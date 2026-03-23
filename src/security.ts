@@ -77,20 +77,26 @@ export class SecurityLayer {
   }
 
   private evaluateFileAccess(action: string, path: string): SecurityDecision {
-    // Block writes/edits to the agent's own source code
+    // Block writes/edits to core agent files (but allow dashboard + new files)
     if (action === "write" || action === "edit") {
-      const selfProtectedPaths = [
-        /[/\\]src[/\\]/i,
-        /[/\\]public[/\\]/i,
+      const coreProtectedFiles = [
+        /[/\\]src[/\\]agent\.ts$/i,
+        /[/\\]src[/\\]security\.ts$/i,
+        /[/\\]src[/\\]server\.ts$/i,
+        /[/\\]src[/\\]auth\.ts$/i,
+        /[/\\]src[/\\]codex-client\.ts$/i,
+        /[/\\]src[/\\]config\.ts$/i,
+        /[/\\]src[/\\]index\.ts$/i,
+        /[/\\]src[/\\]types\.ts$/i,
         /[/\\]package\.json$/i,
         /[/\\]tsconfig\.json$/i,
-        /[/\\]\.env/i,
+        /[/\\]\.env$/i,
       ];
-      for (const pattern of selfProtectedPaths) {
+      for (const pattern of coreProtectedFiles) {
         if (pattern.test(path)) {
           return {
             allowed: false,
-            reason: `Blocked: agent cannot modify its own code (${path}). Use the workspace/ directory instead.`,
+            reason: `Blocked: ${path} is a core file. Agent can modify public/, workspace/, and add new src/ files, but not core logic.`,
           };
         }
       }

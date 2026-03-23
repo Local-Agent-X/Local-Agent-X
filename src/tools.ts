@@ -1,7 +1,32 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
+import { promises as dns } from "node:dns";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { wrapExternalContent } from "./sanitize.js";
+
+/**
+ * DNS pinning check: resolve hostname and verify it doesn't point to private IPs.
+ * Prevents DNS rebinding attacks where a public hostname resolves to localhost after initial check.
+ */
+async function dnsPin(url: string): Promise<string | null> {
+  try {
+    const host = new URL(url).hostname;
+    // Skip for literal IPs (already validated by SecurityLayer)
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(":")) return null;
+
+    const addrs = await dns.resolve4(host).catch(() => [] as string[]);
+    for (const ip of addrs) {
+      const parts = ip.split(".").map(Number);
+      const [a, b] = parts;
+      if (a === 127 || a === 10 || a === 0 || a >= 224) return `DNS rebinding blocked: ${host} → ${ip}`;
+      if (a === 192 && b === 168) return `DNS rebinding blocked: ${host} → ${ip}`;
+      if (a === 172 && b >= 16 && b <= 31) return `DNS rebinding blocked: ${host} → ${ip}`;
+      if (a === 169 && b === 254) return `DNS rebinding blocked: ${host} → ${ip}`;
+    }
+  } catch { /* DNS failure is ok — might be valid host */ }
+  return null;
+}
 
 function ok(content: string): ToolResult {
   return { content };
@@ -137,12 +162,53 @@ const bashTool: ToolDefinition = {
     const command = String(args.command);
     const timeout = (args.timeout as number) || 120_000;
 
+    // Sanitize environment: strip variables that look like secrets/credentials
+    const SAFE_ENV_KEYS = new Set([
+      "PATH", "HOME", "USER", "USERNAME", "USERPROFILE", "SHELL",
+      "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "TMPDIR", "TEMP", "TMP",
+      "NODE_ENV", "NODE_PATH", "NPM_CONFIG_PREFIX",
+      "COMPUTERNAME", "HOSTNAME", "OS", "PROCESSOR_ARCHITECTURE",
+      "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT",
+      "PROGRAMFILES", "PROGRAMFILES(X86)", "APPDATA", "LOCALAPPDATA",
+      "CommonProgramFiles", "CommonProgramFiles(x86)",
+      "PWD", "OLDPWD", "SHLVL", "LOGNAME",
+      "GIT_EXEC_PATH", "GIT_TEMPLATE_DIR",
+      "EDITOR", "VISUAL", "PAGER",
+    ]);
+    const CREDENTIAL_PATTERNS = [
+      /api[_-]?key/i, /secret/i, /token/i, /password/i, /passwd/i,
+      /private[_-]?key/i, /access[_-]?key/i, /auth/i, /credential/i,
+      /^AWS_/i, /^AZURE_/i, /^GCP_/i, /^GOOGLE_/i,
+      /^OPENAI/i, /^XAI/i, /^SAX_AUTH/i, /^SAX_.*KEY/i,
+      /^GITHUB_/i, /^SLACK_/i, /^STRIPE_/i, /^LINEAR_/i,
+      /^NPM_TOKEN/i, /^DOCKER_/i, /^CI_/i,
+    ];
+
+    const sanitizedEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (!value) continue;
+      // Always allow safe system vars
+      if (SAFE_ENV_KEYS.has(key)) {
+        sanitizedEnv[key] = value;
+        continue;
+      }
+      // Block known credential patterns
+      if (CREDENTIAL_PATTERNS.some((p) => p.test(key))) continue;
+      // Block values that contain null bytes
+      if (value.includes("\0")) continue;
+      // Block values that look like base64 secrets (80+ chars, only base64 chars)
+      if (value.length >= 80 && /^[A-Za-z0-9+/=]+$/.test(value)) continue;
+      // Allow everything else
+      sanitizedEnv[key] = value;
+    }
+
     try {
       const output = execSync(command, {
         encoding: "utf-8",
         timeout,
         maxBuffer: 1024 * 1024 * 10, // 10MB
         shell: process.platform === "win32" ? "powershell.exe" : "/bin/bash",
+        env: sanitizedEnv,
       });
       return ok(output || "(no output)");
     } catch (e) {
@@ -168,6 +234,10 @@ const webFetchTool: ToolDefinition = {
   async execute(args) {
     const url = String(args.url);
 
+    // DNS rebinding protection
+    const pinResult = await dnsPin(url);
+    if (pinResult) return err(pinResult);
+
     try {
       const res = await fetch(url, {
         headers: {
@@ -189,7 +259,8 @@ const webFetchTool: ToolDefinition = {
         body = body.slice(0, MAX_CHARS) + `\n\n[Truncated at ${MAX_CHARS} chars]`;
       }
 
-      return ok(body);
+      // Wrap external content to prevent prompt injection
+      return ok(wrapExternalContent(body, "web_fetch", { url, status: String(res.status) }));
     } catch (e) {
       return err(`Fetch failed: ${(e as Error).message}`);
     }
@@ -239,6 +310,10 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       const method = String(args.method || "GET").toUpperCase();
       const timeout = Math.min((args.timeout as number) || 30_000, 120_000);
 
+      // DNS rebinding protection
+      const pinResult = await dnsPin(url);
+      if (pinResult) return err(pinResult);
+
       const validMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
       if (!validMethods.includes(method)) {
         return err(`Invalid HTTP method: ${method}. Must be one of: ${validMethods.join(", ")}`);
@@ -277,11 +352,12 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         bodyStr = secrets.resolve(bodyStr);
       }
 
-      // Build fetch options
+      // Build fetch options — manual redirects to strip auth on cross-origin
       const fetchOpts: RequestInit = {
         method,
         headers,
         signal: AbortSignal.timeout(timeout),
+        redirect: "manual", // Handle redirects ourselves for security
       };
 
       // Attach body for methods that support it
@@ -293,7 +369,41 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       }
 
       try {
-        const res = await fetch(url, fetchOpts);
+        // Follow redirects manually, stripping sensitive headers on cross-origin
+        const SENSITIVE_HEADERS = ["authorization", "cookie", "proxy-authorization", "x-api-key"];
+        const MAX_REDIRECTS = 5;
+        let currentUrl = url;
+        let res = await fetch(currentUrl, fetchOpts);
+        let redirectCount = 0;
+
+        while (res.status >= 300 && res.status < 400 && res.headers.get("location") && redirectCount < MAX_REDIRECTS) {
+          const location = new URL(res.headers.get("location")!, currentUrl).toString();
+          const origOrigin = new URL(currentUrl).origin;
+          const newOrigin = new URL(location).origin;
+
+          // DNS pin the redirect target
+          const redirectPin = await dnsPin(location);
+          if (redirectPin) return err(`Redirect blocked: ${redirectPin}`);
+
+          // Strip sensitive headers if redirecting cross-origin
+          const redirectHeaders = { ...headers };
+          if (origOrigin !== newOrigin) {
+            for (const h of SENSITIVE_HEADERS) {
+              for (const key of Object.keys(redirectHeaders)) {
+                if (key.toLowerCase() === h) delete redirectHeaders[key];
+              }
+            }
+          }
+
+          currentUrl = location;
+          res = await fetch(currentUrl, {
+            ...fetchOpts,
+            headers: redirectHeaders,
+            body: res.status === 303 ? undefined : fetchOpts.body, // 303 = GET with no body
+            method: res.status === 303 ? "GET" : method,
+          });
+          redirectCount++;
+        }
 
         const statusLine = `${res.status} ${res.statusText}`;
 
@@ -322,7 +432,13 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           body = body.slice(0, MAX_CHARS) + `\n\n[Truncated at ${MAX_CHARS} chars]`;
         }
 
-        const output = `HTTP ${statusLine}\n\n${body}`;
+        // Wrap external content to prevent prompt injection
+        const wrapped = wrapExternalContent(body, "http_request", {
+          url,
+          method,
+          status: statusLine,
+        });
+        const output = `HTTP ${statusLine}\n\n${wrapped}`;
         return res.ok ? ok(output) : err(output);
       } catch (e) {
         return err(`HTTP request failed: ${(e as Error).message}`);

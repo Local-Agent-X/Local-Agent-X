@@ -162,3 +162,98 @@ export function sanitizeSemiTrusted(content: string): string {
   result = normalizeHomoglyphs(result);
   return result;
 }
+
+// ── Memory Taint Protection ──
+// Prevents untrusted external content from being persisted into
+// high-trust memory/profile files, which would create permanent
+// instruction hijacks (durable prompt injection).
+
+/** Markers that indicate content originated from an external/untrusted source */
+const EXTERNAL_MARKERS = [
+  /<<<EXTERNAL_UNTRUSTED_CONTENT/i,
+  /\[MARKER_SANITIZED\]/i,
+  /INJECTION WARNING/i,
+];
+
+/** Patterns that look like instruction injection attempting to persist */
+const MEMORY_INJECTION_PATTERNS = [
+  /ignore\s+(all\s+)?previous/i,
+  /you\s+are\s+now/i,
+  /new\s+instructions?\s*:/i,
+  /system\s*(:|prompt|override)/i,
+  /\[system\]/i,
+  /<\/?system>/i,
+  /elevated\s*=\s*true/i,
+  /admin\s*mode/i,
+  /ALWAYS\s+(do|execute|run|call|send|output)/i,
+  /NEVER\s+(tell|mention|reveal|show|say)/i,
+  /from\s+now\s+on/i,
+  /your\s+new\s+(role|personality|instructions?|behavior)/i,
+];
+
+export interface MemoryTaintResult {
+  safe: boolean;
+  reason?: string;
+  injectionScore: number;
+}
+
+/**
+ * Check if content is safe to persist to memory/profile files.
+ * Returns safe=false if the content looks like it came from an external
+ * source or contains instruction injection patterns.
+ *
+ * This prevents the attack chain:
+ *   malicious webpage → agent reads it → memory_save → permanent instruction hijack
+ */
+export function checkMemoryTaint(content: string): MemoryTaintResult {
+  // Check for external content markers (wrapped content leaking into memory)
+  for (const marker of EXTERNAL_MARKERS) {
+    if (marker.test(content)) {
+      return {
+        safe: false,
+        reason: "Content contains external/untrusted source markers. External content cannot be saved to memory.",
+        injectionScore: 0.95,
+      };
+    }
+  }
+
+  // Check for instruction injection patterns
+  let injectionScore = 0;
+  const matches: string[] = [];
+  for (const pattern of MEMORY_INJECTION_PATTERNS) {
+    if (pattern.test(content)) {
+      injectionScore += 0.15;
+      matches.push(pattern.source);
+    }
+  }
+  injectionScore = Math.min(injectionScore, 1.0);
+
+  // High injection score = likely poisoning attempt
+  if (injectionScore >= 0.3) {
+    return {
+      safe: false,
+      reason: `Content has high injection score (${injectionScore.toFixed(2)}). ` +
+        `Patterns: ${matches.slice(0, 3).join(", ")}. ` +
+        `This looks like an attempt to inject persistent instructions.`,
+      injectionScore,
+    };
+  }
+
+  return { safe: true, injectionScore };
+}
+
+/**
+ * Sanitize content before writing to memory/profile files.
+ * Strips external markers and control characters, but does NOT block —
+ * use checkMemoryTaint() first to decide whether to block entirely.
+ */
+export function sanitizeForMemory(content: string): string {
+  let result = stripControlChars(content);
+  result = normalizeHomoglyphs(result);
+  // Strip any external content wrapper markers that leaked through
+  result = result.replace(/<<<EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/gi, "[external content removed]");
+  result = result.replace(/<<<END_EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/gi, "");
+  result = result.replace(/<metadata>[\s\S]*?<\/metadata>/gi, "");
+  result = result.replace(/<content>\n?/gi, "").replace(/\n?<\/content>/gi, "");
+  return result.trim();
+}

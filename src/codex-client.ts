@@ -164,19 +164,47 @@ export async function* streamCodexResponse(params: {
 
   // Codex endpoint does not support temperature
 
-  const res = await fetch(CODEX_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+  // Retry logic for transient failures (503, 429, network errors)
+  let res: Response;
+  const maxRetries = 3;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      res = await fetch(CODEX_URL, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(60_000), // 60s timeout per request
+      });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Codex API error ${res.status}: ${errText.slice(0, 500)}`);
+      if (res.ok) break;
+
+      const errText = await res.text();
+
+      // Retry on transient errors
+      if ((res.status === 503 || res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+        const waitMs = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+        console.warn(`[codex] API ${res.status}, retrying in ${waitMs}ms (attempt ${attempt}/${maxRetries})`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+
+      throw new Error(`Codex API error ${res.status}: ${errText.slice(0, 500)}`);
+    } catch (e) {
+      if (attempt >= maxRetries) throw e;
+      const msg = (e as Error).message;
+      // Retry on network/timeout errors
+      if (msg.includes("timeout") || msg.includes("fetch") || msg.includes("ECONNRESET")) {
+        const waitMs = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+        console.warn(`[codex] Network error, retrying in ${waitMs}ms: ${msg.slice(0, 100)}`);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+      throw e;
+    }
   }
 
-  const reader = res.body?.getReader();
-  if (!reader) throw new Error("No response body");
+  const reader = res!.body?.getReader();
+  if (!reader) throw new Error("Codex returned empty response — try again.");
 
   const decoder = new TextDecoder();
   let buffer = "";

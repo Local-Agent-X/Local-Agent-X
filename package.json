@@ -10,7 +10,8 @@
     "dev": "tsx --watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsup",
-    "test": "vitest run"
+    "test": "vitest run",
+    "setup-ai": "node scripts/setup-ai.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",

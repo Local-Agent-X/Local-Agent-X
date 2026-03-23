@@ -255,6 +255,10 @@ function md(s){
   h=h.replace(/^### (.+)$/gm,'<h4 style="color:var(--accent);margin:8px 0 4px;font-size:.9rem">$1</h4>');
   h=h.replace(/^## (.+)$/gm,'<h3 style="color:var(--accent);margin:10px 0 4px;font-size:1rem">$1</h3>');
   h=h.replace(/^# (.+)$/gm,'<h2 style="color:var(--accent);margin:12px 0 4px;font-size:1.1rem">$1</h2>');
+  // URLs → clickable links (before line breaks)
+  h=h.replace(/(https?:\/\/[^\s<"']+)/g,'<a href="$1" target="_blank" style="color:var(--accent);text-decoration:underline;cursor:pointer" onclick="event.stopPropagation()">$1</a>');
+  // File paths → clickable (open in browser for html files)
+  h=h.replace(/(?<!")(\b[\w./\\-]+\.html\b)/g,'<a href="$1" target="_blank" style="color:var(--accent);text-decoration:underline;cursor:pointer">$1</a>');
   // Line breaks
   h=h.replace(/\n/g,'<br>');
   return h;

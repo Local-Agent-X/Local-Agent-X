@@ -112,6 +112,26 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 #send-btn{background:var(--accent);border:none;border-radius:8px;color:var(--bg);font-weight:700;padding:8px 18px;cursor:pointer;font-family:var(--mono);font-size:.8rem;margin-left:10px;transition:all .2s}
 #send-btn:hover{box-shadow:0 0 14px var(--accent-dim)}
 #send-btn:disabled{opacity:.3;cursor:not-allowed}
+
+/* ── Secret Request Modal ── */
+#secret-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:10000;align-items:center;justify-content:center}
+#secret-modal-overlay.visible{display:flex}
+#secret-modal{background:var(--surface);border:1px solid var(--accent);border-radius:16px;padding:28px 32px;max-width:480px;width:90%;box-shadow:0 0 40px rgba(0,255,65,.15);animation:fadeIn .2s ease}
+#secret-modal h3{font-family:var(--mono);color:var(--accent);font-size:.95rem;margin-bottom:6px;letter-spacing:1px}
+#secret-modal .secret-reason{color:var(--muted);font-size:.82rem;margin-bottom:16px;line-height:1.5}
+#secret-modal .secret-name-badge{display:inline-block;background:#1a1a30;border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-family:var(--mono);font-size:.78rem;color:var(--accent);margin-bottom:12px}
+#secret-modal .secret-service{color:var(--muted);font-size:.72rem;font-family:var(--mono);margin-bottom:12px}
+#secret-input{width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;color:var(--text);font-family:var(--mono);font-size:.85rem;outline:none;transition:border-color .2s}
+#secret-input:focus{border-color:var(--accent);box-shadow:0 0 8px rgba(0,255,65,.1)}
+#secret-input::placeholder{color:var(--muted)}
+.secret-modal-actions{display:flex;gap:10px;margin-top:16px;justify-content:flex-end}
+.secret-modal-actions button{font-family:var(--mono);font-size:.78rem;padding:8px 18px;border-radius:8px;cursor:pointer;transition:all .2s}
+#secret-cancel{background:transparent;border:1px solid var(--border);color:var(--muted)}
+#secret-cancel:hover{border-color:var(--danger);color:var(--danger)}
+#secret-submit{background:var(--accent);border:none;color:var(--bg);font-weight:700}
+#secret-submit:hover{box-shadow:0 0 14px var(--accent-dim)}
+#secret-submit:disabled{opacity:.3;cursor:not-allowed}
+.secret-warning{font-size:.7rem;color:var(--muted);margin-top:8px;display:flex;align-items:center;gap:4px}
 </style>
 </head>
 <body>
@@ -125,6 +145,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
   <div id="nav-links">
     <a class="nav-link active" onclick="showChat()">Chat</a>
     <a class="nav-link" href="/tasks.html">Task Board</a>
+    <a class="nav-link" href="/secrets.html">Secrets</a>
   </div>
 
   <div id="projects-section">
@@ -156,6 +177,23 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
       <textarea id="msg-input" placeholder="Message Agent X..." rows="1"
         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
       <button id="send-btn" onclick="sendMessage()">SEND</button>
+    </div>
+  </div>
+</div>
+
+<!-- Secret Request Modal -->
+<div id="secret-modal-overlay">
+  <div id="secret-modal">
+    <h3>Secret Requested</h3>
+    <div class="secret-service" id="secret-modal-service"></div>
+    <div class="secret-name-badge" id="secret-modal-name"></div>
+    <div class="secret-reason" id="secret-modal-reason"></div>
+    <input type="password" id="secret-input" placeholder="Paste your secret here..." autocomplete="off" spellcheck="false"
+      onkeydown="if(event.key==='Enter')submitSecret()"/>
+    <div class="secret-warning">This value is encrypted and stored locally. It never appears in chat.</div>
+    <div class="secret-modal-actions">
+      <button id="secret-cancel" onclick="cancelSecret()">Cancel</button>
+      <button id="secret-submit" onclick="submitSecret()">Save Secret</button>
     </div>
   </div>
 </div>
@@ -354,6 +392,9 @@ async function sendMessage(){
               }
               break;
             }
+            case 'secret_request':
+              showSecretModal(event.name, event.service, event.reason);
+              break;
             case 'error':
               content+='\n\nError: '+event.message;
               bodyEl.innerHTML=md(content);
@@ -407,6 +448,53 @@ function makeToolCard(name,args){
 document.getElementById('msg-input').addEventListener('input',function(){
   this.style.height='auto';
   this.style.height=Math.min(this.scrollHeight,160)+'px';
+});
+
+// ── Secret Modal ──
+let pendingSecretName = '';
+
+function showSecretModal(name, service, reason) {
+  pendingSecretName = name;
+  document.getElementById('secret-modal-name').textContent = name;
+  document.getElementById('secret-modal-service').textContent = service ? `Service: ${service}` : '';
+  document.getElementById('secret-modal-reason').textContent = reason;
+  document.getElementById('secret-input').value = '';
+  document.getElementById('secret-modal-overlay').classList.add('visible');
+  setTimeout(() => document.getElementById('secret-input').focus(), 100);
+}
+
+async function submitSecret() {
+  const input = document.getElementById('secret-input');
+  const value = input.value.trim();
+  if (!value) return;
+
+  document.getElementById('secret-submit').disabled = true;
+
+  try {
+    await fetch(`${API}/api/secrets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ name: pendingSecretName, value }),
+    });
+  } catch (e) {
+    console.error('Failed to save secret:', e);
+  }
+
+  input.value = '';
+  pendingSecretName = '';
+  document.getElementById('secret-submit').disabled = false;
+  document.getElementById('secret-modal-overlay').classList.remove('visible');
+}
+
+function cancelSecret() {
+  document.getElementById('secret-input').value = '';
+  pendingSecretName = '';
+  document.getElementById('secret-modal-overlay').classList.remove('visible');
+}
+
+// Close modal on overlay click
+document.getElementById('secret-modal-overlay').addEventListener('click', function(e) {
+  if (e.target === this) cancelSecret();
 });
 
 // ── Init ──

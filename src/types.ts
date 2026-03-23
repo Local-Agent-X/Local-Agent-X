@@ -45,7 +45,8 @@ export type ServerEvent =
   | { type: "tool_start"; toolName: string; args: unknown }
   | { type: "tool_end"; toolName: string; result: string; allowed: boolean }
   | { type: "done"; usage: AgentTurn["usage"] }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "secret_request"; name: string; service?: string; reason: string };
 
 // ── Auth Types ──
 

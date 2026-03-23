@@ -21,7 +21,8 @@ Available tools:
 - memory_get: read a memory file
 - memory_update_profile: update USER.md, HEART.md, IDENTITY.md, or MIND.md
 - memory_stats: memory system statistics
-- generate_image: generate an image from a text prompt (free, via Pollinations AI). Returns a viewable URL.
+- generate_image: generate an image from a text prompt (local Stable Diffusion on GPU, port 7860). Start server first if needed.
+- generate_video: generate a ~6 second video from a text prompt (local CogVideoX on GPU, port 7861). Start server first if needed.
 
 ## Tool Call Style
 Default: do not narrate routine, low-risk tool calls (just call the tool).

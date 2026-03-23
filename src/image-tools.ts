@@ -115,4 +115,93 @@ const generateImageTool: ToolDefinition = {
   },
 };
 
-export const imageTools: ToolDefinition[] = [generateImageTool];
+const VIDEO_SERVER_URL = "http://127.0.0.1:7861";
+
+const generateVideoTool: ToolDefinition = {
+  name: "generate_video",
+  description:
+    "Generate a short video (~6 seconds) from a text prompt using local CogVideoX (runs on your GPU). " +
+    "The video server must be running on port 7861. If not running, use bash to start it: " +
+    "'python workspace/sd-server/video-server.py' (first run downloads ~4GB model). " +
+    "Use detailed prompts for best results. Videos are saved as MP4.",
+  parameters: {
+    type: "object",
+    properties: {
+      prompt: {
+        type: "string",
+        description: "Detailed text description of the video to generate",
+      },
+      num_frames: {
+        type: "number",
+        description: "Number of frames (default 49 = ~6 seconds at 8fps, max 81)",
+      },
+      steps: {
+        type: "number",
+        description: "Inference steps (default 50, more = higher quality but slower)",
+      },
+    },
+    required: ["prompt"],
+  },
+  async execute(args) {
+    const prompt = String(args.prompt || "");
+    if (!prompt.trim()) return err("Prompt is required.");
+
+    const numFrames = Math.min(81, Math.max(17, Number(args.num_frames) || 49));
+    const steps = Math.min(80, Math.max(20, Number(args.steps) || 50));
+
+    // Check if video server is running
+    try {
+      const healthRes = await fetch(`${VIDEO_SERVER_URL}/health`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!healthRes.ok) throw new Error("not ok");
+    } catch {
+      return err(
+        "Video server is not running.\n" +
+        "Start it with bash: python workspace/sd-server/video-server.py\n" +
+        "(First run downloads CogVideoX model ~4GB, takes a few minutes)"
+      );
+    }
+
+    try {
+      const res = await fetch(`${VIDEO_SERVER_URL}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, num_frames: numFrames, steps }),
+        signal: AbortSignal.timeout(300_000), // 5 min timeout — video gen is slow
+      });
+
+      if (!res.ok) {
+        const errBody = await res.text();
+        return err(`Video generation failed: ${errBody.slice(0, 300)}`);
+      }
+
+      const data = (await res.json()) as {
+        filename: string;
+        path: string;
+        size: number;
+        frames: number;
+        prompt: string;
+      };
+
+      const localUrl = `http://127.0.0.1:4800/videos/${data.filename}`;
+
+      return ok(
+        `Video generated!\n` +
+        `Prompt: ${prompt}\n` +
+        `Frames: ${data.frames} (~${Math.round(data.frames / 8)}s at 8fps)\n` +
+        `Size: ${Math.round(data.size / 1024)}KB\n` +
+        `View: ${localUrl}\n` +
+        `Saved: workspace/videos/${data.filename}`
+      );
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (msg.includes("timeout")) {
+        return err("Video generation timed out (>5 min). Try fewer frames or steps.");
+      }
+      return err(`Video generation failed: ${msg}`);
+    }
+  },
+};
+
+export const imageTools: ToolDefinition[] = [generateImageTool, generateVideoTool];

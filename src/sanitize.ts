@@ -206,9 +206,13 @@ export interface MemoryTaintResult {
  *   malicious webpage → agent reads it → memory_save → permanent instruction hijack
  */
 export function checkMemoryTaint(content: string): MemoryTaintResult {
+  // FIRST: normalize unicode tricks that could bypass pattern matching
+  // This closes the homoglyph/invisible-char bypass the audit identified
+  const normalized = normalizeHomoglyphs(stripControlChars(content));
+
   // Check for external content markers (wrapped content leaking into memory)
   for (const marker of EXTERNAL_MARKERS) {
-    if (marker.test(content)) {
+    if (marker.test(normalized)) {
       return {
         safe: false,
         reason: "Content contains external/untrusted source markers. External content cannot be saved to memory.",
@@ -217,11 +221,11 @@ export function checkMemoryTaint(content: string): MemoryTaintResult {
     }
   }
 
-  // Check for instruction injection patterns
+  // Check for instruction injection patterns (against normalized content)
   let injectionScore = 0;
   const matches: string[] = [];
   for (const pattern of MEMORY_INJECTION_PATTERNS) {
-    if (pattern.test(content)) {
+    if (pattern.test(normalized)) {
       injectionScore += 0.15;
       matches.push(pattern.source);
     }

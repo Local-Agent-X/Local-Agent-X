@@ -33,7 +33,7 @@ import {
   unlinkSync,
   watch,
 } from "node:fs";
-import { join, basename } from "node:path";
+import { join, basename, resolve, relative, isAbsolute } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import Database from "better-sqlite3";
 import type { Session } from "./types.js";
@@ -2434,6 +2434,25 @@ export function autoExtractAndSave(
   userMessage: string,
   assistantResponse: string
 ): void {
+  // Memory taint protection: skip auto-extraction if the message contains
+  // external content markers or injection patterns. This prevents:
+  //   malicious webpage content → pasted into chat → auto-extracted to profile files
+  try {
+    const { checkMemoryTaint } = require("./sanitize.js");
+    const taint = checkMemoryTaint(userMessage);
+    if (!taint.safe) {
+      console.log(`[memory] Auto-extract skipped: ${taint.reason}`);
+      return;
+    }
+    const taintReply = checkMemoryTaint(assistantResponse);
+    if (!taintReply.safe) {
+      console.log(`[memory] Auto-extract skipped (assistant): ${taintReply.reason}`);
+      return;
+    }
+  } catch {
+    // Sanitize module not available — proceed (backwards compat)
+  }
+
   const lower = userMessage.toLowerCase().trim();
 
   // ── Agent rename detection ──
@@ -2595,7 +2614,17 @@ export function createMemoryTools(memory: MemoryIndex) {
       },
       async execute(args: Record<string, unknown>) {
         const requestedPath = String(args.path || "");
-        const fullPath = join(memory["memoryDir"], requestedPath);
+
+        // Path traversal protection: resolve and verify it stays within memory dir
+        const memDir = resolve(memory["memoryDir"]);
+        const fullPath = resolve(memDir, requestedPath);
+        const rel = relative(memDir, fullPath);
+        if (rel.startsWith("..") || isAbsolute(requestedPath)) {
+          return {
+            content: "BLOCKED: path traversal detected. Only files within the memory directory are accessible.",
+            isError: true,
+          };
+        }
 
         if (!existsSync(fullPath)) {
           return { content: `Memory file not found: ${requestedPath}` };

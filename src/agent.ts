@@ -8,6 +8,7 @@ import { SecurityLayer } from "./security.js";
 import { streamCodexResponse } from "./codex-client.js";
 import type { ToolPolicy } from "./tool-policy.js";
 import type { ThreatEngine } from "./threat-engine.js";
+import type { RBACManager, Role } from "./rbac.js";
 
 interface AgentOptions {
   apiKey: string;
@@ -19,6 +20,8 @@ interface AgentOptions {
   security: SecurityLayer;
   toolPolicy?: ToolPolicy;
   threatEngine?: ThreatEngine;
+  rbac?: RBACManager;
+  callerRole?: Role;
   sessionId?: string;
   maxIterations?: number;
   temperature?: number;
@@ -43,6 +46,8 @@ async function executeToolCalls(
   security: SecurityLayer,
   toolPolicy?: ToolPolicy,
   threatEngine?: ThreatEngine,
+  rbac?: RBACManager,
+  callerRole?: Role,
   sessionId?: string,
   onEvent?: (event: ServerEvent) => void,
   signal?: AbortSignal
@@ -66,10 +71,21 @@ async function executeToolCalls(
       sessionId: sessionId || "default",
     });
 
-    // Layer 2: ToolPolicy (configurable allow/deny rules, rate limits, host constraints)
+    // Layer 2: RBAC tool permission (role-based tool access)
+    let rbacBlocked = false;
+    let rbacReason = "";
+    if (secDecision.allowed && rbac && callerRole) {
+      const rbacDecision = rbac.checkTool(callerRole, tc.name);
+      if (!rbacDecision.allowed) {
+        rbacBlocked = true;
+        rbacReason = rbacDecision.reason;
+      }
+    }
+
+    // Layer 3: ToolPolicy (configurable allow/deny rules, rate limits, host constraints)
     let policyBlocked = false;
     let policyReason = "";
-    if (secDecision.allowed && toolPolicy) {
+    if (secDecision.allowed && !rbacBlocked && toolPolicy) {
       const policyDecision = toolPolicy.evaluate(tc.name, args, sessionId || "default");
       if (!policyDecision.allowed) {
         policyBlocked = true;
@@ -77,11 +93,13 @@ async function executeToolCalls(
       }
     }
 
-    const allowed = secDecision.allowed && !policyBlocked;
+    const allowed = secDecision.allowed && !rbacBlocked && !policyBlocked;
     let result: ToolResult;
 
     if (!secDecision.allowed) {
       result = { content: `BLOCKED by security: ${secDecision.reason}`, isError: true };
+    } else if (rbacBlocked) {
+      result = { content: `BLOCKED by RBAC: ${rbacReason}`, isError: true };
     } else if (policyBlocked) {
       result = { content: `BLOCKED by policy: ${policyReason}`, isError: true };
     } else {
@@ -246,7 +264,7 @@ async function runCodexAgent(
       lastToolKey = toolKey;
     }
 
-    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.sessionId, onEvent, signal);
+    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
     messages.push(...toolResults);
   }
 
@@ -381,7 +399,7 @@ async function runStandardAgent(
       stdLastToolKey = stdToolKey;
     }
 
-    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.sessionId, onEvent, signal);
+    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
     messages.push(...toolResults);
   }
 

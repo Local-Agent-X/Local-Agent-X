@@ -1,0 +1,28 @@
+{
+  "name": "secret-agent-x",
+  "version": "0.1.0",
+  "description": "Personal AI agent with voice conversation, runtime security, and free OpenAI subscription access",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx --watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsup",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "openai": "^4.86.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "tsx": "^4.19.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

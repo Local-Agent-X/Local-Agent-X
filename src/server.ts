@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { timingSafeEqual } from "node:crypto";
 import { runAgent } from "./agent.js";
 import { allTools, createHttpRequestTool } from "./tools.js";
 import { SecurityLayer } from "./security.js";
@@ -18,6 +19,7 @@ import {
 import { SecretsStore } from "./secrets.js";
 import { createSecretTools } from "./secret-tools.js";
 import { createBrowserTools, closeBrowser } from "./browser-tools.js";
+import { setCurrentBrowserSession, closeAllBrowsers } from "./browser.js";
 import { redactCredentials } from "./security.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 
@@ -229,10 +231,14 @@ export function startServer(config: SAXConfig) {
       }
     }
 
-    // Auth check (skip for static files)
+    // Auth check (skip for static files) — timing-safe comparison
     if (url.pathname.startsWith("/api/")) {
-      const auth = req.headers.authorization;
-      if (auth !== `Bearer ${config.authToken}`) {
+      const auth = req.headers.authorization || "";
+      const expected = `Bearer ${config.authToken}`;
+      const authBuf = Buffer.from(auth);
+      const expectedBuf = Buffer.from(expected);
+      const isValid = authBuf.length === expectedBuf.length && timingSafeEqual(authBuf, expectedBuf);
+      if (!isValid) {
         jsonResponse(res, 401, { error: "Unauthorized" }, req);
         return;
       }
@@ -419,6 +425,9 @@ export function startServer(config: SAXConfig) {
         const onEvent = (event: ServerEvent) => sseWrite(res, event);
         activeOnEvent = onEvent;
 
+        // Isolate browser session per chat session
+        setCurrentBrowserSession(sessionId);
+
         // ── Best-friend memory injection ──
         // Load user profile + auto-search relevant memories
         // These get injected into the system prompt so the agent
@@ -533,7 +542,7 @@ export function startServer(config: SAXConfig) {
 
   // Cleanup on exit
   process.on("SIGINT", async () => {
-    await closeBrowser();
+    await closeAllBrowsers();
     memoryIndex.close();
     process.exit(0);
   });

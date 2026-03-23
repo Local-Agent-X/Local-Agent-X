@@ -7,6 +7,7 @@ import type { ToolDefinition, ToolResult, AgentTurn, ServerEvent } from "./types
 import { SecurityLayer } from "./security.js";
 import { streamCodexResponse } from "./codex-client.js";
 import type { ToolPolicy } from "./tool-policy.js";
+import type { ThreatEngine } from "./threat-engine.js";
 
 interface AgentOptions {
   apiKey: string;
@@ -17,6 +18,7 @@ interface AgentOptions {
   tools: ToolDefinition[];
   security: SecurityLayer;
   toolPolicy?: ToolPolicy;
+  threatEngine?: ThreatEngine;
   sessionId?: string;
   maxIterations?: number;
   temperature?: number;
@@ -40,6 +42,7 @@ async function executeToolCalls(
   toolMap: Map<string, ToolDefinition>,
   security: SecurityLayer,
   toolPolicy?: ToolPolicy,
+  threatEngine?: ThreatEngine,
   sessionId?: string,
   onEvent?: (event: ServerEvent) => void,
   signal?: AbortSignal
@@ -91,6 +94,22 @@ async function executeToolCalls(
         } catch (e) {
           result = { content: `Tool error: ${(e as Error).message}`, isError: true };
         }
+      }
+    }
+
+    // Layer 3: ThreatEngine post-execution analysis
+    // (exfiltration detection, data classification, threat scoring, audit)
+    if (threatEngine) {
+      const threat = threatEngine.evaluateToolResult(tc.name, args, result.content, allowed);
+      if (threat.blocked) {
+        result = { content: `BLOCKED by threat engine: ${threat.reason}`, isError: true };
+      }
+      // If session is in restricted mode (high threat score), block external tools
+      if (threatEngine.isRestricted() && ["http_request", "web_fetch", "browser"].includes(tc.name)) {
+        result = {
+          content: `BLOCKED: Session threat level is ${threat.threatLevel} (score: ${threat.threatScore}). External tool calls are restricted. Resolve security concerns first.`,
+          isError: true,
+        };
       }
     }
 
@@ -227,7 +246,7 @@ async function runCodexAgent(
       lastToolKey = toolKey;
     }
 
-    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.sessionId, onEvent, signal);
+    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.sessionId, onEvent, signal);
     messages.push(...toolResults);
   }
 
@@ -362,7 +381,7 @@ async function runStandardAgent(
       stdLastToolKey = stdToolKey;
     }
 
-    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.sessionId, onEvent, signal);
+    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.sessionId, onEvent, signal);
     messages.push(...toolResults);
   }
 

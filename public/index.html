@@ -32,35 +32,52 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 #new-chat-btn{background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:7px 12px;font-size:.75rem;cursor:pointer;font-family:var(--mono);transition:all .2s;white-space:nowrap}
 #new-chat-btn:hover{background:var(--accent);color:var(--bg);box-shadow:0 0 12px var(--accent-dim)}
 
-/* Nav links */
-#nav-links{padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px}
-.nav-link{font-size:.72rem;font-family:var(--mono);color:var(--muted);text-decoration:none;padding:5px 10px;border-radius:6px;transition:all .15s;cursor:pointer}
-.nav-link:hover{background:var(--hover);color:var(--text)}
-.nav-link.active{background:#1a1a30;color:var(--accent)}
-
 /* Projects */
-#projects-section{padding:8px 12px;border-bottom:1px solid var(--border)}
-#projects-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
-#projects-header span{font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+#projects-section{padding:8px 0;border-bottom:1px solid var(--border)}
+.section-header{display:flex;align-items:center;justify-content:space-between;padding:0 12px;margin-bottom:4px}
+.section-header span{font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px}
 .add-btn{background:none;border:none;color:var(--accent);cursor:pointer;font-size:.9rem;padding:2px 6px;border-radius:4px}
 .add-btn:hover{background:var(--hover)}
-.project-item{padding:6px 10px;border-radius:6px;cursor:pointer;font-size:.78rem;color:var(--muted);display:flex;align-items:center;gap:8px;transition:all .15s}
+.project-item{padding:6px 10px 6px 12px;cursor:pointer;font-size:.78rem;color:var(--muted);display:flex;align-items:center;gap:8px;transition:all .15s}
 .project-item:hover{background:var(--hover);color:var(--text)}
-.project-item.active{background:#1a1a30;color:var(--accent)}
-.folder-icon{font-size:.7rem}
+.project-item.active{color:var(--accent)}
+.project-arrow{font-size:.55rem;transition:transform .15s;width:10px;text-align:center;flex-shrink:0}
+.project-item.expanded .project-arrow{transform:rotate(90deg)}
+.project-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-count{font-size:.65rem;color:var(--muted);font-family:var(--mono)}
+.project-delete{display:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:.7rem;padding:2px 5px;border-radius:3px}
+.project-item:hover .project-delete{display:block}
+.project-delete:hover{color:var(--danger);background:#2a1010}
+.project-chats{display:none;padding:2px 0 4px 20px}
+.project-item.expanded+.project-chats{display:block}
 
 /* Chat list */
-#chats-header{padding:8px 12px 4px;font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+#chats-section{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+#chats-header{padding:8px 12px 4px;font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px;flex-shrink:0}
 #chat-list{flex:1;overflow-y:auto;padding:4px 8px;scrollbar-width:thin;scrollbar-color:#222 transparent}
-.chat-item{padding:9px 12px;border-radius:8px;cursor:pointer;font-size:.82rem;color:var(--muted);transition:all .15s;margin-bottom:2px;display:flex;align-items:center;gap:8px;position:relative}
+.chat-item{padding:8px 10px;border-radius:8px;cursor:pointer;font-size:.78rem;color:var(--muted);transition:all .15s;margin-bottom:1px;display:flex;align-items:center;gap:8px;position:relative}
 .chat-item:hover{background:var(--hover);color:var(--text)}
 .chat-item.active{background:#1a1a30;color:var(--accent);border-left:2px solid var(--accent)}
-.chat-dot{width:6px;height:6px;border-radius:50%;background:var(--accent-dim);flex-shrink:0}
+.chat-dot{width:5px;height:5px;border-radius:50%;background:var(--accent-dim);flex-shrink:0}
 .chat-item.active .chat-dot{background:var(--accent);box-shadow:0 0 6px var(--accent)}
 .chat-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chat-delete{display:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:.75rem;padding:2px 5px;border-radius:3px}
-.chat-item:hover .chat-delete{display:block}
-.chat-delete:hover{color:var(--danger);background:#2a1010}
+.chat-actions{display:none;align-items:center;gap:2px}
+.chat-item:hover .chat-actions{display:flex}
+.chat-action-btn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:.7rem;padding:2px 4px;border-radius:3px}
+.chat-action-btn:hover{color:var(--text);background:var(--hover)}
+.chat-action-btn.delete:hover{color:var(--danger);background:#2a1010}
+
+/* Move-to-project dropdown */
+.move-menu{position:absolute;right:0;top:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;min-width:140px;z-index:100;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+.move-menu-item{padding:5px 10px;font-size:.72rem;color:var(--muted);cursor:pointer;border-radius:4px;font-family:var(--mono)}
+.move-menu-item:hover{background:var(--hover);color:var(--text)}
+.move-menu-item.remove{color:var(--danger)}
+
+/* Utility bar */
+#utility-bar{display:flex;border-top:1px solid var(--border);padding:6px 8px;gap:4px}
+.util-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 4px;border-radius:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-family:var(--mono);font-size:.68rem;text-decoration:none;transition:all .15s}
+.util-btn:hover{background:var(--hover);color:var(--text)}
+.util-btn .util-icon{font-size:.8rem}
 
 #sidebar-footer{padding:10px 14px;border-top:1px solid var(--border);font-size:.68rem;font-family:var(--mono);display:flex;align-items:center;gap:6px}
 #auth-dot{width:6px;height:6px;border-radius:50%;background:var(--danger)}
@@ -142,22 +159,24 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
     <button id="new-chat-btn" onclick="newChat()">+ New Chat</button>
   </div>
 
-  <div id="nav-links">
-    <a class="nav-link active" onclick="showChat()">Chat</a>
-    <a class="nav-link" href="/tasks.html">Task Board</a>
-    <a class="nav-link" href="/secrets.html">Secrets</a>
-  </div>
-
   <div id="projects-section">
-    <div id="projects-header">
+    <div class="section-header">
       <span>Projects</span>
       <button class="add-btn" onclick="newProject()" title="New project">+</button>
     </div>
     <div id="project-list"></div>
   </div>
 
-  <div id="chats-header">Recent Chats</div>
-  <div id="chat-list"></div>
+  <div id="chats-section">
+    <div id="chats-header">All Chats</div>
+    <div id="chat-list"></div>
+  </div>
+
+  <div id="utility-bar">
+    <a class="util-btn" href="/tasks.html"><span class="util-icon">&#9776;</span> Tasks</a>
+    <a class="util-btn" href="/secrets.html"><span class="util-icon">&#128273;</span> Secrets</a>
+    <button class="util-btn" onclick="openSettings()"><span class="util-icon">&#9881;</span> Settings</button>
+  </div>
 
   <div id="sidebar-footer">
     <span id="auth-dot"></span>
@@ -251,23 +270,112 @@ async function checkAuth(){
   }catch{ document.getElementById('auth-label').textContent='offline'; }
 }
 
+let expandedProjects = new Set();
+let openMoveMenu = null;
+
+// Close move menu on outside click
+document.addEventListener('click', ()=>{ if(openMoveMenu){openMoveMenu.remove();openMoveMenu=null;} });
+
 // ── Projects ──
 function newProject(){
   const name=prompt('Project name:');
   if(!name) return;
-  projects.push({id:uid(),name,createdAt:Date.now()});
+  const p={id:uid(),name,createdAt:Date.now()};
+  projects.push(p);
   saveProjects();
-  renderProjects();
+  expandedProjects.add(p.id);
+  renderSidebar();
+}
+
+function deleteProject(id,e){
+  e.stopPropagation();
+  if(!confirm('Delete this project? Chats will be moved to All Chats.')) return;
+  // Unassign chats from this project
+  chats.forEach(c=>{ if(c.projectId===id) c.projectId=null; });
+  saveChats();
+  projects=projects.filter(p=>p.id!==id);
+  saveProjects();
+  expandedProjects.delete(id);
+  renderSidebar();
+}
+
+function toggleProject(id){
+  if(expandedProjects.has(id)) expandedProjects.delete(id);
+  else expandedProjects.add(id);
+  renderSidebar();
+}
+
+function projectChatsCount(pid){
+  return chats.filter(c=>c.projectId===pid).length;
+}
+
+function showMoveMenu(chatId,e){
+  e.stopPropagation();
+  if(openMoveMenu){openMoveMenu.remove();openMoveMenu=null;}
+  const chat=chats.find(c=>c.id===chatId);
+  if(!chat) return;
+  const menu=document.createElement('div');
+  menu.className='move-menu';
+  // Option to remove from project
+  if(chat.projectId){
+    menu.innerHTML+=`<div class="move-menu-item remove" onclick="moveChat('${chatId}',null,event)">Remove from project</div>`;
+  }
+  // List all projects
+  projects.forEach(p=>{
+    if(p.id!==chat.projectId){
+      menu.innerHTML+=`<div class="move-menu-item" onclick="moveChat('${chatId}','${p.id}',event)">${esc(p.name)}</div>`;
+    }
+  });
+  if(projects.length===0 && !chat.projectId){
+    menu.innerHTML='<div class="move-menu-item" style="color:var(--muted);cursor:default">No projects yet</div>';
+  }
+  e.currentTarget.closest('.chat-item').appendChild(menu);
+  openMoveMenu=menu;
+}
+
+function moveChat(chatId,projectId,e){
+  e.stopPropagation();
+  const chat=chats.find(c=>c.id===chatId);
+  if(!chat) return;
+  chat.projectId=projectId||null;
+  saveChats();
+  if(projectId) expandedProjects.add(projectId);
+  if(openMoveMenu){openMoveMenu.remove();openMoveMenu=null;}
+  renderSidebar();
 }
 
 function renderProjects(){
   const el=document.getElementById('project-list');
-  el.innerHTML=projects.map(p=>`
-    <div class="project-item" title="${esc(p.name)}">
-      <span class="folder-icon">📁</span>
-      <span>${esc(p.name)}</span>
-    </div>
-  `).join('') || '<div style="padding:4px 10px;font-size:.72rem;color:var(--muted)">No projects yet</div>';
+  if(projects.length===0){
+    el.innerHTML='<div style="padding:4px 12px;font-size:.72rem;color:var(--muted)">No projects yet</div>';
+    return;
+  }
+  el.innerHTML=projects.map(p=>{
+    const expanded=expandedProjects.has(p.id);
+    const count=projectChatsCount(p.id);
+    const pChats=chats.filter(c=>c.projectId===p.id);
+    return `
+      <div class="project-item ${expanded?'expanded':''}" onclick="toggleProject('${p.id}')">
+        <span class="project-arrow">&#9654;</span>
+        <span class="project-name">${esc(p.name)}</span>
+        ${count?`<span class="project-count">${count}</span>`:''}
+        <button class="project-delete" onclick="deleteProject('${p.id}',event)" title="Delete project">&times;</button>
+      </div>
+      <div class="project-chats">
+        ${pChats.map(c=>`
+          <div class="chat-item ${activeChat&&activeChat.id===c.id?'active':''}" onclick="selectChat('${c.id}')">
+            <span class="chat-dot"></span>
+            <span class="chat-title">${esc(c.title)}</span>
+            <span class="chat-actions">
+              <button class="chat-action-btn" onclick="showMoveMenu('${c.id}',event)" title="Move">&#8618;</button>
+              <button class="chat-action-btn delete" onclick="deleteChat('${c.id}',event)" title="Delete">&times;</button>
+            </span>
+          </div>
+        `).join('')}
+        ${pChats.length===0?'<div style="padding:4px 8px;font-size:.7rem;color:var(--muted)">No chats yet</div>':''}
+      </div>
+    `;
+  }).join('');
 }
 
 // ── Chats ──
@@ -275,13 +383,13 @@ function newChat(){
   activeChat={id:'chat-'+uid(),title:'New Chat',messages:[],createdAt:Date.now(),updatedAt:Date.now()};
   chats.unshift(activeChat);
   saveChats();
-  renderChatList();
+  renderSidebar();
   renderMessages();
 }
 
 function selectChat(id){
   activeChat=chats.find(c=>c.id===id)||null;
-  renderChatList();
+  renderSidebar();
   renderMessages();
 }
 
@@ -291,20 +399,33 @@ function deleteChat(id,e){
   chats=chats.filter(c=>c.id!==id);
   if(activeChat&&activeChat.id===id){activeChat=null;}
   saveChats();
-  renderChatList();
+  renderSidebar();
   renderMessages();
   fetch(`/api/sessions/${encodeURIComponent(id)}`,{method:'DELETE'}).catch(()=>{});
 }
 
 function renderChatList(){
   const el=document.getElementById('chat-list');
-  el.innerHTML=chats.map(c=>`
+  const unassigned=chats.filter(c=>!c.projectId);
+  el.innerHTML=unassigned.map(c=>`
     <div class="chat-item ${activeChat&&activeChat.id===c.id?'active':''}" onclick="selectChat('${c.id}')">
       <span class="chat-dot"></span>
       <span class="chat-title">${esc(c.title)}</span>
-      <button class="chat-delete" onclick="deleteChat('${c.id}',event)" title="Delete">&times;</button>
+      <span class="chat-actions">
+        ${projects.length?`<button class="chat-action-btn" onclick="showMoveMenu('${c.id}',event)" title="Move to project">&#8618;</button>`:''}
+        <button class="chat-action-btn delete" onclick="deleteChat('${c.id}',event)" title="Delete">&times;</button>
+      </span>
     </div>
   `).join('') || '<div style="padding:8px 12px;font-size:.72rem;color:var(--muted)">No chats yet. Click + New Chat to start.</div>';
+}
+
+function renderSidebar(){
+  renderProjects();
+  renderChatList();
+}
+
+function openSettings(){
+  alert('Settings coming soon!');
 }
 
 function renderMessages(){
@@ -336,7 +457,7 @@ async function sendMessage(){
   if(activeChat.messages.length===0){
     activeChat.title=text.slice(0,50)+(text.length>50?'...':'');
     saveChats();
-    renderChatList();
+    renderSidebar();
   }
 
   // Clear empty state
@@ -412,7 +533,7 @@ async function sendMessage(){
       activeChat.messages.push({role:'assistant',content});
       activeChat.updatedAt=Date.now();
       saveChats();
-      renderChatList();
+      renderSidebar();
     }
   }catch(e){
     bodyEl.textContent='Connection error: '+e.message;
@@ -546,8 +667,7 @@ document.getElementById('secret-modal-overlay').addEventListener('click', functi
 
 // ── Init ──
 checkAuth();
-renderProjects();
-renderChatList();
+renderSidebar();
 renderMessages();
 </script>
 </body>

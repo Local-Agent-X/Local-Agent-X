@@ -3,15 +3,26 @@ import type { ToolDefinition, ToolResult } from "./types.js";
 import { getBrowserManager, closeBrowser } from "./browser.js";
 import type { BrowserEngine } from "./browser.js";
 
-/** DNS pinning for browser navigate — prevents rebinding to private IPs */
+/**
+ * DNS pinning for browser navigate — prevents rebinding to private IPs.
+ * EXCEPTION: localhost/127.0.0.1 is allowed (user's own dev servers).
+ */
 async function dnsPinCheck(url: string): Promise<string | null> {
   try {
-    const host = new URL(url).hostname;
+    const parsed = new URL(url);
+    const host = parsed.hostname;
+
+    // Allow localhost and 127.0.0.1 — user's own dev servers
+    if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
+      return null;
+    }
+
     if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(":")) return null;
     const addrs = await dns.resolve4(host).catch(() => [] as string[]);
     for (const ip of addrs) {
       const [a, b] = ip.split(".").map(Number);
-      if (a === 127 || a === 10 || a === 0 || a >= 224) return `DNS rebinding blocked: ${host} → ${ip}`;
+      // Block private networks (but NOT 127.x — already handled above)
+      if (a === 10 || a === 0 || a >= 224) return `DNS rebinding blocked: ${host} → ${ip}`;
       if (a === 192 && b === 168) return `DNS rebinding blocked: ${host} → ${ip}`;
       if (a === 172 && b >= 16 && b <= 31) return `DNS rebinding blocked: ${host} → ${ip}`;
       if (a === 169 && b === 254) return `DNS rebinding blocked: ${host} → ${ip}`;

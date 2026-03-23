@@ -2197,12 +2197,13 @@ function toSearchResult(
 
 // ── Personality file paths ──
 
-const PERSONALITY_FILES = {
-  user: "USER.md",      // Who the user is, how they want to be addressed
-  heart: "HEART.md",     // Agent personality, behavior config, vibe
+const PERSONALITY_FILES: Record<string, string> = {
+  user: "USER.md",        // Who the user is, how they want to be addressed
+  heart: "HEART.md",      // Agent personality, behavior config, vibe
   identity: "IDENTITY.md", // Agent name, emoji, catchphrase
-  memory: "MIND.md",  // Core facts and curated knowledge
-} as const;
+  memory: "MIND.md",      // Core facts and curated knowledge
+  mind: "MIND.md",        // Alias — agent can say "mind" or "memory"
+};
 
 const DEFAULT_USER_MD = `# About Me
 
@@ -2366,8 +2367,9 @@ export function ensurePersonalityFiles(memDir: string): void {
 
 function readPersonalityFile(
   memDir: string,
-  key: keyof typeof PERSONALITY_FILES
+  key: string
 ): string | null {
+  if (!PERSONALITY_FILES[key]) return null;
   const filePath = join(memDir, PERSONALITY_FILES[key]);
   if (!existsSync(filePath)) return null;
   const content = safeReadTextFile(filePath);
@@ -2773,13 +2775,13 @@ export function createMemoryTools(memory: MemoryIndex) {
     {
       name: "memory_update_profile",
       description:
-        "Update a personality/profile file. Use this to evolve knowledge about the user or to adjust agent behavior based on what you learn. Files: 'user' (USER.md — who they are), 'heart' (HEART.md — your personality), 'identity' (IDENTITY.md — your name/vibe), 'memory' (MIND.md — core facts). You can replace specific sections or append new information.",
+        "Update a personality/profile file. Use this to evolve knowledge about the user or to adjust agent behavior based on what you learn. Files: 'user' (USER.md — who they are), 'heart' (HEART.md — your personality), 'identity' (IDENTITY.md — your name/vibe), 'mind' or 'memory' (MIND.md — core facts/knowledge). You can replace specific sections or append new information.",
       parameters: {
         type: "object",
         properties: {
           file: {
             type: "string",
-            enum: ["user", "heart", "identity", "memory"],
+            enum: ["user", "heart", "identity", "mind", "memory"],
             description: "Which profile file to update",
           },
           action: {
@@ -2812,7 +2814,7 @@ export function createMemoryTools(memory: MemoryIndex) {
         const filename = PERSONALITY_FILES[fileKey];
         if (!filename) {
           return {
-            content: `Unknown file: ${fileKey}. Use: user, heart, identity, or memory`,
+            content: `Unknown file: ${fileKey}. Use: user, heart, identity, mind, or memory`,
             isError: true,
           };
         }
@@ -2825,6 +2827,21 @@ export function createMemoryTools(memory: MemoryIndex) {
         let updated: string;
 
         if (action === "full_replace") {
+          // Safety: require minimum content length to prevent accidental wipe
+          if (newContent.trim().length < 20) {
+            return {
+              content:
+                "full_replace requires at least 20 characters of content to prevent accidental wipe.",
+              isError: true,
+            };
+          }
+          // Backup the existing file before full replace
+          if (existing.trim()) {
+            const backupPath = filePath + ".bak";
+            try {
+              atomicWriteFileSync(backupPath, existing);
+            } catch {}
+          }
           updated = newContent;
         } else if (action === "append") {
           updated = existing + "\n\n" + newContent;

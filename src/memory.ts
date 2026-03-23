@@ -2638,6 +2638,21 @@ export function createMemoryTools(memory: MemoryIndex) {
           return { content: "Nothing to save.", isError: true };
         }
 
+        // Memory taint protection: block external/injected content from persisting
+        // This prevents the attack chain: malicious webpage → memory_save → permanent instruction hijack
+        try {
+          const { checkMemoryTaint, sanitizeForMemory } = await import("./sanitize.js");
+          const taint = checkMemoryTaint(content);
+          if (!taint.safe) {
+            return {
+              content: `BLOCKED: ${taint.reason}`,
+              isError: true,
+            };
+          }
+        } catch {
+          // Sanitize module not available — allow (fail-open for backwards compat)
+        }
+
         if (target === "memory") {
           const existing = memory.readMemoryFile();
           memory.writeMemoryFile(existing + (existing ? "\n\n" : "") + content);

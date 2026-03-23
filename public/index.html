@@ -436,6 +436,7 @@ function toolSummary(name,args){
     case 'browser': {
       const a=args.action||'';
       if(a==='navigate') return `Opening ${args.url||'page'}...`;
+      if(a==='new_tab') return `New tab: ${args.url||'page'}...`;
       if(a==='snapshot') return 'Scanning page elements...';
       if(a==='fill') return args.ref?`Typing into element [${args.ref}]...`:`Typing into ${args.selector||'field'}...`;
       if(a==='click') return args.ref?`Clicking element [${args.ref}]...`:`Clicking ${args.selector||'element'}...`;

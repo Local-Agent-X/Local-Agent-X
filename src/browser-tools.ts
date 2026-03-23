@@ -34,8 +34,9 @@ const VALID_ENGINES: BrowserEngine[] = ["chromium", "firefox", "webkit"];
  * Creates the browser tool for web interaction via Playwright.
  * Single tool with an "action" parameter to keep token costs low.
  * Supports Chromium, Firefox, and WebKit engines.
+ * @param getSessionId - Returns the current session ID (thread-safe, no global state)
  */
-export function createBrowserTools(): ToolDefinition[] {
+export function createBrowserTools(getSessionId?: () => string): ToolDefinition[] {
   const browserTool: ToolDefinition = {
     name: "browser",
     description:
@@ -48,7 +49,8 @@ export function createBrowserTools(): ToolDefinition[] {
       "Don't just tell the user you'll retry — actually call this tool again.\n\n" +
       "WORKFLOW: navigate → snapshot → click/fill by ref. The snapshot shows numbered refs for every interactive element.\n\n" +
       "Actions:\n" +
-      "- navigate: Go to a URL. ALWAYS follow with 'snapshot' to see the page elements.\n" +
+      "- navigate: Go to a URL (replaces current tab). ALWAYS follow with 'snapshot'.\n" +
+      "- new_tab: Open a URL in a NEW tab (keeps current tab open).\n" +
       "- snapshot: Get accessibility tree with numbered refs (e.g. [1] button \"Log in\"). ALWAYS use this before clicking.\n" +
       "- click: Click by ref number (set 'ref') or CSS selector (set 'selector'). Ref is more reliable.\n" +
       "- click_text: Click element by visible text (set 'text'). Good for popups/modals.\n" +
@@ -70,8 +72,8 @@ export function createBrowserTools(): ToolDefinition[] {
       properties: {
         action: {
           type: "string",
-          enum: ["navigate", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "tabs", "switch_tab", "info", "close"],
-          description: "The browser action to perform. Use 'snapshot' first to see interactive elements with ref numbers, then 'click' with a ref number.",
+          enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "tabs", "switch_tab", "info", "close"],
+          description: "The browser action to perform. Use 'snapshot' to see interactive elements with ref numbers, then 'click' with a ref. Use 'new_tab' to open a URL in a new tab without closing the current one.",
         },
         url: {
           type: "string",
@@ -110,7 +112,8 @@ export function createBrowserTools(): ToolDefinition[] {
     },
     async execute(args) {
       const action = String(args.action || "");
-      const manager = getBrowserManager();
+      const sessionId = getSessionId ? getSessionId() : "default";
+      const manager = getBrowserManager(sessionId);
 
       // Validate engine if provided
       const engine = args.engine ? String(args.engine) as BrowserEngine : undefined;
@@ -127,6 +130,14 @@ export function createBrowserTools(): ToolDefinition[] {
             const pinResult = await dnsPinCheck(url);
             if (pinResult) return err(pinResult);
             return ok(await manager.navigate(url, engine));
+          }
+
+          case "new_tab": {
+            const url = String(args.url || "");
+            if (!url) return err("'url' parameter is required for new_tab action.");
+            const pinResult2 = await dnsPinCheck(url);
+            if (pinResult2) return err(pinResult2);
+            return ok(await manager.newTab(url));
           }
 
           case "snapshot": {
@@ -257,7 +268,7 @@ export function createBrowserTools(): ToolDefinition[] {
           }
 
           case "close": {
-            await closeBrowser();
+            await closeBrowser(sessionId);
             return ok("Browser session closed.");
           }
 

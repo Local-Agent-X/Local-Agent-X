@@ -69,6 +69,14 @@ export class SecurityLayer {
       case "http_request":
         decision = this.evaluateWebFetch(String(args.url || ""));
         break;
+      case "browser":
+        // Only check SSRF on navigate; other actions operate on the already-loaded page
+        if (args.action === "navigate" && args.url) {
+          decision = this.evaluateWebFetch(String(args.url));
+        } else {
+          decision = { allowed: true, reason: "Browser action allowed" };
+        }
+        break;
       default:
         decision = { allowed: true, reason: "Unknown tool — allowed by default" };
     }

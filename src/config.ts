@@ -133,7 +133,7 @@ export function loadConfig(): SAXConfig {
 
 export function saveConfig(config: SAXConfig): void {
   const configPath = getConfigPath();
-  writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+  writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: "utf-8", mode: 0o600 });
 }
 
 export function getAuthPath(): string {

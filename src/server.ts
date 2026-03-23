@@ -12,11 +12,13 @@ import {
   createMemoryTools,
   buildContextBlock,
   autoSearchContext,
+  autoExtractAndSave,
   ensurePersonalityFiles,
 } from "./memory.js";
 import { SecretsStore } from "./secrets.js";
 import { createSecretTools } from "./secret-tools.js";
 import { createBrowserTools, closeBrowser } from "./browser-tools.js";
+import { redactCredentials } from "./security.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 
 // Session ID validation: alphanumeric + dash/underscore, max 64 chars
@@ -24,16 +26,88 @@ function isValidSessionId(id: string): boolean {
   return /^[a-zA-Z0-9_-]{1,64}$/.test(id);
 }
 
-function jsonResponse(res: ServerResponse, status: number, data: unknown) {
-  res.writeHead(status, {
+// ── CORS: loopback-only for mutations ──
+
+const LOOPBACK_ORIGINS = new Set([
+  "http://localhost",
+  "http://127.0.0.1",
+  "http://[::1]",
+]);
+
+function isLoopbackOrigin(origin: string | undefined): boolean {
+  if (!origin) return true; // No origin = non-browser client (curl, etc.) → allow
+  try {
+    const parsed = new URL(origin);
+    const base = `${parsed.protocol}//${parsed.hostname}`;
+    return LOOPBACK_ORIGINS.has(base);
+  } catch {
+    return false;
+  }
+}
+
+function corsHeaders(req: IncomingMessage): Record<string, string> {
+  const origin = req.headers.origin;
+  // Only reflect origin if it's from loopback
+  if (origin && isLoopbackOrigin(origin)) {
+    return {
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+      "Vary": "Origin",
+    };
+  }
+  // No CORS headers for non-loopback origins → browser blocks the request
+  return {};
+}
+
+function jsonResponse(res: ServerResponse, status: number, data: unknown, req?: IncomingMessage) {
+  const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type",
-  });
+    ...(req ? corsHeaders(req) : {}),
+  };
+  res.writeHead(status, headers);
   res.end(JSON.stringify(data));
 }
 
+// ── Rate Limiting: token bucket per IP ──
+
+const rateLimits = new Map<string, { tokens: number; lastRefill: number }>();
+const RATE_LIMIT_MAX = 30;          // max burst
+const RATE_LIMIT_REFILL_PER_SEC = 2; // tokens per second
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  let bucket = rateLimits.get(ip);
+  if (!bucket) {
+    bucket = { tokens: RATE_LIMIT_MAX, lastRefill: now };
+    rateLimits.set(ip, bucket);
+  }
+  // Refill tokens based on elapsed time
+  const elapsed = (now - bucket.lastRefill) / 1000;
+  bucket.tokens = Math.min(RATE_LIMIT_MAX, bucket.tokens + elapsed * RATE_LIMIT_REFILL_PER_SEC);
+  bucket.lastRefill = now;
+
+  if (bucket.tokens < 1) return false; // rate limited
+  bucket.tokens -= 1;
+  return true;
+}
+
+// Periodic cleanup of stale rate limit entries (every 5 min)
+setInterval(() => {
+  const cutoff = Date.now() - 300_000;
+  for (const [ip, bucket] of rateLimits) {
+    if (bucket.lastRefill < cutoff) rateLimits.delete(ip);
+  }
+}, 300_000);
+
 function sseWrite(res: ServerResponse, event: ServerEvent) {
+  // Redact credentials from tool output before streaming to client
+  if (event.type === "tool_end" && event.result) {
+    event = { ...event, result: redactCredentials(event.result) };
+  }
+  if (event.type === "stream" && event.delta) {
+    event = { ...event, delta: redactCredentials(event.delta) };
+  }
   res.write(`data: ${JSON.stringify(event)}\n\n`);
 }
 
@@ -118,22 +192,48 @@ export function startServer(config: SAXConfig) {
     const url = new URL(req.url || "/", `http://127.0.0.1:${config.port}`);
     const method = req.method || "GET";
 
-    // CORS preflight
+    // Helper: jsonResponse with req always bound for CORS
+    const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
+
+    // CORS preflight — only allow loopback origins
     if (method === "OPTIONS") {
-      res.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Authorization, Content-Type",
-      });
+      res.writeHead(204, corsHeaders(req));
       res.end();
       return;
+    }
+
+    // CSRF guard: block cross-origin mutations
+    if (url.pathname.startsWith("/api/") && method !== "GET") {
+      const origin = req.headers.origin;
+      const secFetchSite = req.headers["sec-fetch-site"];
+
+      // If browser sends Sec-Fetch-Site: cross-site, block immediately
+      if (secFetchSite === "cross-site") {
+        jsonResponse(res, 403, { error: "Cross-origin mutation blocked" }, req);
+        return;
+      }
+
+      // If Origin header present, must be loopback
+      if (origin && !isLoopbackOrigin(origin)) {
+        jsonResponse(res, 403, { error: "Cross-origin request blocked" }, req);
+        return;
+      }
+    }
+
+    // Rate limiting on API endpoints
+    if (url.pathname.startsWith("/api/")) {
+      const clientIp = req.socket.remoteAddress || "unknown";
+      if (!checkRateLimit(clientIp)) {
+        jsonResponse(res, 429, { error: "Rate limit exceeded. Try again shortly." }, req);
+        return;
+      }
     }
 
     // Auth check (skip for static files)
     if (url.pathname.startsWith("/api/")) {
       const auth = req.headers.authorization;
       if (auth !== `Bearer ${config.authToken}`) {
-        jsonResponse(res, 401, { error: "Unauthorized" });
+        jsonResponse(res, 401, { error: "Unauthorized" }, req);
         return;
       }
     }
@@ -143,7 +243,7 @@ export function startServer(config: SAXConfig) {
     // Health
     if (method === "GET" && url.pathname === "/api/health") {
       const memStats = memoryIndex.getStats();
-      jsonResponse(res, 200, {
+      json(200, {
         status: "ok",
         version: "0.1.0",
         memory: memStats,
@@ -154,7 +254,7 @@ export function startServer(config: SAXConfig) {
     // List sessions
     if (method === "GET" && url.pathname === "/api/sessions") {
       const list = sessionStore.list();
-      jsonResponse(res, 200, list);
+      json(200, list);
       return;
     }
 
@@ -162,11 +262,11 @@ export function startServer(config: SAXConfig) {
     if (method === "GET" && url.pathname.startsWith("/api/sessions/")) {
       const id = url.pathname.split("/").pop()!;
       if (!isValidSessionId(id)) {
-        jsonResponse(res, 400, { error: "Invalid session ID" });
+        json(400, { error: "Invalid session ID" });
         return;
       }
       const session = getOrCreateSession(id);
-      jsonResponse(res, 200, session);
+      json(200, session);
       return;
     }
 
@@ -174,12 +274,12 @@ export function startServer(config: SAXConfig) {
     if (method === "DELETE" && url.pathname.startsWith("/api/sessions/")) {
       const id = url.pathname.split("/").pop()!;
       if (!isValidSessionId(id)) {
-        jsonResponse(res, 400, { error: "Invalid session ID" });
+        json(400, { error: "Invalid session ID" });
         return;
       }
       sessions.delete(id);
       sessionStore.delete(id);
-      jsonResponse(res, 200, { ok: true });
+      json(200, { ok: true });
       return;
     }
 
@@ -187,17 +287,17 @@ export function startServer(config: SAXConfig) {
     if (method === "GET" && url.pathname === "/api/memory/search") {
       const query = url.searchParams.get("q") || "";
       if (!query) {
-        jsonResponse(res, 400, { error: "q parameter required" });
+        json(400, { error: "q parameter required" });
         return;
       }
       const results = await memoryIndex.search(query);
-      jsonResponse(res, 200, results);
+      json(200, results);
       return;
     }
 
     // Memory stats
     if (method === "GET" && url.pathname === "/api/memory/stats") {
-      jsonResponse(res, 200, memoryIndex.getStats());
+      json(200, memoryIndex.getStats());
       return;
     }
 
@@ -215,10 +315,10 @@ export function startServer(config: SAXConfig) {
       } else if (since) {
         facts = memoryIndex.recallByTime(new Date(since));
       } else {
-        jsonResponse(res, 400, { error: "Provide entity, kind, or since parameter" });
+        json(400, { error: "Provide entity, kind, or since parameter" });
         return;
       }
-      jsonResponse(res, 200, facts);
+      json(200, facts);
       return;
     }
 
@@ -228,12 +328,12 @@ export function startServer(config: SAXConfig) {
       try {
         body = JSON.parse(await readBody(req));
       } catch {
-        jsonResponse(res, 400, { error: "Invalid JSON body" });
+        json(400, { error: "Invalid JSON body" });
         return;
       }
       const sinceDays = (body.since_days as number) || 7;
       const result = await memoryIndex.reflect(sinceDays);
-      jsonResponse(res, 200, result);
+      json(200, result);
       return;
     }
 
@@ -241,7 +341,7 @@ export function startServer(config: SAXConfig) {
 
     // List secrets (names + metadata only, never values)
     if (method === "GET" && url.pathname === "/api/secrets") {
-      jsonResponse(res, 200, secretsStore.list());
+      json(200, secretsStore.list());
       return;
     }
 
@@ -254,11 +354,11 @@ export function startServer(config: SAXConfig) {
       };
       const name = body.name?.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
       if (!name || !body.value) {
-        jsonResponse(res, 400, { error: "name and value are required" });
+        json(400, { error: "name and value are required" });
         return;
       }
       secretsStore.set(name, body.value, body.service);
-      jsonResponse(res, 200, { ok: true, name });
+      json(200, { ok: true, name });
       return;
     }
 
@@ -266,7 +366,7 @@ export function startServer(config: SAXConfig) {
     if (method === "DELETE" && url.pathname.startsWith("/api/secrets/")) {
       const name = decodeURIComponent(url.pathname.split("/").pop()!);
       const existed = secretsStore.delete(name);
-      jsonResponse(res, 200, { ok: true, deleted: existed });
+      json(200, { ok: true, deleted: existed });
       return;
     }
 
@@ -276,28 +376,28 @@ export function startServer(config: SAXConfig) {
       try {
         body = JSON.parse(await readBody(req));
       } catch {
-        jsonResponse(res, 400, { error: "Invalid JSON body" });
+        json(400, { error: "Invalid JSON body" });
         return;
       }
       const message = body.message as string | undefined;
       const sessionId = (body.sessionId as string) || "default";
 
       if (!message) {
-        jsonResponse(res, 400, { error: "message is required" });
+        json(400, { error: "message is required" });
         return;
       }
 
       if (!isValidSessionId(sessionId)) {
-        jsonResponse(res, 400, { error: "Invalid session ID" });
+        json(400, { error: "Invalid session ID" });
         return;
       }
 
-      // SSE headers
+      // SSE headers — CORS restricted to loopback
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
-        "Access-Control-Allow-Origin": "*",
+        ...corsHeaders(req),
       });
 
       const session = getOrCreateSession(sessionId);
@@ -349,6 +449,18 @@ export function startServer(config: SAXConfig) {
         session.messages = result.messages.filter((m) => m.role !== "system");
         session.updatedAt = Date.now();
 
+        // Auto-extract profile facts from this exchange
+        // (safety net — persists name changes etc. even if LLM forgets to call tools)
+        const assistantReply = result.messages
+          .filter((m) => m.role === "assistant" && typeof m.content === "string")
+          .map((m) => m.content as string)
+          .join("\n");
+        try {
+          autoExtractAndSave(memoryIndex, message, assistantReply);
+        } catch (e) {
+          console.warn("[memory] Auto-extract failed:", (e as Error).message);
+        }
+
         // Persist to disk
         saveSession(session);
       } catch (e) {
@@ -364,9 +476,9 @@ export function startServer(config: SAXConfig) {
       try {
         const { startOAuthLogin } = await import("./auth.js");
         await startOAuthLogin();
-        jsonResponse(res, 200, { ok: true });
+        json(200, { ok: true });
       } catch (e) {
-        jsonResponse(res, 500, { error: (e as Error).message });
+        json(500, { error: (e as Error).message });
       }
       return;
     }
@@ -375,7 +487,7 @@ export function startServer(config: SAXConfig) {
     if (method === "GET" && url.pathname === "/api/auth/status") {
       const { loadTokens } = await import("./auth.js");
       const tokens = loadTokens();
-      jsonResponse(res, 200, {
+      json(200, {
         authenticated: !!tokens || !!config.openaiApiKey,
         method: config.openaiApiKey ? "api_key" : tokens ? "oauth" : "none",
       });
@@ -409,12 +521,12 @@ export function startServer(config: SAXConfig) {
     }
 
     // 404
-    jsonResponse(res, 404, { error: "Not found" });
+    json(404, { error: "Not found" });
   });
 
   server.listen(config.port, "127.0.0.1", () => {
     console.log(`\n  Secret Agent X running at http://127.0.0.1:${config.port}`);
-    console.log(`  Auth token: ${config.authToken}`);
+    console.log(`  Auth token: ${config.authToken.slice(0, 8)}...`);
     console.log(`  Memory: ${dataDir}/memory/`);
     console.log(`  Sessions: ${dataDir}/sessions/\n`);
   });

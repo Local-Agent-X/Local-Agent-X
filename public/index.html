@@ -3,444 +3,392 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Secret Agent X — Task Dashboard</title>
+<title>Secret Agent X</title>
 <style>
 :root {
   --bg: #0a0a0f;
   --surface: #0f0f18;
-  --surface-2: #131325;
   --border: #1a1a2e;
   --accent: #00ff41;
   --accent-dim: #00cc3388;
   --danger: #ff3333;
-  --warn: #ffaa00;
-  --info: #33aaff;
   --text: #c8d0e0;
-  --muted: #666680;
+  --muted: #555570;
+  --user-bg: #0d1a2a;
+  --agent-bg: #0f0f1a;
+  --input-bg: #111122;
+  --hover: #151528;
   --font: 'Segoe UI', system-ui, sans-serif;
   --mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  font-family: var(--font);
-  background: var(--bg);
-  color: var(--text);
-  height: 100vh;
-  display: grid;
-  grid-template-columns: 340px 1fr;
-  overflow: hidden;
-}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,65,0.012) 2px,rgba(0,255,65,0.012) 4px);z-index:9999}
 
-/* Left panel */
-#left {
-  border-right: 1px solid var(--border);
-  background: var(--surface);
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-#brand {
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-#brand h1 {
-  font-size: 0.9rem;
-  letter-spacing: 2px;
-  font-family: var(--mono);
-  color: var(--accent);
-  text-transform: uppercase;
-}
-#auth-label { color: var(--muted); font-size: 0.75rem; }
+/* ── Sidebar ── */
+#sidebar{width:280px;min-width:280px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;transition:width .2s}
+#sidebar-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+#logo{font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase;text-shadow:0 0 10px var(--accent-dim);flex:1}
+#new-chat-btn{background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:7px 12px;font-size:.75rem;cursor:pointer;font-family:var(--mono);transition:all .2s;white-space:nowrap}
+#new-chat-btn:hover{background:var(--accent);color:var(--bg);box-shadow:0 0 12px var(--accent-dim)}
 
-#quick-add {
-  padding: 12px;
-  border-bottom: 1px solid var(--border);
-}
-#quick-add textarea {
-  width: 100%;
-  background: #111122;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  padding: 10px;
-  min-height: 70px;
-  resize: vertical;
-}
-.row { display: flex; gap: 8px; margin-top: 8px; }
-select, input[type="date"], input[type="text"] {
-  background: #111122;
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 7px 8px;
-  font-size: 0.82rem;
-}
-button {
-  background: transparent;
-  color: var(--accent);
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  padding: 8px 10px;
-  cursor: pointer;
-  font-family: var(--mono);
-  font-size: 0.76rem;
-}
-button:hover { background: var(--accent); color: #001107; }
+/* Nav links */
+#nav-links{padding:8px 12px;border-bottom:1px solid var(--border);display:flex;gap:6px}
+.nav-link{font-size:.72rem;font-family:var(--mono);color:var(--muted);text-decoration:none;padding:5px 10px;border-radius:6px;transition:all .15s;cursor:pointer}
+.nav-link:hover{background:var(--hover);color:var(--text)}
+.nav-link.active{background:#1a1a30;color:var(--accent)}
 
-#filters {
-  padding: 12px;
-  border-bottom: 1px solid var(--border);
-}
-#task-list {
-  flex: 1;
-  overflow: auto;
-  padding: 10px;
-}
-.task-item {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #101020;
-  padding: 10px;
-  margin-bottom: 8px;
-  cursor: pointer;
-}
-.task-item.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-dim) inset; }
-.task-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.badge { font-size: 0.68rem; padding: 2px 6px; border-radius: 999px; font-family: var(--mono); }
-.p1 { background: #3a1111; color: #ff8080; }
-.p2 { background: #3a2a11; color: #ffd080; }
-.p3 { background: #102a3a; color: #80ccff; }
-.status { background: #1c1c30; color: #aab; }
-.task-title { font-size: 0.86rem; line-height: 1.35; color: #d8e1ef; }
-.task-meta { margin-top: 6px; color: var(--muted); font-size: 0.72rem; }
+/* Projects */
+#projects-section{padding:8px 12px;border-bottom:1px solid var(--border)}
+#projects-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+#projects-header span{font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.add-btn{background:none;border:none;color:var(--accent);cursor:pointer;font-size:.9rem;padding:2px 6px;border-radius:4px}
+.add-btn:hover{background:var(--hover)}
+.project-item{padding:6px 10px;border-radius:6px;cursor:pointer;font-size:.78rem;color:var(--muted);display:flex;align-items:center;gap:8px;transition:all .15s}
+.project-item:hover{background:var(--hover);color:var(--text)}
+.project-item.active{background:#1a1a30;color:var(--accent)}
+.folder-icon{font-size:.7rem}
 
-/* Right panel */
-#right { display: flex; flex-direction: column; min-width: 0; }
-#toolbar {
-  height: 48px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 14px;
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-#editor { flex: 1; overflow: auto; padding: 14px; }
-.panel {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px;
-}
-.grid { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.grid .full { grid-column: 1 / -1; }
-label { font-size: 0.72rem; color: var(--muted); display: block; margin-bottom: 4px; text-transform: uppercase; letter-spacing: .8px; }
-textarea {
-  width: 100%;
-  background: #0f0f1c;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  padding: 9px;
-  min-height: 86px;
-  resize: vertical;
-}
-#agentPrompt { min-height: 130px; }
-#notes { min-height: 120px; }
-#chat {
-  margin-top: 10px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-}
-#chatLog {
-  background: #0e0e17;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px;
-  height: 180px;
-  overflow: auto;
-  white-space: pre-wrap;
-  font-size: 0.82rem;
-}
-.small { font-size: 0.75rem; color: var(--muted); }
-.hidden { display: none; }
+/* Chat list */
+#chats-header{padding:8px 12px 4px;font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+#chat-list{flex:1;overflow-y:auto;padding:4px 8px;scrollbar-width:thin;scrollbar-color:#222 transparent}
+.chat-item{padding:9px 12px;border-radius:8px;cursor:pointer;font-size:.82rem;color:var(--muted);transition:all .15s;margin-bottom:2px;display:flex;align-items:center;gap:8px;position:relative}
+.chat-item:hover{background:var(--hover);color:var(--text)}
+.chat-item.active{background:#1a1a30;color:var(--accent);border-left:2px solid var(--accent)}
+.chat-dot{width:6px;height:6px;border-radius:50%;background:var(--accent-dim);flex-shrink:0}
+.chat-item.active .chat-dot{background:var(--accent);box-shadow:0 0 6px var(--accent)}
+.chat-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-delete{display:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:.75rem;padding:2px 5px;border-radius:3px}
+.chat-item:hover .chat-delete{display:block}
+.chat-delete:hover{color:var(--danger);background:#2a1010}
+
+#sidebar-footer{padding:10px 14px;border-top:1px solid var(--border);font-size:.68rem;font-family:var(--mono);display:flex;align-items:center;gap:6px}
+#auth-dot{width:6px;height:6px;border-radius:50%;background:var(--danger)}
+#auth-dot.ok{background:var(--accent);box-shadow:0 0 6px var(--accent-dim)}
+#auth-label{color:var(--muted)}
+
+/* ── Main ── */
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+
+/* Messages */
+#messages{flex:1;overflow-y:auto;padding:24px 20px;display:flex;flex-direction:column;gap:16px;scrollbar-width:thin;scrollbar-color:#1a1a2e transparent}
+.msg{max-width:800px;width:100%;animation:fadeIn .2s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
+.msg.user{align-self:flex-end}
+.msg.assistant{align-self:flex-start}
+.msg-label{font-size:.65rem;font-family:var(--mono);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px}
+.msg.user .msg-label{color:#3388aa;text-align:right}
+.msg.assistant .msg-label{color:var(--accent)}
+.msg-body{padding:12px 16px;border-radius:12px;line-height:1.7;font-size:.9rem;white-space:pre-wrap;word-break:break-word}
+.msg.user .msg-body{background:var(--user-bg);border:1px solid #1a2a40;border-radius:12px 12px 4px 12px}
+.msg.assistant .msg-body{background:var(--agent-bg);border:1px solid var(--border);border-radius:12px 12px 12px 4px}
+
+.tool-card{margin:8px 0;border-radius:8px;border:1px solid var(--border);overflow:hidden;font-size:.82rem}
+.tool-header{padding:8px 12px;background:#111125;display:flex;align-items:center;gap:8px;cursor:pointer;font-family:var(--mono)}
+.tool-header .indicator{width:8px;height:8px;border-radius:50%}
+.tool-header .indicator.allowed{background:var(--accent);box-shadow:0 0 6px var(--accent-dim)}
+.tool-header .indicator.blocked{background:var(--danger);box-shadow:0 0 6px rgba(255,51,51,.4)}
+.tool-name{color:var(--accent)}
+.tool-detail{display:none;padding:10px 12px;background:#0d0d18;font-family:var(--mono);font-size:.78rem;color:var(--muted);white-space:pre-wrap;max-height:200px;overflow-y:auto}
+.tool-card.open .tool-detail{display:block}
+
+.thinking{color:var(--muted);font-size:.85rem;padding:8px 0;font-family:var(--mono)}
+.thinking span{animation:blink 1.2s infinite}
+.thinking span:nth-child(2){animation-delay:.2s}
+.thinking span:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
+
+/* Empty state */
+#empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted)}
+#empty h2{font-family:var(--mono);color:var(--accent);font-size:1.5rem;letter-spacing:3px;text-shadow:0 0 20px var(--accent-dim)}
+#empty p{font-size:.85rem;max-width:400px;text-align:center;line-height:1.6}
+
+/* Input area */
+#input-area{padding:12px 20px 18px;border-top:1px solid var(--border)}
+#input-box{background:var(--input-bg);border:1px solid var(--border);border-radius:14px;display:flex;align-items:flex-end;padding:10px 14px;transition:border-color .2s;max-width:800px;margin:0 auto;width:100%}
+#input-box:focus-within{border-color:var(--accent);box-shadow:0 0 8px rgba(0,255,65,.1)}
+#msg-input{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:.9rem;resize:none;max-height:160px;line-height:1.5;font-family:var(--font)}
+#msg-input::placeholder{color:var(--muted)}
+#send-btn{background:var(--accent);border:none;border-radius:8px;color:var(--bg);font-weight:700;padding:8px 18px;cursor:pointer;font-family:var(--mono);font-size:.8rem;margin-left:10px;transition:all .2s}
+#send-btn:hover{box-shadow:0 0 14px var(--accent-dim)}
+#send-btn:disabled{opacity:.3;cursor:not-allowed}
 </style>
 </head>
 <body>
-  <section id="left">
-    <div id="brand">
-      <h1>Agent Task Board</h1>
-      <div id="auth-label">checking auth...</div>
-    </div>
 
-    <div id="quick-add">
-      <textarea id="newTitle" placeholder="Quick add task..."></textarea>
-      <div class="row">
-        <select id="newPriority">
-          <option value="P1">P1</option><option value="P2" selected>P2</option><option value="P3">P3</option>
-        </select>
-        <select id="newStatus">
-          <option>Todo</option><option>Doing</option><option>Blocked</option><option>Done</option>
-        </select>
-        <input id="newDue" type="date"/>
-        <button onclick="createTask()">+ Add</button>
-      </div>
-    </div>
+<div id="sidebar">
+  <div id="sidebar-header">
+    <span id="logo">Agent X</span>
+    <button id="new-chat-btn" onclick="newChat()">+ New Chat</button>
+  </div>
 
-    <div id="filters">
-      <div class="row">
-        <input id="search" type="text" placeholder="Search tasks..." oninput="renderTasks()" style="flex:1"/>
-      </div>
-      <div class="row">
-        <select id="filterStatus" onchange="renderTasks()">
-          <option value="">All status</option><option>Todo</option><option>Doing</option><option>Blocked</option><option>Done</option>
-        </select>
-        <select id="filterPriority" onchange="renderTasks()">
-          <option value="">All priority</option><option>P1</option><option>P2</option><option>P3</option>
-        </select>
-      </div>
-    </div>
+  <div id="nav-links">
+    <a class="nav-link active" onclick="showChat()">Chat</a>
+    <a class="nav-link" href="/tasks.html">Task Board</a>
+  </div>
 
-    <div id="task-list"></div>
-  </section>
+  <div id="projects-section">
+    <div id="projects-header">
+      <span>Projects</span>
+      <button class="add-btn" onclick="newProject()" title="New project">+</button>
+    </div>
+    <div id="project-list"></div>
+  </div>
 
-  <section id="right">
-    <div id="toolbar">
-      <span id="taskHeader">Select a task</span>
-      <div>
-        <button id="deleteBtn" class="hidden" onclick="deleteTask()" style="border-color:var(--danger);color:var(--danger)">Delete</button>
-      </div>
+  <div id="chats-header">Recent Chats</div>
+  <div id="chat-list"></div>
+
+  <div id="sidebar-footer">
+    <span id="auth-dot"></span>
+    <span id="auth-label">checking...</span>
+  </div>
+</div>
+
+<div id="main">
+  <div id="messages">
+    <div id="empty">
+      <h2>SECRET AGENT X</h2>
+      <p>Your personal AI agent. Start a conversation or pick one from the sidebar.</p>
     </div>
-    <div id="editor">
-      <div id="empty" class="panel small">No task selected. Create one on the left, then use <b>Send to Agent</b> to run it.</div>
-      <div id="details" class="panel hidden">
-        <div class="grid">
-          <div>
-            <label>Title</label>
-            <textarea id="title"></textarea>
-          </div>
-          <div>
-            <label>Tags (comma separated)</label>
-            <input id="tags" type="text"/>
-          </div>
-          <div>
-            <label>Priority</label>
-            <select id="priority"><option>P1</option><option>P2</option><option>P3</option></select>
-          </div>
-          <div>
-            <label>Status</label>
-            <select id="status"><option>Todo</option><option>Doing</option><option>Blocked</option><option>Done</option></select>
-          </div>
-          <div>
-            <label>Due Date</label>
-            <input id="dueDate" type="date"/>
-          </div>
-          <div>
-            <label>Session ID</label>
-            <input id="sessionId" type="text" placeholder="agent-session"/>
-          </div>
-          <div class="full">
-            <label>For Agent (clear instruction)</label>
-            <textarea id="agentPrompt" placeholder="Example: Refactor auth.ts to separate token parsing and validation..."></textarea>
-          </div>
-          <div class="full">
-            <label>Notes / Output</label>
-            <textarea id="notes" placeholder="Store decisions and results here..."></textarea>
-          </div>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <button onclick="saveTask()">Save</button>
-          <button onclick="sendToAgent()">Send to Agent</button>
-        </div>
-        <div id="chat">
-          <div class="small" style="margin-bottom:6px">Agent Response Stream</div>
-          <div id="chatLog"></div>
-        </div>
-      </div>
+  </div>
+  <div id="input-area">
+    <div id="input-box">
+      <textarea id="msg-input" placeholder="Message Agent X..." rows="1"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
+      <button id="send-btn" onclick="sendMessage()">SEND</button>
     </div>
-  </section>
+  </div>
+</div>
 
 <script>
 const AUTH_TOKEN = new URLSearchParams(location.search).get('token') || localStorage.getItem('sax_token') || '';
 if (AUTH_TOKEN) localStorage.setItem('sax_token', AUTH_TOKEN);
 const API = '';
 
-let tasks = loadTasks();
-let selectedId = null;
+let chats = loadChats();
+let projects = loadProjects();
+let activeChat = null;
+let streaming = false;
 
-function loadTasks(){
-  try { return JSON.parse(localStorage.getItem('sax_tasks_v1') || '[]'); }
-  catch { return []; }
-}
-function persist(){ localStorage.setItem('sax_tasks_v1', JSON.stringify(tasks)); }
-function uid(){ return 'task-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,7); }
-function esc(s){ const d=document.createElement('div'); d.textContent=String(s||''); return d.innerHTML; }
+// ── Storage ──
+function loadChats(){ try { return JSON.parse(localStorage.getItem('sax_chats_v2')||'[]'); } catch { return []; }}
+function saveChats(){ localStorage.setItem('sax_chats_v2', JSON.stringify(chats)); }
+function loadProjects(){ try { return JSON.parse(localStorage.getItem('sax_projects_v1')||'[]'); } catch { return []; }}
+function saveProjects(){ localStorage.setItem('sax_projects_v1', JSON.stringify(projects)); }
+function uid(){ return Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7); }
+function esc(s){ const d=document.createElement('div');d.textContent=String(s||'');return d.innerHTML; }
 
+// ── Auth ──
 async function checkAuth(){
-  try {
-    const r = await fetch(`${API}/api/auth/status`, { headers:{ Authorization:`Bearer ${AUTH_TOKEN}` }});
-    const d = await r.json();
-    document.getElementById('auth-label').textContent = d.authenticated ? `auth: ${d.method}` : 'auth: none';
-  } catch {
-    document.getElementById('auth-label').textContent = 'auth: offline';
+  try{
+    const r=await fetch(`${API}/api/auth/status`,{headers:{Authorization:`Bearer ${AUTH_TOKEN}`}});
+    const d=await r.json();
+    document.getElementById('auth-dot').className=d.authenticated?'ok':'';
+    document.getElementById('auth-label').textContent=d.authenticated?(d.method==='oauth'?'OAuth connected':'API key active'):'not connected';
+  }catch{ document.getElementById('auth-label').textContent='offline'; }
+}
+
+// ── Projects ──
+function newProject(){
+  const name=prompt('Project name:');
+  if(!name) return;
+  projects.push({id:uid(),name,createdAt:Date.now()});
+  saveProjects();
+  renderProjects();
+}
+
+function renderProjects(){
+  const el=document.getElementById('project-list');
+  el.innerHTML=projects.map(p=>`
+    <div class="project-item" title="${esc(p.name)}">
+      <span class="folder-icon">📁</span>
+      <span>${esc(p.name)}</span>
+    </div>
+  `).join('') || '<div style="padding:4px 10px;font-size:.72rem;color:var(--muted)">No projects yet</div>';
+}
+
+// ── Chats ──
+function newChat(){
+  activeChat={id:'chat-'+uid(),title:'New Chat',messages:[],createdAt:Date.now(),updatedAt:Date.now()};
+  chats.unshift(activeChat);
+  saveChats();
+  renderChatList();
+  renderMessages();
+}
+
+function selectChat(id){
+  activeChat=chats.find(c=>c.id===id)||null;
+  renderChatList();
+  renderMessages();
+}
+
+function deleteChat(id,e){
+  e.stopPropagation();
+  chats=chats.filter(c=>c.id!==id);
+  if(activeChat&&activeChat.id===id){activeChat=null;}
+  saveChats();
+  renderChatList();
+  renderMessages();
+}
+
+function renderChatList(){
+  const el=document.getElementById('chat-list');
+  el.innerHTML=chats.map(c=>`
+    <div class="chat-item ${activeChat&&activeChat.id===c.id?'active':''}" onclick="selectChat('${c.id}')">
+      <span class="chat-dot"></span>
+      <span class="chat-title">${esc(c.title)}</span>
+      <button class="chat-delete" onclick="deleteChat('${c.id}',event)" title="Delete">&times;</button>
+    </div>
+  `).join('') || '<div style="padding:8px 12px;font-size:.72rem;color:var(--muted)">No chats yet. Click + New Chat to start.</div>';
+}
+
+function renderMessages(){
+  const el=document.getElementById('messages');
+  if(!activeChat||activeChat.messages.length===0){
+    el.innerHTML=`<div id="empty"><h2>SECRET AGENT X</h2><p>${activeChat?'Start your conversation below.':'Select a chat or start a new one.'}</p></div>`;
+    return;
   }
+  el.innerHTML='';
+  for(const msg of activeChat.messages){
+    if(msg.role==='user') addMessageEl('user',msg.content);
+    else if(msg.role==='assistant'&&msg.content) addMessageEl('assistant',msg.content);
+  }
+  el.scrollTop=el.scrollHeight;
 }
 
-function createTask(){
-  const title = document.getElementById('newTitle').value.trim();
-  if(!title) return;
-  const t = {
-    id: uid(),
-    title,
-    priority: document.getElementById('newPriority').value,
-    status: document.getElementById('newStatus').value,
-    dueDate: document.getElementById('newDue').value || '',
-    tags: [],
-    agentPrompt: '',
-    notes: '',
-    sessionId: 'mission-' + Date.now().toString(36),
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-  tasks.unshift(t);
-  document.getElementById('newTitle').value='';
-  persist();
-  renderTasks();
-  selectTask(t.id);
-}
+// ── Send Message ──
+async function sendMessage(){
+  if(streaming) return;
+  const input=document.getElementById('msg-input');
+  const text=input.value.trim();
+  if(!text) return;
+  input.value='';
+  input.style.height='auto';
 
-function filteredTasks(){
-  const q = document.getElementById('search').value.toLowerCase().trim();
-  const fs = document.getElementById('filterStatus').value;
-  const fp = document.getElementById('filterPriority').value;
-  return tasks
-    .filter(t => !fs || t.status===fs)
-    .filter(t => !fp || t.priority===fp)
-    .filter(t => !q || [t.title,t.agentPrompt,t.notes,(t.tags||[]).join(' ')].join(' ').toLowerCase().includes(q))
-    .sort((a,b)=>b.updatedAt-a.updatedAt);
-}
+  if(!activeChat) newChat();
 
-function renderTasks(){
-  const list = document.getElementById('task-list');
-  const rows = filteredTasks().map(t=>`
-    <div class="task-item ${t.id===selectedId?'active':''}" onclick="selectTask('${t.id}')">
-      <div class="task-top">
-        <span class="badge ${t.priority.toLowerCase()}">${t.priority}</span>
-        <span class="badge status">${esc(t.status)}</span>
-      </div>
-      <div class="task-title">${esc(t.title)}</div>
-      <div class="task-meta">${t.dueDate ? 'Due: '+esc(t.dueDate)+' · ' : ''}Updated ${new Date(t.updatedAt).toLocaleString()}</div>
-    </div>`).join('');
-  list.innerHTML = rows || `<div class="small" style="padding:10px">No tasks yet.</div>`;
-}
+  // Auto-title from first message
+  if(activeChat.messages.length===0){
+    activeChat.title=text.slice(0,50)+(text.length>50?'...':'');
+    saveChats();
+    renderChatList();
+  }
 
-function selectTask(id){
-  selectedId = id;
-  const t = tasks.find(x=>x.id===id);
-  if(!t) return;
-  document.getElementById('empty').classList.add('hidden');
-  document.getElementById('details').classList.remove('hidden');
-  document.getElementById('deleteBtn').classList.remove('hidden');
-  document.getElementById('taskHeader').textContent = `Task: ${t.title.slice(0,80)}`;
+  // Clear empty state
+  const empty=document.getElementById('empty');
+  if(empty) empty.remove();
 
-  document.getElementById('title').value = t.title || '';
-  document.getElementById('tags').value = (t.tags||[]).join(', ');
-  document.getElementById('priority').value = t.priority || 'P2';
-  document.getElementById('status').value = t.status || 'Todo';
-  document.getElementById('dueDate').value = t.dueDate || '';
-  document.getElementById('sessionId').value = t.sessionId || '';
-  document.getElementById('agentPrompt').value = t.agentPrompt || '';
-  document.getElementById('notes').value = t.notes || '';
-  document.getElementById('chatLog').textContent = '';
-  renderTasks();
-}
+  addMessageEl('user',text);
+  activeChat.messages.push({role:'user',content:text});
 
-function saveTask(){
-  const t = tasks.find(x=>x.id===selectedId);
-  if(!t) return;
-  t.title = document.getElementById('title').value.trim();
-  t.tags = document.getElementById('tags').value.split(',').map(x=>x.trim()).filter(Boolean);
-  t.priority = document.getElementById('priority').value;
-  t.status = document.getElementById('status').value;
-  t.dueDate = document.getElementById('dueDate').value;
-  t.sessionId = document.getElementById('sessionId').value.trim() || ('mission-' + Date.now().toString(36));
-  t.agentPrompt = document.getElementById('agentPrompt').value.trim();
-  t.notes = document.getElementById('notes').value;
-  t.updatedAt = Date.now();
-  persist();
-  renderTasks();
-  document.getElementById('taskHeader').textContent = `Task: ${t.title.slice(0,80)}`;
-}
+  const msgEl=addMessageEl('assistant','');
+  const bodyEl=msgEl.querySelector('.msg-body');
+  bodyEl.innerHTML='<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
 
-function deleteTask(){
-  if(!selectedId) return;
-  tasks = tasks.filter(t=>t.id!==selectedId);
-  selectedId = null;
-  persist();
-  renderTasks();
-  document.getElementById('details').classList.add('hidden');
-  document.getElementById('deleteBtn').classList.add('hidden');
-  document.getElementById('empty').classList.remove('hidden');
-  document.getElementById('taskHeader').textContent = 'Select a task';
-}
+  streaming=true;
+  document.getElementById('send-btn').disabled=true;
 
-async function sendToAgent(){
-  saveTask();
-  const t = tasks.find(x=>x.id===selectedId);
-  if(!t || !t.agentPrompt) return;
-  const log = document.getElementById('chatLog');
-  log.textContent = 'Sending...\n';
-
-  try {
-    const res = await fetch(`${API}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type':'application/json', Authorization:`Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ message: t.agentPrompt, sessionId: t.sessionId || 'default' }),
+  try{
+    const res=await fetch(`${API}/api/chat`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json',Authorization:`Bearer ${AUTH_TOKEN}`},
+      body:JSON.stringify({message:text,sessionId:activeChat.id}),
     });
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer='';
-    let content='';
+    const reader=res.body.getReader();
+    const decoder=new TextDecoder();
+    let buffer='',content='';
 
     while(true){
-      const {done,value} = await reader.read();
+      const{done,value}=await reader.read();
       if(done) break;
-      buffer += decoder.decode(value, {stream:true});
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      buffer+=decoder.decode(value,{stream:true});
+      const lines=buffer.split('\n');
+      buffer=lines.pop()||'';
+
       for(const line of lines){
         if(!line.startsWith('data: ')) continue;
-        try {
-          const event = JSON.parse(line.slice(6));
-          if(event.type==='stream') content += event.delta;
-          else if(event.type==='tool_start') content += `\n\n[tool] ${event.toolName} ${JSON.stringify(event.args)}\n`;
-          else if(event.type==='tool_end') content += `\n[tool-result] ${event.allowed?'allowed':'blocked'}\n`;
-          else if(event.type==='error') content += `\n[error] ${event.message}\n`;
-          log.textContent = content;
-          log.scrollTop = log.scrollHeight;
-        } catch {}
+        try{
+          const event=JSON.parse(line.slice(6));
+          switch(event.type){
+            case 'stream':
+              content+=event.delta;
+              bodyEl.textContent=content;
+              break;
+            case 'tool_start':
+              bodyEl.innerHTML=content?esc(content):'';
+              bodyEl.appendChild(makeToolCard(event.toolName,event.args));
+              break;
+            case 'tool_end':{
+              const cards=bodyEl.querySelectorAll('.tool-card');
+              const last=cards[cards.length-1];
+              if(last){
+                const ind=last.querySelector('.indicator');
+                ind.className='indicator '+(event.allowed?'allowed':'blocked');
+                last.querySelector('.tool-detail').textContent=event.result.slice(0,2000);
+              }
+              break;
+            }
+            case 'error':
+              content+='\n\nError: '+event.message;
+              bodyEl.textContent=content;
+              break;
+          }
+        }catch{}
       }
+      document.getElementById('messages').scrollTop=document.getElementById('messages').scrollHeight;
     }
 
-    t.notes = ((t.notes||'') + '\n\n--- Agent Run ' + new Date().toLocaleString() + ' ---\n' + content).trim();
-    t.updatedAt = Date.now();
-    persist();
-    document.getElementById('notes').value = t.notes;
-    renderTasks();
-  } catch(e){
-    log.textContent += '\nConnection error: ' + e.message;
+    activeChat.messages.push({role:'assistant',content});
+    activeChat.updatedAt=Date.now();
+    saveChats();
+    renderChatList();
+  }catch(e){
+    bodyEl.textContent='Connection error: '+e.message;
   }
+
+  streaming=false;
+  document.getElementById('send-btn').disabled=false;
 }
 
+function addMessageEl(role,text){
+  const el=document.getElementById('messages');
+  const div=document.createElement('div');
+  div.className='msg '+role;
+  div.innerHTML=`
+    <div class="msg-label">${role==='user'?'You':'Agent X'}</div>
+    <div class="msg-body">${esc(text)}</div>
+  `;
+  el.appendChild(div);
+  el.scrollTop=el.scrollHeight;
+  return div;
+}
+
+function makeToolCard(name,args){
+  const card=document.createElement('div');
+  card.className='tool-card';
+  card.innerHTML=`
+    <div class="tool-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="indicator"></span>
+      <span class="tool-name">${esc(name)}</span>
+      <span style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(JSON.stringify(args).slice(0,80))}</span>
+    </div>
+    <div class="tool-detail">executing...</div>
+  `;
+  return card;
+}
+
+// Auto-resize textarea
+document.getElementById('msg-input').addEventListener('input',function(){
+  this.style.height='auto';
+  this.style.height=Math.min(this.scrollHeight,160)+'px';
+});
+
+// ── Init ──
 checkAuth();
-renderTasks();
+renderProjects();
+renderChatList();
+renderMessages();
 </script>
 </body>
 </html>

@@ -154,8 +154,19 @@ export class SecurityLayer {
         decision = this.evaluateWebFetch(String(args.url || ""));
         break;
       case "browser":
-        if (args.action === "navigate" && args.url) {
-          decision = this.evaluateWebFetch(String(args.url));
+        if ((args.action === "navigate" || args.action === "new_tab") && args.url) {
+          const browserUrl = String(args.url);
+          // Allow localhost/127.0.0.1 for browser — user's own dev servers
+          try {
+            const host = new URL(browserUrl).hostname;
+            if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
+              decision = { allowed: true, reason: "Browser navigation to localhost allowed" };
+            } else {
+              decision = this.evaluateWebFetch(browserUrl);
+            }
+          } catch {
+            decision = { allowed: false, reason: "Blocked: invalid URL" };
+          }
         } else {
           decision = { allowed: true, reason: "Browser action allowed" };
         }

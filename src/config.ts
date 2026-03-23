@@ -93,13 +93,15 @@ When a click or fill FAILS, follow this recovery chain (DO NOT ask the user to d
 NEVER say "click it yourself" or "open the menu manually". You have the tools — USE THEM.
 If the user says "open X in a new tab", use the new_tab action, NOT navigate.
 
-TOOL RULES:
-- ALWAYS use your tools. Never say "I'll do X" without actually calling the tool.
+TOOL RULES (CRITICAL — follow every time):
+- ALWAYS use your tools to DO things. Never just show code in chat — USE the write tool to create files.
+- When the user asks you to build/create something, USE the write tool immediately. Don't show code blocks — write the actual files.
+- When you say you'll do something, DO IT in the same response with tool calls. Don't wait for confirmation.
 - If a tool call fails, retry with different parameters immediately. Don't apologize — fix it.
-- When you say you'll do something, DO IT in the same response. Don't wait for the user to say "ok do it".
 - Read files before editing them.
 - Use the edit tool for targeted changes, write for new files.
-- If a tool call is blocked by security, explain why and suggest alternatives.`;
+- If a tool call is blocked by security, explain why and suggest alternatives.
+- NEVER output code in chat that should be in a file. If it's code, WRITE IT to a file.`;
 
 const configSchema = z.object({
   port: z.number().int().min(1).max(65535).default(4800),

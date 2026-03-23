@@ -6,7 +6,14 @@ import { hostname, userInfo } from "node:os";
 /**
  * Encrypted secrets store for API keys and tokens.
  * Secrets are AES-256-GCM encrypted at rest in ~/.sax/secrets.enc
- * Key is derived from machine identity (hostname + username).
+ *
+ * Key derivation: scrypt(machine_identity, per_install_random_salt)
+ * - Machine identity = hostname + username (binds to this machine)
+ * - Per-install salt = 32 random bytes, generated once and stored in ~/.sax/secrets.salt
+ * - scrypt params: N=2^15, r=8, p=1 (OWASP recommended)
+ *
+ * This means: even if attacker knows hostname+username, they still need the
+ * random salt file. And even with the salt, scrypt is deliberately slow.
  */
 
 interface SecretEntry {
@@ -28,11 +35,23 @@ interface SecretsFile {
   }>;
 }
 
-function deriveKey(): Buffer {
-  // Machine-bound key: not perfect security, but keeps secrets from being
-  // plain text on disk. For stronger security, use OS keychain in the future.
+/** Load or create the per-install random salt */
+function getOrCreateSalt(dataDir: string): Buffer {
+  const saltPath = join(dataDir, "secrets.salt");
+  if (existsSync(saltPath)) {
+    return readFileSync(saltPath);
+  }
+  // Generate 32 bytes of random salt on first use
+  const salt = randomBytes(32);
+  writeFileSync(saltPath, salt, { mode: 0o600 });
+  return salt;
+}
+
+function deriveKey(dataDir: string): Buffer {
   const identity = `sax-secrets::${hostname()}::${userInfo().username}`;
-  return scryptSync(identity, "secret-agent-x-salt-v1", 32);
+  const salt = getOrCreateSalt(dataDir);
+  // scrypt: N=2^14 (16384) — balanced for speed + security
+  return scryptSync(identity, salt, 32, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
 }
 
 function encrypt(plaintext: string, key: Buffer): string {
@@ -61,7 +80,7 @@ export class SecretsStore {
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
     this.filePath = join(dataDir, "secrets.enc");
-    this.key = deriveKey();
+    this.key = deriveKey(dataDir);
     this.load();
   }
 

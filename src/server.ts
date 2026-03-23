@@ -702,6 +702,24 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // Serve generated videos (e.g. /videos/my_video_123.mp4)
+    if (method === "GET" && url.pathname.startsWith("/videos/")) {
+      const videosDir = resolve(process.cwd(), "workspace", "videos");
+      const vidFile = resolve(videosDir, url.pathname.replace("/videos/", ""));
+      const vidRel = relative(videosDir, vidFile);
+      if (vidRel.startsWith("..") || vidRel.includes("..")) {
+        json(403, { error: "Path traversal blocked" });
+        return;
+      }
+      if (existsSync(vidFile)) {
+        const ext = vidFile.split(".").pop() || "";
+        const ct: Record<string, string> = { mp4: "video/mp4", webm: "video/webm" };
+        res.writeHead(200, { "Content-Type": ct[ext] || "application/octet-stream" });
+        res.end(readFileSync(vidFile));
+        return;
+      }
+    }
+
     // Serve generated images (e.g. /images/my_image_123.png)
     if (method === "GET" && url.pathname.startsWith("/images/")) {
       const imagesDir = resolve(process.cwd(), "workspace", "images");

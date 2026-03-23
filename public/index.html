@@ -287,11 +287,13 @@ function selectChat(id){
 
 function deleteChat(id,e){
   e.stopPropagation();
+  if(!confirm('Delete this chat? This cannot be undone.')) return;
   chats=chats.filter(c=>c.id!==id);
   if(activeChat&&activeChat.id===id){activeChat=null;}
   saveChats();
   renderChatList();
   renderMessages();
+  fetch(`/api/sessions/${encodeURIComponent(id)}`,{method:'DELETE'}).catch(()=>{});
 }
 
 function renderChatList(){
@@ -405,12 +407,21 @@ async function sendMessage(){
       document.getElementById('messages').scrollTop=document.getElementById('messages').scrollHeight;
     }
 
-    activeChat.messages.push({role:'assistant',content});
-    activeChat.updatedAt=Date.now();
-    saveChats();
-    renderChatList();
+    // Only save non-empty responses
+    if(content.trim()){
+      activeChat.messages.push({role:'assistant',content});
+      activeChat.updatedAt=Date.now();
+      saveChats();
+      renderChatList();
+    }
   }catch(e){
     bodyEl.textContent='Connection error: '+e.message;
+    // Show retry button
+    const retryBtn=document.createElement('button');
+    retryBtn.textContent='Retry';
+    retryBtn.style.cssText='margin-top:8px;padding:6px 16px;background:var(--accent);color:var(--bg);border:none;border-radius:6px;cursor:pointer;font-family:var(--mono);font-size:.8rem';
+    retryBtn.onclick=()=>{document.getElementById('msg-input').value=msg;sendMessage()};
+    bodyEl.appendChild(retryBtn);
   }
 
   streaming=false;

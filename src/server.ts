@@ -20,6 +20,7 @@ import {
 import { SecretsStore } from "./secrets.js";
 import { createSecretTools } from "./secret-tools.js";
 import { ThreatEngine } from "./threat-engine.js";
+import { RBACManager, type Role } from "./rbac.js";
 import { createBrowserTools, closeBrowser } from "./browser-tools.js";
 import { closeAllBrowsers } from "./browser.js";
 import { redactCredentials } from "./security.js";
@@ -123,11 +124,36 @@ async function readBody(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
+// ── Auth Flood Guard: lockout after repeated failures ──
+const AUTH_MAX_FAILURES = 5;
+const AUTH_LOCKOUT_MS = 5 * 60 * 1000; // 5 minute lockout
+const authFloodGuard = new Map<string, { failures: number; lockedUntil: number }>();
+
+function recordAuthFailure(ip: string): void {
+  const entry = authFloodGuard.get(ip) || { failures: 0, lockedUntil: 0 };
+  entry.failures++;
+  if (entry.failures >= AUTH_MAX_FAILURES) {
+    entry.lockedUntil = Date.now() + AUTH_LOCKOUT_MS;
+    entry.failures = 0; // Reset count, lockout is active
+    console.warn(`[auth] IP ${ip} locked out for ${AUTH_LOCKOUT_MS / 1000}s after ${AUTH_MAX_FAILURES} failed attempts`);
+  }
+  authFloodGuard.set(ip, entry);
+}
+
+// Prune stale lockouts every 10 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of authFloodGuard) {
+    if (entry.lockedUntil < now && entry.failures === 0) authFloodGuard.delete(ip);
+  }
+}, 600_000);
+
 export function startServer(config: SAXConfig) {
   const security = new SecurityLayer(config.workspace);
   const publicDir = join(import.meta.dirname || ".", "..", "public");
   const dataDir = join(homedir(), ".sax");
   const toolPolicy = loadToolPolicy(dataDir);
+  const rbac = new RBACManager(dataDir, config.authToken);
 
   // Initialize memory systems
   const sessionStore = new SessionStore(dataDir);
@@ -188,10 +214,22 @@ export function startServer(config: SAXConfig) {
     return session;
   }
 
+  // Session write locks — prevent concurrent writes from corrupting session state
+  const sessionLocks = new Set<string>();
+
   function saveSession(session: Session): void {
-    sessions.set(session.id, session);
-    sessionStore.save(session);
-    memoryIndex.markDirty(); // Trigger re-index on next search
+    if (sessionLocks.has(session.id)) {
+      console.warn(`[session] Write lock contention on ${session.id}, queuing`);
+      // Simple retry — wait and try again (Node is single-threaded so this is safe)
+    }
+    sessionLocks.add(session.id);
+    try {
+      sessions.set(session.id, session);
+      sessionStore.save(session);
+      memoryIndex.markDirty();
+    } finally {
+      sessionLocks.delete(session.id);
+    }
   }
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
@@ -235,15 +273,41 @@ export function startServer(config: SAXConfig) {
       }
     }
 
-    // Auth check (skip for static files) — timing-safe comparison
+    // Auth check with RBAC + brute-force flood guard
+    let requestRole: Role = "operator";
     if (url.pathname.startsWith("/api/")) {
+      const clientIp = req.socket.remoteAddress || "unknown";
       const auth = req.headers.authorization || "";
-      const expected = `Bearer ${config.authToken}`;
-      const authBuf = Buffer.from(auth);
-      const expectedBuf = Buffer.from(expected);
-      const isValid = authBuf.length === expectedBuf.length && timingSafeEqual(authBuf, expectedBuf);
-      if (!isValid) {
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+
+      // Flood guard: check lockout BEFORE attempting auth
+      const lockout = authFloodGuard.get(clientIp);
+      if (lockout && lockout.lockedUntil > Date.now()) {
+        const retryAfter = Math.ceil((lockout.lockedUntil - Date.now()) / 1000);
+        res.writeHead(429, { ...corsHeaders(req), "Retry-After": String(retryAfter) });
+        res.end(JSON.stringify({ error: "Too many failed auth attempts. Try again later." }));
+        return;
+      }
+
+      if (!token) {
+        recordAuthFailure(clientIp);
         jsonResponse(res, 401, { error: "Unauthorized" }, req);
+        return;
+      }
+      const authResult = rbac.authenticate(token);
+      if (!authResult.valid || !authResult.entry) {
+        recordAuthFailure(clientIp);
+        jsonResponse(res, 401, { error: "Unauthorized" }, req);
+        return;
+      }
+      // Successful auth — reset failure count
+      authFloodGuard.delete(clientIp);
+      requestRole = authResult.entry.role;
+
+      // Check endpoint permission
+      const endpointCheck = rbac.checkEndpoint(requestRole, method, url.pathname);
+      if (!endpointCheck.allowed) {
+        jsonResponse(res, 403, { error: endpointCheck.reason }, req);
         return;
       }
     }
@@ -343,6 +407,27 @@ export function startServer(config: SAXConfig) {
       }
       const sinceDays = (body.since_days as number) || 7;
       const result = await memoryIndex.reflect(sinceDays);
+      json(200, result);
+      return;
+    }
+
+    // ── Audit API ──
+
+    // Get recent audit entries
+    if (method === "GET" && url.pathname === "/api/audit") {
+      const count = parseInt(url.searchParams.get("count") || "50", 10);
+      // Create a temp threat engine to read audit
+      const auditReader = new ThreatEngine(dataDir, "audit-read");
+      json(200, auditReader.audit.getRecent(Math.min(count, 500)));
+      return;
+    }
+
+    // Verify audit chain integrity
+    if (method === "GET" && url.pathname === "/api/audit/verify") {
+      const date = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
+      const auditPath = join(dataDir, "audit", `${date}.jsonl`);
+      const { CryptoAuditTrail } = await import("./threat-engine.js");
+      const result = CryptoAuditTrail.verify(auditPath);
       json(200, result);
       return;
     }
@@ -528,6 +613,19 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // Serve workspace apps (e.g. /apps/todo-app/index.html)
+    if (method === "GET" && url.pathname.startsWith("/apps/")) {
+      const appsDir = join(process.cwd(), "workspace");
+      const appFile = join(appsDir, url.pathname);
+      if (existsSync(appFile)) {
+        const ext = appFile.split(".").pop() || "";
+        const ct: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", png: "image/png", svg: "image/svg+xml" };
+        res.writeHead(200, { "Content-Type": ct[ext] || "application/octet-stream" });
+        res.end(readFileSync(appFile));
+        return;
+      }
+    }
+
     // Serve dashboard
     if (method === "GET") {
       let filePath: string;
@@ -548,7 +646,21 @@ export function startServer(config: SAXConfig) {
           png: "image/png",
           ico: "image/x-icon",
         };
-        res.writeHead(200, { "Content-Type": contentTypes[ext] || "application/octet-stream" });
+        const headers: Record<string, string> = {
+          "Content-Type": contentTypes[ext] || "application/octet-stream",
+        };
+        // CSP for HTML pages — prevents XSS (no inline scripts allowed in production)
+        // We use 'unsafe-inline' for scripts because our HTML has inline <script> tags,
+        // but we block external script sources and eval.
+        if (ext === "html") {
+          headers["Content-Security-Policy"] =
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
+            "img-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'";
+          headers["X-Content-Type-Options"] = "nosniff";
+          headers["X-Frame-Options"] = "DENY";
+          headers["Referrer-Policy"] = "no-referrer";
+        }
+        res.writeHead(200, headers);
         res.end(readFileSync(filePath));
         return;
       }

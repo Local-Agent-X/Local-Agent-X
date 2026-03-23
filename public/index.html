@@ -241,17 +241,43 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 <script>
 // Token handling: prefer sessionStorage (dies with tab) over localStorage.
 // URL param accepted ONCE for initial setup, then stripped from URL to prevent leakage.
-let AUTH_TOKEN = sessionStorage.getItem('sax_token') || localStorage.getItem('sax_token') || '';
+let AUTH_TOKEN = localStorage.getItem('sax_token') || sessionStorage.getItem('sax_token') || '';
 const urlToken = new URLSearchParams(location.search).get('token');
 if (urlToken) {
   AUTH_TOKEN = urlToken;
+  // Persist to localStorage so it survives tab closes and new sessions
+  localStorage.setItem('sax_token', urlToken);
   sessionStorage.setItem('sax_token', urlToken);
   // Strip token from URL immediately (prevents leakage via referrer/history/screenshots)
   const cleanUrl = new URL(location.href);
   cleanUrl.searchParams.delete('token');
   history.replaceState(null, '', cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
-} else if (AUTH_TOKEN) {
-  sessionStorage.setItem('sax_token', AUTH_TOKEN);
+}
+
+// First-run setup: if no token, show instructions instead of silently failing
+if (!AUTH_TOKEN) {
+  document.addEventListener('DOMContentLoaded', () => {
+    document.body.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0a0f;font-family:monospace;color:#00ff41">
+        <div style="max-width:520px;text-align:center;padding:40px">
+          <h1 style="font-size:1.6rem;margin-bottom:8px">SECRET AGENT X</h1>
+          <p style="color:#666;margin-bottom:32px;font-size:.85rem">First-time setup required</p>
+          <p style="color:#ccc;margin-bottom:16px;font-size:.9rem">Copy the URL printed in your terminal and open it in this browser:</p>
+          <div style="background:#111;border:1px solid #00ff4133;border-radius:8px;padding:16px;font-size:.8rem;color:#00ff41;word-break:break-all;margin-bottom:24px">
+            http://127.0.0.1:4800/?token=<span style="color:#f59e0b">&lt;your-token-from-terminal&gt;</span>
+          </div>
+          <p style="color:#555;font-size:.75rem">Or paste your token directly:</p>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <input id="token-input" type="text" placeholder="Paste token here..."
+              style="flex:1;background:#111;border:1px solid #333;border-radius:6px;padding:10px;color:#fff;font-family:monospace;font-size:.8rem;outline:none" />
+            <button onclick="
+              const t=document.getElementById('token-input').value.trim();
+              if(t){localStorage.setItem('sax_token',t);sessionStorage.setItem('sax_token',t);location.reload();}
+            " style="background:#00ff41;color:#0a0a0f;border:none;border-radius:6px;padding:10px 18px;font-family:monospace;font-weight:700;cursor:pointer;font-size:.8rem">GO</button>
+          </div>
+        </div>
+      </div>`;
+  });
 }
 const API = '';
 

@@ -1,29 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { runAgent } from "./agent.js";
 import { allTools } from "./tools.js";
 import { SecurityLayer } from "./security.js";
 import { getApiKey } from "./auth.js";
+import { SessionStore, MemoryIndex, createMemoryTools } from "./memory.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
-
-// In-memory session store (v1 — persist to disk later)
-const sessions = new Map<string, Session>();
-
-function getOrCreateSession(id: string): Session {
-  let session = sessions.get(id);
-  if (!session) {
-    session = {
-      id,
-      title: "New Mission",
-      messages: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-    sessions.set(id, session);
-  }
-  return session;
-}
 
 function jsonResponse(res: ServerResponse, status: number, data: unknown) {
   res.writeHead(status, {
@@ -49,6 +33,48 @@ async function readBody(req: IncomingMessage): Promise<string> {
 export function startServer(config: SAXConfig) {
   const security = new SecurityLayer(config.workspace);
   const publicDir = join(import.meta.dirname || ".", "..", "public");
+  const dataDir = join(homedir(), ".sax");
+
+  // Initialize memory systems
+  const sessionStore = new SessionStore(dataDir);
+  const memoryIndex = new MemoryIndex(dataDir);
+  const memoryTools = createMemoryTools(memoryIndex);
+
+  // Combine file tools + memory tools
+  const tools = [...allTools, ...memoryTools];
+
+  // In-memory session cache (backed by disk)
+  const sessions = new Map<string, Session>();
+
+  function getOrCreateSession(id: string): Session {
+    // Try cache first
+    let session = sessions.get(id);
+    if (session) return session;
+
+    // Try disk
+    session = sessionStore.load(id) ?? undefined;
+    if (session) {
+      sessions.set(id, session);
+      return session;
+    }
+
+    // Create new
+    session = {
+      id,
+      title: "New Mission",
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    sessions.set(id, session);
+    return session;
+  }
+
+  function saveSession(session: Session): void {
+    sessions.set(session.id, session);
+    sessionStore.save(session);
+    memoryIndex.markDirty(); // Trigger re-index on next search
+  }
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || "/", `http://127.0.0.1:${config.port}`);
@@ -65,7 +91,7 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
-    // Auth check (skip for dashboard static files)
+    // Auth check (skip for static files)
     if (url.pathname.startsWith("/api/")) {
       const auth = req.headers.authorization;
       if (auth !== `Bearer ${config.authToken}`) {
@@ -78,19 +104,18 @@ export function startServer(config: SAXConfig) {
 
     // Health
     if (method === "GET" && url.pathname === "/api/health") {
-      jsonResponse(res, 200, { status: "ok", version: "0.1.0" });
+      const memStats = memoryIndex.getStats();
+      jsonResponse(res, 200, {
+        status: "ok",
+        version: "0.1.0",
+        memory: memStats,
+      });
       return;
     }
 
     // List sessions
     if (method === "GET" && url.pathname === "/api/sessions") {
-      const list = Array.from(sessions.values()).map((s) => ({
-        id: s.id,
-        title: s.title,
-        updatedAt: s.updatedAt,
-        messageCount: s.messages.length,
-      }));
-      list.sort((a, b) => b.updatedAt - a.updatedAt);
+      const list = sessionStore.list();
       jsonResponse(res, 200, list);
       return;
     }
@@ -98,11 +123,7 @@ export function startServer(config: SAXConfig) {
     // Get session
     if (method === "GET" && url.pathname.startsWith("/api/sessions/")) {
       const id = url.pathname.split("/").pop()!;
-      const session = sessions.get(id);
-      if (!session) {
-        jsonResponse(res, 404, { error: "Session not found" });
-        return;
-      }
+      const session = getOrCreateSession(id);
       jsonResponse(res, 200, session);
       return;
     }
@@ -111,7 +132,26 @@ export function startServer(config: SAXConfig) {
     if (method === "DELETE" && url.pathname.startsWith("/api/sessions/")) {
       const id = url.pathname.split("/").pop()!;
       sessions.delete(id);
+      sessionStore.delete(id);
       jsonResponse(res, 200, { ok: true });
+      return;
+    }
+
+    // Memory search API
+    if (method === "GET" && url.pathname === "/api/memory/search") {
+      const query = url.searchParams.get("q") || "";
+      if (!query) {
+        jsonResponse(res, 400, { error: "q parameter required" });
+        return;
+      }
+      const results = await memoryIndex.search(query);
+      jsonResponse(res, 200, results);
+      return;
+    }
+
+    // Memory stats
+    if (method === "GET" && url.pathname === "/api/memory/stats") {
+      jsonResponse(res, 200, memoryIndex.getStats());
       return;
     }
 
@@ -146,26 +186,29 @@ export function startServer(config: SAXConfig) {
       try {
         const apiKey = await getApiKey(config.openaiApiKey);
 
-        // Detect provider: if OAuth tokens exist use codex, otherwise check for xAI key
+        // Detect provider
         const { loadTokens } = await import("./auth.js");
         const tokens = loadTokens();
-        const provider = tokens && !config.openaiApiKey ? "codex" as const : "xai" as const;
+        const provider = tokens && !config.openaiApiKey ? ("codex" as const) : ("xai" as const);
 
         const result = await runAgent(message, session.messages, {
           apiKey,
           model: provider === "codex" ? "gpt-5.3-codex" : config.model,
           provider,
           systemPrompt: config.systemPrompt,
-          tools: allTools,
+          tools,
           security,
           maxIterations: config.maxIterations,
           temperature: config.temperature,
           onEvent: (event) => sseWrite(res, event),
         });
 
-        // Update session with new messages (skip system prompt)
+        // Update session (skip system prompt)
         session.messages = result.messages.filter((m) => m.role !== "system");
         session.updatedAt = Date.now();
+
+        // Persist to disk
+        saveSession(session);
       } catch (e) {
         sseWrite(res, { type: "error", message: (e as Error).message });
       }
@@ -229,7 +272,15 @@ export function startServer(config: SAXConfig) {
 
   server.listen(config.port, "127.0.0.1", () => {
     console.log(`\n  Secret Agent X running at http://127.0.0.1:${config.port}`);
-    console.log(`  Auth token: ${config.authToken}\n`);
+    console.log(`  Auth token: ${config.authToken}`);
+    console.log(`  Memory: ${dataDir}/memory/`);
+    console.log(`  Sessions: ${dataDir}/sessions/\n`);
+  });
+
+  // Cleanup on exit
+  process.on("SIGINT", () => {
+    memoryIndex.close();
+    process.exit(0);
   });
 
   return server;

@@ -46,26 +46,32 @@ export function createBrowserTools(): ToolDefinition[] {
       "The browser session persists across calls — navigate once, then click/fill/extract as needed. " +
       "IMPORTANT: When a fill or click fails, retry with a different selector or use evaluate to find the right one. " +
       "Don't just tell the user you'll retry — actually call this tool again.\n\n" +
+      "WORKFLOW: navigate → snapshot → click/fill by ref. The snapshot shows numbered refs for every interactive element.\n\n" +
       "Actions:\n" +
-      "- navigate: Go to a URL, returns page text. Set 'engine' to switch browsers.\n" +
-      "- click: Click an element by CSS selector\n" +
-      "- fill: Type text into an input field (waits up to 30s for element to appear)\n" +
-      "- select: Choose an option from a dropdown\n" +
-      "- extract: Get visible text from the page or a specific element\n" +
-      "- screenshot: Capture the current page\n" +
-      "- evaluate: Run JavaScript in the page (use to find selectors when click/fill fails)\n" +
-      "- tabs: List all open tabs with URLs and titles\n" +
-      "- switch_tab: Switch to a different tab by index (set 'value' to tab number)\n" +
-      "- info: Get current page URL, title, and engine\n" +
-      "- close: Close the browser session\n\n" +
-      "IMPORTANT: When a login opens a new tab (e.g. Gmail after Instagram login), use 'tabs' to see all open tabs, then 'switch_tab' to go to the new one.",
+      "- navigate: Go to a URL. ALWAYS follow with 'snapshot' to see the page elements.\n" +
+      "- snapshot: Get accessibility tree with numbered refs (e.g. [1] button \"Log in\"). ALWAYS use this before clicking.\n" +
+      "- click: Click by ref number (set 'ref') or CSS selector (set 'selector'). Ref is more reliable.\n" +
+      "- click_text: Click element by visible text (set 'text'). Good for popups/modals.\n" +
+      "- fill: Fill input by ref (set 'ref' + 'value') or CSS selector (set 'selector' + 'value').\n" +
+      "- select: Choose dropdown option by CSS selector + value.\n" +
+      "- extract: Get visible text from the page or a specific element.\n" +
+      "- screenshot: Capture the current page.\n" +
+      "- evaluate: Run JavaScript in the page.\n" +
+      "- tabs: List all open tabs with URLs and titles.\n" +
+      "- switch_tab: Switch to a tab by index (set 'value' to tab number).\n" +
+      "- info: Get current page URL, title, and engine.\n" +
+      "- close: Close the browser session.\n\n" +
+      "TIPS:\n" +
+      "- After navigate, ALWAYS take a snapshot before interacting.\n" +
+      "- Use click_text for popups/modals where you can see the button text.\n" +
+      "- When a login opens a new tab, use 'tabs' then 'switch_tab'.",
     parameters: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["navigate", "click", "fill", "select", "extract", "screenshot", "evaluate", "tabs", "switch_tab", "info", "close"],
-          description: "The browser action to perform",
+          enum: ["navigate", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "tabs", "switch_tab", "info", "close"],
+          description: "The browser action to perform. Use 'snapshot' first to see interactive elements with ref numbers, then 'click' with a ref number.",
         },
         url: {
           type: "string",
@@ -79,9 +85,17 @@ export function createBrowserTools(): ToolDefinition[] {
             "chromium = Chrome/Edge, firefox = Firefox, webkit = Safari. " +
             "Switching engine closes the current session and opens a new one.",
         },
+        ref: {
+          type: "number",
+          description: "Ref number from snapshot (preferred for click/fill — more reliable than CSS selectors)",
+        },
         selector: {
           type: "string",
-          description: "CSS selector for the target element (required for 'click', 'fill', 'select'; optional for 'extract')",
+          description: "CSS selector (fallback — use ref from snapshot instead when possible)",
+        },
+        text: {
+          type: "string",
+          description: "Visible text to click (for 'click_text' action — clicks element containing this text)",
         },
         value: {
           type: "string",
@@ -115,23 +129,43 @@ export function createBrowserTools(): ToolDefinition[] {
             return ok(await manager.navigate(url, engine));
           }
 
+          case "snapshot": {
+            return ok(await manager.snapshot());
+          }
+
           case "click": {
+            // Prefer ref (from snapshot) over CSS selector
+            if (args.ref !== undefined && args.ref !== null) {
+              const ref = Number(args.ref);
+              if (isNaN(ref)) return err("'ref' must be a number from the snapshot.");
+              return ok(await manager.clickByRef(ref));
+            }
             const selector = String(args.selector || "");
-            if (!selector) return err("'selector' parameter is required for click action.");
+            if (!selector) return err("Provide 'ref' (from snapshot) or 'selector' (CSS) for click.");
             return ok(await manager.click(selector));
           }
 
+          case "click_text": {
+            const text = String(args.text || "");
+            if (!text) return err("'text' parameter is required for click_text action.");
+            return ok(await manager.clickByText(text));
+          }
+
           case "fill": {
-            const selector = String(args.selector || "");
             const value = String(args.value ?? "");
-            if (!selector) return err("'selector' parameter is required for fill action.");
+            // Prefer ref over CSS selector
+            if (args.ref !== undefined && args.ref !== null) {
+              const ref = Number(args.ref);
+              if (isNaN(ref)) return err("'ref' must be a number from the snapshot.");
+              return ok(await manager.fillByRef(ref, value));
+            }
+            const selector = String(args.selector || "");
+            if (!selector) return err("Provide 'ref' (from snapshot) or 'selector' (CSS) for fill.");
             try {
               return ok(await manager.fill(selector, value));
             } catch {
-              // Auto-recovery: try common alternative selectors
+              // Auto-recovery fallbacks
               const alternatives = [
-                `input[aria-label*="${selector.replace(/input\[.*\]/i, "").replace(/[[\]'"]/g, "")}"]`,
-                `input[placeholder*="${value.split("@")[0] || ""}"]`,
                 "input[type='text']:first-of-type",
                 "input[type='email']:first-of-type",
                 "input:first-of-type",
@@ -139,15 +173,10 @@ export function createBrowserTools(): ToolDefinition[] {
               for (const alt of alternatives) {
                 try {
                   const result = await manager.fill(alt, value);
-                  return ok(result + `\n(original selector "${selector}" failed, used "${alt}" instead)`);
-                } catch {
-                  continue;
-                }
+                  return ok(result + `\n(used fallback "${alt}")`);
+                } catch { continue; }
               }
-              return err(
-                `Could not fill "${selector}" or any alternative selectors. ` +
-                `Use action "evaluate" with script "document.querySelectorAll('input').forEach(i => console.log(i.name, i.type, i.placeholder))" to find the right selector.`
-              );
+              return err(`Could not fill "${selector}". Use 'snapshot' action to find the right ref.`);
             }
           }
 

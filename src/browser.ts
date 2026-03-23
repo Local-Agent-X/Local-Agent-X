@@ -225,7 +225,33 @@ export class BrowserManager {
     }
   }
 
-  /** Navigate to a URL. Optionally switch browser engine. */
+  /** Open a URL in a NEW tab (keeps existing tabs). */
+  async newTab(url: string): Promise<string> {
+    if (!this.context) {
+      // No browser yet — just navigate normally
+      return this.navigate(url);
+    }
+    const newPage = await this.context.newPage();
+    newPage.setDefaultTimeout(ACTION_TIMEOUT);
+    const response = await newPage.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: NAV_TIMEOUT,
+    });
+    const status = response?.status() ?? "unknown";
+    try {
+      await newPage.waitForLoadState("load", { timeout: 5000 });
+    } catch {}
+    await newPage.waitForTimeout(1000);
+
+    // Switch active page to the new tab
+    this.page = newPage;
+    await newPage.bringToFront();
+    const title = await newPage.title();
+    const tabCount = this.context.pages().length;
+    return `Opened new tab (${tabCount} tabs total)\nURL: ${newPage.url()}\nStatus: ${status}\nTitle: ${title}`;
+  }
+
+  /** Navigate to a URL in the CURRENT tab. Optionally switch browser engine. */
   async navigate(url: string, engine?: BrowserEngine): Promise<string> {
     const page = await this.getPage(engine);
     const response = await page.goto(url, {
@@ -348,8 +374,18 @@ export class BrowserManager {
     for (const el of elements) {
       const ref = this.nextRef++;
       this.refMap.set(ref, { role: el.role, name: el.name });
-      const typeStr = el.type ? ` (${el.type})` : "";
-      lines.push(`[${ref}] ${el.role} "${el.name}"${typeStr}`);
+      // Sanitize element names to prevent prompt injection via malicious websites.
+      // Strip newlines, control chars, and escape quotes so attacker-controlled
+      // aria-label/textContent can't inject fake refs or LLM instructions.
+      const safeName = el.name
+        .replace(/[\r\n\t]/g, " ")          // no newlines (blocks instruction injection)
+        .replace(/[\x00-\x1f\x7f]/g, "")    // strip control characters
+        .replace(/"/g, "'")                  // escape quotes (prevents breaking out of ref format)
+        .replace(/\[(\d+)\]/g, "($1)")       // prevent fake ref numbers like [2]
+        .slice(0, 80);                       // cap length
+      const safeRole = el.role.replace(/[\r\n]/g, "").slice(0, 20);
+      const typeStr = el.type ? ` (${el.type.replace(/[\r\n]/g, "").slice(0, 20)})` : "";
+      lines.push(`[${ref}] ${safeRole} "${safeName}"${typeStr}`);
     }
 
     const url = page.url();
@@ -552,28 +588,27 @@ export class BrowserManager {
   }
 }
 
-// Per-session browser instances
+// Per-session browser instances — keyed by session ID, no global mutable state
 const instances = new Map<string, BrowserManager>();
-let currentSessionId = "default";
 
-export function setCurrentBrowserSession(sessionId: string): void {
-  currentSessionId = sessionId;
-}
-
-export function getBrowserManager(): BrowserManager {
-  let instance = instances.get(currentSessionId);
+/**
+ * Get browser manager for a specific session. Thread-safe — no global state.
+ * Each caller passes the session ID explicitly to avoid race conditions.
+ */
+export function getBrowserManager(sessionId: string = "default"): BrowserManager {
+  let instance = instances.get(sessionId);
   if (!instance) {
     instance = new BrowserManager();
-    instances.set(currentSessionId, instance);
+    instances.set(sessionId, instance);
   }
   return instance;
 }
 
-export async function closeBrowser(): Promise<void> {
-  const instance = instances.get(currentSessionId);
+export async function closeBrowser(sessionId: string = "default"): Promise<void> {
+  const instance = instances.get(sessionId);
   if (instance) {
     await instance.close();
-    instances.delete(currentSessionId);
+    instances.delete(sessionId);
   }
 }
 
@@ -582,4 +617,9 @@ export async function closeAllBrowsers(): Promise<void> {
     await instance.close();
     instances.delete(id);
   }
+}
+
+// Backwards compat — no-op, session ID now passed directly
+export function setCurrentBrowserSession(_sessionId: string): void {
+  // Deprecated: session ID is now passed directly to getBrowserManager/closeBrowser
 }

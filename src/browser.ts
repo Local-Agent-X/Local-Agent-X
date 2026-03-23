@@ -271,18 +271,19 @@ export class BrowserManager {
     await page.waitForTimeout(1000);
 
     const title = await page.title();
-    const text = await this.extractText();
-    return `Navigated to: ${page.url()}\nStatus: ${status}\nTitle: ${title}\nEngine: ${this.currentEngine}\n\n${text}`;
+    // Auto-snapshot so agent sees interactive elements immediately
+    const snap = await this.snapshot();
+    return `Navigated to: ${page.url()}\nStatus: ${status}\nTitle: ${title}\n\n${snap}`;
   }
 
-  /** Click an element by CSS selector. */
+  /** Click an element by CSS selector. Auto-snapshots after. */
   async click(selector: string): Promise<string> {
     const page = await this.getPage();
     await page.waitForSelector(selector, { state: "visible", timeout: 5000 });
     await page.click(selector, { timeout: ACTION_TIMEOUT });
-    await page.waitForTimeout(500);
-    const title = await page.title();
-    return `Clicked: ${selector}\nPage: ${page.url()}\nTitle: ${title}`;
+    await page.waitForTimeout(1000);
+    const snap = await this.snapshot();
+    return `Clicked: ${selector}\nPage: ${page.url()}\n\n${snap}`;
   }
 
   /** Fill a text input by CSS selector. */
@@ -393,7 +394,7 @@ export class BrowserManager {
     return `Page: ${title} (${url})\n${lines.length} elements:\n\n${lines.join("\n")}`;
   }
 
-  /** Click an element by ref number (from snapshot). */
+  /** Click an element by ref number (from snapshot). Auto-snapshots after click. */
   async clickByRef(ref: number): Promise<string> {
     const page = await this.getPage();
     const info = this.refMap.get(ref);
@@ -410,16 +411,19 @@ export class BrowserManager {
       const textLocator = page.getByText(info.name, { exact: false });
       if ((await textLocator.count()) > 0) {
         await textLocator.first().click({ timeout: ACTION_TIMEOUT });
-        await page.waitForTimeout(500);
-        return `Clicked "${info.name}" (found by text).\nPage: ${page.url()}`;
+        await page.waitForTimeout(1000);
+        // Auto-snapshot so agent sees what changed
+        const snap = await this.snapshot();
+        return `Clicked "${info.name}" (found by text).\nPage: ${page.url()}\n\n${snap}`;
       }
       return `Could not find element [${ref}] ${info.role} "${info.name}" on the page. Page may have changed — take a new snapshot.`;
     }
 
     await locator.first().click({ timeout: ACTION_TIMEOUT });
-    await page.waitForTimeout(500);
-    const title = await page.title();
-    return `Clicked [${ref}] ${info.role} "${info.name}"\nPage: ${page.url()}\nTitle: ${title}`;
+    await page.waitForTimeout(1000);
+    // Auto-snapshot so agent sees what changed after click
+    const snap = await this.snapshot();
+    return `Clicked [${ref}] ${info.role} "${info.name}"\nPage: ${page.url()}\n\n${snap}`;
   }
 
   /** Fill an element by ref number. */
@@ -439,7 +443,7 @@ export class BrowserManager {
     return `Filled [${ref}] ${info.role} "${info.name}" with value (${value.length} chars)`;
   }
 
-  /** Click by visible text content (fallback when refs aren't available). */
+  /** Click by visible text content (fallback when refs aren't available). Auto-snapshots after. */
   async clickByText(text: string): Promise<string> {
     const page = await this.getPage();
     const locator = page.getByText(text, { exact: false });
@@ -450,15 +454,17 @@ export class BrowserManager {
         const roleLocator = page.getByRole(role as any, { name: text, exact: false });
         if ((await roleLocator.count()) > 0) {
           await roleLocator.first().click({ timeout: ACTION_TIMEOUT });
-          await page.waitForTimeout(500);
-          return `Clicked ${role} "${text}"\nPage: ${page.url()}`;
+          await page.waitForTimeout(1000);
+          const snap = await this.snapshot();
+          return `Clicked ${role} "${text}"\nPage: ${page.url()}\n\n${snap}`;
         }
       }
       return `No element with text "${text}" found on the page.`;
     }
     await locator.first().click({ timeout: ACTION_TIMEOUT });
-    await page.waitForTimeout(500);
-    return `Clicked text "${text}"\nPage: ${page.url()}`;
+    await page.waitForTimeout(1000);
+    const snap = await this.snapshot();
+    return `Clicked text "${text}"\nPage: ${page.url()}\n\n${snap}`;
   }
 
   /** Extract visible text from the page or a specific selector. */

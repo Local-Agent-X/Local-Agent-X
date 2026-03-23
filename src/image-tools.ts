@@ -1,7 +1,6 @@
 import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "./types.js";
-import { getApiKey, loadTokens } from "./auth.js";
 
 function ok(content: string): ToolResult {
   return { content };
@@ -10,17 +9,22 @@ function err(content: string): ToolResult {
   return { content, isError: true };
 }
 
+const SD_SERVER_URL = "http://127.0.0.1:7860";
+
 /**
- * Image generation via OpenAI DALL-E API.
- * Uses the same OAuth token as the chat (Codex/ChatGPT subscription).
+ * Image generation via local Stable Diffusion server.
+ * The SD server runs on port 7860 and must be started separately:
+ *   python workspace/sd-server/server.py
+ *
+ * Falls back to a helpful error if the server isn't running.
  */
 const generateImageTool: ToolDefinition = {
   name: "generate_image",
   description:
-    "Generate an image from a text prompt using DALL-E. Returns a viewable URL and saves it locally. " +
-    "Use detailed, descriptive prompts for best results. " +
-    "Examples: 'a cyberpunk city at night, neon lights reflecting on wet streets', " +
-    "'a golden retriever wearing sunglasses sitting on a beach at sunset, photorealistic'.",
+    "Generate an image from a text prompt using local Stable Diffusion (runs on your GPU). " +
+    "The SD server must be running on port 7860. If not running, use bash to start it: " +
+    "'python workspace/sd-server/server.py' (first run downloads ~4GB model). " +
+    "Use detailed prompts for best results. Supports custom size, steps, and guidance scale.",
   parameters: {
     type: "object",
     properties: {
@@ -28,20 +32,21 @@ const generateImageTool: ToolDefinition = {
         type: "string",
         description: "Detailed text description of the image to generate",
       },
-      size: {
-        type: "string",
-        enum: ["1024x1024", "1024x1792", "1792x1024"],
-        description: "Image size (default: 1024x1024). 1024x1792 for portrait, 1792x1024 for landscape.",
+      width: {
+        type: "number",
+        description: "Image width in pixels (default 512, max 1024)",
       },
-      quality: {
-        type: "string",
-        enum: ["standard", "hd"],
-        description: "Image quality — 'hd' for more detail (default: standard)",
+      height: {
+        type: "number",
+        description: "Image height in pixels (default 512, max 1024)",
       },
-      style: {
-        type: "string",
-        enum: ["vivid", "natural"],
-        description: "vivid = hyper-real/dramatic, natural = more realistic (default: vivid)",
+      steps: {
+        type: "number",
+        description: "Number of diffusion steps (default 25, more = higher quality but slower)",
+      },
+      guidance: {
+        type: "number",
+        description: "Guidance scale — how closely to follow the prompt (default 7.5, higher = more literal)",
       },
     },
     required: ["prompt"],
@@ -50,88 +55,60 @@ const generateImageTool: ToolDefinition = {
     const prompt = String(args.prompt || "");
     if (!prompt.trim()) return err("Prompt is required.");
 
-    const size = String(args.size || "1024x1024");
-    const quality = String(args.quality || "standard");
-    const style = String(args.style || "vivid");
+    const width = Math.min(1024, Math.max(256, Number(args.width) || 512));
+    const height = Math.min(1024, Math.max(256, Number(args.height) || 512));
+    const steps = Math.min(50, Math.max(10, Number(args.steps) || 25));
+    const guidance = Number(args.guidance) || 7.5;
+
+    // Check if SD server is running
+    try {
+      const healthRes = await fetch(`${SD_SERVER_URL}/health`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!healthRes.ok) throw new Error("not ok");
+    } catch {
+      return err(
+        "Stable Diffusion server is not running.\n" +
+        "Start it with bash: python workspace/sd-server/server.py\n" +
+        "(First run downloads the model ~4GB, takes a few minutes)"
+      );
+    }
 
     try {
-      // Get API key (same OAuth token used for chat)
-      const apiKey = await getApiKey();
-
-      const res = await fetch("https://api.openai.com/v1/images/generations", {
+      const res = await fetch(`${SD_SERVER_URL}/generate`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "dall-e-3",
-          prompt,
-          n: 1,
-          size,
-          quality,
-          style,
-          response_format: "url",
-        }),
-        signal: AbortSignal.timeout(120_000), // 2 min timeout
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, width, height, steps, guidance }),
+        signal: AbortSignal.timeout(120_000), // 2 min timeout for generation
       });
 
       if (!res.ok) {
         const errBody = await res.text();
-        // Check for specific errors
-        if (res.status === 401 || res.status === 403) {
-          return err(
-            "DALL-E access denied — your OpenAI account may not have image generation enabled. " +
-            "Check your OpenAI plan at https://platform.openai.com/account/billing"
-          );
-        }
-        if (res.status === 429) {
-          return err("Rate limited — wait a moment and try again.");
-        }
-        return err(`DALL-E error ${res.status}: ${errBody.slice(0, 300)}`);
+        return err(`Image generation failed: ${errBody.slice(0, 300)}`);
       }
 
       const data = (await res.json()) as {
-        data: Array<{ url: string; revised_prompt?: string }>;
+        filename: string;
+        path: string;
+        size: number;
+        width: number;
+        height: number;
+        prompt: string;
       };
 
-      if (!data.data || data.data.length === 0) {
-        return err("DALL-E returned no images.");
-      }
-
-      const imageUrl = data.data[0].url;
-      const revisedPrompt = data.data[0].revised_prompt || prompt;
-
-      // Download and save locally
-      const imgRes = await fetch(imageUrl, {
-        signal: AbortSignal.timeout(30_000),
-      });
-      const buffer = Buffer.from(await imgRes.arrayBuffer());
-
-      const imagesDir = join(process.cwd(), "workspace", "images");
-      if (!existsSync(imagesDir)) mkdirSync(imagesDir, { recursive: true });
-
-      const safeName = prompt
-        .replace(/[^a-zA-Z0-9_-]/g, "_")
-        .slice(0, 40);
-      const filename = `${safeName}_${Date.now()}.png`;
-      const filePath = join(imagesDir, filename);
-
-      writeFileSync(filePath, buffer);
-
-      const localUrl = `http://127.0.0.1:4800/images/${filename}`;
+      const localUrl = `http://127.0.0.1:4800/images/${data.filename}`;
 
       return ok(
         `Image generated!\n` +
-          `Prompt: ${revisedPrompt}\n` +
-          `Size: ${size} | Quality: ${quality} | Style: ${style}\n` +
-          `View: ${localUrl}\n` +
-          `Saved: workspace/images/${filename}`
+        `Prompt: ${prompt}\n` +
+        `Size: ${data.width}x${data.height} | Steps: ${steps}\n` +
+        `View: ${localUrl}\n` +
+        `Saved: workspace/images/${data.filename}`
       );
     } catch (e) {
       const msg = (e as Error).message;
       if (msg.includes("timeout")) {
-        return err("Image generation timed out — DALL-E may be busy. Try again.");
+        return err("Image generation timed out (>2 min). Try fewer steps or smaller size.");
       }
       return err(`Image generation failed: ${msg}`);
     }

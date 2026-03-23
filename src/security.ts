@@ -77,6 +77,25 @@ export class SecurityLayer {
   }
 
   private evaluateFileAccess(action: string, path: string): SecurityDecision {
+    // Block writes/edits to the agent's own source code
+    if (action === "write" || action === "edit") {
+      const selfProtectedPaths = [
+        /[/\\]src[/\\]/i,
+        /[/\\]public[/\\]/i,
+        /[/\\]package\.json$/i,
+        /[/\\]tsconfig\.json$/i,
+        /[/\\]\.env/i,
+      ];
+      for (const pattern of selfProtectedPaths) {
+        if (pattern.test(path)) {
+          return {
+            allowed: false,
+            reason: `Blocked: agent cannot modify its own code (${path}). Use the workspace/ directory instead.`,
+          };
+        }
+      }
+    }
+
     // Check sensitive paths
     for (const pattern of SENSITIVE_PATTERNS) {
       if (pattern.test(path)) {

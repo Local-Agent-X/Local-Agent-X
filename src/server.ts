@@ -3,11 +3,18 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { runAgent } from "./agent.js";
-import { allTools } from "./tools.js";
+import { allTools, createHttpRequestTool } from "./tools.js";
 import { SecurityLayer } from "./security.js";
 import { getApiKey } from "./auth.js";
 import { SessionStore, MemoryIndex, createMemoryTools } from "./memory.js";
+import { SecretsStore } from "./secrets.js";
+import { createSecretTools } from "./secret-tools.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
+
+// Session ID validation: alphanumeric + dash/underscore, max 64 chars
+function isValidSessionId(id: string): boolean {
+  return /^[a-zA-Z0-9_-]{1,64}$/.test(id);
+}
 
 function jsonResponse(res: ServerResponse, status: number, data: unknown) {
   res.writeHead(status, {
@@ -40,8 +47,25 @@ export function startServer(config: SAXConfig) {
   const memoryIndex = new MemoryIndex(dataDir);
   const memoryTools = createMemoryTools(memoryIndex);
 
-  // Combine file tools + memory tools
-  const tools = [...allTools, ...memoryTools];
+  // Initialize secrets store
+  const secretsStore = new SecretsStore(dataDir);
+
+  // Mutable ref so secret tools can emit SSE events during the active request
+  let activeOnEvent: ((event: ServerEvent) => void) | undefined;
+  const secretTools = createSecretTools(secretsStore, undefined);
+  // Patch request_secret to use the active SSE writer
+  const origExecute = secretTools[0].execute;
+  secretTools[0].execute = async (args, signal) => {
+    const { createSecretTools: factory } = await import("./secret-tools.js");
+    const patched = factory(secretsStore, activeOnEvent);
+    return patched[0].execute(args, signal);
+  };
+
+  // HTTP request tool with secrets resolution
+  const httpRequestTool = createHttpRequestTool(secretsStore);
+
+  // Combine all tools
+  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools];
 
   // In-memory session cache (backed by disk)
   const sessions = new Map<string, Session>();
@@ -123,6 +147,10 @@ export function startServer(config: SAXConfig) {
     // Get session
     if (method === "GET" && url.pathname.startsWith("/api/sessions/")) {
       const id = url.pathname.split("/").pop()!;
+      if (!isValidSessionId(id)) {
+        jsonResponse(res, 400, { error: "Invalid session ID" });
+        return;
+      }
       const session = getOrCreateSession(id);
       jsonResponse(res, 200, session);
       return;
@@ -131,6 +159,10 @@ export function startServer(config: SAXConfig) {
     // Delete session
     if (method === "DELETE" && url.pathname.startsWith("/api/sessions/")) {
       const id = url.pathname.split("/").pop()!;
+      if (!isValidSessionId(id)) {
+        jsonResponse(res, 400, { error: "Invalid session ID" });
+        return;
+      }
       sessions.delete(id);
       sessionStore.delete(id);
       jsonResponse(res, 200, { ok: true });
@@ -155,16 +187,94 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // Memory recall (entity/temporal/kind queries)
+    if (method === "GET" && url.pathname === "/api/memory/recall") {
+      const entity = url.searchParams.get("entity") || undefined;
+      const kind = url.searchParams.get("kind") as import("./memory.js").FactKind | undefined;
+      const since = url.searchParams.get("since");
+
+      let facts;
+      if (entity) {
+        facts = memoryIndex.recallByEntity(entity);
+      } else if (kind) {
+        facts = memoryIndex.recallByKind(kind);
+      } else if (since) {
+        facts = memoryIndex.recallByTime(new Date(since));
+      } else {
+        jsonResponse(res, 400, { error: "Provide entity, kind, or since parameter" });
+        return;
+      }
+      jsonResponse(res, 200, facts);
+      return;
+    }
+
+    // Memory reflect (trigger reflection cycle)
+    if (method === "POST" && url.pathname === "/api/memory/reflect") {
+      let body: Record<string, unknown>;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        jsonResponse(res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+      const sinceDays = (body.since_days as number) || 7;
+      const result = await memoryIndex.reflect(sinceDays);
+      jsonResponse(res, 200, result);
+      return;
+    }
+
+    // ── Secrets API ──
+
+    // List secrets (names + metadata only, never values)
+    if (method === "GET" && url.pathname === "/api/secrets") {
+      jsonResponse(res, 200, secretsStore.list());
+      return;
+    }
+
+    // Add or update a secret
+    if (method === "POST" && url.pathname === "/api/secrets") {
+      const body = JSON.parse(await readBody(req)) as {
+        name?: string;
+        value?: string;
+        service?: string;
+      };
+      const name = body.name?.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+      if (!name || !body.value) {
+        jsonResponse(res, 400, { error: "name and value are required" });
+        return;
+      }
+      secretsStore.set(name, body.value, body.service);
+      jsonResponse(res, 200, { ok: true, name });
+      return;
+    }
+
+    // Delete a secret
+    if (method === "DELETE" && url.pathname.startsWith("/api/secrets/")) {
+      const name = decodeURIComponent(url.pathname.split("/").pop()!);
+      const existed = secretsStore.delete(name);
+      jsonResponse(res, 200, { ok: true, deleted: existed });
+      return;
+    }
+
     // Chat (SSE streaming)
     if (method === "POST" && url.pathname === "/api/chat") {
-      const body = JSON.parse(await readBody(req));
-      const { message, sessionId = "default" } = body as {
-        message: string;
-        sessionId?: string;
-      };
+      let body: Record<string, unknown>;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        jsonResponse(res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+      const message = body.message as string | undefined;
+      const sessionId = (body.sessionId as string) || "default";
 
       if (!message) {
         jsonResponse(res, 400, { error: "message is required" });
+        return;
+      }
+
+      if (!isValidSessionId(sessionId)) {
+        jsonResponse(res, 400, { error: "Invalid session ID" });
         return;
       }
 
@@ -191,6 +301,10 @@ export function startServer(config: SAXConfig) {
         const tokens = loadTokens();
         const provider = tokens && !config.openaiApiKey ? ("codex" as const) : ("xai" as const);
 
+        // Wire up SSE writer so request_secret can emit to the active stream
+        const onEvent = (event: ServerEvent) => sseWrite(res, event);
+        activeOnEvent = onEvent;
+
         const result = await runAgent(message, session.messages, {
           apiKey,
           model: provider === "codex" ? "gpt-5.3-codex" : config.model,
@@ -200,8 +314,10 @@ export function startServer(config: SAXConfig) {
           security,
           maxIterations: config.maxIterations,
           temperature: config.temperature,
-          onEvent: (event) => sseWrite(res, event),
+          onEvent,
         });
+
+        activeOnEvent = undefined;
 
         // Update session (skip system prompt)
         session.messages = result.messages.filter((m) => m.role !== "system");

@@ -196,6 +196,141 @@ const webFetchTool: ToolDefinition = {
   },
 };
 
+// ── HTTP Request (Full API Integration) ──
+// Created via factory so it can resolve {{SECRET_NAME}} placeholders from the secrets store.
+
+import type { SecretsStore } from "./secrets.js";
+
+export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
+  return {
+    name: "http_request",
+    description:
+      "Make a full HTTP request to any API. Supports all methods, custom headers, authentication, and request bodies. " +
+      "Use {{SECRET_NAME}} syntax in header values to securely inject stored secrets (e.g. \"Authorization\": \"Bearer {{GITHUB_TOKEN}}\"). " +
+      "Use request_secret first if the needed secret isn't stored yet. " +
+      "Use this to integrate with external services (GitHub, Slack, Jira, Linear, Discord, REST/GraphQL APIs, etc.).",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Full URL to request" },
+        method: {
+          type: "string",
+          description: "HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS (default: GET)",
+        },
+        headers: {
+          type: "object",
+          description:
+            'Custom headers as key-value pairs. Use {{SECRET_NAME}} for stored secrets. Example: { "Authorization": "Bearer {{GITHUB_TOKEN}}" }',
+        },
+        body: {
+          type: "string",
+          description:
+            "Request body as a string. Supports {{SECRET_NAME}} placeholders. For JSON APIs, pass a JSON string and set Content-Type header to application/json.",
+        },
+        timeout: {
+          type: "number",
+          description: "Timeout in milliseconds (default: 30000 = 30s, max: 120000 = 2min)",
+        },
+      },
+      required: ["url"],
+    },
+    async execute(args) {
+      const url = String(args.url);
+      const method = String(args.method || "GET").toUpperCase();
+      const timeout = Math.min((args.timeout as number) || 30_000, 120_000);
+
+      const validMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+      if (!validMethods.includes(method)) {
+        return err(`Invalid HTTP method: ${method}. Must be one of: ${validMethods.join(", ")}`);
+      }
+
+      // Build headers, resolving secret placeholders
+      const headers: Record<string, string> = {
+        "User-Agent": "SecretAgentX/0.1",
+      };
+      if (args.headers && typeof args.headers === "object") {
+        for (const [key, value] of Object.entries(args.headers as Record<string, unknown>)) {
+          let resolved = String(value);
+          if (secrets) {
+            // Check for missing secrets before resolving
+            const missing = secrets.findMissing(resolved);
+            if (missing.length > 0) {
+              return err(
+                `Missing secrets: ${missing.join(", ")}. Use request_secret to ask the user for these credentials first.`
+              );
+            }
+            resolved = secrets.resolve(resolved);
+          }
+          headers[String(key)] = resolved;
+        }
+      }
+
+      // Resolve secrets in body too
+      let bodyStr = args.body ? String(args.body) : undefined;
+      if (bodyStr && secrets) {
+        const missing = secrets.findMissing(bodyStr);
+        if (missing.length > 0) {
+          return err(
+            `Missing secrets in body: ${missing.join(", ")}. Use request_secret to ask the user for these credentials first.`
+          );
+        }
+        bodyStr = secrets.resolve(bodyStr);
+      }
+
+      // Build fetch options
+      const fetchOpts: RequestInit = {
+        method,
+        headers,
+        signal: AbortSignal.timeout(timeout),
+      };
+
+      // Attach body for methods that support it
+      if (bodyStr && method !== "GET" && method !== "HEAD") {
+        fetchOpts.body = bodyStr;
+        if (!headers["Content-Type"] && !headers["content-type"]) {
+          headers["Content-Type"] = "application/json";
+        }
+      }
+
+      try {
+        const res = await fetch(url, fetchOpts);
+
+        const statusLine = `${res.status} ${res.statusText}`;
+
+        const resHeaders: string[] = [];
+        res.headers.forEach((value, key) => {
+          resHeaders.push(`${key}: ${value}`);
+        });
+
+        if (method === "HEAD") {
+          return ok(`HTTP ${statusLine}\n\n${resHeaders.join("\n")}`);
+        }
+
+        let body = await res.text();
+
+        const contentType = res.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+          try {
+            body = JSON.stringify(JSON.parse(body), null, 2);
+          } catch {
+            // Keep raw body
+          }
+        }
+
+        const MAX_CHARS = 100_000;
+        if (body.length > MAX_CHARS) {
+          body = body.slice(0, MAX_CHARS) + `\n\n[Truncated at ${MAX_CHARS} chars]`;
+        }
+
+        const output = `HTTP ${statusLine}\n\n${body}`;
+        return res.ok ? ok(output) : err(output);
+      } catch (e) {
+        return err(`HTTP request failed: ${(e as Error).message}`);
+      }
+    },
+  };
+}
+
 // ── Export All ──
 
 export const allTools: ToolDefinition[] = [readTool, writeTool, editTool, bashTool, webFetchTool];

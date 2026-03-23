@@ -55,6 +55,32 @@ const BLOCKED_COMMANDS = [
   /\bcurl\b.*\|/i,
   /\bwget\b.*\|/i,
   /\|.*\b(bash|sh|cmd|powershell)\b/i,
+  // ── Shell-as-exfiltration: block network clients entirely ──
+  // These can send data to arbitrary hosts, bypassing all HTTP/SSRF controls.
+  // The agent should use http_request (which has SSRF checks, DNS pinning,
+  // content wrapping, and audit logging) instead of raw shell network tools.
+  /\bcurl\s/i,                              // curl (any use)
+  /\bwget\s/i,                              // wget (any use)
+  /\bnc\s/i,                                // netcat
+  /\bncat\s/i,                              // nmap netcat
+  /\bsocat\s/i,                             // socat
+  /\btelnet\s/i,                            // telnet
+  /\bssh\s/i,                               // ssh (outbound)
+  /\bscp\s/i,                               // scp
+  /\bsftp\s/i,                              // sftp
+  /\brsync\s/i,                             // rsync
+  /\bftp\s/i,                               // ftp
+  /Invoke-WebRequest\b/i,                   // PowerShell web
+  /Invoke-RestMethod\b/i,                   // PowerShell REST
+  /\bIwr\b/i,                               // PowerShell alias
+  /\bIrm\b/i,                               // PowerShell alias
+  /\bStart-BitsTransfer\b/i,               // PowerShell BITS
+  /\bNet\.WebClient\b/i,                    // .NET web client
+  /\bSystem\.Net\.Http/i,                   // .NET HTTP
+  /\brequests\.(get|post|put|delete)\b/i,   // Python requests
+  /\burllib\.(request|urlopen)\b/i,         // Python urllib
+  /\bhttpx?\./i,                            // Python httpx
+  /\baiohttp\b/i,                           // Python aiohttp
 ];
 
 // ── SSRF: IP address validation helpers ──

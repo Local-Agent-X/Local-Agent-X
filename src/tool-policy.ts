@@ -207,43 +207,78 @@ export class ToolPolicy {
 // ── Default policy ──
 
 const DEFAULT_POLICY: ToolPolicyConfig = {
-  defaultDecision: "allow",
+  // DEFAULT-DENY: everything is blocked unless explicitly allowed.
+  // This is the enterprise-safe posture. Users can override via ~/.sax/tool-policy.json.
+  defaultDecision: "deny",
   rules: [
-    // Always deny these dangerous tools/patterns
+    // ── Explicitly ALLOWED tools (safe by design) ──
+
+    // File operations — safe, gated by SecurityLayer path checks
+    { id: "allow-read", tool: "read", decision: "allow", reason: "File read (path-checked by SecurityLayer)", priority: 50 },
+    { id: "allow-write", tool: "write", decision: "allow", reason: "File write (path-checked by SecurityLayer)", priority: 50 },
+    { id: "allow-edit", tool: "edit", decision: "allow", reason: "File edit (path-checked by SecurityLayer)", priority: 50 },
+
+    // Memory tools — safe, internal only
+    { id: "allow-memory", tool: "memory_*", decision: "allow", reason: "Memory operations (internal)", priority: 50 },
+
+    // Request secret — triggers UI prompt, user confirms
+    { id: "allow-request-secret", tool: "request_secret", decision: "allow", reason: "Secret request (user confirms via UI)", priority: 50 },
+
+    // ── ALLOWED but RATE-LIMITED tools (can be abused) ──
+
+    // Shell — rate limited, gated by SecurityLayer command checks
     {
-      id: "deny-eval-browser",
+      id: "allow-bash-limited",
+      tool: "bash",
+      decision: "allow",
+      reason: "Shell allowed (rate limited, command-checked)",
+      priority: 40,
+      constraints: { maxCallsPerSession: 30 },
+    },
+
+    // HTTP — rate limited, gated by SSRF + DNS pinning
+    {
+      id: "allow-http-limited",
+      tool: "http_request",
+      decision: "allow",
+      reason: "HTTP allowed (rate limited, SSRF-checked, content-wrapped)",
+      priority: 40,
+      constraints: { maxCallsPerSession: 60 },
+    },
+
+    // Web fetch — rate limited, simpler than http_request
+    {
+      id: "allow-webfetch-limited",
+      tool: "web_fetch",
+      decision: "allow",
+      reason: "Web fetch allowed (rate limited, SSRF-checked, content-wrapped)",
+      priority: 40,
+      constraints: { maxCallsPerSession: 60 },
+    },
+
+    // Browser — rate limited, all actions except evaluate
+    {
+      id: "allow-browser",
+      tool: "browser",
+      decision: "allow",
+      reason: "Browser allowed (rate limited)",
+      priority: 40,
+      constraints: { maxCallsPerSession: 100 },
+    },
+
+    // ── FLAGGED tools (allowed but logged as elevated risk) ──
+
+    {
+      id: "flag-browser-evaluate",
       tool: "browser",
       action: "evaluate",
       decision: "confirm",
       reason: "Browser JS evaluation — flagged for review",
       priority: 100,
     },
-    // Rate limit bash to 50 calls per session
-    {
-      id: "rate-limit-bash",
-      tool: "bash",
-      decision: "allow",
-      reason: "Shell allowed (rate limited)",
-      priority: 50,
-      constraints: { maxCallsPerSession: 50 },
-    },
-    // Rate limit http to 100 calls per session
-    {
-      id: "rate-limit-http",
-      tool: "http_request",
-      decision: "allow",
-      reason: "HTTP allowed (rate limited)",
-      priority: 50,
-      constraints: { maxCallsPerSession: 100 },
-    },
-    // Allow everything else by default
-    {
-      id: "allow-all",
-      tool: "*",
-      decision: "allow",
-      reason: "Default allow",
-      priority: 0,
-    },
+
+    // ── Everything else is DENIED by default ──
+    // No catch-all "allow *" rule. Unknown tools are blocked.
   ],
 };
 

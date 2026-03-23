@@ -84,29 +84,57 @@ export class ToolChainAnalyzer {
     return { blocked: false };
   }
 
+  /** Check if a file path is inherently sensitive (regardless of content) */
+  private isPathSensitive(filePath: string): boolean {
+    const p = filePath.toLowerCase().replace(/\\/g, "/");
+    const sensitivePatterns = [
+      /\.ssh\//,  /\.aws\//, /\.gnupg\//, /\.kube\//, /\.env$/,
+      /\.env\./, /id_rsa/, /id_ed25519/, /credentials/, /\.netrc/,
+      /\.npmrc/, /\.pypirc/, /auth\.json/, /secrets?\./, /password/,
+      /\.git\/config/, /config\.json$/, /token/, /\.sax\//,
+      /\.pem$/, /\.key$/, /\.p12$/, /\.pfx$/,
+      // Any file outside workspace is potentially sensitive
+    ];
+    return sensitivePatterns.some(pat => pat.test(p));
+  }
+
+  /** Check if a shell command accesses sensitive resources */
+  private isCommandSensitive(command: string): boolean {
+    const c = command.toLowerCase();
+    return /\b(cat|type|more|less|head|tail|get-content)\b/.test(c) &&
+      (this.isPathSensitive(c) || /\/etc\//.test(c) || /registry/.test(c));
+  }
+
   private classifyAccess(
     toolName: string,
     args: Record<string, unknown>,
     classification: DataClassification
   ): DataAccess | null {
-    const sensitive = classification.labels.length > 0;
+    // Sensitive by CONTENT (regex classification) OR by SOURCE PATH
+    const contentSensitive = classification.labels.length > 0;
     switch (toolName) {
-      case "read":
-        return { type: "file_read", target: String(args.path || ""), sensitive, timestamp: Date.now() };
+      case "read": {
+        const path = String(args.path || "");
+        const sensitive = contentSensitive || this.isPathSensitive(path);
+        return { type: "file_read", target: path, sensitive, timestamp: Date.now() };
+      }
       case "write":
       case "edit":
-        return { type: "file_write", target: String(args.path || ""), sensitive, timestamp: Date.now() };
-      case "bash":
-        return { type: "shell", target: String(args.command || ""), sensitive, timestamp: Date.now() };
+        return { type: "file_write", target: String(args.path || ""), sensitive: contentSensitive, timestamp: Date.now() };
+      case "bash": {
+        const cmd = String(args.command || "");
+        const sensitive = contentSensitive || this.isCommandSensitive(cmd);
+        return { type: "shell", target: cmd, sensitive, timestamp: Date.now() };
+      }
       case "web_fetch":
-        return { type: "web_fetch", target: String(args.url || ""), sensitive, timestamp: Date.now() };
+        return { type: "web_fetch", target: String(args.url || ""), sensitive: contentSensitive, timestamp: Date.now() };
       case "http_request":
-        return { type: "http_request", target: String(args.url || ""), sensitive, timestamp: Date.now() };
+        return { type: "http_request", target: String(args.url || ""), sensitive: contentSensitive, timestamp: Date.now() };
       case "browser":
-        return { type: "browser", target: String(args.url || args.action || ""), sensitive, timestamp: Date.now() };
+        return { type: "browser", target: String(args.url || args.action || ""), sensitive: contentSensitive, timestamp: Date.now() };
       case "memory_search":
       case "memory_get":
-        return { type: "memory", target: String(args.query || args.path || ""), sensitive, timestamp: Date.now() };
+        return { type: "memory", target: String(args.query || args.path || ""), sensitive: true, timestamp: Date.now() }; // Memory is always sensitive
       case "request_secret":
         return { type: "secret", target: String(args.name || ""), sensitive: true, timestamp: Date.now() };
       default:
@@ -376,6 +404,8 @@ interface AuditEntry {
   toolName?: string;
   decision: "allow" | "block" | "warn";
   reason: string;
+  role?: string;                    // RBAC role of the caller (operator/user/readonly)
+  controlsApplied?: string[];       // Which security controls evaluated this (SecurityLayer, ToolPolicy, ThreatEngine, etc.)
   threatScore?: number;
   threatLevel?: ThreatLevel;
   dataLabels?: DataLabel[];

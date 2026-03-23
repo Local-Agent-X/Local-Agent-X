@@ -1,19 +1,22 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { hostname, userInfo } from "node:os";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { getOrCreateMasterKey, type KeychainProvider } from "./keychain.js";
 
 /**
  * Encrypted secrets store for API keys and tokens.
  * Secrets are AES-256-GCM encrypted at rest in ~/.sax/secrets.enc
  *
- * Key derivation: scrypt(machine_identity, per_install_random_salt)
- * - Machine identity = hostname + username (binds to this machine)
- * - Per-install salt = 32 random bytes, generated once and stored in ~/.sax/secrets.salt
- * - scrypt params: N=2^15, r=8, p=1 (OWASP recommended)
+ * Master key is stored in the OS keychain (DPAPI on Windows, Keychain on macOS,
+ * libsecret on Linux) rather than derived from machine identity. This means
+ * even with full filesystem access, an attacker can't decrypt without the
+ * user's OS login credentials.
  *
- * This means: even if attacker knows hostname+username, they still need the
- * random salt file. And even with the salt, scrypt is deliberately slow.
+ * Fallback chain:
+ * 1. Windows DPAPI (tied to Windows login)
+ * 2. macOS Keychain (tied to macOS login)
+ * 3. Linux libsecret (tied to desktop session)
+ * 4. Machine-identity derivation (hostname+username+random salt) — last resort
  */
 
 interface SecretEntry {
@@ -33,25 +36,6 @@ interface SecretsFile {
     updatedAt: number;
     encrypted: string; // hex: iv(24) + authTag(32) + ciphertext
   }>;
-}
-
-/** Load or create the per-install random salt */
-function getOrCreateSalt(dataDir: string): Buffer {
-  const saltPath = join(dataDir, "secrets.salt");
-  if (existsSync(saltPath)) {
-    return readFileSync(saltPath);
-  }
-  // Generate 32 bytes of random salt on first use
-  const salt = randomBytes(32);
-  writeFileSync(saltPath, salt, { mode: 0o600 });
-  return salt;
-}
-
-function deriveKey(dataDir: string): Buffer {
-  const identity = `sax-secrets::${hostname()}::${userInfo().username}`;
-  const salt = getOrCreateSalt(dataDir);
-  // scrypt: N=2^14 (16384) — balanced for speed + security
-  return scryptSync(identity, salt, 32, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
 }
 
 function encrypt(plaintext: string, key: Buffer): string {
@@ -76,11 +60,15 @@ export class SecretsStore {
   private filePath: string;
   private key: Buffer;
   private secrets: Map<string, SecretEntry> = new Map();
+  public readonly keychainProvider: KeychainProvider;
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
     this.filePath = join(dataDir, "secrets.enc");
-    this.key = deriveKey(dataDir);
+    const { key, provider } = getOrCreateMasterKey(dataDir);
+    this.key = key;
+    this.keychainProvider = provider;
+    console.log(`[secrets] Encryption key from: ${provider}`);
     this.load();
   }
 

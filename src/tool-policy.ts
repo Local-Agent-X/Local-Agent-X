@@ -277,6 +277,16 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
       constraints: { maxCallsPerSession: 20 },
     },
 
+    // Video generation — rate limited (slow + GPU intensive)
+    {
+      id: "allow-generate-video",
+      tool: "generate_video",
+      decision: "allow",
+      reason: "Video generation allowed (rate limited)",
+      priority: 40,
+      constraints: { maxCallsPerSession: 5 },
+    },
+
     // ── FLAGGED tools (allowed but logged as elevated risk) ──
 
     {

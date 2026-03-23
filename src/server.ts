@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
 import { timingSafeEqual } from "node:crypto";
 import { runAgent } from "./agent.js";
@@ -24,6 +24,7 @@ import { RBACManager, type Role } from "./rbac.js";
 import { createBrowserTools, closeBrowser } from "./browser-tools.js";
 import { closeAllBrowsers } from "./browser.js";
 import { redactCredentials } from "./security.js";
+import { imageTools } from "./image-tools.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 
 // Session ID validation: alphanumeric + dash/underscore, max 64 chars
@@ -185,7 +186,7 @@ export function startServer(config: SAXConfig) {
   let activeBrowserSessionId = "default";
   const browserTools = createBrowserTools(() => activeBrowserSessionId);
 
-  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools];
+  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools];
 
   // In-memory session cache (backed by disk)
   const sessions = new Map<string, Session>();
@@ -542,6 +543,8 @@ export function startServer(config: SAXConfig) {
           security,
           toolPolicy,
           threatEngine,
+          rbac,
+          callerRole: requestRole,
           sessionId,
           maxIterations: config.maxIterations,
           temperature: config.temperature,
@@ -613,14 +616,50 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // Serve generated images (e.g. /images/my_image_123.png)
+    if (method === "GET" && url.pathname.startsWith("/images/")) {
+      const imagesDir = resolve(process.cwd(), "workspace", "images");
+      const imgFile = resolve(imagesDir, url.pathname.replace("/images/", ""));
+      const imgRel = relative(imagesDir, imgFile);
+      if (imgRel.startsWith("..") || imgRel.includes("..")) {
+        json(403, { error: "Path traversal blocked" });
+        return;
+      }
+      if (existsSync(imgFile)) {
+        const ext = imgFile.split(".").pop() || "";
+        const ct: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml" };
+        res.writeHead(200, { "Content-Type": ct[ext] || "application/octet-stream" });
+        res.end(readFileSync(imgFile));
+        return;
+      }
+    }
+
     // Serve workspace apps (e.g. /apps/todo-app/index.html)
     if (method === "GET" && url.pathname.startsWith("/apps/")) {
-      const appsDir = join(process.cwd(), "workspace");
-      const appFile = join(appsDir, url.pathname);
+      const appsDir = resolve(process.cwd(), "workspace");
+      const appFile = resolve(appsDir, "." + url.pathname); // resolve to absolute
+      // Path traversal protection: ensure resolved path stays within workspace
+      const rel = relative(appsDir, appFile);
+      if (rel.startsWith("..") || rel.includes("..")) {
+        json(403, { error: "Path traversal blocked" });
+        return;
+      }
       if (existsSync(appFile)) {
         const ext = appFile.split(".").pop() || "";
         const ct: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", png: "image/png", svg: "image/svg+xml" };
-        res.writeHead(200, { "Content-Type": ct[ext] || "application/octet-stream" });
+        const headers: Record<string, string> = {
+          "Content-Type": ct[ext] || "application/octet-stream",
+        };
+        // CSP for HTML — same policy as dashboard
+        if (ext === "html") {
+          headers["Content-Security-Policy"] =
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
+            "img-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'";
+          headers["X-Content-Type-Options"] = "nosniff";
+          headers["X-Frame-Options"] = "DENY";
+          headers["Referrer-Policy"] = "no-referrer";
+        }
+        res.writeHead(200, headers);
         res.end(readFileSync(appFile));
         return;
       }

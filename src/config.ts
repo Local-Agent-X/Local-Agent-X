@@ -21,6 +21,7 @@ Available tools:
 - memory_get: read a memory file
 - memory_update_profile: update USER.md, HEART.md, IDENTITY.md, or MIND.md
 - memory_stats: memory system statistics
+- generate_image: generate an image from a text prompt (free, via Pollinations AI). Returns a viewable URL.
 
 ## Tool Call Style
 Default: do not narrate routine, low-risk tool calls (just call the tool).

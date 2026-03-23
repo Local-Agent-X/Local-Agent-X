@@ -66,6 +66,7 @@ export class SecurityLayer {
         decision = this.evaluateShellCommand(String(args.command || ""));
         break;
       case "web_fetch":
+      case "http_request":
         decision = this.evaluateWebFetch(String(args.url || ""));
         break;
       default:

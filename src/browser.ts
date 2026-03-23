@@ -277,6 +277,154 @@ export class BrowserManager {
     return `Selected "${selected.join(", ")}" in ${selector}`;
   }
 
+  // ── Accessibility tree snapshot with numbered refs ──
+
+  private refMap = new Map<number, { role: string; name: string }>();
+  private nextRef = 1;
+
+  /**
+   * Build an accessibility snapshot of the page — the key to reliable interaction.
+   * Returns a tree like:
+   *   [1] button "Log in"
+   *   [2] textbox "Username"
+   *   [3] link "Forgot password?"
+   *
+   * The agent says "click ref 1" and we resolve it reliably.
+   */
+  async snapshot(): Promise<string> {
+    const page = await this.getPage();
+    this.refMap.clear();
+    this.nextRef = 1;
+
+    // Build accessibility snapshot by querying interactive elements via JavaScript
+    // This runs in the browser context (page.evaluate), not Node
+    const elements = await page.evaluate(`(() => {
+      const results = [];
+      const interactiveTags = {
+        BUTTON: "button", A: "link", SELECT: "combobox", TEXTAREA: "textbox",
+      };
+
+      const all = document.querySelectorAll(
+        'a, button, input, select, textarea, [role="button"], [role="link"], ' +
+        '[role="menuitem"], [role="tab"], [role="checkbox"], [role="radio"], ' +
+        '[role="switch"], [role="option"], [role="treeitem"], [role="combobox"], ' +
+        '[role="searchbox"], h1, h2, h3, h4, h5, h6'
+      );
+
+      for (const el of all) {
+        if (el.offsetParent === null && el.style.position !== 'fixed') continue;
+        if (el.getAttribute('aria-hidden') === 'true') continue;
+
+        const tag = el.tagName;
+        let role = el.getAttribute('role') || interactiveTags[tag] || "";
+        const type = el.type || "";
+
+        if (tag === 'INPUT') {
+          if (type === 'submit' || type === 'button') role = 'button';
+          else if (type === 'checkbox') role = 'checkbox';
+          else if (type === 'radio') role = 'radio';
+          else role = 'textbox';
+        }
+        if (/^H[1-6]$/.test(tag)) role = 'heading';
+
+        let name = el.getAttribute('aria-label')
+          || el.placeholder
+          || (el.textContent || '').trim().slice(0, 80)
+          || (el.value || '').slice(0, 40)
+          || el.getAttribute('title')
+          || "";
+
+        if (!name && !role) continue;
+        name = name.replace(/\\s+/g, ' ').trim();
+
+        results.push({ role, name, tag, type });
+      }
+      return results;
+    })()`) as Array<{ role: string; name: string; tag: string; type: string }>;
+
+    if (elements.length === 0) return "No interactive elements found.";
+
+    const lines: string[] = [];
+    for (const el of elements) {
+      const ref = this.nextRef++;
+      this.refMap.set(ref, { role: el.role, name: el.name });
+      const typeStr = el.type ? ` (${el.type})` : "";
+      lines.push(`[${ref}] ${el.role} "${el.name}"${typeStr}`);
+    }
+
+    const url = page.url();
+    const title = await page.title();
+    return `Page: ${title} (${url})\n${lines.length} elements:\n\n${lines.join("\n")}`;
+  }
+
+  /** Click an element by ref number (from snapshot). */
+  async clickByRef(ref: number): Promise<string> {
+    const page = await this.getPage();
+    const info = this.refMap.get(ref);
+    if (!info) {
+      return `Ref [${ref}] not found. Use 'snapshot' action first to get current refs.`;
+    }
+
+    // Resolve via getByRole (most reliable cross-DOM method)
+    const locator = page.getByRole(info.role as any, { name: info.name, exact: false });
+    const count = await locator.count();
+
+    if (count === 0) {
+      // Fallback: find by text content
+      const textLocator = page.getByText(info.name, { exact: false });
+      if ((await textLocator.count()) > 0) {
+        await textLocator.first().click({ timeout: ACTION_TIMEOUT });
+        await page.waitForTimeout(500);
+        return `Clicked "${info.name}" (found by text).\nPage: ${page.url()}`;
+      }
+      return `Could not find element [${ref}] ${info.role} "${info.name}" on the page. Page may have changed — take a new snapshot.`;
+    }
+
+    await locator.first().click({ timeout: ACTION_TIMEOUT });
+    await page.waitForTimeout(500);
+    const title = await page.title();
+    return `Clicked [${ref}] ${info.role} "${info.name}"\nPage: ${page.url()}\nTitle: ${title}`;
+  }
+
+  /** Fill an element by ref number. */
+  async fillByRef(ref: number, value: string): Promise<string> {
+    const page = await this.getPage();
+    const info = this.refMap.get(ref);
+    if (!info) {
+      return `Ref [${ref}] not found. Use 'snapshot' action first to get current refs.`;
+    }
+
+    const locator = page.getByRole(info.role as any, { name: info.name, exact: false });
+    if ((await locator.count()) === 0) {
+      return `Could not find element [${ref}] ${info.role} "${info.name}". Take a new snapshot.`;
+    }
+
+    await locator.first().fill(value, { timeout: ACTION_TIMEOUT });
+    return `Filled [${ref}] ${info.role} "${info.name}" with value (${value.length} chars)`;
+  }
+
+  /** Click by visible text content (fallback when refs aren't available). */
+  async clickByText(text: string): Promise<string> {
+    const page = await this.getPage();
+    const locator = page.getByText(text, { exact: false });
+    const count = await locator.count();
+    if (count === 0) {
+      // Try getByRole with the text as name
+      for (const role of ["button", "link", "menuitem", "tab"]) {
+        const roleLocator = page.getByRole(role as any, { name: text, exact: false });
+        if ((await roleLocator.count()) > 0) {
+          await roleLocator.first().click({ timeout: ACTION_TIMEOUT });
+          await page.waitForTimeout(500);
+          return `Clicked ${role} "${text}"\nPage: ${page.url()}`;
+        }
+      }
+      return `No element with text "${text}" found on the page.`;
+    }
+    await locator.first().click({ timeout: ACTION_TIMEOUT });
+    await page.waitForTimeout(500);
+    return `Clicked text "${text}"\nPage: ${page.url()}`;
+  }
+
   /** Extract visible text from the page or a specific selector. */
   async extractText(selector?: string): Promise<string> {
     const page = await this.getPage();

@@ -436,8 +436,10 @@ function toolSummary(name,args){
     case 'browser': {
       const a=args.action||'';
       if(a==='navigate') return `Opening ${args.url||'page'}...`;
-      if(a==='fill') return `Typing into ${args.selector||'field'}...`;
-      if(a==='click') return `Clicking ${args.selector||'element'}...`;
+      if(a==='snapshot') return 'Scanning page elements...';
+      if(a==='fill') return args.ref?`Typing into element [${args.ref}]...`:`Typing into ${args.selector||'field'}...`;
+      if(a==='click') return args.ref?`Clicking element [${args.ref}]...`:`Clicking ${args.selector||'element'}...`;
+      if(a==='click_text') return `Clicking "${args.text||'element'}"...`;
       if(a==='screenshot') return 'Taking screenshot...';
       if(a==='extract') return 'Reading page content...';
       if(a==='evaluate') return 'Running script...';

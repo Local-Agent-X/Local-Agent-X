@@ -430,14 +430,47 @@ function addMessageEl(role,text){
   return div;
 }
 
+function toolSummary(name,args){
+  // Human-friendly one-liner for each tool
+  switch(name){
+    case 'browser': {
+      const a=args.action||'';
+      if(a==='navigate') return `Opening ${args.url||'page'}...`;
+      if(a==='fill') return `Typing into ${args.selector||'field'}...`;
+      if(a==='click') return `Clicking ${args.selector||'element'}...`;
+      if(a==='screenshot') return 'Taking screenshot...';
+      if(a==='extract') return 'Reading page content...';
+      if(a==='evaluate') return 'Running script...';
+      if(a==='close') return 'Closing browser...';
+      if(a==='tabs') return 'Listing open tabs...';
+      if(a==='switch_tab') return `Switching to tab ${args.value||''}...`;
+      return `Browser: ${a}`;
+    }
+    case 'memory_search': return `Searching memory: "${(args.query||'').slice(0,40)}"`;
+    case 'memory_save': return `Saving to ${args.target||'daily'} memory`;
+    case 'memory_recall': return `Recalling ${args.entity||args.kind||'facts'}`;
+    case 'memory_reflect': return 'Reflecting on recent conversations...';
+    case 'memory_update_profile': return `Updating ${args.file||'profile'}`;
+    case 'memory_get': return `Reading ${args.path||'memory file'}`;
+    case 'memory_stats': return 'Checking memory stats';
+    case 'read': return `Reading ${(args.path||'').split(/[/\\]/).pop()||'file'}`;
+    case 'write': return `Writing ${(args.path||'').split(/[/\\]/).pop()||'file'}`;
+    case 'edit': return `Editing ${(args.path||'').split(/[/\\]/).pop()||'file'}`;
+    case 'bash': return `Running: ${(args.command||'').slice(0,50)}`;
+    case 'http_request': return `${(args.method||'GET')} ${(args.url||'').slice(0,50)}`;
+    default: return `${name} ${JSON.stringify(args).slice(0,60)}`;
+  }
+}
 function makeToolCard(name,args){
   const card=document.createElement('div');
   card.className='tool-card';
+  const summary=toolSummary(name,args);
   card.innerHTML=`
     <div class="tool-header" onclick="this.parentElement.classList.toggle('open')">
       <span class="indicator"></span>
       <span class="tool-name">${esc(name)}</span>
-      <span style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(JSON.stringify(args).slice(0,80))}</span>
+      <span style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(summary)}</span>
+      <span style="color:var(--muted);font-size:.65rem">▶</span>
     </div>
     <div class="tool-detail">executing...</div>
   `;

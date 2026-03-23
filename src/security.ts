@@ -244,32 +244,37 @@ export class SecurityLayer {
   // ── Shell Command ──
 
   private evaluateShellCommand(command: string): SecurityDecision {
-    // Check for shell metacharacters (pipes, redirects, command chaining)
-    // These indicate the command is trying to compose operations in a shell,
-    // which opens injection vectors. Reject rather than try to escape.
-    if (SHELL_METACHARACTERS.test(command)) {
-      // Allow single pipes for simple operations like `grep | head`
-      // but block dangerous combinations
-      const stripped = command.replace(/\|/g, ""); // remove pipes for further checking
-      // Still check the full command against blocked patterns
+    // Block non-pipe shell metacharacters outright (command chaining, subshells, redirects)
+    if (/[;&`$(){}<>\r\n]/.test(command)) {
+      return {
+        allowed: false,
+        reason: `Blocked: shell metacharacters detected. Use separate tool calls instead of chaining commands.`,
+      };
+    }
+
+    // Allow at most 2 pipes (e.g., `ls | grep foo | head`). More than that is suspicious.
+    const pipeCount = (command.match(/\|/g) || []).length;
+    if (pipeCount > 2) {
+      return {
+        allowed: false,
+        reason: `Blocked: too many pipes (${pipeCount}). Maximum 2 pipes allowed per command.`,
+      };
+    }
+
+    // Check every segment of a piped command against blocked patterns
+    const segments = command.split("|").map((s) => s.trim());
+    for (const segment of segments) {
       for (const pattern of BLOCKED_COMMANDS) {
-        if (pattern.test(command)) {
+        if (pattern.test(segment)) {
           return {
             allowed: false,
-            reason: `Blocked: command matches dangerous pattern. Avoid shell metacharacters, eval, and piping to shells.`,
+            reason: `Blocked: pipe segment matches dangerous pattern.`,
           };
         }
       }
-      // Pipes alone are ok (e.g., `ls | grep foo`), but chains/redirects are not
-      if (/[;&`$(){}]/.test(command)) {
-        return {
-          allowed: false,
-          reason: `Blocked: shell metacharacters detected (;, &, \`, $, (), {}). Use separate tool calls instead of chaining commands.`,
-        };
-      }
     }
 
-    // Check blocked commands even without metacharacters
+    // Also check the full command (catches patterns that span pipes)
     for (const pattern of BLOCKED_COMMANDS) {
       if (pattern.test(command)) {
         return {
@@ -383,20 +388,24 @@ export class SecurityLayer {
 // Masks secrets in tool output before they reach the LLM/chat
 
 const REDACT_PATTERNS = [
-  // Common API key prefixes
-  /\b(sk-[a-zA-Z0-9]{20,})/g,
-  /\b(ghp_[a-zA-Z0-9]{36,})/g,
-  /\b(github_pat_[a-zA-Z0-9_]{20,})/g,
-  /\b(gho_[a-zA-Z0-9]{36,})/g,
-  /\b(xox[bpas]-[a-zA-Z0-9-]{20,})/g,
-  /\b(glpat-[a-zA-Z0-9_-]{20,})/g,
-  /\b(AKIA[A-Z0-9]{16})/g,
+  // Common API key prefixes (known formats)
+  /\b(sk-[a-zA-Z0-9]{20,})/g,              // OpenAI
+  /\b(ghp_[a-zA-Z0-9]{36,})/g,             // GitHub personal access token
+  /\b(github_pat_[a-zA-Z0-9_]{20,})/g,     // GitHub fine-grained PAT
+  /\b(gho_[a-zA-Z0-9]{36,})/g,             // GitHub OAuth
+  /\b(ghs_[a-zA-Z0-9]{36,})/g,             // GitHub App installation
+  /\b(xox[bpas]-[a-zA-Z0-9-]{20,})/g,      // Slack
+  /\b(glpat-[a-zA-Z0-9_-]{20,})/g,         // GitLab
+  /\b(AKIA[A-Z0-9]{16})/g,                 // AWS Access Key
+  /\b(lin_api_[a-zA-Z0-9]{20,})/g,         // Linear
+  /\b(sk_live_[a-zA-Z0-9]{20,})/g,         // Stripe live
+  /\b(sk_test_[a-zA-Z0-9]{20,})/g,         // Stripe test
+  /\b(sq0[a-z]{3}-[a-zA-Z0-9_-]{20,})/g,   // Square
+  /\b(xai-[a-zA-Z0-9]{20,})/g,             // xAI
   // Bearer tokens in output
   /Bearer\s+([a-zA-Z0-9._\-]{20,})/gi,
-  // Generic long hex/base64 tokens (40+ chars, likely secrets)
-  /\b([a-f0-9]{40,})\b/g,
-  // Key=value patterns
-  /(?:api[_-]?key|token|secret|password|authorization)\s*[:=]\s*["']?([^\s"',]{8,})/gi,
+  // Key=value patterns (only for known sensitive keys)
+  /(?:api[_-]?key|token|secret|password|authorization|access_key|private_key)\s*[:=]\s*["']?([^\s"',]{12,})/gi,
   // PEM private keys
   /-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(RSA\s+)?PRIVATE\s+KEY-----/g,
 ];

@@ -19,6 +19,7 @@ import {
 } from "./memory.js";
 import { SecretsStore } from "./secrets.js";
 import { createSecretTools } from "./secret-tools.js";
+import { ThreatEngine } from "./threat-engine.js";
 import { createBrowserTools, closeBrowser } from "./browser-tools.js";
 import { closeAllBrowsers } from "./browser.js";
 import { redactCredentials } from "./security.js";
@@ -440,8 +441,12 @@ export function startServer(config: SAXConfig) {
           autoSearchContext(memoryIndex, message),
         ]);
 
+        // Initialize threat engine for this session
+        const threatEngine = new ThreatEngine(dataDir, sessionId);
+
+        // Inject canary tokens into system prompt (prompt injection detection)
         const enrichedPrompt =
-          config.systemPrompt + contextBlock + relevantMemories;
+          config.systemPrompt + contextBlock + relevantMemories + threatEngine.getCanaryBlock();
 
         const result = await runAgent(message, session.messages, {
           apiKey,
@@ -451,10 +456,21 @@ export function startServer(config: SAXConfig) {
           tools,
           security,
           toolPolicy,
+          threatEngine,
           sessionId,
           maxIterations: config.maxIterations,
           temperature: config.temperature,
-          onEvent,
+          onEvent: (event) => {
+            // Canary check on streamed text — if canary leaks, LLM is compromised
+            if (event.type === "stream" && event.delta) {
+              const canaryTrip = threatEngine.checkOutput(event.delta);
+              if (canaryTrip) {
+                sseWrite(res, { type: "error", message: "Security alert: prompt injection detected. Response terminated." });
+                return; // Don't forward the compromised text
+              }
+            }
+            onEvent(event);
+          },
         });
 
         activeOnEvent = undefined;

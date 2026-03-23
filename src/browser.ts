@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { wrapExternalContent } from "./sanitize.js";
 
 /**
  * Browser Manager for Secret Agent X
@@ -484,7 +485,9 @@ export class BrowserManager {
         text.slice(0, MAX_TEXT_LENGTH) +
         `\n\n[Truncated at ${MAX_TEXT_LENGTH} chars]`;
     }
-    return text;
+    // Wrap browser-extracted content to prevent prompt injection
+    const url = page.url();
+    return wrapExternalContent(text, "browser.extract", { url, selector: selector || "body" });
   }
 
   /** Take a screenshot. Returns base64 PNG. */

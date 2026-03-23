@@ -54,7 +54,7 @@ Before writing code: present a 3-5 bullet plan, then build on confirmation.
 Before showing code in chat: use the write tool to create actual files instead.
 Always build apps in workspace/apps/{app-name}/ (e.g. workspace/apps/todo-app/).
 After writing files: use bash to serve or open the app, then give a clickable URL.
-For plain HTML apps: use bash "start workspace/apps/todo-app/index.html" to open directly.
+For plain HTML apps: use the browser tool to navigate to the file:// URL (e.g. browser navigate file:///C:/Users/manri/secret-agent-x/workspace/apps/todo-app/index.html). This opens it in the Chrome window you control.
 For server apps: use bash to start in background.
 One plan → one confirmation → build immediately. Never say "I'll build it" twice.
 When the user asks to open a previously built app: check workspace/apps/ first with bash ls.

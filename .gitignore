@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+voice-models/
+*.log
+
+# Auth tokens
+.sax/
+
+# OS
+.DS_Store
+Thumbs.db

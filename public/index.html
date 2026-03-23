@@ -126,9 +126,24 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 #input-box:focus-within{border-color:var(--accent);box-shadow:0 0 8px rgba(0,255,65,.1)}
 #msg-input{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:.9rem;resize:none;max-height:160px;line-height:1.5;font-family:var(--font)}
 #msg-input::placeholder{color:var(--muted)}
+#upload-btn{background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-weight:700;padding:8px 12px;cursor:pointer;font-family:var(--mono);font-size:.8rem;margin-left:10px;transition:all .2s}
+#upload-btn:hover{border-color:var(--accent);color:var(--accent);box-shadow:0 0 10px rgba(0,255,65,.1)}
 #send-btn{background:var(--accent);border:none;border-radius:8px;color:var(--bg);font-weight:700;padding:8px 18px;cursor:pointer;font-family:var(--mono);font-size:.8rem;margin-left:10px;transition:all .2s}
 #send-btn:hover{box-shadow:0 0 14px var(--accent-dim)}
 #send-btn:disabled{opacity:.3;cursor:not-allowed}
+
+/* ── Voice ── */
+#mic-btn{background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);padding:8px 12px;cursor:pointer;font-size:.9rem;margin-left:10px;transition:all .2s;position:relative}
+#mic-btn:hover{border-color:var(--accent);color:var(--accent)}
+#mic-btn.listening{background:rgba(255,51,51,.15);border-color:var(--danger);color:var(--danger);animation:pulse-mic 1.5s infinite}
+#mic-btn.speaking{border-color:var(--accent);color:var(--accent);opacity:.7}
+@keyframes pulse-mic{0%,100%{box-shadow:0 0 0 0 rgba(255,51,51,.3)}50%{box-shadow:0 0 12px 4px rgba(255,51,51,.2)}}
+#voice-indicator{position:fixed;top:12px;right:12px;font-family:var(--mono);font-size:.68rem;padding:5px 10px;border-radius:6px;z-index:1000;display:none;letter-spacing:.5px}
+#voice-indicator.listening{display:block;background:rgba(255,51,51,.15);color:var(--danger);border:1px solid var(--danger)}
+#voice-indicator.speaking{display:block;background:rgba(0,255,65,.1);color:var(--accent);border:1px solid var(--accent)}
+#tts-toggle{position:fixed;top:12px;right:140px;font-family:var(--mono);font-size:.65rem;padding:4px 8px;border-radius:5px;background:var(--surface);border:1px solid var(--border);color:var(--muted);cursor:pointer;z-index:1000;transition:all .15s}
+#tts-toggle:hover{border-color:var(--accent);color:var(--accent)}
+#tts-toggle.active{border-color:var(--accent);color:var(--accent);background:#0f1f0f}
 
 /* ── Secret Request Modal ── */
 #secret-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:10000;align-items:center;justify-content:center}
@@ -184,6 +199,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
   </div>
 </div>
 
+<div id="voice-indicator"></div>
+<button id="tts-toggle" onclick="toggleTTS()" title="Toggle voice responses">VOICE OFF</button>
+
 <div id="main">
   <div id="messages">
     <div id="empty">
@@ -195,6 +213,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
     <div id="input-box">
       <textarea id="msg-input" placeholder="Message Agent X..." rows="1"
         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
+      <input id="file-input" type="file" multiple style="display:none" onchange="handleFileUpload(event)" />
+      <button id="mic-btn" onclick="toggleMic()" title="Voice input (hold Space or click)">&#127908;</button>
+      <button id="upload-btn" onclick="triggerUpload()">UPLOAD</button>
       <button id="send-btn" onclick="sendMessage()">SEND</button>
     </div>
   </div>
@@ -238,6 +259,7 @@ let chats = loadChats();
 let projects = loadProjects();
 let activeChat = null;
 let streaming = false;
+let pendingUploads = [];
 
 // ── Storage ──
 function loadChats(){ try { return JSON.parse(localStorage.getItem('sax_chats_v2')||'[]'); } catch { return []; }}
@@ -473,7 +495,13 @@ async function sendMessage(){
   if(streaming) return;
   const input=document.getElementById('msg-input');
   const text=input.value.trim();
-  if(!text) return;
+  if(!text && pendingUploads.length===0) return;
+
+  const uploadPrefix = pendingUploads.length
+    ? `Attached files:\n${pendingUploads.map(f=>`- ${f.name} (${f.size} bytes)`).join('\n')}\n\n`
+    : '';
+  const finalText = uploadPrefix + text;
+
   input.value='';
   input.style.height='auto';
 
@@ -481,7 +509,7 @@ async function sendMessage(){
 
   // Auto-title from first message
   if(activeChat.messages.length===0){
-    activeChat.title=text.slice(0,50)+(text.length>50?'...':'');
+    activeChat.title=finalText.slice(0,50)+(finalText.length>50?'...':'');
     saveChats();
     renderSidebar();
   }
@@ -490,21 +518,23 @@ async function sendMessage(){
   const empty=document.getElementById('empty');
   if(empty) empty.remove();
 
-  addMessageEl('user',text);
-  activeChat.messages.push({role:'user',content:text});
+  addMessageEl('user',finalText);
+  activeChat.messages.push({role:'user',content:finalText});
 
   const msgEl=addMessageEl('assistant','');
   const bodyEl=msgEl.querySelector('.msg-body');
   bodyEl.innerHTML='<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
 
   streaming=true;
+  stopSpeaking(); // Stop any ongoing TTS from previous response
+  ttsSentenceBuffer = '';
   document.getElementById('send-btn').disabled=true;
 
   try{
     const res=await fetch(`${API}/api/chat`,{
       method:'POST',
       headers:{'Content-Type':'application/json',Authorization:`Bearer ${AUTH_TOKEN}`},
-      body:JSON.stringify({message:text,sessionId:activeChat.id}),
+      body:JSON.stringify({message:finalText,sessionId:activeChat.id}),
     });
 
     const reader=res.body.getReader();
@@ -526,6 +556,8 @@ async function sendMessage(){
             case 'stream':
               content+=event.delta;
               bodyEl.innerHTML=md(content);
+              // Feed to TTS sentence-by-sentence as text arrives
+              feedTTS(event.delta);
               break;
             case 'tool_start':
               bodyEl.innerHTML=content?esc(content):'';
@@ -571,8 +603,30 @@ async function sendMessage(){
     bodyEl.appendChild(retryBtn);
   }
 
+  // Flush any remaining TTS buffer
+  flushTTS();
+
   streaming=false;
   document.getElementById('send-btn').disabled=false;
+  pendingUploads = [];
+  const uploadBtn = document.getElementById('upload-btn');
+  if (uploadBtn) uploadBtn.textContent = 'UPLOAD';
+  const fileInput = document.getElementById('file-input');
+  if (fileInput) fileInput.value = '';
+}
+
+function triggerUpload(){
+  const fileInput = document.getElementById('file-input');
+  if(fileInput) fileInput.click();
+}
+
+function handleFileUpload(event){
+  const files = Array.from(event.target.files || []);
+  pendingUploads = files.map(f => ({ name: f.name, size: f.size, type: f.type || 'unknown' }));
+  const uploadBtn = document.getElementById('upload-btn');
+  if(uploadBtn){
+    uploadBtn.textContent = pendingUploads.length ? `UPLOAD (${pendingUploads.length})` : 'UPLOAD';
+  }
 }
 
 function addMessageEl(role,text){
@@ -689,6 +743,284 @@ function cancelSecret() {
 // Close modal on overlay click
 document.getElementById('secret-modal-overlay').addEventListener('click', function(e) {
   if (e.target === this) cancelSecret();
+});
+
+// ── Voice System (Local Whisper STT + Kokoro TTS) ──
+// Zero API calls. Everything runs on the local machine.
+
+let voiceEnabled = false;
+let isListening = false;
+let isSpeaking = false;
+let mediaRecorder = null;
+let audioChunks = [];
+let audioContext = null;
+let ttsQueue = [];
+let ttsSentenceBuffer = '';
+let currentAudioSource = null;
+
+// ── STT: Record audio → send to server → Whisper transcribes ──
+
+async function toggleMic() {
+  if (isListening) {
+    stopListening();
+  } else {
+    await startListening();
+  }
+}
+
+async function startListening() {
+  stopSpeaking(); // Interrupt TTS
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true }
+    });
+
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      if (audioChunks.length === 0) return;
+
+      const blob = new Blob(audioChunks, { type: 'audio/webm' });
+      audioChunks = [];
+
+      // Convert WebM to WAV for Whisper (needs PCM)
+      updateVoiceUI('transcribing');
+      try {
+        const wavBlob = await webmToWav(blob);
+        const arrayBuf = await wavBlob.arrayBuffer();
+
+        const res = await fetch(`${API}/api/voice/transcribe`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+          body: new Uint8Array(arrayBuf),
+        });
+        const data = await res.json();
+
+        if (data.text && data.text.trim()) {
+          const input = document.getElementById('msg-input');
+          input.value = data.text.trim();
+          // Auto-send the transcribed text
+          sendMessage();
+        }
+      } catch (e) {
+        console.error('[voice] Transcription failed:', e);
+      }
+      updateVoiceUI();
+    };
+
+    mediaRecorder.start(100); // 100ms chunks for responsive stop
+    isListening = true;
+    updateVoiceUI();
+  } catch (e) {
+    console.error('[voice] Mic access failed:', e);
+  }
+}
+
+function stopListening() {
+  isListening = false;
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  mediaRecorder = null;
+  updateVoiceUI();
+}
+
+// Convert WebM/Opus → WAV (16kHz mono PCM16) for Whisper
+async function webmToWav(blob) {
+  if (!audioContext) audioContext = new AudioContext({ sampleRate: 16000 });
+
+  const arrayBuf = await blob.arrayBuffer();
+  const audioBuf = await audioContext.decodeAudioData(arrayBuf);
+
+  // Get mono channel
+  const samples = audioBuf.getChannelData(0);
+  const pcm16 = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i++) {
+    pcm16[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
+  }
+
+  // Build WAV
+  const wavHeader = new ArrayBuffer(44);
+  const view = new DataView(wavHeader);
+  const sr = 16000;
+  const bps = 16;
+  const ch = 1;
+  const dataSize = pcm16.length * 2;
+
+  // RIFF header
+  writeStr(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeStr(view, 8, 'WAVE');
+  writeStr(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);           // fmt chunk size
+  view.setUint16(20, 1, true);            // PCM
+  view.setUint16(22, ch, true);           // channels
+  view.setUint32(24, sr, true);           // sample rate
+  view.setUint32(28, sr * ch * bps/8, true); // byte rate
+  view.setUint16(32, ch * bps/8, true);   // block align
+  view.setUint16(34, bps, true);          // bits per sample
+  writeStr(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  return new Blob([wavHeader, pcm16.buffer], { type: 'audio/wav' });
+}
+
+function writeStr(view, offset, str) {
+  for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+}
+
+// ── TTS: Sentence → server → Kokoro → audio playback ──
+
+function toggleTTS() {
+  voiceEnabled = !voiceEnabled;
+  const btn = document.getElementById('tts-toggle');
+  btn.textContent = voiceEnabled ? 'VOICE ON' : 'VOICE OFF';
+  btn.className = voiceEnabled ? 'active' : '';
+  if (!voiceEnabled) stopSpeaking();
+}
+
+async function speakSentence(text) {
+  if (!voiceEnabled || !text.trim()) return;
+
+  isSpeaking = true;
+  updateVoiceUI();
+
+  try {
+    const res = await fetch(`${API}/api/voice/synthesize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${AUTH_TOKEN}`,
+      },
+      body: JSON.stringify({ text: text.trim() }),
+    });
+
+    if (!res.ok) throw new Error(`TTS failed: ${res.status}`);
+
+    const wavBuf = await res.arrayBuffer();
+    if (wavBuf.byteLength < 100) throw new Error('Empty audio');
+
+    // Play the WAV
+    if (!audioContext) audioContext = new AudioContext({ sampleRate: 16000 });
+    const audioBuf = await audioContext.decodeAudioData(wavBuf);
+    const source = audioContext.createBufferSource();
+    source.buffer = audioBuf;
+    source.connect(audioContext.destination);
+    currentAudioSource = source;
+
+    await new Promise((resolve) => {
+      source.onended = resolve;
+      source.start();
+    });
+
+    currentAudioSource = null;
+  } catch (e) {
+    console.warn('[voice] TTS playback error:', e);
+  }
+
+  // Play next in queue
+  if (ttsQueue.length > 0) {
+    await speakSentence(ttsQueue.shift());
+  } else {
+    isSpeaking = false;
+    updateVoiceUI();
+  }
+}
+
+function feedTTS(delta) {
+  if (!voiceEnabled) return;
+
+  ttsSentenceBuffer += delta;
+
+  const sentenceEnd = /[.!?]\s+|[.!?]$/;
+  while (sentenceEnd.test(ttsSentenceBuffer)) {
+    const match = ttsSentenceBuffer.match(sentenceEnd);
+    const idx = match.index + match[0].length;
+    const sentence = ttsSentenceBuffer.slice(0, idx).trim();
+    ttsSentenceBuffer = ttsSentenceBuffer.slice(idx);
+
+    if (sentence.length > 3) {
+      if (isSpeaking) {
+        ttsQueue.push(sentence);
+      } else {
+        speakSentence(sentence);
+      }
+    }
+  }
+}
+
+function flushTTS() {
+  if (voiceEnabled && ttsSentenceBuffer.trim().length > 3) {
+    if (isSpeaking) {
+      ttsQueue.push(ttsSentenceBuffer.trim());
+    } else {
+      speakSentence(ttsSentenceBuffer.trim());
+    }
+  }
+  ttsSentenceBuffer = '';
+}
+
+function stopSpeaking() {
+  if (currentAudioSource) {
+    try { currentAudioSource.stop(); } catch {}
+    currentAudioSource = null;
+  }
+  ttsQueue = [];
+  ttsSentenceBuffer = '';
+  isSpeaking = false;
+  updateVoiceUI();
+}
+
+// ── Voice UI ──
+
+function updateVoiceUI(state) {
+  const micBtn = document.getElementById('mic-btn');
+  const indicator = document.getElementById('voice-indicator');
+
+  if (state === 'transcribing') {
+    micBtn.className = 'listening';
+    indicator.className = 'listening';
+    indicator.textContent = 'TRANSCRIBING...';
+    return;
+  }
+
+  micBtn.className = isListening ? 'listening' : isSpeaking ? 'speaking' : '';
+
+  if (isListening) {
+    indicator.className = 'listening';
+    indicator.textContent = 'RECORDING...';
+  } else if (isSpeaking) {
+    indicator.className = 'speaking';
+    indicator.textContent = 'SPEAKING...';
+  } else {
+    indicator.className = '';
+  }
+}
+
+// Spacebar hold-to-talk (only when input not focused)
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && document.activeElement !== document.getElementById('msg-input')) {
+    e.preventDefault();
+    if (!isListening) startListening();
+  }
+});
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'Space' && isListening && document.activeElement !== document.getElementById('msg-input')) {
+    e.preventDefault();
+    stopListening();
+  }
+});
+
+// Escape to stop TTS
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape') { stopSpeaking(); }
 });
 
 // ── Init ──

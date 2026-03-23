@@ -57,7 +57,9 @@ const ROLE_PERMISSIONS: Record<Role, {
     canManageSecrets: false,
     canViewAudit: false,
     canManageTokens: false,
-    allowedTools: ["read", "write", "edit", "bash", "web_fetch", "http_request", "browser", "memory_search", "memory_get", "memory_save"],
+    // No egress tools (http_request, web_fetch, browser) — operator only
+    // Users can read/write local files and use memory, but can't send data externally
+    allowedTools: ["read", "write", "edit", "bash", "memory_search", "memory_get", "memory_save"],
     deniedEndpoints: ["/api/secrets", "/api/audit", "/api/tokens"],
   },
   readonly: {
@@ -207,5 +209,46 @@ export class RBACManager {
   /** Get permissions for a role */
   static getPermissions(role: Role) {
     return ROLE_PERMISSIONS[role];
+  }
+
+  /**
+   * Rotate a token: revoke the old one and issue a new one with the same role/name.
+   * Returns the new raw token (show once to the user).
+   */
+  rotateToken(id: string): { token: string; entry: TokenEntry } | null {
+    const old = this.tokens.get(id);
+    if (!old) return null;
+
+    // Don't allow rotating the default operator token (it comes from config)
+    if (id === "operator-default") {
+      // Generate a new operator token and replace
+      const newToken = randomBytes(32).toString("hex");
+      old.tokenHash = hashToken(newToken);
+      old.createdAt = Date.now();
+      old.lastUsed = undefined;
+      this.save();
+      return { token: newToken, entry: old };
+    }
+
+    // For other tokens: revoke old, create new with same role/name
+    const role = old.role;
+    const name = old.name;
+    const expiresIn = old.expiresAt ? old.expiresAt - Date.now() : undefined;
+    this.tokens.delete(id);
+    return this.createToken(name, role, expiresIn && expiresIn > 0 ? expiresIn : undefined);
+  }
+
+  /** Prune all expired tokens */
+  pruneExpired(): number {
+    let pruned = 0;
+    const now = Date.now();
+    for (const [id, entry] of this.tokens) {
+      if (entry.expiresAt && entry.expiresAt < now && id !== "operator-default") {
+        this.tokens.delete(id);
+        pruned++;
+      }
+    }
+    if (pruned > 0) this.save();
+    return pruned;
   }
 }

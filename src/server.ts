@@ -412,6 +412,69 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── Voice API ──
+
+    // Get voice capabilities
+    if (method === "GET" && url.pathname === "/api/voice/capabilities") {
+      const { detectCapabilities } = await import("./voice.js");
+      json(200, detectCapabilities());
+      return;
+    }
+
+    // Transcribe audio (STT)
+    if (method === "POST" && url.pathname === "/api/voice/transcribe") {
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const audioBuffer = Buffer.concat(chunks);
+
+        if (audioBuffer.length < 1000) {
+          json(400, { error: "Audio too short" });
+          return;
+        }
+
+        const { transcribe } = await import("./voice.js");
+        const text = transcribe(audioBuffer);
+        json(200, { text });
+      } catch (e) {
+        json(500, { error: `Transcription failed: ${(e as Error).message}` });
+      }
+      return;
+    }
+
+    // Synthesize speech (TTS)
+    if (method === "POST" && url.pathname === "/api/voice/synthesize") {
+      try {
+        const body = JSON.parse(await readBody(req)) as {
+          text?: string;
+          voice?: string;
+          speed?: number;
+        };
+        if (!body.text?.trim()) {
+          json(400, { error: "text is required" });
+          return;
+        }
+
+        const { synthesize } = await import("./voice.js");
+        const wavBuffer = synthesize(body.text, body.voice, body.speed);
+
+        if (wavBuffer.length === 0) {
+          json(500, { error: "TTS engine not available" });
+          return;
+        }
+
+        res.writeHead(200, {
+          "Content-Type": "audio/wav",
+          "Content-Length": String(wavBuffer.length),
+          ...corsHeaders(req),
+        });
+        res.end(wavBuffer);
+      } catch (e) {
+        json(500, { error: `Synthesis failed: ${(e as Error).message}` });
+      }
+      return;
+    }
+
     // ── Audit API ──
 
     // Get recent audit entries
@@ -529,6 +592,7 @@ export function startServer(config: SAXConfig) {
 
         // Initialize threat engine for this session
         const threatEngine = new ThreatEngine(dataDir, sessionId);
+        let canaryBuffer = ""; // Rolling buffer for chunk-boundary canary detection
 
         // Inject canary tokens into system prompt (prompt injection detection)
         const enrichedPrompt =
@@ -549,12 +613,15 @@ export function startServer(config: SAXConfig) {
           maxIterations: config.maxIterations,
           temperature: config.temperature,
           onEvent: (event) => {
-            // Canary check on streamed text — if canary leaks, LLM is compromised
+            // Canary check with rolling buffer — catches canaries split across chunk boundaries
             if (event.type === "stream" && event.delta) {
-              const canaryTrip = threatEngine.checkOutput(event.delta);
+              canaryBuffer += event.delta;
+              // Keep buffer to max canary length + margin (canaries are ~25 chars)
+              if (canaryBuffer.length > 100) canaryBuffer = canaryBuffer.slice(-100);
+              const canaryTrip = threatEngine.checkOutput(canaryBuffer);
               if (canaryTrip) {
                 sseWrite(res, { type: "error", message: "Security alert: prompt injection detected. Response terminated." });
-                return; // Don't forward the compromised text
+                return;
               }
             }
             onEvent(event);

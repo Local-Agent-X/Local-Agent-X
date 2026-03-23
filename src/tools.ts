@@ -4,6 +4,7 @@ import { resolve, dirname } from "node:path";
 import { promises as dns } from "node:dns";
 import type { ToolDefinition, ToolResult } from "./types.js";
 import { wrapExternalContent } from "./sanitize.js";
+import { getSandboxMode, execInSandbox } from "./sandbox.js";
 
 /**
  * DNS pinning check: resolve hostname and verify it doesn't point to private IPs.
@@ -202,6 +203,17 @@ const bashTool: ToolDefinition = {
       sanitizedEnv[key] = value;
     }
 
+    // Use container sandbox if enabled (SAX_SANDBOX=docker)
+    const sandboxMode = getSandboxMode();
+    if (sandboxMode === "docker") {
+      const result = execInSandbox(command);
+      if (result.exitCode === 0) {
+        return ok(result.stdout || "(no output)");
+      }
+      return err(result.stderr || result.stdout || `Exit code: ${result.exitCode}`);
+    }
+
+    // Host execution (default) — with sanitized environment
     try {
       const output = execSync(command, {
         encoding: "utf-8",
@@ -239,15 +251,30 @@ const webFetchTool: ToolDefinition = {
     if (pinResult) return err(pinResult);
 
     try {
-      const res = await fetch(url, {
+      // Manual redirect handling with DNS pinning on each hop
+      let currentUrl = url;
+      let res = await fetch(currentUrl, {
         headers: {
           "User-Agent": "SecretAgentX/0.1",
           Accept: "text/html,application/json,text/plain",
         },
         signal: AbortSignal.timeout(30_000),
+        redirect: "manual",
       });
+      let redirects = 0;
+      while (res.status >= 300 && res.status < 400 && res.headers.get("location") && redirects < 5) {
+        currentUrl = new URL(res.headers.get("location")!, currentUrl).toString();
+        const redirectPin = await dnsPin(currentUrl);
+        if (redirectPin) return err(`Redirect blocked: ${redirectPin}`);
+        res = await fetch(currentUrl, {
+          headers: { "User-Agent": "SecretAgentX/0.1", Accept: "text/html,application/json,text/plain" },
+          signal: AbortSignal.timeout(30_000),
+          redirect: "manual",
+        });
+        redirects++;
+      }
 
-      if (!res.ok) {
+      if (!res.ok && !(res.status >= 300 && res.status < 400)) {
         return err(`HTTP ${res.status}: ${res.statusText}`);
       }
 

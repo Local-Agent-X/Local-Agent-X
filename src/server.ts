@@ -6,9 +6,17 @@ import { runAgent } from "./agent.js";
 import { allTools, createHttpRequestTool } from "./tools.js";
 import { SecurityLayer } from "./security.js";
 import { getApiKey } from "./auth.js";
-import { SessionStore, MemoryIndex, createMemoryTools } from "./memory.js";
+import {
+  SessionStore,
+  MemoryIndex,
+  createMemoryTools,
+  buildContextBlock,
+  autoSearchContext,
+  ensurePersonalityFiles,
+} from "./memory.js";
 import { SecretsStore } from "./secrets.js";
 import { createSecretTools } from "./secret-tools.js";
+import { createBrowserTools, closeBrowser } from "./browser-tools.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 
 // Session ID validation: alphanumeric + dash/underscore, max 64 chars
@@ -47,6 +55,9 @@ export function startServer(config: SAXConfig) {
   const memoryIndex = new MemoryIndex(dataDir);
   const memoryTools = createMemoryTools(memoryIndex);
 
+  // Create personality files on first run
+  ensurePersonalityFiles(join(dataDir, "memory"));
+
   // Initialize secrets store
   const secretsStore = new SecretsStore(dataDir);
 
@@ -65,7 +76,10 @@ export function startServer(config: SAXConfig) {
   const httpRequestTool = createHttpRequestTool(secretsStore);
 
   // Combine all tools
-  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools];
+  // Browser tools (Playwright)
+  const browserTools = createBrowserTools();
+
+  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools];
 
   // In-memory session cache (backed by disk)
   const sessions = new Map<string, Session>();
@@ -305,11 +319,23 @@ export function startServer(config: SAXConfig) {
         const onEvent = (event: ServerEvent) => sseWrite(res, event);
         activeOnEvent = onEvent;
 
+        // ── Best-friend memory injection ──
+        // Load user profile + auto-search relevant memories
+        // These get injected into the system prompt so the agent
+        // STARTS the conversation already knowing who you are.
+        const [contextBlock, relevantMemories] = await Promise.all([
+          buildContextBlock(memoryIndex),
+          autoSearchContext(memoryIndex, message),
+        ]);
+
+        const enrichedPrompt =
+          config.systemPrompt + contextBlock + relevantMemories;
+
         const result = await runAgent(message, session.messages, {
           apiKey,
           model: provider === "codex" ? "gpt-5.3-codex" : config.model,
           provider,
-          systemPrompt: config.systemPrompt,
+          systemPrompt: enrichedPrompt,
           tools,
           security,
           maxIterations: config.maxIterations,
@@ -394,7 +420,8 @@ export function startServer(config: SAXConfig) {
   });
 
   // Cleanup on exit
-  process.on("SIGINT", () => {
+  process.on("SIGINT", async () => {
+    await closeBrowser();
     memoryIndex.close();
     process.exit(0);
   });

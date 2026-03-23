@@ -666,7 +666,7 @@ export class MemoryIndex {
   // ── Knowledge Memory Files ──
 
   getMemoryFilePath(): string {
-    return join(this.memoryDir, "MEMORY.md");
+    return join(this.memoryDir, "MIND.md");
   }
 
   getDailyLogPath(date?: Date): string {
@@ -2192,6 +2192,230 @@ function toSearchResult(
 }
 
 // ══════════════════════════════════════════════════════════
+//  USER PROFILE (always-in-context core memory block)
+// ══════════════════════════════════════════════════════════
+
+// ── Personality file paths ──
+
+const PERSONALITY_FILES = {
+  user: "USER.md",      // Who the user is, how they want to be addressed
+  heart: "HEART.md",     // Agent personality, behavior config, vibe
+  identity: "IDENTITY.md", // Agent name, emoji, catchphrase
+  memory: "MIND.md",  // Core facts and curated knowledge
+} as const;
+
+const DEFAULT_USER_MD = `# About Me
+
+<!-- Edit this file to tell your agent who you are. -->
+<!-- The agent will read this at the start of every conversation. -->
+
+- Name:
+- Location:
+- Job/Role:
+- Interests:
+- Communication style: (casual / formal / technical / etc.)
+
+## Family & People
+<!-- List the people who matter to you so the agent knows them -->
+
+## Current Projects
+<!-- What are you working on right now? -->
+`;
+
+const DEFAULT_HEART_MD = `# Agent Heart
+
+<!-- This file defines your agent's personality and behavior. -->
+<!-- Edit it to shape how your agent talks, thinks, and acts. -->
+
+## Personality Traits
+- Warm, genuine, and direct
+- Remembers everything and weaves it into conversation naturally
+- Celebrates wins, asks follow-ups on things that matter
+- Matches the user's energy — casual when they're casual, focused when they're focused
+
+## Communication Style
+- Talk like a real friend, not a customer service bot
+- Use the user's name naturally
+- Reference past conversations: "Didn't you mention..." / "Last time you were working on..."
+- Be honest — a real friend tells the truth
+
+## Boundaries
+- Never expose internal memory system details (scores, paths, chunks)
+- Never make up personal information — search memory first
+- Never treat the user like a stranger if you have memories of them
+
+## Special Instructions
+<!-- Add any custom rules here -->
+`;
+
+const DEFAULT_IDENTITY_MD = `# Agent Identity
+
+<!-- Give your agent a name and personality. -->
+<!-- These get loaded into every conversation. -->
+
+- Name: Agent X
+- Emoji: 🕵️
+- Tagline: "Your personal AI companion"
+- Vibe: Helpful, warm, a little mysterious
+`;
+
+/**
+ * Builds a dynamic context block that gets injected into the system prompt
+ * before every agent turn. This is the "best friend" layer — it makes the
+ * agent remember who you are without needing to search first.
+ *
+ * Loads: IDENTITY.md → HEART.md → USER.md → MIND.md → today's log →
+ *        opinions → known entities
+ *
+ * Inspired by MemGPT/Letta "core memory blocks" — a small, curated set of
+ * facts that are always in context so the agent never starts from zero.
+ */
+export async function buildContextBlock(memory: MemoryIndex): Promise<string> {
+  const sections: string[] = [];
+  const memDir = memory["memoryDir"];
+
+  // 0. Ensure personality files exist with defaults on first run
+  ensurePersonalityFiles(memDir);
+
+  // 1. Agent identity (name, vibe, emoji)
+  const identity = readPersonalityFile(memDir, "identity");
+  if (identity) {
+    sections.push(`<agent_identity>\n${identity}\n</agent_identity>`);
+  }
+
+  // 2. Agent heart (personality, behavior rules)
+  const heart = readPersonalityFile(memDir, "heart");
+  if (heart) {
+    sections.push(`<agent_heart>\n${heart}\n</agent_heart>`);
+  }
+
+  // 3. User profile (who they are)
+  const user = readPersonalityFile(memDir, "user");
+  if (user) {
+    sections.push(`<user_profile>\n${user}\n</user_profile>`);
+  }
+
+  // 4. Core memory (curated facts)
+  const coreMemory = memory.readMemoryFile();
+  if (coreMemory.trim()) {
+    sections.push(`<core_memory>\n${coreMemory.trim()}\n</core_memory>`);
+  }
+
+  // 5. Today's daily log (recent context)
+  const todayLog = memory.getDailyLogPath();
+  if (existsSync(todayLog)) {
+    const content = safeReadTextFile(todayLog);
+    if (content && content.trim()) {
+      const recent = content.trim().slice(-1500);
+      sections.push(`<today_context>\n${recent}\n</today_context>`);
+    }
+  }
+
+  // 6. Key opinions/preferences (high-confidence, always relevant)
+  const opinions = memory.recallOpinions();
+  const topOpinions = opinions.filter((f) => f.confidence >= 0.7).slice(0, 10);
+  if (topOpinions.length > 0) {
+    const opLines = topOpinions
+      .map((f) => {
+        const ents =
+          f.entities.length > 0 ? ` (@${f.entities.join(", @")})` : "";
+        return `- ${f.content}${ents}`;
+      })
+      .join("\n");
+    sections.push(`<user_preferences>\n${opLines}\n</user_preferences>`);
+  }
+
+  // 7. Known entities
+  const stats = memory.getStats();
+  if (stats.totalEntities > 0) {
+    const entitySlugs = memory["db"]
+      .prepare(
+        "SELECT DISTINCT entity_slug FROM entity_mentions ORDER BY entity_slug LIMIT 30"
+      )
+      .all() as Array<{ entity_slug: string }>;
+    if (entitySlugs.length > 0) {
+      sections.push(
+        `<known_entities>\n${entitySlugs.map((e) => e.entity_slug).join(", ")}\n</known_entities>`
+      );
+    }
+  }
+
+  if (sections.length === 0) return "";
+
+  return (
+    "\n\n--- MEMORY CONTEXT (auto-loaded, do not repeat verbatim to user) ---\n" +
+    sections.join("\n\n") +
+    "\n--- END MEMORY CONTEXT ---"
+  );
+}
+
+export function ensurePersonalityFiles(memDir: string): void {
+  const defaults: Record<string, string> = {
+    [PERSONALITY_FILES.user]: DEFAULT_USER_MD,
+    [PERSONALITY_FILES.heart]: DEFAULT_HEART_MD,
+    [PERSONALITY_FILES.identity]: DEFAULT_IDENTITY_MD,
+  };
+
+  for (const [filename, content] of Object.entries(defaults)) {
+    const filePath = join(memDir, filename);
+    if (!existsSync(filePath)) {
+      writeFileSync(filePath, content, "utf-8");
+    }
+  }
+}
+
+function readPersonalityFile(
+  memDir: string,
+  key: keyof typeof PERSONALITY_FILES
+): string | null {
+  const filePath = join(memDir, PERSONALITY_FILES[key]);
+  if (!existsSync(filePath)) return null;
+  const content = safeReadTextFile(filePath);
+  if (!content || !content.trim()) return null;
+
+  // Strip HTML comments (<!-- ... -->) so they don't waste tokens
+  return content.replace(/<!--[\s\S]*?-->/g, "").trim() || null;
+}
+
+/**
+ * Auto-search: finds memories relevant to the user's current message.
+ * Injected as a hidden system message so the agent has context without
+ * needing to call memory_search first.
+ */
+export async function autoSearchContext(
+  memory: MemoryIndex,
+  userMessage: string
+): Promise<string> {
+  // Don't search for very short messages (greetings, etc)
+  const keywords = extractKeywords(userMessage);
+  if (keywords.length < 2) return "";
+
+  try {
+    const results = await memory.search(userMessage, {
+      maxResults: 3,
+      minScore: 0.25,
+    });
+
+    if (results.length === 0) return "";
+
+    const relevant = results
+      .map(
+        (r) =>
+          `[${r.source}${r.entities?.length ? `, about: ${r.entities.join(",")}` : ""}] ${r.snippet.slice(0, 300)}`
+      )
+      .join("\n\n");
+
+    return (
+      "\n\n--- RELEVANT MEMORIES (auto-retrieved for this message) ---\n" +
+      relevant +
+      "\n--- END RELEVANT MEMORIES ---"
+    );
+  } catch {
+    return "";
+  }
+}
+
+// ══════════════════════════════════════════════════════════
 //  MEMORY TOOLS FOR AGENT
 // ══════════════════════════════════════════════════════════
 
@@ -2255,14 +2479,14 @@ export function createMemoryTools(memory: MemoryIndex) {
     {
       name: "memory_get",
       description:
-        "Read a specific memory file by path. Use to retrieve MEMORY.md, a daily log, or an entity page.",
+        "Read a specific memory file by path. Use to retrieve MIND.md, a daily log, or an entity page.",
       parameters: {
         type: "object",
         properties: {
           path: {
             type: "string",
             description:
-              "File path within memory dir (e.g. MEMORY.md, 2026-03-22.md, bank/entities/peter.md)",
+              "File path within memory dir (e.g. MIND.md, 2026-03-22.md, bank/entities/peter.md)",
           },
         },
         required: ["path"],
@@ -2290,7 +2514,7 @@ export function createMemoryTools(memory: MemoryIndex) {
     {
       name: "memory_save",
       description:
-        "Save important information to long-term memory. Targets: 'daily' (conversation log), 'memory' (curated MEMORY.md facts), 'retain' (structured fact with type/entity/confidence for the Retain system).",
+        "Save important information to long-term memory. Targets: 'daily' (conversation log), 'memory' (curated MIND.md facts), 'retain' (structured fact with type/entity/confidence for the Retain system).",
       parameters: {
         type: "object",
         properties: {
@@ -2299,7 +2523,7 @@ export function createMemoryTools(memory: MemoryIndex) {
             type: "string",
             enum: ["daily", "memory", "retain"],
             description:
-              "'daily' for daily log (default), 'memory' for MEMORY.md, 'retain' for structured fact",
+              "'daily' for daily log (default), 'memory' for MIND.md, 'retain' for structured fact",
           },
         },
         required: ["content"],
@@ -2315,7 +2539,7 @@ export function createMemoryTools(memory: MemoryIndex) {
         if (target === "memory") {
           const existing = memory.readMemoryFile();
           memory.writeMemoryFile(existing + (existing ? "\n\n" : "") + content);
-          return { content: "Saved to MEMORY.md" };
+          return { content: "Saved to MIND.md" };
         } else if (target === "retain") {
           // Parse structured fact line(s)
           const facts = memory.retain(content, "agent-tool");
@@ -2442,6 +2666,102 @@ export function createMemoryTools(memory: MemoryIndex) {
             `FTS5: ${stats.hasFts ? "active" : "unavailable"}`,
             `sqlite-vec: ${stats.hasVec ? "active" : "unavailable (using in-memory cosine)"}`,
           ].join("\n"),
+        };
+      },
+    },
+
+    {
+      name: "memory_update_profile",
+      description:
+        "Update a personality/profile file. Use this to evolve knowledge about the user or to adjust agent behavior based on what you learn. Files: 'user' (USER.md — who they are), 'heart' (HEART.md — your personality), 'identity' (IDENTITY.md — your name/vibe), 'memory' (MIND.md — core facts). You can replace specific sections or append new information.",
+      parameters: {
+        type: "object",
+        properties: {
+          file: {
+            type: "string",
+            enum: ["user", "heart", "identity", "memory"],
+            description: "Which profile file to update",
+          },
+          action: {
+            type: "string",
+            enum: ["replace_section", "append", "full_replace"],
+            description:
+              "'replace_section' to find and replace a section by heading, 'append' to add at the end, 'full_replace' to overwrite the entire file",
+          },
+          section_heading: {
+            type: "string",
+            description:
+              "For replace_section: the ## heading to find (e.g. 'Family & People')",
+          },
+          content: {
+            type: "string",
+            description: "The new content to write",
+          },
+        },
+        required: ["file", "action", "content"],
+      },
+      async execute(args: Record<string, unknown>) {
+        const fileKey = String(args.file || "") as keyof typeof PERSONALITY_FILES;
+        const action = String(args.action || "append");
+        const newContent = String(args.content || "");
+
+        if (!newContent.trim()) {
+          return { content: "Nothing to write.", isError: true };
+        }
+
+        const filename = PERSONALITY_FILES[fileKey];
+        if (!filename) {
+          return {
+            content: `Unknown file: ${fileKey}. Use: user, heart, identity, or memory`,
+            isError: true,
+          };
+        }
+
+        const filePath = join(memory["memoryDir"], filename);
+        const existing = existsSync(filePath)
+          ? readFileSync(filePath, "utf-8")
+          : "";
+
+        let updated: string;
+
+        if (action === "full_replace") {
+          updated = newContent;
+        } else if (action === "append") {
+          updated = existing + "\n\n" + newContent;
+        } else if (action === "replace_section") {
+          const heading = String(args.section_heading || "");
+          if (!heading) {
+            return {
+              content: "section_heading required for replace_section",
+              isError: true,
+            };
+          }
+
+          // Find section by heading and replace it
+          const headingPattern = new RegExp(
+            `(^|\\n)(##?\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\n]*)([\\s\\S]*?)(?=\\n##?\\s|$)`,
+            "i"
+          );
+
+          const match = existing.match(headingPattern);
+          if (match) {
+            updated = existing.replace(
+              headingPattern,
+              `$1$2\n${newContent}`
+            );
+          } else {
+            // Section not found — append as new section
+            updated = existing + `\n\n## ${heading}\n${newContent}`;
+          }
+        } else {
+          return { content: `Unknown action: ${action}`, isError: true };
+        }
+
+        atomicWriteFileSync(filePath, updated);
+        memory.markDirty();
+
+        return {
+          content: `Updated ${filename} (${action}${action === "replace_section" ? `: ${args.section_heading}` : ""})`,
         };
       },
     },

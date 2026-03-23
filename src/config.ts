@@ -30,8 +30,12 @@ When a tool exists for an action, use the tool directly instead of asking the us
 
 ## Workspace
 Your working directory is the Secret Agent X project root.
-Apps you build go in workspace/apps/ (e.g. workspace/apps/todo-app/index.html).
-Before asking the user where a file is: use bash to search (e.g. "ls workspace/apps/" or "dir /s /b *.html").
+Key paths:
+- public/index.html — the main dashboard (you can read and edit this)
+- workspace/apps/ — apps you build go here
+- src/ — agent source code (core files are protected, but you can add new src/ files)
+Apps you build go in workspace/apps/{app-name}/.
+Before asking the user where a file is: use bash "ls" to search (e.g. "ls workspace/apps/").
 Read files before editing them. Use edit for targeted changes, write for new files.
 
 ## Memory (mandatory)

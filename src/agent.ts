@@ -6,6 +6,7 @@ import type {
 import type { ToolDefinition, ToolResult, AgentTurn, ServerEvent } from "./types.js";
 import { SecurityLayer } from "./security.js";
 import { streamCodexResponse } from "./codex-client.js";
+import type { ToolPolicy } from "./tool-policy.js";
 
 interface AgentOptions {
   apiKey: string;
@@ -15,6 +16,8 @@ interface AgentOptions {
   systemPrompt: string;
   tools: ToolDefinition[];
   security: SecurityLayer;
+  toolPolicy?: ToolPolicy;
+  sessionId?: string;
   maxIterations?: number;
   temperature?: number;
   onEvent?: (event: ServerEvent) => void;
@@ -36,6 +39,8 @@ async function executeToolCalls(
   toolCalls: Array<{ id: string; name: string; arguments: string }>,
   toolMap: Map<string, ToolDefinition>,
   security: SecurityLayer,
+  toolPolicy?: ToolPolicy,
+  sessionId?: string,
   onEvent?: (event: ServerEvent) => void,
   signal?: AbortSignal
 ): Promise<ChatCompletionMessageParam[]> {
@@ -51,16 +56,31 @@ async function executeToolCalls(
 
     onEvent?.({ type: "tool_start", toolName: tc.name, args });
 
-    const decision = security.evaluate({
+    // Layer 1: SecurityLayer (SSRF, shell, file access, path traversal)
+    const secDecision = security.evaluate({
       toolName: tc.name,
       args,
-      sessionId: "default",
+      sessionId: sessionId || "default",
     });
 
+    // Layer 2: ToolPolicy (configurable allow/deny rules, rate limits, host constraints)
+    let policyBlocked = false;
+    let policyReason = "";
+    if (secDecision.allowed && toolPolicy) {
+      const policyDecision = toolPolicy.evaluate(tc.name, args, sessionId || "default");
+      if (!policyDecision.allowed) {
+        policyBlocked = true;
+        policyReason = policyDecision.reason;
+      }
+    }
+
+    const allowed = secDecision.allowed && !policyBlocked;
     let result: ToolResult;
 
-    if (!decision.allowed) {
-      result = { content: `BLOCKED by security: ${decision.reason}`, isError: true };
+    if (!secDecision.allowed) {
+      result = { content: `BLOCKED by security: ${secDecision.reason}`, isError: true };
+    } else if (policyBlocked) {
+      result = { content: `BLOCKED by policy: ${policyReason}`, isError: true };
     } else {
       const tool = toolMap.get(tc.name);
       if (!tool) {
@@ -78,7 +98,7 @@ async function executeToolCalls(
       type: "tool_end",
       toolName: tc.name,
       result: result.content,
-      allowed: decision.allowed,
+      allowed,
     });
 
     results.push({
@@ -119,6 +139,10 @@ async function runCodexAgent(
 
   let totalInput = 0;
   let totalOutput = 0;
+
+  // Tool call loop detection
+  let lastToolKey = "";
+  let sameToolCount = 0;
 
   const codexTools = tools.map((t) => ({
     type: "function" as const,
@@ -186,7 +210,24 @@ async function runCodexAgent(
       };
     }
 
-    const toolResults = await executeToolCalls(toolCalls, toolMap, security, onEvent, signal);
+    // Detect tool call loops (same tool called 3+ times in a row)
+    const toolKey = toolCalls.map((tc) => `${tc.name}:${tc.arguments}`).join("|");
+    if (toolKey === lastToolKey) {
+      sameToolCount++;
+      if (sameToolCount >= 3) {
+        onEvent?.({ type: "stream", delta: "\n\n(Detected repeated tool calls — stopping to avoid infinite loop)" });
+        return {
+          messages: [{ role: "system", content: systemPrompt }, ...messages],
+          usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
+          stopReason: "end_turn",
+        };
+      }
+    } else {
+      sameToolCount = 1;
+      lastToolKey = toolKey;
+    }
+
+    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.sessionId, onEvent, signal);
     messages.push(...toolResults);
   }
 
@@ -228,6 +269,8 @@ async function runStandardAgent(
 
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
+  let stdLastToolKey = "";
+  let stdSameToolCount = 0;
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal?.aborted) {
@@ -302,7 +345,24 @@ async function runStandardAgent(
       };
     }
 
-    const toolResults = await executeToolCalls(toolCalls, toolMap, security, onEvent, signal);
+    // Detect tool call loops
+    const stdToolKey = toolCalls.map((tc) => `${tc.name}:${tc.arguments}`).join("|");
+    if (stdToolKey === stdLastToolKey) {
+      stdSameToolCount++;
+      if (stdSameToolCount >= 3) {
+        onEvent?.({ type: "stream", delta: "\n\n(Detected repeated tool calls — stopping loop)" });
+        return {
+          messages,
+          usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },
+          stopReason: "end_turn",
+        };
+      }
+    } else {
+      stdSameToolCount = 1;
+      stdLastToolKey = stdToolKey;
+    }
+
+    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.sessionId, onEvent, signal);
     messages.push(...toolResults);
   }
 

@@ -6,6 +6,7 @@ import { timingSafeEqual } from "node:crypto";
 import { runAgent } from "./agent.js";
 import { allTools, createHttpRequestTool } from "./tools.js";
 import { SecurityLayer } from "./security.js";
+import { loadToolPolicy } from "./tool-policy.js";
 import { getApiKey } from "./auth.js";
 import {
   SessionStore,
@@ -19,7 +20,7 @@ import {
 import { SecretsStore } from "./secrets.js";
 import { createSecretTools } from "./secret-tools.js";
 import { createBrowserTools, closeBrowser } from "./browser-tools.js";
-import { setCurrentBrowserSession, closeAllBrowsers } from "./browser.js";
+import { closeAllBrowsers } from "./browser.js";
 import { redactCredentials } from "./security.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 
@@ -125,6 +126,7 @@ export function startServer(config: SAXConfig) {
   const security = new SecurityLayer(config.workspace);
   const publicDir = join(import.meta.dirname || ".", "..", "public");
   const dataDir = join(homedir(), ".sax");
+  const toolPolicy = loadToolPolicy(dataDir);
 
   // Initialize memory systems
   const sessionStore = new SessionStore(dataDir);
@@ -152,8 +154,9 @@ export function startServer(config: SAXConfig) {
   const httpRequestTool = createHttpRequestTool(secretsStore);
 
   // Combine all tools
-  // Browser tools (Playwright)
-  const browserTools = createBrowserTools();
+  // Browser tools — session ID passed via getter (thread-safe, no global state)
+  let activeBrowserSessionId = "default";
+  const browserTools = createBrowserTools(() => activeBrowserSessionId);
 
   const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools];
 
@@ -425,8 +428,8 @@ export function startServer(config: SAXConfig) {
         const onEvent = (event: ServerEvent) => sseWrite(res, event);
         activeOnEvent = onEvent;
 
-        // Isolate browser session per chat session
-        setCurrentBrowserSession(sessionId);
+        // Isolate browser session per chat session (thread-safe — no global mutable)
+        activeBrowserSessionId = sessionId;
 
         // ── Best-friend memory injection ──
         // Load user profile + auto-search relevant memories
@@ -447,6 +450,8 @@ export function startServer(config: SAXConfig) {
           systemPrompt: enrichedPrompt,
           tools,
           security,
+          toolPolicy,
+          sessionId,
           maxIterations: config.maxIterations,
           temperature: config.temperature,
           onEvent,
@@ -454,8 +459,10 @@ export function startServer(config: SAXConfig) {
 
         activeOnEvent = undefined;
 
-        // Update session (skip system prompt)
-        session.messages = result.messages.filter((m) => m.role !== "system");
+        // Update session (skip system prompt + empty messages)
+        session.messages = result.messages.filter(
+          (m) => m.role !== "system" && (m.content || (m as any).tool_calls)
+        );
         session.updatedAt = Date.now();
 
         // Auto-extract profile facts from this exchange
@@ -474,6 +481,8 @@ export function startServer(config: SAXConfig) {
         saveSession(session);
       } catch (e) {
         sseWrite(res, { type: "error", message: (e as Error).message });
+        // Always send done so browser clears spinner
+        sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
       }
 
       res.end();

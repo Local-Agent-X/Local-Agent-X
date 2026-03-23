@@ -473,7 +473,151 @@ function renderSidebar(){
 }
 
 function openSettings(){
-  alert('Settings coming soon!');
+  // Build settings modal
+  let overlay = document.getElementById('settings-overlay');
+  if(overlay){ overlay.style.display='flex'; refreshAuthStatus(); return; }
+
+  overlay = document.createElement('div');
+  overlay.id='settings-overlay';
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:1000';
+  overlay.onclick=e=>{ if(e.target===overlay) overlay.style.display='none'; };
+
+  const panel = document.createElement('div');
+  panel.style.cssText='background:var(--sidebar);border:1px solid var(--border);border-radius:12px;padding:28px 32px;min-width:380px;max-width:460px;font-family:var(--mono);color:var(--text)';
+  panel.innerHTML=`
+    <h2 style="margin:0 0 20px;color:var(--accent);font-size:1.1rem;letter-spacing:2px">⚙ SETTINGS</h2>
+
+    <div style="margin-bottom:20px">
+      <h3 style="margin:0 0 10px;font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Authentication</h3>
+      <div id="settings-auth-status" style="margin-bottom:12px;font-size:.75rem;color:var(--muted)">Checking...</div>
+      <button id="btn-oauth-login" onclick="triggerOAuthLogin()" style="
+        width:100%;padding:10px 16px;border-radius:8px;border:1px solid var(--accent);
+        background:transparent;color:var(--accent);font-family:var(--mono);font-size:.78rem;
+        cursor:pointer;transition:all .15s;letter-spacing:1px;
+      ">🔑 SIGN IN WITH OPENAI</button>
+      <button id="btn-oauth-disconnect" onclick="triggerOAuthDisconnect()" style="
+        display:none;width:100%;padding:10px 16px;margin-top:8px;border-radius:8px;border:1px solid var(--danger,#ff4444);
+        background:transparent;color:var(--danger,#ff4444);font-family:var(--mono);font-size:.78rem;
+        cursor:pointer;transition:all .15s;letter-spacing:1px;
+      ">✕ DISCONNECT</button>
+      <p style="margin:8px 0 0;font-size:.65rem;color:var(--muted)">Uses OpenAI OAuth (Codex). Opens your browser to sign in.</p>
+    </div>
+
+    <div style="border-top:1px solid var(--border);padding-top:16px;display:flex;justify-content:flex-end">
+      <button onclick="document.getElementById('settings-overlay').style.display='none'" style="
+        padding:8px 20px;border-radius:8px;border:1px solid var(--border);
+        background:transparent;color:var(--muted);font-family:var(--mono);font-size:.72rem;cursor:pointer;
+      ">CLOSE</button>
+    </div>
+  `;
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+
+  // Hover effect for login button
+  const btn=document.getElementById('btn-oauth-login');
+  btn.onmouseenter=()=>{btn.style.background='var(--accent)';btn.style.color='#0a0a0f';};
+  btn.onmouseleave=()=>{btn.style.background='transparent';btn.style.color='var(--accent)';};
+
+  refreshAuthStatus();
+}
+
+async function refreshAuthStatus(){
+  const el=document.getElementById('settings-auth-status');
+  const btn=document.getElementById('btn-oauth-login');
+  try{
+    const r=await fetch(`${API}/api/auth/status`,{headers:{Authorization:`Bearer ${AUTH_TOKEN}`}});
+    const d=await r.json();
+    const discBtn=document.getElementById('btn-oauth-disconnect');
+    if(d.authenticated){
+      el.innerHTML=`<span style="color:var(--accent)">● Connected</span> — ${d.method==='oauth'?'OpenAI OAuth':'API Key'}`;
+      btn.textContent='✓ ALREADY CONNECTED';
+      btn.style.opacity='.5';
+      if(d.method==='oauth' && discBtn) discBtn.style.display='block';
+    } else {
+      el.innerHTML='<span style="color:var(--danger)">● Not connected</span>';
+      btn.textContent='🔑 SIGN IN WITH OPENAI';
+      btn.style.opacity='1';
+      if(discBtn) discBtn.style.display='none';
+    }
+  }catch{
+    el.textContent='Could not reach server';
+  }
+}
+
+async function triggerOAuthDisconnect(){
+  const btn=document.getElementById('btn-oauth-disconnect');
+  btn.textContent='⏳ DISCONNECTING...';
+  btn.disabled=true;
+  try{
+    const r=await fetch(`${API}/api/auth/logout`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+    });
+    const d=await r.json();
+    if(d.ok){
+      btn.textContent='✓ DISCONNECTED';
+      btn.style.display='none';
+      refreshAuthStatus();
+      checkAuth();
+    }
+  }catch(e){
+    btn.textContent='✗ ERROR';
+  }
+  btn.disabled=false;
+}
+
+async function triggerOAuthLogin(){
+  const btn=document.getElementById('btn-oauth-login');
+  btn.textContent='⏳ STARTING LOGIN...';
+  btn.disabled=true;
+  btn.style.opacity='.6';
+  try{
+    const r=await fetch(`${API}/api/auth/login`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+    });
+    const d=await r.json();
+    console.log('[settings] auth/login response:', r.status, d);
+    if(d.ok && d.authUrl){
+      // Open OpenAI login in a new tab
+      window.open(d.authUrl, '_blank');
+      btn.textContent='⏳ COMPLETE LOGIN IN BROWSER TAB...';
+      // Poll auth status until connected
+      let attempts=0;
+      const poll=setInterval(async()=>{
+        attempts++;
+        try{
+          const sr=await fetch(`${API}/api/auth/status`,{headers:{Authorization:`Bearer ${AUTH_TOKEN}`}});
+          const sd=await sr.json();
+          if(sd.authenticated){
+            clearInterval(poll);
+            btn.textContent='✓ LOGIN SUCCESSFUL';
+            btn.style.borderColor='var(--accent)';
+            btn.style.color='var(--accent)';
+            btn.disabled=false;
+            refreshAuthStatus();
+            checkAuth();
+          }
+        }catch{}
+        if(attempts>150){ // ~5 min at 2s intervals
+          clearInterval(poll);
+          btn.textContent='⏱ TIMED OUT — TRY AGAIN';
+          btn.disabled=false;
+          btn.style.opacity='1';
+        }
+      },2000);
+    } else {
+      btn.textContent='✗ FAILED — TRY AGAIN';
+      btn.style.borderColor='var(--danger)';
+      btn.style.color='var(--danger)';
+      btn.disabled=false;
+    }
+  }catch(e){
+    btn.textContent='✗ ERROR — TRY AGAIN';
+    btn.style.borderColor='var(--danger)';
+    btn.style.color='var(--danger)';
+    btn.disabled=false;
+  }
 }
 
 function renderMessages(){

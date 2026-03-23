@@ -276,7 +276,8 @@ export function startServer(config: SAXConfig) {
 
     // Auth check with RBAC + brute-force flood guard
     let requestRole: Role = "operator";
-    if (url.pathname.startsWith("/api/")) {
+    const authExempt = ["/api/auth/login", "/api/auth/logout", "/api/auth/status"];
+    if (url.pathname.startsWith("/api/") && !authExempt.includes(url.pathname)) {
       const clientIp = req.socket.remoteAddress || "unknown";
       const auth = req.headers.authorization || "";
       const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
@@ -660,11 +661,29 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
-    // OAuth login trigger
+    // OAuth login trigger — returns auth URL immediately, doesn't block
     if (method === "POST" && url.pathname === "/api/auth/login") {
       try {
-        const { startOAuthLogin } = await import("./auth.js");
-        await startOAuthLogin();
+        const { initiateOAuthLogin } = await import("./auth.js");
+        const { authUrl, promise } = initiateOAuthLogin();
+        // Don't await the promise — it completes when user finishes in browser
+        promise.then(() => console.log("[auth] OAuth login completed via dashboard"))
+               .catch((e) => console.warn("[auth] OAuth login failed:", e.message));
+        json(200, { ok: true, authUrl });
+      } catch (e) {
+        json(500, { error: (e as Error).message });
+      }
+      return;
+    }
+
+    // OAuth logout — delete stored tokens
+    if (method === "POST" && url.pathname === "/api/auth/logout") {
+      try {
+        const { getAuthPath } = await import("./config.js");
+        const { unlinkSync, existsSync } = await import("node:fs");
+        const authPath = getAuthPath();
+        if (existsSync(authPath)) unlinkSync(authPath);
+        console.log("[auth] OAuth tokens removed");
         json(200, { ok: true });
       } catch (e) {
         json(500, { error: (e as Error).message });

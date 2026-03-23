@@ -188,6 +188,7 @@ export async function* streamCodexResponse(params: {
         continue;
       }
 
+      console.error(`[codex] API error ${res.status}:`, errText.slice(0, 500));
       throw new Error(`Codex API error ${res.status}: ${errText.slice(0, 500)}`);
     } catch (e) {
       if (attempt >= maxRetries) throw e;

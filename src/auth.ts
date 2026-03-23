@@ -100,9 +100,21 @@ export async function getApiKey(configApiKey?: string): Promise<string> {
 
 // ── OAuth Login Flow ──
 
-export async function startOAuthLogin(): Promise<OAuthTokens> {
-  const { verifier, challenge } = generatePkce();
+// Pending login state (so the callback server can complete the exchange)
+let pendingLogin: { verifier: string; resolve: (t: OAuthTokens) => void; reject: (e: Error) => void } | null = null;
+let callbackServer: ReturnType<typeof createServer> | null = null;
+let callbackTimeout: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * Initiate OAuth flow: generates PKCE, starts callback server, returns the auth URL.
+ * Does NOT block — call this from an API endpoint and return the URL to the browser.
+ */
+export function initiateOAuthLogin(): { authUrl: string; promise: Promise<OAuthTokens> } {
+  // Clean up any prior pending login
+  if (callbackTimeout) clearTimeout(callbackTimeout);
+  if (callbackServer) try { callbackServer.close(); } catch {}
+
+  const { verifier, challenge } = generatePkce();
   const state = randomBytes(16).toString("hex");
 
   const authUrl = new URL(AUTH_URL);
@@ -115,26 +127,16 @@ export async function startOAuthLogin(): Promise<OAuthTokens> {
   authUrl.searchParams.set("scope", "openid profile email offline_access");
   authUrl.searchParams.set("codex_cli_simplified_flow", "true");
 
-  console.log(`\n[auth] Open this URL in your browser:\n\n  ${authUrl.toString()}\n`);
+  const promise = new Promise<OAuthTokens>((resolve, reject) => {
+    pendingLogin = { verifier, resolve, reject };
 
-  // Open browser automatically
-  const { exec } = await import("node:child_process");
-  const openCmd =
-    process.platform === "win32"
-      ? "start"
-      : process.platform === "darwin"
-        ? "open"
-        : "xdg-open";
-  exec(`${openCmd} "${authUrl.toString()}"`);
-
-  // Wait for callback
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      server.close();
+    callbackTimeout = setTimeout(() => {
+      if (callbackServer) try { callbackServer.close(); } catch {}
+      pendingLogin = null;
       reject(new Error("OAuth login timed out after 5 minutes"));
     }, 5 * 60 * 1000);
 
-    const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    callbackServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
       const url = new URL(req.url || "/", `http://127.0.0.1:${CALLBACK_PORT}`);
 
       if (url.pathname !== CALLBACK_PATH) {
@@ -150,8 +152,13 @@ export async function startOAuthLogin(): Promise<OAuthTokens> {
         return;
       }
 
+      if (!pendingLogin) {
+        res.writeHead(400);
+        res.end("No pending login");
+        return;
+      }
+
       try {
-        // Exchange code for tokens
         const tokenRes = await fetch(TOKEN_URL, {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -160,7 +167,7 @@ export async function startOAuthLogin(): Promise<OAuthTokens> {
             client_id: CLIENT_ID,
             code,
             redirect_uri: `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`,
-            code_verifier: verifier,
+            code_verifier: pendingLogin.verifier,
           }),
         });
 
@@ -193,20 +200,46 @@ export async function startOAuthLogin(): Promise<OAuthTokens> {
           </body></html>
         `);
 
-        clearTimeout(timeout);
-        server.close();
-        resolve(tokens);
+        if (callbackTimeout) clearTimeout(callbackTimeout);
+        callbackServer!.close();
+        callbackServer = null;
+        pendingLogin.resolve(tokens);
+        pendingLogin = null;
       } catch (err) {
         res.writeHead(500);
         res.end("Token exchange failed");
-        clearTimeout(timeout);
-        server.close();
-        reject(err);
+        if (callbackTimeout) clearTimeout(callbackTimeout);
+        callbackServer!.close();
+        callbackServer = null;
+        pendingLogin?.reject(err as Error);
+        pendingLogin = null;
       }
     });
 
-    server.listen(CALLBACK_PORT, "127.0.0.1", () => {
+    callbackServer.listen(CALLBACK_PORT, "127.0.0.1", () => {
       console.log(`[auth] Waiting for OAuth callback on port ${CALLBACK_PORT}...`);
     });
   });
+
+  return { authUrl: authUrl.toString(), promise };
+}
+
+/**
+ * Legacy blocking login (for CLI --login flag).
+ */
+export async function startOAuthLogin(): Promise<OAuthTokens> {
+  const { authUrl, promise } = initiateOAuthLogin();
+
+  console.log(`\n[auth] Open this URL in your browser:\n\n  ${authUrl}\n`);
+
+  const { exec } = await import("node:child_process");
+  const openCmd =
+    process.platform === "win32"
+      ? "start"
+      : process.platform === "darwin"
+        ? "open"
+        : "xdg-open";
+  exec(`${openCmd} "${authUrl}"`);
+
+  return promise;
 }

@@ -503,6 +503,26 @@ function openSettings(){
       <p style="margin:8px 0 0;font-size:.65rem;color:var(--muted)">Uses OpenAI OAuth (Codex). Opens your browser to sign in.</p>
     </div>
 
+    <div style="margin-bottom:20px;border-top:1px solid var(--border);padding-top:16px">
+      <h3 style="margin:0 0 10px;font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px">AI Generation (Local GPU)</h3>
+      <div id="ai-status" style="margin-bottom:12px;font-size:.75rem;color:var(--muted)">Checking...</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button onclick="checkAiServer('image')" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text);font-family:var(--mono);font-size:.72rem;cursor:pointer">
+          🖼 Check Image Server
+        </button>
+        <button onclick="checkAiServer('video')" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text);font-family:var(--mono);font-size:.72rem;cursor:pointer">
+          🎬 Check Video Server
+        </button>
+      </div>
+      <button onclick="startAiServer('image')" style="width:100%;padding:10px 16px;margin-bottom:6px;border-radius:8px;border:1px solid var(--accent);background:transparent;color:var(--accent);font-family:var(--mono);font-size:.78rem;cursor:pointer">
+        ▶ START IMAGE SERVER (SD 1.5, port 7860)
+      </button>
+      <button onclick="startAiServer('video')" style="width:100%;padding:10px 16px;border-radius:8px;border:1px solid #8b5cf6;background:transparent;color:#8b5cf6;font-family:var(--mono);font-size:.78rem;cursor:pointer">
+        ▶ START VIDEO SERVER (CogVideoX, port 7861)
+      </button>
+      <p style="margin:8px 0 0;font-size:.65rem;color:var(--muted)">Runs on your GPU. First start downloads models (~4GB each). Uses Stable Diffusion for images, CogVideoX for video.</p>
+    </div>
+
     <div style="border-top:1px solid var(--border);padding-top:16px;display:flex;justify-content:flex-end">
       <button onclick="document.getElementById('settings-overlay').style.display='none'" style="
         padding:8px 20px;border-radius:8px;border:1px solid var(--border);
@@ -617,6 +637,63 @@ async function triggerOAuthLogin(){
     btn.style.borderColor='var(--danger)';
     btn.style.color='var(--danger)';
     btn.disabled=false;
+  }
+}
+
+async function checkAiServer(type){
+  const port=type==='image'?7860:7861;
+  const el=document.getElementById('ai-status');
+  el.textContent=`Checking ${type} server on port ${port}...`;
+  try{
+    const r=await fetch(`http://127.0.0.1:${port}/health`,{signal:AbortSignal.timeout(3000)});
+    const d=await r.json();
+    if(d.model_loaded){
+      el.innerHTML=`<span style="color:var(--accent)">● ${type} server running</span> — ${d.device} | Model loaded`;
+    } else {
+      el.innerHTML=`<span style="color:#f59e0b">● ${type} server starting</span> — model loading...`;
+    }
+  }catch{
+    el.innerHTML=`<span style="color:var(--danger)">● ${type} server offline</span> — click Start to launch`;
+  }
+}
+
+async function startAiServer(type){
+  const el=document.getElementById('ai-status');
+  const script=type==='image'?'workspace/sd-server/server.py':'workspace/sd-server/video-server.py';
+  el.innerHTML=`<span style="color:#f59e0b">⏳ Starting ${type} server...</span> (first run downloads ~4GB model)`;
+
+  try{
+    // Use the agent's bash tool via chat API to start the server
+    const r=await fetch(`${API}/api/chat`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':`Bearer ${AUTH_TOKEN}`},
+      body:JSON.stringify({
+        message:`Use bash to start the ${type} server in background: start /B python ${script}`,
+        sessionId:'system-setup'
+      })
+    });
+
+    // Poll for server to be ready
+    const port=type==='image'?7860:7861;
+    let ready=false;
+    for(let i=0;i<60;i++){
+      await new Promise(r=>setTimeout(r,5000));
+      try{
+        const h=await fetch(`http://127.0.0.1:${port}/health`,{signal:AbortSignal.timeout(2000)});
+        const d=await h.json();
+        if(d.model_loaded){ready=true;break;}
+        el.innerHTML=`<span style="color:#f59e0b">⏳ ${type} server loading model... (${(i+1)*5}s)</span>`;
+      }catch{
+        el.innerHTML=`<span style="color:#f59e0b">⏳ Downloading ${type} model... (${(i+1)*5}s)</span>`;
+      }
+    }
+    if(ready){
+      el.innerHTML=`<span style="color:var(--accent)">● ${type} server ready!</span>`;
+    }else{
+      el.innerHTML=`<span style="color:var(--danger)">● ${type} server timed out</span> — try starting manually: python ${script}`;
+    }
+  }catch(e){
+    el.innerHTML=`<span style="color:var(--danger)">● Failed: ${e.message}</span>`;
   }
 }
 

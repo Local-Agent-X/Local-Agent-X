@@ -95,7 +95,7 @@ export class SecretsStore {
         encrypted: encrypt(s.value, this.key),
       })),
     };
-    writeFileSync(this.filePath, JSON.stringify(data, null, 2), "utf-8");
+    writeFileSync(this.filePath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
   }
 
   /** Get a decrypted secret value by name. Returns undefined if not found. */

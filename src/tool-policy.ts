@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { checkRegexSafety } from "./safe-regex.js";
 
 /**
  * Tool Policy System
@@ -266,6 +267,16 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
       constraints: { maxCallsPerSession: 100 },
     },
 
+    // Image generation — rate limited
+    {
+      id: "allow-generate-image",
+      tool: "generate_image",
+      decision: "allow",
+      reason: "Image generation allowed (rate limited)",
+      priority: 40,
+      constraints: { maxCallsPerSession: 20 },
+    },
+
     // ── FLAGGED tools (allowed but logged as elevated risk) ──
 
     {
@@ -288,6 +299,14 @@ export function loadToolPolicy(dataDir: string): ToolPolicy {
   if (existsSync(policyPath)) {
     try {
       const raw = JSON.parse(readFileSync(policyPath, "utf-8")) as ToolPolicyConfig;
+      // Validate user-provided patterns for ReDoS safety
+      for (const rule of raw.rules) {
+        const patternCheck = checkRegexSafety(rule.tool);
+        if (patternCheck) {
+          console.warn(`[policy] Unsafe tool pattern in rule "${rule.id}": ${patternCheck}. Skipping.`);
+          continue;
+        }
+      }
       console.log(`[policy] Loaded ${raw.rules.length} rules from ${policyPath}`);
       return new ToolPolicy(raw);
     } catch (e) {

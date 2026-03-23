@@ -241,18 +241,13 @@ export class SecurityLayer {
 
     // Block writes/edits to core agent files
     if (action === "write" || action === "edit") {
+      // Only protect files that could break the agent's core functionality if corrupted
+      // Agent CAN edit: server.ts, public/, workspace/, new src/ files
       const coreProtectedFiles = [
-        /[/\\]src[/\\]agent\.ts$/i,
-        /[/\\]src[/\\]security\.ts$/i,
-        /[/\\]src[/\\]server\.ts$/i,
-        /[/\\]src[/\\]auth\.ts$/i,
-        /[/\\]src[/\\]codex-client\.ts$/i,
-        /[/\\]src[/\\]config\.ts$/i,
-        /[/\\]src[/\\]index\.ts$/i,
-        /[/\\]src[/\\]types\.ts$/i,
-        /[/\\]package\.json$/i,
-        /[/\\]tsconfig\.json$/i,
-        /[/\\]\.env$/i,
+        /[/\\]src[/\\]security\.ts$/i,    // Security layer — never let agent weaken its own guardrails
+        /[/\\]src[/\\]auth\.ts$/i,         // Auth — token handling
+        /[/\\]src[/\\]codex-client\.ts$/i, // API client
+        /[/\\]\.env$/i,                     // Environment secrets
       ];
       for (const pattern of coreProtectedFiles) {
         // Check BOTH the requested path and the real path (symlink target)

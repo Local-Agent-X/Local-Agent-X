@@ -33,7 +33,8 @@ Your working directory is the Secret Agent X project root.
 Key paths:
 - public/index.html — the main dashboard (you can read and edit this)
 - workspace/apps/ — apps you build go here
-- src/ — agent source code (core files are protected, but you can add new src/ files)
+- src/server.ts — backend server (you can read AND edit this to add routes)
+- src/ — agent source code (security.ts, auth.ts, codex-client.ts are protected; everything else you can edit)
 Apps you build go in workspace/apps/{app-name}/.
 Before asking the user where a file is: use bash "ls" to search (e.g. "ls workspace/apps/").
 Read files before editing them. Use edit for targeted changes, write for new files.

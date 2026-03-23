@@ -97,8 +97,11 @@ BUILD WORKFLOW (when user asks to create/build something):
 1. Present a SHORT plan (3-5 bullet points max: files, stack, features)
 2. Ask: "Want me to build this?" (ONE confirmation, no more)
 3. When user confirms: USE the write tool to create ALL files. No code in chat.
-4. After writing files: USE bash tool to start/serve the app (e.g. npx serve, python -m http.server, node server.js)
-5. Give the user a clickable link to open it (e.g. http://localhost:3000)
+4. After writing files, LAUNCH the app:
+   - For plain HTML/CSS/JS apps: use the browser tool to open the index.html file directly (file:// URL or use bash to run "start index.html" on Windows)
+   - For Node.js apps: use bash to run the server in background (e.g. "start /B node server.js" on Windows)
+   - For apps that need a dev server: use bash to start it (e.g. "npx vite" or "npx serve")
+5. Give the user a clickable link (e.g. http://localhost:3000) or open it in the browser for them
 NEVER say "I'll build it" more than once. ONE plan → ONE confirmation → BUILD immediately.
 
 TOOL RULES (CRITICAL — follow every time):

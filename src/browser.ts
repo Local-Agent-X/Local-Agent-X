@@ -31,7 +31,6 @@ const USER_AGENTS: Record<BrowserEngine, string> = {
 
 // Chrome args that reduce automation fingerprint
 const STEALTH_ARGS = [
-  "--disable-blink-features=AutomationControlled",
   "--no-first-run",
   "--no-default-browser-check",
   "--disable-sync",
@@ -41,6 +40,7 @@ const STEALTH_ARGS = [
   "--disable-session-crashed-bubble",
   "--hide-crash-restore-bubble",
   "--password-store=basic",
+  "--disable-infobars",
 ];
 
 // Find Chrome executable on Windows
@@ -83,16 +83,24 @@ export class BrowserManager {
     }
     if (engine) this.currentEngine = engine;
 
-    if (this.page && !this.page.isClosed()) {
-      this.resetIdle();
-      return this.page;
+    // Reuse existing page if still alive
+    if (this.page) {
+      try {
+        // Quick check if page is still connected
+        await this.page.title();
+        this.resetIdle();
+        return this.page;
+      } catch {
+        // Page disconnected — need to relaunch
+        this.page = null;
+        this.context = null;
+        this.browser = null;
+      }
     }
 
     const pw = await import("playwright");
 
     if (this.currentEngine === "chromium") {
-      // Strategy: spawn Chrome directly (no Playwright automation markers)
-      // then connect via CDP — this is what OpenClaw does
       this.browser = await this.launchViaCDP(pw);
     } else {
       const launcher = pw[this.currentEngine];
@@ -102,6 +110,21 @@ export class BrowserManager {
       });
     }
 
+    // For CDP-connected browsers, reuse the existing context/page from Chrome
+    // instead of creating new ones (which opens extra about:blank tabs)
+    const existingContexts = this.browser.contexts();
+    if (existingContexts.length > 0) {
+      this.context = existingContexts[0];
+      const existingPages = this.context.pages();
+      if (existingPages.length > 0) {
+        this.page = existingPages[0];
+        this.page.setDefaultTimeout(ACTION_TIMEOUT);
+        this.resetIdle();
+        return this.page;
+      }
+    }
+
+    // Fallback: create new context (non-CDP path)
     this.context = await this.browser.newContext({
       userAgent: USER_AGENTS[this.currentEngine],
       viewport: { width: 1280, height: 800 },
@@ -138,9 +161,6 @@ export class BrowserManager {
         `--user-data-dir=${userDataDir}`,
         ...STEALTH_ARGS,
         "--window-size=1280,800",
-        "--disable-web-security",
-        "--disable-features=IsolateOrigins,site-per-process",
-        "about:blank",
       ];
 
       console.log(`[browser] Spawning Chrome directly: ${chromePath}`);
@@ -232,6 +252,7 @@ export class BrowserManager {
   /** Click an element by CSS selector. */
   async click(selector: string): Promise<string> {
     const page = await this.getPage();
+    await page.waitForSelector(selector, { state: "visible", timeout: 5000 });
     await page.click(selector, { timeout: ACTION_TIMEOUT });
     await page.waitForTimeout(500);
     const title = await page.title();
@@ -241,6 +262,8 @@ export class BrowserManager {
   /** Fill a text input by CSS selector. */
   async fill(selector: string, value: string): Promise<string> {
     const page = await this.getPage();
+    // Wait for element but with shorter timeout — auto-recovery in browser-tools handles fallbacks
+    await page.waitForSelector(selector, { state: "visible", timeout: 5000 });
     await page.fill(selector, value, { timeout: ACTION_TIMEOUT });
     return `Filled "${selector}" with value (${value.length} chars)`;
   }
@@ -296,6 +319,47 @@ export class BrowserManager {
         `\n\n[Truncated at ${MAX_TEXT_LENGTH} chars]`;
     }
     return output ?? "(no return value)";
+  }
+
+  /** List all open tabs with their URLs and titles. */
+  async listTabs(): Promise<string> {
+    if (!this.context) {
+      return "No browser session active.";
+    }
+    const pages = this.context.pages();
+    if (pages.length === 0) return "No tabs open.";
+
+    const currentUrl = this.page?.url() || "";
+    const tabs: string[] = [];
+    for (let i = 0; i < pages.length; i++) {
+      const p = pages[i];
+      try {
+        const title = await p.title();
+        const url = p.url();
+        const active = url === currentUrl ? " ← active" : "";
+        tabs.push(`[${i}] ${title || "(no title)"} — ${url}${active}`);
+      } catch {
+        tabs.push(`[${i}] (disconnected)`);
+      }
+    }
+    return `${pages.length} tab(s) open:\n${tabs.join("\n")}`;
+  }
+
+  /** Switch to a tab by index number. */
+  async switchTab(index: number): Promise<string> {
+    if (!this.context) {
+      return "No browser session active.";
+    }
+    const pages = this.context.pages();
+    if (index < 0 || index >= pages.length) {
+      return `Invalid tab index ${index}. Use 'tabs' action to see available tabs (0-${pages.length - 1}).`;
+    }
+    this.page = pages[index];
+    this.page.setDefaultTimeout(ACTION_TIMEOUT);
+    await this.page.bringToFront();
+    const title = await this.page.title();
+    const url = this.page.url();
+    return `Switched to tab [${index}]: ${title} — ${url}`;
   }
 
   /** Get current page info. */

@@ -281,6 +281,16 @@ export class SecurityLayer {
   // ── Shell Command ──
 
   private evaluateShellCommand(command: string): SecurityDecision {
+    // Obfuscation detection (inspired by upstream exec-obfuscation-detect)
+    try {
+      const obfuscationResult = this.detectObfuscation(command);
+      if (obfuscationResult) {
+        return { allowed: false, reason: obfuscationResult };
+      }
+    } catch {
+      // Don't crash on obfuscation check failure — allow the command through
+    }
+
     // Block non-pipe shell metacharacters outright (command chaining, subshells, redirects)
     if (/[;&`$(){}<>\r\n]/.test(command)) {
       return {
@@ -414,6 +424,50 @@ export class SecurityLayer {
     }
 
     return { allowed: true, reason: "Web fetch allowed (DNS validated)" };
+  }
+
+  // ── Obfuscation Detection ──
+
+  private detectObfuscation(command: string): string | null {
+    // Hex-encoded sequences (e.g., \x72\x6d = "rm")
+    if (/\\x[0-9a-f]{2}/i.test(command)) {
+      return "Blocked: hex-encoded characters detected (possible obfuscation)";
+    }
+    // Octal-encoded sequences (e.g., \162\155 = "rm")
+    if (/\\[0-3][0-7]{2}/.test(command)) {
+      return "Blocked: octal-encoded characters detected (possible obfuscation)";
+    }
+    // Unicode escape sequences (e.g., \u0072\u006d = "rm")
+    if (/\\u[0-9a-f]{4}/i.test(command)) {
+      return "Blocked: unicode escape sequences detected (possible obfuscation)";
+    }
+    // Base64 inline decoding (echo BASE64 | base64 -d)
+    if (/base64\s+(-d|--decode)/i.test(command)) {
+      return "Blocked: base64 decode in command (possible obfuscation)";
+    }
+    // printf with escape sequences (printf '\x72\x6d')
+    if (/\bprintf\b.*\\(x|u|[0-7])/i.test(command)) {
+      return "Blocked: printf with escape sequences (possible obfuscation)";
+    }
+    // xxd / od reverse (decode hex to binary)
+    if (/\bxxd\s+-r\b/i.test(command) || /\bod\b.*-A\s*x/i.test(command)) {
+      return "Blocked: hex decode tool (possible obfuscation)";
+    }
+    // String concatenation tricks: a='r'; b='m'; $a$b
+    // We already block $ metacharacter, but check for quoted var assignment patterns
+    if (/\b[a-z]=['"][a-z]{1,3}['"]/i.test(command) && command.split("=").length > 3) {
+      return "Blocked: suspicious variable assignment pattern (possible string concatenation obfuscation)";
+    }
+    // rev (reverse string to hide commands)
+    if (/\brev\b/i.test(command)) {
+      return "Blocked: 'rev' command (commonly used for obfuscation)";
+    }
+    // Very long commands are suspicious (likely encoded payloads)
+    if (command.length > 2000) {
+      return "Blocked: command exceeds 2000 characters (possible encoded payload)";
+    }
+
+    return null;
   }
 
   getAuditLog() {

@@ -154,13 +154,8 @@ export async function* streamCodexResponse(params: {
     input: convertMessagesToInput(params.messages),
     text: { verbosity: "medium" },
     include: ["reasoning.encrypted_content"],
-    store: true, // Enable store so we can use previous_response_id for incremental turns
+    store: false,
   };
-
-  // Incremental mode: if we have a previous response ID, only send new items
-  if (params.previousResponseId) {
-    body.previous_response_id = params.previousResponseId;
-  }
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;

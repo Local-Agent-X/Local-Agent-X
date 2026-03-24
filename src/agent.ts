@@ -236,7 +236,8 @@ async function runCodexAgent(
           });
         },
         onError(error) {
-          onEvent?.({ type: "error", message: error });
+          // Don't surface WS errors to user — fallback to HTTP handles it
+          console.log(`[agent] WS error (will fallback): ${error}`);
         },
       },
 
@@ -291,8 +292,8 @@ async function runCodexAgent(
       },
     });
   } catch (e) {
-    // WebSocket failed — fall back to HTTP streaming
-    console.warn(`[agent] WebSocket failed, falling back to HTTP: ${(e as Error).message}`);
+    // WebSocket failed — fall back to HTTP streaming (expected for Codex OAuth)
+    console.log(`[agent] WS unavailable, using HTTP: ${(e as Error).message}`);
     return runCodexAgentHttp(userMessage, history, options);
   }
 

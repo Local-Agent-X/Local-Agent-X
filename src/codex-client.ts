@@ -160,9 +160,7 @@ export async function* streamCodexResponse(params: {
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;
-    // "required" forces the model to call a tool every turn (no text-only "I'll do it" responses)
-    // Falls back to "auto" after a few iterations to let the model respond with text
-    body.tool_choice = params.forceToolUse ? "required" : "auto";
+    body.tool_choice = "auto";
     body.parallel_tool_calls = true;
   }
 

@@ -75,5 +75,28 @@ export function createSecretTools(
     },
   };
 
-  return [requestSecretTool];
+  const listSecretsTool: ToolDefinition = {
+    name: "list_secrets",
+    description:
+      "List the names and services of all stored secrets (API keys, tokens). " +
+      "Does NOT reveal secret values — only names so you know what's available. " +
+      "Use this to check if a secret exists before requesting it or using {{SECRET_NAME}} in http_request.",
+    parameters: {
+      type: "object",
+      properties: {},
+    },
+    async execute() {
+      const list = secrets.list();
+      if (list.length === 0) {
+        return ok("No secrets stored. Use request_secret to ask the user for credentials.");
+      }
+      const lines = list.map(s => {
+        const svc = s.service ? ` (${s.service})` : "";
+        return `- ${s.name}${svc} — use as {{${s.name}}} in http_request headers`;
+      });
+      return ok(`Stored secrets (${list.length}):\n${lines.join("\n")}`);
+    },
+  };
+
+  return [requestSecretTool, listSecretsTool];
 }

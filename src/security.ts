@@ -81,6 +81,12 @@ const BLOCKED_COMMANDS = [
   /\burllib\.(request|urlopen)\b/i,         // Python urllib
   /\bhttpx?\./i,                            // Python httpx
   /\baiohttp\b/i,                           // Python aiohttp
+  // ── Shell escape / injection edge cases ──
+  /^\.\s+\//,                               // dot-sourcing: ". /path" (source command)
+  /\bsource\s+\//i,                         // source /path
+  /[<>]&\d/,                                // fd redirection: <&3, >&3
+  /\d+>&\d/,                                // fd duplication: 2>&1 in exotic forms
+  /\\\n/,                                   // backslash-newline continuation (multi-line escape)
 ];
 
 // ── SSRF: IP address validation helpers ──
@@ -138,11 +144,23 @@ const BLOCKED_HOSTNAMES = new Set([
 
 // ── Tool call context ──
 
+export type CallContext = "local" | "api" | "delegated" | "cron";
+
 interface ToolCallContext {
   toolName: string;
   args: Record<string, unknown>;
   sessionId: string;
+  callContext?: CallContext; // Where the call originates from
 }
+
+// Tools blocked in non-local contexts (API calls, delegated agents, cron jobs)
+const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
+  bash: ["delegated", "cron"],           // Shell too dangerous for delegated/automated
+  write: ["delegated"],                   // No file writes from delegated agents
+  edit: ["delegated"],                    // No file edits from delegated agents
+  browser: ["cron"],                      // No browser in automated jobs
+  generate_image: ["delegated", "cron"],  // Resource-intensive, block in automation
+};
 
 /**
  * Security layer that evaluates tool calls before execution.
@@ -163,6 +181,16 @@ export class SecurityLayer {
 
   evaluate(ctx: ToolCallContext): SecurityDecision {
     const { toolName, args } = ctx;
+
+    // Context-based tool tiering: block tools in restricted contexts
+    const callCtx = ctx.callContext || "local";
+    const restricted = CONTEXT_RESTRICTED_TOOLS[toolName];
+    if (restricted && restricted.includes(callCtx)) {
+      return {
+        allowed: false,
+        reason: `Blocked: tool "${toolName}" is not allowed in ${callCtx} context`,
+      };
+    }
 
     let decision: SecurityDecision;
 
@@ -235,19 +263,39 @@ export class SecurityLayer {
     // Check for directory traversal (.. in path after resolution)
     const rel = relative(this.workspace, realPath);
     if (rel.startsWith("..")) {
-      // Path escapes workspace — only allow if not writing to sensitive areas
-      // (reads outside workspace are ok for general files, but sensitive patterns still apply)
+      // Path escapes workspace — block writes entirely, restrict reads
+      if (action === "write" || action === "edit") {
+        return { allowed: false, reason: "Blocked: cannot write files outside workspace directory" };
+      }
+      // Allow reads only for the project directory (src/, public/, etc.) and home .sax directory
+      const projectRoot = resolve(this.workspace, "..");
+      const homeDir = resolve(process.env.HOME || process.env.USERPROFILE || "");
+      const saxDir = resolve(homeDir, ".sax");
+      const inProject = !relative(projectRoot, realPath).startsWith("..");
+      const inSax = !relative(saxDir, realPath).startsWith("..");
+      if (!inProject && !inSax) {
+        return { allowed: false, reason: "Blocked: cannot read files outside project and workspace directories" };
+      }
     }
 
-    // Block writes/edits to core agent files
+    // Block writes/edits to core agent files — CODE ENFORCED, not just documented
+    // Even if the AI is prompt-injected, it CANNOT weaken its own security
     if (action === "write" || action === "edit") {
-      // Only protect files that could break the agent's core functionality if corrupted
-      // Agent CAN edit: server.ts, public/, workspace/, new src/ files
       const coreProtectedFiles = [
-        /[/\\]src[/\\]security\.ts$/i,    // Security layer — never let agent weaken its own guardrails
-        /[/\\]src[/\\]auth\.ts$/i,         // Auth — token handling
-        /[/\\]src[/\\]codex-client\.ts$/i, // API client
-        /[/\\]\.env$/i,                     // Environment secrets
+        /[/\\]src[/\\]security\.ts$/i,        // Security layer — guardrails
+        /[/\\]src[/\\]auth\.ts$/i,            // Auth — token handling
+        /[/\\]src[/\\]codex-client\.ts$/i,    // API client — token transport
+        /[/\\]src[/\\]codex-ws\.ts$/i,        // WebSocket client
+        /[/\\]src[/\\]keychain\.ts$/i,        // Encryption key management
+        /[/\\]src[/\\]sanitize\.ts$/i,        // Prompt injection defense
+        /[/\\]src[/\\]threat-engine\.ts$/i,   // Threat detection / canary tokens
+        /[/\\]src[/\\]rbac\.ts$/i,            // Role-based access control
+        /[/\\]src[/\\]safe-regex\.ts$/i,      // Regex safety
+        /[/\\]src[/\\]tool-policy\.ts$/i,     // Tool policy enforcement
+        /[/\\]\.env$/i,                        // Environment secrets
+        /[/\\]\.sax[/\\]secrets\./i,           // Encrypted secrets store
+        /[/\\]\.sax[/\\]master\./i,            // Master encryption key
+        /[/\\]\.sax[/\\]auth\.json$/i,         // OAuth tokens
       ];
       for (const pattern of coreProtectedFiles) {
         // Check BOTH the requested path and the real path (symlink target)

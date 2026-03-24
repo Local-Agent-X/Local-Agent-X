@@ -169,7 +169,9 @@ function fileFallbackGetOrCreate(dataDir: string): Buffer {
     writeFileSync(saltPath, salt, { mode: 0o600 });
   }
   const identity = `sax-secrets::${hostname()}::${userInfo().username}`;
-  return scryptSync(identity, salt, 32, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+  // N=131072 (~500ms per attempt) — makes brute-force impractical even with known machine identity
+  // WARNING: Changing these params invalidates existing encrypted secrets (users must re-enter keys)
+  return scryptSync(identity, salt, 32, { N: 131072, r: 8, p: 2, maxmem: 256 * 1024 * 1024 });
 }
 
 // ═══════════════════════════════════════════════════════════════════

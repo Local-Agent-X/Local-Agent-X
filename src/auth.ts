@@ -146,9 +146,17 @@ export function initiateOAuthLogin(): { authUrl: string; promise: Promise<OAuthT
       }
 
       const code = url.searchParams.get("code");
+      const returnedState = url.searchParams.get("state");
       if (!code) {
         res.writeHead(400);
         res.end("Missing authorization code");
+        return;
+      }
+      // Validate state parameter to prevent CSRF
+      if (returnedState !== state) {
+        res.writeHead(400);
+        res.end("Invalid state parameter — possible CSRF attack");
+        console.warn("[auth] OAuth state mismatch! Expected:", state.slice(0, 8) + "...", "Got:", returnedState?.slice(0, 8) + "...");
         return;
       }
 

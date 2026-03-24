@@ -1,0 +1,88 @@
+// ── Shared utilities for all panels ──
+
+// Auth token (sessionStorage preferred, localStorage fallback)
+let AUTH_TOKEN = sessionStorage.getItem('sax_token') || localStorage.getItem('sax_token') || '';
+const urlToken = new URLSearchParams(location.search).get('token');
+if (urlToken) {
+  AUTH_TOKEN = urlToken;
+  sessionStorage.setItem('sax_token', urlToken);
+  const cleanUrl = new URL(location.href);
+  cleanUrl.searchParams.delete('token');
+  history.replaceState(null, '', cleanUrl.pathname + cleanUrl.hash);
+} else if (AUTH_TOKEN) {
+  sessionStorage.setItem('sax_token', AUTH_TOKEN);
+}
+
+const API = '';
+
+function uid() { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7); }
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = String(s || '');
+  return d.innerHTML;
+}
+
+// Markdown renderer
+function md(s) {
+  if (!s) return '';
+  let h = esc(s);
+  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>');
+  h = h.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+  h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  h = h.replace(/^- (.+)$/gm, '<li style="margin-left:16px;list-style:disc">$1</li>');
+  h = h.replace(/^\d+\. (.+)$/gm, '<li style="margin-left:16px;list-style:decimal">$1</li>');
+  h = h.replace(/^### (.+)$/gm, '<h4 class="md-h">$1</h4>');
+  h = h.replace(/^## (.+)$/gm, '<h3 class="md-h">$1</h3>');
+  h = h.replace(/^# (.+)$/gm, '<h2 class="md-h">$1</h2>');
+  const urlPlaceholders = [];
+  h = h.replace(/(https?:\/\/[^\s<"']+)/g, (match) => {
+    const idx = urlPlaceholders.length;
+    urlPlaceholders.push(`<a href="${match}" target="_blank" class="md-link">${match}</a>`);
+    return '%%URL' + idx + '%%';
+  });
+  h = h.replace(/\n/g, '<br>');
+  for (let i = 0; i < urlPlaceholders.length; i++) {
+    h = h.replace('%%URL' + i + '%%', urlPlaceholders[i]);
+  }
+  return h;
+}
+
+// Auth check (updates sidebar footer)
+async function checkAuth() {
+  try {
+    const r = await fetch(`${API}/api/auth/status`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const d = await r.json();
+    const dot = document.getElementById('auth-dot');
+    const label = document.getElementById('auth-label');
+    if (dot) dot.className = d.authenticated ? 'ok' : '';
+    if (label) label.textContent = d.authenticated
+      ? (d.method === 'oauth' ? 'OAuth connected' : 'API key active')
+      : 'not connected';
+  } catch {
+    const label = document.getElementById('auth-label');
+    if (label) label.textContent = 'offline';
+  }
+}
+
+// Fetch helper with auth
+async function apiFetch(path, opts = {}) {
+  return fetch(`${API}${path}`, {
+    ...opts,
+    headers: { Authorization: `Bearer ${AUTH_TOKEN}`, ...opts.headers },
+  });
+}
+
+async function apiJson(path, opts = {}) {
+  const r = await apiFetch(path, opts);
+  return r.json();
+}
+
+async function apiPost(path, body) {
+  return apiJson(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}

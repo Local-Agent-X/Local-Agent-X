@@ -114,6 +114,7 @@ async function sendMessage() {
               break;
             }
             case 'secret_request': showSecretModal(event.name, event.service, event.reason); break;
+            case 'context_status': updateContextBar(event); break;
             case 'error': content += '\n\nError: ' + event.message; bodyEl.innerHTML = md(content); break;
           }
         } catch {}
@@ -125,6 +126,85 @@ async function sendMessage() {
   } catch (e) { bodyEl.textContent = 'Connection error: ' + e.message; }
   flushTTS(); streaming = false;
   document.getElementById('send-btn').disabled = false;
+  updateContextBar();
+}
+
+// ── Context health indicator ──
+function updateContextBar() {
+  const bar = document.getElementById('context-bar');
+  if (!bar || !activeChat) { if (bar) bar.classList.remove('visible'); return; }
+
+  const msgCount = activeChat.messages.length;
+  const compacted = activeChat.compactedAt || 0; // messages compacted so far
+  const effective = msgCount - compacted;
+
+  if (effective < 20) {
+    bar.classList.remove('visible');
+    return;
+  }
+
+  bar.classList.add('visible');
+  let dot, text, showCompact = false;
+
+  const compactLabel = compacted ? ` (AI sees ${effective})` : '';
+  if (effective < 40) {
+    dot = 'green';
+    text = `${msgCount} messages${compactLabel} — context healthy`;
+  } else if (effective < 60) {
+    dot = 'yellow';
+    text = `${msgCount} messages${compactLabel} — context getting long`;
+    showCompact = true;
+  } else {
+    dot = 'red';
+    text = `${msgCount} messages${compactLabel} — context heavy, consider compacting`;
+    showCompact = true;
+  }
+
+  bar.innerHTML = `
+    <span class="ctx-dot ${dot}"></span>
+    <span class="ctx-text">${text}</span>
+    ${showCompact ? `<button class="ctx-action" onclick="compactChat()">Compact context</button>` : ''}
+  `;
+}
+
+// ── Context compaction (like Claude Code) ──
+// Keeps full chat visible in UI, but tells the server to summarize old messages
+// for the AI. The chat record on disk stays complete.
+async function compactChat() {
+  if (!activeChat) return;
+  console.log('[compact] Starting compact for', activeChat.id, 'with', activeChat.messages.length, 'frontend messages');
+
+  const bar = document.getElementById('context-bar');
+  if (bar) bar.innerHTML = '<span class="ctx-dot yellow"></span><span class="ctx-text">Compacting context...</span>';
+
+  try {
+    const res = await apiFetch('/api/compact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: activeChat.id }),
+    });
+    const data = await res.json();
+    console.log('[compact] Response:', data);
+    if (data.ok) {
+      activeChat.compactedAt = data.compactedAt || activeChat.messages.length - 20;
+      saveChats();
+
+      // Show compaction marker in chat
+      const el = document.getElementById('messages');
+      const marker = document.createElement('div');
+      marker.style.cssText = 'text-align:center;padding:12px;font-family:var(--mono);font-size:.7rem;color:var(--accent);border-top:1px dashed var(--border);border-bottom:1px dashed var(--border);margin:12px 0';
+      marker.textContent = `— context compacted — ${data.oldCount} old messages summarized, ${data.recentCount} kept in full —`;
+      el.appendChild(marker);
+      autoScroll();
+    } else {
+      console.warn('[compact] Not compacted:', data.reason);
+      if (bar) bar.innerHTML = `<span class="ctx-dot yellow"></span><span class="ctx-text">${data.reason || 'Compact failed'}</span>`;
+    }
+  } catch (e) {
+    console.warn('Compact failed:', e);
+    if (bar) bar.innerHTML = `<span class="ctx-dot red"></span><span class="ctx-text">Compact error: ${e.message}</span>`;
+  }
+  updateContextBar();
 }
 
 function addMessageEl(role, text, attachments) {
@@ -597,6 +677,51 @@ function previewImage(index) {
   }
   overlay.innerHTML = `<img src="${f.dataUrl}" style="max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 0 40px rgba(0,0,0,.5)"/>`;
   overlay.style.display = 'flex';
+}
+
+// ── Context usage indicator ──
+let lastContextStatus = null;
+
+function updateContextBar(event) {
+  if (event) lastContextStatus = event;
+  const data = lastContextStatus;
+
+  let bar = document.getElementById('context-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'context-bar';
+    bar.style.cssText = 'display:none;max-width:800px;margin:0 auto 8px;width:100%;padding:0 14px';
+    const inputArea = document.getElementById('input-area');
+    if (inputArea) inputArea.insertBefore(bar, inputArea.firstChild);
+  }
+
+  if (!data) {
+    // Show empty bar at 0% until first status comes in
+    data = { percentage: 0, level: 'ok', usedTokens: 0, maxTokens: 128000, compacted: false };
+  }
+
+  bar.style.display = 'block';
+
+  // Color based on level
+  let color = 'var(--accent)';      // green
+  let bgColor = 'rgba(0,255,65,.1)';
+  if (data.percentage >= 95) { color = 'var(--danger)'; bgColor = 'rgba(255,51,51,.1)'; }
+  else if (data.percentage >= 85) { color = 'var(--warn)'; bgColor = 'rgba(255,170,0,.1)'; }
+  else if (data.percentage >= 70) { color = '#88aaff'; bgColor = 'rgba(136,170,255,.08)'; }
+
+  const compactedNote = data.compacted ? ' <span style="color:var(--accent)">(compacted)</span>' : '';
+  const tokensK = (data.usedTokens / 1000).toFixed(0);
+  const maxK = (data.maxTokens / 1000).toFixed(0);
+
+  bar.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:.68rem">
+      <div style="flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden">
+        <div style="height:100%;width:${Math.min(data.percentage, 100)}%;background:${color};border-radius:2px;transition:width .3s"></div>
+      </div>
+      <span style="color:${color};white-space:nowrap">${data.percentage}% context${compactedNote}</span>
+      <span style="color:var(--muted);white-space:nowrap">${tokensK}K / ${maxK}K</span>
+    </div>
+  `;
 }
 
 // Init chat on page load

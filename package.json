@@ -14,6 +14,10 @@
     "setup-ai": "node scripts/setup-ai.js"
   },
   "dependencies": {
+    "@arikernel/adapters": "file:../Ari Kernel/packages/adapters",
+    "@arikernel/core": "file:../Ari Kernel/packages/core",
+    "@arikernel/runtime": "file:../Ari Kernel/packages/runtime",
+    "@arikernel/sidecar": "file:../Ari Kernel/packages/sidecar",
     "better-sqlite3": "^12.8.0",
     "openai": "^4.86.0",
     "playwright": "^1.58.2",

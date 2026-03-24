@@ -222,8 +222,9 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     // Memory tools — safe, internal only
     { id: "allow-memory", tool: "memory_*", decision: "allow", reason: "Memory operations (internal)", priority: 50 },
 
-    // Request secret — triggers UI prompt, user confirms
+    // Secrets — request triggers UI prompt, list shows names only
     { id: "allow-request-secret", tool: "request_secret", decision: "allow", reason: "Secret request (user confirms via UI)", priority: 50 },
+    { id: "allow-list-secrets", tool: "list_secrets", decision: "allow", reason: "List secret names (no values exposed)", priority: 50 },
 
     // ── ALLOWED but RATE-LIMITED tools (can be abused) ──
 

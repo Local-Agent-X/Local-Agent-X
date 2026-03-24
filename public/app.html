@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Secret Agent X</title>
+<link rel="stylesheet" href="/css/app.css"/>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.7/dist/bundle.min.js"></script>
+</head>
+<body>
+
+<!-- ═══ SIDEBAR (persists across all pages) ═══ -->
+<div id="sidebar">
+  <div id="sidebar-header">
+    <span id="logo" onclick="navigate('chat')">Agent X</span>
+    <button id="new-chat-btn" onclick="newChat()">+ New Chat</button>
+  </div>
+
+  <div id="projects-section">
+    <div class="section-header">
+      <span>Projects</span>
+      <button class="add-btn" onclick="newProject()" title="New project">+</button>
+    </div>
+    <div id="project-list"></div>
+  </div>
+
+  <div id="chats-section">
+    <div id="chats-header">All Chats</div>
+    <div id="chat-list"></div>
+  </div>
+
+  <div id="utility-bar">
+    <button class="util-btn" data-route="cron" onclick="navigate('cron')"><span class="util-icon">&#9200;</span> Cron</button>
+    <button class="util-btn" data-route="secrets" onclick="navigate('secrets')"><span class="util-icon">&#128273;</span> Secrets</button>
+    <button class="util-btn" data-route="settings" onclick="navigate('settings')"><span class="util-icon">&#9881;</span> Settings</button>
+  </div>
+
+  <div id="sidebar-footer">
+    <span id="auth-dot"></span>
+    <span id="auth-label">checking...</span>
+  </div>
+</div>
+
+<!-- ═══ MAIN CONTENT (swaps based on route) ═══ -->
+<div id="main">
+
+  <!-- VOICE INDICATORS (global) -->
+  <div id="voice-indicator"></div>
+  <button id="tts-toggle" onclick="toggleTTS()">VOICE OFF</button>
+
+  <!-- ══ CHAT PAGE ══ -->
+  <div id="page-chat" class="page active">
+    <div id="messages">
+      <div id="empty"><h2>SECRET AGENT X</h2><p>Select a chat or start a new one.</p></div>
+    </div>
+    <div id="input-area">
+      <input id="file-input" type="file" multiple style="display:none" onchange="handleFileUpload(event)"/>
+      <div id="input-wrapper">
+        <button id="plus-btn" onclick="triggerUpload()" title="Attach files">+</button>
+        <div id="input-box">
+          <div id="upload-previews"></div>
+          <textarea id="msg-input" placeholder="Message Agent X..." rows="1"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
+        </div>
+        <button id="mic-btn" class="input-btn" onclick="toggleMic()" title="Voice input">&#127908;</button>
+        <button id="send-btn" onclick="sendMessage()">&#9650;</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ SETTINGS PAGE ══ -->
+  <div id="page-settings" class="page">
+    <div style="padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px;flex-shrink:0">
+      <h1 style="font-family:var(--mono);font-size:.9rem;color:var(--accent);letter-spacing:2px">SETTINGS</h1>
+      <div style="flex:1"></div>
+      <span id="save-status" style="font-family:var(--mono);font-size:.68rem;color:var(--muted)"></span>
+      <button class="action-btn primary" onclick="saveSettings()">SAVE</button>
+    </div>
+    <div class="settings-tabs">
+      <button class="tab-pill active" onclick="switchTab('general')">General</button>
+      <button class="tab-pill" onclick="switchTab('ai')">AI & Models</button>
+      <button class="tab-pill" onclick="switchTab('image')">Image & Video</button>
+      <button class="tab-pill" onclick="switchTab('voice')">Voice</button>
+      <button class="tab-pill" onclick="switchTab('security')">Security</button>
+      <button class="tab-pill" onclick="switchTab('tools')">Tools</button>
+      <button class="tab-pill" onclick="switchTab('sync')">Agent Sync</button>
+    </div>
+    <div class="settings-content">
+      <!-- General -->
+      <div id="stab-general" class="tab-pane active">
+        <div class="section-card">
+          <div class="section-title">Authentication</div>
+          <div class="section-desc">Connect to OpenAI via OAuth to use GPT models.</div>
+          <div id="auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
+          <div class="btn-row">
+            <button id="btn-login" class="action-btn primary" onclick="doLogin()">Sign In with OpenAI</button>
+            <button id="btn-disconnect" class="action-btn danger" onclick="doDisconnect()" style="display:none">Disconnect</button>
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Server</div>
+          <div class="section-desc">Local server configuration. Changes require restart.</div>
+          <div class="field-row"><div class="field"><label class="field-label">Port</label><input class="field-input" id="cfg-port" type="number" value="4800"/></div><div class="field"><label class="field-label">Workspace</label><input class="field-input" id="cfg-workspace" value="./workspace"/></div></div>
+        </div>
+      </div>
+      <!-- AI & Models -->
+      <div id="stab-ai" class="tab-pane">
+        <div class="section-card">
+          <div class="section-title">Model Provider</div>
+          <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-provider"><option value="codex">OpenAI Codex (ChatGPT OAuth)</option><option value="xai">xAI (Grok)</option><option value="openai">OpenAI API (direct key)</option></select></div>
+          <div class="field"><label class="field-label">Model</label><input class="field-input" id="cfg-model" value="grok-3-mini"/><div class="field-hint">Codex: gpt-5.3-codex | xAI: grok-3-mini | OpenAI: gpt-4o</div></div>
+          <div class="field-row"><div class="field"><label class="field-label">Temperature</label><input class="field-input" id="cfg-temperature" type="number" step="0.1" min="0" max="2" value="0.7"/></div><div class="field"><label class="field-label">Max Iterations</label><input class="field-input" id="cfg-maxiter" type="number" min="1" max="100" value="25"/></div></div>
+        </div>
+      </div>
+      <!-- Image & Video -->
+      <div id="stab-image" class="tab-pane">
+        <div class="section-card">
+          <div class="section-title">Image Generation</div>
+          <div id="img-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
+          <div class="field"><label class="field-label">Default Engine</label><select class="field-select" id="cfg-image-engine"><option value="sd-local">Stable Diffusion (Local GPU)</option><option value="comfyui">ComfyUI (Local)</option><option value="dalle">DALL-E (OpenAI API)</option><option value="none">None</option></select></div>
+          <div class="btn-row"><button class="action-btn primary" onclick="checkServer('image')">Check Server</button><button class="action-btn secondary" onclick="startServer('image')">Start SD Server</button></div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Video Generation</div>
+          <div id="vid-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
+          <div class="btn-row"><button class="action-btn primary" onclick="checkServer('video')">Check Server</button><button class="action-btn secondary" onclick="startServer('video')">Start Video Server</button></div>
+        </div>
+      </div>
+      <!-- Voice -->
+      <div id="stab-voice" class="tab-pane">
+        <div class="section-card">
+          <div class="section-title">Speech-to-Text</div>
+          <div id="stt-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
+          <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-stt-engine"><option value="whisper">Whisper (Local)</option><option value="browser">Browser Web Speech API</option><option value="none">None</option></select></div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Text-to-Speech</div>
+          <div id="tts-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
+          <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-tts-engine"><option value="kokoro">Kokoro (Local)</option><option value="piper">Piper (Local)</option><option value="browser">Browser</option><option value="none">None</option></select></div>
+          <div class="field"><label class="field-label">Voice</label><select class="field-select" id="cfg-tts-voice"><option value="am_onyx">Onyx (Male, deep)</option><option value="am_eric">Eric (Male)</option><option value="bm_george">George (British)</option><option value="bm_lewis">Lewis (British)</option></select></div>
+        </div>
+      </div>
+      <!-- Security -->
+      <div id="stab-security" class="tab-pane">
+        <div class="section-card">
+          <div class="section-title">Tool Policy</div>
+          <div class="section-desc">Default-deny. Only allowed tools can execute.</div>
+          <div class="toggle-row"><div><div class="toggle-label">Shell Access (bash)</div><div class="toggle-desc">Allow shell commands (rate limited)</div></div><div class="toggle on" onclick="toggleSwitch(this)"></div></div>
+          <div class="toggle-row"><div><div class="toggle-label">HTTP Requests</div><div class="toggle-desc">Outbound API calls (operator only)</div></div><div class="toggle on" onclick="toggleSwitch(this)"></div></div>
+          <div class="toggle-row"><div><div class="toggle-label">Browser</div><div class="toggle-desc">Playwright browser control (operator only)</div></div><div class="toggle on" onclick="toggleSwitch(this)"></div></div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Sandbox</div>
+          <div class="field"><label class="field-label">Execution Mode</label><select class="field-select" id="cfg-sandbox"><option value="host">Host (no isolation)</option><option value="docker">Docker (secure)</option></select></div>
+        </div>
+      </div>
+      <!-- Tools -->
+      <div id="stab-tools" class="tab-pane">
+        <div class="section-card">
+          <div class="section-title">Available Tools</div>
+          <div id="tools-list" style="font-family:var(--mono);font-size:.75rem">Loading...</div>
+        </div>
+      </div>
+      <!-- Agent Sync -->
+      <div id="stab-sync" class="tab-pane">
+        <div class="section-card">
+          <div class="section-title">Agent Sync</div>
+          <div class="section-desc">Sync your agent's memory, identity, and config across machines via a private GitHub repo. All operations run silently in the background.</div>
+          <div id="sync-status" class="status-badge warn"><span class="status-dot"></span> Not configured</div>
+          <div class="toggle-row">
+            <div><div class="toggle-label">Enable Sync</div><div class="toggle-desc">Automatically sync agent data to GitHub</div></div>
+            <div class="toggle" id="tog-sync" onclick="toggleSwitch(this)"></div>
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Setup Guide</div>
+          <div style="font-size:.78rem;line-height:2;color:var(--text)">
+            <div><strong style="color:var(--accent)">Step 1:</strong> Go to <a href="https://github.com/new" target="_blank" style="color:var(--accent)">github.com/new</a> and create a new <strong>private</strong> repository (e.g. "agent-memory"). Leave it empty — no README.</div>
+            <div><strong style="color:var(--accent)">Step 2:</strong> Copy the repo URL and paste it below.</div>
+            <div><strong style="color:var(--accent)">Step 3:</strong> Go to <a href="https://github.com/settings/tokens?type=beta" target="_blank" style="color:var(--accent)">GitHub Settings → Tokens</a> and create a fine-grained personal access token with <strong>Contents: Read and write</strong> permission for your memory repo.</div>
+            <div><strong style="color:var(--accent)">Step 4:</strong> Paste the token below, enable sync, and click Save.</div>
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">GitHub Repository</div>
+          <div class="section-desc">Only memory and config files are synced — secrets and auth tokens are never uploaded.</div>
+          <div class="field"><label class="field-label">Repository URL</label><input class="field-input" id="cfg-sync-repo" placeholder="https://github.com/yourusername/agent-memory.git"/></div>
+          <div class="field"><label class="field-label">GitHub Personal Access Token</label><input class="field-input" id="cfg-sync-token" type="password" placeholder="ghp_xxxxxxxxxxxx" autocomplete="off"/><div class="field-hint">Needs Contents: Read and write scope for your memory repo only. Token is encrypted and stored in your local secrets vault — never synced.</div></div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Sync Settings</div>
+          <div class="field"><label class="field-label">Sync Frequency</label><select class="field-select" id="cfg-sync-interval"><option value="after_chat">After every chat (recommended)</option><option value="2min">Every 2 minutes</option><option value="5min">Every 5 minutes</option><option value="15min">Every 15 minutes</option><option value="manual">Manual only</option></select></div>
+          <div class="toggle-row">
+            <div><div class="toggle-label">Auto-download on startup</div><div class="toggle-desc">Pull latest memory when server starts</div></div>
+            <div class="toggle on" id="tog-sync-autodownload" onclick="toggleSwitch(this)"></div>
+          </div>
+          <div class="toggle-row">
+            <div><div class="toggle-label">Sync chat sessions</div><div class="toggle-desc">Include full chat history (larger, optional)</div></div>
+            <div class="toggle" id="tog-sync-sessions" onclick="toggleSwitch(this)"></div>
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">What Gets Synced</div>
+          <div style="font-size:.78rem;line-height:1.8;color:var(--text)">
+            <div><span style="color:var(--accent)">&#10003;</span> IDENTITY.md — who your agent is</div>
+            <div><span style="color:var(--accent)">&#10003;</span> HEART.md — emotional context</div>
+            <div><span style="color:var(--accent)">&#10003;</span> MIND.md — curated knowledge</div>
+            <div><span style="color:var(--accent)">&#10003;</span> USER.md — everything about you</div>
+            <div><span style="color:var(--accent)">&#10003;</span> Daily logs — conversation notes</div>
+            <div><span style="color:var(--accent)">&#10003;</span> Tool policy — security rules</div>
+            <div style="margin-top:8px"><span style="color:var(--danger)">&#10007;</span> Secrets — re-enter on each machine</div>
+            <div><span style="color:var(--danger)">&#10007;</span> Auth tokens — re-authenticate on each machine</div>
+            <div><span style="color:var(--danger)">&#10007;</span> Audit logs — stay local</div>
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Manual Controls</div>
+          <div class="btn-row">
+            <button class="action-btn primary" onclick="syncNow()">Sync Now</button>
+            <button class="action-btn secondary" onclick="forcePull()">Force Pull</button>
+            <button class="action-btn secondary" onclick="forcePush()">Force Push</button>
+          </div>
+          <div id="sync-result" style="font-size:.72rem;color:var(--muted);margin-top:10px;font-family:var(--mono)"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ SECRETS PAGE ══ -->
+  <div id="page-secrets" class="page">
+    <div class="secrets-layout">
+      <div class="secrets-left">
+        <h2 style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px;margin-bottom:12px">SECRETS VAULT</h2>
+        <div class="field"><label class="field-label">Name</label><input class="field-input" id="new-secret-name" placeholder="GITHUB_TOKEN"/></div>
+        <div class="field"><label class="field-label">Value</label><input class="field-input" id="new-secret-value" type="password" placeholder="ghp_xxx" autocomplete="off"/></div>
+        <div class="field"><label class="field-label">Service</label><input class="field-input" id="new-secret-service" placeholder="GitHub"/></div>
+        <button class="action-btn primary" style="width:100%;margin:8px 0" onclick="addSecret()">Add Secret</button>
+        <div style="font-size:.65rem;color:var(--muted);margin-bottom:16px">AES-256-GCM encrypted. Referenced as <code style="color:var(--accent);font-size:.62rem">{{NAME}}</code></div>
+        <div style="display:flex;justify-content:space-between;font-size:.68rem;font-family:var(--mono);color:var(--muted);margin-bottom:8px"><span>STORED</span><span id="secret-count">0</span></div>
+        <div id="secrets-list"></div>
+      </div>
+      <div class="secrets-right">
+        <div id="secret-detail-empty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted)">
+          <h2 style="font-family:var(--mono);font-size:1.1rem;color:var(--accent);letter-spacing:2px">SECRETS VAULT</h2>
+          <p style="font-size:.85rem;max-width:400px;text-align:center;line-height:1.6">Add API keys and tokens. Encrypted at rest, never shown in chat.</p>
+        </div>
+        <div id="secret-detail-view" style="display:none">
+          <h2 id="detail-name" style="font-family:var(--mono);font-size:1.1rem;color:var(--accent)"></h2>
+          <div id="detail-service" style="font-size:.78rem;color:var(--muted);margin-bottom:12px"></div>
+          <div id="detail-meta" style="font-size:.75rem;color:var(--muted);margin-bottom:16px"></div>
+          <div class="section-card"><div class="section-title">Usage</div><code id="detail-usage" style="display:block;font-family:var(--mono);font-size:.85rem;color:var(--accent);padding:8px;background:var(--bg);border-radius:6px;margin-top:8px"></code></div>
+          <div class="btn-row" style="margin-top:16px"><button class="action-btn primary" onclick="updateSecretValue()">Update Value</button><button class="action-btn danger" onclick="deleteSecretItem()">Delete</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ CRON JOBS PAGE ══ -->
+  <div id="page-cron" class="page">
+    <div class="cron-layout">
+      <div class="cron-left">
+        <h2 style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px;margin-bottom:12px">CRON JOBS</h2>
+        <div class="field"><label class="field-label">Job Name</label><input class="field-input" id="new-cron-name" placeholder="Daily report"/></div>
+        <div class="field"><label class="field-label">Schedule</label><input class="field-input" id="new-cron-schedule" placeholder="every 1h / daily 9am / */30 * * * *"/></div>
+        <div class="field"><label class="field-label">Agent Prompt</label><textarea class="field-input" id="new-cron-prompt" rows="3" placeholder="Check my email and summarize..." style="resize:vertical"></textarea></div>
+        <button class="action-btn primary" style="width:100%;margin:8px 0" onclick="addCronJob()">Add Job</button>
+        <div style="display:flex;justify-content:space-between;font-size:.68rem;font-family:var(--mono);color:var(--muted);margin:12px 0 8px"><span>SCHEDULED JOBS</span><span id="cron-count">0</span></div>
+        <div id="cron-list"></div>
+      </div>
+      <div class="cron-right">
+        <div id="cron-detail-empty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted)">
+          <h2 style="font-family:var(--mono);font-size:1.1rem;color:var(--accent);letter-spacing:2px">CRON JOBS</h2>
+          <p style="font-size:.85rem;max-width:400px;text-align:center;line-height:1.6">Schedule recurring agent tasks. The agent runs your prompt on a schedule.</p>
+        </div>
+        <div id="cron-detail-view" style="display:none">
+          <h2 id="cron-detail-name" style="font-family:var(--mono);font-size:1.1rem;color:var(--accent)"></h2>
+          <div style="margin:12px 0;font-family:var(--mono);font-size:.78rem"><span style="color:var(--muted)">Schedule:</span> <span id="cron-detail-schedule"></span></div>
+          <div style="margin-bottom:12px;font-family:var(--mono);font-size:.78rem"><span style="color:var(--muted)">Status:</span> <span id="cron-detail-status"></span></div>
+          <div style="margin-bottom:16px;font-family:var(--mono);font-size:.78rem"><span style="color:var(--muted)">Last run:</span> <span id="cron-detail-lastrun"></span></div>
+          <div class="section-card"><div class="section-title">Prompt</div><pre id="cron-detail-prompt" style="font-family:var(--mono);font-size:.82rem;white-space:pre-wrap;margin-top:8px;color:var(--text)"></pre></div>
+          <div class="btn-row" style="margin-top:16px">
+            <button class="action-btn primary" onclick="runCronJobNow()">Run Now</button>
+            <button class="action-btn secondary" onclick="toggleCronJob()">Toggle Pause</button>
+            <button class="action-btn danger" onclick="deleteCronJob()">Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Scripts -->
+<script src="/js/shared.js"></script>
+<script src="/js/app.js"></script>
+<script src="/js/chat.js"></script>
+<script src="/js/settings.js"></script>
+<script src="/js/secrets.js"></script>
+<script src="/js/cron.js"></script>
+</body>
+</html>

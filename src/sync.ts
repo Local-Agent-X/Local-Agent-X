@@ -410,23 +410,28 @@ export class AgentSync {
       }
 
       // Check if there are remote changes
+      let hasRemoteChanges = true;
       try {
         const diff = await this.git("diff", "HEAD", "origin/main", "--stat");
-        if (!diff) { this.isSyncing = false; return { success: true, message: "Already up to date" }; }
+        if (!diff) hasRemoteChanges = false;
       } catch {}
 
-      // Pull
-      try {
-        await this.git("pull", "--no-rebase", "origin", "main");
-      } catch {
-        await this.resolveConflicts();
+      // Pull if there are remote changes
+      if (hasRemoteChanges) {
+        try {
+          await this.git("pull", "--no-rebase", "origin", "main");
+        } catch {
+          await this.resolveConflicts();
+        }
       }
 
-      // Copy from sync repo to data dir (with merge)
+      // Always copy from sync repo to data dir (handles cases where
+      // git is up-to-date but local memory files are missing)
       this.copyFromSync();
       this.lastSyncTime = Date.now();
-      console.log("[sync] Pulled successfully");
-      return { success: true, message: "Downloaded latest" };
+      const msg = hasRemoteChanges ? "Downloaded latest" : "Synced local files";
+      console.log(`[sync] ${msg}`);
+      return { success: true, message: msg };
     } catch (e) {
       console.warn("[sync] Pull failed:", (e as Error).message);
       return { success: false, message: (e as Error).message };

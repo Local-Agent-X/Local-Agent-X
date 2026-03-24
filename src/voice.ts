@@ -147,9 +147,10 @@ export function synthesizeKokoro(
   const outPath = tmpPath("wav");
 
   try {
-    // Run Kokoro via Python one-liner
+    // Run Kokoro via temp Python script (cmd.exe mangles inline Python)
+    const pyScriptPath = tmpPath("py");
     const pyScript = `
-import sys, wave, io, numpy as np
+import sys, wave, numpy as np
 from kokoro_onnx import Kokoro
 k = Kokoro('${KOKORO_MODEL.replace(/\\/g, "/")}', '${KOKORO_VOICES.replace(/\\/g, "/")}')
 samples, sr = k.create(sys.argv[1], voice=sys.argv[2], speed=float(sys.argv[3]), lang='en-us')
@@ -160,10 +161,15 @@ with wave.open(sys.argv[4], 'wb') as f:
     f.writeframes((samples * 32767).astype(np.int16).tobytes())
 `.trim();
 
-    execSync(
-      `python -c "${pyScript.replace(/\n/g, ";")}" "${clean.replace(/"/g, '\\"')}" "${voice}" "${speed}" "${outPath.replace(/\\/g, "/")}"`,
-      { timeout: 30_000, stdio: "ignore", shell: process.platform === "win32" ? "cmd.exe" : "/bin/sh" }
-    );
+    writeFileSync(pyScriptPath, pyScript, "utf-8");
+    try {
+      execSync(
+        `python "${pyScriptPath}" "${clean.replace(/"/g, '\\"')}" "${voice}" "${speed}" "${outPath.replace(/\\/g, "/")}"`,
+        { timeout: 30_000, stdio: "ignore" }
+      );
+    } finally {
+      try { unlinkSync(pyScriptPath); } catch {}
+    }
 
     if (existsSync(outPath)) {
       return readFileSync(outPath);

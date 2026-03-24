@@ -186,7 +186,10 @@ async function runCodexAgent(
   let totalInput = 0;
   let totalOutput = 0;
 
-  // Try WebSocket first — enables stateful tool chaining
+  // WebSocket disabled — Codex OAuth returns 500. Use HTTP.
+  return runCodexAgentHttp(userMessage, history, options);
+
+  // eslint-disable-next-line no-unreachable
   try {
     // Use WebSocket for continuous tool chaining — the model keeps working
     // without waiting for the user to say "continue"

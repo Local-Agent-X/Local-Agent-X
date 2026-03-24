@@ -4,15 +4,20 @@ let pendingUploads = [];
 let userScrolledUp = false;
 
 // Detect when user scrolls away from bottom — pause auto-scroll
-document.addEventListener('DOMContentLoaded', () => {
+(function initScrollPause() {
   const el = document.getElementById('messages');
-  if (!el) return;
+  if (!el) { document.addEventListener('DOMContentLoaded', initScrollPause); return; }
   el.addEventListener('wheel', () => {
     if (!streaming) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     userScrolledUp = !atBottom;
   });
-});
+  el.addEventListener('scroll', () => {
+    if (!streaming) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (atBottom) userScrolledUp = false;
+  });
+})();
 
 function autoScroll() {
   if (userScrolledUp) return;
@@ -408,18 +413,40 @@ function toggleTTS() {
   if (btn) { btn.textContent = voiceEnabled ? 'VOICE ON' : 'VOICE OFF'; btn.className = voiceEnabled ? 'active' : ''; }
   if (!voiceEnabled) stopSpeaking();
 }
+// Pre-fetch: start fetching next audio while current plays
+let prefetchedAudio = null;
+
+async function fetchTTSAudio(text) {
+  const r = await fetch(`${API}/api/voice/synthesize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+    body: JSON.stringify({ text: text.trim(), speed: 1.15 })
+  });
+  if (!r.ok) return null;
+  if (!audioContext) audioContext = new AudioContext();
+  return await audioContext.decodeAudioData(await r.arrayBuffer());
+}
+
 async function speakSentence(text) {
   if (!voiceEnabled || !text.trim()) return;
+  // Client-side cleanup — strip URLs, code, paths before sending
+  let clean = text.replace(/https?:\/\/\S+/g, '').replace(/`[^`]+`/g, '')
+    .replace(/[\w/\\.-]+\.(?:html|js|ts|css|json|md)\b/g, '').replace(/\([^)]{15,}\)/g, '').trim();
+  if (clean.length < 4) { if (ttsQueue.length > 0) await speakSentence(ttsQueue.shift()); return; }
+
   isSpeaking = true; updateVoiceUI();
   try {
-    const r = await fetch(`${API}/api/voice/synthesize`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ text: text.trim(), speed: 1.15 })
-    });
-    if (!r.ok) throw new Error('TTS fail');
-    if (!audioContext) audioContext = new AudioContext();
-    const buf = await audioContext.decodeAudioData(await r.arrayBuffer());
+    // Use pre-fetched audio if available, otherwise fetch now
+    let buf = prefetchedAudio; prefetchedAudio = null;
+    if (!buf) buf = await fetchTTSAudio(clean);
+    if (!buf) throw new Error('TTS empty');
+
+    // Pre-fetch NEXT audio while this one plays (eliminates gap)
+    if (ttsQueue.length > 0) {
+      const nextText = ttsQueue[0].replace(/https?:\/\/\S+/g, '').replace(/`[^`]+`/g, '').trim();
+      if (nextText.length > 3) fetchTTSAudio(nextText).then(a => { prefetchedAudio = a; });
+    }
+
     const src = audioContext.createBufferSource(); src.buffer = buf; src.connect(audioContext.destination);
     currentAudioSource = src;
     await new Promise(res => { src.onended = res; src.start(); });

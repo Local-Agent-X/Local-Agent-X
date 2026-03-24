@@ -42,11 +42,12 @@ export interface Session {
 
 export type ServerEvent =
   | { type: "stream"; delta: string }
-  | { type: "tool_start"; toolName: string; args: unknown }
+  | { type: "tool_start"; toolName: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string }
   | { type: "tool_end"; toolName: string; result: string; allowed: boolean }
   | { type: "done"; usage: AgentTurn["usage"] }
   | { type: "error"; message: string }
-  | { type: "secret_request"; name: string; service?: string; reason: string };
+  | { type: "secret_request"; name: string; service?: string; reason: string }
+  | { type: "context_status"; percentage: number; level: string; usedTokens: number; maxTokens: number; compacted: boolean };
 
 // ── Auth Types ──
 

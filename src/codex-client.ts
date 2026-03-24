@@ -62,13 +62,26 @@ function convertMessagesToInput(
   for (const msg of messages) {
     if (msg.role === "system") continue; // handled separately as instructions
     if (msg.role === "user") {
+      let content: unknown[];
+      if (typeof msg.content === "string") {
+        content = [{ type: "input_text", text: msg.content }];
+      } else if (Array.isArray(msg.content)) {
+        // Convert Chat Completions vision format to Responses API format
+        content = (msg.content as unknown as Array<Record<string, unknown>>).map((part) => {
+          if (part.type === "text") return { type: "input_text", text: part.text };
+          if (part.type === "image_url") {
+            const iu = part.image_url as { url: string; detail?: string };
+            return { type: "input_image", image_url: iu.url, detail: iu.detail || "auto" };
+          }
+          return part;
+        });
+      } else {
+        content = [{ type: "input_text", text: String(msg.content || "") }];
+      }
       input.push({
         type: "message",
         role: "user",
-        content:
-          typeof msg.content === "string"
-            ? [{ type: "input_text", text: msg.content }]
-            : msg.content,
+        content,
       });
     } else if (msg.role === "assistant") {
       const m = msg as Record<string, unknown>;

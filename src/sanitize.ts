@@ -37,6 +37,20 @@ const INJECTION_PATTERNS: Array<{ pattern: RegExp; score: number; label: string 
   { pattern: /curl\s+https?:\/\//i, score: 0.6, label: "exfil-curl" },
   { pattern: /rm\s+-rf/i, score: 0.9, label: "destructive-command" },
   { pattern: /delete\s+all/i, score: 0.65, label: "delete-all" },
+  // ── Fuzzy / synonym variants (bypass resistance) ──
+  { pattern: /disregard\s+(all\s+)?(previous|prior|earlier|above)/i, score: 0.95, label: "instruction-override-synonym" },
+  { pattern: /override\s+(your|the|all)\s+(instructions?|rules?|guidelines?|constraints?)/i, score: 0.9, label: "override-synonym" },
+  { pattern: /pretend\s+(you\s+are|to\s+be|you're)/i, score: 0.85, label: "identity-pretend" },
+  { pattern: /act\s+as\s+(if\s+you\s+are|an?\s+)/i, score: 0.8, label: "identity-act-as" },
+  { pattern: /imagine\s+you\s+(are|have|were|can)/i, score: 0.75, label: "identity-imagine" },
+  { pattern: /do\s+not\s+follow\s+(your|the|any)\s+(rules?|instructions?|guidelines?)/i, score: 0.9, label: "rule-bypass" },
+  { pattern: /jailbreak/i, score: 0.95, label: "jailbreak-keyword" },
+  { pattern: /DAN\s*(mode|prompt)?/i, score: 0.9, label: "dan-jailbreak" },
+  { pattern: /developer\s+mode\s*(:|enabled|on|true|output)/i, score: 0.85, label: "dev-mode-inject" },
+  { pattern: /\bplease\s+ignore\s+(the|your|all|any)\s+(safety|security|guard|filter)/i, score: 0.9, label: "safety-bypass" },
+  { pattern: /output\s+(your|the)\s+(system|initial|original)\s+(prompt|instructions?|message)/i, score: 0.85, label: "prompt-leak" },
+  { pattern: /what\s+(is|are)\s+your\s+(system|initial|original)\s+(prompt|instructions?)/i, score: 0.7, label: "prompt-probe" },
+  { pattern: /repeat\s+(the\s+)?(text|words?|content)\s+(above|before|prior)/i, score: 0.8, label: "context-extract" },
 ];
 
 // ── Unicode homoglyph detection ──

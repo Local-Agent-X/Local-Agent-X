@@ -2,6 +2,7 @@ import { promises as dns } from "node:dns";
 import type { ToolDefinition, ToolResult } from "./types.js";
 import { getBrowserManager, closeBrowser } from "./browser.js";
 import type { BrowserEngine } from "./browser.js";
+import { wrapExternalContent } from "./sanitize.js";
 
 /**
  * DNS pinning for browser navigate — prevents rebinding to private IPs.
@@ -152,7 +153,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           }
 
           case "snapshot": {
-            return ok(await manager.snapshot());
+            const raw = await manager.snapshot();
+            return ok(wrapExternalContent(raw, "browser.snapshot"));
           }
 
           case "click": {
@@ -211,7 +213,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
 
           case "extract": {
             const selector = args.selector ? String(args.selector) : undefined;
-            return ok(await manager.extractText(selector));
+            const raw = await manager.extractText(selector);
+            return ok(wrapExternalContent(raw, "browser.extract"));
           }
 
           case "screenshot": {

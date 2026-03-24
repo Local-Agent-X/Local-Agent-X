@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
-import { timingSafeEqual } from "node:crypto";
+import { timingSafeEqual, randomBytes } from "node:crypto";
 import { runAgent } from "./agent.js";
 import { allTools, createHttpRequestTool } from "./tools.js";
 import { SecurityLayer } from "./security.js";
@@ -20,12 +20,46 @@ import {
 import { SecretsStore } from "./secrets.js";
 import { createSecretTools } from "./secret-tools.js";
 import { ThreatEngine } from "./threat-engine.js";
+import { AgentSync } from "./sync.js";
 import { RBACManager, type Role } from "./rbac.js";
 import { createBrowserTools, closeBrowser } from "./browser-tools.js";
 import { closeAllBrowsers } from "./browser.js";
 import { redactCredentials } from "./security.js";
+import { runSecurityAudit, printAuditReport } from "./security-audit.js";
+import { startAriKernel, isAriActive } from "./ari-kernel.js";
+import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "./session-policy.js";
 import { imageTools } from "./image-tools.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
+
+// ── Multipart parser ──
+interface MultipartPart { filename?: string; name?: string; data: Buffer; contentType?: string }
+function parseMultipart(body: Buffer, boundary: string): MultipartPart[] {
+  const parts: MultipartPart[] = [];
+  const sep = Buffer.from(`--${boundary}`);
+  let pos = 0;
+  while (pos < body.length) {
+    const start = body.indexOf(sep, pos);
+    if (start === -1) break;
+    const nextStart = body.indexOf(sep, start + sep.length + 2);
+    if (nextStart === -1) break;
+    const partBuf = body.subarray(start + sep.length + 2, nextStart - 2); // skip CRLF
+    const headerEnd = partBuf.indexOf("\r\n\r\n");
+    if (headerEnd === -1) { pos = nextStart; continue; }
+    const headerStr = partBuf.subarray(0, headerEnd).toString();
+    const data = partBuf.subarray(headerEnd + 4);
+    const filenameMatch = headerStr.match(/filename="([^"]+)"/);
+    const nameMatch = headerStr.match(/name="([^"]+)"/);
+    const ctMatch = headerStr.match(/Content-Type:\s*(.+)/i);
+    parts.push({
+      filename: filenameMatch?.[1],
+      name: nameMatch?.[1],
+      data,
+      contentType: ctMatch?.[1]?.trim(),
+    });
+    pos = nextStart;
+  }
+  return parts;
+}
 
 // Session ID validation: alphanumeric + dash/underscore, max 64 chars
 function isValidSessionId(id: string): boolean {
@@ -75,25 +109,32 @@ function jsonResponse(res: ServerResponse, status: number, data: unknown, req?: 
   res.end(JSON.stringify(data));
 }
 
-// ── Rate Limiting: token bucket per IP ──
+// ── Rate Limiting: token bucket per auth token (falls back to IP) ──
 
 const rateLimits = new Map<string, { tokens: number; lastRefill: number }>();
-const RATE_LIMIT_MAX = 30;          // max burst
-const RATE_LIMIT_REFILL_PER_SEC = 2; // tokens per second
+const RATE_LIMIT_MAX = 120;          // max burst (dashboard polls many endpoints at once)
+const RATE_LIMIT_REFILL_PER_SEC = 10; // tokens per second (single-user app, be generous)
 
-function checkRateLimit(ip: string): boolean {
+function getRateLimitKey(req: IncomingMessage): string {
+  // Prefer auth token as key (unique per session), fall back to IP
+  const auth = req.headers.authorization || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (token) return `tok:${token.slice(0, 16)}`; // Use prefix to avoid storing full token
+  return `ip:${req.socket.remoteAddress || "unknown"}`;
+}
+
+function checkRateLimit(key: string): boolean {
   const now = Date.now();
-  let bucket = rateLimits.get(ip);
+  let bucket = rateLimits.get(key);
   if (!bucket) {
     bucket = { tokens: RATE_LIMIT_MAX, lastRefill: now };
-    rateLimits.set(ip, bucket);
+    rateLimits.set(key, bucket);
   }
-  // Refill tokens based on elapsed time
   const elapsed = (now - bucket.lastRefill) / 1000;
   bucket.tokens = Math.min(RATE_LIMIT_MAX, bucket.tokens + elapsed * RATE_LIMIT_REFILL_PER_SEC);
   bucket.lastRefill = now;
 
-  if (bucket.tokens < 1) return false; // rate limited
+  if (bucket.tokens < 1) return false;
   bucket.tokens -= 1;
   return true;
 }
@@ -101,8 +142,8 @@ function checkRateLimit(ip: string): boolean {
 // Periodic cleanup of stale rate limit entries (every 5 min)
 setInterval(() => {
   const cutoff = Date.now() - 300_000;
-  for (const [ip, bucket] of rateLimits) {
-    if (bucket.lastRefill < cutoff) rateLimits.delete(ip);
+  for (const [key, bucket] of rateLimits) {
+    if (bucket.lastRefill < cutoff) rateLimits.delete(key);
   }
 }, 300_000);
 
@@ -126,8 +167,8 @@ async function readBody(req: IncomingMessage): Promise<string> {
 }
 
 // ── Auth Flood Guard: lockout after repeated failures ──
-const AUTH_MAX_FAILURES = 5;
-const AUTH_LOCKOUT_MS = 5 * 60 * 1000; // 5 minute lockout
+const AUTH_MAX_FAILURES = 20;           // Generous for localhost (dashboard retries on page load)
+const AUTH_LOCKOUT_MS = 60 * 1000;      // 1 minute lockout (not 5 — single user app)
 const authFloodGuard = new Map<string, { failures: number; lockedUntil: number }>();
 
 function recordAuthFailure(ip: string): void {
@@ -153,8 +194,17 @@ export function startServer(config: SAXConfig) {
   const security = new SecurityLayer(config.workspace);
   const publicDir = join(import.meta.dirname || ".", "..", "public");
   const dataDir = join(homedir(), ".sax");
+
+  // Ensure workspace directories exist for new installs
+  mkdirSync(join(resolve(config.workspace), "apps"), { recursive: true });
+  mkdirSync(join(resolve(config.workspace), "images"), { recursive: true });
+  mkdirSync(join(resolve(config.workspace), "videos"), { recursive: true });
+  mkdirSync(join(dataDir, "uploads"), { recursive: true });
   const toolPolicy = loadToolPolicy(dataDir);
   const rbac = new RBACManager(dataDir, config.authToken);
+
+  // Agent Sync (git-based memory sync across machines)
+  const agentSync = new AgentSync(dataDir, () => secretsStore.get("GITHUB_SYNC_TOKEN"));
 
   // Initialize memory systems
   const sessionStore = new SessionStore(dataDir);
@@ -265,10 +315,9 @@ export function startServer(config: SAXConfig) {
       }
     }
 
-    // Rate limiting on API endpoints
+    // Rate limiting on API endpoints (per auth token, falls back to per-IP)
     if (url.pathname.startsWith("/api/")) {
-      const clientIp = req.socket.remoteAddress || "unknown";
-      if (!checkRateLimit(clientIp)) {
+      if (!checkRateLimit(getRateLimitKey(req))) {
         jsonResponse(res, 429, { error: "Rate limit exceeded. Try again shortly." }, req);
         return;
       }
@@ -356,6 +405,104 @@ export function startServer(config: SAXConfig) {
       sessions.delete(id);
       sessionStore.delete(id);
       json(200, { ok: true });
+      return;
+    }
+
+    // Upload file (images, documents) — 100MB limit
+    if (method === "POST" && url.pathname === "/api/upload") {
+      const uploadsDir = join(dataDir, "uploads");
+      mkdirSync(uploadsDir, { recursive: true });
+
+      const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // 100MB
+      const chunks: Buffer[] = [];
+      let totalSize = 0;
+      for await (const chunk of req) {
+        totalSize += (chunk as Buffer).length;
+        if (totalSize > MAX_UPLOAD_BYTES) {
+          json(413, { error: `File too large. Maximum upload size is 100MB.` });
+          req.destroy();
+          return;
+        }
+        chunks.push(chunk as Buffer);
+      }
+      const body = Buffer.concat(chunks);
+
+      // Parse multipart boundary from content-type
+      const contentType = req.headers["content-type"] || "";
+      const boundaryMatch = contentType.match(/boundary=(.+)/);
+      if (!boundaryMatch) {
+        json(400, { error: "Multipart form data required" });
+        return;
+      }
+      const boundary = boundaryMatch[1];
+      const parts = parseMultipart(body, boundary);
+
+      // Magic number validation for common file types
+      const MAGIC_NUMBERS: Record<string, Buffer[]> = {
+        png: [Buffer.from([0x89, 0x50, 0x4E, 0x47])],
+        jpg: [Buffer.from([0xFF, 0xD8, 0xFF])],
+        jpeg: [Buffer.from([0xFF, 0xD8, 0xFF])],
+        gif: [Buffer.from("GIF87a"), Buffer.from("GIF89a")],
+        webp: [Buffer.from("RIFF")], // RIFF....WEBP
+        bmp: [Buffer.from("BM")],
+        pdf: [Buffer.from("%PDF")],
+      };
+      const validateMagic = (data: Buffer, ext: string): boolean => {
+        const sigs = MAGIC_NUMBERS[ext];
+        if (!sigs) return true; // No magic check for unknown types — allow
+        return sigs.some(sig => data.length >= sig.length && data.subarray(0, sig.length).equals(sig));
+      }
+
+      const uploaded: { name: string; url: string; size: number; isImage: boolean }[] = [];
+      for (const part of parts) {
+        const ext = (part.filename?.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
+        // Validate file magic bytes match declared extension
+        if (!validateMagic(part.data, ext)) {
+          json(400, { error: `File ${part.filename} does not match its declared type (.${ext})` });
+          return;
+        }
+        const id = randomBytes(8).toString("hex");
+        const safeName = `${id}.${ext}`;
+        const filePath = join(uploadsDir, safeName);
+        writeFileSync(filePath, part.data);
+        const isImage = /^(png|jpg|jpeg|gif|webp|svg|bmp)$/.test(ext);
+        uploaded.push({
+          name: part.filename || safeName,
+          url: `/uploads/${safeName}`,
+          size: part.data.length,
+          isImage,
+        });
+      }
+      json(200, { files: uploaded });
+      return;
+    }
+
+    // Serve uploaded files
+    if (method === "GET" && url.pathname.startsWith("/uploads/")) {
+      const uploadsDir = join(dataDir, "uploads");
+      const fileName = url.pathname.replace("/uploads/", "");
+      if (/[^a-zA-Z0-9._-]/.test(fileName)) {
+        json(400, { error: "Invalid filename" });
+        return;
+      }
+      const filePath = join(uploadsDir, fileName);
+      if (existsSync(filePath)) {
+        const ext = fileName.split(".").pop() || "";
+        const ct: Record<string, string> = {
+          png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+          gif: "image/gif", webp: "image/webp", svg: "image/svg+xml",
+          bmp: "image/bmp", pdf: "application/pdf",
+          txt: "text/plain", json: "application/json", csv: "text/csv",
+        };
+        res.writeHead(200, {
+          ...corsHeaders(req),
+          "Content-Type": ct[ext] || "application/octet-stream",
+          "Cache-Control": "public, max-age=31536000, immutable",
+        });
+        res.end(readFileSync(filePath));
+        return;
+      }
+      json(404, { error: "File not found" });
       return;
     }
 
@@ -476,6 +623,35 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── Sync API ──
+
+    if (method === "GET" && url.pathname === "/api/sync/status") {
+      json(200, agentSync.getStatus());
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/sync/configure") {
+      const body = JSON.parse(await readBody(req));
+      agentSync.saveConfig(body);
+      // Restart heartbeat with new config
+      agentSync.stopHeartbeat();
+      agentSync.startHeartbeat();
+      json(200, { ok: true });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/sync/push") {
+      const result = await agentSync.push();
+      json(200, result);
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/sync/pull") {
+      const result = await agentSync.pull();
+      json(200, result);
+      return;
+    }
+
     // ── Audit API ──
 
     // Get recent audit entries
@@ -530,6 +706,92 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── ARI Kernel status ──
+    if (method === "GET" && url.pathname === "/api/ari-status") {
+      const { ariStatus } = await import("./ari-kernel.js");
+      const status = await ariStatus();
+      json(200, { active: isAriActive(), status });
+      return;
+    }
+
+    // ── Session security policy ──
+    if (method === "GET" && url.pathname === "/api/session-policy") {
+      const sessionId = url.searchParams.get("sessionId") || "default";
+      json(200, { policy: getSessionPolicy(sessionId), presets: listPresets() });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/api/session-policy") {
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
+      const sessionId = (body.sessionId as string) || "default";
+      const preset = body.preset as PolicyPreset;
+      if (!listPresets().includes(preset)) {
+        json(400, { error: `Invalid preset. Available: ${listPresets().join(", ")}` });
+        return;
+      }
+      const policy = setSessionPolicy(sessionId, preset);
+      console.log(`[security] Session ${sessionId} policy set to: ${preset}`);
+      json(200, { ok: true, policy });
+      return;
+    }
+
+    // ── Context compaction ──
+    // Summarizes old messages for the AI while keeping full chat on disk.
+    // The user's chat history is never lost — only the AI's view gets compacted.
+    if (method === "POST" && url.pathname === "/api/compact") {
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
+      const sessionId = (body.sessionId as string) || "default";
+      if (!isValidSessionId(sessionId)) { json(400, { error: "Invalid session ID" }); return; }
+
+      const session = getOrCreateSession(sessionId);
+      console.log(`[compact] Session ${sessionId}: ${session.messages.length} server-side messages`);
+      if (session.messages.length < 10) {
+        json(200, { ok: false, reason: `Only ${session.messages.length} server messages (need 10+)` });
+        return;
+      }
+
+      const KEEP_RECENT = Math.min(20, session.messages.length - 5); // Keep at least 5 for summary
+      let cutIdx = Math.max(0, session.messages.length - KEEP_RECENT);
+      for (let i = cutIdx; i < session.messages.length; i++) {
+        if (session.messages[i].role === "user") { cutIdx = i; break; }
+      }
+      const oldMessages = session.messages.slice(0, cutIdx);
+      const recentMessages = session.messages.slice(cutIdx);
+
+      // Build a structured summary of old messages (no AI call needed — fast & free)
+      const summaryLines: string[] = [];
+      let topicChanges = 0;
+      for (const m of oldMessages) {
+        if (m.role === "user" && typeof m.content === "string") {
+          summaryLines.push(`[User] ${m.content.slice(0, 200).replace(/\n/g, " ")}`);
+          topicChanges++;
+        } else if (m.role === "assistant" && typeof m.content === "string") {
+          // Keep only the first line or key decisions
+          const first = m.content.split("\n").filter(l => l.trim()).slice(0, 2).join(" ").slice(0, 200);
+          summaryLines.push(`[Agent] ${first}`);
+        }
+        // Skip tool_calls and tool results in summary
+      }
+
+      const compactSummary = `[COMPACTED CONTEXT — ${oldMessages.length} messages summarized]\n` +
+        `This conversation has been going for ${session.messages.length} messages. ` +
+        `Here is a condensed record of the earlier part:\n\n` +
+        summaryLines.join("\n") +
+        `\n\n[END COMPACTED CONTEXT — ${recentMessages.length} recent messages follow in full]`;
+
+      // Store the compacted summary in the session (AI sees this instead of old messages)
+      (session as any).compactedSummary = compactSummary;
+      (session as any).compactedAt = oldMessages.length;
+
+      // IMPORTANT: session.messages stays COMPLETE (full history on disk)
+      sessionStore.save(session);
+
+      console.log(`[compact] Session ${sessionId}: ${oldMessages.length} old messages compacted, ${recentMessages.length} recent kept`);
+      json(200, { ok: true, compactedAt: oldMessages.length, oldCount: oldMessages.length, recentCount: recentMessages.length });
+      return;
+    }
+
     // Chat (SSE streaming)
     if (method === "POST" && url.pathname === "/api/chat") {
       let body: Record<string, unknown>;
@@ -541,6 +803,7 @@ export function startServer(config: SAXConfig) {
       }
       const message = body.message as string | undefined;
       const sessionId = (body.sessionId as string) || "default";
+      const attachments = (body.attachments as Array<{ name: string; url: string; isImage: boolean }>) || [];
 
       if (!message) {
         json(400, { error: "message is required" });
@@ -599,7 +862,91 @@ export function startServer(config: SAXConfig) {
         const enrichedPrompt =
           config.systemPrompt + contextBlock + relevantMemories + threatEngine.getCanaryBlock();
 
-        const result = await runAgent(message, session.messages, {
+        // Resolve image attachments to absolute file paths for vision API
+        const uploadsDir = join(dataDir, "uploads");
+        const imageAttachments = attachments
+          .filter(a => a.isImage && a.url)
+          .map(a => {
+            const fname = a.url.replace(/^\/uploads\//, "");
+            const filePath = join(uploadsDir, fname);
+            console.log(`[chat] Image attachment: ${a.name} → ${filePath} (exists: ${existsSync(filePath)})`);
+            return { name: a.name, url: a.url, filePath };
+          });
+        if (imageAttachments.length) console.log(`[chat] Sending ${imageAttachments.length} image(s) to vision API`);
+
+        // ── Sanitize history: remove orphaned tool results ──
+        // Tool results MUST follow their matching assistant tool_call message.
+        // If a tool result references a call_id not in the preceding assistant message, drop it.
+        const sanitizeHistory = (msgs: typeof session.messages) => {
+          const validCallIds = new Set<string>();
+          const result = [];
+          for (const m of msgs) {
+            if (m.role === "assistant" && (m as any).tool_calls) {
+              for (const tc of (m as any).tool_calls) validCallIds.add(tc.id);
+              result.push(m);
+            } else if (m.role === "tool") {
+              const callId = (m as any).tool_call_id;
+              if (callId && validCallIds.has(callId)) {
+                result.push(m);
+              } // else: orphaned tool result — skip it
+            } else {
+              result.push(m);
+            }
+          }
+          return result;
+        }
+
+        // ── Context management: compacted summary OR auto sliding window ──
+        // CRITICAL: never cut between a tool_call and its tool result — find safe cut points
+        const findSafeCutPoint = (msgs: typeof session.messages, targetIdx: number): number => {
+          // Walk forward from target to find a "user" message — that's always a safe boundary
+          for (let i = targetIdx; i < msgs.length; i++) {
+            if (msgs[i].role === "user") return i;
+          }
+          // Walk backward if nothing found forward
+          for (let i = targetIdx; i >= 0; i--) {
+            if (msgs[i].role === "user") return i;
+          }
+          return targetIdx;
+        }
+
+        const buildSummary = (msgs: typeof session.messages): string => {
+          const parts: string[] = [];
+          for (const m of msgs) {
+            if (m.role === "user" && typeof m.content === "string") {
+              parts.push(`User: ${m.content.slice(0, 150).replace(/\n/g, " ")}`);
+            } else if (m.role === "assistant" && typeof m.content === "string") {
+              parts.push(`Agent: ${m.content.split("\n").filter(l => l.trim())[0]?.slice(0, 150) || ""}`);
+            }
+          }
+          return `[Earlier in this conversation (${msgs.length} messages summarized):\n${parts.join("\n")}\n...end of summary]`;
+        }
+
+        let historyToSend = session.messages;
+        const compactedSummary = (session as any).compactedSummary as string | undefined;
+        const compactedAt = (session as any).compactedAt as number | undefined;
+
+        if (compactedSummary && compactedAt) {
+          const cutPoint = findSafeCutPoint(session.messages, compactedAt);
+          const recentMessages = session.messages.slice(cutPoint);
+          historyToSend = [
+            { role: "system", content: compactedSummary } as any,
+            ...recentMessages,
+          ];
+          console.log(`[chat] Compacted context: summary + ${recentMessages.length} recent`);
+        } else if (session.messages.length > 40) {
+          const rawCut = session.messages.length - 40;
+          const cutPoint = findSafeCutPoint(session.messages, rawCut);
+          const oldMessages = session.messages.slice(0, cutPoint);
+          const recentMessages = session.messages.slice(cutPoint);
+          historyToSend = [
+            { role: "system", content: buildSummary(oldMessages) } as any,
+            ...recentMessages,
+          ];
+          console.log(`[chat] Sliding window: ${session.messages.length} total → ${recentMessages.length} recent (cut at user msg ${cutPoint})`);
+        }
+
+        const result = await runAgent(message, sanitizeHistory(historyToSend), {
           apiKey,
           model: provider === "codex" ? "gpt-5.3-codex" : config.model,
           provider,
@@ -611,6 +958,7 @@ export function startServer(config: SAXConfig) {
           rbac,
           callerRole: requestRole,
           sessionId,
+          images: imageAttachments,
           maxIterations: config.maxIterations,
           temperature: config.temperature,
           onEvent: (event) => {
@@ -651,6 +999,9 @@ export function startServer(config: SAXConfig) {
 
         // Persist to disk
         saveSession(session);
+
+        // Agent Sync: push after chat (background, non-blocking)
+        agentSync.onChatEnd().catch(() => {});
       } catch (e) {
         sseWrite(res, { type: "error", message: (e as Error).message });
         // Always send done so browser clears spinner
@@ -754,14 +1105,38 @@ export function startServer(config: SAXConfig) {
         const headers: Record<string, string> = {
           "Content-Type": ct[ext] || "application/octet-stream",
         };
-        // CSP for HTML — same policy as dashboard
+        // Sandboxed CSP for user-built apps — stricter than dashboard
+        // Blocks: sessionStorage/localStorage access (via connect-src restriction),
+        // inline scripts that could steal auth tokens, and API calls
         if (ext === "html") {
           headers["Content-Security-Policy"] =
-            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-            "img-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'";
+            "default-src 'self'; " +
+            "script-src 'self' 'unsafe-inline'; " +  // unsafe-inline needed for agent-built apps
+            "style-src 'self' 'unsafe-inline'; " +
+            "img-src 'self' data: blob:; " +
+            "connect-src 'self' http://127.0.0.1:* http://localhost:*; " +
+            "frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'";
           headers["X-Content-Type-Options"] = "nosniff";
           headers["X-Frame-Options"] = "DENY";
           headers["Referrer-Policy"] = "no-referrer";
+        }
+        // Inject token isolation script into HTML — clears auth tokens before app code runs
+        if (ext === "html") {
+          let html = readFileSync(appFile, "utf-8");
+          const isolationScript = `<script>sessionStorage.removeItem('sax_token');localStorage.removeItem('sax_token');` +
+            `delete window.__AUTH_TOKEN__;` +
+            `history.replaceState(null,'',location.pathname);</script>`;
+          // Inject right after <head> or at start of <body>
+          if (html.includes("<head>")) {
+            html = html.replace("<head>", "<head>" + isolationScript);
+          } else if (html.includes("<body>")) {
+            html = html.replace("<body>", "<body>" + isolationScript);
+          } else {
+            html = isolationScript + html;
+          }
+          res.writeHead(200, headers);
+          res.end(html);
+          return;
         }
         res.writeHead(200, headers);
         res.end(readFileSync(appFile));
@@ -772,8 +1147,8 @@ export function startServer(config: SAXConfig) {
     // Serve dashboard
     if (method === "GET") {
       let filePath: string;
-      if (url.pathname === "/" || url.pathname === "/index.html") {
-        filePath = join(publicDir, "index.html");
+      if (url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/app.html") {
+        filePath = join(publicDir, "app.html");
       } else {
         filePath = join(publicDir, url.pathname);
       }
@@ -798,7 +1173,7 @@ export function startServer(config: SAXConfig) {
         if (ext === "html") {
           headers["Content-Security-Policy"] =
             "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-            "img-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'";
+            "img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:*; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'";
           headers["X-Content-Type-Options"] = "nosniff";
           headers["X-Frame-Options"] = "DENY";
           headers["Referrer-Policy"] = "no-referrer";
@@ -814,16 +1189,38 @@ export function startServer(config: SAXConfig) {
   });
 
   server.listen(config.port, "127.0.0.1", () => {
-    const openUrl = `http://127.0.0.1:${config.port}/?token=${config.authToken}`;
+    const maskedToken = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
     console.log(`\n  Secret Agent X running at http://127.0.0.1:${config.port}`);
-    console.log(`\n  ► Open this URL in your browser (first time or new machine):`);
-    console.log(`    ${openUrl}\n`);
+    console.log(`  Auth token: ${maskedToken}`);
+    console.log(`\n  ► Open: http://127.0.0.1:${config.port}/?token=<your-token>\n`);
     console.log(`  Memory: ${dataDir}/memory/`);
-    console.log(`  Sessions: ${dataDir}/sessions/\n`);
+    console.log(`  Sessions: ${dataDir}/sessions/`);
+
+    // Run security self-audit on every startup
+    const auditReport = runSecurityAudit({ authToken: config.authToken, workspace: config.workspace });
+    printAuditReport(auditReport);
+
+    // Start AriKernel (runtime security enforcement)
+    const ariAuditDb = join(dataDir, "ari-audit.db");
+    startAriKernel(ariAuditDb).then(active => {
+      if (active) console.log(`  [ari] Audit log: ${ariAuditDb}`);
+    });
+
+    // Agent Sync: pull on startup + start heartbeat (background, non-blocking)
+    const syncCfg = agentSync.getConfig();
+    if (syncCfg.enabled && syncCfg.autoDownload) {
+      agentSync.pull().then(r => {
+        if (r.success) console.log(`[sync] Startup pull: ${r.message}`);
+      }).catch(() => {});
+    }
+    agentSync.startHeartbeat();
   });
 
   // Cleanup on exit
   process.on("SIGINT", async () => {
+    agentSync.stopHeartbeat();
+    // Final sync before shutdown
+    await agentSync.push().catch(() => {});
     await closeAllBrowsers();
     memoryIndex.close();
     process.exit(0);

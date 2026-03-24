@@ -243,15 +243,29 @@ export class AgentSync {
     const memDir = join(this.dataDir, "memory");
     if (!existsSync(memDir)) mkdirSync(memDir, { recursive: true });
 
-    // Copy memory .md files
+    // Copy memory .md files — with injection validation
     if (existsSync(syncMemDir)) {
+      let checkMemoryTaint: ((s: string) => { safe: boolean; reason?: string }) | null = null;
+      try {
+        const san = require("./sanitize.js");
+        checkMemoryTaint = san.checkMemoryTaint;
+      } catch {}
+
       for (const file of readdirSync(syncMemDir)) {
         if (file.endsWith(".md")) {
           const syncContent = readFileSync(join(syncMemDir, file), "utf-8");
-          const localPath = join(memDir, file);
 
+          // Validate pulled content for injection before writing
+          if (checkMemoryTaint) {
+            const taint = checkMemoryTaint(syncContent);
+            if (!taint.safe) {
+              console.warn(`[sync] Rejected pulled file ${file}: ${taint.reason}`);
+              continue; // Skip this poisoned file
+            }
+          }
+
+          const localPath = join(memDir, file);
           if (existsSync(localPath)) {
-            // Union merge for .md files
             const localContent = readFileSync(localPath, "utf-8");
             const merged = this.unionMerge(localContent, syncContent);
             writeFileSync(localPath, merged, "utf-8");

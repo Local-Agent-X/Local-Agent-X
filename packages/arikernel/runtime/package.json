@@ -1,0 +1,60 @@
+{
+	"name": "@arikernel/runtime",
+	"version": "0.1.2",
+	"description": "Main runtime orchestrator for AriKernel",
+	"license": "SEE LICENSE IN LICENSE.md",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/AriKernel/arikernel.git",
+		"directory": "packages/runtime"
+	},
+	"homepage": "https://github.com/AriKernel/arikernel#readme",
+	"bugs": {
+		"url": "https://github.com/AriKernel/arikernel/issues"
+	},
+	"keywords": [
+		"ai",
+		"agent",
+		"security",
+		"llm",
+		"tool-use",
+		"firewall",
+		"enforcement",
+		"reference-monitor",
+		"kernel"
+	],
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"files": ["dist"],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsup src/index.ts --format esm --dts",
+		"test": "vitest run --passWithNoTests",
+		"typecheck": "tsc --noEmit",
+		"clean": "rimraf dist"
+	},
+	"dependencies": {
+		"@arikernel/core": "file:../core",
+		"@arikernel/policy-engine": "file:../policy-engine",
+		"@arikernel/taint-tracker": "file:../taint-tracker",
+		"@arikernel/audit-log": "file:../audit-log",
+		"@arikernel/tool-executors": "file:../tool-executors"
+	},
+	"peerDependencies": {
+		"better-sqlite3": ">=11.0.0"
+	},
+	"devDependencies": {
+		"@types/better-sqlite3": "^7.6.12",
+		"typescript": "^5.7.2",
+		"vitest": "^2.1.8"
+	}
+}

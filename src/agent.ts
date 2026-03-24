@@ -462,24 +462,31 @@ async function runCodexAgentHttp(
     // Iterations 4+: auto (let model finish with text)
     const forceToolUse = iteration > 0 && iteration < 4;
 
-    const stream = streamCodexResponse({
-      token: apiKey,
-      model,
-      messages: streamMessages,
-      systemPrompt,
-      tools: codexTools,
-      previousResponseId,
-      forceToolUse,
-    });
+    try {
+      const stream = streamCodexResponse({
+        token: apiKey,
+        model,
+        messages: streamMessages,
+        systemPrompt,
+        tools: codexTools,
+        previousResponseId,
+        forceToolUse,
+      });
 
-    for await (const event of stream) {
-      if (event.type === "text") { assistantContent += event.delta; onEvent?.({ type: "stream", delta: event.delta }); }
-      else if (event.type === "tool_call") { toolCalls.push({ id: event.id, name: event.name, arguments: event.arguments }); }
-      else if (event.type === "done") {
-        totalInput += event.usage.inputTokens;
-        totalOutput += event.usage.outputTokens;
-        if (event.responseId) previousResponseId = event.responseId;
+      for await (const event of stream) {
+        if (event.type === "text") { assistantContent += event.delta; onEvent?.({ type: "stream", delta: event.delta }); }
+        else if (event.type === "tool_call") { toolCalls.push({ id: event.id, name: event.name, arguments: event.arguments }); }
+        else if (event.type === "done") {
+          totalInput += event.usage.inputTokens;
+          totalOutput += event.usage.outputTokens;
+          if (event.responseId) previousResponseId = event.responseId;
+        }
       }
+    } catch (e) {
+      const errMsg = (e as Error).message || "Stream error";
+      console.error("[agent] Codex HTTP stream error:", errMsg);
+      onEvent?.({ type: "stream", delta: `\n\nError: ${errMsg}` });
+      break;
     }
 
     const assistantMsg: ChatCompletionMessageParam = { role: "assistant", content: assistantContent || null };
@@ -568,43 +575,50 @@ async function runStandardAgent(
       };
     }
 
-    const stream = await client.chat.completions.create({
-      model,
-      messages,
-      tools: toolsToOpenAI(tools),
-      temperature,
-      stream: true,
-    });
-
     let assistantContent = "";
     const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
 
-    for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta;
-      if (!delta) continue;
+    try {
+      const stream = await client.chat.completions.create({
+        model,
+        messages,
+        tools: toolsToOpenAI(tools),
+        temperature,
+        stream: true,
+      });
 
-      if (delta.content) {
-        assistantContent += delta.content;
-        onEvent?.({ type: "stream", delta: delta.content });
-      }
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        if (!delta) continue;
 
-      if (delta.tool_calls) {
-        for (const tc of delta.tool_calls) {
-          if (tc.index !== undefined) {
-            while (toolCalls.length <= tc.index) {
-              toolCalls.push({ id: "", name: "", arguments: "" });
+        if (delta.content) {
+          assistantContent += delta.content;
+          onEvent?.({ type: "stream", delta: delta.content });
+        }
+
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            if (tc.index !== undefined) {
+              while (toolCalls.length <= tc.index) {
+                toolCalls.push({ id: "", name: "", arguments: "" });
+              }
+              if (tc.id) toolCalls[tc.index].id = tc.id;
+              if (tc.function?.name) toolCalls[tc.index].name = tc.function.name;
+              if (tc.function?.arguments) toolCalls[tc.index].arguments += tc.function.arguments;
             }
-            if (tc.id) toolCalls[tc.index].id = tc.id;
-            if (tc.function?.name) toolCalls[tc.index].name = tc.function.name;
-            if (tc.function?.arguments) toolCalls[tc.index].arguments += tc.function.arguments;
           }
         }
-      }
 
-      if (chunk.usage) {
-        totalPromptTokens += chunk.usage.prompt_tokens || 0;
-        totalCompletionTokens += chunk.usage.completion_tokens || 0;
+        if (chunk.usage) {
+          totalPromptTokens += chunk.usage.prompt_tokens || 0;
+          totalCompletionTokens += chunk.usage.completion_tokens || 0;
+        }
       }
+    } catch (e) {
+      const errMsg = (e as Error).message || "Stream error";
+      console.error("[agent] Standard stream error:", errMsg);
+      onEvent?.({ type: "stream", delta: `\n\nError: ${errMsg}` });
+      break;
     }
 
     const assistantMsg: ChatCompletionMessageParam = {

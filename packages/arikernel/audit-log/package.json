@@ -1,0 +1,55 @@
+{
+	"name": "@arikernel/audit-log",
+	"version": "0.1.2",
+	"description": "SHA-256 hash-chained audit logging for AriKernel (tamper-evident, not tamper-proof)",
+	"license": "SEE LICENSE IN LICENSE.md",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/AriKernel/arikernel.git",
+		"directory": "packages/audit-log"
+	},
+	"homepage": "https://github.com/AriKernel/arikernel#readme",
+	"bugs": {
+		"url": "https://github.com/AriKernel/arikernel/issues"
+	},
+	"keywords": [
+		"ai",
+		"agent",
+		"security",
+		"llm",
+		"tool-use",
+		"audit",
+		"hash-chain",
+		"tamper-evident",
+		"sqlite"
+	],
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"files": ["dist"],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsup src/index.ts --format esm --dts",
+		"test": "vitest run --passWithNoTests",
+		"typecheck": "tsc --noEmit",
+		"clean": "rimraf dist"
+	},
+	"dependencies": {
+		"@arikernel/core": "file:../core"
+	},
+	"peerDependencies": {
+		"better-sqlite3": ">=11.0.0"
+	},
+	"devDependencies": {
+		"@types/better-sqlite3": "^7.6.12",
+		"typescript": "^5.7.2"
+	}
+}

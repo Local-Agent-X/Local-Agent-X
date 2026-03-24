@@ -300,12 +300,12 @@ export function runCodexWs(params: {
     // Global timeout
     setTimeout(() => {
       if (ws.readyState === WebSocket.OPEN) {
-        console.warn("[codex-ws] Global timeout (5 min)");
-        events.onError("Agent timed out after 5 minutes");
+        console.warn("[codex-ws] Global timeout (10 min)");
+        events.onError("Agent timed out after 10 minutes");
         events.onDone(totalUsage);
         ws.close();
         resolve();
       }
-    }, 5 * 60 * 1000);
+    }, 10 * 60 * 1000);
   });
 }

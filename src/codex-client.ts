@@ -176,7 +176,7 @@ export async function* streamCodexResponse(params: {
         method: "POST",
         headers,
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(60_000), // 60s timeout per request
+        signal: AbortSignal.timeout(180_000), // 3 min timeout per request (multi-file builds need time)
       });
 
       if (res.ok) break;

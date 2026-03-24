@@ -136,7 +136,8 @@ export function runCodexWs(params: {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
       "OpenAI-Beta": "responses-websocket=v1",
-      "User-Agent": `sax-ws (${process.platform} ${process.arch})`,
+      originator: "pi",
+      "User-Agent": `sax/${process.platform}`,
     };
     if (accountId) {
       headers["chatgpt-account-id"] = accountId;
@@ -160,6 +161,7 @@ export function runCodexWs(params: {
           tools: tools.length > 0 ? tools : undefined,
           tool_choice: tools.length > 0 ? "auto" : undefined,
           store: false,
+          reasoning: { effort: "low" },
         },
       };
 

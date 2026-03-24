@@ -23,6 +23,27 @@ function esc(s) {
   return d.innerHTML;
 }
 
+// URL sanitizer — strips javascript: URIs, data: URIs, and event handler injections
+function sanitizeUrl(url) {
+  // Decode HTML entities that esc() produced, validate, re-encode
+  const decoded = url.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#x27;/g, "'");
+  // Only allow http/https
+  if (!/^https?:\/\//i.test(decoded)) return '#';
+  // Re-encode for safe attribute insertion
+  return decoded.replace(/"/g, '%22').replace(/'/g, '%27').replace(/</g, '%3C').replace(/>/g, '%3E');
+}
+
+// Final output sanitizer — strips any event handlers that might have snuck through
+function sanitizeHtml(html) {
+  // Remove on* event handlers from any tags
+  return html.replace(/\bon\w+\s*=\s*["'][^"']*["']/gi, '')
+             .replace(/\bon\w+\s*=\s*[^\s>]*/gi, '')
+             // Remove javascript: in any href/src
+             .replace(/javascript\s*:/gi, 'blocked:')
+             // Remove data: URIs in href/src (except images in img tags)
+             .replace(/href\s*=\s*["']data:/gi, 'href="blocked:');
+}
+
 // Markdown renderer
 function md(s) {
   if (!s) return '';
@@ -39,14 +60,16 @@ function md(s) {
   const urlPlaceholders = [];
   h = h.replace(/(https?:\/\/[^\s<"']+)/g, (match) => {
     const idx = urlPlaceholders.length;
-    urlPlaceholders.push(`<a href="${match}" target="_blank" class="md-link">${match}</a>`);
+    const safeUrl = sanitizeUrl(match);
+    urlPlaceholders.push(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${match}</a>`);
     return '%%URL' + idx + '%%';
   });
   h = h.replace(/\n/g, '<br>');
   for (let i = 0; i < urlPlaceholders.length; i++) {
     h = h.replace('%%URL' + i + '%%', urlPlaceholders[i]);
   }
-  return h;
+  // Final sweep: strip any event handlers or script injections
+  return sanitizeHtml(h);
 }
 
 // Auth check (updates sidebar footer)

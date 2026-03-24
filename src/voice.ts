@@ -77,15 +77,27 @@ export function detectCapabilities(): VoiceCapabilities {
 
 function cleanForTTS(text: string): string {
   let clean = text;
-  clean = clean.replace(/\[\[.*?\]\]/g, "");                    // openclaw tags
+
+  // Remove things that shouldn't be spoken
+  clean = clean.replace(/```[\s\S]*?```/g, "");                  // code blocks — skip entirely
+  clean = clean.replace(/`[^`]+`/g, "");                          // inline code
+  clean = clean.replace(/https?:\/\/\S+/g, "");                  // URLs — don't read them
+  clean = clean.replace(/[\w/\\.-]+\.(?:html|js|ts|css|json|md|py|sh)\b/g, ""); // file paths
+  clean = clean.replace(/workspace\/\S+/g, "");                  // workspace paths
+  clean = clean.replace(/\([^)]{15,}\)/g, "");                   // long parenthetical text (>15 chars)
+  clean = clean.replace(/\{[^}]*\}/g, "");                        // JSON/code in braces
+  clean = clean.replace(/\[.*?\]\(.*?\)/g, "");                  // markdown links
+  clean = clean.replace(/\[\[.*?\]\]/g, "");                      // tags
   clean = clean.replace(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF\u23E9-\u23FA]+/gu, ""); // emojis
-  clean = clean.replace(/[*_`#~]/g, "");                        // markdown
-  clean = clean.replace(/https?:\/\/\S+/g, "link");             // URLs
-  clean = clean.replace(/[—–]/g, ", ");                          // dashes → pause
-  clean = clean.replace(/```[\s\S]*?```/g, "code block");       // code blocks
-  clean = clean.replace(/[^\x00-\x7F]/g, "");                   // non-ASCII
-  clean = clean.replace(/\s+/g, " ");                            // collapse whitespace
-  return clean.trim().slice(0, 3000);                            // max 3000 chars
+  clean = clean.replace(/[*_`#~>]/g, "");                        // markdown formatting
+  clean = clean.replace(/[—–]/g, ", ");                            // dashes → pause
+  clean = clean.replace(/\b\d{4,}\b/g, "");                       // long numbers (ports, IDs)
+  clean = clean.replace(/[^\x20-\x7E]/g, "");                    // non-printable/non-ASCII
+  clean = clean.replace(/\s{2,}/g, " ");                          // collapse whitespace
+  clean = clean.replace(/^\s*[-•]\s*/gm, "");                    // bullet points
+  clean = clean.replace(/^\s*\d+\.\s*/gm, "");                   // numbered lists (just the number)
+
+  return clean.trim().slice(0, 2000);
 }
 
 // ── STT: Whisper ──

@@ -128,6 +128,7 @@ export async function* streamCodexResponse(params: {
   tools?: CodexTool[];
   temperature?: number;
   previousResponseId?: string;
+  forceToolUse?: boolean;
 }): AsyncGenerator<
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
@@ -159,7 +160,9 @@ export async function* streamCodexResponse(params: {
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;
-    body.tool_choice = "auto";
+    // "required" forces the model to call a tool every turn (no text-only "I'll do it" responses)
+    // Falls back to "auto" after a few iterations to let the model respond with text
+    body.tool_choice = params.forceToolUse ? "required" : "auto";
     body.parallel_tool_calls = true;
   }
 

@@ -10,6 +10,15 @@ import { runCodexWs, type CodexTool as WsTool } from "./codex-ws.js";
 import type { ToolPolicy } from "./tool-policy.js";
 import type { ThreatEngine } from "./threat-engine.js";
 import type { RBACManager, Role } from "./rbac.js";
+import { compactIfNeeded, getContextStatus, type ContextStatus } from "./context-manager.js";
+import { checkSessionPolicy } from "./session-policy.js";
+import { ariEvaluate, isAriActive } from "./ari-kernel.js";
+
+interface ImageAttachment {
+  url: string;       // server URL like /uploads/abc.png
+  filePath?: string;  // absolute path on disk
+  name: string;
+}
 
 interface AgentOptions {
   apiKey: string;
@@ -26,6 +35,7 @@ interface AgentOptions {
   sessionId?: string;
   maxIterations?: number;
   temperature?: number;
+  images?: ImageAttachment[];
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
 }
@@ -39,6 +49,48 @@ function toolsToOpenAI(tools: ToolDefinition[]): ChatCompletionTool[] {
       parameters: t.parameters,
     },
   }));
+}
+
+// ── Approval context: enrich tool events with risk info ──
+function getRiskLevel(toolName: string, args: Record<string, unknown>): "low" | "medium" | "high" {
+  if (toolName === "bash") return "high";
+  if (toolName === "write" || toolName === "edit") {
+    const path = String(args.path || "");
+    if (/src\//.test(path)) return "high"; // Editing source code
+    return "medium";
+  }
+  if (toolName === "browser") {
+    const action = String(args.action || "");
+    if (action === "evaluate") return "high";
+    if (action === "navigate" || action === "new_tab") return "medium";
+    return "low";
+  }
+  if (toolName === "http_request" || toolName === "web_fetch") return "medium";
+  if (toolName === "read") return "low";
+  return "low";
+}
+
+function buildApprovalContext(toolName: string, args: Record<string, unknown>): string {
+  switch (toolName) {
+    case "bash":
+      return `Shell: ${String(args.command || "").slice(0, 200)}`;
+    case "write":
+      return `Write ${String(args.path || "")} (${String(args.content || "").length} chars)`;
+    case "edit":
+      return `Edit ${String(args.path || "")}`;
+    case "read":
+      return `Read ${String(args.path || "")}`;
+    case "browser": {
+      const a = String(args.action || "");
+      if (a === "navigate" || a === "new_tab") return `Browser → ${args.url || ""}`;
+      if (a === "evaluate") return `Browser JS: ${String(args.script || "").slice(0, 100)}`;
+      return `Browser: ${a}`;
+    }
+    case "http_request":
+      return `${args.method || "GET"} ${String(args.url || "").slice(0, 100)}`;
+    default:
+      return `${toolName} ${JSON.stringify(args).slice(0, 100)}`;
+  }
 }
 
 async function executeToolCalls(
@@ -63,7 +115,30 @@ async function executeToolCalls(
       args = {};
     }
 
-    onEvent?.({ type: "tool_start", toolName: tc.name, args });
+    // Build rich approval context for risky tool calls
+    const riskLevel = getRiskLevel(tc.name, args);
+    const approvalContext = buildApprovalContext(tc.name, args);
+    onEvent?.({ type: "tool_start", toolName: tc.name, args, riskLevel, context: approvalContext });
+
+    // Layer -1: AriKernel (taint tracking, behavioral rules, quarantine)
+    if (isAriActive()) {
+      const actionMap: Record<string, string> = { read: "read", write: "write", edit: "write", bash: "exec" };
+      const ariResult = await ariEvaluate(tc.name, actionMap[tc.name] || "exec", args);
+      if (!ariResult.allowed) {
+        const result = ariResult.reason;
+        onEvent?.({ type: "tool_end", toolName: tc.name, result, allowed: false });
+        results.push({ role: "tool", tool_call_id: tc.id, content: result } as any);
+        continue;
+      }
+    }
+
+    // Layer 0: Session policy (per-session overrides — high-security, read-only, etc.)
+    const policyBlock = checkSessionPolicy(sessionId || "default", tc.name);
+    if (policyBlock) {
+      const result = policyBlock;
+      onEvent?.({ type: "tool_end", toolName: tc.name, result, allowed: false });
+      return result;
+    }
 
     // Layer 1: SecurityLayer (SSRF, shell, file access, path traversal)
     const secDecision = security.evaluate({
@@ -147,6 +222,29 @@ async function executeToolCalls(
   }
 
   return results;
+}
+
+// ── Context compaction helper ──
+
+function checkAndCompact(
+  messages: ChatCompletionMessageParam[],
+  model: string,
+  onEvent?: (event: ServerEvent) => void,
+  force: boolean = false
+): ChatCompletionMessageParam[] {
+  const result = compactIfNeeded(messages, model, force);
+
+  // Emit context status to UI
+  onEvent?.({
+    type: "context_status",
+    percentage: result.status.percentage,
+    level: result.status.level,
+    usedTokens: result.status.usedTokens,
+    maxTokens: result.status.maxTokens,
+    compacted: result.compacted,
+  });
+
+  return result.messages;
 }
 
 // ── Codex (ChatGPT subscription) Agent Loop ──
@@ -253,6 +351,10 @@ async function runCodexAgent(
           args = {};
         }
 
+        // Session policy check
+        const pBlock = checkSessionPolicy(options.sessionId || "default", name);
+        if (pBlock) return pBlock;
+
         // Security check
         const decision = security.evaluate({
           toolName: name,
@@ -317,13 +419,33 @@ async function runCodexAgentHttp(
 ): Promise<AgentTurn> {
   const { apiKey, model, systemPrompt, tools, security, maxIterations = 25, onEvent, signal } = options;
   const toolMap = new Map(tools.map((t) => [t.name, t]));
-  const messages: ChatCompletionMessageParam[] = [...history, { role: "user", content: userMessage }];
+
+  // Build user message with vision content if images attached
+  let userContent: any = userMessage;
+  if (options.images && options.images.length > 0) {
+    const parts: any[] = [{ type: "text", text: userMessage }];
+    for (const img of options.images) {
+      try {
+        const { readFileSync } = await import("node:fs");
+        const data = readFileSync(img.filePath || "");
+        const ext = (img.name.split(".").pop() || "png").toLowerCase();
+        const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+        parts.push({ type: "image_url", image_url: { url: `data:${mime};base64,${data.toString("base64")}`, detail: "auto" } });
+      } catch (e) { console.warn(`[agent] Could not read image ${img.name}:`, e); }
+    }
+    userContent = parts;
+  }
+
+  let messages: ChatCompletionMessageParam[] = [...history, { role: "user", content: userContent }];
   let totalInput = 0, totalOutput = 0;
   let previousResponseId: string | undefined;
   const codexTools = tools.map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters }));
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal?.aborted) return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "abort" };
+
+    // Auto-compact if context is getting full (preserves task state + recent messages)
+    messages = checkAndCompact(messages, model, onEvent);
 
     let assistantContent = "";
     const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
@@ -399,10 +521,34 @@ async function runStandardAgent(
   const client = new OpenAI({ apiKey, baseURL });
   const toolMap = new Map(tools.map((t) => [t.name, t]));
 
-  const messages: ChatCompletionMessageParam[] = [
+  // Build user message — include images as vision content parts if present
+  let userContent: ChatCompletionMessageParam["content"];
+  if (options.images && options.images.length > 0) {
+    const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: string } }> = [
+      { type: "text", text: userMessage },
+    ];
+    for (const img of options.images) {
+      // Read file and convert to base64 data URL for the vision API
+      try {
+        const { readFileSync } = await import("node:fs");
+        const data = readFileSync(img.filePath || "");
+        const ext = (img.name.split(".").pop() || "png").toLowerCase();
+        const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+        const b64 = `data:${mime};base64,${data.toString("base64")}`;
+        parts.push({ type: "image_url", image_url: { url: b64, detail: "auto" } });
+      } catch (e) {
+        console.warn(`[agent] Could not read image ${img.name}:`, e);
+      }
+    }
+    userContent = parts as any;
+  } else {
+    userContent = userMessage;
+  }
+
+  let messages: ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
     ...history,
-    { role: "user", content: userMessage },
+    { role: "user", content: userContent } as ChatCompletionMessageParam,
   ];
 
   let totalPromptTokens = 0;
@@ -411,6 +557,9 @@ async function runStandardAgent(
   let stdSameToolCount = 0;
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    // Auto-compact if context is getting full
+    messages = checkAndCompact(messages, model, onEvent);
+
     if (signal?.aborted) {
       return {
         messages,

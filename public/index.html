@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.7/dist/bundle.min.js"></script>
 <title>Secret Agent X</title>
 <style>
 :root {
@@ -128,6 +130,24 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 #msg-input::placeholder{color:var(--muted)}
 #upload-btn{background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-weight:700;padding:8px 12px;cursor:pointer;font-family:var(--mono);font-size:.8rem;margin-left:10px;transition:all .2s}
 #upload-btn:hover{border-color:var(--accent);color:var(--accent);box-shadow:0 0 10px rgba(0,255,65,.1)}
+
+/* Attachment preview strip */
+#attachment-preview{display:none;padding:8px 14px 0;max-width:800px;margin:0 auto;width:100%;gap:8px;flex-wrap:wrap}
+#attachment-preview .att-thumb{position:relative;width:64px;height:64px;border-radius:8px;border:1px solid var(--border);overflow:hidden;background:var(--surface)}
+#attachment-preview .att-thumb img{width:100%;height:100%;object-fit:cover}
+#attachment-preview .att-thumb .att-file{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:.6rem;color:var(--muted);font-family:var(--mono);text-align:center;padding:4px;word-break:break-all}
+#attachment-preview .att-remove{position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;background:var(--danger);color:#fff;border:none;cursor:pointer;font-size:.65rem;display:flex;align-items:center;justify-content:center;line-height:1}
+
+/* Chat image attachments */
+.msg-attachments{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.msg-attachments img{max-width:240px;max-height:180px;border-radius:8px;border:1px solid var(--border);cursor:pointer;transition:transform .15s;object-fit:cover}
+.msg-attachments img:hover{transform:scale(1.03);border-color:var(--accent)}
+.msg-attachments .att-file-badge{padding:6px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--border);font-size:.75rem;font-family:var(--mono);color:var(--muted)}
+
+/* Lightbox */
+#lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);backdrop-filter:blur(6px);z-index:10001;align-items:center;justify-content:center;cursor:zoom-out}
+#lightbox.visible{display:flex}
+#lightbox img{max-width:90vw;max-height:90vh;border-radius:12px;box-shadow:0 0 40px rgba(0,0,0,.5)}
 #send-btn{background:var(--accent);border:none;border-radius:8px;color:var(--bg);font-weight:700;padding:8px 18px;cursor:pointer;font-family:var(--mono);font-size:.8rem;margin-left:10px;transition:all .2s}
 #send-btn:hover{box-shadow:0 0 14px var(--accent-dim)}
 #send-btn:disabled{opacity:.3;cursor:not-allowed}
@@ -190,7 +210,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
   <div id="utility-bar">
     <a class="util-btn" href="/tasks.html"><span class="util-icon">&#9776;</span> Tasks</a>
     <a class="util-btn" href="/secrets.html"><span class="util-icon">&#128273;</span> Secrets</a>
-    <button class="util-btn" onclick="openSettings()"><span class="util-icon">&#9881;</span> Settings</button>
+    <a class="util-btn" href="/settings.html" style="text-decoration:none"><span class="util-icon">&#9881;</span> Settings</a>
   </div>
 
   <div id="sidebar-footer">
@@ -210,15 +230,21 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
     </div>
   </div>
   <div id="input-area">
+    <div id="attachment-preview"></div>
     <div id="input-box">
       <textarea id="msg-input" placeholder="Message Agent X..." rows="1"
         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
-      <input id="file-input" type="file" multiple style="display:none" onchange="handleFileUpload(event)" />
+      <input id="file-input" type="file" multiple accept="image/*,.pdf,.txt,.json,.csv,.md,.doc,.docx" style="display:none" onchange="handleFileUpload(event)" />
       <button id="mic-btn" onclick="toggleMic()" title="Voice input (hold Space or click)">&#127908;</button>
       <button id="upload-btn" onclick="triggerUpload()">UPLOAD</button>
       <button id="send-btn" onclick="sendMessage()">SEND</button>
     </div>
   </div>
+</div>
+
+<!-- Lightbox for image zoom -->
+<div id="lightbox" onclick="this.classList.remove('visible')">
+  <img id="lightbox-img" src="" alt="Preview" />
 </div>
 
 <!-- Secret Request Modal -->
@@ -289,7 +315,17 @@ let pendingUploads = [];
 
 // ── Storage ──
 function loadChats(){ try { return JSON.parse(localStorage.getItem('sax_chats_v2')||'[]'); } catch { return []; }}
-function saveChats(){ localStorage.setItem('sax_chats_v2', JSON.stringify(chats)); }
+function saveChats(){
+  // Keep only serializable fields (url is a small path, safe for localStorage)
+  const toSave = chats.map(c => ({
+    ...c,
+    messages: c.messages.map(m => {
+      if(!m.attachments) return m;
+      return {...m, attachments: m.attachments.map(a => ({name:a.name, size:a.size, type:a.type, isImage:a.isImage, url:a.url}))};
+    })
+  }));
+  localStorage.setItem('sax_chats_v2', JSON.stringify(toSave));
+}
 function loadProjects(){ try { return JSON.parse(localStorage.getItem('sax_projects_v1')||'[]'); } catch { return []; }}
 function saveProjects(){ localStorage.setItem('sax_projects_v1', JSON.stringify(projects)); }
 function uid(){ return Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7); }
@@ -731,7 +767,7 @@ function renderMessages(){
   }
   el.innerHTML='';
   for(const msg of activeChat.messages){
-    if(msg.role==='user') addMessageEl('user',msg.content);
+    if(msg.role==='user') addMessageEl('user', msg.attachments ? (msg.content.replace(/^Attached files:\n.*?\n\n/s,'') || '') : msg.content, msg.attachments);
     else if(msg.role==='assistant'&&msg.content) addMessageEl('assistant',msg.content);
   }
   el.scrollTop=el.scrollHeight;
@@ -744,19 +780,27 @@ async function sendMessage(){
   const text=input.value.trim();
   if(!text && pendingUploads.length===0) return;
 
-  const uploadPrefix = pendingUploads.length
-    ? `Attached files:\n${pendingUploads.map(f=>`- ${f.name} (${f.size} bytes)`).join('\n')}\n\n`
+  // Capture attachments before clearing — use server URL for persistence
+  const msgAttachments = pendingUploads.length ? pendingUploads.map(f => ({
+    name: f.name, size: f.size, type: f.type, isImage: f.isImage,
+    url: f.url || f.localUrl || null
+  })) : null;
+  const uploadPrefix = msgAttachments
+    ? `Attached files:\n${msgAttachments.map(f=>`- ${f.name} (${f.size} bytes)`).join('\n')}\n\n`
     : '';
   const finalText = uploadPrefix + text;
+  const displayText = text || '';
 
   input.value='';
   input.style.height='auto';
+  clearAttachments();
 
   if(!activeChat) newChat();
 
   // Auto-title from first message
   if(activeChat.messages.length===0){
-    activeChat.title=finalText.slice(0,50)+(finalText.length>50?'...':'');
+    const titleSource = text || (msgAttachments ? msgAttachments[0].name : 'New Chat');
+    activeChat.title=titleSource.slice(0,50)+(titleSource.length>50?'...':'');
     saveChats();
     renderSidebar();
   }
@@ -765,8 +809,8 @@ async function sendMessage(){
   const empty=document.getElementById('empty');
   if(empty) empty.remove();
 
-  addMessageEl('user',finalText);
-  activeChat.messages.push({role:'user',content:finalText});
+  addMessageEl('user', displayText, msgAttachments);
+  activeChat.messages.push({role:'user', content:finalText, attachments:msgAttachments});
 
   const msgEl=addMessageEl('assistant','');
   const bodyEl=msgEl.querySelector('.msg-body');
@@ -855,11 +899,6 @@ async function sendMessage(){
 
   streaming=false;
   document.getElementById('send-btn').disabled=false;
-  pendingUploads = [];
-  const uploadBtn = document.getElementById('upload-btn');
-  if (uploadBtn) uploadBtn.textContent = 'UPLOAD';
-  const fileInput = document.getElementById('file-input');
-  if (fileInput) fileInput.value = '';
 }
 
 function triggerUpload(){
@@ -867,22 +906,135 @@ function triggerUpload(){
   if(fileInput) fileInput.click();
 }
 
-function handleFileUpload(event){
+async function handleFileUpload(event){
   const files = Array.from(event.target.files || []);
-  pendingUploads = files.map(f => ({ name: f.name, size: f.size, type: f.type || 'unknown' }));
-  const uploadBtn = document.getElementById('upload-btn');
-  if(uploadBtn){
-    uploadBtn.textContent = pendingUploads.length ? `UPLOAD (${pendingUploads.length})` : 'UPLOAD';
+  for(const f of files){
+    // Create local preview immediately
+    const localUrl = URL.createObjectURL(f);
+    const entry = {
+      name: f.name,
+      size: f.size,
+      type: f.type || 'unknown',
+      localUrl,
+      url: null,
+      isImage: f.type.startsWith('image/'),
+      file: f
+    };
+    pendingUploads.push(entry);
+    renderAttachmentPreview();
+
+    // Upload to server in background
+    const form = new FormData();
+    form.append('file', f);
+    try{
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+        body: form
+      });
+      const data = await res.json();
+      if(data.files && data.files[0]){
+        entry.url = data.files[0].url;
+      }
+    }catch(e){ console.warn('Upload failed:', e); }
   }
 }
 
-function addMessageEl(role,text){
+function renderAttachmentPreview(){
+  const el = document.getElementById('attachment-preview');
+  if(pendingUploads.length === 0){
+    el.style.display = 'none';
+    el.innerHTML = '';
+    document.getElementById('upload-btn').textContent = 'UPLOAD';
+    return;
+  }
+  el.style.display = 'flex';
+  document.getElementById('upload-btn').textContent = `UPLOAD (${pendingUploads.length})`;
+  el.innerHTML = pendingUploads.map((f, i) => `
+    <div class="att-thumb">
+      ${f.isImage
+        ? `<img src="${f.localUrl || f.url || ''}" alt="${esc(f.name)}" />`
+        : `<div class="att-file">${esc(f.name)}</div>`}
+      <button class="att-remove" onclick="removeAttachment(${i})">&times;</button>
+    </div>
+  `).join('');
+}
+
+function removeAttachment(idx){
+  pendingUploads.splice(idx, 1);
+  renderAttachmentPreview();
+}
+
+function clearAttachments(){
+  pendingUploads = [];
+  renderAttachmentPreview();
+  const fileInput = document.getElementById('file-input');
+  if(fileInput) fileInput.value = '';
+}
+
+function openLightbox(src){
+  document.getElementById('lightbox-img').src = src;
+  document.getElementById('lightbox').classList.add('visible');
+}
+
+// Paste images from clipboard (Ctrl+V screenshots)
+document.getElementById('msg-input').addEventListener('paste', (e) => {
+  const items = Array.from(e.clipboardData?.items || []);
+  const imageItems = items.filter(i => i.type.startsWith('image/'));
+  if(imageItems.length === 0) return;
+  e.preventDefault();
+  imageItems.forEach(async item => {
+    const file = item.getAsFile();
+    if(!file) return;
+    const localUrl = URL.createObjectURL(file);
+    const entry = {
+      name: `screenshot-${Date.now()}.png`,
+      size: file.size,
+      type: file.type,
+      localUrl,
+      url: null,
+      isImage: true,
+      file
+    };
+    pendingUploads.push(entry);
+    renderAttachmentPreview();
+    // Upload to server
+    const form = new FormData();
+    form.append('file', file, entry.name);
+    try{
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+        body: form
+      });
+      const data = await res.json();
+      if(data.files && data.files[0]) entry.url = data.files[0].url;
+    }catch(e){ console.warn('Upload failed:', e); }
+  });
+});
+
+function addMessageEl(role,text,attachments){
   const el=document.getElementById('messages');
   const div=document.createElement('div');
   div.className='msg '+role;
+
+  let attachHtml = '';
+  if(attachments && attachments.length){
+    attachHtml = '<div class="msg-attachments">' + attachments.map(a => {
+      if(a.isImage && a.url){
+        return `<img src="${a.url}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" />`;
+      } else if(a.isImage){
+        return `<div class="att-file-badge" style="display:flex;align-items:center;gap:6px"><span style="font-size:1.1rem">&#128444;</span> ${esc(a.name)}</div>`;
+      } else {
+        return `<div class="att-file-badge">${esc(a.name)} (${(a.size/1024).toFixed(1)}KB)</div>`;
+      }
+    }).join('') + '</div>';
+  }
+
+  const bodyContent = role==='assistant' ? md(text) : esc(text);
   div.innerHTML=`
     <div class="msg-label">${role==='user'?'You':'Assistant'}</div>
-    <div class="msg-body">${role==='assistant'?md(text):esc(text)}</div>
+    <div class="msg-body">${attachHtml}${bodyContent}</div>
   `;
   el.appendChild(div);
   el.scrollTop=el.scrollHeight;
@@ -992,132 +1144,139 @@ document.getElementById('secret-modal-overlay').addEventListener('click', functi
   if (e.target === this) cancelSecret();
 });
 
-// ── Voice System (Local Whisper STT + Kokoro TTS) ──
-// Zero API calls. Everything runs on the local machine.
+// ── Voice System v2: Always-On with VAD ──
+// VAD (Voice Activity Detection) auto-detects when you talk — no button needed.
+// Whisper transcribes locally. Kokoro speaks responses. All free, all local.
 
 let voiceEnabled = false;
+let voiceMode = false; // true = always-listening mode active
 let isListening = false;
 let isSpeaking = false;
-let mediaRecorder = null;
-let audioChunks = [];
+let vadInstance = null;
 let audioContext = null;
 let ttsQueue = [];
 let ttsSentenceBuffer = '';
 let currentAudioSource = null;
 
-// ── STT: Record audio → send to server → Whisper transcribes ──
+// ── Toggle voice mode (always-on vs off) ──
 
 async function toggleMic() {
-  if (isListening) {
-    stopListening();
+  if (voiceMode) {
+    stopVoiceMode();
   } else {
-    await startListening();
+    await startVoiceMode();
   }
 }
 
-async function startListening() {
-  stopSpeaking(); // Interrupt TTS
+async function startVoiceMode() {
+  stopSpeaking();
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true, noiseSuppression: true }
+    // Initialize VAD — auto-detects speech start/end
+    vadInstance = await vad.MicVAD.new({
+      positiveSpeechThreshold: 0.8,
+      negativeSpeechThreshold: 0.3,
+      minSpeechFrames: 5,
+      preSpeechPadFrames: 10,
+      redemptionFrames: 15,
+
+      onSpeechStart() {
+        console.log('[voice] Speech detected');
+        isListening = true;
+        stopSpeaking(); // Interrupt TTS when user starts talking
+        updateVoiceUI();
+      },
+
+      onSpeechEnd(audio) {
+        console.log('[voice] Speech ended, transcribing...');
+        isListening = false;
+        updateVoiceUI('transcribing');
+        transcribeAndSend(audio);
+      },
     });
 
-    audioChunks = [];
-    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) audioChunks.push(e.data);
-    };
-
-    mediaRecorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      if (audioChunks.length === 0) return;
-
-      const blob = new Blob(audioChunks, { type: 'audio/webm' });
-      audioChunks = [];
-
-      // Convert WebM to WAV for Whisper (needs PCM)
-      updateVoiceUI('transcribing');
-      try {
-        const wavBlob = await webmToWav(blob);
-        const arrayBuf = await wavBlob.arrayBuffer();
-
-        const res = await fetch(`${API}/api/voice/transcribe`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
-          body: new Uint8Array(arrayBuf),
-        });
-        const data = await res.json();
-
-        if (data.text && data.text.trim()) {
-          const input = document.getElementById('msg-input');
-          input.value = data.text.trim();
-          // Auto-send the transcribed text
-          sendMessage();
-        }
-      } catch (e) {
-        console.error('[voice] Transcription failed:', e);
-      }
-      updateVoiceUI();
-    };
-
-    mediaRecorder.start(100); // 100ms chunks for responsive stop
-    isListening = true;
+    vadInstance.start();
+    voiceMode = true;
+    voiceEnabled = true; // Auto-enable TTS in voice mode
+    document.getElementById('tts-toggle').textContent = 'VOICE ON';
+    document.getElementById('tts-toggle').className = 'active';
     updateVoiceUI();
+    console.log('[voice] Always-on voice mode started');
   } catch (e) {
-    console.error('[voice] Mic access failed:', e);
+    console.error('[voice] VAD init failed:', e);
+    // Fallback to push-to-talk
+    alert('Voice mode failed to start. Check microphone permissions.');
   }
 }
 
-function stopListening() {
+function stopVoiceMode() {
+  voiceMode = false;
   isListening = false;
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
+  if (vadInstance) {
+    vadInstance.pause();
+    vadInstance = null;
   }
-  mediaRecorder = null;
+  stopSpeaking();
+  updateVoiceUI();
+  console.log('[voice] Voice mode stopped');
+}
+
+// ── Transcribe speech and auto-send ──
+
+async function transcribeAndSend(audioFloat32) {
+  try {
+    // Convert Float32 audio from VAD to WAV for Whisper
+    const wavBlob = float32ToWav(audioFloat32, 16000);
+    const arrayBuf = await wavBlob.arrayBuffer();
+
+    const res = await fetch(`${API}/api/voice/transcribe`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: new Uint8Array(arrayBuf),
+    });
+    const data = await res.json();
+
+    if (data.text && data.text.trim()) {
+      // Show transcription briefly then send
+      const input = document.getElementById('msg-input');
+      input.value = data.text.trim();
+      sendMessage();
+    }
+  } catch (e) {
+    console.error('[voice] Transcription failed:', e);
+  }
   updateVoiceUI();
 }
 
-// Convert WebM/Opus → WAV (16kHz mono PCM16) for Whisper
-async function webmToWav(blob) {
-  if (!audioContext) audioContext = new AudioContext({ sampleRate: 16000 });
-
-  const arrayBuf = await blob.arrayBuffer();
-  const audioBuf = await audioContext.decodeAudioData(arrayBuf);
-
-  // Get mono channel
-  const samples = audioBuf.getChannelData(0);
+// Convert Float32 PCM (from VAD) → WAV blob for Whisper
+function float32ToWav(samples, sampleRate) {
   const pcm16 = new Int16Array(samples.length);
   for (let i = 0; i < samples.length; i++) {
     pcm16[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
   }
 
-  // Build WAV
   const wavHeader = new ArrayBuffer(44);
   const view = new DataView(wavHeader);
-  const sr = 16000;
-  const bps = 16;
-  const ch = 1;
   const dataSize = pcm16.length * 2;
 
-  // RIFF header
   writeStr(view, 0, 'RIFF');
   view.setUint32(4, 36 + dataSize, true);
   writeStr(view, 8, 'WAVE');
   writeStr(view, 12, 'fmt ');
-  view.setUint32(16, 16, true);           // fmt chunk size
-  view.setUint16(20, 1, true);            // PCM
-  view.setUint16(22, ch, true);           // channels
-  view.setUint32(24, sr, true);           // sample rate
-  view.setUint32(28, sr * ch * bps/8, true); // byte rate
-  view.setUint16(32, ch * bps/8, true);   // block align
-  view.setUint16(34, bps, true);          // bits per sample
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
   writeStr(view, 36, 'data');
   view.setUint32(40, dataSize, true);
 
   return new Blob([wavHeader, pcm16.buffer], { type: 'audio/wav' });
 }
+
+// REMOVED: webmToWav — replaced by float32ToWav (VAD outputs Float32 directly)
 
 function writeStr(view, offset, str) {
   for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
@@ -1234,19 +1393,27 @@ function updateVoiceUI(state) {
   if (state === 'transcribing') {
     micBtn.className = 'listening';
     indicator.className = 'listening';
-    indicator.textContent = 'TRANSCRIBING...';
+    indicator.textContent = '⚡ TRANSCRIBING...';
     return;
   }
 
-  micBtn.className = isListening ? 'listening' : isSpeaking ? 'speaking' : '';
+  if (voiceMode) {
+    micBtn.className = isListening ? 'listening' : isSpeaking ? 'speaking' : 'listening';
+    micBtn.title = 'Voice mode ON (click to stop)';
 
-  if (isListening) {
-    indicator.className = 'listening';
-    indicator.textContent = 'RECORDING...';
-  } else if (isSpeaking) {
-    indicator.className = 'speaking';
-    indicator.textContent = 'SPEAKING...';
+    if (isListening) {
+      indicator.className = 'listening';
+      indicator.textContent = '🎙 LISTENING...';
+    } else if (isSpeaking) {
+      indicator.className = 'speaking';
+      indicator.textContent = '🔊 SPEAKING...';
+    } else {
+      indicator.className = 'listening';
+      indicator.textContent = '🎙 VOICE MODE';
+    }
   } else {
+    micBtn.className = '';
+    micBtn.title = 'Click to enable voice mode (hands-free)';
     indicator.className = '';
   }
 }

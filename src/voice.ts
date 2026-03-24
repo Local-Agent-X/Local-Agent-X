@@ -133,6 +133,21 @@ export function transcribe(audioBuffer: Buffer): string {
     if (lower === "thank you." || lower === "thanks for watching." || text.length < 2) {
       return "";
     }
+
+    // Voice injection guard: adversarial audio can make Whisper output prompt injection text.
+    // Check transcription for injection patterns before returning.
+    try {
+      const { detectInjection } = require("./sanitize.js");
+      const injections = detectInjection(text);
+      if (injections.length > 0) {
+        const maxScore = Math.max(...injections.map((i: { score: number }) => i.score));
+        if (maxScore >= 0.7) {
+          console.warn(`[voice] Injection detected in transcription (score=${maxScore.toFixed(2)}): "${text.slice(0, 80)}"`);
+          return ""; // Silently drop injected transcription
+        }
+      }
+    } catch {}
+
     return text;
   } finally {
     try { unlinkSync(wavPath); } catch {}

@@ -1,4 +1,6 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
+import { getOrCreateCert } from "./tls.js";
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
@@ -72,6 +74,9 @@ const LOOPBACK_ORIGINS = new Set([
   "http://localhost",
   "http://127.0.0.1",
   "http://[::1]",
+  "https://localhost",
+  "https://127.0.0.1",
+  "https://[::1]",
 ]);
 
 function isLoopbackOrigin(origin: string | undefined): boolean {
@@ -283,7 +288,12 @@ export function startServer(config: SAXConfig) {
     }
   }
 
-  const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+  // TLS: try HTTPS first, fall back to HTTP if cert unavailable
+  const tlsCert = getOrCreateCert(dataDir);
+  const isHttps = !!tlsCert;
+  const protocol = isHttps ? "https" : "http";
+
+  const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || "/", `http://127.0.0.1:${config.port}`);
     const method = req.method || "GET";
 
@@ -1186,13 +1196,19 @@ export function startServer(config: SAXConfig) {
 
     // 404
     json(404, { error: "Not found" });
-  });
+  };
+
+  // Create server: HTTPS if cert available, HTTP fallback
+  const server = isHttps
+    ? createHttpsServer({ cert: tlsCert!.cert, key: tlsCert!.key }, requestHandler)
+    : createHttpServer(requestHandler);
 
   server.listen(config.port, "127.0.0.1", () => {
     const maskedToken = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
-    console.log(`\n  Secret Agent X running at http://127.0.0.1:${config.port}`);
+    console.log(`\n  Secret Agent X running at ${protocol}://127.0.0.1:${config.port}`);
+    console.log(`  Protocol: ${isHttps ? "HTTPS (TLS encrypted)" : "HTTP (⚠ unencrypted — install OpenSSL for HTTPS)"}`);
     console.log(`  Auth token: ${maskedToken}`);
-    console.log(`\n  ► Open: http://127.0.0.1:${config.port}/?token=<your-token>\n`);
+    console.log(`\n  ► Open: ${protocol}://127.0.0.1:${config.port}/?token=<your-token>\n`);
     console.log(`  Memory: ${dataDir}/memory/`);
     console.log(`  Sessions: ${dataDir}/sessions/`);
 

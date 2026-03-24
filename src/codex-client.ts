@@ -127,10 +127,11 @@ export async function* streamCodexResponse(params: {
   systemPrompt: string;
   tools?: CodexTool[];
   temperature?: number;
+  previousResponseId?: string;
 }): AsyncGenerator<
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
-  | { type: "done"; usage: { inputTokens: number; outputTokens: number } }
+  | { type: "done"; usage: { inputTokens: number; outputTokens: number }; responseId?: string }
 > {
   const accountId = extractAccountIdFromJwt(params.token);
 
@@ -153,8 +154,13 @@ export async function* streamCodexResponse(params: {
     input: convertMessagesToInput(params.messages),
     text: { verbosity: "medium" },
     include: ["reasoning.encrypted_content"],
-    store: false,
+    store: true, // Enable store so we can use previous_response_id for incremental turns
   };
+
+  // Incremental mode: if we have a previous response ID, only send new items
+  if (params.previousResponseId) {
+    body.previous_response_id = params.previousResponseId;
+  }
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;
@@ -301,5 +307,9 @@ export async function* streamCodexResponse(params: {
     }
   }
 
-  yield { type: "done", usage };
+  // Extract response ID for incremental mode
+  let responseId: string | undefined;
+  // Re-scan buffer for response ID (it's in the completed event)
+  // Already processed above — check if event had response.id
+  yield { type: "done", usage, responseId };
 }

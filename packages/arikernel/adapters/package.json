@@ -1,0 +1,81 @@
+{
+	"name": "@arikernel/adapters",
+	"version": "0.1.2",
+	"description": "Framework adapters for AriKernel — protect agents built with LangChain, CrewAI, OpenAI, and more",
+	"license": "SEE LICENSE IN LICENSE.md",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/AriKernel/arikernel.git",
+		"directory": "packages/adapters"
+	},
+	"homepage": "https://github.com/AriKernel/arikernel#readme",
+	"bugs": {
+		"url": "https://github.com/AriKernel/arikernel/issues"
+	},
+	"keywords": [
+		"ai",
+		"agent",
+		"security",
+		"llm",
+		"tool-use",
+		"langchain",
+		"openai",
+		"crewai",
+		"vercel-ai",
+		"framework"
+	],
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"files": ["dist"],
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./langchain": {
+			"types": "./dist/langchain.d.ts",
+			"import": "./dist/langchain.js"
+		},
+		"./openai": {
+			"types": "./dist/openai.d.ts",
+			"import": "./dist/openai.js"
+		},
+		"./crewai": {
+			"types": "./dist/crewai.d.ts",
+			"import": "./dist/crewai.js"
+		},
+		"./vercel-ai": {
+			"types": "./dist/vercel-ai.d.ts",
+			"import": "./dist/vercel-ai.js"
+		},
+		"./openai-agents": {
+			"types": "./dist/openai-agents.d.ts",
+			"import": "./dist/openai-agents.js"
+		},
+		"./llamaindex": {
+			"types": "./dist/llamaindex.d.ts",
+			"import": "./dist/llamaindex.js"
+		},
+		"./upstream": {
+			"types": "./dist/upstream.d.ts",
+			"import": "./dist/upstream.js"
+		}
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"build": "tsup src/index.ts src/langchain.ts src/openai.ts src/crewai.ts src/vercel-ai.ts src/openai-agents.ts src/llamaindex.ts src/upstream.ts --format esm --dts",
+		"test": "vitest run --passWithNoTests",
+		"typecheck": "tsc --noEmit",
+		"clean": "rimraf dist"
+	},
+	"dependencies": {
+		"@arikernel/core": "file:../core",
+		"@arikernel/runtime": "file:../runtime"
+	},
+	"devDependencies": {
+		"typescript": "^5.7.2"
+	}
+}

@@ -31,6 +31,7 @@ import { runSecurityAudit, printAuditReport } from "./security-audit.js";
 import { startAriKernel, isAriActive } from "./ari-kernel.js";
 import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "./session-policy.js";
 import { imageTools } from "./image-tools.js";
+import { createPlaybookTools } from "./playbooks.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 
 // ── Multipart parser ──
@@ -241,7 +242,8 @@ export function startServer(config: SAXConfig) {
   let activeBrowserSessionId = "default";
   const browserTools = createBrowserTools(() => activeBrowserSessionId);
 
-  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools];
+  const playbookTools = createPlaybookTools();
+  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...playbookTools];
 
   // In-memory session cache (backed by disk)
   const sessions = new Map<string, Session>();

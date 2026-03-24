@@ -1,0 +1,45 @@
+{
+	"name": "@arikernel/control-plane",
+	"private": true,
+	"version": "0.1.2",
+	"description": "Centralized policy decision service for AriKernel — remote enforcement, signed decisions, global audit",
+	"license": "SEE LICENSE IN LICENSE.md",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/AriKernel/arikernel.git",
+		"directory": "packages/control-plane"
+	},
+	"homepage": "https://github.com/AriKernel/arikernel#readme",
+	"bugs": {
+		"url": "https://github.com/AriKernel/arikernel/issues"
+	},
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"scripts": {
+		"build": "tsup src/index.ts --format esm --dts",
+		"test": "vitest run --passWithNoTests",
+		"typecheck": "tsc --noEmit",
+		"clean": "rimraf dist"
+	},
+	"dependencies": {
+		"@arikernel/core": "file:../core",
+		"@arikernel/policy-engine": "file:../policy-engine",
+		"@arikernel/taint-tracker": "file:../taint-tracker",
+		"@arikernel/audit-log": "file:../audit-log"
+	},
+	"peerDependencies": {
+		"better-sqlite3": ">=11.0.0"
+	},
+	"devDependencies": {
+		"@types/better-sqlite3": "^7.6.12",
+		"typescript": "^5.7.2",
+		"vitest": "^2.1.8"
+	}
+}

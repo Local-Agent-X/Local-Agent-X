@@ -668,7 +668,7 @@ async function startAiServer(type){
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':`Bearer ${AUTH_TOKEN}`},
       body:JSON.stringify({
-        message:`Use bash to start the ${type} server in background: start /B python ${script}`,
+        message:`Use bash tool to run this exact command: Start-Process python -ArgumentList "${script}" -WindowStyle Normal`,
         sessionId:'system-setup'
       })
     });
@@ -682,9 +682,9 @@ async function startAiServer(type){
         const h=await fetch(`http://127.0.0.1:${port}/health`,{signal:AbortSignal.timeout(2000)});
         const d=await h.json();
         if(d.model_loaded){ready=true;break;}
-        el.innerHTML=`<span style="color:#f59e0b">⏳ ${type} server loading model... (${(i+1)*5}s)</span>`;
+        el.innerHTML=`<span style="color:#f59e0b">⏳ Loading ${type} model to GPU... (${(i+1)*5}s)</span>`;
       }catch{
-        el.innerHTML=`<span style="color:#f59e0b">⏳ Downloading ${type} model... (${(i+1)*5}s)</span>`;
+        el.innerHTML=`<span style="color:#f59e0b">⏳ Starting ${type} server... (${(i+1)*5}s)</span>`;
       }
     }
     if(ready){

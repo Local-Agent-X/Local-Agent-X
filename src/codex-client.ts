@@ -172,11 +172,12 @@ export async function* streamCodexResponse(params: {
   const maxRetries = 3;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      // No fetch-level timeout — we handle silence detection in the stream reader instead.
+      // This lets long builds run as long as data keeps flowing.
       res = await fetch(CODEX_URL, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(600_000), // 10 min timeout per request (complex builds can take a while)
       });
 
       if (res.ok) break;
@@ -219,10 +220,34 @@ export async function* streamCodexResponse(params: {
   >();
   let usage = { inputTokens: 0, outputTokens: 0 };
 
+  // Silence-based timeout: abort if no data arrives for 90 seconds
+  // Resets every time data flows — so long builds stay alive as long as output is streaming
+  const SILENCE_TIMEOUT_MS = 90_000;
+  let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+  const abortController = new AbortController();
+
+  function resetSilenceTimer() {
+    if (silenceTimer) clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => {
+      console.warn("[codex] No data for 90s — aborting (silence timeout)");
+      abortController.abort();
+    }, SILENCE_TIMEOUT_MS);
+  }
+  resetSilenceTimer();
+
   while (true) {
-    const { done, value } = await reader.read();
+    let done: boolean;
+    let value: Uint8Array | undefined;
+    try {
+      const result = await reader.read();
+      done = result.done;
+      value = result.value;
+    } catch {
+      break; // Reader aborted by silence timer
+    }
     if (done) break;
 
+    resetSilenceTimer(); // Data arrived — reset the silence clock
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
@@ -304,9 +329,8 @@ export async function* streamCodexResponse(params: {
     }
   }
 
-  // Extract response ID for incremental mode
-  let responseId: string | undefined;
-  // Re-scan buffer for response ID (it's in the completed event)
-  // Already processed above — check if event had response.id
-  yield { type: "done", usage, responseId };
+  // Clean up silence timer
+  if (silenceTimer) clearTimeout(silenceTimer);
+
+  yield { type: "done", usage };
 }

@@ -6,6 +6,7 @@ import type {
 import type { ToolDefinition, ToolResult, AgentTurn, ServerEvent } from "./types.js";
 import { SecurityLayer } from "./security.js";
 import { streamCodexResponse } from "./codex-client.js";
+import { runCodexWs, type CodexTool as WsTool } from "./codex-ws.js";
 import type { ToolPolicy } from "./tool-policy.js";
 import type { ThreatEngine } from "./threat-engine.js";
 import type { RBACManager, Role } from "./rbac.js";
@@ -162,7 +163,6 @@ async function runCodexAgent(
     tools,
     security,
     maxIterations = 25,
-    temperature,
     onEvent,
     signal,
   } = options;
@@ -174,105 +174,193 @@ async function runCodexAgent(
     { role: "user", content: userMessage },
   ];
 
-  let totalInput = 0;
-  let totalOutput = 0;
-
-  // Tool call loop detection
-  let lastToolKey = "";
-  let sameToolCount = 0;
-
-  const codexTools = tools.map((t) => ({
+  const codexTools: WsTool[] = tools.map((t) => ({
     type: "function" as const,
     name: t.name,
     description: t.description,
     parameters: t.parameters,
   }));
 
-  for (let iteration = 0; iteration < maxIterations; iteration++) {
-    if (signal?.aborted) {
-      return {
-        messages: [{ role: "system", content: systemPrompt }, ...messages],
-        usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
-        stopReason: "abort",
-      };
-    }
+  // Track all messages generated during this turn
+  const turnMessages: ChatCompletionMessageParam[] = [];
+  let totalInput = 0;
+  let totalOutput = 0;
 
-    let assistantContent = "";
-    const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
-
-    const stream = streamCodexResponse({
+  try {
+    // Use WebSocket for continuous tool chaining — the model keeps working
+    // without waiting for the user to say "continue"
+    await runCodexWs({
       token: apiKey,
       model,
       messages,
       systemPrompt,
       tools: codexTools,
-      temperature,
+      maxIterations,
+
+      events: {
+        onText(delta) {
+          onEvent?.({ type: "stream", delta });
+        },
+        onToolCall(id, name, args) {
+          onEvent?.({ type: "tool_start", toolName: name, args: JSON.parse(args || "{}") });
+        },
+        onToolResult(id, name, result) {
+          onEvent?.({
+            type: "tool_end",
+            toolName: name,
+            result,
+            allowed: true,
+          });
+          // Track tool call + result in messages for session persistence
+          turnMessages.push({
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id,
+              type: "function",
+              function: { name, arguments: "" },
+            }],
+          } as unknown as ChatCompletionMessageParam);
+          turnMessages.push({
+            role: "tool",
+            tool_call_id: id,
+            content: result,
+          } as unknown as ChatCompletionMessageParam);
+        },
+        onDone(usage) {
+          totalInput = usage.inputTokens;
+          totalOutput = usage.outputTokens;
+          onEvent?.({
+            type: "done",
+            usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
+          });
+        },
+        onError(error) {
+          onEvent?.({ type: "error", message: error });
+        },
+      },
+
+      async executeToolCall(name: string, argsJson: string): Promise<string> {
+        let args: Record<string, unknown>;
+        try {
+          args = JSON.parse(argsJson);
+        } catch {
+          args = {};
+        }
+
+        // Security check
+        const decision = security.evaluate({
+          toolName: name,
+          args,
+          sessionId: options.sessionId || "default",
+        });
+
+        if (!decision.allowed) {
+          return `BLOCKED by security: ${decision.reason}`;
+        }
+
+        // Policy check
+        if (options.toolPolicy) {
+          const policyResult = options.toolPolicy.evaluate(name, args, options.sessionId);
+          if (!policyResult.allowed) {
+            return `BLOCKED by policy: ${policyResult.reason}`;
+          }
+        }
+
+        // Execute
+        const tool = toolMap.get(name);
+        if (!tool) {
+          return `Unknown tool: ${name}`;
+        }
+
+        try {
+          const result = await tool.execute(args, signal);
+
+          // Threat engine check
+          if (options.threatEngine) {
+            const threat = options.threatEngine.evaluateToolResult(name, args, result.content, true);
+            if (threat.blocked) {
+              return `BLOCKED by threat engine: ${threat.reason}`;
+            }
+          }
+
+          return result.content;
+        } catch (e) {
+          return `Tool error: ${(e as Error).message}`;
+        }
+      },
+    });
+  } catch (e) {
+    // WebSocket failed — fall back to HTTP streaming
+    console.warn(`[agent] WebSocket failed, falling back to HTTP: ${(e as Error).message}`);
+    return runCodexAgentHttp(userMessage, history, options);
+  }
+
+  return {
+    messages: [{ role: "system", content: systemPrompt }, ...messages, ...turnMessages],
+    usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
+    stopReason: "end_turn",
+  };
+}
+
+// ── HTTP fallback (original implementation) ──
+
+async function runCodexAgentHttp(
+  userMessage: string,
+  history: ChatCompletionMessageParam[],
+  options: AgentOptions
+): Promise<AgentTurn> {
+  const { apiKey, model, systemPrompt, tools, security, maxIterations = 25, onEvent, signal } = options;
+  const toolMap = new Map(tools.map((t) => [t.name, t]));
+  const messages: ChatCompletionMessageParam[] = [...history, { role: "user", content: userMessage }];
+  let totalInput = 0, totalOutput = 0;
+  let previousResponseId: string | undefined;
+  const codexTools = tools.map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters }));
+
+  for (let iteration = 0; iteration < maxIterations; iteration++) {
+    if (signal?.aborted) return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "abort" };
+
+    let assistantContent = "";
+    const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+
+    // Use previous_response_id for incremental turns (only send new tool results)
+    const streamMessages = previousResponseId
+      ? messages.slice(-toolCalls.length * 2) // Only new tool results
+      : messages;
+
+    const stream = streamCodexResponse({
+      token: apiKey,
+      model,
+      messages: streamMessages,
+      systemPrompt,
+      tools: codexTools,
+      previousResponseId,
     });
 
     for await (const event of stream) {
-      if (event.type === "text") {
-        assistantContent += event.delta;
-        onEvent?.({ type: "stream", delta: event.delta });
-      } else if (event.type === "tool_call") {
-        toolCalls.push({ id: event.id, name: event.name, arguments: event.arguments });
-      } else if (event.type === "done") {
+      if (event.type === "text") { assistantContent += event.delta; onEvent?.({ type: "stream", delta: event.delta }); }
+      else if (event.type === "tool_call") { toolCalls.push({ id: event.id, name: event.name, arguments: event.arguments }); }
+      else if (event.type === "done") {
         totalInput += event.usage.inputTokens;
         totalOutput += event.usage.outputTokens;
+        if (event.responseId) previousResponseId = event.responseId;
       }
     }
 
-    // Build assistant message
-    const assistantMsg: ChatCompletionMessageParam = {
-      role: "assistant",
-      content: assistantContent || null,
-    };
-    if (toolCalls.length > 0) {
-      (assistantMsg as Record<string, unknown>).tool_calls = toolCalls.map((tc) => ({
-        id: tc.id,
-        type: "function",
-        function: { name: tc.name, arguments: tc.arguments },
-      }));
-    }
+    const assistantMsg: ChatCompletionMessageParam = { role: "assistant", content: assistantContent || null };
+    if (toolCalls.length > 0) { (assistantMsg as Record<string, unknown>).tool_calls = toolCalls.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } })); }
     messages.push(assistantMsg);
 
     if (toolCalls.length === 0) {
-      onEvent?.({
-        type: "done",
-        usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
-      });
-      return {
-        messages: [{ role: "system", content: systemPrompt }, ...messages],
-        usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
-        stopReason: "end_turn",
-      };
-    }
-
-    // Detect tool call loops (same tool called 3+ times in a row)
-    const toolKey = toolCalls.map((tc) => `${tc.name}:${tc.arguments}`).join("|");
-    if (toolKey === lastToolKey) {
-      sameToolCount++;
-      if (sameToolCount >= 3) {
-        onEvent?.({ type: "stream", delta: "\n\n(Detected repeated tool calls — stopping to avoid infinite loop)" });
-        return {
-          messages: [{ role: "system", content: systemPrompt }, ...messages],
-          usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
-          stopReason: "end_turn",
-        };
-      }
-    } else {
-      sameToolCount = 1;
-      lastToolKey = toolKey;
+      onEvent?.({ type: "done", usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput } });
+      return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
     }
 
     const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
     messages.push(...toolResults);
   }
 
-  return {
-    messages: [{ role: "system", content: systemPrompt }, ...messages],
-    usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
-    stopReason: "max_iterations",
-  };
+  return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "max_iterations" };
 }
 
 // ── Standard (xAI/OpenAI API) Agent Loop ──

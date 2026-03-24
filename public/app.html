@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Secret Agent X</title>
 <link rel="stylesheet" href="/css/app.css"/>
-<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.7/dist/bundle.min.js"></script>
+<script src="/lib/ort.js"></script>
+<script>if(typeof ort!=='undefined')ort.env.wasm.wasmPaths='/lib/';</script>
+<script src="/lib/vad.js"></script>
 </head>
 <body>
 
@@ -178,7 +179,8 @@
           <div style="font-size:.78rem;line-height:2;color:var(--text)">
             <div><strong style="color:var(--accent)">Step 1:</strong> Go to <a href="https://github.com/new" target="_blank" style="color:var(--accent)">github.com/new</a> and create a new <strong>private</strong> repository (e.g. "agent-memory"). Leave it empty — no README.</div>
             <div><strong style="color:var(--accent)">Step 2:</strong> Copy the repo URL and paste it below.</div>
-            <div><strong style="color:var(--accent)">Step 3:</strong> Go to <a href="https://github.com/settings/tokens?type=beta" target="_blank" style="color:var(--accent)">GitHub Settings → Tokens</a> and create a fine-grained personal access token with <strong>Contents: Read and write</strong> permission for your memory repo.</div>
+            <div><strong style="color:var(--accent)">Step 3:</strong> Go to <a href="https://github.com/settings/tokens?type=beta" target="_blank" style="color:var(--accent)">GitHub Settings → Fine-grained tokens</a> and create a token scoped to <strong>only your memory repo</strong> with <strong>Contents: Read and write</strong>. This limits exposure if the token ever leaks.</div>
+            <div style="color:var(--muted);font-size:.72rem;margin-left:20px;margin-top:-4px">Tip: If you also want your agent to work on other repos when asked, save a separate classic token as <code style="color:var(--accent);font-size:.68rem">GITHUB_TOKEN</code> in the Secrets tab.</div>
             <div><strong style="color:var(--accent)">Step 4:</strong> Paste the token below, enable sync, and click Save.</div>
           </div>
         </div>

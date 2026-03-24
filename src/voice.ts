@@ -139,7 +139,7 @@ export function transcribe(audioBuffer: Buffer): string {
 export function synthesizeKokoro(
   text: string,
   voice: string = "am_onyx",
-  speed: number = 0.95
+  speed: number = 1.15
 ): Buffer {
   const clean = cleanForTTS(text);
   if (!clean) return Buffer.alloc(0);

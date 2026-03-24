@@ -1,6 +1,24 @@
 // ── Chat Panel ──
 let streaming = false;
 let pendingUploads = [];
+let userScrolledUp = false;
+
+// Detect when user scrolls away from bottom — pause auto-scroll
+document.addEventListener('DOMContentLoaded', () => {
+  const el = document.getElementById('messages');
+  if (!el) return;
+  el.addEventListener('wheel', () => {
+    if (!streaming) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    userScrolledUp = !atBottom;
+  });
+});
+
+function autoScroll() {
+  if (userScrolledUp) return;
+  const el = document.getElementById('messages');
+  if (el) el.scrollTop = el.scrollHeight;
+}
 
 // Voice state
 let voiceEnabled = false, isListening = false, isSpeaking = false;
@@ -28,6 +46,7 @@ function renderMessages() {
 
 async function sendMessage() {
   if (streaming) return;
+  userScrolledUp = false; // Reset scroll lock when user sends
   const input = document.getElementById('msg-input');
   const text = input.value.trim();
   if (!text && pendingUploads.length === 0) return;
@@ -94,8 +113,9 @@ async function sendMessage() {
           }
         } catch {}
       }
-      document.getElementById('messages').scrollTop = document.getElementById('messages').scrollHeight;
+      autoScroll();
     }
+    userScrolledUp = false; // Reset when stream ends
     if (content.trim()) { activeChat.messages.push({ role: 'assistant', content }); activeChat.updatedAt = Date.now(); saveChats(); renderSidebar(); }
   } catch (e) { bodyEl.textContent = 'Connection error: ' + e.message; }
   flushTTS(); streaming = false;
@@ -123,9 +143,9 @@ function addMessageEl(role, text, attachments) {
   // Scroll after images load (they change height)
   const imgs = div.querySelectorAll('.msg-attachments img');
   if (imgs.length) {
-    imgs.forEach(img => img.onload = () => { el.scrollTop = el.scrollHeight; });
+    imgs.forEach(img => img.onload = () => autoScroll());
   }
-  el.scrollTop = el.scrollHeight;
+  autoScroll();
   return div;
 }
 
@@ -392,9 +412,13 @@ async function speakSentence(text) {
   if (!voiceEnabled || !text.trim()) return;
   isSpeaking = true; updateVoiceUI();
   try {
-    const r = await fetch(`${API}/api/voice/synthesize`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` }, body: JSON.stringify({ text: text.trim() }) });
+    const r = await fetch(`${API}/api/voice/synthesize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ text: text.trim(), speed: 1.15 })
+    });
     if (!r.ok) throw new Error('TTS fail');
-    if (!audioContext) audioContext = new AudioContext({ sampleRate: 16000 });
+    if (!audioContext) audioContext = new AudioContext();
     const buf = await audioContext.decodeAudioData(await r.arrayBuffer());
     const src = audioContext.createBufferSource(); src.buffer = buf; src.connect(audioContext.destination);
     currentAudioSource = src;
@@ -404,18 +428,32 @@ async function speakSentence(text) {
   if (ttsQueue.length > 0) await speakSentence(ttsQueue.shift());
   else { isSpeaking = false; updateVoiceUI(); }
 }
+let ttsBatchBuffer = '';
 function feedTTS(delta) {
   if (!voiceEnabled) return;
   ttsSentenceBuffer += delta;
+
+  // Look for sentence boundaries
   const re = /[.!?]\s+|[.!?]$/;
   while (re.test(ttsSentenceBuffer)) {
     const m = ttsSentenceBuffer.match(re), idx = m.index + m[0].length;
-    const s = ttsSentenceBuffer.slice(0, idx).trim(); ttsSentenceBuffer = ttsSentenceBuffer.slice(idx);
-    if (s.length > 3) { isSpeaking ? ttsQueue.push(s) : speakSentence(s); }
+    const s = ttsSentenceBuffer.slice(0, idx).trim();
+    ttsSentenceBuffer = ttsSentenceBuffer.slice(idx);
+    if (s.length > 3) ttsBatchBuffer += (ttsBatchBuffer ? ' ' : '') + s;
+  }
+
+  // Send batch when we have enough text (80+ chars = ~2 sentences)
+  // This reduces pauses between sentences dramatically
+  if (ttsBatchBuffer.length > 80) {
+    const batch = ttsBatchBuffer; ttsBatchBuffer = '';
+    isSpeaking ? ttsQueue.push(batch) : speakSentence(batch);
   }
 }
 function flushTTS() {
-  if (voiceEnabled && ttsSentenceBuffer.trim().length > 3) { isSpeaking ? ttsQueue.push(ttsSentenceBuffer.trim()) : speakSentence(ttsSentenceBuffer.trim()); }
+  // Flush any remaining batched text + sentence buffer
+  const remaining = (ttsBatchBuffer + ' ' + ttsSentenceBuffer).trim();
+  ttsBatchBuffer = '';
+  if (voiceEnabled && remaining.length > 3) { isSpeaking ? ttsQueue.push(remaining) : speakSentence(remaining); }
   ttsSentenceBuffer = '';
 }
 function stopSpeaking() {

@@ -329,6 +329,13 @@ async function runCodexAgentHttp(
       ? messages.slice(-toolCalls.length * 2) // Only new tool results
       : messages;
 
+    // Force tool use on iterations 1+ (after the model already responded with text)
+    // This prevents the "I'll do it" → wait → "ok do it" loop
+    // First iteration: auto (model can respond with text or tools)
+    // Iterations 1-3: required (force tool use if there were tool calls)
+    // Iterations 4+: auto (let model finish with text)
+    const forceToolUse = iteration > 0 && iteration < 4;
+
     const stream = streamCodexResponse({
       token: apiKey,
       model,
@@ -336,6 +343,7 @@ async function runCodexAgentHttp(
       systemPrompt,
       tools: codexTools,
       previousResponseId,
+      forceToolUse,
     });
 
     for await (const event of stream) {

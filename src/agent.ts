@@ -186,11 +186,7 @@ async function runCodexAgent(
   let totalInput = 0;
   let totalOutput = 0;
 
-  // WebSocket disabled — Codex OAuth doesn't support it (always 500s)
-  // Go straight to HTTP with tool_choice for multi-turn
-  return runCodexAgentHttp(userMessage, history, options);
-
-  // Dead code below — kept for when WebSocket becomes available
+  // Try WebSocket first — enables stateful tool chaining
   try {
     // Use WebSocket for continuous tool chaining — the model keeps working
     // without waiting for the user to say "continue"

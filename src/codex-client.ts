@@ -156,6 +156,7 @@ export async function* streamCodexResponse(params: {
     text: { verbosity: "medium" },
     include: ["reasoning.encrypted_content"],
     store: false,
+    reasoning: { effort: "low" },
   };
 
   if (params.tools && params.tools.length > 0) {

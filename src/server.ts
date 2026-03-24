@@ -814,8 +814,10 @@ export function startServer(config: SAXConfig) {
   });
 
   server.listen(config.port, "127.0.0.1", () => {
+    const openUrl = `http://127.0.0.1:${config.port}/?token=${config.authToken}`;
     console.log(`\n  Secret Agent X running at http://127.0.0.1:${config.port}`);
-    console.log(`  Auth token: ${config.authToken.slice(0, 8)}...`);
+    console.log(`\n  ► Open this URL in your browser (first time or new machine):`);
+    console.log(`    ${openUrl}\n`);
     console.log(`  Memory: ${dataDir}/memory/`);
     console.log(`  Sessions: ${dataDir}/sessions/\n`);
   });

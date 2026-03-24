@@ -227,10 +227,19 @@ function renderUploadPreviews() {
   }).join('');
 }
 
-// ── Voice v2: Always-On with VAD ──
-// No push-to-talk — VAD auto-detects when you speak.
-let vadInstance = null;
+// ── Voice v2: Always-On with simple VAD (no external libs) ──
+// Uses Web Audio API volume detection — no ONNX, no worklets, just works.
 let voiceMode = false;
+let vadStream = null;
+let vadAnalyser = null;
+let vadContext = null;
+let vadRecorder = null;
+let vadChunks = [];
+let silenceStart = 0;
+let speechDetected = false;
+const SPEECH_THRESHOLD = 15;   // Volume level to detect speech (0-255)
+const SILENCE_DURATION = 1200; // ms of silence before ending recording
+const MIN_SPEECH_MS = 500;     // Minimum speech duration to process
 
 async function toggleMic() {
   if (voiceMode) { stopVoiceMode(); } else { await startVoiceMode(); }
@@ -239,69 +248,137 @@ async function toggleMic() {
 async function startVoiceMode() {
   stopSpeaking();
   try {
-    vadInstance = await vad.MicVAD.new({
-      positiveSpeechThreshold: 0.8,
-      negativeSpeechThreshold: 0.3,
-      minSpeechFrames: 5,
-      preSpeechPadFrames: 10,
-      redemptionFrames: 15,
-      onSpeechStart() {
-        console.log('[voice] Speech detected');
-        isListening = true;
-        stopSpeaking();
-        updateVoiceUI();
-      },
-      onSpeechEnd(audio) {
-        console.log('[voice] Speech ended, transcribing...');
-        isListening = false;
-        updateVoiceUI('transcribing');
-        transcribeFloat32(audio);
-      },
+    vadStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
     });
-    vadInstance.start();
+
+    vadContext = new AudioContext({ sampleRate: 16000 });
+    const source = vadContext.createMediaStreamSource(vadStream);
+    vadAnalyser = vadContext.createAnalyser();
+    vadAnalyser.fftSize = 512;
+    vadAnalyser.smoothingTimeConstant = 0.3;
+    source.connect(vadAnalyser);
+
     voiceMode = true;
     voiceEnabled = true;
-    document.getElementById('tts-toggle').textContent = 'VOICE ON';
-    document.getElementById('tts-toggle').className = 'active';
+    const ttsBtn = document.getElementById('tts-toggle');
+    if (ttsBtn) { ttsBtn.textContent = 'VOICE ON'; ttsBtn.className = 'active'; }
     updateVoiceUI();
     console.log('[voice] Always-on voice mode started');
+
+    // Start monitoring loop
+    monitorVoice();
   } catch (e) {
-    console.error('[voice] VAD failed:', e);
+    console.error('[voice] Mic failed:', e);
     alert('Voice mode failed. Check microphone permissions.\nError: ' + e.message);
   }
 }
 
 function stopVoiceMode() {
-  voiceMode = false; isListening = false;
-  if (vadInstance) { vadInstance.pause(); vadInstance = null; }
+  voiceMode = false; isListening = false; speechDetected = false;
+  if (vadRecorder && vadRecorder.state !== 'inactive') vadRecorder.stop();
+  if (vadStream) { vadStream.getTracks().forEach(t => t.stop()); vadStream = null; }
+  if (vadContext) { vadContext.close(); vadContext = null; }
+  vadAnalyser = null; vadRecorder = null; vadChunks = [];
   stopSpeaking(); updateVoiceUI();
+  console.log('[voice] Voice mode stopped');
 }
 
-async function transcribeFloat32(audioFloat32) {
-  try {
-    const wavBlob = float32ToWav(audioFloat32, 16000);
-    const r = await fetch(`${API}/api/voice/transcribe`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: new Uint8Array(await wavBlob.arrayBuffer()),
-    });
-    const d = await r.json();
-    if (d.text?.trim()) {
-      document.getElementById('msg-input').value = d.text.trim();
-      sendMessage();
+function monitorVoice() {
+  if (!voiceMode || !vadAnalyser) return;
+
+  const data = new Uint8Array(vadAnalyser.frequencyBinCount);
+  vadAnalyser.getByteFrequencyData(data);
+  const volume = data.reduce((a, b) => a + b, 0) / data.length;
+
+  if (volume > SPEECH_THRESHOLD) {
+    // Speech detected
+    if (!speechDetected && !isSpeaking) {
+      speechDetected = true;
+      isListening = true;
+      stopSpeaking(); // Interrupt TTS
+      startRecording();
+      updateVoiceUI();
     }
-  } catch (e) { console.error('[voice] STT failed:', e); }
-  updateVoiceUI();
+    silenceStart = 0;
+  } else if (speechDetected) {
+    // Silence after speech
+    if (!silenceStart) silenceStart = Date.now();
+    if (Date.now() - silenceStart > SILENCE_DURATION) {
+      // Enough silence — stop recording and transcribe
+      speechDetected = false;
+      isListening = false;
+      stopRecording();
+      updateVoiceUI();
+    }
+  }
+
+  requestAnimationFrame(monitorVoice);
 }
 
-function float32ToWav(samples, sr) {
+function startRecording() {
+  if (!vadStream || vadRecorder) return;
+  vadChunks = [];
+  vadRecorder = new MediaRecorder(vadStream, {
+    mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
+  });
+  vadRecorder.ondataavailable = e => { if (e.data.size > 0) vadChunks.push(e.data); };
+  vadRecorder.onstop = async () => {
+    vadRecorder = null;
+    if (vadChunks.length === 0) return;
+    const blob = new Blob(vadChunks, { type: 'audio/webm' });
+    vadChunks = [];
+
+    // Skip very short recordings (noise, not speech)
+    if (blob.size < 5000) return;
+
+    updateVoiceUI('transcribing');
+    try {
+      const wavBlob = await webmToWav16k(blob);
+      const r = await fetch(`${API}/api/voice/transcribe`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+        body: new Uint8Array(await wavBlob.arrayBuffer()),
+      });
+      const d = await r.json();
+      if (d.text?.trim() && d.text.trim().length > 1) {
+        document.getElementById('msg-input').value = d.text.trim();
+        sendMessage();
+      }
+    } catch (e) { console.error('[voice] STT failed:', e); }
+    updateVoiceUI();
+  };
+  vadRecorder.start(100);
+  console.log('[voice] Recording started');
+}
+
+function stopRecording() {
+  if (vadRecorder && vadRecorder.state !== 'inactive') {
+    vadRecorder.stop();
+    console.log('[voice] Recording stopped');
+  }
+}
+
+// Convert WebM → WAV 16kHz mono for Whisper
+async function webmToWav16k(blob) {
+  const ctx = new OfflineAudioContext(1, 1, 16000);
+  const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+  // Resample to 16kHz mono
+  const offline = new OfflineAudioContext(1, Math.ceil(buf.duration * 16000), 16000);
+  const src = offline.createBufferSource();
+  src.buffer = buf;
+  src.connect(offline.destination);
+  src.start();
+  const rendered = await offline.startRendering();
+  const samples = rendered.getChannelData(0);
+
   const pcm = new Int16Array(samples.length);
   for (let i = 0; i < samples.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
   const ds = pcm.length * 2, hdr = new ArrayBuffer(44), v = new DataView(hdr);
   const w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
   w(0,'RIFF'); v.setUint32(4, 36+ds, true); w(8,'WAVE'); w(12,'fmt ');
   v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
-  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  v.setUint32(24,16000,true); v.setUint32(28,32000,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
   w(36,'data'); v.setUint32(40,ds,true);
   return new Blob([hdr, pcm.buffer], { type: 'audio/wav' });
 }

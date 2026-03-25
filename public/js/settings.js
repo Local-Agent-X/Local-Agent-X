@@ -4,6 +4,7 @@ function init_settings() {
   loadSettings();
   loadSyncConfig();
   checkSettingsAuth();
+  checkAnthropicAuth();
   checkServer('image');
   checkServer('video');
   checkVoiceCaps();
@@ -51,6 +52,44 @@ async function doDisconnect() {
   if (!confirm('Disconnect from OpenAI?')) return;
   await apiFetch('/api/auth/logout', { method: 'POST' });
   checkSettingsAuth(); checkAuth();
+}
+
+// ── Anthropic Auth ──
+
+async function checkAnthropicAuth() {
+  try {
+    const d = await apiJson('/api/auth/anthropic/status');
+    const el = document.getElementById('anthropic-auth-status');
+    const loginBtn = document.getElementById('btn-anthropic-login');
+    const discBtn = document.getElementById('btn-anthropic-disconnect');
+    if (!el) return;
+    if (d.authenticated && !d.expired) {
+      el.className = 'status-badge ok';
+      el.innerHTML = '<span class="status-dot"></span> Connected — Anthropic OAuth';
+      if (loginBtn) { loginBtn.textContent = 'Already Connected'; loginBtn.disabled = true; }
+      if (discBtn) discBtn.style.display = '';
+    } else {
+      el.className = 'status-badge err';
+      el.innerHTML = '<span class="status-dot"></span> Not connected';
+      if (loginBtn) { loginBtn.textContent = 'Sign In with Claude'; loginBtn.disabled = false; }
+      if (discBtn) discBtn.style.display = 'none';
+    }
+  } catch {}
+}
+
+async function doAnthropicLogin() {
+  try {
+    const d = await apiPost('/api/auth/anthropic/login', {});
+    if (d.authUrl) window.open(d.authUrl, '_blank');
+    setTimeout(checkAnthropicAuth, 5000);
+    setTimeout(checkAnthropicAuth, 15000);
+  } catch (e) { console.error('Anthropic login failed:', e); }
+}
+
+async function doAnthropicDisconnect() {
+  if (!confirm('Disconnect from Anthropic?')) return;
+  await apiFetch('/api/auth/anthropic/logout', { method: 'POST' });
+  checkAnthropicAuth();
 }
 
 async function checkServer(type) {

@@ -38,30 +38,13 @@ export function getAriPresetForSession(sessionPreset: string): string {
  */
 export async function startAriKernel(auditDbPath: string, preset?: string): Promise<boolean> {
   currentPreset = preset || "workspace-assistant";
-  // Try embedded mode first (no sidecar needed)
-  try {
-    const kernel = createKernel({
-      preset: currentPreset as any,
-      autoScope: true,
-    });
 
-    firewall = kernel.createFirewall({
-      principal: "secret-agent-x",
-      auditLog: auditDbPath,
-    });
-
-    console.log(`  [ari] Kernel initialized (embedded mode, preset: ${currentPreset})`);
-    return true;
-  } catch (e) {
-    console.warn(`  [ari] Embedded mode failed, trying sidecar: ${(e as Error).message}`);
-  }
-
-  // Fallback: try connecting to existing sidecar
+  // Priority 1: Sidecar mode (secure — separate process, can't be bypassed by compromised agent)
   try {
     const health = await fetch(`${ARI_BASE_URL}/health`, { signal: AbortSignal.timeout(2000) });
     if (health.ok) {
       const kernel = createKernel({
-        preset: "workspace-assistant",
+        preset: currentPreset as any,
         mode: "sidecar",
         sidecar: { baseUrl: ARI_BASE_URL, principalId: "secret-agent-x" },
       });
@@ -69,11 +52,64 @@ export async function startAriKernel(auditDbPath: string, preset?: string): Prom
         principal: "secret-agent-x",
         auditLog: auditDbPath,
       });
-      console.log(`  [ari] Connected to existing sidecar at ${ARI_BASE_URL}`);
+      console.log(`  [ari] Kernel initialized (SIDECAR mode, preset: ${currentPreset})`);
+      console.log(`  [ari] Sidecar: ${ARI_BASE_URL}`);
       return true;
     }
   } catch {
-    // Sidecar not running — that's OK
+    // Sidecar not running — fall through to embedded
+  }
+
+  // Priority 2: Start sidecar process ourselves
+  try {
+    const { spawn: spawnProcess } = await import("node:child_process");
+    // Try to start arikernel-sidecar binary
+    sidecarProcess = spawnProcess("arikernel-sidecar", [
+      "--port", String(ARI_PORT),
+      "--preset", currentPreset,
+      "--audit-db", auditDbPath,
+    ], {
+      stdio: "ignore",
+      detached: false,
+      windowsHide: true,
+    });
+
+    // Wait for sidecar to be ready
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const health = await fetch(`${ARI_BASE_URL}/health`, { signal: AbortSignal.timeout(3000) });
+    if (health.ok) {
+      const kernel = createKernel({
+        preset: currentPreset as any,
+        mode: "sidecar",
+        sidecar: { baseUrl: ARI_BASE_URL, principalId: "secret-agent-x" },
+      });
+      firewall = kernel.createFirewall({
+        principal: "secret-agent-x",
+        auditLog: auditDbPath,
+      });
+      console.log(`  [ari] Kernel initialized (SIDECAR mode — started process, preset: ${currentPreset})`);
+      return true;
+    }
+  } catch {
+    // Sidecar binary not available — fall through to embedded
+    if (sidecarProcess) { try { sidecarProcess.kill(); } catch {} sidecarProcess = null; }
+  }
+
+  // Priority 3: Embedded mode (weaker — in-process, but better than nothing)
+  try {
+    const kernel = createKernel({
+      preset: currentPreset as any,
+      autoScope: true,
+    });
+    firewall = kernel.createFirewall({
+      principal: "secret-agent-x",
+      auditLog: auditDbPath,
+    });
+    console.log(`[AriKernel] Running in EMBEDDED mode. For production security, install and run arikernel-sidecar.`);
+    console.log(`  [ari] Kernel initialized (embedded mode, preset: ${currentPreset})`);
+    return true;
+  } catch (e) {
+    console.warn(`  [ari] Embedded mode failed: ${(e as Error).message}`);
   }
 
   console.log(`  [ari] Kernel not available — running without AriKernel (built-in security still active)`);

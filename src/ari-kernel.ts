@@ -60,19 +60,21 @@ export async function startAriKernel(auditDbPath: string, preset?: string): Prom
     // Sidecar not running — fall through to embedded
   }
 
-  // Priority 2: Start sidecar process ourselves
+  // Priority 2: Start sidecar process ourselves (only if binary exists)
   try {
+    const { execFileSync } = await import("node:child_process");
+    // Check if binary exists before spawning (prevents ENOENT crash)
+    try { execFileSync("arikernel-sidecar", ["--version"], { timeout: 3000, stdio: "ignore", windowsHide: true }); } catch { throw new Error("not installed"); }
+
     const { spawn: spawnProcess } = await import("node:child_process");
-    // Try to start arikernel-sidecar binary
     sidecarProcess = spawnProcess("arikernel-sidecar", [
       "--port", String(ARI_PORT),
       "--preset", currentPreset,
       "--audit-db", auditDbPath,
-    ], {
-      stdio: "ignore",
-      detached: false,
-      windowsHide: true,
-    });
+    ], { stdio: "ignore", detached: false, windowsHide: true });
+
+    // Catch spawn errors so they don't crash the process
+    sidecarProcess.on("error", () => { sidecarProcess = null; });
 
     // Wait for sidecar to be ready
     await new Promise(resolve => setTimeout(resolve, 2000));

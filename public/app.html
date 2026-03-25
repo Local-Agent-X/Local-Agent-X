@@ -155,22 +155,6 @@
           <div class="section-title">Sandbox</div>
           <div class="field"><label class="field-label">Execution Mode</label><select class="field-select" id="cfg-sandbox"><option value="host">Host (no isolation)</option><option value="docker">Docker (secure)</option></select></div>
         </div>
-        <div class="section-card">
-          <div class="section-title">HTTPS (TLS Encryption)</div>
-          <div class="section-desc">Encrypt all traffic between your browser and the agent server. Requires a one-time browser confirmation on first use.</div>
-          <div id="https-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
-          <div class="toggle-row">
-            <div>
-              <div class="toggle-label">Enable HTTPS</div>
-              <div class="toggle-desc">Generates a self-signed certificate for localhost. Your browser will show a one-time warning — click Advanced → Proceed.</div>
-            </div>
-            <div class="toggle" id="tog-https" onclick="toggleSwitch(this)"></div>
-          </div>
-          <div class="btn-row">
-            <button class="action-btn secondary" onclick="applyHttps()">Apply & Restart</button>
-          </div>
-          <div id="https-result" style="font-size:.72rem;color:var(--muted);margin-top:8px;font-family:var(--mono)"></div>
-        </div>
       </div>
       <!-- Tools -->
       <div id="stab-tools" class="tab-pane">

@@ -164,14 +164,19 @@ export function initiateAnthropicLogin(): { authUrl: string; promise: Promise<vo
       try {
         const tokenRes = await fetch(TOKEN_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+          },
           body: JSON.stringify({
             grant_type: "authorization_code",
             client_id: CLIENT_ID,
             code,
+            state,
             redirect_uri: redirectUri,
             code_verifier: verifier,
           }),
+          signal: AbortSignal.timeout(30_000),
         });
 
         if (!tokenRes.ok) {

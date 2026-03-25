@@ -66,8 +66,8 @@ function saveAnthropicTokens(tokens: AnthropicTokens): void {
 export async function refreshAnthropicTokens(tokens: AnthropicTokens): Promise<AnthropicTokens> {
   const res = await fetch(TOKEN_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
       grant_type: "refresh_token",
       client_id: CLIENT_ID,
       refresh_token: tokens.refreshToken,
@@ -164,8 +164,8 @@ export function initiateAnthropicLogin(): { authUrl: string; promise: Promise<vo
       try {
         const tokenRes = await fetch(TOKEN_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
             grant_type: "authorization_code",
             client_id: CLIENT_ID,
             code,

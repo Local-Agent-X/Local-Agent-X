@@ -1,5 +1,5 @@
 {
-  "name": "secret-agent-x",
+  "name": "open-agent-x",
   "version": "0.1.0",
   "description": "Personal AI agent with voice conversation, runtime security, and free OpenAI subscription access",
   "type": "module",

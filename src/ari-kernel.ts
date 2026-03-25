@@ -60,40 +60,52 @@ export async function startAriKernel(auditDbPath: string, preset?: string): Prom
     // Sidecar not running — fall through to embedded
   }
 
-  // Priority 2: Start sidecar process ourselves (only if binary exists)
+  // Priority 2: Start sidecar process from ARI Kernel project
   try {
-    const { execFileSync } = await import("node:child_process");
-    // Check if binary exists before spawning (prevents ENOENT crash)
-    try { execFileSync("arikernel-sidecar", ["--version"], { timeout: 3000, stdio: "ignore", windowsHide: true }); } catch { throw new Error("not installed"); }
-
     const { spawn: spawnProcess } = await import("node:child_process");
-    sidecarProcess = spawnProcess("arikernel-sidecar", [
-      "--port", String(ARI_PORT),
-      "--preset", currentPreset,
-      "--audit-db", auditDbPath,
-    ], { stdio: "ignore", detached: false, windowsHide: true });
+    const { existsSync: ex } = await import("node:fs");
+    const { join: j, resolve: res } = await import("node:path");
+    const { homedir: hd } = await import("node:os");
 
-    // Catch spawn errors so they don't crash the process
-    sidecarProcess.on("error", () => { sidecarProcess = null; });
+    // Look for ARI Kernel CLI in known locations
+    const ariCliPaths = [
+      j(hd(), "Ari Kernel", "apps", "cli", "dist", "main.js"),
+      j(res("."), "..", "Ari Kernel", "apps", "cli", "dist", "main.js"),
+      j(hd(), "ari-kernel", "apps", "cli", "dist", "main.js"),
+    ];
+    const ariCli = ariCliPaths.find(p => ex(p));
 
-    // Wait for sidecar to be ready
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    const health = await fetch(`${ARI_BASE_URL}/health`, { signal: AbortSignal.timeout(3000) });
-    if (health.ok) {
-      const kernel = createKernel({
-        preset: currentPreset as any,
-        mode: "sidecar",
-        sidecar: { baseUrl: ARI_BASE_URL, principalId: "secret-agent-x" },
-      });
-      firewall = kernel.createFirewall({
-        principal: "secret-agent-x",
-        auditLog: auditDbPath,
-      });
-      console.log(`  [ari] Kernel initialized (SIDECAR mode — started process, preset: ${currentPreset})`);
-      return true;
+    if (ariCli) {
+      console.log(`  [ari] Starting sidecar from ${ariCli}...`);
+      sidecarProcess = spawnProcess("node", [
+        ariCli, "sidecar",
+        "--port", String(ARI_PORT),
+        "--host", "127.0.0.1",
+        "--audit-log", auditDbPath,
+      ], { stdio: "ignore", detached: false, windowsHide: true });
+
+      sidecarProcess.on("error", () => { sidecarProcess = null; });
+
+      // Wait for sidecar to be ready
+      await new Promise(resolve => setTimeout(resolve, 2500));
+      const health = await fetch(`${ARI_BASE_URL}/health`, { signal: AbortSignal.timeout(3000) });
+      if (health.ok) {
+        const kernel = createKernel({
+          preset: currentPreset as any,
+          mode: "sidecar",
+          sidecar: { baseUrl: ARI_BASE_URL, principalId: "secret-agent-x" },
+        });
+        firewall = kernel.createFirewall({
+          principal: "secret-agent-x",
+          auditLog: auditDbPath,
+        });
+        console.log(`  [ari] Kernel initialized (SIDECAR mode, preset: ${currentPreset})`);
+        console.log(`  [ari] Sidecar: ${ARI_BASE_URL}`);
+        return true;
+      }
     }
   } catch {
-    // Sidecar binary not available — fall through to embedded
+    // Sidecar start failed — fall through to embedded
     if (sidecarProcess) { try { sidecarProcess.kill(); } catch {} sidecarProcess = null; }
   }
 

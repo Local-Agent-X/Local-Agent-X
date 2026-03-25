@@ -103,7 +103,7 @@ function renderMessages() {
   const el = document.getElementById('messages');
   if (!el) return;
   if (!activeChat || activeChat.messages.length === 0) {
-    el.innerHTML = `<div id="empty"><h2>SECRET AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
+    el.innerHTML = `<div id="empty"><h2>OPEN AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
     return;
   }
   el.innerHTML = '';

@@ -7,21 +7,22 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "tsx --watch src/index.ts",
-    "start": "node dist/index.js",
+    "dev": "node --max-old-space-size=512 --import=tsx --watch src/index.ts",
+    "start": "node --max-old-space-size=512 dist/index.js",
     "build": "tsup",
     "test": "vitest run",
     "setup-ai": "node scripts/setup-ai.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
     "@arikernel/adapters": "file:packages/arikernel/adapters",
     "@arikernel/audit-log": "file:packages/arikernel/audit-log",
     "@arikernel/cli": "^0.1.3",
     "@arikernel/control-plane": "file:packages/arikernel/control-plane",
-    "@arikernel/core": "^0.1.3",
+    "@arikernel/core": "file:../Ari Kernel/packages/core",
     "@arikernel/policy-engine": "file:packages/arikernel/policy-engine",
     "@arikernel/runtime": "^0.1.3",
-    "@arikernel/sidecar": "file:packages/arikernel/sidecar",
+    "@arikernel/sidecar": "file:../Ari Kernel/packages/sidecar",
     "@arikernel/taint-tracker": "file:packages/arikernel/taint-tracker",
     "@arikernel/tool-executors": "file:packages/arikernel/tool-executors",
     "better-sqlite3": "^12.8.0",

@@ -786,6 +786,28 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── Settings API (server-side persistence) ──
+
+    if (method === "POST" && url.pathname === "/api/settings") {
+      const body = JSON.parse(await readBody(req));
+      const settingsPath = join(dataDir, "settings.json");
+      let existing: Record<string, unknown> = {};
+      try { if (existsSync(settingsPath)) existing = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
+      const merged = { ...existing, ...body };
+      writeFileSync(settingsPath, JSON.stringify(merged, null, 2), { encoding: "utf-8", mode: 0o600 });
+      json(200, { ok: true });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/settings") {
+      const settingsPath = join(dataDir, "settings.json");
+      try {
+        if (existsSync(settingsPath)) { json(200, JSON.parse(readFileSync(settingsPath, "utf-8"))); }
+        else { json(200, {}); }
+      } catch { json(200, {}); }
+      return;
+    }
+
     // ── Audit API ──
 
     // ── Active Chats API (for WS-less fallback) ──
@@ -1002,22 +1024,29 @@ export function startServer(config: SAXConfig) {
       }
 
       try {
-        // Detect provider — check Anthropic first, then Codex, then xAI
+        // Provider: use saved preference from settings, fall back to auto-detect
         const { loadTokens } = await import("./auth.js");
         const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
-        const openaiTokens = loadTokens();
-        const anthropicTokens = loadAnthropicTokens();
+
+        let savedProvider: string | null = null;
+        try {
+          const settingsPath = join(dataDir, "settings.json");
+          if (existsSync(settingsPath)) {
+            savedProvider = JSON.parse(readFileSync(settingsPath, "utf-8")).provider || null;
+          }
+        } catch {}
 
         let provider: "codex" | "xai" | "openai" | "anthropic";
-        if (anthropicTokens || process.env.ANTHROPIC_API_KEY) {
+        if (savedProvider && ["codex", "xai", "openai", "anthropic"].includes(savedProvider)) {
+          provider = savedProvider as typeof provider;
+        } else if (loadAnthropicTokens()) {
           provider = "anthropic";
-        } else if (openaiTokens && !config.openaiApiKey) {
+        } else if (loadTokens() && !config.openaiApiKey) {
           provider = "codex";
         } else {
           provider = "xai";
         }
 
-        // Get API key for the detected provider
         const apiKey = provider === "anthropic"
           ? await getAnthropicApiKey()
           : await getApiKey(config.openaiApiKey);
@@ -1456,13 +1485,22 @@ export function startServer(config: SAXConfig) {
         else cronProvider = "xai";
         const apiKey = cronProvider === "anthropic" ? await getAnthropicApiKey() : await getApiKey(config.openaiApiKey);
         const session = getOrCreateSession(`cron-${jobId}`);
+
+        // Cron jobs run with elevated permissions — they're operator-level automated tasks
+        // Create a separate SecurityLayer with unrestricted file access for cron execution
+        const { SecurityLayer } = await import("./security.js");
+        const cronSecurity = new SecurityLayer(
+          resolve(process.env.SAX_WORKSPACE || join(homedir(), ".sax", "workspace")),
+          "unrestricted", // Cron jobs need full access to fix code, write reports, etc.
+        );
+
         const result = await runAgent(prompt, session.messages, {
           apiKey,
           model: cronProvider === "codex" ? "gpt-5.3-codex" : cronProvider === "anthropic" ? "claude-sonnet-4-20250514" : config.model,
           provider: cronProvider,
           systemPrompt: config.systemPrompt,
           tools,
-          security,
+          security: cronSecurity,
           toolPolicy,
           sessionId: `cron-${jobId}`,
           maxIterations: config.maxIterations,

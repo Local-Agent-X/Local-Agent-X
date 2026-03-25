@@ -65,6 +65,7 @@
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
         </div>
         <button id="mic-btn" class="input-btn" onclick="toggleMic()" title="Voice input">&#127908;</button>
+        <button id="stop-btn" onclick="stopChat()" title="Stop agent" style="display:none;background:var(--danger);border-color:var(--danger);color:#fff">&#9632;</button>
         <button id="send-btn" onclick="sendMessage()">&#9650;</button>
       </div>
     </div>

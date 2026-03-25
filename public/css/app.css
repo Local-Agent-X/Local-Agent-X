@@ -74,6 +74,10 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .util-btn.active{color:var(--accent)}
 .util-icon{font-size:.8rem}
 #sidebar-footer{padding:10px 14px;border-top:1px solid var(--border);font-size:.68rem;font-family:var(--mono);display:flex;align-items:center;gap:6px}
+.chat-dot.active-pulse{background:var(--accent)!important;box-shadow:0 0 6px var(--accent);animation:dot-pulse 1.5s infinite}
+@keyframes dot-pulse{0%,100%{opacity:1;box-shadow:0 0 4px var(--accent)}50%{opacity:.5;box-shadow:0 0 10px var(--accent)}}
+#stop-btn{width:36px;height:36px;border-radius:50%;border:none;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-bottom:2px;transition:all .2s}
+#stop-btn:hover{box-shadow:0 0 12px rgba(255,51,51,.4)}
 #theme-toggle{margin-left:auto;background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:.85rem;color:var(--muted);transition:all .15s}
 #theme-toggle:hover{border-color:var(--accent);color:var(--accent)}
 #auth-dot{width:6px;height:6px;border-radius:50%;background:var(--danger)}
@@ -132,7 +136,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 #input-box:focus-within{border-color:var(--accent);box-shadow:0 0 8px rgba(0,255,65,.1)}
 #upload-previews{display:none;gap:10px;padding:0 0 8px;flex-wrap:wrap}
 #upload-previews.has-items{display:flex}
-#msg-input{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:.9rem;resize:none;max-height:160px;line-height:1.5;font-family:var(--font)}
+#msg-input{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:.9rem;resize:none;min-height:24px;max-height:200px;line-height:1.5;font-family:var(--font);overflow-y:auto}
 #msg-input::placeholder{color:var(--muted)}
 .input-btn{background:transparent;border:1px solid var(--border);border-radius:50%;color:var(--muted);width:36px;height:36px;cursor:pointer;font-size:1rem;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-bottom:2px}
 .input-btn:hover{border-color:var(--accent);color:var(--accent)}

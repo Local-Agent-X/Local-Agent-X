@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { wrapExternalContent } from "./sanitize.js";
 
 /**
- * Browser Manager for Secret Agent X
+ * Browser Manager for Open Agent X
  *
  * Uses real Chrome (not Playwright's bundled Chromium) to avoid bot detection.
  * Launches headed by default — sites see a real browser, not headless automation.

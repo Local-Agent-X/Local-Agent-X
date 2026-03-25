@@ -294,14 +294,19 @@ export class SecurityLayer {
       if (action === "write" || action === "edit") {
         return { allowed: false, reason: "Blocked: cannot write files outside workspace directory" };
       }
-      // Allow reads only for the project directory (src/, public/, etc.) and home .sax directory
+      // Allow reads for: project dir, .sax dir, and common user directories
       const projectRoot = resolve(this.workspace, "..");
       const homeDir = resolve(process.env.HOME || process.env.USERPROFILE || "");
       const saxDir = resolve(homeDir, ".sax");
       const inProject = !relative(projectRoot, realPath).startsWith("..");
       const inSax = !relative(saxDir, realPath).startsWith("..");
-      if (!inProject && !inSax) {
-        return { allowed: false, reason: "Blocked: cannot read files outside project and workspace directories" };
+      // Allow reading from user's own directories (Downloads, Documents, Desktop, Pictures)
+      const userDirs = ["Downloads", "Documents", "Desktop", "Pictures", "Videos", "Music"].map(
+        (d) => resolve(homeDir, d)
+      );
+      const inUserDir = userDirs.some((d) => !relative(d, realPath).startsWith(".."));
+      if (!inProject && !inSax && !inUserDir) {
+        return { allowed: false, reason: "Blocked: cannot read files outside project, home, and user directories" };
       }
     }
 

@@ -1,9 +1,10 @@
 /**
- * Anthropic Messages API streaming client using the official SDK.
- * Handles OAuth tokens, beta headers, and proper message format.
+ * Anthropic client with dual strategy:
+ * 1. Claude CLI proxy (for OAuth — uses `claude -p` which handles all auth natively)
+ * 2. Raw HTTP fetch (for direct API keys — sk-ant-api03-*)
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import { spawn } from "child_process";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 interface StreamEvent {
@@ -26,14 +27,154 @@ interface StreamOptions {
   maxTokens?: number;
 }
 
-/** Check if token is OAuth (vs regular API key) */
+const API_BASE = "https://api.anthropic.com";
+
 function isOAuthToken(token: string): boolean {
   return token.includes("sk-ant-oat");
 }
 
-/** Convert OpenAI messages to Anthropic format */
-function convertMessages(messages: ChatCompletionMessageParam[]): Anthropic.MessageParam[] {
-  const result: Anthropic.MessageParam[] = [];
+// ── Claude CLI proxy (for OAuth tokens) ──
+
+function extractUserPrompt(messages: ChatCompletionMessageParam[]): string {
+  // Get the last user message as the prompt
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      const content = messages[i].content;
+      return typeof content === "string" ? content : JSON.stringify(content);
+    }
+  }
+  return "";
+}
+
+async function* streamViaClaude(options: StreamOptions): AsyncGenerator<StreamEvent> {
+  const { model, messages, systemPrompt, maxTokens = 16000 } = options;
+  const prompt = extractUserPrompt(messages);
+
+  const args = [
+    "-p",
+    "--model", model,
+    "--output-format", "stream-json",
+    "--verbose",
+  ];
+
+  if (systemPrompt) {
+    args.push("--system-prompt", systemPrompt);
+  }
+
+  try {
+    const proc = spawn("claude", args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: process.platform === "win32",
+      windowsVerbatimArguments: false,
+    });
+
+    // Send prompt via stdin to avoid shell quoting issues
+    proc.stdin?.write(prompt);
+    proc.stdin?.end();
+
+    let stderr = "";
+    proc.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    let buffer = "";
+    let prevText = "";
+
+    for await (const chunk of proc.stdout as AsyncIterable<Buffer>) {
+      buffer += chunk.toString();
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const event = JSON.parse(line);
+
+          if (event.type === "assistant") {
+            // Incremental text from assistant message
+            const content = event.message?.content;
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block.type === "text" && typeof block.text === "string") {
+                  if (block.text.length > prevText.length) {
+                    const delta = block.text.slice(prevText.length);
+                    prevText = block.text;
+                    yield { type: "text", delta };
+                  }
+                }
+              }
+            }
+          } else if (event.type === "result") {
+            // Final result — emit any remaining text
+            const result = event.result;
+            if (typeof result === "string" && result.length > prevText.length) {
+              yield { type: "text", delta: result.slice(prevText.length) };
+            }
+            yield {
+              type: "done",
+              usage: {
+                inputTokens: event.usage?.input_tokens || 0,
+                outputTokens: event.usage?.output_tokens || 0,
+              },
+            };
+            return;
+          }
+          // Skip system, rate_limit_event, etc.
+        } catch {
+          // Not valid JSON — skip
+        }
+      }
+    }
+
+    // Process leftover buffer
+    if (buffer.trim()) {
+      try {
+        const event = JSON.parse(buffer);
+        if (event.type === "result") {
+          const result = event.result;
+          if (typeof result === "string" && result.length > prevText.length) {
+            yield { type: "text", delta: result.slice(prevText.length) };
+          }
+          yield {
+            type: "done",
+            usage: {
+              inputTokens: event.usage?.input_tokens || 0,
+              outputTokens: event.usage?.output_tokens || 0,
+            },
+          };
+          return;
+        }
+      } catch {}
+    }
+
+    const exitCode = await new Promise<number>((resolve) => {
+      proc.on("close", (code) => resolve(code ?? 0));
+    });
+
+    if (exitCode !== 0 && stderr) {
+      yield { type: "error", error: `Claude CLI error (${exitCode}): ${stderr.slice(0, 300)}` };
+      return;
+    }
+
+    yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
+  } catch (e) {
+    yield { type: "error", error: `Claude CLI error: ${(e as Error).message}` };
+  }
+}
+
+// ── Raw HTTP fetch (for direct API keys) ──
+
+interface AnthropicMessage {
+  role: "user" | "assistant";
+  content: string | AnthropicContent[];
+}
+
+type AnthropicContent =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_result"; tool_use_id: string; content: string };
+
+function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessage[] {
+  const result: AnthropicMessage[] = [];
 
   for (const msg of messages) {
     if (msg.role === "system") continue;
@@ -45,12 +186,10 @@ function convertMessages(messages: ChatCompletionMessageParam[]): Anthropic.Mess
       });
     } else if (msg.role === "assistant") {
       const m = msg as Record<string, unknown>;
-      const content: Anthropic.ContentBlockParam[] = [];
-
+      const content: AnthropicContent[] = [];
       if (typeof m.content === "string" && m.content) {
         content.push({ type: "text", text: m.content });
       }
-
       if (m.tool_calls && Array.isArray(m.tool_calls)) {
         for (const tc of m.tool_calls as Array<{ id: string; function: { name: string; arguments: string } }>) {
           let input: Record<string, unknown> = {};
@@ -58,10 +197,7 @@ function convertMessages(messages: ChatCompletionMessageParam[]): Anthropic.Mess
           content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
         }
       }
-
-      if (content.length > 0) {
-        result.push({ role: "assistant", content });
-      }
+      if (content.length > 0) result.push({ role: "assistant", content });
     } else if (msg.role === "tool") {
       const m = msg as { tool_call_id: string; content: string };
       result.push({
@@ -70,102 +206,120 @@ function convertMessages(messages: ChatCompletionMessageParam[]): Anthropic.Mess
       });
     }
   }
-
   return result;
 }
 
-/**
- * Stream a response from Anthropic using the official SDK.
- */
-export async function* streamAnthropicResponse(options: StreamOptions): AsyncGenerator<StreamEvent> {
+async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { token, model, messages, systemPrompt, tools, temperature = 1, maxTokens = 8192 } = options;
 
-  const betaHeaders = isOAuthToken(token)
-    ? "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14"
-    : "fine-grained-tool-streaming-2025-05-14";
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-api-key": token,
+    "anthropic-version": "2023-06-01",
+    "anthropic-beta": "interleaved-thinking-2025-05-14",
+  };
 
-  // OAuth tokens use authToken (Bearer auth), API keys use apiKey (x-api-key header)
-  const client = isOAuthToken(token)
-    ? new Anthropic({
-        apiKey: null as unknown as string,
-        authToken: token,
-        defaultHeaders: {
-          "anthropic-beta": betaHeaders,
-          "user-agent": "claude-cli/2.1.75",
-          "x-app": "cli",
-        },
-      })
-    : new Anthropic({
-        apiKey: token,
-        defaultHeaders: { "anthropic-beta": betaHeaders },
-      });
+  const body: Record<string, unknown> = {
+    model,
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages: convertMessages(messages),
+    stream: true,
+    temperature,
+  };
 
-  const anthropicMessages = convertMessages(messages);
   const anthropicTools = tools?.map(t => ({
-    name: t.name,
-    description: t.description,
-    input_schema: t.parameters as Anthropic.Tool["input_schema"],
+    name: t.name, description: t.description, input_schema: t.parameters,
   }));
+  if (anthropicTools?.length) body.tools = anthropicTools;
 
   try {
-    const params: Anthropic.MessageCreateParamsStreaming = {
-      model,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: anthropicMessages,
-      stream: true,
-      temperature,
-    };
+    const response = await fetch(`${API_BASE}/v1/messages`, {
+      method: "POST", headers, body: JSON.stringify(body),
+    });
 
-    if (anthropicTools && anthropicTools.length > 0) {
-      params.tools = anthropicTools;
+    if (!response.ok) {
+      const errorText = await response.text();
+      yield { type: "error", error: `Anthropic ${response.status}: ${errorText.slice(0, 500)}` };
+      return;
     }
 
-    const stream = client.messages.stream(params);
+    if (!response.body) {
+      yield { type: "error", error: "No response body" };
+      return;
+    }
 
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
     let currentToolId = "";
     let currentToolName = "";
     let currentToolArgs = "";
+    let inputTokens = 0;
+    let outputTokens = 0;
 
-    stream.on("text", (text) => {
-      // Handled in the event loop below
-    });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    for await (const event of stream) {
-      if (event.type === "content_block_start") {
-        const block = event.content_block;
-        if (block.type === "tool_use") {
-          currentToolId = block.id;
-          currentToolName = block.name;
-          currentToolArgs = "";
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+
+      for (const part of parts) {
+        for (const line of part.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6);
+          if (data === "[DONE]") continue;
+
+          let parsed: Record<string, unknown>;
+          try { parsed = JSON.parse(data); } catch { continue; }
+
+          const eventType = parsed.type as string;
+          if (eventType === "message_start") {
+            const usage = (parsed.message as Record<string, unknown>)?.usage as Record<string, number>;
+            if (usage) inputTokens = usage.input_tokens || 0;
+          } else if (eventType === "content_block_start") {
+            const block = parsed.content_block as Record<string, unknown>;
+            if (block?.type === "tool_use") {
+              currentToolId = block.id as string;
+              currentToolName = block.name as string;
+              currentToolArgs = "";
+            }
+          } else if (eventType === "content_block_delta") {
+            const delta = parsed.delta as Record<string, unknown>;
+            if (delta?.type === "text_delta") yield { type: "text", delta: delta.text as string };
+            else if (delta?.type === "input_json_delta") currentToolArgs += delta.partial_json as string;
+          } else if (eventType === "content_block_stop") {
+            if (currentToolId) {
+              yield { type: "tool_call", id: currentToolId, name: currentToolName, arguments: currentToolArgs };
+              currentToolId = ""; currentToolName = ""; currentToolArgs = "";
+            }
+          } else if (eventType === "message_delta") {
+            const usage = parsed.usage as Record<string, number>;
+            if (usage) outputTokens = usage.output_tokens || 0;
+          }
         }
-      } else if (event.type === "content_block_delta") {
-        if (event.delta.type === "text_delta") {
-          yield { type: "text", delta: event.delta.text };
-        } else if (event.delta.type === "input_json_delta") {
-          currentToolArgs += event.delta.partial_json;
-        }
-      } else if (event.type === "content_block_stop") {
-        if (currentToolId) {
-          yield { type: "tool_call", id: currentToolId, name: currentToolName, arguments: currentToolArgs };
-          currentToolId = ""; currentToolName = ""; currentToolArgs = "";
-        }
-      } else if (event.type === "message_delta") {
-        // Usage comes here
-      } else if (event.type === "message_stop") {
-        // Final
       }
     }
 
-    const finalMessage = await stream.finalMessage();
-    yield {
-      type: "done",
-      usage: {
-        inputTokens: finalMessage.usage?.input_tokens || 0,
-        outputTokens: finalMessage.usage?.output_tokens || 0,
-      },
-    };
+    yield { type: "done", usage: { inputTokens, outputTokens } };
   } catch (e) {
     yield { type: "error", error: `Anthropic error: ${(e as Error).message?.slice(0, 300)}` };
+  }
+}
+
+// ── Main entry point ──
+
+/**
+ * Stream a response from Anthropic.
+ * OAuth tokens (sk-ant-oat*) or "cli" → Claude CLI proxy (handles all auth)
+ * API keys (sk-ant-api*) → Direct HTTP to api.anthropic.com
+ */
+export async function* streamAnthropicResponse(options: StreamOptions): AsyncGenerator<StreamEvent> {
+  if (options.token === "cli" || isOAuthToken(options.token)) {
+    yield* streamViaClaude(options);
+  } else {
+    yield* streamViaAPI(options);
   }
 }

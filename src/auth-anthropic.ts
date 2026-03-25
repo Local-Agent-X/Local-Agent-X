@@ -99,21 +99,22 @@ export async function refreshAnthropicTokens(tokens: AnthropicTokens): Promise<A
 // ── Get Valid Anthropic API Key ──
 
 export async function getAnthropicApiKey(): Promise<string> {
-  // Check for direct API key in env
+  // Check for direct API key in env (console API keys use direct HTTP)
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
 
-  let tokens = loadAnthropicTokens();
-  if (!tokens) {
-    throw new Error("No Anthropic API key or OAuth tokens. Sign in via Settings → General.");
-  }
+  // OAuth tokens → use "cli" sentinel to route through Claude CLI proxy
+  // Claude CLI handles all OAuth auth, token refresh, and model access natively
+  const tokens = loadAnthropicTokens();
+  if (tokens) return "cli";
 
-  // Refresh if expired
-  if (Date.now() > tokens.expiresAt) {
-    console.log("[anthropic-auth] Refreshing tokens...");
-    tokens = await refreshAnthropicTokens(tokens);
-  }
+  // Check if Claude CLI is available (it has its own credentials)
+  try {
+    const { execSync } = await import("child_process");
+    execSync("claude --version", { timeout: 3000, stdio: "pipe" });
+    return "cli";
+  } catch {}
 
-  return tokens.accessToken;
+  throw new Error("No Anthropic API key or OAuth tokens. Sign in via Settings → General.");
 }
 
 // ── OAuth Login Flow ──

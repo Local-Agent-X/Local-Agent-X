@@ -149,6 +149,8 @@ async function saveSettings() {
     sandbox: document.getElementById('cfg-sandbox')?.value,
   };
   localStorage.setItem('sax_settings', JSON.stringify(s));
+  // Save provider + model to server (so backend knows which to use)
+  await apiPost('/api/settings', { provider: s.provider, model: s.model, temperature: s.temperature });
   // Also save sync config to server
   await saveSyncConfig();
   const el = document.getElementById('save-status');

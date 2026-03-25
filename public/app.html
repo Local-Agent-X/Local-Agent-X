@@ -152,6 +152,19 @@
           <div class="toggle-row"><div><div class="toggle-label">Browser</div><div class="toggle-desc">Playwright browser control (operator only)</div></div><div class="toggle on" onclick="toggleSwitch(this)"></div></div>
         </div>
         <div class="section-card">
+          <div class="section-title">File Access</div>
+          <div class="section-desc">Controls what files the agent can read from your computer.</div>
+          <div class="field">
+            <label class="field-label">Access Mode</label>
+            <select class="field-select" id="cfg-file-access" onchange="setFileAccessMode(this.value)">
+              <option value="workspace">Workspace Only — project files + memory only</option>
+              <option value="common" selected>Common — + Downloads, Documents, Desktop, Pictures</option>
+              <option value="unrestricted">Unrestricted — read any file on the computer</option>
+            </select>
+            <div class="field-hint" id="file-access-hint">Default: agent can read your Downloads, Documents, Desktop, and Pictures folders.</div>
+          </div>
+        </div>
+        <div class="section-card">
           <div class="section-title">Sandbox</div>
           <div class="field"><label class="field-label">Execution Mode</label><select class="field-select" id="cfg-sandbox"><option value="host">Host (no isolation)</option><option value="docker">Docker (secure)</option></select></div>
         </div>

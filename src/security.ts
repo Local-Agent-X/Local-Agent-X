@@ -1,5 +1,5 @@
 import { resolve, relative, join } from "node:path";
-import { realpathSync, lstatSync, readFileSync, existsSync } from "node:fs";
+import { realpathSync, lstatSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { promises as dns } from "node:dns";
 import { homedir } from "node:os";
 import type { SecurityDecision } from "./types.js";
@@ -185,13 +185,17 @@ const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
  * - No shell metacharacters: reject, don't escape
  * - Path normalization: realpath before checking
  */
+export type FileAccessMode = "workspace" | "common" | "unrestricted";
+
 export class SecurityLayer {
   private workspace: string;
   private auditLog: Array<{ timestamp: number; tool: string; decision: SecurityDecision }> = [];
   private egressAllowlist: Set<string> = new Set();
+  fileAccessMode: FileAccessMode = "common";
 
-  constructor(workspace: string) {
+  constructor(workspace: string, fileAccessMode?: FileAccessMode) {
     this.workspace = resolve(workspace);
+    this.fileAccessMode = fileAccessMode || this.loadFileAccessMode();
     // Load egress allowlist from ~/.sax/egress-allowlist.json
     try {
       const allowlistPath = join(homedir(), ".sax", "egress-allowlist.json");
@@ -204,6 +208,32 @@ export class SecurityLayer {
     } catch (e) {
       console.warn(`[security] Failed to load egress allowlist: ${(e as Error).message}`);
     }
+    console.log(`[security] File access mode: ${this.fileAccessMode}`);
+  }
+
+  private loadFileAccessMode(): FileAccessMode {
+    try {
+      const cfgPath = join(homedir(), ".sax", "security.json");
+      if (existsSync(cfgPath)) {
+        const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+        if (["workspace", "common", "unrestricted"].includes(cfg.fileAccessMode)) {
+          return cfg.fileAccessMode;
+        }
+      }
+    } catch {}
+    return "common"; // Default
+  }
+
+  setFileAccessMode(mode: FileAccessMode): void {
+    this.fileAccessMode = mode;
+    try {
+      const cfgPath = join(homedir(), ".sax", "security.json");
+      let cfg: Record<string, unknown> = {};
+      if (existsSync(cfgPath)) cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+      cfg.fileAccessMode = mode;
+      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
+    } catch {}
+    console.log(`[security] File access mode changed to: ${mode}`);
   }
 
   evaluate(ctx: ToolCallContext): SecurityDecision {
@@ -290,23 +320,47 @@ export class SecurityLayer {
     // Check for directory traversal (.. in path after resolution)
     const rel = relative(this.workspace, realPath);
     if (rel.startsWith("..")) {
-      // Path escapes workspace — block writes entirely, restrict reads
-      if (action === "write" || action === "edit") {
-        return { allowed: false, reason: "Blocked: cannot write files outside workspace directory" };
-      }
-      // Allow reads for: project dir, .sax dir, and common user directories
-      const projectRoot = resolve(this.workspace, "..");
       const homeDir = resolve(process.env.HOME || process.env.USERPROFILE || "");
-      const saxDir = resolve(homeDir, ".sax");
-      const inProject = !relative(projectRoot, realPath).startsWith("..");
-      const inSax = !relative(saxDir, realPath).startsWith("..");
-      // Allow reading from user's own directories (Downloads, Documents, Desktop, Pictures)
-      const userDirs = ["Downloads", "Documents", "Desktop", "Pictures", "Videos", "Music"].map(
-        (d) => resolve(homeDir, d)
-      );
-      const inUserDir = userDirs.some((d) => !relative(d, realPath).startsWith(".."));
-      if (!inProject && !inSax && !inUserDir) {
-        return { allowed: false, reason: "Blocked: cannot read files outside project, home, and user directories" };
+
+      // Unrestricted mode: allow reads/writes anywhere (except core protected files)
+      if (this.fileAccessMode === "unrestricted") {
+        // Writes outside workspace still blocked for safety in non-workspace dirs
+        if (action === "write" || action === "edit") {
+          const projectRoot = resolve(this.workspace, "..");
+          const inProject = !relative(projectRoot, realPath).startsWith("..");
+          const inHome = !relative(homeDir, realPath).startsWith("..");
+          if (!inProject && !inHome) {
+            return { allowed: false, reason: "Blocked: cannot write outside home directory even in unrestricted mode" };
+          }
+        }
+        // Reads: allowed everywhere
+      } else {
+        // Workspace + Common modes: block writes outside workspace
+        if (action === "write" || action === "edit") {
+          return { allowed: false, reason: "Blocked: cannot write files outside workspace directory" };
+        }
+
+        // Reads: check based on mode
+        const projectRoot = resolve(this.workspace, "..");
+        const saxDir = resolve(homeDir, ".sax");
+        const inProject = !relative(projectRoot, realPath).startsWith("..");
+        const inSax = !relative(saxDir, realPath).startsWith("..");
+
+        if (this.fileAccessMode === "workspace") {
+          // Strict: only project + .sax
+          if (!inProject && !inSax) {
+            return { allowed: false, reason: "Blocked: workspace mode — reads restricted to project directory only. Change to 'common' mode in Settings to access Downloads, Documents, etc." };
+          }
+        } else {
+          // Common (default): project + .sax + user directories
+          const userDirs = ["Downloads", "Documents", "Desktop", "Pictures", "Videos", "Music"].map(
+            (d) => resolve(homeDir, d)
+          );
+          const inUserDir = userDirs.some((d) => !relative(d, realPath).startsWith(".."));
+          if (!inProject && !inSax && !inUserDir) {
+            return { allowed: false, reason: "Blocked: cannot read files outside project and user directories. Change to 'unrestricted' mode in Settings for full access." };
+          }
+        }
       }
     }
 

@@ -1,23 +1,10 @@
 /**
- * Anthropic Messages API streaming client.
- *
- * Streams responses from Claude models via the Anthropic Messages API.
- * Supports tool use (function calling) in the same format as OpenAI.
- *
- * Uses OAuth access token or API key as Bearer auth.
- * Special headers for OAuth tokens (claude-code compatibility).
+ * Anthropic Messages API streaming client using the official SDK.
+ * Handles OAuth tokens, beta headers, and proper message format.
  */
 
+import Anthropic from "@anthropic-ai/sdk";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-
-const API_URL = "https://api.anthropic.com/v1/messages";
-const API_VERSION = "2023-06-01";
-
-interface AnthropicTool {
-  name: string;
-  description: string;
-  input_schema: Record<string, unknown>;
-}
 
 interface StreamEvent {
   type: "text" | "tool_call" | "done" | "error";
@@ -39,12 +26,17 @@ interface StreamOptions {
   maxTokens?: number;
 }
 
-/** Convert OpenAI-format messages to Anthropic format */
-function convertMessages(messages: ChatCompletionMessageParam[]): unknown[] {
-  const result: unknown[] = [];
+/** Check if token is OAuth (vs regular API key) */
+function isOAuthToken(token: string): boolean {
+  return token.includes("sk-ant-oat");
+}
+
+/** Convert OpenAI messages to Anthropic format */
+function convertMessages(messages: ChatCompletionMessageParam[]): Anthropic.MessageParam[] {
+  const result: Anthropic.MessageParam[] = [];
 
   for (const msg of messages) {
-    if (msg.role === "system") continue; // System prompt handled separately
+    if (msg.role === "system") continue;
 
     if (msg.role === "user") {
       result.push({
@@ -53,23 +45,17 @@ function convertMessages(messages: ChatCompletionMessageParam[]): unknown[] {
       });
     } else if (msg.role === "assistant") {
       const m = msg as Record<string, unknown>;
-      const content: unknown[] = [];
+      const content: Anthropic.ContentBlockParam[] = [];
 
       if (typeof m.content === "string" && m.content) {
         content.push({ type: "text", text: m.content });
       }
 
-      // Tool calls → tool_use blocks
       if (m.tool_calls && Array.isArray(m.tool_calls)) {
         for (const tc of m.tool_calls as Array<{ id: string; function: { name: string; arguments: string } }>) {
           let input: Record<string, unknown> = {};
           try { input = JSON.parse(tc.function.arguments); } catch {}
-          content.push({
-            type: "tool_use",
-            id: tc.id,
-            name: tc.function.name,
-            input,
-          });
+          content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
         }
       }
 
@@ -80,11 +66,7 @@ function convertMessages(messages: ChatCompletionMessageParam[]): unknown[] {
       const m = msg as { tool_call_id: string; content: string };
       result.push({
         role: "user",
-        content: [{
-          type: "tool_result",
-          tool_use_id: m.tool_call_id,
-          content: m.content,
-        }],
+        content: [{ type: "tool_result", tool_use_id: m.tool_call_id, content: m.content }],
       });
     }
   }
@@ -92,169 +74,87 @@ function convertMessages(messages: ChatCompletionMessageParam[]): unknown[] {
   return result;
 }
 
-/** Convert our tool format to Anthropic format */
-function convertTools(tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>): AnthropicTool[] | undefined {
-  if (!tools || tools.length === 0) return undefined;
-  return tools.map(t => ({
-    name: t.name,
-    description: t.description,
-    input_schema: t.parameters,
-  }));
-}
-
-/** Check if token is an OAuth token (vs API key) */
-function isOAuthToken(token: string): boolean {
-  return token.startsWith("eyJ") || token.startsWith("sk-ant-oat");
-}
-
 /**
- * Stream a response from the Anthropic Messages API.
- * Yields events as they arrive.
+ * Stream a response from Anthropic using the official SDK.
  */
 export async function* streamAnthropicResponse(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  const {
-    token,
-    model,
-    messages,
-    systemPrompt,
-    tools,
-    temperature = 0.7,
-    maxTokens = 8192,
-  } = options;
+  const { token, model, messages, systemPrompt, tools, temperature = 1, maxTokens = 8192 } = options;
 
-  const anthropicMessages = convertMessages(messages);
-  const anthropicTools = convertTools(tools);
+  const betaHeaders = isOAuthToken(token)
+    ? "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14"
+    : "fine-grained-tool-streaming-2025-05-14";
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "x-api-key": token,
-    "anthropic-version": API_VERSION,
-  };
-
-  // OAuth tokens need extra headers for compatibility
-  if (isOAuthToken(token)) {
-    headers["Authorization"] = `Bearer ${token}`;
-    headers["anthropic-beta"] = "claude-code-20250219,oauth-2025-04-20";
-    headers["user-agent"] = "SecretAgentX/0.2";
-    headers["x-app"] = "secret-agent-x";
-    delete headers["x-api-key"]; // Use Authorization instead
-  }
-
-  const body: Record<string, unknown> = {
-    model,
-    max_tokens: maxTokens,
-    system: systemPrompt,
-    messages: anthropicMessages,
-    stream: true,
-    temperature,
-  };
-
-  if (anthropicTools) {
-    body.tools = anthropicTools;
-  }
-
-  const res = await fetch(API_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
+  const client = new Anthropic({
+    apiKey: token,
+    defaultHeaders: { "anthropic-beta": betaHeaders },
   });
 
-  if (!res.ok) {
-    const errBody = await res.text();
-    yield { type: "error", error: `Anthropic API error (${res.status}): ${errBody.slice(0, 300)}` };
-    return;
-  }
+  const anthropicMessages = convertMessages(messages);
+  const anthropicTools = tools?.map(t => ({
+    name: t.name,
+    description: t.description,
+    input_schema: t.parameters as Anthropic.Tool["input_schema"],
+  }));
 
-  const reader = res.body?.getReader();
-  if (!reader) { yield { type: "error", error: "No response body" }; return; }
+  try {
+    const params: Anthropic.MessageCreateParamsStreaming = {
+      model,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: anthropicMessages,
+      stream: true,
+      temperature,
+    };
 
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let currentToolId = "";
-  let currentToolName = "";
-  let currentToolArgs = "";
+    if (anthropicTools && anthropicTools.length > 0) {
+      params.tools = anthropicTools;
+    }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    const stream = client.messages.stream(params);
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
+    let currentToolId = "";
+    let currentToolName = "";
+    let currentToolArgs = "";
 
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const data = line.slice(6).trim();
-      if (data === "[DONE]") continue;
+    stream.on("text", (text) => {
+      // Handled in the event loop below
+    });
 
-      let event: Record<string, unknown>;
-      try { event = JSON.parse(data); } catch { continue; }
-
-      const eventType = event.type as string;
-
-      switch (eventType) {
-        case "message_start": {
-          const usage = (event.message as Record<string, unknown>)?.usage as Record<string, number>;
-          if (usage) inputTokens = usage.input_tokens || 0;
-          break;
+    for await (const event of stream) {
+      if (event.type === "content_block_start") {
+        const block = event.content_block;
+        if (block.type === "tool_use") {
+          currentToolId = block.id;
+          currentToolName = block.name;
+          currentToolArgs = "";
         }
-
-        case "content_block_start": {
-          const block = event.content_block as Record<string, unknown>;
-          if (block?.type === "tool_use") {
-            currentToolId = String(block.id || "");
-            currentToolName = String(block.name || "");
-            currentToolArgs = "";
-          }
-          break;
+      } else if (event.type === "content_block_delta") {
+        if (event.delta.type === "text_delta") {
+          yield { type: "text", delta: event.delta.text };
+        } else if (event.delta.type === "input_json_delta") {
+          currentToolArgs += event.delta.partial_json;
         }
-
-        case "content_block_delta": {
-          const delta = event.delta as Record<string, unknown>;
-          if (delta?.type === "text_delta") {
-            yield { type: "text", delta: String(delta.text || "") };
-          } else if (delta?.type === "input_json_delta") {
-            currentToolArgs += String(delta.partial_json || "");
-          }
-          break;
+      } else if (event.type === "content_block_stop") {
+        if (currentToolId) {
+          yield { type: "tool_call", id: currentToolId, name: currentToolName, arguments: currentToolArgs };
+          currentToolId = ""; currentToolName = ""; currentToolArgs = "";
         }
-
-        case "content_block_stop": {
-          if (currentToolId) {
-            yield {
-              type: "tool_call",
-              id: currentToolId,
-              name: currentToolName,
-              arguments: currentToolArgs,
-            };
-            currentToolId = "";
-            currentToolName = "";
-            currentToolArgs = "";
-          }
-          break;
-        }
-
-        case "message_delta": {
-          const usage = event.usage as Record<string, number>;
-          if (usage) outputTokens = usage.output_tokens || 0;
-          break;
-        }
-
-        case "message_stop": {
-          yield {
-            type: "done",
-            usage: { inputTokens, outputTokens },
-          };
-          break;
-        }
-
-        case "error": {
-          yield { type: "error", error: String((event.error as Record<string, unknown>)?.message || "Unknown error") };
-          break;
-        }
+      } else if (event.type === "message_delta") {
+        // Usage comes here
+      } else if (event.type === "message_stop") {
+        // Final
       }
     }
+
+    const finalMessage = await stream.finalMessage();
+    yield {
+      type: "done",
+      usage: {
+        inputTokens: finalMessage.usage?.input_tokens || 0,
+        outputTokens: finalMessage.usage?.output_tokens || 0,
+      },
+    };
+  } catch (e) {
+    yield { type: "error", error: `Anthropic error: ${(e as Error).message?.slice(0, 300)}` };
   }
 }

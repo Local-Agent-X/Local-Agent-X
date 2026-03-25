@@ -191,12 +191,12 @@ export class AgentSync {
       }
     }
 
-    // Optional: sync workspace apps (source code, project docs — skip heavy artifacts)
+    // Optional: sync entire workspace (apps, images, videos, etc. — skip heavy artifacts)
     if (this.config.syncWorkspace) {
-      const workspaceApps = resolve("workspace", "apps");
-      const syncAppsDir = join(this.syncDir, "workspace-apps");
-      if (existsSync(workspaceApps)) {
-        this.copyDirFiltered(workspaceApps, syncAppsDir);
+      const workspace = resolve("workspace");
+      const syncWorkspaceDir = join(this.syncDir, "workspace");
+      if (existsSync(workspace)) {
+        this.copyDirFiltered(workspace, syncWorkspaceDir);
       }
     }
   }
@@ -204,14 +204,21 @@ export class AgentSync {
   /** Recursively copy a directory, skipping heavy/generated artifacts */
   private copyDirFiltered(src: string, dest: string): void {
     // Skip these directories entirely (heavy, regeneratable)
-    const SKIP_DIRS = new Set(["node_modules", ".next", "dist", "build", ".cache", "__pycache__", ".git", ".venv", "venv"]);
-    // Only sync these file extensions (source code + project docs)
+    const SKIP_DIRS = new Set(["node_modules", ".next", "dist", "build", ".cache", "__pycache__", ".git", ".venv", "venv", "sd-server", "models", "checkpoints", "weights"]);
+    // Sync these file extensions (source code, project docs, media)
     const SYNC_EXTENSIONS = new Set([
+      // Code & docs
       ".html", ".css", ".js", ".ts", ".tsx", ".jsx", ".json", ".md",
       ".txt", ".yaml", ".yml", ".toml", ".svg", ".env.example",
       ".py", ".sh", ".bat", ".sql", ".graphql",
+      // Images
+      ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp",
+      // Video & audio
+      ".mp4", ".webm", ".mov", ".mp3", ".wav", ".ogg",
+      // Other media
+      ".pdf", ".csv",
     ]);
-    const MAX_FILE_SIZE = 500_000; // 500KB max per file
+    const MAX_FILE_SIZE = 10_000_000; // 10MB max per file (for images/videos)
 
     if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
 
@@ -296,13 +303,13 @@ export class AgentSync {
       }
     }
 
-    // Optional: pull workspace apps from sync
+    // Optional: pull entire workspace from sync
     if (this.config.syncWorkspace) {
-      const syncAppsDir = join(this.syncDir, "workspace-apps");
-      const workspaceApps = resolve("workspace", "apps");
-      if (existsSync(syncAppsDir)) {
-        if (!existsSync(workspaceApps)) mkdirSync(workspaceApps, { recursive: true });
-        this.pullDirFiltered(syncAppsDir, workspaceApps);
+      const syncWorkspaceDir = join(this.syncDir, "workspace");
+      const workspace = resolve("workspace");
+      if (existsSync(syncWorkspaceDir)) {
+        if (!existsSync(workspace)) mkdirSync(workspace, { recursive: true });
+        this.pullDirFiltered(syncWorkspaceDir, workspace);
       }
     }
   }

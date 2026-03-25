@@ -1,5 +1,5 @@
 /**
- * Secret Agent X — Memory System v2
+ * Open Agent X — Memory System v2
  *
  * Phase 1: Parity with upstream
  *   - Query expansion with stop word filtering

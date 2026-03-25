@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.7/dist/bundle.min.js"></script>
-<title>Secret Agent X</title>
+<title>Open Agent X</title>
 <style>
 :root {
   --bg: #0a0a0f;
@@ -225,7 +225,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 <div id="main">
   <div id="messages">
     <div id="empty">
-      <h2>SECRET AGENT X</h2>
+      <h2>OPEN AGENT X</h2>
       <p>Your personal AI agent. Start a conversation or pick one from the sidebar.</p>
     </div>
   </div>
@@ -286,7 +286,7 @@ if (!AUTH_TOKEN) {
     document.body.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#0a0a0f;font-family:monospace;color:#00ff41">
         <div style="max-width:520px;text-align:center;padding:40px">
-          <h1 style="font-size:1.6rem;margin-bottom:8px">SECRET AGENT X</h1>
+          <h1 style="font-size:1.6rem;margin-bottom:8px">OPEN AGENT X</h1>
           <p style="color:#666;margin-bottom:32px;font-size:.85rem">First-time setup required</p>
           <p style="color:#ccc;margin-bottom:16px;font-size:.9rem">Copy the URL printed in your terminal and open it in this browser:</p>
           <div style="background:#111;border:1px solid #00ff4133;border-radius:8px;padding:16px;font-size:.8rem;color:#00ff41;word-break:break-all;margin-bottom:24px">
@@ -762,7 +762,7 @@ async function startAiServer(type){
 function renderMessages(){
   const el=document.getElementById('messages');
   if(!activeChat||activeChat.messages.length===0){
-    el.innerHTML=`<div id="empty"><h2>SECRET AGENT X</h2><p>${activeChat?'Start your conversation below.':'Select a chat or start a new one.'}</p></div>`;
+    el.innerHTML=`<div id="empty"><h2>OPEN AGENT X</h2><p>${activeChat?'Start your conversation below.':'Select a chat or start a new one.'}</p></div>`;
     return;
   }
   el.innerHTML='';

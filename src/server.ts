@@ -728,6 +728,26 @@ export function startServer(config: SAXConfig) {
 
     // ── Audit API ──
 
+    // ── File Access Mode API ──
+
+    if (method === "GET" && url.pathname === "/api/security/file-access") {
+      json(200, { mode: security.fileAccessMode });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/security/file-access") {
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
+      const mode = String(body.mode || "");
+      if (!["workspace", "common", "unrestricted"].includes(mode)) {
+        json(400, { error: "mode must be: workspace, common, or unrestricted" });
+        return;
+      }
+      security.setFileAccessMode(mode as any);
+      json(200, { ok: true, mode });
+      return;
+    }
+
     // Get recent audit entries
     if (method === "GET" && url.pathname === "/api/audit") {
       const count = parseInt(url.searchParams.get("count") || "50", 10);

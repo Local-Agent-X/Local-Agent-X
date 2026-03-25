@@ -8,6 +8,7 @@ function init_settings() {
   checkServer('video');
   checkVoiceCaps();
   loadToolsList();
+  loadFileAccessMode();
 }
 
 function switchTab(id) {
@@ -213,6 +214,37 @@ async function forcePush() {
     const d = await apiPost('/api/sync/push', {});
     if (el) el.textContent = d.success ? `Done: ${syncMsg(d)}` : `Error: ${syncMsg(d)}`;
   } catch (e) { if (el) el.textContent = 'Push failed: ' + e.message; }
+}
+
+// ── File Access Mode ──
+
+const FILE_ACCESS_HINTS = {
+  workspace: 'Strict: agent can only read project files and memory. Most secure.',
+  common: 'Default: agent can also read Downloads, Documents, Desktop, Pictures.',
+  unrestricted: 'Full access: agent can read any file on your computer. Use with trust.'
+};
+
+async function loadFileAccessMode() {
+  try {
+    const r = await fetch(`${API}/api/security/file-access`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const d = await r.json();
+    const sel = document.getElementById('cfg-file-access');
+    if (sel) sel.value = d.mode || 'common';
+    const hint = document.getElementById('file-access-hint');
+    if (hint) hint.textContent = FILE_ACCESS_HINTS[d.mode] || '';
+  } catch {}
+}
+
+async function setFileAccessMode(mode) {
+  const hint = document.getElementById('file-access-hint');
+  if (hint) hint.textContent = FILE_ACCESS_HINTS[mode] || '';
+  try {
+    await fetch(`${API}/api/security/file-access`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ mode })
+    });
+  } catch {}
 }
 
 // ── HTTPS ──

@@ -500,4 +500,48 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
 
 // ── Export All ──
 
-export const allTools: ToolDefinition[] = [readTool, writeTool, editTool, bashTool, webFetchTool];
+// ── View Image ──
+
+const viewImageTool: ToolDefinition = {
+  name: "view_image",
+  description:
+    "View/analyze a local image file. Reads the image from disk and returns it for visual analysis. " +
+    "Use this when the user asks you to look at, review, or analyze an image file on their computer. " +
+    "Supports: jpg, jpeg, png, gif, webp, bmp.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Path to the image file (absolute or relative)" },
+      question: { type: "string", description: "What to analyze about the image (default: describe it)" },
+    },
+    required: ["path"],
+  },
+  async execute(args) {
+    const { resolve } = await import("node:path");
+    const { readFileSync, existsSync } = await import("node:fs");
+
+    const filePath = resolve(String(args.path));
+    if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
+
+    const ext = filePath.split(".").pop()?.toLowerCase() || "";
+    const imageExts = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp"]);
+    if (!imageExts.has(ext)) return { content: `Not an image file: .${ext}`, isError: true };
+
+    try {
+      const data = readFileSync(filePath);
+      const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+      const b64 = data.toString("base64");
+      const question = String(args.question || "Describe this image in detail.");
+
+      // Return special format that the agent loop recognizes as a vision request
+      return {
+        content: `[IMAGE:${mime}:${b64.slice(0, 100)}...${b64.length} bytes]\nFile: ${filePath}\nQuestion: ${question}\n\nPlease analyze this image.`,
+        _image: { mime, b64, path: filePath, question },
+      } as any;
+    } catch (e) {
+      return { content: `Failed to read image: ${(e as Error).message}`, isError: true };
+    }
+  },
+};
+
+export const allTools: ToolDefinition[] = [readTool, writeTool, editTool, bashTool, webFetchTool, viewImageTool];

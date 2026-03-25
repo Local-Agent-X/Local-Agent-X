@@ -268,6 +268,9 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
       constraints: { maxCallsPerSession: 100 },
     },
 
+    // View image — safe, path-checked by SecurityLayer
+    { id: "allow-view-image", tool: "view_image", decision: "allow", reason: "Image viewing (path-checked)", priority: 50 },
+
     // Image generation — rate limited
     {
       id: "allow-generate-image",

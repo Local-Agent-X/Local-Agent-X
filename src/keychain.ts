@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes, scryptSync } from "node:crypto";
 import { hostname, userInfo } from "node:os";
@@ -41,37 +41,44 @@ interface KeychainResult {
 
 /** Store a key using Windows DPAPI (encrypted to current user's login) */
 function dpapiStore(data: Buffer, filePath: string): void {
-  // Use PowerShell to encrypt via DPAPI and write to file
+  // Write a temp PowerShell script (avoids inline quoting hell)
   const b64 = data.toString("base64");
-  const ps = `
-    Add-Type -AssemblyName System.Security
-    $bytes = [Convert]::FromBase64String('${b64}')
-    $encrypted = [System.Security.Cryptography.ProtectedData]::Protect(
-      $bytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser
-    )
-    [IO.File]::WriteAllBytes('${filePath.replace(/\\/g, "\\\\")}', $encrypted)
-  `;
-  execSync(`powershell -NoProfile -NonInteractive -Command "${ps.replace(/\n/g, " ")}"`, {
-    timeout: 10_000,
-    stdio: "ignore",
-  });
+  const scriptPath = filePath + ".ps1";
+  const script =
+    `Add-Type -AssemblyName System.Security\n` +
+    `$bytes = [Convert]::FromBase64String('${b64}')\n` +
+    `$encrypted = [System.Security.Cryptography.ProtectedData]::Protect($bytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)\n` +
+    `[IO.File]::WriteAllBytes('${filePath.replace(/\\/g, "/")}', $encrypted)\n`;
+  writeFileSync(scriptPath, script, "utf-8");
+  try {
+    execSync(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"`, {
+      timeout: 10_000, stdio: "ignore", windowsHide: true,
+    });
+  } finally {
+    try { unlinkSync(scriptPath); } catch {}
+  }
 }
 
 /** Retrieve a key using Windows DPAPI */
 function dpapiRetrieve(filePath: string): Buffer {
-  const ps = `
-    Add-Type -AssemblyName System.Security
-    $encrypted = [IO.File]::ReadAllBytes('${filePath.replace(/\\/g, "\\\\")}')
-    $decrypted = [System.Security.Cryptography.ProtectedData]::Unprotect(
-      $encrypted, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser
-    )
-    [Convert]::ToBase64String($decrypted)
-  `;
-  const result = execSync(
-    `powershell -NoProfile -NonInteractive -Command "${ps.replace(/\n/g, " ")}"`,
-    { encoding: "utf-8", timeout: 10_000 }
-  ).trim();
-  return Buffer.from(result, "base64");
+  const scriptPath = filePath + ".retrieve.ps1";
+  const outPath = filePath + ".b64";
+  const script =
+    `Add-Type -AssemblyName System.Security\n` +
+    `$encrypted = [IO.File]::ReadAllBytes('${filePath.replace(/\\/g, "/")}')\n` +
+    `$decrypted = [System.Security.Cryptography.ProtectedData]::Unprotect($encrypted, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)\n` +
+    `[IO.File]::WriteAllText('${outPath.replace(/\\/g, "/")}', [Convert]::ToBase64String($decrypted))\n`;
+  writeFileSync(scriptPath, script, "utf-8");
+  try {
+    execSync(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"`, {
+      timeout: 10_000, stdio: "ignore", windowsHide: true,
+    });
+    const result = readFileSync(outPath, "utf-8").trim();
+    return Buffer.from(result, "base64");
+  } finally {
+    try { unlinkSync(scriptPath); } catch {}
+    try { unlinkSync(outPath); } catch {}
+  }
 }
 
 /** Check if DPAPI is available (Windows only) */

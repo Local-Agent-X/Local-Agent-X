@@ -73,6 +73,23 @@ export class ToolChainAnalyzer {
       return { blocked: true, reason: loopResult, loopDetected: loopResult };
     }
 
+    // Encoding detection: flag base64/hex encoding as a data transform (exfil prep)
+    if (access && access.type === "shell") {
+      const cmd = String(args.command || "").toLowerCase();
+      const ENCODING_PATTERNS = /\bbase64\b|\bxxd\b|\bod\s+-[xA]|\bopenssl\s+enc\b|\bhex\b.*encode|\bencode.*\bhex\b|\bprintf\s+'%x/i;
+      if (ENCODING_PATTERNS.test(cmd)) {
+        // Mark this as a sensitive data transform — inherits taint from any prior sensitive read
+        const hasPriorSensitive = this.history.some(h => h.sensitive && Date.now() - h.timestamp < 30_000);
+        if (hasPriorSensitive) {
+          return {
+            blocked: true,
+            reason: `Exfiltration prep detected: encoding command (${cmd.slice(0, 60)}) after sensitive data access. ` +
+              `Data encoding after reading sensitive files is a known exfiltration technique.`,
+          };
+        }
+      }
+    }
+
     // Exfiltration detection: did we read something sensitive, then try to send it out?
     if (access && this.isExternalSink(access)) {
       const exfil = this.checkExfiltration(access);

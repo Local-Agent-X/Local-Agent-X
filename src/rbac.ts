@@ -57,9 +57,10 @@ const ROLE_PERMISSIONS: Record<Role, {
     canManageSecrets: false,
     canViewAudit: false,
     canManageTokens: false,
-    // No egress tools (http_request, web_fetch, browser) — operator only
+    // No egress tools, no secrets, no browser — operator only
     // Users can read/write local files and use memory, but can't send data externally
-    allowedTools: ["read", "write", "edit", "bash", "memory_search", "memory_get", "memory_save"],
+    // bash is allowed but SecurityLayer blocks network tools within it
+    allowedTools: ["read", "write", "edit", "bash", "memory_search", "memory_get", "memory_save", "memory_recall", "memory_reflect", "memory_update_profile", "memory_stats"],
     deniedEndpoints: ["/api/secrets", "/api/audit", "/api/tokens"],
   },
   readonly: {

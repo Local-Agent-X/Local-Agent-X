@@ -113,11 +113,18 @@ export function execInSandbox(
  */
 export function getSandboxMode(): SandboxMode {
   const envMode = process.env.SAX_SANDBOX;
+  // Explicit override
+  if (envMode === "host") return "host";
   if (envMode === "docker") {
     if (!isDockerAvailable()) {
       console.warn("[sandbox] SAX_SANDBOX=docker but Docker not available. Falling back to host.");
       return "host";
     }
+    return "docker";
+  }
+  // Auto-detect: prefer Docker if available (secure by default)
+  if (isDockerAvailable()) {
+    console.log("[sandbox] Docker detected — using container sandbox by default. Set SAX_SANDBOX=host to disable.");
     return "docker";
   }
   return "host";

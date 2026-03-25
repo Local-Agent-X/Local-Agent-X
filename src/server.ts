@@ -25,6 +25,7 @@ import { RBACManager, type Role } from "./rbac.js";
 import { createBrowserTools, closeBrowser } from "./browser-tools.js";
 import { closeAllBrowsers } from "./browser.js";
 import { redactCredentials } from "./security.js";
+import { setupChatWebSocket } from "./chat-ws.js";
 import { runSecurityAudit, printAuditReport } from "./security-audit.js";
 import { startAriKernel, isAriActive } from "./ari-kernel.js";
 import { CronService, createCronTools } from "./cron-service.js";
@@ -1372,7 +1373,6 @@ export function startServer(config: SAXConfig) {
   const server = createServer(requestHandler);
 
   // WebSocket chat system — enables multi-chat, reconnect, stop button
-  const { setupChatWebSocket } = require("./chat-ws.js") as typeof import("./chat-ws.js");
   const chatWs = setupChatWebSocket(server, config.authToken);
 
   server.listen(config.port, "127.0.0.1", () => {

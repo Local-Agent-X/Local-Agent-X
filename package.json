@@ -15,9 +15,10 @@
   },
   "dependencies": {
     "@arikernel/adapters": "file:packages/arikernel/adapters",
+    "@arikernel/audit-log": "file:packages/arikernel/audit-log",
+    "@arikernel/cli": "^0.1.3",
     "@arikernel/control-plane": "file:packages/arikernel/control-plane",
     "@arikernel/core": "file:packages/arikernel/core",
-    "@arikernel/audit-log": "file:packages/arikernel/audit-log",
     "@arikernel/policy-engine": "file:packages/arikernel/policy-engine",
     "@arikernel/runtime": "file:packages/arikernel/runtime",
     "@arikernel/sidecar": "file:packages/arikernel/sidecar",

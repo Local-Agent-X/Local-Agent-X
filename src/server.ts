@@ -693,11 +693,11 @@ export function startServer(config: SAXConfig) {
           return;
         }
         wf(flagPath, "true", "utf-8");
-        json(200, { ok: true, message: "HTTPS enabled. Restart the server and visit https://127.0.0.1:" + config.port });
+        json(200, { ok: true, message: "HTTPS enabled. Restart the server to activate.", redirectTo: `https://127.0.0.1:${config.port}/#settings` });
       } else {
         // Disable: remove flag
         if (ex(flagPath)) ul(flagPath);
-        json(200, { ok: true, message: "HTTPS disabled. Restart the server." });
+        json(200, { ok: true, message: "HTTPS disabled. Restart the server to apply.", redirectTo: `http://127.0.0.1:${config.port}/#settings` });
       }
       return;
     }
@@ -907,6 +907,7 @@ export function startServer(config: SAXConfig) {
         // Initialize threat engine for this session
         const threatEngine = new ThreatEngine(dataDir, sessionId);
         let canaryBuffer = ""; // Rolling buffer for chunk-boundary canary detection
+        let fullResponseText = ""; // Full accumulated response for deep canary scan
 
         // Inject canary tokens into system prompt (prompt injection detection)
         const enrichedPrompt =
@@ -1015,9 +1016,12 @@ export function startServer(config: SAXConfig) {
             // Canary check with rolling buffer — catches canaries split across chunk boundaries
             if (event.type === "stream" && event.delta) {
               canaryBuffer += event.delta;
-              // Keep buffer to max canary length + margin (canaries are ~25 chars)
-              if (canaryBuffer.length > 100) canaryBuffer = canaryBuffer.slice(-100);
-              const canaryTrip = threatEngine.checkOutput(canaryBuffer);
+              fullResponseText += event.delta;
+              // Rolling buffer: keep 200 chars to catch splits across any chunk boundary
+              if (canaryBuffer.length > 200) canaryBuffer = canaryBuffer.slice(-200);
+              // Check both rolling buffer (fast, per-chunk) and periodically scan full response
+              const canaryTrip = threatEngine.checkOutput(canaryBuffer) ||
+                (fullResponseText.length % 500 < 10 ? threatEngine.checkOutput(fullResponseText) : null);
               if (canaryTrip) {
                 sseWrite(res, { type: "error", message: "Security alert: prompt injection detected. Response terminated." });
                 return;
@@ -1242,6 +1246,17 @@ export function startServer(config: SAXConfig) {
   const server = isHttps
     ? createHttpsServer({ cert: tlsCert!.cert, key: tlsCert!.key }, requestHandler)
     : createHttpServer(requestHandler);
+
+  // If HTTPS is active, also run HTTP on port+1 that redirects to HTTPS
+  if (isHttps) {
+    const httpRedirector = createHttpServer((req, res) => {
+      res.writeHead(301, { Location: `https://127.0.0.1:${config.port}${req.url || "/"}` });
+      res.end();
+    });
+    httpRedirector.listen(config.port + 1, "127.0.0.1", () => {
+      console.log(`  HTTP redirect: http://127.0.0.1:${config.port + 1} → https://127.0.0.1:${config.port}`);
+    });
+  }
 
   server.listen(config.port, "127.0.0.1", () => {
     const maskedToken = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";

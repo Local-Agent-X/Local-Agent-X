@@ -97,10 +97,11 @@ export async function startAriKernel(auditDbPath: string, preset?: string): Prom
     if (sidecarProcess) { try { sidecarProcess.kill(); } catch {} sidecarProcess = null; }
   }
 
-  // Priority 3: Embedded mode (weaker — in-process, but better than nothing)
+  // Priority 3: Embedded mode (explicitly set to suppress "defaulting to embedded" warning)
   try {
     const kernel = createKernel({
       preset: currentPreset as any,
+      mode: "embedded",
       autoScope: true,
     });
     firewall = kernel.createFirewall({

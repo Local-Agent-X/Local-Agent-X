@@ -13,6 +13,7 @@ import type { RBACManager, Role } from "./rbac.js";
 import { compactIfNeeded, getContextStatus, type ContextStatus } from "./context-manager.js";
 import { checkSessionPolicy } from "./session-policy.js";
 import { ariEvaluate, isAriActive } from "./ari-kernel.js";
+import { recordSensitiveRead, checkEgressTaint, isSensitivePath } from "./data-lineage.js";
 
 interface ImageAttachment {
   url: string;       // server URL like /uploads/abc.png
@@ -118,7 +119,8 @@ async function executeToolCalls(
     // Build rich approval context for risky tool calls
     const riskLevel = getRiskLevel(tc.name, args);
     const approvalContext = buildApprovalContext(tc.name, args);
-    onEvent?.({ type: "tool_start", toolName: tc.name, args, riskLevel, context: approvalContext });
+    const requiresApproval = riskLevel === "high";
+    onEvent?.({ type: "tool_start", toolName: tc.name, args, riskLevel, context: approvalContext, requiresApproval });
 
     // Layer -1: AriKernel (taint tracking, behavioral rules, quarantine)
     if (isAriActive()) {
@@ -147,10 +149,12 @@ async function executeToolCalls(
       sessionId: sessionId || "default",
     });
 
-    // Layer 2: RBAC tool permission (role-based tool access)
+    // Layer 2: RBAC tool permission (ALWAYS runs — not gated by SecurityLayer)
+    // This prevents role escalation: user role can't access operator-only tools
+    // even if SecurityLayer would allow the operation itself
     let rbacBlocked = false;
     let rbacReason = "";
-    if (secDecision.allowed && rbac && callerRole) {
+    if (rbac && callerRole) {
       const rbacDecision = rbac.checkTool(callerRole, tc.name);
       if (!rbacDecision.allowed) {
         rbacBlocked = true;
@@ -179,12 +183,28 @@ async function executeToolCalls(
     } else if (policyBlocked) {
       result = { content: `BLOCKED by policy: ${policyReason}`, isError: true };
     } else {
+      // Data lineage: block egress if session has tainted data
+      const egressTools = ["http_request", "web_fetch", "browser"];
+      if (egressTools.includes(tc.name)) {
+        const egressCheck = checkEgressTaint(sessionId || "default");
+        if (egressCheck.blocked) {
+          result = { content: `BLOCKED by data lineage: ${egressCheck.reason}`, isError: true };
+          onEvent?.({ type: "tool_end", toolName: tc.name, result: result.content, allowed: false });
+          results.push({ role: "tool", tool_call_id: tc.id, content: result.content } as any);
+          continue;
+        }
+      }
+
       const tool = toolMap.get(tc.name);
       if (!tool) {
         result = { content: `Unknown tool: ${tc.name}`, isError: true };
       } else {
         try {
           result = await tool.execute(args, signal);
+          // Data lineage: record sensitive reads for taint tracking
+          if (tc.name === "read" && isSensitivePath(String(args.path || ""))) {
+            recordSensitiveRead(sessionId || "default", "sensitive_file", String(args.path));
+          }
         } catch (e) {
           result = { content: `Tool error: ${(e as Error).message}`, isError: true };
         }

@@ -42,7 +42,7 @@ export interface Session {
 
 export type ServerEvent =
   | { type: "stream"; delta: string }
-  | { type: "tool_start"; toolName: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string }
+  | { type: "tool_start"; toolName: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean }
   | { type: "tool_end"; toolName: string; result: string; allowed: boolean }
   | { type: "done"; usage: AgentTurn["usage"] }
   | { type: "error"; message: string }

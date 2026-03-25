@@ -57,19 +57,19 @@ async function* streamViaClaude(options: StreamOptions): AsyncGenerator<StreamEv
     "--verbose",
   ];
 
-  if (systemPrompt) {
-    args.push("--system-prompt", systemPrompt);
-  }
-
   try {
+    // Embed system prompt in the user message via stdin
+    // Avoids Windows command line length limits (~8KB) for long system prompts
+    const fullPrompt = systemPrompt
+      ? `<system>${systemPrompt}</system>\n\n${prompt}`
+      : prompt;
+
     const proc = spawn("claude", args, {
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
-      windowsVerbatimArguments: false,
     });
 
-    // Send prompt via stdin to avoid shell quoting issues
-    proc.stdin?.write(prompt);
+    proc.stdin?.write(fullPrompt);
     proc.stdin?.end();
 
     let stderr = "";

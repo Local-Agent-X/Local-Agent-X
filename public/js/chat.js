@@ -684,7 +684,7 @@ let lastContextStatus = null;
 
 function updateContextBar(event) {
   if (event) lastContextStatus = event;
-  const data = lastContextStatus;
+  let data = lastContextStatus;
 
   let bar = document.getElementById('context-bar');
   if (!bar) {

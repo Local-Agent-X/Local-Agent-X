@@ -61,7 +61,7 @@
         <button id="plus-btn" onclick="triggerUpload()" title="Attach files">+</button>
         <div id="input-box">
           <div id="upload-previews"></div>
-          <textarea id="msg-input" placeholder="Message Agent X..." rows="1"
+          <textarea id="msg-input" placeholder="Message Agent X..." rows="3"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
         </div>
         <button id="mic-btn" class="input-btn" onclick="toggleMic()" title="Voice input">&#127908;</button>
@@ -284,6 +284,10 @@
         <div class="field"><label class="field-label">Job Name</label><input class="field-input" id="new-cron-name" placeholder="Daily report"/></div>
         <div class="field"><label class="field-label">Schedule</label><input class="field-input" id="new-cron-schedule" placeholder="every 1h / daily 9am / */30 * * * *"/></div>
         <div class="field"><label class="field-label">Agent Prompt</label><textarea class="field-input" id="new-cron-prompt" rows="3" placeholder="Check my email and summarize..." style="resize:vertical"></textarea></div>
+        <div class="toggle-row" style="margin:8px 0">
+          <div><div class="toggle-label" style="font-size:.75rem">System job</div><div class="toggle-desc" style="font-size:.65rem">Also create Windows Task — wakes Agent X if not running</div></div>
+          <div class="toggle" id="tog-cron-system" onclick="toggleSwitch(this)"></div>
+        </div>
         <button class="action-btn primary" style="width:100%;margin:8px 0" onclick="addCronJob()">Add Job</button>
         <div style="display:flex;justify-content:space-between;font-size:.68rem;font-family:var(--mono);color:var(--muted);margin:12px 0 8px"><span>SCHEDULED JOBS</span><span id="cron-count">0</span></div>
         <div id="cron-list"></div>
@@ -297,7 +301,8 @@
           <h2 id="cron-detail-name" style="font-family:var(--mono);font-size:1.1rem;color:var(--accent)"></h2>
           <div style="margin:12px 0;font-family:var(--mono);font-size:.78rem"><span style="color:var(--muted)">Schedule:</span> <span id="cron-detail-schedule"></span></div>
           <div style="margin-bottom:12px;font-family:var(--mono);font-size:.78rem"><span style="color:var(--muted)">Status:</span> <span id="cron-detail-status"></span></div>
-          <div style="margin-bottom:16px;font-family:var(--mono);font-size:.78rem"><span style="color:var(--muted)">Last run:</span> <span id="cron-detail-lastrun"></span></div>
+          <div style="margin-bottom:12px;font-family:var(--mono);font-size:.78rem"><span style="color:var(--muted)">Last run:</span> <span id="cron-detail-lastrun"></span></div>
+          <div id="cron-detail-result" style="margin-bottom:16px;font-family:var(--mono);font-size:.72rem;color:var(--muted);max-height:80px;overflow-y:auto"></div>
           <div class="section-card"><div class="section-title">Prompt</div><pre id="cron-detail-prompt" style="font-family:var(--mono);font-size:.82rem;white-space:pre-wrap;margin-top:8px;color:var(--text)"></pre></div>
           <div class="btn-row" style="margin-top:16px">
             <button class="action-btn primary" onclick="runCronJobNow()">Run Now</button>

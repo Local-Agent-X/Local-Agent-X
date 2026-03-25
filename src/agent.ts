@@ -137,9 +137,9 @@ async function executeToolCalls(
     // Layer 0: Session policy (per-session overrides — high-security, read-only, etc.)
     const policyBlock = checkSessionPolicy(sessionId || "default", tc.name);
     if (policyBlock) {
-      const result = policyBlock;
-      onEvent?.({ type: "tool_end", toolName: tc.name, result, allowed: false });
-      return result;
+      onEvent?.({ type: "tool_end", toolName: tc.name, result: policyBlock, allowed: false });
+      results.push({ role: "tool", tool_call_id: tc.id, content: policyBlock } as any);
+      continue;
     }
 
     // Layer 1: SecurityLayer (SSRF, shell, file access, path traversal)
@@ -234,11 +234,30 @@ async function executeToolCalls(
       allowed,
     });
 
-    results.push({
-      role: "tool",
-      tool_call_id: tc.id,
-      content: result.content,
-    });
+    // Check if tool returned an image for vision analysis
+    const imageData = (result as any)._image;
+    if (imageData) {
+      // Add tool result with brief text
+      results.push({
+        role: "tool",
+        tool_call_id: tc.id,
+        content: `Image loaded: ${imageData.path}\nQuestion: ${imageData.question}`,
+      });
+      // Add vision message so the model can SEE the image on next turn
+      results.push({
+        role: "user",
+        content: [
+          { type: "text", text: `[Image from ${imageData.path}] ${imageData.question}` },
+          { type: "image_url", image_url: { url: `data:${imageData.mime};base64,${imageData.b64}`, detail: "auto" } },
+        ],
+      } as any);
+    } else {
+      results.push({
+        role: "tool",
+        tool_call_id: tc.id,
+        content: result.content,
+      });
+    }
   }
 
   return results;

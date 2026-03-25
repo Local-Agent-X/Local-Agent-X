@@ -1167,7 +1167,7 @@ export function startServer(config: SAXConfig) {
 
         const result = await runAgent(message, sanitizeHistory(historyToSend), {
           apiKey,
-          model: provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-haiku-4-5" : config.model,
+          model: provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model,
           provider,
           systemPrompt: enrichedPrompt,
           tools,

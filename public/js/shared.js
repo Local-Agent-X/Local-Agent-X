@@ -15,6 +15,26 @@ if (urlToken) {
 
 const API = '';
 
+// ── Theme toggle (dark/light) ──
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme');
+  const next = current === 'light' ? 'dark' : 'light';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('sax_theme', next);
+  const btn = document.getElementById('theme-toggle');
+  if (btn) btn.textContent = next === 'light' ? '🌙' : '☀';
+}
+// Apply saved theme on load
+(function() {
+  const saved = localStorage.getItem('sax_theme') || 'dark';
+  if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+  document.addEventListener('DOMContentLoaded', () => {
+    const btn = document.getElementById('theme-toggle');
+    if (btn) btn.textContent = saved === 'light' ? '🌙' : '☀';
+  });
+})();
+
 function uid() { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7); }
 
 function esc(s) {

@@ -14,7 +14,7 @@
     "setup-ai": "node scripts/setup-ai.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.80.0",
+    "@anthropic-ai/sdk": "^0.73.0",
     "@arikernel/adapters": "file:packages/arikernel/adapters",
     "@arikernel/audit-log": "file:packages/arikernel/audit-log",
     "@arikernel/cli": "^0.1.3",

@@ -7,6 +7,23 @@
   --font: 'Segoe UI', system-ui, sans-serif;
   --mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 }
+
+/* ── Light Mode ── */
+[data-theme="light"] {
+  --bg: #f5f5f7; --surface: #ffffff; --surface-2: #f0f0f5;
+  --border: #d8d8e0; --accent: #0066cc; --accent-dim: #0066cc44;
+  --danger: #dc3545; --warn: #e67700; --info: #0077cc;
+  --text: #1a1a2e; --muted: #7777aa; --hover: #eeeef4;
+  --user-bg: #e8f0fe; --agent-bg: #f8f8fc; --input-bg: #ffffff;
+}
+[data-theme="light"] body::after { display: none; }
+[data-theme="light"] #logo { text-shadow: none; }
+[data-theme="light"] .chat-item.active { background: #e0e8ff; }
+[data-theme="light"] .tool-header { background: #f0f0f8; }
+[data-theme="light"] .tool-detail { background: #f5f5fa; color: #555; }
+[data-theme="light"] pre { background: #f0f0f8 !important; border-color: var(--border) !important; }
+[data-theme="light"] code { background: #e8e8f0 !important; }
+[data-theme="light"] #new-chat-btn:hover { color: #fff; }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}
 body::after{content:'';position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,65,.012) 2px,rgba(0,255,65,.012) 4px);z-index:9999}
@@ -57,6 +74,8 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .util-btn.active{color:var(--accent)}
 .util-icon{font-size:.8rem}
 #sidebar-footer{padding:10px 14px;border-top:1px solid var(--border);font-size:.68rem;font-family:var(--mono);display:flex;align-items:center;gap:6px}
+#theme-toggle{margin-left:auto;background:none;border:1px solid var(--border);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:.85rem;color:var(--muted);transition:all .15s}
+#theme-toggle:hover{border-color:var(--accent);color:var(--accent)}
 #auth-dot{width:6px;height:6px;border-radius:50%;background:var(--danger)}
 #auth-dot.ok{background:var(--accent);box-shadow:0 0 6px var(--accent-dim)}
 #auth-label{color:var(--muted)}

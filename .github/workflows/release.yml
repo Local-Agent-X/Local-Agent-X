@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggered by version tags: v0.2.0, v0.3.0, etc.
+
+permissions:
+  contents: write # Needed to create GitHub releases
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Security check
+        run: npm audit --production --audit-level=high
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Package release
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          tar -czf open-agent-x-${VERSION}.tar.gz dist/ public/ package.json package-lock.json SECURITY.md THREAT-MODEL.md LICENSE
+
+      - name: Generate checksums
+        run: |
+          sha256sum open-agent-x-*.tar.gz > checksums-sha256.txt
+          cat checksums-sha256.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            open-agent-x-*.tar.gz
+            checksums-sha256.txt
+          body: |
+            ## Open Agent X ${{ env.VERSION }}
+
+            ### Security
+            - SHA-256 checksums included for integrity verification
+            - All security checks passed before release
+            - Run `sha256sum -c checksums-sha256.txt` to verify
+
+            ### Install
+            ```bash
+            tar -xzf open-agent-x-${{ env.VERSION }}.tar.gz
+            npm install --production
+            npm run dev
+            ```
+          draft: false
+          prerelease: false

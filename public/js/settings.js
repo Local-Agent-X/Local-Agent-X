@@ -248,7 +248,15 @@ async function applyHttps() {
     const d = await apiPost('/api/https/toggle', { enabled });
     if (d.ok) {
       if (el) el.textContent = d.message;
-      checkHttpsStatus();
+      // Tell user to restart and where to go
+      if (d.redirectTo) {
+        if (el) el.innerHTML =
+          d.message + '<br>' +
+          '<span style="color:var(--accent)">1.</span> Stop the server (Ctrl+C in terminal)<br>' +
+          '<span style="color:var(--accent)">2.</span> Start it again: <code style="color:var(--accent);font-size:.7rem">npm run dev</code><br>' +
+          '<span style="color:var(--accent)">3.</span> Open: <a href="' + d.redirectTo + '" style="color:var(--accent)">' + d.redirectTo + '</a>' +
+          (enabled ? '<br><span style="color:var(--muted);font-size:.65rem">Browser will show a one-time warning — click Advanced → Proceed</span>' : '');
+      }
     } else {
       if (el) el.textContent = 'Error: ' + (d.error || 'Unknown error');
     }

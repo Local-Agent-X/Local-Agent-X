@@ -3,6 +3,75 @@ let streaming = false;
 let pendingUploads = [];
 let userScrolledUp = false;
 
+// ── WebSocket Chat Connection ──
+let chatWs = null;
+let activeChatsSet = new Set();
+
+function connectChatWs() {
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) return;
+  const wsUrl = `ws://${location.host}/ws/chat?token=${AUTH_TOKEN}`;
+  chatWs = new WebSocket(wsUrl);
+
+  chatWs.onopen = () => {
+    console.log('[ws] Chat WebSocket connected');
+    // Subscribe to active chat if we have one
+    if (activeChat) chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: activeChat.id }));
+  };
+
+  chatWs.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+
+    if (msg.type === 'active_chats') {
+      activeChatsSet = new Set(msg.sessionIds || []);
+      renderSidebar(); // Update indicators
+    }
+
+    if (msg.type === 'event' && msg.sessionId && msg.event) {
+      // If we're viewing this chat, update the UI
+      if (activeChat && activeChat.id === msg.sessionId && streaming) {
+        // Events already handled by SSE stream — skip to avoid duplicates
+        return;
+      }
+      // If we're NOT viewing this chat but it's active, update sidebar indicator
+      if (!activeChat || activeChat.id !== msg.sessionId) {
+        if (msg.event.type === 'done') {
+          activeChatsSet.delete(msg.sessionId);
+          renderSidebar();
+        }
+      }
+    }
+  };
+
+  chatWs.onclose = () => {
+    console.log('[ws] Chat WebSocket closed, reconnecting in 3s...');
+    setTimeout(connectChatWs, 3000);
+  };
+
+  chatWs.onerror = () => {}; // onclose handles reconnect
+}
+
+// Connect on load
+setTimeout(connectChatWs, 1000);
+
+function stopChat() {
+  if (!activeChat) return;
+  // Send stop via WS
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify({ type: 'stop', sessionId: activeChat.id }));
+  }
+  // Also try HTTP fallback
+  fetch(`${API}/api/chats/stop`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+    body: JSON.stringify({ sessionId: activeChat.id }),
+  }).catch(() => {});
+}
+
+function isChatActive(sessionId) {
+  return activeChatsSet.has(sessionId);
+}
+
 // Detect when user scrolls away from bottom — pause auto-scroll
 (function initScrollPause() {
   const el = document.getElementById('messages');
@@ -82,6 +151,13 @@ async function sendMessage() {
   const bodyEl = msgEl.querySelector('.msg-body');
   bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
   streaming = true; stopSpeaking(); ttsSentenceBuffer = '';
+  // Show stop button, hide send button
+  const stopBtn = document.getElementById('stop-btn');
+  if (stopBtn) stopBtn.style.display = 'flex';
+  // Subscribe to this chat via WS
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: activeChat.id }));
+  }
   document.getElementById('send-btn').disabled = true;
 
   try {
@@ -93,17 +169,18 @@ async function sendMessage() {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '', content = '';
+    let toolEvents = []; // Track tool calls for persistence
     let lastSaveTime = 0;
 
     // Save partial response so it survives navigation
     function savePartial() {
-      if (!content.trim() || !activeChat) return;
-      // Update or add the assistant message
+      if ((!content.trim() && toolEvents.length === 0) || !activeChat) return;
       const lastMsg = activeChat.messages[activeChat.messages.length - 1];
       if (lastMsg && lastMsg.role === 'assistant' && lastMsg._streaming) {
         lastMsg.content = content;
+        lastMsg._tools = toolEvents.length > 0 ? [...toolEvents] : undefined;
       } else {
-        activeChat.messages.push({ role: 'assistant', content, _streaming: true });
+        activeChat.messages.push({ role: 'assistant', content, _streaming: true, _tools: toolEvents.length > 0 ? [...toolEvents] : undefined });
       }
       activeChat.updatedAt = Date.now();
       saveChats();
@@ -125,11 +202,15 @@ async function sendMessage() {
               if (Date.now() - lastSaveTime > 2000) { savePartial(); lastSaveTime = Date.now(); }
               break;
             case 'tool_start':
-              bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args)); break;
+              bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args));
+              toolEvents.push({ type: 'start', name: event.toolName, args: event.args });
+              break;
             case 'tool_end': {
               const cards = bodyEl.querySelectorAll('.tool-card');
               const last = cards[cards.length - 1];
               if (last) { last.querySelector('.indicator').className = 'indicator ' + (event.allowed ? 'allowed' : 'blocked'); last.querySelector('.tool-detail').textContent = event.result.slice(0, 2000); }
+              toolEvents.push({ type: 'end', name: event.toolName, allowed: event.allowed, result: (event.result||'').slice(0, 500) });
+              savePartial(); // Save immediately after tool completes
               break;
             }
             case 'secret_request': showSecretModal(event.name, event.service, event.reason); break;
@@ -154,6 +235,9 @@ async function sendMessage() {
     }
   } catch (e) { bodyEl.textContent = 'Connection error: ' + e.message; }
   flushTTS(); streaming = false;
+  // Hide stop button
+  const stopBtn2 = document.getElementById('stop-btn');
+  if (stopBtn2) stopBtn2.style.display = 'none';
   document.getElementById('send-btn').disabled = false;
   updateContextBar();
 }

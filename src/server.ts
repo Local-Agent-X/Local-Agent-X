@@ -1273,7 +1273,7 @@ export function startServer(config: SAXConfig) {
     const maskedToken = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
     console.log(`\n  Secret Agent X running at http://127.0.0.1:${config.port}`);
     console.log(`  Auth token: ${maskedToken}`);
-    console.log(`\n  ► Open: http://127.0.0.1:${config.port}/?token=<your-token>\n`);
+    console.log(`\n  ► Open: http://127.0.0.1:${config.port}/?token=${config.authToken}\n`);
     console.log(`  Memory: ${dataDir}/memory/`);
     console.log(`  Sessions: ${dataDir}/sessions/`);
 

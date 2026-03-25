@@ -84,10 +84,21 @@ export async function* streamAnthropicResponse(options: StreamOptions): AsyncGen
     ? "claude-code-20250219,oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14"
     : "fine-grained-tool-streaming-2025-05-14";
 
-  const client = new Anthropic({
-    apiKey: token,
-    defaultHeaders: { "anthropic-beta": betaHeaders },
-  });
+  // OAuth tokens use authToken (Bearer auth), API keys use apiKey (x-api-key header)
+  const client = isOAuthToken(token)
+    ? new Anthropic({
+        apiKey: null as unknown as string,
+        authToken: token,
+        defaultHeaders: {
+          "anthropic-beta": betaHeaders,
+          "user-agent": "claude-cli/2.1.75",
+          "x-app": "cli",
+        },
+      })
+    : new Anthropic({
+        apiKey: token,
+        defaultHeaders: { "anthropic-beta": betaHeaders },
+      });
 
   const anthropicMessages = convertMessages(messages);
   const anthropicTools = tools?.map(t => ({

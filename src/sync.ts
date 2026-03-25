@@ -194,7 +194,7 @@ export class AgentSync {
     // Optional: sync entire workspace (apps, images, videos, etc. — skip heavy artifacts)
     if (this.config.syncWorkspace) {
       const workspace = resolve("workspace");
-      const syncWorkspaceDir = join(this.syncDir, "workspace-apps");
+      const syncWorkspaceDir = join(this.syncDir, "workspace");
       if (existsSync(workspace)) {
         this.copyDirFiltered(workspace, syncWorkspaceDir);
       }
@@ -305,7 +305,7 @@ export class AgentSync {
 
     // Optional: pull entire workspace from sync
     if (this.config.syncWorkspace) {
-      const syncWorkspaceDir = join(this.syncDir, "workspace-apps");
+      const syncWorkspaceDir = join(this.syncDir, "workspace");
       const workspace = resolve("workspace");
       if (existsSync(syncWorkspaceDir)) {
         if (!existsSync(workspace)) mkdirSync(workspace, { recursive: true });

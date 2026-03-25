@@ -2660,7 +2660,7 @@ export function createMemoryTools(memory: MemoryIndex) {
         required: ["content"],
       },
       async execute(args: Record<string, unknown>) {
-        const content = String(args.content || "");
+        let content = String(args.content || "");
         const target = String(args.target || "daily");
 
         if (!content.trim()) {
@@ -2670,7 +2670,10 @@ export function createMemoryTools(memory: MemoryIndex) {
         // Memory taint protection: block external/injected content from persisting
         // This prevents the attack chain: malicious webpage → memory_save → permanent instruction hijack
         try {
-          const { checkMemoryTaint, sanitizeForMemory } = await import("./sanitize.js");
+          const { checkMemoryTaint, sanitizeForMemory, stripControlChars, normalizeHomoglyphs } = await import("./sanitize.js");
+          // Step 1: Cryptographic normalization — strip ALL unicode tricks before checking
+          content = normalizeHomoglyphs(stripControlChars(content));
+          // Step 2: Taint check on normalized content
           const taint = checkMemoryTaint(content);
           if (!taint.safe) {
             return {
@@ -2678,6 +2681,8 @@ export function createMemoryTools(memory: MemoryIndex) {
               isError: true,
             };
           }
+          // Step 3: Final sanitization pass (strip any remaining markers)
+          content = sanitizeForMemory(content);
         } catch {
           // Sanitize module not available — allow (fail-open for backwards compat)
         }

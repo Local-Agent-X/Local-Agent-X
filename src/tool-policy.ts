@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { checkRegexSafety } from "./safe-regex.js";
 
@@ -324,5 +324,10 @@ export function loadToolPolicy(dataDir: string): ToolPolicy {
       console.warn(`[policy] Failed to parse ${policyPath}: ${(e as Error).message}, using defaults`);
     }
   }
+  // Write default policy to disk on first run (so audit doesn't warn about missing file)
+  try {
+    writeFileSync(policyPath, JSON.stringify(DEFAULT_POLICY, null, 2), { encoding: "utf-8", mode: 0o600 });
+    console.log(`[policy] Created default policy at ${policyPath}`);
+  } catch {}
   return new ToolPolicy(DEFAULT_POLICY);
 }

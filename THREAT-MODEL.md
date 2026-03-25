@@ -59,28 +59,42 @@ Open Agent X operates as a **single-user personal AI agent** on a local workstat
 - **Risk**: Bearer token theft → full agent control
 - **Mitigations**: RBAC with scoped roles, token stripped from URL immediately, sessionStorage over localStorage, timing-safe comparison
 
+### MITRE ATLAS Mapping
+
+| Technique | ID | Our Defense |
+|---|---|---|
+| LLM Prompt Injection | AML.T0051 | sanitize.ts (54+ patterns), content wrapping, canary tokens |
+| LLM Jailbreak | AML.T0054 | Session policies, ARI Kernel behavioral rules |
+| Adversarial Input | AML.T0048 | Homoglyph normalization, control char stripping |
+| Exfiltration via ML Model | AML.T0024 | Data lineage tracking, egress allowlist, encoding detection |
+| Model Supply Chain | AML.T0010 | Lockfile, minimal deps, npm audit |
+| Denial of Service | AML.T0029 | Rate limiting, loop detection, circuit breaker |
+
 ## Defense Layers
 
 ```
-Layer 1: SecurityLayer      — Static rules (SSRF, shell, file, path traversal)
-Layer 2: ToolPolicy          — Configurable allow/deny (default-deny)
-Layer 3: ThreatEngine        — Behavioral analysis (chains, canaries, scoring)
-Layer 4: Content Sanitizer   — Prompt injection defense (wrapping, homoglyphs)
-Layer 5: Memory Taint        — Persistence protection (blocks untrusted → memory)
-Layer 6: RBAC                — Role-based access control (operator/user/readonly)
-Layer 7: Container Sandbox   — Optional Docker isolation (SAX_SANDBOX=docker)
-Layer 8: Crypto Audit Trail  — Tamper-evident logging (SHA-256 hash chains)
-— Future —
-Layer 9: ARI Kernel          — Capability-based enforcement, taint tracking, policy engine
+Layer -1: ARI Kernel         — Capability tokens, taint propagation, behavioral rules, quarantine
+Layer 0:  Session Policy     — Per-session modes (default/high-security/dev-mode/read-only)
+Layer 1:  SecurityLayer      — SSRF, shell injection, path traversal, obfuscation, egress allowlist
+Layer 2:  Data Lineage       — Tracks sensitive reads → blocks egress when tainted
+Layer 3:  RBAC               — Role-based tool permissions enforced at execution time
+Layer 4:  ToolPolicy         — Configurable allow/deny (default-deny)
+Layer 5:  ThreatEngine       — Canary tokens, chain analysis, encoding detection, adaptive scoring
+Layer 6:  Content Sanitizer  — 54+ injection patterns, homoglyphs, external content wrapping
+Layer 7:  Memory Taint       — Blocks untrusted content from persisting to memory
+Layer 8:  Container Sandbox  — Docker auto-detected (SAX_SANDBOX=host to disable)
+Layer 9:  Crypto Audit Trail — Tamper-evident SHA-256 hash chain + ARI Kernel audit DB
+Layer 10: Output Redaction   — Credential masking before AI sees tool results
 ```
 
 ## Known Limitations
 
-1. **No container sandbox by default** — Tools run on host. Set `SAX_SANDBOX=docker` for isolation.
-2. **Single-user model** — RBAC adds roles but not true multi-tenancy. Don't share a single instance between mutually untrusted users.
-3. **Secrets bound to machine** — Key derivation uses hostname + username + random salt. Not OS keychain. If attacker has file read + knows machine identity, they can attempt offline cracking (scrypt N=32768 provides ~100ms per attempt).
-4. **Memory taint is heuristic** — Pattern-based detection can be evaded by sufficiently creative injection. Defense-in-depth (canaries, scoring, wrapping) reduces but doesn't eliminate risk.
+1. **Single-user model** — RBAC adds roles but not true multi-tenancy. Don't share a single instance between mutually untrusted users.
+2. **Docker sandbox auto-detects** — If Docker is available, bash runs in containers by default. Set `SAX_SANDBOX=host` to disable.
+3. **Secrets encryption** — Uses OS keychain (DPAPI/Keychain) when available, falls back to scrypt N=131072 (~500ms/attempt).
+4. **Memory taint is heuristic** — Pattern-based detection + Unicode normalization can be evaded by sufficiently creative injection. ARI Kernel taint tracking adds formal enforcement.
 5. **No formal verification** — Security properties are tested empirically, not formally proven.
+6. **Egress allowlist is opt-in** — Create `~/.sax/egress-allowlist.json` to restrict outbound domains. Without it, all public domains are allowed.
 
 ## Incident Response
 

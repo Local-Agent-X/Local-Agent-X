@@ -1,7 +1,7 @@
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { getOrCreateCert } from "./tls.js";
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
 import { timingSafeEqual, randomBytes } from "node:crypto";
@@ -666,6 +666,71 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── Credential rotation ──
+    if (method === "POST" && url.pathname === "/api/auth/rotate") {
+      const newToken = randomBytes(24).toString("hex");
+      // Update config file
+      const configPath = join(dataDir, "config.json");
+      try {
+        const cfg = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf-8")) : {};
+        cfg.authToken = newToken;
+        writeFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+        const masked = newToken.slice(0, 4) + "****" + newToken.slice(-4);
+        console.log(`[auth] Token rotated. New token: ${masked}`);
+        json(200, { ok: true, token: newToken, message: "Token rotated. Save this token — it won't be shown again." });
+      } catch (e) {
+        json(500, { error: `Failed to rotate: ${(e as Error).message}` });
+      }
+      return;
+    }
+
+    // ── History export ──
+    if (method === "GET" && url.pathname === "/api/history") {
+      const sessions = sessionStore.list();
+      const exported = sessions.map((s: any) => ({
+        id: s.id,
+        title: s.title,
+        messageCount: s.messageCount,
+        updatedAt: s.updatedAt,
+      }));
+      json(200, { sessions: exported, exportedAt: Date.now() });
+      return;
+    }
+    if (method === "GET" && url.pathname.startsWith("/api/history/")) {
+      const id = url.pathname.split("/").pop()!;
+      if (!isValidSessionId(id)) { json(400, { error: "Invalid session ID" }); return; }
+      const session = getOrCreateSession(id);
+      // Redact any secrets from exported messages
+      const redacted = session.messages.map((m: any) => ({
+        role: m.role,
+        content: typeof m.content === "string" ? redactCredentials(m.content) : m.content,
+      }));
+      json(200, { ...session, messages: redacted });
+      return;
+    }
+
+    // ── SIEM / log export (JSON lines format for Splunk, ELK, etc.) ──
+    if (method === "GET" && url.pathname === "/api/logs/export") {
+      const count = parseInt(url.searchParams.get("count") || "100", 10);
+      const auditDir = join(dataDir, "audit");
+      if (!existsSync(auditDir)) { json(200, { lines: [] }); return; }
+      try {
+        const files = readdirSync(auditDir).filter(f => f.endsWith(".jsonl")).sort().reverse();
+        const lines: string[] = [];
+        for (const file of files) {
+          if (lines.length >= count) break;
+          const content = readFileSync(join(auditDir, file), "utf-8");
+          const fileLines = content.split("\n").filter(l => l.trim());
+          lines.push(...fileLines.slice(-(count - lines.length)));
+        }
+        res.writeHead(200, { ...corsHeaders(req), "Content-Type": "application/x-ndjson" });
+        res.end(lines.join("\n"));
+      } catch (e) {
+        json(500, { error: (e as Error).message });
+      }
+      return;
+    }
+
     // ── HTTPS API ──
 
     if (method === "GET" && url.pathname === "/api/https/status") {
@@ -1231,6 +1296,7 @@ export function startServer(config: SAXConfig) {
           headers["X-Content-Type-Options"] = "nosniff";
           headers["X-Frame-Options"] = "DENY";
           headers["Referrer-Policy"] = "no-referrer";
+          if (isHttps) headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
         }
         res.writeHead(200, headers);
         res.end(readFileSync(filePath));

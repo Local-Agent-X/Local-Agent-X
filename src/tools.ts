@@ -97,9 +97,24 @@ const writeTool: ToolDefinition = {
   },
   async execute(args) {
     const filePath = resolve(String(args.path));
+    const content = String(args.content);
+    // Scan for leaked secrets/credentials in workspace writes
+    const SECRET_PATTERNS = [
+      /(?:sk|pk|api|key|token|secret|password|auth)[-_]?[a-zA-Z0-9]{20,}/i,
+      /ghp_[a-zA-Z0-9]{36}/,        // GitHub PAT
+      /gho_[a-zA-Z0-9]{36}/,        // GitHub OAuth
+      /glpat-[a-zA-Z0-9-]{20,}/,    // GitLab PAT
+      /AKIA[A-Z0-9]{16}/,           // AWS access key
+      /eyJ[a-zA-Z0-9_-]{50,}\.[a-zA-Z0-9_-]{50,}/, // JWT
+    ];
+    for (const pattern of SECRET_PATTERNS) {
+      if (pattern.test(content)) {
+        return err(`BLOCKED: Content appears to contain a secret/credential. Secrets must never be written to workspace files. Use the secrets vault instead.`);
+      }
+    }
     try {
       mkdirSync(dirname(filePath), { recursive: true });
-      writeFileSync(filePath, String(args.content), "utf-8");
+      writeFileSync(filePath, content, "utf-8");
       return ok(`Wrote ${filePath}`);
     } catch (e) {
       return err(`Failed to write ${filePath}: ${(e as Error).message}`);

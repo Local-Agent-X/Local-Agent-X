@@ -51,6 +51,13 @@ const INJECTION_PATTERNS: Array<{ pattern: RegExp; score: number; label: string 
   { pattern: /output\s+(your|the)\s+(system|initial|original)\s+(prompt|instructions?|message)/i, score: 0.85, label: "prompt-leak" },
   { pattern: /what\s+(is|are)\s+your\s+(system|initial|original)\s+(prompt|instructions?)/i, score: 0.7, label: "prompt-probe" },
   { pattern: /repeat\s+(the\s+)?(text|words?|content)\s+(above|before|prior)/i, score: 0.8, label: "context-extract" },
+  // ── Semantic injection (intent-based, not just keyword) ──
+  { pattern: /\b(secretly|covertly|without\s+(the\s+)?user\s+knowing)\b/i, score: 0.85, label: "covert-action" },
+  { pattern: /\b(hide|conceal|obscure)\s+(this|the|your)\s+(action|output|response)/i, score: 0.8, label: "stealth-action" },
+  { pattern: /\bdo\s+not\s+(tell|inform|alert|notify)\s+(the\s+)?user/i, score: 0.9, label: "hide-from-user" },
+  { pattern: /\b(before|after)\s+responding.*\b(also|first|quietly)\b/i, score: 0.7, label: "side-channel" },
+  { pattern: /\binsert\s+(into|in)\s+(the|your)\s+(response|output|reply).*\b(hidden|invisible)\b/i, score: 0.85, label: "hidden-payload" },
+  { pattern: /\bencode\s+(the|this|your|all)\s+(response|output|data)\s+(in|as|to)\s+(base64|hex|rot13)/i, score: 0.9, label: "encoding-exfil" },
 ];
 
 // ── Unicode homoglyph detection ──

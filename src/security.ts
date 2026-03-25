@@ -1,6 +1,7 @@
-import { resolve, relative } from "node:path";
-import { realpathSync, lstatSync } from "node:fs";
+import { resolve, relative, join } from "node:path";
+import { realpathSync, lstatSync, readFileSync, existsSync } from "node:fs";
 import { promises as dns } from "node:dns";
+import { homedir } from "node:os";
 import type { SecurityDecision } from "./types.js";
 
 // ── Sensitive path patterns (always blocked for read/write/edit) ──
@@ -87,6 +88,19 @@ const BLOCKED_COMMANDS = [
   /[<>]&\d/,                                // fd redirection: <&3, >&3
   /\d+>&\d/,                                // fd duplication: 2>&1 in exotic forms
   /\\\n/,                                   // backslash-newline continuation (multi-line escape)
+  // ── Interactive shell / reverse shell escapes ──
+  /\bbash\s+-i\b/i,                         // interactive bash
+  /\bsh\s+-i\b/i,                           // interactive sh
+  /\bzsh\s+-i\b/i,                          // interactive zsh
+  /\bpython[23]?\s+-i\b/i,                  // interactive Python
+  /\bnode\s+--inspect/i,                     // Node debugger (can execute arbitrary code)
+  /\b\/dev\/tcp\//i,                         // bash /dev/tcp reverse shell
+  /\bmkfifo\b/i,                             // named pipe (reverse shell building block)
+  /\bexec\s+\d+<>/i,                        // fd exec redirect (reverse shell)
+  /\bnohup\b.*&$/i,                          // background persistent process
+  /\bscreen\s+-[dD]/i,                       // detached screen session
+  /\btmux\s+new/i,                           // tmux session (persistence)
+  /\bxterm\b.*-e/i,                          // xterm reverse shell
 ];
 
 // ── SSRF: IP address validation helpers ──
@@ -174,9 +188,22 @@ const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
 export class SecurityLayer {
   private workspace: string;
   private auditLog: Array<{ timestamp: number; tool: string; decision: SecurityDecision }> = [];
+  private egressAllowlist: Set<string> = new Set();
 
   constructor(workspace: string) {
     this.workspace = resolve(workspace);
+    // Load egress allowlist from ~/.sax/egress-allowlist.json
+    try {
+      const allowlistPath = join(homedir(), ".sax", "egress-allowlist.json");
+      if (existsSync(allowlistPath)) {
+        const domains: string[] = JSON.parse(readFileSync(allowlistPath, "utf-8"));
+        this.egressAllowlist = new Set(domains.map((d: string) => d.toLowerCase()));
+        console.log(`[security] Egress allowlist loaded: ${this.egressAllowlist.size} domains`);
+      }
+      // If no file exists, allowlist is empty = all public domains allowed (backwards compatible)
+    } catch (e) {
+      console.warn(`[security] Failed to load egress allowlist: ${(e as Error).message}`);
+    }
   }
 
   evaluate(ctx: ToolCallContext): SecurityDecision {
@@ -417,6 +444,18 @@ export class SecurityLayer {
     // Cloud metadata endpoints (various formats)
     if (host === "169.254.169.254" || host.endsWith(".internal") || host.endsWith(".metadata")) {
       return { allowed: false, reason: `Blocked: ${host} is a cloud metadata endpoint` };
+    }
+
+    // ── Egress domain allowlist ──
+    // If an allowlist is configured, only approved domains can be accessed.
+    // This prevents exfiltration to attacker-controlled servers.
+    if (this.egressAllowlist.size > 0) {
+      const allowed = this.egressAllowlist.has(host) ||
+        // Check wildcard subdomains: *.example.com matches sub.example.com
+        Array.from(this.egressAllowlist).some(d => d.startsWith("*.") && host.endsWith(d.slice(1)));
+      if (!allowed) {
+        return { allowed: false, reason: `Blocked: ${host} is not in the egress allowlist. Add it to ~/.sax/egress-allowlist.json to permit.` };
+      }
     }
 
     return { allowed: true, reason: "Web fetch allowed" };

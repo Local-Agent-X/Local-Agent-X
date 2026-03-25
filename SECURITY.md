@@ -72,24 +72,49 @@ Open Agent X is designed as a **single-user personal agent** running on a local 
 
 ### Known Limitations
 
-- No container/VM sandboxing for tool execution (tools run on host)
-- No enterprise IAM (OIDC/SAML/RBAC) — single shared token
-- Secrets encryption is machine-identity bound (not OS keychain)
-- Memory/profile files are trusted context — poisoning is mitigated but not impossible
+- Docker sandbox auto-detects — if Docker unavailable, tools run on host (set `SAX_SANDBOX=docker` to require it)
+- RBAC has 3 roles (operator/user/readonly) — not full enterprise IAM (OIDC/SAML planned)
+- Secrets encryption uses OS keychain (DPAPI/Keychain) with scrypt fallback (N=131072)
+- Memory taint checking is heuristic + ARI Kernel formal taint — defense-in-depth, not proof
+- Egress allowlist is opt-in — create `~/.sax/egress-allowlist.json` for lockdown
 
 ## Secure Deployment Checklist
 
 - [ ] Run on a dedicated user account with minimal privileges
 - [ ] Enable full-disk encryption on the host
 - [ ] Keep `~/.sax/` directory permissions at `0700`
+- [ ] Enable Docker sandbox (`SAX_SANDBOX=docker` or auto-detect)
+- [ ] Create `~/.sax/egress-allowlist.json` with approved domains
 - [ ] Review `~/.sax/tool-policy.json` for your use case
+- [ ] Enable HTTPS in settings for encrypted localhost traffic
 - [ ] Monitor `~/.sax/audit/` logs for anomalies
+- [ ] Export logs to SIEM via `GET /api/logs/export` (NDJSON format)
 - [ ] Do NOT expose port 4800 to the network
 - [ ] Do NOT share the bearer token across users
-- [ ] Regularly rotate the auth token (delete `~/.sax/config.json` authToken field)
+- [ ] Rotate auth token periodically via `POST /api/auth/rotate`
+
+## Security Advisory Process
+
+We use GitHub Security Advisories for responsible disclosure. Published advisories include:
+- CVE ID (when applicable)
+- Affected versions
+- Impact assessment
+- Remediation steps
+- Timeline
+
+## Data Retention
+
+- Chat sessions: stored in `~/.sax/sessions/` as JSON (can be deleted per-session)
+- Audit logs: stored in `~/.sax/audit/` as JSONL (append-only, hash-chained)
+- Memory: stored in `~/.sax/memory/` as Markdown (synced if Agent Sync enabled)
+- Uploads: stored in `~/.sax/uploads/` (can be cleaned manually)
+- Secrets: encrypted at rest in `~/.sax/secrets.enc` (AES-256-GCM)
+- No data is sent to external services except the configured LLM API (OpenAI/xAI)
+- PI (Personal Information) in chat is not automatically redacted from storage — use high-security session mode for sensitive conversations
 
 ## Supported Versions
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | Yes       |
+| 0.2.x   | Yes (current) |
+| 0.1.x   | Security fixes only |

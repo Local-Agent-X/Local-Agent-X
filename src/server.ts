@@ -1167,7 +1167,7 @@ export function startServer(config: SAXConfig) {
 
         const result = await runAgent(message, sanitizeHistory(historyToSend), {
           apiKey,
-          model: provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-3-haiku-20240307" : config.model,
+          model: provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-haiku-4-5" : config.model,
           provider,
           systemPrompt: enrichedPrompt,
           tools,
@@ -1496,7 +1496,7 @@ export function startServer(config: SAXConfig) {
 
         const result = await runAgent(prompt, session.messages, {
           apiKey,
-          model: cronProvider === "codex" ? "gpt-5.3-codex" : cronProvider === "anthropic" ? "claude-3-haiku-20240307" : config.model,
+          model: cronProvider === "codex" ? "gpt-5.3-codex" : cronProvider === "anthropic" ? "claude-haiku-4-5" : config.model,
           provider: cronProvider,
           systemPrompt: config.systemPrompt,
           tools,

@@ -93,6 +93,22 @@ async function sendMessage() {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '', content = '';
+    let lastSaveTime = 0;
+
+    // Save partial response so it survives navigation
+    function savePartial() {
+      if (!content.trim() || !activeChat) return;
+      // Update or add the assistant message
+      const lastMsg = activeChat.messages[activeChat.messages.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant' && lastMsg._streaming) {
+        lastMsg.content = content;
+      } else {
+        activeChat.messages.push({ role: 'assistant', content, _streaming: true });
+      }
+      activeChat.updatedAt = Date.now();
+      saveChats();
+    }
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -104,7 +120,10 @@ async function sendMessage() {
           const event = JSON.parse(line.slice(6));
           switch (event.type) {
             case 'stream':
-              content += event.delta; bodyEl.innerHTML = md(content); feedTTS(event.delta); break;
+              content += event.delta; bodyEl.innerHTML = md(content); feedTTS(event.delta);
+              // Save partial every 2 seconds so content survives navigation
+              if (Date.now() - lastSaveTime > 2000) { savePartial(); lastSaveTime = Date.now(); }
+              break;
             case 'tool_start':
               bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args)); break;
             case 'tool_end': {
@@ -122,7 +141,17 @@ async function sendMessage() {
       autoScroll();
     }
     userScrolledUp = false; // Reset when stream ends
-    if (content.trim()) { activeChat.messages.push({ role: 'assistant', content }); activeChat.updatedAt = Date.now(); saveChats(); renderSidebar(); }
+    if (content.trim()) {
+      // Finalize: replace the streaming message with the final one
+      const lastMsg = activeChat.messages[activeChat.messages.length - 1];
+      if (lastMsg && lastMsg._streaming) {
+        lastMsg.content = content;
+        delete lastMsg._streaming;
+      } else {
+        activeChat.messages.push({ role: 'assistant', content });
+      }
+      activeChat.updatedAt = Date.now(); saveChats(); renderSidebar();
+    }
   } catch (e) { bodyEl.textContent = 'Connection error: ' + e.message; }
   flushTTS(); streaming = false;
   document.getElementById('send-btn').disabled = false;
@@ -592,7 +621,7 @@ document.addEventListener('keydown', e => {
 });
 
 // Auto-resize textarea
-document.getElementById('msg-input')?.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 160) + 'px'; });
+document.getElementById('msg-input')?.addEventListener('input', function () { this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 200) + 'px'; });
 
 // ── Paste handling (images + files from clipboard) ──
 document.addEventListener('paste', (e) => {

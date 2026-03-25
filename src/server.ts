@@ -340,7 +340,7 @@ export function startServer(config: SAXConfig) {
 
     // Auth check with RBAC + brute-force flood guard
     let requestRole: Role = "operator";
-    const authExempt = ["/api/auth/login", "/api/auth/logout", "/api/auth/status"];
+    const authExempt = ["/api/auth/login", "/api/auth/logout", "/api/auth/status", "/api/auth/anthropic/login", "/api/auth/anthropic/logout", "/api/auth/anthropic/status"];
     if (url.pathname.startsWith("/api/") && !authExempt.includes(url.pathname)) {
       const clientIp = req.socket.remoteAddress || "unknown";
       const auth = req.headers.authorization || "";
@@ -1002,12 +1002,25 @@ export function startServer(config: SAXConfig) {
       }
 
       try {
-        const apiKey = await getApiKey(config.openaiApiKey);
-
-        // Detect provider
+        // Detect provider — check Anthropic first, then Codex, then xAI
         const { loadTokens } = await import("./auth.js");
-        const tokens = loadTokens();
-        const provider = tokens && !config.openaiApiKey ? ("codex" as const) : ("xai" as const);
+        const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
+        const openaiTokens = loadTokens();
+        const anthropicTokens = loadAnthropicTokens();
+
+        let provider: "codex" | "xai" | "openai" | "anthropic";
+        if (anthropicTokens || process.env.ANTHROPIC_API_KEY) {
+          provider = "anthropic";
+        } else if (openaiTokens && !config.openaiApiKey) {
+          provider = "codex";
+        } else {
+          provider = "xai";
+        }
+
+        // Get API key for the detected provider
+        const apiKey = provider === "anthropic"
+          ? await getAnthropicApiKey()
+          : await getApiKey(config.openaiApiKey);
 
         // Wire up SSE writer so request_secret can emit to the active stream
         // Register with WebSocket chat manager for multi-client broadcast
@@ -1125,7 +1138,7 @@ export function startServer(config: SAXConfig) {
 
         const result = await runAgent(message, sanitizeHistory(historyToSend), {
           apiKey,
-          model: provider === "codex" ? "gpt-5.3-codex" : config.model,
+          model: provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-20250514" : config.model,
           provider,
           systemPrompt: enrichedPrompt,
           tools,
@@ -1230,6 +1243,43 @@ export function startServer(config: SAXConfig) {
       json(200, {
         authenticated: !!tokens || !!config.openaiApiKey,
         method: config.openaiApiKey ? "api_key" : tokens ? "oauth" : "none",
+      });
+      return;
+    }
+
+    // ── Anthropic Auth ──
+
+    if (method === "POST" && url.pathname === "/api/auth/anthropic/login") {
+      try {
+        const { initiateAnthropicLogin } = await import("./auth-anthropic.js");
+        const { authUrl, promise } = initiateAnthropicLogin();
+        promise.then(() => console.log("[anthropic-auth] Login completed"))
+               .catch((e) => console.warn("[anthropic-auth] Login failed:", e.message));
+        json(200, { ok: true, authUrl });
+      } catch (e) {
+        json(500, { error: (e as Error).message });
+      }
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/auth/anthropic/logout") {
+      try {
+        const { deleteAnthropicTokens } = await import("./auth-anthropic.js");
+        deleteAnthropicTokens();
+        json(200, { ok: true });
+      } catch (e) {
+        json(500, { error: (e as Error).message });
+      }
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/auth/anthropic/status") {
+      const { loadAnthropicTokens } = await import("./auth-anthropic.js");
+      const tokens = loadAnthropicTokens();
+      json(200, {
+        authenticated: !!tokens,
+        method: tokens ? "oauth" : "none",
+        expired: tokens ? Date.now() > tokens.expiresAt : false,
       });
       return;
     }
@@ -1396,15 +1446,20 @@ export function startServer(config: SAXConfig) {
     // Start cron scheduler
     cronService.onExecute(async (jobId, prompt) => {
       try {
-        const apiKey = await getApiKey(config.openaiApiKey);
         const { loadTokens } = await import("./auth.js");
-        const tokens = loadTokens();
-        const provider = tokens && !config.openaiApiKey ? ("codex" as const) : ("xai" as const);
+        const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
+        const openaiTokens = loadTokens();
+        const anthropicTokens = loadAnthropicTokens();
+        let cronProvider: "codex" | "xai" | "openai" | "anthropic";
+        if (anthropicTokens || process.env.ANTHROPIC_API_KEY) cronProvider = "anthropic";
+        else if (openaiTokens && !config.openaiApiKey) cronProvider = "codex";
+        else cronProvider = "xai";
+        const apiKey = cronProvider === "anthropic" ? await getAnthropicApiKey() : await getApiKey(config.openaiApiKey);
         const session = getOrCreateSession(`cron-${jobId}`);
         const result = await runAgent(prompt, session.messages, {
           apiKey,
-          model: provider === "codex" ? "gpt-5.3-codex" : config.model,
-          provider,
+          model: cronProvider === "codex" ? "gpt-5.3-codex" : cronProvider === "anthropic" ? "claude-sonnet-4-20250514" : config.model,
+          provider: cronProvider,
           systemPrompt: config.systemPrompt,
           tools,
           security,

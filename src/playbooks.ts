@@ -1,5 +1,5 @@
 /**
- * Playbook System for Secret Agent X
+ * Playbook System for Open Agent X
  *
  * Playbooks are built-in multi-step procedures the agent can execute.
  * Unlike one-shot tools, playbooks maintain state across steps and

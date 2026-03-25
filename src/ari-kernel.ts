@@ -1,5 +1,5 @@
 /**
- * AriKernel Integration for Secret Agent X
+ * AriKernel Integration for Open Agent X
  *
  * Runs AriKernel as a sidecar process on port 8787.
  * Every tool call routes through the kernel for:
@@ -46,10 +46,10 @@ export async function startAriKernel(auditDbPath: string, preset?: string): Prom
       const kernel = createKernel({
         preset: currentPreset as any,
         mode: "sidecar",
-        sidecar: { baseUrl: ARI_BASE_URL, principalId: "secret-agent-x" },
+        sidecar: { baseUrl: ARI_BASE_URL, principalId: "open-agent-x" },
       });
       firewall = kernel.createFirewall({
-        principal: "secret-agent-x",
+        principal: "open-agent-x",
         auditLog: auditDbPath,
       });
       console.log(`  [ari] Kernel initialized (SIDECAR mode, preset: ${currentPreset})`);
@@ -96,10 +96,10 @@ export async function startAriKernel(auditDbPath: string, preset?: string): Prom
         const kernel = createKernel({
           preset: currentPreset as any,
           mode: "sidecar",
-          sidecar: { baseUrl: ARI_BASE_URL, principalId: "secret-agent-x" },
+          sidecar: { baseUrl: ARI_BASE_URL, principalId: "open-agent-x" },
         });
         firewall = kernel.createFirewall({
-          principal: "secret-agent-x",
+          principal: "open-agent-x",
           auditLog: auditDbPath,
         });
         console.log(`  [ari] Kernel initialized (SIDECAR mode, preset: ${currentPreset})`);
@@ -120,7 +120,7 @@ export async function startAriKernel(auditDbPath: string, preset?: string): Prom
       autoScope: true,
     });
     firewall = kernel.createFirewall({
-      principal: "secret-agent-x",
+      principal: "open-agent-x",
       auditLog: auditDbPath,
     });
     console.log(`[AriKernel] Running in EMBEDDED mode. For production security, install and run arikernel-sidecar.`);

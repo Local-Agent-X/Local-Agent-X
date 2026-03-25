@@ -53,7 +53,7 @@ import { loadTokens } from "./auth.js";
 
 console.log(`
   ╔═══════════════════════════════════╗
-  ║       SECRET AGENT X  v0.1       ║
+  ║       OPEN AGENT X  v0.1       ║
   ╚═══════════════════════════════════╝
 `);
 

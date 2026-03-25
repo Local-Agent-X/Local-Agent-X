@@ -136,7 +136,7 @@ function renderProjects() {
       <div class="project-chats">
         ${pChats.map(c => `
           <div class="chat-item ${activeChat && activeChat.id === c.id ? 'active' : ''}" onclick="selectChat('${c.id}')">
-            <span class="chat-dot"></span>
+            <span class="chat-dot${typeof isChatActive==='function'&&isChatActive(c.id)?' active-pulse':''}"></span>
             <span class="chat-title">${esc(c.title)}</span>
             <span class="chat-actions">
               <button class="chat-action-btn" onclick="showMoveMenu('${c.id}',event)" title="Move">&#8618;</button>
@@ -156,7 +156,7 @@ function renderChatList() {
   const unassigned = chats.filter(c => !c.projectId);
   el.innerHTML = unassigned.map(c => `
     <div class="chat-item ${activeChat && activeChat.id === c.id ? 'active' : ''}" onclick="selectChat('${c.id}')">
-      <span class="chat-dot"></span>
+      <span class="chat-dot${typeof isChatActive==='function'&&isChatActive(c.id)?' active-pulse':''}"></span>
       <span class="chat-title">${esc(c.title)}</span>
       <span class="chat-actions">
         ${projects.length ? `<button class="chat-action-btn" onclick="showMoveMenu('${c.id}',event)" title="Move">&#8618;</button>` : ''}

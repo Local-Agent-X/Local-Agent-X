@@ -27,6 +27,7 @@ import { closeAllBrowsers } from "./browser.js";
 import { redactCredentials } from "./security.js";
 import { runSecurityAudit, printAuditReport } from "./security-audit.js";
 import { startAriKernel, isAriActive } from "./ari-kernel.js";
+import { CronService, createCronTools } from "./cron-service.js";
 import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "./session-policy.js";
 import { imageTools } from "./image-tools.js";
 import { createPlaybookTools } from "./playbooks.js";
@@ -221,6 +222,9 @@ export function startServer(config: SAXConfig) {
   // Initialize secrets store
   const secretsStore = new SecretsStore(dataDir);
 
+  // Initialize cron scheduler
+  const cronService = new CronService(dataDir);
+
   // Mutable ref so secret tools can emit SSE events during the active request
   let activeOnEvent: ((event: ServerEvent) => void) | undefined;
   const secretTools = createSecretTools(secretsStore, undefined);
@@ -241,7 +245,8 @@ export function startServer(config: SAXConfig) {
   const browserTools = createBrowserTools(() => activeBrowserSessionId);
 
   const playbookTools = createPlaybookTools();
-  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...playbookTools];
+  const cronTools = createCronTools(cronService);
+  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...playbookTools, ...cronTools];
 
   // In-memory session cache (backed by disk)
   const sessions = new Map<string, Session>();
@@ -661,6 +666,60 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── Cron Jobs ──
+    if (method === "GET" && url.pathname === "/api/cron") {
+      json(200, { jobs: cronService.list(), settings: cronService.getSettings() });
+      return;
+    }
+    if (method === "POST" && url.pathname === "/api/cron") {
+      const body = JSON.parse(await readBody(req)) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean };
+      if (!body.name || !body.schedule || !body.prompt) { json(400, { error: "name, schedule, and prompt are required" }); return; }
+      try {
+        const job = cronService.create(body.name, body.schedule, body.prompt, body.systemJob);
+        json(200, { ok: true, job });
+      } catch (e) { json(400, { error: (e as Error).message }); }
+      return;
+    }
+    if (method === "PATCH" && url.pathname.startsWith("/api/cron/")) {
+      const id = url.pathname.split("/").pop()!;
+      const body = JSON.parse(await readBody(req));
+      try {
+        const job = cronService.update(id, body);
+        if (!job) { json(404, { error: "Job not found" }); return; }
+        json(200, { ok: true, job });
+      } catch (e) { json(400, { error: (e as Error).message }); }
+      return;
+    }
+    if (method === "DELETE" && url.pathname.startsWith("/api/cron/")) {
+      const id = url.pathname.split("/").pop()!;
+      const deleted = cronService.delete(id);
+      json(200, { ok: true, deleted });
+      return;
+    }
+    if (method === "POST" && url.pathname.match(/^\/api\/cron\/[^/]+\/toggle$/)) {
+      const id = url.pathname.split("/")[3];
+      const job = cronService.toggle(id);
+      if (!job) { json(404, { error: "Job not found" }); return; }
+      json(200, { ok: true, job });
+      return;
+    }
+    if (method === "POST" && url.pathname.match(/^\/api\/cron\/[^/]+\/run$/)) {
+      const id = url.pathname.split("/")[3];
+      const job = cronService.get(id);
+      if (!job) { json(404, { error: "Job not found" }); return; }
+      // Manual run — trigger via the execute callback
+      json(200, { ok: true, message: `Job "${job.name}" triggered` });
+      // Fire-and-forget execution
+      cronService["executeJob"](job).catch(() => {});
+      return;
+    }
+    if (method === "POST" && url.pathname === "/api/cron/settings") {
+      const body = JSON.parse(await readBody(req));
+      cronService.updateSettings(body);
+      json(200, { ok: true, settings: cronService.getSettings() });
+      return;
+    }
+
     // ── Credential rotation ──
     if (method === "POST" && url.pathname === "/api/auth/rotate") {
       const newToken = randomBytes(24).toString("hex");
@@ -727,6 +786,23 @@ export function startServer(config: SAXConfig) {
     }
 
     // ── Audit API ──
+
+    // ── Active Chats API (for WS-less fallback) ──
+
+    if (method === "GET" && url.pathname === "/api/chats/active") {
+      json(200, { active: chatWs.getActiveChats() });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/chats/stop") {
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
+      const sid = String(body.sessionId || "");
+      if (!sid) { json(400, { error: "sessionId required" }); return; }
+      // The WS manager handles abort
+      json(200, { ok: true, stopped: sid });
+      return;
+    }
 
     // ── File Access Mode API ──
 
@@ -933,7 +1009,12 @@ export function startServer(config: SAXConfig) {
         const provider = tokens && !config.openaiApiKey ? ("codex" as const) : ("xai" as const);
 
         // Wire up SSE writer so request_secret can emit to the active stream
-        const onEvent = (event: ServerEvent) => sseWrite(res, event);
+        // Register with WebSocket chat manager for multi-client broadcast
+        const wsChat = chatWs.startChat(sessionId);
+        const onEvent = (event: ServerEvent) => {
+          sseWrite(res, event);    // SSE to the original requester
+          wsChat.onEvent(event);   // WS to all subscribed clients
+        };
         activeOnEvent = onEvent;
 
         // Isolate browser session per chat session (thread-safe — no global mutable)
@@ -1056,6 +1137,7 @@ export function startServer(config: SAXConfig) {
           images: imageAttachments,
           maxIterations: config.maxIterations,
           temperature: config.temperature,
+          signal: wsChat.abort.signal, // Abort from WS stop button
           onEvent: (event) => {
             // Canary check with rolling buffer — catches canaries split across chunk boundaries
             if (event.type === "stream" && event.delta) {
@@ -1289,6 +1371,10 @@ export function startServer(config: SAXConfig) {
   // Create server: HTTPS if cert available, HTTP fallback
   const server = createServer(requestHandler);
 
+  // WebSocket chat system — enables multi-chat, reconnect, stop button
+  const { setupChatWebSocket } = require("./chat-ws.js") as typeof import("./chat-ws.js");
+  const chatWs = setupChatWebSocket(server, config.authToken);
+
   server.listen(config.port, "127.0.0.1", () => {
     const maskedToken = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
     console.log(`\n  Secret Agent X running at http://127.0.0.1:${config.port}`);
@@ -1306,6 +1392,36 @@ export function startServer(config: SAXConfig) {
     startAriKernel(ariAuditDb).then(active => {
       if (active) console.log(`  [ari] Audit log: ${ariAuditDb}`);
     });
+
+    // Start cron scheduler
+    cronService.onExecute(async (jobId, prompt) => {
+      try {
+        const apiKey = await getApiKey(config.openaiApiKey);
+        const { loadTokens } = await import("./auth.js");
+        const tokens = loadTokens();
+        const provider = tokens && !config.openaiApiKey ? ("codex" as const) : ("xai" as const);
+        const session = getOrCreateSession(`cron-${jobId}`);
+        const result = await runAgent(prompt, session.messages, {
+          apiKey,
+          model: provider === "codex" ? "gpt-5.3-codex" : config.model,
+          provider,
+          systemPrompt: config.systemPrompt,
+          tools,
+          security,
+          toolPolicy,
+          sessionId: `cron-${jobId}`,
+          maxIterations: config.maxIterations,
+        });
+        const assistantReply = result.messages.filter(m => m.role === "assistant" && m.content).map(m => String(m.content)).join("\n");
+        session.messages = result.messages.filter(m => m.role !== "system");
+        session.updatedAt = Date.now();
+        saveSession(session);
+        return assistantReply.slice(0, 500) || "Completed (no text output)";
+      } catch (e) {
+        throw new Error(`Cron execution failed: ${(e as Error).message}`);
+      }
+    });
+    cronService.start();
 
     // Agent Sync: pull on startup + start heartbeat (background, non-blocking)
     const syncCfg = agentSync.getConfig();

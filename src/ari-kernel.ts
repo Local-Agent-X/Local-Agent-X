@@ -67,8 +67,11 @@ export async function startAriKernel(auditDbPath: string, preset?: string): Prom
     const { join: j, resolve: res } = await import("node:path");
     const { homedir: hd } = await import("node:os");
 
-    // Look for ARI Kernel CLI in known locations
+    // Look for ARI Kernel CLI: npm package first, then local project
     const ariCliPaths = [
+      // From npm (installed via: npm install @arikernel/cli)
+      j(res("."), "node_modules", "@arikernel", "cli", "dist", "main.js"),
+      // Local project (development)
       j(hd(), "Ari Kernel", "apps", "cli", "dist", "main.js"),
       j(res("."), "..", "Ari Kernel", "apps", "cli", "dist", "main.js"),
       j(hd(), "ari-kernel", "apps", "cli", "dist", "main.js"),

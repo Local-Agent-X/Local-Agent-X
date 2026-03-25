@@ -93,7 +93,7 @@ async function checkAuth() {
 async function apiFetch(path, opts = {}) {
   return fetch(`${API}${path}`, {
     ...opts,
-    headers: { Authorization: `Bearer ${AUTH_TOKEN}`, ...opts.headers },
+    headers: { ...opts.headers, Authorization: `Bearer ${AUTH_TOKEN}` },
   });
 }
 

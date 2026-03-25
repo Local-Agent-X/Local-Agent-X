@@ -248,13 +248,14 @@ async function applyHttps() {
     const d = await apiPost('/api/https/toggle', { enabled });
     if (d.ok) {
       if (el) el.textContent = d.message;
-      // Tell user to restart and where to go
+      // Tell user to restart — include token in redirect URL so auth carries across protocol change
       if (d.redirectTo) {
+        const redirectWithToken = d.redirectTo + (d.redirectTo.includes('?') ? '&' : '?') + 'token=' + AUTH_TOKEN;
         if (el) el.innerHTML =
           d.message + '<br>' +
           '<span style="color:var(--accent)">1.</span> Stop the server (Ctrl+C in terminal)<br>' +
           '<span style="color:var(--accent)">2.</span> Start it again: <code style="color:var(--accent);font-size:.7rem">npm run dev</code><br>' +
-          '<span style="color:var(--accent)">3.</span> Open: <a href="' + d.redirectTo + '" style="color:var(--accent)">' + d.redirectTo + '</a>' +
+          '<span style="color:var(--accent)">3.</span> Open: <a href="' + redirectWithToken + '" style="color:var(--accent)">' + d.redirectTo + '</a>' +
           (enabled ? '<br><span style="color:var(--muted);font-size:.65rem">Browser will show a one-time warning — click Advanced → Proceed</span>' : '');
       }
     } else {

@@ -8,7 +8,6 @@ function init_settings() {
   checkServer('video');
   checkVoiceCaps();
   loadToolsList();
-  checkHttpsStatus();
 }
 
 function switchTab(id) {
@@ -218,50 +217,3 @@ async function forcePush() {
 
 // ── HTTPS ──
 
-async function checkHttpsStatus() {
-  try {
-    const d = await apiJson('/api/https/status');
-    const el = document.getElementById('https-status');
-    const tog = document.getElementById('tog-https');
-    if (!el) return;
-    if (d.isHttps) {
-      el.className = 'status-badge ok';
-      el.innerHTML = '<span class="status-dot"></span> HTTPS active — traffic encrypted';
-      if (tog) tog.classList.add('on');
-    } else if (d.enabled) {
-      el.className = 'status-badge warn';
-      el.innerHTML = '<span class="status-dot"></span> HTTPS enabled — restart server to activate';
-      if (tog) tog.classList.add('on');
-    } else {
-      el.className = 'status-badge warn';
-      el.innerHTML = '<span class="status-dot"></span> HTTP only — traffic unencrypted';
-    }
-  } catch {}
-}
-
-async function applyHttps() {
-  const enabled = document.getElementById('tog-https')?.classList.contains('on');
-  const el = document.getElementById('https-result');
-  if (el) el.textContent = enabled ? 'Enabling HTTPS...' : 'Disabling HTTPS...';
-
-  try {
-    const d = await apiPost('/api/https/toggle', { enabled });
-    if (d.ok) {
-      if (el) el.textContent = d.message;
-      // Tell user to restart — include token in redirect URL so auth carries across protocol change
-      if (d.redirectTo) {
-        const redirectWithToken = d.redirectTo + (d.redirectTo.includes('?') ? '&' : '?') + 'token=' + AUTH_TOKEN;
-        if (el) el.innerHTML =
-          d.message + '<br>' +
-          '<span style="color:var(--accent)">1.</span> Stop the server (Ctrl+C in terminal)<br>' +
-          '<span style="color:var(--accent)">2.</span> Start it again: <code style="color:var(--accent);font-size:.7rem">npm run dev</code><br>' +
-          '<span style="color:var(--accent)">3.</span> Open: <a href="' + redirectWithToken + '" style="color:var(--accent)">' + d.redirectTo + '</a>' +
-          (enabled ? '<br><span style="color:var(--muted);font-size:.65rem">Browser will show a one-time warning — click Advanced → Proceed</span>' : '');
-      }
-    } else {
-      if (el) el.textContent = 'Error: ' + (d.error || 'Unknown error');
-    }
-  } catch (e) {
-    if (el) el.textContent = 'Failed: ' + e.message;
-  }
-}

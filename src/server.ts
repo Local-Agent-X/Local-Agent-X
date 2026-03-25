@@ -1,6 +1,4 @@
-import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createServer as createHttpsServer } from "node:https";
-import { getOrCreateCert } from "./tls.js";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
@@ -292,10 +290,7 @@ export function startServer(config: SAXConfig) {
 
   // TLS: try HTTPS first, fall back to HTTP if cert unavailable
   // HTTPS: only enable if user opted in via Settings → Security → HTTPS toggle
-  const httpsFlag = existsSync(join(dataDir, "https-enabled"));
-  const tlsCert = httpsFlag ? getOrCreateCert(dataDir) : null;
-  const isHttps = !!tlsCert;
-  const protocol = isHttps ? "https" : "http";
+  // HTTP only — localhost doesn't need TLS (loopback traffic can't be sniffed remotely)
 
   const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || "/", `http://127.0.0.1:${config.port}`);
@@ -727,42 +722,6 @@ export function startServer(config: SAXConfig) {
         res.end(lines.join("\n"));
       } catch (e) {
         json(500, { error: (e as Error).message });
-      }
-      return;
-    }
-
-    // ── HTTPS API ──
-
-    if (method === "GET" && url.pathname === "/api/https/status") {
-      const { existsSync: ex } = await import("node:fs");
-      const { join: j } = await import("node:path");
-      const certExists = ex(j(dataDir, "tls", "cert.pem"));
-      const httpsConfigPath = j(dataDir, "https-enabled");
-      const httpsEnabled = ex(httpsConfigPath);
-      json(200, { enabled: httpsEnabled, certExists, isHttps });
-      return;
-    }
-
-    if (method === "POST" && url.pathname === "/api/https/toggle") {
-      const body = JSON.parse(await readBody(req));
-      const { join: j } = await import("node:path");
-      const { writeFileSync: wf, unlinkSync: ul, existsSync: ex } = await import("node:fs");
-      const flagPath = j(dataDir, "https-enabled");
-
-      if (body.enabled) {
-        // Enable: generate cert if needed, write flag
-        const { getOrCreateCert: gcc } = await import("./tls.js");
-        const cert = gcc(dataDir);
-        if (!cert) {
-          json(500, { error: "Could not generate TLS certificate. Ensure openssl is installed." });
-          return;
-        }
-        wf(flagPath, "true", "utf-8");
-        json(200, { ok: true, message: "HTTPS enabled. Restart the server to activate.", redirectTo: `https://127.0.0.1:${config.port}/#settings` });
-      } else {
-        // Disable: remove flag
-        if (ex(flagPath)) ul(flagPath);
-        json(200, { ok: true, message: "HTTPS disabled. Restart the server to apply.", redirectTo: `http://127.0.0.1:${config.port}/#settings` });
       }
       return;
     }
@@ -1296,7 +1255,6 @@ export function startServer(config: SAXConfig) {
           headers["X-Content-Type-Options"] = "nosniff";
           headers["X-Frame-Options"] = "DENY";
           headers["Referrer-Policy"] = "no-referrer";
-          if (isHttps) headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
         }
         res.writeHead(200, headers);
         res.end(readFileSync(filePath));
@@ -1309,27 +1267,13 @@ export function startServer(config: SAXConfig) {
   };
 
   // Create server: HTTPS if cert available, HTTP fallback
-  const server = isHttps
-    ? createHttpsServer({ cert: tlsCert!.cert, key: tlsCert!.key }, requestHandler)
-    : createHttpServer(requestHandler);
-
-  // If HTTPS is active, also run HTTP on port+1 that redirects to HTTPS
-  if (isHttps) {
-    const httpRedirector = createHttpServer((req, res) => {
-      res.writeHead(301, { Location: `https://127.0.0.1:${config.port}${req.url || "/"}` });
-      res.end();
-    });
-    httpRedirector.listen(config.port + 1, "127.0.0.1", () => {
-      console.log(`  HTTP redirect: http://127.0.0.1:${config.port + 1} → https://127.0.0.1:${config.port}`);
-    });
-  }
+  const server = createServer(requestHandler);
 
   server.listen(config.port, "127.0.0.1", () => {
     const maskedToken = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
-    console.log(`\n  Secret Agent X running at ${protocol}://127.0.0.1:${config.port}`);
-    console.log(`  Protocol: ${isHttps ? "HTTPS (TLS encrypted)" : "HTTP (⚠ unencrypted — install OpenSSL for HTTPS)"}`);
+    console.log(`\n  Secret Agent X running at http://127.0.0.1:${config.port}`);
     console.log(`  Auth token: ${maskedToken}`);
-    console.log(`\n  ► Open: ${protocol}://127.0.0.1:${config.port}/?token=<your-token>\n`);
+    console.log(`\n  ► Open: http://127.0.0.1:${config.port}/?token=<your-token>\n`);
     console.log(`  Memory: ${dataDir}/memory/`);
     console.log(`  Sessions: ${dataDir}/sessions/`);
 

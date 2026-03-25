@@ -11,6 +11,7 @@ import type { ToolPolicy } from "./tool-policy.js";
 import type { ThreatEngine } from "./threat-engine.js";
 import type { RBACManager, Role } from "./rbac.js";
 import { compactIfNeeded, getContextStatus, type ContextStatus } from "./context-manager.js";
+import { streamAnthropicResponse } from "./anthropic-client.js";
 import { checkSessionPolicy } from "./session-policy.js";
 import { ariEvaluate, isAriActive } from "./ari-kernel.js";
 import { recordSensitiveRead, checkEgressTaint, isSensitivePath } from "./data-lineage.js";
@@ -25,7 +26,7 @@ interface AgentOptions {
   apiKey: string;
   model: string;
   baseURL?: string;
-  provider: "xai" | "openai" | "codex";
+  provider: "xai" | "openai" | "codex" | "anthropic";
   systemPrompt: string;
   tools: ToolDefinition[];
   security: SecurityLayer;
@@ -715,6 +716,79 @@ async function runStandardAgent(
 
 // ── Main Entry Point ──
 
+// ── Anthropic (Claude) Agent Loop ──
+
+async function runAnthropicAgent(
+  userMessage: string,
+  history: ChatCompletionMessageParam[],
+  options: AgentOptions
+): Promise<AgentTurn> {
+  const { apiKey, model, systemPrompt, tools, security, maxIterations = 25, temperature = 0.7, onEvent, signal } = options;
+  const toolMap = new Map(tools.map(t => [t.name, t]));
+
+  let messages: ChatCompletionMessageParam[] = [
+    ...history,
+    { role: "user", content: userMessage },
+  ];
+
+  let totalInput = 0, totalOutput = 0;
+  const anthropicTools = tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
+
+  for (let iteration = 0; iteration < maxIterations; iteration++) {
+    messages = checkAndCompact(messages, model, onEvent);
+    if (signal?.aborted) {
+      return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "abort" };
+    }
+
+    let assistantContent = "";
+    const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+
+    const stream = streamAnthropicResponse({
+      token: apiKey,
+      model,
+      messages,
+      systemPrompt,
+      tools: anthropicTools,
+      temperature,
+    });
+
+    for await (const event of stream) {
+      if (event.type === "text") {
+        assistantContent += event.delta;
+        onEvent?.({ type: "stream", delta: event.delta || "" });
+      } else if (event.type === "tool_call") {
+        toolCalls.push({ id: event.id!, name: event.name!, arguments: event.arguments! });
+      } else if (event.type === "done") {
+        totalInput += event.usage?.inputTokens || 0;
+        totalOutput += event.usage?.outputTokens || 0;
+      } else if (event.type === "error") {
+        onEvent?.({ type: "error", message: event.error || "Anthropic error" });
+      }
+    }
+
+    // Build assistant message
+    const assistantMsg: ChatCompletionMessageParam = { role: "assistant", content: assistantContent || null };
+    if (toolCalls.length > 0) {
+      (assistantMsg as Record<string, unknown>).tool_calls = toolCalls.map(tc => ({
+        id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments },
+      }));
+    }
+    messages.push(assistantMsg);
+
+    if (toolCalls.length === 0) {
+      onEvent?.({ type: "done", usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput } });
+      return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
+    }
+
+    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
+    messages.push(...toolResults);
+  }
+
+  return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "max_iterations" };
+}
+
+// ── Main Entry Point ──
+
 export async function runAgent(
   userMessage: string,
   history: ChatCompletionMessageParam[],
@@ -722,6 +796,9 @@ export async function runAgent(
 ): Promise<AgentTurn> {
   if (options.provider === "codex") {
     return runCodexAgent(userMessage, history, options);
+  }
+  if (options.provider === "anthropic") {
+    return runAnthropicAgent(userMessage, history, options);
   }
   return runStandardAgent(userMessage, history, options);
 }

@@ -1,0 +1,111 @@
+name: Security & CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Run weekly on Monday at 9am UTC (catches new CVEs in dependencies)
+    - cron: '0 9 * * 1'
+
+jobs:
+  security:
+    name: Security Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: npm audit (production deps)
+        run: npm audit --production --audit-level=high
+        continue-on-error: true
+
+      - name: Check for hardcoded secrets
+        run: |
+          echo "Scanning for hardcoded secrets..."
+          FOUND=0
+          # API keys, tokens, passwords in source
+          if grep -rniP '(password|secret|api_key|apikey|private_key)\s*[=:]\s*["\x27][a-zA-Z0-9]{16,}' src/ public/ --include="*.ts" --include="*.js" 2>/dev/null | grep -v 'test\|example\|placeholder\|schema\|type\|interface\|description\|pattern\|regex'; then
+            echo "::warning::Potential hardcoded secrets found"
+            FOUND=1
+          fi
+          # AWS keys
+          if grep -rn 'AKIA[A-Z0-9]{16}' src/ public/ 2>/dev/null; then
+            echo "::error::AWS access key found in source"
+            FOUND=1
+          fi
+          # GitHub tokens
+          if grep -rnP 'gh[ps]_[a-zA-Z0-9]{36}' src/ public/ 2>/dev/null; then
+            echo "::error::GitHub token found in source"
+            FOUND=1
+          fi
+          if [ "$FOUND" -eq 0 ]; then echo "No secrets found"; fi
+
+      - name: Verify security files exist
+        run: |
+          for f in src/security.ts src/sanitize.ts src/threat-engine.ts src/keychain.ts SECURITY.md THREAT-MODEL.md; do
+            if [ ! -f "$f" ]; then
+              echo "::error::Missing critical security file: $f"
+              exit 1
+            fi
+          done
+          echo "All security files present"
+
+      - name: Verify lockfile integrity
+        run: |
+          if [ ! -f "package-lock.json" ]; then
+            echo "::error::No package-lock.json — dependency confusion risk"
+            exit 1
+          fi
+          echo "Lockfile present"
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+        continue-on-error: true
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [security, test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 30

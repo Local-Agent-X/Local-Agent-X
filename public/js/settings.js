@@ -8,6 +8,7 @@ function init_settings() {
   checkServer('video');
   checkVoiceCaps();
   loadToolsList();
+  checkHttpsStatus();
 }
 
 function switchTab(id) {
@@ -213,4 +214,45 @@ async function forcePush() {
     const d = await apiPost('/api/sync/push', {});
     if (el) el.textContent = d.success ? `Done: ${syncMsg(d)}` : `Error: ${syncMsg(d)}`;
   } catch (e) { if (el) el.textContent = 'Push failed: ' + e.message; }
+}
+
+// ── HTTPS ──
+
+async function checkHttpsStatus() {
+  try {
+    const d = await apiJson('/api/https/status');
+    const el = document.getElementById('https-status');
+    const tog = document.getElementById('tog-https');
+    if (!el) return;
+    if (d.isHttps) {
+      el.className = 'status-badge ok';
+      el.innerHTML = '<span class="status-dot"></span> HTTPS active — traffic encrypted';
+      if (tog) tog.classList.add('on');
+    } else if (d.enabled) {
+      el.className = 'status-badge warn';
+      el.innerHTML = '<span class="status-dot"></span> HTTPS enabled — restart server to activate';
+      if (tog) tog.classList.add('on');
+    } else {
+      el.className = 'status-badge warn';
+      el.innerHTML = '<span class="status-dot"></span> HTTP only — traffic unencrypted';
+    }
+  } catch {}
+}
+
+async function applyHttps() {
+  const enabled = document.getElementById('tog-https')?.classList.contains('on');
+  const el = document.getElementById('https-result');
+  if (el) el.textContent = enabled ? 'Enabling HTTPS...' : 'Disabling HTTPS...';
+
+  try {
+    const d = await apiPost('/api/https/toggle', { enabled });
+    if (d.ok) {
+      if (el) el.textContent = d.message;
+      checkHttpsStatus();
+    } else {
+      if (el) el.textContent = 'Error: ' + (d.error || 'Unknown error');
+    }
+  } catch (e) {
+    if (el) el.textContent = 'Failed: ' + e.message;
+  }
 }

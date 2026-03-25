@@ -291,7 +291,9 @@ export function startServer(config: SAXConfig) {
   }
 
   // TLS: try HTTPS first, fall back to HTTP if cert unavailable
-  const tlsCert = getOrCreateCert(dataDir);
+  // HTTPS: only enable if user opted in via Settings → Security → HTTPS toggle
+  const httpsFlag = existsSync(join(dataDir, "https-enabled"));
+  const tlsCert = httpsFlag ? getOrCreateCert(dataDir) : null;
   const isHttps = !!tlsCert;
   const protocol = isHttps ? "https" : "http";
 
@@ -661,6 +663,42 @@ export function startServer(config: SAXConfig) {
     if (method === "POST" && url.pathname === "/api/sync/pull") {
       const result = await agentSync.pull();
       json(200, result);
+      return;
+    }
+
+    // ── HTTPS API ──
+
+    if (method === "GET" && url.pathname === "/api/https/status") {
+      const { existsSync: ex } = await import("node:fs");
+      const { join: j } = await import("node:path");
+      const certExists = ex(j(dataDir, "tls", "cert.pem"));
+      const httpsConfigPath = j(dataDir, "https-enabled");
+      const httpsEnabled = ex(httpsConfigPath);
+      json(200, { enabled: httpsEnabled, certExists, isHttps });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/https/toggle") {
+      const body = JSON.parse(await readBody(req));
+      const { join: j } = await import("node:path");
+      const { writeFileSync: wf, unlinkSync: ul, existsSync: ex } = await import("node:fs");
+      const flagPath = j(dataDir, "https-enabled");
+
+      if (body.enabled) {
+        // Enable: generate cert if needed, write flag
+        const { getOrCreateCert: gcc } = await import("./tls.js");
+        const cert = gcc(dataDir);
+        if (!cert) {
+          json(500, { error: "Could not generate TLS certificate. Ensure openssl is installed." });
+          return;
+        }
+        wf(flagPath, "true", "utf-8");
+        json(200, { ok: true, message: "HTTPS enabled. Restart the server and visit https://127.0.0.1:" + config.port });
+      } else {
+        // Disable: remove flag
+        if (ex(flagPath)) ul(flagPath);
+        json(200, { ok: true, message: "HTTPS disabled. Restart the server." });
+      }
       return;
     }
 

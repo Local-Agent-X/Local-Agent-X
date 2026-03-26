@@ -1,58 +1,41 @@
-import { execFile, spawn } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, rmSync } from "node:fs";
 import { join, resolve, relative, extname } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-/**
- * Agent Sync — Git-based memory synchronization across machines.
- *
- * Syncs the agent's "soul" (memory, identity, config) to a private GitHub repo.
- * Background operations — user never sees terminals or popups.
- *
- * Safe sync list:  memory/*.md, tool-policy.json, config.json (sanitized)
- * Never synced:    secrets.enc, secrets.salt, master.dpapi, tokens.json, auth.json, audit/
- *
- * Merge strategy:
- * - .md files: union merge (keep all unique lines from both versions)
- * - .json files: last-write-wins
- * - sessions/: per-file, no conflict (unique IDs)
- */
-
 export interface SyncConfig {
   enabled: boolean;
-  repoUrl: string;          // e.g. https://github.com/user/agent-memory.git
-  tokenSecretName: string;  // Name in secrets vault (e.g. GITHUB_SYNC_TOKEN)
+  repoUrl: string;
+  tokenSecretName: string;
   interval: "after_chat" | "2min" | "5min" | "15min" | "manual";
-  syncSessions: boolean;    // Optional: sync session history
-  syncWorkspace: boolean;   // Optional: sync workspace/apps (PROJECT.md, source files)
-  autoDownload: boolean;    // Pull on startup
+  syncSessions: boolean;
+  syncWorkspace: boolean;
+  autoDownload: boolean;
 }
 
 const DEFAULT_CONFIG: SyncConfig = {
-  enabled: false,
-  repoUrl: "",
-  tokenSecretName: "GITHUB_SYNC_TOKEN",
-  interval: "after_chat",
-  syncSessions: false,
-  syncWorkspace: false,
-  autoDownload: true,
+  enabled: false, repoUrl: "", tokenSecretName: "GITHUB_SYNC_TOKEN",
+  interval: "after_chat", syncSessions: true, syncWorkspace: false, autoDownload: true,
 };
 
-// Files that should NEVER be synced (security risk)
-const NEVER_SYNC = new Set([
-  "secrets.enc", "secrets.salt", "master.dpapi",
-  "tokens.json", "auth.json", "config.json",
-  "memory.db", "memory.db-wal", "memory.db-shm",
+const SYNC_EXTENSIONS = new Set([
+  ".html", ".css", ".js", ".ts", ".tsx", ".jsx", ".json", ".md", ".txt",
+  ".yaml", ".yml", ".toml", ".svg", ".env.example", ".py", ".sh", ".bat",
+  ".sql", ".graphql", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
+  ".bmp", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".ogg", ".pdf", ".csv",
 ]);
-
-const NEVER_SYNC_DIRS = new Set(["audit", "voice-tmp", "chrome-profile"]);
+const SKIP_DIRS = new Set([
+  "node_modules", ".next", "dist", "build", ".cache", "__pycache__",
+  ".git", ".venv", "venv", "sd-server", "models", "checkpoints", "weights",
+]);
+const MAX_FILE_SIZE = 10_000_000;
 
 export class AgentSync {
   private config: SyncConfig;
   private dataDir: string;
-  private syncDir: string;      // Local git repo clone
+  private syncDir: string;
   private configPath: string;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private isSyncing = false;
@@ -67,13 +50,9 @@ export class AgentSync {
     this.config = this.loadConfig();
   }
 
-  // ── Config ──
-
   private loadConfig(): SyncConfig {
     if (existsSync(this.configPath)) {
-      try {
-        return { ...DEFAULT_CONFIG, ...JSON.parse(readFileSync(this.configPath, "utf-8")) };
-      } catch {}
+      try { return { ...DEFAULT_CONFIG, ...JSON.parse(readFileSync(this.configPath, "utf-8")) }; } catch {}
     }
     return { ...DEFAULT_CONFIG };
   }
@@ -85,8 +64,6 @@ export class AgentSync {
 
   getConfig(): SyncConfig { return { ...this.config }; }
 
-  // ── Git helpers (silent, background) ──
-
   private getAuthUrl(): string {
     const token = this.getToken();
     if (!token || !this.config.repoUrl) return this.config.repoUrl;
@@ -95,440 +72,287 @@ export class AgentSync {
       url.username = "x-access-token";
       url.password = token;
       return url.toString();
-    } catch {
-      return this.config.repoUrl;
-    }
+    } catch { return this.config.repoUrl; }
   }
 
   private async git(...args: string[]): Promise<string> {
     try {
-      const { stdout } = await execFileAsync("git", args, {
-        cwd: this.syncDir,
-        timeout: 30_000,
-        windowsHide: true,
-      });
+      const { stdout } = await execFileAsync("git", args, { cwd: this.syncDir, timeout: 30_000, windowsHide: true });
       return stdout.trim();
     } catch (e) {
-      const err = e as { stderr?: string; message: string };
-      throw new Error(err.stderr || err.message);
+      throw new Error((e as { stderr?: string; message: string }).stderr || (e as Error).message);
     }
   }
-
-  // ── Initialize sync repo ──
 
   async init(): Promise<boolean> {
     if (!this.config.enabled || !this.config.repoUrl) return false;
-
     if (!existsSync(this.syncDir)) {
       mkdirSync(this.syncDir, { recursive: true });
       try {
-        await execFileAsync("git", ["clone", this.getAuthUrl(), this.syncDir], {
-          timeout: 60_000,
-          windowsHide: true,
-        });
-        console.log("[sync] Cloned sync repo");
+        await execFileAsync("git", ["clone", this.getAuthUrl(), this.syncDir], { timeout: 60_000, windowsHide: true });
       } catch {
-        // Empty repo — init locally
         await execFileAsync("git", ["init"], { cwd: this.syncDir, windowsHide: true });
         await this.git("remote", "add", "origin", this.getAuthUrl());
-        console.log("[sync] Initialized new sync repo");
       }
     }
-
-    // Update remote URL (in case token changed)
-    try {
-      await this.git("remote", "set-url", "origin", this.getAuthUrl());
-    } catch {}
-
+    try { await this.git("remote", "set-url", "origin", this.getAuthUrl()); } catch {}
     return true;
   }
 
-  // ── Copy files: data dir → sync repo (respecting safe list) ──
+  // ── Push direction: local → sync repo (with deletion propagation) ──
 
   private copyToSync(): void {
     const memDir = join(this.dataDir, "memory");
     const syncMemDir = join(this.syncDir, "memory");
     if (!existsSync(syncMemDir)) mkdirSync(syncMemDir, { recursive: true });
 
-    // Copy memory .md files
+    const localMemFiles = new Set<string>();
     if (existsSync(memDir)) {
-      for (const file of readdirSync(memDir)) {
-        if (file.endsWith(".md")) {
-          const src = readFileSync(join(memDir, file), "utf-8");
-          writeFileSync(join(syncMemDir, file), src, "utf-8");
+      for (const f of readdirSync(memDir)) {
+        if (f.endsWith(".md")) {
+          localMemFiles.add(f);
+          writeFileSync(join(syncMemDir, f), readFileSync(join(memDir, f), "utf-8"), "utf-8");
         }
       }
     }
-
-    // Copy tool policy
-    const policyPath = join(this.dataDir, "tool-policy.json");
-    if (existsSync(policyPath)) {
-      writeFileSync(join(this.syncDir, "tool-policy.json"), readFileSync(policyPath, "utf-8"));
+    // Delete from sync repo if deleted locally
+    for (const f of readdirSync(syncMemDir)) {
+      if (f.endsWith(".md") && !localMemFiles.has(f)) unlinkSync(join(syncMemDir, f));
     }
 
-    // Copy sanitized config (strip secrets)
+    const policyPath = join(this.dataDir, "tool-policy.json");
+    if (existsSync(policyPath)) writeFileSync(join(this.syncDir, "tool-policy.json"), readFileSync(policyPath, "utf-8"));
+
     const configPath = join(this.dataDir, "config.json");
     if (existsSync(configPath)) {
       try {
         const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
-        delete cfg.authToken;
-        delete cfg.openaiApiKey;
+        delete cfg.authToken; delete cfg.openaiApiKey;
         writeFileSync(join(this.syncDir, "config-sanitized.json"), JSON.stringify(cfg, null, 2));
       } catch {}
     }
 
-    // Optional: copy sessions
     if (this.config.syncSessions) {
       const sessDir = join(this.dataDir, "sessions");
       const syncSessDir = join(this.syncDir, "sessions");
       if (!existsSync(syncSessDir)) mkdirSync(syncSessDir, { recursive: true });
       if (existsSync(sessDir)) {
-        for (const file of readdirSync(sessDir)) {
-          if (file.endsWith(".json")) {
-            writeFileSync(join(syncSessDir, file), readFileSync(join(sessDir, file), "utf-8"));
-          }
+        for (const f of readdirSync(sessDir)) {
+          if (f.endsWith(".json")) writeFileSync(join(syncSessDir, f), readFileSync(join(sessDir, f), "utf-8"));
         }
       }
     }
 
-    // Optional: sync entire workspace (apps, images, videos, etc. — skip heavy artifacts)
     if (this.config.syncWorkspace) {
       const workspace = resolve("workspace");
-      const syncWorkspaceDir = join(this.syncDir, "workspace");
-      if (existsSync(workspace)) {
-        this.copyDirFiltered(workspace, syncWorkspaceDir);
-      }
+      if (existsSync(workspace)) this.mirrorDir(workspace, join(this.syncDir, "workspace"));
     }
   }
 
-  /** Recursively copy a directory, skipping heavy/generated artifacts */
-  private copyDirFiltered(src: string, dest: string): void {
-    // Skip these directories entirely (heavy, regeneratable)
-    const SKIP_DIRS = new Set(["node_modules", ".next", "dist", "build", ".cache", "__pycache__", ".git", ".venv", "venv", "sd-server", "models", "checkpoints", "weights"]);
-    // Sync these file extensions (source code, project docs, media)
-    const SYNC_EXTENSIONS = new Set([
-      // Code & docs
-      ".html", ".css", ".js", ".ts", ".tsx", ".jsx", ".json", ".md",
-      ".txt", ".yaml", ".yml", ".toml", ".svg", ".env.example",
-      ".py", ".sh", ".bat", ".sql", ".graphql",
-      // Images
-      ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp",
-      // Video & audio
-      ".mp4", ".webm", ".mov", ".mp3", ".wav", ".ogg",
-      // Other media
-      ".pdf", ".csv",
-    ]);
-    const MAX_FILE_SIZE = 10_000_000; // 10MB max per file (for images/videos)
-
+  /** Mirror src → dest: copies files, deletes dest entries not in src */
+  private mirrorDir(src: string, dest: string): void {
     if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
+    const srcEntries = new Set<string>();
 
     for (const entry of readdirSync(src)) {
       const srcPath = join(src, entry);
-      const destPath = join(dest, entry);
       const stat = statSync(srcPath);
-
       if (stat.isDirectory()) {
-        if (!SKIP_DIRS.has(entry)) {
-          this.copyDirFiltered(srcPath, destPath);
-        }
+        if (!SKIP_DIRS.has(entry)) { srcEntries.add(entry); this.mirrorDir(srcPath, join(dest, entry)); }
       } else if (stat.isFile()) {
         const ext = extname(entry).toLowerCase();
-        // Always sync project docs regardless of extension
-        const isProjectDoc = /^(PROJECT|CHANGELOG|TODO|README)\.md$/i.test(entry);
-        if ((SYNC_EXTENSIONS.has(ext) || isProjectDoc) && stat.size <= MAX_FILE_SIZE) {
-          if (!existsSync(join(dest, ".."))) mkdirSync(join(dest, ".."), { recursive: true });
-          writeFileSync(destPath, readFileSync(srcPath));
+        const isDoc = /^(PROJECT|CHANGELOG|TODO|README)\.md$/i.test(entry);
+        if ((SYNC_EXTENSIONS.has(ext) || isDoc) && stat.size <= MAX_FILE_SIZE) {
+          srcEntries.add(entry);
+          writeFileSync(join(dest, entry), readFileSync(srcPath));
         }
+      }
+    }
+    // Remove entries deleted from source
+    for (const entry of readdirSync(dest)) {
+      if (!srcEntries.has(entry)) {
+        const p = join(dest, entry);
+        if (statSync(p).isDirectory()) rmSync(p, { recursive: true, force: true }); else unlinkSync(p);
       }
     }
   }
 
-  // ── Copy files: sync repo → data dir ──
+  // ── Pull direction: sync repo → local (with deletion propagation) ──
 
   private copyFromSync(): void {
     const syncMemDir = join(this.syncDir, "memory");
     const memDir = join(this.dataDir, "memory");
     if (!existsSync(memDir)) mkdirSync(memDir, { recursive: true });
 
-    // Copy memory .md files — with injection validation
+    const remoteMemFiles = new Set<string>();
     if (existsSync(syncMemDir)) {
-      let checkMemoryTaint: ((s: string) => { safe: boolean; reason?: string }) | null = null;
-      try {
-        const san = require("./sanitize.js");
-        checkMemoryTaint = san.checkMemoryTaint;
-      } catch {}
+      let checkTaint: ((s: string) => { safe: boolean; reason?: string }) | null = null;
+      try { checkTaint = require("./sanitize.js").checkMemoryTaint; } catch {}
 
-      for (const file of readdirSync(syncMemDir)) {
-        if (file.endsWith(".md")) {
-          const syncContent = readFileSync(join(syncMemDir, file), "utf-8");
-
-          // Validate pulled content for injection before writing
-          if (checkMemoryTaint) {
-            const taint = checkMemoryTaint(syncContent);
-            if (!taint.safe) {
-              console.warn(`[sync] Rejected pulled file ${file}: ${taint.reason}`);
-              continue; // Skip this poisoned file
-            }
-          }
-
-          const localPath = join(memDir, file);
-          if (existsSync(localPath)) {
-            const localContent = readFileSync(localPath, "utf-8");
-            const merged = this.unionMerge(localContent, syncContent);
-            writeFileSync(localPath, merged, "utf-8");
-          } else {
-            writeFileSync(localPath, syncContent, "utf-8");
-          }
+      for (const f of readdirSync(syncMemDir)) {
+        if (!f.endsWith(".md")) continue;
+        remoteMemFiles.add(f);
+        const syncContent = readFileSync(join(syncMemDir, f), "utf-8");
+        if (checkTaint) {
+          const t = checkTaint(syncContent);
+          if (!t.safe) { console.warn(`[sync] Rejected ${f}: ${t.reason}`); continue; }
+        }
+        const localPath = join(memDir, f);
+        if (existsSync(localPath)) {
+          writeFileSync(localPath, this.unionMerge(readFileSync(localPath, "utf-8"), syncContent), "utf-8");
+        } else {
+          writeFileSync(localPath, syncContent, "utf-8");
         }
       }
     }
-
-    // Copy tool policy (last-write-wins)
-    const syncPolicy = join(this.syncDir, "tool-policy.json");
-    if (existsSync(syncPolicy)) {
-      writeFileSync(join(this.dataDir, "tool-policy.json"), readFileSync(syncPolicy, "utf-8"));
+    // Delete local memory files removed from sync repo
+    for (const f of readdirSync(memDir)) {
+      if (f.endsWith(".md") && !remoteMemFiles.has(f)) {
+        console.log(`[sync] Deleting ${f} (removed from remote)`);
+        unlinkSync(join(memDir, f));
+      }
     }
 
-    // Optional: copy sessions
+    const syncPolicy = join(this.syncDir, "tool-policy.json");
+    if (existsSync(syncPolicy)) writeFileSync(join(this.dataDir, "tool-policy.json"), readFileSync(syncPolicy, "utf-8"));
+
     if (this.config.syncSessions) {
       const syncSessDir = join(this.syncDir, "sessions");
       const sessDir = join(this.dataDir, "sessions");
       if (!existsSync(sessDir)) mkdirSync(sessDir, { recursive: true });
       if (existsSync(syncSessDir)) {
-        for (const file of readdirSync(syncSessDir)) {
-          if (file.endsWith(".json") && !existsSync(join(sessDir, file))) {
-            writeFileSync(join(sessDir, file), readFileSync(join(syncSessDir, file), "utf-8"));
-          }
+        for (const f of readdirSync(syncSessDir)) {
+          if (f.endsWith(".json") && !existsSync(join(sessDir, f))) writeFileSync(join(sessDir, f), readFileSync(join(syncSessDir, f), "utf-8"));
         }
       }
     }
 
-    // Optional: pull entire workspace from sync
     if (this.config.syncWorkspace) {
-      const syncWorkspaceDir = join(this.syncDir, "workspace");
-      const workspace = resolve("workspace");
-      if (existsSync(syncWorkspaceDir)) {
-        if (!existsSync(workspace)) mkdirSync(workspace, { recursive: true });
-        this.pullDirFiltered(syncWorkspaceDir, workspace);
-      }
+      const syncWs = join(this.syncDir, "workspace");
+      const ws = resolve("workspace");
+      if (existsSync(syncWs)) { if (!existsSync(ws)) mkdirSync(ws, { recursive: true }); this.pullDir(syncWs, ws); }
     }
   }
 
-  /** Pull synced files into workspace (won't overwrite newer local files) */
-  private pullDirFiltered(src: string, dest: string): void {
+  /** Pull from sync → local. Propagates deletions. */
+  private pullDir(src: string, dest: string): void {
     if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
+    const remoteEntries = new Set<string>();
     for (const entry of readdirSync(src)) {
+      remoteEntries.add(entry);
       const srcPath = join(src, entry);
       const destPath = join(dest, entry);
       const stat = statSync(srcPath);
       if (stat.isDirectory()) {
-        this.pullDirFiltered(srcPath, destPath);
+        this.pullDir(srcPath, destPath);
       } else if (stat.isFile()) {
-        // Only write if local file doesn't exist or is older
-        if (!existsSync(destPath) || statSync(destPath).mtimeMs < stat.mtimeMs) {
-          writeFileSync(destPath, readFileSync(srcPath));
-        }
+        if (!existsSync(destPath) || statSync(destPath).mtimeMs < stat.mtimeMs) writeFileSync(destPath, readFileSync(srcPath));
+      }
+    }
+    // Delete local entries removed from sync repo
+    for (const entry of readdirSync(dest)) {
+      if (!remoteEntries.has(entry)) {
+        const p = join(dest, entry);
+        console.log(`[sync] Deleting ${relative(resolve("workspace"), p)} (removed from remote)`);
+        if (statSync(p).isDirectory()) rmSync(p, { recursive: true, force: true }); else unlinkSync(p);
       }
     }
   }
 
-  // ── Union merge for .md files ──
-
   private unionMerge(local: string, remote: string): string {
-    const localLines = local.split("\n").map(l => l.trim()).filter(Boolean);
-    const remoteLines = remote.split("\n").map(l => l.trim()).filter(Boolean);
     const seen = new Set<string>();
     const merged: string[] = [];
-
-    // Keep order from local, then add new lines from remote
-    for (const line of localLines) {
+    for (const line of local.split("\n").map(l => l.trim()).filter(Boolean)) {
       if (!seen.has(line)) { seen.add(line); merged.push(line); }
     }
-    for (const line of remoteLines) {
+    for (const line of remote.split("\n").map(l => l.trim()).filter(Boolean)) {
       if (!seen.has(line)) { seen.add(line); merged.push(line); }
     }
     return merged.join("\n") + "\n";
   }
 
-  // ── Push (background, non-blocking) ──
+  // ── Push / Pull / Heartbeat ──
 
   async push(): Promise<{ success: boolean; message: string }> {
     if (!this.config.enabled || this.isSyncing) return { success: false, message: "Sync disabled or already running" };
     this.isSyncing = true;
-
     try {
       await this.init();
       this.copyToSync();
-
-      // Stage all changes
       await this.git("add", "-A");
-
-      // Check if there's anything to commit
-      try {
-        const status = await this.git("status", "--porcelain");
-        if (!status) { this.isSyncing = false; return { success: true, message: "Nothing to sync" }; }
-      } catch {}
-
-      // Commit
+      try { const s = await this.git("status", "--porcelain"); if (!s) { this.isSyncing = false; return { success: true, message: "Nothing to sync" }; } } catch {}
       const hostname = (await execFileAsync("hostname", [], { windowsHide: true })).stdout.trim();
       await this.git("commit", "-m", `sync from ${hostname} at ${new Date().toISOString()}`);
-
-      // Pull + rebase first (handle remote changes)
-      try {
-        await this.git("pull", "--rebase", "origin", "main");
-      } catch {
-        // If rebase fails (conflict), abort and try merge
+      try { await this.git("pull", "--rebase", "origin", "main"); } catch {
         try { await this.git("rebase", "--abort"); } catch {}
-        try {
-          await this.git("pull", "--no-rebase", "origin", "main");
-          // Auto-resolve any .md conflicts with union merge
-          await this.resolveConflicts();
-        } catch {}
+        try { await this.git("pull", "--no-rebase", "origin", "main"); await this.resolveConflicts(); } catch {}
       }
-
-      // Push
       await this.git("push", "-u", "origin", "HEAD:main");
       this.lastSyncTime = Date.now();
-      console.log("[sync] Pushed successfully");
       return { success: true, message: "Synced" };
     } catch (e) {
-      console.warn("[sync] Push failed:", (e as Error).message);
       return { success: false, message: (e as Error).message };
-    } finally {
-      this.isSyncing = false;
-    }
+    } finally { this.isSyncing = false; }
   }
-
-  // ── Pull (background, non-blocking) ──
 
   async pull(): Promise<{ success: boolean; message: string }> {
     if (!this.config.enabled || this.isSyncing) return { success: false, message: "Sync disabled or already running" };
     this.isSyncing = true;
-
     try {
       await this.init();
-
-      // Fetch latest
-      try {
-        await this.git("fetch", "origin", "main");
-      } catch {
-        this.isSyncing = false;
-        return { success: false, message: "Could not reach remote" };
-      }
-
-      // Check if there are remote changes
-      let hasRemoteChanges = true;
-      try {
-        const diff = await this.git("diff", "HEAD", "origin/main", "--stat");
-        if (!diff) hasRemoteChanges = false;
-      } catch {}
-
-      // Pull if there are remote changes
-      if (hasRemoteChanges) {
-        try {
-          await this.git("pull", "--no-rebase", "origin", "main");
-        } catch {
-          await this.resolveConflicts();
-        }
-      }
-
-      // Always copy from sync repo to data dir (handles cases where
-      // git is up-to-date but local memory files are missing)
+      try { await this.git("fetch", "origin", "main"); } catch { this.isSyncing = false; return { success: false, message: "Could not reach remote" }; }
+      let hasChanges = true;
+      try { if (!await this.git("diff", "HEAD", "origin/main", "--stat")) hasChanges = false; } catch {}
+      if (hasChanges) { try { await this.git("pull", "--no-rebase", "origin", "main"); } catch { await this.resolveConflicts(); } }
       this.copyFromSync();
       this.lastSyncTime = Date.now();
-      const msg = hasRemoteChanges ? "Downloaded latest" : "Synced local files";
-      console.log(`[sync] ${msg}`);
-      return { success: true, message: msg };
+      return { success: true, message: hasChanges ? "Downloaded latest" : "Synced local files" };
     } catch (e) {
-      console.warn("[sync] Pull failed:", (e as Error).message);
       return { success: false, message: (e as Error).message };
-    } finally {
-      this.isSyncing = false;
-    }
+    } finally { this.isSyncing = false; }
   }
-
-  // ── Resolve git conflicts via union merge ──
 
   private async resolveConflicts(): Promise<void> {
     try {
       const status = await this.git("status", "--porcelain");
       const conflicted = status.split("\n").filter(l => l.startsWith("UU ") || l.startsWith("AA "));
-
       for (const line of conflicted) {
         const file = line.slice(3).trim();
         if (file.endsWith(".md")) {
-          // Union merge: get both versions, merge unique lines
           const fullPath = join(this.syncDir, file);
           if (existsSync(fullPath)) {
-            const content = readFileSync(fullPath, "utf-8");
-            // Remove git conflict markers and merge
-            const cleaned = content
-              .replace(/<<<<<<< HEAD\n/g, "")
-              .replace(/=======\n/g, "")
-              .replace(/>>>>>>> .*\n/g, "");
-            const lines = [...new Set(cleaned.split("\n").map(l => l.trim()).filter(Boolean))];
+            const cleaned = readFileSync(fullPath, "utf-8").replace(/<<<<<<< HEAD\n/g, "").replace(/=======\n/g, "").replace(/>>>>>>> .*\n/g, "");
+            const lines = Array.from(new Set(cleaned.split("\n").map(l => l.trim()).filter(Boolean)));
             writeFileSync(fullPath, lines.join("\n") + "\n");
           }
         }
         await this.git("add", file);
       }
-
-      if (conflicted.length > 0) {
-        await this.git("commit", "-m", "auto-merge: union merge resolved conflicts");
-      }
+      if (conflicted.length > 0) await this.git("commit", "-m", "auto-merge: union merge resolved conflicts");
     } catch {}
   }
 
-  // ── Heartbeat: check for remote changes periodically ──
-
   startHeartbeat(): void {
     if (!this.config.enabled || this.config.interval === "manual") return;
-
-    const ms = {
-      after_chat: 0,  // No timer, triggered after each chat
-      "2min": 2 * 60_000,
-      "5min": 5 * 60_000,
-      "15min": 15 * 60_000,
-      manual: 0,
-    }[this.config.interval];
-
+    const ms = { after_chat: 0, "2min": 120_000, "5min": 300_000, "15min": 900_000, manual: 0 }[this.config.interval];
     if (ms > 0) {
-      this.heartbeatTimer = setInterval(async () => {
-        // Pull to check for remote changes, then push local changes
-        await this.pull();
-        await this.push();
-      }, ms);
-      console.log(`[sync] Heartbeat started: every ${ms / 60000} min`);
+      this.heartbeatTimer = setInterval(async () => { await this.pull(); await this.push(); }, ms);
     }
   }
 
   stopHeartbeat(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
+    if (this.heartbeatTimer) { clearInterval(this.heartbeatTimer); this.heartbeatTimer = null; }
   }
-
-  // ── After chat: push if configured ──
 
   async onChatEnd(): Promise<void> {
-    if (this.config.enabled && (this.config.interval === "after_chat")) {
-      // Run in background — don't block the response
-      this.push().catch(() => {});
-    }
+    if (this.config.enabled && this.config.interval === "after_chat") this.push().catch(() => {});
   }
-
-  // ── Status ──
 
   getStatus() {
     return {
-      enabled: this.config.enabled,
-      lastSync: this.lastSyncTime,
-      isSyncing: this.isSyncing,
-      repoUrl: this.config.repoUrl,
-      interval: this.config.interval,
-      autoDownload: this.config.autoDownload,
-      syncSessions: this.config.syncSessions,
+      enabled: this.config.enabled, lastSync: this.lastSyncTime, isSyncing: this.isSyncing,
+      repoUrl: this.config.repoUrl, interval: this.config.interval,
+      autoDownload: this.config.autoDownload, syncSessions: this.config.syncSessions,
     };
   }
 }

@@ -1,12 +1,72 @@
 // ── App Shell: Sidebar + Router ──
 // The sidebar persists across all "pages" — state never resets.
 
-let chats = loadChats();
+let chats = loadChatsFromCache(); // Start with cache, then fetch from server
 let projects = loadProjects();
 let activeChat = null;
 let expandedProjects = new Set();
+let serverSyncing = false; // Prevent save loops
 
-function loadChats() { try { return JSON.parse(localStorage.getItem('sax_chats_v2') || '[]'); } catch { return []; } }
+// Cache-only load (instant, for page load)
+function loadChatsFromCache() { try { return JSON.parse(localStorage.getItem('sax_chats_v2') || '[]'); } catch { return []; } }
+
+// Fetch chats from server (source of truth), merge with cache
+async function syncChatsFromServer() {
+  try {
+    const res = await fetch(`${API}/api/sessions`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    if (!res.ok) return;
+    const serverList = await res.json(); // [{id, title, updatedAt, messageCount}]
+
+    // Build map of server sessions
+    const serverMap = new Map(serverList.map(s => [s.id, s]));
+    const localMap = new Map(chats.map(c => [c.id, c]));
+
+    // Merge: server wins for sessions it knows about, keep local-only sessions
+    const merged = [];
+    const seen = new Set();
+
+    // Server sessions first (sorted by updatedAt desc)
+    for (const srv of serverList) {
+      seen.add(srv.id);
+      const local = localMap.get(srv.id);
+      if (local && local.updatedAt >= srv.updatedAt) {
+        // Local is newer or same — keep local version (has UI metadata like projectId)
+        merged.push(local);
+      } else if (local) {
+        // Server is newer — fetch full session and merge UI metadata
+        try {
+          const full = await fetch(`${API}/api/sessions/${srv.id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+          if (full.ok) {
+            const session = await full.json();
+            session.projectId = local.projectId; // Preserve UI metadata
+            session.compactedAt = local.compactedAt;
+            merged.push(session);
+          } else merged.push(local);
+        } catch { merged.push(local); }
+      } else {
+        // Server-only session (from another machine) — fetch it
+        try {
+          const full = await fetch(`${API}/api/sessions/${srv.id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+          if (full.ok) merged.push(await full.json());
+        } catch {}
+      }
+    }
+
+    // Local-only sessions (not on server yet — newly created before first save)
+    for (const local of chats) {
+      if (!seen.has(local.id)) merged.push(local);
+    }
+
+    merged.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    chats = merged;
+    localStorage.setItem('sax_chats_v2', JSON.stringify(chats));
+    renderSidebar();
+  } catch (e) {
+    console.warn('[sync] Failed to fetch sessions from server:', e.message);
+  }
+}
+
+// Save: write to localStorage immediately, push to server in background
 function saveChats() {
   const toSave = chats.map(c => ({
     ...c,
@@ -17,8 +77,12 @@ function saveChats() {
   }));
   localStorage.setItem('sax_chats_v2', JSON.stringify(toSave));
 }
+
 function loadProjects() { try { return JSON.parse(localStorage.getItem('sax_projects_v1') || '[]'); } catch { return []; } }
 function saveProjects() { localStorage.setItem('sax_projects_v1', JSON.stringify(projects)); }
+
+// Sync from server on page load (after initial render from cache)
+setTimeout(() => syncChatsFromServer(), 500);
 
 // ── Routing ──
 const ROUTES = ['chat', 'settings', 'secrets', 'cron'];

@@ -1368,16 +1368,19 @@ export function startServer(config: SAXConfig) {
         // Persist to disk
         saveSession(session);
 
+        // Send done event BEFORE post-processing so frontend unlocks immediately
+        sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+        clearInterval(heartbeat);
+        res.end();
+
         // Agent Sync: push after chat (background, non-blocking)
         agentSync.onChatEnd().catch(() => {});
       } catch (e) {
         sseWrite(res, { type: "error", message: (e as Error).message });
-        // Always send done so browser clears spinner
         sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+        clearInterval(heartbeat);
+        res.end();
       }
-
-      clearInterval(heartbeat);
-      res.end();
       return;
     }
 

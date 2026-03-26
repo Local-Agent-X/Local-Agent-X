@@ -95,6 +95,11 @@ function newChat() {
   saveChats(); renderSidebar();
   navigate('chat');
   if (window.renderMessages) renderMessages();
+  // New chat is never streaming — reset UI
+  const stopBtn = document.getElementById('stop-btn');
+  const sendBtn = document.getElementById('send-btn');
+  if (stopBtn) stopBtn.style.display = 'none';
+  if (sendBtn) sendBtn.disabled = false;
 }
 
 function selectChat(id) {
@@ -102,6 +107,16 @@ function selectChat(id) {
   renderSidebar();
   navigate('chat');
   if (window.renderMessages) renderMessages();
+  // Update send/stop button state for THIS chat
+  const isThisChatStreaming = window.streamingSessionId === id;
+  const stopBtn = document.getElementById('stop-btn');
+  const sendBtn = document.getElementById('send-btn');
+  if (stopBtn) stopBtn.style.display = isThisChatStreaming ? 'flex' : 'none';
+  if (sendBtn) sendBtn.disabled = isThisChatStreaming;
+  // Subscribe to this chat's events via WS
+  if (window.chatWs && window.chatWs.readyState === WebSocket.OPEN) {
+    window.chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
+  }
 }
 
 function deleteChat(id, e) {

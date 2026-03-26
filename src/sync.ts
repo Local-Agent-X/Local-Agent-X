@@ -77,7 +77,10 @@ export class AgentSync {
 
   private async git(...args: string[]): Promise<string> {
     try {
-      const { stdout } = await execFileAsync("git", args, { cwd: this.syncDir, timeout: 30_000, windowsHide: true });
+      const { stdout } = await execFileAsync("git", args, {
+        cwd: this.syncDir, timeout: 30_000, windowsHide: true,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "" },
+      });
       return stdout.trim();
     } catch (e) {
       throw new Error((e as { stderr?: string; message: string }).stderr || (e as Error).message);
@@ -89,9 +92,10 @@ export class AgentSync {
     if (!existsSync(this.syncDir)) {
       mkdirSync(this.syncDir, { recursive: true });
       try {
-        await execFileAsync("git", ["clone", this.getAuthUrl(), this.syncDir], { timeout: 60_000, windowsHide: true });
+        const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "" };
+        await execFileAsync("git", ["clone", this.getAuthUrl(), this.syncDir], { timeout: 60_000, windowsHide: true, env: gitEnv });
       } catch {
-        await execFileAsync("git", ["init"], { cwd: this.syncDir, windowsHide: true });
+        await execFileAsync("git", ["init"], { cwd: this.syncDir, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
         await this.git("remote", "add", "origin", this.getAuthUrl());
       }
     }

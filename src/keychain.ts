@@ -51,7 +51,7 @@ function dpapiStore(data: Buffer, filePath: string): void {
     `[IO.File]::WriteAllBytes('${filePath.replace(/\\/g, "/")}', $encrypted)\n`;
   writeFileSync(scriptPath, script, "utf-8");
   try {
-    execSync(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"`, {
+    execSync(`powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${scriptPath}"`, {
       timeout: 10_000, stdio: "ignore", windowsHide: true,
     });
   } finally {
@@ -70,7 +70,7 @@ function dpapiRetrieve(filePath: string): Buffer {
     `[IO.File]::WriteAllText('${outPath.replace(/\\/g, "/")}', [Convert]::ToBase64String($decrypted))\n`;
   writeFileSync(scriptPath, script, "utf-8");
   try {
-    execSync(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"`, {
+    execSync(`powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${scriptPath}"`, {
       timeout: 10_000, stdio: "ignore", windowsHide: true,
     });
     const result = readFileSync(outPath, "utf-8").trim();

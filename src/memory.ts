@@ -2251,13 +2251,13 @@ const DEFAULT_HEART_MD = `# Agent Heart
 
 const DEFAULT_IDENTITY_MD = `# Agent Identity
 
-<!-- Give your agent a name and personality. -->
-<!-- These get loaded into every conversation. -->
+<!-- Your agent has no name yet. On first conversation, it will ask you to name it. -->
+<!-- Once named, the name and personality are saved here and loaded into every conversation. -->
 
-- Name: Agent X
-- Emoji: 🕵️
-- Tagline: "Your personal AI companion"
-- Vibe: Helpful, warm, a little mysterious
+- Name: (not yet named)
+- Emoji:
+- Tagline:
+- Vibe:
 `;
 
 /**

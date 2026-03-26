@@ -1,5 +1,5 @@
 // ── Chat Panel ──
-let streaming = false;
+let streamingSessionId = null; // Track WHICH session is streaming, not global boolean
 let pendingUploads = [];
 let userScrolledUp = false;
 
@@ -28,9 +28,8 @@ function connectChatWs() {
     }
 
     if (msg.type === 'event' && msg.sessionId && msg.event) {
-      // If we're viewing this chat, update the UI
-      if (activeChat && activeChat.id === msg.sessionId && streaming) {
-        // Events already handled by SSE stream — skip to avoid duplicates
+      // If we're viewing this chat AND it's the one streaming via SSE, skip WS events (avoid duplicates)
+      if (activeChat && activeChat.id === msg.sessionId && streamingSessionId === msg.sessionId) {
         return;
       }
       // If we're NOT viewing this chat but it's active, update sidebar indicator
@@ -150,7 +149,7 @@ async function sendMessage() {
   const msgEl = addMessageEl('assistant', '');
   const bodyEl = msgEl.querySelector('.msg-body');
   bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
-  streaming = true; stopSpeaking(); ttsSentenceBuffer = '';
+  streamingSessionId = activeChat.id; stopSpeaking(); ttsSentenceBuffer = '';
   // Show stop button, hide send button
   const stopBtn = document.getElementById('stop-btn');
   if (stopBtn) stopBtn.style.display = 'flex';
@@ -234,7 +233,7 @@ async function sendMessage() {
       activeChat.updatedAt = Date.now(); saveChats(); renderSidebar();
     }
   } catch (e) { bodyEl.textContent = 'Connection error: ' + e.message; }
-  flushTTS(); streaming = false;
+  flushTTS(); streamingSessionId = null;
   // Hide stop button
   const stopBtn2 = document.getElementById('stop-btn');
   if (stopBtn2) stopBtn2.style.display = 'none';
@@ -836,6 +835,16 @@ function updateContextBar(event) {
     </div>
   `;
 }
+
+// Expose for cross-file access
+window.streamingSessionId = null;
+Object.defineProperty(window, 'streamingSessionId', {
+  get() { return streamingSessionId; },
+  set(v) { streamingSessionId = v; }
+});
+Object.defineProperty(window, 'chatWs', {
+  get() { return chatWs; }
+});
 
 // Init chat on page load
 function init_chat() { renderMessages(); }

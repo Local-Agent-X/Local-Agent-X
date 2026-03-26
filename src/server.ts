@@ -1021,11 +1021,15 @@ export function startServer(config: SAXConfig) {
       try {
         // Pick a simple GET endpoint to test connectivity
         const testEndpoint = config.endpoints.find(e => e.method === "GET") || config.endpoints[0];
-        const testUrl = config.baseUrl + (testEndpoint?.path?.replace(/\{[^}]+\}/g, "") || "");
-        const headers: Record<string, string> = {
-          "Authorization": `Bearer ${token}`,
-          ...config.headers,
-        };
+        let testUrl = config.baseUrl + (testEndpoint?.path?.replace(/\{[^}]+\}/g, "") || "");
+        const headers: Record<string, string> = { ...config.headers };
+        // API keys go as query param; bearer/bot tokens go in Authorization header
+        if (config.authType === "api_key") {
+          const sep = testUrl.includes("?") ? "&" : "?";
+          testUrl += `${sep}key=${encodeURIComponent(token)}`;
+        } else {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10000);
         const r = await fetch(testUrl, { headers, signal: controller.signal });

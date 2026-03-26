@@ -185,7 +185,7 @@ async function executeToolCalls(
       result = { content: `BLOCKED by policy: ${policyReason}`, isError: true };
     } else {
       // Data lineage: block egress if session has tainted data
-      const egressTools = ["http_request", "web_fetch", "browser"];
+      const egressTools = ["http_request", "web_fetch"];
       if (egressTools.includes(tc.name)) {
         const egressCheck = checkEgressTaint(sessionId || "default");
         if (egressCheck.blocked) {

@@ -161,6 +161,7 @@ function newChat() {
   navigate('chat');
   if (window.renderMessages) renderMessages();
   // New chat is never streaming — reset UI
+  if (window.streamingSessionId !== undefined) window.streamingSessionId = null;
   const stopBtn = document.getElementById('stop-btn');
   const sendBtn = document.getElementById('send-btn');
   if (stopBtn) stopBtn.style.display = 'none';

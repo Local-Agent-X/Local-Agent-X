@@ -149,39 +149,42 @@ async function sendMessage() {
   const msgEl = addMessageEl('assistant', '');
   const bodyEl = msgEl.querySelector('.msg-body');
   bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
-  streamingSessionId = activeChat.id; stopSpeaking(); ttsSentenceBuffer = '';
-  // Show stop button, hide send button
+  const streamSessionId = activeChat.id; // Capture which session THIS stream belongs to
+  const streamChat = activeChat; // Reference to the chat object (survives navigation)
+  streamingSessionId = streamSessionId; stopSpeaking(); ttsSentenceBuffer = '';
   const stopBtn = document.getElementById('stop-btn');
   if (stopBtn) stopBtn.style.display = 'flex';
-  // Subscribe to this chat via WS
   if (chatWs && chatWs.readyState === WebSocket.OPEN) {
-    chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: activeChat.id }));
+    chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: streamSessionId }));
   }
   document.getElementById('send-btn').disabled = true;
+
+  // Helper: is the user still viewing this chat?
+  function isViewingThis() { return activeChat && activeChat.id === streamSessionId; }
 
   try {
     const res = await fetch(`${API}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ message: finalText, sessionId: activeChat.id, attachments: msgAttachments || [] }),
+      body: JSON.stringify({ message: finalText, sessionId: streamSessionId, attachments: msgAttachments || [] }),
     });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '', content = '';
-    let toolEvents = []; // Track tool calls for persistence
+    let toolEvents = [];
     let lastSaveTime = 0;
 
-    // Save partial response so it survives navigation
+    // Always save to the ORIGINAL chat object, not whatever activeChat is now
     function savePartial() {
-      if ((!content.trim() && toolEvents.length === 0) || !activeChat) return;
-      const lastMsg = activeChat.messages[activeChat.messages.length - 1];
+      if ((!content.trim() && toolEvents.length === 0)) return;
+      const lastMsg = streamChat.messages[streamChat.messages.length - 1];
       if (lastMsg && lastMsg.role === 'assistant' && lastMsg._streaming) {
         lastMsg.content = content;
         lastMsg._tools = toolEvents.length > 0 ? [...toolEvents] : undefined;
       } else {
-        activeChat.messages.push({ role: 'assistant', content, _streaming: true, _tools: toolEvents.length > 0 ? [...toolEvents] : undefined });
+        streamChat.messages.push({ role: 'assistant', content, _streaming: true, _tools: toolEvents.length > 0 ? [...toolEvents] : undefined });
       }
-      activeChat.updatedAt = Date.now();
+      streamChat.updatedAt = Date.now();
       saveChats();
     }
 
@@ -194,50 +197,59 @@ async function sendMessage() {
         if (!line.startsWith('data: ')) continue;
         try {
           const event = JSON.parse(line.slice(6));
+          const viewing = isViewingThis();
           switch (event.type) {
             case 'stream':
-              content += event.delta; bodyEl.innerHTML = md(content); feedTTS(event.delta);
-              // Save partial every 2 seconds so content survives navigation
+              content += event.delta;
+              if (viewing) { bodyEl.innerHTML = md(content); feedTTS(event.delta); }
               if (Date.now() - lastSaveTime > 2000) { savePartial(); lastSaveTime = Date.now(); }
               break;
             case 'tool_start':
-              bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args));
               toolEvents.push({ type: 'start', name: event.toolName, args: event.args });
+              if (viewing) { bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args)); }
               break;
             case 'tool_end': {
-              const cards = bodyEl.querySelectorAll('.tool-card');
-              const last = cards[cards.length - 1];
-              if (last) { last.querySelector('.indicator').className = 'indicator ' + (event.allowed ? 'allowed' : 'blocked'); last.querySelector('.tool-detail').textContent = event.result.slice(0, 2000); }
               toolEvents.push({ type: 'end', name: event.toolName, allowed: event.allowed, result: (event.result||'').slice(0, 500) });
-              savePartial(); // Save immediately after tool completes
+              if (viewing) {
+                const cards = bodyEl.querySelectorAll('.tool-card');
+                const last = cards[cards.length - 1];
+                if (last) { last.querySelector('.indicator').className = 'indicator ' + (event.allowed ? 'allowed' : 'blocked'); last.querySelector('.tool-detail').textContent = event.result.slice(0, 2000); }
+              }
+              savePartial();
               break;
             }
-            case 'secret_request': showSecretModal(event.name, event.service, event.reason); break;
-            case 'context_status': updateContextBar(event); break;
-            case 'error': content += '\n\nError: ' + event.message; bodyEl.innerHTML = md(content); break;
+            case 'secret_request': if (viewing) showSecretModal(event.name, event.service, event.reason); break;
+            case 'context_status': if (viewing) updateContextBar(event); break;
+            case 'error': content += '\n\nError: ' + event.message; if (viewing) bodyEl.innerHTML = md(content); break;
           }
         } catch {}
       }
-      autoScroll();
+      if (isViewingThis()) autoScroll();
     }
-    userScrolledUp = false; // Reset when stream ends
+    userScrolledUp = false;
+    // Finalize the ORIGINAL chat
+    const lastMsg = streamChat.messages[streamChat.messages.length - 1];
     if (content.trim()) {
-      // Finalize: replace the streaming message with the final one
-      const lastMsg = activeChat.messages[activeChat.messages.length - 1];
       if (lastMsg && lastMsg._streaming) {
         lastMsg.content = content;
         delete lastMsg._streaming;
       } else {
-        activeChat.messages.push({ role: 'assistant', content });
+        streamChat.messages.push({ role: 'assistant', content });
       }
-      activeChat.updatedAt = Date.now(); saveChats(); renderSidebar();
+      streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
     }
-  } catch (e) { bodyEl.textContent = 'Connection error: ' + e.message; }
-  flushTTS(); streamingSessionId = null;
-  // Hide stop button
-  const stopBtn2 = document.getElementById('stop-btn');
-  if (stopBtn2) stopBtn2.style.display = 'none';
-  document.getElementById('send-btn').disabled = false;
+    // If user navigated back, re-render to show completed response
+    if (isViewingThis()) renderMessages();
+  } catch (e) { if (isViewingThis()) bodyEl.textContent = 'Connection error: ' + e.message; }
+  flushTTS();
+  // Only clear streaming state if THIS stream is still the active one
+  if (streamingSessionId === streamSessionId) streamingSessionId = null;
+  // Only update UI if user is still viewing this chat
+  if (isViewingThis()) {
+    const stopBtn2 = document.getElementById('stop-btn');
+    if (stopBtn2) stopBtn2.style.display = 'none';
+    document.getElementById('send-btn').disabled = false;
+  }
   updateContextBar();
 }
 
@@ -609,11 +621,26 @@ function toggleTTS() {
 let prefetchedAudio = null;
 
 async function fetchTTSAudio(text) {
-  const r = await fetch(`${API}/api/voice/synthesize`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-    body: JSON.stringify({ text: text.trim(), speed: 1.15 })
-  });
+  // Check if XTTS is selected
+  let ttsEngine = 'kokoro';
+  try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); ttsEngine = s.ttsEngine || 'kokoro'; } catch {}
+
+  let r;
+  if (ttsEngine === 'xtts') {
+    let voiceId = '';
+    try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); voiceId = s.xttsVoice || ''; } catch {}
+    r = await fetch('http://127.0.0.1:7862/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text.trim(), voice_id: voiceId, language: 'en' })
+    });
+  } else {
+    r = await fetch(`${API}/api/voice/synthesize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ text: text.trim(), speed: 1.15 })
+    });
+  }
   if (!r.ok) return null;
   if (!audioContext) audioContext = new AudioContext();
   return await audioContext.decodeAudioData(await r.arrayBuffer());

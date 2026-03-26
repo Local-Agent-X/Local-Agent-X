@@ -65,6 +65,12 @@ function stopChat() {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
     body: JSON.stringify({ sessionId: activeChat.id }),
   }).catch(() => {});
+  // Clear streaming state so send button works again
+  streamingSessionId = null;
+  const stopBtn = document.getElementById('stop-btn');
+  const sendBtn = document.getElementById('send-btn');
+  if (stopBtn) stopBtn.style.display = 'none';
+  if (sendBtn) sendBtn.disabled = false;
 }
 
 function isChatActive(sessionId) {
@@ -76,12 +82,12 @@ function isChatActive(sessionId) {
   const el = document.getElementById('messages');
   if (!el) { document.addEventListener('DOMContentLoaded', initScrollPause); return; }
   el.addEventListener('wheel', () => {
-    if (!streaming) return;
+    if (!streamingSessionId) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     userScrolledUp = !atBottom;
   });
   el.addEventListener('scroll', () => {
-    if (!streaming) return;
+    if (!streamingSessionId) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     if (atBottom) userScrolledUp = false;
   });
@@ -118,7 +124,7 @@ function renderMessages() {
 }
 
 async function sendMessage() {
-  if (streaming) return;
+  if (streamingSessionId) return;
   userScrolledUp = false; // Reset scroll lock when user sends
   const input = document.getElementById('msg-input');
   const text = input.value.trim();
@@ -240,7 +246,40 @@ async function sendMessage() {
     }
     // If user navigated back, re-render to show completed response
     if (isViewingThis()) renderMessages();
-  } catch (e) { if (isViewingThis()) bodyEl.textContent = 'Connection error: ' + e.message; }
+  } catch (e) {
+    // Auto-retry once on network error (browser launch can be slow)
+    if (!content && e.message && (e.message.includes('network') || e.message.includes('Failed to fetch'))) {
+      try {
+        if (isViewingThis()) bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
+        const res2 = await fetch(`${API}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+          body: JSON.stringify({ message: finalText, sessionId: streamSessionId, attachments: msgAttachments || [] }),
+        });
+        const reader2 = res2.body.getReader();
+        const decoder2 = new TextDecoder();
+        let buffer2 = '';
+        while (true) {
+          const { done, value } = await reader2.read();
+          if (done) break;
+          buffer2 += decoder2.decode(value, { stream: true });
+          const lines = buffer2.split('\n'); buffer2 = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === 'stream') { content += event.delta; if (isViewingThis()) bodyEl.innerHTML = md(content); }
+              if (event.type === 'tool_start' && isViewingThis()) { bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args)); }
+              if (event.type === 'tool_end' && isViewingThis()) { const cards = bodyEl.querySelectorAll('.tool-card'); const last = cards[cards.length-1]; if(last){last.querySelector('.indicator').className='indicator '+(event.allowed?'allowed':'blocked');} }
+              if (event.type === 'done') { savePartial(); }
+            } catch {}
+          }
+        }
+      } catch (e2) { if (isViewingThis()) bodyEl.textContent = 'Connection error: ' + e2.message; }
+    } else {
+      if (isViewingThis()) bodyEl.textContent = 'Connection error: ' + e.message;
+    }
+  }
   flushTTS();
   // Only clear streaming state if THIS stream is still the active one
   if (streamingSessionId === streamSessionId) streamingSessionId = null;

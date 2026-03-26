@@ -245,6 +245,7 @@ const bashTool: ToolDefinition = {
         maxBuffer: 1024 * 1024 * 10, // 10MB
         shell: process.platform === "win32" ? "powershell.exe" : "/bin/bash",
         env: sanitizedEnv,
+        windowsHide: true,
       });
       return ok(output || "(no output)");
     } catch (e) {

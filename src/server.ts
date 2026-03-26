@@ -1019,15 +1019,20 @@ export function startServer(config: SAXConfig) {
       const token = secretsStore.get(config.secretName);
       if (!token) { json(400, { error: `No credentials found. Save your ${config.secretName} first.` }); return; }
       try {
-        // Pick a simple GET endpoint to test connectivity
-        const testEndpoint = config.endpoints.find(e => e.method === "GET") || config.endpoints[0];
-        let testUrl = config.baseUrl + (testEndpoint?.path?.replace(/\{[^}]+\}/g, "") || "");
+        // Pick a test URL appropriate for the auth type
+        let testUrl: string;
         const headers: Record<string, string> = { ...config.headers };
-        // API keys go as query param; bearer/bot tokens go in Authorization header
-        if (config.authType === "api_key") {
+        if (config.id === "google" && config.authType === "api_key") {
+          // API keys only work with public endpoints — test against YouTube
+          testUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=test&maxResults=1&key=${encodeURIComponent(token)}`;
+        } else if (config.authType === "api_key") {
+          const testEndpoint = config.endpoints.find(e => e.method === "GET") || config.endpoints[0];
+          testUrl = config.baseUrl + (testEndpoint?.path?.replace(/\{[^}]+\}/g, "") || "");
           const sep = testUrl.includes("?") ? "&" : "?";
           testUrl += `${sep}key=${encodeURIComponent(token)}`;
         } else {
+          const testEndpoint = config.endpoints.find(e => e.method === "GET") || config.endpoints[0];
+          testUrl = config.baseUrl + (testEndpoint?.path?.replace(/\{[^}]+\}/g, "") || "");
           headers["Authorization"] = `Bearer ${token}`;
         }
         const controller = new AbortController();

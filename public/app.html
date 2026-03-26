@@ -86,6 +86,7 @@
       <button class="tab-pill" onclick="switchTab('voice')">Voice</button>
       <button class="tab-pill" onclick="switchTab('security')">Security</button>
       <button class="tab-pill" onclick="switchTab('tools')">Tools</button>
+      <button class="tab-pill" onclick="switchTab('integrations')">API Integrations</button>
       <button class="tab-pill" onclick="switchTab('sync')">Agent Sync</button>
     </div>
     <div class="settings-content">
@@ -148,8 +149,27 @@
         <div class="section-card">
           <div class="section-title">Text-to-Speech</div>
           <div id="tts-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
-          <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-tts-engine"><option value="kokoro">Kokoro (Local)</option><option value="piper">Piper (Local)</option><option value="browser">Browser</option><option value="none">None</option></select></div>
-          <div class="field"><label class="field-label">Voice</label><select class="field-select" id="cfg-tts-voice"><option value="am_onyx">Onyx (Male, deep)</option><option value="am_eric">Eric (Male)</option><option value="bm_george">George (British)</option><option value="bm_lewis">Lewis (British)</option></select></div>
+          <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-tts-engine" onchange="onTtsEngineChange(this.value)"><option value="kokoro">Kokoro (Local)</option><option value="piper">Piper (Local)</option><option value="xtts">XTTS v2 (Voice Clone)</option><option value="browser">Browser</option><option value="none">None</option></select></div>
+          <div class="field" id="tts-voice-field"><label class="field-label">Voice</label><select class="field-select" id="cfg-tts-voice"><option value="am_onyx">Onyx (Male, deep)</option><option value="am_eric">Eric (Male)</option><option value="bm_george">George (British)</option><option value="bm_lewis">Lewis (British)</option></select></div>
+          <div class="field" id="xtts-voice-field" style="display:none"><label class="field-label">Cloned Voice</label><select class="field-select" id="cfg-xtts-voice"><option value="">-- select voice --</option></select></div>
+
+          <!-- Voice Clone Manager (shown when XTTS selected) -->
+          <div id="voice-clone-section" style="display:none">
+            <div style="margin-top:16px;font-family:var(--mono);font-size:.75rem;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Voice Cloning</div>
+            <div class="section-card">
+              <p style="color:var(--muted);font-size:.78rem;margin-bottom:12px">Record or upload a 6-10 second voice sample. XTTS will clone the voice for all responses.</p>
+              <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+                <button class="btn" id="record-voice-btn" onclick="toggleVoiceRecording()">&#127908; Record</button>
+                <label class="btn" style="cursor:pointer">&#128194; Upload<input type="file" accept="audio/*" onchange="uploadVoiceSample(this)" style="display:none"></label>
+                <span id="record-status" style="color:var(--muted);font-size:.72rem"></span>
+              </div>
+              <div class="field" style="margin-bottom:12px">
+                <label class="field-label">Voice Name</label>
+                <input type="text" class="field-input" id="voice-clone-name" placeholder="e.g. my_voice, peter, agent_x" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;font-family:var(--mono);font-size:.8rem;width:100%">
+              </div>
+              <div id="saved-voices-list"></div>
+            </div>
+          </div>
         </div>
       </div>
       <!-- Security -->
@@ -184,6 +204,25 @@
         <div class="section-card">
           <div class="section-title">Available Tools</div>
           <div id="tools-list" style="font-family:var(--mono);font-size:.75rem">Loading...</div>
+        </div>
+      </div>
+      <!-- API Integrations -->
+      <div id="stab-integrations" class="tab-pane">
+        <div class="section-card">
+          <div class="section-title">Connected APIs</div>
+          <div class="section-desc">Connect third-party APIs so your agent can interact with them directly. API keys are encrypted in your local secrets vault.</div>
+          <div id="integrations-list" style="margin-top:12px">Loading...</div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Add Custom Integration</div>
+          <div class="section-desc">Can't find the service you need? Tell your agent: <span style="color:var(--accent)">"Add an integration for [service name]"</span> and it will auto-discover and install the API config. Or add one manually below.</div>
+          <div class="field"><label class="field-label">Service ID</label><input class="field-input" id="int-new-id" placeholder="e.g. stripe, linear, airtable"/></div>
+          <div class="field"><label class="field-label">Service Name</label><input class="field-input" id="int-new-name" placeholder="e.g. Stripe"/></div>
+          <div class="field"><label class="field-label">Base URL</label><input class="field-input" id="int-new-url" placeholder="e.g. https://api.stripe.com/v1"/></div>
+          <div class="field"><label class="field-label">Docs URL</label><input class="field-input" id="int-new-docs" placeholder="e.g. https://docs.stripe.com"/></div>
+          <div class="field"><label class="field-label">Auth Type</label><select class="field-select" id="int-new-auth"><option value="bearer_token">Bearer Token</option><option value="api_key">API Key</option><option value="bot_token">Bot Token</option><option value="oauth2">OAuth 2.0</option></select></div>
+          <div class="field"><label class="field-label">Secret Name</label><input class="field-input" id="int-new-secret" placeholder="e.g. STRIPE_API_KEY"/></div>
+          <div class="btn-row"><button class="action-btn primary" onclick="addCustomIntegration()">Add Integration</button></div>
         </div>
       </div>
       <!-- Agent Sync -->

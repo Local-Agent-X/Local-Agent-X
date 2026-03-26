@@ -37,12 +37,13 @@ function tmpPath(ext: string): string {
 
 export interface VoiceCapabilities {
   stt: "whisper" | "none";
-  tts: "kokoro" | "piper" | "none";
+  tts: "kokoro" | "piper" | "xtts" | "none";
   whisperModel: string;
   ttsVoice: string;
+  xttsAvailable: boolean;
 }
 
-export function detectCapabilities(): VoiceCapabilities {
+export async function detectCapabilities(): Promise<VoiceCapabilities> {
   const stt = existsSync(WHISPER_EXE) && existsSync(WHISPER_MODEL) ? "whisper" as const : "none" as const;
 
   let tts: "kokoro" | "piper" | "none" = "none";
@@ -65,11 +66,19 @@ export function detectCapabilities(): VoiceCapabilities {
     ttsVoice = "en_US-ryan-medium";
   }
 
+  // Check XTTS server availability
+  let xttsAvailable = false;
+  try {
+    const r = await fetch("http://127.0.0.1:7862/health", { signal: AbortSignal.timeout(1000) });
+    if (r.ok) xttsAvailable = true;
+  } catch {}
+
   return {
     stt,
     tts,
     whisperModel: stt === "whisper" ? "base.en" : "",
     ttsVoice,
+    xttsAvailable,
   };
 }
 
@@ -251,12 +260,12 @@ export function synthesizePiper(text: string): Buffer {
 /**
  * Synthesize text to speech using best available engine.
  */
-export function synthesize(
+export async function synthesize(
   text: string,
   voice?: string,
   speed?: number
-): Buffer {
-  const caps = detectCapabilities();
+): Promise<Buffer> {
+  const caps = await detectCapabilities();
 
   if (caps.tts === "kokoro") {
     return synthesizeKokoro(text, voice || "am_onyx", speed || 0.95);

@@ -32,6 +32,7 @@ import { CronService, createCronTools } from "./cron-service.js";
 import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "./session-policy.js";
 import { imageTools } from "./image-tools.js";
 import { createPlaybookTools } from "./playbooks.js";
+import { IntegrationRegistry } from "./integrations.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 
 // ── Multipart parser ──
@@ -225,6 +226,9 @@ export function startServer(config: SAXConfig) {
 
   // Initialize cron scheduler
   const cronService = new CronService(dataDir);
+
+  // Initialize API integrations registry
+  const integrations = new IntegrationRegistry(dataDir);
 
   // Mutable ref so secret tools can emit SSE events during the active request
   let activeOnEvent: ((event: ServerEvent) => void) | undefined;
@@ -580,7 +584,33 @@ export function startServer(config: SAXConfig) {
     // Get voice capabilities
     if (method === "GET" && url.pathname === "/api/voice/capabilities") {
       const { detectCapabilities } = await import("./voice.js");
-      json(200, detectCapabilities());
+      json(200, await detectCapabilities());
+      return;
+    }
+
+    // Start XTTS server
+    if (method === "POST" && url.pathname === "/api/voice/start-xtts") {
+      try {
+        // Check if already running
+        try {
+          const h = await fetch("http://127.0.0.1:7862/health", { signal: AbortSignal.timeout(1000) });
+          if (h.ok) { json(200, { ok: true, status: "already running" }); return; }
+        } catch {}
+        // Spawn XTTS server as detached process
+        const { spawn } = await import("node:child_process");
+        const scriptPath = join(process.cwd(), "scripts", "xtts-server.py");
+        const child = spawn("python", [scriptPath], {
+          detached: true,
+          stdio: "ignore",
+          env: { ...process.env, XTTS_PORT: "7862" },
+        });
+        child.unref();
+        // Wait a moment then check health
+        await new Promise(r => setTimeout(r, 2000));
+        json(200, { ok: true, status: "started", pid: child.pid });
+      } catch (e) {
+        json(500, { error: `Failed to start XTTS: ${(e as Error).message}` });
+      }
       return;
     }
 
@@ -619,7 +649,7 @@ export function startServer(config: SAXConfig) {
         }
 
         const { synthesize } = await import("./voice.js");
-        const wavBuffer = synthesize(body.text, body.voice, body.speed);
+        const wavBuffer = await synthesize(body.text, body.voice, body.speed);
 
         if (wavBuffer.length === 0) {
           json(500, { error: "TTS engine not available" });
@@ -899,6 +929,114 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── API Integrations ──
+
+    // List all integrations
+    if (method === "GET" && url.pathname === "/api/integrations") {
+      json(200, integrations.list());
+      return;
+    }
+
+    // Get the schema template for creating new integrations
+    if (method === "GET" && url.pathname === "/api/integrations/schema") {
+      json(200, { schema: IntegrationRegistry.getIntegrationSchema() });
+      return;
+    }
+
+    // Get a single integration by ID
+    if (method === "GET" && url.pathname.startsWith("/api/integrations/")) {
+      const id = decodeURIComponent(url.pathname.split("/").pop()!);
+      const config = integrations.get(id);
+      if (!config) { json(404, { error: "Integration not found" }); return; }
+      json(200, config);
+      return;
+    }
+
+    // Install/configure an integration (mark installed + save secret)
+    if (method === "POST" && url.pathname === "/api/integrations/install") {
+      const body = JSON.parse(await readBody(req)) as { id: string; secretValue?: string };
+      const config = integrations.get(body.id);
+      if (!config) { json(404, { error: "Integration not found" }); return; }
+      // Save the API key/token to secrets vault
+      if (body.secretValue) {
+        secretsStore.set(config.secretName, body.secretValue, config.name);
+      }
+      integrations.markInstalled(body.id, true);
+      json(200, { ok: true, id: body.id, secretName: config.secretName });
+      return;
+    }
+
+    // Uninstall an integration (remove secret + mark uninstalled)
+    if (method === "POST" && url.pathname === "/api/integrations/uninstall") {
+      const body = JSON.parse(await readBody(req)) as { id: string };
+      const config = integrations.get(body.id);
+      if (!config) { json(404, { error: "Integration not found" }); return; }
+      secretsStore.delete(config.secretName);
+      integrations.markInstalled(body.id, false);
+      json(200, { ok: true, id: body.id });
+      return;
+    }
+
+    // Toggle enable/disable
+    if (method === "POST" && url.pathname === "/api/integrations/toggle") {
+      const body = JSON.parse(await readBody(req)) as { id: string; enabled: boolean };
+      integrations.setEnabled(body.id, body.enabled);
+      json(200, { ok: true, id: body.id, enabled: body.enabled });
+      return;
+    }
+
+    // Add a new custom integration (agent-discovered)
+    if (method === "POST" && url.pathname === "/api/integrations") {
+      const body = JSON.parse(await readBody(req));
+      if (!body.id || !body.name || !body.baseUrl) {
+        json(400, { error: "id, name, and baseUrl are required" });
+        return;
+      }
+      body.builtin = false;
+      body.installed = false;
+      body.enabled = true;
+      if (!body.endpoints) body.endpoints = [];
+      if (!body.headers) body.headers = {};
+      integrations.addIntegration(body);
+      json(200, { ok: true, id: body.id });
+      return;
+    }
+
+    // Delete a custom integration
+    if (method === "DELETE" && url.pathname.startsWith("/api/integrations/")) {
+      const id = decodeURIComponent(url.pathname.split("/").pop()!);
+      const removed = integrations.removeIntegration(id);
+      if (!removed) { json(400, { error: "Cannot delete built-in integration" }); return; }
+      json(200, { ok: true, deleted: id });
+      return;
+    }
+
+    // Test an integration (make a simple GET to its base URL)
+    if (method === "POST" && url.pathname === "/api/integrations/test") {
+      const body = JSON.parse(await readBody(req)) as { id: string };
+      const config = integrations.get(body.id);
+      if (!config) { json(404, { error: "Integration not found" }); return; }
+      const token = secretsStore.get(config.secretName);
+      if (!token) { json(400, { error: `No credentials found. Save your ${config.secretName} first.` }); return; }
+      try {
+        // Pick a simple GET endpoint to test connectivity
+        const testEndpoint = config.endpoints.find(e => e.method === "GET") || config.endpoints[0];
+        const testUrl = config.baseUrl + (testEndpoint?.path?.replace(/\{[^}]+\}/g, "") || "");
+        const headers: Record<string, string> = {
+          "Authorization": `Bearer ${token}`,
+          ...config.headers,
+        };
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        const r = await fetch(testUrl, { headers, signal: controller.signal });
+        clearTimeout(timeout);
+        json(200, { ok: r.ok, status: r.status, statusText: r.statusText });
+      } catch (e: any) {
+        json(200, { ok: false, error: e.message });
+      }
+      return;
+    }
+
     // ── ARI Kernel status ──
     if (method === "GET" && url.pathname === "/api/ari-status") {
       const { ariStatus } = await import("./ari-kernel.js");
@@ -1077,9 +1215,10 @@ export function startServer(config: SAXConfig) {
         let canaryBuffer = ""; // Rolling buffer for chunk-boundary canary detection
         let fullResponseText = ""; // Full accumulated response for deep canary scan
 
-        // Inject canary tokens into system prompt (prompt injection detection)
+        // Inject canary tokens + connected integrations into system prompt
+        const integrationsContext = integrations.getAgentContext();
         const enrichedPrompt =
-          config.systemPrompt + contextBlock + relevantMemories + threatEngine.getCanaryBlock();
+          config.systemPrompt + contextBlock + relevantMemories + integrationsContext + threatEngine.getCanaryBlock();
 
         // Resolve image attachments to absolute file paths for vision API
         const uploadsDir = join(dataDir, "uploads");

@@ -360,7 +360,7 @@ export function startServer(config: SAXConfig) {
       }
 
       if (!token) {
-        recordAuthFailure(clientIp);
+        // Missing token is not a brute-force attempt — don't count as failure
         jsonResponse(res, 401, { error: "Unauthorized" }, req);
         return;
       }
@@ -1198,6 +1198,12 @@ export function startServer(config: SAXConfig) {
         };
         activeOnEvent = onEvent;
 
+        // SSE keepalive — prevents connection drop during long tool calls (browser launch, etc.)
+        const heartbeat = setInterval(() => {
+          if (!res.destroyed) res.write(": heartbeat\n\n");
+          else clearInterval(heartbeat);
+        }, 15_000);
+
         // Isolate browser session per chat session (thread-safe — no global mutable)
         activeBrowserSessionId = sessionId;
 
@@ -1370,6 +1376,7 @@ export function startServer(config: SAXConfig) {
         sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
       }
 
+      clearInterval(heartbeat);
       res.end();
       return;
     }

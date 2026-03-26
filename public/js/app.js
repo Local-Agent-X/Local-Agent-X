@@ -26,25 +26,26 @@ async function syncChatsFromServer() {
     const seen = new Set();
 
     // Server sessions first (sorted by updatedAt desc)
+    const deletedIds = getDeletedIds();
     for (const srv of serverList) {
       seen.add(srv.id);
+      // Skip tombstoned sessions — they were deliberately deleted
+      if (deletedIds[srv.id]) continue;
       const local = localMap.get(srv.id);
       if (local && local.updatedAt >= srv.updatedAt) {
-        // Local is newer or same — keep local version (has UI metadata like projectId)
         merged.push(local);
       } else if (local) {
-        // Server is newer — fetch full session and merge UI metadata
         try {
           const full = await fetch(`${API}/api/sessions/${srv.id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
           if (full.ok) {
             const session = await full.json();
-            session.projectId = local.projectId; // Preserve UI metadata
+            session.projectId = local.projectId;
             session.compactedAt = local.compactedAt;
             merged.push(session);
           } else merged.push(local);
         } catch { merged.push(local); }
       } else {
-        // Server-only session (from another machine) — fetch it
+        // Server-only session (from another machine) — skip if tombstoned
         try {
           const full = await fetch(`${API}/api/sessions/${srv.id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
           if (full.ok) merged.push(await full.json());
@@ -183,11 +184,24 @@ function selectChat(id) {
   }
 }
 
+// Tombstones: track deleted session IDs so sync doesn't resurrect them
+function getDeletedIds() { try { return JSON.parse(localStorage.getItem('sax_deleted_sessions') || '{}'); } catch { return {}; } }
+function markDeleted(id) {
+  const deleted = getDeletedIds();
+  deleted[id] = Date.now();
+  // Prune tombstones older than 30 days
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  for (const [k, v] of Object.entries(deleted)) { if (v < cutoff) delete deleted[k]; }
+  localStorage.setItem('sax_deleted_sessions', JSON.stringify(deleted));
+}
+function isDeleted(id) { return !!getDeletedIds()[id]; }
+
 function deleteChat(id, e) {
   e.stopPropagation();
   if (!confirm('Delete this chat?')) return;
   chats = chats.filter(c => c.id !== id);
   if (activeChat && activeChat.id === id) activeChat = null;
+  markDeleted(id); // Record tombstone so sync doesn't bring it back
   saveChats(); renderSidebar();
   if (window.renderMessages) renderMessages();
   apiFetch(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});

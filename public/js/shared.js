@@ -1,15 +1,17 @@
 // ── Shared utilities for all panels ──
 
-// Auth token (sessionStorage preferred, localStorage fallback)
-let AUTH_TOKEN = sessionStorage.getItem('sax_token') || localStorage.getItem('sax_token') || '';
+// Auth token (localStorage persists across tabs/sessions, sessionStorage as backup)
+let AUTH_TOKEN = localStorage.getItem('sax_token') || sessionStorage.getItem('sax_token') || '';
 const urlToken = new URLSearchParams(location.search).get('token');
 if (urlToken) {
   AUTH_TOKEN = urlToken;
+  localStorage.setItem('sax_token', urlToken);
   sessionStorage.setItem('sax_token', urlToken);
   const cleanUrl = new URL(location.href);
   cleanUrl.searchParams.delete('token');
   history.replaceState(null, '', cleanUrl.pathname + cleanUrl.hash);
 } else if (AUTH_TOKEN) {
+  localStorage.setItem('sax_token', AUTH_TOKEN);
   sessionStorage.setItem('sax_token', AUTH_TOKEN);
 }
 

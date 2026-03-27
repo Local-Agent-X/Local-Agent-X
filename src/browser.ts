@@ -73,8 +73,35 @@ export class BrowserManager {
     this.idleTimer = setTimeout(() => this.close(), IDLE_TIMEOUT);
   }
 
+  /** Auto-inject auth token for localhost app URLs so pages load authenticated. */
+  private injectTokenIfLocal(url: string): string {
+    try {
+      const u = new URL(url);
+      const appPort = process.env.SAX_PORT || "4800";
+      if ((u.hostname === "127.0.0.1" || u.hostname === "localhost") && u.port === appPort) {
+        const token = process.env.SAX_AUTH_TOKEN;
+        if (token && !u.searchParams.has("token")) {
+          u.searchParams.set("token", token);
+          return u.toString();
+        }
+      }
+    } catch {}
+    return url;
+  }
+
   getEngine(): BrowserEngine {
     return this.currentEngine;
+  }
+
+  /** Get current page URL (empty string if no page open). */
+  getCurrentUrl(): string {
+    try { return this.page?.url() || ""; } catch { return ""; }
+  }
+
+  /** Check if the browser is currently on our own app. */
+  isOnOwnApp(): boolean {
+    const port = process.env.SAX_PORT || "4800";
+    return new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${port}`, "i").test(this.getCurrentUrl());
   }
 
   /** Lazy-launch browser and return the current page. Switches engine if requested. */
@@ -228,6 +255,7 @@ export class BrowserManager {
 
   /** Open a URL in a NEW tab (keeps existing tabs). */
   async newTab(url: string): Promise<string> {
+    url = this.injectTokenIfLocal(url);
     if (!this.context) {
       // No browser yet — just navigate normally
       return this.navigate(url);
@@ -254,6 +282,8 @@ export class BrowserManager {
 
   /** Navigate to a URL in the CURRENT tab. Optionally switch browser engine. */
   async navigate(url: string, engine?: BrowserEngine): Promise<string> {
+    // Auto-inject auth token for our own app URLs so pages load authenticated
+    url = this.injectTokenIfLocal(url);
     const page = await this.getPage(engine);
     const response = await page.goto(url, {
       waitUntil: "domcontentloaded",

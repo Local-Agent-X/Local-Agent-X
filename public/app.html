@@ -25,7 +25,11 @@
   </div>
 
   <div id="chats-section">
-    <div id="chats-header">All Chats</div>
+    <div id="wa-chats-section" style="display:none">
+      <div id="wa-chats-header" class="section-header" style="padding:8px 12px 4px"><span>WhatsApp</span></div>
+      <div id="wa-chat-list"></div>
+    </div>
+    <div id="chats-header" style="padding:8px 12px 4px;font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px">Conversations</div>
     <div id="chat-list"></div>
   </div>
 
@@ -86,6 +90,7 @@
       <button class="tab-pill" onclick="switchTab('voice')">Voice</button>
       <button class="tab-pill" onclick="switchTab('security')">Security</button>
       <button class="tab-pill" onclick="switchTab('tools')">Tools</button>
+      <button class="tab-pill" onclick="switchTab('whatsapp')">Communication</button>
       <button class="tab-pill" onclick="switchTab('integrations')">API Integrations</button>
       <button class="tab-pill" onclick="switchTab('sync')">Agent Sync</button>
     </div>
@@ -120,8 +125,8 @@
       <div id="stab-ai" class="tab-pane">
         <div class="section-card">
           <div class="section-title">Model Provider</div>
-          <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-provider"><option value="codex">OpenAI Codex (ChatGPT OAuth — free)</option><option value="anthropic">Anthropic Claude (OAuth — free for subscribers)</option><option value="xai">xAI Grok</option><option value="openai">OpenAI API (direct key)</option></select></div>
-          <div class="field"><label class="field-label">Model</label><input class="field-input" id="cfg-model" value="grok-3-mini"/><div class="field-hint">Codex: gpt-5.3-codex | Anthropic: claude-sonnet-4-20250514 | xAI: grok-3-mini | OpenAI: gpt-4o</div></div>
+          <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-provider" onchange="onProviderChange(this.value)"><option value="codex">OpenAI Codex (ChatGPT OAuth — free)</option><option value="anthropic">Anthropic Claude (OAuth — free for subscribers)</option><option value="xai">xAI Grok</option><option value="openai">OpenAI API (direct key)</option><option value="local">Local Model (Ollama)</option></select></div>
+          <div class="field"><label class="field-label">Model</label><input class="field-input" id="cfg-model" value="grok-3-mini"/><select class="field-select" id="cfg-model-select" style="display:none"></select><div class="field-hint" id="cfg-model-hint">Codex: gpt-5.3-codex | Anthropic: claude-sonnet-4-20250514 | xAI: grok-3-mini | OpenAI: gpt-4o</div><div id="ollama-status" style="display:none;margin-top:8px"></div></div>
           <div class="field-row"><div class="field"><label class="field-label">Temperature</label><input class="field-input" id="cfg-temperature" type="number" step="0.1" min="0" max="2" value="0.7"/></div><div class="field"><label class="field-label">Max Iterations</label><input class="field-input" id="cfg-maxiter" type="number" min="1" max="100" value="25"/></div></div>
         </div>
       </div>
@@ -204,6 +209,43 @@
         <div class="section-card">
           <div class="section-title">Available Tools</div>
           <div id="tools-list" style="font-family:var(--mono);font-size:.75rem">Loading...</div>
+        </div>
+      </div>
+      <!-- WhatsApp -->
+      <div id="stab-whatsapp" class="tab-pane">
+        <div class="section-card">
+          <div class="section-title">WhatsApp Bridge</div>
+          <div class="section-desc">Chat with your agent from anywhere via WhatsApp. Scan QR code to connect — no API keys needed.</div>
+          <div id="wa-status-box" style="margin:16px 0;padding:16px;border:1px solid var(--border);border-radius:8px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+              <span style="font-size:1.4rem">📱</span>
+              <div style="flex:1">
+                <div id="wa-state" style="font-family:var(--mono);font-size:.85rem;font-weight:600">Checking...</div>
+                <div id="wa-phone" style="font-size:.72rem;color:var(--muted)"></div>
+              </div>
+              <span id="wa-badge" style="font-size:.65rem;padding:3px 10px;border-radius:4px;background:var(--border);color:var(--muted)">...</span>
+            </div>
+            <div id="wa-qr-box" style="display:none;text-align:center;margin:16px 0;padding:20px;background:#fff;border-radius:12px;max-width:300px;margin-left:auto;margin-right:auto">
+              <img id="wa-qr-img" style="width:260px;height:260px" alt="QR Code"/>
+              <div style="color:#333;font-size:.7rem;margin-top:8px">Scan with WhatsApp → Linked Devices</div>
+            </div>
+            <div id="wa-error" style="display:none;color:var(--danger);font-size:.75rem;margin:8px 0"></div>
+            <div style="display:flex;gap:8px;margin-top:12px">
+              <button class="action-btn primary" id="wa-connect-btn" onclick="waConnect()">Connect</button>
+              <button class="action-btn" id="wa-disconnect-btn" onclick="waDisconnect()" style="display:none">Disconnect</button>
+              <button class="action-btn" id="wa-reset-btn" onclick="waReset()" style="color:var(--danger)">Reset</button>
+            </div>
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">How It Works</div>
+          <div style="font-size:.78rem;color:var(--muted);line-height:1.9">
+            <div>1. Click <strong style="color:var(--text)">Connect</strong> — a QR code appears</div>
+            <div>2. Open WhatsApp → <strong style="color:var(--text)">Linked Devices</strong> → <strong style="color:var(--text)">Link a Device</strong></div>
+            <div>3. Scan the QR code</div>
+            <div>4. <strong style="color:var(--text)">Message yourself</strong> — the agent replies in the same chat</div>
+            <div style="margin-top:6px;color:var(--accent)">Session persists across restarts — no re-scan needed.</div>
+          </div>
         </div>
       </div>
       <!-- API Integrations -->

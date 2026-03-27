@@ -33,6 +33,7 @@ import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } fr
 import { imageTools } from "./image-tools.js";
 import { createPlaybookTools } from "./playbooks.js";
 import { IntegrationRegistry } from "./integrations.js";
+import { WhatsAppBridge } from "./whatsapp-bridge.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 
 // ── Multipart parser ──
@@ -210,6 +211,10 @@ export function startServer(config: SAXConfig) {
   const toolPolicy = loadToolPolicy(dataDir);
   const rbac = new RBACManager(dataDir, config.authToken);
 
+  // Make auth token + port available to BrowserManager for auto-injection on localhost navigations
+  process.env.SAX_AUTH_TOKEN = config.authToken;
+  process.env.SAX_PORT = String(config.port);
+
   // Agent Sync (git-based memory sync across machines)
   const agentSync = new AgentSync(dataDir, () => secretsStore.get("GITHUB_SYNC_TOKEN"));
 
@@ -229,6 +234,90 @@ export function startServer(config: SAXConfig) {
 
   // Initialize API integrations registry
   const integrations = new IntegrationRegistry(dataDir);
+
+  // Initialize WhatsApp bridge (Baileys — QR code scan, no API keys needed)
+  const whatsappBridge = new WhatsAppBridge({
+    dataDir,
+    onMessage: async ({ from, name, text, sessionId }) => {
+      // Load provider (same logic as /api/chat)
+      const { loadTokens } = await import("./auth.js");
+      const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
+
+      let savedProvider: string | null = null;
+      let savedModel: string | null = null;
+      try {
+        const settingsPath = join(dataDir, "settings.json");
+        if (existsSync(settingsPath)) {
+          const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
+          savedProvider = s.provider || null;
+          savedModel = s.model || null;
+        }
+      } catch {}
+
+      let provider: "codex" | "xai" | "openai" | "anthropic" | "local";
+      if (savedProvider && ["codex", "xai", "openai", "anthropic", "local"].includes(savedProvider)) {
+        provider = savedProvider as typeof provider;
+      } else if (loadAnthropicTokens()) {
+        provider = "anthropic";
+      } else if (loadTokens() && !config.openaiApiKey) {
+        provider = "codex";
+      } else {
+        provider = "xai";
+      }
+
+      const { getApiKey } = await import("./auth.js");
+      const apiKey = provider === "local"
+        ? "ollama"
+        : provider === "anthropic"
+        ? await getAnthropicApiKey()
+        : await getApiKey(config.openaiApiKey);
+
+      const session = getOrCreateSession(sessionId);
+      if (session.messages.length === 0) {
+        session.title = `WhatsApp: ${name}`;
+      }
+
+      // Build memory context
+      const [contextBlock, relevantMemories] = await Promise.all([
+        buildContextBlock(memoryIndex),
+        autoSearchContext(memoryIndex, text),
+      ]);
+
+      const integrationsContext = integrations.getAgentContext();
+      const enrichedPrompt = config.systemPrompt + contextBlock + relevantMemories + integrationsContext +
+        `\n\n[WhatsApp bridge] This message is from ${name} (${from}) via WhatsApp. ` +
+        `Keep responses concise — WhatsApp messages should be shorter than web UI responses. ` +
+        `Use plain text (no HTML). Markdown is OK but keep it minimal.`;
+
+      const result = await runAgent(text, session.messages, {
+        apiKey,
+        model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
+        provider,
+        systemPrompt: enrichedPrompt,
+        tools,
+        security,
+        toolPolicy,
+        sessionId,
+        maxIterations: config.maxIterations,
+        temperature: config.temperature,
+      });
+
+      // Save session
+      session.messages = result.messages.filter(
+        (m) => m.role !== "system" && (m.content || (m as any).tool_calls)
+      );
+      session.updatedAt = Date.now();
+      saveSession(session);
+
+      // Extract agent's text reply
+      const reply = result.messages
+        .filter((m) => m.role === "assistant" && typeof m.content === "string")
+        .map((m) => m.content as string)
+        .pop() || "Done.";
+
+      return reply;
+    },
+  });
 
   // Mutable ref so secret tools can emit SSE events during the active request
   let activeOnEvent: ((event: ServerEvent) => void) | undefined;
@@ -838,6 +927,41 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── Local Models (Ollama) API ──
+
+    if (method === "GET" && url.pathname === "/api/models/local") {
+      try {
+        const ollamaRes = await fetch("http://127.0.0.1:11434/api/tags");
+        if (!ollamaRes.ok) { json(502, { error: "Ollama returned " + ollamaRes.status }); return; }
+        const data = await ollamaRes.json() as { models?: Array<{ name: string; size: number; modified_at: string }> };
+        const models = (data.models || []).map((m: { name: string; size: number; modified_at: string }) => ({
+          name: m.name,
+          size: m.size,
+          modified: m.modified_at,
+        }));
+        json(200, { models });
+      } catch {
+        json(502, { error: "Ollama not running. Start it with: ollama serve" });
+      }
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/ollama/start") {
+      try {
+        const { spawn } = await import("node:child_process");
+        const child = spawn("ollama", ["serve"], {
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+        });
+        child.unref();
+        json(200, { ok: true, message: "Ollama starting..." });
+      } catch (e: unknown) {
+        json(500, { error: "Failed to start Ollama: " + (e instanceof Error ? e.message : String(e)) });
+      }
+      return;
+    }
+
     // ── Audit API ──
 
     // ── Active Chats API (for WS-less fallback) ──
@@ -1132,6 +1256,69 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── WhatsApp (Baileys — QR code scan) ──
+
+    // Connect: starts Baileys, returns QR code to scan
+    if (method === "POST" && url.pathname === "/api/whatsapp/connect") {
+      try {
+        const result = await whatsappBridge.connect();
+        json(200, result);
+      } catch (e) {
+        json(500, { error: (e as Error).message });
+      }
+      return;
+    }
+
+    // Disconnect: cleanly close WhatsApp connection
+    if (method === "POST" && url.pathname === "/api/whatsapp/disconnect") {
+      await whatsappBridge.disconnect();
+      json(200, { ok: true });
+      return;
+    }
+
+    // Reset: clear saved session, force new QR scan
+    if (method === "POST" && url.pathname === "/api/whatsapp/reset") {
+      await whatsappBridge.reset();
+      json(200, { ok: true });
+      return;
+    }
+
+    // Status: connection state, QR code, phone number
+    if (method === "GET" && url.pathname === "/api/whatsapp/status") {
+      json(200, await whatsappBridge.getStatus());
+      return;
+    }
+
+    // Send a message (agent-initiated or test)
+    if (method === "POST" && url.pathname === "/api/whatsapp/send") {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const { to, message: msg } = body;
+        if (!to || !msg) {
+          json(400, { error: "to and message are required" });
+          return;
+        }
+        const ok = await whatsappBridge.sendMessage(to, msg);
+        json(ok ? 200 : 500, { ok, error: ok ? undefined : "Failed to send" });
+      } catch (e) {
+        json(500, { error: (e as Error).message });
+      }
+      return;
+    }
+
+    // Set allowed numbers (security: only these numbers can message the agent)
+    if (method === "POST" && url.pathname === "/api/whatsapp/allowed-numbers") {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const numbers: string[] = body.numbers || [];
+        whatsappBridge.setAllowedNumbers(numbers);
+        json(200, { ok: true, numbers });
+      } catch (e) {
+        json(500, { error: (e as Error).message });
+      }
+      return;
+    }
+
     // Chat (SSE streaming)
     if (method === "POST" && url.pathname === "/api/chat") {
       let body: Record<string, unknown>;
@@ -1170,21 +1357,25 @@ export function startServer(config: SAXConfig) {
         session.title = message.slice(0, 60) + (message.length > 60 ? "..." : "");
       }
 
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
       try {
         // Provider: use saved preference from settings, fall back to auto-detect
         const { loadTokens } = await import("./auth.js");
         const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
 
         let savedProvider: string | null = null;
+        let savedModel: string | null = null;
         try {
           const settingsPath = join(dataDir, "settings.json");
           if (existsSync(settingsPath)) {
-            savedProvider = JSON.parse(readFileSync(settingsPath, "utf-8")).provider || null;
+            const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+            savedProvider = savedSettings.provider || null;
+            savedModel = savedSettings.model || null;
           }
         } catch {}
 
-        let provider: "codex" | "xai" | "openai" | "anthropic";
-        if (savedProvider && ["codex", "xai", "openai", "anthropic"].includes(savedProvider)) {
+        let provider: "codex" | "xai" | "openai" | "anthropic" | "local";
+        if (savedProvider && ["codex", "xai", "openai", "anthropic", "local"].includes(savedProvider)) {
           provider = savedProvider as typeof provider;
         } else if (loadAnthropicTokens()) {
           provider = "anthropic";
@@ -1194,7 +1385,9 @@ export function startServer(config: SAXConfig) {
           provider = "xai";
         }
 
-        const apiKey = provider === "anthropic"
+        const apiKey = provider === "local"
+          ? "ollama"
+          : provider === "anthropic"
           ? await getAnthropicApiKey()
           : await getApiKey(config.openaiApiKey);
 
@@ -1208,7 +1401,7 @@ export function startServer(config: SAXConfig) {
         activeOnEvent = onEvent;
 
         // SSE keepalive — prevents connection drop during long tool calls (browser launch, etc.)
-        const heartbeat = setInterval(() => {
+        heartbeat = setInterval(() => {
           if (!res.destroyed) res.write(": heartbeat\n\n");
           else clearInterval(heartbeat);
         }, 15_000);
@@ -1321,7 +1514,7 @@ export function startServer(config: SAXConfig) {
 
         const result = await runAgent(message, sanitizeHistory(historyToSend), {
           apiKey,
-          model: provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model,
+          model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
           provider,
           systemPrompt: enrichedPrompt,
           tools,
@@ -1381,6 +1574,13 @@ export function startServer(config: SAXConfig) {
         sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
         clearInterval(heartbeat);
         res.end();
+
+        // WhatsApp bridge: if this is a wa- session and typed from the web UI,
+        // forward the agent's reply to WhatsApp so it shows on the phone
+        if (sessionId.startsWith("wa-") && assistantReply) {
+          const waPhone = sessionId.slice(3); // "wa-18058146534" → "18058146534"
+          whatsappBridge.sendMessage(waPhone, assistantReply).catch(() => {});
+        }
 
         // Agent Sync: push after chat (background, non-blocking)
         agentSync.onChatEnd().catch(() => {});

@@ -25,9 +25,12 @@
     "@arikernel/sidecar": "file:../Ari Kernel/packages/sidecar",
     "@arikernel/taint-tracker": "file:packages/arikernel/taint-tracker",
     "@arikernel/tool-executors": "file:packages/arikernel/tool-executors",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "better-sqlite3": "^12.8.0",
     "openai": "^4.86.0",
     "playwright": "^1.58.2",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0",
     "ws": "^8.18.0",
     "zod": "^3.24.0"
   },

@@ -22,6 +22,7 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "grok-3-mini": 131_072,
   "grok-3": 131_072,
 };
+// Ollama models typically have smaller context; use conservative default
 const DEFAULT_CONTEXT = 128_000;
 
 // ── Token estimation ──

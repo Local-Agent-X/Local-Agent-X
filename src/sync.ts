@@ -12,12 +12,13 @@ export interface SyncConfig {
   interval: "after_chat" | "2min" | "5min" | "15min" | "manual";
   syncSessions: boolean;
   syncWorkspace: boolean;
+  syncCronJobs: boolean;
   autoDownload: boolean;
 }
 
 const DEFAULT_CONFIG: SyncConfig = {
   enabled: false, repoUrl: "", tokenSecretName: "GITHUB_SYNC_TOKEN",
-  interval: "after_chat", syncSessions: true, syncWorkspace: false, autoDownload: true,
+  interval: "after_chat", syncSessions: true, syncWorkspace: false, syncCronJobs: false, autoDownload: true,
 };
 
 const SYNC_EXTENSIONS = new Set([
@@ -151,6 +152,17 @@ export class AgentSync {
       const workspace = resolve("workspace");
       if (existsSync(workspace)) this.mirrorDir(workspace, join(this.syncDir, "workspace"));
     }
+
+    if (this.config.syncCronJobs) {
+      const cronDir = join(this.dataDir, "cron");
+      const syncCronDir = join(this.syncDir, "cron");
+      if (!existsSync(syncCronDir)) mkdirSync(syncCronDir, { recursive: true });
+      if (existsSync(cronDir)) {
+        for (const f of readdirSync(cronDir)) {
+          if (f.endsWith(".json")) writeFileSync(join(syncCronDir, f), readFileSync(join(cronDir, f), "utf-8"));
+        }
+      }
+    }
   }
 
   /** Mirror src → dest: copies files, deletes dest entries not in src */
@@ -235,6 +247,17 @@ export class AgentSync {
       const syncWs = join(this.syncDir, "workspace");
       const ws = resolve("workspace");
       if (existsSync(syncWs)) { if (!existsSync(ws)) mkdirSync(ws, { recursive: true }); this.pullDir(syncWs, ws); }
+    }
+
+    if (this.config.syncCronJobs) {
+      const syncCronDir = join(this.syncDir, "cron");
+      const cronDir = join(this.dataDir, "cron");
+      if (!existsSync(cronDir)) mkdirSync(cronDir, { recursive: true });
+      if (existsSync(syncCronDir)) {
+        for (const f of readdirSync(syncCronDir)) {
+          if (f.endsWith(".json")) writeFileSync(join(cronDir, f), readFileSync(join(syncCronDir, f), "utf-8"));
+        }
+      }
     }
   }
 

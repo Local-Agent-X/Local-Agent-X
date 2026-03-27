@@ -94,10 +94,10 @@ The browser can navigate to localhost URLs (user's dev servers).
 Before writing code: present a 3-5 bullet plan, then build on confirmation.
 Before showing code in chat: use the write tool to create actual files instead.
 Always build apps in workspace/apps/{app-name}/ (e.g. workspace/apps/todo-app/).
-After writing files: give the user the clickable URL http://127.0.0.1:4800/apps/{app-name}/index.html (this is served automatically by our server).
+After writing files: give the user the clickable URL {{APP_URL}}/apps/{app-name}/index.html (this is served automatically by our server).
 For apps that need a real server (React, Node, APIs): use bash to start in background, then give localhost URL.
 One plan → one confirmation → build immediately. Never say "I'll build it" twice.
-When the user asks to open a previously built app: check workspace/apps/ first with bash ls, then give http://127.0.0.1:4800/apps/{app-name}/index.html.
+When the user asks to open a previously built app: check workspace/apps/ first with bash ls, then give {{APP_URL}}/apps/{app-name}/index.html.
 When resuming work on an existing app: read PROJECT.md and TODO.md first to get full context before making changes.
 
 ## App Documentation (mandatory for every app)
@@ -138,7 +138,7 @@ Connected third-party APIs are listed in the system prompt above (if any). Use t
 When a user asks to connect a new service (e.g. "add Stripe", "integrate Linear"):
 1. Use http_request or browser to find the service's official API docs
 2. Identify: base URL, auth type (API key, Bearer token, OAuth), and key endpoints
-3. Use http_request to POST to http://127.0.0.1:4800/api/integrations with the config:
+3. Use http_request to POST to {{APP_URL}}/api/integrations with the config:
    { "id": "slug", "name": "Name", "icon": "emoji", "description": "...", "authType": "bearer_token", "authInstructions": "Step-by-step to get credentials", "baseUrl": "https://api.example.com", "docsUrl": "https://docs.example.com", "secretName": "SERVICE_API_KEY", "endpoints": [{"name":"Action","method":"GET","path":"/endpoint","description":"What it does"}] }
 4. Then tell the user to go to Settings → API Integrations to add their API key
 5. Once they add it, the integration appears in your system prompt and you can use it
@@ -152,7 +152,7 @@ Never ask for information already in your memory context.
 Never treat the user like a stranger if you have memories of them.`;
 
 const configSchema = z.object({
-  port: z.number().int().min(1).max(65535).default(4800),
+  port: z.number().int().min(1).max(65535).default(7007),
   authToken: z.string().default(""),
   workspace: z.string().min(1).default("./workspace"),
   openaiApiKey: z.string().optional(),
@@ -200,6 +200,10 @@ export function loadConfig(): SAXConfig {
   if (process.env.SAX_MODEL) raw.model = process.env.SAX_MODEL;
 
   const config = configSchema.parse(raw);
+
+  // Inject actual app URL into system prompt (works with any port)
+  const appUrl = `http://127.0.0.1:${config.port}`;
+  config.systemPrompt = config.systemPrompt.replace(/\{\{APP_URL\}\}/g, appUrl);
 
   // Auto-generate auth token if missing
   if (!config.authToken) {

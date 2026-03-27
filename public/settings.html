@@ -294,6 +294,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
   <button class="tab-pill" onclick="switchTab('voice')">Voice</button>
   <button class="tab-pill" onclick="switchTab('security')">Security</button>
   <button class="tab-pill" onclick="switchTab('tools')">Tools</button>
+  <button class="tab-pill" onclick="switchTab('whatsapp')">Communication</button>
+  <button class="tab-pill" onclick="switchTab('integrations')">API Integrations</button>
+  <button class="tab-pill" onclick="switchTab('sync')">Agent Sync</button>
 </div>
 
 <div id="content">
@@ -337,16 +340,20 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
       <div class="section-desc">Choose which AI provider and model to use.</div>
       <div class="field">
         <label class="field-label">Provider</label>
-        <select class="field-select" id="cfg-provider">
+        <select class="field-select" id="cfg-provider" onchange="onProviderChange(this.value)">
           <option value="codex">OpenAI Codex (ChatGPT OAuth — free)</option>
+          <option value="anthropic">Anthropic Claude (OAuth — free for subscribers)</option>
           <option value="xai">xAI (Grok)</option>
           <option value="openai">OpenAI API (direct key)</option>
+          <option value="local">Local Model (Ollama)</option>
         </select>
       </div>
       <div class="field">
         <label class="field-label">Model</label>
         <input class="field-input" id="cfg-model" value="grok-3-mini"/>
-        <div class="field-hint">For Codex: gpt-5.3-codex | For xAI: grok-3-mini | For OpenAI: gpt-4o</div>
+        <select class="field-select" id="cfg-model-select" style="display:none"></select>
+        <div class="field-hint" id="cfg-model-hint">Codex: gpt-5.3-codex | Anthropic: claude-sonnet-4-20250514 | xAI: grok-3-mini | OpenAI: gpt-4o</div>
+        <div id="ollama-status" style="display:none;margin-top:8px"></div>
       </div>
       <div class="field-row">
         <div class="field">
@@ -586,6 +593,68 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 
   </div>
 
+  <!-- ═══ WHATSAPP ═══ -->
+  <div id="tab-whatsapp" class="tab-content">
+    <div class="section">
+      <div class="section-title">WhatsApp Bridge</div>
+      <div class="section-desc">Chat with your agent from anywhere via WhatsApp. Scan QR code to connect — no API keys needed.</div>
+
+      <div id="wa-status" style="margin:16px 0;padding:16px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <span style="font-size:1.6rem">📱</span>
+          <div>
+            <div id="wa-state" style="font-family:var(--mono);font-size:.85rem;font-weight:600">Checking...</div>
+            <div id="wa-phone" style="font-size:.72rem;color:var(--muted)"></div>
+          </div>
+          <div style="flex:1"></div>
+          <span id="wa-badge" style="font-size:.65rem;padding:3px 10px;border-radius:4px;background:var(--border);color:var(--muted)">...</span>
+        </div>
+
+        <div id="wa-qr-container" style="display:none;text-align:center;margin:16px 0;padding:20px;background:#fff;border-radius:12px;max-width:280px;margin-left:auto;margin-right:auto">
+          <img id="wa-qr-img" style="width:240px;height:240px" alt="QR Code"/>
+          <div style="color:#333;font-size:.72rem;margin-top:8px">Scan with WhatsApp → Linked Devices → Link a Device</div>
+        </div>
+
+        <div id="wa-error" style="display:none;color:var(--danger);font-size:.75rem;margin:8px 0"></div>
+
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="action-btn primary" id="wa-connect-btn" onclick="waConnect()" style="padding:8px 16px;font-size:.78rem">Connect</button>
+          <button class="action-btn" id="wa-disconnect-btn" onclick="waDisconnect()" style="padding:8px 16px;font-size:.78rem;display:none">Disconnect</button>
+          <button class="action-btn" id="wa-reset-btn" onclick="waReset()" style="padding:8px 16px;font-size:.78rem;color:var(--danger)">Reset Session</button>
+        </div>
+      </div>
+
+      <div class="section" style="margin-top:20px">
+        <div class="section-title">How It Works</div>
+        <div style="font-size:.78rem;color:var(--muted);line-height:1.8">
+          <div>1. Click <strong style="color:var(--text)">Connect</strong> — a QR code appears</div>
+          <div>2. Open WhatsApp on your phone → <strong style="color:var(--text)">Linked Devices</strong> → <strong style="color:var(--text)">Link a Device</strong></div>
+          <div>3. Scan the QR code</div>
+          <div>4. <strong style="color:var(--text)">Message yourself</strong> on WhatsApp — the agent replies in the same chat</div>
+          <div style="margin-top:8px;color:var(--accent)">Session persists across restarts. No re-scan needed.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ API INTEGRATIONS ═══ -->
+  <div id="tab-integrations" class="tab-content">
+    <div class="section">
+      <div class="section-title" style="color:var(--accent)">Connected APIs</div>
+      <div class="section-desc">Connect third-party APIs so your agent can interact with them directly. API keys are encrypted in your local secrets vault.</div>
+      <div id="integrations-list" style="margin-top:12px;font-family:var(--mono);font-size:.75rem;color:var(--muted)">Loading...</div>
+    </div>
+  </div>
+
+  <!-- ═══ AGENT SYNC ═══ -->
+  <div id="tab-sync" class="tab-content">
+    <div class="section">
+      <div class="section-title">Agent Sync</div>
+      <div class="section-desc">Sync your agent's memory and settings across machines via Git.</div>
+      <div id="sync-status" style="margin-top:12px;font-family:var(--mono);font-size:.75rem;color:var(--muted)">Loading...</div>
+    </div>
+  </div>
+
 </div>
 </div> <!-- close #main -->
 
@@ -819,6 +888,148 @@ function renderSidebar() {
   renderChatList();
 }
 
+// ── API Helpers ──
+async function apiGet(path) {
+  const r = await fetch(API + path, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` }});
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+async function apiPost(path, body) {
+  const r = await fetch(API + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+// ── WhatsApp Bridge ──
+
+async function waCheckStatus() {
+  try {
+    const d = await apiGet('/api/whatsapp/status');
+    const stateEl = document.getElementById('wa-state');
+    const phoneEl = document.getElementById('wa-phone');
+    const badgeEl = document.getElementById('wa-badge');
+    const errorEl = document.getElementById('wa-error');
+    const qrEl = document.getElementById('wa-qr-container');
+    const connectBtn = document.getElementById('wa-connect-btn');
+    const disconnectBtn = document.getElementById('wa-disconnect-btn');
+
+    if (d.state === 'connected') {
+      stateEl.textContent = 'Connected';
+      stateEl.style.color = 'var(--accent)';
+      phoneEl.textContent = d.phone ? '+' + d.phone : '';
+      badgeEl.textContent = 'CONNECTED';
+      badgeEl.style.background = 'var(--accent)';
+      badgeEl.style.color = '#000';
+      qrEl.style.display = 'none';
+      connectBtn.style.display = 'none';
+      disconnectBtn.style.display = '';
+      errorEl.style.display = 'none';
+    } else if (d.state === 'qr' && d.qr) {
+      stateEl.textContent = 'Scan QR Code';
+      stateEl.style.color = 'var(--warn)';
+      badgeEl.textContent = 'WAITING';
+      badgeEl.style.background = 'var(--warn)';
+      badgeEl.style.color = '#000';
+      qrEl.style.display = '';
+      connectBtn.style.display = 'none';
+      disconnectBtn.style.display = '';
+      // Render QR
+      if (typeof QRCode !== 'undefined') {
+        const canvas = document.getElementById('wa-qr-canvas');
+        QRCode.toCanvas(canvas, d.qr, { width: 240, margin: 2 }, () => {});
+      }
+    } else if (d.state === 'disconnected') {
+      stateEl.textContent = 'Disconnected';
+      stateEl.style.color = 'var(--muted)';
+      phoneEl.textContent = d.hasSavedSession ? 'Saved session available' : 'No session';
+      badgeEl.textContent = 'OFF';
+      badgeEl.style.background = 'var(--border)';
+      badgeEl.style.color = 'var(--muted)';
+      qrEl.style.display = 'none';
+      connectBtn.style.display = '';
+      disconnectBtn.style.display = 'none';
+      if (d.error) {
+        errorEl.textContent = d.error;
+        errorEl.style.display = '';
+      }
+    } else {
+      stateEl.textContent = 'Connecting...';
+      stateEl.style.color = 'var(--info)';
+      badgeEl.textContent = 'CONNECTING';
+      badgeEl.style.background = 'var(--info)';
+      badgeEl.style.color = '#000';
+    }
+  } catch (e) {
+    document.getElementById('wa-state').textContent = 'Error';
+    document.getElementById('wa-state').style.color = 'var(--danger)';
+  }
+}
+
+async function waConnect() {
+  document.getElementById('wa-connect-btn').textContent = 'Connecting...';
+  document.getElementById('wa-connect-btn').disabled = true;
+  try {
+    const d = await apiPost('/api/whatsapp/connect', {});
+    await waCheckStatus();
+    // If QR shown, poll for connection
+    if (d.state === 'qr' || d.state === 'connecting') {
+      const poll = setInterval(async () => {
+        const s = await apiGet('/api/whatsapp/status');
+        await waCheckStatus();
+        if (s.state === 'connected' || s.state === 'disconnected') clearInterval(poll);
+      }, 3000);
+      setTimeout(() => clearInterval(poll), 120000); // stop polling after 2 min
+    }
+  } catch (e) {
+    alert('Failed to connect: ' + e.message);
+  }
+  document.getElementById('wa-connect-btn').textContent = 'Connect';
+  document.getElementById('wa-connect-btn').disabled = false;
+}
+
+async function waDisconnect() {
+  if (!confirm('Disconnect WhatsApp?')) return;
+  await apiPost('/api/whatsapp/disconnect', {});
+  await waCheckStatus();
+}
+
+async function waReset() {
+  if (!confirm('This will clear your saved session. You will need to scan the QR code again.')) return;
+  await apiPost('/api/whatsapp/reset', {});
+  await waCheckStatus();
+}
+
+// ── API Integrations ──
+
+async function loadIntegrations() {
+  const el = document.getElementById('integrations-list');
+  if (!el) return;
+  try {
+    const list = await apiGet('/api/integrations');
+    if (!Array.isArray(list) || list.length === 0) { el.innerHTML = '<p style="color:var(--muted)">No integrations available.</p>'; return; }
+    el.innerHTML = list.map(i => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:var(--surface-2)">
+        <div style="display:flex;align-items:center;gap:10px;flex:1">
+          <span style="font-size:1.4rem">${i.icon || '🔌'}</span>
+          <div>
+            <div style="font-family:var(--mono);font-size:.85rem;font-weight:600;color:var(--text)">${esc(i.name)}</div>
+            <div style="font-size:.7rem;color:var(--muted);margin-top:2px">${esc(i.description)}</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:.65rem;padding:3px 8px;border-radius:4px;background:${i.installed ? 'var(--accent)' : 'var(--border)'};color:${i.installed ? '#000' : 'var(--muted)'}">${i.installed ? 'CONNECTED' : 'NOT SET UP'}</span>
+          ${!i.installed ? `<button class="action-btn" onclick="alert('Use the agent to set up: tell it to install the ${esc(i.name)} integration')" style="padding:4px 10px;font-size:.7rem;color:var(--accent)">Set Up</button>` : ''}
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    el.innerHTML = '<p style="color:var(--danger)">Failed to load integrations.</p>';
+  }
+}
+
 // ── Init ──
 renderSidebar();
 loadSettings();
@@ -827,6 +1038,8 @@ checkServer('image');
 checkServer('video');
 checkVoice();
 loadToolsList();
+loadIntegrations();
+waCheckStatus();
 </script>
 </body>
 </html>

@@ -11,6 +11,7 @@ function init_settings() {
   loadToolsList();
   loadFileAccessMode();
   loadIntegrations();
+  waCheckStatus();
 }
 
 function switchTab(id) {
@@ -138,10 +139,97 @@ function loadToolsList() {
   }).join('');
 }
 
+// ── Provider change → toggle model input vs dropdown ──
+
+async function onProviderChange(provider) {
+  const modelInput = document.getElementById('cfg-model');
+  const modelSelect = document.getElementById('cfg-model-select');
+  const hint = document.getElementById('cfg-model-hint');
+  const ollamaStatus = document.getElementById('ollama-status');
+  if (!modelInput || !modelSelect) return;
+
+  if (provider === 'local') {
+    modelInput.style.display = 'none';
+    modelSelect.style.display = '';
+    if (ollamaStatus) ollamaStatus.style.display = '';
+    if (hint) hint.textContent = 'Showing models downloaded via Ollama. Run "ollama pull <model>" to add more.';
+    await loadLocalModels();
+  } else {
+    modelInput.style.display = '';
+    modelSelect.style.display = 'none';
+    if (ollamaStatus) ollamaStatus.style.display = 'none';
+    if (hint) hint.textContent = 'Codex: gpt-5.3-codex | Anthropic: claude-sonnet-4-20250514 | xAI: grok-3-mini | OpenAI: gpt-4o';
+  }
+}
+
+async function loadLocalModels() {
+  const sel = document.getElementById('cfg-model-select');
+  const statusEl = document.getElementById('ollama-status');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Loading...</option>';
+  try {
+    const data = await apiJson('/api/models/local');
+    if (data.error) {
+      sel.innerHTML = '<option value="">Ollama not reachable</option>';
+      if (statusEl) statusEl.innerHTML = `<span class="status-badge err"><span class="status-dot"></span> Not running</span> <button class="btn" onclick="startOllama()" id="btn-start-ollama" style="padding:4px 12px;font-size:.72rem;color:var(--accent);margin-left:8px">Start Ollama</button>`;
+      return;
+    }
+    const models = data.models || [];
+    if (models.length === 0) {
+      sel.innerHTML = '<option value="">No models found</option>';
+      if (statusEl) statusEl.innerHTML = '<span class="status-badge warn"><span class="status-dot"></span> Running — no models</span> <span style="font-size:.7rem;color:var(--muted)">Run <code style="background:var(--bg2);padding:2px 6px;border-radius:4px">ollama pull llama3</code> to download a model</span>';
+      return;
+    }
+    sel.innerHTML = models.map(m => {
+      const sizeGB = m.size ? (m.size / 1024 / 1024 / 1024).toFixed(1) + ' GB' : '';
+      return `<option value="${m.name}">${m.name}${sizeGB ? ' (' + sizeGB + ')' : ''}</option>`;
+    }).join('');
+    if (statusEl) statusEl.innerHTML = `<span class="status-badge ok"><span class="status-dot"></span> Running — ${models.length} model${models.length > 1 ? 's' : ''} available</span> <button class="btn" onclick="loadLocalModels()" style="padding:4px 10px;font-size:.7rem;margin-left:8px">Refresh</button>`;
+    // Restore saved selection
+    try {
+      const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+      if (s.model) sel.value = s.model;
+    } catch {}
+  } catch {
+    sel.innerHTML = '<option value="">Ollama not running</option>';
+    if (statusEl) statusEl.innerHTML = `<span class="status-badge err"><span class="status-dot"></span> Not running</span> <button class="btn" onclick="startOllama()" id="btn-start-ollama" style="padding:4px 12px;font-size:.72rem;color:var(--accent);margin-left:8px">Start Ollama</button>`;
+  }
+}
+
+async function startOllama() {
+  const btn = document.getElementById('btn-start-ollama');
+  if (btn) { btn.textContent = 'Starting...'; btn.disabled = true; }
+  try {
+    await apiPost('/api/ollama/start', {});
+    // Poll until Ollama is reachable
+    let attempts = 0;
+    const check = setInterval(async () => {
+      attempts++;
+      try {
+        const data = await apiJson('/api/models/local');
+        if (!data.error) {
+          clearInterval(check);
+          await loadLocalModels();
+        }
+      } catch {}
+      if (attempts > 15) { // 15s timeout
+        clearInterval(check);
+        if (btn) { btn.textContent = 'Start Ollama'; btn.disabled = false; }
+      }
+    }, 1000);
+  } catch {
+    if (btn) { btn.textContent = 'Start Ollama'; btn.disabled = false; }
+  }
+}
+
 async function saveSettings() {
+  const provider = document.getElementById('cfg-provider')?.value;
+  const modelInput = document.getElementById('cfg-model');
+  const modelSelect = document.getElementById('cfg-model-select');
+  const model = provider === 'local' ? modelSelect?.value : modelInput?.value;
   const s = {
-    provider: document.getElementById('cfg-provider')?.value,
-    model: document.getElementById('cfg-model')?.value,
+    provider,
+    model,
     temperature: parseFloat(document.getElementById('cfg-temperature')?.value || '0.7'),
     imageEngine: document.getElementById('cfg-image-engine')?.value,
     sttEngine: document.getElementById('cfg-stt-engine')?.value,
@@ -169,6 +257,8 @@ function loadSettings() {
     set('cfg-xtts-voice', s.xttsVoice);
     // Show/hide XTTS sections based on engine
     if (s.ttsEngine) onTtsEngineChange(s.ttsEngine);
+    // Show local model dropdown if provider is local
+    if (s.provider) onProviderChange(s.provider);
   } catch {}
   checkSyncStatus();
 }
@@ -489,7 +579,7 @@ async function loadIntegrations() {
           ${i.installed
             ? `<button class="btn" onclick="testIntegration('${i.id}')" title="Test" style="padding:4px 8px;font-size:.7rem">Test</button>
                <button class="btn" onclick="uninstallIntegration('${i.id}')" title="Disconnect" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">&#10005;</button>`
-            : `<button class="btn" onclick="showInstallModal('${i.id}')" style="padding:4px 10px;font-size:.7rem;color:var(--accent)">Set Up</button>`
+            : `<button class="btn" onclick="showInstallModal('${i.id}')" style="padding:4px 10px;font-size:.7rem;color:var(--accent)" aria-label="Set up ${esc(i.name)}">Set Up ${esc(i.name)}</button>`
           }
           ${!i.builtin ? `<button class="btn" onclick="deleteIntegration('${i.id}')" title="Remove" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">🗑</button>` : ''}
         </div>
@@ -599,5 +689,132 @@ async function addCustomIntegration() {
   } catch (e) { alert('Failed: ' + e.message); }
 }
 
+// ── WhatsApp Bridge ──
+
+let _waPollTimer = null;
+
+async function waCheckStatus() {
+  try {
+    const d = await apiJson('/api/whatsapp/status');
+    const stateEl = document.getElementById('wa-state');
+    const phoneEl = document.getElementById('wa-phone');
+    const badgeEl = document.getElementById('wa-badge');
+    const errorEl = document.getElementById('wa-error');
+    const qrBox = document.getElementById('wa-qr-box');
+    const connectBtn = document.getElementById('wa-connect-btn');
+    const disconnectBtn = document.getElementById('wa-disconnect-btn');
+    if (!stateEl) return d;
+
+    errorEl && (errorEl.style.display = 'none');
+
+    if (d.state === 'connected') {
+      stateEl.textContent = 'Connected';
+      stateEl.style.color = 'var(--accent)';
+      phoneEl.textContent = d.phone ? '+' + d.phone : '';
+      badgeEl.textContent = 'CONNECTED';
+      badgeEl.style.background = 'var(--accent)'; badgeEl.style.color = '#000';
+      if (qrBox) qrBox.style.display = 'none';
+      if (connectBtn) connectBtn.style.display = 'none';
+      if (disconnectBtn) disconnectBtn.style.display = '';
+      waStopPoll();
+    } else if (d.state === 'qr' && (d.qrImageUrl || d.qr)) {
+      stateEl.textContent = 'Scan QR Code';
+      stateEl.style.color = 'var(--warn)';
+      phoneEl.textContent = 'Waiting for scan...';
+      badgeEl.textContent = 'SCAN ME'; badgeEl.style.background = 'var(--warn)'; badgeEl.style.color = '#000';
+      if (qrBox) qrBox.style.display = '';
+      if (connectBtn) connectBtn.style.display = 'none';
+      if (disconnectBtn) disconnectBtn.style.display = '';
+      // Show QR as image (rendered server-side)
+      const img = document.getElementById('wa-qr-img');
+      if (img && d.qrImageUrl) img.src = d.qrImageUrl;
+      waStartPoll();
+    } else if (d.state === 'disconnected') {
+      stateEl.textContent = 'Disconnected'; stateEl.style.color = 'var(--muted)';
+      phoneEl.textContent = d.hasSavedSession ? 'Saved session — click Connect to resume' : 'Not set up';
+      badgeEl.textContent = 'OFF'; badgeEl.style.background = 'var(--border)'; badgeEl.style.color = 'var(--muted)';
+      if (qrBox) qrBox.style.display = 'none';
+      if (connectBtn) connectBtn.style.display = '';
+      if (disconnectBtn) disconnectBtn.style.display = 'none';
+      if (d.error && errorEl) { errorEl.textContent = d.error; errorEl.style.display = ''; }
+      waStopPoll();
+    } else {
+      stateEl.textContent = 'Connecting...'; stateEl.style.color = 'var(--info)';
+      phoneEl.textContent = '';
+      badgeEl.textContent = 'CONNECTING'; badgeEl.style.background = 'var(--info)'; badgeEl.style.color = '#000';
+      if (connectBtn) connectBtn.style.display = 'none';
+      waStartPoll();
+    }
+    return d;
+  } catch (e) {
+    // Stop polling if we get auth errors (prevents 401 spam)
+    waStopPoll();
+    return null;
+  }
+}
+
+function waStartPoll() {
+  if (_waPollTimer) return;
+  _waPollTimer = setInterval(waCheckStatus, 3000);
+  setTimeout(() => waStopPoll(), 120000); // stop after 2 min
+}
+function waStopPoll() {
+  if (_waPollTimer) { clearInterval(_waPollTimer); _waPollTimer = null; }
+}
+
+async function waConnect() {
+  const btn = document.getElementById('wa-connect-btn');
+  if (btn) { btn.textContent = 'Connecting...'; btn.disabled = true; }
+  try {
+    await apiPost('/api/whatsapp/connect', {});
+    waStartPoll();
+    await waCheckStatus();
+  } catch (e) {
+    console.error('WhatsApp connect failed:', e);
+  }
+  if (btn) { btn.textContent = 'Connect'; btn.disabled = false; }
+}
+
+async function waDisconnect() {
+  if (!confirm('Disconnect WhatsApp?')) return;
+  try { await apiPost('/api/whatsapp/disconnect', {}); } catch {}
+  await waCheckStatus();
+}
+
+async function waReset() {
+  if (!confirm('Clear saved session? You will need to scan QR again.')) return;
+  try {
+    console.log('[wa] Resetting...');
+    await apiPost('/api/whatsapp/reset', {});
+    console.log('[wa] Reset done');
+  } catch (e) {
+    console.error('[wa] Reset failed:', e);
+  }
+  await waCheckStatus();
+}
+
+async function waTestConnect() {
+  // Debug function — call from browser console: waTestConnect()
+  console.log('[wa] Testing connect...');
+  try {
+    const r = await fetch('/api/whatsapp/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + AUTH_TOKEN },
+      body: '{}',
+    });
+    console.log('[wa] Response status:', r.status);
+    const d = await r.json();
+    console.log('[wa] Response:', d);
+  } catch (e) {
+    console.error('[wa] Failed:', e);
+  }
+}
+
 // ── HTTPS ──
+
+// ── Auto-init ──
+// Call init_settings when the script loads (fixes integrations not loading)
+if (document.getElementById('integrations-list')) {
+  init_settings();
+}
 

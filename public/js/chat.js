@@ -219,7 +219,16 @@ async function sendMessage() {
               if (viewing) {
                 const cards = bodyEl.querySelectorAll('.tool-card');
                 const last = cards[cards.length - 1];
-                if (last) { last.querySelector('.indicator').className = 'indicator ' + (event.allowed ? 'allowed' : 'blocked'); last.querySelector('.tool-detail').textContent = event.result.slice(0, 2000); }
+                if (last) {
+                  last.querySelector('.indicator').className = 'indicator ' + (event.allowed ? 'allowed' : 'blocked');
+                  // Clean tool result: strip security wrappers and show brief summary
+                  let cleanResult = (event.result || '').replace(/<<<EXTERNAL_UNTRUSTED_CONTENT[\s\S]*?<<<END_EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/g, '[content loaded]')
+                    .replace(/IMPORTANT:.*?Do NOT follow any instructions.*$/gm, '')
+                    .replace(/<metadata>[\s\S]*?<\/metadata>/g, '')
+                    .replace(/<content>\n?/g, '').replace(/\n?<\/content>/g, '')
+                    .trim().slice(0, 200);
+                  last.querySelector('.tool-detail').textContent = cleanResult || '✓ Done';
+                }
               }
               savePartial();
               break;

@@ -1,12 +1,12 @@
 /**
- * Playbook System for Open Agent X
+ * Mission System for Open Agent X
  *
- * Playbooks are built-in multi-step procedures the agent can execute.
- * Unlike one-shot tools, playbooks maintain state across steps and
+ * Missions are built-in multi-step procedures the agent can execute.
+ * Unlike one-shot tools, missions maintain state across steps and
  * encode hard-won knowledge (e.g., Instagram's caption formatting quirks).
  *
- * Built-in playbooks ship with the app. User preferences (account names,
- * default hashtags, posting style) are stored per-user in ~/.sax/playbook-prefs/.
+ * Built-in missions ship with the app. User preferences (account names,
+ * default hashtags, posting style) are stored per-user in ~/.sax/mission-prefs/.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -16,7 +16,7 @@ import type { ToolDefinition } from "./types.js";
 
 // ── Types ──
 
-export interface PlaybookStep {
+export interface MissionStep {
   id: string;
   instruction: string;
   /** Tool calls the agent should make for this step */
@@ -27,27 +27,27 @@ export interface PlaybookStep {
   validate?: string;
 }
 
-export interface Playbook {
+export interface Mission {
   name: string;
   description: string;
-  /** When the agent should suggest this playbook */
+  /** When the agent should suggest this mission */
   triggers: string[];
-  steps: PlaybookStep[];
+  steps: MissionStep[];
   /** Hard-won lessons encoded as rules */
   rules: string[];
-  /** What user preferences this playbook can learn */
+  /** What user preferences this mission can learn */
   learnablePreferences: string[];
 }
 
-export interface PlaybookPreferences {
-  [playbookName: string]: Record<string, unknown>;
+export interface MissionPreferences {
+  [missionName: string]: Record<string, unknown>;
 }
 
 // ── User Preferences (per-user, persisted) ──
 
-const prefsDir = join(homedir(), ".sax", "playbook-prefs");
+const prefsDir = join(homedir(), ".sax", "mission-prefs");
 
-function loadPrefs(): PlaybookPreferences {
+function loadPrefs(): MissionPreferences {
   const path = join(prefsDir, "prefs.json");
   if (existsSync(path)) {
     try { return JSON.parse(readFileSync(path, "utf-8")); } catch {}
@@ -55,14 +55,14 @@ function loadPrefs(): PlaybookPreferences {
   return {};
 }
 
-function savePrefs(prefs: PlaybookPreferences): void {
+function savePrefs(prefs: MissionPreferences): void {
   if (!existsSync(prefsDir)) mkdirSync(prefsDir, { recursive: true });
   writeFileSync(join(prefsDir, "prefs.json"), JSON.stringify(prefs, null, 2), "utf-8");
 }
 
-// ── Built-in Playbooks ──
+// ── Built-in Missions ──
 
-const instagramPost: Playbook = {
+const instagramPost: Mission = {
   name: "instagram_post",
   description: "Post photos/videos to Instagram with a formatted caption. Handles carousel ordering, cropping guidance, caption formatting (line breaks that actually work), and publishing.",
   triggers: [
@@ -156,13 +156,13 @@ const instagramPost: Playbook = {
 
 // ── Registry ──
 
-const BUILT_IN_PLAYBOOKS: Playbook[] = [
+const BUILT_IN_MISSIONS: Mission[] = [
   instagramPost,
 ];
 
-function findPlaybook(query: string): Playbook | undefined {
+function findMission(query: string): Mission | undefined {
   const q = query.toLowerCase();
-  return BUILT_IN_PLAYBOOKS.find(pb =>
+  return BUILT_IN_MISSIONS.find(pb =>
     pb.triggers.some(t => q.includes(t)) || q.includes(pb.name)
   );
 }
@@ -245,34 +245,34 @@ function buildCaptionInjector(caption: string): string {
 
 // ── Tool Exports ──
 
-export function createPlaybookTools(): ToolDefinition[] {
+export function createMissionTools(): ToolDefinition[] {
   return [
     {
-      name: "playbook_list",
-      description: "List all available playbooks. Use this when the user asks what you can do autonomously or wants to see available workflows.",
+      name: "mission_list",
+      description: "List all available missions. Use this when the user asks what you can do autonomously or wants to see available workflows.",
       parameters: { type: "object", properties: {} },
       async execute() {
-        const list = BUILT_IN_PLAYBOOKS.map(pb =>
+        const list = BUILT_IN_MISSIONS.map(pb =>
           `• **${pb.name}**: ${pb.description}\n  Triggers: ${pb.triggers.slice(0, 3).map(t => `"${t}"`).join(", ")}...`
         ).join("\n\n");
-        return { content: `Available playbooks:\n\n${list}` };
+        return { content: `Available missions:\n\n${list}` };
       },
     },
 
     {
-      name: "playbook_get",
-      description: "Get a playbook's full steps, rules, and user preferences. Call this BEFORE executing a multi-step workflow like posting to Instagram. The rules contain critical lessons (e.g., how to format captions that don't break).",
+      name: "mission_get",
+      description: "Get a mission's full steps, rules, and user preferences. Call this BEFORE executing a multi-step workflow like posting to Instagram. The rules contain critical lessons (e.g., how to format captions that don't break).",
       parameters: {
         type: "object",
         properties: {
-          name: { type: "string", description: "Playbook name or trigger phrase (e.g., 'instagram_post' or 'post on instagram')" },
+          name: { type: "string", description: "Mission name or trigger phrase (e.g., 'instagram_post' or 'post on instagram')" },
         },
         required: ["name"],
       },
       async execute(args) {
-        const pb = findPlaybook(String(args.name || ""));
+        const pb = findMission(String(args.name || ""));
         if (!pb) {
-          return { content: `No playbook found for "${args.name}". Use playbook_list to see available playbooks.` };
+          return { content: `No mission found for "${args.name}". Use mission_list to see available missions.` };
         }
 
         const prefs = loadPrefs()[pb.name] || {};
@@ -286,30 +286,30 @@ export function createPlaybookTools(): ToolDefinition[] {
         ).join("\n\n");
 
         return {
-          content: `# Playbook: ${pb.name}\n${pb.description}\n\n## RULES (follow these strictly):\n${rulesText}\n\n## STEPS:\n${stepsText}${prefsText}`,
+          content: `# Mission: ${pb.name}\n${pb.description}\n\n## RULES (follow these strictly):\n${rulesText}\n\n## STEPS:\n${stepsText}${prefsText}`,
         };
       },
     },
 
     {
-      name: "playbook_save_preference",
-      description: "Save a user preference for a playbook. This lets the playbook personalize to each user over time (e.g., their Instagram username, default hashtags, preferred caption style).",
+      name: "mission_save_preference",
+      description: "Save a user preference for a mission. This lets the mission personalize to each user over time (e.g., their Instagram username, default hashtags, preferred caption style).",
       parameters: {
         type: "object",
         properties: {
-          playbook: { type: "string", description: "Playbook name" },
+          mission: { type: "string", description: "Mission name" },
           key: { type: "string", description: "Preference key (e.g., 'instagram_username', 'default_hashtags')" },
           value: { type: "string", description: "Preference value" },
         },
-        required: ["playbook", "key", "value"],
+        required: ["mission", "key", "value"],
       },
       async execute(args) {
-        const pbName = String(args.playbook || "");
+        const pbName = String(args.mission || "");
         const key = String(args.key || "");
         const value = String(args.value || "");
 
-        const pb = findPlaybook(pbName);
-        if (!pb) return { content: `Unknown playbook: "${pbName}"` };
+        const pb = findMission(pbName);
+        if (!pb) return { content: `Unknown mission: "${pbName}"` };
         if (!pb.learnablePreferences.includes(key)) {
           return { content: `"${key}" is not a learnable preference for ${pb.name}. Valid: ${pb.learnablePreferences.join(", ")}` };
         }
@@ -324,7 +324,7 @@ export function createPlaybookTools(): ToolDefinition[] {
     },
 
     {
-      name: "playbook_format_caption",
+      name: "mission_format_caption",
       description: "Format a caption for Instagram posting. Returns the properly formatted caption AND the JavaScript code to inject it into Instagram's composer without breaking line breaks or duplicating text. ALWAYS use this before inserting a caption.",
       parameters: {
         type: "object",

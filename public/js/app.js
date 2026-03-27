@@ -60,7 +60,7 @@ async function syncChatsFromServer() {
 
     merged.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     chats = merged;
-    localStorage.setItem('sax_chats_v2', JSON.stringify(chats));
+    saveChats(); // Uses the safe, truncated save
     renderSidebar();
   } catch (e) {
     console.warn('[sync] Failed to fetch sessions from server:', e.message);
@@ -69,14 +69,23 @@ async function syncChatsFromServer() {
 
 // Save: write to localStorage immediately, push to server in background
 function saveChats() {
+  // Only save chat metadata + last 10 messages per chat to localStorage (prevents quota overflow)
+  // Full history lives on the server in ~/.sax/sessions/
   const toSave = chats.map(c => ({
-    ...c,
-    messages: c.messages.map(m => {
-      if (!m.attachments) return m;
-      return { ...m, attachments: m.attachments.map(a => ({ name: a.name, size: a.size, type: a.type, isImage: a.isImage, url: a.url })) };
+    id: c.id, title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt,
+    messages: c.messages.slice(-10).map(m => {
+      if (!m.attachments) return { role: m.role, content: (m.content || '').slice(0, 500) };
+      return { role: m.role, content: (m.content || '').slice(0, 500), attachments: m.attachments.map(a => ({ name: a.name, size: a.size, type: a.type, isImage: a.isImage })) };
     })
   }));
-  localStorage.setItem('sax_chats_v2', JSON.stringify(toSave));
+  try {
+    localStorage.setItem('sax_chats_v2', JSON.stringify(toSave));
+  } catch (e) {
+    // Quota exceeded — prune oldest chats and retry
+    console.warn('[storage] Quota exceeded, pruning old chats');
+    while (toSave.length > 5) { toSave.pop(); }
+    try { localStorage.setItem('sax_chats_v2', JSON.stringify(toSave)); } catch {}
+  }
 }
 
 function loadProjects() { try { return JSON.parse(localStorage.getItem('sax_projects_v1') || '[]'); } catch { return []; } }
@@ -246,9 +255,15 @@ function renderProjects() {
 
 function renderChatList() {
   const el = document.getElementById('chat-list');
+  const waEl = document.getElementById('wa-chat-list');
+  const waSection = document.getElementById('wa-chats-section');
   if (!el) return;
+
   const unassigned = chats.filter(c => !c.projectId);
-  el.innerHTML = unassigned.map(c => `
+  const waChats = unassigned.filter(c => c.id && c.id.startsWith('wa-'));
+  const regularChats = unassigned.filter(c => !c.id || !c.id.startsWith('wa-'));
+
+  const renderItem = (c) => `
     <div class="chat-item ${activeChat && activeChat.id === c.id ? 'active' : ''}" onclick="selectChat('${c.id}')">
       <span class="chat-dot${typeof isChatActive==='function'&&isChatActive(c.id)?' active-pulse':''}"></span>
       <span class="chat-title">${esc(c.title)}</span>
@@ -257,7 +272,21 @@ function renderChatList() {
         <button class="chat-action-btn delete" onclick="deleteChat('${c.id}',event)" title="Delete">&times;</button>
       </span>
     </div>
-  `).join('') || '<div style="padding:8px 12px;font-size:.72rem;color:var(--muted)">No chats yet. Click + New Chat.</div>';
+  `;
+
+  // WhatsApp section
+  if (waEl && waSection) {
+    if (waChats.length > 0) {
+      waSection.style.display = '';
+      waEl.innerHTML = waChats.map(renderItem).join('');
+    } else {
+      waSection.style.display = 'none';
+    }
+  }
+
+  // Regular conversations
+  el.innerHTML = regularChats.map(renderItem).join('')
+    || '<div style="padding:8px 12px;font-size:.72rem;color:var(--muted)">No chats yet. Click + New Chat.</div>';
 }
 
 function renderSidebar() {
@@ -270,3 +299,8 @@ renderSidebar();
 checkAuth();
 window.addEventListener('hashchange', () => navigate(currentRoute()));
 navigate(currentRoute());
+
+// Auto-refresh sidebar every 30s to pick up new WhatsApp sessions
+setInterval(() => {
+  syncChatsFromServer().then(() => renderChatList()).catch(() => {});
+}, 30000);

@@ -26,7 +26,7 @@ interface AgentOptions {
   apiKey: string;
   model: string;
   baseURL?: string;
-  provider: "xai" | "openai" | "codex" | "anthropic";
+  provider: "xai" | "openai" | "codex" | "anthropic" | "local";
   systemPrompt: string;
   tools: ToolDefinition[];
   security: SecurityLayer;
@@ -220,11 +220,29 @@ async function executeToolCalls(
         result = { content: `BLOCKED by threat engine: ${threat.reason}`, isError: true };
       }
       // If session is in restricted mode (high threat score), block external tools
+      // Exception: browser interacting with our own app (localhost:4800) is always safe
       if (threatEngine.isRestricted() && ["http_request", "web_fetch", "browser"].includes(tc.name)) {
-        result = {
-          content: `BLOCKED: Session threat level is ${threat.threatLevel} (score: ${threat.threatScore}). External tool calls are restricted. Resolve security concerns first.`,
-          isError: true,
-        };
+        let isOwnApp = false;
+        if (tc.name === "browser") {
+          const urlArg = String(args.url || "");
+          // Navigating to our own app
+          const appPort = process.env.SAX_PORT || "4800";
+          if (new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${appPort}`, "i").test(urlArg)) {
+            isOwnApp = true;
+          } else if (!urlArg) {
+            // Non-navigation action (click/fill/etc) — check if currently on our app
+            try {
+              const { getBrowserManager } = await import("./browser.js");
+              isOwnApp = getBrowserManager(sessionId || "default").isOnOwnApp();
+            } catch {}
+          }
+        }
+        if (!isOwnApp) {
+          result = {
+            content: `BLOCKED: Session threat level is ${threat.threatLevel} (score: ${threat.threatScore}). External tool calls are restricted. Resolve security concerns first.`,
+            isError: true,
+          };
+        }
       }
     }
 
@@ -545,6 +563,9 @@ async function runCodexAgentHttp(
   return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "max_iterations" };
 }
 
+// Cache of local models that don't support tool calling (avoids repeated 400 errors)
+const _localNoToolModels = new Set<string>();
+
 // ── Standard (xAI/OpenAI API) Agent Loop ──
 
 async function runStandardAgent(
@@ -564,7 +585,7 @@ async function runStandardAgent(
     signal,
   } = options;
 
-  const baseURL = options.baseURL || (options.provider === "xai" ? "https://api.x.ai/v1" : "https://api.openai.com/v1");
+  const baseURL = options.baseURL || (options.provider === "local" ? "http://127.0.0.1:11434/v1" : options.provider === "xai" ? "https://api.x.ai/v1" : "https://api.openai.com/v1");
   const client = new OpenAI({ apiKey, baseURL });
   const toolMap = new Map(tools.map((t) => [t.name, t]));
 
@@ -619,15 +640,33 @@ async function runStandardAgent(
     const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
 
     try {
-      const stream = await client.chat.completions.create({
+      const useTools = !_localNoToolModels.has(model);
+      let stream = await client.chat.completions.create({
         model,
         messages,
-        tools: toolsToOpenAI(tools),
+        ...(useTools ? { tools: toolsToOpenAI(tools) } : {}),
         temperature,
         stream: true,
+      }, { signal: signal || undefined }).catch(async (err: Error) => {
+        // If model doesn't support tools, remember and retry without them
+        if (options.provider === "local" && err.message?.includes("does not support tools")) {
+          _localNoToolModels.add(model);
+          console.log(`[agent] Model ${model} doesn't support tools — switching to chat-only mode`);
+          return client.chat.completions.create({
+            model,
+            messages,
+            temperature,
+            stream: true,
+          }, { signal: signal || undefined });
+        }
+        throw err;
       });
 
       for await (const chunk of stream) {
+        if (signal?.aborted) {
+          stream.controller.abort();
+          break;
+        }
         const delta = chunk.choices[0]?.delta;
         if (!delta) continue;
 

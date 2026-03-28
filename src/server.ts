@@ -322,7 +322,7 @@ export function startServer(config: SAXConfig) {
       model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
       provider,
       systemPrompt: enrichedPrompt,
-      tools,
+      tools: primalOnlyTools,
       security,
       toolPolicy,
       sessionId,
@@ -380,7 +380,18 @@ export function startServer(config: SAXConfig) {
   const rateLimiter = getToolRateLimiter();
   const swarmTools = createSwarmTools();
   const primalTools = createPrimalTools();
-  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools];
+  const allAgentTools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools];
+
+  // Primal only gets agent control tools — forces delegation, no direct work
+  const PRIMAL_ALLOWED = new Set([
+    "agent_spawn", "agent_redirect", "agent_pause", "agent_resume",
+    "agent_cancel", "agent_status", "agent_output", "agent_message",
+    "delegate", "swarm_create", "swarm_status", "swarm_cancel",
+    "swarm_list_roles", "swarm_result", "memory_search", "memory_save",
+  ]);
+  const primalOnlyTools = allAgentTools.filter(t => PRIMAL_ALLOWED.has(t.name));
+  // Full tools for spawned agents (they do the actual work)
+  const tools = allAgentTools;
 
   // In-memory session cache (backed by disk)
   const sessions = new Map<string, Session>();
@@ -1737,7 +1748,7 @@ export function startServer(config: SAXConfig) {
           model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
           provider,
           systemPrompt: enrichedPrompt,
-          tools,
+          tools: primalOnlyTools,
           security,
           toolPolicy,
           threatEngine,
@@ -2036,6 +2047,86 @@ export function startServer(config: SAXConfig) {
 
   // Initialize event bus (Task 60)
   const eventBus = EventBus.getInstance();
+
+  // Wire spawned agent execution — when Primal spawns an agent, actually run it
+  eventBus.on("primal:agent-run", async (data: any) => {
+    const { agentId, task, systemPrompt, role } = data;
+    console.log(`[primal] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
+    try {
+      // Resolve API key and provider from saved settings (same as chat handler)
+      let agentProvider = "codex";
+      try {
+        const saved = JSON.parse(readFileSync(join(dataDir, "settings.json"), "utf-8"));
+        if (saved.provider) agentProvider = saved.provider;
+      } catch {}
+      const { getApiKey: getKey } = await import("./auth.js");
+      const { getAnthropicApiKey: getAnthKey } = await import("./anthropic-client.js");
+      const agentApiKey = agentProvider === "anthropic"
+        ? await getAnthKey()
+        : await getKey(config.openaiApiKey);
+
+      const agentSession: Session = {
+        id: `agent-${agentId}`,
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      // Match model to provider (same logic as main chat)
+      let savedModel = "";
+      try {
+        const saved = JSON.parse(readFileSync(join(dataDir, "settings.json"), "utf-8"));
+        if (saved.model) savedModel = saved.model;
+      } catch {}
+      const agentModel = savedModel || (agentProvider === "codex" ? "gpt-5.3-codex" : agentProvider === "anthropic" ? "claude-sonnet-4-6" : config.model);
+
+      // Spawned agents get work tools only (no agent_*, swarm_*, delegate — prevents recursion)
+      const spawnedAgentTools = tools.filter(t =>
+        !t.name.startsWith("agent_") && !t.name.startsWith("swarm_") && t.name !== "delegate"
+      );
+
+      // Timeout: 2 minutes per agent
+      const agentAbort = new AbortController();
+      const agentTimeout = setTimeout(() => {
+        agentAbort.abort();
+        console.warn(`[primal] Agent ${agentId} (${role}) timed out after 2 minutes`);
+      }, 120000);
+
+      const result = await runAgent(task, agentSession.messages, {
+        apiKey: agentApiKey,
+        model: agentModel,
+        provider: agentProvider,
+        systemPrompt: systemPrompt || `You are a ${role} agent. Complete the following task thoroughly. Use the tools available to create files, run commands, and get the job done. Report your results when finished.`,
+        tools: spawnedAgentTools,
+        security,
+        toolPolicy,
+        sessionId: `agent-${agentId}`,
+        maxIterations: config.maxIterations,
+        temperature: config.temperature,
+        signal: agentAbort.signal,
+        onEvent: (event) => {
+          if (event.type === "stream" && event.delta) {
+            eventBus.emit("primal:agent-output", { agentId, output: event.delta });
+          }
+          if (event.type === "tool_start") {
+            console.log(`[primal] Agent ${agentId} tool: ${event.toolName}`);
+            eventBus.emit("primal:agent-output", { agentId, output: `[tool] ${event.toolName}...` });
+          }
+          // Auto-approve all tool calls for spawned agents (no user to confirm)
+          if (event.type === "tool_start" && event.requiresApproval) {
+            event.requiresApproval = false;
+          }
+        },
+      });
+      clearTimeout(agentTimeout);
+      const finalMessage = result.messages.filter((m: any) => m.role === "assistant").pop();
+      const content = typeof finalMessage?.content === "string" ? finalMessage.content : JSON.stringify(finalMessage?.content || "");
+      eventBus.emit("primal:agent-result", { agentId, result: content, success: true });
+      console.log(`[primal] Agent ${agentId} (${role}) completed`);
+    } catch (e) {
+      eventBus.emit("primal:agent-result", { agentId, result: (e as Error).message, success: false });
+      console.error(`[primal] Agent ${agentId} (${role}) failed:`, (e as Error).message);
+    }
+  });
 
   // Initialize response cache (Task 51)
   const responseCache = new ResponseCache();

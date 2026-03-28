@@ -355,6 +355,14 @@ export function startServer(config: SAXConfig) {
     onMessage: (params) => bridgeMessageHandler("Telegram", params),
   });
 
+  // Auto-reconnect Telegram if token exists (persists across server restarts)
+  if (secretsStore.has("TELEGRAM_BOT_TOKEN")) {
+    telegramBridge.connect().then(r => {
+      if (r.state === "connected") console.log(`[telegram] Auto-reconnected as @${r.botUsername}`);
+      else if (r.state === "error") console.warn("[telegram] Auto-reconnect failed");
+    }).catch(() => {});
+  }
+
   // Mutable ref so secret tools can emit SSE events during the active request
   let activeOnEvent: ((event: ServerEvent) => void) | undefined;
   const secretTools = createSecretTools(secretsStore, undefined);
@@ -1713,7 +1721,7 @@ export function startServer(config: SAXConfig) {
     }
 
     if (method === "GET" && url.pathname === "/api/telegram/status") {
-      json(200, telegramBridge.getStatus());
+      json(200, { ...telegramBridge.getStatus(), hasToken: secretsStore.has("TELEGRAM_BOT_TOKEN") });
       return;
     }
 

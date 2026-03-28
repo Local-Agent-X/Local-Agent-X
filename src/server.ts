@@ -32,6 +32,7 @@ import { CronService, createCronTools } from "./cron-service.js";
 import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "./session-policy.js";
 import { imageTools } from "./image-tools.js";
 import { createMissionTools } from "./missions.js";
+// Background task queue removed — sub-agent system handles background work
 import { createAllMissionTools } from "./missions/index.js";
 import { runInjectionTests } from "./security-tests.js";
 import { getThreatDashboard, recordThreatEvent } from "./threat-dashboard.js";
@@ -388,6 +389,7 @@ export function startServer(config: SAXConfig) {
   const rateLimiter = getToolRateLimiter();
   const swarmTools = createSwarmTools();
   const primalTools = createPrimalTools();
+
   const allAgentTools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools];
 
   // Primal only gets agent control tools — forces delegation, no direct work

@@ -29,7 +29,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh
 body::after{content:'';position:fixed;inset:0;pointer-events:none;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,255,65,.012) 2px,rgba(0,255,65,.012) 4px);z-index:9999}
 
 /* ── Sidebar ── */
-#sidebar{width:280px;min-width:280px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column}
+#sidebar{width:280px;min-width:280px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;transition:width .2s ease,min-width .2s ease}
+#sidebar.collapsed{width:0;min-width:0;overflow:hidden;border-right:none}
 #sidebar-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
 #logo{font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase;text-shadow:0 0 10px var(--accent-dim);flex:1;cursor:pointer}
 #new-chat-btn{background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:7px 12px;font-size:.75rem;cursor:pointer;font-family:var(--mono);transition:all .2s;white-space:nowrap}
@@ -222,3 +223,226 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 #secret-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:10000;align-items:center;justify-content:center}
 #secret-modal-overlay.visible{display:flex}
 #secret-modal{background:var(--surface);border:1px solid var(--accent);border-radius:16px;padding:28px 32px;max-width:480px;width:90%;box-shadow:0 0 40px rgba(0,255,65,.15)}
+
+/* ── Skip to content (feature 100) ── */
+.skip-to-content{position:absolute;top:-100px;left:8px;background:var(--accent);color:var(--bg);padding:8px 16px;border-radius:0 0 8px 8px;z-index:100000;font-family:var(--mono);font-size:.8rem;text-decoration:none;transition:top .2s}
+.skip-to-content:focus{top:0}
+
+/* ── Chat search bar (feature 87) ── */
+#chat-search-bar{padding:8px 10px 4px}
+#chat-search-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:.75rem;outline:none;transition:border-color .2s}
+#chat-search-input:focus{border-color:var(--accent);box-shadow:0 0 6px rgba(0,255,65,.1)}
+#chat-search-input::placeholder{color:var(--muted)}
+
+/* ── Pin indicator (feature 88) ── */
+.chat-item.pinned{border-left:2px solid var(--warn)}
+.pin-icon{font-size:.6rem;vertical-align:middle}
+
+/* ── Tag pills (feature 89) ── */
+.tag-filter-bar{display:flex;gap:4px;padding:4px 4px 8px;flex-wrap:wrap}
+.tag-pill{font-family:var(--mono);font-size:.6rem;padding:3px 8px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;transition:all .15s}
+.tag-pill:hover{border-color:var(--accent);color:var(--text)}
+.tag-pill.active{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.chat-tags-inline{display:none;gap:3px;flex-wrap:wrap;margin-left:auto}
+.chat-item:hover .chat-tags-inline,.chat-item.active .chat-tags-inline{display:flex}
+.tag-pill-sm{font-family:var(--mono);font-size:.55rem;padding:1px 5px;border-radius:6px;background:var(--surface-2);color:var(--muted);white-space:nowrap}
+.tag-menu{position:absolute;right:0;top:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;min-width:120px;z-index:100;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+.tag-menu-item{padding:5px 10px;font-size:.7rem;color:var(--muted);cursor:pointer;border-radius:4px;font-family:var(--mono)}
+.tag-menu-item:hover{background:var(--hover);color:var(--text)}
+.tag-menu-item.active{color:var(--accent)}
+.tag-menu-item.active::before{content:'\2713 ';color:var(--accent)}
+.tag-menu-item.add-tag{color:var(--accent);border-top:1px solid var(--border);margin-top:2px;padding-top:6px}
+
+/* ── Code block copy button (feature 91) ── */
+.code-block-wrapper{position:relative;margin:8px 0}
+.code-block-header{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#0a0a14;border:1px solid var(--border);border-bottom:none;border-radius:8px 8px 0 0;font-family:var(--mono);font-size:.7rem}
+.code-block-wrapper .code-block{margin:0;border-radius:0 0 8px 8px;border-top:none}
+.code-lang{color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.code-copy-btn{background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 10px;border-radius:4px;font-family:var(--mono);font-size:.65rem;cursor:pointer;transition:all .15s}
+.code-copy-btn:hover{border-color:var(--accent);color:var(--accent)}
+[data-theme="light"] .code-block-header{background:#e8e8f0}
+
+/* ── Inline chat images (feature 92) ── */
+.inline-chat-img{max-width:400px;max-height:300px;border-radius:10px;border:1px solid var(--border);cursor:pointer;margin:6px 0;display:block;transition:transform .15s}
+.inline-chat-img:hover{transform:scale(1.02);border-color:var(--accent)}
+
+/* ── Raw markdown view (feature 90) ── */
+.raw-md{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--mono);font-size:.82rem;white-space:pre-wrap;word-break:break-word;color:var(--text);margin:0}
+#chat-toolbar{display:flex;justify-content:flex-end;padding:6px 20px 0;gap:8px}
+#md-toggle-btn{background:transparent;border:1px solid var(--border);color:var(--muted);padding:4px 10px;border-radius:6px;font-family:var(--mono);font-size:.65rem;cursor:pointer;transition:all .15s}
+#md-toggle-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ── File drop overlay (feature 93) ── */
+#drop-overlay{display:none;position:absolute;inset:0;background:rgba(0,255,65,.05);border:2px dashed var(--accent);border-radius:12px;z-index:500;align-items:center;justify-content:center;pointer-events:none}
+#drop-overlay.visible{display:flex}
+.drop-overlay-content{display:flex;flex-direction:column;align-items:center;gap:10px;font-family:var(--mono);font-size:.85rem;color:var(--accent)}
+.drop-icon{font-size:2rem}
+
+/* ── Command palette (feature 86) ── */
+#cmd-palette-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);z-index:20000;align-items:flex-start;justify-content:center;padding-top:15vh}
+#cmd-palette-overlay.visible{display:flex}
+#cmd-palette{background:var(--surface);border:1px solid var(--border);border-radius:12px;width:90%;max-width:520px;box-shadow:0 8px 40px rgba(0,0,0,.5);overflow:hidden}
+#cmd-search{width:100%;background:transparent;border:none;border-bottom:1px solid var(--border);padding:14px 18px;color:var(--text);font-family:var(--mono);font-size:.88rem;outline:none}
+#cmd-search::placeholder{color:var(--muted)}
+#cmd-results{max-height:320px;overflow-y:auto;padding:6px}
+.cmd-item{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-radius:6px;cursor:pointer;transition:background .1s}
+.cmd-item:hover,.cmd-item.selected{background:var(--hover)}
+.cmd-label{font-size:.82rem;color:var(--text)}
+.cmd-shortcut{font-size:.7rem;color:var(--muted);font-family:var(--mono)}
+.cmd-empty{padding:20px;text-align:center;color:var(--muted);font-size:.82rem}
+
+/* ── Status bar (feature 97) ── */
+#status-bar{display:flex;justify-content:center;gap:20px;padding:6px 14px;font-family:var(--mono);font-size:.62rem;color:var(--muted);max-width:800px;margin:0 auto;width:100%}
+.status-item{display:flex;align-items:center;gap:4px}
+.status-icon{font-size:.7rem}
+
+/* ── Onboarding wizard (feature 99) ── */
+#onboarding-overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);backdrop-filter:blur(6px);z-index:30000;display:flex;align-items:center;justify-content:center}
+#onboarding-modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px 40px;max-width:520px;width:90%;box-shadow:0 8px 60px rgba(0,0,0,.5)}
+.onboarding-step{display:none;text-align:center}
+.onboarding-step.active{display:block}
+.onboarding-title{font-family:var(--mono);font-size:1.1rem;color:var(--accent);letter-spacing:1px;margin-bottom:8px}
+.onboarding-desc{font-size:.85rem;color:var(--muted);line-height:1.6;margin-bottom:20px}
+.onboarding-art{font-size:3rem;margin:16px 0}
+.onboarding-options{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.onboarding-option{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 18px;text-align:left;color:var(--text);cursor:pointer;transition:all .15s;font-family:var(--font);font-size:.85rem}
+.onboarding-option:hover{border-color:var(--accent);background:var(--hover)}
+.onboarding-option.selected{border-color:var(--accent);background:rgba(0,255,65,.08)}
+.onboarding-nav{display:flex;justify-content:space-between;align-items:center;margin-top:24px;padding-top:16px;border-top:1px solid var(--border)}
+.onboarding-dots{display:flex;gap:6px}
+.ob-dot{width:8px;height:8px;border-radius:50%;background:var(--border);transition:all .2s}
+.ob-dot.active{background:var(--accent);box-shadow:0 0 6px var(--accent-dim)}
+
+/* ── Agent Feeds (Mission Control) ── */
+#page-chat{flex-direction:row}
+#chat-main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.agent-feeds{width:0;min-width:0;overflow:hidden;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;transition:width .25s ease,min-width .25s ease}
+.agent-feeds.collapsed{width:0;min-width:0;border-left:none}
+.agent-feeds.active{width:320px;min-width:320px;overflow:visible}
+.agent-feeds-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0}
+.agent-feeds-title{font-family:var(--mono);font-size:.72rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase}
+.agent-count{font-family:var(--mono);font-size:.65rem;background:var(--accent);color:var(--bg);border-radius:10px;padding:1px 7px;min-width:18px;text-align:center}
+.agent-feeds-toggle{background:none;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:.85rem;padding:4px 8px;border-radius:6px;margin-left:auto;transition:all .15s;line-height:1}
+.agent-feeds-toggle:hover{border-color:var(--accent);color:var(--accent)}
+.agent-feeds-list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;scrollbar-color:#222 transparent}
+.agent-feed-card{background:rgba(15,15,24,.7);backdrop-filter:blur(8px);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:8px;padding:10px 12px;transition:all .2s}
+.agent-feed-card.working{border-left-color:var(--accent);box-shadow:0 0 12px rgba(0,255,65,.06)}
+.agent-feed-card.waiting{border-left-color:var(--warn)}
+.agent-feed-card.done{border-left-color:var(--muted);opacity:.7}
+.agent-feed-card.error{border-left-color:var(--danger)}
+.agent-feed-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.agent-feed-icon{font-size:.95rem;flex-shrink:0}
+.agent-feed-name{font-family:var(--mono);font-size:.75rem;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.agent-feed-status{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:.62rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.agent-status-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.agent-feed-card.working .agent-status-dot{background:var(--accent);box-shadow:0 0 6px var(--accent-dim);animation:agent-pulse 1.5s infinite}
+.agent-feed-card.waiting .agent-status-dot{background:var(--warn);box-shadow:0 0 6px rgba(255,170,0,.3)}
+.agent-feed-card.done .agent-status-dot{background:var(--muted)}
+.agent-feed-card.error .agent-status-dot{background:var(--danger);box-shadow:0 0 6px rgba(255,51,51,.3)}
+@keyframes agent-pulse{0%,100%{opacity:1;box-shadow:0 0 4px var(--accent)}50%{opacity:.5;box-shadow:0 0 10px var(--accent)}}
+.agent-feed-output{max-height:150px;overflow-y:auto;font-family:var(--mono);font-size:.7rem;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;margin:6px 0;line-height:1.5;scrollbar-width:thin;scrollbar-color:#222 transparent;white-space:pre-wrap;word-break:break-word}
+.agent-feed-card.done .agent-feed-output{max-height:0;padding:0;border:none;margin:0;overflow:hidden}
+.agent-feed-controls{display:flex;gap:4px;margin-top:4px}
+.agent-ctrl-btn{background:none;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:.6rem;padding:3px 8px;border-radius:4px;cursor:pointer;transition:all .15s;text-transform:uppercase;letter-spacing:.5px}
+.agent-ctrl-btn:hover{border-color:var(--accent);color:var(--accent)}
+.agent-ctrl-btn.cancel:hover{border-color:var(--danger);color:var(--danger)}
+.agent-redirect-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-family:var(--mono);font-size:.7rem;outline:none;margin-top:4px;display:none;transition:border-color .2s}
+.agent-redirect-input:focus{border-color:var(--accent);box-shadow:0 0 6px rgba(0,255,65,.1)}
+.agent-redirect-input.visible{display:block}
+.agent-inline-card{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 10px;margin:4px 0;font-family:var(--mono);font-size:.72rem;cursor:pointer;transition:all .15s}
+.agent-inline-card:hover{border-color:var(--accent);background:var(--hover)}
+.agent-inline-icon{font-size:.85rem}
+.agent-inline-name{color:var(--text)}
+.agent-inline-status{color:var(--muted);font-size:.65rem}
+.agent-inline-progress{color:var(--accent);font-size:.65rem}
+
+/* ── Mobile hamburger (feature 95) ── */
+#mobile-menu-btn{display:none;position:fixed;top:10px;left:10px;z-index:1100;background:var(--surface);border:1px solid var(--border);color:var(--text);width:36px;height:36px;border-radius:8px;font-size:1.2rem;cursor:pointer;align-items:center;justify-content:center}
+#sidebar-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999;display:block}
+
+/* ── Mobile responsive (feature 95) ── */
+@media (max-width:768px) {
+  #sidebar{position:fixed;left:-300px;top:0;bottom:0;z-index:1000;width:280px;transition:left .25s ease;box-shadow:none}
+  #sidebar.mobile-open{left:0;box-shadow:4px 0 20px rgba(0,0,0,.4)}
+  #mobile-menu-btn{display:flex}
+  #main{margin-left:0;width:100%}
+
+  /* Settings responsive */
+  .settings-tabs{overflow-x:auto;flex-wrap:nowrap;padding:10px 12px;gap:4px;-webkit-overflow-scrolling:touch}
+  .tab-pill{white-space:nowrap;flex-shrink:0;font-size:.65rem;padding:6px 10px}
+  .settings-content{padding:12px}
+  .section-card{padding:14px 16px}
+  .field-row{flex-direction:column}
+
+  /* Secrets & cron responsive */
+  .secrets-layout,.cron-layout{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .secrets-left,.cron-left{border-right:none;border-bottom:1px solid var(--border);max-height:40vh}
+  .secrets-right,.cron-right{padding:16px}
+
+  /* Chat input responsive */
+  #input-wrapper{gap:6px}
+  #input-box{border-radius:12px}
+  #messages{padding:12px 10px}
+  .msg{max-width:100%}
+  .msg.user .msg-body{max-width:90%}
+
+  /* Status bar compact */
+  #status-bar{gap:10px;font-size:.58rem}
+
+  /* Voice indicators */
+  #voice-indicator{top:50px;font-size:.6rem}
+  #tts-toggle{top:50px;right:auto;left:50px;font-size:.6rem}
+
+  /* Chat toolbar */
+  #chat-toolbar{padding:4px 10px 0}
+
+  /* Agent feeds overlay on mobile */
+  .agent-feeds{position:fixed;right:0;top:0;bottom:0;z-index:1000;box-shadow:none}
+  .agent-feeds.active{box-shadow:-4px 0 20px rgba(0,0,0,.4);width:300px;min-width:300px}
+}
+
+@media (max-width:480px) {
+  #sidebar{width:85vw;left:-85vw}
+  #sidebar.mobile-open{left:0}
+  .onboarding-option{padding:10px 14px;font-size:.8rem}
+  #onboarding-modal{padding:20px 24px}
+  #cmd-palette{width:95%}
+}
+
+/* ── Keyboard focus indicators (feature 100) ── */
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:focus-visible,.chat-item:focus-visible,.util-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+/* ── Feature 1: Fork/Branch button in messages ── */
+.msg-fork-btn{display:none;background:none;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:.6rem;padding:2px 8px;border-radius:4px;cursor:pointer;transition:all .15s;margin-top:4px}
+.msg:hover .msg-fork-btn{display:inline-block}
+.msg-fork-btn:hover{border-color:var(--accent);color:var(--accent)}
+.fork-badge{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:.62rem;color:var(--info);background:rgba(51,170,255,.08);border:1px solid rgba(51,170,255,.2);border-radius:6px;padding:2px 8px;margin-bottom:4px}
+
+/* ── Feature 2: Sidebar action buttons ── */
+.sidebar-action-btn{flex:1;background:transparent;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:.6rem;padding:4px 6px;border-radius:6px;cursor:pointer;transition:all .15s;text-transform:uppercase;letter-spacing:.5px}
+.sidebar-action-btn:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ── Feature 3: Global search results ── */
+.gs-result{padding:10px 12px;border-radius:8px;cursor:pointer;transition:background .15s;border-bottom:1px solid var(--border)}
+.gs-result:hover{background:var(--hover)}
+.gs-result-title{font-family:var(--mono);font-size:.78rem;color:var(--accent);margin-bottom:4px}
+.gs-result-match{font-size:.75rem;color:var(--text);background:var(--bg);border-radius:6px;padding:6px 8px;margin:4px 0;font-family:var(--mono);line-height:1.5}
+.gs-result-match mark{background:rgba(0,255,65,.2);color:var(--accent);padding:0 2px;border-radius:2px}
+.gs-result-meta{font-size:.62rem;color:var(--muted);font-family:var(--mono)}
+
+/* ── Feature 5: Mood indicator colors ── */
+#mood-indicator.positive{color:var(--accent);border-color:var(--accent-dim)}
+#mood-indicator.negative{color:var(--warn);border-color:rgba(255,170,0,.3)}
+#mood-indicator.urgent{color:var(--danger);border-color:rgba(255,51,51,.3)}
+#mood-indicator.neutral{color:var(--muted);border-color:var(--border)}
+
+/* ── Fork tree items ── */
+.fork-tree-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;transition:all .15s;border:1px solid var(--border);margin-bottom:6px}
+.fork-tree-item:hover{border-color:var(--accent);background:var(--hover)}
+.fork-tree-item.current{border-color:var(--accent);background:rgba(0,255,65,.05)}
+.fork-tree-dot{width:10px;height:10px;border-radius:50%;background:var(--accent-dim);flex-shrink:0}
+.fork-tree-item.current .fork-tree-dot{background:var(--accent);box-shadow:0 0 6px var(--accent-dim)}
+.fork-tree-info{flex:1;min-width:0}
+.fork-tree-title{font-family:var(--mono);font-size:.78rem;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fork-tree-meta{font-size:.62rem;color:var(--muted);font-family:var(--mono);margin-top:2px}

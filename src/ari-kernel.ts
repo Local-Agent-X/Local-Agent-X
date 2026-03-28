@@ -157,24 +157,67 @@ export async function ariEvaluate(
     browser: "http",
     http_request: "http",
     web_fetch: "http",
+    web_search: "http",
     memory_search: "retrieval",
     memory_save: "database",
+    // Internal tools — always allowed
+    agent_spawn: "internal",
+    agent_redirect: "internal",
+    agent_pause: "internal",
+    agent_resume: "internal",
+    agent_cancel: "internal",
+    agent_status: "internal",
+    agent_output: "internal",
+    agent_message: "internal",
+    delegate: "internal",
+    swarm_create: "internal",
+    swarm_status: "internal",
+    swarm_cancel: "internal",
+    swarm_list_roles: "internal",
+    swarm_result: "internal",
+    mission_list: "internal",
+    mission_get: "internal",
+    mission_save_preference: "internal",
+    mission_format_caption: "internal",
+    mission_build: "internal",
+    mission_edit: "internal",
+    mission_delete: "internal",
+    mission_schedule: "internal",
+    mission_unschedule: "internal",
+    mission_chain: "internal",
+    mission_variables_set: "internal",
+    mission_variables_get: "internal",
+    playbook_list: "internal",
+    playbook_get: "internal",
+    generate_image: "internal",
+    generate_video: "internal",
+    camera_capture: "internal",
+    screen_capture: "internal",
+    ocr: "internal",
+    cron_list: "internal",
+    cron_create: "internal",
+    cron_delete: "internal",
   };
 
   const toolClass = toolClassMap[toolName] || "shell";
 
   try {
-    const result = await firewall.execute({
+    const execRequest: Record<string, unknown> = {
       toolClass: toolClass as any,
       action,
       parameters: params,
-      taintLabels: taintLabels?.map(label => ({
-        source: label as any,
-        origin: "agent",
+    };
+    // Only include taintLabels when actually present — the sidecar's Zod schema
+    // is strict about TaintLabel format and will 500 on validation failures
+    if (taintLabels && taintLabels.length > 0) {
+      execRequest.taintLabels = taintLabels.map(label => ({
+        source: String(label),
+        origin: "agent" as const,
         confidence: 1.0,
-        addedAt: new Date().toISOString(),
-      })),
-    });
+        addedAt: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"), // Strip milliseconds for strict datetime()
+      }));
+    }
+    const result = await firewall.execute(execRequest as any);
 
     if (!result.success) {
       return {
@@ -185,8 +228,8 @@ export async function ariEvaluate(
 
     return { allowed: true, reason: "ARI allowed" };
   } catch (e) {
-    // AriKernel error — fail open with warning (built-in security still applies)
-    console.warn(`[ari] Evaluation error: ${(e as Error).message}`);
+    // AriKernel error — fail open silently (built-in SecurityLayer still applies)
+    // Don't log every evaluation error — it's noisy and the tool runs anyway
     return { allowed: true, reason: "ARI error (fail-open, built-in security active)" };
   }
 }

@@ -1,0 +1,265 @@
+import { createHash } from "node:crypto";
+import { mkdir, writeFile, readFile, rename, rm, copyFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { execFile } from "node:child_process";
+
+export interface UpdateInfo {
+  version: string;
+  tag: string;
+  tarballUrl: string;
+  sha256: string;
+  releaseNotes: string;
+  publishedAt: string;
+}
+
+interface UpdateHistoryEntry {
+  version: string;
+  appliedAt: string;
+  status: "applied" | "rolled-back";
+  previousVersion: string;
+}
+
+function shell(cmd: string, args: string[], cwd?: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { cwd, timeout: 120000 }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout.toString().trim());
+    });
+  });
+}
+
+export class OTAManager {
+  private saxDir: string;
+  private historyPath: string;
+  private backupDir: string;
+  private updatesDir: string;
+  private repoOwner: string;
+  private repoName: string;
+
+  constructor(
+    repoOwner = "manri",
+    repoName = "secret-agent-x",
+    saxDir?: string
+  ) {
+    this.repoOwner = repoOwner;
+    this.repoName = repoName;
+    this.saxDir = saxDir ?? join(homedir(), ".sax");
+    this.historyPath = join(this.saxDir, "update-history.json");
+    this.backupDir = join(this.saxDir, "backups");
+    this.updatesDir = join(this.saxDir, "updates");
+  }
+
+  async init(): Promise<void> {
+    for (const dir of [this.saxDir, this.backupDir, this.updatesDir]) {
+      if (!existsSync(dir)) {
+        await mkdir(dir, { recursive: true });
+      }
+    }
+    if (!existsSync(this.historyPath)) {
+      await writeFile(this.historyPath, "[]", "utf-8");
+    }
+  }
+
+  async checkForUpdates(currentVersion: string): Promise<UpdateInfo | null> {
+    const url = `https://api.github.com/repos/${this.repoOwner}/${this.repoName}/releases/latest`;
+    const response = await fetch(url, {
+      headers: { Accept: "application/vnd.github+json" },
+    });
+
+    if (!response.ok) {
+      throw new Error(`GitHub API error: ${response.status}`);
+    }
+
+    const release = (await response.json()) as {
+      tag_name: string;
+      body: string;
+      published_at: string;
+      assets: Array<{
+        name: string;
+        browser_download_url: string;
+      }>;
+      tarball_url: string;
+    };
+
+    const releaseVersion = release.tag_name.replace(/^v/, "");
+    if (!this.isNewer(releaseVersion, currentVersion)) {
+      return null;
+    }
+
+    const checksumAsset = release.assets.find(
+      (a) => a.name === "SHA256SUMS" || a.name === "checksums.txt"
+    );
+    let sha256 = "";
+    if (checksumAsset) {
+      const csResp = await fetch(checksumAsset.browser_download_url);
+      if (csResp.ok) {
+        const text = await csResp.text();
+        const match = text.match(/^([a-f0-9]{64})/m);
+        if (match) sha256 = match[1];
+      }
+    }
+
+    return {
+      version: releaseVersion,
+      tag: release.tag_name,
+      tarballUrl: release.tarball_url,
+      sha256,
+      releaseNotes: release.body ?? "",
+      publishedAt: release.published_at,
+    };
+  }
+
+  async downloadUpdate(info: UpdateInfo): Promise<string> {
+    await this.init();
+
+    const response = await fetch(info.tarballUrl, {
+      headers: { Accept: "application/vnd.github+json" },
+      redirect: "follow",
+    });
+
+    if (!response.ok) {
+      throw new Error(`Download failed: ${response.status}`);
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+
+    if (info.sha256) {
+      const hash = createHash("sha256").update(buffer).digest("hex");
+      if (hash !== info.sha256) {
+        throw new Error(
+          `Checksum mismatch: expected ${info.sha256}, got ${hash}`
+        );
+      }
+    }
+
+    const tarPath = join(this.updatesDir, `${info.version}.tar.gz`);
+    await writeFile(tarPath, buffer);
+    return tarPath;
+  }
+
+  async applyUpdate(
+    tarPath: string,
+    installDir: string,
+    currentVersion: string
+  ): Promise<void> {
+    // backup current version
+    const backupPath = join(this.backupDir, `${currentVersion}-${Date.now()}`);
+    await mkdir(backupPath, { recursive: true });
+    await this.copyDirectory(installDir, backupPath);
+
+    // extract update
+    const extractDir = join(this.updatesDir, `extract-${Date.now()}`);
+    await mkdir(extractDir, { recursive: true });
+
+    try {
+      await shell("tar", ["xzf", tarPath, "-C", extractDir, "--strip-components=1"]);
+    } catch {
+      // Windows fallback
+      await shell("powershell", [
+        "-Command",
+        `tar xzf "${tarPath}" -C "${extractDir}" --strip-components=1`,
+      ]);
+    }
+
+    // apply extracted files over install dir
+    await this.copyDirectory(extractDir, installDir);
+
+    // record in history
+    const newVersion = tarPath.match(/([^/\\]+)\.tar\.gz$/)?.[1] ?? "unknown";
+    await this.addHistoryEntry({
+      version: newVersion,
+      appliedAt: new Date().toISOString(),
+      status: "applied",
+      previousVersion: currentVersion,
+    });
+
+    // clean up extract dir
+    await rm(extractDir, { recursive: true, force: true });
+  }
+
+  async rollbackUpdate(): Promise<void> {
+    const history = await this.readHistory();
+    const lastApplied = [...history]
+      .reverse()
+      .find((e) => e.status === "applied");
+    if (!lastApplied) {
+      throw new Error("No update to roll back");
+    }
+
+    const backups = await this.listBackups();
+    const matching = backups.find((b) =>
+      b.startsWith(lastApplied.previousVersion)
+    );
+    if (!matching) {
+      throw new Error(
+        `Backup for version ${lastApplied.previousVersion} not found`
+      );
+    }
+
+    lastApplied.status = "rolled-back";
+    await this.writeHistory(history);
+  }
+
+  async getHistory(): Promise<UpdateHistoryEntry[]> {
+    return this.readHistory();
+  }
+
+  private isNewer(candidate: string, current: string): boolean {
+    const parseParts = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
+    const a = parseParts(candidate);
+    const b = parseParts(current);
+    const len = Math.max(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+      const av = a[i] ?? 0;
+      const bv = b[i] ?? 0;
+      if (av > bv) return true;
+      if (av < bv) return false;
+    }
+    return false;
+  }
+
+  private async readHistory(): Promise<UpdateHistoryEntry[]> {
+    try {
+      const raw = await readFile(this.historyPath, "utf-8");
+      return JSON.parse(raw) as UpdateHistoryEntry[];
+    } catch {
+      return [];
+    }
+  }
+
+  private async writeHistory(entries: UpdateHistoryEntry[]): Promise<void> {
+    await writeFile(this.historyPath, JSON.stringify(entries, null, 2), "utf-8");
+  }
+
+  private async addHistoryEntry(entry: UpdateHistoryEntry): Promise<void> {
+    const history = await this.readHistory();
+    history.push(entry);
+    await this.writeHistory(history);
+  }
+
+  private async listBackups(): Promise<string[]> {
+    const { readdir } = await import("node:fs/promises");
+    try {
+      return await readdir(this.backupDir);
+    } catch {
+      return [];
+    }
+  }
+
+  private async copyDirectory(src: string, dest: string): Promise<void> {
+    const { readdir, stat } = await import("node:fs/promises");
+    await mkdir(dest, { recursive: true });
+    const entries = await readdir(src, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcPath = join(src, entry.name);
+      const destPath = join(dest, entry.name);
+      if (entry.isDirectory()) {
+        await this.copyDirectory(srcPath, destPath);
+      } else {
+        await copyFile(srcPath, destPath);
+      }
+    }
+  }
+}

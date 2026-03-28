@@ -1254,14 +1254,11 @@ function _updateAgentCount() {
         updateAgentFeed(msg.agentId, { output: msg.output });
       } else if (msg.type === 'agent-complete' && msg.agentId) {
         updateAgentFeed(msg.agentId, { status: msg.success ? 'done' : 'error', output: msg.result ? '[Result] ' + msg.result.slice(0, 200) : '' });
-        // Inject completion notification into chat
+        // Inject completion as a clean markdown message, not raw HTML
+        var statusIcon = msg.success ? '✅' : '❌';
         var statusText = msg.success ? 'completed' : 'failed';
-        var resultPreview = msg.result ? msg.result.slice(0, 300) : 'No output';
-        var notifHtml = '<div style="border:1px solid ' + (msg.success ? 'var(--accent)' : 'var(--danger)') + ';border-radius:8px;padding:12px;margin:8px 0;background:var(--bg2)">' +
-          '<div style="font-family:var(--mono);font-size:.75rem;color:' + (msg.success ? 'var(--accent)' : 'var(--danger)') + ';margin-bottom:6px">' +
-          (msg.success ? '✓' : '✗') + ' Agent ' + statusText + '</div>' +
-          '<div style="font-size:.8rem;color:var(--text)">' + esc(resultPreview) + '</div></div>';
-        addMessageEl('assistant', notifHtml);
+        var resultPreview = msg.result ? msg.result.slice(0, 500) : 'No output';
+        addMessageEl('assistant', statusIcon + ' **Agent ' + statusText + '**\n\n' + resultPreview);
         setTimeout(function() { removeAgentFeed(msg.agentId); }, 10000);
       }
     };

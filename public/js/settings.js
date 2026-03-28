@@ -131,11 +131,18 @@ async function checkVoiceCaps() {
 function loadToolsList() {
   const tools = [
     { name: 'read', status: 'allowed' }, { name: 'write', status: 'allowed' }, { name: 'edit', status: 'allowed' },
-    { name: 'bash', status: 'rate-limited' }, { name: 'web_fetch', status: 'operator-only' },
-    { name: 'http_request', status: 'operator-only' }, { name: 'browser', status: 'operator-only' },
+    { name: 'bash', status: 'rate-limited' },
+    { name: 'web_fetch', status: 'rate-limited' }, { name: 'web_search', status: 'allowed' },
+    { name: 'http_request', status: 'rate-limited' }, { name: 'browser', status: 'rate-limited' },
     { name: 'generate_image', status: 'rate-limited' }, { name: 'generate_video', status: 'rate-limited' },
     { name: 'memory_search', status: 'allowed' }, { name: 'memory_save', status: 'allowed' },
-    { name: 'memory_get', status: 'allowed' }, { name: 'request_secret', status: 'allowed' },
+    { name: 'memory_get', status: 'allowed' }, { name: 'memory_recall', status: 'allowed' },
+    { name: 'memory_reflect', status: 'allowed' }, { name: 'memory_update_profile', status: 'allowed' },
+    { name: 'memory_stats', status: 'allowed' }, { name: 'request_secret', status: 'allowed' },
+    { name: 'mission_list', status: 'allowed' }, { name: 'mission_get', status: 'allowed' },
+    { name: 'mission_save_preference', status: 'allowed' }, { name: 'mission_format_caption', status: 'allowed' },
+    { name: 'cron_list', status: 'allowed' }, { name: 'cron_create', status: 'allowed' },
+    { name: 'cron_delete', status: 'allowed' }, { name: 'cron_toggle', status: 'allowed' },
   ];
   const el = document.getElementById('tools-list'); if (!el) return;
   el.innerHTML = tools.map(t => {

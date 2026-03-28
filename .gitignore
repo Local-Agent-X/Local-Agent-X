@@ -14,23 +14,7 @@ voice-models/
 .DS_Store
 Thumbs.db
 
-# Workspace — agent-built apps, generated content, temp files
+# Workspace — personal files, agent-built apps, generated content
 # These sync via the brain/memory repo, not the code repo
-workspace/apps/
-workspace/images/
-workspace/videos/
-workspace/chatgpt-export/
-workspace/reports/
-workspace/test-ws/
-workspace/todo-app/
-workspace/lakers-todo/
-workspace/pistons-todo/
-workspace/my-groom-time/
-workspace/meal-planner-saas/
-workspace/ai-animation-studio/
-workspace/agent-x-logo.svg
-workspace/*.py
-workspace/*.js
-workspace/*.txt
-workspace/deep-research*.md
+workspace/
 index.html

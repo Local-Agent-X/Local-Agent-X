@@ -35,6 +35,10 @@
   <!-- Chat search (feature 87) -->
   <div id="chat-search-bar">
     <input id="chat-search-input" type="search" placeholder="Search chats..." oninput="onChatSearch(this.value)" aria-label="Search conversations" autocomplete="off" />
+    <div style="display:flex;gap:4px;margin-top:4px">
+      <button class="sidebar-action-btn" onclick="openGlobalSearch()" title="Search across all sessions">Deep Search</button>
+      <button class="sidebar-action-btn" onclick="autoSummarize()" title="Summarize old sessions">Summarize</button>
+    </div>
   </div>
 
   <div id="chats-section" role="list" aria-label="Chat list">
@@ -74,8 +78,11 @@
   <!-- ══ CHAT PAGE ══ -->
   <div id="page-chat" class="page active">
     <div id="chat-main">
-      <!-- Markdown preview toggle (feature 90) -->
+      <!-- Chat toolbar -->
       <div id="chat-toolbar">
+        <span id="mood-indicator" title="Detected mood" style="display:none;font-size:.65rem;font-family:var(--mono);padding:3px 8px;border-radius:6px;border:1px solid var(--border);color:var(--muted)"></span>
+        <span id="smart-ctx-indicator" title="Smart context active" style="display:none;font-size:.65rem;font-family:var(--mono);padding:3px 8px;border-radius:6px;border:1px solid var(--accent-dim);color:var(--accent)">CTX</span>
+        <button id="fork-tree-btn" onclick="showForkTree()" title="View conversation branches" aria-label="View branches" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:4px 10px;border-radius:6px;font-family:var(--mono);font-size:.65rem;cursor:pointer;display:none">Branches</button>
         <button id="md-toggle-btn" onclick="toggleMdPreview()" title="Show raw markdown" aria-label="Toggle markdown preview">Raw</button>
       </div>
       <div id="messages" role="log" aria-label="Chat messages" aria-live="polite">
@@ -535,5 +542,26 @@ document.addEventListener('keydown', (e) => {
   }
 });
 </script>
+
+<!-- ═══ Global Search Modal ═══ -->
+<div id="global-search-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:20000;align-items:flex-start;justify-content:center;padding-top:12vh">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;width:90%;max-width:620px;box-shadow:0 8px 40px rgba(0,0,0,.5);overflow:hidden;max-height:70vh;display:flex;flex-direction:column">
+    <input id="global-search-input" type="search" placeholder="Search all conversations..." autocomplete="off"
+      style="width:100%;background:transparent;border:none;border-bottom:1px solid var(--border);padding:14px 18px;color:var(--text);font-family:var(--mono);font-size:.88rem;outline:none"
+      oninput="debounceGlobalSearch(this.value)" />
+    <div id="global-search-results" style="flex:1;overflow-y:auto;padding:8px;max-height:50vh"></div>
+  </div>
+</div>
+
+<!-- ═══ Fork Tree Modal ═══ -->
+<div id="fork-tree-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:20000;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;width:90%;max-width:500px;box-shadow:0 8px 40px rgba(0,0,0,.5);padding:24px;max-height:60vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <span style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px">CONVERSATION BRANCHES</span>
+      <button onclick="closeForkTree()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.2rem">&times;</button>
+    </div>
+    <div id="fork-tree-content"></div>
+  </div>
+</div>
 </body>
 </html>

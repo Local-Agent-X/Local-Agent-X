@@ -290,6 +290,75 @@ export function runSecurityAudit(config: { authToken: string; workspace: string 
   };
 }
 
+/** Export security report in JSON or HTML format */
+export function exportSecurityReport(format: "json" | "html", config?: { authToken: string; workspace: string }): string {
+  const report = config ? runSecurityAudit(config) : {
+    timestamp: Date.now(),
+    findings: [],
+    summary: { info: 0, warn: 0, critical: 0 },
+    passed: true,
+  };
+
+  if (format === "json") {
+    return JSON.stringify({
+      exportedAt: new Date().toISOString(),
+      report,
+    }, null, 2);
+  }
+
+  // HTML format
+  const severityColor = (s: AuditSeverity) =>
+    s === "critical" ? "#dc3545" : s === "warn" ? "#ffc107" : "#17a2b8";
+
+  const findingsHtml = report.findings.map(f => `
+    <tr>
+      <td><span style="color:${severityColor(f.severity)};font-weight:bold">${f.severity.toUpperCase()}</span></td>
+      <td>${escapeHtml(f.id)}</td>
+      <td>${escapeHtml(f.title)}</td>
+      <td>${escapeHtml(f.detail)}</td>
+      <td>${f.remediation ? escapeHtml(f.remediation) : "—"}</td>
+    </tr>`).join("\n");
+
+  const statusColor = report.summary.critical > 0 ? "#dc3545" : report.summary.warn > 0 ? "#ffc107" : "#28a745";
+  const statusText = report.summary.critical > 0 ? "FAILED" : report.summary.warn > 0 ? "WARNINGS" : "PASSED";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Open Agent X — Security Report</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; max-width: 900px; margin: 2em auto; padding: 0 1em; background: #0d1117; color: #c9d1d9; }
+    h1 { border-bottom: 1px solid #30363d; padding-bottom: .5em; }
+    table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+    th, td { padding: .5em .75em; text-align: left; border-bottom: 1px solid #21262d; }
+    th { background: #161b22; color: #8b949e; font-size: .85em; text-transform: uppercase; }
+    .status { font-size: 1.2em; font-weight: bold; color: ${statusColor}; }
+    .summary { display: flex; gap: 2em; margin: 1em 0; }
+    .summary div { padding: .5em 1em; border-radius: 6px; background: #161b22; }
+  </style>
+</head>
+<body>
+  <h1>Security Audit Report</h1>
+  <p>Generated: ${new Date(report.timestamp).toISOString()}</p>
+  <p class="status">Status: ${statusText}</p>
+  <div class="summary">
+    <div>${report.summary.critical} Critical</div>
+    <div>${report.summary.warn} Warnings</div>
+    <div>${report.summary.info} Info</div>
+  </div>
+  <table>
+    <thead><tr><th>Severity</th><th>ID</th><th>Title</th><th>Detail</th><th>Remediation</th></tr></thead>
+    <tbody>${findingsHtml || "<tr><td colspan='5'>No findings — all checks passed.</td></tr>"}</tbody>
+  </table>
+</body>
+</html>`;
+}
+
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 /** Pretty-print audit report to console */
 export function printAuditReport(report: AuditReport): void {
   const icons = { info: "\x1b[36mℹ\x1b[0m", warn: "\x1b[33m⚠\x1b[0m", critical: "\x1b[31m✖\x1b[0m" };

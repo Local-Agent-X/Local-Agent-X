@@ -65,12 +65,28 @@ function stopChat() {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
     body: JSON.stringify({ sessionId: activeChat.id }),
   }).catch(() => {});
-  // Clear streaming state so send button works again
+  // Force stop local rendering immediately
   streamingSessionId = null;
+  // Close and reconnect WS to kill any in-flight stream
+  if (chatWs) {
+    chatWs.close();
+    setTimeout(connectChatWs, 500);
+  }
+  // Append "stopped" indicator to last message
+  const msgs = document.querySelectorAll('.msg.assistant');
+  const last = msgs[msgs.length - 1];
+  if (last) {
+    const body = last.querySelector('.msg-body');
+    if (body && !body.textContent.includes('[stopped]')) {
+      body.innerHTML += '<div style="color:var(--muted);font-size:.72rem;margin-top:8px;font-style:italic">[stopped by user]</div>';
+    }
+  }
   const stopBtn = document.getElementById('stop-btn');
   const sendBtn = document.getElementById('send-btn');
   if (stopBtn) stopBtn.style.display = 'none';
   if (sendBtn) sendBtn.disabled = false;
+  // Stop TTS if speaking
+  stopSpeaking();
 }
 
 function isChatActive(sessionId) {
@@ -109,10 +125,26 @@ function renderMessages() {
   if (!el) return;
   if (!activeChat || activeChat.messages.length === 0) {
     el.innerHTML = `<div id="empty"><h2>OPEN AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
+    // Hide branch button when no chat
+    const forkBtn = document.getElementById('fork-tree-btn');
+    if (forkBtn) forkBtn.style.display = 'none';
     return;
   }
   el.innerHTML = '';
-  for (const msg of activeChat.messages) {
+  // Feature 1: Show fork badge if this is a forked conversation
+  if (activeChat.forkedFrom) {
+    const badge = document.createElement('div');
+    badge.className = 'fork-badge';
+    badge.innerHTML = '&#9095; Branched conversation';
+    badge.style.cursor = 'pointer';
+    badge.onclick = () => showForkTree();
+    el.appendChild(badge);
+  }
+  // Show branches button if chat has messages
+  const forkTreeBtn = document.getElementById('fork-tree-btn');
+  if (forkTreeBtn) forkTreeBtn.style.display = 'inline-block';
+  for (let i = 0; i < activeChat.messages.length; i++) {
+    const msg = activeChat.messages[i];
     if (msg.role === 'user') {
       const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
       addMessageEl('user', displayText, msg.attachments);
@@ -158,6 +190,8 @@ async function sendMessage() {
   const streamSessionId = activeChat.id; // Capture which session THIS stream belongs to
   const streamChat = activeChat; // Reference to the chat object (survives navigation)
   streamingSessionId = streamSessionId; stopSpeaking(); ttsSentenceBuffer = '';
+  // Track task start for browser notifications (feature 96)
+  if (window.taskStartTime !== undefined) window.taskStartTime = Date.now();
   const stopBtn = document.getElementById('stop-btn');
   if (stopBtn) stopBtn.style.display = 'flex';
   if (chatWs && chatWs.readyState === WebSocket.OPEN) {
@@ -167,6 +201,9 @@ async function sendMessage() {
 
   // Helper: is the user still viewing this chat?
   function isViewingThis() { return activeChat && activeChat.id === streamSessionId; }
+
+  // Feature 5: Mood detection — update indicator
+  detectMood(text);
 
   try {
     const res = await fetch(`${API}/api/chat`, {
@@ -236,6 +273,14 @@ async function sendMessage() {
             case 'secret_request': if (viewing) showSecretModal(event.name, event.service, event.reason); break;
             case 'context_status': if (viewing) updateContextBar(event); break;
             case 'error': content += '\n\nError: ' + event.message; if (viewing) bodyEl.innerHTML = md(content); break;
+            case 'agent_spawn':
+              if (event.agent) addAgentFeed(event.agent);
+              if (viewing) { var _ac = document.createElement('div'); _ac.innerHTML = renderAgentCard_inline(event.agent); bodyEl.appendChild(_ac.firstChild); }
+              break;
+            case 'agent_status':
+              if (event.agentId) updateAgentFeed(event.agentId, event);
+              if (viewing && event.agent) { var _as = document.createElement('div'); _as.innerHTML = renderAgentCard_inline(event.agent); bodyEl.appendChild(_as.firstChild); }
+              break;
           }
         } catch {}
       }
@@ -290,6 +335,8 @@ async function sendMessage() {
     }
   }
   flushTTS();
+  // Browser notification for completed long tasks (feature 96)
+  if (typeof window.notifyTaskComplete === 'function') window.notifyTaskComplete(streamChat.title);
   // Only clear streaming state if THIS stream is still the active one
   if (streamingSessionId === streamSessionId) streamingSessionId = null;
   // Only update UI if user is still viewing this chat
@@ -379,14 +426,28 @@ async function compactChat() {
   updateContextBar();
 }
 
+// Markdown preview toggle state (feature 90)
+let mdPreviewMode = true; // true = rendered, false = raw
+
+function toggleMdPreview() {
+  mdPreviewMode = !mdPreviewMode;
+  const btn = document.getElementById('md-toggle-btn');
+  if (btn) { btn.textContent = mdPreviewMode ? 'Raw' : 'Preview'; btn.title = mdPreviewMode ? 'Show raw markdown' : 'Show rendered markdown'; }
+  renderMessages();
+}
+
 function addMessageEl(role, text, attachments) {
   const el = document.getElementById('messages');
   const div = document.createElement('div'); div.className = 'msg ' + role;
+  div.setAttribute('role', 'article');
+  div.setAttribute('aria-label', role === 'user' ? 'Your message' : 'Assistant message');
   let attachHtml = '';
   if (attachments && attachments.length) {
     attachHtml = '<div class="msg-attachments">' + attachments.map(a => {
       if (a.isImage && a.url) {
-        return `<img src="${a.url}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" />`;
+        return `<img src="${a.url}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
+      } else if (a.isImage && a.dataUrl) {
+        return `<img src="${a.dataUrl}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
       } else if (a.isImage) {
         return `<div class="att-badge"><span>&#128444;</span> ${esc(a.name)}</div>`;
       } else {
@@ -394,8 +455,11 @@ function addMessageEl(role, text, attachments) {
       }
     }).join('') + '</div>';
   }
-  const bodyContent = role === 'assistant' ? md(text) : esc(text);
-  div.innerHTML = `<div class="msg-label">${role === 'user' ? 'You' : 'Assistant'}</div><div class="msg-body">${attachHtml}${bodyContent}</div>`;
+  const bodyContent = role === 'assistant' ? (mdPreviewMode ? md(text) : `<pre class="raw-md">${esc(text)}</pre>`) : esc(text);
+  // Feature 1: Add fork button to each message
+  const msgIdx = activeChat ? activeChat.messages.length : 0;
+  const forkBtn = activeChat ? `<button class="msg-fork-btn" onclick="forkAtMessage(${msgIdx})" title="Branch conversation from here">&#9095; Fork</button>` : '';
+  div.innerHTML = `<div class="msg-label">${role === 'user' ? 'You' : 'Assistant'}</div><div class="msg-body">${attachHtml}${bodyContent}</div>${forkBtn}`;
   el.appendChild(div);
   // Scroll after images load (they change height)
   const imgs = div.querySelectorAll('.msg-attachments img');
@@ -798,27 +862,48 @@ document.addEventListener('paste', (e) => {
   }
 });
 
-// ── Drag & drop ──
-const dropTarget = document.getElementById('page-chat');
-if (dropTarget) {
-  dropTarget.addEventListener('dragover', (e) => {
+// ── Drag & drop (feature 93: works anywhere in main area) ──
+function initDragDrop() {
+  const dropZone = document.getElementById('main') || document.getElementById('page-chat');
+  if (!dropZone) return;
+  let dragCounter = 0;
+
+  // Create drop overlay
+  let dropOverlay = document.getElementById('drop-overlay');
+  if (!dropOverlay) {
+    dropOverlay = document.createElement('div');
+    dropOverlay.id = 'drop-overlay';
+    dropOverlay.innerHTML = '<div class="drop-overlay-content"><span class="drop-icon">&#128206;</span><span>Drop files to attach</span></div>';
+    dropZone.appendChild(dropOverlay);
+  }
+
+  dropZone.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragCounter++;
+    dropOverlay.classList.add('visible');
+  });
+  dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
-    dropTarget.style.outline = '2px dashed var(--accent)';
-    dropTarget.style.outlineOffset = '-4px';
   });
-  dropTarget.addEventListener('dragleave', () => {
-    dropTarget.style.outline = '';
-    dropTarget.style.outlineOffset = '';
-  });
-  dropTarget.addEventListener('drop', (e) => {
+  dropZone.addEventListener('dragleave', (e) => {
     e.preventDefault();
-    dropTarget.style.outline = '';
-    dropTarget.style.outlineOffset = '';
+    dragCounter--;
+    if (dragCounter <= 0) { dragCounter = 0; dropOverlay.classList.remove('visible'); }
+  });
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    dropOverlay.classList.remove('visible');
     const files = Array.from(e.dataTransfer?.files || []);
-    if (files.length > 0) addFilesToUpload(files);
+    if (files.length > 0) {
+      // Navigate to chat if not already there
+      if (typeof currentRoute === 'function' && currentRoute() !== 'chat') navigate('chat');
+      addFilesToUpload(files);
+    }
   });
 }
+initDragDrop();
 
 async function addFilesToUpload(files) {
   for (const f of files) {
@@ -921,5 +1006,516 @@ Object.defineProperty(window, 'chatWs', {
   get() { return chatWs; }
 });
 
+// ── Status bar (feature 97) ──
+let serverStartTime = Date.now();
+
+function initStatusBar() {
+  const bar = document.getElementById('status-bar');
+  if (!bar) return;
+  updateStatusBar();
+  setInterval(updateStatusBar, 10000); // Update every 10s
+  // Fetch server uptime once
+  apiFetch('/api/auth/status').then(r => r.json()).then(d => {
+    if (d.uptime) serverStartTime = Date.now() - (d.uptime * 1000);
+  }).catch(() => {});
+}
+
+function updateStatusBar() {
+  const bar = document.getElementById('status-bar');
+  if (!bar) return;
+  let model = '—';
+  try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); model = s.model || s.provider || '—'; } catch {}
+  const uptime = formatUptime(Date.now() - serverStartTime);
+  const tokenInfo = window.lastContextStatus ? `${(window.lastContextStatus.usedTokens / 1000).toFixed(0)}K tokens` : '—';
+  bar.innerHTML = `
+    <span class="status-item" aria-label="Active model"><span class="status-icon">&#9881;</span> ${esc(model)}</span>
+    <span class="status-item" aria-label="Token usage"><span class="status-icon">&#9998;</span> ${tokenInfo}</span>
+    <span class="status-item" aria-label="Server uptime"><span class="status-icon">&#9200;</span> ${uptime}</span>
+  `;
+}
+
+function formatUptime(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60);
+  return h + 'h ' + (m % 60) + 'm';
+}
+
+// Store last context status globally for status bar
+const _origUpdateContextBar = updateContextBar;
+window.lastContextStatus = null;
+
+// ── Agent Feeds (Mission Control) ──
+const AGENT_ROLE_ICONS = {
+  researcher: '\uD83D\uDD0D', writer: '\u270D\uFE0F', coder: '\uD83D\uDCBB',
+  reviewer: '\uD83D\uDD0E', 'social-media': '\uD83D\uDCF1', analyst: '\uD83D\uDCCA',
+  monitor: '\uD83D\uDC41\uFE0F', designer: '\uD83C\uDFA8', ops: '\u2699\uFE0F',
+  communicator: '\uD83D\uDCE8'
+};
+let agentFeedsOpen = false;
+let agentFeedsData = {};
+
+function toggleAgentFeeds() {
+  var panel = document.getElementById('agent-feeds');
+  if (!panel) return;
+  agentFeedsOpen = !agentFeedsOpen;
+  if (agentFeedsOpen) {
+    panel.classList.remove('collapsed');
+    panel.classList.add('active');
+    panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9654;';
+  } else {
+    panel.classList.remove('active');
+    panel.classList.add('collapsed');
+    panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9664;';
+  }
+}
+
+function updateAgentFeeds(agents) {
+  if (!agents || !Array.isArray(agents)) return;
+  agentFeedsData = {};
+  for (var i = 0; i < agents.length; i++) {
+    agentFeedsData[agents[i].id] = agents[i];
+  }
+  _renderAgentFeedsList();
+}
+
+function addAgentFeed(agent) {
+  if (!agent || !agent.id) return;
+  agentFeedsData[agent.id] = agent;
+  if (!agentFeedsOpen) toggleAgentFeeds();
+  _renderAgentFeedsList();
+}
+
+function updateAgentFeed(agentId, update) {
+  var existing = agentFeedsData[agentId];
+  if (!existing) {
+    agentFeedsData[agentId] = update;
+    existing = update;
+  } else {
+    if (update.status) existing.status = update.status;
+    if (update.output) {
+      existing.output = (existing.output || '') + update.output;
+    }
+    if (update.name) existing.name = update.name;
+    if (update.role) existing.role = update.role;
+  }
+  var card = document.getElementById('agent-card-' + agentId);
+  if (card) {
+    card.className = 'agent-feed-card ' + (existing.status || 'working');
+    var outputEl = card.querySelector('.agent-feed-output');
+    if (outputEl && existing.output) {
+      outputEl.textContent = existing.output;
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+    var statusEl = card.querySelector('.agent-feed-status');
+    if (statusEl) {
+      statusEl.innerHTML = '<span class="agent-status-dot"></span> ' + (existing.status || 'working');
+    }
+  } else {
+    _renderAgentFeedsList();
+  }
+  _updateAgentCount();
+}
+
+function removeAgentFeed(agentId) {
+  delete agentFeedsData[agentId];
+  var card = document.getElementById('agent-card-' + agentId);
+  if (card) card.remove();
+  _updateAgentCount();
+}
+
+function renderAgentCard(agent) {
+  var icon = AGENT_ROLE_ICONS[agent.role] || '\uD83E\uDD16';
+  var status = agent.status || 'working';
+  var output = agent.output || '';
+  var isPaused = status === 'paused';
+  return '<div id="agent-card-' + agent.id + '" class="agent-feed-card ' + status + '">' +
+    '<div class="agent-feed-header">' +
+      '<span class="agent-feed-icon">' + icon + '</span>' +
+      '<span class="agent-feed-name">' + esc(agent.name || agent.id) + '</span>' +
+      '<span class="agent-feed-status"><span class="agent-status-dot"></span> ' + esc(status) + '</span>' +
+    '</div>' +
+    '<div class="agent-feed-output">' + esc(output) + '</div>' +
+    '<div class="agent-feed-controls">' +
+      (isPaused
+        ? '<button class="agent-ctrl-btn" onclick="onAgentResume(\'' + agent.id + '\')">Resume</button>'
+        : '<button class="agent-ctrl-btn" onclick="onAgentPause(\'' + agent.id + '\')">Pause</button>') +
+      '<button class="agent-ctrl-btn" onclick="onAgentRedirect(\'' + agent.id + '\')">Redirect</button>' +
+      '<button class="agent-ctrl-btn cancel" onclick="onAgentCancel(\'' + agent.id + '\')">Cancel</button>' +
+    '</div>' +
+    '<input class="agent-redirect-input" id="agent-redirect-' + agent.id + '" placeholder="New instructions..." ' +
+      'onkeydown="if(event.key===\'Enter\'){sendAgentRedirect(\'' + agent.id + '\',this.value);this.value=\'\';this.classList.remove(\'visible\')}" />' +
+  '</div>';
+}
+
+function renderAgentCard_inline(agent) {
+  var icon = AGENT_ROLE_ICONS[agent.role] || '\uD83E\uDD16';
+  var status = agent.status || 'working';
+  var progress = agent.progress || '';
+  return '<div class="agent-inline-card" onclick="toggleAgentFeeds();var c=document.getElementById(\'agent-card-' + agent.id + '\');if(c)c.scrollIntoView({behavior:\'smooth\'})">' +
+    '<span class="agent-inline-icon">' + icon + '</span>' +
+    '<span class="agent-inline-name">' + esc(agent.name || agent.id) + '</span>' +
+    '<span class="agent-inline-status">' + esc(status) + '</span>' +
+    (progress ? '<span class="agent-inline-progress">' + esc(progress) + '</span>' : '') +
+  '</div>';
+}
+
+function onAgentRedirect(agentId) {
+  var input = document.getElementById('agent-redirect-' + agentId);
+  if (!input) return;
+  var isVisible = input.classList.contains('visible');
+  input.classList.toggle('visible');
+  if (!isVisible) input.focus();
+}
+
+function sendAgentRedirect(agentId, instruction) {
+  if (!instruction || !instruction.trim()) return;
+  var payload = { type: 'agent-redirect', agentId: agentId, instruction: instruction.trim() };
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify(payload));
+  } else {
+    fetch(API + '/api/agents/' + agentId + '/redirect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + AUTH_TOKEN },
+      body: JSON.stringify({ instruction: instruction.trim() })
+    }).catch(function() {});
+  }
+}
+
+function onAgentPause(agentId) {
+  var payload = { type: 'agent-control', agentId: agentId, action: 'pause' };
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify(payload));
+  }
+  updateAgentFeed(agentId, { status: 'waiting' });
+}
+
+function onAgentResume(agentId) {
+  var payload = { type: 'agent-control', agentId: agentId, action: 'resume' };
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify(payload));
+  }
+  updateAgentFeed(agentId, { status: 'working' });
+}
+
+function onAgentCancel(agentId) {
+  var payload = { type: 'agent-control', agentId: agentId, action: 'cancel' };
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify(payload));
+  }
+  updateAgentFeed(agentId, { status: 'done' });
+  setTimeout(function() { removeAgentFeed(agentId); }, 1500);
+}
+
+function _renderAgentFeedsList() {
+  var list = document.getElementById('agent-feeds-list');
+  if (!list) return;
+  var ids = Object.keys(agentFeedsData);
+  if (ids.length === 0) {
+    list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-family:var(--mono);font-size:.72rem">No active agents</div>';
+  } else {
+    list.innerHTML = ids.map(function(id) { return renderAgentCard(agentFeedsData[id]); }).join('');
+  }
+  _updateAgentCount();
+}
+
+function _updateAgentCount() {
+  var count = Object.keys(agentFeedsData).length;
+  var el = document.getElementById('agent-count');
+  if (el) el.textContent = count;
+  var toggleCount = document.getElementById('agents-toggle-count');
+  if (toggleCount) toggleCount.textContent = count;
+  // Pulse the button when agents are active
+  var toggleBtn = document.getElementById('agents-toggle');
+  if (toggleBtn) toggleBtn.style.borderColor = count > 0 ? 'var(--accent)' : 'var(--border)';
+}
+
+// WebSocket listener for agent events
+(function initAgentFeedWs() {
+  var origOnMessage = null;
+
+  function hookWs() {
+    if (!chatWs) { setTimeout(hookWs, 2000); return; }
+    if (chatWs._agentHooked) return;
+    chatWs._agentHooked = true;
+    var originalOnMessage = chatWs.onmessage;
+    chatWs.onmessage = function(e) {
+      if (originalOnMessage) originalOnMessage(e);
+      var msg;
+      try { msg = JSON.parse(e.data); } catch(ex) { return; }
+      if (msg.type === 'agent-spawn') {
+        // Server sends flat: {type, agentId, name, role, task, status}
+        addAgentFeed({ id: msg.agentId, name: msg.name, role: msg.role, status: msg.status || 'working', currentTask: msg.task });
+      } else if (msg.type === 'agent-update' && msg.agentId) {
+        updateAgentFeed(msg.agentId, msg);
+      } else if (msg.type === 'agent-output' && msg.agentId) {
+        updateAgentFeed(msg.agentId, { output: msg.output });
+      } else if (msg.type === 'agent-complete' && msg.agentId) {
+        updateAgentFeed(msg.agentId, { status: msg.success ? 'done' : 'error', output: msg.result ? '[Result] ' + msg.result.slice(0, 200) : '' });
+        // Inject completion notification into chat
+        var statusText = msg.success ? 'completed' : 'failed';
+        var resultPreview = msg.result ? msg.result.slice(0, 300) : 'No output';
+        var notifHtml = '<div style="border:1px solid ' + (msg.success ? 'var(--accent)' : 'var(--danger)') + ';border-radius:8px;padding:12px;margin:8px 0;background:var(--bg2)">' +
+          '<div style="font-family:var(--mono);font-size:.75rem;color:' + (msg.success ? 'var(--accent)' : 'var(--danger)') + ';margin-bottom:6px">' +
+          (msg.success ? '✓' : '✗') + ' Agent ' + statusText + '</div>' +
+          '<div style="font-size:.8rem;color:var(--text)">' + esc(resultPreview) + '</div></div>';
+        addMessageEl('assistant', notifHtml);
+        setTimeout(function() { removeAgentFeed(msg.agentId); }, 10000);
+      }
+    };
+  }
+
+  // Re-hook whenever WebSocket reconnects
+  var origConnect = window.connectChatWs;
+  if (origConnect) {
+    window.connectChatWs = function() {
+      origConnect();
+      setTimeout(function() {
+        if (chatWs) { chatWs._agentHooked = false; hookWs(); }
+      }, 500);
+    };
+  }
+  hookWs();
+})();
+
 // Init chat on page load
-function init_chat() { renderMessages(); }
+function init_chat() { renderMessages(); initStatusBar(); _renderAgentFeedsList(); }
+
+// ═══════════════════════════════════════════════
+// Feature 1: Conversation Branching
+// ═══════════════════════════════════════════════
+
+async function forkAtMessage(msgIndex) {
+  if (!activeChat) return;
+  try {
+    const res = await apiFetch('/api/sessions/fork', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: activeChat.id, atIndex: msgIndex }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      // Add the forked session to our chat list
+      const forkChat = {
+        id: data.forkId,
+        title: data.title,
+        messages: activeChat.messages.slice(0, msgIndex + 1).map(m => ({ role: m.role, content: m.content })),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        forkedFrom: activeChat.id,
+        forkAtIndex: msgIndex,
+      };
+      chats.unshift(forkChat);
+      saveChats();
+      renderSidebar();
+      selectChat(data.forkId);
+    }
+  } catch (e) {
+    console.warn('[fork] Error:', e.message);
+  }
+}
+
+async function showForkTree() {
+  if (!activeChat) return;
+  const overlay = document.getElementById('fork-tree-overlay');
+  const content = document.getElementById('fork-tree-content');
+  if (!overlay || !content) return;
+  overlay.style.display = 'flex';
+  content.innerHTML = '<div style="color:var(--muted);font-size:.75rem;font-family:var(--mono)">Loading branches...</div>';
+  overlay.onclick = (e) => { if (e.target === overlay) closeForkTree(); };
+
+  try {
+    const res = await apiFetch(`/api/sessions/forks?sessionId=${encodeURIComponent(activeChat.id)}`);
+    const data = await res.json();
+
+    let html = '';
+    // Show parent if this is a fork
+    if (data.parent) {
+      const parentChat = chats.find(c => c.id === data.parent);
+      html += `<div class="fork-tree-item" onclick="closeForkTree();selectChat('${esc(data.parent)}')" title="Go to parent">
+        <div class="fork-tree-dot" style="background:var(--info)"></div>
+        <div class="fork-tree-info">
+          <div class="fork-tree-title">${esc(parentChat?.title || data.parent)}</div>
+          <div class="fork-tree-meta">PARENT</div>
+        </div>
+      </div>`;
+    }
+
+    // Current session
+    html += `<div class="fork-tree-item current">
+      <div class="fork-tree-dot"></div>
+      <div class="fork-tree-info">
+        <div class="fork-tree-title">${esc(activeChat.title)}</div>
+        <div class="fork-tree-meta">CURRENT${activeChat.forkedFrom ? ' (branch)' : ''}</div>
+      </div>
+    </div>`;
+
+    // Child forks
+    if (data.forks.length > 0) {
+      for (const fork of data.forks) {
+        const d = new Date(fork.createdAt).toLocaleDateString();
+        html += `<div class="fork-tree-item" onclick="closeForkTree();selectChat('${esc(fork.id)}')" style="margin-left:20px">
+          <div class="fork-tree-dot" style="background:var(--warn)"></div>
+          <div class="fork-tree-info">
+            <div class="fork-tree-title">${esc(fork.title)}</div>
+            <div class="fork-tree-meta">Forked at msg #${fork.forkAtIndex} &middot; ${d}</div>
+          </div>
+        </div>`;
+      }
+    } else if (!data.parent) {
+      html += '<div style="color:var(--muted);font-size:.72rem;font-family:var(--mono);padding:8px 0">No branches yet. Hover a message and click Fork to create one.</div>';
+    }
+
+    content.innerHTML = html;
+  } catch (e) {
+    content.innerHTML = `<div style="color:var(--danger);font-size:.75rem">Error loading branches: ${esc(e.message)}</div>`;
+  }
+}
+
+function closeForkTree() {
+  const overlay = document.getElementById('fork-tree-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════
+// Feature 2: Auto-Summarize Old Sessions
+// ═══════════════════════════════════════════════
+
+async function autoSummarize() {
+  const btn = event?.target;
+  if (btn) { btn.textContent = 'Working...'; btn.disabled = true; }
+  try {
+    const res = await apiFetch('/api/sessions/auto-summarize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const data = await res.json();
+    if (btn) {
+      btn.textContent = data.summarized > 0 ? `${data.summarized} summarized` : 'Up to date';
+      btn.disabled = false;
+      setTimeout(() => { btn.textContent = 'Summarize'; }, 3000);
+    }
+  } catch (e) {
+    if (btn) { btn.textContent = 'Error'; btn.disabled = false; setTimeout(() => { btn.textContent = 'Summarize'; }, 2000); }
+  }
+}
+
+// ═══════════════════════════════════════════════
+// Feature 3: Cross-Session Search
+// ═══════════════════════════════════════════════
+
+let _gsTimer = null;
+function openGlobalSearch() {
+  const overlay = document.getElementById('global-search-overlay');
+  if (!overlay) return;
+  overlay.style.display = 'flex';
+  const input = document.getElementById('global-search-input');
+  if (input) { input.value = ''; input.focus(); }
+  document.getElementById('global-search-results').innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:.78rem">Type to search across all conversations</div>';
+  overlay.onclick = (e) => { if (e.target === overlay) closeGlobalSearch(); };
+}
+
+function closeGlobalSearch() {
+  const overlay = document.getElementById('global-search-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function debounceGlobalSearch(query) {
+  if (_gsTimer) clearTimeout(_gsTimer);
+  _gsTimer = setTimeout(() => runGlobalSearch(query), 300);
+}
+
+async function runGlobalSearch(query) {
+  const resultsEl = document.getElementById('global-search-results');
+  if (!resultsEl) return;
+  if (!query || query.length < 2) {
+    resultsEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:.78rem">Type at least 2 characters</div>';
+    return;
+  }
+  resultsEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:.78rem;font-family:var(--mono)">Searching...</div>';
+
+  try {
+    const res = await apiFetch(`/api/sessions/search?q=${encodeURIComponent(query)}`);
+    const data = await res.json();
+    if (!data.results || data.results.length === 0) {
+      resultsEl.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:.78rem">No results found</div>';
+      return;
+    }
+
+    resultsEl.innerHTML = data.results.map(r => {
+      const matchHtml = r.matches.map(m => {
+        const highlighted = esc(m.snippet).replace(new RegExp(esc(query), 'gi'), match => `<mark>${match}</mark>`);
+        return `<div class="gs-result-match"><span style="color:var(--muted);font-size:.6rem">${m.role}:</span> ${highlighted}</div>`;
+      }).join('');
+      return `<div class="gs-result" onclick="closeGlobalSearch();selectChat('${esc(r.sessionId)}')">
+        <div class="gs-result-title">${esc(r.title)}</div>
+        ${matchHtml}
+        <div class="gs-result-meta">${r.matches.length} match${r.matches.length > 1 ? 'es' : ''}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    resultsEl.innerHTML = `<div style="padding:20px;text-align:center;color:var(--danger);font-size:.78rem">Search error: ${esc(e.message)}</div>`;
+  }
+}
+
+// Keyboard shortcut: Ctrl+Shift+F for global search
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+    e.preventDefault();
+    openGlobalSearch();
+  }
+  if (e.key === 'Escape') {
+    closeGlobalSearch();
+    closeForkTree();
+  }
+});
+
+// ═══════════════════════════════════════════════
+// Feature 4: Smart Context Indicator
+// ═══════════════════════════════════════════════
+
+function updateSmartContextIndicator(contextData) {
+  const el = document.getElementById('smart-ctx-indicator');
+  if (!el) return;
+  if (contextData && contextData.hasSmartContext) {
+    el.style.display = 'inline-block';
+    el.title = `Smart context: ${contextData.sources || 0} related sessions injected`;
+    el.textContent = `CTX +${contextData.sources || 0}`;
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+// ═══════════════════════════════════════════════
+// Feature 5: Mood/Tone Detection
+// ═══════════════════════════════════════════════
+
+async function detectMood(text) {
+  const el = document.getElementById('mood-indicator');
+  if (!el) return;
+  try {
+    const res = await apiFetch('/api/mood/detect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json();
+    if (data.mood && data.mood !== 'neutral') {
+      el.style.display = 'inline-block';
+      el.className = data.mood;
+      el.id = 'mood-indicator';
+      const icons = { positive: '&#9786;', negative: '&#9785;', urgent: '&#9888;' };
+      el.innerHTML = `${icons[data.mood] || ''} ${data.mood}${data.tone !== 'balanced' ? ' &middot; ' + data.tone : ''}`;
+      el.title = data.styleHint || `Detected mood: ${data.mood}`;
+      // Auto-hide after 30 seconds
+      setTimeout(() => { el.style.display = 'none'; }, 30000);
+    } else {
+      el.style.display = 'none';
+    }
+  } catch {
+    el.style.display = 'none';
+  }
+}

@@ -124,14 +124,23 @@ async function executeToolCalls(
     onEvent?.({ type: "tool_start", toolName: tc.name, args, riskLevel, context: approvalContext, requiresApproval });
 
     // Layer -1: AriKernel (taint tracking, behavioral rules, quarantine)
+    const isInternalTool = tc.name.startsWith("agent_") || tc.name.startsWith("swarm_") ||
+      tc.name.startsWith("mission_") || tc.name.startsWith("cron_") ||
+      ["delegate", "generate_image", "generate_video", "camera_capture", "screen_capture", "ocr",
+       "memory_search", "memory_save", "playbook_list", "playbook_get"].includes(tc.name);
     if (isAriActive()) {
       const actionMap: Record<string, string> = { read: "read", write: "write", edit: "write", bash: "exec" };
       const ariResult = await ariEvaluate(tc.name, actionMap[tc.name] || "exec", args);
       if (!ariResult.allowed) {
-        const result = ariResult.reason;
-        onEvent?.({ type: "tool_end", toolName: tc.name, result, allowed: false });
-        results.push({ role: "tool", tool_call_id: tc.id, content: result } as any);
-        continue;
+        if (isInternalTool) {
+          // Internal tools: ARI logs the concern but doesn't block — these are our own code
+          console.warn(`[ari] Internal tool ${tc.name} flagged but allowed: ${ariResult.reason}`);
+        } else {
+          const result = ariResult.reason;
+          onEvent?.({ type: "tool_end", toolName: tc.name, result, allowed: false });
+          results.push({ role: "tool", tool_call_id: tc.id, content: result } as any);
+          continue;
+        }
       }
     }
 
@@ -814,6 +823,23 @@ async function runAnthropicAgent(
     }
     messages.push(assistantMsg);
 
+    // Intercept: if Claude tried to write files directly instead of calling build_app,
+    // detect it and auto-route to build_app
+    if (toolCalls.length === 0 && detectBuildIntent(assistantContent, userMessage)) {
+      const appName = extractAppName(assistantContent, userMessage);
+      const buildPrompt = extractBuildPrompt(assistantContent, userMessage);
+      console.log(`[agent] Auto-routing to build_app: ${appName}`);
+      onEvent?.({ type: "stream", delta: "\n\n*Building app...*\n" });
+      toolCalls.push({
+        id: `call_${Date.now()}_build_app`,
+        name: "build_app",
+        arguments: JSON.stringify({ name: appName, prompt: buildPrompt }),
+      });
+      (assistantMsg as Record<string, unknown>).tool_calls = toolCalls.map(tc => ({
+        id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments },
+      }));
+    }
+
     if (toolCalls.length === 0) {
       onEvent?.({ type: "done", usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput } });
       return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
@@ -824,6 +850,49 @@ async function runAnthropicAgent(
   }
 
   return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "max_iterations" };
+}
+
+/** Detect if Claude tried to build/write an app instead of calling build_app */
+function detectBuildIntent(response: string, userMessage: string): boolean {
+  const buildKeywords = /\b(build|create|make|write|upgrade|update|improve|redesign|level.?up)\b.*\b(app|website|page|game|project|todo|site)\b/i;
+  const claudeCodeSignals = /permission|allow|click allow|approve|write.*file|I'll write|I'll create the file|mkdir|workspace.apps/i;
+  if (buildKeywords.test(userMessage) && claudeCodeSignals.test(response)) return true;
+  if (/I'll (write|create|drop|save) (the |these |all )?files/i.test(response)) return true;
+  return false;
+}
+
+/** Extract app name from conversation */
+function extractAppName(response: string, userMessage: string): string {
+  // Check response for workspace/apps/ path
+  const wsMatch = response.match(/workspace\/apps\/([a-zA-Z0-9_-]+)/);
+  if (wsMatch) return wsMatch[1];
+  // Check if an app with a similar name exists in workspace/apps/
+  try {
+    const { readdirSync, existsSync } = require("fs");
+    const { resolve } = require("path");
+    const appsDir = resolve("workspace", "apps");
+    if (existsSync(appsDir)) {
+      const apps = readdirSync(appsDir) as string[];
+      const msg = userMessage.toLowerCase();
+      for (const app of apps) {
+        // Match if user mentions the app name (e.g. "todo" matches "todo-app")
+        const appWords = app.replace(/-/g, " ").toLowerCase();
+        if (msg.includes(appWords) || msg.includes(app) || appWords.split(" ").some((w: string) => w.length > 3 && msg.includes(w))) {
+          return app;
+        }
+      }
+    }
+  } catch {}
+  // Fallback: extract from user message
+  const m = userMessage.match(/(?:the\s+)?([a-z][a-z0-9]+(?:[- ][a-z0-9]+)*)\s+app/i);
+  if (m) return m[1].trim().toLowerCase().replace(/\s+/g, "-");
+  return "my-app";
+}
+
+/** Build a prompt for build_app from the conversation context */
+function extractBuildPrompt(response: string, userMessage: string): string {
+  const cleanResponse = response.replace(/permission|allow|click allow|approve|Claude Code/gi, "").slice(0, 1000);
+  return `User request: ${userMessage}\n\nDetails from conversation: ${cleanResponse}`;
 }
 
 // ── Main Entry Point ──

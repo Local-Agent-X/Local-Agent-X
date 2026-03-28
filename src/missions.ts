@@ -16,6 +16,15 @@ import type { ToolDefinition } from "./types.js";
 
 // ── Types ──
 
+export interface MissionCondition {
+  /** Variable or output key to evaluate */
+  field: string;
+  /** Comparison operator */
+  operator: "equals" | "not_equals" | "contains" | "not_contains" | "exists" | "not_exists" | "gt" | "lt";
+  /** Value to compare against (not needed for exists/not_exists) */
+  value?: unknown;
+}
+
 export interface MissionStep {
   id: string;
   instruction: string;
@@ -25,6 +34,12 @@ export interface MissionStep {
   requiresUserAction?: boolean;
   /** Validation to run after step completes */
   validate?: string;
+  /** Condition that must be true to execute this step (if branch) */
+  condition?: MissionCondition;
+  /** Step ID to jump to if condition is false (else branch) */
+  elseStep?: string;
+  /** Step ID to jump to after this step completes (instead of next sequential step) */
+  nextStep?: string;
 }
 
 export interface Mission {
@@ -154,15 +169,105 @@ const instagramPost: Mission = {
   ],
 };
 
+// ── Conditional Step Evaluation ──
+
+export function evaluateCondition(condition: MissionCondition, context: Record<string, unknown>): boolean {
+  const fieldValue = context[condition.field];
+  switch (condition.operator) {
+    case "exists": return fieldValue !== undefined && fieldValue !== null;
+    case "not_exists": return fieldValue === undefined || fieldValue === null;
+    case "equals": return fieldValue === condition.value;
+    case "not_equals": return fieldValue !== condition.value;
+    case "contains": return typeof fieldValue === "string" && typeof condition.value === "string" && fieldValue.includes(condition.value);
+    case "not_contains": return typeof fieldValue === "string" && typeof condition.value === "string" && !fieldValue.includes(condition.value);
+    case "gt": return typeof fieldValue === "number" && typeof condition.value === "number" && fieldValue > condition.value;
+    case "lt": return typeof fieldValue === "number" && typeof condition.value === "number" && fieldValue < condition.value;
+    default: return true;
+  }
+}
+
+export function resolveNextStep(step: MissionStep, steps: MissionStep[], context: Record<string, unknown>): MissionStep | null {
+  if (step.condition) {
+    const result = evaluateCondition(step.condition, context);
+    if (!result && step.elseStep) {
+      return steps.find(s => s.id === step.elseStep) ?? null;
+    }
+    if (!result) {
+      const idx = steps.indexOf(step);
+      return idx + 1 < steps.length ? steps[idx + 1] : null;
+    }
+  }
+  if (step.nextStep) {
+    return steps.find(s => s.id === step.nextStep) ?? null;
+  }
+  const idx = steps.indexOf(step);
+  return idx + 1 < steps.length ? steps[idx + 1] : null;
+}
+
+// ── Dry-Run Execution ──
+
+export interface DryRunResult {
+  missionName: string;
+  steps: Array<{
+    id: string;
+    instruction: string;
+    wouldExecuteTools: Array<{ tool: string; args: Record<string, unknown> }>;
+    requiresUserAction: boolean;
+    hasCondition: boolean;
+    conditionSummary?: string;
+  }>;
+  totalSteps: number;
+  userActionSteps: number;
+  conditionalSteps: number;
+}
+
+export function dryRunMission(mission: Mission, context: Record<string, unknown> = {}): DryRunResult {
+  const drySteps = mission.steps.map(step => {
+    const conditionMet = step.condition ? evaluateCondition(step.condition, context) : true;
+    return {
+      id: step.id,
+      instruction: conditionMet ? step.instruction : `[SKIPPED — condition not met: ${step.condition?.field} ${step.condition?.operator} ${step.condition?.value ?? ""}]`,
+      wouldExecuteTools: conditionMet ? (step.suggestedTools ?? []) : [],
+      requiresUserAction: conditionMet ? (step.requiresUserAction ?? false) : false,
+      hasCondition: !!step.condition,
+      conditionSummary: step.condition ? `${step.condition.field} ${step.condition.operator} ${step.condition.value ?? ""}` : undefined,
+    };
+  });
+
+  return {
+    missionName: mission.name,
+    steps: drySteps,
+    totalSteps: drySteps.length,
+    userActionSteps: drySteps.filter(s => s.requiresUserAction).length,
+    conditionalSteps: drySteps.filter(s => s.hasCondition).length,
+  };
+}
+
 // ── Registry ──
 
-const BUILT_IN_PLAYBOOKS: Mission[] = [
-  instagramPost,
-];
+import { loadCustomMissions } from "./missions/builder.js";
+import { socialMissions } from "./missions/packs/social.js";
+import { developerMissions } from "./missions/packs/developer.js";
+import { smarthomeMissions } from "./missions/packs/smarthome.js";
+import { researchMissions } from "./missions/packs/research.js";
+import { communicationMissions } from "./missions/packs/communication.js";
+import { createAllMissionTools } from "./missions/index.js";
+
+function getAllMissions(): Mission[] {
+  return [
+    instagramPost,
+    ...socialMissions,
+    ...developerMissions,
+    ...smarthomeMissions,
+    ...researchMissions,
+    ...communicationMissions,
+    ...loadCustomMissions(),
+  ];
+}
 
 function findMission(query: string): Mission | undefined {
   const q = query.toLowerCase();
-  return BUILT_IN_PLAYBOOKS.find(pb =>
+  return getAllMissions().find(pb =>
     pb.triggers.some(t => q.includes(t)) || q.includes(pb.name)
   );
 }
@@ -252,10 +357,11 @@ export function createMissionTools(): ToolDefinition[] {
       description: "List all available missions. Use this when the user asks what you can do autonomously or wants to see available workflows.",
       parameters: { type: "object", properties: {} },
       async execute() {
-        const list = BUILT_IN_PLAYBOOKS.map(pb =>
+        const all = getAllMissions();
+        const list = all.map(pb =>
           `• **${pb.name}**: ${pb.description}\n  Triggers: ${pb.triggers.slice(0, 3).map(t => `"${t}"`).join(", ")}...`
         ).join("\n\n");
-        return { content: `Available missions:\n\n${list}` };
+        return { content: `Available missions (${all.length}):\n\n${list}` };
       },
     },
 
@@ -364,5 +470,36 @@ export function createMissionTools(): ToolDefinition[] {
         };
       },
     },
+
+    {
+      name: "mission_dry_run",
+      description: "Preview a mission's execution plan without actually running it. Shows which steps would execute, which require user action, and evaluates conditions against provided context.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Mission name or trigger phrase" },
+          context: { type: "object", description: "Context variables to evaluate conditions against" },
+        },
+        required: ["name"],
+      },
+      async execute(args) {
+        const pb = findMission(String(args.name || ""));
+        if (!pb) return { content: `No mission found for "${args.name}".` };
+
+        const ctx = (args.context as Record<string, unknown>) ?? {};
+        const result = dryRunMission(pb, ctx);
+
+        const stepsText = result.steps.map((s, i) =>
+          `  ${i + 1}. [${s.id}] ${s.instruction}${s.requiresUserAction ? " ⏸️" : ""}${s.hasCondition ? ` 🔀 (${s.conditionSummary})` : ""}${s.wouldExecuteTools.length ? `\n     Tools: ${s.wouldExecuteTools.map(t => t.tool).join(", ")}` : ""}`
+        ).join("\n");
+
+        return {
+          content: `# Dry Run: ${result.missionName}\n\nSteps: ${result.totalSteps} | User actions: ${result.userActionSteps} | Conditional: ${result.conditionalSteps}\n\n${stepsText}`,
+        };
+      },
+    },
+
+    // Include all submodule tools (builder, marketplace, templates, scheduler, chain, progress, rollback, variables)
+    ...createAllMissionTools(),
   ];
 }

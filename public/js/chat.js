@@ -158,6 +158,8 @@ async function sendMessage() {
   const streamSessionId = activeChat.id; // Capture which session THIS stream belongs to
   const streamChat = activeChat; // Reference to the chat object (survives navigation)
   streamingSessionId = streamSessionId; stopSpeaking(); ttsSentenceBuffer = '';
+  // Track task start for browser notifications (feature 96)
+  if (window.taskStartTime !== undefined) window.taskStartTime = Date.now();
   const stopBtn = document.getElementById('stop-btn');
   if (stopBtn) stopBtn.style.display = 'flex';
   if (chatWs && chatWs.readyState === WebSocket.OPEN) {
@@ -290,6 +292,8 @@ async function sendMessage() {
     }
   }
   flushTTS();
+  // Browser notification for completed long tasks (feature 96)
+  if (typeof window.notifyTaskComplete === 'function') window.notifyTaskComplete(streamChat.title);
   // Only clear streaming state if THIS stream is still the active one
   if (streamingSessionId === streamSessionId) streamingSessionId = null;
   // Only update UI if user is still viewing this chat
@@ -379,14 +383,28 @@ async function compactChat() {
   updateContextBar();
 }
 
+// Markdown preview toggle state (feature 90)
+let mdPreviewMode = true; // true = rendered, false = raw
+
+function toggleMdPreview() {
+  mdPreviewMode = !mdPreviewMode;
+  const btn = document.getElementById('md-toggle-btn');
+  if (btn) { btn.textContent = mdPreviewMode ? 'Raw' : 'Preview'; btn.title = mdPreviewMode ? 'Show raw markdown' : 'Show rendered markdown'; }
+  renderMessages();
+}
+
 function addMessageEl(role, text, attachments) {
   const el = document.getElementById('messages');
   const div = document.createElement('div'); div.className = 'msg ' + role;
+  div.setAttribute('role', 'article');
+  div.setAttribute('aria-label', role === 'user' ? 'Your message' : 'Assistant message');
   let attachHtml = '';
   if (attachments && attachments.length) {
     attachHtml = '<div class="msg-attachments">' + attachments.map(a => {
       if (a.isImage && a.url) {
-        return `<img src="${a.url}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" />`;
+        return `<img src="${a.url}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
+      } else if (a.isImage && a.dataUrl) {
+        return `<img src="${a.dataUrl}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
       } else if (a.isImage) {
         return `<div class="att-badge"><span>&#128444;</span> ${esc(a.name)}</div>`;
       } else {
@@ -394,7 +412,7 @@ function addMessageEl(role, text, attachments) {
       }
     }).join('') + '</div>';
   }
-  const bodyContent = role === 'assistant' ? md(text) : esc(text);
+  const bodyContent = role === 'assistant' ? (mdPreviewMode ? md(text) : `<pre class="raw-md">${esc(text)}</pre>`) : esc(text);
   div.innerHTML = `<div class="msg-label">${role === 'user' ? 'You' : 'Assistant'}</div><div class="msg-body">${attachHtml}${bodyContent}</div>`;
   el.appendChild(div);
   // Scroll after images load (they change height)
@@ -798,27 +816,48 @@ document.addEventListener('paste', (e) => {
   }
 });
 
-// ── Drag & drop ──
-const dropTarget = document.getElementById('page-chat');
-if (dropTarget) {
-  dropTarget.addEventListener('dragover', (e) => {
+// ── Drag & drop (feature 93: works anywhere in main area) ──
+function initDragDrop() {
+  const dropZone = document.getElementById('main') || document.getElementById('page-chat');
+  if (!dropZone) return;
+  let dragCounter = 0;
+
+  // Create drop overlay
+  let dropOverlay = document.getElementById('drop-overlay');
+  if (!dropOverlay) {
+    dropOverlay = document.createElement('div');
+    dropOverlay.id = 'drop-overlay';
+    dropOverlay.innerHTML = '<div class="drop-overlay-content"><span class="drop-icon">&#128206;</span><span>Drop files to attach</span></div>';
+    dropZone.appendChild(dropOverlay);
+  }
+
+  dropZone.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragCounter++;
+    dropOverlay.classList.add('visible');
+  });
+  dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
-    dropTarget.style.outline = '2px dashed var(--accent)';
-    dropTarget.style.outlineOffset = '-4px';
   });
-  dropTarget.addEventListener('dragleave', () => {
-    dropTarget.style.outline = '';
-    dropTarget.style.outlineOffset = '';
-  });
-  dropTarget.addEventListener('drop', (e) => {
+  dropZone.addEventListener('dragleave', (e) => {
     e.preventDefault();
-    dropTarget.style.outline = '';
-    dropTarget.style.outlineOffset = '';
+    dragCounter--;
+    if (dragCounter <= 0) { dragCounter = 0; dropOverlay.classList.remove('visible'); }
+  });
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragCounter = 0;
+    dropOverlay.classList.remove('visible');
     const files = Array.from(e.dataTransfer?.files || []);
-    if (files.length > 0) addFilesToUpload(files);
+    if (files.length > 0) {
+      // Navigate to chat if not already there
+      if (typeof currentRoute === 'function' && currentRoute() !== 'chat') navigate('chat');
+      addFilesToUpload(files);
+    }
   });
 }
+initDragDrop();
 
 async function addFilesToUpload(files) {
   for (const f of files) {
@@ -921,5 +960,46 @@ Object.defineProperty(window, 'chatWs', {
   get() { return chatWs; }
 });
 
+// ── Status bar (feature 97) ──
+let serverStartTime = Date.now();
+
+function initStatusBar() {
+  const bar = document.getElementById('status-bar');
+  if (!bar) return;
+  updateStatusBar();
+  setInterval(updateStatusBar, 10000); // Update every 10s
+  // Fetch server uptime once
+  apiFetch('/api/auth/status').then(r => r.json()).then(d => {
+    if (d.uptime) serverStartTime = Date.now() - (d.uptime * 1000);
+  }).catch(() => {});
+}
+
+function updateStatusBar() {
+  const bar = document.getElementById('status-bar');
+  if (!bar) return;
+  let model = '—';
+  try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); model = s.model || s.provider || '—'; } catch {}
+  const uptime = formatUptime(Date.now() - serverStartTime);
+  const tokenInfo = window.lastContextStatus ? `${(window.lastContextStatus.usedTokens / 1000).toFixed(0)}K tokens` : '—';
+  bar.innerHTML = `
+    <span class="status-item" aria-label="Active model"><span class="status-icon">&#9881;</span> ${esc(model)}</span>
+    <span class="status-item" aria-label="Token usage"><span class="status-icon">&#9998;</span> ${tokenInfo}</span>
+    <span class="status-item" aria-label="Server uptime"><span class="status-icon">&#9200;</span> ${uptime}</span>
+  `;
+}
+
+function formatUptime(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60);
+  return h + 'h ' + (m % 60) + 'm';
+}
+
+// Store last context status globally for status bar
+const _origUpdateContextBar = updateContextBar;
+window.lastContextStatus = null;
+
 // Init chat on page load
-function init_chat() { renderMessages(); }
+function init_chat() { renderMessages(); initStatusBar(); }

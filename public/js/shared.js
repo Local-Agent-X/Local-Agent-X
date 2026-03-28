@@ -17,24 +17,40 @@ if (urlToken) {
 
 const API = '';
 
-// ── Theme toggle (dark/light) ──
-function toggleTheme() {
-  const html = document.documentElement;
-  const current = html.getAttribute('data-theme');
-  const next = current === 'light' ? 'dark' : 'light';
-  html.setAttribute('data-theme', next);
-  localStorage.setItem('sax_theme', next);
-  const btn = document.getElementById('theme-toggle');
-  if (btn) btn.textContent = next === 'light' ? '🌙' : '☀';
+// ── Theme toggle (dark/light/system) ──
+const THEME_CYCLE = ['dark', 'light', 'system'];
+const THEME_ICONS = { dark: '\u2600', light: '\uD83C\uDF19', system: '\uD83D\uDCBB' };
+const THEME_LABELS = { dark: 'Dark', light: 'Light', system: 'System' };
+
+function getEffectiveTheme(pref) {
+  if (pref === 'system') return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  return pref;
 }
+
+function applyTheme(pref) {
+  const effective = getEffectiveTheme(pref);
+  document.documentElement.setAttribute('data-theme', effective);
+  const btn = document.getElementById('theme-toggle');
+  if (btn) { btn.textContent = THEME_ICONS[pref]; btn.title = 'Theme: ' + THEME_LABELS[pref]; }
+}
+
+function toggleTheme() {
+  const saved = localStorage.getItem('sax_theme') || 'dark';
+  const idx = THEME_CYCLE.indexOf(saved);
+  const next = THEME_CYCLE[(idx + 1) % THEME_CYCLE.length];
+  localStorage.setItem('sax_theme', next);
+  applyTheme(next);
+}
+
 // Apply saved theme on load
 (function() {
   const saved = localStorage.getItem('sax_theme') || 'dark';
-  if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
-  document.addEventListener('DOMContentLoaded', () => {
-    const btn = document.getElementById('theme-toggle');
-    if (btn) btn.textContent = saved === 'light' ? '🌙' : '☀';
+  applyTheme(saved);
+  // Listen for OS theme changes when in system mode
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if (localStorage.getItem('sax_theme') === 'system') applyTheme('system');
   });
+  document.addEventListener('DOMContentLoaded', () => applyTheme(saved));
 })();
 
 function uid() { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7); }
@@ -70,7 +86,11 @@ function sanitizeHtml(html) {
 function md(s) {
   if (!s) return '';
   let h = esc(s);
-  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>');
+  // Code blocks with copy button (feature 91)
+  h = h.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const id = 'cb-' + Math.random().toString(36).slice(2, 8);
+    return `<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang">${lang || 'code'}</span><button class="code-copy-btn" onclick="copyCodeBlock('${id}')" aria-label="Copy code">Copy</button></div><pre class="code-block" id="${id}"><code>${code}</code></pre></div>`;
+  });
   h = h.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
   h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
@@ -79,19 +99,53 @@ function md(s) {
   h = h.replace(/^### (.+)$/gm, '<h4 class="md-h">$1</h4>');
   h = h.replace(/^## (.+)$/gm, '<h3 class="md-h">$1</h3>');
   h = h.replace(/^# (.+)$/gm, '<h2 class="md-h">$1</h2>');
+  // Inline image rendering (feature 92) — render image URLs and base64 inline
+  const imgPlaceholders = [];
+  h = h.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, src) => {
+    const idx = imgPlaceholders.length;
+    const safeSrc = /^(https?:\/\/|data:image\/)/.test(src) ? src : '#';
+    imgPlaceholders.push(`<img src="${safeSrc}" alt="${esc(alt)}" class="inline-chat-img" onclick="openLightbox(this.src)" />`);
+    return '%%IMG' + idx + '%%';
+  });
   const urlPlaceholders = [];
+  h = h.replace(/(https?:\/\/[^\s<"']+\.(?:png|jpg|jpeg|gif|webp|svg))(\s|$|<br>)/gi, (match, url, after) => {
+    const idx = imgPlaceholders.length;
+    const safeUrl = sanitizeUrl(url);
+    imgPlaceholders.push(`<img src="${safeUrl}" alt="image" class="inline-chat-img" onclick="openLightbox(this.src)" />`);
+    return '%%IMG' + idx + '%%' + after;
+  });
   h = h.replace(/(https?:\/\/[^\s<"']+)/g, (match) => {
     const idx = urlPlaceholders.length;
     const safeUrl = sanitizeUrl(match);
     urlPlaceholders.push(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${match}</a>`);
     return '%%URL' + idx + '%%';
   });
+  // Base64 image data inline (feature 92)
+  h = h.replace(/(data:image\/[a-z+]+;base64,[A-Za-z0-9+/=]+)/g, (match) => {
+    const idx = imgPlaceholders.length;
+    imgPlaceholders.push(`<img src="${match}" alt="image" class="inline-chat-img" onclick="openLightbox(this.src)" />`);
+    return '%%IMG' + idx + '%%';
+  });
   h = h.replace(/\n/g, '<br>');
   for (let i = 0; i < urlPlaceholders.length; i++) {
     h = h.replace('%%URL' + i + '%%', urlPlaceholders[i]);
   }
+  for (let i = 0; i < imgPlaceholders.length; i++) {
+    h = h.replace('%%IMG' + i + '%%', imgPlaceholders[i]);
+  }
   // Final sweep: strip any event handlers or script injections
   return sanitizeHtml(h);
+}
+
+// Copy code block to clipboard (feature 91)
+function copyCodeBlock(id) {
+  const block = document.getElementById(id);
+  if (!block) return;
+  const text = block.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = block.closest('.code-block-wrapper')?.querySelector('.code-copy-btn');
+    if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 2000); }
+  });
 }
 
 // Auth check (updates sidebar footer)

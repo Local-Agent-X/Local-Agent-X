@@ -275,3 +275,326 @@ export async function synthesize(
   }
   return Buffer.alloc(0);
 }
+
+// ── Feature 17: Continuous Listening with VAD ──
+
+export interface ContinuousListenOptions {
+  /** Silence duration (seconds) to split segments. Default: 1.5 */
+  silenceThreshold?: number;
+  /** Minimum segment duration (seconds) to transcribe. Default: 0.5 */
+  minSegmentSec?: number;
+  /** Maximum segment duration (seconds). Default: 30 */
+  maxSegmentSec?: number;
+  /** Callback for each transcribed segment */
+  onTranscription?: (text: string, segmentIndex: number) => void;
+  /** Callback for VAD state changes */
+  onVADState?: (speaking: boolean) => void;
+}
+
+/**
+ * Continuous listening with VAD-based auto-segmentation.
+ * Records audio, splits on silence, transcribes each segment.
+ * Returns a stop() function.
+ */
+export function continuousListen(options: ContinuousListenOptions = {}): { stop: () => void } {
+  const silenceThreshold = options.silenceThreshold ?? 1.5;
+  const minSeg = options.minSegmentSec ?? 0.5;
+  const maxSeg = options.maxSegmentSec ?? 30;
+  let running = true;
+  let segmentIndex = 0;
+  let currentProc: ReturnType<typeof spawn> | null = null;
+
+  const loop = async () => {
+    while (running) {
+      const segPath = tmpPath("wav");
+      try {
+        // Record with silence detection via ffmpeg
+        currentProc = spawn("ffmpeg", [
+          "-f", "dshow", "-i", "audio=default",
+          "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
+          "-af", `silencedetect=noise=-30dB:d=${silenceThreshold}`,
+          "-t", String(maxSeg),
+          "-y", segPath,
+        ], { stdio: ["ignore", "pipe", "pipe"] });
+
+        const proc = currentProc;
+
+        await new Promise<void>((resolve) => {
+          let stderr = "";
+          let speechDetected = false;
+
+          proc.stderr?.on("data", (chunk: Buffer) => {
+            stderr += chunk.toString();
+            if (!speechDetected && stderr.includes("silence_end")) {
+              speechDetected = true;
+              options.onVADState?.(true);
+            }
+            // End recording when silence follows speech
+            if (speechDetected && stderr.lastIndexOf("silence_start") > stderr.lastIndexOf("silence_end")) {
+              options.onVADState?.(false);
+              setTimeout(() => { try { proc.kill("SIGTERM"); } catch {} }, 200);
+            }
+          });
+
+          proc.on("close", () => resolve());
+          proc.on("error", () => resolve());
+        });
+
+        currentProc = null;
+        if (!running) break;
+
+        // Check file size (skip near-empty)
+        if (existsSync(segPath)) {
+          const stat = require("node:fs").statSync(segPath);
+          const durationEstimate = (stat.size - 44) / (16000 * 2); // 16kHz 16-bit mono
+          if (durationEstimate >= minSeg) {
+            const audio = readFileSync(segPath);
+            const text = transcribe(audio);
+            if (text) {
+              options.onTranscription?.(text, segmentIndex);
+              segmentIndex++;
+            }
+          }
+        }
+      } catch {
+        // Brief pause on error
+        await new Promise((r) => setTimeout(r, 500));
+      } finally {
+        try { unlinkSync(segPath); } catch {}
+      }
+    }
+  };
+
+  loop();
+
+  return {
+    stop() {
+      running = false;
+      if (currentProc) try { currentProc.kill(); } catch {}
+    },
+  };
+}
+
+// ── Feature 19: Voice Interruption ──
+
+let _currentTTSProcess: ReturnType<typeof spawn> | null = null;
+let _ttsInterrupted = false;
+
+/** Register a TTS playback process so it can be interrupted */
+export function registerTTSProcess(proc: ReturnType<typeof spawn>): void {
+  _currentTTSProcess = proc;
+  _ttsInterrupted = false;
+  proc.on("close", () => {
+    if (_currentTTSProcess === proc) _currentTTSProcess = null;
+  });
+}
+
+/** Interrupt current TTS playback (call when new speech detected) */
+export function interruptSpeech(): boolean {
+  if (_currentTTSProcess) {
+    _ttsInterrupted = true;
+    try {
+      _currentTTSProcess.kill();
+      _currentTTSProcess = null;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/** Check if TTS was interrupted */
+export function wasTTSInterrupted(): boolean {
+  return _ttsInterrupted;
+}
+
+// ── Feature 20: Whisper.cpp with Configurable Model ──
+
+export type WhisperModel = "tiny" | "tiny.en" | "base" | "base.en" | "small" | "small.en" | "medium" | "medium.en" | "large";
+
+/**
+ * Transcribe audio using whisper-cli with configurable model size.
+ * Falls back to default model if requested model not found.
+ */
+export function whisperTranscribe(
+  audioBuffer: Buffer,
+  options: {
+    model?: WhisperModel;
+    language?: string;
+    translate?: boolean;
+    threads?: number;
+  } = {},
+): string {
+  const model = options.model ?? "base.en";
+  const lang = options.language ?? "en";
+  const threads = options.threads ?? 4;
+
+  const modelPath = join(VOICE_DIR, "whisper-bin", "models", `ggml-${model}.bin`);
+  const effectiveModel = existsSync(modelPath) ? modelPath : WHISPER_MODEL;
+
+  if (!existsSync(WHISPER_EXE) || !existsSync(effectiveModel)) {
+    return "";
+  }
+
+  const wavPath = tmpPath("wav");
+  try {
+    writeFileSync(wavPath, audioBuffer);
+
+    const args = [
+      "-m", effectiveModel,
+      "-f", wavPath,
+      "-np", "-nt",
+      "-l", lang,
+      "-t", String(threads),
+    ];
+
+    if (options.translate) args.push("--translate");
+
+    const output = execFileSync(WHISPER_EXE, args, {
+      encoding: "utf-8",
+      timeout: 60_000,
+    });
+
+    let text = output.trim().replace(/\[.*?\]/g, "").trim();
+    const lower = text.toLowerCase();
+    if (lower === "thank you." || lower === "thanks for watching." || text.length < 2) {
+      return "";
+    }
+    return text;
+  } finally {
+    try { unlinkSync(wavPath); } catch {}
+  }
+}
+
+// ── Feature 26: Multi-Language STT/TTS ──
+
+const LANGUAGE_WHISPER_MODELS: Record<string, string> = {
+  en: "base.en",
+  es: "base",
+  fr: "base",
+  de: "base",
+  it: "base",
+  pt: "base",
+  ja: "base",
+  ko: "base",
+  zh: "base",
+  ru: "base",
+  ar: "base",
+  hi: "base",
+};
+
+/**
+ * Detect language from audio and transcribe with appropriate model.
+ * Uses Whisper's built-in language detection on first pass,
+ * then re-transcribes with language-specific settings.
+ */
+export function multiLanguageTranscribe(
+  audioBuffer: Buffer,
+): { text: string; language: string; confidence: number } {
+  if (!existsSync(WHISPER_EXE)) {
+    return { text: "", language: "unknown", confidence: 0 };
+  }
+
+  // Use multilingual model for language detection
+  const multiModelPath = join(VOICE_DIR, "whisper-bin", "models", "ggml-base.bin");
+  const detectModel = existsSync(multiModelPath) ? multiModelPath : WHISPER_MODEL;
+
+  const wavPath = tmpPath("wav");
+  try {
+    writeFileSync(wavPath, audioBuffer);
+
+    // First pass: detect language
+    const detectOutput = execFileSync(WHISPER_EXE, [
+      "-m", detectModel,
+      "-f", wavPath,
+      "-np", "-nt",
+      "--detect-language",
+    ], {
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
+
+    // Parse detected language from output
+    let detectedLang = "en";
+    let confidence = 0;
+    const langMatch = detectOutput.match(/language:\s*(\w+)\s*\(p\s*=\s*([\d.]+)\)/i);
+    if (langMatch) {
+      detectedLang = langMatch[1].toLowerCase();
+      confidence = parseFloat(langMatch[2]);
+    }
+
+    // Second pass: transcribe with detected language
+    const text = whisperTranscribe(audioBuffer, {
+      model: (LANGUAGE_WHISPER_MODELS[detectedLang] || "base") as WhisperModel,
+      language: detectedLang,
+    });
+
+    return { text, language: detectedLang, confidence };
+  } finally {
+    try { unlinkSync(wavPath); } catch {}
+  }
+}
+
+// ── Feature 28: Bone Conduction / EQ Presets ──
+
+export type EQPreset = "default" | "bone_conduction" | "hearing_aid" | "headphones" | "speaker" | "phone" | "bright" | "warm";
+
+const EQ_PRESETS: Record<EQPreset, { bass: number; mid: number; treble: number; description: string }> = {
+  default:          { bass: 0, mid: 0, treble: 0, description: "Flat EQ — no adjustments" },
+  bone_conduction:  { bass: 6, mid: 3, treble: -2, description: "Boosted bass to compensate for bone conduction loss" },
+  hearing_aid:      { bass: 2, mid: 4, treble: 6, description: "Enhanced clarity for hearing-impaired listeners" },
+  headphones:       { bass: 2, mid: 0, treble: 1, description: "Slight bass boost for headphone listening" },
+  speaker:          { bass: -2, mid: 2, treble: 0, description: "Reduced bass, boosted mids for small speakers" },
+  phone:            { bass: -3, mid: 4, treble: 2, description: "Optimized for phone earpiece" },
+  bright:           { bass: -2, mid: 0, treble: 4, description: "Bright, clear sound" },
+  warm:             { bass: 4, mid: 1, treble: -2, description: "Warm, rich sound" },
+};
+
+/**
+ * Apply an EQ preset to a WAV audio buffer using ffmpeg.
+ * Returns the processed WAV buffer.
+ */
+export function applyEQPreset(audioBuffer: Buffer, preset: EQPreset = "default"): Buffer {
+  if (preset === "default" || audioBuffer.length === 0) return audioBuffer;
+
+  const eq = EQ_PRESETS[preset];
+  if (!eq) return audioBuffer;
+
+  const inPath = tmpPath("wav");
+  const outPath = tmpPath("wav");
+
+  // Build ffmpeg equalizer filter
+  // bass ~100Hz, mid ~1kHz, treble ~8kHz
+  const filters = [
+    `equalizer=f=100:t=h:w=200:g=${eq.bass}`,
+    `equalizer=f=1000:t=h:w=1000:g=${eq.mid}`,
+    `equalizer=f=8000:t=h:w=4000:g=${eq.treble}`,
+  ].join(",");
+
+  try {
+    writeFileSync(inPath, audioBuffer);
+    execSync(`ffmpeg -i "${inPath}" -af "${filters}" -y "${outPath}"`, {
+      timeout: 10_000,
+      stdio: "ignore",
+    });
+
+    if (existsSync(outPath)) {
+      return readFileSync(outPath);
+    }
+    return audioBuffer;
+  } catch {
+    return audioBuffer; // return original on failure
+  } finally {
+    try { unlinkSync(inPath); } catch {}
+    try { unlinkSync(outPath); } catch {}
+  }
+}
+
+/** List available EQ presets */
+export function listEQPresets(): Array<{ name: EQPreset; description: string }> {
+  return Object.entries(EQ_PRESETS).map(([name, eq]) => ({
+    name: name as EQPreset,
+    description: eq.description,
+  }));
+}

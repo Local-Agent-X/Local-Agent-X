@@ -947,11 +947,14 @@ async function tgCheckStatus() {
       if (d.error && errorEl) { errorEl.textContent = d.error; errorEl.style.display = ''; }
     } else {
       stateEl.textContent = 'Disconnected'; stateEl.style.color = 'var(--muted)';
-      nameEl.textContent = 'Not set up';
+      nameEl.textContent = d.hasToken ? 'Token saved — click Connect' : 'Not set up';
       badgeEl.textContent = 'OFF'; badgeEl.style.background = 'var(--border)'; badgeEl.style.color = 'var(--muted)';
       if (tokenBox) tokenBox.style.display = '';
       if (connectBtn) connectBtn.style.display = '';
       if (disconnectBtn) disconnectBtn.style.display = 'none';
+      // Show placeholder hint if token is already saved
+      const tokenInput = document.getElementById('tg-token-input');
+      if (tokenInput && d.hasToken) tokenInput.placeholder = 'Token saved in vault (leave blank to use it)';
     }
   } catch {}
 }

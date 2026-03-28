@@ -53,7 +53,7 @@ export class WhatsAppBridge {
   private processedMessages = new Set<string>();
   private phoneNumber: string | null = null;
   private lastError: string | null = null;
-  private allowedNumbers: Set<string> = new Set(); // Empty = allow all
+  private allowedNumbers: Set<string> = new Set(); // Empty = owner-only (default-deny)
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(config: WhatsAppBridgeConfig) {
@@ -189,7 +189,7 @@ export class WhatsAppBridge {
     };
   }
 
-  /** Set which phone numbers can message the agent (empty = allow all) */
+  /** Set which phone numbers can message the agent (in addition to owner) */
   setAllowedNumbers(numbers: string[]): void {
     this.allowedNumbers = new Set(numbers.map(n => n.replace(/\D/g, "")));
     this.saveAllowedNumbers();
@@ -365,9 +365,10 @@ export class WhatsAppBridge {
         // Use real phone number for self-chat sessions (not the LID)
         const phone = isSelfChat ? (this.phoneNumber || senderPhone) : senderPhone;
 
-        // Check allowed numbers
-        if (this.allowedNumbers.size > 0 && !this.allowedNumbers.has(phone)) {
-          console.log(`[whatsapp] Blocked message from ${phone} (not in allowed list)`);
+        // Check allowed numbers — DEFAULT-DENY: only owner + explicitly allowed numbers
+        const isOwner = this.phoneNumber && phone === this.phoneNumber;
+        if (!isOwner && !this.allowedNumbers.has(phone)) {
+          console.log(`[whatsapp] BLOCKED message from ${phone} (not owner or in allowed list)`);
           continue;
         }
 

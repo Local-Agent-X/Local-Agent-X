@@ -246,15 +246,14 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
 
   const fullSystem = systemPrompt + "\n\n" + toolPrompt;
   const historyContext = contextParts.length > 0 ? "\n\nConversation so far:\n" + contextParts.join("\n") + "\n\n" : "";
-  const fullPrompt = `<system>${fullSystem}</system>\n${historyContext}\n${prompt}`;
+  // Strip system tags from user input to prevent prompt injection
+  const safePrompt = prompt.replace(/<\/?system>/gi, "");
+  const safeHistory = historyContext.replace(/<\/?system>/gi, "");
+  const fullPrompt = `<system>${fullSystem}</system>\n${safeHistory}\n${safePrompt}`;
 
-  // Only bypass permissions for build-like requests (so Claude Code can read/write files)
-  // Regular chat stays in default mode for fast responses
-  const isBuildRequest = /\b(build|create|make|upgrade|update|redesign|change|fix|add|improve|modify)\b.*\b(app|website|page|game|project|todo|site|background|style|color|theme|feature)\b/i.test(prompt);
   const args = [
     "-p", "--model", model, "--output-format", "stream-json", "--verbose",
     "--no-session-persistence",
-    ...(isBuildRequest ? ["--permission-mode", "bypassPermissions"] : []),
   ];
 
   try {

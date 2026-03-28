@@ -72,18 +72,15 @@
 
   <!-- VOICE INDICATORS (global) -->
   <div id="voice-indicator" role="status" aria-live="polite"></div>
-  <button id="tts-toggle" onclick="toggleTTS()" aria-label="Toggle text-to-speech">VOICE OFF</button>
-  <button id="agents-toggle" onclick="toggleAgentFeeds()" aria-label="Toggle agents panel" title="Show/hide agents panel" style="position:fixed;top:8px;right:80px;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-family:var(--mono);font-size:.68rem;color:var(--muted);transition:all .15s">AGENTS <span id="agents-toggle-count" style="color:var(--accent)">0</span></button>
+  <button id="agents-toggle" onclick="toggleAgentFeeds()" aria-label="Toggle agents panel" title="Show/hide agents panel" style="position:fixed;top:8px;right:16px;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-family:var(--mono);font-size:.68rem;color:var(--muted);transition:all .15s">AGENTS <span id="agents-toggle-count" style="color:var(--accent)">0</span></button>
 
   <!-- ══ CHAT PAGE ══ -->
   <div id="page-chat" class="page active">
     <div id="chat-main">
-      <!-- Chat toolbar -->
+      <!-- Chat toolbar (mood/context indicators only — controls moved to status bar) -->
       <div id="chat-toolbar">
         <span id="mood-indicator" title="Detected mood" style="display:none;font-size:.65rem;font-family:var(--mono);padding:3px 8px;border-radius:6px;border:1px solid var(--border);color:var(--muted)"></span>
         <span id="smart-ctx-indicator" title="Smart context active" style="display:none;font-size:.65rem;font-family:var(--mono);padding:3px 8px;border-radius:6px;border:1px solid var(--accent-dim);color:var(--accent)">CTX</span>
-        <button id="fork-tree-btn" onclick="showForkTree()" title="View conversation branches" aria-label="View branches" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:4px 10px;border-radius:6px;font-family:var(--mono);font-size:.65rem;cursor:pointer;display:none">Branches</button>
-        <button id="md-toggle-btn" onclick="toggleMdPreview()" title="Show raw markdown" aria-label="Toggle markdown preview">Raw</button>
       </div>
       <div id="messages" role="log" aria-label="Chat messages" aria-live="polite">
         <div id="empty"><h2>OPEN AGENT X</h2><p>Select a chat or start a new one.</p></div>
@@ -102,8 +99,12 @@
           <button id="stop-btn" onclick="stopChat()" title="Stop agent" aria-label="Stop agent" style="display:none;background:var(--danger);border-color:var(--danger);color:#fff">&#9632;</button>
           <button id="send-btn" onclick="sendMessage()" aria-label="Send message">&#9650;</button>
         </div>
-        <!-- Status bar (feature 97) -->
-        <div id="status-bar" role="status" aria-label="Status information"></div>
+        <!-- Status bar with controls -->
+        <div id="status-bar" role="status" aria-label="Status information" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button id="tts-toggle" onclick="toggleTTS()" aria-label="Toggle text-to-speech" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;font-family:var(--mono);font-size:.62rem;cursor:pointer">VOICE OFF</button>
+          <button id="fork-tree-btn" onclick="showForkTree()" title="View conversation branches" aria-label="View branches" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;font-family:var(--mono);font-size:.62rem;cursor:pointer;display:none">Branches</button>
+          <button id="md-toggle-btn" onclick="toggleMdPreview()" title="Show raw markdown" aria-label="Toggle markdown preview" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;font-family:var(--mono);font-size:.62rem;cursor:pointer">Raw</button>
+        </div>
       </div>
     </div>
     <div id="agent-feeds" class="agent-feeds collapsed">
@@ -154,9 +155,11 @@
           <div class="section-title">Anthropic Authentication</div>
           <div class="section-desc">Connect to Anthropic via OAuth to use Claude models (free for Claude subscribers).</div>
           <div id="anthropic-auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
+          <div id="claude-cli-status" class="status-badge warn" style="margin-top:6px"><span class="status-dot"></span> Checking Claude CLI...</div>
           <div class="btn-row">
             <button id="btn-anthropic-login" class="action-btn primary" onclick="doAnthropicLogin()">Sign In with Claude</button>
             <button id="btn-anthropic-disconnect" class="action-btn danger" onclick="doAnthropicDisconnect()" style="display:none">Disconnect</button>
+            <button id="btn-install-claude-cli" class="action-btn" onclick="installClaudeCli()" style="display:none">Install Claude CLI</button>
           </div>
         </div>
         <div class="section-card">
@@ -170,7 +173,8 @@
         <div class="section-card">
           <div class="section-title">Model Provider</div>
           <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-provider" onchange="onProviderChange(this.value)"><option value="codex">OpenAI Codex (ChatGPT OAuth — free)</option><option value="anthropic">Anthropic Claude (OAuth — free for subscribers)</option><option value="xai">xAI Grok</option><option value="openai">OpenAI API (direct key)</option><option value="local">Local Model (Ollama)</option></select></div>
-          <div class="field"><label class="field-label">Model</label><input class="field-input" id="cfg-model" value="grok-3-mini"/><select class="field-select" id="cfg-model-select" style="display:none"></select><div class="field-hint" id="cfg-model-hint">Codex: gpt-5.3-codex | Anthropic: claude-sonnet-4-20250514 | xAI: grok-3-mini | OpenAI: gpt-4o</div><div id="ollama-status" style="display:none;margin-top:8px"></div></div>
+          <div class="field"><label class="field-label">Model</label><select class="field-select" id="cfg-model-select"></select><input class="field-input" id="cfg-model" value="" placeholder="Custom model name..." style="display:none"/><div class="field-hint" id="cfg-model-hint"></div><div id="ollama-status" style="display:none;margin-top:8px"></div></div>
+          <div class="field" id="api-key-field" style="display:none"><label class="field-label" id="api-key-label">API Key</label><div style="display:flex;gap:8px"><input class="field-input" id="cfg-api-key" type="password" placeholder="Enter API key..." style="flex:1"/><button class="action-btn" onclick="toggleApiKeyVisibility()" style="min-width:60px" id="btn-toggle-key">Show</button></div><div class="field-hint" id="api-key-hint"></div><div id="api-key-status" style="margin-top:4px"></div></div>
           <div class="field-row"><div class="field"><label class="field-label">Temperature</label><input class="field-input" id="cfg-temperature" type="number" step="0.1" min="0" max="2" value="0.7"/></div><div class="field"><label class="field-label">Max Iterations</label><input class="field-input" id="cfg-maxiter" type="number" min="1" max="100" value="25"/></div></div>
         </div>
       </div>

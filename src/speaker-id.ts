@@ -53,7 +53,7 @@ with open(sys.argv[2], 'w') as f:
     writeFileSync(wavPath, audioBuffer);
     writeFileSync(pyPath, script, "utf-8");
 
-    execSync(`python "${pyPath}" "${wavPath}" "${outPath}"`, {
+    execFileSync("python", [pyPath, wavPath, outPath], {
       timeout: 15_000,
       stdio: "ignore",
     });

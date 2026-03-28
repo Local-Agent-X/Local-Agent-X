@@ -3,7 +3,7 @@
  * Uses ffmpeg to grab frames from the default video device.
  */
 
-import { execSync, spawn } from "node:child_process";
+import { execSync, execFileSync, spawn } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -114,7 +114,7 @@ export function captureFrame(options: CaptureOptions = {}): CaptureResult {
 
     args.push("-y", outPath);
 
-    execSync(`ffmpeg ${args.map((a) => a.includes("=") || a.includes(" ") ? `"${a}"` : a).join(" ")}`, {
+    execFileSync("ffmpeg", args, {
       timeout: 10_000,
       stdio: "ignore",
     });

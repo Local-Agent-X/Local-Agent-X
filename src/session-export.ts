@@ -27,7 +27,9 @@ interface ExportedSession {
 }
 
 function loadSession(sessionDir: string, sessionId: string): SessionData {
-  const sessionFile = join(sessionDir, `${sessionId}.json`);
+  // Sanitize sessionId to prevent path traversal
+  const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const sessionFile = join(sessionDir, `${safeId}.json`);
   if (!existsSync(sessionFile)) {
     throw new Error(`Session not found: ${sessionId}`);
   }

@@ -329,7 +329,7 @@ function saveChats(){
 function loadProjects(){ try { return JSON.parse(localStorage.getItem('sax_projects_v1')||'[]'); } catch { return []; }}
 function saveProjects(){ localStorage.setItem('sax_projects_v1', JSON.stringify(projects)); }
 function uid(){ return Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,7); }
-function esc(s){ const d=document.createElement('div');d.textContent=String(s||'');return d.innerHTML; }
+function esc(s){ const d=document.createElement('div');d.textContent=String(s||'');return d.innerHTML.replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
 
 // Basic markdown renderer
 function md(s){
@@ -755,7 +755,7 @@ async function startAiServer(type){
       el.innerHTML=`<span style="color:var(--danger)">● ${type} server timed out</span> — try starting manually: python ${script}`;
     }
   }catch(e){
-    el.innerHTML=`<span style="color:var(--danger)">● Failed: ${e.message}</span>`;
+    el.innerHTML=`<span style="color:var(--danger)">● Failed: ${esc(e.message)}</span>`;
   }
 }
 

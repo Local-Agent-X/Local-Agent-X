@@ -289,7 +289,7 @@ function loadTasks(){
 }
 function persist(){ localStorage.setItem('sax_tasks_v1', JSON.stringify(tasks)); }
 function uid(){ return 'task-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,7); }
-function esc(s){ const d=document.createElement('div'); d.textContent=String(s||''); return d.innerHTML; }
+function esc(s){ const d=document.createElement('div'); d.textContent=String(s||''); return d.innerHTML.replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
 
 async function checkAuth(){
   try {

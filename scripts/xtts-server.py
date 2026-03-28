@@ -103,7 +103,7 @@ class XTTSHandler(BaseHTTPRequestHandler):
         print(f"[xtts] {args[0]}")
 
     def _cors(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1:4800")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
@@ -140,6 +140,13 @@ class XTTSHandler(BaseHTTPRequestHandler):
         # Serve voice audio files for preview
         if path.startswith("/voices/") and path.endswith("/preview"):
             voice_id = path.split("/")[2]
+            # Prevent path traversal
+            if ".." in voice_id or "/" in voice_id or "\\" in voice_id:
+                self.send_response(400)
+                self._cors()
+                self.end_headers()
+                self.wfile.write(b'{"error":"Invalid voice ID"}')
+                return
             for ext in [".wav", ".mp3"]:
                 p = VOICES_DIR / f"{voice_id}{ext}"
                 if p.exists():

@@ -65,7 +65,7 @@ function convertMessagesToInput(messages: ChatCompletionMessageParam[]): unknown
             : msg.content,
       });
     } else if (msg.role === "assistant") {
-      const m = msg as Record<string, unknown>;
+      const m = msg as unknown as Record<string, unknown>;
       if (m.tool_calls) {
         for (const tc of m.tool_calls as Array<{
           id: string;

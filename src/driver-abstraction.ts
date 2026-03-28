@@ -215,6 +215,7 @@ export class SystemSpeakerDriver implements SpeakerDriver {
   }
 
   async play(audio: Buffer, format = "wav"): Promise<void> {
+    if (!/^[a-z0-9]{1,10}$/.test(format)) throw new Error(`Invalid audio format: ${format}`);
     const tmpFile = `/tmp/sax-playback-${Date.now()}.${format}`;
     const fs = await import("node:fs/promises");
     await fs.writeFile(tmpFile, audio);
@@ -222,7 +223,7 @@ export class SystemSpeakerDriver implements SpeakerDriver {
       if (process.platform === "win32") {
         await runCommand("powershell", [
           "-Command",
-          `(New-Object Media.SoundPlayer '${tmpFile}').PlaySync()`,
+          `(New-Object Media.SoundPlayer '${tmpFile.replace(/'/g, "''")}').PlaySync()`,
         ]);
       } else if (process.platform === "darwin") {
         await runCommand("afplay", ["-v", String(this.volume / 100), tmpFile]);

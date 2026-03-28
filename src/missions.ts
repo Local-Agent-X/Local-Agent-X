@@ -286,11 +286,8 @@ function formatCaptionForInstagram(caption: string): string {
 
 // JavaScript code to inject caption into Instagram's composer
 function buildCaptionInjector(caption: string): string {
-  // Escape for JS string literal
-  const escaped = caption
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/\n/g, "\\n");
+  // Escape for JS string literal using JSON.stringify (handles all special chars)
+  const escaped = JSON.stringify(caption).slice(1, -1); // strip outer quotes
 
   return `
     (function() {

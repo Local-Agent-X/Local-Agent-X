@@ -3,11 +3,22 @@
  * Uses ffmpeg for frame extraction, optionally sends to vision model for descriptions.
  */
 
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { readFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
+
+/** Safely parse a fraction string like "30000/1001" without eval() */
+function parseFraction(s: string): number {
+  const parts = s.split("/");
+  if (parts.length === 2) {
+    const num = Number(parts[0]);
+    const den = Number(parts[1]);
+    return den !== 0 ? num / den : 0;
+  }
+  return Number(s) || 0;
+}
 
 const TMP_DIR = join(homedir(), ".sax", "voice-tmp");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
@@ -54,10 +65,10 @@ export interface SummarizeOptions {
 export function getVideoInfo(videoPath: string): VideoInfo {
   if (!existsSync(videoPath)) throw new Error(`Video not found: ${videoPath}`);
 
-  const probe = execSync(
-    `ffprobe -v quiet -print_format json -show_format -show_streams "${videoPath}"`,
-    { encoding: "utf-8", timeout: 10_000 },
-  );
+  const probe = execFileSync("ffprobe", ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", videoPath], {
+    encoding: "utf-8",
+    timeout: 10_000,
+  });
 
   const data = JSON.parse(probe);
   const videoStream = data.streams?.find((s: any) => s.codec_type === "video");
@@ -67,7 +78,7 @@ export function getVideoInfo(videoPath: string): VideoInfo {
     duration: parseFloat(format.duration || "0"),
     width: videoStream?.width || 0,
     height: videoStream?.height || 0,
-    fps: eval(videoStream?.r_frame_rate || "0") || 0,
+    fps: parseFraction(videoStream?.r_frame_rate || "0"),
     codec: videoStream?.codec_name || "unknown",
     fileSize: parseInt(format.size || "0"),
   };
@@ -104,10 +115,10 @@ export function extractKeyframes(
         : `scale=-2:${maxDim}`;
 
       try {
-        execSync(
-          `ffmpeg -ss ${ts.toFixed(2)} -i "${videoPath}" -frames:v 1 -vf "${scaleFilter}" -y "${outPath}"`,
-          { timeout: 10_000, stdio: "ignore" },
-        );
+        execFileSync("ffmpeg", ["-ss", ts.toFixed(2), "-i", videoPath, "-frames:v", "1", "-vf", scaleFilter, "-y", outPath], {
+          timeout: 10_000,
+          stdio: "ignore",
+        });
 
         if (existsSync(outPath)) {
           keyframes.push({

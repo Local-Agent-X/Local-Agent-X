@@ -199,10 +199,10 @@ with wave.open(sys.argv[4], 'wb') as f:
 
     writeFileSync(pyScriptPath, pyScript, "utf-8");
     try {
-      execSync(
-        `python "${pyScriptPath}" "${clean.replace(/"/g, '\\"')}" "${voice}" "${speed}" "${outPath.replace(/\\/g, "/")}"`,
-        { timeout: 30_000, stdio: "ignore" }
-      );
+      execFileSync("python", [pyScriptPath, clean, voice, String(speed), outPath.replace(/\\/g, "/")], {
+        timeout: 30_000,
+        stdio: "ignore",
+      });
     } finally {
       try { unlinkSync(pyScriptPath); } catch {}
     }
@@ -574,7 +574,7 @@ export function applyEQPreset(audioBuffer: Buffer, preset: EQPreset = "default")
 
   try {
     writeFileSync(inPath, audioBuffer);
-    execSync(`ffmpeg -i "${inPath}" -af "${filters}" -y "${outPath}"`, {
+    execFileSync("ffmpeg", ["-i", inPath, "-af", filters, "-y", outPath], {
       timeout: 10_000,
       stdio: "ignore",
     });

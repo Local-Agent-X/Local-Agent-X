@@ -47,8 +47,8 @@ function showTagMenu(chatId, e) {
   menu.className = 'tag-menu';
   const currentTags = chatTags[chatId] || [];
   menu.innerHTML = allTags.map(t =>
-    `<div class="tag-menu-item ${currentTags.includes(t) ? 'active' : ''}" onclick="${currentTags.includes(t) ? `removeTagFromChat('${chatId}','${t}',event)` : `addTagToChat('${chatId}','${t}',event)`}">${esc(t)}</div>`
-  ).join('') + `<div class="tag-menu-item add-tag" onclick="promptNewTag('${chatId}',event)">+ New tag</div>`;
+    `<div class="tag-menu-item ${currentTags.includes(t) ? 'active' : ''}" onclick="${currentTags.includes(t) ? `removeTagFromChat('${esc(chatId)}','${esc(t)}',event)` : `addTagToChat('${esc(chatId)}','${esc(t)}',event)`}">${esc(t)}</div>`
+  ).join('') + `<div class="tag-menu-item add-tag" onclick="promptNewTag('${esc(chatId)}',event)">+ New tag</div>`;
   e.target.closest('.chat-item').appendChild(menu);
   setTimeout(() => document.addEventListener('click', function h() { menu.remove(); document.removeEventListener('click', h); }), 10);
 }
@@ -175,6 +175,9 @@ function navigate(route) {
   });
   // Init page if it has an init function
   if (window['init_' + route]) window['init_' + route]();
+  // Only show agents toggle on chat page
+  var agentsBtn = document.getElementById('agents-toggle');
+  if (agentsBtn) agentsBtn.style.display = (route === 'chat') ? '' : 'none';
 }
 
 function currentRoute() {

@@ -170,7 +170,7 @@ export class FastVoicePipeline extends EventEmitter {
     this.emit("response", { response, ms: processingMs });
 
     // TTS (optional)
-    let ttsResult = { wav: Buffer.alloc(0), ms: 0 };
+    let ttsResult: { wav: Buffer; ms: number } = { wav: Buffer.alloc(0), ms: 0 };
     if (!this.opts.skipTTS && response) {
       ttsResult = this.synthesizeFast(response);
       this.emit("tts", { ms: ttsResult.ms });

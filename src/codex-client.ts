@@ -84,7 +84,7 @@ function convertMessagesToInput(
         content,
       });
     } else if (msg.role === "assistant") {
-      const m = msg as Record<string, unknown>;
+      const m = msg as unknown as Record<string, unknown>;
       if (m.tool_calls) {
         // Add function calls as output items
         for (const tc of m.tool_calls as Array<{

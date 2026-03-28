@@ -15,6 +15,14 @@ import { wrapExternalContent } from "./sanitize.js";
 
 export type BrowserEngine = "chromium" | "firefox" | "webkit";
 
+// Auth token passed via setter instead of process.env to avoid leaking to child processes
+let _saxAuthToken = "";
+let _saxPort = "";
+export function setBrowserAuthContext(token: string, port: string): void {
+  _saxAuthToken = token;
+  _saxPort = port;
+}
+
 const IDLE_TIMEOUT = 10 * 60 * 1000; // 10 minutes
 const NAV_TIMEOUT = 30_000;
 const ACTION_TIMEOUT = 10_000;
@@ -77,9 +85,9 @@ export class BrowserManager {
   private injectTokenIfLocal(url: string): string {
     try {
       const u = new URL(url);
-      const appPort = process.env.SAX_PORT || "4800";
+      const appPort = _saxPort || process.env.SAX_PORT || "4800";
       if ((u.hostname === "127.0.0.1" || u.hostname === "localhost") && u.port === appPort) {
-        const token = process.env.SAX_AUTH_TOKEN;
+        const token = _saxAuthToken;
         if (token && !u.searchParams.has("token")) {
           u.searchParams.set("token", token);
           return u.toString();

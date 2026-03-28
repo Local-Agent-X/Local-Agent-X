@@ -20,6 +20,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "node:http";
 import type { Server } from "node:http";
 import type { ServerEvent } from "./types.js";
+import { timingSafeEqual } from "node:crypto";
 
 interface ActiveChat {
   sessionId: string;
@@ -42,7 +43,9 @@ export function setupChatWebSocket(server: Server, authToken: string) {
     // Auth check via query param
     const url = new URL(req.url || "/", "http://localhost");
     const token = url.searchParams.get("token") || "";
-    if (token !== authToken) {
+    const tokenBuf = Buffer.from(token);
+    const authBuf = Buffer.from(authToken);
+    if (tokenBuf.length !== authBuf.length || !timingSafeEqual(tokenBuf, authBuf)) {
       ws.close(4001, "Unauthorized");
       return;
     }

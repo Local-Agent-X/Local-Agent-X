@@ -188,7 +188,7 @@ async function testToolRegistration(): Promise<void> {
 
   // Check tools by importing each module that creates them
   const toolSources: Record<string, () => Promise<string[]>> = {
-    "base tools": async () => { const m = await import("./tools.js"); const t = typeof m.allTools === "function" ? m.allTools() : m.allTools; return Array.isArray(t) ? t.map((x: any) => x.name || "") : []; },
+    "base tools": async () => { const m = await import("./tools.js"); const t = typeof (m.allTools as any) === "function" ? (m.allTools as any)() : m.allTools; return Array.isArray(t) ? t.map((x: any) => x.name || "") : []; },
     "swarm tools": async () => { const m = await import("./swarm/index.js"); return m.createSwarmTools().map((t: any) => t.name); },
     "primal tools": async () => { const m = await import("./swarm/primal.js"); return m.createPrimalTools().map((t: any) => t.name); },
     "mission tools": async () => { const m = await import("./missions.js"); return m.createMissionTools().map((t: any) => t.name); },

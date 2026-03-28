@@ -23,7 +23,7 @@ import { ThreatEngine } from "./threat-engine.js";
 import { AgentSync } from "./sync.js";
 import { RBACManager, type Role } from "./rbac.js";
 import { createBrowserTools, closeBrowser } from "./browser-tools.js";
-import { closeAllBrowsers } from "./browser.js";
+import { closeAllBrowsers, setBrowserAuthContext } from "./browser.js";
 import { redactCredentials } from "./security.js";
 import { setupChatWebSocket, broadcastAll } from "./chat-ws.js";
 import { runSecurityAudit, printAuditReport } from "./security-audit.js";
@@ -201,10 +201,24 @@ function sseWrite(res: ServerResponse, event: ServerEvent) {
 
 async function readBody(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
+  let size = 0;
+  const MAX_BODY = 10 * 1024 * 1024; // 10MB limit for JSON endpoints
   for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > MAX_BODY) throw new Error("Request body too large");
     chunks.push(chunk as Buffer);
   }
   return Buffer.concat(chunks).toString("utf-8");
+}
+
+/** Safely parse JSON body — returns parsed object or null on invalid JSON */
+async function safeParseBody(req: IncomingMessage): Promise<any> {
+  const raw = await readBody(req);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 // ── Auth Flood Guard: lockout after repeated failures ──
@@ -244,9 +258,8 @@ export function startServer(config: SAXConfig) {
   const toolPolicy = loadToolPolicy(dataDir);
   const rbac = new RBACManager(dataDir, config.authToken);
 
-  // Make auth token + port available to BrowserManager for auto-injection on localhost navigations
-  process.env.SAX_AUTH_TOKEN = config.authToken;
-  process.env.SAX_PORT = String(config.port);
+  // Pass auth token + port to BrowserManager via setter (not env vars, to avoid leaking to child processes)
+  setBrowserAuthContext(config.authToken, String(config.port));
 
   // Agent Sync (git-based memory sync across machines)
   const agentSync = new AgentSync(dataDir, () => secretsStore.get("GITHUB_SYNC_TOKEN"));
@@ -261,6 +274,9 @@ export function startServer(config: SAXConfig) {
 
   // Initialize secrets store
   const secretsStore = new SecretsStore(dataDir);
+
+  // Initialize image tools with secrets store for API-based image generation
+  import("./image-tools.js").then(m => m.initImageTools?.(secretsStore)).catch(() => {});
 
   // Initialize cron scheduler
   const cronService = new CronService(dataDir);
@@ -296,11 +312,18 @@ export function startServer(config: SAXConfig) {
     }
 
     const { getApiKey } = await import("./auth.js");
-    const apiKey = provider === "local"
-      ? "ollama"
-      : provider === "anthropic"
-      ? await getAnthropicApiKey()
-      : await getApiKey(config.openaiApiKey);
+    let apiKey: string;
+    if (provider === "local") {
+      apiKey = "ollama";
+    } else if (provider === "anthropic") {
+      apiKey = await getAnthropicApiKey();
+    } else if (provider === "xai") {
+      apiKey = secretsStore.get("XAI_API_KEY") || "";
+    } else if (provider === "openai" && !config.openaiApiKey) {
+      apiKey = secretsStore.get("OPENAI_API_KEY") || await getApiKey(config.openaiApiKey);
+    } else {
+      apiKey = await getApiKey(config.openaiApiKey);
+    }
 
     const session = getOrCreateSession(sessionId);
     if (session.messages.length === 0) {
@@ -812,6 +835,20 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // Auth check for static file routes (uploads, videos, images)
+    // Accept token via query param or Authorization header
+    const staticAuthRoutes = ["/uploads/", "/videos/", "/images/"];
+    if (method === "GET" && staticAuthRoutes.some(r => url.pathname.startsWith(r))) {
+      const auth = req.headers.authorization || "";
+      const bearerToken = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      const queryToken = url.searchParams.get("token") || "";
+      const providedToken = bearerToken || queryToken;
+      if (!providedToken || providedToken !== config.authToken) {
+        json(401, { error: "Authentication required" });
+        return;
+      }
+    }
+
     // Serve uploaded files
     if (method === "GET" && url.pathname.startsWith("/uploads/")) {
       const uploadsDir = join(dataDir, "uploads");
@@ -829,11 +866,17 @@ export function startServer(config: SAXConfig) {
           bmp: "image/bmp", pdf: "application/pdf",
           txt: "text/plain", json: "application/json", csv: "text/csv",
         };
-        res.writeHead(200, {
+        const headers: Record<string, string> = {
           ...corsHeaders(req),
           "Content-Type": ct[ext] || "application/octet-stream",
           "Cache-Control": "public, max-age=31536000, immutable",
-        });
+        };
+        // Prevent script execution in SVGs served from uploads
+        if (ext === "svg") {
+          headers["Content-Security-Policy"] = "script-src 'none'";
+          headers["X-Content-Type-Options"] = "nosniff";
+        }
+        res.writeHead(200, headers);
         res.end(readFileSync(filePath));
         return;
       }
@@ -906,7 +949,7 @@ export function startServer(config: SAXConfig) {
       json(200, listPolicies()); return;
     }
     if (method === "POST" && url.pathname === "/api/security/policies") {
-      const body = JSON.parse(await readBody(req));
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
       json(200, createPolicy(body)); return;
     }
     if (method === "DELETE" && url.pathname.startsWith("/api/security/policies/")) {
@@ -917,7 +960,7 @@ export function startServer(config: SAXConfig) {
       json(200, { rules: listEgressRules() }); return;
     }
     if (method === "POST" && url.pathname === "/api/security/egress") {
-      const body = JSON.parse(await readBody(req));
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
       json(200, addEgressRule(body.domain, body.action, body.reason)); return;
     }
     if (method === "GET" && url.pathname === "/api/security/audit") {
@@ -931,7 +974,7 @@ export function startServer(config: SAXConfig) {
       json(200, getRecentFileAccess(50)); return;
     }
     if (method === "POST" && url.pathname === "/api/security/scan") {
-      const body = JSON.parse(await readBody(req));
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
       const result = scanForSecrets(String(body.text || ""));
       json(200, result); return;
     }
@@ -975,7 +1018,7 @@ export function startServer(config: SAXConfig) {
       if (sessionId) {
         const session = sessions.get(sessionId);
         if (session) {
-          json(200, getContextUsage(session.messages, 128000)); return;
+          json(200, getContextUsage(session.messages as any, 128000)); return;
         }
       }
       json(200, { used: 0, max: 128000, percentage: 0, remaining: 128000 }); return;
@@ -986,13 +1029,13 @@ export function startServer(config: SAXConfig) {
       const id = url.pathname.split("/")[3];
       const format = (url.searchParams.get("format") || "json") as "json" | "markdown";
       try {
-        const result = await exportSession(id, format);
+        const result = exportSession(dataDir, id, format);
         json(200, result); return;
       } catch (e) { json(404, { error: (e as Error).message }); return; }
     }
     if (method === "POST" && url.pathname === "/api/sessions/import") {
       try {
-        const body = JSON.parse(await readBody(req));
+        const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
         const result = await importSession(body);
         json(200, result); return;
       } catch (e) { json(400, { error: (e as Error).message }); return; }
@@ -1028,7 +1071,7 @@ export function startServer(config: SAXConfig) {
       json(200, pm.listPlugins()); return;
     }
     if (method === "POST" && url.pathname === "/api/plugins/load") {
-      const body = JSON.parse(await readBody(req));
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
       const pm = new PluginManager();
       try {
         const plugin = await pm.loadPlugin(String(body.path));
@@ -1036,7 +1079,7 @@ export function startServer(config: SAXConfig) {
       } catch (e) { json(400, { error: (e as Error).message }); return; }
     }
     if (method === "POST" && url.pathname === "/api/plugins/unload") {
-      const body = JSON.parse(await readBody(req));
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
       const pm = new PluginManager();
       json(200, { ok: pm.unloadPlugin(String(body.id)) }); return;
     }
@@ -1050,7 +1093,10 @@ export function startServer(config: SAXConfig) {
 
     // Proxy voice preview from XTTS server (avoids CORS issues)
     if (method === "GET" && url.pathname.startsWith("/api/voice/preview/")) {
-      const voiceId = url.pathname.split("/").pop();
+      const voiceId = url.pathname.split("/").pop() || "";
+      if (!/^[a-zA-Z0-9_-]+$/.test(voiceId)) {
+        json(400, { error: "Invalid voice ID" }); return;
+      }
       try {
         const r = await fetch(`http://127.0.0.1:7862/voices/${voiceId}/preview`);
         if (r.ok && r.body) {
@@ -1112,7 +1158,7 @@ export function startServer(config: SAXConfig) {
     // Synthesize speech (TTS)
     if (method === "POST" && url.pathname === "/api/voice/synthesize") {
       try {
-        const body = JSON.parse(await readBody(req)) as {
+        const body = await safeParseBody(req) as {
           text?: string;
           voice?: string;
           speed?: number;
@@ -1150,7 +1196,7 @@ export function startServer(config: SAXConfig) {
     }
 
     if (method === "POST" && url.pathname === "/api/sync/configure") {
-      const body = JSON.parse(await readBody(req));
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
       agentSync.saveConfig(body);
       // Restart heartbeat with new config
       agentSync.stopHeartbeat();
@@ -1177,7 +1223,7 @@ export function startServer(config: SAXConfig) {
       return;
     }
     if (method === "POST" && url.pathname === "/api/cron") {
-      const body = JSON.parse(await readBody(req)) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean };
+      const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean };
       if (!body.name || !body.schedule || !body.prompt) { json(400, { error: "name, schedule, and prompt are required" }); return; }
       try {
         const job = cronService.create(body.name, body.schedule, body.prompt, body.systemJob);
@@ -1187,7 +1233,7 @@ export function startServer(config: SAXConfig) {
     }
     if (method === "PATCH" && url.pathname.startsWith("/api/cron/")) {
       const id = url.pathname.split("/").pop()!;
-      const body = JSON.parse(await readBody(req));
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
       try {
         const job = cronService.update(id, body);
         if (!job) { json(404, { error: "Job not found" }); return; }
@@ -1219,7 +1265,7 @@ export function startServer(config: SAXConfig) {
       return;
     }
     if (method === "POST" && url.pathname === "/api/cron/settings") {
-      const body = JSON.parse(await readBody(req));
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
       cronService.updateSettings(body);
       json(200, { ok: true, settings: cronService.getSettings() });
       return;
@@ -1234,6 +1280,9 @@ export function startServer(config: SAXConfig) {
         const cfg = existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf-8")) : {};
         cfg.authToken = newToken;
         writeFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+        // Invalidate old token immediately by updating in-memory config
+        config.authToken = newToken;
+        setBrowserAuthContext(newToken, String(config.port));
         const masked = newToken.slice(0, 4) + "****" + newToken.slice(-4);
         console.log(`[auth] Token rotated. New token: ${masked}`);
         json(200, { ok: true, token: newToken, message: "Token rotated. Save this token — it won't be shown again." });
@@ -1293,7 +1342,7 @@ export function startServer(config: SAXConfig) {
     // ── Settings API (server-side persistence) ──
 
     if (method === "POST" && url.pathname === "/api/settings") {
-      const body = JSON.parse(await readBody(req));
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
       const settingsPath = join(dataDir, "settings.json");
       let existing: Record<string, unknown> = {};
       try { if (existsSync(settingsPath)) existing = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
@@ -1398,6 +1447,9 @@ export function startServer(config: SAXConfig) {
     // Verify audit chain integrity
     if (method === "GET" && url.pathname === "/api/audit/verify") {
       const date = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        json(400, { error: "Invalid date format. Expected YYYY-MM-DD" }); return;
+      }
       const auditPath = join(dataDir, "audit", `${date}.jsonl`);
       const { CryptoAuditTrail } = await import("./threat-engine.js");
       const result = CryptoAuditTrail.verify(auditPath);
@@ -1415,7 +1467,7 @@ export function startServer(config: SAXConfig) {
 
     // Add or update a secret
     if (method === "POST" && url.pathname === "/api/secrets") {
-      const body = JSON.parse(await readBody(req)) as {
+      const body = await safeParseBody(req) as {
         name?: string;
         value?: string;
         service?: string;
@@ -1463,7 +1515,7 @@ export function startServer(config: SAXConfig) {
 
     // Install/configure an integration (mark installed + save secret)
     if (method === "POST" && url.pathname === "/api/integrations/install") {
-      const body = JSON.parse(await readBody(req)) as { id: string; secretValue?: string };
+      const body = await safeParseBody(req) as { id: string; secretValue?: string };
       const config = integrations.get(body.id);
       if (!config) { json(404, { error: "Integration not found" }); return; }
       // Save the API key/token to secrets vault
@@ -1477,7 +1529,7 @@ export function startServer(config: SAXConfig) {
 
     // Uninstall an integration (remove secret + mark uninstalled)
     if (method === "POST" && url.pathname === "/api/integrations/uninstall") {
-      const body = JSON.parse(await readBody(req)) as { id: string };
+      const body = await safeParseBody(req) as { id: string };
       const config = integrations.get(body.id);
       if (!config) { json(404, { error: "Integration not found" }); return; }
       secretsStore.delete(config.secretName);
@@ -1488,7 +1540,7 @@ export function startServer(config: SAXConfig) {
 
     // Toggle enable/disable
     if (method === "POST" && url.pathname === "/api/integrations/toggle") {
-      const body = JSON.parse(await readBody(req)) as { id: string; enabled: boolean };
+      const body = await safeParseBody(req) as { id: string; enabled: boolean };
       integrations.setEnabled(body.id, body.enabled);
       json(200, { ok: true, id: body.id, enabled: body.enabled });
       return;
@@ -1496,7 +1548,7 @@ export function startServer(config: SAXConfig) {
 
     // Add a new custom integration (agent-discovered)
     if (method === "POST" && url.pathname === "/api/integrations") {
-      const body = JSON.parse(await readBody(req));
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
       if (!body.id || !body.name || !body.baseUrl) {
         json(400, { error: "id, name, and baseUrl are required" });
         return;
@@ -1522,7 +1574,7 @@ export function startServer(config: SAXConfig) {
 
     // Test an integration (make a simple GET to its base URL)
     if (method === "POST" && url.pathname === "/api/integrations/test") {
-      const body = JSON.parse(await readBody(req)) as { id: string };
+      const body = await safeParseBody(req) as { id: string };
       const config = integrations.get(body.id);
       if (!config) { json(404, { error: "Integration not found" }); return; }
       const token = secretsStore.get(config.secretName);
@@ -1677,7 +1729,7 @@ export function startServer(config: SAXConfig) {
     // Send a message (agent-initiated or test)
     if (method === "POST" && url.pathname === "/api/whatsapp/send") {
       try {
-        const body = JSON.parse(await readBody(req));
+        const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
         const { to, message: msg } = body;
         if (!to || !msg) {
           json(400, { error: "to and message are required" });
@@ -1694,7 +1746,7 @@ export function startServer(config: SAXConfig) {
     // Set allowed numbers (security: only these numbers can message the agent)
     if (method === "POST" && url.pathname === "/api/whatsapp/allowed-numbers") {
       try {
-        const body = JSON.parse(await readBody(req));
+        const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
         const numbers: string[] = body.numbers || [];
         whatsappBridge.setAllowedNumbers(numbers);
         json(200, { ok: true, numbers });
@@ -1729,7 +1781,7 @@ export function startServer(config: SAXConfig) {
 
     if (method === "POST" && url.pathname === "/api/telegram/send") {
       try {
-        const body = JSON.parse(await readBody(req));
+        const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
         const { chatId, message: msg } = body;
         if (!chatId || !msg) { json(400, { error: "chatId and message are required" }); return; }
         const ok = await telegramBridge.sendMessage(chatId, msg);
@@ -1806,11 +1858,19 @@ export function startServer(config: SAXConfig) {
           provider = "xai";
         }
 
-        const apiKey = provider === "local"
-          ? "ollama"
-          : provider === "anthropic"
-          ? await getAnthropicApiKey()
-          : await getApiKey(config.openaiApiKey);
+        let apiKey: string;
+        if (provider === "local") {
+          apiKey = "ollama";
+        } else if (provider === "anthropic") {
+          apiKey = await getAnthropicApiKey();
+        } else if (provider === "xai") {
+          apiKey = secretsStore.get("XAI_API_KEY") || "";
+          if (!apiKey) { sseWrite(res, { type: "error", message: "No xAI API key configured. Go to Settings → AI tab and enter your key." }); res.end(); return; }
+        } else if (provider === "openai" && !config.openaiApiKey) {
+          apiKey = secretsStore.get("OPENAI_API_KEY") || await getApiKey(config.openaiApiKey);
+        } else {
+          apiKey = await getApiKey(config.openaiApiKey);
+        }
 
         // Wire up SSE writer so request_secret can emit to the active stream
         // Register with WebSocket chat manager for multi-client broadcast
@@ -1885,10 +1945,12 @@ export function startServer(config: SAXConfig) {
         let canaryBuffer = ""; // Rolling buffer for chunk-boundary canary detection
         let fullResponseText = ""; // Full accumulated response for deep canary scan
 
-        // Inject canary tokens + connected integrations into system prompt
+        // Inject provider awareness + canary tokens + connected integrations into system prompt
+        const providerNames: Record<string, string> = { codex: "OpenAI Codex", anthropic: "Anthropic Claude", xai: "xAI Grok", openai: "OpenAI", local: "Local (Ollama)" };
+        const providerHint = `\n\n[System: You are currently powered by ${providerNames[provider] || provider}, model: ${savedModel || "default"}. If asked what LLM you are running on, be transparent about this.]`;
         const integrationsContext = integrations.getAgentContext();
         const enrichedPrompt =
-          config.systemPrompt + contextBlock + relevantMemories + smartContext + moodHint + integrationsContext + threatEngine.getCanaryBlock();
+          config.systemPrompt + providerHint + contextBlock + relevantMemories + smartContext + moodHint + integrationsContext + threatEngine.getCanaryBlock();
 
         // Resolve image attachments to absolute file paths for vision API
         const uploadsDir = join(dataDir, "uploads");
@@ -2127,11 +2189,40 @@ export function startServer(config: SAXConfig) {
     if (method === "GET" && url.pathname === "/api/auth/anthropic/status") {
       const { loadAnthropicTokens } = await import("./auth-anthropic.js");
       const tokens = loadAnthropicTokens();
+      // Also check if Claude CLI is installed
+      let cliInstalled = false;
+      try {
+        const { execSync } = await import("node:child_process");
+        execSync("claude --version", { timeout: 5000, stdio: "pipe" });
+        cliInstalled = true;
+      } catch {}
       json(200, {
         authenticated: !!tokens,
         method: tokens ? "oauth" : "none",
         expired: tokens ? Date.now() > tokens.expiresAt : false,
+        cliInstalled,
       });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/auth/anthropic/install-cli") {
+      try {
+        const { exec } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const execAsync = promisify(exec);
+        const { stdout, stderr } = await execAsync("npm install -g @anthropic-ai/claude-code", {
+          timeout: 120_000,
+        });
+        // Verify it installed
+        let version = "unknown";
+        try {
+          const { execSync } = await import("node:child_process");
+          version = execSync("claude --version", { timeout: 5000, stdio: "pipe" }).toString().trim();
+        } catch {}
+        json(200, { ok: true, version, output: (stdout + stderr).slice(-500) });
+      } catch (e) {
+        json(500, { error: `Install failed: ${(e as Error).message?.slice(0, 300)}` });
+      }
       return;
     }
 
@@ -2233,6 +2324,13 @@ export function startServer(config: SAXConfig) {
         filePath = join(publicDir, "app.html");
       } else {
         filePath = join(publicDir, url.pathname);
+      }
+
+      // Path traversal protection: ensure resolved path stays within publicDir
+      const dashRel = relative(publicDir, resolve(filePath));
+      if (dashRel.startsWith("..") || dashRel.includes("..")) {
+        json(403, { error: "Path traversal blocked" });
+        return;
       }
 
       if (existsSync(filePath)) {
@@ -2390,7 +2488,7 @@ export function startServer(config: SAXConfig) {
     const maskedToken = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
     console.log(`\n  Open Agent X running at http://127.0.0.1:${config.port}`);
     console.log(`  Auth token: ${maskedToken}`);
-    console.log(`\n  ► Open: http://127.0.0.1:${config.port}/?token=${config.authToken}\n`);
+    console.log(`\n  ► Open: http://127.0.0.1:${config.port}/?token=${maskedToken}\n`);
     console.log(`  Memory: ${dataDir}/memory/`);
     console.log(`  Sessions: ${dataDir}/sessions/`);
 
@@ -2418,12 +2516,11 @@ export function startServer(config: SAXConfig) {
         const apiKey = cronProvider === "anthropic" ? await getAnthropicApiKey() : await getApiKey(config.openaiApiKey);
         const session = getOrCreateSession(`cron-${jobId}`);
 
-        // Cron jobs run with elevated permissions — they're operator-level automated tasks
-        // Create a separate SecurityLayer with unrestricted file access for cron execution
+        // Cron jobs use workspace-scoped file access to prevent filesystem escape
         const { SecurityLayer } = await import("./security.js");
         const cronSecurity = new SecurityLayer(
           resolve(process.env.SAX_WORKSPACE || join(homedir(), ".sax", "workspace")),
-          "unrestricted", // Cron jobs need full access to fix code, write reports, etc.
+          "workspace",
         );
 
         const result = await runAgent(prompt, session.messages, {

@@ -1102,9 +1102,6 @@ function removeAgentFeed(agentId) {
   var card = document.getElementById('agent-card-' + agentId);
   if (card) card.remove();
   _updateAgentCount();
-  if (Object.keys(agentFeedsData).length === 0 && agentFeedsOpen) {
-    toggleAgentFeeds();
-  }
 }
 
 function renderAgentCard(agent) {
@@ -1203,8 +1200,14 @@ function _renderAgentFeedsList() {
 }
 
 function _updateAgentCount() {
+  var count = Object.keys(agentFeedsData).length;
   var el = document.getElementById('agent-count');
-  if (el) el.textContent = Object.keys(agentFeedsData).length;
+  if (el) el.textContent = count;
+  var toggleCount = document.getElementById('agents-toggle-count');
+  if (toggleCount) toggleCount.textContent = count;
+  // Pulse the button when agents are active
+  var toggleBtn = document.getElementById('agents-toggle');
+  if (toggleBtn) toggleBtn.style.borderColor = count > 0 ? 'var(--accent)' : 'var(--border)';
 }
 
 // WebSocket listener for agent events
@@ -1220,15 +1223,24 @@ function _updateAgentCount() {
       if (originalOnMessage) originalOnMessage(e);
       var msg;
       try { msg = JSON.parse(e.data); } catch(ex) { return; }
-      if (msg.type === 'agent-spawn' && msg.agent) {
-        addAgentFeed(msg.agent);
+      if (msg.type === 'agent-spawn') {
+        // Server sends flat: {type, agentId, name, role, task, status}
+        addAgentFeed({ id: msg.agentId, name: msg.name, role: msg.role, status: msg.status || 'working', currentTask: msg.task });
       } else if (msg.type === 'agent-update' && msg.agentId) {
         updateAgentFeed(msg.agentId, msg);
       } else if (msg.type === 'agent-output' && msg.agentId) {
-        updateAgentFeed(msg.agentId, { output: msg.data });
+        updateAgentFeed(msg.agentId, { output: msg.output });
       } else if (msg.type === 'agent-complete' && msg.agentId) {
-        updateAgentFeed(msg.agentId, { status: 'done' });
-        setTimeout(function() { removeAgentFeed(msg.agentId); }, 5000);
+        updateAgentFeed(msg.agentId, { status: msg.success ? 'done' : 'error', output: msg.result ? '[Result] ' + msg.result.slice(0, 200) : '' });
+        // Inject completion notification into chat
+        var statusText = msg.success ? 'completed' : 'failed';
+        var resultPreview = msg.result ? msg.result.slice(0, 300) : 'No output';
+        var notifHtml = '<div style="border:1px solid ' + (msg.success ? 'var(--accent)' : 'var(--danger)') + ';border-radius:8px;padding:12px;margin:8px 0;background:var(--bg2)">' +
+          '<div style="font-family:var(--mono);font-size:.75rem;color:' + (msg.success ? 'var(--accent)' : 'var(--danger)') + ';margin-bottom:6px">' +
+          (msg.success ? '✓' : '✗') + ' Agent ' + statusText + '</div>' +
+          '<div style="font-size:.8rem;color:var(--text)">' + esc(resultPreview) + '</div></div>';
+        addMessageEl('assistant', notifHtml);
+        setTimeout(function() { removeAgentFeed(msg.agentId); }, 10000);
       }
     };
   }

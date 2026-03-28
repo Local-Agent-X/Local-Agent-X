@@ -567,6 +567,172 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── Feature 1: Conversation Branching (fork chat at message index) ──
+    if (method === "POST" && url.pathname === "/api/sessions/fork") {
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
+      const sourceId = String(body.sessionId || "");
+      const atIndex = typeof body.atIndex === "number" ? body.atIndex : -1;
+      if (!sourceId || !isValidSessionId(sourceId)) { json(400, { error: "Invalid session ID" }); return; }
+      const source = getOrCreateSession(sourceId);
+      if (atIndex < 0 || atIndex >= source.messages.length) { json(400, { error: "Invalid message index" }); return; }
+      const forkId = `fork-${sourceId.slice(0, 20)}-${Date.now().toString(36)}`;
+      const forkedMessages = source.messages.slice(0, atIndex + 1);
+      const forkSession: Session = {
+        id: forkId,
+        title: `Fork: ${source.title}`,
+        messages: JSON.parse(JSON.stringify(forkedMessages)),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      (forkSession as any).forkedFrom = sourceId;
+      (forkSession as any).forkAtIndex = atIndex;
+      sessions.set(forkId, forkSession);
+      saveSession(forkSession);
+      json(200, { ok: true, forkId, title: forkSession.title, messageCount: forkedMessages.length });
+      return;
+    }
+
+    // Get fork tree for a session
+    if (method === "GET" && url.pathname === "/api/sessions/forks") {
+      const sourceId = url.searchParams.get("sessionId") || "";
+      if (!sourceId) { json(400, { error: "sessionId required" }); return; }
+      const allSessions = sessionStore.list();
+      const forks: Array<{ id: string; title: string; forkAtIndex: number; createdAt: number }> = [];
+      for (const meta of allSessions) {
+        const s = sessionStore.load(meta.id);
+        if (s && (s as any).forkedFrom === sourceId) {
+          forks.push({ id: s.id, title: s.title, forkAtIndex: (s as any).forkAtIndex || 0, createdAt: s.createdAt });
+        }
+      }
+      // Also check if THIS session is a fork
+      const thisSession = sessionStore.load(sourceId);
+      const parent = thisSession ? (thisSession as any).forkedFrom || null : null;
+      json(200, { forks, parent });
+      return;
+    }
+
+    // ── Feature 2: Auto-summarize old sessions into memory ──
+    if (method === "POST" && url.pathname === "/api/sessions/auto-summarize") {
+      const allSessions = sessionStore.list();
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days old
+      const stale = allSessions.filter(s => s.updatedAt < cutoff && s.messageCount > 4);
+      const summaries: Array<{ id: string; title: string; summary: string }> = [];
+      const summaryDir = join(dataDir, "memory", "session-summaries");
+      mkdirSync(summaryDir, { recursive: true });
+      for (const meta of stale.slice(0, 20)) {
+        const summaryFile = join(summaryDir, `${meta.id}.md`);
+        if (existsSync(summaryFile)) continue; // already summarized
+        const session = sessionStore.load(meta.id);
+        if (!session) continue;
+        // Build a quick extractive summary from messages
+        const userMsgs = session.messages.filter(m => m.role === "user" && typeof m.content === "string");
+        const assistMsgs = session.messages.filter(m => m.role === "assistant" && typeof m.content === "string");
+        const topicLines = userMsgs.slice(0, 5).map(m => `- User: ${String(m.content).slice(0, 120)}`);
+        const assistLines = assistMsgs.slice(0, 3).map(m => `- Agent: ${String(m.content).split("\n")[0]?.slice(0, 120)}`);
+        const summary = `# ${session.title}\n\nDate: ${new Date(session.createdAt).toISOString().split("T")[0]}\nMessages: ${session.messages.length}\n\n## Key Topics\n${topicLines.join("\n")}\n\n## Key Responses\n${assistLines.join("\n")}`;
+        writeFileSync(summaryFile, summary, "utf-8");
+        summaries.push({ id: meta.id, title: session.title, summary });
+      }
+      json(200, { ok: true, summarized: summaries.length, total: stale.length, summaries });
+      return;
+    }
+
+    // Get session summaries
+    if (method === "GET" && url.pathname === "/api/sessions/summaries") {
+      const summaryDir = join(dataDir, "memory", "session-summaries");
+      if (!existsSync(summaryDir)) { json(200, { summaries: [] }); return; }
+      const files = readdirSync(summaryDir).filter(f => f.endsWith(".md"));
+      const summaries = files.map(f => {
+        const content = readFileSync(join(summaryDir, f), "utf-8");
+        const id = f.replace(".md", "");
+        const titleMatch = content.match(/^# (.+)$/m);
+        return { id, title: titleMatch?.[1] || id, summary: content.slice(0, 500) };
+      });
+      json(200, { summaries });
+      return;
+    }
+
+    // ── Feature 3: Cross-session search ──
+    if (method === "GET" && url.pathname === "/api/sessions/search") {
+      const query = (url.searchParams.get("q") || "").toLowerCase().trim();
+      if (!query || query.length < 2) { json(400, { error: "Query too short" }); return; }
+      const allSessions = sessionStore.list();
+      const results: Array<{ sessionId: string; title: string; matches: Array<{ role: string; snippet: string; index: number }> }> = [];
+      for (const meta of allSessions.slice(0, 100)) {
+        const session = sessionStore.load(meta.id);
+        if (!session) continue;
+        const matches: Array<{ role: string; snippet: string; index: number }> = [];
+        for (let i = 0; i < session.messages.length; i++) {
+          const m = session.messages[i];
+          const content = typeof m.content === "string" ? m.content : "";
+          const idx = content.toLowerCase().indexOf(query);
+          if (idx >= 0) {
+            const start = Math.max(0, idx - 50);
+            const end = Math.min(content.length, idx + query.length + 100);
+            matches.push({ role: m.role as string, snippet: content.slice(start, end), index: i });
+          }
+        }
+        if (matches.length > 0) {
+          results.push({ sessionId: meta.id, title: session.title, matches: matches.slice(0, 5) });
+        }
+        if (results.length >= 20) break;
+      }
+      json(200, { results, query });
+      return;
+    }
+
+    // ── Feature 5: Mood/tone detection ──
+    if (method === "POST" && url.pathname === "/api/mood/detect") {
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
+      const text = String(body.text || "");
+      if (!text) { json(400, { error: "text required" }); return; }
+
+      // Lightweight keyword-based sentiment analysis (no external deps)
+      const lower = text.toLowerCase();
+      const positiveWords = ["thanks", "great", "awesome", "perfect", "love", "excellent", "amazing", "happy", "good", "nice", "wonderful", "fantastic", "brilliant", "appreciate", "excited", "glad", "pleased", "helpful", "beautiful"];
+      const negativeWords = ["frustrated", "angry", "annoyed", "broken", "bug", "wrong", "error", "fail", "hate", "terrible", "awful", "bad", "worst", "stuck", "confused", "disappointed", "problem", "issue", "unfortunately", "sucks"];
+      const urgentWords = ["urgent", "asap", "immediately", "critical", "emergency", "deadline", "hurry", "rush"];
+      const casualWords = ["hey", "hi", "yo", "lol", "haha", "btw", "nah", "yeah", "cool", "sup", "chill"];
+      const formalWords = ["please", "kindly", "would you", "could you", "regarding", "concerning", "pursuant", "hereby"];
+
+      let posScore = 0, negScore = 0, urgentScore = 0, casualScore = 0, formalScore = 0;
+      for (const w of positiveWords) { if (lower.includes(w)) posScore++; }
+      for (const w of negativeWords) { if (lower.includes(w)) negScore++; }
+      for (const w of urgentWords) { if (lower.includes(w)) urgentScore++; }
+      for (const w of casualWords) { if (lower.includes(w)) casualScore++; }
+      for (const w of formalWords) { if (lower.includes(w)) formalScore++; }
+
+      // Detect exclamation/caps emphasis
+      const exclamations = (text.match(/!/g) || []).length;
+      const capsRatio = (text.match(/[A-Z]/g) || []).length / Math.max(text.length, 1);
+      if (exclamations > 2) urgentScore++;
+      if (capsRatio > 0.5 && text.length > 10) urgentScore++;
+
+      let mood = "neutral";
+      let tone = "balanced";
+      let confidence = 0.5;
+
+      if (posScore > negScore && posScore > 0) { mood = "positive"; confidence = Math.min(0.9, 0.5 + posScore * 0.1); }
+      else if (negScore > posScore && negScore > 0) { mood = "negative"; confidence = Math.min(0.9, 0.5 + negScore * 0.1); }
+      else if (urgentScore > 0) { mood = "urgent"; confidence = Math.min(0.9, 0.5 + urgentScore * 0.15); }
+
+      if (casualScore > formalScore) tone = "casual";
+      else if (formalScore > casualScore) tone = "formal";
+
+      // Generate style hint for the agent
+      let styleHint = "";
+      if (mood === "negative") styleHint = "User seems frustrated. Be empathetic, acknowledge the issue, and focus on solutions.";
+      else if (mood === "urgent") styleHint = "User has urgency. Be concise, prioritize action over explanation.";
+      else if (mood === "positive") styleHint = "User is in a good mood. Match their energy, be warm and encouraging.";
+      if (tone === "casual") styleHint += " Keep responses casual and conversational.";
+      else if (tone === "formal") styleHint += " Match their formal tone.";
+
+      json(200, { mood, tone, confidence, styleHint, scores: { positive: posScore, negative: negScore, urgent: urgentScore, casual: casualScore, formal: formalScore } });
+      return;
+    }
+
     // Upload file (images, documents) — 100MB limit
     if (method === "POST" && url.pathname === "/api/upload") {
       const uploadsDir = join(dataDir, "uploads");
@@ -1663,6 +1829,47 @@ export function startServer(config: SAXConfig) {
           autoSearchContext(memoryIndex, message),
         ]);
 
+        // ── Feature 4: Smart Context Window ──
+        // Score relevance of session summaries to current message and inject top matches
+        let smartContext = "";
+        try {
+          const summaryDir = join(dataDir, "memory", "session-summaries");
+          if (existsSync(summaryDir)) {
+            const summaryFiles = readdirSync(summaryDir).filter(f => f.endsWith(".md"));
+            const queryWords = message.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+            if (queryWords.length > 0 && summaryFiles.length > 0) {
+              const scored = summaryFiles.map(f => {
+                const content = readFileSync(join(summaryDir, f), "utf-8");
+                const lower = content.toLowerCase();
+                let score = 0;
+                for (const w of queryWords) { if (lower.includes(w)) score++; }
+                return { file: f, content: content.slice(0, 400), score };
+              }).filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 2);
+              if (scored.length > 0) {
+                smartContext = "\n\n--- RELATED PAST SESSIONS (auto-retrieved) ---\n" +
+                  scored.map(s => s.content).join("\n---\n") +
+                  "\n--- END RELATED SESSIONS ---";
+              }
+            }
+          }
+        } catch {}
+
+        // ── Feature 5: Mood/tone detection → style hint injection ──
+        let moodHint = "";
+        try {
+          const lower = message.toLowerCase();
+          const posWords = ["thanks", "great", "awesome", "perfect", "love", "excellent", "amazing", "happy", "good"];
+          const negWords = ["frustrated", "angry", "broken", "bug", "wrong", "error", "fail", "hate", "stuck", "confused", "problem"];
+          const urgWords = ["urgent", "asap", "immediately", "critical", "emergency", "deadline"];
+          let pos = 0, neg = 0, urg = 0;
+          for (const w of posWords) { if (lower.includes(w)) pos++; }
+          for (const w of negWords) { if (lower.includes(w)) neg++; }
+          for (const w of urgWords) { if (lower.includes(w)) urg++; }
+          if (urg > 0) moodHint = "\n\n[Tone hint: user has urgency — be concise, prioritize action]";
+          else if (neg > pos && neg > 0) moodHint = "\n\n[Tone hint: user may be frustrated — be empathetic, focus on solutions]";
+          else if (pos > neg && pos > 1) moodHint = "\n\n[Tone hint: user is positive — match their energy]";
+        } catch {}
+
         // Initialize threat engine for this session
         const threatEngine = new ThreatEngine(dataDir, sessionId);
         let canaryBuffer = ""; // Rolling buffer for chunk-boundary canary detection
@@ -1671,7 +1878,7 @@ export function startServer(config: SAXConfig) {
         // Inject canary tokens + connected integrations into system prompt
         const integrationsContext = integrations.getAgentContext();
         const enrichedPrompt =
-          config.systemPrompt + contextBlock + relevantMemories + integrationsContext + threatEngine.getCanaryBlock();
+          config.systemPrompt + contextBlock + relevantMemories + smartContext + moodHint + integrationsContext + threatEngine.getCanaryBlock();
 
         // Resolve image attachments to absolute file paths for vision API
         const uploadsDir = join(dataDir, "uploads");
@@ -2068,19 +2275,20 @@ export function startServer(config: SAXConfig) {
     console.log(`[primal] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
     try {
       // Resolve API key and provider from saved settings (same as chat handler)
-      let agentProvider = "codex";
+      let agentProvider: "codex" | "anthropic" | "openai" | "xai" | "local" = "codex";
       try {
         const saved = JSON.parse(readFileSync(join(dataDir, "settings.json"), "utf-8"));
         if (saved.provider) agentProvider = saved.provider;
       } catch {}
       const { getApiKey: getKey } = await import("./auth.js");
-      const { getAnthropicApiKey: getAnthKey } = await import("./anthropic-client.js");
+      const { getAnthropicApiKey: getAnthKey } = await import("./auth-anthropic.js");
       const agentApiKey = agentProvider === "anthropic"
         ? await getAnthKey()
         : await getKey(config.openaiApiKey);
 
       const agentSession: Session = {
         id: `agent-${agentId}`,
+        title: `Agent: ${role}`,
         messages: [],
         createdAt: Date.now(),
         updatedAt: Date.now(),

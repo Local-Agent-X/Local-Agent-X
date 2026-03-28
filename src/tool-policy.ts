@@ -302,6 +302,12 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
       priority: 100,
     },
 
+    // Missions — multi-step workflows (internal)
+    { id: "allow-missions", tool: "mission_*", decision: "allow", reason: "Mission workflows (internal)", priority: 50 },
+
+    // Cron — scheduled job management (internal)
+    { id: "allow-cron", tool: "cron_*", decision: "allow", reason: "Cron job management (internal)", priority: 50 },
+
     // ── Everything else is DENIED by default ──
     // No catch-all "allow *" rule. Unknown tools are blocked.
   ],

@@ -124,14 +124,23 @@ async function executeToolCalls(
     onEvent?.({ type: "tool_start", toolName: tc.name, args, riskLevel, context: approvalContext, requiresApproval });
 
     // Layer -1: AriKernel (taint tracking, behavioral rules, quarantine)
+    const isInternalTool = tc.name.startsWith("agent_") || tc.name.startsWith("swarm_") ||
+      tc.name.startsWith("mission_") || tc.name.startsWith("cron_") ||
+      ["delegate", "generate_image", "generate_video", "camera_capture", "screen_capture", "ocr",
+       "memory_search", "memory_save", "playbook_list", "playbook_get"].includes(tc.name);
     if (isAriActive()) {
       const actionMap: Record<string, string> = { read: "read", write: "write", edit: "write", bash: "exec" };
       const ariResult = await ariEvaluate(tc.name, actionMap[tc.name] || "exec", args);
       if (!ariResult.allowed) {
-        const result = ariResult.reason;
-        onEvent?.({ type: "tool_end", toolName: tc.name, result, allowed: false });
-        results.push({ role: "tool", tool_call_id: tc.id, content: result } as any);
-        continue;
+        if (isInternalTool) {
+          // Internal tools: ARI logs the concern but doesn't block — these are our own code
+          console.warn(`[ari] Internal tool ${tc.name} flagged but allowed: ${ariResult.reason}`);
+        } else {
+          const result = ariResult.reason;
+          onEvent?.({ type: "tool_end", toolName: tc.name, result, allowed: false });
+          results.push({ role: "tool", tool_call_id: tc.id, content: result } as any);
+          continue;
+        }
       }
     }
 

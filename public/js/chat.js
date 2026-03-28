@@ -65,12 +65,28 @@ function stopChat() {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
     body: JSON.stringify({ sessionId: activeChat.id }),
   }).catch(() => {});
-  // Clear streaming state so send button works again
+  // Force stop local rendering immediately
   streamingSessionId = null;
+  // Close and reconnect WS to kill any in-flight stream
+  if (chatWs) {
+    chatWs.close();
+    setTimeout(connectChatWs, 500);
+  }
+  // Append "stopped" indicator to last message
+  const msgs = document.querySelectorAll('.msg.assistant');
+  const last = msgs[msgs.length - 1];
+  if (last) {
+    const body = last.querySelector('.msg-body');
+    if (body && !body.textContent.includes('[stopped]')) {
+      body.innerHTML += '<div style="color:var(--muted);font-size:.72rem;margin-top:8px;font-style:italic">[stopped by user]</div>';
+    }
+  }
   const stopBtn = document.getElementById('stop-btn');
   const sendBtn = document.getElementById('send-btn');
   if (stopBtn) stopBtn.style.display = 'none';
   if (sendBtn) sendBtn.disabled = false;
+  // Stop TTS if speaking
+  stopSpeaking();
 }
 
 function isChatActive(sessionId) {

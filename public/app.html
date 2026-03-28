@@ -201,6 +201,7 @@
               <p style="color:var(--muted);font-size:.78rem;margin-bottom:12px">Record or upload a 6-10 second voice sample. XTTS will clone the voice for all responses.</p>
               <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
                 <button class="btn" id="record-voice-btn" onclick="toggleVoiceRecording()">&#127908; Record</button>
+                <canvas id="voice-visualizer" width="120" height="32" style="display:none;border-radius:6px;background:var(--bg)"></canvas>
                 <label class="btn" style="cursor:pointer">&#128194; Upload<input type="file" accept="audio/*" onchange="uploadVoiceSample(this)" style="display:none"></label>
                 <span id="record-status" style="color:var(--muted);font-size:.72rem"></span>
               </div>

@@ -1254,11 +1254,17 @@ function _updateAgentCount() {
         updateAgentFeed(msg.agentId, { output: msg.output });
       } else if (msg.type === 'agent-complete' && msg.agentId) {
         updateAgentFeed(msg.agentId, { status: msg.success ? 'done' : 'error', output: msg.result ? '[Result] ' + msg.result.slice(0, 200) : '' });
-        // Inject completion as a clean markdown message, not raw HTML
+        // Inject completion as a clean markdown message and persist it
         var statusIcon = msg.success ? '✅' : '❌';
         var statusText = msg.success ? 'completed' : 'failed';
         var resultPreview = msg.result ? msg.result.slice(0, 500) : 'No output';
-        addMessageEl('assistant', statusIcon + ' **Agent ' + statusText + '**\n\n' + resultPreview);
+        var agentMsg = statusIcon + ' **Agent ' + statusText + '**\n\n' + resultPreview;
+        addMessageEl('assistant', agentMsg);
+        if (activeChat) {
+          activeChat.messages.push({ role: 'assistant', content: agentMsg });
+          activeChat.updatedAt = Date.now();
+          saveChats();
+        }
         setTimeout(function() { removeAgentFeed(msg.agentId); }, 10000);
       }
     };

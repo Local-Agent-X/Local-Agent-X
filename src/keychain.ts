@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes, scryptSync } from "node:crypto";
@@ -28,6 +28,9 @@ import { hostname, userInfo } from "node:os";
 const SERVICE_NAME = "SecretAgentX";
 const ACCOUNT_NAME = "master-key";
 
+// All child processes on Windows use CREATE_NO_WINDOW via execFileSync + windowsHide
+const HIDDEN = { windowsHide: true } as const;
+
 export type KeychainProvider = "dpapi" | "macos-keychain" | "libsecret" | "file-fallback";
 
 interface KeychainResult {
@@ -41,7 +44,6 @@ interface KeychainResult {
 
 /** Store a key using Windows DPAPI (encrypted to current user's login) */
 function dpapiStore(data: Buffer, filePath: string): void {
-  // Write a temp PowerShell script (avoids inline quoting hell)
   const b64 = data.toString("base64");
   const scriptPath = filePath + ".ps1";
   const script =
@@ -51,9 +53,10 @@ function dpapiStore(data: Buffer, filePath: string): void {
     `[IO.File]::WriteAllBytes('${filePath.replace(/\\/g, "/")}', $encrypted)\n`;
   writeFileSync(scriptPath, script, "utf-8");
   try {
-    execSync(`powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${scriptPath}"`, {
-      timeout: 10_000, stdio: "ignore", windowsHide: true,
-    });
+    execFileSync("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+      "-ExecutionPolicy", "Bypass", "-File", scriptPath
+    ], { timeout: 10_000, stdio: "ignore", ...HIDDEN });
   } finally {
     try { unlinkSync(scriptPath); } catch {}
   }
@@ -70,9 +73,10 @@ function dpapiRetrieve(filePath: string): Buffer {
     `[IO.File]::WriteAllText('${outPath.replace(/\\/g, "/")}', [Convert]::ToBase64String($decrypted))\n`;
   writeFileSync(scriptPath, script, "utf-8");
   try {
-    execSync(`powershell -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "${scriptPath}"`, {
-      timeout: 10_000, stdio: "ignore", windowsHide: true,
-    });
+    execFileSync("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+      "-ExecutionPolicy", "Bypass", "-File", scriptPath
+    ], { timeout: 10_000, stdio: "ignore", ...HIDDEN });
     const result = readFileSync(outPath, "utf-8").trim();
     return Buffer.from(result, "base64");
   } finally {
@@ -85,10 +89,10 @@ function dpapiRetrieve(filePath: string): Buffer {
 function dpapiAvailable(): boolean {
   if (process.platform !== "win32") return false;
   try {
-    execSync(
-      'powershell -NoProfile -NonInteractive -Command "Add-Type -AssemblyName System.Security; echo ok"',
-      { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }
-    );
+    execFileSync("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+      "-Command", "Add-Type -AssemblyName System.Security; echo ok"
+    ], { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"], ...HIDDEN });
     return true;
   } catch {
     return false;
@@ -102,30 +106,26 @@ function dpapiAvailable(): boolean {
 function macKeychainStore(data: Buffer): void {
   const hex = data.toString("hex");
   try {
-    // Delete existing entry first (ignore errors)
-    execSync(
-      `security delete-generic-password -s "${SERVICE_NAME}" -a "${ACCOUNT_NAME}" 2>/dev/null`,
-      { stdio: "ignore" }
-    );
+    execFileSync("security", [
+      "delete-generic-password", "-s", SERVICE_NAME, "-a", ACCOUNT_NAME
+    ], { stdio: "ignore" });
   } catch { /* ok */ }
-  execSync(
-    `security add-generic-password -s "${SERVICE_NAME}" -a "${ACCOUNT_NAME}" -w "${hex}" -U`,
-    { timeout: 5000 }
-  );
+  execFileSync("security", [
+    "add-generic-password", "-s", SERVICE_NAME, "-a", ACCOUNT_NAME, "-w", hex, "-U"
+  ], { timeout: 5000 });
 }
 
 function macKeychainRetrieve(): Buffer {
-  const hex = execSync(
-    `security find-generic-password -s "${SERVICE_NAME}" -a "${ACCOUNT_NAME}" -w`,
-    { encoding: "utf-8", timeout: 5000 }
-  ).trim();
+  const hex = execFileSync("security", [
+    "find-generic-password", "-s", SERVICE_NAME, "-a", ACCOUNT_NAME, "-w"
+  ], { encoding: "utf-8", timeout: 5000 }).trim();
   return Buffer.from(hex, "hex");
 }
 
 function macKeychainAvailable(): boolean {
   if (process.platform !== "darwin") return false;
   try {
-    execSync("security help 2>&1", { stdio: "ignore", timeout: 3000 });
+    execFileSync("security", ["help"], { stdio: "ignore", timeout: 3000 });
     return true;
   } catch {
     return false;
@@ -138,24 +138,23 @@ function macKeychainAvailable(): boolean {
 
 function libsecretStore(data: Buffer): void {
   const hex = data.toString("hex");
-  execSync(
-    `secret-tool store --label="${SERVICE_NAME} Master Key" service "${SERVICE_NAME}" account "${ACCOUNT_NAME}"`,
-    { input: hex, timeout: 5000 }
-  );
+  execFileSync("secret-tool", [
+    "store", `--label=${SERVICE_NAME} Master Key`,
+    "service", SERVICE_NAME, "account", ACCOUNT_NAME
+  ], { input: hex, timeout: 5000 });
 }
 
 function libsecretRetrieve(): Buffer {
-  const hex = execSync(
-    `secret-tool lookup service "${SERVICE_NAME}" account "${ACCOUNT_NAME}"`,
-    { encoding: "utf-8", timeout: 5000 }
-  ).trim();
+  const hex = execFileSync("secret-tool", [
+    "lookup", "service", SERVICE_NAME, "account", ACCOUNT_NAME
+  ], { encoding: "utf-8", timeout: 5000 }).trim();
   return Buffer.from(hex, "hex");
 }
 
 function libsecretAvailable(): boolean {
   if (process.platform !== "linux") return false;
   try {
-    execSync("which secret-tool", { stdio: "ignore", timeout: 3000 });
+    execFileSync("which", ["secret-tool"], { stdio: "ignore", timeout: 3000 });
     return true;
   } catch {
     return false;
@@ -176,8 +175,6 @@ function fileFallbackGetOrCreate(dataDir: string): Buffer {
     writeFileSync(saltPath, salt, { mode: 0o600 });
   }
   const identity = `sax-secrets::${hostname()}::${userInfo().username}`;
-  // N=131072 (~500ms per attempt) — makes brute-force impractical even with known machine identity
-  // WARNING: Changing these params invalidates existing encrypted secrets (users must re-enter keys)
   return scryptSync(identity, salt, 32, { N: 131072, r: 8, p: 2, maxmem: 256 * 1024 * 1024 });
 }
 
@@ -220,7 +217,6 @@ export function getOrCreateMasterKey(dataDir: string): KeychainResult {
         return { key, provider: "macos-keychain" };
       }
     } catch {
-      // Key doesn't exist yet — create it
       try {
         const key = randomBytes(32);
         macKeychainStore(key);

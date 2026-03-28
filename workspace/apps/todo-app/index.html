@@ -3,30 +3,169 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Game Plan Board</title>
+  <title>Numberblocks Todo!</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <main class="app">
-    <p class="kicker">🏆 Season Tracker</p>
-    <h1>Game Plan Board</h1>
+  <main class="app-shell">
+    <section class="todo-card" aria-label="Todo App">
+      <header class="card-header">
+        <div>
+            <h1>Numberblocks Todo!</h1>
+            <p>Count your tasks, one block at a time! 1, 2, 3, go!</p>
+          </div>
+        <div class="header-actions">
+          <button id="shortcuts-btn" class="ghost-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">⌨</button>
+          <button id="theme-toggle" class="ghost-btn" aria-label="Toggle dark mode">🌙</button>
+        </div>
+      </header>
 
-    <form id="todo-form" class="todo-form">
-      <input id="todo-input" type="text" placeholder="Add a play..." autocomplete="off" required />
-      <button type="submit">Add Play</button>
-    </form>
+      <form id="todo-form" class="todo-form" autocomplete="off">
+        <label for="todo-input" class="sr-only">Add a new task</label>
+        <input id="todo-input" type="text" placeholder="Task text (supports #tags)" maxlength="180" />
 
-    <div class="controls">
-      <button data-filter="all" class="filter active">Full Schedule</button>
-      <button data-filter="active" class="filter">In Progress</button>
-      <button data-filter="completed" class="filter">Final</button>
-      <button id="clear-completed" class="clear">Reset Wins</button>
-    </div>
+        <label for="priority-input" class="sr-only">Priority</label>
+        <select id="priority-input" title="Priority">
+          <option value="low">Low</option>
+          <option value="medium" selected>Medium</option>
+          <option value="high">High</option>
+        </select>
 
-    <ul id="todo-list" class="todo-list"></ul>
-    <p id="count" class="count">0 plays left this season</p>
+        <label for="due-input" class="sr-only">Due date</label>
+        <input id="due-input" type="date" />
+
+        <label for="repeat-input" class="sr-only">Repeat</label>
+        <select id="repeat-input" title="Repeat">
+          <option value="none">No repeat</option>
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly</option>
+        </select>
+
+        <button type="submit">Add</button>
+      </form>
+
+      <section class="toolbar" aria-label="Task controls">
+        <input id="search-input" type="search" placeholder="Search text or #tag..." />
+
+        <div class="toolbar-right">
+          <label for="sort-input" class="sr-only">Sort by</label>
+          <select id="sort-input" title="Sort tasks">
+            <option value="date">Date Added</option>
+            <option value="priority">Priority</option>
+            <option value="due">Due Date</option>
+            <option value="name">Name</option>
+          </select>
+
+          <div class="filters" role="group" aria-label="Filter tasks">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="active">Active</button>
+            <button class="filter-btn" data-filter="completed">Completed</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="stats" aria-label="Statistics">
+        <div><strong id="stat-total">0</strong><span>Total</span></div>
+        <div><strong id="stat-active">0</strong><span>Active</span></div>
+        <div><strong id="stat-completed">0</strong><span>Completed</span></div>
+        <div><strong id="stat-overdue">0</strong><span>Overdue</span></div>
+      </section>
+
+      <div class="progress-wrap" aria-label="Completion progress">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+
+      <ul id="todo-list" class="todo-list" aria-live="polite"></ul>
+
+      <footer class="todo-footer">
+        <div class="count"><span id="active-count">0</span> active</div>
+        <button id="clear-completed" class="clear-btn">Clear completed</button>
+      </footer>
+    </section>
   </main>
 
-  <script src="app.js"></script>
+  <!-- Bulk action bar -->
+  <div id="bulk-bar" class="bulk-bar hidden" role="toolbar" aria-label="Bulk actions">
+    <span id="bulk-count">0 selected</span>
+    <button id="bulk-complete" class="bulk-btn">Complete all</button>
+    <button id="bulk-delete" class="bulk-btn bulk-btn-danger">Delete all</button>
+    <button id="bulk-cancel" class="bulk-btn bulk-btn-ghost">Cancel</button>
+  </div>
+
+  <!-- Keyboard shortcuts overlay -->
+  <div id="shortcuts-overlay" class="shortcuts-overlay hidden" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+    <div class="shortcuts-panel">
+      <div class="shortcuts-header">
+        <h2>Keyboard Shortcuts</h2>
+        <button id="shortcuts-close" class="ghost-btn" aria-label="Close shortcuts">✕</button>
+      </div>
+      <table class="shortcuts-table">
+        <tbody>
+          <tr><td><kbd>Enter</kbd></td><td>Add task (when input focused)</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Cancel edit / close overlay</td></tr>
+          <tr><td><kbd>D</kbd></td><td>Delete focused task</td></tr>
+          <tr><td><kbd>Space</kbd></td><td>Toggle focused task complete</td></tr>
+          <tr><td><kbd>E</kbd></td><td>Edit focused task</td></tr>
+          <tr><td><kbd>X</kbd></td><td>Select/deselect focused task</td></tr>
+          <tr><td><kbd>?</kbd></td><td>Toggle this shortcuts panel</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Task item template -->
+  <template id="todo-item-template">
+    <li class="todo-item" draggable="true">
+      <span class="drag-handle" title="Drag to reorder" aria-hidden="true">⋮⋮</span>
+
+      <label class="select-wrap" title="Select task">
+        <input type="checkbox" class="select-check" />
+        <span class="select-box" aria-hidden="true"></span>
+      </label>
+
+      <label class="check-wrap">
+        <input type="checkbox" class="toggle" />
+        <span class="checkmark" aria-hidden="true"></span>
+      </label>
+
+      <div class="task-main">
+        <div class="line-1">
+          <button class="expand-btn" aria-label="Toggle subtasks" aria-expanded="false">▶</button>
+          <span class="todo-text" tabindex="0"></span>
+          <span class="priority-badge"></span>
+          <span class="recur-badge hidden" title="Recurring task">🔁</span>
+          <span class="subtask-progress hidden"></span>
+        </div>
+        <input class="edit-input hidden" type="text" maxlength="180" />
+        <div class="meta-row">
+          <span class="due-date"></span>
+          <div class="tags"></div>
+        </div>
+        <div class="subtask-section hidden">
+          <ul class="subtask-list"></ul>
+          <form class="subtask-form">
+            <input class="subtask-input" type="text" placeholder="Add subtask…" maxlength="120" />
+            <button type="submit" class="subtask-add-btn">+</button>
+          </form>
+        </div>
+      </div>
+
+      <button class="delete-btn" aria-label="Delete task">✕</button>
+    </li>
+  </template>
+
+  <!-- Subtask item template -->
+  <template id="subtask-item-template">
+    <li class="subtask-item">
+      <label class="check-wrap">
+        <input type="checkbox" class="subtask-toggle" />
+        <span class="checkmark" aria-hidden="true"></span>
+      </label>
+      <span class="subtask-text"></span>
+      <button class="subtask-delete-btn" aria-label="Delete subtask">✕</button>
+    </li>
+  </template>
+
+  <script src="script.js"></script>
 </body>
 </html>

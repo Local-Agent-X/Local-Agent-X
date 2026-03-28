@@ -14,12 +14,14 @@
 
 <!-- Mobile hamburger (feature 95) -->
 <button id="mobile-menu-btn" class="mobile-only" onclick="toggleMobileSidebar()" aria-label="Toggle sidebar menu">&#9776;</button>
+<button id="sidebar-expand-btn" onclick="toggleSidebarCollapse()" title="Expand sidebar" aria-label="Expand sidebar" style="display:none;position:fixed;top:14px;left:8px;z-index:100;background:var(--surface);border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:1.1rem;padding:4px 8px;border-radius:6px">&#9776;</button>
 
 <!-- ═══ SIDEBAR (persists across all pages) ═══ -->
 <div id="sidebar" role="navigation" aria-label="Sidebar navigation">
   <div id="sidebar-header">
     <span id="logo" onclick="navigate('chat')" role="button" tabindex="0" aria-label="Go to chat">Agent X</span>
     <button id="new-chat-btn" onclick="newChat()">+ New Chat</button>
+    <button id="sidebar-collapse-btn" onclick="toggleSidebarCollapse()" title="Collapse sidebar" aria-label="Collapse sidebar" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:2px 6px;margin-left:auto">&#x276E;</button>
   </div>
 
   <div id="projects-section">
@@ -70,29 +72,39 @@
 
   <!-- ══ CHAT PAGE ══ -->
   <div id="page-chat" class="page active">
-    <!-- Markdown preview toggle (feature 90) -->
-    <div id="chat-toolbar">
-      <button id="md-toggle-btn" onclick="toggleMdPreview()" title="Show raw markdown" aria-label="Toggle markdown preview">Raw</button>
-    </div>
-    <div id="messages" role="log" aria-label="Chat messages" aria-live="polite">
-      <div id="empty"><h2>OPEN AGENT X</h2><p>Select a chat or start a new one.</p></div>
-    </div>
-    <div id="input-area">
-      <div id="context-bar"></div>
-      <input id="file-input" type="file" multiple style="display:none" onchange="handleFileUpload(event)" aria-hidden="true"/>
-      <div id="input-wrapper">
-        <button id="plus-btn" onclick="triggerUpload()" title="Attach files" aria-label="Attach files">+</button>
-        <div id="input-box">
-          <div id="upload-previews" role="list" aria-label="Upload previews"></div>
-          <textarea id="msg-input" placeholder="Message Agent X..." rows="3" aria-label="Message input"
-            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
-        </div>
-        <button id="mic-btn" class="input-btn" onclick="toggleMic()" title="Voice input" aria-label="Toggle voice input">&#127908;</button>
-        <button id="stop-btn" onclick="stopChat()" title="Stop agent" aria-label="Stop agent" style="display:none;background:var(--danger);border-color:var(--danger);color:#fff">&#9632;</button>
-        <button id="send-btn" onclick="sendMessage()" aria-label="Send message">&#9650;</button>
+    <div id="chat-main">
+      <!-- Markdown preview toggle (feature 90) -->
+      <div id="chat-toolbar">
+        <button id="md-toggle-btn" onclick="toggleMdPreview()" title="Show raw markdown" aria-label="Toggle markdown preview">Raw</button>
       </div>
-      <!-- Status bar (feature 97) -->
-      <div id="status-bar" role="status" aria-label="Status information"></div>
+      <div id="messages" role="log" aria-label="Chat messages" aria-live="polite">
+        <div id="empty"><h2>OPEN AGENT X</h2><p>Select a chat or start a new one.</p></div>
+      </div>
+      <div id="input-area">
+        <div id="context-bar"></div>
+        <input id="file-input" type="file" multiple style="display:none" onchange="handleFileUpload(event)" aria-hidden="true"/>
+        <div id="input-wrapper">
+          <button id="plus-btn" onclick="triggerUpload()" title="Attach files" aria-label="Attach files">+</button>
+          <div id="input-box">
+            <div id="upload-previews" role="list" aria-label="Upload previews"></div>
+            <textarea id="msg-input" placeholder="Message Agent X..." rows="3" aria-label="Message input"
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
+          </div>
+          <button id="mic-btn" class="input-btn" onclick="toggleMic()" title="Voice input" aria-label="Toggle voice input">&#127908;</button>
+          <button id="stop-btn" onclick="stopChat()" title="Stop agent" aria-label="Stop agent" style="display:none;background:var(--danger);border-color:var(--danger);color:#fff">&#9632;</button>
+          <button id="send-btn" onclick="sendMessage()" aria-label="Send message">&#9650;</button>
+        </div>
+        <!-- Status bar (feature 97) -->
+        <div id="status-bar" role="status" aria-label="Status information"></div>
+      </div>
+    </div>
+    <div id="agent-feeds" class="agent-feeds collapsed">
+      <div class="agent-feeds-header">
+        <span class="agent-feeds-title">AGENTS</span>
+        <span id="agent-count" class="agent-count">0</span>
+        <button class="agent-feeds-toggle" onclick="toggleAgentFeeds()" title="Toggle agent panel">&#9664;</button>
+      </div>
+      <div id="agent-feeds-list" class="agent-feeds-list"></div>
     </div>
   </div>
 
@@ -142,7 +154,7 @@
         <div class="section-card">
           <div class="section-title">Server</div>
           <div class="section-desc">Local server configuration. Changes require restart.</div>
-          <div class="field-row"><div class="field"><label class="field-label">Port</label><input class="field-input" id="cfg-port" type="number" value="4800"/></div><div class="field"><label class="field-label">Workspace</label><input class="field-input" id="cfg-workspace" value="./workspace"/></div></div>
+          <div class="field-row"><div class="field"><label class="field-label">Port</label><input class="field-input" id="cfg-port" type="number" value="7007"/></div><div class="field"><label class="field-label">Workspace</label><input class="field-input" id="cfg-workspace" value="./workspace"/></div></div>
         </div>
       </div>
       <!-- AI & Models -->
@@ -271,42 +283,41 @@
             <div style="margin-top:6px;color:var(--accent)">Session persists across restarts — no re-scan needed.</div>
           </div>
         </div>
-      </div>
-      <!-- Telegram Bot -->
-      <div class="section-card">
-        <div class="section-title">Telegram Bot</div>
-        <div class="section-desc">Chat with your agent via Telegram. Create a bot with @BotFather, paste the token, connect.</div>
-        <div id="tg-status-box" style="margin:16px 0;padding:16px;border:1px solid var(--border);border-radius:8px">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-            <span style="font-size:1.4rem">✈️</span>
-            <div style="flex:1">
-              <div id="tg-state" style="font-family:var(--mono);font-size:.85rem;font-weight:600">Checking...</div>
-              <div id="tg-bot-name" style="font-size:.72rem;color:var(--muted)"></div>
+        <!-- Telegram Bot -->
+        <div class="section-card">
+          <div class="section-title">Telegram Bot</div>
+          <div class="section-desc">Chat with your agent via Telegram. Create a bot with @BotFather, paste the token, connect.</div>
+          <div id="tg-status-box" style="margin:16px 0;padding:16px;border:1px solid var(--border);border-radius:8px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+              <span style="font-size:1.4rem">✈️</span>
+              <div style="flex:1">
+                <div id="tg-state" style="font-family:var(--mono);font-size:.85rem;font-weight:600">Checking...</div>
+                <div id="tg-bot-name" style="font-size:.72rem;color:var(--muted)"></div>
+              </div>
+              <span id="tg-badge" style="font-size:.65rem;padding:3px 10px;border-radius:4px;background:var(--border);color:var(--muted)">...</span>
             </div>
-            <span id="tg-badge" style="font-size:.65rem;padding:3px 10px;border-radius:4px;background:var(--border);color:var(--muted)">...</span>
-          </div>
-          <div id="tg-token-box" style="margin:12px 0">
-            <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">Bot Token</label>
-            <input class="field-input" id="tg-token-input" type="password" placeholder="Paste token from @BotFather" style="width:100%" autocomplete="off"/>
-          </div>
-          <div id="tg-error" style="display:none;color:var(--danger);font-size:.75rem;margin:8px 0"></div>
-          <div style="display:flex;gap:8px;margin-top:12px">
-            <button class="action-btn primary" id="tg-connect-btn" onclick="tgConnect()">Connect</button>
-            <button class="action-btn" id="tg-disconnect-btn" onclick="tgDisconnect()" style="display:none">Disconnect</button>
+            <div id="tg-token-box" style="margin:12px 0">
+              <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">Bot Token</label>
+              <input class="field-input" id="tg-token-input" type="password" placeholder="Paste token from @BotFather" style="width:100%" autocomplete="off"/>
+            </div>
+            <div id="tg-error" style="display:none;color:var(--danger);font-size:.75rem;margin:8px 0"></div>
+            <div style="display:flex;gap:8px;margin-top:12px">
+              <button class="action-btn primary" id="tg-connect-btn" onclick="tgConnect()">Connect</button>
+              <button class="action-btn" id="tg-disconnect-btn" onclick="tgDisconnect()" style="display:none">Disconnect</button>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="section-card">
-        <div class="section-title">Telegram Setup</div>
-        <div style="font-size:.78rem;color:var(--muted);line-height:1.9">
-          <div>1. Message <strong style="color:var(--text)">@BotFather</strong> on Telegram</div>
-          <div>2. Send <strong style="color:var(--text)">/newbot</strong> and follow the prompts</div>
-          <div>3. Copy the bot token and paste it above</div>
-          <div>4. Click <strong style="color:var(--text)">Connect</strong></div>
-          <div>5. <strong style="color:var(--warn)">Immediately message your bot</strong> — the first person to message it becomes the owner. Nobody else will be able to use it after that.</div>
-          <div style="margin-top:6px;color:var(--accent)">Works on multiple devices simultaneously — no conflicts.</div>
+        <div class="section-card">
+          <div class="section-title">Telegram Setup</div>
+          <div style="font-size:.78rem;color:var(--muted);line-height:1.9">
+            <div>1. Message <strong style="color:var(--text)">@BotFather</strong> on Telegram</div>
+            <div>2. Send <strong style="color:var(--text)">/newbot</strong> and follow the prompts</div>
+            <div>3. Copy the bot token and paste it above</div>
+            <div>4. Click <strong style="color:var(--text)">Connect</strong></div>
+            <div>5. <strong style="color:var(--warn)">Immediately message your bot</strong> — the first person to message it becomes the owner. Nobody else will be able to use it after that.</div>
+            <div style="margin-top:6px;color:var(--accent)">Works on multiple devices simultaneously — no conflicts.</div>
+          </div>
         </div>
-      </div>
       </div>
       <!-- API Integrations -->
       <div id="stab-integrations" class="tab-pane">
@@ -476,6 +487,25 @@
 <script src="/js/cron.js"></script>
 <script src="/js/shortcuts.js"></script>
 <script>
+// Desktop sidebar collapse toggle
+function toggleSidebarCollapse() {
+  const sidebar = document.getElementById('sidebar');
+  const expandBtn = document.getElementById('sidebar-expand-btn');
+  if (!sidebar) return;
+  const collapsed = sidebar.classList.toggle('collapsed');
+  if (expandBtn) expandBtn.style.display = collapsed ? 'block' : 'none';
+  localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '');
+}
+// Restore sidebar state on load
+(function() {
+  if (localStorage.getItem('sidebar-collapsed') === '1') {
+    const sidebar = document.getElementById('sidebar');
+    const expandBtn = document.getElementById('sidebar-expand-btn');
+    if (sidebar) sidebar.classList.add('collapsed');
+    if (expandBtn) expandBtn.style.display = 'block';
+  }
+})();
+
 // Mobile sidebar toggle (feature 95)
 function toggleMobileSidebar() {
   const sidebar = document.getElementById('sidebar');

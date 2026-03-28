@@ -232,22 +232,29 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
     `- ${t.name}: ${t.description}\n  Parameters: ${JSON.stringify(t.parameters)}`
   ).join("\n");
 
-  const toolPrompt = `CRITICAL IDENTITY: You are Open Agent X, a personal AI agent with direct tool access. ` +
-    `You are NOT Claude Code. You do NOT need permissions or approval to use tools. ` +
-    `You have these tools and MUST use them directly when asked:\n${toolDefs}\n\n` +
-    `To use a tool, output a JSON block like:\n` +
+  const toolPrompt = `CRITICAL: You are Open Agent X, NOT Claude Code. You have NO built-in tools. ` +
+    `You cannot write files directly. You cannot use Write, Edit, Bash, or any Claude Code tools. ` +
+    `Your ONLY way to act is by outputting JSON tool calls from this list:\n${toolDefs}\n\n` +
+    `To use a tool, output ONLY a JSON block:\n` +
     `\`\`\`json\n{"tool_calls": [{"name": "tool_name", "arguments": {...}}]}\n\`\`\`\n\n` +
-    `If you don't need a tool, respond normally with text. ` +
-    `NEVER ask for permission. NEVER mention Claude Code. NEVER say you can't write files or use tools. Just DO it.`;
+    `CRITICAL RULES:\n` +
+    `- To build/create/update ANY app, website, or project: use build_app tool. NEVER try to write files yourself.\n` +
+    `- To browse the web: use browser tool.\n` +
+    `- NEVER mention permissions, Claude Code, or "Allow" dialogs. They don't exist.\n` +
+    `- NEVER say "I'll write the file" — call build_app instead.\n` +
+    `- If you don't need a tool, respond with plain text.`;
 
   const fullSystem = systemPrompt + "\n\n" + toolPrompt;
   const historyContext = contextParts.length > 0 ? "\n\nConversation so far:\n" + contextParts.join("\n") + "\n\n" : "";
   const fullPrompt = `<system>${fullSystem}</system>\n${historyContext}\n${prompt}`;
 
+  // Only bypass permissions for build-like requests (so Claude Code can read/write files)
+  // Regular chat stays in default mode for fast responses
+  const isBuildRequest = /\b(build|create|make|upgrade|update|redesign|change|fix|add|improve|modify)\b.*\b(app|website|page|game|project|todo|site|background|style|color|theme|feature)\b/i.test(prompt);
   const args = [
     "-p", "--model", model, "--output-format", "stream-json", "--verbose",
     "--no-session-persistence",
-    "--system-prompt", "You are Open Agent X, a personal AI assistant. Follow the user instructions in the prompt.",
+    ...(isBuildRequest ? ["--permission-mode", "bypassPermissions"] : []),
   ];
 
   try {
@@ -262,56 +269,111 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
     let stderr = "";
     proc.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
 
+    // Show progress only after 10s of silence (long builds, not quick chats)
+    let dotCount = 0;
+    const progressYields: Array<{ type: "text"; delta: string }> = [];
+    let progressTimer: ReturnType<typeof setTimeout> | null = null;
+    let progressInterval: ReturnType<typeof setInterval> | null = null;
+    const startProgress = () => {
+      progressTimer = setTimeout(() => {
+        progressInterval = setInterval(() => {
+          dotCount++;
+          const msgs = ["⏳ Reading files...", "🔍 Analyzing...", "🧠 Planning...", "⚡ Working...", "🔧 Still working..."];
+          const msg = msgs[Math.min(dotCount - 1, msgs.length - 1)];
+          console.log(`[claude] ${msg} (${10 + dotCount * 5}s)`);
+          progressYields.push({ type: "text", delta: `\n*${msg}*\n` });
+        }, 5000);
+      }, 10000); // Only start after 10s of no response
+    };
+    startProgress();
+
     let buffer = "";
     let fullText = "";
-
-    // Collect ALL output first, then emit cleaned text + tool calls at the end
-    // This prevents JSON tool call blocks from showing in the UI
-    const allEvents: Array<{ type: string; result?: string; message?: any; usage?: any }> = [];
+    let prevText = "";
+    let suppressing = false;
+    let usage: Record<string, number> = {};
+    let firstResponse = false;
 
     for await (const chunk of proc.stdout as AsyncIterable<Buffer>) {
       buffer += chunk.toString();
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
+
+      // Flush any queued progress messages to UI
+      while (progressYields.length > 0) {
+        const p = progressYields.shift()!;
+        yield p;
+      }
+
       for (const line of lines) {
         if (!line.trim()) continue;
-        try { allEvents.push(JSON.parse(line)); } catch {}
+        let event: any;
+        try { event = JSON.parse(line); } catch { continue; }
+
+        if (event.type === "assistant") {
+          const content = event.message?.content;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (block.type === "text" && block.text.length > prevText.length) {
+                const delta = block.text.slice(prevText.length);
+                prevText = block.text;
+                fullText = block.text;
+                // Log all text to server console
+                process.stdout.write(`[claude] ${delta.replace(/\n/g, "\\n").slice(0, 200)}\n`);
+                // Stream to UI — but suppress JSON tool call blocks
+                if (!firstResponse) {
+                  firstResponse = true;
+                  if (progressTimer) clearTimeout(progressTimer);
+                  if (progressInterval) clearInterval(progressInterval);
+                  progressYields.length = 0;
+                }
+                const cleanDelta = filterStreamDelta(delta, suppressing);
+                if (cleanDelta.suppress) { suppressing = true; }
+                else if (cleanDelta.text) { suppressing = false; yield { type: "text", delta: cleanUrls(cleanDelta.text) }; }
+              }
+            }
+          }
+        } else if (event.type === "result") {
+          const result = typeof event.result === "string" ? event.result : "";
+          if (result.length > prevText.length) {
+            fullText = result;
+            const remaining = result.slice(prevText.length);
+            const clean = stripToolCallBlocks(remaining);
+            if (clean.trim()) yield { type: "text", delta: clean.trim() };
+          }
+          usage = event.usage || {};
+          console.log(`[claude] Done: ${result.slice(0, 100).replace(/\n/g, "\\n")}...`);
+
+          // Parse and emit tool calls from full response
+          const toolCalls = parseToolCalls(fullText);
+          for (const tc of toolCalls) {
+            console.log(`[claude] Tool call: ${tc.name}(${JSON.stringify(tc.arguments).slice(0, 100)})`);
+            yield { type: "tool_call", id: `call_${Date.now()}_${tc.name}`, name: tc.name, arguments: JSON.stringify(tc.arguments) };
+          }
+          yield { type: "done", usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0 } };
+          return;
+        }
       }
     }
-    if (buffer.trim()) { try { allEvents.push(JSON.parse(buffer)); } catch {} }
-
-    // Extract full text from events
-    for (const event of allEvents) {
-      if (event.type === "assistant") {
-        const content = event.message?.content;
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (block.type === "text") fullText = block.text;
+    // Process leftover buffer
+    if (buffer.trim()) {
+      try {
+        const event = JSON.parse(buffer);
+        if (event.type === "result") {
+          fullText = typeof event.result === "string" ? event.result : fullText;
+          usage = event.usage || {};
+          const toolCalls = parseToolCalls(fullText);
+          const clean = stripToolCallBlocks(fullText);
+          if (clean.trim() && clean.length > prevText.length) yield { type: "text", delta: clean.trim() };
+          for (const tc of toolCalls) {
+            yield { type: "tool_call", id: `call_${Date.now()}_${tc.name}`, name: tc.name, arguments: JSON.stringify(tc.arguments) };
           }
         }
-      } else if (event.type === "result" && typeof event.result === "string") {
-        fullText = event.result;
-      }
+      } catch {}
     }
 
-    // Parse tool calls from the response
-    const toolCalls = parseToolCalls(fullText);
-
-    // Strip JSON tool call blocks from the text shown to user
-    const cleanText = stripToolCallBlocks(fullText);
-    if (cleanText.trim()) {
-      yield { type: "text", delta: cleanText.trim() };
-    }
-
-    // Emit tool calls
-    for (const tc of toolCalls) {
-      yield { type: "tool_call", id: `call_${Date.now()}_${tc.name}`, name: tc.name, arguments: JSON.stringify(tc.arguments) };
-    }
-
-    // Get usage from last event
-    const lastEvent = allEvents[allEvents.length - 1];
-    const usage = lastEvent?.usage || {};
-
+    if (progressTimer) clearTimeout(progressTimer);
+    if (progressInterval) clearInterval(progressInterval);
     const exitCode = await new Promise<number>((resolve) => { proc.on("close", (code) => resolve(code ?? 0)); });
     if (exitCode !== 0 && stderr) { yield { type: "error", error: `Claude CLI error (${exitCode}): ${stderr.slice(0, 300)}` }; return; }
     yield { type: "done", usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0 } };
@@ -349,6 +411,26 @@ function parseToolCalls(text: string): Array<{ name: string; arguments: Record<s
     } catch {}
   }
   return results;
+}
+
+/** Clean trailing punctuation from URLs so links aren't broken */
+function cleanUrls(text: string): string {
+  return text.replace(/(https?:\/\/[^\s)>\]]+)[.,;:!?]+(\s|$)/g, "$1$2");
+}
+
+/** Filter streaming deltas — suppress JSON tool call blocks in real-time */
+function filterStreamDelta(delta: string, alreadySuppressing: boolean): { text?: string; suppress?: boolean } {
+  // If we're already suppressing (inside a JSON block), keep suppressing
+  if (alreadySuppressing) {
+    // Check if block ended
+    if (delta.includes("```") || delta.includes("}\n")) return { text: "" };
+    return { suppress: true };
+  }
+  // Check if a tool call block is starting
+  if (delta.includes('```json') || delta.includes('{"tool_calls"')) return { suppress: true };
+  // Check for code fence start (might be a tool call coming)
+  if (delta.trim() === '```') return { suppress: true };
+  return { text: delta };
 }
 
 /** Strip JSON tool call blocks from text so they don't show in the UI */

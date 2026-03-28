@@ -25,15 +25,47 @@ import { RBACManager, type Role } from "./rbac.js";
 import { createBrowserTools, closeBrowser } from "./browser-tools.js";
 import { closeAllBrowsers } from "./browser.js";
 import { redactCredentials } from "./security.js";
-import { setupChatWebSocket } from "./chat-ws.js";
+import { setupChatWebSocket, broadcastAll } from "./chat-ws.js";
 import { runSecurityAudit, printAuditReport } from "./security-audit.js";
 import { startAriKernel, isAriActive } from "./ari-kernel.js";
 import { CronService, createCronTools } from "./cron-service.js";
 import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "./session-policy.js";
 import { imageTools } from "./image-tools.js";
 import { createMissionTools } from "./missions.js";
+import { createAllMissionTools } from "./missions/index.js";
+import { runInjectionTests } from "./security-tests.js";
+import { getThreatDashboard, recordThreatEvent } from "./threat-dashboard.js";
+import { listPolicies, createPolicy, updatePolicy, deletePolicy, evaluateCustomPolicies, exportPolicies } from "./ari-policy-editor.js";
+import { checkEgress, listEgressRules, addEgressRule, removeEgressRule } from "./egress-policy.js";
+import { scanForSecrets, containsSecrets } from "./secret-scanner.js";
+import { recordFileAccess, queryFileAccess, getRecentFileAccess } from "./file-audit.js";
+import { getToolRateLimiter } from "./tool-rate-limiter.js";
+import { queryAuditLog, getAuditSummary } from "./ari-audit-viewer.js";
+import { runBenchmarks } from "./ari-benchmarks.js";
+import { createVoiceRouter } from "./voice-commands.js";
+import { captureFrame, captureAndDescribe } from "./camera-tool.js";
+import { captureScreen } from "./screen-capture.js";
+import { extractText } from "./ocr-tool.js";
 import { IntegrationRegistry } from "./integrations.js";
 import { WhatsAppBridge } from "./whatsapp-bridge.js";
+import { TelegramBridge } from "./telegram-bridge.js";
+import { recordToolCall as trackTool, getToolStats, getToolSuccessRate, getRecentFailures } from "./tool-tracker.js";
+import { withRetry } from "./auto-retry.js";
+import { saveCheckpoint, loadCheckpoint, hasCheckpoint } from "./session-recovery.js";
+import { categorizeError } from "./error-categories.js";
+import { estimateTokens, getContextUsage } from "./context-usage.js";
+import { recordCrash, getCrashReport, getTopCrashPatterns } from "./crash-analytics.js";
+import { ResponseCache } from "./response-cache.js";
+import { exportSession, importSession } from "./session-export.js";
+import { loadSessionPage, getSessionMessageCount } from "./progressive-loader.js";
+import { runMigrations } from "./db-migrations.js";
+import { runStartupTests } from "./startup-test.js";
+import { PluginManager } from "./plugin-system.js";
+import { createSwarmTools } from "./swarm/index.js";
+import { createPrimalTools } from "./swarm/primal.js";
+import { EventBus } from "./event-bus.js";
+import { generateFullSpec } from "./api-docs.js";
+import { ConfigWatcher } from "./config-hot-reload.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 
 // ── Multipart parser ──
@@ -235,89 +267,101 @@ export function startServer(config: SAXConfig) {
   // Initialize API integrations registry
   const integrations = new IntegrationRegistry(dataDir);
 
-  // Initialize WhatsApp bridge (Baileys — QR code scan, no API keys needed)
+  // Shared message handler for all bridges (WhatsApp, Telegram, etc.)
+  async function bridgeMessageHandler(platform: string, { from, name, text, sessionId }: { from: string; name: string; text: string; sessionId: string }): Promise<string> {
+    const { loadTokens } = await import("./auth.js");
+    const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
+
+    let savedProvider: string | null = null;
+    let savedModel: string | null = null;
+    try {
+      const settingsPath = join(dataDir, "settings.json");
+      if (existsSync(settingsPath)) {
+        const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
+        savedProvider = s.provider || null;
+        savedModel = s.model || null;
+      }
+    } catch {}
+
+    let provider: "codex" | "xai" | "openai" | "anthropic" | "local";
+    if (savedProvider && ["codex", "xai", "openai", "anthropic", "local"].includes(savedProvider)) {
+      provider = savedProvider as typeof provider;
+    } else if (loadAnthropicTokens()) {
+      provider = "anthropic";
+    } else if (loadTokens() && !config.openaiApiKey) {
+      provider = "codex";
+    } else {
+      provider = "xai";
+    }
+
+    const { getApiKey } = await import("./auth.js");
+    const apiKey = provider === "local"
+      ? "ollama"
+      : provider === "anthropic"
+      ? await getAnthropicApiKey()
+      : await getApiKey(config.openaiApiKey);
+
+    const session = getOrCreateSession(sessionId);
+    if (session.messages.length === 0) {
+      session.title = `${platform}: ${name}`;
+    }
+
+    const [contextBlock, relevantMemories] = await Promise.all([
+      buildContextBlock(memoryIndex),
+      autoSearchContext(memoryIndex, text),
+    ]);
+
+    const integrationsContext = integrations.getAgentContext();
+    const enrichedPrompt = config.systemPrompt + contextBlock + relevantMemories + integrationsContext +
+      `\n\n[${platform} bridge] This message is from ${name} (${from}) via ${platform}. ` +
+      `Keep responses concise — ${platform} messages should be shorter than web UI responses. ` +
+      `Use plain text (no HTML). Markdown is OK but keep it minimal.`;
+
+    const result = await runAgent(text, session.messages, {
+      apiKey,
+      model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
+      provider,
+      systemPrompt: enrichedPrompt,
+      tools: primalOnlyTools,
+      security,
+      toolPolicy,
+      sessionId,
+      maxIterations: config.maxIterations,
+      temperature: config.temperature,
+    });
+
+    session.messages = result.messages.filter(
+      (m) => m.role !== "system" && (m.content || (m as any).tool_calls)
+    );
+    session.updatedAt = Date.now();
+    saveSession(session);
+
+    return result.messages
+      .filter((m) => m.role === "assistant" && typeof m.content === "string")
+      .map((m) => m.content as string)
+      .pop() || "Done.";
+  }
+
+  // Initialize WhatsApp bridge
   const whatsappBridge = new WhatsAppBridge({
     dataDir,
-    onMessage: async ({ from, name, text, sessionId }) => {
-      // Load provider (same logic as /api/chat)
-      const { loadTokens } = await import("./auth.js");
-      const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
-
-      let savedProvider: string | null = null;
-      let savedModel: string | null = null;
-      try {
-        const settingsPath = join(dataDir, "settings.json");
-        if (existsSync(settingsPath)) {
-          const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
-          savedProvider = s.provider || null;
-          savedModel = s.model || null;
-        }
-      } catch {}
-
-      let provider: "codex" | "xai" | "openai" | "anthropic" | "local";
-      if (savedProvider && ["codex", "xai", "openai", "anthropic", "local"].includes(savedProvider)) {
-        provider = savedProvider as typeof provider;
-      } else if (loadAnthropicTokens()) {
-        provider = "anthropic";
-      } else if (loadTokens() && !config.openaiApiKey) {
-        provider = "codex";
-      } else {
-        provider = "xai";
-      }
-
-      const { getApiKey } = await import("./auth.js");
-      const apiKey = provider === "local"
-        ? "ollama"
-        : provider === "anthropic"
-        ? await getAnthropicApiKey()
-        : await getApiKey(config.openaiApiKey);
-
-      const session = getOrCreateSession(sessionId);
-      if (session.messages.length === 0) {
-        session.title = `WhatsApp: ${name}`;
-      }
-
-      // Build memory context
-      const [contextBlock, relevantMemories] = await Promise.all([
-        buildContextBlock(memoryIndex),
-        autoSearchContext(memoryIndex, text),
-      ]);
-
-      const integrationsContext = integrations.getAgentContext();
-      const enrichedPrompt = config.systemPrompt + contextBlock + relevantMemories + integrationsContext +
-        `\n\n[WhatsApp bridge] This message is from ${name} (${from}) via WhatsApp. ` +
-        `Keep responses concise — WhatsApp messages should be shorter than web UI responses. ` +
-        `Use plain text (no HTML). Markdown is OK but keep it minimal.`;
-
-      const result = await runAgent(text, session.messages, {
-        apiKey,
-        model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
-        provider,
-        systemPrompt: enrichedPrompt,
-        tools,
-        security,
-        toolPolicy,
-        sessionId,
-        maxIterations: config.maxIterations,
-        temperature: config.temperature,
-      });
-
-      // Save session
-      session.messages = result.messages.filter(
-        (m) => m.role !== "system" && (m.content || (m as any).tool_calls)
-      );
-      session.updatedAt = Date.now();
-      saveSession(session);
-
-      // Extract agent's text reply
-      const reply = result.messages
-        .filter((m) => m.role === "assistant" && typeof m.content === "string")
-        .map((m) => m.content as string)
-        .pop() || "Done.";
-
-      return reply;
-    },
+    onMessage: (params) => bridgeMessageHandler("WhatsApp", params),
   });
+
+  // Initialize Telegram bridge
+  const telegramBridge = new TelegramBridge({
+    dataDir,
+    getToken: () => secretsStore.get("TELEGRAM_BOT_TOKEN") ?? null,
+    onMessage: (params) => bridgeMessageHandler("Telegram", params),
+  });
+
+  // Auto-reconnect Telegram if token exists (persists across server restarts)
+  if (secretsStore.has("TELEGRAM_BOT_TOKEN")) {
+    telegramBridge.connect().then(r => {
+      if (r.state === "connected") console.log(`[telegram] Auto-reconnected as @${r.botUsername}`);
+      else if (r.state === "error") console.warn("[telegram] Auto-reconnect failed");
+    }).catch(() => {});
+  }
 
   // Mutable ref so secret tools can emit SSE events during the active request
   let activeOnEvent: ((event: ServerEvent) => void) | undefined;
@@ -339,8 +383,23 @@ export function startServer(config: SAXConfig) {
   const browserTools = createBrowserTools(() => activeBrowserSessionId);
 
   const missionTools = createMissionTools();
+  const extendedMissionTools = createAllMissionTools();
   const cronTools = createCronTools(cronService);
-  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...cronTools];
+  const rateLimiter = getToolRateLimiter();
+  const swarmTools = createSwarmTools();
+  const primalTools = createPrimalTools();
+  const allAgentTools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools];
+
+  // Primal only gets agent control tools — forces delegation, no direct work
+  const PRIMAL_ALLOWED = new Set([
+    "agent_spawn", "agent_redirect", "agent_pause", "agent_resume",
+    "agent_cancel", "agent_status", "agent_output", "agent_message",
+    "delegate", "swarm_create", "swarm_status", "swarm_cancel",
+    "swarm_list_roles", "swarm_result", "memory_search", "memory_save",
+  ]);
+  const primalOnlyTools = allAgentTools.filter(t => PRIMAL_ALLOWED.has(t.name));
+  // Full tools for spawned agents (they do the actual work)
+  const tools = allAgentTools;
 
   // In-memory session cache (backed by disk)
   const sessions = new Map<string, Session>();
@@ -516,6 +575,172 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── Feature 1: Conversation Branching (fork chat at message index) ──
+    if (method === "POST" && url.pathname === "/api/sessions/fork") {
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
+      const sourceId = String(body.sessionId || "");
+      const atIndex = typeof body.atIndex === "number" ? body.atIndex : -1;
+      if (!sourceId || !isValidSessionId(sourceId)) { json(400, { error: "Invalid session ID" }); return; }
+      const source = getOrCreateSession(sourceId);
+      if (atIndex < 0 || atIndex >= source.messages.length) { json(400, { error: "Invalid message index" }); return; }
+      const forkId = `fork-${sourceId.slice(0, 20)}-${Date.now().toString(36)}`;
+      const forkedMessages = source.messages.slice(0, atIndex + 1);
+      const forkSession: Session = {
+        id: forkId,
+        title: `Fork: ${source.title}`,
+        messages: JSON.parse(JSON.stringify(forkedMessages)),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      (forkSession as any).forkedFrom = sourceId;
+      (forkSession as any).forkAtIndex = atIndex;
+      sessions.set(forkId, forkSession);
+      saveSession(forkSession);
+      json(200, { ok: true, forkId, title: forkSession.title, messageCount: forkedMessages.length });
+      return;
+    }
+
+    // Get fork tree for a session
+    if (method === "GET" && url.pathname === "/api/sessions/forks") {
+      const sourceId = url.searchParams.get("sessionId") || "";
+      if (!sourceId) { json(400, { error: "sessionId required" }); return; }
+      const allSessions = sessionStore.list();
+      const forks: Array<{ id: string; title: string; forkAtIndex: number; createdAt: number }> = [];
+      for (const meta of allSessions) {
+        const s = sessionStore.load(meta.id);
+        if (s && (s as any).forkedFrom === sourceId) {
+          forks.push({ id: s.id, title: s.title, forkAtIndex: (s as any).forkAtIndex || 0, createdAt: s.createdAt });
+        }
+      }
+      // Also check if THIS session is a fork
+      const thisSession = sessionStore.load(sourceId);
+      const parent = thisSession ? (thisSession as any).forkedFrom || null : null;
+      json(200, { forks, parent });
+      return;
+    }
+
+    // ── Feature 2: Auto-summarize old sessions into memory ──
+    if (method === "POST" && url.pathname === "/api/sessions/auto-summarize") {
+      const allSessions = sessionStore.list();
+      const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days old
+      const stale = allSessions.filter(s => s.updatedAt < cutoff && s.messageCount > 4);
+      const summaries: Array<{ id: string; title: string; summary: string }> = [];
+      const summaryDir = join(dataDir, "memory", "session-summaries");
+      mkdirSync(summaryDir, { recursive: true });
+      for (const meta of stale.slice(0, 20)) {
+        const summaryFile = join(summaryDir, `${meta.id}.md`);
+        if (existsSync(summaryFile)) continue; // already summarized
+        const session = sessionStore.load(meta.id);
+        if (!session) continue;
+        // Build a quick extractive summary from messages
+        const userMsgs = session.messages.filter(m => m.role === "user" && typeof m.content === "string");
+        const assistMsgs = session.messages.filter(m => m.role === "assistant" && typeof m.content === "string");
+        const topicLines = userMsgs.slice(0, 5).map(m => `- User: ${String(m.content).slice(0, 120)}`);
+        const assistLines = assistMsgs.slice(0, 3).map(m => `- Agent: ${String(m.content).split("\n")[0]?.slice(0, 120)}`);
+        const summary = `# ${session.title}\n\nDate: ${new Date(session.createdAt).toISOString().split("T")[0]}\nMessages: ${session.messages.length}\n\n## Key Topics\n${topicLines.join("\n")}\n\n## Key Responses\n${assistLines.join("\n")}`;
+        writeFileSync(summaryFile, summary, "utf-8");
+        summaries.push({ id: meta.id, title: session.title, summary });
+      }
+      json(200, { ok: true, summarized: summaries.length, total: stale.length, summaries });
+      return;
+    }
+
+    // Get session summaries
+    if (method === "GET" && url.pathname === "/api/sessions/summaries") {
+      const summaryDir = join(dataDir, "memory", "session-summaries");
+      if (!existsSync(summaryDir)) { json(200, { summaries: [] }); return; }
+      const files = readdirSync(summaryDir).filter(f => f.endsWith(".md"));
+      const summaries = files.map(f => {
+        const content = readFileSync(join(summaryDir, f), "utf-8");
+        const id = f.replace(".md", "");
+        const titleMatch = content.match(/^# (.+)$/m);
+        return { id, title: titleMatch?.[1] || id, summary: content.slice(0, 500) };
+      });
+      json(200, { summaries });
+      return;
+    }
+
+    // ── Feature 3: Cross-session search ──
+    if (method === "GET" && url.pathname === "/api/sessions/search") {
+      const query = (url.searchParams.get("q") || "").toLowerCase().trim();
+      if (!query || query.length < 2) { json(400, { error: "Query too short" }); return; }
+      const allSessions = sessionStore.list();
+      const results: Array<{ sessionId: string; title: string; matches: Array<{ role: string; snippet: string; index: number }> }> = [];
+      for (const meta of allSessions.slice(0, 100)) {
+        const session = sessionStore.load(meta.id);
+        if (!session) continue;
+        const matches: Array<{ role: string; snippet: string; index: number }> = [];
+        for (let i = 0; i < session.messages.length; i++) {
+          const m = session.messages[i];
+          const content = typeof m.content === "string" ? m.content : "";
+          const idx = content.toLowerCase().indexOf(query);
+          if (idx >= 0) {
+            const start = Math.max(0, idx - 50);
+            const end = Math.min(content.length, idx + query.length + 100);
+            matches.push({ role: m.role as string, snippet: content.slice(start, end), index: i });
+          }
+        }
+        if (matches.length > 0) {
+          results.push({ sessionId: meta.id, title: session.title, matches: matches.slice(0, 5) });
+        }
+        if (results.length >= 20) break;
+      }
+      json(200, { results, query });
+      return;
+    }
+
+    // ── Feature 5: Mood/tone detection ──
+    if (method === "POST" && url.pathname === "/api/mood/detect") {
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
+      const text = String(body.text || "");
+      if (!text) { json(400, { error: "text required" }); return; }
+
+      // Lightweight keyword-based sentiment analysis (no external deps)
+      const lower = text.toLowerCase();
+      const positiveWords = ["thanks", "great", "awesome", "perfect", "love", "excellent", "amazing", "happy", "good", "nice", "wonderful", "fantastic", "brilliant", "appreciate", "excited", "glad", "pleased", "helpful", "beautiful"];
+      const negativeWords = ["frustrated", "angry", "annoyed", "broken", "bug", "wrong", "error", "fail", "hate", "terrible", "awful", "bad", "worst", "stuck", "confused", "disappointed", "problem", "issue", "unfortunately", "sucks"];
+      const urgentWords = ["urgent", "asap", "immediately", "critical", "emergency", "deadline", "hurry", "rush"];
+      const casualWords = ["hey", "hi", "yo", "lol", "haha", "btw", "nah", "yeah", "cool", "sup", "chill"];
+      const formalWords = ["please", "kindly", "would you", "could you", "regarding", "concerning", "pursuant", "hereby"];
+
+      let posScore = 0, negScore = 0, urgentScore = 0, casualScore = 0, formalScore = 0;
+      for (const w of positiveWords) { if (lower.includes(w)) posScore++; }
+      for (const w of negativeWords) { if (lower.includes(w)) negScore++; }
+      for (const w of urgentWords) { if (lower.includes(w)) urgentScore++; }
+      for (const w of casualWords) { if (lower.includes(w)) casualScore++; }
+      for (const w of formalWords) { if (lower.includes(w)) formalScore++; }
+
+      // Detect exclamation/caps emphasis
+      const exclamations = (text.match(/!/g) || []).length;
+      const capsRatio = (text.match(/[A-Z]/g) || []).length / Math.max(text.length, 1);
+      if (exclamations > 2) urgentScore++;
+      if (capsRatio > 0.5 && text.length > 10) urgentScore++;
+
+      let mood = "neutral";
+      let tone = "balanced";
+      let confidence = 0.5;
+
+      if (posScore > negScore && posScore > 0) { mood = "positive"; confidence = Math.min(0.9, 0.5 + posScore * 0.1); }
+      else if (negScore > posScore && negScore > 0) { mood = "negative"; confidence = Math.min(0.9, 0.5 + negScore * 0.1); }
+      else if (urgentScore > 0) { mood = "urgent"; confidence = Math.min(0.9, 0.5 + urgentScore * 0.15); }
+
+      if (casualScore > formalScore) tone = "casual";
+      else if (formalScore > casualScore) tone = "formal";
+
+      // Generate style hint for the agent
+      let styleHint = "";
+      if (mood === "negative") styleHint = "User seems frustrated. Be empathetic, acknowledge the issue, and focus on solutions.";
+      else if (mood === "urgent") styleHint = "User has urgency. Be concise, prioritize action over explanation.";
+      else if (mood === "positive") styleHint = "User is in a good mood. Match their energy, be warm and encouraging.";
+      if (tone === "casual") styleHint += " Keep responses casual and conversational.";
+      else if (tone === "formal") styleHint += " Match their formal tone.";
+
+      json(200, { mood, tone, confidence, styleHint, scores: { positive: posScore, negative: negScore, urgent: urgentScore, casual: casualScore, formal: formalScore } });
+      return;
+    }
+
     // Upload file (images, documents) — 100MB limit
     if (method === "POST" && url.pathname === "/api/upload") {
       const uploadsDir = join(dataDir, "uploads");
@@ -670,10 +895,168 @@ export function startServer(config: SAXConfig) {
 
     // ── Voice API ──
 
+    // ── Security & ARI APIs ──
+
+    if (method === "GET" && url.pathname === "/api/security/dashboard") {
+      json(200, getThreatDashboard()); return;
+    }
+    if (method === "GET" && url.pathname === "/api/security/policies") {
+      json(200, listPolicies()); return;
+    }
+    if (method === "POST" && url.pathname === "/api/security/policies") {
+      const body = JSON.parse(await readBody(req));
+      json(200, createPolicy(body)); return;
+    }
+    if (method === "DELETE" && url.pathname.startsWith("/api/security/policies/")) {
+      const id = url.pathname.split("/").pop()!;
+      json(200, { ok: deletePolicy(id) }); return;
+    }
+    if (method === "GET" && url.pathname === "/api/security/egress") {
+      json(200, { rules: listEgressRules() }); return;
+    }
+    if (method === "POST" && url.pathname === "/api/security/egress") {
+      const body = JSON.parse(await readBody(req));
+      json(200, addEgressRule(body.domain, body.action, body.reason)); return;
+    }
+    if (method === "GET" && url.pathname === "/api/security/audit") {
+      const query = Object.fromEntries(url.searchParams.entries());
+      json(200, await queryAuditLog(query)); return;
+    }
+    if (method === "GET" && url.pathname === "/api/security/audit/summary") {
+      json(200, await getAuditSummary()); return;
+    }
+    if (method === "GET" && url.pathname === "/api/security/file-access") {
+      json(200, getRecentFileAccess(50)); return;
+    }
+    if (method === "POST" && url.pathname === "/api/security/scan") {
+      const body = JSON.parse(await readBody(req));
+      const result = scanForSecrets(String(body.text || ""));
+      json(200, result); return;
+    }
+    if (method === "POST" && url.pathname === "/api/security/benchmarks") {
+      const report = await runBenchmarks();
+      json(200, report); return;
+    }
+    if (method === "POST" && url.pathname === "/api/security/injection-tests") {
+      const report = runInjectionTests();
+      json(200, report); return;
+    }
+
+    // ── Reliability & Core APIs ──
+
+    // Health check (Task 39)
+    if (method === "GET" && url.pathname === "/api/health") {
+      const uptime = process.uptime();
+      const mem = process.memoryUsage();
+      json(200, {
+        status: "ok",
+        uptime: Math.round(uptime),
+        memory: { heapUsedMB: Math.round(mem.heapUsed / 1048576), heapTotalMB: Math.round(mem.heapTotal / 1048576), rssMB: Math.round(mem.rss / 1048576) },
+        toolStats: getToolStats(),
+        version: "0.1.0",
+      }); return;
+    }
+
+    // Tool stats (Task 36)
+    if (method === "GET" && url.pathname === "/api/tools/stats") {
+      json(200, { stats: getToolStats(), successRate: getToolSuccessRate(), recentFailures: getRecentFailures(20) }); return;
+    }
+
+    // Crash analytics (Task 50)
+    if (method === "GET" && url.pathname === "/api/crashes") {
+      json(200, { report: getCrashReport(), topPatterns: getTopCrashPatterns(10) }); return;
+    }
+
+    // Context usage (Task 43)
+    if (method === "GET" && url.pathname === "/api/context/usage") {
+      const sessionId = url.searchParams.get("sessionId");
+      if (sessionId) {
+        const session = sessions.get(sessionId);
+        if (session) {
+          json(200, getContextUsage(session.messages, 128000)); return;
+        }
+      }
+      json(200, { used: 0, max: 128000, percentage: 0, remaining: 128000 }); return;
+    }
+
+    // Session export/import (Task 49)
+    if (method === "GET" && url.pathname.startsWith("/api/sessions/") && url.pathname.endsWith("/export")) {
+      const id = url.pathname.split("/")[3];
+      const format = (url.searchParams.get("format") || "json") as "json" | "markdown";
+      try {
+        const result = await exportSession(id, format);
+        json(200, result); return;
+      } catch (e) { json(404, { error: (e as Error).message }); return; }
+    }
+    if (method === "POST" && url.pathname === "/api/sessions/import") {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const result = await importSession(body);
+        json(200, result); return;
+      } catch (e) { json(400, { error: (e as Error).message }); return; }
+    }
+
+    // Progressive loading (Task 53)
+    if (method === "GET" && url.pathname.startsWith("/api/sessions/") && url.pathname.endsWith("/messages")) {
+      const id = url.pathname.split("/")[3];
+      const page = parseInt(url.searchParams.get("page") || "0");
+      const pageSize = parseInt(url.searchParams.get("pageSize") || "50");
+      try {
+        const result = await loadSessionPage(id, page, pageSize);
+        json(200, result); return;
+      } catch (e) { json(404, { error: (e as Error).message }); return; }
+    }
+
+    // Startup tests (Task 55)
+    if (method === "GET" && url.pathname === "/api/startup-tests") {
+      const results = await runStartupTests();
+      json(200, { results }); return;
+    }
+
+    // ── Architecture APIs ──
+
+    // API docs (Task 59)
+    if (method === "GET" && url.pathname === "/api/docs") {
+      json(200, generateFullSpec()); return;
+    }
+
+    // Plugins (Task 56)
+    if (method === "GET" && url.pathname === "/api/plugins") {
+      const pm = new PluginManager();
+      json(200, pm.listPlugins()); return;
+    }
+    if (method === "POST" && url.pathname === "/api/plugins/load") {
+      const body = JSON.parse(await readBody(req));
+      const pm = new PluginManager();
+      try {
+        const plugin = await pm.loadPlugin(String(body.path));
+        json(200, { ok: true, plugin }); return;
+      } catch (e) { json(400, { error: (e as Error).message }); return; }
+    }
+    if (method === "POST" && url.pathname === "/api/plugins/unload") {
+      const body = JSON.parse(await readBody(req));
+      const pm = new PluginManager();
+      json(200, { ok: pm.unloadPlugin(String(body.id)) }); return;
+    }
+
     // Get voice capabilities
     if (method === "GET" && url.pathname === "/api/voice/capabilities") {
       const { detectCapabilities } = await import("./voice.js");
       json(200, await detectCapabilities());
+      return;
+    }
+
+    // Proxy voice preview from XTTS server (avoids CORS issues)
+    if (method === "GET" && url.pathname.startsWith("/api/voice/preview/")) {
+      const voiceId = url.pathname.split("/").pop();
+      try {
+        const r = await fetch(`http://127.0.0.1:7862/voices/${voiceId}/preview`);
+        if (r.ok && r.body) {
+          const buf = Buffer.from(await r.arrayBuffer());
+          res.writeHead(200, { "Content-Type": "audio/wav", "Content-Length": String(buf.length) });
+          res.end(buf);
+        } else { json(404, { error: "Voice not found" }); }
+      } catch { json(502, { error: "XTTS server not reachable" }); }
       return;
     }
 
@@ -1319,6 +1702,42 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── Telegram Bot ──
+
+    if (method === "POST" && url.pathname === "/api/telegram/connect") {
+      try {
+        const result = await telegramBridge.connect();
+        json(200, result);
+      } catch (e) {
+        json(500, { error: (e as Error).message });
+      }
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/telegram/disconnect") {
+      telegramBridge.disconnect();
+      json(200, { ok: true });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/telegram/status") {
+      json(200, { ...telegramBridge.getStatus(), hasToken: secretsStore.has("TELEGRAM_BOT_TOKEN") });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/telegram/send") {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const { chatId, message: msg } = body;
+        if (!chatId || !msg) { json(400, { error: "chatId and message are required" }); return; }
+        const ok = await telegramBridge.sendMessage(chatId, msg);
+        json(ok ? 200 : 500, { ok });
+      } catch (e) {
+        json(500, { error: (e as Error).message });
+      }
+      return;
+    }
+
     // Chat (SSE streaming)
     if (method === "POST" && url.pathname === "/api/chat") {
       let body: Record<string, unknown>;
@@ -1418,6 +1837,47 @@ export function startServer(config: SAXConfig) {
           autoSearchContext(memoryIndex, message),
         ]);
 
+        // ── Feature 4: Smart Context Window ──
+        // Score relevance of session summaries to current message and inject top matches
+        let smartContext = "";
+        try {
+          const summaryDir = join(dataDir, "memory", "session-summaries");
+          if (existsSync(summaryDir)) {
+            const summaryFiles = readdirSync(summaryDir).filter(f => f.endsWith(".md"));
+            const queryWords = message.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+            if (queryWords.length > 0 && summaryFiles.length > 0) {
+              const scored = summaryFiles.map(f => {
+                const content = readFileSync(join(summaryDir, f), "utf-8");
+                const lower = content.toLowerCase();
+                let score = 0;
+                for (const w of queryWords) { if (lower.includes(w)) score++; }
+                return { file: f, content: content.slice(0, 400), score };
+              }).filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 2);
+              if (scored.length > 0) {
+                smartContext = "\n\n--- RELATED PAST SESSIONS (auto-retrieved) ---\n" +
+                  scored.map(s => s.content).join("\n---\n") +
+                  "\n--- END RELATED SESSIONS ---";
+              }
+            }
+          }
+        } catch {}
+
+        // ── Feature 5: Mood/tone detection → style hint injection ──
+        let moodHint = "";
+        try {
+          const lower = message.toLowerCase();
+          const posWords = ["thanks", "great", "awesome", "perfect", "love", "excellent", "amazing", "happy", "good"];
+          const negWords = ["frustrated", "angry", "broken", "bug", "wrong", "error", "fail", "hate", "stuck", "confused", "problem"];
+          const urgWords = ["urgent", "asap", "immediately", "critical", "emergency", "deadline"];
+          let pos = 0, neg = 0, urg = 0;
+          for (const w of posWords) { if (lower.includes(w)) pos++; }
+          for (const w of negWords) { if (lower.includes(w)) neg++; }
+          for (const w of urgWords) { if (lower.includes(w)) urg++; }
+          if (urg > 0) moodHint = "\n\n[Tone hint: user has urgency — be concise, prioritize action]";
+          else if (neg > pos && neg > 0) moodHint = "\n\n[Tone hint: user may be frustrated — be empathetic, focus on solutions]";
+          else if (pos > neg && pos > 1) moodHint = "\n\n[Tone hint: user is positive — match their energy]";
+        } catch {}
+
         // Initialize threat engine for this session
         const threatEngine = new ThreatEngine(dataDir, sessionId);
         let canaryBuffer = ""; // Rolling buffer for chunk-boundary canary detection
@@ -1426,7 +1886,7 @@ export function startServer(config: SAXConfig) {
         // Inject canary tokens + connected integrations into system prompt
         const integrationsContext = integrations.getAgentContext();
         const enrichedPrompt =
-          config.systemPrompt + contextBlock + relevantMemories + integrationsContext + threatEngine.getCanaryBlock();
+          config.systemPrompt + contextBlock + relevantMemories + smartContext + moodHint + integrationsContext + threatEngine.getCanaryBlock();
 
         // Resolve image attachments to absolute file paths for vision API
         const uploadsDir = join(dataDir, "uploads");
@@ -1517,7 +1977,7 @@ export function startServer(config: SAXConfig) {
           model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
           provider,
           systemPrompt: enrichedPrompt,
-          tools,
+          tools: primalOnlyTools,
           security,
           toolPolicy,
           threatEngine,
@@ -1575,11 +2035,13 @@ export function startServer(config: SAXConfig) {
         clearInterval(heartbeat);
         res.end();
 
-        // WhatsApp bridge: if this is a wa- session and typed from the web UI,
-        // forward the agent's reply to WhatsApp so it shows on the phone
+        // Bridge forwarding: if typed from web UI in a bridge session,
+        // forward the reply to the original platform
         if (sessionId.startsWith("wa-") && assistantReply) {
-          const waPhone = sessionId.slice(3); // "wa-18058146534" → "18058146534"
-          whatsappBridge.sendMessage(waPhone, assistantReply).catch(() => {});
+          whatsappBridge.sendMessage(sessionId.slice(3), assistantReply).catch(() => {});
+        }
+        if (sessionId.startsWith("tg-") && assistantReply) {
+          telegramBridge.sendMessage(sessionId.slice(3), assistantReply).catch(() => {});
         }
 
         // Agent Sync: push after chat (background, non-blocking)
@@ -1808,6 +2270,116 @@ export function startServer(config: SAXConfig) {
 
   // Create server: HTTPS if cert available, HTTP fallback
   const server = createServer(requestHandler);
+
+  // Run database migrations on startup (Task 54)
+  runMigrations(dataDir).catch(e => console.warn("[migrations]", e.message));
+
+  // Initialize event bus (Task 60)
+  const eventBus = EventBus.getInstance();
+
+  // Wire spawned agent execution — when Primal spawns an agent, actually run it
+  eventBus.on("primal:agent-run", async (data: any) => {
+    const { agentId, task, systemPrompt, role } = data;
+    console.log(`[primal] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
+    try {
+      // Resolve API key and provider from saved settings (same as chat handler)
+      let agentProvider: "codex" | "anthropic" | "openai" | "xai" | "local" = "codex";
+      try {
+        const saved = JSON.parse(readFileSync(join(dataDir, "settings.json"), "utf-8"));
+        if (saved.provider) agentProvider = saved.provider;
+      } catch {}
+      const { getApiKey: getKey } = await import("./auth.js");
+      const { getAnthropicApiKey: getAnthKey } = await import("./auth-anthropic.js");
+      const agentApiKey = agentProvider === "anthropic"
+        ? await getAnthKey()
+        : await getKey(config.openaiApiKey);
+
+      const agentSession: Session = {
+        id: `agent-${agentId}`,
+        title: `Agent: ${role}`,
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      // Match model to provider (same logic as main chat)
+      let savedModel = "";
+      try {
+        const saved = JSON.parse(readFileSync(join(dataDir, "settings.json"), "utf-8"));
+        if (saved.model) savedModel = saved.model;
+      } catch {}
+      const agentModel = savedModel || (agentProvider === "codex" ? "gpt-5.3-codex" : agentProvider === "anthropic" ? "claude-sonnet-4-6" : config.model);
+
+      // Spawned agents get work tools only (no agent_*, swarm_*, delegate — prevents recursion)
+      const spawnedAgentTools = tools.filter(t =>
+        !t.name.startsWith("agent_") && !t.name.startsWith("swarm_") && t.name !== "delegate"
+      );
+
+      // Timeout: 2 minutes per agent
+      const agentAbort = new AbortController();
+      const agentTimeout = setTimeout(() => {
+        agentAbort.abort();
+        console.warn(`[primal] Agent ${agentId} (${role}) timed out after 2 minutes`);
+      }, 120000);
+
+      const result = await runAgent(task, agentSession.messages, {
+        apiKey: agentApiKey,
+        model: agentModel,
+        provider: agentProvider,
+        systemPrompt: systemPrompt || `You are a ${role} agent. Complete the following task thoroughly. Use the tools available to create files, run commands, and get the job done. Report your results when finished.`,
+        tools: spawnedAgentTools,
+        security,
+        toolPolicy,
+        sessionId: `agent-${agentId}`,
+        maxIterations: config.maxIterations,
+        temperature: config.temperature,
+        signal: agentAbort.signal,
+        onEvent: (event) => {
+          if (event.type === "stream" && event.delta) {
+            eventBus.emit("primal:agent-output", { agentId, output: event.delta });
+          }
+          if (event.type === "tool_start") {
+            console.log(`[primal] Agent ${agentId} tool: ${event.toolName}`);
+            eventBus.emit("primal:agent-output", { agentId, output: `[tool] ${event.toolName}...` });
+          }
+          // Auto-approve all tool calls for spawned agents (no user to confirm)
+          if (event.type === "tool_start" && event.requiresApproval) {
+            event.requiresApproval = false;
+          }
+        },
+      });
+      clearTimeout(agentTimeout);
+      const finalMessage = result.messages.filter((m: any) => m.role === "assistant").pop();
+      const content = typeof finalMessage?.content === "string" ? finalMessage.content : JSON.stringify(finalMessage?.content || "");
+      eventBus.emit("primal:agent-result", { agentId, result: content, success: true });
+      console.log(`[primal] Agent ${agentId} (${role}) completed`);
+    } catch (e) {
+      eventBus.emit("primal:agent-result", { agentId, result: (e as Error).message, success: false });
+      console.error(`[primal] Agent ${agentId} (${role}) failed:`, (e as Error).message);
+    }
+  });
+
+  // Forward agent events to WebSocket clients (Mission Control UI)
+  eventBus.on("primal:agent-spawn", (data: any) => {
+    broadcastAll({ type: "agent-spawn", ...data });
+  });
+  eventBus.on("primal:agent-output", (data: any) => {
+    broadcastAll({ type: "agent-output", ...data });
+  });
+  eventBus.on("primal:agent-result", (data: any) => {
+    broadcastAll({ type: "agent-complete", ...data });
+  });
+  eventBus.on("primal:agent-redirect", (data: any) => {
+    broadcastAll({ type: "agent-update", ...data, status: "redirected" });
+  });
+
+  // Initialize response cache (Task 51)
+  const responseCache = new ResponseCache();
+
+  // Config hot-reload (Task 61)
+  const configWatcher = new ConfigWatcher();
+  configWatcher.start(join(dataDir, "config.json"), (newConfig) => {
+    console.log("[config] Hot-reloaded config");
+  });
 
   // WebSocket chat system — enables multi-chat, reconnect, stop button
   const chatWs = setupChatWebSocket(server, config.authToken);

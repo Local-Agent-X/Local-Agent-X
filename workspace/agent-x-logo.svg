@@ -1,0 +1,28 @@
+<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle -->
+  <circle cx="100" cy="100" r="95" fill="#0a1628" stroke="#2563eb" stroke-width="2"/>
+  
+  <!-- Detective hat silhouette -->
+  <g id="hat">
+    <!-- Brim -->
+    <ellipse cx="100" cy="65" rx="45" ry="12" fill="#1e3a8a" opacity="0.8"/>
+    <!-- Crown -->
+    <path d="M 70 65 L 80 40 L 100 35 L 120 40 L 130 65" fill="#1e3a8a" stroke="#2563eb" stroke-width="1.5"/>
+  </g>
+  
+  <!-- Large X -->
+  <g id="x-mark" transform="translate(100, 100)">
+    <!-- Left diagonal -->
+    <line x1="-35" y1="-35" x2="35" y2="35" stroke="#60a5fa" stroke-width="8" stroke-linecap="round" opacity="0.9"/>
+    <!-- Right diagonal -->
+    <line x1="35" y1="-35" x2="-35" y2="35" stroke="#60a5fa" stroke-width="8" stroke-linecap="round" opacity="0.9"/>
+    <!-- Center circle accent -->
+    <circle cx="0" cy="0" r="8" fill="#f59e0b" opacity="0.8"/>
+  </g>
+  
+  <!-- Glow effect -->
+  <circle cx="100" cy="100" r="95" fill="none" stroke="#2563eb" stroke-width="1" opacity="0.3" r="100"/>
+  
+  <!-- Text: AGENT X -->
+  <text x="100" y="155" font-family="Arial, sans-serif" font-size="18" font-weight="bold" text-anchor="middle" fill="#60a5fa" letter-spacing="2">AGENT X</text>
+</svg>

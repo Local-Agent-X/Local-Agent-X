@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Game Plan Board</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <p class="kicker">🏆 Season Tracker</p>
+    <h1>Game Plan Board</h1>
+
+    <form id="todo-form" class="todo-form">
+      <input id="todo-input" type="text" placeholder="Add a play..." autocomplete="off" required />
+      <button type="submit">Add Play</button>
+    </form>
+
+    <div class="controls">
+      <button data-filter="all" class="filter active">Full Schedule</button>
+      <button data-filter="active" class="filter">In Progress</button>
+      <button data-filter="completed" class="filter">Final</button>
+      <button id="clear-completed" class="clear">Reset Wins</button>
+    </div>
+
+    <ul id="todo-list" class="todo-list"></ul>
+    <p id="count" class="count">0 plays left this season</p>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

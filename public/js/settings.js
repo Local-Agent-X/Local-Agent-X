@@ -12,6 +12,7 @@ function init_settings() {
   loadFileAccessMode();
   loadIntegrations();
   waCheckStatus();
+  tgCheckStatus();
 }
 
 function switchTab(id) {
@@ -810,11 +811,234 @@ async function waTestConnect() {
   }
 }
 
+// ── Telegram Bot ──
+
+async function tgCheckStatus() {
+  try {
+    const d = await apiJson('/api/telegram/status');
+    const stateEl = document.getElementById('tg-state');
+    const nameEl = document.getElementById('tg-bot-name');
+    const badgeEl = document.getElementById('tg-badge');
+    const errorEl = document.getElementById('tg-error');
+    const tokenBox = document.getElementById('tg-token-box');
+    const connectBtn = document.getElementById('tg-connect-btn');
+    const disconnectBtn = document.getElementById('tg-disconnect-btn');
+    if (!stateEl) return;
+
+    errorEl && (errorEl.style.display = 'none');
+
+    if (d.state === 'connected') {
+      stateEl.textContent = 'Connected';
+      stateEl.style.color = 'var(--accent)';
+      nameEl.textContent = d.botUsername ? '@' + d.botUsername : d.botName || '';
+      badgeEl.textContent = 'CONNECTED'; badgeEl.style.background = 'var(--accent)'; badgeEl.style.color = '#000';
+      if (tokenBox) tokenBox.style.display = 'none';
+      if (connectBtn) connectBtn.style.display = 'none';
+      if (disconnectBtn) disconnectBtn.style.display = '';
+    } else if (d.state === 'error') {
+      stateEl.textContent = 'Error'; stateEl.style.color = 'var(--danger)';
+      nameEl.textContent = '';
+      badgeEl.textContent = 'ERROR'; badgeEl.style.background = 'var(--danger)'; badgeEl.style.color = '#fff';
+      if (tokenBox) tokenBox.style.display = '';
+      if (connectBtn) connectBtn.style.display = '';
+      if (disconnectBtn) disconnectBtn.style.display = 'none';
+      if (d.error && errorEl) { errorEl.textContent = d.error; errorEl.style.display = ''; }
+    } else {
+      stateEl.textContent = 'Disconnected'; stateEl.style.color = 'var(--muted)';
+      nameEl.textContent = 'Not set up';
+      badgeEl.textContent = 'OFF'; badgeEl.style.background = 'var(--border)'; badgeEl.style.color = 'var(--muted)';
+      if (tokenBox) tokenBox.style.display = '';
+      if (connectBtn) connectBtn.style.display = '';
+      if (disconnectBtn) disconnectBtn.style.display = 'none';
+    }
+  } catch {}
+}
+
+async function tgConnect() {
+  const tokenInput = document.getElementById('tg-token-input');
+  const token = tokenInput?.value?.trim();
+  const btn = document.getElementById('tg-connect-btn');
+  if (btn) { btn.textContent = 'Connecting...'; btn.disabled = true; }
+
+  try {
+    // Save token to secrets vault first (if provided)
+    if (token) {
+      await apiPost('/api/secrets', { name: 'TELEGRAM_BOT_TOKEN', value: token });
+    }
+    const d = await apiPost('/api/telegram/connect', {});
+    if (d.state === 'error') {
+      const errorEl = document.getElementById('tg-error');
+      if (errorEl) { errorEl.textContent = d.error || 'Connection failed'; errorEl.style.display = ''; }
+    }
+    await tgCheckStatus();
+  } catch (e) {
+    console.error('Telegram connect failed:', e);
+  }
+  if (btn) { btn.textContent = 'Connect'; btn.disabled = false; }
+}
+
+async function tgDisconnect() {
+  if (!confirm('Disconnect Telegram bot?')) return;
+  try { await apiPost('/api/telegram/disconnect', {}); } catch {}
+  await tgCheckStatus();
+}
+
 // ── HTTPS ──
+
+// ── Settings Import/Export (feature 98) ──
+
+function exportSettings() {
+  const data = {};
+  // Collect all sax_ localStorage keys
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('sax_') && !key.includes('token')) {
+      try { data[key] = JSON.parse(localStorage.getItem(key)); } catch { data[key] = localStorage.getItem(key); }
+    }
+  }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'agent-x-settings-' + new Date().toISOString().slice(0, 10) + '.json';
+  a.click(); URL.revokeObjectURL(url);
+}
+
+function importSettings() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json';
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      let count = 0;
+      for (const [key, value] of Object.entries(data)) {
+        if (key.startsWith('sax_') && !key.includes('token')) {
+          localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+          count++;
+        }
+      }
+      alert('Imported ' + count + ' settings. Reloading...');
+      location.reload();
+    } catch (err) {
+      alert('Import failed: ' + err.message);
+    }
+  };
+  input.click();
+}
+
+// ── Onboarding Wizard (feature 99) ──
+
+function shouldShowOnboarding() {
+  return !localStorage.getItem('sax_onboarded');
+}
+
+function showOnboarding() {
+  const overlay = document.createElement('div');
+  overlay.id = 'onboarding-overlay';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-label', 'Welcome wizard');
+  overlay.innerHTML = `
+    <div id="onboarding-modal">
+      <div id="onboarding-steps">
+        <div class="onboarding-step active" data-step="0">
+          <h2 class="onboarding-title">Welcome to Open Agent X</h2>
+          <p class="onboarding-desc">Your personal AI agent that runs locally. Let's get you set up in 3 quick steps.</p>
+          <div class="onboarding-art">&#9889;</div>
+        </div>
+        <div class="onboarding-step" data-step="1">
+          <h2 class="onboarding-title">Choose Your AI Provider</h2>
+          <p class="onboarding-desc">Select which AI model to use. You can change this later in Settings.</p>
+          <div class="onboarding-options">
+            <button class="onboarding-option" onclick="selectOnboardProvider('codex')"><strong>OpenAI Codex</strong><br><span style="color:var(--muted);font-size:.72rem">Free with ChatGPT</span></button>
+            <button class="onboarding-option" onclick="selectOnboardProvider('anthropic')"><strong>Anthropic Claude</strong><br><span style="color:var(--muted);font-size:.72rem">Free for subscribers</span></button>
+            <button class="onboarding-option" onclick="selectOnboardProvider('xai')"><strong>xAI Grok</strong><br><span style="color:var(--muted);font-size:.72rem">API key required</span></button>
+            <button class="onboarding-option" onclick="selectOnboardProvider('local')"><strong>Local (Ollama)</strong><br><span style="color:var(--muted);font-size:.72rem">Runs on your GPU</span></button>
+          </div>
+        </div>
+        <div class="onboarding-step" data-step="2">
+          <h2 class="onboarding-title">Voice Settings</h2>
+          <p class="onboarding-desc">Agent X supports hands-free voice chat. Enable it now or later.</p>
+          <div class="onboarding-options">
+            <button class="onboarding-option" onclick="selectOnboardVoice(true)"><strong>Enable Voice</strong><br><span style="color:var(--muted);font-size:.72rem">Mic + TTS</span></button>
+            <button class="onboarding-option" onclick="selectOnboardVoice(false)"><strong>Text Only</strong><br><span style="color:var(--muted);font-size:.72rem">Keyboard input</span></button>
+          </div>
+        </div>
+        <div class="onboarding-step" data-step="3">
+          <h2 class="onboarding-title">You're All Set!</h2>
+          <p class="onboarding-desc">Start chatting with your agent. Use Ctrl+K anytime to open the command palette.</p>
+          <div class="onboarding-art" style="font-size:2.5rem">&#128640;</div>
+        </div>
+      </div>
+      <div class="onboarding-nav">
+        <button class="action-btn secondary" id="ob-back" onclick="onboardStep(-1)" style="visibility:hidden">Back</button>
+        <div class="onboarding-dots" id="ob-dots"></div>
+        <button class="action-btn primary" id="ob-next" onclick="onboardStep(1)">Get Started</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  updateOnboardingUI();
+}
+
+let _onboardStep = 0;
+let _onboardProvider = '';
+const ONBOARD_TOTAL = 4;
+
+function onboardStep(dir) {
+  _onboardStep += dir;
+  if (_onboardStep >= ONBOARD_TOTAL) { finishOnboarding(); return; }
+  if (_onboardStep < 0) _onboardStep = 0;
+  updateOnboardingUI();
+}
+
+function updateOnboardingUI() {
+  document.querySelectorAll('.onboarding-step').forEach(el => {
+    el.classList.toggle('active', parseInt(el.dataset.step) === _onboardStep);
+  });
+  const back = document.getElementById('ob-back');
+  const next = document.getElementById('ob-next');
+  const dots = document.getElementById('ob-dots');
+  if (back) back.style.visibility = _onboardStep > 0 ? 'visible' : 'hidden';
+  if (next) next.textContent = _onboardStep === ONBOARD_TOTAL - 1 ? 'Start Chatting' : (_onboardStep === 0 ? 'Get Started' : 'Next');
+  if (dots) dots.innerHTML = Array.from({ length: ONBOARD_TOTAL }, (_, i) => `<span class="ob-dot${i === _onboardStep ? ' active' : ''}"></span>`).join('');
+}
+
+function selectOnboardProvider(provider) {
+  _onboardProvider = provider;
+  document.querySelectorAll('.onboarding-option').forEach(b => b.classList.remove('selected'));
+  event.currentTarget.classList.add('selected');
+}
+
+function selectOnboardVoice(enabled) {
+  document.querySelectorAll('[data-step="2"] .onboarding-option').forEach(b => b.classList.remove('selected'));
+  event.currentTarget.classList.add('selected');
+}
+
+function finishOnboarding() {
+  localStorage.setItem('sax_onboarded', '1');
+  if (_onboardProvider) {
+    const defaults = { codex: 'gpt-5.3-codex', anthropic: 'claude-sonnet-4-20250514', xai: 'grok-3-mini', local: '' };
+    const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    s.provider = _onboardProvider;
+    if (defaults[_onboardProvider]) s.model = defaults[_onboardProvider];
+    localStorage.setItem('sax_settings', JSON.stringify(s));
+    apiPost('/api/settings', { provider: s.provider, model: s.model }).catch(() => {});
+  }
+  const overlay = document.getElementById('onboarding-overlay');
+  if (overlay) overlay.remove();
+  newChat();
+}
 
 // ── Auto-init ──
 // Call init_settings when the script loads (fixes integrations not loading)
 if (document.getElementById('integrations-list')) {
   init_settings();
+}
+
+// Show onboarding on first run
+if (shouldShowOnboarding()) {
+  setTimeout(showOnboarding, 500);
 }
 

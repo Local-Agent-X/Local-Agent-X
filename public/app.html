@@ -9,10 +9,16 @@
 </head>
 <body>
 
+<!-- Skip to content link (accessibility feature 100) -->
+<a href="#main" class="skip-to-content" id="skip-link">Skip to main content</a>
+
+<!-- Mobile hamburger (feature 95) -->
+<button id="mobile-menu-btn" class="mobile-only" onclick="toggleMobileSidebar()" aria-label="Toggle sidebar menu">&#9776;</button>
+
 <!-- ═══ SIDEBAR (persists across all pages) ═══ -->
-<div id="sidebar">
+<div id="sidebar" role="navigation" aria-label="Sidebar navigation">
   <div id="sidebar-header">
-    <span id="logo" onclick="navigate('chat')">Agent X</span>
+    <span id="logo" onclick="navigate('chat')" role="button" tabindex="0" aria-label="Go to chat">Agent X</span>
     <button id="new-chat-btn" onclick="newChat()">+ New Chat</button>
   </div>
 
@@ -24,54 +30,69 @@
     <div id="project-list"></div>
   </div>
 
-  <div id="chats-section">
+  <!-- Chat search (feature 87) -->
+  <div id="chat-search-bar">
+    <input id="chat-search-input" type="search" placeholder="Search chats..." oninput="onChatSearch(this.value)" aria-label="Search conversations" autocomplete="off" />
+  </div>
+
+  <div id="chats-section" role="list" aria-label="Chat list">
     <div id="wa-chats-section" style="display:none">
       <div id="wa-chats-header" class="section-header" style="padding:8px 12px 4px"><span>WhatsApp</span></div>
       <div id="wa-chat-list"></div>
     </div>
+    <div id="tg-chats-section" style="display:none">
+      <div class="section-header" style="padding:8px 12px 4px"><span>Telegram</span></div>
+      <div id="tg-chat-list"></div>
+    </div>
     <div id="chats-header" style="padding:8px 12px 4px;font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px">Conversations</div>
-    <div id="chat-list"></div>
+    <div id="chat-list" role="listbox" aria-label="Conversations"></div>
   </div>
 
-  <div id="utility-bar">
-    <button class="util-btn" data-route="cron" onclick="navigate('cron')"><span class="util-icon">&#9200;</span> Cron</button>
-    <button class="util-btn" data-route="secrets" onclick="navigate('secrets')"><span class="util-icon">&#128273;</span> Secrets</button>
-    <button class="util-btn" data-route="settings" onclick="navigate('settings')"><span class="util-icon">&#9881;</span> Settings</button>
+  <div id="utility-bar" role="toolbar" aria-label="Navigation">
+    <button class="util-btn" data-route="cron" onclick="navigate('cron')" aria-label="Cron jobs"><span class="util-icon">&#9200;</span> Cron</button>
+    <button class="util-btn" data-route="secrets" onclick="navigate('secrets')" aria-label="Secrets vault"><span class="util-icon">&#128273;</span> Secrets</button>
+    <button class="util-btn" data-route="settings" onclick="navigate('settings')" aria-label="Settings"><span class="util-icon">&#9881;</span> Settings</button>
   </div>
 
   <div id="sidebar-footer">
-    <span id="auth-dot"></span>
+    <span id="auth-dot" role="status" aria-label="Connection status"></span>
     <span id="auth-label">checking...</span>
-    <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light/dark mode">☀</button>
+    <button id="theme-toggle" onclick="toggleTheme()" title="Toggle theme (dark/light/system)" aria-label="Toggle theme">☀</button>
   </div>
 </div>
 
 <!-- ═══ MAIN CONTENT (swaps based on route) ═══ -->
-<div id="main">
+<div id="main" role="main" aria-label="Main content">
 
   <!-- VOICE INDICATORS (global) -->
-  <div id="voice-indicator"></div>
-  <button id="tts-toggle" onclick="toggleTTS()">VOICE OFF</button>
+  <div id="voice-indicator" role="status" aria-live="polite"></div>
+  <button id="tts-toggle" onclick="toggleTTS()" aria-label="Toggle text-to-speech">VOICE OFF</button>
 
   <!-- ══ CHAT PAGE ══ -->
   <div id="page-chat" class="page active">
-    <div id="messages">
+    <!-- Markdown preview toggle (feature 90) -->
+    <div id="chat-toolbar">
+      <button id="md-toggle-btn" onclick="toggleMdPreview()" title="Show raw markdown" aria-label="Toggle markdown preview">Raw</button>
+    </div>
+    <div id="messages" role="log" aria-label="Chat messages" aria-live="polite">
       <div id="empty"><h2>OPEN AGENT X</h2><p>Select a chat or start a new one.</p></div>
     </div>
     <div id="input-area">
       <div id="context-bar"></div>
-      <input id="file-input" type="file" multiple style="display:none" onchange="handleFileUpload(event)"/>
+      <input id="file-input" type="file" multiple style="display:none" onchange="handleFileUpload(event)" aria-hidden="true"/>
       <div id="input-wrapper">
-        <button id="plus-btn" onclick="triggerUpload()" title="Attach files">+</button>
+        <button id="plus-btn" onclick="triggerUpload()" title="Attach files" aria-label="Attach files">+</button>
         <div id="input-box">
-          <div id="upload-previews"></div>
-          <textarea id="msg-input" placeholder="Message Agent X..." rows="3"
+          <div id="upload-previews" role="list" aria-label="Upload previews"></div>
+          <textarea id="msg-input" placeholder="Message Agent X..." rows="3" aria-label="Message input"
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
         </div>
-        <button id="mic-btn" class="input-btn" onclick="toggleMic()" title="Voice input">&#127908;</button>
-        <button id="stop-btn" onclick="stopChat()" title="Stop agent" style="display:none;background:var(--danger);border-color:var(--danger);color:#fff">&#9632;</button>
-        <button id="send-btn" onclick="sendMessage()">&#9650;</button>
+        <button id="mic-btn" class="input-btn" onclick="toggleMic()" title="Voice input" aria-label="Toggle voice input">&#127908;</button>
+        <button id="stop-btn" onclick="stopChat()" title="Stop agent" aria-label="Stop agent" style="display:none;background:var(--danger);border-color:var(--danger);color:#fff">&#9632;</button>
+        <button id="send-btn" onclick="sendMessage()" aria-label="Send message">&#9650;</button>
       </div>
+      <!-- Status bar (feature 97) -->
+      <div id="status-bar" role="status" aria-label="Status information"></div>
     </div>
   </div>
 
@@ -81,6 +102,9 @@
       <h1 style="font-family:var(--mono);font-size:.9rem;color:var(--accent);letter-spacing:2px">SETTINGS</h1>
       <div style="flex:1"></div>
       <span id="save-status" style="font-family:var(--mono);font-size:.68rem;color:var(--muted)"></span>
+      <!-- Settings import/export (feature 98) -->
+      <button class="action-btn secondary" onclick="exportSettings()" aria-label="Export settings as JSON" title="Export settings">Export</button>
+      <button class="action-btn secondary" onclick="importSettings()" aria-label="Import settings from JSON" title="Import settings">Import</button>
       <button class="action-btn primary" onclick="saveSettings()">SAVE</button>
     </div>
     <div class="settings-tabs">
@@ -248,6 +272,42 @@
           </div>
         </div>
       </div>
+      <!-- Telegram Bot -->
+      <div class="section-card">
+        <div class="section-title">Telegram Bot</div>
+        <div class="section-desc">Chat with your agent via Telegram. Create a bot with @BotFather, paste the token, connect.</div>
+        <div id="tg-status-box" style="margin:16px 0;padding:16px;border:1px solid var(--border);border-radius:8px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <span style="font-size:1.4rem">✈️</span>
+            <div style="flex:1">
+              <div id="tg-state" style="font-family:var(--mono);font-size:.85rem;font-weight:600">Checking...</div>
+              <div id="tg-bot-name" style="font-size:.72rem;color:var(--muted)"></div>
+            </div>
+            <span id="tg-badge" style="font-size:.65rem;padding:3px 10px;border-radius:4px;background:var(--border);color:var(--muted)">...</span>
+          </div>
+          <div id="tg-token-box" style="margin:12px 0">
+            <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">Bot Token</label>
+            <input class="field-input" id="tg-token-input" type="password" placeholder="Paste token from @BotFather" style="width:100%" autocomplete="off"/>
+          </div>
+          <div id="tg-error" style="display:none;color:var(--danger);font-size:.75rem;margin:8px 0"></div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="action-btn primary" id="tg-connect-btn" onclick="tgConnect()">Connect</button>
+            <button class="action-btn" id="tg-disconnect-btn" onclick="tgDisconnect()" style="display:none">Disconnect</button>
+          </div>
+        </div>
+      </div>
+      <div class="section-card">
+        <div class="section-title">Telegram Setup</div>
+        <div style="font-size:.78rem;color:var(--muted);line-height:1.9">
+          <div>1. Message <strong style="color:var(--text)">@BotFather</strong> on Telegram</div>
+          <div>2. Send <strong style="color:var(--text)">/newbot</strong> and follow the prompts</div>
+          <div>3. Copy the bot token and paste it above</div>
+          <div>4. Click <strong style="color:var(--text)">Connect</strong></div>
+          <div>5. <strong style="color:var(--warn)">Immediately message your bot</strong> — the first person to message it becomes the owner. Nobody else will be able to use it after that.</div>
+          <div style="margin-top:6px;color:var(--accent)">Works on multiple devices simultaneously — no conflicts.</div>
+        </div>
+      </div>
+      </div>
       <!-- API Integrations -->
       <div id="stab-integrations" class="tab-pane">
         <div class="section-card">
@@ -414,5 +474,34 @@
 <script src="/js/settings.js"></script>
 <script src="/js/secrets.js"></script>
 <script src="/js/cron.js"></script>
+<script src="/js/shortcuts.js"></script>
+<script>
+// Mobile sidebar toggle (feature 95)
+function toggleMobileSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+  const isOpen = sidebar.classList.toggle('mobile-open');
+  let backdrop = document.getElementById('sidebar-backdrop');
+  if (isOpen && !backdrop) {
+    backdrop = document.createElement('div');
+    backdrop.id = 'sidebar-backdrop';
+    backdrop.onclick = () => { sidebar.classList.remove('mobile-open'); backdrop.remove(); };
+    document.body.appendChild(backdrop);
+  } else if (!isOpen && backdrop) {
+    backdrop.remove();
+  }
+}
+
+// Keyboard navigation for sidebar (feature 100)
+document.addEventListener('keydown', (e) => {
+  // Alt+1-4 for sidebar navigation
+  if (e.altKey && e.key >= '1' && e.key <= '4') {
+    e.preventDefault();
+    const routes = ['chat', 'cron', 'secrets', 'settings'];
+    const idx = parseInt(e.key) - 1;
+    if (routes[idx]) navigate(routes[idx]);
+  }
+});
+</script>
 </body>
 </html>

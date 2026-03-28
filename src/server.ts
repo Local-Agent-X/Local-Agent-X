@@ -32,8 +32,23 @@ import { CronService, createCronTools } from "./cron-service.js";
 import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "./session-policy.js";
 import { imageTools } from "./image-tools.js";
 import { createMissionTools } from "./missions.js";
+import { createAllMissionTools } from "./missions/index.js";
+import { runInjectionTests } from "./security-tests.js";
+import { getThreatDashboard, recordThreatEvent } from "./threat-dashboard.js";
+import { listPolicies, createPolicy, updatePolicy, deletePolicy, evaluateCustomPolicies, exportPolicies } from "./ari-policy-editor.js";
+import { checkEgress, listEgressRules, addEgressRule, removeEgressRule } from "./egress-policy.js";
+import { scanForSecrets, containsSecrets } from "./secret-scanner.js";
+import { recordFileAccess, queryFileAccess, getRecentFileAccess } from "./file-audit.js";
+import { getToolRateLimiter } from "./tool-rate-limiter.js";
+import { queryAuditLog, getAuditSummary } from "./ari-audit-viewer.js";
+import { runBenchmarks } from "./ari-benchmarks.js";
+import { createVoiceRouter } from "./voice-commands.js";
+import { captureFrame, captureAndDescribe } from "./camera-tool.js";
+import { captureScreen } from "./screen-capture.js";
+import { extractText } from "./ocr-tool.js";
 import { IntegrationRegistry } from "./integrations.js";
 import { WhatsAppBridge } from "./whatsapp-bridge.js";
+import { TelegramBridge } from "./telegram-bridge.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 
 // ── Multipart parser ──
@@ -235,88 +250,92 @@ export function startServer(config: SAXConfig) {
   // Initialize API integrations registry
   const integrations = new IntegrationRegistry(dataDir);
 
-  // Initialize WhatsApp bridge (Baileys — QR code scan, no API keys needed)
+  // Shared message handler for all bridges (WhatsApp, Telegram, etc.)
+  async function bridgeMessageHandler(platform: string, { from, name, text, sessionId }: { from: string; name: string; text: string; sessionId: string }): Promise<string> {
+    const { loadTokens } = await import("./auth.js");
+    const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
+
+    let savedProvider: string | null = null;
+    let savedModel: string | null = null;
+    try {
+      const settingsPath = join(dataDir, "settings.json");
+      if (existsSync(settingsPath)) {
+        const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
+        savedProvider = s.provider || null;
+        savedModel = s.model || null;
+      }
+    } catch {}
+
+    let provider: "codex" | "xai" | "openai" | "anthropic" | "local";
+    if (savedProvider && ["codex", "xai", "openai", "anthropic", "local"].includes(savedProvider)) {
+      provider = savedProvider as typeof provider;
+    } else if (loadAnthropicTokens()) {
+      provider = "anthropic";
+    } else if (loadTokens() && !config.openaiApiKey) {
+      provider = "codex";
+    } else {
+      provider = "xai";
+    }
+
+    const { getApiKey } = await import("./auth.js");
+    const apiKey = provider === "local"
+      ? "ollama"
+      : provider === "anthropic"
+      ? await getAnthropicApiKey()
+      : await getApiKey(config.openaiApiKey);
+
+    const session = getOrCreateSession(sessionId);
+    if (session.messages.length === 0) {
+      session.title = `${platform}: ${name}`;
+    }
+
+    const [contextBlock, relevantMemories] = await Promise.all([
+      buildContextBlock(memoryIndex),
+      autoSearchContext(memoryIndex, text),
+    ]);
+
+    const integrationsContext = integrations.getAgentContext();
+    const enrichedPrompt = config.systemPrompt + contextBlock + relevantMemories + integrationsContext +
+      `\n\n[${platform} bridge] This message is from ${name} (${from}) via ${platform}. ` +
+      `Keep responses concise — ${platform} messages should be shorter than web UI responses. ` +
+      `Use plain text (no HTML). Markdown is OK but keep it minimal.`;
+
+    const result = await runAgent(text, session.messages, {
+      apiKey,
+      model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
+      provider,
+      systemPrompt: enrichedPrompt,
+      tools,
+      security,
+      toolPolicy,
+      sessionId,
+      maxIterations: config.maxIterations,
+      temperature: config.temperature,
+    });
+
+    session.messages = result.messages.filter(
+      (m) => m.role !== "system" && (m.content || (m as any).tool_calls)
+    );
+    session.updatedAt = Date.now();
+    saveSession(session);
+
+    return result.messages
+      .filter((m) => m.role === "assistant" && typeof m.content === "string")
+      .map((m) => m.content as string)
+      .pop() || "Done.";
+  }
+
+  // Initialize WhatsApp bridge
   const whatsappBridge = new WhatsAppBridge({
     dataDir,
-    onMessage: async ({ from, name, text, sessionId }) => {
-      // Load provider (same logic as /api/chat)
-      const { loadTokens } = await import("./auth.js");
-      const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
+    onMessage: (params) => bridgeMessageHandler("WhatsApp", params),
+  });
 
-      let savedProvider: string | null = null;
-      let savedModel: string | null = null;
-      try {
-        const settingsPath = join(dataDir, "settings.json");
-        if (existsSync(settingsPath)) {
-          const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
-          savedProvider = s.provider || null;
-          savedModel = s.model || null;
-        }
-      } catch {}
-
-      let provider: "codex" | "xai" | "openai" | "anthropic" | "local";
-      if (savedProvider && ["codex", "xai", "openai", "anthropic", "local"].includes(savedProvider)) {
-        provider = savedProvider as typeof provider;
-      } else if (loadAnthropicTokens()) {
-        provider = "anthropic";
-      } else if (loadTokens() && !config.openaiApiKey) {
-        provider = "codex";
-      } else {
-        provider = "xai";
-      }
-
-      const { getApiKey } = await import("./auth.js");
-      const apiKey = provider === "local"
-        ? "ollama"
-        : provider === "anthropic"
-        ? await getAnthropicApiKey()
-        : await getApiKey(config.openaiApiKey);
-
-      const session = getOrCreateSession(sessionId);
-      if (session.messages.length === 0) {
-        session.title = `WhatsApp: ${name}`;
-      }
-
-      // Build memory context
-      const [contextBlock, relevantMemories] = await Promise.all([
-        buildContextBlock(memoryIndex),
-        autoSearchContext(memoryIndex, text),
-      ]);
-
-      const integrationsContext = integrations.getAgentContext();
-      const enrichedPrompt = config.systemPrompt + contextBlock + relevantMemories + integrationsContext +
-        `\n\n[WhatsApp bridge] This message is from ${name} (${from}) via WhatsApp. ` +
-        `Keep responses concise — WhatsApp messages should be shorter than web UI responses. ` +
-        `Use plain text (no HTML). Markdown is OK but keep it minimal.`;
-
-      const result = await runAgent(text, session.messages, {
-        apiKey,
-        model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
-        provider,
-        systemPrompt: enrichedPrompt,
-        tools,
-        security,
-        toolPolicy,
-        sessionId,
-        maxIterations: config.maxIterations,
-        temperature: config.temperature,
-      });
-
-      // Save session
-      session.messages = result.messages.filter(
-        (m) => m.role !== "system" && (m.content || (m as any).tool_calls)
-      );
-      session.updatedAt = Date.now();
-      saveSession(session);
-
-      // Extract agent's text reply
-      const reply = result.messages
-        .filter((m) => m.role === "assistant" && typeof m.content === "string")
-        .map((m) => m.content as string)
-        .pop() || "Done.";
-
-      return reply;
-    },
+  // Initialize Telegram bridge
+  const telegramBridge = new TelegramBridge({
+    dataDir,
+    getToken: () => secretsStore.get("TELEGRAM_BOT_TOKEN") ?? null,
+    onMessage: (params) => bridgeMessageHandler("Telegram", params),
   });
 
   // Mutable ref so secret tools can emit SSE events during the active request
@@ -339,8 +358,10 @@ export function startServer(config: SAXConfig) {
   const browserTools = createBrowserTools(() => activeBrowserSessionId);
 
   const missionTools = createMissionTools();
+  const extendedMissionTools = createAllMissionTools();
   const cronTools = createCronTools(cronService);
-  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...cronTools];
+  const rateLimiter = getToolRateLimiter();
+  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools];
 
   // In-memory session cache (backed by disk)
   const sessions = new Map<string, Session>();
@@ -669,6 +690,53 @@ export function startServer(config: SAXConfig) {
     }
 
     // ── Voice API ──
+
+    // ── Security & ARI APIs ──
+
+    if (method === "GET" && url.pathname === "/api/security/dashboard") {
+      json(200, getThreatDashboard()); return;
+    }
+    if (method === "GET" && url.pathname === "/api/security/policies") {
+      json(200, listPolicies()); return;
+    }
+    if (method === "POST" && url.pathname === "/api/security/policies") {
+      const body = JSON.parse(await readBody(req));
+      json(200, createPolicy(body)); return;
+    }
+    if (method === "DELETE" && url.pathname.startsWith("/api/security/policies/")) {
+      const id = url.pathname.split("/").pop()!;
+      json(200, { ok: deletePolicy(id) }); return;
+    }
+    if (method === "GET" && url.pathname === "/api/security/egress") {
+      json(200, { rules: listEgressRules() }); return;
+    }
+    if (method === "POST" && url.pathname === "/api/security/egress") {
+      const body = JSON.parse(await readBody(req));
+      json(200, addEgressRule(body.domain, body.action, body.reason)); return;
+    }
+    if (method === "GET" && url.pathname === "/api/security/audit") {
+      const query = Object.fromEntries(url.searchParams.entries());
+      json(200, await queryAuditLog(query)); return;
+    }
+    if (method === "GET" && url.pathname === "/api/security/audit/summary") {
+      json(200, await getAuditSummary()); return;
+    }
+    if (method === "GET" && url.pathname === "/api/security/file-access") {
+      json(200, getRecentFileAccess(50)); return;
+    }
+    if (method === "POST" && url.pathname === "/api/security/scan") {
+      const body = JSON.parse(await readBody(req));
+      const result = scanForSecrets(String(body.text || ""));
+      json(200, result); return;
+    }
+    if (method === "POST" && url.pathname === "/api/security/benchmarks") {
+      const report = await runBenchmarks();
+      json(200, report); return;
+    }
+    if (method === "POST" && url.pathname === "/api/security/injection-tests") {
+      const report = runInjectionTests();
+      json(200, report); return;
+    }
 
     // Get voice capabilities
     if (method === "GET" && url.pathname === "/api/voice/capabilities") {
@@ -1319,6 +1387,42 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── Telegram Bot ──
+
+    if (method === "POST" && url.pathname === "/api/telegram/connect") {
+      try {
+        const result = await telegramBridge.connect();
+        json(200, result);
+      } catch (e) {
+        json(500, { error: (e as Error).message });
+      }
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/telegram/disconnect") {
+      telegramBridge.disconnect();
+      json(200, { ok: true });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/telegram/status") {
+      json(200, telegramBridge.getStatus());
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/telegram/send") {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const { chatId, message: msg } = body;
+        if (!chatId || !msg) { json(400, { error: "chatId and message are required" }); return; }
+        const ok = await telegramBridge.sendMessage(chatId, msg);
+        json(ok ? 200 : 500, { ok });
+      } catch (e) {
+        json(500, { error: (e as Error).message });
+      }
+      return;
+    }
+
     // Chat (SSE streaming)
     if (method === "POST" && url.pathname === "/api/chat") {
       let body: Record<string, unknown>;
@@ -1575,11 +1679,13 @@ export function startServer(config: SAXConfig) {
         clearInterval(heartbeat);
         res.end();
 
-        // WhatsApp bridge: if this is a wa- session and typed from the web UI,
-        // forward the agent's reply to WhatsApp so it shows on the phone
+        // Bridge forwarding: if typed from web UI in a bridge session,
+        // forward the reply to the original platform
         if (sessionId.startsWith("wa-") && assistantReply) {
-          const waPhone = sessionId.slice(3); // "wa-18058146534" → "18058146534"
-          whatsappBridge.sendMessage(waPhone, assistantReply).catch(() => {});
+          whatsappBridge.sendMessage(sessionId.slice(3), assistantReply).catch(() => {});
+        }
+        if (sessionId.startsWith("tg-") && assistantReply) {
+          telegramBridge.sendMessage(sessionId.slice(3), assistantReply).catch(() => {});
         }
 
         // Agent Sync: push after chat (background, non-blocking)

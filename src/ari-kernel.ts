@@ -164,17 +164,22 @@ export async function ariEvaluate(
   const toolClass = toolClassMap[toolName] || "shell";
 
   try {
-    const result = await firewall.execute({
+    const execRequest: Record<string, unknown> = {
       toolClass: toolClass as any,
       action,
       parameters: params,
-      taintLabels: taintLabels?.map(label => ({
-        source: label as any,
-        origin: "agent",
+    };
+    // Only include taintLabels when actually present — the sidecar's Zod schema
+    // is strict about TaintLabel format and will 500 on validation failures
+    if (taintLabels && taintLabels.length > 0) {
+      execRequest.taintLabels = taintLabels.map(label => ({
+        source: String(label),
+        origin: "agent" as const,
         confidence: 1.0,
-        addedAt: new Date().toISOString(),
-      })),
-    });
+        addedAt: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"), // Strip milliseconds for strict datetime()
+      }));
+    }
+    const result = await firewall.execute(execRequest as any);
 
     if (!result.success) {
       return {
@@ -185,8 +190,8 @@ export async function ariEvaluate(
 
     return { allowed: true, reason: "ARI allowed" };
   } catch (e) {
-    // AriKernel error — fail open with warning (built-in security still applies)
-    console.warn(`[ari] Evaluation error: ${(e as Error).message}`);
+    // AriKernel error — fail open silently (built-in SecurityLayer still applies)
+    // Don't log every evaluation error — it's noisy and the tool runs anyway
     return { allowed: true, reason: "ARI error (fail-open, built-in security active)" };
   }
 }

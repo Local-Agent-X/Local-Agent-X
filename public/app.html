@@ -69,6 +69,7 @@
   <!-- VOICE INDICATORS (global) -->
   <div id="voice-indicator" role="status" aria-live="polite"></div>
   <button id="tts-toggle" onclick="toggleTTS()" aria-label="Toggle text-to-speech">VOICE OFF</button>
+  <button id="agents-toggle" onclick="toggleAgentFeeds()" aria-label="Toggle agents panel" title="Show/hide agents panel" style="position:fixed;top:8px;right:80px;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-family:var(--mono);font-size:.68rem;color:var(--muted);transition:all .15s">AGENTS <span id="agents-toggle-count" style="color:var(--accent)">0</span></button>
 
   <!-- ══ CHAT PAGE ══ -->
   <div id="page-chat" class="page active">

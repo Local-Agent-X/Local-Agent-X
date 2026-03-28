@@ -25,7 +25,7 @@ import { RBACManager, type Role } from "./rbac.js";
 import { createBrowserTools, closeBrowser } from "./browser-tools.js";
 import { closeAllBrowsers } from "./browser.js";
 import { redactCredentials } from "./security.js";
-import { setupChatWebSocket } from "./chat-ws.js";
+import { setupChatWebSocket, broadcastAll } from "./chat-ws.js";
 import { runSecurityAudit, printAuditReport } from "./security-audit.js";
 import { startAriKernel, isAriActive } from "./ari-kernel.js";
 import { CronService, createCronTools } from "./cron-service.js";
@@ -869,6 +869,20 @@ export function startServer(config: SAXConfig) {
     if (method === "GET" && url.pathname === "/api/voice/capabilities") {
       const { detectCapabilities } = await import("./voice.js");
       json(200, await detectCapabilities());
+      return;
+    }
+
+    // Proxy voice preview from XTTS server (avoids CORS issues)
+    if (method === "GET" && url.pathname.startsWith("/api/voice/preview/")) {
+      const voiceId = url.pathname.split("/").pop();
+      try {
+        const r = await fetch(`http://127.0.0.1:7862/voices/${voiceId}/preview`);
+        if (r.ok && r.body) {
+          const buf = Buffer.from(await r.arrayBuffer());
+          res.writeHead(200, { "Content-Type": "audio/wav", "Content-Length": String(buf.length) });
+          res.end(buf);
+        } else { json(404, { error: "Voice not found" }); }
+      } catch { json(502, { error: "XTTS server not reachable" }); }
       return;
     }
 
@@ -2126,6 +2140,20 @@ export function startServer(config: SAXConfig) {
       eventBus.emit("primal:agent-result", { agentId, result: (e as Error).message, success: false });
       console.error(`[primal] Agent ${agentId} (${role}) failed:`, (e as Error).message);
     }
+  });
+
+  // Forward agent events to WebSocket clients (Mission Control UI)
+  eventBus.on("primal:agent-spawn", (data: any) => {
+    broadcastAll({ type: "agent-spawn", ...data });
+  });
+  eventBus.on("primal:agent-output", (data: any) => {
+    broadcastAll({ type: "agent-output", ...data });
+  });
+  eventBus.on("primal:agent-result", (data: any) => {
+    broadcastAll({ type: "agent-complete", ...data });
+  });
+  eventBus.on("primal:agent-redirect", (data: any) => {
+    broadcastAll({ type: "agent-update", ...data, status: "redirected" });
   });
 
   // Initialize response cache (Task 51)

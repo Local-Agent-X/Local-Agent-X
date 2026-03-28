@@ -187,4 +187,15 @@ function broadcastActiveChats() {
   }
 }
 
+/** Broadcast a message to ALL connected WebSocket clients (for agent events). */
+function broadcastAll(data: Record<string, unknown>) {
+  const payload = JSON.stringify(data);
+  for (const [ws] of clients) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(payload);
+    }
+  }
+}
+
+export { broadcastAll };
 export type ChatWsManager = ReturnType<typeof setupChatWebSocket>;

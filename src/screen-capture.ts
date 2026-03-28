@@ -37,16 +37,27 @@ export interface ScreenCaptureResult {
   capturedAt: string;
 }
 
+/** Validate and coerce a value to a finite number, or throw */
+function safeNum(val: unknown, name: string): number {
+  const n = Number(val);
+  if (!Number.isFinite(n)) throw new Error(`Invalid ${name}: must be a finite number`);
+  return n;
+}
+
 /** Capture the screen using PowerShell + .NET */
 export function captureScreen(options: ScreenCaptureOptions = {}): ScreenCaptureResult {
   const format = options.format ?? "png";
+  if (!/^(png|jpg)$/.test(format)) throw new Error(`Invalid format: ${format}`);
   const outPath = tmpPath(format);
-  const scale = options.scale ?? 1.0;
+  const scale = safeNum(options.scale ?? 1.0, "scale");
 
   let psScript: string;
 
   if (options.region) {
-    const { x, y, width, height } = options.region;
+    const x = safeNum(options.region.x, "region.x");
+    const y = safeNum(options.region.y, "region.y");
+    const width = safeNum(options.region.width, "region.width");
+    const height = safeNum(options.region.height, "region.height");
     psScript = `
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
@@ -57,7 +68,7 @@ $g.CopyFromScreen(${x}, ${y}, 0, 0, [System.Drawing.Size]::new($w, $h))
 $g.Dispose()
 `;
   } else {
-    const monitorIdx = options.monitor ?? 0;
+    const monitorIdx = safeNum(options.monitor ?? 0, "monitor");
     psScript = `
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
@@ -87,7 +98,7 @@ $bmp = $scaled
   }
 
   if (format === "jpg") {
-    const q = options.quality ?? 85;
+    const q = safeNum(options.quality ?? 85, "quality");
     psScript += `
 $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
 $params = New-Object System.Drawing.Imaging.EncoderParameters(1)

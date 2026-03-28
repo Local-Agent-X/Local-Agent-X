@@ -557,7 +557,7 @@ async function runCodexAgentHttp(
     }
 
     const assistantMsg: ChatCompletionMessageParam = { role: "assistant", content: assistantContent || null };
-    if (toolCalls.length > 0) { (assistantMsg as Record<string, unknown>).tool_calls = toolCalls.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } })); }
+    if (toolCalls.length > 0) { (assistantMsg as unknown as Record<string, unknown>).tool_calls = toolCalls.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } })); }
     messages.push(assistantMsg);
 
     if (toolCalls.length === 0) {
@@ -714,7 +714,7 @@ async function runStandardAgent(
       content: assistantContent || null,
     };
     if (toolCalls.length > 0) {
-      (assistantMsg as Record<string, unknown>).tool_calls = toolCalls.map((tc) => ({
+      (assistantMsg as unknown as Record<string, unknown>).tool_calls = toolCalls.map((tc) => ({
         id: tc.id,
         type: "function",
         function: { name: tc.name, arguments: tc.arguments },
@@ -817,7 +817,7 @@ async function runAnthropicAgent(
     // Build assistant message
     const assistantMsg: ChatCompletionMessageParam = { role: "assistant", content: assistantContent || null };
     if (toolCalls.length > 0) {
-      (assistantMsg as Record<string, unknown>).tool_calls = toolCalls.map(tc => ({
+      (assistantMsg as unknown as Record<string, unknown>).tool_calls = toolCalls.map(tc => ({
         id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments },
       }));
     }
@@ -835,7 +835,7 @@ async function runAnthropicAgent(
         name: "build_app",
         arguments: JSON.stringify({ name: appName, prompt: buildPrompt }),
       });
-      (assistantMsg as Record<string, unknown>).tool_calls = toolCalls.map(tc => ({
+      (assistantMsg as unknown as Record<string, unknown>).tool_calls = toolCalls.map(tc => ({
         id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments },
       }));
     }

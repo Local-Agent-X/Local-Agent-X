@@ -381,11 +381,17 @@ export class IntegrationRegistry {
     return true;
   }
 
-  /** Update an integration's config */
+  /** Update an integration's config (only safe fields) */
   updateIntegration(id: string, updates: Partial<IntegrationConfig>): boolean {
     const config = this.integrations.get(id);
     if (!config) return false;
-    Object.assign(config, updates, { id }); // never change the ID
+    // Whitelist updatable fields — prevent overwriting secretName, baseUrl, builtin, endpoints
+    const safeFields = ["enabled", "installed", "name", "description", "icon", "category"] as const;
+    for (const field of safeFields) {
+      if (field in updates) {
+        (config as any)[field] = (updates as any)[field];
+      }
+    }
     this.save();
     return true;
   }

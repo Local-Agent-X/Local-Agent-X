@@ -65,6 +65,8 @@ async function checkAnthropicAuth() {
     const el = document.getElementById('anthropic-auth-status');
     const loginBtn = document.getElementById('btn-anthropic-login');
     const discBtn = document.getElementById('btn-anthropic-disconnect');
+    const cliEl = document.getElementById('claude-cli-status');
+    const cliBtn = document.getElementById('btn-install-claude-cli');
     if (!el) return;
     if (d.authenticated && !d.expired) {
       el.className = 'status-badge ok';
@@ -77,7 +79,38 @@ async function checkAnthropicAuth() {
       if (loginBtn) { loginBtn.textContent = 'Sign In with Claude'; loginBtn.disabled = false; }
       if (discBtn) discBtn.style.display = 'none';
     }
+    // Claude CLI status
+    if (cliEl) {
+      if (d.cliInstalled) {
+        cliEl.className = 'status-badge ok';
+        cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI installed';
+        if (cliBtn) cliBtn.style.display = 'none';
+      } else {
+        cliEl.className = 'status-badge err';
+        cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI not found — required for Claude to work';
+        if (cliBtn) cliBtn.style.display = '';
+      }
+    }
   } catch {}
+}
+
+async function installClaudeCli() {
+  const btn = document.getElementById('btn-install-claude-cli');
+  const cliEl = document.getElementById('claude-cli-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Installing...'; }
+  if (cliEl) { cliEl.className = 'status-badge warn'; cliEl.innerHTML = '<span class="status-dot"></span> Installing Claude CLI via npm... this may take a minute'; }
+  try {
+    const d = await apiPost('/api/auth/anthropic/install-cli', {});
+    if (d.ok) {
+      if (cliEl) { cliEl.className = 'status-badge ok'; cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI installed — ' + (d.version || 'ready'); }
+      if (btn) btn.style.display = 'none';
+    } else {
+      throw new Error(d.error || 'Unknown error');
+    }
+  } catch (e) {
+    if (cliEl) { cliEl.className = 'status-badge err'; cliEl.innerHTML = '<span class="status-dot"></span> Install failed: ' + esc(e.message); }
+    if (btn) { btn.disabled = false; btn.textContent = 'Retry Install'; }
+  }
 }
 
 async function doAnthropicLogin() {
@@ -103,7 +136,7 @@ async function checkServer(type) {
   try {
     const r = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(3000) });
     const d = await r.json();
-    el.className = 'status-badge ok'; el.innerHTML = `<span class="status-dot"></span> Running — ${d.device || 'ready'}`;
+    el.className = 'status-badge ok'; el.innerHTML = `<span class="status-dot"></span> Running — ${esc(d.device || 'ready')}`;
   } catch {
     el.className = 'status-badge err'; el.innerHTML = '<span class="status-dot"></span> Not running';
   }
@@ -123,8 +156,8 @@ async function checkVoiceCaps() {
     const userEngine = saved.ttsEngine || d.tts;
     const userVoice = userEngine === 'xtts' ? (saved.xttsVoice || 'clone') : (saved.ttsVoice || d.ttsVoice);
     const stt = document.getElementById('stt-status'), tts = document.getElementById('tts-status');
-    if (stt) { stt.className = d.stt !== 'none' ? 'status-badge ok' : 'status-badge err'; stt.innerHTML = `<span class="status-dot"></span> ${d.stt !== 'none' ? 'Whisper (' + d.whisperModel + ')' : 'Not available'}`; }
-    if (tts) { tts.className = userEngine !== 'none' ? 'status-badge ok' : 'status-badge err'; tts.innerHTML = `<span class="status-dot"></span> ${userEngine !== 'none' ? userEngine + ' (' + userVoice + ')' : 'Not available'}`; }
+    if (stt) { stt.className = d.stt !== 'none' ? 'status-badge ok' : 'status-badge err'; stt.innerHTML = `<span class="status-dot"></span> ${d.stt !== 'none' ? 'Whisper (' + esc(d.whisperModel) + ')' : 'Not available'}`; }
+    if (tts) { tts.className = userEngine !== 'none' ? 'status-badge ok' : 'status-badge err'; tts.innerHTML = `<span class="status-dot"></span> ${userEngine !== 'none' ? esc(userEngine) + ' (' + esc(userVoice) + ')' : 'Not available'}`; }
   } catch {}
 }
 
@@ -151,9 +184,88 @@ function loadToolsList() {
   }).join('');
 }
 
+// ── API Key management per provider ──
+
+const PROVIDER_KEY_CONFIG = {
+  xai: { label: 'xAI API Key', placeholder: 'xai-...', hint: 'Get your key at console.x.ai', secretName: 'XAI_API_KEY' },
+  openai: { label: 'OpenAI API Key', placeholder: 'sk-...', hint: 'Get your key at platform.openai.com/api-keys', secretName: 'OPENAI_API_KEY' },
+};
+
+function updateApiKeyField(provider) {
+  const field = document.getElementById('api-key-field');
+  const label = document.getElementById('api-key-label');
+  const input = document.getElementById('cfg-api-key');
+  const hint = document.getElementById('api-key-hint');
+  const status = document.getElementById('api-key-status');
+  if (!field) return;
+
+  const config = PROVIDER_KEY_CONFIG[provider];
+  if (!config) {
+    field.style.display = 'none';
+    return;
+  }
+
+  field.style.display = '';
+  if (label) label.textContent = config.label;
+  if (input) input.placeholder = config.placeholder;
+  if (hint) hint.textContent = config.hint;
+  if (status) status.innerHTML = '';
+
+  // Check if key exists in secrets store
+  if (input) {
+    input.value = '';
+    input.dataset.provider = provider;
+    apiJson('/api/secrets').then(secrets => {
+      const exists = Array.isArray(secrets) && secrets.some(s => s.name === config.secretName);
+      if (exists) {
+        input.placeholder = '••••••••  (saved — enter new value to replace)';
+        if (status) { status.className = 'status-badge ok'; status.innerHTML = '<span class="status-dot"></span> Key saved securely'; }
+      }
+    }).catch(() => {});
+  }
+}
+
+function toggleApiKeyVisibility() {
+  const input = document.getElementById('cfg-api-key');
+  const btn = document.getElementById('btn-toggle-key');
+  if (!input) return;
+  if (input.type === 'password') { input.type = 'text'; if (btn) btn.textContent = 'Hide'; }
+  else { input.type = 'password'; if (btn) btn.textContent = 'Show'; }
+}
+
 // ── Provider change → toggle model input vs dropdown ──
 
-async function onProviderChange(provider) {
+const PROVIDER_MODELS = {
+  codex: [
+    { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex (default)' },
+    { value: 'gpt-4.1', label: 'GPT-4.1' },
+    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
+    { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano' },
+    { value: 'o3', label: 'o3' },
+    { value: 'o4-mini', label: 'o4-mini' },
+  ],
+  anthropic: [
+    { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4 (default)' },
+    { value: 'claude-opus-4-20250514', label: 'Claude Opus 4' },
+    { value: 'claude-haiku-4-20250514', label: 'Claude Haiku 4' },
+    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
+  ],
+  xai: [
+    { value: 'grok-3-mini', label: 'Grok 3 Mini (default)' },
+    { value: 'grok-3', label: 'Grok 3' },
+    { value: 'grok-2', label: 'Grok 2' },
+  ],
+  openai: [
+    { value: 'gpt-4o', label: 'GPT-4o (default)' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+    { value: 'gpt-4.1', label: 'GPT-4.1' },
+    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
+    { value: 'o3', label: 'o3' },
+    { value: 'o4-mini', label: 'o4-mini' },
+  ],
+};
+
+async function onProviderChange(provider, keepModel) {
   const modelInput = document.getElementById('cfg-model');
   const modelSelect = document.getElementById('cfg-model-select');
   const hint = document.getElementById('cfg-model-hint');
@@ -167,11 +279,44 @@ async function onProviderChange(provider) {
     if (hint) hint.textContent = 'Showing models downloaded via Ollama. Run "ollama pull <model>" to add more.';
     await loadLocalModels();
   } else {
-    modelInput.style.display = '';
-    modelSelect.style.display = 'none';
+    const models = PROVIDER_MODELS[provider] || [];
+    if (models.length) {
+      modelSelect.style.display = '';
+      modelInput.style.display = 'none';
+      modelSelect.innerHTML = models.map(m => `<option value="${esc(m.value)}">${esc(m.label)}</option>`).join('') +
+        '<option value="__custom__">Custom model...</option>';
+      // Restore saved model if it matches, otherwise use default
+      if (keepModel) {
+        const saved = modelInput.value || modelInput.dataset.saved;
+        const match = models.find(m => m.value === saved);
+        if (match) modelSelect.value = saved;
+        else if (saved && saved !== '__custom__') {
+          // Custom model was saved — show it
+          modelSelect.value = '__custom__';
+          modelInput.style.display = '';
+          modelInput.value = saved;
+        }
+      }
+      modelSelect.onchange = () => {
+        if (modelSelect.value === '__custom__') {
+          modelInput.style.display = '';
+          modelInput.value = '';
+          modelInput.focus();
+        } else {
+          modelInput.style.display = 'none';
+          modelInput.value = modelSelect.value;
+        }
+      };
+      // Sync hidden input with dropdown
+      if (modelSelect.value !== '__custom__') modelInput.value = modelSelect.value;
+    } else {
+      modelSelect.style.display = 'none';
+      modelInput.style.display = '';
+    }
     if (ollamaStatus) ollamaStatus.style.display = 'none';
-    if (hint) hint.textContent = 'Codex: gpt-5.3-codex | Anthropic: claude-sonnet-4-20250514 | xAI: grok-3-mini | OpenAI: gpt-4o';
+    if (hint) hint.textContent = '';
   }
+  updateApiKeyField(provider);
 }
 
 async function loadLocalModels() {
@@ -194,7 +339,7 @@ async function loadLocalModels() {
     }
     sel.innerHTML = models.map(m => {
       const sizeGB = m.size ? (m.size / 1024 / 1024 / 1024).toFixed(1) + ' GB' : '';
-      return `<option value="${m.name}">${m.name}${sizeGB ? ' (' + sizeGB + ')' : ''}</option>`;
+      return `<option value="${esc(m.name)}">${esc(m.name)}${sizeGB ? ' (' + sizeGB + ')' : ''}</option>`;
     }).join('');
     if (statusEl) statusEl.innerHTML = `<span class="status-badge ok"><span class="status-dot"></span> Running — ${models.length} model${models.length > 1 ? 's' : ''} available</span> <button class="btn" onclick="loadLocalModels()" style="padding:4px 10px;font-size:.7rem;margin-left:8px">Refresh</button>`;
     // Restore saved selection
@@ -238,7 +383,8 @@ async function saveSettings() {
   const provider = document.getElementById('cfg-provider')?.value;
   const modelInput = document.getElementById('cfg-model');
   const modelSelect = document.getElementById('cfg-model-select');
-  const model = provider === 'local' ? modelSelect?.value : modelInput?.value;
+  const model = provider === 'local' ? modelSelect?.value :
+    (modelSelect?.value === '__custom__' || modelSelect?.style.display === 'none') ? modelInput?.value : (modelSelect?.value || modelInput?.value);
   const s = {
     provider,
     model,
@@ -251,7 +397,19 @@ async function saveSettings() {
     sandbox: document.getElementById('cfg-sandbox')?.value,
   };
   localStorage.setItem('sax_settings', JSON.stringify(s));
-  // Save provider + model to server (so backend knows which to use)
+  // Save API key to encrypted secrets store (never plain settings.json)
+  const apiKeyInput = document.getElementById('cfg-api-key');
+  const apiKeyStatus = document.getElementById('api-key-status');
+  if (apiKeyInput && apiKeyInput.value && PROVIDER_KEY_CONFIG[provider]) {
+    try {
+      await apiPost('/api/secrets', { name: PROVIDER_KEY_CONFIG[provider].secretName, value: apiKeyInput.value });
+      localStorage.setItem('sax_apikey_' + provider, 'saved'); // flag only, not the actual key
+      if (apiKeyStatus) { apiKeyStatus.className = 'status-badge ok'; apiKeyStatus.innerHTML = '<span class="status-dot"></span> Key saved securely'; }
+    } catch (e) {
+      if (apiKeyStatus) { apiKeyStatus.className = 'status-badge err'; apiKeyStatus.innerHTML = '<span class="status-dot"></span> Failed to save key'; }
+    }
+  }
+  // Save provider + model to server (no API key in settings.json)
   await apiPost('/api/settings', { provider: s.provider, model: s.model, temperature: s.temperature });
   // Also save sync config to server
   await saveSyncConfig();
@@ -264,6 +422,10 @@ function loadSettings() {
     const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
     const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
     set('cfg-provider', s.provider); set('cfg-model', s.model); set('cfg-temperature', s.temperature);
+    // Store saved model and trigger provider change to populate dropdown
+    const modelInput = document.getElementById('cfg-model');
+    if (modelInput && s.model) modelInput.dataset.saved = s.model;
+    if (s.provider) onProviderChange(s.provider, true);
     set('cfg-image-engine', s.imageEngine); set('cfg-stt-engine', s.sttEngine);
     set('cfg-tts-engine', s.ttsEngine); set('cfg-tts-voice', s.ttsVoice); set('cfg-sandbox', s.sandbox);
     set('cfg-xtts-voice', s.xttsVoice);
@@ -326,11 +488,11 @@ async function loadXttsVoices() {
         list.innerHTML = voices.map(v => `
           <div style="display:flex;align-items:center;justify-content:space-between;padding:8px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px">
             <div style="display:flex;align-items:center;gap:8px">
-              <button class="btn" onclick="previewVoice('${v.id}')" title="Preview" style="padding:4px 8px;font-size:.75rem">&#9654;</button>
+              <button class="btn" onclick="previewVoice('${esc(v.id)}')" title="Preview" style="padding:4px 8px;font-size:.75rem">&#9654;</button>
               <span style="font-family:var(--mono);font-size:.8rem">${esc(v.name)}</span>
               <span style="color:var(--muted);font-size:.7rem">${Math.round(v.size/1024)}KB</span>
             </div>
-            <button class="btn" onclick="deleteVoice('${v.id}')" title="Delete" style="padding:4px 8px;font-size:.75rem;color:var(--danger)">&#10005;</button>
+            <button class="btn" onclick="deleteVoice('${esc(v.id)}')" title="Delete" style="padding:4px 8px;font-size:.75rem;color:var(--danger)">&#10005;</button>
           </div>
         `).join('');
       }
@@ -524,7 +686,7 @@ async function startXttsServer() {
 async function previewVoice(voiceId) {
   try {
     // Route through our server to avoid CORS issues with XTTS port
-    const r = await fetch(`/api/voice/preview/${voiceId}?token=${AUTH_TOKEN}`);
+    const r = await fetch(`/api/voice/preview/${voiceId}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     if (!r.ok) {
       // Fallback: try XTTS directly
       const r2 = await fetch(`${XTTS_URL}/voices/${voiceId}/preview`);
@@ -678,7 +840,7 @@ async function loadIntegrations() {
     el.innerHTML = list.map(i => `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:var(--bg2)">
         <div style="display:flex;align-items:center;gap:10px;flex:1">
-          <span style="font-size:1.4rem">${i.icon || '🔌'}</span>
+          <span style="font-size:1.4rem">${esc(i.icon || '🔌')}</span>
           <div>
             <div style="font-family:var(--mono);font-size:.85rem;font-weight:600;color:var(--text)">${esc(i.name)}</div>
             <div style="font-size:.7rem;color:var(--muted);margin-top:2px">${esc(i.description)}</div>
@@ -687,11 +849,11 @@ async function loadIntegrations() {
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:.65rem;padding:3px 8px;border-radius:4px;background:${i.installed ? 'var(--accent)' : 'var(--border)'};color:${i.installed ? '#000' : 'var(--muted)'}">${i.installed ? 'CONNECTED' : 'NOT SET UP'}</span>
           ${i.installed
-            ? `<button class="btn" onclick="testIntegration('${i.id}')" title="Test" style="padding:4px 8px;font-size:.7rem">Test</button>
-               <button class="btn" onclick="uninstallIntegration('${i.id}')" title="Disconnect" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">&#10005;</button>`
-            : `<button class="btn" onclick="showInstallModal('${i.id}')" style="padding:4px 10px;font-size:.7rem;color:var(--accent)" aria-label="Set up ${esc(i.name)}">Set Up ${esc(i.name)}</button>`
+            ? `<button class="btn" onclick="testIntegration('${esc(i.id)}')" title="Test" style="padding:4px 8px;font-size:.7rem">Test</button>
+               <button class="btn" onclick="uninstallIntegration('${esc(i.id)}')" title="Disconnect" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">&#10005;</button>`
+            : `<button class="btn" onclick="showInstallModal('${esc(i.id)}')" style="padding:4px 10px;font-size:.7rem;color:var(--accent)" aria-label="Set up ${esc(i.name)}">Set Up ${esc(i.name)}</button>`
           }
-          ${!i.builtin ? `<button class="btn" onclick="deleteIntegration('${i.id}')" title="Remove" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">🗑</button>` : ''}
+          ${!i.builtin ? `<button class="btn" onclick="deleteIntegration('${esc(i.id)}')" title="Remove" style="padding:4px 8px;font-size:.7rem;color:var(--danger)">🗑</button>` : ''}
         </div>
       </div>
     `).join('');
@@ -703,11 +865,11 @@ async function loadIntegrations() {
 async function showInstallModal(id) {
   try {
     const config = await apiJson('/api/integrations/' + id);
-    const instructions = (config.authInstructions || '').replace(/\n/g, '<br>');
+    const instructions = esc(config.authInstructions || '').replace(/\n/g, '<br>');
     const html = `
       <div id="install-modal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:9999" onclick="if(event.target===this)this.remove()">
         <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:500px;width:90%">
-          <div style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:4px">${config.icon} Set Up ${esc(config.name)}</div>
+          <div style="font-size:1.1rem;font-weight:600;color:var(--text);margin-bottom:4px">${esc(config.icon)} Set Up ${esc(config.name)}</div>
           <div style="font-size:.75rem;color:var(--muted);margin-bottom:16px">${esc(config.description)}</div>
           <div style="font-size:.72rem;color:var(--text);line-height:1.8;margin-bottom:16px;padding:12px;background:var(--bg2);border-radius:8px;border:1px solid var(--border)">
             <div style="color:var(--accent);font-weight:600;margin-bottom:6px">How to get your credentials:</div>

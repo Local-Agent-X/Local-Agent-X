@@ -243,7 +243,7 @@ const bashTool: ToolDefinition = {
         encoding: "utf-8",
         timeout,
         maxBuffer: 1024 * 1024 * 10, // 10MB
-        shell: process.platform === "win32" ? "powershell.exe" : "/bin/bash",
+        shell: process.platform === "win32" ? "cmd.exe" : "/bin/bash",
         env: sanitizedEnv,
         windowsHide: true,
       });

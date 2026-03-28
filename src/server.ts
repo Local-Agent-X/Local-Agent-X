@@ -62,6 +62,7 @@ import { runMigrations } from "./db-migrations.js";
 import { runStartupTests } from "./startup-test.js";
 import { PluginManager } from "./plugin-system.js";
 import { createSwarmTools } from "./swarm/index.js";
+import { createPrimalTools } from "./swarm/primal.js";
 import { EventBus } from "./event-bus.js";
 import { generateFullSpec } from "./api-docs.js";
 import { ConfigWatcher } from "./config-hot-reload.js";
@@ -378,7 +379,8 @@ export function startServer(config: SAXConfig) {
   const cronTools = createCronTools(cronService);
   const rateLimiter = getToolRateLimiter();
   const swarmTools = createSwarmTools();
-  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools];
+  const primalTools = createPrimalTools();
+  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools];
 
   // In-memory session cache (backed by disk)
   const sessions = new Map<string, Session>();

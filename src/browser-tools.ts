@@ -18,15 +18,26 @@ async function dnsPinCheck(url: string): Promise<string | null> {
       return null;
     }
 
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(":")) return null;
+    // Check if an IP is in a private/reserved range (excluding 127.x which is allowed above)
+    function isPrivateIp(ip: string): boolean {
+      const [a, b] = ip.split(".").map(Number);
+      if (a === 10 || a === 0 || a >= 224) return true;
+      if (a === 192 && b === 168) return true;
+      if (a === 172 && b >= 16 && b <= 31) return true;
+      if (a === 169 && b === 254) return true;
+      return false;
+    }
+
+    // For raw IP addresses, validate they're not private/internal
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+      if (isPrivateIp(host)) return `Blocked: ${host} is a private/reserved IP`;
+      return null;
+    }
+    if (host.includes(":")) return null; // IPv6 literal — pass through
+
     const addrs = await dns.resolve4(host).catch(() => [] as string[]);
     for (const ip of addrs) {
-      const [a, b] = ip.split(".").map(Number);
-      // Block private networks (but NOT 127.x — already handled above)
-      if (a === 10 || a === 0 || a >= 224) return `DNS rebinding blocked: ${host} → ${ip}`;
-      if (a === 192 && b === 168) return `DNS rebinding blocked: ${host} → ${ip}`;
-      if (a === 172 && b >= 16 && b <= 31) return `DNS rebinding blocked: ${host} → ${ip}`;
-      if (a === 169 && b === 254) return `DNS rebinding blocked: ${host} → ${ip}`;
+      if (isPrivateIp(ip)) return `DNS rebinding blocked: ${host} → ${ip}`;
     }
   } catch { /* DNS failure ok */ }
   return null;

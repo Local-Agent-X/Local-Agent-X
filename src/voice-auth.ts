@@ -3,7 +3,7 @@
  * Uses MFCC-based embeddings with cosine similarity scoring.
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -78,7 +78,7 @@ with open(sys.argv[2], 'w') as f:
   try {
     writeFileSync(wavPath, audioBuffer);
     writeFileSync(pyPath, script, "utf-8");
-    execSync(`python "${pyPath}" "${wavPath}" "${outPath}"`, { timeout: 15_000, stdio: "ignore" });
+    execFileSync("python", [pyPath, wavPath, outPath], { timeout: 15_000, stdio: "ignore" });
 
     if (existsSync(outPath)) {
       return JSON.parse(readFileSync(outPath, "utf-8"));

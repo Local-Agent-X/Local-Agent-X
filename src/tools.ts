@@ -720,4 +720,6 @@ async function buildWithCodex(prompt: string, appDir: string, appUrl: string): P
   }
 }
 
-export const allTools: ToolDefinition[] = [readTool, writeTool, editTool, bashTool, webFetchTool, viewImageTool, buildAppTool];
+import { youtubeAnalyzeTool } from "./youtube-tool.js";
+
+export const allTools: ToolDefinition[] = [readTool, writeTool, editTool, bashTool, webFetchTool, viewImageTool, buildAppTool, youtubeAnalyzeTool];

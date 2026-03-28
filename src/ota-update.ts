@@ -125,13 +125,16 @@ export class OTAManager {
 
     const buffer = Buffer.from(await response.arrayBuffer());
 
-    if (info.sha256) {
-      const hash = createHash("sha256").update(buffer).digest("hex");
-      if (hash !== info.sha256) {
-        throw new Error(
-          `Checksum mismatch: expected ${info.sha256}, got ${hash}`
-        );
-      }
+    if (!info.sha256) {
+      throw new Error(
+        "Update rejected: no SHA256 checksum available. The release must include a SHA256SUMS asset."
+      );
+    }
+    const hash = createHash("sha256").update(buffer).digest("hex");
+    if (hash !== info.sha256) {
+      throw new Error(
+        `Checksum mismatch: expected ${info.sha256}, got ${hash}`
+      );
     }
 
     const tarPath = join(this.updatesDir, `${info.version}.tar.gz`);

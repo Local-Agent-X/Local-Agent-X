@@ -1,7 +1,13 @@
 import { spawn } from "node:child_process";
+import { resolve, relative } from "node:path";
 import type { ToolCall, ToolResult } from "@arikernel/core";
 import type { ToolExecutor } from "./base.js";
 import { DEFAULT_TIMEOUT_MS, makeResult } from "./base.js";
+
+/** Allowed root for cwd — defaults to process.cwd(), overridden by FILE_EXECUTOR_ROOT */
+function getAllowedCwd(): string {
+	return process.env.FILE_EXECUTOR_ROOT || process.cwd();
+}
 
 /**
  * Shell metacharacters that enable command injection when passed through
@@ -39,6 +45,35 @@ const BLOCKED_EXECUTABLES = new Set([
 	"env",
 	"printenv",
 	"set",
+	// Script interpreters — can execute arbitrary code from files, bypassing metachar checks
+	"python",
+	"python3",
+	"python3.11",
+	"python3.12",
+	"python3.13",
+	"node",
+	"nodejs",
+	"bun",
+	"deno",
+	"perl",
+	"ruby",
+	"lua",
+	"php",
+	"Rscript",
+	// Multi-call binaries that can act as shells
+	"busybox",
+	// Network tools that bypass HTTP SSRF protections
+	"curl",
+	"wget",
+	"nc",
+	"ncat",
+	"netcat",
+	"socat",
+	"ssh",
+	"scp",
+	"sftp",
+	"telnet",
+	"ftp",
 ]);
 
 /**
@@ -141,9 +176,17 @@ export class ShellExecutor implements ToolExecutor {
 
 			validateCommand(executable, args);
 
+			// Validate cwd stays within allowed root
+			const cwd = resolve(params.cwd ?? process.cwd());
+			const allowedRoot = getAllowedCwd();
+			const rel = relative(allowedRoot, cwd);
+			if (rel.startsWith("..") || resolve(cwd) !== cwd) {
+				throw new Error(`cwd must be within ${allowedRoot}. Got: ${params.cwd}`);
+			}
+
 			const { stdout, stderr } = await spawnSafe(executable, args, {
 				timeout: DEFAULT_TIMEOUT_MS,
-				cwd: params.cwd ?? process.cwd(),
+				cwd,
 				maxBuffer: 5 * 1024 * 1024,
 			});
 

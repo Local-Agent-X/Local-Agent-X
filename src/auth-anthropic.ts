@@ -17,6 +17,10 @@ import { homedir } from "node:os";
  * Tokens stored in ~/.sax/anthropic-auth.json
  */
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 const AUTH_URL = "https://claude.ai/oauth/authorize";
 const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const CALLBACK_PORT = 53692;
@@ -147,7 +151,7 @@ export function initiateAnthropicLogin(): { authUrl: string; promise: Promise<vo
 
       if (error) {
         res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(`<html><body><h2>Authentication failed</h2><p>${error}</p><p>You can close this window.</p></body></html>`);
+        res.end(`<html><body><h2>Authentication failed</h2><p>${escapeHtml(String(error))}</p><p>You can close this window.</p></body></html>`);
         server.close();
         reject(new Error(`OAuth error: ${error}`));
         return;
@@ -207,7 +211,7 @@ export function initiateAnthropicLogin(): { authUrl: string; promise: Promise<vo
         resolve();
       } catch (e) {
         res.writeHead(500, { "Content-Type": "text/html" });
-        res.end(`<html><body><h2>Token exchange failed</h2><p>${(e as Error).message}</p></body></html>`);
+        res.end(`<html><body><h2>Token exchange failed</h2><p>${escapeHtml((e as Error).message)}</p></body></html>`);
         server.close();
         reject(e);
       }

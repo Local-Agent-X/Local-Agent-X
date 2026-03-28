@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, join } from "node:path";
 import { promises as dns } from "node:dns";
 import type { ToolDefinition, ToolResult } from "./types.js";
 import { wrapExternalContent, detectInjection } from "./sanitize.js";
@@ -67,7 +67,9 @@ const readTool: ToolDefinition = {
       const shown = slice.length;
       const header = shown < total ? `[Lines ${offset + 1}-${offset + shown} of ${total}]\n` : "";
       // Detect prompt injection patterns in file content
-      const injections = detectInjection(numbered);
+      // Skip for workspace/apps/ files (agent-written code, not external content)
+      const isAgentCode = filePath.replace(/\\/g, "/").includes("workspace/apps/");
+      const injections = isAgentCode ? [] : detectInjection(numbered);
       let warning = "";
       if (injections.length > 0) {
         const maxScore = Math.max(...injections.map(i => i.score));
@@ -99,7 +101,10 @@ const writeTool: ToolDefinition = {
     const filePath = resolve(String(args.path));
     const content = String(args.content);
     // Scan for leaked secrets/credentials in workspace writes
-    const SECRET_PATTERNS = [
+    // Skip for CSS/SVG (false positives on keyframes, animation names, etc.)
+    const ext = filePath.split(".").pop()?.toLowerCase() || "";
+    const skipSecretScan = ["css", "svg"].includes(ext);
+    const SECRET_PATTERNS = skipSecretScan ? [] : [
       /(?:sk|pk|api|key|token|secret|password|auth)[-_]?[a-zA-Z0-9]{20,}/i,
       /ghp_[a-zA-Z0-9]{36}/,        // GitHub PAT
       /gho_[a-zA-Z0-9]{36}/,        // GitHub OAuth
@@ -227,10 +232,25 @@ const bashTool: ToolDefinition = {
       sanitizedEnv[key] = value;
     }
 
+    // Auto-translate common Linux commands to Windows equivalents
+    let cmd = command;
+    if (process.platform === "win32") {
+      // mkdir -p → mkdir (cmd.exe creates parents by default)
+      cmd = cmd.replace(/\bmkdir\s+-p\s+/g, "mkdir ");
+      // ls → dir
+      cmd = cmd.replace(/^ls\b/, "dir");
+      // rm -rf → rmdir /s /q (for directories)
+      cmd = cmd.replace(/\brm\s+-rf?\s+/g, "rmdir /s /q ");
+      // cat → type
+      cmd = cmd.replace(/^cat\b/, "type");
+      // touch → echo. >
+      cmd = cmd.replace(/^touch\s+(.+)$/, "echo. > $1");
+    }
+
     // Use container sandbox if enabled (SAX_SANDBOX=docker)
     const sandboxMode = getSandboxMode();
     if (sandboxMode === "docker") {
-      const result = execInSandbox(command);
+      const result = execInSandbox(cmd);
       if (result.exitCode === 0) {
         return ok(result.stdout || "(no output)");
       }
@@ -239,7 +259,7 @@ const bashTool: ToolDefinition = {
 
     // Host execution (default) — with sanitized environment
     try {
-      const output = execSync(command, {
+      const output = execSync(cmd, {
         encoding: "utf-8",
         timeout,
         maxBuffer: 1024 * 1024 * 10, // 10MB
@@ -545,4 +565,159 @@ const viewImageTool: ToolDefinition = {
   },
 };
 
-export const allTools: ToolDefinition[] = [readTool, writeTool, editTool, bashTool, webFetchTool, viewImageTool];
+// ── Build App (delegates to Claude Code or Codex for multi-file app creation) ──
+
+const buildAppTool: ToolDefinition = {
+  name: "build_app",
+  description: "Build a web app in workspace/apps/. Delegates to Claude Code or Codex for native file writing. Use this for creating or updating apps, websites, games, and multi-file projects. Returns the app URL when done.",
+  parameters: {
+    type: "object",
+    properties: {
+      name: { type: "string", description: "App directory name (e.g. 'marios-numberblocks', 'todo-app')" },
+      prompt: { type: "string", description: "Detailed description of what to build or change. Be specific about features, styling, behavior." },
+      backend: { type: "string", enum: ["claude", "codex", "auto"], description: "Which AI builder to use. 'auto' (default) matches the active chat provider. 'claude' = Claude Code, 'codex' = ChatGPT/Codex" },
+    },
+    required: ["name", "prompt"],
+  },
+  async execute(args) {
+    const appName = String(args.name || "app").replace(/[^a-zA-Z0-9_-]/g, "-");
+    const prompt = String(args.prompt || "");
+    // Auto-detect: match builder to active chat provider
+    let backend = String(args.backend || "auto");
+    if (backend === "auto") {
+      // Check which provider is active from settings
+      try {
+        const settingsPath = join(process.env.HOME || process.env.USERPROFILE || "", ".sax", "settings.json");
+        if (existsSync(settingsPath)) {
+          const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
+          backend = (s.provider === "codex" || s.provider === "openai") ? "codex" : "claude";
+        } else { backend = "claude"; }
+      } catch { backend = "claude"; }
+    }
+    const appDir = resolve("workspace", "apps", appName);
+    const port = process.env.SAX_PORT || "4800";
+    const appUrl = `http://127.0.0.1:${port}/apps/${appName}/index.html`;
+
+    mkdirSync(appDir, { recursive: true });
+
+    // Check if app exists (update vs create)
+    const isUpdate = existsSync(resolve(appDir, "index.html"));
+    const contextFiles: string[] = [];
+    if (isUpdate) {
+      // Read existing project context
+      for (const f of ["PROJECT.md", "TODO.md", "CHANGELOG.md", "index.html"]) {
+        const p = resolve(appDir, f);
+        if (existsSync(p)) {
+          try { contextFiles.push(`=== ${f} ===\n${readFileSync(p, "utf-8").slice(0, 3000)}`); } catch {}
+        }
+      }
+    }
+
+    const context = contextFiles.length > 0
+      ? `\n\nExisting app context:\n${contextFiles.join("\n\n")}`
+      : "";
+
+    const builderPrompt = `You are building a web app in the directory: ${appDir}
+App name: ${appName}
+Task: ${isUpdate ? "UPDATE existing app" : "CREATE new app"}
+${context}
+
+Instructions: ${prompt}
+
+RULES:
+- Write ALL files to ${appDir}/ (use absolute paths)
+- The main entry point MUST be index.html
+- Create PROJECT.md with app description and status
+- For single-page apps: put everything in index.html (inline CSS/JS is fine)
+- Make it look polished — use modern CSS, good colors, responsive design
+- The app will be served at ${appUrl}
+- If using images from the web, use full URLs (https://)
+- Do NOT ask questions — just build it based on the instructions
+- After writing files, output: APP_READY: ${appUrl}`;
+
+    try {
+      if (backend === "codex") {
+        return await buildWithCodex(builderPrompt, appDir, appUrl);
+      }
+      return await buildWithClaude(builderPrompt, appDir, appUrl);
+    } catch (e) {
+      return { content: `Build failed: ${(e as Error).message}`, isError: true };
+    }
+  },
+};
+
+async function buildWithClaude(prompt: string, appDir: string, appUrl: string): Promise<ToolResult> {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+
+  try {
+    // Use stdin for prompt to avoid Windows command line length limits
+    const { spawn: spawnChild } = await import("node:child_process");
+    const stdout = await new Promise<string>((resolve, reject) => {
+      const proc = spawnChild("claude", [
+        "-p",
+        "--model", "claude-sonnet-4-6",
+        "--output-format", "text",
+        "--no-session-persistence",
+        "--max-turns", "25",
+        "--dangerously-skip-permissions",
+        "--tools", "Write,Edit,Read,Bash",
+        "--disallowedTools", "WebFetch,WebSearch",
+      ], {
+        cwd: appDir,
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: process.platform === "win32",
+      });
+      proc.stdin?.write(prompt);
+      proc.stdin?.end();
+      let out = "", errOut = "";
+      proc.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
+      proc.stderr?.on("data", (d: Buffer) => { errOut += d.toString(); });
+      const timer = setTimeout(() => { proc.kill(); reject(new Error("Build timed out after 3 minutes")); }, 180_000);
+      proc.on("close", (code) => { clearTimeout(timer); code === 0 ? resolve(out) : reject(new Error(errOut || `Exit code ${code}`)); });
+    });
+
+    const output = stdout.trim();
+    if (output.includes("APP_READY") || existsSync(resolve(appDir, "index.html"))) {
+      return { content: `App built successfully!\n\nOpen it here: ${appUrl}\n\nBuilder output:\n${output.slice(-500)}` };
+    }
+    return { content: `Builder finished but index.html not found. Output:\n${output.slice(-1000)}`, isError: true };
+  } catch (e) {
+    const errMsg = (e as { stderr?: string; message: string }).stderr || (e as Error).message;
+    // Check if it built files despite the error (timeout, etc.)
+    if (existsSync(resolve(appDir, "index.html"))) {
+      return { content: `App built (with warnings)!\n\nOpen it here: ${appUrl}\n\nWarning: ${errMsg.slice(0, 300)}` };
+    }
+    return { content: `Claude Code build failed: ${errMsg.slice(0, 500)}`, isError: true };
+  }
+}
+
+async function buildWithCodex(prompt: string, appDir: string, appUrl: string): Promise<ToolResult> {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+
+  try {
+    // Use codex CLI if available, otherwise fall back to claude
+    const { stdout } = await execFileAsync("codex", [
+      "--prompt", prompt,
+      "--full-auto",
+    ], {
+      cwd: appDir,
+      timeout: 120_000,
+      windowsHide: true,
+      shell: process.platform === "win32",
+    });
+
+    if (existsSync(resolve(appDir, "index.html"))) {
+      return { content: `App built with Codex!\n\nOpen it here: ${appUrl}\n\n${stdout.slice(-500)}` };
+    }
+    return { content: `Codex finished but index.html not found. Output:\n${stdout.slice(-1000)}`, isError: true };
+  } catch {
+    // Codex CLI not available — fall back to Claude
+    return buildWithClaude(prompt, appDir, appUrl);
+  }
+}
+
+export const allTools: ToolDefinition[] = [readTool, writeTool, editTool, bashTool, webFetchTool, viewImageTool, buildAppTool];

@@ -238,6 +238,14 @@ async function sendMessage() {
             case 'secret_request': if (viewing) showSecretModal(event.name, event.service, event.reason); break;
             case 'context_status': if (viewing) updateContextBar(event); break;
             case 'error': content += '\n\nError: ' + event.message; if (viewing) bodyEl.innerHTML = md(content); break;
+            case 'agent_spawn':
+              if (event.agent) addAgentFeed(event.agent);
+              if (viewing) { var _ac = document.createElement('div'); _ac.innerHTML = renderAgentCard_inline(event.agent); bodyEl.appendChild(_ac.firstChild); }
+              break;
+            case 'agent_status':
+              if (event.agentId) updateAgentFeed(event.agentId, event);
+              if (viewing && event.agent) { var _as = document.createElement('div'); _as.innerHTML = renderAgentCard_inline(event.agent); bodyEl.appendChild(_as.firstChild); }
+              break;
           }
         } catch {}
       }
@@ -1001,5 +1009,226 @@ function formatUptime(ms) {
 const _origUpdateContextBar = updateContextBar;
 window.lastContextStatus = null;
 
+// ── Agent Feeds (Mission Control) ──
+const AGENT_ROLE_ICONS = {
+  researcher: '\uD83D\uDD0D', writer: '\u270D\uFE0F', coder: '\uD83D\uDCBB',
+  reviewer: '\uD83D\uDD0E', 'social-media': '\uD83D\uDCF1', analyst: '\uD83D\uDCCA',
+  monitor: '\uD83D\uDC41\uFE0F', designer: '\uD83C\uDFA8', ops: '\u2699\uFE0F',
+  communicator: '\uD83D\uDCE8'
+};
+let agentFeedsOpen = false;
+let agentFeedsData = {};
+
+function toggleAgentFeeds() {
+  var panel = document.getElementById('agent-feeds');
+  if (!panel) return;
+  agentFeedsOpen = !agentFeedsOpen;
+  if (agentFeedsOpen) {
+    panel.classList.remove('collapsed');
+    panel.classList.add('active');
+    panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9654;';
+  } else {
+    panel.classList.remove('active');
+    panel.classList.add('collapsed');
+    panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9664;';
+  }
+}
+
+function updateAgentFeeds(agents) {
+  if (!agents || !Array.isArray(agents)) return;
+  agentFeedsData = {};
+  for (var i = 0; i < agents.length; i++) {
+    agentFeedsData[agents[i].id] = agents[i];
+  }
+  _renderAgentFeedsList();
+}
+
+function addAgentFeed(agent) {
+  if (!agent || !agent.id) return;
+  agentFeedsData[agent.id] = agent;
+  if (!agentFeedsOpen) toggleAgentFeeds();
+  _renderAgentFeedsList();
+}
+
+function updateAgentFeed(agentId, update) {
+  var existing = agentFeedsData[agentId];
+  if (!existing) {
+    agentFeedsData[agentId] = update;
+    existing = update;
+  } else {
+    if (update.status) existing.status = update.status;
+    if (update.output) {
+      existing.output = (existing.output || '') + update.output;
+    }
+    if (update.name) existing.name = update.name;
+    if (update.role) existing.role = update.role;
+  }
+  var card = document.getElementById('agent-card-' + agentId);
+  if (card) {
+    card.className = 'agent-feed-card ' + (existing.status || 'working');
+    var outputEl = card.querySelector('.agent-feed-output');
+    if (outputEl && existing.output) {
+      outputEl.textContent = existing.output;
+      outputEl.scrollTop = outputEl.scrollHeight;
+    }
+    var statusEl = card.querySelector('.agent-feed-status');
+    if (statusEl) {
+      statusEl.innerHTML = '<span class="agent-status-dot"></span> ' + (existing.status || 'working');
+    }
+  } else {
+    _renderAgentFeedsList();
+  }
+  _updateAgentCount();
+}
+
+function removeAgentFeed(agentId) {
+  delete agentFeedsData[agentId];
+  var card = document.getElementById('agent-card-' + agentId);
+  if (card) card.remove();
+  _updateAgentCount();
+  if (Object.keys(agentFeedsData).length === 0 && agentFeedsOpen) {
+    toggleAgentFeeds();
+  }
+}
+
+function renderAgentCard(agent) {
+  var icon = AGENT_ROLE_ICONS[agent.role] || '\uD83E\uDD16';
+  var status = agent.status || 'working';
+  var output = agent.output || '';
+  var isPaused = status === 'paused';
+  return '<div id="agent-card-' + agent.id + '" class="agent-feed-card ' + status + '">' +
+    '<div class="agent-feed-header">' +
+      '<span class="agent-feed-icon">' + icon + '</span>' +
+      '<span class="agent-feed-name">' + esc(agent.name || agent.id) + '</span>' +
+      '<span class="agent-feed-status"><span class="agent-status-dot"></span> ' + esc(status) + '</span>' +
+    '</div>' +
+    '<div class="agent-feed-output">' + esc(output) + '</div>' +
+    '<div class="agent-feed-controls">' +
+      (isPaused
+        ? '<button class="agent-ctrl-btn" onclick="onAgentResume(\'' + agent.id + '\')">Resume</button>'
+        : '<button class="agent-ctrl-btn" onclick="onAgentPause(\'' + agent.id + '\')">Pause</button>') +
+      '<button class="agent-ctrl-btn" onclick="onAgentRedirect(\'' + agent.id + '\')">Redirect</button>' +
+      '<button class="agent-ctrl-btn cancel" onclick="onAgentCancel(\'' + agent.id + '\')">Cancel</button>' +
+    '</div>' +
+    '<input class="agent-redirect-input" id="agent-redirect-' + agent.id + '" placeholder="New instructions..." ' +
+      'onkeydown="if(event.key===\'Enter\'){sendAgentRedirect(\'' + agent.id + '\',this.value);this.value=\'\';this.classList.remove(\'visible\')}" />' +
+  '</div>';
+}
+
+function renderAgentCard_inline(agent) {
+  var icon = AGENT_ROLE_ICONS[agent.role] || '\uD83E\uDD16';
+  var status = agent.status || 'working';
+  var progress = agent.progress || '';
+  return '<div class="agent-inline-card" onclick="toggleAgentFeeds();var c=document.getElementById(\'agent-card-' + agent.id + '\');if(c)c.scrollIntoView({behavior:\'smooth\'})">' +
+    '<span class="agent-inline-icon">' + icon + '</span>' +
+    '<span class="agent-inline-name">' + esc(agent.name || agent.id) + '</span>' +
+    '<span class="agent-inline-status">' + esc(status) + '</span>' +
+    (progress ? '<span class="agent-inline-progress">' + esc(progress) + '</span>' : '') +
+  '</div>';
+}
+
+function onAgentRedirect(agentId) {
+  var input = document.getElementById('agent-redirect-' + agentId);
+  if (!input) return;
+  var isVisible = input.classList.contains('visible');
+  input.classList.toggle('visible');
+  if (!isVisible) input.focus();
+}
+
+function sendAgentRedirect(agentId, instruction) {
+  if (!instruction || !instruction.trim()) return;
+  var payload = { type: 'agent-redirect', agentId: agentId, instruction: instruction.trim() };
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify(payload));
+  } else {
+    fetch(API + '/api/agents/' + agentId + '/redirect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + AUTH_TOKEN },
+      body: JSON.stringify({ instruction: instruction.trim() })
+    }).catch(function() {});
+  }
+}
+
+function onAgentPause(agentId) {
+  var payload = { type: 'agent-control', agentId: agentId, action: 'pause' };
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify(payload));
+  }
+  updateAgentFeed(agentId, { status: 'waiting' });
+}
+
+function onAgentResume(agentId) {
+  var payload = { type: 'agent-control', agentId: agentId, action: 'resume' };
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify(payload));
+  }
+  updateAgentFeed(agentId, { status: 'working' });
+}
+
+function onAgentCancel(agentId) {
+  var payload = { type: 'agent-control', agentId: agentId, action: 'cancel' };
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify(payload));
+  }
+  updateAgentFeed(agentId, { status: 'done' });
+  setTimeout(function() { removeAgentFeed(agentId); }, 1500);
+}
+
+function _renderAgentFeedsList() {
+  var list = document.getElementById('agent-feeds-list');
+  if (!list) return;
+  var ids = Object.keys(agentFeedsData);
+  if (ids.length === 0) {
+    list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-family:var(--mono);font-size:.72rem">No active agents</div>';
+  } else {
+    list.innerHTML = ids.map(function(id) { return renderAgentCard(agentFeedsData[id]); }).join('');
+  }
+  _updateAgentCount();
+}
+
+function _updateAgentCount() {
+  var el = document.getElementById('agent-count');
+  if (el) el.textContent = Object.keys(agentFeedsData).length;
+}
+
+// WebSocket listener for agent events
+(function initAgentFeedWs() {
+  var origOnMessage = null;
+
+  function hookWs() {
+    if (!chatWs) { setTimeout(hookWs, 2000); return; }
+    if (chatWs._agentHooked) return;
+    chatWs._agentHooked = true;
+    var originalOnMessage = chatWs.onmessage;
+    chatWs.onmessage = function(e) {
+      if (originalOnMessage) originalOnMessage(e);
+      var msg;
+      try { msg = JSON.parse(e.data); } catch(ex) { return; }
+      if (msg.type === 'agent-spawn' && msg.agent) {
+        addAgentFeed(msg.agent);
+      } else if (msg.type === 'agent-update' && msg.agentId) {
+        updateAgentFeed(msg.agentId, msg);
+      } else if (msg.type === 'agent-output' && msg.agentId) {
+        updateAgentFeed(msg.agentId, { output: msg.data });
+      } else if (msg.type === 'agent-complete' && msg.agentId) {
+        updateAgentFeed(msg.agentId, { status: 'done' });
+        setTimeout(function() { removeAgentFeed(msg.agentId); }, 5000);
+      }
+    };
+  }
+
+  // Re-hook whenever WebSocket reconnects
+  var origConnect = window.connectChatWs;
+  if (origConnect) {
+    window.connectChatWs = function() {
+      origConnect();
+      setTimeout(function() {
+        if (chatWs) { chatWs._agentHooked = false; hookWs(); }
+      }, 500);
+    };
+  }
+  hookWs();
+})();
+
 // Init chat on page load
-function init_chat() { renderMessages(); initStatusBar(); }
+function init_chat() { renderMessages(); initStatusBar(); _renderAgentFeedsList(); }

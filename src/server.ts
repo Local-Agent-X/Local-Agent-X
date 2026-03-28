@@ -1352,6 +1352,57 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // Available providers (only those with valid keys/auth configured)
+    if (method === "GET" && url.pathname === "/api/providers") {
+      const { loadTokens } = await import("./auth.js");
+      const { loadAnthropicTokens } = await import("./auth-anthropic.js");
+      const providers: Array<{ id: string; name: string; models: string[]; active: boolean }> = [];
+      // Check each provider
+      const hasOpenAIOAuth = !!loadTokens();
+      const hasAnthropicOAuth = !!loadAnthropicTokens();
+      const hasXaiKey = secretsStore.has("XAI_API_KEY");
+      const hasOpenAIKey = !!config.openaiApiKey || secretsStore.has("OPENAI_API_KEY");
+      let hasOllama = false;
+      try { const r = await fetch("http://127.0.0.1:11434/api/tags"); hasOllama = r.ok; } catch {}
+
+      // Read current provider/model from settings
+      let currentProvider = "xai", currentModel = "grok-3-mini";
+      try {
+        const sp = join(dataDir, "settings.json");
+        if (existsSync(sp)) { const s = JSON.parse(readFileSync(sp, "utf-8")); currentProvider = s.provider || "xai"; currentModel = s.model || ""; }
+      } catch {}
+
+      if (hasOpenAIOAuth) providers.push({ id: "codex", name: "OpenAI Codex", models: ["gpt-5.3-codex", "gpt-4o", "gpt-4o-mini", "o3-pro"], active: currentProvider === "codex" });
+      if (hasAnthropicOAuth) providers.push({ id: "anthropic", name: "Anthropic", models: ["claude-sonnet-4-6", "claude-haiku-4-5"], active: currentProvider === "anthropic" });
+      if (hasXaiKey) providers.push({ id: "xai", name: "xAI Grok", models: ["grok-3-mini", "grok-3", "grok-2"], active: currentProvider === "xai" });
+      if (hasOpenAIKey) providers.push({ id: "openai", name: "OpenAI API", models: ["gpt-4o", "gpt-4o-mini", "o3-pro"], active: currentProvider === "openai" });
+      if (hasOllama) {
+        let ollamaModels: string[] = [];
+        try { const r = await fetch("http://127.0.0.1:11434/api/tags"); const d = await r.json() as any; ollamaModels = (d.models || []).map((m: any) => m.name); } catch {}
+        providers.push({ id: "local", name: "Ollama", models: ollamaModels, active: currentProvider === "local" });
+      }
+      json(200, { providers, current: { provider: currentProvider, model: currentModel } });
+      return;
+    }
+
+    // Switch provider/model on the fly
+    if (method === "POST" && url.pathname === "/api/providers/switch") {
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
+      const provider = String(body.provider || "");
+      const model = String(body.model || "");
+      if (!provider) { json(400, { error: "provider required" }); return; }
+      // Update settings.json
+      const settingsPath = join(dataDir, "settings.json");
+      let settings: Record<string, unknown> = {};
+      try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
+      settings.provider = provider;
+      if (model) settings.model = model;
+      writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+      json(200, { ok: true, provider, model: model || settings.model });
+      return;
+    }
+
     if (method === "GET" && url.pathname === "/api/settings") {
       const settingsPath = join(dataDir, "settings.json");
       try {

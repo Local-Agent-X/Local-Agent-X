@@ -31,7 +31,7 @@ import { startAriKernel, isAriActive } from "./ari-kernel.js";
 import { CronService, createCronTools } from "./cron-service.js";
 import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "./session-policy.js";
 import { imageTools } from "./image-tools.js";
-import { createPlaybookTools } from "./playbooks.js";
+import { createMissionTools } from "./missions.js";
 import { IntegrationRegistry } from "./integrations.js";
 import { WhatsAppBridge } from "./whatsapp-bridge.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
@@ -338,9 +338,9 @@ export function startServer(config: SAXConfig) {
   let activeBrowserSessionId = "default";
   const browserTools = createBrowserTools(() => activeBrowserSessionId);
 
-  const playbookTools = createPlaybookTools();
+  const missionTools = createMissionTools();
   const cronTools = createCronTools(cronService);
-  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...playbookTools, ...cronTools];
+  const tools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...cronTools];
 
   // In-memory session cache (backed by disk)
   const sessions = new Map<string, Session>();

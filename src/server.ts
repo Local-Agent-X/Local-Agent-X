@@ -60,6 +60,10 @@ import { exportSession, importSession } from "./session-export.js";
 import { loadSessionPage, getSessionMessageCount } from "./progressive-loader.js";
 import { runMigrations } from "./db-migrations.js";
 import { runStartupTests } from "./startup-test.js";
+import { PluginManager } from "./plugin-system.js";
+import { EventBus } from "./event-bus.js";
+import { generateFullSpec } from "./api-docs.js";
+import { ConfigWatcher } from "./config-hot-reload.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 
 // ── Multipart parser ──
@@ -818,6 +822,32 @@ export function startServer(config: SAXConfig) {
     if (method === "GET" && url.pathname === "/api/startup-tests") {
       const results = await runStartupTests();
       json(200, { results }); return;
+    }
+
+    // ── Architecture APIs ──
+
+    // API docs (Task 59)
+    if (method === "GET" && url.pathname === "/api/docs") {
+      json(200, generateFullSpec()); return;
+    }
+
+    // Plugins (Task 56)
+    if (method === "GET" && url.pathname === "/api/plugins") {
+      const pm = new PluginManager();
+      json(200, pm.listPlugins()); return;
+    }
+    if (method === "POST" && url.pathname === "/api/plugins/load") {
+      const body = JSON.parse(await readBody(req));
+      const pm = new PluginManager();
+      try {
+        const plugin = await pm.loadPlugin(String(body.path));
+        json(200, { ok: true, plugin }); return;
+      } catch (e) { json(400, { error: (e as Error).message }); return; }
+    }
+    if (method === "POST" && url.pathname === "/api/plugins/unload") {
+      const body = JSON.parse(await readBody(req));
+      const pm = new PluginManager();
+      json(200, { ok: pm.unloadPlugin(String(body.id)) }); return;
     }
 
     // Get voice capabilities
@@ -2000,8 +2030,17 @@ export function startServer(config: SAXConfig) {
   // Run database migrations on startup (Task 54)
   runMigrations(dataDir).catch(e => console.warn("[migrations]", e.message));
 
+  // Initialize event bus (Task 60)
+  const eventBus = EventBus.getInstance();
+
   // Initialize response cache (Task 51)
   const responseCache = new ResponseCache();
+
+  // Config hot-reload (Task 61)
+  const configWatcher = new ConfigWatcher();
+  configWatcher.start(join(dataDir, "config.json"), (newConfig) => {
+    console.log("[config] Hot-reloaded config");
+  });
 
   // WebSocket chat system — enables multi-chat, reconnect, stop button
   const chatWs = setupChatWebSocket(server, config.authToken);

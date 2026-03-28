@@ -417,11 +417,11 @@ async function compactChat() {
       autoScroll();
     } else {
       console.warn('[compact] Not compacted:', data.reason);
-      if (bar) bar.innerHTML = `<span class="ctx-dot yellow"></span><span class="ctx-text">${data.reason || 'Compact failed'}</span>`;
+      if (bar) bar.innerHTML = `<span class="ctx-dot yellow"></span><span class="ctx-text">${esc(data.reason || 'Compact failed')}</span>`;
     }
   } catch (e) {
     console.warn('Compact failed:', e);
-    if (bar) bar.innerHTML = `<span class="ctx-dot red"></span><span class="ctx-text">Compact error: ${e.message}</span>`;
+    if (bar) bar.innerHTML = `<span class="ctx-dot red"></span><span class="ctx-text">Compact error: ${esc(e.message)}</span>`;
   }
   updateContextBar();
 }
@@ -445,9 +445,9 @@ function addMessageEl(role, text, attachments) {
   if (attachments && attachments.length) {
     attachHtml = '<div class="msg-attachments">' + attachments.map(a => {
       if (a.isImage && a.url) {
-        return `<img src="${a.url}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
+        return `<img src="${esc(a.url)}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
       } else if (a.isImage && a.dataUrl) {
-        return `<img src="${a.dataUrl}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
+        return `<img src="${esc(a.dataUrl)}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
       } else if (a.isImage) {
         return `<div class="att-badge"><span>&#128444;</span> ${esc(a.name)}</div>`;
       } else {
@@ -479,7 +479,11 @@ function openLightbox(src) {
     lb.onclick = () => lb.style.display = 'none';
     document.body.appendChild(lb);
   }
-  lb.innerHTML = `<img src="${src}" style="max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 0 40px rgba(0,0,0,.5)"/>`;
+  lb.textContent = '';
+  const img = document.createElement('img');
+  img.src = src;
+  img.style.cssText = 'max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 0 40px rgba(0,0,0,.5)';
+  lb.appendChild(img);
   lb.style.display = 'flex';
 }
 
@@ -947,7 +951,11 @@ function previewImage(index) {
     overlay.onclick = () => overlay.style.display = 'none';
     document.body.appendChild(overlay);
   }
-  overlay.innerHTML = `<img src="${f.dataUrl}" style="max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 0 40px rgba(0,0,0,.5)"/>`;
+  overlay.textContent = '';
+  var prevImg = document.createElement('img');
+  prevImg.src = f.dataUrl;
+  prevImg.style.cssText = 'max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 0 40px rgba(0,0,0,.5)';
+  overlay.appendChild(prevImg);
   overlay.style.display = 'flex';
 }
 
@@ -1059,16 +1067,19 @@ let agentFeedsData = {};
 
 function toggleAgentFeeds() {
   var panel = document.getElementById('agent-feeds');
+  var toggleBtn = document.getElementById('agents-toggle');
   if (!panel) return;
   agentFeedsOpen = !agentFeedsOpen;
   if (agentFeedsOpen) {
     panel.classList.remove('collapsed');
     panel.classList.add('active');
     panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9654;';
+    if (toggleBtn) toggleBtn.style.display = 'none';
   } else {
     panel.classList.remove('active');
     panel.classList.add('collapsed');
     panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9664;';
+    if (toggleBtn) toggleBtn.style.display = '';
   }
 }
 
@@ -1111,7 +1122,7 @@ function updateAgentFeed(agentId, update) {
     }
     var statusEl = card.querySelector('.agent-feed-status');
     if (statusEl) {
-      statusEl.innerHTML = '<span class="agent-status-dot"></span> ' + (existing.status || 'working');
+      statusEl.innerHTML = '<span class="agent-status-dot"></span> ' + esc(existing.status || 'working');
     }
   } else {
     _renderAgentFeedsList();
@@ -1131,7 +1142,8 @@ function renderAgentCard(agent) {
   var status = agent.status || 'working';
   var output = agent.output || '';
   var isPaused = status === 'paused';
-  return '<div id="agent-card-' + agent.id + '" class="agent-feed-card ' + status + '">' +
+  var safeId = esc(agent.id);
+  return '<div id="agent-card-' + safeId + '" class="agent-feed-card ' + status + '">' +
     '<div class="agent-feed-header">' +
       '<span class="agent-feed-icon">' + icon + '</span>' +
       '<span class="agent-feed-name">' + esc(agent.name || agent.id) + '</span>' +
@@ -1140,13 +1152,13 @@ function renderAgentCard(agent) {
     '<div class="agent-feed-output">' + esc(output) + '</div>' +
     '<div class="agent-feed-controls">' +
       (isPaused
-        ? '<button class="agent-ctrl-btn" onclick="onAgentResume(\'' + agent.id + '\')">Resume</button>'
-        : '<button class="agent-ctrl-btn" onclick="onAgentPause(\'' + agent.id + '\')">Pause</button>') +
-      '<button class="agent-ctrl-btn" onclick="onAgentRedirect(\'' + agent.id + '\')">Redirect</button>' +
-      '<button class="agent-ctrl-btn cancel" onclick="onAgentCancel(\'' + agent.id + '\')">Cancel</button>' +
+        ? '<button class="agent-ctrl-btn" onclick="onAgentResume(\'' + safeId + '\')">Resume</button>'
+        : '<button class="agent-ctrl-btn" onclick="onAgentPause(\'' + safeId + '\')">Pause</button>') +
+      '<button class="agent-ctrl-btn" onclick="onAgentRedirect(\'' + safeId + '\')">Redirect</button>' +
+      '<button class="agent-ctrl-btn cancel" onclick="onAgentCancel(\'' + safeId + '\')">Cancel</button>' +
     '</div>' +
-    '<input class="agent-redirect-input" id="agent-redirect-' + agent.id + '" placeholder="New instructions..." ' +
-      'onkeydown="if(event.key===\'Enter\'){sendAgentRedirect(\'' + agent.id + '\',this.value);this.value=\'\';this.classList.remove(\'visible\')}" />' +
+    '<input class="agent-redirect-input" id="agent-redirect-' + safeId + '" placeholder="New instructions..." ' +
+      'onkeydown="if(event.key===\'Enter\'){sendAgentRedirect(\'' + safeId + '\',this.value);this.value=\'\';this.classList.remove(\'visible\')}" />' +
   '</div>';
 }
 
@@ -1154,7 +1166,7 @@ function renderAgentCard_inline(agent) {
   var icon = AGENT_ROLE_ICONS[agent.role] || '\uD83E\uDD16';
   var status = agent.status || 'working';
   var progress = agent.progress || '';
-  return '<div class="agent-inline-card" onclick="toggleAgentFeeds();var c=document.getElementById(\'agent-card-' + agent.id + '\');if(c)c.scrollIntoView({behavior:\'smooth\'})">' +
+  return '<div class="agent-inline-card" onclick="toggleAgentFeeds();var c=document.getElementById(\'agent-card-' + esc(agent.id) + '\');if(c)c.scrollIntoView({behavior:\'smooth\'})">' +
     '<span class="agent-inline-icon">' + icon + '</span>' +
     '<span class="agent-inline-name">' + esc(agent.name || agent.id) + '</span>' +
     '<span class="agent-inline-status">' + esc(status) + '</span>' +
@@ -1253,11 +1265,11 @@ function _updateAgentCount() {
       } else if (msg.type === 'agent-output' && msg.agentId) {
         updateAgentFeed(msg.agentId, { output: msg.output });
       } else if (msg.type === 'agent-complete' && msg.agentId) {
-        updateAgentFeed(msg.agentId, { status: msg.success ? 'done' : 'error', output: msg.result ? '[Result] ' + msg.result.slice(0, 200) : '' });
+        updateAgentFeed(msg.agentId, { status: msg.success ? 'done' : 'error', output: msg.result ? '[Result] ' + msg.result.slice(0, 500) : '' });
         // Inject completion as a clean markdown message and persist it
         var statusIcon = msg.success ? '✅' : '❌';
         var statusText = msg.success ? 'completed' : 'failed';
-        var resultPreview = msg.result ? msg.result.slice(0, 500) : 'No output';
+        var resultPreview = msg.result || 'No output';
         var agentMsg = statusIcon + ' **Agent ' + statusText + '**\n\n' + resultPreview;
         addMessageEl('assistant', agentMsg);
         if (activeChat) {
@@ -1511,7 +1523,7 @@ async function detectMood(text) {
       el.className = data.mood;
       el.id = 'mood-indicator';
       const icons = { positive: '&#9786;', negative: '&#9785;', urgent: '&#9888;' };
-      el.innerHTML = `${icons[data.mood] || ''} ${data.mood}${data.tone !== 'balanced' ? ' &middot; ' + data.tone : ''}`;
+      el.innerHTML = `${icons[data.mood] || ''} ${esc(data.mood)}${data.tone !== 'balanced' ? ' &middot; ' + esc(data.tone) : ''}`;
       el.title = data.styleHint || `Detected mood: ${data.mood}`;
       // Auto-hide after 30 seconds
       setTimeout(() => { el.style.display = 'none'; }, 30000);

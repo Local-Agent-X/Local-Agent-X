@@ -7,7 +7,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
+
+/** Validate OCR language code: only allow safe chars like 'eng', 'eng+fra' */
+function validateLang(lang: string): string {
+  if (!/^[a-zA-Z0-9_+.-]+$/.test(lang)) {
+    throw new Error(`Invalid OCR language code: ${lang}`);
+  }
+  return lang;
+}
 
 const TMP_DIR = join(homedir(), ".sax", "voice-tmp");
 const TESS_DIR = join(homedir(), ".sax", "tesseract");
@@ -47,7 +55,7 @@ export async function recognizeText(
   options: OCROptions = {},
 ): Promise<OCRResult> {
   const start = Date.now();
-  const lang = options.language ?? "eng";
+  const lang = validateLang(options.language ?? "eng");
   const psm = options.psm ?? 3;
 
   // Write image to temp file if buffer
@@ -66,16 +74,17 @@ export async function recognizeText(
   const scriptPath = tmpPath("mjs");
 
   // Generate a Node.js script that uses Tesseract.js
+  // Use JSON.stringify to safely escape all interpolated values
   const script = `
 import Tesseract from 'tesseract.js';
 import { writeFileSync } from 'fs';
 
 const result = await Tesseract.recognize(
-  '${imagePath.replace(/\\/g, "/")}',
-  '${lang}',
+  ${JSON.stringify(imagePath.replace(/\\/g, "/"))},
+  ${JSON.stringify(lang)},
   {
     logger: () => {},
-    cachePath: '${TESS_DIR.replace(/\\/g, "/")}',
+    cachePath: ${JSON.stringify(TESS_DIR.replace(/\\/g, "/"))},
   }
 );
 
@@ -91,7 +100,7 @@ const output = {
   words,
 };
 
-writeFileSync('${outPath.replace(/\\/g, "/")}', JSON.stringify(output));
+writeFileSync(${JSON.stringify(outPath.replace(/\\/g, "/"))}, JSON.stringify(output));
 `.trim();
 
   try {
@@ -132,8 +141,11 @@ export function recognizeTextNative(
   options: OCROptions = {},
 ): OCRResult {
   const start = Date.now();
-  const lang = options.language ?? "eng";
+  const lang = validateLang(options.language ?? "eng");
   const psm = options.psm ?? 3;
+  if (!Number.isInteger(psm) || psm < 0 || psm > 13) {
+    throw new Error(`Invalid PSM value: ${psm}`);
+  }
 
   let imagePath: string;
   let tempImage = false;
@@ -149,10 +161,10 @@ export function recognizeTextNative(
   const outBase = tmpPath("txt").replace(".txt", "");
 
   try {
-    execSync(
-      `tesseract "${imagePath}" "${outBase}" -l ${lang} --psm ${psm} --oem 3`,
-      { timeout: 30_000, stdio: "ignore" },
-    );
+    execFileSync("tesseract", [imagePath, outBase, "-l", lang, "--psm", String(psm), "--oem", "3"], {
+      timeout: 30_000,
+      stdio: "ignore",
+    });
 
     const textPath = outBase + ".txt";
     const text = existsSync(textPath) ? readFileSync(textPath, "utf-8").trim() : "";

@@ -16,5 +16,6 @@ Thumbs.db
 
 # Workspace — personal files, agent-built apps, generated content
 # These sync via the brain/memory repo, not the code repo
-workspace/
+workspace/*
+!workspace/.gitkeep
 index.html

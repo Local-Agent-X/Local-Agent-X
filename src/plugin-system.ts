@@ -1,7 +1,7 @@
 // ── Plugin System ── Load/unload capability modules dynamically
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
 
@@ -67,7 +67,15 @@ export class PluginManager {
   private loaded = new Map<string, LoadedPlugin>();
 
   async loadPlugin(pluginPath: string): Promise<PluginManifest> {
-    const manifestPath = join(pluginPath, "manifest.json");
+    // Security: restrict plugins to the designated plugins directory
+    const resolvedPath = resolve(pluginPath);
+    const realPluginsDir = realpathSync(PLUGINS_DIR);
+    const rel = relative(realPluginsDir, resolvedPath);
+    if (rel.startsWith("..") || relative(realPluginsDir, resolvedPath) !== rel) {
+      throw new Error(`Plugin path must be within ${PLUGINS_DIR}. Got: ${pluginPath}`);
+    }
+
+    const manifestPath = join(resolvedPath, "manifest.json");
     if (!existsSync(manifestPath)) {
       throw new Error(`No manifest.json found at ${pluginPath}`);
     }

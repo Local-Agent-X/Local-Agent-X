@@ -240,14 +240,19 @@ export async function startOAuthLogin(): Promise<OAuthTokens> {
 
   console.log(`\n[auth] Open this URL in your browser:\n\n  ${authUrl}\n`);
 
-  const { exec } = await import("node:child_process");
+  const { execFile } = await import("node:child_process");
   const openCmd =
     process.platform === "win32"
       ? "start"
       : process.platform === "darwin"
         ? "open"
         : "xdg-open";
-  exec(`${openCmd} "${authUrl}"`);
+  if (process.platform === "win32") {
+    // 'start' is a cmd builtin, needs shell — but URL is safe (built from constants + PKCE)
+    execFile("cmd", ["/c", "start", "", authUrl]);
+  } else {
+    execFile(openCmd, [authUrl]);
+  }
 
   return promise;
 }

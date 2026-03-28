@@ -841,7 +841,7 @@ function loadSettings() {
 }
 
 // ── Sidebar (shared data from localStorage) ──
-function esc(s){ const d=document.createElement('div');d.textContent=String(s||'');return d.innerHTML; }
+function esc(s){ const d=document.createElement('div');d.textContent=String(s||'');return d.innerHTML.replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
 
 let chats = [];
 let projects = [];

@@ -58,7 +58,7 @@ function uid() { return Date.now().toString(36) + '-' + Math.random().toString(3
 function esc(s) {
   const d = document.createElement('div');
   d.textContent = String(s || '');
-  return d.innerHTML;
+  return d.innerHTML.replace(/'/g, '&#39;').replace(/"/g, '&quot;');
 }
 
 // URL sanitizer — strips javascript: URIs, data: URIs, and event handler injections

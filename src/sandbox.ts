@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 
 /**
  * Container Sandbox for Shell Execution
@@ -91,7 +91,8 @@ export function execInSandbox(
   args.push("/bin/sh", "-c", command);
 
   try {
-    const stdout = execSync(args.join(" "), {
+    const [cmd, ...cmdArgs] = args;
+    const stdout = execFileSync(cmd, cmdArgs, {
       encoding: "utf-8",
       timeout: 120_000,
       maxBuffer: 1024 * 1024 * 10,

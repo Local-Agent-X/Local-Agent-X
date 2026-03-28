@@ -27,11 +27,11 @@ export interface PageResult {
 const DEFAULT_PAGE_SIZE = 50;
 
 function resolveSessionPath(sessionId: string): string {
-  // Support both direct paths and session directory lookup
-  if (existsSync(sessionId)) return sessionId;
+  // Sanitize sessionId to prevent path traversal
+  const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, "_");
   const candidates = [
-    sessionId,
-    join(sessionId + ".json"),
+    safeId,
+    safeId + ".json",
   ];
   for (const c of candidates) {
     if (existsSync(c)) return c;

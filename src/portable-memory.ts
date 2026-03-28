@@ -170,7 +170,12 @@ export function importMemoryJsonLD(data: unknown, memoryDir: string): number {
   let written = 0;
   for (const node of validated) {
     const ext = node.sourceFormat ? `.${node.sourceFormat}` : ".md";
-    const fileName = node["@id"].includes(".") ? node["@id"] : `${node["@id"]}${ext}`;
+    const rawName = node["@id"].includes(".") ? node["@id"] : `${node["@id"]}${ext}`;
+    // Security: prevent path traversal via @id or sourceFormat
+    const fileName = basename(rawName);
+    if (fileName !== rawName || fileName.includes("..")) {
+      throw new Error(`Unsafe @id in memory node: ${node["@id"]}`);
+    }
     const filePath = join(memoryDir, fileName);
     writeFileSync(filePath, node.content, "utf-8");
     written++;

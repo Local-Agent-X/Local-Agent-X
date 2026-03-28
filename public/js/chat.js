@@ -1017,29 +1017,96 @@ Object.defineProperty(window, 'chatWs', {
 // ── Status bar (feature 97) ──
 let serverStartTime = Date.now();
 
+let _providersCache = null;
+let _providersCacheTime = 0;
+
 function initStatusBar() {
   const bar = document.getElementById('status-bar');
   if (!bar) return;
-  updateStatusBar();
-  setInterval(updateStatusBar, 10000); // Update every 10s
-  // Fetch server uptime once
+  loadProviders().then(() => updateStatusBar());
+  setInterval(updateStatusBar, 10000);
   apiFetch('/api/auth/status').then(r => r.json()).then(d => {
     if (d.uptime) serverStartTime = Date.now() - (d.uptime * 1000);
   }).catch(() => {});
 }
 
+async function loadProviders() {
+  if (_providersCache && Date.now() - _providersCacheTime < 30000) return _providersCache;
+  try {
+    const res = await apiFetch('/api/providers');
+    const data = await res.json();
+    _providersCache = data;
+    _providersCacheTime = Date.now();
+    return data;
+  } catch { return null; }
+}
+
 function updateStatusBar() {
   const bar = document.getElementById('status-bar');
   if (!bar) return;
-  let model = '—';
-  try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); model = s.model || s.provider || '—'; } catch {}
   const uptime = formatUptime(Date.now() - serverStartTime);
   const tokenInfo = window.lastContextStatus ? `${(window.lastContextStatus.usedTokens / 1000).toFixed(0)}K tokens` : '—';
+  const data = _providersCache;
+  const currentProvider = data?.current?.provider || '—';
+  const currentModel = data?.current?.model || '—';
+  const providers = data?.providers || [];
+  const activeP = providers.find(p => p.active) || providers[0];
+  const providerName = activeP?.name || currentProvider;
+
+  // Build provider dropdown options
+  const providerOpts = providers.map(p =>
+    `<option value="${esc(p.id)}" ${p.active ? 'selected' : ''}>${esc(p.name)}</option>`
+  ).join('');
+
+  // Build model dropdown for active provider
+  const modelOpts = activeP ? activeP.models.map(m =>
+    `<option value="${esc(m)}" ${m === currentModel ? 'selected' : ''}>${esc(m)}</option>`
+  ).join('') : `<option value="${esc(currentModel)}">${esc(currentModel)}</option>`;
+
   bar.innerHTML = `
-    <span class="status-item" aria-label="Active model"><span class="status-icon">&#9881;</span> ${esc(model)}</span>
+    <span class="status-item status-selector" aria-label="Provider">
+      <select id="provider-quick-select" class="status-select" onchange="quickSwitchProvider(this.value)" title="Switch provider">${providerOpts}</select>
+    </span>
+    <span class="status-item status-selector" aria-label="Model">
+      <select id="model-quick-select" class="status-select" onchange="quickSwitchModel(this.value)" title="Switch model">${modelOpts}</select>
+    </span>
     <span class="status-item" aria-label="Token usage"><span class="status-icon">&#9998;</span> ${tokenInfo}</span>
     <span class="status-item" aria-label="Server uptime"><span class="status-icon">&#9200;</span> ${uptime}</span>
   `;
+}
+
+async function quickSwitchProvider(providerId) {
+  const data = _providersCache;
+  const provider = data?.providers?.find(p => p.id === providerId);
+  const model = provider ? provider.models[0] : '';
+  try {
+    await apiFetch('/api/providers/switch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: providerId, model }),
+    });
+    // Update local settings cache too
+    try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); s.provider = providerId; s.model = model; localStorage.setItem('sax_settings', JSON.stringify(s)); } catch {}
+    _providersCacheTime = 0; // Force refresh
+    await loadProviders();
+    updateStatusBar();
+  } catch (e) { console.warn('[provider] Switch failed:', e); }
+}
+
+async function quickSwitchModel(model) {
+  const providerSel = document.getElementById('provider-quick-select');
+  const provider = providerSel ? providerSel.value : '';
+  try {
+    await apiFetch('/api/providers/switch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, model }),
+    });
+    try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); s.model = model; localStorage.setItem('sax_settings', JSON.stringify(s)); } catch {}
+    _providersCacheTime = 0;
+    await loadProviders();
+    updateStatusBar();
+  } catch (e) { console.warn('[model] Switch failed:', e); }
 }
 
 function formatUptime(ms) {

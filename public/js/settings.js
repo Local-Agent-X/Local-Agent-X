@@ -118,9 +118,13 @@ async function startServer(type) {
 async function checkVoiceCaps() {
   try {
     const d = await apiJson('/api/voice/capabilities');
+    // Override with user's saved preference (capabilities shows auto-detected, but user may have chosen differently)
+    const saved = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    const userEngine = saved.ttsEngine || d.tts;
+    const userVoice = userEngine === 'xtts' ? (saved.xttsVoice || 'clone') : (saved.ttsVoice || d.ttsVoice);
     const stt = document.getElementById('stt-status'), tts = document.getElementById('tts-status');
     if (stt) { stt.className = d.stt !== 'none' ? 'status-badge ok' : 'status-badge err'; stt.innerHTML = `<span class="status-dot"></span> ${d.stt !== 'none' ? 'Whisper (' + d.whisperModel + ')' : 'Not available'}`; }
-    if (tts) { tts.className = d.tts !== 'none' ? 'status-badge ok' : 'status-badge err'; tts.innerHTML = `<span class="status-dot"></span> ${d.tts !== 'none' ? d.tts + ' (' + d.ttsVoice + ')' : 'Not available'}`; }
+    if (tts) { tts.className = userEngine !== 'none' ? 'status-badge ok' : 'status-badge err'; tts.innerHTML = `<span class="status-dot"></span> ${userEngine !== 'none' ? userEngine + ' (' + userVoice + ')' : 'Not available'}`; }
   } catch {}
 }
 
@@ -330,11 +334,93 @@ async function loadXttsVoices() {
   }
 }
 
+/** Convert WebM/Opus blob to WAV blob using Web Audio API */
+async function webmToWav(webmBlob) {
+  const arrayBuf = await webmBlob.arrayBuffer();
+  const actx = new OfflineAudioContext(1, 1, 44100);
+  let audioBuf;
+  try {
+    audioBuf = await actx.decodeAudioData(arrayBuf);
+  } catch {
+    // If decode fails, return original blob
+    return webmBlob;
+  }
+  const numCh = audioBuf.numberOfChannels;
+  const length = audioBuf.length;
+  const sampleRate = audioBuf.sampleRate;
+  const bytesPerSample = 2; // 16-bit PCM
+  const dataSize = length * numCh * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  // WAV header
+  const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+  writeStr(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); writeStr(8, 'WAVE');
+  writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, numCh, true); view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numCh * bytesPerSample, true);
+  view.setUint16(32, numCh * bytesPerSample, true); view.setUint16(34, 16, true);
+  writeStr(36, 'data'); view.setUint32(40, dataSize, true);
+  // PCM samples
+  let offset = 44;
+  const channels = [];
+  for (let ch = 0; ch < numCh; ch++) channels.push(audioBuf.getChannelData(ch));
+  for (let i = 0; i < length; i++) {
+    for (let ch = 0; ch < numCh; ch++) {
+      const s = Math.max(-1, Math.min(1, channels[ch][i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      offset += 2;
+    }
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+let _vizAnimFrame = null;
+let _vizCtx = null;
+let _vizAnalyser = null;
+
+function startVisualizer(stream) {
+  const canvas = document.getElementById('voice-visualizer');
+  if (!canvas) return;
+  canvas.style.display = 'block';
+  _vizCtx = canvas.getContext('2d');
+  const actx = new AudioContext();
+  const src = actx.createMediaStreamSource(stream);
+  _vizAnalyser = actx.createAnalyser();
+  _vizAnalyser.fftSize = 64;
+  src.connect(_vizAnalyser);
+  const data = new Uint8Array(_vizAnalyser.frequencyBinCount);
+  function draw() {
+    _vizAnimFrame = requestAnimationFrame(draw);
+    _vizAnalyser.getByteFrequencyData(data);
+    const w = canvas.width, h = canvas.height;
+    _vizCtx.clearRect(0, 0, w, h);
+    const bars = 16;
+    const barW = (w / bars) - 2;
+    for (let i = 0; i < bars; i++) {
+      const v = data[i] / 255;
+      const barH = Math.max(2, v * h);
+      const x = i * (barW + 2);
+      const hue = 120 + i * 8;
+      _vizCtx.fillStyle = `hsl(${hue}, 80%, ${50 + v * 20}%)`;
+      _vizCtx.fillRect(x, h - barH, barW, barH);
+    }
+  }
+  draw();
+}
+
+function stopVisualizer() {
+  if (_vizAnimFrame) cancelAnimationFrame(_vizAnimFrame);
+  _vizAnimFrame = null;
+  const canvas = document.getElementById('voice-visualizer');
+  if (canvas) { canvas.style.display = 'none'; }
+}
+
 async function toggleVoiceRecording() {
   const btn = document.getElementById('record-voice-btn');
   const status = document.getElementById('record-status');
   if (_voiceRecorder && _voiceRecorder.state === 'recording') {
     _voiceRecorder.stop();
+    stopVisualizer();
     btn.textContent = '\u{1F3A4} Record';
     btn.style.borderColor = '';
     if (status) status.textContent = 'Processing...';
@@ -347,10 +433,13 @@ async function toggleVoiceRecording() {
     _voiceRecorder.ondataavailable = e => { if (e.data.size > 0) _voiceChunks.push(e.data); };
     _voiceRecorder.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
-      const blob = new Blob(_voiceChunks, { type: 'audio/webm' });
-      await sendVoiceSample(blob);
+      const webmBlob = new Blob(_voiceChunks, { type: 'audio/webm' });
+      // Convert WebM to WAV for XTTS compatibility and playback
+      const wavBlob = await webmToWav(webmBlob);
+      await sendVoiceSample(wavBlob);
     };
     _voiceRecorder.start();
+    startVisualizer(stream);
     btn.textContent = '\u{23F9} Stop Recording';
     btn.style.borderColor = 'var(--danger)';
     if (status) status.textContent = 'Recording... (6-10 seconds recommended)';
@@ -374,7 +463,9 @@ async function sendVoiceSample(blob) {
   const name = nameInput?.value?.trim() || 'voice_' + Date.now();
   try {
     const formData = new FormData();
-    formData.append('audio', blob, name + '.wav');
+    // Keep original format extension (webm from browser recording, wav/mp3 from uploads)
+    const ext = blob.type?.includes('webm') ? '.webm' : blob.type?.includes('mp3') ? '.mp3' : '.wav';
+    formData.append('audio', blob, name + ext);
     formData.append('name', name);
     const r = await fetch(`${XTTS_URL}/clone`, { method: 'POST', body: formData });
     const d = await r.json();
@@ -425,9 +516,20 @@ async function startXttsServer() {
 
 async function previewVoice(voiceId) {
   try {
-    const audio = new Audio(`${XTTS_URL}/voices/${voiceId}/preview`);
-    audio.play();
-  } catch {}
+    // Route through our server to avoid CORS issues with XTTS port
+    const r = await fetch(`/api/voice/preview/${voiceId}?token=${AUTH_TOKEN}`);
+    if (!r.ok) {
+      // Fallback: try XTTS directly
+      const r2 = await fetch(`${XTTS_URL}/voices/${voiceId}/preview`);
+      const blob = await r2.blob();
+      const audio = new Audio(URL.createObjectURL(new Blob([blob], { type: 'audio/wav' })));
+      await audio.play();
+      return;
+    }
+    const blob = await r.blob();
+    const audio = new Audio(URL.createObjectURL(blob));
+    await audio.play();
+  } catch (e) { console.error('Preview failed:', e); }
 }
 
 async function deleteVoice(voiceId) {

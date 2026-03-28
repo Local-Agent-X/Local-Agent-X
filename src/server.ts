@@ -49,6 +49,17 @@ import { extractText } from "./ocr-tool.js";
 import { IntegrationRegistry } from "./integrations.js";
 import { WhatsAppBridge } from "./whatsapp-bridge.js";
 import { TelegramBridge } from "./telegram-bridge.js";
+import { recordToolCall as trackTool, getToolStats, getToolSuccessRate, getRecentFailures } from "./tool-tracker.js";
+import { withRetry } from "./auto-retry.js";
+import { saveCheckpoint, loadCheckpoint, hasCheckpoint } from "./session-recovery.js";
+import { categorizeError } from "./error-categories.js";
+import { estimateTokens, getContextUsage } from "./context-usage.js";
+import { recordCrash, getCrashReport, getTopCrashPatterns } from "./crash-analytics.js";
+import { ResponseCache } from "./response-cache.js";
+import { exportSession, importSession } from "./session-export.js";
+import { loadSessionPage, getSessionMessageCount } from "./progressive-loader.js";
+import { runMigrations } from "./db-migrations.js";
+import { runStartupTests } from "./startup-test.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 
 // ── Multipart parser ──
@@ -736,6 +747,77 @@ export function startServer(config: SAXConfig) {
     if (method === "POST" && url.pathname === "/api/security/injection-tests") {
       const report = runInjectionTests();
       json(200, report); return;
+    }
+
+    // ── Reliability & Core APIs ──
+
+    // Health check (Task 39)
+    if (method === "GET" && url.pathname === "/api/health") {
+      const uptime = process.uptime();
+      const mem = process.memoryUsage();
+      json(200, {
+        status: "ok",
+        uptime: Math.round(uptime),
+        memory: { heapUsedMB: Math.round(mem.heapUsed / 1048576), heapTotalMB: Math.round(mem.heapTotal / 1048576), rssMB: Math.round(mem.rss / 1048576) },
+        toolStats: getToolStats(),
+        version: "0.1.0",
+      }); return;
+    }
+
+    // Tool stats (Task 36)
+    if (method === "GET" && url.pathname === "/api/tools/stats") {
+      json(200, { stats: getToolStats(), successRate: getToolSuccessRate(), recentFailures: getRecentFailures(20) }); return;
+    }
+
+    // Crash analytics (Task 50)
+    if (method === "GET" && url.pathname === "/api/crashes") {
+      json(200, { report: getCrashReport(), topPatterns: getTopCrashPatterns(10) }); return;
+    }
+
+    // Context usage (Task 43)
+    if (method === "GET" && url.pathname === "/api/context/usage") {
+      const sessionId = url.searchParams.get("sessionId");
+      if (sessionId) {
+        const session = sessions.get(sessionId);
+        if (session) {
+          json(200, getContextUsage(session.messages, 128000)); return;
+        }
+      }
+      json(200, { used: 0, max: 128000, percentage: 0, remaining: 128000 }); return;
+    }
+
+    // Session export/import (Task 49)
+    if (method === "GET" && url.pathname.startsWith("/api/sessions/") && url.pathname.endsWith("/export")) {
+      const id = url.pathname.split("/")[3];
+      const format = (url.searchParams.get("format") || "json") as "json" | "markdown";
+      try {
+        const result = await exportSession(id, format);
+        json(200, result); return;
+      } catch (e) { json(404, { error: (e as Error).message }); return; }
+    }
+    if (method === "POST" && url.pathname === "/api/sessions/import") {
+      try {
+        const body = JSON.parse(await readBody(req));
+        const result = await importSession(body);
+        json(200, result); return;
+      } catch (e) { json(400, { error: (e as Error).message }); return; }
+    }
+
+    // Progressive loading (Task 53)
+    if (method === "GET" && url.pathname.startsWith("/api/sessions/") && url.pathname.endsWith("/messages")) {
+      const id = url.pathname.split("/")[3];
+      const page = parseInt(url.searchParams.get("page") || "0");
+      const pageSize = parseInt(url.searchParams.get("pageSize") || "50");
+      try {
+        const result = await loadSessionPage(id, page, pageSize);
+        json(200, result); return;
+      } catch (e) { json(404, { error: (e as Error).message }); return; }
+    }
+
+    // Startup tests (Task 55)
+    if (method === "GET" && url.pathname === "/api/startup-tests") {
+      const results = await runStartupTests();
+      json(200, { results }); return;
     }
 
     // Get voice capabilities
@@ -1914,6 +1996,12 @@ export function startServer(config: SAXConfig) {
 
   // Create server: HTTPS if cert available, HTTP fallback
   const server = createServer(requestHandler);
+
+  // Run database migrations on startup (Task 54)
+  runMigrations(dataDir).catch(e => console.warn("[migrations]", e.message));
+
+  // Initialize response cache (Task 51)
+  const responseCache = new ResponseCache();
 
   // WebSocket chat system — enables multi-chat, reconnect, stop button
   const chatWs = setupChatWebSocket(server, config.authToken);

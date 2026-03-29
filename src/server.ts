@@ -1989,51 +1989,27 @@ export function startServer(config: SAXConfig) {
           }
         } catch {}
 
-        // ── Feature 5: Advanced emotional memory + proactive context ──
-        let moodHint = "";
-        let proactiveHint = "";
+        // ── Memory Orchestrator: ONE call coordinates all 33 memory modules ──
+        let memoryContext = "";
+        let memoryNotifications: Array<{type: string, message: string, priority: number}> = [];
         try {
-          const { EmotionalMemory } = await import("./emotional-memory.js");
-          const emo = EmotionalMemory.getInstance();
-          const emotion = emo.detectEmotion(message);
-          emo.recordEmotion(sessionId, emotion, message.slice(0, 100));
-          const hint = emo.getAdaptationHint(emotion);
-          if (hint && emotion.confidence > 0.4) {
-            moodHint = `\n\n[Tone: ${hint}]`;
+          const { processMessage } = await import("./memory-orchestrator.js");
+          const orchestratorResult = await processMessage({
+            message,
+            sessionId,
+            sessionMessages: session.messages.slice(-20).map((m: any) => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" })),
+            timeOfDay: new Date().getHours(),
+            dayOfWeek: new Date().getDay(),
+            agentPreviousMessage: session.messages.filter((m: any) => m.role === "assistant").pop()?.content as string || undefined,
+          });
+          memoryContext = orchestratorResult.contextInjection ? `\n\n${orchestratorResult.contextInjection}` : "";
+          memoryNotifications = orchestratorResult.notifications || [];
+          if (orchestratorResult.debug) {
+            console.log(`[memory] Orchestrator: ${orchestratorResult.debug.modulesActivated.length} modules, ${orchestratorResult.debug.totalTimeMs}ms`);
           }
-        } catch {}
-
-        // Proactive memory — surface relevant context before user asks
-        try {
-          const { ProactiveMemory } = await import("./proactive-memory.js");
-          const pm = ProactiveMemory.getInstance();
-          pm.recordInteraction(sessionId, message, Date.now());
-          const suggestions = pm.analyzeContext(message, session.messages.slice(-10) as any[], new Date().getHours());
-          const topSuggestions = suggestions.filter(s => s.confidence > 0.5).slice(0, 2);
-          if (topSuggestions.length > 0) {
-            proactiveHint = "\n\n[Proactive context: " + topSuggestions.map(s => s.message).join(" | ") + "]";
-          }
-        } catch {}
-
-        // Cross-session learning — track actions for pattern detection
-        try {
-          const { CrossSessionLearner } = await import("./cross-session-learning.js");
-          const csl = CrossSessionLearner.getInstance();
-          csl.recordAction(sessionId, { type: "message", details: message.slice(0, 200), timestamp: Date.now() });
-        } catch {}
-
-        // Memory graph — extract relationships from user message
-        try {
-          const { MemoryGraph } = await import("./memory-graph.js");
-          const graph = MemoryGraph.getInstance();
-          // Light extraction only if message mentions known entities
-          const nodes = graph.getAllNodes?.() || [];
-          if (nodes.length > 0) {
-            const entityNames = nodes.map((n: any) => n.id || n.name || "").filter(Boolean);
-            const extracted = graph.autoExtractRelationships(message, entityNames);
-            // Edges auto-added by the method
-          }
-        } catch {}
+        } catch (e) {
+          console.warn("[memory] Orchestrator error (falling back to basic):", (e as Error).message);
+        }
 
         // Initialize threat engine for this session
         const threatEngine = new ThreatEngine(dataDir, sessionId);
@@ -2044,8 +2020,16 @@ export function startServer(config: SAXConfig) {
         const providerNames: Record<string, string> = { codex: "OpenAI Codex", anthropic: "Anthropic Claude", xai: "xAI Grok", openai: "OpenAI", local: "Local (Ollama)" };
         const providerHint = `\n\n[System: You are currently powered by ${providerNames[provider] || provider}, model: ${savedModel || "default"}. If asked what LLM you are running on, be transparent about this.]`;
         const integrationsContext = integrations.getAgentContext();
+
+        // Inject milestone/follow-up notifications so agent can weave them into response
+        let notificationHint = "";
+        if (memoryNotifications.length > 0) {
+          const topNotifs = memoryNotifications.sort((a, b) => b.priority - a.priority).slice(0, 2);
+          notificationHint = "\n\n[Naturally weave into your response: " + topNotifs.map(n => n.message).join(" | ") + "]";
+        }
+
         const enrichedPrompt =
-          config.systemPrompt + providerHint + contextBlock + relevantMemories + smartContext + moodHint + proactiveHint + integrationsContext + threatEngine.getCanaryBlock();
+          config.systemPrompt + providerHint + contextBlock + relevantMemories + smartContext + memoryContext + notificationHint + integrationsContext + threatEngine.getCanaryBlock();
 
         // Resolve image attachments to absolute file paths for vision API
         const uploadsDir = join(dataDir, "uploads");

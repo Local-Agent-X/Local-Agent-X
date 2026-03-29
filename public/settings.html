@@ -331,6 +331,13 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
       <div class="field-hint">Changes require server restart.</div>
     </div>
 
+    <div class="section">
+      <div class="section-title">Updates</div>
+      <div class="section-desc">Check for new versions of Open Agent X.</div>
+      <div id="settings-update-status" style="font-size:.8rem;color:var(--muted);margin-bottom:8px">Not checked yet.</div>
+      <button class="action-btn primary" onclick="settingsCheckUpdate()">Check for Updates</button>
+    </div>
+
   </div>
 
   <!-- ═══ AI & MODELS ═══ -->
@@ -725,6 +732,26 @@ async function doDisconnect() {
 }
 
 // ── Server checks ──
+async function settingsCheckUpdate() {
+  const status = document.getElementById('settings-update-status');
+  if (!status) return;
+  status.style.color = 'var(--muted)';
+  status.textContent = 'Checking...';
+  try {
+    const res = await apiGet('/api/updates/check');
+    if (res.updateAvailable) {
+      status.style.color = 'var(--accent)';
+      status.innerHTML = `Update available: v${res.remoteVersion}${res.remoteCommit ? ' (' + res.remoteCommit + ')' : ''}${res.releaseNotes ? ' — ' + res.releaseNotes : ''} <a href="https://github.com/petermanrique101-sys/Open-Agent-X" target="_blank" style="color:var(--accent);margin-left:8px">View on GitHub</a>`;
+    } else {
+      status.style.color = 'var(--accent)';
+      status.textContent = 'You are up to date! (v' + (res.localVersion || '0.1.0') + ')';
+    }
+  } catch (e) {
+    status.style.color = 'var(--error, red)';
+    status.textContent = 'Could not check for updates. Check your internet connection.';
+  }
+}
+
 async function checkServer(type) {
   const port = type === 'image' ? 7860 : 7861;
   const statusEl = document.getElementById(type === 'image' ? 'img-status' : 'vid-status');

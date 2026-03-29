@@ -424,6 +424,7 @@ setInterval(() => {
     if (data.updateAvailable) {
       const banner = document.getElementById('update-banner');
       if (!banner) return;
+      banner.style.display = '';
       banner.className = 'visible';
       banner.innerHTML = `
         <span class="update-msg">Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''}</span>

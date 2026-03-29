@@ -885,6 +885,16 @@ function mergeSignals(signals: ModuleSignal[], previousHashes: string[]): { para
   };
 }
 
+/** Sanitize a signal string: strip control chars and prompt-injection patterns */
+function sanitizeSignal(raw: string): string {
+  // Strip control characters (except normal whitespace)
+  let s = raw.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+  // Strip patterns that look like prompt injection boundaries
+  s = s.replace(/\[(?:system|assistant|user|INST)\][\s:]/gi, "");
+  s = s.replace(/<\/?(?:system|assistant|user|s|im_start|im_end)[^>]*>/gi, "");
+  return s;
+}
+
 function buildParagraph(signals: ModuleSignal[]): string {
   if (signals.length === 0) return "";
 
@@ -898,11 +908,11 @@ function buildParagraph(signals: ModuleSignal[]): string {
   const contextual = signals.filter(s => s.category === "reference" || s.category === "recall" || s.category === "narrative" || s.category === "followup" || s.category === "proactive");
   const observational = signals.filter(s => s.category === "style" || s.category === "growth" || s.category === "pattern" || s.category === "milestone" || s.category === "unspoken" || s.category === "behavior-change" || s.category === "contradiction");
 
-  for (const sig of critical) parts.push(sig.signal);
-  for (const sig of emotional) parts.push(sig.signal);
-  for (const sig of relational.slice(0, 1)) parts.push(sig.signal);
-  for (const sig of contextual.slice(0, 2)) parts.push(sig.signal);
-  for (const sig of observational.slice(0, 2)) parts.push(sig.signal);
+  for (const sig of critical) parts.push(sanitizeSignal(sig.signal));
+  for (const sig of emotional) parts.push(sanitizeSignal(sig.signal));
+  for (const sig of relational.slice(0, 1)) parts.push(sanitizeSignal(sig.signal));
+  for (const sig of contextual.slice(0, 2)) parts.push(sanitizeSignal(sig.signal));
+  for (const sig of observational.slice(0, 2)) parts.push(sanitizeSignal(sig.signal));
 
   if (parts.length === 0) return "";
 

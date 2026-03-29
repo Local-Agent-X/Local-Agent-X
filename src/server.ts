@@ -104,6 +104,18 @@ function isValidSessionId(id: string): boolean {
   return /^[a-zA-Z0-9_-]{1,64}$/.test(id);
 }
 
+// Strip file paths, stack traces, and internal details from error messages sent to clients
+function safeErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  // Remove absolute file paths (C:\..., /home/..., etc.)
+  let safe = raw.replace(/[A-Z]:\\[^\s:'"]+/gi, "[path]").replace(/\/(?:home|usr|tmp|var|Users|root|etc|mnt|opt)\b[^\s:'"]+/gi, "[path]");
+  // Remove stack-trace-like lines
+  safe = safe.replace(/\s+at\s+.+\(.+\)/g, "");
+  // Cap length
+  if (safe.length > 200) safe = safe.slice(0, 197) + "...";
+  return safe;
+}
+
 // ── CORS: loopback-only for mutations ──
 
 const LOOPBACK_ORIGINS = new Set([
@@ -171,7 +183,7 @@ function checkRateLimit(key: string): boolean {
     bucket = { tokens: RATE_LIMIT_MAX, lastRefill: now };
     rateLimits.set(key, bucket);
   }
-  const elapsed = (now - bucket.lastRefill) / 1000;
+  const elapsed = Math.max(0, (now - bucket.lastRefill) / 1000);
   bucket.tokens = Math.min(RATE_LIMIT_MAX, bucket.tokens + elapsed * RATE_LIMIT_REFILL_PER_SEC);
   bucket.lastRefill = now;
 
@@ -212,10 +224,15 @@ async function readBody(req: IncomingMessage): Promise<string> {
 }
 
 /** Safely parse JSON body — returns parsed object or null on invalid JSON */
+const BANNED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 async function safeParseBody(req: IncomingMessage): Promise<any> {
   const raw = await readBody(req);
   try {
-    return JSON.parse(raw);
+    return JSON.parse(raw, (key, value) => {
+      if (BANNED_KEYS.has(key)) return undefined;
+      return value;
+    });
   } catch {
     return null;
   }
@@ -467,22 +484,26 @@ export function startServer(config: SAXConfig) {
     return session;
   }
 
-  // Session write locks — prevent concurrent writes from corrupting session state
-  const sessionLocks = new Set<string>();
+  // Session write queue — serialize writes per session to prevent lost updates
+  // when two async handlers modify the same session concurrently
+  const sessionWriteQueues = new Map<string, Promise<void>>();
 
   function saveSession(session: Session): void {
-    if (sessionLocks.has(session.id)) {
-      console.warn(`[session] Write lock contention on ${session.id}, queuing`);
-      // Simple retry — wait and try again (Node is single-threaded so this is safe)
-    }
-    sessionLocks.add(session.id);
-    try {
+    const prev = sessionWriteQueues.get(session.id) ?? Promise.resolve();
+    const next = prev.then(() => {
       sessions.set(session.id, session);
       sessionStore.save(session);
       memoryIndex.markDirty();
-    } finally {
-      sessionLocks.delete(session.id);
-    }
+    }).catch((err) => {
+      console.error(`[session] Save failed for ${session.id}:`, err);
+    });
+    sessionWriteQueues.set(session.id, next);
+    // Clean up the queue entry once it settles to avoid memory leak
+    next.finally(() => {
+      if (sessionWriteQueues.get(session.id) === next) {
+        sessionWriteQueues.delete(session.id);
+      }
+    });
   }
 
   // TLS: try HTTPS first, fall back to HTTP if cert unavailable
@@ -640,7 +661,7 @@ export function startServer(config: SAXConfig) {
         (globalThis as any)[cacheKey] = { data: result, time: now };
         json(200, result);
       } catch (e) {
-        json(200, { updateAvailable: false, error: (e as Error).message });
+        json(200, { updateAvailable: false, error: safeErrorMessage(e) });
       }
       return;
     }
@@ -1115,14 +1136,14 @@ export function startServer(config: SAXConfig) {
       try {
         const result = exportSession(dataDir, id, format);
         json(200, result); return;
-      } catch (e) { json(404, { error: (e as Error).message }); return; }
+      } catch (e) { json(404, { error: safeErrorMessage(e) }); return; }
     }
     if (method === "POST" && url.pathname === "/api/sessions/import") {
       try {
         const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
         const result = await importSession(body);
         json(200, result); return;
-      } catch (e) { json(400, { error: (e as Error).message }); return; }
+      } catch (e) { json(400, { error: safeErrorMessage(e) }); return; }
     }
 
     // Progressive loading (Task 53)
@@ -1133,7 +1154,7 @@ export function startServer(config: SAXConfig) {
       try {
         const result = await loadSessionPage(id, page, pageSize);
         json(200, result); return;
-      } catch (e) { json(404, { error: (e as Error).message }); return; }
+      } catch (e) { json(404, { error: safeErrorMessage(e) }); return; }
     }
 
     // Startup tests (Task 55)
@@ -1160,7 +1181,7 @@ export function startServer(config: SAXConfig) {
       try {
         const plugin = await pm.loadPlugin(String(body.path));
         json(200, { ok: true, plugin }); return;
-      } catch (e) { json(400, { error: (e as Error).message }); return; }
+      } catch (e) { json(400, { error: safeErrorMessage(e) }); return; }
     }
     if (method === "POST" && url.pathname === "/api/plugins/unload") {
       const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return; }
@@ -1312,7 +1333,7 @@ export function startServer(config: SAXConfig) {
       try {
         const job = cronService.create(body.name, body.schedule, body.prompt, body.systemJob);
         json(200, { ok: true, job });
-      } catch (e) { json(400, { error: (e as Error).message }); }
+      } catch (e) { json(400, { error: safeErrorMessage(e) }); }
       return;
     }
     if (method === "PATCH" && url.pathname.startsWith("/api/cron/")) {
@@ -1322,7 +1343,7 @@ export function startServer(config: SAXConfig) {
         const job = cronService.update(id, body);
         if (!job) { json(404, { error: "Job not found" }); return; }
         json(200, { ok: true, job });
-      } catch (e) { json(400, { error: (e as Error).message }); }
+      } catch (e) { json(400, { error: safeErrorMessage(e) }); }
       return;
     }
     if (method === "DELETE" && url.pathname.startsWith("/api/cron/")) {
@@ -1418,7 +1439,7 @@ export function startServer(config: SAXConfig) {
         res.writeHead(200, { ...corsHeaders(req), "Content-Type": "application/x-ndjson" });
         res.end(lines.join("\n"));
       } catch (e) {
-        json(500, { error: (e as Error).message });
+        json(500, { error: safeErrorMessage(e) });
       }
       return;
     }
@@ -1430,15 +1451,14 @@ export function startServer(config: SAXConfig) {
       const settingsPath = join(dataDir, "settings.json");
       let existing: Record<string, unknown> = {};
       try { if (existsSync(settingsPath)) existing = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
-      const { __proto__: _a, constructor: _b, prototype: _c, ...safeBody2 } = body as any;
-      const merged = { ...existing, ...safeBody2 };
+      const merged = { ...existing, ...body };
       writeFileSync(settingsPath, JSON.stringify(merged, null, 2), { encoding: "utf-8", mode: 0o600 });
       // Also persist port to config.json so it takes effect on restart
-      if (safeBody2.port) {
+      if (body.port) {
         const configPath = join(dataDir, "config.json");
         let cfg: Record<string, unknown> = {};
         try { if (existsSync(configPath)) cfg = JSON.parse(readFileSync(configPath, "utf-8")); } catch {}
-        cfg.port = parseInt(String(safeBody2.port), 10);
+        cfg.port = parseInt(String(body.port), 10);
         writeFileSync(configPath, JSON.stringify(cfg, null, 2), { encoding: "utf-8", mode: 0o600 });
       }
       json(200, { ok: true });
@@ -1482,8 +1502,7 @@ export function startServer(config: SAXConfig) {
     if (method === "POST" && url.pathname === "/api/providers/switch") {
       let body: Record<string, unknown>;
       try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
-      const { __proto__: _a, constructor: _b, prototype: _c, ...safeBody } = body as any;
-      const provider = String(safeBody.provider || "");
+      const provider = String(body.provider || "");
       const model = String(body.model || "");
       if (!provider) { json(400, { error: "provider required" }); return; }
       // Update settings.json
@@ -1635,6 +1654,7 @@ export function startServer(config: SAXConfig) {
     // Delete a secret
     if (method === "DELETE" && url.pathname.startsWith("/api/secrets/")) {
       const name = decodeURIComponent(url.pathname.split("/").pop()!);
+      if (!/^[A-Z0-9_]{1,64}$/i.test(name)) { json(400, { error: "Invalid secret name" }); return; }
       const existed = secretsStore.delete(name);
       json(200, { ok: true, deleted: existed });
       return;
@@ -1716,6 +1736,7 @@ export function startServer(config: SAXConfig) {
     // Delete a custom integration
     if (method === "DELETE" && url.pathname.startsWith("/api/integrations/")) {
       const id = decodeURIComponent(url.pathname.split("/").pop()!);
+      if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) { json(400, { error: "Invalid integration ID" }); return; }
       const removed = integrations.removeIntegration(id);
       if (!removed) { json(400, { error: "Cannot delete built-in integration" }); return; }
       json(200, { ok: true, deleted: id });
@@ -1851,7 +1872,7 @@ export function startServer(config: SAXConfig) {
         const result = await whatsappBridge.connect();
         json(200, result);
       } catch (e) {
-        json(500, { error: (e as Error).message });
+        json(500, { error: safeErrorMessage(e) });
       }
       return;
     }
@@ -1888,7 +1909,7 @@ export function startServer(config: SAXConfig) {
         const ok = await whatsappBridge.sendMessage(to, msg);
         json(ok ? 200 : 500, { ok, error: ok ? undefined : "Failed to send" });
       } catch (e) {
-        json(500, { error: (e as Error).message });
+        json(500, { error: safeErrorMessage(e) });
       }
       return;
     }
@@ -1901,7 +1922,7 @@ export function startServer(config: SAXConfig) {
         whatsappBridge.setAllowedNumbers(numbers);
         json(200, { ok: true, numbers });
       } catch (e) {
-        json(500, { error: (e as Error).message });
+        json(500, { error: safeErrorMessage(e) });
       }
       return;
     }
@@ -1913,7 +1934,7 @@ export function startServer(config: SAXConfig) {
         const result = await telegramBridge.connect();
         json(200, result);
       } catch (e) {
-        json(500, { error: (e as Error).message });
+        json(500, { error: safeErrorMessage(e) });
       }
       return;
     }
@@ -1937,7 +1958,7 @@ export function startServer(config: SAXConfig) {
         const ok = await telegramBridge.sendMessage(chatId, msg);
         json(ok ? 200 : 500, { ok });
       } catch (e) {
-        json(500, { error: (e as Error).message });
+        json(500, { error: safeErrorMessage(e) });
       }
       return;
     }
@@ -1946,19 +1967,18 @@ export function startServer(config: SAXConfig) {
     if (method === "POST" && url.pathname === "/api/chat") {
       let body: Record<string, unknown>;
       try {
-        body = JSON.parse(await readBody(req));
+        body = JSON.parse(await readBody(req), (key, value) => BANNED_KEYS.has(key) ? undefined : value);
       } catch {
         json(400, { error: "Invalid JSON body" });
         return;
       }
-      const message = body.message as string | undefined;
-      const sessionId = (body.sessionId as string) || "default";
-      const attachments = (body.attachments as Array<{ name: string; url: string; isImage: boolean }>) || [];
-
-      if (!message) {
-        json(400, { error: "message is required" });
+      if (typeof body.message !== "string" || !body.message.trim()) {
+        json(400, { error: "message is required and must be a string" });
         return;
       }
+      const message: string = body.message;
+      const sessionId = typeof body.sessionId === "string" ? body.sessionId : "default";
+      const attachments = Array.isArray(body.attachments) ? body.attachments as Array<{ name: string; url: string; isImage: boolean }> : [];
 
       if (!isValidSessionId(sessionId)) {
         json(400, { error: "Invalid session ID" });
@@ -2288,7 +2308,7 @@ export function startServer(config: SAXConfig) {
         // Agent Sync: push after chat (background, non-blocking)
         agentSync.onChatEnd().catch(() => {});
       } catch (e) {
-        sseWrite(res, { type: "error", message: (e as Error).message });
+        sseWrite(res, { type: "error", message: safeErrorMessage(e) });
         sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
         clearInterval(heartbeat);
         res.end();
@@ -2306,7 +2326,7 @@ export function startServer(config: SAXConfig) {
                .catch((e) => console.warn("[auth] OAuth login failed:", e.message));
         json(200, { ok: true, authUrl });
       } catch (e) {
-        json(500, { error: (e as Error).message });
+        json(500, { error: safeErrorMessage(e) });
       }
       return;
     }
@@ -2321,7 +2341,7 @@ export function startServer(config: SAXConfig) {
         console.log("[auth] OAuth tokens removed");
         json(200, { ok: true });
       } catch (e) {
-        json(500, { error: (e as Error).message });
+        json(500, { error: safeErrorMessage(e) });
       }
       return;
     }
@@ -2347,7 +2367,7 @@ export function startServer(config: SAXConfig) {
                .catch((e) => console.warn("[anthropic-auth] Login failed:", e.message));
         json(200, { ok: true, authUrl });
       } catch (e) {
-        json(500, { error: (e as Error).message });
+        json(500, { error: safeErrorMessage(e) });
       }
       return;
     }
@@ -2358,7 +2378,7 @@ export function startServer(config: SAXConfig) {
         deleteAnthropicTokens();
         json(200, { ok: true });
       } catch (e) {
-        json(500, { error: (e as Error).message });
+        json(500, { error: safeErrorMessage(e) });
       }
       return;
     }
@@ -2398,7 +2418,7 @@ export function startServer(config: SAXConfig) {
         } catch {}
         json(200, { ok: true, version, output: (stdout + stderr).slice(-500) });
       } catch (e) {
-        json(500, { error: `Install failed: ${(e as Error).message?.slice(0, 300)}` });
+        json(500, { error: `Install failed: ${safeErrorMessage(e)}` });
       }
       return;
     }
@@ -2651,7 +2671,7 @@ export function startServer(config: SAXConfig) {
       eventBus.emit("primal:agent-result", { agentId, result: content, success: true });
       console.log(`[primal] Agent ${agentId} (${role}) completed`);
     } catch (e) {
-      eventBus.emit("primal:agent-result", { agentId, result: (e as Error).message, success: false });
+      eventBus.emit("primal:agent-result", { agentId, result: safeErrorMessage(e), success: false });
       console.error(`[primal] Agent ${agentId} (${role}) failed:`, (e as Error).message);
     }
   });
@@ -2686,9 +2706,8 @@ export function startServer(config: SAXConfig) {
     const maskedToken = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
     console.log(`\n  Open Agent X running at http://127.0.0.1:${config.port}`);
     console.log(`  Auth token: ${maskedToken}`);
-    const realUrl = `http://127.0.0.1:${config.port}/?token=${config.authToken}`;
     const displayUrl = `http://127.0.0.1:${config.port}/?token=${maskedToken}`;
-    console.log(`\n  ► Open: \x1b]8;;${realUrl}\x1b\\${displayUrl}\x1b]8;;\x1b\\\n`);
+    console.log(`\n  ► Open: ${displayUrl}\n`);
     console.log(`  Memory: ${dataDir}/memory/`);
     console.log(`  Sessions: ${dataDir}/sessions/`);
 
@@ -2762,6 +2781,7 @@ export function startServer(config: SAXConfig) {
     await agentSync.push().catch(() => {});
     await closeAllBrowsers();
     memoryIndex.close();
+    secretsStore.destroy();
     process.exit(0);
   });
 

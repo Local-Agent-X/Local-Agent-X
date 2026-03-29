@@ -79,7 +79,7 @@ interface ModuleSignal {
   signal: string;
   priority: number;  // 0-10
   category: string;
-  confidence: number; // 0-1, how confident the module is in this signal
+  confidence: number; // 0-1, how confident the module is in this signal (default 1.0)
 }
 
 // ── Fusion Confidence + Veto Layer ──────────────────────────
@@ -165,6 +165,7 @@ interface OrchestrationExample {
   notes?: string;
 }
 
+const SAX_DIR = join(homedir(), ".sax");
 const EXAMPLES_FILE = join(SAX_DIR, "orchestration-examples.json");
 const MAX_EXAMPLES = 200;
 
@@ -219,7 +220,6 @@ export interface HealthReport {
 
 // ── Constants ───────────────────────────────────────────────
 
-const SAX_DIR = join(homedir(), ".sax");
 const STATE_FILE = join(SAX_DIR, "orchestrator-state.json");
 
 const SENSITIVE_KEYWORDS = [
@@ -435,6 +435,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: hint,
           priority: 5 + Math.round(emotion.confidence * 3),
           category: "emotion",
+          confidence: 1.0,
         });
       }
       // Check for emotional shift from recent history
@@ -448,6 +449,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
             signal: `Emotional shift detected: moved from ${prev} to ${curr}`,
             priority: 7,
             category: "emotion-shift",
+            confidence: 1.0,
           });
         }
       }
@@ -465,6 +467,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
             signal: hint,
             priority: 4,
             category: "style",
+            confidence: 1.0,
           });
         }
       }
@@ -481,6 +484,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
         signal: stage,
         priority: 3,
         category: "trust",
+        confidence: 1.0,
       });
       if (adjustments.personalReferences) {
         signals.push({
@@ -488,6 +492,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: "Relationship is close enough for personal references and callbacks to shared history",
           priority: 2,
           category: "trust-behavior",
+          confidence: 1.0,
         });
       }
       break;
@@ -502,6 +507,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: `Possible inside reference: "${callback.reference}" — ${callback.originalContext}`,
           priority: 8,
           category: "reference",
+          confidence: 1.0,
         });
       }
       break;
@@ -516,6 +522,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: `Follow up on "${fu.event.event}": ${fu.suggestedMessage}`,
           priority: 6,
           category: "followup",
+          confidence: 1.0,
         });
       }
       const proactive = care.getProactiveMessage(input.timeOfDay);
@@ -525,6 +532,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: proactive,
           priority: 5,
           category: "proactive",
+          confidence: 1.0,
         });
       }
       break;
@@ -540,6 +548,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: guidance,
           priority: 9,
           category: "vulnerability",
+          confidence: 1.0,
         });
       }
       break;
@@ -555,6 +564,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: `Related memory: ${top.content} (relevance: ${top.score.toFixed(2)})`,
           priority: 4 + Math.round(top.score * 3),
           category: "recall",
+          confidence: 1.0,
         });
       }
       break;
@@ -574,6 +584,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: top.message,
           priority: 3 + Math.round(top.confidence * 4),
           category: "proactive",
+          confidence: 1.0,
         });
       }
       break;
@@ -589,6 +600,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: `Recurring pattern: ${top.description} (seen ${top.occurrences}x)`,
           priority: 3,
           category: "pattern",
+          confidence: 1.0,
         });
       }
       break;
@@ -605,6 +617,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
             signal: `Notable shared moments: ${moments.map(m => m.description).join("; ")}`,
             priority: 2,
             category: "history",
+            confidence: 1.0,
           });
         }
       }
@@ -622,6 +635,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
             signal: hint,
             priority: 6,
             category: "unspoken",
+            confidence: 1.0,
           });
         }
       }
@@ -632,6 +646,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: `Behavior change: ${changes[0].description}`,
           priority: 5,
           category: "behavior-change",
+          confidence: 1.0,
         });
       }
       break;
@@ -646,6 +661,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: summary,
           priority: 3,
           category: "growth",
+          confidence: 1.0,
         });
       }
       break;
@@ -660,6 +676,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: `Ongoing story: "${detected.title}" — ${detected.summary}`,
           priority: 4,
           category: "narrative",
+          confidence: 1.0,
         });
       }
       const ongoing = nm.getOngoingStories();
@@ -669,6 +686,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: `Continuing narrative: "${ongoing[0].title}"`,
           priority: 3,
           category: "narrative",
+          confidence: 1.0,
         });
       }
       break;
@@ -693,6 +711,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: celebration,
           priority: 8,
           category: "milestone",
+          confidence: 1.0,
         });
       }
       break;
@@ -708,6 +727,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
           signal: `User is correcting: "${correction.wrongInfo}" should be "${correction.correctInfo}" — avoid repeating this mistake`,
           priority: 9,
           category: "correction",
+          confidence: 0.9,
         });
         const context = cl.getCorrectiveContext(correction.wrongInfo);
         if (context) {
@@ -716,6 +736,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
             signal: context,
             priority: 8,
             category: "correction-context",
+            confidence: 0.8,
           });
         }
       }
@@ -734,6 +755,7 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
             signal: `Possible contradiction: "${contradiction.oldFact}" vs "${contradiction.newFact}" — gently clarify`,
             priority: 7,
             category: "contradiction",
+            confidence: 0.7,
           });
         }
       }

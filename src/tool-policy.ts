@@ -308,6 +308,22 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     // Cron — scheduled job management (internal)
     { id: "allow-cron", tool: "cron_*", decision: "allow", reason: "Cron job management (internal)", priority: 50 },
 
+    // Agent delegation — required for Primal orchestrator
+    { id: "allow-agent-spawn", tool: "agent_spawn", decision: "allow", reason: "Agent delegation", priority: 50 },
+    { id: "allow-delegate", tool: "delegate", decision: "allow", reason: "Task delegation", priority: 50 },
+    { id: "allow-agent-ops", tool: "agent_*", decision: "allow", reason: "Agent management", priority: 50 },
+
+    // Swarm — multi-agent orchestration
+    { id: "allow-swarm", tool: "swarm_*", decision: "allow", reason: "Swarm orchestration", priority: 50 },
+
+    // Web search — safe, read-only
+    { id: "allow-web-search", tool: "web_search", decision: "allow", reason: "Web search", priority: 50 },
+
+    // Media tools — camera, screen, OCR
+    { id: "allow-camera", tool: "camera_*", decision: "allow", reason: "Camera capture", priority: 50 },
+    { id: "allow-screen", tool: "screen_*", decision: "allow", reason: "Screen capture", priority: 50 },
+    { id: "allow-ocr", tool: "ocr", decision: "allow", reason: "OCR text extraction", priority: 50 },
+
     // ── Everything else is DENIED by default ──
     // No catch-all "allow *" rule. Unknown tools are blocked.
   ],

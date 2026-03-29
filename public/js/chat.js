@@ -125,24 +125,9 @@ function renderMessages() {
   if (!el) return;
   if (!activeChat || activeChat.messages.length === 0) {
     el.innerHTML = `<div id="empty"><img src="/hero.jpg" alt="Open Agent X" class="hero-img" /><h2>OPEN AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
-    // Hide branch button when no chat
-    const forkBtn = document.getElementById('fork-tree-btn');
-    if (forkBtn) forkBtn.style.display = 'none';
     return;
   }
   el.innerHTML = '';
-  // Feature 1: Show fork badge if this is a forked conversation
-  if (activeChat.forkedFrom) {
-    const badge = document.createElement('div');
-    badge.className = 'fork-badge';
-    badge.innerHTML = '&#9095; Branched conversation';
-    badge.style.cursor = 'pointer';
-    badge.onclick = () => showForkTree();
-    el.appendChild(badge);
-  }
-  // Show branches button if chat has messages
-  const forkTreeBtn = document.getElementById('fork-tree-btn');
-  if (forkTreeBtn) forkTreeBtn.style.display = 'inline-block';
   for (let i = 0; i < activeChat.messages.length; i++) {
     const msg = activeChat.messages[i];
     if (msg.role === 'user') {
@@ -472,14 +457,11 @@ function addMessageEl(role, text, attachments) {
     }).join('') + '</div>';
   }
   const bodyContent = role === 'assistant' ? (mdPreviewMode ? md(text) : `<pre class="raw-md">${esc(text)}</pre>`) : esc(text);
-  // Feature 1: Add fork button to each message
-  const msgIdx = activeChat ? activeChat.messages.length : 0;
-  const forkBtn = activeChat ? `<button class="msg-fork-btn" onclick="forkAtMessage(${msgIdx})" title="Branch conversation from here">&#9095; Fork</button>` : '';
   // Timestamp
   const ts = arguments[3]; // optional 4th arg: timestamp
   const timeStr = ts ? formatMsgTime(ts) : '';
   const timeHtml = timeStr ? `<span class="msg-time">${timeStr}</span>` : '';
-  div.innerHTML = `<div class="msg-label">${role === 'user' ? 'You' : 'Assistant'}</div><div class="msg-body">${attachHtml}${bodyContent}</div><div class="msg-footer">${timeHtml}${forkBtn}</div>`;
+  div.innerHTML = `<div class="msg-label">${role === 'user' ? 'You' : 'Assistant'}</div><div class="msg-body">${attachHtml}${bodyContent}</div><div class="msg-footer">${timeHtml}</div>`;
   el.appendChild(div);
   // Scroll after images load (they change height)
   const imgs = div.querySelectorAll('.msg-attachments img');
@@ -1474,11 +1456,6 @@ async function showForkTree() {
   } catch (e) {
     content.innerHTML = `<div style="color:var(--danger);font-size:.75rem">Error loading branches: ${esc(e.message)}</div>`;
   }
-}
-
-function closeForkTree() {
-  const overlay = document.getElementById('fork-tree-overlay');
-  if (overlay) overlay.style.display = 'none';
 }
 
 // ═══════════════════════════════════════════════

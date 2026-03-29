@@ -79,6 +79,123 @@ interface ModuleSignal {
   signal: string;
   priority: number;  // 0-10
   category: string;
+  confidence: number; // 0-1, how confident the module is in this signal
+}
+
+// ── Fusion Confidence + Veto Layer ──────────────────────────
+
+interface FusionResult {
+  signals: ModuleSignal[];
+  fusionConfidence: number;    // 0-1, overall confidence in merged output
+  vetoApplied: boolean;        // true if a sacred/vulnerability signal overrode normal flow
+  vetoReason?: string;
+  deepPassTriggered: boolean;  // true if low confidence triggered a deeper analysis
+}
+
+/** Sacred topics and high-vulnerability signals break through even if heuristics keep things light */
+function applyVetoLayer(signals: ModuleSignal[]): { vetoed: boolean; reason?: string; overrideSignal?: ModuleSignal } {
+  // Check for vulnerability/sacred signals — these ALWAYS take priority
+  for (const sig of signals) {
+    if (sig.source === "vulnerability-awareness" && sig.priority >= 8) {
+      return {
+        vetoed: true,
+        reason: "Sacred/vulnerable topic detected — overriding normal tone",
+        overrideSignal: { ...sig, priority: 10, confidence: 1.0 },
+      };
+    }
+    if (sig.source === "contradiction-detector" && sig.confidence >= 0.8) {
+      return {
+        vetoed: true,
+        reason: "High-confidence contradiction — must address before proceeding",
+        overrideSignal: { ...sig, priority: 9, confidence: 1.0 },
+      };
+    }
+    if (sig.source === "correction-learning" && sig.confidence >= 0.7) {
+      return {
+        vetoed: true,
+        reason: "User correction detected — acknowledge and fix",
+        overrideSignal: { ...sig, priority: 9, confidence: 1.0 },
+      };
+    }
+  }
+  return { vetoed: false };
+}
+
+/** Calculate overall fusion confidence from individual module confidences */
+function calculateFusionConfidence(signals: ModuleSignal[]): number {
+  if (signals.length === 0) return 0;
+  // Weighted average: higher priority signals contribute more to overall confidence
+  let totalWeight = 0;
+  let weightedSum = 0;
+  for (const sig of signals) {
+    const weight = sig.priority;
+    totalWeight += weight;
+    weightedSum += sig.confidence * weight;
+  }
+  return totalWeight > 0 ? weightedSum / totalWeight : 0;
+}
+
+/** If critical modules have low confidence, identify which ones need a deeper pass */
+function checkDeepPassNeeded(signals: ModuleSignal[], activatedModules: string[]): { needed: boolean; modules: string[] } {
+  const criticalModules = ["vulnerability-awareness", "contradiction-detector", "correction-learning", "emotional-memory"];
+  const lowConfidence: string[] = [];
+  for (const sig of signals) {
+    if (criticalModules.includes(sig.source) && sig.confidence < 0.4 && sig.confidence > 0.1) {
+      lowConfidence.push(sig.source);
+    }
+  }
+  // Also check if critical modules were activated but produced no signal (suspicious)
+  for (const mod of activatedModules) {
+    if (criticalModules.includes(mod) && !signals.some(s => s.source === mod)) {
+      lowConfidence.push(mod);
+    }
+  }
+  return { needed: lowConfidence.length > 0, modules: [...new Set(lowConfidence)] };
+}
+
+// ── Orchestration Examples (for tuning) ─────────────────────
+
+interface OrchestrationExample {
+  input: { message: string; timeOfDay: number };
+  modulesActivated: string[];
+  signals: ModuleSignal[];
+  output: string;
+  quality: "good" | "bad" | "neutral";
+  timestamp: number;
+  notes?: string;
+}
+
+const EXAMPLES_FILE = join(SAX_DIR, "orchestration-examples.json");
+const MAX_EXAMPLES = 200;
+
+function loadExamples(): OrchestrationExample[] {
+  try {
+    if (existsSync(EXAMPLES_FILE)) return JSON.parse(readFileSync(EXAMPLES_FILE, "utf-8"));
+  } catch {}
+  return [];
+}
+
+function saveExample(example: OrchestrationExample): void {
+  const examples = loadExamples();
+  examples.push(example);
+  if (examples.length > MAX_EXAMPLES) examples.splice(0, examples.length - MAX_EXAMPLES);
+  writeFileSync(EXAMPLES_FILE, JSON.stringify(examples, null, 2), "utf-8");
+}
+
+/** Rate a recent orchestration as good/bad (called by user feedback or auto-heuristic) */
+export function rateOrchestration(index: number, quality: "good" | "bad", notes?: string): void {
+  const examples = loadExamples();
+  if (index >= 0 && index < examples.length) {
+    examples[index].quality = quality;
+    if (notes) examples[index].notes = notes;
+    writeFileSync(EXAMPLES_FILE, JSON.stringify(examples, null, 2), "utf-8");
+  }
+}
+
+/** Get recent examples for few-shot tuning */
+export function getOrchestrationExamples(quality?: "good" | "bad"): OrchestrationExample[] {
+  const examples = loadExamples();
+  return quality ? examples.filter(e => e.quality === quality) : examples;
 }
 
 export interface BackgroundReport {
@@ -289,6 +406,13 @@ function gatherSignals(input: OrchestratorInput, triage: TriageResult): ModuleSi
   for (const mod of allModules) {
     const collected = safeRun(mod, () => runModule(mod, input), []);
     signals.push(...collected);
+  }
+
+  // Ensure all signals have confidence (default based on priority)
+  for (const sig of signals) {
+    if (sig.confidence === undefined || sig.confidence === null) {
+      sig.confidence = Math.min(1, sig.priority / 10);
+    }
   }
 
   return signals;
@@ -844,23 +968,61 @@ export class MemoryOrchestrator {
     const allActivated = [...triage.always, ...triage.conditional, ...triage.scheduled, ...triage.triggered];
 
     // 2. GATHER — run activated modules, collect signals
-    const signals = gatherSignals(input, triage);
+    let signals = gatherSignals(input, triage);
+
+    // 2.5 VETO LAYER — sacred/vulnerability signals override normal flow
+    const veto = applyVetoLayer(signals);
+    if (veto.vetoed && veto.overrideSignal) {
+      // Push the override signal to top priority
+      signals = signals.filter(s => s.source !== veto.overrideSignal!.source);
+      signals.unshift(veto.overrideSignal);
+    }
+
+    // 2.6 CONFIDENCE CHECK — if critical modules have low confidence, run deeper
+    const deepPass = checkDeepPassNeeded(signals, allActivated);
+    if (deepPass.needed) {
+      // Re-run low-confidence critical modules with broader context (more session messages)
+      for (const mod of deepPass.modules) {
+        const deepSignal = safeRun(mod + "-deep", () => {
+          // Run with more context for higher confidence
+          const expandedInput = { ...input, sessionMessages: input.sessionMessages.slice(-40) };
+          return gatherSignals(expandedInput, { always: [mod], conditional: [], scheduled: [], triggered: [] });
+        }, []);
+        if (deepSignal.length > 0) {
+          // Replace the low-confidence signal with the deeper one
+          signals = signals.filter(s => s.source !== mod);
+          signals.push(...deepSignal);
+        }
+      }
+    }
 
     // 3. MERGE — combine into one coherent context injection
     const merged = mergeSignals(signals, orchestratorState.lastSignalHashes);
 
+    // 3.5 FUSION CONFIDENCE — overall confidence score
+    const fusionConfidence = calculateFusionConfidence(merged.usedSignals);
+
     // 4. EXTRACT NOTIFICATIONS
     const notifications = extractNotifications(signals, input);
 
-    // 5. RECORD — update modules with new data (non-blocking conceptually, runs sync but after output generation)
+    // 5. RECORD — update modules with new data
     const adaptations = buildAdaptations(signals);
 
     // Build debug info
     const debug: DebugInfo = {
       modulesActivated: allActivated,
       totalTimeMs: Date.now() - startTime,
-      signals: Object.fromEntries(signals.map(s => [s.source + ":" + s.category, { signal: s.signal.slice(0, 80), priority: s.priority }])),
-    };
+      signals: Object.fromEntries(signals.map(s => [s.source + ":" + s.category, {
+        signal: s.signal.slice(0, 80),
+        priority: s.priority,
+        confidence: s.confidence,
+      }])),
+      fusionConfidence,
+      vetoApplied: veto.vetoed,
+      vetoReason: veto.reason,
+      deepPassTriggered: deepPass.needed,
+      deepPassModules: deepPass.modules,
+    } as any;
 
     const output: OrchestratorOutput = {
       contextInjection: merged.paragraph,
@@ -871,6 +1033,18 @@ export class MemoryOrchestrator {
 
     // Record data from this message (happens after output is generated)
     safeRun("recording", () => recordFromMessage(input), undefined);
+
+    // 6. SAVE ORCHESTRATION EXAMPLE — for tuning
+    safeRun("save-example", () => {
+      saveExample({
+        input: { message: input.message.slice(0, 200), timeOfDay: input.timeOfDay },
+        modulesActivated: allActivated,
+        signals: merged.usedSignals.map(s => ({ ...s, signal: s.signal.slice(0, 100) })),
+        output: merged.paragraph.slice(0, 300),
+        quality: "neutral", // starts neutral, can be rated later
+        timestamp: Date.now(),
+      });
+    }, undefined);
 
     // Update state
     orchestratorState.lastProcessedAt = Date.now();

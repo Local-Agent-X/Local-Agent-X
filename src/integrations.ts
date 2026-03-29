@@ -315,8 +315,9 @@ export class IntegrationRegistry {
     // Overlay saved state (installed status, user-added integrations)
     if (existsSync(this.filePath)) {
       try {
-        const saved: IntegrationConfig[] = JSON.parse(readFileSync(this.filePath, "utf-8"));
-        for (const s of saved) {
+        const saved = JSON.parse(readFileSync(this.filePath, "utf-8"));
+        if (!Array.isArray(saved)) throw new Error("Invalid integrations config");
+        for (const s of saved as IntegrationConfig[]) {
           const existing = this.integrations.get(s.id);
           if (existing) {
             // Merge saved state into built-in (preserve built-in endpoints but keep user's installed/enabled state)
@@ -368,6 +369,16 @@ export class IntegrationRegistry {
   /** Add a new custom integration (agent-discovered or user-created) */
   addIntegration(config: IntegrationConfig): void {
     config.builtin = false;
+    if (config.baseUrl) {
+      try {
+        const u = new URL(config.baseUrl);
+        if (u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "0.0.0.0" || u.hostname === "[::1]" || u.hostname.endsWith(".local") || /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(u.hostname)) {
+          throw new Error("Internal URLs not allowed as integration base URL");
+        }
+      } catch (e) {
+        if ((e as Error).message.includes("Internal URLs")) throw e;
+      }
+    }
     this.integrations.set(config.id, config);
     this.save();
   }

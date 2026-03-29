@@ -123,6 +123,8 @@ export function checkEgress(hostname: string): { allowed: boolean; reason: strin
 
 /** Match a hostname against a domain rule (supports wildcards like *.example.com) */
 function matchesDomain(hostname: string, rule: string): boolean {
+  hostname = hostname.toLowerCase();
+  rule = rule.toLowerCase();
   if (rule.startsWith("*.")) {
     return hostname === rule.slice(2) || hostname.endsWith(rule.slice(1));
   }

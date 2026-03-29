@@ -85,7 +85,7 @@ export function stripControlChars(text: string): string {
 
 /** Replace Unicode homoglyphs for angle brackets with ASCII equivalents */
 export function normalizeHomoglyphs(text: string): string {
-  return text.replace(ANGLE_HOMOGLYPHS, (ch) => {
+  let sanitized = text.replace(ANGLE_HOMOGLYPHS, (ch) => {
     // Map to ASCII < or >
     const code = ch.codePointAt(0)!;
     // Left angle variants
@@ -93,6 +93,15 @@ export function normalizeHomoglyphs(text: string): string {
     // Right angle variants
     return ">";
   });
+  // Parentheses homoglyphs
+  sanitized = sanitized.replace(/[\uFF08\uFF09\uFE59\uFE5A\u207D\u207E\u208D\u208E\u2768\u2769]/g, (ch) =>
+    "\uFF08\uFE59\u207D\u208D\u2768".includes(ch) ? "(" : ")"
+  );
+  // Bracket homoglyphs
+  sanitized = sanitized.replace(/[\uFF3B\uFF3D\u2045\u2046\u27E6\u27E7]/g, (ch) =>
+    "\uFF3B\u2045\u27E6".includes(ch) ? "[" : "]"
+  );
+  return sanitized;
 }
 
 /**
@@ -136,6 +145,7 @@ export function wrapExternalContent(
   sanitized = sanitized.replace(/<<<\s*EXTERNAL/gi, "[[MARKER_SANITIZED]]");
   sanitized = sanitized.replace(/<<<\s*END_EXTERNAL/gi, "[[MARKER_SANITIZED]]");
   sanitized = sanitized.replace(/<<<\s*UNTRUSTED/gi, "[[MARKER_SANITIZED]]");
+  sanitized = sanitized.replace(/\[\[MARKER_SANITIZED\]\]/g, "");
 
   // Step 3: Normalize Unicode homoglyphs that could spoof XML/boundary tags
   sanitized = normalizeHomoglyphs(sanitized);
@@ -229,7 +239,7 @@ export interface MemoryTaintResult {
 export function checkMemoryTaint(content: string): MemoryTaintResult {
   // FIRST: normalize unicode tricks that could bypass pattern matching
   // This closes the homoglyph/invisible-char bypass the audit identified
-  const normalized = normalizeHomoglyphs(stripControlChars(content));
+  const normalized = normalizeHomoglyphs(stripControlChars(content)).normalize('NFKC');
 
   // Check for external content markers (wrapped content leaking into memory)
   for (const marker of EXTERNAL_MARKERS) {

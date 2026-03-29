@@ -52,7 +52,9 @@ function getNextCronMs(schedule: string): number | null {
 }
 
 function getIntervalMs(schedule: string): number {
-  return parseInterval(schedule) || getNextCronMs(schedule) || 3600000;
+  const ms = parseInterval(schedule) || getNextCronMs(schedule) || 3600000;
+  if (ms < 60000) return 60000; // minimum 1 minute
+  return ms;
 }
 
 export class CronService {
@@ -148,6 +150,12 @@ export class CronService {
   }
 
   create(name: string, schedule: string, prompt: string, systemJob?: boolean): CronJob {
+    if (prompt.length > 5000) {
+      throw new Error("Cron job prompt too long (max 5000 characters)");
+    }
+    if (!schedule || schedule.trim().length === 0) {
+      throw new Error("Schedule is required");
+    }
     const id = `cron_${Date.now().toString(36)}`;
     const job: CronJob = {
       id, name, schedule, prompt,

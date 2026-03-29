@@ -72,6 +72,10 @@ async function fetchTranscriptYtDlp(videoId: string): Promise<string | null> {
     // Clean up any previous run
     if (existsSync(subFile)) unlinkSync(subFile);
 
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+      return null; // Invalid YouTube video ID format
+    }
+
     await execFileAsync("python", [
       "-m", "yt_dlp",
       "--write-auto-sub", "--sub-lang", "en",

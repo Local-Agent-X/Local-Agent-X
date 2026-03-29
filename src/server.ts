@@ -814,6 +814,11 @@ export function startServer(config: SAXConfig) {
       const uploaded: { name: string; url: string; size: number; isImage: boolean }[] = [];
       for (const part of parts) {
         const ext = (part.filename?.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const BLOCKED_EXTENSIONS = new Set(["exe", "sh", "bat", "cmd", "com", "ps1", "vbs", "js", "msi", "dll", "so"]);
+        if (BLOCKED_EXTENSIONS.has(ext)) {
+          json(400, { error: `File type .${ext} is not allowed` });
+          return;
+        }
         // Validate file magic bytes match declared extension
         if (!validateMagic(part.data, ext)) {
           json(400, { error: `File ${part.filename} does not match its declared type (.${ext})` });
@@ -843,7 +848,9 @@ export function startServer(config: SAXConfig) {
       const bearerToken = auth.startsWith("Bearer ") ? auth.slice(7) : "";
       const queryToken = url.searchParams.get("token") || "";
       const providedToken = bearerToken || queryToken;
-      if (!providedToken || providedToken !== config.authToken) {
+      const tokenMatch = providedToken.length === config.authToken.length &&
+        timingSafeEqual(Buffer.from(providedToken), Buffer.from(config.authToken));
+      if (!providedToken || !tokenMatch) {
         json(401, { error: "Authentication required" });
         return;
       }
@@ -1129,7 +1136,7 @@ export function startServer(config: SAXConfig) {
         await new Promise(r => setTimeout(r, 2000));
         json(200, { ok: true, status: "started", pid: child.pid });
       } catch (e) {
-        json(500, { error: `Failed to start XTTS: ${(e as Error).message}` });
+        json(500, { error: "Failed to start XTTS" });
       }
       return;
     }
@@ -1150,7 +1157,7 @@ export function startServer(config: SAXConfig) {
         const text = transcribe(audioBuffer);
         json(200, { text });
       } catch (e) {
-        json(500, { error: `Transcription failed: ${(e as Error).message}` });
+        json(500, { error: "Transcription failed" });
       }
       return;
     }
@@ -1183,7 +1190,7 @@ export function startServer(config: SAXConfig) {
         });
         res.end(wavBuffer);
       } catch (e) {
-        json(500, { error: `Synthesis failed: ${(e as Error).message}` });
+        json(500, { error: "Synthesis failed" });
       }
       return;
     }
@@ -1287,7 +1294,7 @@ export function startServer(config: SAXConfig) {
         console.log(`[auth] Token rotated. New token: ${masked}`);
         json(200, { ok: true, token: newToken, message: "Token rotated. Save this token — it won't be shown again." });
       } catch (e) {
-        json(500, { error: `Failed to rotate: ${(e as Error).message}` });
+        json(500, { error: "Failed to rotate token" });
       }
       return;
     }
@@ -1346,7 +1353,8 @@ export function startServer(config: SAXConfig) {
       const settingsPath = join(dataDir, "settings.json");
       let existing: Record<string, unknown> = {};
       try { if (existsSync(settingsPath)) existing = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
-      const merged = { ...existing, ...body };
+      const { __proto__: _a, constructor: _b, prototype: _c, ...safeBody2 } = body as any;
+      const merged = { ...existing, ...safeBody2 };
       writeFileSync(settingsPath, JSON.stringify(merged, null, 2), { encoding: "utf-8", mode: 0o600 });
       json(200, { ok: true });
       return;
@@ -1389,7 +1397,8 @@ export function startServer(config: SAXConfig) {
     if (method === "POST" && url.pathname === "/api/providers/switch") {
       let body: Record<string, unknown>;
       try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
-      const provider = String(body.provider || "");
+      const { __proto__: _a, constructor: _b, prototype: _c, ...safeBody } = body as any;
+      const provider = String(safeBody.provider || "");
       const model = String(body.model || "");
       if (!provider) { json(400, { error: "provider required" }); return; }
       // Update settings.json
@@ -1500,6 +1509,11 @@ export function startServer(config: SAXConfig) {
       const date = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
         json(400, { error: "Invalid date format. Expected YYYY-MM-DD" }); return;
+      }
+      const [y, m, d] = date.split("-").map(Number);
+      if (m < 1 || m > 12 || d < 1 || d > 31) {
+        json(400, { error: "Invalid date values" });
+        return;
       }
       const auditPath = join(dataDir, "audit", `${date}.jsonl`);
       const { CryptoAuditTrail } = await import("./threat-engine.js");
@@ -2087,6 +2101,9 @@ export function startServer(config: SAXConfig) {
           console.log(`[chat] Sliding window: ${session.messages.length} total → ${recentMessages.length} recent (cut at user msg ${cutPoint})`);
         }
 
+        // Set parent session ID so spawned agents get parent context
+        try { const { PrimalOrchestrator: PO } = await import("./swarm/primal.js"); PO.getInstance().currentSessionId = sessionId; } catch {}
+
         const result = await runAgent(message, sanitizeHistory(historyToSend), {
           apiKey,
           model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
@@ -2282,7 +2299,7 @@ export function startServer(config: SAXConfig) {
       const videosDir = resolve(process.cwd(), "workspace", "videos");
       const vidFile = resolve(videosDir, url.pathname.replace("/videos/", ""));
       const vidRel = relative(videosDir, vidFile);
-      if (vidRel.startsWith("..") || vidRel.includes("..")) {
+      if (vidRel.startsWith("..") || vidRel.includes("..") || url.pathname.includes("\x00") || url.pathname.includes("%00")) {
         json(403, { error: "Path traversal blocked" });
         return;
       }
@@ -2343,6 +2360,9 @@ export function startServer(config: SAXConfig) {
           headers["X-Content-Type-Options"] = "nosniff";
           headers["X-Frame-Options"] = "DENY";
           headers["Referrer-Policy"] = "no-referrer";
+          headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+          headers["X-XSS-Protection"] = "1; mode=block";
+          headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
         }
         // Inject token isolation script into HTML — clears auth tokens before app code runs
         if (ext === "html") {
@@ -2408,6 +2428,9 @@ export function startServer(config: SAXConfig) {
           headers["X-Content-Type-Options"] = "nosniff";
           headers["X-Frame-Options"] = "DENY";
           headers["Referrer-Policy"] = "no-referrer";
+          headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+          headers["X-XSS-Protection"] = "1; mode=block";
+          headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
         }
         res.writeHead(200, headers);
         res.end(readFileSync(filePath));
@@ -2430,8 +2453,23 @@ export function startServer(config: SAXConfig) {
 
   // Wire spawned agent execution — when Primal spawns an agent, actually run it
   eventBus.on("primal:agent-run", async (data: any) => {
-    const { agentId, task, systemPrompt, role } = data;
+    const { agentId, task, systemPrompt, role, parentSessionId } = data;
     console.log(`[primal] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
+
+    // Build parent context from the conversation that spawned this agent
+    let parentContext = "";
+    if (parentSessionId) {
+      const parentSession = sessions.get(parentSessionId);
+      if (parentSession && parentSession.messages.length > 0) {
+        const recent = parentSession.messages.slice(-10);
+        const summary = recent
+          .filter((m: any) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+          .map((m: any) => `${m.role === "user" ? "User" : "Agent"}: ${(m.content as string).slice(0, 200)}`)
+          .join("\n");
+        parentContext = `\n\n--- PARENT CONVERSATION CONTEXT ---\nYou were spawned from a conversation. Here is recent context:\n${summary}\n--- END PARENT CONTEXT ---\n`;
+        console.log(`[primal] Agent ${agentId} received parent context from session ${parentSessionId}`);
+      }
+    }
     try {
       // Resolve API key and provider from saved settings (same as chat handler)
       let agentProvider: "codex" | "anthropic" | "openai" | "xai" | "local" = "codex";
@@ -2476,7 +2514,7 @@ export function startServer(config: SAXConfig) {
         apiKey: agentApiKey,
         model: agentModel,
         provider: agentProvider,
-        systemPrompt: systemPrompt || `You are a ${role} agent. Complete the following task thoroughly. Use the tools available to create files, run commands, and get the job done. Report your results when finished.`,
+        systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the following task thoroughly. Use the tools available to create files, run commands, and get the job done. Report your results when finished.`) + parentContext,
         tools: spawnedAgentTools,
         security,
         toolPolicy,
@@ -2539,7 +2577,9 @@ export function startServer(config: SAXConfig) {
     const maskedToken = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
     console.log(`\n  Open Agent X running at http://127.0.0.1:${config.port}`);
     console.log(`  Auth token: ${maskedToken}`);
-    console.log(`\n  ► Open: http://127.0.0.1:${config.port}/?token=${maskedToken}\n`);
+    const realUrl = `http://127.0.0.1:${config.port}/?token=${config.authToken}`;
+    const displayUrl = `http://127.0.0.1:${config.port}/?token=${maskedToken}`;
+    console.log(`\n  ► Open: \x1b]8;;${realUrl}\x1b\\${displayUrl}\x1b]8;;\x1b\\\n`);
     console.log(`  Memory: ${dataDir}/memory/`);
     console.log(`  Sessions: ${dataDir}/sessions/`);
 

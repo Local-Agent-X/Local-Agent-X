@@ -1,5 +1,26 @@
 // ── Settings Panel ──
 
+async function settingsCheckUpdate() {
+  const status = document.getElementById('settings-update-status');
+  if (!status) return;
+  status.style.color = 'var(--muted)';
+  status.textContent = 'Checking...';
+  try {
+    const res = await apiFetch('/api/updates/check');
+    const data = await res.json();
+    if (data.updateAvailable) {
+      status.style.color = 'var(--accent)';
+      status.innerHTML = `Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''} <a href="https://github.com/petermanrique101-sys/Open-Agent-X" target="_blank" style="color:var(--accent);margin-left:8px">View on GitHub</a>`;
+    } else {
+      status.style.color = 'var(--accent)';
+      status.textContent = 'You are up to date! (v' + (data.localVersion || '0.1.0') + ')';
+    }
+  } catch (e) {
+    status.style.color = 'var(--error, red)';
+    status.textContent = 'Could not check for updates.';
+  }
+}
+
 function init_settings() {
   loadSettings();
   loadSyncConfig();

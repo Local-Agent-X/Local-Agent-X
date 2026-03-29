@@ -173,6 +173,12 @@
           <div class="section-desc">Local server configuration. Changes require restart.</div>
           <div class="field-row"><div class="field"><label class="field-label">Port</label><input class="field-input" id="cfg-port" type="number" value="7007"/></div><div class="field"><label class="field-label">Workspace</label><input class="field-input" id="cfg-workspace" value="./workspace"/></div></div>
         </div>
+        <div class="section-card">
+          <div class="section-title">Updates</div>
+          <div class="section-desc">Check for new versions of Open Agent X.</div>
+          <div id="settings-update-status" style="font-size:.8rem;color:var(--muted);margin-bottom:8px">Not checked yet.</div>
+          <button class="action-btn primary" onclick="settingsCheckUpdate()">Check for Updates</button>
+        </div>
       </div>
       <!-- AI & Models -->
       <div id="stab-ai" class="tab-pane">

@@ -270,12 +270,15 @@ exit /b 1
 echo.
 echo  [6/6] Creating shortcuts...
 
-:: Create start script that launches Electron desktop app
+:: Create a VBS launcher (starts Electron without any visible cmd window)
 set "ICON_PATH=%INSTALL_DIR%\public\icon.ico"
 set "ELECTRON_CMD=%INSTALL_DIR%\desktop\node_modules\.bin\electron.cmd"
-powershell -Command "Set-Content -Path '%INSTALL_DIR%\start.bat' -Value \"@echo off`r`ncd /d %INSTALL_DIR%\desktop`r`nstart `\"`\" `\"%ELECTRON_CMD%`\" dist/main.js\"" 2>nul
+powershell -Command "Set-Content -Path '%INSTALL_DIR%\launch.vbs' -Value \"Set WshShell = CreateObject(`\"WScript.Shell`\")`r`nWshShell.CurrentDirectory = `\"%INSTALL_DIR%\desktop`\"`r`nWshShell.Run `\"`\"`\"%ELECTRON_CMD%`\"`\" dist/main.js`\", 0, False\"" 2>nul
 
-:: Also keep a fallback start-server.bat for debug
+:: Create start.bat as fallback (calls the VBS)
+powershell -Command "Set-Content -Path '%INSTALL_DIR%\start.bat' -Value \"@echo off`r`ncscript //nologo `\"%INSTALL_DIR%\launch.vbs`\"`r`nexit\"" 2>nul
+
+:: Also keep a start-server.bat for debug
 powershell -Command "Set-Content -Path '%INSTALL_DIR%\start-server.bat' -Value \"@echo off`r`ntitle Open Agent X Server`r`ncd /d %INSTALL_DIR%`r`nnode --max-old-space-size=512 dist/index.js`r`npause\"" 2>nul
 
 :: Create desktop shortcut (handles OneDrive Desktop path)
@@ -302,8 +305,7 @@ echo  Starting Open Agent X now...
 echo.
 
 :: Launch the Electron desktop app (starts server + opens UI automatically)
-cd /d "%INSTALL_DIR%\desktop"
-start "" "%ELECTRON_CMD%" dist/main.js
+cscript //nologo "%INSTALL_DIR%\launch.vbs"
 
 echo.
 echo  Open Agent X is running! Check your browser.

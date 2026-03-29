@@ -147,9 +147,9 @@ function renderMessages() {
     const msg = activeChat.messages[i];
     if (msg.role === 'user') {
       const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
-      addMessageEl('user', displayText, msg.attachments);
+      addMessageEl('user', displayText, msg.attachments, msg.timestamp);
     } else if (msg.role === 'assistant' && msg.content) {
-      addMessageEl('assistant', msg.content);
+      addMessageEl('assistant', msg.content, null, msg.timestamp);
     }
   }
   el.scrollTop = el.scrollHeight;
@@ -182,8 +182,9 @@ async function sendMessage() {
     saveChats(); renderSidebar();
   }
   const empty = document.getElementById('empty'); if (empty) empty.remove();
-  addMessageEl('user', displayText, msgAttachments);
-  activeChat.messages.push({ role: 'user', content: finalText, attachments: msgAttachments });
+  const msgTime = Date.now();
+  addMessageEl('user', displayText, msgAttachments, msgTime);
+  activeChat.messages.push({ role: 'user', content: finalText, attachments: msgAttachments, timestamp: msgTime });
   const msgEl = addMessageEl('assistant', '');
   const bodyEl = msgEl.querySelector('.msg-body');
   bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
@@ -292,9 +293,10 @@ async function sendMessage() {
     if (content.trim()) {
       if (lastMsg && lastMsg._streaming) {
         lastMsg.content = content;
+        lastMsg.timestamp = Date.now();
         delete lastMsg._streaming;
       } else {
-        streamChat.messages.push({ role: 'assistant', content });
+        streamChat.messages.push({ role: 'assistant', content, timestamp: Date.now() });
       }
       streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
     }
@@ -436,6 +438,20 @@ function toggleMdPreview() {
   renderMessages();
 }
 
+function formatMsgTime(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  const diff = now - d;
+  const mins = Math.floor(diff / 60000);
+  const hrs = Math.floor(diff / 3600000);
+  const days = Math.floor(diff / 86400000);
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (days === 0) return time;
+  if (days === 1) return 'Yesterday ' + time;
+  if (days < 7) return d.toLocaleDateString([], { weekday: 'short' }) + ' ' + time;
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
+}
+
 function addMessageEl(role, text, attachments) {
   const el = document.getElementById('messages');
   const div = document.createElement('div'); div.className = 'msg ' + role;
@@ -459,7 +475,11 @@ function addMessageEl(role, text, attachments) {
   // Feature 1: Add fork button to each message
   const msgIdx = activeChat ? activeChat.messages.length : 0;
   const forkBtn = activeChat ? `<button class="msg-fork-btn" onclick="forkAtMessage(${msgIdx})" title="Branch conversation from here">&#9095; Fork</button>` : '';
-  div.innerHTML = `<div class="msg-label">${role === 'user' ? 'You' : 'Assistant'}</div><div class="msg-body">${attachHtml}${bodyContent}</div>${forkBtn}`;
+  // Timestamp
+  const ts = arguments[3]; // optional 4th arg: timestamp
+  const timeStr = ts ? formatMsgTime(ts) : '';
+  const timeHtml = timeStr ? `<span class="msg-time">${timeStr}</span>` : '';
+  div.innerHTML = `<div class="msg-label">${role === 'user' ? 'You' : 'Assistant'}</div><div class="msg-body">${attachHtml}${bodyContent}</div><div class="msg-footer">${timeHtml}${forkBtn}</div>`;
   el.appendChild(div);
   // Scroll after images load (they change height)
   const imgs = div.querySelectorAll('.msg-attachments img');

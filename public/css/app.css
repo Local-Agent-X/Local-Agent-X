@@ -97,6 +97,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .msg.user{display:flex;justify-content:flex-end}
 .msg.assistant{}
 .msg-label{display:none}
+.msg-footer{display:flex;align-items:center;gap:8px;margin-top:4px}
+.msg-time{font-family:var(--mono);font-size:.58rem;color:var(--muted);opacity:.6}
+.msg:hover .msg-time{opacity:1}
 .msg-body{line-height:1.75;font-size:.92rem;white-space:pre-wrap;word-break:break-word}
 .msg.user .msg-body{background:var(--surface-2);border:1px solid var(--border);border-radius:18px;padding:10px 18px;display:inline-block;max-width:85%}
 .msg.assistant .msg-body{padding:4px 0;background:none;border:none}

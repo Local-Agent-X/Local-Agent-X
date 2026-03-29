@@ -96,6 +96,7 @@ function setSetting<K extends keyof DesktopSettings>(key: K, value: DesktopSetti
 let mainWindow: BrowserWindow | null = null;
 let serverProcess: ChildProcess | null = null;
 let isQuitting = false;
+let isRestarting = false;
 let saxConfig: SAXConfig;
 
 // ── Server Lifecycle ──────────────────────────────────────
@@ -144,9 +145,9 @@ function startServer(): void {
   serverProcess.on("exit", (code) => {
     console.log(`[desktop] Server exited with code ${code}`);
     serverProcess = null;
-    if (!isQuitting) {
+    if (!isQuitting && !isRestarting) {
       setTimeout(() => {
-        if (!isQuitting && !serverProcess) startServer();
+        if (!isQuitting && !isRestarting && !serverProcess) startServer();
       }, 3000);
     }
   });
@@ -370,12 +371,17 @@ function setupIPC(): void {
   });
 
   ipcMain.handle("restart-server", async () => {
+    isRestarting = true;
     await stopServer();
+    await new Promise(r => setTimeout(r, 1000));
     saxConfig = loadSAXConfig();
+    console.log("[desktop] Restarting on port", saxConfig.port);
     startServer();
+    isRestarting = false;
     const ready = await waitForServer();
     if (ready && mainWindow) {
       const newUrl = `http://127.0.0.1:${saxConfig.port}/?token=${saxConfig.authToken}`;
+      console.log("[desktop] Reloading window to", newUrl);
       mainWindow.loadURL(newUrl);
     }
     return ready;
@@ -454,12 +460,17 @@ app.on("ready", async () => {
     },
     getServerStatus: isServerRunning,
     onRestartServer: async () => {
+      isRestarting = true;
       await stopServer();
+      await new Promise(r => setTimeout(r, 1000));
       saxConfig = loadSAXConfig();
+      console.log("[desktop] Tray restart on port", saxConfig.port);
       startServer();
+      isRestarting = false;
       const ready = await waitForServer();
       if (ready && mainWindow) {
         const newUrl = `http://127.0.0.1:${saxConfig.port}/?token=${saxConfig.authToken}`;
+        console.log("[desktop] Reloading window to", newUrl);
         mainWindow.loadURL(newUrl);
       }
     },

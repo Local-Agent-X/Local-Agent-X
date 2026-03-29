@@ -248,6 +248,13 @@ echo  [5/6] Building Open Agent X...
 call npm run build
 if %errorlevel% neq 0 goto :build_failed
 if not exist "dist\index.js" goto :build_failed
+
+:: Build desktop app (Electron wrapper)
+echo  Building desktop app...
+cd /d "%INSTALL_DIR%\desktop"
+call npm install --no-audit --no-fund 2>nul
+call npx tsc 2>nul
+cd /d "%INSTALL_DIR%"
 goto :build_done
 
 :build_failed
@@ -263,15 +270,19 @@ exit /b 1
 echo.
 echo  [6/6] Creating shortcuts...
 
-:: Create start script using PowerShell (avoids batch echo/pipe issues)
-powershell -Command "$s = @'`r`n@echo off`r`ntitle Open Agent X`r`ncd /d %INSTALL_DIR%`r`necho Starting Open Agent X...`r`nstart /b node --max-old-space-size=512 dist/index.js`r`necho Waiting for server...`r`n:waitloop`r`ntimeout /t 1 /nobreak >nul`r`ncurl -s http://127.0.0.1:7007/api/health >nul 2>&1`r`nif %%errorlevel%% neq 0 goto waitloop`r`nfor /f ""tokens=*"" %%%%t in ('node -e ""try{console.log(JSON.parse(require('fs').readFileSync(require('path').join(require('os').homedir(),'.sax','config.json'),'utf-8')).authToken)}catch{}"" 2^^^^>nul') do set ""TOKEN=%%%%t""`r`nif defined TOKEN (start http://127.0.0.1:7007/?token=%%TOKEN%%) else (start http://127.0.0.1:7007)`r`necho Open Agent X is running. Close this window to stop.`r`ncmd /k`r`n'@; Set-Content -Path '%INSTALL_DIR%\start.bat' -Value $s" 2>nul
-
-:: Create desktop shortcut via PowerShell (handles OneDrive Desktop path)
+:: Create start script that launches Electron desktop app
 set "ICON_PATH=%INSTALL_DIR%\public\icon.ico"
-powershell -Command "$desktop=[Environment]::GetFolderPath('Desktop'); $ws=New-Object -ComObject WScript.Shell; $sc=$ws.CreateShortcut(\"$desktop\Open Agent X.lnk\"); $sc.TargetPath='%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory='%INSTALL_DIR%'; $sc.Description='Open Agent X'; if(Test-Path '%ICON_PATH%'){$sc.IconLocation='%ICON_PATH%,0'}; $sc.Save(); Write-Host '  Desktop shortcut created.'" 2>nul
+set "ELECTRON_CMD=%INSTALL_DIR%\desktop\node_modules\.bin\electron.cmd"
+powershell -Command "Set-Content -Path '%INSTALL_DIR%\start.bat' -Value \"@echo off`r`ncd /d %INSTALL_DIR%\desktop`r`nstart `\"`\" `\"%ELECTRON_CMD%`\" dist/main.js\"" 2>nul
+
+:: Also keep a fallback start-server.bat for debug
+powershell -Command "Set-Content -Path '%INSTALL_DIR%\start-server.bat' -Value \"@echo off`r`ntitle Open Agent X Server`r`ncd /d %INSTALL_DIR%`r`nnode --max-old-space-size=512 dist/index.js`r`npause\"" 2>nul
+
+:: Create desktop shortcut (handles OneDrive Desktop path)
+powershell -Command "$desktop=[Environment]::GetFolderPath('Desktop'); $ws=New-Object -ComObject WScript.Shell; $sc=$ws.CreateShortcut(\"$desktop\Open Agent X.lnk\"); $sc.TargetPath='%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory='%INSTALL_DIR%\desktop'; $sc.Description='Open Agent X'; if(Test-Path '%ICON_PATH%'){$sc.IconLocation='%ICON_PATH%,0'}; $sc.Save(); Write-Host '  Desktop shortcut created.'" 2>nul
 
 :: Create Start Menu shortcut
-powershell -Command "$sm=\"$env:APPDATA\Microsoft\Windows\Start Menu\Programs\"; $ws=New-Object -ComObject WScript.Shell; $sc=$ws.CreateShortcut(\"${sm}Open Agent X.lnk\"); $sc.TargetPath='%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory='%INSTALL_DIR%'; $sc.Description='Open Agent X'; if(Test-Path '%ICON_PATH%'){$sc.IconLocation='%ICON_PATH%,0'}; $sc.Save()" 2>nul
+powershell -Command "$sm=\"$env:APPDATA\Microsoft\Windows\Start Menu\Programs\"; $ws=New-Object -ComObject WScript.Shell; $sc=$ws.CreateShortcut(\"${sm}Open Agent X.lnk\"); $sc.TargetPath='%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory='%INSTALL_DIR%\desktop'; $sc.Description='Open Agent X'; if(Test-Path '%ICON_PATH%'){$sc.IconLocation='%ICON_PATH%,0'}; $sc.Save()" 2>nul
 
 :: ── Launch ──
 echo.
@@ -290,22 +301,9 @@ echo.
 echo  Starting Open Agent X now...
 echo.
 
-:: Start the server
-cd /d "%INSTALL_DIR%"
-start "Open Agent X" cmd /k "node --max-old-space-size=512 dist/index.js"
-
-:: Wait for server to be ready
-echo  Waiting for server to start...
-:wait_server
-timeout /t 2 /nobreak >nul
-curl -s http://127.0.0.1:7007/api/health >nul 2>&1
-if %errorlevel% neq 0 goto :wait_server
-
-:: Read auth token and open browser
-set "SAX_CONFIG=%USERPROFILE%\.sax\config.json"
-set "TOKEN="
-if exist "%SAX_CONFIG%" for /f "tokens=*" %%t in ('powershell -Command "try{(Get-Content '%SAX_CONFIG%' | ConvertFrom-Json).authToken}catch{}"') do set "TOKEN=%%t"
-if defined TOKEN (start http://127.0.0.1:7007/?token=%TOKEN%) else (start http://127.0.0.1:7007)
+:: Launch the Electron desktop app (starts server + opens UI automatically)
+cd /d "%INSTALL_DIR%\desktop"
+start "" "%ELECTRON_CMD%" dist/main.js
 
 echo.
 echo  Open Agent X is running! Check your browser.

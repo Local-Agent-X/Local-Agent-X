@@ -217,8 +217,8 @@ function showMoveMenu(chatId, e) {
   menu.className = 'move-menu';
   const chat = chats.find(c => c.id === chatId);
   menu.innerHTML = projects.map(p =>
-    `<div class="move-menu-item" onclick="moveChat('${chatId}','${p.id}',event)">${esc(p.name)}</div>`
-  ).join('') + (chat?.projectId ? `<div class="move-menu-item remove" onclick="moveChat('${chatId}','',event)">Remove from project</div>` : '');
+    `<div class="move-menu-item" onclick="moveChat('${esc(chatId)}','${esc(p.id)}',event)">${esc(p.name)}</div>`
+  ).join('') + (chat?.projectId ? `<div class="move-menu-item remove" onclick="moveChat('${esc(chatId)}','',event)">Remove from project</div>` : '');
   e.target.closest('.chat-item').appendChild(menu);
   setTimeout(() => document.addEventListener('click', function h() { menu.remove(); document.removeEventListener('click', h); }), 10);
 }
@@ -413,3 +413,29 @@ navigate(currentRoute());
 setInterval(() => {
   syncChatsFromServer().then(() => renderChatList()).catch(() => {});
 }, 30000);
+
+// ── Update checker (runs on startup) ──
+(async function checkForUpdates() {
+  // Don't annoy users — only check once per session, and respect dismissal
+  if (sessionStorage.getItem('sax_update_dismissed')) return;
+  try {
+    const res = await apiFetch('/api/updates/check');
+    const data = await res.json();
+    if (data.updateAvailable) {
+      const banner = document.getElementById('update-banner');
+      if (!banner) return;
+      banner.className = 'visible';
+      banner.innerHTML = `
+        <span class="update-msg">Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''}</span>
+        <button class="update-btn" onclick="window.open('https://github.com/petermanrique101-sys/Open-Agent-X','_blank')">View on GitHub</button>
+        <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>
+      `;
+    }
+  } catch {}
+})();
+
+function dismissUpdate() {
+  const banner = document.getElementById('update-banner');
+  if (banner) { banner.style.display = 'none'; banner.className = ''; }
+  sessionStorage.setItem('sax_update_dismissed', '1');
+}

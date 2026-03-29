@@ -263,34 +263,15 @@ exit /b 1
 echo.
 echo  [6/6] Creating shortcuts...
 
-:: Create start script
-(
-echo @echo off
-echo title Open Agent X
-echo cd /d "%INSTALL_DIR%"
-echo echo Starting Open Agent X...
-echo node --max-old-space-size=512 dist/index.js ^|^| (echo. ^&^& echo Server crashed. See error above.)
-echo pause
-) > "%INSTALL_DIR%\start.bat"
+:: Create start script using PowerShell (avoids batch echo/pipe issues)
+powershell -Command "Set-Content -Path '%INSTALL_DIR%\start.bat' -Value '@echo off`r`ntitle Open Agent X`r`ncd /d %INSTALL_DIR%`r`necho Starting Open Agent X...`r`nnode --max-old-space-size=512 dist/index.js`r`npause'" 2>nul
 
-:: Create desktop shortcut via PowerShell (with custom icon)
-:: Use PowerShell to find the real Desktop path (handles OneDrive redirection)
-for /f "tokens=*" %%d in ('powershell -Command "[Environment]::GetFolderPath('Desktop')"') do set "DESKTOP_PATH=%%d"
-if not defined DESKTOP_PATH set "DESKTOP_PATH=%USERPROFILE%\Desktop"
-set "SHORTCUT=%DESKTOP_PATH%\Open Agent X.lnk"
+:: Create desktop shortcut via PowerShell (handles OneDrive Desktop path)
 set "ICON_PATH=%INSTALL_DIR%\public\icon.ico"
-powershell -Command "$ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut('%SHORTCUT%'); $sc.TargetPath = '%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory = '%INSTALL_DIR%'; $sc.Description = 'Open Agent X - Personal AI Agent'; if (Test-Path '%ICON_PATH%') { $sc.IconLocation = '%ICON_PATH%,0' }; $sc.Save()" 2>nul
+powershell -Command "$desktop=[Environment]::GetFolderPath('Desktop'); $ws=New-Object -ComObject WScript.Shell; $sc=$ws.CreateShortcut(\"$desktop\Open Agent X.lnk\"); $sc.TargetPath='%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory='%INSTALL_DIR%'; $sc.Description='Open Agent X'; if(Test-Path '%ICON_PATH%'){$sc.IconLocation='%ICON_PATH%,0'}; $sc.Save(); Write-Host '  Desktop shortcut created.'" 2>nul
 
-if exist "%SHORTCUT%" (
-    echo  Desktop shortcut created.
-) else (
-    echo  Could not create shortcut (non-critical).
-)
-
-:: Create Start Menu shortcut (with custom icon)
-set "START_MENU=%APPDATA%\Microsoft\Windows\Start Menu\Programs"
-set "SM_SHORTCUT=%START_MENU%\Open Agent X.lnk"
-powershell -Command "$ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut('%SM_SHORTCUT%'); $sc.TargetPath = '%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory = '%INSTALL_DIR%'; $sc.Description = 'Open Agent X - Personal AI Agent'; if (Test-Path '%ICON_PATH%') { $sc.IconLocation = '%ICON_PATH%,0' }; $sc.Save()" 2>nul
+:: Create Start Menu shortcut
+powershell -Command "$sm=\"$env:APPDATA\Microsoft\Windows\Start Menu\Programs\"; $ws=New-Object -ComObject WScript.Shell; $sc=$ws.CreateShortcut(\"${sm}Open Agent X.lnk\"); $sc.TargetPath='%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory='%INSTALL_DIR%'; $sc.Description='Open Agent X'; if(Test-Path '%ICON_PATH%'){$sc.IconLocation='%ICON_PATH%,0'}; $sc.Save()" 2>nul
 
 :: ── Launch ──
 echo.
@@ -303,7 +284,6 @@ echo    %INSTALL_DIR%
 echo.
 echo    To start it anytime:
 echo      - Double-click "Open Agent X" on your desktop
-echo      - Or run: cd "%INSTALL_DIR%" ^&^& npm start
 echo.
 echo  ================================================================
 echo.
@@ -312,19 +292,11 @@ echo.
 
 :: Start the server
 cd /d "%INSTALL_DIR%"
-start "Open Agent X" cmd /k "node --max-old-space-size=512 dist/index.js || (echo. && echo Server crashed. See error above. && pause)"
+start "Open Agent X" cmd /k "node --max-old-space-size=512 dist/index.js"
 
 :: Wait for server to start, then open browser
-timeout /t 5 /nobreak >nul
-
-:: Read the auth token from output or config
-for /f "tokens=*" %%u in ('node -e "try{const c=JSON.parse(require('fs').readFileSync(require('path').join(require('os').homedir(),'.sax','config.json'),'utf-8'));console.log(c.authToken)}catch{}" 2^>nul') do set "AUTH_TOKEN=%%u"
-
-if defined AUTH_TOKEN (
-    start http://127.0.0.1:7007/?token=%AUTH_TOKEN%
-) else (
-    start http://127.0.0.1:7007
-)
+timeout /t 8 /nobreak >nul
+start http://127.0.0.1:7007
 
 echo.
 echo  Open Agent X is running! Check your browser.
@@ -332,10 +304,3 @@ echo  Press any key to close this installer (the server keeps running).
 echo.
 pause
 exit /b 0
-
-:: Catch-all: if anything falls through, don't close the window
-:error_catch
-echo.
-echo  Something went wrong. See the messages above.
-pause
-exit /b 1

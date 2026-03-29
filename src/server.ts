@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync, readdirSync, realpathSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
 import { timingSafeEqual, randomBytes } from "node:crypto";
@@ -426,18 +426,31 @@ export function startServer(config: SAXConfig) {
   // Full tools for spawned agents (they do the actual work)
   const tools = allAgentTools;
 
-  // In-memory session cache (backed by disk)
+  // In-memory session cache (backed by disk) — capped to prevent OOM
+  const MAX_CACHED_SESSIONS = 200;
   const sessions = new Map<string, Session>();
 
+  function evictOldestSession(): void {
+    if (sessions.size <= MAX_CACHED_SESSIONS) return;
+    // Map iterates in insertion order — oldest first
+    const oldest = sessions.keys().next().value;
+    if (oldest) sessions.delete(oldest);
+  }
+
   function getOrCreateSession(id: string): Session {
-    // Try cache first
+    // Try cache first — re-insert to keep LRU order
     let session = sessions.get(id);
-    if (session) return session;
+    if (session) {
+      sessions.delete(id);
+      sessions.set(id, session);
+      return session;
+    }
 
     // Try disk
     session = sessionStore.load(id) ?? undefined;
     if (session) {
       sessions.set(id, session);
+      evictOldestSession();
       return session;
     }
 
@@ -450,6 +463,7 @@ export function startServer(config: SAXConfig) {
       updatedAt: Date.now(),
     };
     sessions.set(id, session);
+    evictOldestSession();
     return session;
   }
 
@@ -940,11 +954,11 @@ export function startServer(config: SAXConfig) {
           ...corsHeaders(req),
           "Content-Type": ct[ext] || "application/octet-stream",
           "Cache-Control": "public, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
         };
         // Prevent script execution in SVGs served from uploads
         if (ext === "svg") {
           headers["Content-Security-Policy"] = "script-src 'none'";
-          headers["X-Content-Type-Options"] = "nosniff";
         }
         res.writeHead(200, headers);
         res.end(readFileSync(filePath));
@@ -1419,6 +1433,14 @@ export function startServer(config: SAXConfig) {
       const { __proto__: _a, constructor: _b, prototype: _c, ...safeBody2 } = body as any;
       const merged = { ...existing, ...safeBody2 };
       writeFileSync(settingsPath, JSON.stringify(merged, null, 2), { encoding: "utf-8", mode: 0o600 });
+      // Also persist port to config.json so it takes effect on restart
+      if (safeBody2.port) {
+        const configPath = join(dataDir, "config.json");
+        let cfg: Record<string, unknown> = {};
+        try { if (existsSync(configPath)) cfg = JSON.parse(readFileSync(configPath, "utf-8")); } catch {}
+        cfg.port = parseInt(String(safeBody2.port), 10);
+        writeFileSync(configPath, JSON.stringify(cfg, null, 2), { encoding: "utf-8", mode: 0o600 });
+      }
       json(200, { ok: true });
       return;
     }
@@ -1713,12 +1735,12 @@ export function startServer(config: SAXConfig) {
         const headers: Record<string, string> = { ...config.headers };
         if (config.id === "google" && config.authType === "api_key") {
           // API keys only work with public endpoints — test against YouTube
-          testUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=test&maxResults=1&key=${encodeURIComponent(token)}`;
+          testUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=test&maxResults=1`;
+          headers["X-Goog-Api-Key"] = token;
         } else if (config.authType === "api_key") {
           const testEndpoint = config.endpoints.find(e => e.method === "GET") || config.endpoints[0];
           testUrl = config.baseUrl + (testEndpoint?.path?.replace(/\{[^}]+\}/g, "") || "");
-          const sep = testUrl.includes("?") ? "&" : "?";
-          testUrl += `${sep}key=${encodeURIComponent(token)}`;
+          headers["Authorization"] = `Bearer ${token}`;
         } else {
           const testEndpoint = config.endpoints.find(e => e.method === "GET") || config.endpoints[0];
           testUrl = config.baseUrl + (testEndpoint?.path?.replace(/\{[^}]+\}/g, "") || "");
@@ -2386,7 +2408,7 @@ export function startServer(config: SAXConfig) {
       const videosDir = resolve(process.cwd(), "workspace", "videos");
       const vidFile = resolve(videosDir, url.pathname.replace("/videos/", ""));
       const vidRel = relative(videosDir, vidFile);
-      if (vidRel.startsWith("..") || vidRel.includes("..") || url.pathname.includes("\x00") || url.pathname.includes("%00")) {
+      if (vidRel.startsWith("..") || vidRel.includes("..") || url.pathname.includes("\x00") || url.pathname.includes("%00") || (existsSync(vidFile) && !realpathSync(vidFile).startsWith(realpathSync(videosDir)))) {
         json(403, { error: "Path traversal blocked" });
         return;
       }
@@ -2404,7 +2426,7 @@ export function startServer(config: SAXConfig) {
       const imagesDir = resolve(process.cwd(), "workspace", "images");
       const imgFile = resolve(imagesDir, url.pathname.replace("/images/", ""));
       const imgRel = relative(imagesDir, imgFile);
-      if (imgRel.startsWith("..") || imgRel.includes("..")) {
+      if (imgRel.startsWith("..") || imgRel.includes("..") || url.pathname.includes("\x00") || url.pathname.includes("%00") || (existsSync(imgFile) && !realpathSync(imgFile).startsWith(realpathSync(imagesDir)))) {
         json(403, { error: "Path traversal blocked" });
         return;
       }

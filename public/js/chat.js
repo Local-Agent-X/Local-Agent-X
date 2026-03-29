@@ -984,7 +984,7 @@ function updateContextBar(event) {
 
   // Color based on level
   let color = 'var(--accent)';      // green
-  let bgColor = 'rgba(0,255,65,.1)';
+  let bgColor = 'rgba(64,240,240,.1)';
   if (data.percentage >= 95) { color = 'var(--danger)'; bgColor = 'rgba(255,51,51,.1)'; }
   else if (data.percentage >= 85) { color = 'var(--warn)'; bgColor = 'rgba(255,170,0,.1)'; }
   else if (data.percentage >= 70) { color = '#88aaff'; bgColor = 'rgba(136,170,255,.08)'; }

@@ -198,7 +198,13 @@ function createWindow(): void {
     minWidth: 600,
     minHeight: 400,
     icon: ICON_PATH,
-    title: "Open Agent X",
+    title: "",
+    titleBarStyle: "hidden",
+    titleBarOverlay: {
+      color: "#0a0a0f",
+      symbolColor: "#00ff41",
+      height: 32,
+    },
     backgroundColor: "#0a0a0f",
     show: false,
     webPreferences: {
@@ -211,6 +217,77 @@ function createWindow(): void {
 
   const url = `http://127.0.0.1:${saxConfig.port}/?token=${saxConfig.authToken}`;
   mainWindow.loadURL(url);
+
+  // Inject custom title bar menu into the page
+  mainWindow.webContents.on("did-finish-load", () => {
+    mainWindow?.webContents.executeJavaScript(`
+      (function() {
+        if (document.getElementById('desktop-titlebar')) return;
+        const bar = document.createElement('div');
+        bar.id = 'desktop-titlebar';
+        bar.style.cssText = 'position:fixed;top:0;left:0;right:138px;height:32px;z-index:99999;display:flex;align-items:center;background:#0a0a0f;-webkit-app-region:drag;font-family:"Segoe UI",sans-serif;font-size:12px;user-select:none;';
+
+        const menus = [
+          { label:'File', items:['New Session','Restart Server','—','Quit'] },
+          { label:'Edit', items:['Undo','Redo','—','Cut','Copy','Paste'] },
+          { label:'View', items:['Reload','Toggle DevTools','—','Zoom In','Zoom Out','Reset Zoom'] },
+          { label:'Window', items:['Minimize','Close to Tray'] },
+          { label:'Help', items:['About'] }
+        ];
+
+        const favicon = document.createElement('img');
+        favicon.src = '/favicon.png';
+        favicon.style.cssText = 'width:16px;height:16px;margin:0 8px 0 8px;-webkit-app-region:no-drag;';
+        bar.appendChild(favicon);
+
+        menus.forEach(menu => {
+          const btn = document.createElement('div');
+          btn.textContent = menu.label;
+          btn.style.cssText = 'padding:4px 8px;color:#888;cursor:pointer;-webkit-app-region:no-drag;position:relative;';
+          btn.onmouseenter = () => { btn.style.color='#00ff41'; btn.style.background='#1a1a2f'; };
+          btn.onmouseleave = () => { btn.style.color='#888'; btn.style.background=''; if(dd)dd.style.display='none'; };
+
+          const dd = document.createElement('div');
+          dd.style.cssText = 'display:none;position:absolute;top:100%;left:0;background:#0a0a0f;border:1px solid #1a1a2f;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,0.5);z-index:100000;';
+          menu.items.forEach(item => {
+            if (item === '—') {
+              const sep = document.createElement('div');
+              sep.style.cssText = 'height:1px;background:#1a1a2f;margin:4px 0;';
+              dd.appendChild(sep);
+            } else {
+              const it = document.createElement('div');
+              it.textContent = item;
+              it.style.cssText = 'padding:6px 12px;color:#ccc;cursor:pointer;';
+              it.onmouseenter = () => it.style.background='#1a1a2f';
+              it.onmouseleave = () => it.style.background='';
+              it.onclick = () => {
+                dd.style.display='none';
+                if(window.desktop) {
+                  if(item==='Quit') window.desktop.quit();
+                  if(item==='Restart Server') window.desktop.restartServer();
+                  if(item==='New Session') window.startNewSession?.();
+                  if(item==='Toggle DevTools') require?.('electron')?.remote?.getCurrentWindow?.()?.webContents?.toggleDevTools?.();
+                }
+                if(item==='Reload') location.reload();
+                if(item==='Zoom In') document.body.style.zoom=(parseFloat(document.body.style.zoom||'1')+0.1)+'';
+                if(item==='Zoom Out') document.body.style.zoom=(parseFloat(document.body.style.zoom||'1')-0.1)+'';
+                if(item==='Reset Zoom') document.body.style.zoom='1';
+                if(item==='Minimize') window.desktop?.toggleWindow();
+                if(item==='Close to Tray') window.desktop?.toggleWindow();
+              };
+              dd.appendChild(it);
+            }
+          });
+          btn.appendChild(dd);
+          btn.onclick = () => { dd.style.display = dd.style.display==='none'?'block':'none'; };
+          bar.appendChild(btn);
+        });
+
+        document.body.prepend(bar);
+        document.body.style.paddingTop = '32px';
+      })();
+    `);
+  });
 
   mainWindow.once("ready-to-show", () => {
     mainWindow?.show();
@@ -294,8 +371,14 @@ function setupIPC(): void {
 
   ipcMain.handle("restart-server", async () => {
     await stopServer();
+    saxConfig = loadSAXConfig();
     startServer();
-    return waitForServer();
+    const ready = await waitForServer();
+    if (ready && mainWindow) {
+      const newUrl = `http://127.0.0.1:${saxConfig.port}/?token=${saxConfig.authToken}`;
+      mainWindow.loadURL(newUrl);
+    }
+    return ready;
   });
 
   ipcMain.handle("get-settings", () => {
@@ -372,7 +455,13 @@ app.on("ready", async () => {
     getServerStatus: isServerRunning,
     onRestartServer: async () => {
       await stopServer();
+      saxConfig = loadSAXConfig();
       startServer();
+      const ready = await waitForServer();
+      if (ready && mainWindow) {
+        const newUrl = `http://127.0.0.1:${saxConfig.port}/?token=${saxConfig.authToken}`;
+        mainWindow.loadURL(newUrl);
+      }
     },
   });
 

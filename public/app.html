@@ -108,7 +108,7 @@
         <!-- Status bar with controls -->
         <div id="status-bar" role="status" aria-label="Status information" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <button id="tts-toggle" onclick="toggleTTS()" aria-label="Toggle text-to-speech" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;font-family:var(--mono);font-size:.62rem;cursor:pointer">VOICE OFF</button>
-          <button id="fork-tree-btn" onclick="showForkTree()" title="View conversation branches" aria-label="View branches" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;font-family:var(--mono);font-size:.62rem;cursor:pointer;display:none">Branches</button>
+
           <button id="md-toggle-btn" onclick="toggleMdPreview()" title="Show raw markdown" aria-label="Toggle markdown preview" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;font-family:var(--mono);font-size:.62rem;cursor:pointer">Raw</button>
         </div>
       </div>
@@ -563,15 +563,5 @@ document.addEventListener('keydown', (e) => {
   </div>
 </div>
 
-<!-- ═══ Fork Tree Modal ═══ -->
-<div id="fork-tree-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:20000;align-items:center;justify-content:center">
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;width:90%;max-width:500px;box-shadow:0 8px 40px rgba(0,0,0,.5);padding:24px;max-height:60vh;overflow-y:auto">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <span style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px">CONVERSATION BRANCHES</span>
-      <button onclick="closeForkTree()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.2rem">&times;</button>
-    </div>
-    <div id="fork-tree-content"></div>
-  </div>
-</div>
 </body>
 </html>

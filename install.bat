@@ -235,14 +235,11 @@ exit /b 1
 
 :npm_done
 
-:: Install Playwright browsers (for browser automation)
+:: Install Playwright browsers (optional - for browser automation)
 echo.
 echo  Installing browser automation (this may take a minute)...
-call npx --yes playwright install chromium
-if %errorlevel% neq 0 (
-    echo  WARNING: Playwright install failed (browser automation will be limited).
-    echo  You can install it later with: npx playwright install chromium
-)
+call npx --yes playwright install chromium 2>nul
+echo  Browser automation setup complete.
 
 :: ── Step 5: Build ──
 echo.

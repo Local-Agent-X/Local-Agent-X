@@ -264,7 +264,7 @@ echo.
 echo  [6/6] Creating shortcuts...
 
 :: Create start script using PowerShell (avoids batch echo/pipe issues)
-powershell -Command "Set-Content -Path '%INSTALL_DIR%\start.bat' -Value '@echo off`r`ntitle Open Agent X`r`ncd /d %INSTALL_DIR%`r`necho Starting Open Agent X...`r`nnode --max-old-space-size=512 dist/index.js`r`npause'" 2>nul
+powershell -Command "$s = @'`r`n@echo off`r`ntitle Open Agent X`r`ncd /d %INSTALL_DIR%`r`necho Starting Open Agent X...`r`nstart /b node --max-old-space-size=512 dist/index.js`r`necho Waiting for server...`r`n:waitloop`r`ntimeout /t 1 /nobreak >nul`r`ncurl -s http://127.0.0.1:7007/api/health >nul 2>&1`r`nif %%errorlevel%% neq 0 goto waitloop`r`nfor /f ""tokens=*"" %%%%t in ('node -e ""try{console.log(JSON.parse(require('fs').readFileSync(require('path').join(require('os').homedir(),'.sax','config.json'),'utf-8')).authToken)}catch{}"" 2^^^^>nul') do set ""TOKEN=%%%%t""`r`nif defined TOKEN (start http://127.0.0.1:7007/?token=%%TOKEN%%) else (start http://127.0.0.1:7007)`r`necho Open Agent X is running. Close this window to stop.`r`ncmd /k`r`n'@; Set-Content -Path '%INSTALL_DIR%\start.bat' -Value $s" 2>nul
 
 :: Create desktop shortcut via PowerShell (handles OneDrive Desktop path)
 set "ICON_PATH=%INSTALL_DIR%\public\icon.ico"
@@ -294,9 +294,18 @@ echo.
 cd /d "%INSTALL_DIR%"
 start "Open Agent X" cmd /k "node --max-old-space-size=512 dist/index.js"
 
-:: Wait for server to start, then open browser
-timeout /t 8 /nobreak >nul
-start http://127.0.0.1:7007
+:: Wait for server to be ready
+echo  Waiting for server to start...
+:wait_server
+timeout /t 2 /nobreak >nul
+curl -s http://127.0.0.1:7007/api/health >nul 2>&1
+if %errorlevel% neq 0 goto :wait_server
+
+:: Read auth token and open browser
+set "SAX_CONFIG=%USERPROFILE%\.sax\config.json"
+set "TOKEN="
+if exist "%SAX_CONFIG%" for /f "tokens=*" %%t in ('powershell -Command "try{(Get-Content '%SAX_CONFIG%' | ConvertFrom-Json).authToken}catch{}"') do set "TOKEN=%%t"
+if defined TOKEN (start http://127.0.0.1:7007/?token=%TOKEN%) else (start http://127.0.0.1:7007)
 
 echo.
 echo  Open Agent X is running! Check your browser.

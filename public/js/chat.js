@@ -9,8 +9,8 @@ let activeChatsSet = new Set();
 
 function connectChatWs() {
   if (chatWs && chatWs.readyState === WebSocket.OPEN) return;
-  const wsUrl = `ws://${location.host}/ws/chat?token=${AUTH_TOKEN}`;
-  chatWs = new WebSocket(wsUrl);
+  const wsUrl = `ws://${location.host}/ws/chat`;
+  chatWs = new WebSocket(wsUrl, ['sax-auth', AUTH_TOKEN]);
 
   chatWs.onopen = () => {
     console.log('[ws] Chat WebSocket connected');
@@ -124,7 +124,7 @@ function renderMessages() {
   const el = document.getElementById('messages');
   if (!el) return;
   if (!activeChat || activeChat.messages.length === 0) {
-    el.innerHTML = `<div id="empty"><h2>OPEN AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
+    el.innerHTML = `<div id="empty"><img src="/hero.jpg" alt="Open Agent X" class="hero-img" /><h2>OPEN AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
     // Hide branch button when no chat
     const forkBtn = document.getElementById('fork-tree-btn');
     if (forkBtn) forkBtn.style.display = 'none';

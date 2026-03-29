@@ -1232,6 +1232,14 @@ function showOnboarding() {
           </div>
         </div>
         <div class="onboarding-step" data-step="2">
+          <h2 class="onboarding-title">Connect Your Account</h2>
+          <p class="onboarding-desc" id="ob-connect-desc">Sign in or enter your API key to start chatting.</p>
+          <div id="ob-connect-content" style="display:flex;flex-direction:column;align-items:center;gap:12px;margin-top:12px">
+            <!-- Populated dynamically based on provider selection -->
+          </div>
+          <p id="ob-connect-status" style="color:var(--accent);font-size:.8rem;margin-top:8px;text-align:center"></p>
+        </div>
+        <div class="onboarding-step" data-step="3">
           <h2 class="onboarding-title">Voice Settings</h2>
           <p class="onboarding-desc">Agent X supports hands-free voice chat. Enable it now or later.</p>
           <div class="onboarding-options">
@@ -1239,7 +1247,7 @@ function showOnboarding() {
             <button class="onboarding-option" onclick="selectOnboardVoice(false)"><strong>Text Only</strong><br><span style="color:var(--muted);font-size:.72rem">Keyboard input</span></button>
           </div>
         </div>
-        <div class="onboarding-step" data-step="3">
+        <div class="onboarding-step" data-step="4">
           <h2 class="onboarding-title">You're All Set!</h2>
           <p class="onboarding-desc">Start chatting with your agent. Use Ctrl+K anytime to open the command palette.</p>
           <div class="onboarding-art" style="font-size:2.5rem">&#128640;</div>
@@ -1258,7 +1266,7 @@ function showOnboarding() {
 
 let _onboardStep = 0;
 let _onboardProvider = '';
-const ONBOARD_TOTAL = 4;
+const ONBOARD_TOTAL = 5;
 
 function onboardStep(dir) {
   _onboardStep += dir;
@@ -1277,6 +1285,102 @@ function updateOnboardingUI() {
   if (back) back.style.visibility = _onboardStep > 0 ? 'visible' : 'hidden';
   if (next) next.textContent = _onboardStep === ONBOARD_TOTAL - 1 ? 'Start Chatting' : (_onboardStep === 0 ? 'Get Started' : 'Next');
   if (dots) dots.innerHTML = Array.from({ length: ONBOARD_TOTAL }, (_, i) => `<span class="ob-dot${i === _onboardStep ? ' active' : ''}"></span>`).join('');
+
+  // Populate connect step when entering step 2
+  if (_onboardStep === 2) populateConnectStep();
+}
+
+function populateConnectStep() {
+  const container = document.getElementById('ob-connect-content');
+  const desc = document.getElementById('ob-connect-desc');
+  const status = document.getElementById('ob-connect-status');
+  if (!container) return;
+
+  if (_onboardProvider === 'codex') {
+    desc.textContent = 'Sign in with your OpenAI account to use GPT models for free.';
+    container.innerHTML = `
+      <button class="action-btn primary" onclick="onboardOAuth('openai')" style="padding:10px 32px;font-size:1rem">Sign In with OpenAI</button>
+      <span style="color:var(--muted);font-size:.75rem">Requires a ChatGPT account (free tier works)</span>
+    `;
+  } else if (_onboardProvider === 'anthropic') {
+    desc.textContent = 'Sign in with your Anthropic account to use Claude models.';
+    container.innerHTML = `
+      <button class="action-btn primary" onclick="onboardOAuth('anthropic')" style="padding:10px 32px;font-size:1rem">Sign In with Claude</button>
+      <span style="color:var(--muted);font-size:.75rem">Free for Claude subscribers</span>
+    `;
+  } else if (_onboardProvider === 'xai') {
+    desc.textContent = 'Enter your xAI API key to use Grok models.';
+    container.innerHTML = `
+      <input type="password" id="ob-api-key" placeholder="xai-..." style="width:100%;max-width:360px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.9rem">
+      <button class="action-btn primary" onclick="onboardSaveKey('xai','XAI_API_KEY')" style="padding:8px 24px">Save Key</button>
+      <span style="color:var(--muted);font-size:.75rem">Get your key at console.x.ai</span>
+    `;
+  } else if (_onboardProvider === 'openai') {
+    desc.textContent = 'Enter your OpenAI API key.';
+    container.innerHTML = `
+      <input type="password" id="ob-api-key" placeholder="sk-..." style="width:100%;max-width:360px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.9rem">
+      <button class="action-btn primary" onclick="onboardSaveKey('openai','OPENAI_API_KEY')" style="padding:8px 24px">Save Key</button>
+      <span style="color:var(--muted);font-size:.75rem">Get your key at platform.openai.com/api-keys</span>
+    `;
+  } else if (_onboardProvider === 'local') {
+    desc.textContent = 'Make sure Ollama is running on your machine.';
+    container.innerHTML = `
+      <span style="color:var(--muted);font-size:.85rem">Ollama should be running at localhost:11434</span>
+      <button class="action-btn secondary" onclick="onboardCheckOllama()" style="padding:8px 24px">Check Connection</button>
+    `;
+  } else {
+    desc.textContent = 'Go back and select a provider first.';
+    container.innerHTML = '';
+  }
+  if (status) status.textContent = '';
+}
+
+async function onboardOAuth(type) {
+  const status = document.getElementById('ob-connect-status');
+  try {
+    const endpoint = type === 'anthropic' ? '/api/auth/anthropic/login' : '/api/auth/login';
+    const res = await apiPost(endpoint, {});
+    if (res.authUrl) {
+      window.open(res.authUrl, '_blank', 'width=600,height=700');
+      if (status) status.textContent = 'Sign-in window opened — complete login there, then click Next.';
+    } else if (res.error) {
+      if (status) status.textContent = 'Error: ' + res.error;
+    }
+  } catch (e) {
+    if (status) status.textContent = 'Failed to start sign-in. Try again or set up in Settings later.';
+  }
+}
+
+async function onboardSaveKey(provider, secretName) {
+  const input = document.getElementById('ob-api-key');
+  const status = document.getElementById('ob-connect-status');
+  if (!input || !input.value.trim()) {
+    if (status) status.textContent = 'Please enter your API key.';
+    return;
+  }
+  try {
+    await apiPost('/api/secrets', { name: secretName, value: input.value.trim() });
+    if (status) { status.style.color = 'var(--accent)'; status.textContent = 'Key saved securely! Click Next to continue.'; }
+    input.value = '';
+    input.placeholder = '••••••••  (saved)';
+  } catch (e) {
+    if (status) status.textContent = 'Failed to save key. Try again.';
+  }
+}
+
+async function onboardCheckOllama() {
+  const status = document.getElementById('ob-connect-status');
+  try {
+    const res = await fetch('/api/models/local');
+    const data = await res.json();
+    if (data && data.length > 0) {
+      if (status) { status.style.color = 'var(--accent)'; status.textContent = 'Ollama connected! Found ' + data.length + ' model(s).'; }
+    } else {
+      if (status) status.textContent = 'Ollama is running but no models found. Run: ollama pull llama3';
+    }
+  } catch (e) {
+    if (status) status.textContent = 'Could not connect to Ollama. Make sure it is running.';
+  }
 }
 
 function selectOnboardProvider(provider) {
@@ -1286,7 +1390,7 @@ function selectOnboardProvider(provider) {
 }
 
 function selectOnboardVoice(enabled) {
-  document.querySelectorAll('[data-step="2"] .onboarding-option').forEach(b => b.classList.remove('selected'));
+  document.querySelectorAll('[data-step="3"] .onboarding-option').forEach(b => b.classList.remove('selected'));
   event.currentTarget.classList.add('selected');
 }
 

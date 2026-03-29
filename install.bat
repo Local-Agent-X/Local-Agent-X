@@ -216,23 +216,38 @@ cd /d "%INSTALL_DIR%"
 echo.
 echo  [4/6] Installing dependencies (this may take a minute)...
 
-call npm install --no-audit --no-fund 2>nul
+call npm install --no-audit --no-fund
 if %errorlevel% neq 0 (
-    echo  Retrying with legacy peer deps...
-    call npm install --no-audit --no-fund --legacy-peer-deps 2>nul
+    echo  First attempt failed. Retrying with legacy peer deps...
+    call npm install --no-audit --no-fund --legacy-peer-deps
+    if !errorlevel! neq 0 (
+        echo.
+        echo  ERROR: Could not install dependencies.
+        echo  Check the error messages above and try again.
+        pause
+        exit /b 1
+    )
 )
 
 :: Install Playwright browsers (for browser automation)
-echo  Installing browser automation...
-npx playwright install chromium 2>nul
+echo.
+echo  Installing browser automation (this may take a minute)...
+call npx --yes playwright install chromium
+if %errorlevel% neq 0 (
+    echo  WARNING: Playwright install failed (browser automation will be limited).
+    echo  You can install it later with: npx playwright install chromium
+)
 
 :: ── Step 5: Build ──
 echo.
 echo  [5/6] Building Open Agent X...
 
-call npm run build 2>nul
+call npm run build
 if %errorlevel% neq 0 (
-    echo  Build had warnings (this is usually fine).
+    echo.
+    echo  ERROR: Build failed. See errors above.
+    pause
+    exit /b 1
 )
 
 :: Verify build output exists
@@ -254,7 +269,7 @@ echo @echo off
 echo title Open Agent X
 echo cd /d "%INSTALL_DIR%"
 echo echo Starting Open Agent X...
-echo node --max-old-space-size=512 dist/index.js
+echo node --max-old-space-size=512 dist/index.js ^|^| (echo. ^&^& echo Server crashed. See error above.)
 echo pause
 ) > "%INSTALL_DIR%\start.bat"
 
@@ -294,7 +309,7 @@ echo.
 
 :: Start the server
 cd /d "%INSTALL_DIR%"
-start "Open Agent X" cmd /c "node --max-old-space-size=512 dist/index.js"
+start "Open Agent X" cmd /k "node --max-old-space-size=512 dist/index.js || (echo. && echo Server crashed. See error above. && pause)"
 
 :: Wait for server to start, then open browser
 timeout /t 5 /nobreak >nul

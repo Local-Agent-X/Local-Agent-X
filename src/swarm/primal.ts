@@ -45,6 +45,7 @@ interface SpawnConfig {
   task: string;
   systemPrompt?: string;
   tools?: string[];
+  parentSessionId?: string;
 }
 
 type AgentUpdateCallback = (agentId: string, update: {
@@ -75,6 +76,8 @@ export class PrimalOrchestrator {
   private agents = new Map<string, PrimalAgent>();
   private messageBus: SwarmMessageBus;
   private updateCallbacks: AgentUpdateCallback[] = [];
+  /** Current parent session ID — set by the server before each chat turn */
+  public currentSessionId: string = "";
 
   constructor() {
     this.messageBus = new SwarmMessageBus();
@@ -128,6 +131,7 @@ export class PrimalOrchestrator {
       name: config.name,
       role: config.role,
       task: config.task,
+      parentSessionId: config.parentSessionId,
     });
 
     this.runAgentAsync(agentId);
@@ -378,6 +382,7 @@ export class PrimalOrchestrator {
           systemPrompt: agent.systemPrompt,
           tools: agent.tools,
           task: agent.currentTask,
+          parentSessionId: config.parentSessionId,
         });
 
         const result = await resultPromise;
@@ -472,6 +477,7 @@ export function createPrimalTools(): ToolDefinition[] {
             task: String(args.task),
             systemPrompt: args.system_prompt ? String(args.system_prompt) : undefined,
             tools: Array.isArray(args.tools) ? args.tools.map(String) : undefined,
+            parentSessionId: primal.currentSessionId || undefined,
           });
           const status = primal.getAgentStatus(agentId) as PrimalAgentStatus;
           return ok(

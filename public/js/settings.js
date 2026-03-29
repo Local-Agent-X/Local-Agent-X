@@ -1246,9 +1246,9 @@ function showOnboarding() {
           <h2 class="onboarding-title">Choose Your AI Provider</h2>
           <p class="onboarding-desc">Select which AI model to use. You can change this later in Settings.</p>
           <div class="onboarding-options">
+            <button class="onboarding-option" onclick="selectOnboardProvider('xai')"><strong>xAI Grok</strong><br><span style="color:var(--muted);font-size:.72rem">API key required</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('codex')"><strong>OpenAI Codex</strong><br><span style="color:var(--muted);font-size:.72rem">Free with ChatGPT</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('anthropic')"><strong>Anthropic Claude</strong><br><span style="color:var(--muted);font-size:.72rem">Free for subscribers</span></button>
-            <button class="onboarding-option" onclick="selectOnboardProvider('xai')"><strong>xAI Grok</strong><br><span style="color:var(--muted);font-size:.72rem">API key required</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('local')"><strong>Local (Ollama)</strong><br><span style="color:var(--muted);font-size:.72rem">Runs on your GPU</span></button>
           </div>
         </div>

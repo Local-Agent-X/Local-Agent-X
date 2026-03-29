@@ -159,19 +159,21 @@ echo  [3/6] Downloading Open Agent X...
 
 set "INSTALL_DIR=%USERPROFILE%\Open-Agent-X"
 
-if exist "%INSTALL_DIR%\package.json" (
-    echo  Found existing installation at %INSTALL_DIR%
-    echo  Updating...
-    cd /d "%INSTALL_DIR%"
-    if "%HAS_GIT%"=="1" (
-        git pull origin main 2>nul || echo  (pull skipped - may be a zip install)
-    )
-    goto :install_deps
-)
+if exist "%INSTALL_DIR%\package.json" goto :existing_install
+goto :fresh_download
 
+:existing_install
+echo  Found existing installation at %INSTALL_DIR%
+echo  Updating...
+cd /d "%INSTALL_DIR%"
+where git >nul 2>&1 && git pull origin main 2>nul
+goto :install_deps
+
+:fresh_download
 :: Download via PowerShell (most reliable across all Windows setups)
 cd /d "%USERPROFILE%"
-echo  Downloading from GitHub...
+echo.
+echo  Downloading from GitHub (ZIP)...
 set "ZIP_URL=https://github.com/petermanrique101-sys/Open-Agent-X/archive/refs/heads/main.zip"
 set "ZIP_FILE=%TEMP%\open-agent-x.zip"
 powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%ZIP_URL%' -OutFile '%ZIP_FILE%' -UseBasicParsing"
@@ -272,7 +274,10 @@ echo pause
 ) > "%INSTALL_DIR%\start.bat"
 
 :: Create desktop shortcut via PowerShell (with custom icon)
-set "SHORTCUT=%USERPROFILE%\Desktop\Open Agent X.lnk"
+:: Use PowerShell to find the real Desktop path (handles OneDrive redirection)
+for /f "tokens=*" %%d in ('powershell -Command "[Environment]::GetFolderPath('Desktop')"') do set "DESKTOP_PATH=%%d"
+if not defined DESKTOP_PATH set "DESKTOP_PATH=%USERPROFILE%\Desktop"
+set "SHORTCUT=%DESKTOP_PATH%\Open Agent X.lnk"
 set "ICON_PATH=%INSTALL_DIR%\public\icon.ico"
 powershell -Command "$ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut('%SHORTCUT%'); $sc.TargetPath = '%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory = '%INSTALL_DIR%'; $sc.Description = 'Open Agent X - Personal AI Agent'; if (Test-Path '%ICON_PATH%') { $sc.IconLocation = '%ICON_PATH%,0' }; $sc.Save()" 2>nul
 
@@ -327,3 +332,10 @@ echo  Press any key to close this installer (the server keeps running).
 echo.
 pause
 exit /b 0
+
+:: Catch-all: if anything falls through, don't close the window
+:error_catch
+echo.
+echo  Something went wrong. See the messages above.
+pause
+exit /b 1

@@ -112,6 +112,8 @@ function parseNumericIPv4(hostname: string): string | null {
 
 	if (/^0x[0-9a-f]+$/i.test(trimmed)) {
 		value = Number.parseInt(trimmed.slice(2), 16);
+	} else if (/^0[0-7]+$/.test(trimmed)) {
+		value = Number.parseInt(trimmed, 8);
 	} else if (/^\d+$/.test(trimmed)) {
 		value = Number.parseInt(trimmed, 10);
 	} else {

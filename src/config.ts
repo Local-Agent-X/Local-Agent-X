@@ -260,7 +260,7 @@ export function loadConfig(): SAXConfig {
   if (!config.authToken) {
     config.authToken = generateAuthToken();
     saveConfig(config);
-    console.log(`[config] Generated auth token: ${config.authToken.slice(0, 8)}... (see ~/.sax/config.json)`);
+    console.log("[config] Generated new auth token (see ~/.sax/config.json)");
   }
 
   return config;

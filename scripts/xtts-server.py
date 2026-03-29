@@ -12,7 +12,7 @@ Endpoints:
 import os, sys, json, io, wave, hashlib, time, glob
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote as _url_unquote
 
 # Configurable
 PORT = int(os.environ.get("XTTS_PORT", "7862"))
@@ -139,9 +139,9 @@ class XTTSHandler(BaseHTTPRequestHandler):
 
         # Serve voice audio files for preview
         if path.startswith("/voices/") and path.endswith("/preview"):
-            voice_id = path.split("/")[2]
+            voice_id = _url_unquote(path.split("/")[2])
             # Prevent path traversal
-            if ".." in voice_id or "/" in voice_id or "\\" in voice_id:
+            if ".." in voice_id or "/" in voice_id or "\\" in voice_id or "\x00" in voice_id:
                 self.send_response(400)
                 self._cors()
                 self.end_headers()
@@ -171,6 +171,14 @@ class XTTSHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         content_length = int(self.headers.get("Content-Length", 0))
+
+        MAX_BODY = 50 * 1024 * 1024  # 50MB
+        if content_length > MAX_BODY:
+            self.send_response(413)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Request body too large"}).encode())
+            return
 
         if path == "/tts":
             try:

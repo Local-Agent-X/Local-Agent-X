@@ -49,7 +49,7 @@ const BLOCKED_COMMANDS = [
   /\bpowershell\b.*-enc/i,
   // Windows-specific
   /\bnet\s+user\b/i,
-  /\breg\s+(add|delete)\b/i,
+  /\breg\s+(add|delete|query|export|import|save|restore|load|unload)\b/i,
   /\bwmic\b/i,
   /\bschtasks\b/i,
   // Network exfil via pipe
@@ -293,6 +293,10 @@ export class SecurityLayer {
   // ── File Access ──
 
   private evaluateFileAccess(action: string, rawPath: string): SecurityDecision {
+    if (rawPath.includes("\x00")) {
+      return { allowed: false, reason: "Blocked: null byte in file path" };
+    }
+
     // Normalize the path
     const resolved = resolve(rawPath);
 
@@ -395,8 +399,10 @@ export class SecurityLayer {
     }
 
     // Check sensitive paths against both resolved and real paths
+    const normalizedResolved = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+    const normalizedRealPath = process.platform === "win32" ? realPath.toLowerCase() : realPath;
     for (const pattern of SENSITIVE_PATTERNS) {
-      if (pattern.test(resolved) || pattern.test(realPath)) {
+      if (pattern.test(normalizedResolved) || pattern.test(normalizedRealPath)) {
         return {
           allowed: false,
           reason: `Blocked: matches sensitive path pattern ${pattern.source}`,
@@ -495,7 +501,11 @@ export class SecurityLayer {
 
     // IPv6 (in URL, appears as [::1])
     if (host.startsWith("[") || host.includes(":")) {
-      if (isPrivateIPv6(host)) {
+      const cleanHost = host.replace(/^\[/, "").replace(/\]$/, "");
+      if (host.startsWith("[") && !host.includes("]")) {
+        return { allowed: false, reason: `Blocked: malformed IPv6 address brackets in ${host}` };
+      }
+      if (isPrivateIPv6(cleanHost)) {
         return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv6 address` };
       }
     }
@@ -511,7 +521,7 @@ export class SecurityLayer {
     if (this.egressAllowlist.size > 0) {
       const allowed = this.egressAllowlist.has(host) ||
         // Check wildcard subdomains: *.example.com matches sub.example.com
-        Array.from(this.egressAllowlist).some(d => d.startsWith("*.") && host.endsWith(d.slice(1)));
+        Array.from(this.egressAllowlist).some(d => d.startsWith("*.") && (host === d.slice(2) || host.endsWith("." + d.slice(2))));
       if (!allowed) {
         return { allowed: false, reason: `Blocked: ${host} is not in the egress allowlist. Add it to ~/.sax/egress-allowlist.json to permit.` };
       }
@@ -603,6 +613,14 @@ export class SecurityLayer {
     if (/\brev\b/i.test(command)) {
       return "Blocked: 'rev' command (commonly used for obfuscation)";
     }
+    // ANSI-C quoting with hex escapes (e.g., $'\x72\x6d')
+    if (/\$'[^']*\\x[0-9a-fA-F]{2}/.test(command)) {
+      return "Blocked: ANSI-C quoting with hex escapes detected";
+    }
+    // ANSI-C quoting with octal escapes (e.g., $'\162\155')
+    if (/\$'[^']*\\[0-7]{3}/.test(command)) {
+      return "Blocked: ANSI-C quoting with octal escapes detected";
+    }
     // Very long commands are suspicious (likely encoded payloads)
     if (command.length > 2000) {
       return "Blocked: command exceeds 2000 characters (possible encoded payload)";
@@ -652,9 +670,8 @@ function maskValue(value: string): string {
 export function redactCredentials(text: string): string {
   let result = text;
   for (const pattern of REDACT_PATTERNS) {
-    // Reset regex state
-    pattern.lastIndex = 0;
-    result = result.replace(pattern, (match, captured) => {
+    const p = new RegExp(pattern.source, pattern.flags);
+    result = result.replace(p, (match, captured) => {
       if (captured && captured.length > 12) {
         return match.replace(captured, maskValue(captured));
       }

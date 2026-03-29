@@ -879,7 +879,7 @@ async function showInstallModal(id) {
             <label style="font-size:.72rem;color:var(--muted);display:block;margin-bottom:4px">API Key / Token (${esc(config.secretName)})</label>
             <input type="password" id="install-secret-value" class="field-input" placeholder="Paste your key or token here" style="width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:6px;font-family:var(--mono);font-size:.8rem" autocomplete="off"/>
           </div>
-          ${config.docsUrl ? `<div style="margin-bottom:16px"><a href="${config.docsUrl}" target="_blank" style="font-size:.72rem;color:var(--accent)">📄 Official API Docs →</a></div>` : ''}
+          ${config.docsUrl ? `<div style="margin-bottom:16px"><a href="${/^https?:\/\//i.test(config.docsUrl || '') ? esc(config.docsUrl) : '#'}" target="_blank" style="font-size:.72rem;color:var(--accent)">📄 Official API Docs →</a></div>` : ''}
           <div style="display:flex;gap:8px;justify-content:flex-end">
             <button class="action-btn secondary" onclick="document.getElementById('install-modal').remove()">Cancel</button>
             <button class="action-btn primary" onclick="doInstallIntegration('${config.id}')">Connect</button>

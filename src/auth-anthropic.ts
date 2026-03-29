@@ -1,4 +1,4 @@
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
@@ -157,7 +157,9 @@ export function initiateAnthropicLogin(): { authUrl: string; promise: Promise<vo
         return;
       }
 
-      if (!code || returnedState !== state) {
+      const stateValid = returnedState && returnedState.length === state.length &&
+        timingSafeEqual(Buffer.from(returnedState), Buffer.from(state));
+      if (!code || !stateValid) {
         res.writeHead(400, { "Content-Type": "text/html" });
         res.end(`<html><body><h2>Invalid callback</h2><p>Missing code or state mismatch.</p></body></html>`);
         server.close();

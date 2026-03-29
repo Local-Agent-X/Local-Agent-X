@@ -1,4 +1,4 @@
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { getAuthPath } from "./config.js";
@@ -153,7 +153,9 @@ export function initiateOAuthLogin(): { authUrl: string; promise: Promise<OAuthT
         return;
       }
       // Validate state parameter to prevent CSRF
-      if (returnedState !== state) {
+      const stateValid = returnedState && returnedState.length === state.length &&
+        timingSafeEqual(Buffer.from(returnedState), Buffer.from(state));
+      if (!stateValid) {
         res.writeHead(400);
         res.end("Invalid state parameter — possible CSRF attack");
         console.warn("[auth] OAuth state mismatch! Expected:", state.slice(0, 8) + "...", "Got:", returnedState?.slice(0, 8) + "...");

@@ -1,0 +1,42 @@
+{
+  "name": "open-agent-x-desktop",
+  "version": "0.1.0",
+  "description": "Open Agent X — Desktop Companion",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "electron dist/main.js",
+    "dev": "tsc && electron dist/main.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.8.0"
+  },
+  "build": {
+    "appId": "com.openagentx.desktop",
+    "productName": "Open Agent X",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../public/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "../public/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "allowToChangeInstallationDirectory": false
+    }
+  }
+}

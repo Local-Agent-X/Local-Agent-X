@@ -221,9 +221,16 @@ export class TelegramBridge {
     }
 
     const text = msg.text;
+    if (!text || typeof text !== "string") return;
+    if (text.length > 10000) {
+      await this.sendMessage(chatId, "Message too long (max 10,000 characters).");
+      return;
+    }
     const sessionId = `tg-${chatId}`;
 
-    console.log(`[telegram] ${senderName} (${chatId}): ${text.slice(0, 80)}${text.length > 80 ? "..." : ""}`);
+    const safeName = (senderName || "unknown").replace(/[\x00-\x1f\x7f]/g, "");
+    const safeText = text.slice(0, 80).replace(/[\x00-\x1f\x7f]/g, "");
+    console.log(`[telegram] ${safeName} (${chatId}): ${safeText}${text.length > 80 ? "..." : ""}`);
 
     if (this.processingLock.has(chatId)) {
       await this.sendMessage(chatId, "Still working on your last message...");

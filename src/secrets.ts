@@ -34,7 +34,7 @@ interface SecretsFile {
     service?: string;
     addedAt: number;
     updatedAt: number;
-    encrypted: string; // hex: iv(24) + authTag(32) + ciphertext
+    encrypted: string; // hex: iv(12) + authTag(16) + ciphertext
   }>;
 }
 

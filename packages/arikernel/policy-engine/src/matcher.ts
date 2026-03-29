@@ -91,6 +91,13 @@ function matchesParameters(
 				);
 			}
 
+			// ReDoS protection: reject patterns with nested quantifiers
+			if (/(\+|\*|\{)\s*(\+|\*|\{)/.test(matcher.pattern) || /\([^)]*(\+|\*)[^)]*\)\s*(\+|\*|\{)/.test(matcher.pattern)) {
+				throw new UnsafeMatchError(
+					`Policy pattern for '${key}' contains potentially unsafe nested quantifiers`,
+				);
+			}
+
 			try {
 				const regex = new RegExp(matcher.pattern);
 				if (!regex.test(value)) return false;

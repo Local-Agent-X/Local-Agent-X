@@ -172,21 +172,17 @@ if exist "%INSTALL_DIR%\package.json" (
 :: Change to a safe directory first (avoids OneDrive/sync path issues)
 cd /d "%USERPROFILE%"
 
-if "%HAS_GIT%"=="1" (
-    echo  Cloning repository...
-    git clone https://github.com/petermanrique101-sys/Open-Agent-X.git "%INSTALL_DIR%" 2>&1
-    if exist "%INSTALL_DIR%\package.json" (
-        echo  Clone successful.
-        cd /d "%INSTALL_DIR%"
-        goto :install_deps
-    ) else (
-        echo  Git clone did not produce expected files. Trying ZIP download...
-        rmdir /s /q "%INSTALL_DIR%" 2>nul
-        goto :download_zip
-    )
-) else (
-    goto :download_zip
+if "%HAS_GIT%"=="0" goto :download_zip
+
+echo  Cloning repository...
+git clone https://github.com/petermanrique101-sys/Open-Agent-X.git "%INSTALL_DIR%"
+if exist "%INSTALL_DIR%\package.json" (
+    echo  Clone successful.
+    cd /d "%INSTALL_DIR%"
+    goto :install_deps
 )
+echo  Git clone did not produce expected files. Trying ZIP download...
+rmdir /s /q "%INSTALL_DIR%" 2>nul
 
 :download_zip
 echo  Downloading ZIP archive...

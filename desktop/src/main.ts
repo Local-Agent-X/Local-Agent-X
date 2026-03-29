@@ -294,6 +294,13 @@ function createWindow(): void {
     mainWindow?.show();
   });
 
+  // Disable Ctrl+R / Ctrl+Shift+R / F5 hard refresh (causes port/localStorage issues)
+  mainWindow.webContents.on("before-input-event", (_e, input) => {
+    if (input.key === "F5" || (input.control && input.key.toLowerCase() === "r")) {
+      _e.preventDefault();
+    }
+  });
+
   mainWindow.on("resize", () => {
     if (mainWindow && !mainWindow.isMaximized()) {
       const [width, height] = mainWindow.getSize();

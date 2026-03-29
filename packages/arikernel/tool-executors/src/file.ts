@@ -156,6 +156,22 @@ export class FileExecutor implements ToolExecutor {
 					}
 
 					const handle = await open(resolved, writeFlags, 0o644);
+
+					// Post-open validation: verify opened file is still within allowed root
+					try {
+						const openedPath = await realpath(resolved);
+						const realRoot = await realpath(allowedRoot);
+						if (!openedPath.startsWith(realRoot + path.sep) && openedPath !== realRoot) {
+							await handle.close();
+							throw new Error(`File escaped allowed root after open: ${filePath}`);
+						}
+					} catch (err) {
+						if (err instanceof Error && err.message.startsWith("File escaped")) {
+							throw err;
+						}
+						// realpath may fail for new files, which is OK
+					}
+
 					try {
 						// Post-open validation: same checks as secureOpen (read path)
 						const stat = await handle.stat();
@@ -218,6 +234,7 @@ const SECURITY_PREFIXES = [
 	"Path traversal blocked:",
 	"Parent directory escapes",
 	"Path escapes allowed root",
+	"File escaped allowed root",
 	"Symlink rejected:",
 	"Not a regular file:",
 ];

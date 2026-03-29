@@ -661,7 +661,6 @@ async function buildWithClaude(prompt: string, appDir: string, appUrl: string): 
         "--output-format", "text",
         "--no-session-persistence",
         "--max-turns", "25",
-        "--dangerously-skip-permissions",
         "--tools", "Write,Edit,Read,Bash",
         "--disallowedTools", "WebFetch,WebSearch",
       ], {

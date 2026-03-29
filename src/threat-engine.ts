@@ -165,7 +165,7 @@ export class ToolChainAnalyzer {
 
   private checkExfiltration(sink: DataAccess): ExfilPattern | null {
     // Look back through recent history for sensitive reads
-    const lookback = 30_000; // 30 seconds
+    const lookback = 300_000; // 5 minutes
     const now = Date.now();
 
     for (const source of this.history) {
@@ -222,7 +222,7 @@ export class ToolChainAnalyzer {
     if (this.callHashes.length >= 50) {
       // Only trigger if most are the same few calls
       const uniqueRecent = new Set(this.callHashes.slice(-50));
-      if (uniqueRecent.size <= 3) {
+      if (uniqueRecent.size <= 5) {
         return `Circuit breaker: 50+ calls with only ${uniqueRecent.size} unique patterns. Agent is stuck.`;
       }
     }
@@ -354,6 +354,7 @@ export class ThreatScorer {
 
     // Apply decay — older events matter less
     this.baseScore = this.baseScore * this.DECAY_RATE + score;
+    if (this.baseScore < score) this.baseScore = score;
     return this.getStatus();
   }
 

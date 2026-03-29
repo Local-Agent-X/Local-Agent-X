@@ -85,6 +85,8 @@ export class Pipeline {
 		// This taint label ensures behavioral rules can track model-originated content
 		// through database writes, HTTP requests, and other tool executions.
 		const inputLabels = request.taintLabels ?? [];
+		const safeToolClass = request.toolClass.slice(0, 64);
+		const safeAction = request.action.slice(0, 64);
 		const hasModelTaint = inputLabels.some((l) => l.source === "model-generated");
 		const taintLabels: TaintLabel[] = hasModelTaint
 			? inputLabels
@@ -92,7 +94,7 @@ export class Pipeline {
 					...inputLabels,
 					{
 						source: "model-generated" as const,
-						origin: `${request.toolClass}.${request.action}`,
+						origin: `${safeToolClass}.${safeAction}`,
 						confidence: 1.0,
 						addedAt: now(),
 					},
@@ -133,6 +135,12 @@ export class Pipeline {
 				toolCall.toolClass === "http" &&
 				(toolCall.action === "get" || toolCall.action === "head")
 			) {
+				try {
+					const parsed = new URL(url);
+					if (parsed.searchParams.size > 100) {
+						isGetBudgetExhausted = true;
+					}
+				} catch {}
 				if (url.includes("?")) {
 					isGetBudgetExhausted = this.runState.recordQuarantineGet();
 				}

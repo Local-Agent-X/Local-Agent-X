@@ -1,5 +1,7 @@
 import type { RateLimitConfig } from "./types.js";
 
+const monotonicNow = typeof performance !== 'undefined' ? () => Math.floor(performance.now()) : () => Date.now();
+
 /**
  * Per-principal sliding window rate limiter and concurrency tracker.
  * All state is in-memory — resets on sidecar restart.
@@ -28,7 +30,7 @@ export class RateLimiter {
 		const limit = this.config.maxRequestsPerSecond;
 		if (limit <= 0) return { allowed: true };
 
-		const now = Date.now();
+		const now = monotonicNow();
 		const windowStart = now - 1000;
 		let timestamps = this.requestWindows.get(principalId);
 		if (!timestamps) {
@@ -47,7 +49,7 @@ export class RateLimiter {
 			return { allowed: false, retryAfterMs: Math.max(1, retryAfterMs) };
 		}
 
-		timestamps.push(now);
+		timestamps.push(monotonicNow());
 		return { allowed: true };
 	}
 

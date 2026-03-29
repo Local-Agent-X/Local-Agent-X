@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
-import { dirname, normalize, resolve } from "node:path";
+import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { containsDangerousUnicode, normalizeInput } from "./unicode-safety.js";
 
 /**
@@ -43,8 +43,13 @@ export function canonicalizePath(inputPath: string, cwd?: string): string {
 		const parent = dirname(normalized);
 		if (existsSync(parent)) {
 			const realParent = realpathSync(parent);
-			const filename = normalized.slice(parent.length);
-			return realParent + filename;
+			const filename = basename(normalized);
+			const reconstructed = join(realParent, filename);
+			// Verify reconstructed path is still under the real parent
+			if (!reconstructed.startsWith(realParent + sep) && reconstructed !== realParent) {
+				return normalized; // reject silently by returning unresolved
+			}
+			return reconstructed;
 		}
 	} catch (err) {
 		// SECURITY: Fail closed — if we cannot canonicalize, deny access.

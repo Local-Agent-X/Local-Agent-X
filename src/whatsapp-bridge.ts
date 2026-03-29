@@ -191,7 +191,9 @@ export class WhatsAppBridge {
 
   /** Set which phone numbers can message the agent (in addition to owner) */
   setAllowedNumbers(numbers: string[]): void {
-    this.allowedNumbers = new Set(numbers.map(n => n.replace(/\D/g, "")));
+    this.allowedNumbers = new Set(
+      numbers.map(n => n.replace(/\D/g, "")).filter(n => n.length >= 7 && n.length <= 15)
+    );
     this.saveAllowedNumbers();
   }
 
@@ -318,6 +320,8 @@ export class WhatsAppBridge {
           || msg.message?.imageMessage?.caption
           || null;
 
+        if (text && (typeof text !== "string" || text.length > 10000)) continue;
+
         // Resolve the sender's phone number (handles @lid JIDs)
         let senderPhone = remoteJid.split("@")[0];
         if (remoteJid.endsWith("@lid") && lidLookup) {
@@ -335,7 +339,7 @@ export class WhatsAppBridge {
         const isLidSelfChat = fromMe && remoteJid.endsWith("@lid");
         const isSelfChat = isSamePhone || isLidSelfChat;
 
-        console.log(`[whatsapp] MSG: fromMe=${fromMe} jid=${remoteJid} phone=${senderPhone} selfChat=${isSelfChat} text="${String(text || "").slice(0, 50)}"`);
+        console.log(`[whatsapp] MSG: fromMe=${fromMe} jid=${remoteJid} phone=${senderPhone} selfChat=${isSelfChat} text="${String(text || "").slice(0, 50).replace(/[\x00-\x1f\x7f]/g, "")}"`);
 
         // - fromMe=true + self-chat = user messaging themselves → allow (talk to the agent)
         // - fromMe=true + NOT self-chat = outbound to someone else → skip
@@ -375,7 +379,9 @@ export class WhatsAppBridge {
         const name = msg.pushName || phone;
         const sessionId = `wa-${phone}`;
 
-        console.log(`[whatsapp] → ${name} (${phone}): ${text.slice(0, 80)}${text.length > 80 ? "..." : ""}`);
+        const safeName = (name || "unknown").replace(/[\x00-\x1f\x7f]/g, "");
+        const safeText = text.slice(0, 80).replace(/[\x00-\x1f\x7f]/g, "");
+        console.log(`[whatsapp] → ${safeName} (${phone}): ${safeText}${text.length > 80 ? "..." : ""}`);
 
         // Mark as read (skip for self-chat like upstream)
         if (!isSamePhone) {

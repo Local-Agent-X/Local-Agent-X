@@ -568,6 +568,69 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // ── Update checker: compare local version against GitHub ──
+    if (method === "GET" && url.pathname === "/api/updates/check") {
+      try {
+        // Read local version from package.json
+        const pkgPath = join(import.meta.dirname || ".", "..", "package.json");
+        const localPkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+        const localVersion = localPkg.version || "0.0.0";
+
+        // Get local commit hash if available
+        let localCommit = "";
+        try {
+          const { execSync } = await import("node:child_process");
+          localCommit = execSync("git rev-parse --short HEAD", { cwd: join(import.meta.dirname || ".", ".."), encoding: "utf-8" }).trim();
+        } catch {}
+
+        // Fetch latest from GitHub (cached for 1 hour)
+        const cacheKey = "_updateCache";
+        const now = Date.now();
+        if ((globalThis as any)[cacheKey] && now - (globalThis as any)[cacheKey].time < 3600000) {
+          const cached = (globalThis as any)[cacheKey];
+          json(200, { ...cached.data, localVersion, localCommit, cached: true });
+          return;
+        }
+
+        let remoteVersion = localVersion;
+        let remoteCommit = "";
+        let updateAvailable = false;
+        let releaseNotes = "";
+
+        try {
+          // Check latest commit on main
+          const commitRes = await fetch("https://api.github.com/repos/petermanrique101-sys/Open-Agent-X/commits/main", {
+            headers: { "Accept": "application/vnd.github.v3+json", "User-Agent": "Open-Agent-X" },
+          });
+          if (commitRes.ok) {
+            const commitData = await commitRes.json() as any;
+            remoteCommit = commitData.sha?.slice(0, 7) || "";
+            releaseNotes = commitData.commit?.message?.split("\n")[0] || "";
+          }
+
+          // Check remote package.json for version
+          const pkgRes = await fetch("https://raw.githubusercontent.com/petermanrique101-sys/Open-Agent-X/main/package.json", {
+            headers: { "User-Agent": "Open-Agent-X" },
+          });
+          if (pkgRes.ok) {
+            const remotePkg = await pkgRes.json() as any;
+            remoteVersion = remotePkg.version || localVersion;
+          }
+
+          updateAvailable = (remoteCommit && localCommit && remoteCommit !== localCommit) || remoteVersion !== localVersion;
+        } catch {
+          // GitHub unreachable — skip update check silently
+        }
+
+        const result = { localVersion, localCommit, remoteVersion, remoteCommit, updateAvailable, releaseNotes };
+        (globalThis as any)[cacheKey] = { data: result, time: now };
+        json(200, result);
+      } catch (e) {
+        json(200, { updateAvailable: false, error: (e as Error).message });
+      }
+      return;
+    }
+
     // List sessions
     if (method === "GET" && url.pathname === "/api/sessions") {
       const list = sessionStore.list();

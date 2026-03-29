@@ -403,6 +403,9 @@ function gatherSignals(input: OrchestratorInput, triage: TriageResult): ModuleSi
   const signals: ModuleSignal[] = [];
   const allModules = [...triage.always, ...triage.conditional, ...triage.scheduled, ...triage.triggered];
 
+  // All modules are synchronous (JSON file reads + in-memory computation)
+  // so parallel execution isn't needed. If any module becomes async (e.g. embedding search),
+  // convert this to Promise.all on the async modules while keeping sync ones sequential.
   for (const mod of allModules) {
     const collected = safeRun(mod, () => runModule(mod, input), []);
     signals.push(...collected);
@@ -742,6 +745,78 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
   return signals;
 }
 
+// ── Conflict Resolution ─────────────────────────────────────
+
+/** Resolve contradictory adaptation signals (e.g. "be enthusiastic" vs "be concise") */
+function resolveConflicts(signals: ModuleSignal[]): ModuleSignal[] {
+  // Define conflict pairs: [pattern A, pattern B] — higher priority wins, loser is removed
+  const conflictPairs: Array<{ a: RegExp; b: RegExp; resolution: "higher-priority" | "safety-first" }> = [
+    { a: /enthusias|positive|excited|match.*energy/i, b: /concise|brief|frustrated|solution.oriented/i, resolution: "safety-first" },
+    { a: /casual|informal|slang/i, b: /gentle|sensitive|empathetic|careful/i, resolution: "safety-first" },
+    { a: /take initiative|proactive/i, b: /ask.*before|confirm|clarify/i, resolution: "higher-priority" },
+    { a: /personal.*reference|callback/i, b: /sensitive|vulnerable|sacred/i, resolution: "safety-first" },
+  ];
+
+  const resolved = [...signals];
+  const toRemove = new Set<number>();
+
+  for (const pair of conflictPairs) {
+    const matchA = resolved.findIndex(s => pair.a.test(s.signal));
+    const matchB = resolved.findIndex(s => pair.b.test(s.signal));
+    if (matchA === -1 || matchB === -1 || matchA === matchB) continue;
+
+    const sigA = resolved[matchA];
+    const sigB = resolved[matchB];
+
+    if (pair.resolution === "safety-first") {
+      // Safety/vulnerability signals always win
+      const safetyIdx = sigA.category === "vulnerability" || sigA.category === "correction" ? matchB : matchA;
+      toRemove.add(safetyIdx);
+    } else {
+      // Higher priority wins
+      toRemove.add(sigA.priority >= sigB.priority ? matchB : matchA);
+    }
+  }
+
+  return resolved.filter((_, i) => !toRemove.has(i));
+}
+
+// ── Auto-Rating Heuristic ───────────────────────────────────
+
+/** Auto-rate the last orchestration based on user's next message sentiment */
+function autoRateLastExample(userReply: string): void {
+  const examples = loadExamples();
+  if (examples.length === 0) return;
+  const last = examples[examples.length - 1];
+  if (last.quality !== "neutral") return; // already rated
+
+  const lower = userReply.toLowerCase();
+
+  // Positive signals: user engaged, thanked, continued naturally
+  const positiveWords = ["thanks", "perfect", "great", "awesome", "exactly", "yes", "nice", "love", "good", "cool"];
+  const negativeWords = ["wrong", "no", "stop", "not what", "that's not", "you forgot", "already told", "i said", "fix"];
+
+  let posScore = 0, negScore = 0;
+  for (const w of positiveWords) { if (lower.includes(w)) posScore++; }
+  for (const w of negativeWords) { if (lower.includes(w)) negScore++; }
+
+  // Long engaged replies suggest the context was useful
+  if (userReply.length > 100) posScore++;
+  // Very short replies after long context might mean it was irrelevant
+  if (userReply.length < 10 && last.output.length > 200) negScore++;
+
+  if (posScore > negScore && posScore >= 2) {
+    last.quality = "good";
+    last.notes = "auto-rated: positive user response";
+  } else if (negScore > posScore && negScore >= 2) {
+    last.quality = "bad";
+    last.notes = "auto-rated: negative user response";
+  }
+  // else stays neutral
+
+  writeFileSync(EXAMPLES_FILE, JSON.stringify(examples, null, 2), "utf-8");
+}
+
 // ── Signal Merging ──────────────────────────────────────────
 
 function hashSignal(s: ModuleSignal): string {
@@ -772,8 +847,11 @@ function mergeSignals(signals: ModuleSignal[], previousHashes: string[]): { para
   // If filtering removed everything, fall back to deduped
   const candidates = fresh.length > 0 ? fresh : deduped;
 
+  // Resolve conflicts before final selection
+  const resolved = resolveConflicts(candidates);
+
   // Take top N
-  const top = candidates.slice(0, MAX_CONTEXT_SIGNALS);
+  const top = resolved.slice(0, MAX_CONTEXT_SIGNALS);
 
   // Build natural prose paragraph
   const paragraph = buildParagraph(top);
@@ -962,6 +1040,9 @@ export class MemoryOrchestrator {
   processMessage(input: OrchestratorInput): OrchestratorOutput {
     const startTime = Date.now();
     orchestratorState.messageCount++;
+
+    // 0. AUTO-RATE previous orchestration based on this user message
+    safeRun("auto-rate", () => autoRateLastExample(input.message), undefined);
 
     // 1. TRIAGE — decide which modules to activate
     const triage = triageModules(input, orchestratorState.messageCount);

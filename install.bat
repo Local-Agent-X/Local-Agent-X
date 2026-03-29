@@ -185,18 +185,9 @@ if not exist "%ZIP_FILE%" (
     exit /b 1
 )
 echo  Extracting...
-powershell -Command "Expand-Archive -Path '%ZIP_FILE%' -DestinationPath '%TEMP%\oax-extract' -Force"
-if exist "%TEMP%\oax-extract\Open-Agent-X-main" (
-    move "%TEMP%\oax-extract\Open-Agent-X-main" "%INSTALL_DIR%" >nul 2>&1
-) else (
-    for /d %%d in ("%TEMP%\oax-extract\*") do (
-        move "%%d" "%INSTALL_DIR%" >nul 2>&1
-        goto :zip_moved
-    )
-)
-:zip_moved
-del "%ZIP_FILE%" 2>nul
-rmdir /s /q "%TEMP%\oax-extract" 2>nul
+:: Clean target directory if it exists (leftover from failed install)
+if exist "%INSTALL_DIR%" rmdir /s /q "%INSTALL_DIR%" 2>nul
+powershell -Command "Expand-Archive -Path '%ZIP_FILE%' -DestinationPath '%TEMP%\oax-extract' -Force; $src = Get-ChildItem '%TEMP%\oax-extract' -Directory | Select-Object -First 1; if ($src) { Move-Item $src.FullName '%INSTALL_DIR%' -Force }; Remove-Item '%ZIP_FILE%' -ErrorAction SilentlyContinue; Remove-Item '%TEMP%\oax-extract' -Recurse -ErrorAction SilentlyContinue"
 cd /d "%INSTALL_DIR%"
 
 :: ── Step 4: Install dependencies ──

@@ -1989,20 +1989,50 @@ export function startServer(config: SAXConfig) {
           }
         } catch {}
 
-        // ── Feature 5: Mood/tone detection → style hint injection ──
+        // ── Feature 5: Advanced emotional memory + proactive context ──
         let moodHint = "";
+        let proactiveHint = "";
         try {
-          const lower = message.toLowerCase();
-          const posWords = ["thanks", "great", "awesome", "perfect", "love", "excellent", "amazing", "happy", "good"];
-          const negWords = ["frustrated", "angry", "broken", "bug", "wrong", "error", "fail", "hate", "stuck", "confused", "problem"];
-          const urgWords = ["urgent", "asap", "immediately", "critical", "emergency", "deadline"];
-          let pos = 0, neg = 0, urg = 0;
-          for (const w of posWords) { if (lower.includes(w)) pos++; }
-          for (const w of negWords) { if (lower.includes(w)) neg++; }
-          for (const w of urgWords) { if (lower.includes(w)) urg++; }
-          if (urg > 0) moodHint = "\n\n[Tone hint: user has urgency — be concise, prioritize action]";
-          else if (neg > pos && neg > 0) moodHint = "\n\n[Tone hint: user may be frustrated — be empathetic, focus on solutions]";
-          else if (pos > neg && pos > 1) moodHint = "\n\n[Tone hint: user is positive — match their energy]";
+          const { EmotionalMemory } = await import("./emotional-memory.js");
+          const emo = EmotionalMemory.getInstance();
+          const emotion = emo.detectEmotion(message);
+          emo.recordEmotion(sessionId, emotion, message.slice(0, 100));
+          const hint = emo.getAdaptationHint(emotion);
+          if (hint && emotion.confidence > 0.4) {
+            moodHint = `\n\n[Tone: ${hint}]`;
+          }
+        } catch {}
+
+        // Proactive memory — surface relevant context before user asks
+        try {
+          const { ProactiveMemory } = await import("./proactive-memory.js");
+          const pm = ProactiveMemory.getInstance();
+          pm.recordInteraction(sessionId, message, Date.now());
+          const suggestions = pm.analyzeContext(message, session.messages.slice(-10) as any[], new Date().getHours());
+          const topSuggestions = suggestions.filter(s => s.confidence > 0.5).slice(0, 2);
+          if (topSuggestions.length > 0) {
+            proactiveHint = "\n\n[Proactive context: " + topSuggestions.map(s => s.message).join(" | ") + "]";
+          }
+        } catch {}
+
+        // Cross-session learning — track actions for pattern detection
+        try {
+          const { CrossSessionLearner } = await import("./cross-session-learning.js");
+          const csl = CrossSessionLearner.getInstance();
+          csl.recordAction(sessionId, { type: "message", details: message.slice(0, 200), timestamp: Date.now() });
+        } catch {}
+
+        // Memory graph — extract relationships from user message
+        try {
+          const { MemoryGraph } = await import("./memory-graph.js");
+          const graph = MemoryGraph.getInstance();
+          // Light extraction only if message mentions known entities
+          const nodes = graph.getAllNodes?.() || [];
+          if (nodes.length > 0) {
+            const entityNames = nodes.map((n: any) => n.id || n.name || "").filter(Boolean);
+            const extracted = graph.autoExtractRelationships(message, entityNames);
+            // Edges auto-added by the method
+          }
         } catch {}
 
         // Initialize threat engine for this session
@@ -2015,7 +2045,7 @@ export function startServer(config: SAXConfig) {
         const providerHint = `\n\n[System: You are currently powered by ${providerNames[provider] || provider}, model: ${savedModel || "default"}. If asked what LLM you are running on, be transparent about this.]`;
         const integrationsContext = integrations.getAgentContext();
         const enrichedPrompt =
-          config.systemPrompt + providerHint + contextBlock + relevantMemories + smartContext + moodHint + integrationsContext + threatEngine.getCanaryBlock();
+          config.systemPrompt + providerHint + contextBlock + relevantMemories + smartContext + moodHint + proactiveHint + integrationsContext + threatEngine.getCanaryBlock();
 
         // Resolve image attachments to absolute file paths for vision API
         const uploadsDir = join(dataDir, "uploads");
@@ -2158,6 +2188,16 @@ export function startServer(config: SAXConfig) {
         } catch (e) {
           console.warn("[memory] Auto-extract failed:", (e as Error).message);
         }
+
+        // Track tool usage for cross-session learning
+        try {
+          const { CrossSessionLearner } = await import("./cross-session-learning.js");
+          const csl = CrossSessionLearner.getInstance();
+          const toolCalls = result.messages.filter((m: any) => m.tool_calls).flatMap((m: any) => m.tool_calls || []);
+          for (const tc of toolCalls) {
+            csl.recordAction(sessionId, { type: "tool", details: tc.function?.name || tc.name || "unknown", timestamp: Date.now() });
+          }
+        } catch {}
 
         // Persist to disk
         saveSession(session);

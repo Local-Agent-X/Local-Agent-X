@@ -155,19 +155,26 @@ function startServer(): void {
 function stopServer(): Promise<void> {
   return new Promise((resolve) => {
     if (!serverProcess) { resolve(); return; }
-    console.log("[desktop] Stopping SAX server...");
+    console.log("[desktop] Stopping SAX server (pid: " + serverProcess.pid + ")...");
     const proc = serverProcess;
+    const pid = proc.pid;
     const forceKill = setTimeout(() => {
-      try { proc.kill("SIGKILL"); } catch {}
+      // Windows: SIGTERM doesn't work, use taskkill
+      if (pid && process.platform === "win32") {
+        try { require("child_process").execSync(`taskkill /PID ${pid} /T /F`, { windowsHide: true, stdio: "ignore" }); } catch {}
+      } else {
+        try { proc.kill("SIGKILL"); } catch {}
+      }
       serverProcess = null;
       resolve();
-    }, 5000);
+    }, 2000);
     proc.on("exit", () => {
       clearTimeout(forceKill);
       serverProcess = null;
       resolve();
     });
-    proc.kill("SIGTERM");
+    // Try graceful first, force kill after 2s
+    try { proc.kill("SIGTERM"); } catch {}
   });
 }
 

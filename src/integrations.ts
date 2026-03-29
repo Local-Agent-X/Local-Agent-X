@@ -372,11 +372,15 @@ export class IntegrationRegistry {
     if (config.baseUrl) {
       try {
         const u = new URL(config.baseUrl);
-        if (u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "0.0.0.0" || u.hostname === "[::1]" || u.hostname.endsWith(".local") || /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(u.hostname)) {
+        // Only allow http(s) — block file://, gopher://, data:, etc.
+        if (u.protocol !== "http:" && u.protocol !== "https:") {
+          throw new Error("Only http and https URLs are allowed as integration base URL");
+        }
+        if (u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "0.0.0.0" || u.hostname === "[::1]" || u.hostname.endsWith(".local") || /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(u.hostname) || u.hostname === "169.254.169.254" || u.hostname.endsWith(".internal")) {
           throw new Error("Internal URLs not allowed as integration base URL");
         }
       } catch (e) {
-        if ((e as Error).message.includes("Internal URLs")) throw e;
+        if ((e as Error).message.includes("not allowed") || (e as Error).message.includes("Only http")) throw e;
       }
     }
     this.integrations.set(config.id, config);

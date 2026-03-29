@@ -152,19 +152,23 @@ function startServer(): void {
   });
 }
 
-function stopServer(): void {
-  if (serverProcess) {
+function stopServer(): Promise<void> {
+  return new Promise((resolve) => {
+    if (!serverProcess) { resolve(); return; }
     console.log("[desktop] Stopping SAX server...");
-    serverProcess.kill("SIGTERM");
+    const proc = serverProcess;
     const forceKill = setTimeout(() => {
-      if (serverProcess) {
-        serverProcess.kill("SIGKILL");
-        serverProcess = null;
-      }
+      try { proc.kill("SIGKILL"); } catch {}
+      serverProcess = null;
+      resolve();
     }, 5000);
-    serverProcess.on("exit", () => clearTimeout(forceKill));
-    serverProcess = null;
-  }
+    proc.on("exit", () => {
+      clearTimeout(forceKill);
+      serverProcess = null;
+      resolve();
+    });
+    proc.kill("SIGTERM");
+  });
 }
 
 async function waitForServer(maxWaitMs = 15000): Promise<boolean> {
@@ -282,7 +286,7 @@ function setupIPC(): void {
   });
 
   ipcMain.handle("restart-server", async () => {
-    stopServer();
+    await stopServer();
     startServer();
     return waitForServer();
   });
@@ -359,8 +363,8 @@ app.on("ready", async () => {
       mainWindow?.webContents.executeJavaScript("window.startNewSession?.()");
     },
     getServerStatus: isServerRunning,
-    onRestartServer: () => {
-      stopServer();
+    onRestartServer: async () => {
+      await stopServer();
       startServer();
     },
   });

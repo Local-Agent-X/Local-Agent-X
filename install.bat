@@ -258,9 +258,10 @@ echo node --max-old-space-size=512 dist/index.js
 echo pause
 ) > "%INSTALL_DIR%\start.bat"
 
-:: Create desktop shortcut via PowerShell
+:: Create desktop shortcut via PowerShell (with custom icon)
 set "SHORTCUT=%USERPROFILE%\Desktop\Open Agent X.lnk"
-powershell -Command "$ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut('%SHORTCUT%'); $sc.TargetPath = '%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory = '%INSTALL_DIR%'; $sc.Description = 'Open Agent X - Personal AI Agent'; $sc.Save()" 2>nul
+set "ICON_PATH=%INSTALL_DIR%\public\icon.ico"
+powershell -Command "$ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut('%SHORTCUT%'); $sc.TargetPath = '%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory = '%INSTALL_DIR%'; $sc.Description = 'Open Agent X - Personal AI Agent'; if (Test-Path '%ICON_PATH%') { $sc.IconLocation = '%ICON_PATH%,0' }; $sc.Save()" 2>nul
 
 if exist "%SHORTCUT%" (
     echo  Desktop shortcut created.
@@ -268,10 +269,10 @@ if exist "%SHORTCUT%" (
     echo  Could not create shortcut (non-critical).
 )
 
-:: Create Start Menu shortcut
+:: Create Start Menu shortcut (with custom icon)
 set "START_MENU=%APPDATA%\Microsoft\Windows\Start Menu\Programs"
 set "SM_SHORTCUT=%START_MENU%\Open Agent X.lnk"
-powershell -Command "$ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut('%SM_SHORTCUT%'); $sc.TargetPath = '%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory = '%INSTALL_DIR%'; $sc.Description = 'Open Agent X - Personal AI Agent'; $sc.Save()" 2>nul
+powershell -Command "$ws = New-Object -ComObject WScript.Shell; $sc = $ws.CreateShortcut('%SM_SHORTCUT%'); $sc.TargetPath = '%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory = '%INSTALL_DIR%'; $sc.Description = 'Open Agent X - Personal AI Agent'; if (Test-Path '%ICON_PATH%') { $sc.IconLocation = '%ICON_PATH%,0' }; $sc.Save()" 2>nul
 
 :: ── Launch ──
 echo.

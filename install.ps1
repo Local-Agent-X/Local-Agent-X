@@ -127,21 +127,24 @@ node --max-old-space-size=512 dist/index.js
 pause
 "@ | Set-Content "$InstallDir\start.bat"
 
-# Desktop shortcut
+# Desktop shortcut (with custom icon)
 $desktop = [Environment]::GetFolderPath("Desktop")
+$iconPath = "$InstallDir\public\icon.ico"
 $ws = New-Object -ComObject WScript.Shell
 $sc = $ws.CreateShortcut("$desktop\Open Agent X.lnk")
 $sc.TargetPath = "$InstallDir\start.bat"
 $sc.WorkingDirectory = $InstallDir
 $sc.Description = "Open Agent X - Personal AI Agent"
+if (Test-Path $iconPath) { $sc.IconLocation = "$iconPath,0" }
 $sc.Save()
 
-# Start Menu shortcut
+# Start Menu shortcut (with custom icon)
 $startMenu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
 $sc2 = $ws.CreateShortcut("$startMenu\Open Agent X.lnk")
 $sc2.TargetPath = "$InstallDir\start.bat"
 $sc2.WorkingDirectory = $InstallDir
 $sc2.Description = "Open Agent X - Personal AI Agent"
+if (Test-Path $iconPath) { $sc2.IconLocation = "$iconPath,0" }
 $sc2.Save()
 
 Write-Host "  Desktop shortcut created." -ForegroundColor Green

@@ -9,10 +9,10 @@ import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { execSync, execFileSync } from "node:child_process";
 
-/** Validate OCR language code: only allow safe chars like 'eng', 'eng+fra' */
+/** Validate OCR language code: only allow Tesseract-valid patterns like 'eng', 'eng+fra', 'chi_sim' */
 function validateLang(lang: string): string {
-  if (!/^[a-zA-Z0-9_+.-]+$/.test(lang)) {
-    throw new Error(`Invalid OCR language code: ${lang}`);
+  if (!/^[a-zA-Z][a-zA-Z0-9_]{2,10}(\+[a-zA-Z][a-zA-Z0-9_]{2,10})*$/.test(lang)) {
+    throw new Error(`Invalid OCR language code: ${lang.slice(0, 20)}`);
   }
   return lang;
 }
@@ -57,6 +57,9 @@ export async function recognizeText(
   const start = Date.now();
   const lang = validateLang(options.language ?? "eng");
   const psm = options.psm ?? 3;
+  if (!Number.isInteger(psm) || psm < 0 || psm > 13) {
+    throw new Error(`Invalid PSM value: ${psm}`);
+  }
 
   // Write image to temp file if buffer
   let imagePath: string;

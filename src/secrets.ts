@@ -53,7 +53,10 @@ function decrypt(hex: string, key: Buffer): string {
   const ciphertext = data.subarray(28);
   const decipher = createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAuthTag(authTag);
-  return decipher.update(ciphertext) + decipher.final("utf-8");
+  const result = decipher.update(ciphertext) + decipher.final("utf-8");
+  // Zero the raw buffer to limit exposure of ciphertext material in memory
+  data.fill(0);
+  return result;
 }
 
 export class SecretsStore {
@@ -163,5 +166,11 @@ export class SecretsStore {
       }
     }
     return missing;
+  }
+
+  /** Zero the master key and clear all decrypted values from memory. */
+  destroy(): void {
+    this.key.fill(0);
+    this.secrets.clear();
   }
 }

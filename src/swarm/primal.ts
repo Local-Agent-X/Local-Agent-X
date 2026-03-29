@@ -382,7 +382,7 @@ export class PrimalOrchestrator {
           systemPrompt: agent.systemPrompt,
           tools: agent.tools,
           task: agent.currentTask,
-          parentSessionId: config.parentSessionId,
+          parentSessionId: this.currentSessionId || undefined,
         });
 
         const result = await resultPromise;

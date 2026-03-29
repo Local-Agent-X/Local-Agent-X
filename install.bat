@@ -217,17 +217,23 @@ echo.
 echo  [4/6] Installing dependencies (this may take a minute)...
 
 call npm install --no-audit --no-fund
-if %errorlevel% neq 0 (
-    echo  First attempt failed. Retrying with legacy peer deps...
-    call npm install --no-audit --no-fund --legacy-peer-deps
-    if !errorlevel! neq 0 (
-        echo.
-        echo  ERROR: Could not install dependencies.
-        echo  Check the error messages above and try again.
-        pause
-        exit /b 1
-    )
-)
+if %errorlevel% neq 0 goto :npm_retry
+goto :npm_done
+
+:npm_retry
+echo  First attempt failed. Retrying with legacy peer deps...
+call npm install --no-audit --no-fund --legacy-peer-deps
+if %errorlevel% neq 0 goto :npm_failed
+goto :npm_done
+
+:npm_failed
+echo.
+echo  ERROR: Could not install dependencies.
+echo  Check the error messages above and try again.
+pause
+exit /b 1
+
+:npm_done
 
 :: Install Playwright browsers (for browser automation)
 echo.
@@ -243,21 +249,18 @@ echo.
 echo  [5/6] Building Open Agent X...
 
 call npm run build
-if %errorlevel% neq 0 (
-    echo.
-    echo  ERROR: Build failed. See errors above.
-    pause
-    exit /b 1
-)
+if %errorlevel% neq 0 goto :build_failed
+if not exist "dist\index.js" goto :build_failed
+goto :build_done
 
-:: Verify build output exists
-if not exist "dist\index.js" (
-    echo.
-    echo  ERROR: Build failed. dist\index.js not found.
-    echo  Try running manually: cd "%INSTALL_DIR%" ^&^& npm run build
-    pause
-    exit /b 1
-)
+:build_failed
+echo.
+echo  ERROR: Build failed. See errors above.
+echo  Try running manually: cd "%INSTALL_DIR%" ^&^& npm run build
+pause
+exit /b 1
+
+:build_done
 
 :: ── Step 6: Create shortcuts and start ──
 echo.

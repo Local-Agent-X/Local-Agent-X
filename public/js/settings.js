@@ -433,7 +433,9 @@ async function saveSettings() {
     }
   }
   // Save provider + model to server (no API key in settings.json)
-  await apiPost('/api/settings', { provider: s.provider, model: s.model, temperature: s.temperature });
+  const settingsPayload = { provider: s.provider, model: s.model, temperature: s.temperature };
+  if (s.port) settingsPayload.port = s.port;
+  await apiPost('/api/settings', settingsPayload);
   // Also save sync config to server
   await saveSyncConfig();
   const el = document.getElementById('save-status');

@@ -169,26 +169,12 @@ if exist "%INSTALL_DIR%\package.json" (
     goto :install_deps
 )
 
-:: Change to a safe directory first (avoids OneDrive/sync path issues)
+:: Download via PowerShell (most reliable across all Windows setups)
 cd /d "%USERPROFILE%"
-
-if "%HAS_GIT%"=="0" goto :download_zip
-
-echo  Cloning repository...
-git clone https://github.com/petermanrique101-sys/Open-Agent-X.git "%INSTALL_DIR%"
-if exist "%INSTALL_DIR%\package.json" (
-    echo  Clone successful.
-    cd /d "%INSTALL_DIR%"
-    goto :install_deps
-)
-echo  Git clone did not produce expected files. Trying ZIP download...
-rmdir /s /q "%INSTALL_DIR%" 2>nul
-
-:download_zip
-echo  Downloading ZIP archive...
+echo  Downloading from GitHub...
 set "ZIP_URL=https://github.com/petermanrique101-sys/Open-Agent-X/archive/refs/heads/main.zip"
 set "ZIP_FILE=%TEMP%\open-agent-x.zip"
-powershell -Command "Invoke-WebRequest -Uri '%ZIP_URL%' -OutFile '%ZIP_FILE%'" 2>nul
+powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%ZIP_URL%' -OutFile '%ZIP_FILE%' -UseBasicParsing"
 if not exist "%ZIP_FILE%" (
     echo.
     echo  ERROR: Could not download Open Agent X.
@@ -197,12 +183,10 @@ if not exist "%ZIP_FILE%" (
     exit /b 1
 )
 echo  Extracting...
-powershell -Command "Expand-Archive -Path '%ZIP_FILE%' -DestinationPath '%TEMP%\oax-extract' -Force" 2>nul
-:: The zip extracts to a subfolder
+powershell -Command "Expand-Archive -Path '%ZIP_FILE%' -DestinationPath '%TEMP%\oax-extract' -Force"
 if exist "%TEMP%\oax-extract\Open-Agent-X-main" (
     move "%TEMP%\oax-extract\Open-Agent-X-main" "%INSTALL_DIR%" >nul 2>&1
 ) else (
-    :: Try other possible folder names
     for /d %%d in ("%TEMP%\oax-extract\*") do (
         move "%%d" "%INSTALL_DIR%" >nul 2>&1
         goto :zip_moved

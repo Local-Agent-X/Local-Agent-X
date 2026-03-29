@@ -406,10 +406,12 @@ async function saveSettings() {
   const modelSelect = document.getElementById('cfg-model-select');
   const model = provider === 'local' ? modelSelect?.value :
     (modelSelect?.value === '__custom__' || modelSelect?.style.display === 'none') ? modelInput?.value : (modelSelect?.value || modelInput?.value);
+  const portVal = document.getElementById('cfg-port')?.value;
   const s = {
     provider,
     model,
     temperature: parseFloat(document.getElementById('cfg-temperature')?.value || '0.7'),
+    port: portVal ? parseInt(portVal, 10) : undefined,
     imageEngine: document.getElementById('cfg-image-engine')?.value,
     sttEngine: document.getElementById('cfg-stt-engine')?.value,
     ttsEngine: document.getElementById('cfg-tts-engine')?.value,

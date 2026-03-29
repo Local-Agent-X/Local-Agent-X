@@ -433,9 +433,14 @@ async function saveSettings() {
     }
   }
   // Save provider + model to server (no API key in settings.json)
+  const currentPort = location.port || '7007';
   const settingsPayload = { provider: s.provider, model: s.model, temperature: s.temperature };
   if (s.port) settingsPayload.port = s.port;
   await apiPost('/api/settings', settingsPayload);
+  // If port changed, tell user to restart the app
+  if (s.port && String(s.port) !== String(currentPort)) {
+    alert('Port changed to ' + s.port + '. Please quit and relaunch Open Agent X for this to take effect.');
+  }
   // Also save sync config to server
   await saveSyncConfig();
   const el = document.getElementById('save-status');

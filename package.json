@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "node --max-old-space-size=512 --import=tsx --watch src/index.ts",
     "start": "node --max-old-space-size=512 dist/index.js",
-    "build": "tsup",
+    "build": "tsc",
     "test": "tsx src/test-suite.ts",
     "setup-ai": "node scripts/setup-ai.js"
   },

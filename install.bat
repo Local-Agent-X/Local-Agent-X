@@ -24,7 +24,7 @@ echo  ================================================================
 echo.
 echo    OPEN AGENT X - One-Click Installer
 echo.
-echo    Your personal AI agent — runs locally, 100%% private.
+echo    Your personal AI agent - runs locally, 100%% private.
 echo.
 echo  ================================================================
 echo.
@@ -169,22 +169,24 @@ if exist "%INSTALL_DIR%\package.json" (
     goto :install_deps
 )
 
+:: Change to a safe directory first (avoids OneDrive/sync path issues)
+cd /d "%USERPROFILE%"
+
 if "%HAS_GIT%"=="1" (
     echo  Cloning repository...
-    git clone https://github.com/petermanrique101-sys/Open-Agent-X.git "%INSTALL_DIR%"
-    if !errorlevel! neq 0 (
-        echo  Git clone failed. Trying ZIP download instead...
+    git clone https://github.com/petermanrique101-sys/Open-Agent-X.git "%INSTALL_DIR%" 2>&1
+    if exist "%INSTALL_DIR%\package.json" (
+        echo  Clone successful.
+        cd /d "%INSTALL_DIR%"
+        goto :install_deps
+    ) else (
+        echo  Git clone did not produce expected files. Trying ZIP download...
+        rmdir /s /q "%INSTALL_DIR%" 2>nul
         goto :download_zip
     )
-    if not exist "%INSTALL_DIR%\package.json" (
-        echo  Clone seemed to succeed but package.json missing. Trying ZIP...
-        goto :download_zip
-    )
-    cd /d "%INSTALL_DIR%"
 ) else (
     goto :download_zip
 )
-goto :install_deps
 
 :download_zip
 echo  Downloading ZIP archive...
@@ -222,7 +224,7 @@ cd /d "%INSTALL_DIR%"
 cd /d "%INSTALL_DIR%" 2>nul
 if not exist "%INSTALL_DIR%\package.json" (
     echo.
-    echo  ERROR: Download failed — package.json not found in %INSTALL_DIR%
+    echo  ERROR: Download failed - package.json not found in %INSTALL_DIR%
     echo  The repository may not have downloaded correctly.
     echo  Try deleting %INSTALL_DIR% and running the installer again.
     echo.

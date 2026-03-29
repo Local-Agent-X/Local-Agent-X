@@ -171,9 +171,13 @@ if exist "%INSTALL_DIR%\package.json" (
 
 if "%HAS_GIT%"=="1" (
     echo  Cloning repository...
-    git clone https://github.com/petermanrique101-sys/Open-Agent-X.git "%INSTALL_DIR%" 2>nul
+    git clone https://github.com/petermanrique101-sys/Open-Agent-X.git "%INSTALL_DIR%"
     if !errorlevel! neq 0 (
-        echo  Git clone failed. Trying ZIP download...
+        echo  Git clone failed. Trying ZIP download instead...
+        goto :download_zip
+    )
+    if not exist "%INSTALL_DIR%\package.json" (
+        echo  Clone seemed to succeed but package.json missing. Trying ZIP...
         goto :download_zip
     )
     cd /d "%INSTALL_DIR%"
@@ -213,6 +217,18 @@ cd /d "%INSTALL_DIR%"
 
 :: ── Step 4: Install dependencies ──
 :install_deps
+
+:: CRITICAL: Verify we're in the right directory before running npm
+cd /d "%INSTALL_DIR%" 2>nul
+if not exist "%INSTALL_DIR%\package.json" (
+    echo.
+    echo  ERROR: Download failed — package.json not found in %INSTALL_DIR%
+    echo  The repository may not have downloaded correctly.
+    echo  Try deleting %INSTALL_DIR% and running the installer again.
+    echo.
+    pause
+    exit /b 1
+)
 echo.
 echo  [4/6] Installing dependencies (this may take a minute)...
 

@@ -3047,7 +3047,7 @@ export function startServer(config: SAXConfig) {
           headers["Referrer-Policy"] = "no-referrer";
           headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
           headers["X-XSS-Protection"] = "1; mode=block";
-          headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+          headers["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
         }
         // Inject token isolation script into HTML — clears auth tokens before app code runs
         if (ext === "html") {
@@ -3109,13 +3109,13 @@ export function startServer(config: SAXConfig) {
         if (ext === "html") {
           headers["Content-Security-Policy"] =
             "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-            "img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:*; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'";
+            "img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'";
           headers["X-Content-Type-Options"] = "nosniff";
           headers["X-Frame-Options"] = "DENY";
           headers["Referrer-Policy"] = "no-referrer";
           headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
           headers["X-XSS-Protection"] = "1; mode=block";
-          headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+          headers["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
         }
         res.writeHead(200, headers);
         res.end(readFileSync(filePath));

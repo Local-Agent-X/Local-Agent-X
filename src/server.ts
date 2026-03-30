@@ -3422,7 +3422,7 @@ export function startServer(config: SAXConfig) {
       }, 300000);
 
       // Execute through the agent lane (parallel — multiple agents can run)
-      await enqueue("agent", () => runAgent(task, agentSession.messages, {
+      const agentResult = await enqueue("agent", () => runAgent(task, agentSession.messages, {
         apiKey: agentApiKey,
         model: agentModel,
         provider: agentProvider,
@@ -3455,6 +3455,10 @@ This summary is how your results get reported back to the user. If you produce n
         },
       }), { label: `agent:${agentId}`, timeout: 300_000 });
       clearTimeout(agentTimeout);
+      // Copy messages from agent result back into session (runAgent creates its own array)
+      if (agentResult && agentResult.messages) {
+        agentSession.messages.push(...agentResult.messages);
+      }
       // Collect ALL useful output: assistant messages + tool results
       const allOutput = extractAgentOutput(agentSession.messages);
       eventBus.emit("primal:agent-result", { agentId, result: allOutput, success: true });

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, watch } from "node:fs";
 import { join } from "node:path";
 import { checkRegexSafety } from "./safe-regex.js";
 
@@ -329,8 +329,72 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
   ],
 };
 
+/**
+ * LiveToolPolicy — wraps ToolPolicy with file-watching hot-reload.
+ * Merges user rules with defaults so critical rules (agent delegation, etc.)
+ * can never be accidentally removed.
+ */
+export class LiveToolPolicy extends ToolPolicy {
+  private policyPath: string;
+  private watcher: ReturnType<typeof import("node:fs").watch> | null = null;
+  private currentInner: ToolPolicy;
+
+  constructor(policy: ToolPolicy, policyPath: string) {
+    // Initialize with a dummy config — we delegate to currentInner
+    super({ defaultDecision: "deny", rules: [] });
+    this.currentInner = policy;
+    this.policyPath = policyPath;
+    this.startWatching();
+  }
+
+  override evaluate(toolName: string, args: Record<string, unknown>, sessionId?: string): PolicyDecision {
+    return this.currentInner.evaluate(toolName, args, sessionId);
+  }
+
+  override resetSession(sessionId: string): void {
+    this.currentInner.resetSession(sessionId);
+  }
+
+  private startWatching(): void {
+    try {
+      let debounce: ReturnType<typeof setTimeout> | null = null;
+      this.watcher = watch(this.policyPath, () => {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(() => this.reload(), 500);
+      });
+    } catch {
+      // File may not exist yet — that's fine
+    }
+  }
+
+  private reload(): void {
+    try {
+      if (!existsSync(this.policyPath)) return;
+      const raw = JSON.parse(readFileSync(this.policyPath, "utf-8")) as ToolPolicyConfig;
+      const merged = mergeWithDefaults(raw);
+      this.currentInner = new ToolPolicy(merged);
+      console.log(`[policy] Hot-reloaded ${merged.rules.length} rules`);
+    } catch (e) {
+      console.warn(`[policy] Hot-reload failed: ${(e as Error).message}`);
+    }
+  }
+}
+
+/** Merge user policy with defaults — user rules take priority, but missing default rules are added */
+function mergeWithDefaults(user: ToolPolicyConfig): ToolPolicyConfig {
+  const userIds = new Set(user.rules.map(r => r.id));
+  const missing = DEFAULT_POLICY.rules.filter(r => !userIds.has(r.id));
+  if (missing.length > 0) {
+    console.log(`[policy] Merging ${missing.length} default rules not in user policy`);
+  }
+  return {
+    defaultDecision: user.defaultDecision,
+    rules: [...user.rules, ...missing],
+  };
+}
+
 /** Load tool policy from ~/.sax/tool-policy.json or use defaults */
-export function loadToolPolicy(dataDir: string): ToolPolicy {
+export function loadToolPolicy(dataDir: string): LiveToolPolicy {
   const policyPath = join(dataDir, "tool-policy.json");
   if (existsSync(policyPath)) {
     try {
@@ -343,8 +407,9 @@ export function loadToolPolicy(dataDir: string): ToolPolicy {
           continue;
         }
       }
-      console.log(`[policy] Loaded ${raw.rules.length} rules from ${policyPath}`);
-      return new ToolPolicy(raw);
+      const merged = mergeWithDefaults(raw);
+      console.log(`[policy] Loaded ${merged.rules.length} rules from ${policyPath}`);
+      return new LiveToolPolicy(new ToolPolicy(merged), policyPath);
     } catch (e) {
       console.warn(`[policy] Failed to parse ${policyPath}: ${(e as Error).message}, using defaults`);
     }
@@ -354,5 +419,5 @@ export function loadToolPolicy(dataDir: string): ToolPolicy {
     writeFileSync(policyPath, JSON.stringify(DEFAULT_POLICY, null, 2), { encoding: "utf-8", mode: 0o600 });
     console.log(`[policy] Created default policy at ${policyPath}`);
   } catch {}
-  return new ToolPolicy(DEFAULT_POLICY);
+  return new LiveToolPolicy(new ToolPolicy(DEFAULT_POLICY), policyPath);
 }

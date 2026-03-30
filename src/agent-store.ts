@@ -123,6 +123,43 @@ export interface AgentTemplate {
   allowedTools: string[];
   description: string;
   icon?: string;
+  // Persistent agent fields (template becomes "hired" employee)
+  hired?: boolean;           // true = this is an active employee, not just a template
+  reportsTo?: string;        // ID of the agent this one reports to (hierarchy)
+  heartbeatSchedule?: string; // cron expression for wake-up schedule (e.g. "every 4h")
+  heartbeatEnabled?: boolean;
+  budget?: { maxPerMonth: number; spent: number; resetAt: number };
+  createdAt: number;
+  updatedAt: number;
+}
+
+// ── Issues / Tasks ──
+
+export type IssueStatus = "open" | "in-progress" | "blocked" | "done" | "cancelled";
+export type IssuePriority = "low" | "medium" | "high" | "urgent";
+
+export interface IssueComment {
+  id: string;
+  author: string;       // agent ID or "user"
+  content: string;
+  createdAt: number;
+}
+
+export interface Issue {
+  id: string;            // e.g. "SAX-1"
+  title: string;
+  description: string;
+  assignee: string;      // agent template ID
+  status: IssueStatus;
+  priority: IssuePriority;
+  project?: string;
+  parentIssue?: string;  // for sub-tasks
+  blockedBy?: string[];  // issue IDs this is waiting on
+  comments: IssueComment[];
+  needsApproval?: boolean;  // true = sitting in inbox
+  approvalType?: string;    // "hire" | "action" | "spend" | "deploy"
+  approvalData?: Record<string, unknown>;  // context for the approval
+  createdBy: string;     // who created it (agent ID or "user")
   createdAt: number;
   updatedAt: number;
 }
@@ -276,5 +313,166 @@ export class AgentTemplateStore {
       this.persist();
       console.log(`[agents] Seeded ${added} default agent templates`);
     }
+  }
+
+  /** Get only hired (persistent) agents */
+  listHired(): AgentTemplate[] {
+    return this.templates.filter(t => t.hired);
+  }
+
+  /** Hire an agent (activate a template as a persistent employee) */
+  hire(id: string, opts?: { reportsTo?: string; heartbeatSchedule?: string }): AgentTemplate | null {
+    const tpl = this.get(id);
+    if (!tpl) return null;
+    tpl.hired = true;
+    tpl.reportsTo = opts?.reportsTo;
+    tpl.heartbeatSchedule = opts?.heartbeatSchedule;
+    tpl.heartbeatEnabled = !!opts?.heartbeatSchedule;
+    tpl.updatedAt = Date.now();
+    this.persist();
+    return tpl;
+  }
+
+  /** Fire an agent (deactivate) */
+  fire(id: string): boolean {
+    const tpl = this.get(id);
+    if (!tpl) return false;
+    tpl.hired = false;
+    tpl.heartbeatEnabled = false;
+    tpl.updatedAt = Date.now();
+    this.persist();
+    return true;
+  }
+}
+
+// ── Issue Store ──────────────────────────────────────────
+
+const ISSUES_FILE = join(SAX_DIR, "agent-issues.json");
+
+export class IssueStore {
+  private static instance: IssueStore;
+  private issues: Issue[] = [];
+  private counter = 0;
+
+  private constructor() { this.load(); }
+
+  static getInstance(): IssueStore {
+    if (!IssueStore.instance) IssueStore.instance = new IssueStore();
+    return IssueStore.instance;
+  }
+
+  private load(): void {
+    try {
+      if (existsSync(ISSUES_FILE)) {
+        this.issues = JSON.parse(readFileSync(ISSUES_FILE, "utf-8"));
+        // Derive counter from highest existing ID
+        for (const i of this.issues) {
+          const num = parseInt(i.id.replace("SAX-", ""), 10);
+          if (num > this.counter) this.counter = num;
+        }
+      }
+    } catch { this.issues = []; }
+  }
+
+  private persist(): void {
+    writeFileSync(ISSUES_FILE, JSON.stringify(this.issues, null, 2), "utf-8");
+  }
+
+  create(issue: Omit<Issue, "id" | "comments" | "createdAt" | "updatedAt">): Issue {
+    this.counter++;
+    const full: Issue = {
+      ...issue,
+      id: `SAX-${this.counter}`,
+      comments: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    this.issues.push(full);
+    this.persist();
+    return full;
+  }
+
+  get(id: string): Issue | null {
+    return this.issues.find(i => i.id === id) || null;
+  }
+
+  list(opts?: { assignee?: string; status?: IssueStatus; needsApproval?: boolean; project?: string }): Issue[] {
+    let result = [...this.issues];
+    if (opts?.assignee) result = result.filter(i => i.assignee === opts.assignee);
+    if (opts?.status) result = result.filter(i => i.status === opts.status);
+    if (opts?.needsApproval !== undefined) result = result.filter(i => !!i.needsApproval === opts.needsApproval);
+    if (opts?.project) result = result.filter(i => i.project === opts.project);
+    return result.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  /** Get inbox: issues needing approval */
+  inbox(): Issue[] {
+    return this.list({ needsApproval: true });
+  }
+
+  update(id: string, partial: Partial<Issue>): Issue | null {
+    const issue = this.get(id);
+    if (!issue) return null;
+    Object.assign(issue, partial, { id, updatedAt: Date.now() });
+    this.persist();
+    return issue;
+  }
+
+  /** Add a comment to an issue */
+  comment(id: string, author: string, content: string): IssueComment | null {
+    const issue = this.get(id);
+    if (!issue) return null;
+    const c: IssueComment = {
+      id: `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
+      author, content, createdAt: Date.now(),
+    };
+    issue.comments.push(c);
+    issue.updatedAt = Date.now();
+    this.persist();
+    return c;
+  }
+
+  /** Approve an issue (clears needsApproval, sets status to open/in-progress) */
+  approve(id: string): Issue | null {
+    const issue = this.get(id);
+    if (!issue) return null;
+    issue.needsApproval = false;
+    if (issue.status === "open") issue.status = "in-progress";
+    issue.updatedAt = Date.now();
+    this.persist();
+    return issue;
+  }
+
+  /** Reject an issue (clears needsApproval, sets status to cancelled) */
+  reject(id: string, reason?: string): Issue | null {
+    const issue = this.get(id);
+    if (!issue) return null;
+    issue.needsApproval = false;
+    issue.status = "cancelled";
+    if (reason) {
+      this.comment(id, "user", `Rejected: ${reason}`);
+    }
+    issue.updatedAt = Date.now();
+    this.persist();
+    return issue;
+  }
+
+  delete(id: string): boolean {
+    const len = this.issues.length;
+    this.issues = this.issues.filter(i => i.id !== id);
+    if (this.issues.length < len) { this.persist(); return true; }
+    return false;
+  }
+
+  /** Get stats for dashboard */
+  stats(): { total: number; open: number; inProgress: number; blocked: number; done: number; pendingApproval: number } {
+    return {
+      total: this.issues.length,
+      open: this.issues.filter(i => i.status === "open").length,
+      inProgress: this.issues.filter(i => i.status === "in-progress").length,
+      blocked: this.issues.filter(i => i.status === "blocked").length,
+      done: this.issues.filter(i => i.status === "done").length,
+      pendingApproval: this.issues.filter(i => i.needsApproval).length,
+    };
   }
 }

@@ -536,13 +536,33 @@
     <div class="agents-layout">
       <div class="agents-left">
         <div class="agents-tabs">
-          <button class="agents-tab active" onclick="switchAgentsTab('history',this)">History</button>
+          <button class="agents-tab active" onclick="switchAgentsTab('team',this)">Team</button>
+          <button class="agents-tab" onclick="switchAgentsTab('inbox',this)">Inbox <span id="inbox-badge" style="background:var(--danger);color:#fff;border-radius:8px;padding:0 5px;font-size:.6rem;margin-left:3px;display:none">0</span></button>
+          <button class="agents-tab" onclick="switchAgentsTab('issues',this)">Issues</button>
           <button class="agents-tab" onclick="switchAgentsTab('templates',this)">Templates</button>
-          <button class="agents-tab" onclick="switchAgentsTab('active',this)">Active</button>
+          <button class="agents-tab" onclick="switchAgentsTab('history',this)">History</button>
+        </div>
+
+        <!-- Team tab (hired agents) -->
+        <div id="agents-tab-team" class="agents-tab-content active">
+          <div id="agents-team-list" style="overflow-y:auto;flex:1"></div>
+        </div>
+
+        <!-- Inbox tab -->
+        <div id="agents-tab-inbox" class="agents-tab-content">
+          <div id="agents-inbox-list" style="overflow-y:auto;flex:1"></div>
+        </div>
+
+        <!-- Issues tab -->
+        <div id="agents-tab-issues" class="agents-tab-content">
+          <div style="padding:8px 12px">
+            <button class="action-btn primary" style="width:100%;font-size:.72rem" onclick="showIssueForm()">+ New Issue</button>
+          </div>
+          <div id="agents-issues-list" style="overflow-y:auto;flex:1"></div>
         </div>
 
         <!-- History tab -->
-        <div id="agents-tab-history" class="agents-tab-content active">
+        <div id="agents-tab-history" class="agents-tab-content">
           <div style="padding:8px 12px;display:flex;gap:6px">
             <select id="agents-filter-status" class="field-input" style="font-size:.7rem;padding:4px 8px" onchange="loadAgentHistory()">
               <option value="">All statuses</option>

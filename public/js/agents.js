@@ -1,6 +1,9 @@
 // ── Agents Page ──
 
 async function init_agents() {
+  loadTeam();
+  loadInbox();
+  loadIssues();
   loadAgentHistory();
   loadAgentTemplates();
   loadActiveAgents();
@@ -16,9 +19,327 @@ function switchAgentsTab(tab, btn) {
   if (panel) panel.classList.add('active');
   if (btn) btn.classList.add('active');
   // Refresh data
+  if (tab === 'team') loadTeam();
+  if (tab === 'inbox') loadInbox();
+  if (tab === 'issues') loadIssues();
   if (tab === 'history') loadAgentHistory();
   if (tab === 'templates') loadAgentTemplates();
   if (tab === 'active') loadActiveAgents();
+}
+
+// ── Team (hired agents) ──
+
+async function loadTeam() {
+  const list = document.getElementById('agents-team-list');
+  if (!list) return;
+  try {
+    const r = await fetch(`${API}/api/agents/hired`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const agents = await r.json();
+    if (!Array.isArray(agents) || agents.length === 0) {
+      list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:.78rem">No agents hired yet. Go to Templates and hire one.</div>';
+      return;
+    }
+    list.innerHTML = agents.map(a => `
+      <div class="agent-history-item working" onclick="showHiredAgent('${a.id}')">
+        <div class="agent-history-header">
+          <span class="agent-role-badge">${esc(a.role)}</span>
+          <span style="font-size:.8rem">${a.icon || ''}</span>
+        </div>
+        <div class="agent-history-name">${esc(a.name)}</div>
+        <div class="agent-history-task">${esc(a.description || a.systemPrompt.slice(0, 60))}</div>
+        <div class="agent-history-meta">
+          <span>${a.heartbeatEnabled ? 'Heartbeat: ' + esc(a.heartbeatSchedule || '') : 'No heartbeat'}</span>
+          ${a.reportsTo ? '<span>Reports to: ' + esc(a.reportsTo) + '</span>' : ''}
+        </div>
+      </div>
+    `).join('');
+  } catch { list.innerHTML = '<div style="color:var(--muted);padding:20px;text-align:center">Failed to load</div>'; }
+}
+
+async function showHiredAgent(id) {
+  const empty = document.getElementById('agents-detail-empty');
+  const detail = document.getElementById('agents-detail-view');
+  const form = document.getElementById('agents-template-form');
+  if (empty) empty.style.display = 'none';
+  if (form) form.style.display = 'none';
+  if (detail) detail.style.display = '';
+  try {
+    const r = await fetch(`${API}/api/agents/templates`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const templates = await r.json();
+    const a = templates.find(t => t.id === id);
+    if (!a || !detail) return;
+    // Get issues assigned to this agent
+    const ir = await fetch(`${API}/api/issues?assignee=${id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const issues = await ir.json();
+    detail.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h2 style="font-family:var(--mono);font-size:1rem;color:var(--accent)">${a.icon || ''} ${esc(a.name)}</h2>
+        <button class="action-btn danger" onclick="fireAgent('${a.id}')">Fire</button>
+      </div>
+      <div class="agent-detail-grid">
+        <div class="agent-detail-field"><span class="agent-detail-label">Role</span><span>${esc(a.role)}</span></div>
+        <div class="agent-detail-field"><span class="agent-detail-label">Heartbeat</span><span>${a.heartbeatEnabled ? esc(a.heartbeatSchedule) : 'Off'}</span></div>
+        ${a.reportsTo ? `<div class="agent-detail-field"><span class="agent-detail-label">Reports To</span><span>${esc(a.reportsTo)}</span></div>` : ''}
+        <div class="agent-detail-field"><span class="agent-detail-label">Tools</span><span>${(a.allowedTools || []).join(', ') || 'All'}</span></div>
+      </div>
+      <div style="margin-top:16px">
+        <div class="agent-detail-label">System Prompt</div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:.78rem;line-height:1.5;margin-top:4px;max-height:120px;overflow-y:auto">${esc(a.systemPrompt)}</div>
+      </div>
+      <div style="margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div class="agent-detail-label">Assigned Issues (${issues.length})</div>
+          <button class="action-btn primary" style="font-size:.68rem;padding:3px 10px" onclick="showIssueForm('${a.id}')">+ Assign Task</button>
+        </div>
+        <div style="margin-top:8px">${issues.length === 0 ? '<div style="color:var(--muted);font-size:.78rem">No tasks assigned</div>' :
+          issues.map(i => `
+            <div class="agent-history-item ${i.status}" onclick="showIssueDetail('${i.id}')" style="margin-bottom:4px;border-radius:6px">
+              <div style="display:flex;justify-content:space-between;font-size:.72rem">
+                <span style="font-family:var(--mono);color:var(--accent)">${i.id}</span>
+                <span class="agent-role-badge">${i.status}</span>
+              </div>
+              <div style="font-size:.78rem;margin-top:2px">${esc(i.title)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:8px">
+        <button class="action-btn primary" onclick="spawnFromTemplate('${a.id}')">Run Task Now</button>
+        ${a.heartbeatEnabled ? '<button class="action-btn secondary" onclick="alert(\'Heartbeat will run on schedule\')">Heartbeat Active</button>' : ''}
+      </div>
+    `;
+  } catch { if (detail) detail.innerHTML = '<p style="color:var(--muted)">Failed to load</p>'; }
+}
+
+async function fireAgent(id) {
+  if (!confirm('Fire this agent? Their heartbeat will stop.')) return;
+  try {
+    await fetch(`${API}/api/agents/templates/${id}/fire`, { method: 'POST', headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    loadTeam();
+    document.getElementById('agents-detail-view').style.display = 'none';
+    document.getElementById('agents-detail-empty').style.display = '';
+  } catch {}
+}
+
+// ── Inbox ──
+
+async function loadInbox() {
+  const list = document.getElementById('agents-inbox-list');
+  const badge = document.getElementById('inbox-badge');
+  if (!list) return;
+  try {
+    const r = await fetch(`${API}/api/inbox`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const items = await r.json();
+    if (badge) {
+      badge.textContent = items.length;
+      badge.style.display = items.length > 0 ? '' : 'none';
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:.78rem">Nothing needs your approval</div>';
+      return;
+    }
+    list.innerHTML = items.map(i => `
+      <div class="agent-history-item" style="border-left:3px solid var(--warn)">
+        <div class="agent-history-header">
+          <span class="agent-role-badge" style="background:rgba(255,170,0,.15);color:var(--warn)">${esc(i.approvalType || 'approval')}</span>
+          <span style="font-size:.65rem;font-family:var(--mono);color:var(--muted)">${i.id}</span>
+        </div>
+        <div class="agent-history-name">${esc(i.title)}</div>
+        <div class="agent-history-task">${esc(i.description.slice(0, 100))}</div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="action-btn primary" style="font-size:.68rem;padding:3px 12px" onclick="event.stopPropagation();approveIssue('${i.id}')">Approve</button>
+          <button class="action-btn danger" style="font-size:.68rem;padding:3px 12px" onclick="event.stopPropagation();rejectIssue('${i.id}')">Reject</button>
+        </div>
+      </div>
+    `).join('');
+  } catch { list.innerHTML = '<div style="color:var(--muted);padding:20px;text-align:center">Failed to load</div>'; }
+}
+
+async function approveIssue(id) {
+  try {
+    await fetch(`${API}/api/issues/${id}/approve`, { method: 'POST', headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    loadInbox();
+    loadIssues();
+  } catch {}
+}
+
+async function rejectIssue(id) {
+  const reason = prompt('Reason for rejection (optional):');
+  try {
+    await fetch(`${API}/api/issues/${id}/reject`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ reason: reason || '' })
+    });
+    loadInbox();
+    loadIssues();
+  } catch {}
+}
+
+// ── Issues ──
+
+async function loadIssues() {
+  const list = document.getElementById('agents-issues-list');
+  if (!list) return;
+  try {
+    const r = await fetch(`${API}/api/issues`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const issues = await r.json();
+    if (!Array.isArray(issues) || issues.length === 0) {
+      list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:.78rem">No issues yet. Create one to assign work to an agent.</div>';
+      return;
+    }
+    list.innerHTML = issues.map(i => `
+      <div class="agent-history-item ${i.status}" onclick="showIssueDetail('${i.id}')">
+        <div class="agent-history-header">
+          <span style="font-family:var(--mono);font-size:.65rem;color:var(--accent)">${i.id}</span>
+          <span class="agent-role-badge">${i.status}</span>
+        </div>
+        <div class="agent-history-name">${esc(i.title)}</div>
+        <div class="agent-history-meta">
+          <span>${i.assignee ? 'Assigned: ' + esc(i.assignee) : 'Unassigned'}</span>
+          <span>${i.priority}</span>
+          <span>${timeAgo(i.updatedAt)}</span>
+        </div>
+      </div>
+    `).join('');
+  } catch { list.innerHTML = '<div style="color:var(--muted);padding:20px;text-align:center">Failed to load</div>'; }
+}
+
+async function showIssueDetail(id) {
+  const empty = document.getElementById('agents-detail-empty');
+  const detail = document.getElementById('agents-detail-view');
+  const form = document.getElementById('agents-template-form');
+  if (empty) empty.style.display = 'none';
+  if (form) form.style.display = 'none';
+  if (detail) detail.style.display = '';
+  try {
+    const r = await fetch(`${API}/api/issues/${id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const i = await r.json();
+    if (!detail) return;
+    const statusColor = { open: 'var(--accent)', 'in-progress': 'var(--warn)', blocked: 'var(--danger)', done: '#4caf50', cancelled: 'var(--muted)' }[i.status] || 'var(--muted)';
+    detail.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h2 style="font-family:var(--mono);font-size:.9rem;color:var(--accent)">${i.id}: ${esc(i.title)}</h2>
+        <span style="font-size:.7rem;font-family:var(--mono);color:${statusColor};border:1px solid ${statusColor};padding:2px 10px;border-radius:10px">${i.status.toUpperCase()}</span>
+      </div>
+      <div class="agent-detail-grid">
+        <div class="agent-detail-field"><span class="agent-detail-label">Assignee</span><span>${esc(i.assignee || 'Unassigned')}</span></div>
+        <div class="agent-detail-field"><span class="agent-detail-label">Priority</span><span>${esc(i.priority)}</span></div>
+        <div class="agent-detail-field"><span class="agent-detail-label">Created By</span><span>${esc(i.createdBy)}</span></div>
+        <div class="agent-detail-field"><span class="agent-detail-label">Created</span><span>${new Date(i.createdAt).toLocaleString()}</span></div>
+      </div>
+      <div style="margin-top:12px">
+        <div class="agent-detail-label">Description</div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:.8rem;line-height:1.5;margin-top:4px">${esc(i.description || 'No description')}</div>
+      </div>
+      <div style="margin-top:12px">
+        <div class="agent-detail-label">Status</div>
+        <select class="field-input" style="font-size:.75rem;padding:4px 8px;margin-top:4px" onchange="updateIssueStatus('${i.id}',this.value)">
+          <option value="open" ${i.status==='open'?'selected':''}>Open</option>
+          <option value="in-progress" ${i.status==='in-progress'?'selected':''}>In Progress</option>
+          <option value="blocked" ${i.status==='blocked'?'selected':''}>Blocked</option>
+          <option value="done" ${i.status==='done'?'selected':''}>Done</option>
+          <option value="cancelled" ${i.status==='cancelled'?'selected':''}>Cancelled</option>
+        </select>
+      </div>
+      ${i.comments && i.comments.length > 0 ? `
+        <div style="margin-top:12px">
+          <div class="agent-detail-label">Comments (${i.comments.length})</div>
+          ${i.comments.map(c => `
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin-top:6px;font-size:.78rem">
+              <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                <span style="font-family:var(--mono);color:var(--accent);font-size:.68rem">${esc(c.author)}</span>
+                <span style="color:var(--muted);font-size:.65rem">${timeAgo(c.createdAt)}</span>
+              </div>
+              <div style="line-height:1.4">${esc(c.content)}</div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+      <div style="margin-top:12px;display:flex;gap:6px">
+        <input id="issue-comment-input" class="field-input" style="flex:1;font-size:.75rem;padding:6px 10px" placeholder="Add a comment...">
+        <button class="action-btn primary" style="font-size:.7rem" onclick="addIssueComment('${i.id}')">Comment</button>
+      </div>
+      <div style="margin-top:12px">
+        <button class="action-btn danger" style="font-size:.7rem" onclick="deleteIssue('${i.id}')">Delete Issue</button>
+      </div>
+    `;
+  } catch { if (detail) detail.innerHTML = '<p style="color:var(--muted)">Failed to load issue</p>'; }
+}
+
+async function updateIssueStatus(id, status) {
+  try {
+    await fetch(`${API}/api/issues/${id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ status })
+    });
+    loadIssues();
+  } catch {}
+}
+
+async function addIssueComment(id) {
+  const input = document.getElementById('issue-comment-input');
+  if (!input || !input.value.trim()) return;
+  try {
+    await fetch(`${API}/api/issues/${id}/comments`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ content: input.value.trim(), author: 'user' })
+    });
+    input.value = '';
+    showIssueDetail(id);
+  } catch {}
+}
+
+async function deleteIssue(id) {
+  if (!confirm('Delete this issue?')) return;
+  try {
+    await fetch(`${API}/api/issues/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    loadIssues();
+    document.getElementById('agents-detail-view').style.display = 'none';
+    document.getElementById('agents-detail-empty').style.display = '';
+  } catch {}
+}
+
+function showIssueForm(assignee) {
+  const empty = document.getElementById('agents-detail-empty');
+  const detail = document.getElementById('agents-detail-view');
+  const form = document.getElementById('agents-template-form');
+  if (empty) empty.style.display = 'none';
+  if (detail) detail.style.display = 'none';
+  if (form) form.style.display = '';
+  form.innerHTML = `
+    <h2 style="font-family:var(--mono);font-size:1rem;color:var(--accent);margin-bottom:16px">New Issue</h2>
+    <div class="field"><label class="field-label">Title</label><input class="field-input" id="issue-title" placeholder="e.g. Build landing page"></div>
+    <div class="field"><label class="field-label">Description</label><textarea class="field-input" id="issue-desc" rows="4" style="resize:vertical" placeholder="What needs to be done..."></textarea></div>
+    <div class="field"><label class="field-label">Assignee (agent ID)</label><input class="field-input" id="issue-assignee" value="${assignee || ''}" placeholder="e.g. builtin-coder"></div>
+    <div class="field"><label class="field-label">Priority</label>
+      <select class="field-input" id="issue-priority">
+        <option value="low">Low</option>
+        <option value="medium" selected>Medium</option>
+        <option value="high">High</option>
+        <option value="urgent">Urgent</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="action-btn primary" onclick="createIssue()">Create Issue</button>
+      <button class="action-btn secondary" onclick="cancelTemplateForm()">Cancel</button>
+    </div>
+  `;
+}
+
+async function createIssue() {
+  const title = document.getElementById('issue-title')?.value.trim();
+  const desc = document.getElementById('issue-desc')?.value.trim();
+  const assignee = document.getElementById('issue-assignee')?.value.trim();
+  const priority = document.getElementById('issue-priority')?.value;
+  if (!title) { alert('Title is required'); return; }
+  try {
+    await fetch(`${API}/api/issues`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ title, description: desc, assignee, priority, status: 'open', createdBy: 'user' })
+    });
+    loadIssues();
+    cancelTemplateForm();
+  } catch {}
 }
 
 // ── History ──
@@ -162,6 +483,8 @@ function showTemplateForm(existing) {
       <button class="action-btn primary" onclick="saveTemplate('${t.id}')">${isEdit ? 'Update' : 'Create'}</button>
       <button class="action-btn secondary" onclick="cancelTemplateForm()">Cancel</button>
       ${isEdit ? `<button class="action-btn danger" onclick="deleteTemplate('${t.id}')">Delete</button>` : ''}
+      ${isEdit && !t.hired ? `<button class="action-btn secondary" onclick="hireAgent('${t.id}')">Hire Agent</button>` : ''}
+      ${isEdit && t.hired ? `<span style="color:var(--accent);font-size:.72rem;font-family:var(--mono)">HIRED</span>` : ''}
     </div>
   `;
 }
@@ -187,6 +510,20 @@ async function saveTemplate(existingId) {
         body: JSON.stringify(body)
       });
     }
+    loadAgentTemplates();
+    cancelTemplateForm();
+  } catch {}
+}
+
+async function hireAgent(id) {
+  const schedule = prompt('Heartbeat schedule (e.g. "every 4h", "daily 9am", or leave empty for no heartbeat):');
+  try {
+    await fetch(`${API}/api/agents/templates/${id}/hire`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ heartbeatSchedule: schedule || undefined })
+    });
+    alert('Agent hired!');
+    loadTeam();
     loadAgentTemplates();
     cancelTemplateForm();
   } catch {}

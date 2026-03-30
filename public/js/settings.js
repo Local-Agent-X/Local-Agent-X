@@ -467,13 +467,13 @@ async function saveSettings() {
 
 async function loadSettings() {
   try {
-    // Load from server first (source of truth), then overlay localStorage
+    // Server is the source of truth — localStorage is just a cache
     let serverSettings = {};
     try { const r = await apiFetch('/api/settings'); serverSettings = await r.json(); } catch {}
     const local = JSON.parse(localStorage.getItem('sax_settings') || '{}');
-    const s = { ...serverSettings, ...local };
-    // Always show actual running port from server
-    if (serverSettings.port) s.port = serverSettings.port;
+    const s = { ...local, ...serverSettings };
+    // Sync localStorage with server (so they don't fight)
+    localStorage.setItem('sax_settings', JSON.stringify(s));
     const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
     set('cfg-port', s.port);
     set('cfg-provider', s.provider); set('cfg-model', s.model); set('cfg-temperature', s.temperature);

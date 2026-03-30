@@ -3532,10 +3532,12 @@ export function startServer(config: SAXConfig) {
 
   server.listen(config.port, "127.0.0.1", () => {
     const maskedToken = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
+    const realUrl = `http://127.0.0.1:${config.port}/?token=${config.authToken}`;
+    const maskedUrl = `http://127.0.0.1:${config.port}/?token=${maskedToken}`;
     console.log(`\n  Open Agent X running at http://127.0.0.1:${config.port}`);
     console.log(`  Auth token: ${maskedToken}`);
-    const displayUrl = `http://127.0.0.1:${config.port}/?token=${maskedToken}`;
-    console.log(`\n  ► Open: ${displayUrl}\n`);
+    // OSC 8 terminal hyperlink: real URL is clickable, but display shows masked token
+    console.log(`\n  ► Open: \x1b]8;;${realUrl}\x1b\\${maskedUrl}\x1b]8;;\x1b\\\n`);
     console.log(`  Memory: ${dataDir}/memory/`);
     console.log(`  Sessions: ${dataDir}/sessions/`);
 

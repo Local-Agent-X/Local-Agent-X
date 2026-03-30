@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:*; img-src 'self' data: https:; font-src 'self'; media-src 'self' blob: mediastream:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* wss://127.0.0.1:* wss://localhost:*; img-src 'self' data: https: blob:; font-src 'self'; media-src 'self' blob: mediastream:;">
 <meta http-equiv="Permissions-Policy" content="microphone=*, camera=*">
 <title>Open Agent X</title>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
@@ -58,7 +58,7 @@
   </div>
 
   <div id="utility-bar" role="toolbar" aria-label="Navigation">
-    <button class="util-btn" data-route="dashboards" onclick="navigate('dashboards')" aria-label="Dashboards" title="Dashboards"><span class="util-icon">&#9638;</span></button>
+    <button class="util-btn" data-route="apps" onclick="navigate('apps')" aria-label="Apps" title="Apps"><span class="util-icon">&#9638;</span></button>
     <button class="util-btn" data-route="agents" onclick="navigate('agents')" aria-label="Agents" title="Agents"><span class="util-icon">&#129302;</span></button>
     <button class="util-btn" data-route="cron" onclick="navigate('cron')" aria-label="Cron jobs" title="Cron Jobs"><span class="util-icon">&#9200;</span></button>
     <button class="util-btn" data-route="secrets" onclick="navigate('secrets')" aria-label="Secrets vault" title="Secrets"><span class="util-icon">&#128273;</span></button>
@@ -514,18 +514,18 @@
     </div>
   </div>
 
-  <div id="page-dashboards" class="page">
+  <div id="page-apps" class="page">
     <div style="max-width:900px;margin:0 auto;padding:20px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
-        <h2 style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px">DASHBOARDS</h2>
-        <button class="action-btn primary" onclick="promptCreateDashboard()">+ New Dashboard</button>
+        <h2 style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px">APPS</h2>
+        <button class="action-btn primary" onclick="promptCreateApp()">+ New App</button>
       </div>
-      <div id="dashboards-empty" style="text-align:center;padding:60px 20px;color:var(--muted)">
+      <div id="apps-empty" style="text-align:center;padding:60px 20px;color:var(--muted)">
         <div style="font-size:3rem;margin-bottom:12px">&#9638;</div>
-        <p style="font-size:.9rem;margin-bottom:8px">No dashboards yet</p>
-        <p style="font-size:.78rem">Ask the agent to create one, or click + New Dashboard to start a chat.</p>
+        <p style="font-size:.9rem;margin-bottom:8px">No apps yet</p>
+        <p style="font-size:.78rem">Ask the agent to create one, or click + New App to start a chat. Agents can build interactive apps they use as operational workspaces.</p>
       </div>
-      <div id="dashboards-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px"></div>
+      <div id="apps-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px"></div>
       <div id="custom-pages-section" style="margin-top:32px;display:none">
         <h3 style="font-family:var(--mono);font-size:.75rem;color:var(--muted);letter-spacing:1px;margin-bottom:12px">CUSTOM PAGES</h3>
         <div id="custom-pages-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
@@ -610,7 +610,7 @@
 <script src="/js/settings.js"></script>
 <script src="/js/secrets.js"></script>
 <script src="/js/cron.js"></script>
-<script src="/js/dashboards.js"></script>
+<script src="/js/apps.js"></script>
 <script src="/js/agents.js"></script>
 <script src="/js/shortcuts.js"></script>
 <script>

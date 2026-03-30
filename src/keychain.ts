@@ -187,7 +187,7 @@ function fileFallbackGetOrCreate(dataDir: string): Buffer {
  * Returns the 32-byte key and which provider was used.
  */
 export function getOrCreateMasterKey(dataDir: string): KeychainResult {
-  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const dpapiPath = join(dataDir, "master.dpapi");
 
   // ── Try DPAPI (Windows) ──

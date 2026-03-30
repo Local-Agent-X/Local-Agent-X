@@ -2,6 +2,7 @@
  * Mission Scheduling — integrates with the cron system to run missions on schedule.
  */
 
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -39,7 +40,7 @@ export function saveSchedules(schedules: ScheduledMission[]): void {
 }
 
 function generateId(): string {
-  return `sched_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return `sched_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`;
 }
 
 function parseCronField(field: string, min: number, max: number): number[] {

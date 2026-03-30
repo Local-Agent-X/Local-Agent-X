@@ -1,5 +1,6 @@
 import type { Browser, Page, BrowserContext } from "playwright";
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -185,7 +186,7 @@ export class BrowserManager {
     const chromePath = findChromeExecutable();
 
     if (chromePath) {
-      const cdpPort = 9222 + Math.floor(Math.random() * 1000);
+      const cdpPort = 9222 + (randomBytes(2).readUInt16BE(0) % 1000);
 
       // Use a dedicated SAX profile (not the user's main profile — avoids conflicts)
       // But copy cookies from the default profile on first run for realistic fingerprint

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -47,7 +48,7 @@ export class OfflineQueue {
     headers?: Record<string, string>;
   }): string {
     const data = this.load();
-    const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = `${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
     data.requests.push({
       id,
       method: request.method,

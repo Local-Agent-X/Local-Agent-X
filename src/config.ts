@@ -2,7 +2,40 @@ import { z } from "zod";
 import { readFileSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import type { SAXConfig } from "./types.js";
+import type { SAXConfig, DeploymentProfile, ProfileDefaults } from "./types.js";
+
+// ── Deployment Profile Defaults ──
+// Each profile bundles sane defaults for its target audience.
+// "home"       — single user, max ease, secure but hands-off
+// "dev"        — local development, relaxed policies, verbose logs
+// "enterprise" — locked down, full audit, confirm everything
+
+export const PROFILE_DEFAULTS: Record<DeploymentProfile, ProfileDefaults> = {
+  home: {
+    sandboxMode: "host",
+    toolApproval: "confirm-risky",
+    retentionDays: 90,
+    autoUpdate: true,
+    networkExposure: "localhost",
+    logLevel: "basic",
+  },
+  dev: {
+    sandboxMode: "host",
+    toolApproval: "auto",
+    retentionDays: 90,
+    autoUpdate: true,
+    networkExposure: "localhost",
+    logLevel: "detailed",
+  },
+  enterprise: {
+    sandboxMode: "docker",
+    toolApproval: "confirm-all",
+    retentionDays: 30,
+    autoUpdate: false,
+    networkExposure: "localhost",
+    logLevel: "full-audit",
+  },
+};
 
 const DEFAULT_SYSTEM_PROMPT = `You are a personal AI companion running inside Open Agent X.
 
@@ -237,13 +270,21 @@ const configSchema = z.object({
   maxIterations: z.number().int().min(1).max(100).default(25),
   temperature: z.number().min(0).max(2).default(0.7),
   systemPrompt: z.string().default(DEFAULT_SYSTEM_PROMPT),
+  profile: z.enum(["home", "dev", "enterprise"]).default("home"),
+  toolApproval: z.enum(["auto", "confirm-risky", "confirm-all"]).default("confirm-risky"),
+  retentionDays: z.number().int().min(7).max(365).default(90),
+  autoUpdate: z.boolean().default(true),
+  logLevel: z.enum(["basic", "detailed", "full-audit"]).default("basic"),
 });
 
 function getConfigDir(): string {
   const home = process.env.HOME || process.env.USERPROFILE || "";
+  if (!home) {
+    throw new Error("Cannot determine home directory: neither HOME nor USERPROFILE is set");
+  }
   const dir = join(home, ".sax");
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
   return dir;
 }
@@ -253,7 +294,7 @@ function getConfigPath(): string {
 }
 
 function generateAuthToken(): string {
-  return randomBytes(24).toString("hex");
+  return randomBytes(32).toString("hex"); // 256-bit token
 }
 
 export function loadConfig(): SAXConfig {
@@ -276,7 +317,17 @@ export function loadConfig(): SAXConfig {
   if (process.env.SAX_WORKSPACE) raw.workspace = process.env.SAX_WORKSPACE;
   if (process.env.SAX_MODEL) raw.model = process.env.SAX_MODEL;
 
+  // Environment variable for profile override
+  if (process.env.SAX_PROFILE) raw.profile = process.env.SAX_PROFILE;
+
   const config = configSchema.parse(raw);
+
+  // Apply profile defaults for any fields the user hasn't explicitly set
+  const profileDefaults = PROFILE_DEFAULTS[config.profile];
+  if (!raw.toolApproval) config.toolApproval = profileDefaults.toolApproval;
+  if (!raw.retentionDays) config.retentionDays = profileDefaults.retentionDays;
+  if (raw.autoUpdate === undefined) config.autoUpdate = profileDefaults.autoUpdate;
+  if (!raw.logLevel) config.logLevel = profileDefaults.logLevel;
 
   // Inject actual app URL into system prompt (works with any port)
   const appUrl = `http://127.0.0.1:${config.port}`;

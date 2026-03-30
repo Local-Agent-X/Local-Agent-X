@@ -243,16 +243,22 @@ export async function handleExecute(
 			if (remoteDecision.taintLabels.length > 0) {
 				// Validate and cap taint labels from the control plane
 				const MAX_CP_TAINT_LABELS = 20;
+				const MAX_STRING_LEN = 200;
 				const validLabels = remoteDecision.taintLabels
 					.slice(0, MAX_CP_TAINT_LABELS)
 					.filter(
 						(l) =>
 							typeof l.source === "string" &&
 							l.source.length > 0 &&
+							l.source.length <= MAX_STRING_LEN &&
 							typeof l.origin === "string" &&
 							l.origin.length > 0 &&
+							l.origin.length <= MAX_STRING_LEN &&
 							typeof l.confidence === "number" &&
-							typeof l.addedAt === "string",
+							l.confidence >= 0.0 &&
+							l.confidence <= 1.0 &&
+							typeof l.addedAt === "string" &&
+							/^\d.*T/.test(l.addedAt),
 					);
 				if (validLabels.length > 0) {
 					firewall.injectExternalTaint(validLabels);

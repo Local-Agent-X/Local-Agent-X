@@ -32,11 +32,17 @@ function switchAgentsTab(tab, btn) {
 async function loadTeam() {
   const list = document.getElementById('agents-team-list');
   if (!list) return;
+  list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:.78rem">Loading team...</div>';
   try {
     const r = await fetch(`${API}/api/agents/hired`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     const agents = await r.json();
     if (!Array.isArray(agents) || agents.length === 0) {
-      list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:.78rem">No agents hired yet. Go to Templates and hire one.</div>';
+      list.innerHTML = `<div style="text-align:center;padding:30px;color:var(--muted)">
+        <div style="font-size:2rem;margin-bottom:8px">&#129302;</div>
+        <div style="font-size:.85rem;margin-bottom:12px">No agents hired yet</div>
+        <div style="font-size:.75rem;line-height:1.5;max-width:280px;margin:0 auto 16px">Hire agents from the Templates tab to build your team. Each agent has a role, tools, and can be assigned tasks.</div>
+        <button class="action-btn primary" style="font-size:.72rem" onclick="switchAgentsTab('templates',document.querySelector('.agents-tab:nth-child(4)'))">Browse Templates</button>
+      </div>`;
       return;
     }
     list.innerHTML = agents.map(a => `

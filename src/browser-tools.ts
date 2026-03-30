@@ -236,6 +236,11 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             const script = String(args.script || "");
             if (!script) return err("'script' parameter is required for evaluate action.");
             // Block dangerous patterns: network exfiltration, cookie/storage theft, DOM escape
+            // First: normalize Unicode escapes + string concatenation tricks
+            const normalizedScript = script
+              .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+              .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+
             const blocked = [
               // Network exfiltration
               /\bfetch\s*\(/i,
@@ -249,26 +254,44 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
               /\.src\s*=/i,
               /\.submit\s*\(/i,
               /\.action\s*=/i,
-              /createElement\s*\(\s*['"]script['"]\s*\)/i,
-              /createElement\s*\(\s*['"]iframe['"]\s*\)/i,
-              /createElement\s*\(\s*['"]img['"]\s*\)/i,
-              /createElement\s*\(\s*['"]form['"]\s*\)/i,
-              /createElement\s*\(\s*['"]link['"]\s*\)/i,
-              /createElement\s*\(\s*['"]object['"]\s*\)/i,
+              /createElement\s*\(/i,      // Block all createElement (not just specific tags)
               // Storage/credential theft
               /\bdocument\.cookie\b/i,
               /\blocalStorage\b/i,
               /\bsessionStorage\b/i,
               /\bindexedDB\b/i,
               /\bcredentials\b/i,
-              // Dynamic code execution
+              // Dynamic code execution — direct and indirect forms
               /\beval\s*\(/i,
               /\bFunction\s*\(/i,
               /\bsetTimeout\s*\(\s*['"]/i,
               /\bsetInterval\s*\(\s*['"]/i,
+              // Indirect eval patterns: (0,eval)(), window["eval"], window.eval
+              /\(\s*\d\s*,\s*eval\s*\)/i,
+              /\[\s*['"]eval['"]\s*\]/i,
+              /\bwindow\s*\[\s*['"]/i,      // window["anything"] — bracket access to globals
+              /\bglobalThis\s*\[\s*['"]/i,   // globalThis["anything"]
+              /\bself\s*\[\s*['"]/i,          // self["anything"]
+              // Reflect/Proxy-based execution
+              /\bReflect\s*\.\s*apply\b/i,
+              /\bnew\s+Proxy\b/i,
+              // Import-based exfiltration
+              /\bimport\s*\(/i,              // Dynamic import()
+              // Service worker / shared worker
+              /\bnew\s+Worker\b/i,
+              /\bServiceWorker\b/i,
+              /\bSharedWorker\b/i,
+              // Event source (another exfiltration vector)
+              /\bnew\s+EventSource\b/i,
+              // RTCPeerConnection (WebRTC exfiltration)
+              /\bRTCPeerConnection\b/i,
+              // document.domain manipulation
+              /\bdocument\.domain\b/i,
+              // String concatenation to bypass other checks
+              /\+\s*['"][a-z]{1,5}['"]\s*\+/i,  // "fe" + "tch" style concatenation
             ];
             for (const pattern of blocked) {
-              if (pattern.test(script)) {
+              if (pattern.test(script) || pattern.test(normalizedScript)) {
                 return err(
                   `Blocked: script contains restricted pattern (${pattern.source}). ` +
                   `evaluate() is for DOM inspection only — use http_request for API calls.`

@@ -913,6 +913,26 @@ async function setSelfModify(enabled) {
   } catch {}
 }
 
+// ── Settings Search ──
+
+function searchSettings(query) {
+  const q = query.toLowerCase().trim();
+  const cards = document.querySelectorAll('.settings-content .section-card');
+  const tabs = document.querySelectorAll('.tab-pane');
+  if (!q) {
+    // Show all, restore tab state
+    cards.forEach(c => c.style.display = '');
+    tabs.forEach(t => t.style.display = '');
+    return;
+  }
+  // Show all tabs, filter cards by text content
+  tabs.forEach(t => t.style.display = '');
+  cards.forEach(c => {
+    const text = c.textContent.toLowerCase();
+    c.style.display = text.includes(q) ? '' : 'none';
+  });
+}
+
 // ── User Mode (Simple / Power) ──
 
 function loadUserMode() {

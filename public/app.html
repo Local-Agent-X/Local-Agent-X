@@ -91,7 +91,21 @@
         <span id="smart-ctx-indicator" title="Smart context active" style="display:none;font-size:.65rem;font-family:var(--mono);padding:3px 8px;border-radius:6px;border:1px solid var(--accent-dim);color:var(--accent)">CTX</span>
       </div>
       <div id="messages" role="log" aria-label="Chat messages" aria-live="polite">
-        <div id="empty"><img src="/hero.jpg" alt="Open Agent X" class="hero-img" /><h2>OPEN AGENT X</h2><p>Select a chat or start a new one.</p></div>
+        <div id="empty">
+          <div id="mission-control" style="max-width:800px;margin:0 auto;padding:20px;width:100%">
+            <div style="text-align:center;margin-bottom:24px"><img src="/hero.jpg" alt="Open Agent X" class="hero-img" style="max-height:120px" /><h2 style="font-family:var(--mono);color:var(--accent);letter-spacing:2px;font-size:1rem;margin-top:8px">MISSION CONTROL</h2></div>
+            <div id="mc-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+              <div class="mc-stat-card"><div class="mc-stat-value" id="mc-agents">0</div><div class="mc-stat-label">Agents</div></div>
+              <div class="mc-stat-card"><div class="mc-stat-value" id="mc-tasks">0</div><div class="mc-stat-label">Tasks Active</div></div>
+              <div class="mc-stat-card"><div class="mc-stat-value" id="mc-inbox">0</div><div class="mc-stat-label">Pending Approval</div></div>
+              <div class="mc-stat-card"><div class="mc-stat-value" id="mc-projects">0</div><div class="mc-stat-label">Projects</div></div>
+            </div>
+            <div id="mc-agents-row" style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;margin-bottom:16px"></div>
+            <div style="text-align:center;color:var(--muted);font-size:.8rem">
+              <p>Start a chat, or go to <a href="#agents" onclick="navigate('agents')" style="color:var(--accent);cursor:pointer">Agents</a> to hire your team.</p>
+            </div>
+          </div>
+        </div>
       </div>
       <div id="input-area">
         <div id="context-bar"></div>
@@ -139,6 +153,9 @@
       <button class="action-btn secondary power-only" onclick="exportSettings()" aria-label="Export settings as JSON" title="Export settings">Export</button>
       <button class="action-btn secondary" onclick="importSettings()" aria-label="Import settings from JSON" title="Import settings">Import</button>
       <button class="action-btn primary" onclick="saveSettings()">SAVE</button>
+    </div>
+    <div style="padding:0 24px 8px">
+      <input id="settings-search" type="search" class="field-input" placeholder="Search settings..." oninput="searchSettings(this.value)" style="font-size:.75rem;padding:6px 12px;width:100%;max-width:300px">
     </div>
     <div class="settings-tabs">
       <button class="tab-pill active" onclick="switchTab('general')">General</button>

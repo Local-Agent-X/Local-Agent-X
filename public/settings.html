@@ -213,6 +213,36 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .status-badge.warn .status-dot { background: var(--warn); }
 .status-badge.err .status-dot { background: var(--danger); }
 
+/* Profile Cards */
+.profile-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 8px; }
+.profile-card {
+  padding: 16px; border-radius: 10px; border: 2px solid var(--border); background: var(--surface);
+  cursor: pointer; text-align: center; transition: all .2s;
+}
+.profile-card:hover { border-color: var(--accent); background: #111125; }
+.profile-card.active { border-color: var(--accent); background: rgba(0,255,65,.05); box-shadow: 0 0 12px var(--accent-dim); }
+.profile-icon { font-size: 1.8rem; margin-bottom: 6px; }
+.profile-name { font-family: var(--mono); font-size: .85rem; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.profile-card.active .profile-name { color: var(--accent); }
+.profile-desc { font-size: .68rem; color: var(--muted); line-height: 1.3; }
+
+/* Status Grid */
+.status-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 8px; }
+.status-tile {
+  padding: 14px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border);
+  text-align: center;
+}
+.st-label { font-size: .65rem; font-family: var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+.st-value { font-size: 1rem; font-family: var(--mono); color: var(--text); font-weight: 600; }
+.st-value.ok { color: var(--accent); }
+.st-value.warn { color: var(--warn); }
+.st-value.err { color: var(--danger); }
+
+@media (max-width: 600px) {
+  .profile-cards { grid-template-columns: 1fr; }
+  .status-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* Action buttons */
 .action-btn {
   font-family: var(--mono);
@@ -289,7 +319,8 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 </div>
 
 <div id="tabs">
-  <button class="tab-pill active" onclick="switchTab('general')">General</button>
+  <button class="tab-pill active" onclick="switchTab('system')">System</button>
+  <button class="tab-pill" onclick="switchTab('general')">General</button>
   <button class="tab-pill" onclick="switchTab('ai')">AI & Models</button>
   <button class="tab-pill" onclick="switchTab('image')">Image & Video</button>
   <button class="tab-pill" onclick="switchTab('voice')">Voice</button>
@@ -302,8 +333,76 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 
 <div id="content">
 
+  <!-- ═══ SYSTEM STATUS ═══ -->
+  <div id="tab-system" class="tab-content active">
+
+    <div class="section">
+      <div class="section-title">Deployment Profile</div>
+      <div class="section-desc">Choose how Open Agent X behaves. Home is secure and simple. Dev relaxes tool approvals. Enterprise locks everything down.</div>
+      <div class="profile-cards" id="profile-cards">
+        <div class="profile-card" data-profile="home" onclick="selectProfile('home')">
+          <div class="profile-icon">&#127968;</div>
+          <div class="profile-name">Home</div>
+          <div class="profile-desc">Secure defaults, auto-updates, risky tools need confirmation</div>
+        </div>
+        <div class="profile-card" data-profile="dev" onclick="selectProfile('dev')">
+          <div class="profile-icon">&#128187;</div>
+          <div class="profile-name">Dev</div>
+          <div class="profile-desc">All tools auto-approved, detailed logs, fast iteration</div>
+        </div>
+        <div class="profile-card" data-profile="enterprise" onclick="selectProfile('enterprise')">
+          <div class="profile-icon">&#127970;</div>
+          <div class="profile-name">Enterprise</div>
+          <div class="profile-desc">All tools need confirmation, Docker sandbox, full audit trail</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">System Health</div>
+      <div class="section-desc">Live status of your agent.</div>
+      <div class="status-grid" id="status-grid">
+        <div class="status-tile" id="st-uptime"><div class="st-label">Uptime</div><div class="st-value">--</div></div>
+        <div class="status-tile" id="st-sandbox"><div class="st-label">Sandbox</div><div class="st-value">--</div></div>
+        <div class="status-tile" id="st-threat"><div class="st-label">Threat Level</div><div class="st-value">--</div></div>
+        <div class="status-tile" id="st-tools"><div class="st-label">Tool Calls</div><div class="st-value">--</div></div>
+        <div class="status-tile" id="st-memory"><div class="st-label">Memory</div><div class="st-value">--</div></div>
+        <div class="status-tile" id="st-providers"><div class="st-label">Providers</div><div class="st-value">--</div></div>
+      </div>
+      <button class="action-btn secondary" onclick="loadSystemStatus()" style="margin-top:12px">Refresh Status</button>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Data Retention</div>
+      <div class="section-desc">How long to keep logs and archived memories. Older data is automatically cleaned up.</div>
+      <div class="field-row">
+        <div class="field">
+          <label class="field-label">Retention Period (days)</label>
+          <input class="field-input" id="cfg-retention" type="number" min="7" max="365" value="90"/>
+          <div class="field-hint">Default: 90 days (Home), 30 days (Enterprise)</div>
+        </div>
+        <div class="field">
+          <label class="field-label">Tool Approval Mode</label>
+          <select class="field-select" id="cfg-tool-approval">
+            <option value="auto">Auto-approve all</option>
+            <option value="confirm-risky">Confirm risky tools</option>
+            <option value="confirm-all">Confirm all tools</option>
+          </select>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">Auto-Update</div>
+          <div class="toggle-desc">Automatically check for and notify about new versions</div>
+        </div>
+        <div class="toggle on" id="tog-autoupdate" onclick="toggleSwitch(this)"></div>
+      </div>
+    </div>
+
+  </div>
+
   <!-- ═══ GENERAL ═══ -->
-  <div id="tab-general" class="tab-content active">
+  <div id="tab-general" class="tab-content">
 
     <div class="section">
       <div class="section-title">Authentication</div>
@@ -827,7 +926,6 @@ function loadToolsList() {
 // ── Save ──
 async function saveSettings() {
   document.getElementById('save-status').textContent = 'Saving...';
-  // For now, save to localStorage — later wire to server API
   const settings = {
     provider: document.getElementById('cfg-provider').value,
     model: document.getElementById('cfg-model').value,
@@ -842,8 +940,13 @@ async function saveSettings() {
     ttsVoice: document.getElementById('cfg-tts-voice').value,
     ttsSpeed: parseFloat(document.getElementById('cfg-tts-speed').value),
     sandbox: document.getElementById('cfg-sandbox').value,
+    retentionDays: parseInt(document.getElementById('cfg-retention')?.value || '90'),
+    toolApproval: document.getElementById('cfg-tool-approval')?.value || 'confirm-risky',
+    autoUpdate: document.getElementById('tog-autoupdate')?.classList.contains('on') ?? true,
   };
   localStorage.setItem('sax_settings', JSON.stringify(settings));
+  // Also persist system settings to server
+  try { await apiPost('/api/settings', settings); } catch {}
   document.getElementById('save-status').textContent = 'Saved';
   setTimeout(() => document.getElementById('save-status').textContent = '', 2000);
 }
@@ -865,6 +968,9 @@ function loadSettings() {
     if (s.ttsVoice) document.getElementById('cfg-tts-voice').value = s.ttsVoice;
     if (s.ttsSpeed) document.getElementById('cfg-tts-speed').value = s.ttsSpeed;
     if (s.sandbox) document.getElementById('cfg-sandbox').value = s.sandbox;
+    if (s.retentionDays) { const el = document.getElementById('cfg-retention'); if (el) el.value = s.retentionDays; }
+    if (s.toolApproval) { const el = document.getElementById('cfg-tool-approval'); if (el) el.value = s.toolApproval; }
+    if (s.autoUpdate !== undefined) { const el = document.getElementById('tog-autoupdate'); if (el) el.classList.toggle('on', s.autoUpdate); }
   } catch {}
 }
 
@@ -1058,9 +1164,77 @@ async function loadIntegrations() {
   }
 }
 
+// ── System Status & Profiles ──
+async function loadSystemStatus() {
+  try {
+    const d = await apiGet('/api/system-status');
+
+    // Profile cards
+    document.querySelectorAll('.profile-card').forEach(c => {
+      c.classList.toggle('active', c.dataset.profile === d.profile);
+    });
+
+    // Status tiles
+    const hrs = Math.floor(d.uptime / 3600);
+    const mins = Math.floor((d.uptime % 3600) / 60);
+    setTile('st-uptime', hrs > 0 ? hrs + 'h ' + mins + 'm' : mins + 'm', 'ok');
+
+    const sbMode = d.sandbox?.mode || 'host';
+    const sbDocker = d.sandbox?.dockerAvailable;
+    setTile('st-sandbox', sbMode === 'docker' ? 'Docker' : (sbDocker ? 'Host (Docker ready)' : 'Host'), sbMode === 'docker' ? 'ok' : '');
+
+    const tl = d.security?.threatLevel || 'normal';
+    setTile('st-threat', tl.charAt(0).toUpperCase() + tl.slice(1), tl === 'normal' ? 'ok' : tl === 'elevated' ? 'warn' : 'err');
+
+    setTile('st-tools', (d.tools?.totalCalls || 0).toLocaleString(), 'ok');
+
+    const memMB = Math.round((d.memoryUsage || 0) / 1024 / 1024);
+    setTile('st-memory', memMB + ' MB', memMB > 512 ? 'warn' : 'ok');
+
+    const provCount = d.providers ? Object.keys(d.providers).length : 0;
+    const healthyCount = d.providers ? Object.values(d.providers).filter(p => p.available !== false).length : 0;
+    setTile('st-providers', healthyCount + '/' + provCount + ' healthy', healthyCount === provCount ? 'ok' : 'warn');
+
+    // Settings fields
+    const retEl = document.getElementById('cfg-retention');
+    if (retEl) retEl.value = d.retentionDays || 90;
+    const taEl = document.getElementById('cfg-tool-approval');
+    if (taEl) taEl.value = d.toolApproval || 'confirm-risky';
+    const auEl = document.getElementById('tog-autoupdate');
+    if (auEl) auEl.classList.toggle('on', d.autoUpdate !== false);
+
+  } catch (e) {
+    console.error('System status load failed:', e);
+    setTile('st-uptime', 'Offline', 'err');
+  }
+}
+
+function setTile(id, value, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const v = el.querySelector('.st-value');
+  if (v) { v.textContent = value; v.className = 'st-value' + (cls ? ' ' + cls : ''); }
+}
+
+async function selectProfile(profile) {
+  try {
+    document.querySelectorAll('.profile-card').forEach(c => {
+      c.classList.toggle('active', c.dataset.profile === profile);
+    });
+    const d = await apiPost('/api/profile', { profile });
+    if (d.ok) {
+      // Update local UI to reflect new defaults
+      loadSystemStatus();
+    }
+  } catch (e) {
+    alert('Failed to switch profile: ' + e.message);
+  }
+}
+
 // ── Init ──
 renderSidebar();
 loadSettings();
+loadSystemStatus();
 checkAuth();
 checkServer('image');
 checkServer('video');

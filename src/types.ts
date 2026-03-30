@@ -57,6 +57,19 @@ export interface OAuthTokens {
   expiresAt: number;
 }
 
+// ── Deployment Profile Types ──
+
+export type DeploymentProfile = "home" | "dev" | "enterprise";
+
+export interface ProfileDefaults {
+  sandboxMode: "host" | "docker";
+  toolApproval: "auto" | "confirm-risky" | "confirm-all";
+  retentionDays: number;
+  autoUpdate: boolean;
+  networkExposure: "localhost" | "lan" | "public";
+  logLevel: "basic" | "detailed" | "full-audit";
+}
+
 // ── Config Types ──
 
 export interface SAXConfig {
@@ -68,4 +81,9 @@ export interface SAXConfig {
   maxIterations: number;
   temperature: number;
   systemPrompt: string;
+  profile: DeploymentProfile;
+  toolApproval: "auto" | "confirm-risky" | "confirm-all";
+  retentionDays: number;
+  autoUpdate: boolean;
+  logLevel: "basic" | "detailed" | "full-audit";
 }

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 // Swarm Orchestrator -- Main coordinator for multi-agent task execution
 
 import type {
@@ -23,7 +24,7 @@ function nextAgentId(): string {
 }
 
 function planId(): string {
-  return `plan-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return `plan-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
 }
 
 export class SwarmOrchestrator {

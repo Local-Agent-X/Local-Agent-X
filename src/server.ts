@@ -70,7 +70,7 @@ import { EventBus } from "./event-bus.js";
 import { startHotReload, stopHotReload, isHotReloadActive } from "./hot-reload.js";
 import { DashboardRegistry } from "./dashboard-runtime.js";
 import { renderDashboard } from "./dashboard-renderer.js";
-import { AgentRunStore, AgentTemplateStore, IssueStore, type AgentRun, type IssueStatus, type IssuePriority } from "./agent-store.js";
+import { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore, type AgentRun, type IssueStatus, type IssuePriority } from "./agent-store.js";
 import { resolveSession, linkIdentities, unlinkIdentity, getIdentityGroups, buildChannelContext, type ChannelType } from "./session-router.js";
 import { enqueue, getLaneStatus, getActiveTasks, setLaneConcurrency, drainAll, type LaneName } from "./execution-lanes.js";
 import { withFallback, buildFallbackChain, recordSuccess, recordFailure, getProviderHealthStatus, resetProviderHealth, isProviderAvailable, type ProviderId } from "./model-fallback.js";
@@ -1908,6 +1908,68 @@ export function startServer(config: SAXConfig) {
       } catch (e) {
         json(500, { error: (e as Error).message });
       }
+      return;
+    }
+
+    // ── Projects API ──
+
+    const projectStore = ProjectStore.getInstance();
+
+    if (method === "GET" && url.pathname === "/api/projects") {
+      json(200, projectStore.list());
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/projects") {
+      const body = await safeParseBody(req);
+      if (!body || !body.name) { json(400, { error: "name required" }); return; }
+      const project = projectStore.create({
+        name: body.name, description: body.description || "",
+        workspace: body.workspace, agentIds: body.agentIds || [],
+        secretKeys: body.secretKeys, allowedTools: body.allowedTools,
+      });
+      json(200, project);
+      return;
+    }
+
+    if (method === "GET" && url.pathname.match(/^\/api\/projects\/proj-[^/]+$/)) {
+      const id = url.pathname.split("/").pop()!;
+      const project = projectStore.get(id);
+      if (!project) { json(404, { error: "Project not found" }); return; }
+      json(200, project);
+      return;
+    }
+
+    if (method === "PUT" && url.pathname.match(/^\/api\/projects\/proj-[^/]+$/)) {
+      const id = url.pathname.split("/").pop()!;
+      const body = await safeParseBody(req);
+      if (!body) { json(400, { error: "Invalid JSON" }); return; }
+      const updated = projectStore.update(id, body);
+      if (!updated) { json(404, { error: "Project not found" }); return; }
+      json(200, updated);
+      return;
+    }
+
+    if (method === "DELETE" && url.pathname.match(/^\/api\/projects\/proj-[^/]+$/)) {
+      const id = url.pathname.split("/").pop()!;
+      json(projectStore.delete(id) ? 200 : 404, { ok: true });
+      return;
+    }
+
+    // Add/remove agents to projects
+    if (method === "POST" && url.pathname.match(/^\/api\/projects\/proj-[^/]+\/agents$/)) {
+      const id = url.pathname.split("/")[3];
+      const body = await safeParseBody(req);
+      if (!body || !body.agentId) { json(400, { error: "agentId required" }); return; }
+      json(projectStore.addAgent(id, body.agentId) ? 200 : 404, { ok: true });
+      return;
+    }
+
+    if (method === "DELETE" && url.pathname.match(/^\/api\/projects\/proj-[^/]+\/agents$/)) {
+      const id = url.pathname.split("/")[3];
+      const body = await safeParseBody(req);
+      if (!body || !body.agentId) { json(400, { error: "agentId required" }); return; }
+      json(projectStore.removeAgent(id, body.agentId) ? 200 : 404, { ok: true });
       return;
     }
 

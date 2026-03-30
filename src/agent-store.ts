@@ -12,9 +12,114 @@ import { homedir } from "node:os";
 const SAX_DIR = join(homedir(), ".sax");
 const RUNS_DIR = join(SAX_DIR, "agent-runs");
 const TEMPLATES_FILE = join(SAX_DIR, "agent-templates.json");
+const PROJECTS_FILE = join(SAX_DIR, "agent-projects.json");
 
 function ensureDirs(): void {
   if (!existsSync(RUNS_DIR)) mkdirSync(RUNS_DIR, { recursive: true });
+}
+
+// ── Projects (scoped isolation) ──────────────────────────
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  workspace?: string;          // project-specific workspace directory
+  agentIds: string[];          // agent template IDs assigned to this project
+  secretKeys?: string[];       // which secrets this project can access
+  allowedTools?: string[];     // tool restrictions for this project's agents
+  createdAt: number;
+  updatedAt: number;
+}
+
+export class ProjectStore {
+  private static instance: ProjectStore;
+  private projects: Project[] = [];
+
+  private constructor() { this.load(); }
+
+  static getInstance(): ProjectStore {
+    if (!ProjectStore.instance) ProjectStore.instance = new ProjectStore();
+    return ProjectStore.instance;
+  }
+
+  private load(): void {
+    try {
+      if (existsSync(PROJECTS_FILE)) {
+        this.projects = JSON.parse(readFileSync(PROJECTS_FILE, "utf-8"));
+      }
+    } catch { this.projects = []; }
+  }
+
+  private persist(): void {
+    writeFileSync(PROJECTS_FILE, JSON.stringify(this.projects, null, 2), "utf-8");
+  }
+
+  create(project: Omit<Project, "id" | "createdAt" | "updatedAt">): Project {
+    const id = "proj-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+    const full: Project = { ...project, id, createdAt: Date.now(), updatedAt: Date.now() };
+    this.projects.push(full);
+    this.persist();
+    return full;
+  }
+
+  get(id: string): Project | null {
+    return this.projects.find(p => p.id === id) || null;
+  }
+
+  list(): Project[] {
+    return [...this.projects].sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  update(id: string, partial: Partial<Project>): Project | null {
+    const p = this.projects.find(p => p.id === id);
+    if (!p) return null;
+    Object.assign(p, partial, { id, updatedAt: Date.now() });
+    this.persist();
+    return p;
+  }
+
+  delete(id: string): boolean {
+    const len = this.projects.length;
+    this.projects = this.projects.filter(p => p.id !== id);
+    if (this.projects.length < len) { this.persist(); return true; }
+    return false;
+  }
+
+  /** Add an agent to a project */
+  addAgent(projectId: string, agentId: string): boolean {
+    const p = this.get(projectId);
+    if (!p) return false;
+    if (!p.agentIds.includes(agentId)) {
+      p.agentIds.push(agentId);
+      p.updatedAt = Date.now();
+      this.persist();
+    }
+    return true;
+  }
+
+  /** Remove an agent from a project */
+  removeAgent(projectId: string, agentId: string): boolean {
+    const p = this.get(projectId);
+    if (!p) return false;
+    p.agentIds = p.agentIds.filter(id => id !== agentId);
+    p.updatedAt = Date.now();
+    this.persist();
+    return true;
+  }
+
+  /** Get which project an agent belongs to */
+  getAgentProject(agentId: string): Project | null {
+    return this.projects.find(p => p.agentIds.includes(agentId)) || null;
+  }
+
+  /** Check if two agents are in the same project */
+  sameProject(agentId1: string, agentId2: string): boolean {
+    const p1 = this.getAgentProject(agentId1);
+    const p2 = this.getAgentProject(agentId2);
+    if (!p1 || !p2) return false;
+    return p1.id === p2.id;
+  }
 }
 
 // ── Agent Run History ──────────────────────────────────────
@@ -156,6 +261,7 @@ export interface Issue {
   parentIssue?: string;  // for sub-tasks
   lockedBy?: string;     // agent ID that has checkout lock
   lockedAt?: number;     // when lock was acquired
+  projectId?: string;    // scoped to a project (agents can only see issues in their project)
   blockedBy?: string[];  // issue IDs this is waiting on
   comments: IssueComment[];
   needsApproval?: boolean;  // true = sitting in inbox

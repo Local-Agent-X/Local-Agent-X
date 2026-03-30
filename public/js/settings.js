@@ -447,10 +447,17 @@ async function saveSettings() {
   if (el) { el.textContent = 'Saved'; setTimeout(() => el.textContent = '', 2000); }
 }
 
-function loadSettings() {
+async function loadSettings() {
   try {
-    const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    // Load from server first (source of truth), then overlay localStorage
+    let serverSettings = {};
+    try { const r = await apiFetch('/api/settings'); serverSettings = await r.json(); } catch {}
+    const local = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    const s = { ...serverSettings, ...local };
+    // Always show actual running port from server
+    if (serverSettings.port) s.port = serverSettings.port;
     const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.value = v; };
+    set('cfg-port', s.port);
     set('cfg-provider', s.provider); set('cfg-model', s.model); set('cfg-temperature', s.temperature);
     // Store saved model and trigger provider change to populate dropdown
     const modelInput = document.getElementById('cfg-model');
@@ -1234,8 +1241,15 @@ function importSettings() {
 
 // ── Onboarding Wizard (feature 99) ──
 
-function shouldShowOnboarding() {
-  return !localStorage.getItem('sax_onboarded');
+async function shouldShowOnboarding() {
+  if (localStorage.getItem('sax_onboarded')) return false;
+  // Check server-side flag (survives port changes)
+  try {
+    const r = await apiFetch('/api/settings');
+    const s = await r.json();
+    if (s.onboarded) { localStorage.setItem('sax_onboarded', '1'); return false; }
+  } catch {}
+  return true;
 }
 
 function showOnboarding() {
@@ -1426,6 +1440,8 @@ function selectOnboardVoice(enabled) {
 
 function finishOnboarding() {
   localStorage.setItem('sax_onboarded', '1');
+  // Also save server-side so it survives port changes
+  apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ onboarded: true }) }).catch(() => {});
   if (_onboardProvider) {
     const defaults = { codex: 'gpt-5.3-codex', anthropic: 'claude-sonnet-4-20250514', xai: 'grok-3-mini', local: '' };
     const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
@@ -1446,7 +1462,7 @@ if (document.getElementById('integrations-list')) {
 }
 
 // Show onboarding on first run
-if (shouldShowOnboarding()) {
-  setTimeout(showOnboarding, 500);
-}
+shouldShowOnboarding().then(show => {
+  if (show) setTimeout(showOnboarding, 500);
+});
 

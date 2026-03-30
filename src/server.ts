@@ -65,6 +65,7 @@ import { PluginManager } from "./plugin-system.js";
 import { createSwarmTools } from "./swarm/index.js";
 import { createPrimalTools } from "./swarm/primal.js";
 import { EventBus } from "./event-bus.js";
+import { startHotReload, stopHotReload, isHotReloadActive } from "./hot-reload.js";
 import { generateFullSpec } from "./api-docs.js";
 import { ConfigWatcher } from "./config-hot-reload.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
@@ -298,6 +299,24 @@ export function startServer(config: SAXConfig) {
   // Initialize cron scheduler
   const cronService = new CronService(dataDir);
 
+  // Hot-reload: activate if self-modify mode is enabled
+  if (security.selfModify) {
+    const projectRoot = resolve(config.workspace, "..");
+    startHotReload(projectRoot);
+
+    // Notify WebSocket clients when public assets change
+    EventBus.on("hot-reload:asset", (data) => {
+      broadcastAll({ type: "hot-reload", data });
+    });
+
+    // Log src changes (tsx --watch handles the actual restart in dev mode)
+    EventBus.on("hot-reload:module", (data) => {
+      const ev = data as { path: string };
+      console.log(`[hot-reload] Module changed: ${ev.path} — tsx will handle restart`);
+      broadcastAll({ type: "hot-reload", data });
+    });
+  }
+
   // Initialize API integrations registry
   const integrations = new IntegrationRegistry(dataDir);
 
@@ -434,10 +453,20 @@ export function startServer(config: SAXConfig) {
 
   // Primal only gets agent control tools — forces delegation, no direct work
   const PRIMAL_ALLOWED = new Set([
+    // Agent delegation
     "agent_spawn", "agent_redirect", "agent_pause", "agent_resume",
     "agent_cancel", "agent_status", "agent_output", "agent_message",
     "delegate", "swarm_create", "swarm_status", "swarm_cancel",
-    "swarm_list_roles", "swarm_result", "memory_search", "memory_save",
+    "swarm_list_roles", "swarm_result",
+    // Lightweight tools Primal can use directly (no agent needed)
+    "memory_search", "memory_save", "memory_recall", "memory_reflect",
+    "memory_update_profile", "memory_get", "memory_stats",
+    "view_image", "generate_image", "generate_video",
+    "request_secret", "list_secrets",
+    "mission_list", "mission_get", "mission_save_preference",
+    "cron_list", "cron_create", "cron_delete",
+    "camera_capture", "screen_capture", "ocr",
+    "read", "bash",
   ]);
   const primalOnlyTools = allAgentTools.filter(t => PRIMAL_ALLOWED.has(t.name));
   // Full tools for spawned agents (they do the actual work)
@@ -1602,6 +1631,65 @@ export function startServer(config: SAXConfig) {
       }
       security.setFileAccessMode(mode as any);
       json(200, { ok: true, mode });
+      return;
+    }
+
+    // ── Self-Modify Mode API (power dev) ──
+
+    if (method === "GET" && url.pathname === "/api/security/self-modify") {
+      json(200, { enabled: security.selfModify });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/security/self-modify") {
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
+      const enabled = body.enabled === true;
+      security.setSelfModify(enabled);
+      // Start/stop hot-reload dynamically
+      const projectRoot = resolve(config.workspace, "..");
+      if (enabled && !isHotReloadActive()) {
+        startHotReload(projectRoot);
+        EventBus.on("hot-reload:asset", (data) => broadcastAll({ type: "hot-reload", data }));
+        EventBus.on("hot-reload:module", (data) => {
+          broadcastAll({ type: "hot-reload", data });
+        });
+      } else if (!enabled && isHotReloadActive()) {
+        stopHotReload();
+      }
+      json(200, { ok: true, enabled });
+      return;
+    }
+
+    // ── Custom Pages API ──
+
+    if (method === "GET" && url.pathname === "/api/custom-pages") {
+      const registryPath = join(dataDir, "custom-pages.json");
+      try {
+        if (existsSync(registryPath)) {
+          json(200, JSON.parse(readFileSync(registryPath, "utf-8")));
+        } else {
+          json(200, []);
+        }
+      } catch { json(200, []); }
+      return;
+    }
+
+    if (method === "DELETE" && url.pathname.startsWith("/api/custom-pages/")) {
+      const pageName = url.pathname.split("/").pop() || "";
+      if (!pageName || /[^a-zA-Z0-9_-]/.test(pageName)) { json(400, { error: "Invalid page name" }); return; }
+      // Remove from registry
+      const registryPath = join(dataDir, "custom-pages.json");
+      try {
+        let registry: Array<{ name: string }> = [];
+        if (existsSync(registryPath)) registry = JSON.parse(readFileSync(registryPath, "utf-8"));
+        registry = registry.filter(p => p.name !== pageName);
+        writeFileSync(registryPath, JSON.stringify(registry, null, 2), "utf-8");
+      } catch {}
+      // Remove the file
+      const filePath = join(publicDir, `${pageName}.html`);
+      try { const { unlinkSync } = await import("node:fs"); unlinkSync(filePath); } catch {}
+      json(200, { ok: true, deleted: pageName });
       return;
     }
 

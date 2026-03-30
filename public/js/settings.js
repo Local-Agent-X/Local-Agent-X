@@ -913,6 +913,39 @@ async function setSelfModify(enabled) {
   } catch {}
 }
 
+// ── User Mode (Simple / Power) ──
+
+function loadUserMode() {
+  const mode = localStorage.getItem('sax_user_mode') || 'power';
+  applyUserMode(mode);
+}
+
+function setUserMode(mode) {
+  localStorage.setItem('sax_user_mode', mode);
+  applyUserMode(mode);
+  // Persist to server
+  try {
+    fetch(`${API}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ userMode: mode })
+    });
+  } catch {}
+}
+
+function applyUserMode(mode) {
+  const cb = document.getElementById('cfg-user-mode');
+  if (cb) cb.checked = mode === 'simple';
+  if (mode === 'simple') {
+    document.body.classList.add('simple-mode');
+  } else {
+    document.body.classList.remove('simple-mode');
+  }
+}
+
+// Load mode immediately
+loadUserMode();
+
 // ── API Integrations ──
 
 async function loadIntegrations() {

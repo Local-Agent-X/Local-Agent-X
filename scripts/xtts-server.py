@@ -103,7 +103,8 @@ class XTTSHandler(BaseHTTPRequestHandler):
         print(f"[xtts] {args[0]}")
 
     def _cors(self):
-        self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1:4800")
+        origin = self.headers.get("Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", origin if "127.0.0.1" in origin or "localhost" in origin else "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 

@@ -39,9 +39,16 @@ console.warn = (...args: unknown[]) => {
 };
 
 // Global crash guard — keep the server alive on unhandled errors
+// EADDRINUSE is fatal: server can't function without a port, so exit
+// instead of letting background services (Telegram, cron) keep the process alive as a zombie
 process.on("uncaughtException", (err) => {
   console.error("[CRASH GUARD] Uncaught exception:", err.message);
   console.error(err.stack);
+  const fatal = (err as NodeJS.ErrnoException).code;
+  if (fatal === "EADDRINUSE" || fatal === "EACCES") {
+    console.error("[CRASH GUARD] Fatal: cannot bind port — exiting");
+    process.exit(1);
+  }
 });
 process.on("unhandledRejection", (reason) => {
   console.error("[CRASH GUARD] Unhandled rejection:", reason);

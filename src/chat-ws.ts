@@ -40,9 +40,18 @@ export function setupChatWebSocket(server: Server, authToken: string) {
   const wss = new WebSocketServer({ server, path: "/ws/chat" });
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-    // Auth check via query param
+    // Auth check: accept token via query param OR WebSocket subprotocol
     const url = new URL(req.url || "/", "http://localhost");
-    const token = url.searchParams.get("token") || "";
+    let token = url.searchParams.get("token") || "";
+    // Also check Sec-WebSocket-Protocol header: ['sax-auth', TOKEN]
+    if (!token) {
+      const protocols = req.headers["sec-websocket-protocol"] || "";
+      const parts = protocols.split(",").map(s => s.trim());
+      const authIdx = parts.indexOf("sax-auth");
+      if (authIdx >= 0 && parts[authIdx + 1]) {
+        token = parts[authIdx + 1];
+      }
+    }
     const tokenBuf = Buffer.from(token);
     const authBuf = Buffer.from(authToken);
     if (tokenBuf.length !== authBuf.length || !timingSafeEqual(tokenBuf, authBuf)) {

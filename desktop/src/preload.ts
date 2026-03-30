@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("desktop", {
 
   // Window
   toggleWindow: () => ipcRenderer.invoke("toggle-window"),
+  toggleDevTools: () => ipcRenderer.invoke("toggle-devtools"),
   quit: () => ipcRenderer.invoke("quit-app"),
 
   // Check if running inside desktop app

@@ -54,11 +54,13 @@ function toolsToOpenAI(tools: ToolDefinition[]): ChatCompletionTool[] {
 }
 
 // ── Approval context: enrich tool events with risk info ──
-function getRiskLevel(toolName: string, args: Record<string, unknown>): "low" | "medium" | "high" {
+function getRiskLevel(toolName: string, args: Record<string, unknown>, security?: SecurityLayer): "low" | "medium" | "high" {
   if (toolName === "bash") return "high";
   if (toolName === "write" || toolName === "edit") {
     const path = String(args.path || "");
-    if (/src\//.test(path)) return "high"; // Editing source code
+    // When self-modify is enabled, src/ writes are medium risk (not high)
+    // since the power dev has explicitly opted in
+    if (/src\//.test(path)) return security?.selfModify ? "medium" : "high";
     return "medium";
   }
   if (toolName === "browser") {
@@ -118,7 +120,7 @@ async function executeToolCalls(
     }
 
     // Build rich approval context for risky tool calls
-    const riskLevel = getRiskLevel(tc.name, args);
+    const riskLevel = getRiskLevel(tc.name, args, security);
     const approvalContext = buildApprovalContext(tc.name, args);
     const requiresApproval = riskLevel === "high";
     onEvent?.({ type: "tool_start", toolName: tc.name, args, riskLevel, context: approvalContext, requiresApproval });

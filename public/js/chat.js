@@ -40,6 +40,41 @@ function connectChatWs() {
         }
       }
     }
+
+    // ── Agent feed events (inline — no monkey-patching needed) ──
+    if (msg.type === 'agent-spawn' && msg.agentId) {
+      if (typeof addAgentFeed === 'function') addAgentFeed({ id: msg.agentId, name: msg.name, role: msg.role, status: msg.status || 'working', currentTask: msg.task });
+    } else if (msg.type === 'agent-update' && msg.agentId) {
+      if (typeof updateAgentFeed === 'function') updateAgentFeed(msg.agentId, msg);
+    } else if (msg.type === 'agent-output' && msg.agentId) {
+      if (typeof updateAgentFeed === 'function') updateAgentFeed(msg.agentId, { output: msg.output });
+    } else if (msg.type === 'agent-complete' && msg.agentId) {
+      if (typeof updateAgentFeed === 'function') {
+        updateAgentFeed(msg.agentId, { status: msg.success ? 'done' : 'error', output: msg.result ? '[Result] ' + msg.result.slice(0, 500) : '' });
+        // Build a clean, compact summary for the chat — not the full dump
+        var statusIcon = msg.success ? '\u2705' : '\u274C';
+        var statusLabel = msg.success ? 'completed' : 'failed';
+        var fullResult = msg.result || '';
+        // Extract first meaningful paragraph (skip tool output noise)
+        var lines = fullResult.split('\n').filter(function(l) {
+          var t = l.trim();
+          return t.length > 20 && !t.startsWith('[tool]') && !t.startsWith('Wrote ') && !t.startsWith('Read ') && !t.startsWith('Edited ') && !t.startsWith('BLOCKED');
+        });
+        var preview = lines.slice(0, 6).join('\n');
+        if (preview.length > 600) preview = preview.slice(0, 600) + '...';
+        var hasMore = fullResult.length > preview.length + 50;
+        var agentMsg = statusIcon + ' **Agent ' + statusLabel + '**\n\n' +
+          (preview || '_No readable output_') +
+          (hasMore ? '\n\n_Full results available on the Agents page_' : '');
+        addMessageEl('assistant', agentMsg);
+        if (activeChat) {
+          activeChat.messages.push({ role: 'assistant', content: agentMsg });
+          activeChat.updatedAt = Date.now();
+          saveChats();
+        }
+        setTimeout(function() { if (typeof removeAgentFeed === 'function') removeAgentFeed(msg.agentId); }, 10000);
+      }
+    }
   };
 
   chatWs.onclose = () => {
@@ -1313,56 +1348,7 @@ function _updateAgentCount() {
   if (toggleBtn) toggleBtn.style.borderColor = count > 0 ? 'var(--accent)' : 'var(--border)';
 }
 
-// WebSocket listener for agent events
-(function initAgentFeedWs() {
-  var origOnMessage = null;
-
-  function hookWs() {
-    if (!chatWs) { setTimeout(hookWs, 2000); return; }
-    if (chatWs._agentHooked) return;
-    chatWs._agentHooked = true;
-    var originalOnMessage = chatWs.onmessage;
-    chatWs.onmessage = function(e) {
-      if (originalOnMessage) originalOnMessage(e);
-      var msg;
-      try { msg = JSON.parse(e.data); } catch(ex) { return; }
-      if (msg.type === 'agent-spawn') {
-        // Server sends flat: {type, agentId, name, role, task, status}
-        addAgentFeed({ id: msg.agentId, name: msg.name, role: msg.role, status: msg.status || 'working', currentTask: msg.task });
-      } else if (msg.type === 'agent-update' && msg.agentId) {
-        updateAgentFeed(msg.agentId, msg);
-      } else if (msg.type === 'agent-output' && msg.agentId) {
-        updateAgentFeed(msg.agentId, { output: msg.output });
-      } else if (msg.type === 'agent-complete' && msg.agentId) {
-        updateAgentFeed(msg.agentId, { status: msg.success ? 'done' : 'error', output: msg.result ? '[Result] ' + msg.result.slice(0, 500) : '' });
-        // Inject completion as a clean markdown message and persist it
-        var statusIcon = msg.success ? '✅' : '❌';
-        var statusText = msg.success ? 'completed' : 'failed';
-        var resultPreview = msg.result || 'No output';
-        var agentMsg = statusIcon + ' **Agent ' + statusText + '**\n\n' + resultPreview;
-        addMessageEl('assistant', agentMsg);
-        if (activeChat) {
-          activeChat.messages.push({ role: 'assistant', content: agentMsg });
-          activeChat.updatedAt = Date.now();
-          saveChats();
-        }
-        setTimeout(function() { removeAgentFeed(msg.agentId); }, 10000);
-      }
-    };
-  }
-
-  // Re-hook whenever WebSocket reconnects
-  var origConnect = window.connectChatWs;
-  if (origConnect) {
-    window.connectChatWs = function() {
-      origConnect();
-      setTimeout(function() {
-        if (chatWs) { chatWs._agentHooked = false; hookWs(); }
-      }, 500);
-    };
-  }
-  hookWs();
-})();
+// Agent feed events are now handled inline in chatWs.onmessage (no monkey-patching)
 
 // Init chat on page load
 function init_chat() { renderMessages(); initStatusBar(); _renderAgentFeedsList(); }

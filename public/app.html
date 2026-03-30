@@ -58,6 +58,7 @@
 
   <div id="utility-bar" role="toolbar" aria-label="Navigation">
     <button class="util-btn" data-route="dashboards" onclick="navigate('dashboards')" aria-label="Dashboards" title="Dashboards"><span class="util-icon">&#9638;</span></button>
+    <button class="util-btn" data-route="agents" onclick="navigate('agents')" aria-label="Agents" title="Agents"><span class="util-icon">&#129302;</span></button>
     <button class="util-btn" data-route="cron" onclick="navigate('cron')" aria-label="Cron jobs" title="Cron Jobs"><span class="util-icon">&#9200;</span></button>
     <button class="util-btn" data-route="secrets" onclick="navigate('secrets')" aria-label="Secrets vault" title="Secrets"><span class="util-icon">&#128273;</span></button>
     <button class="util-btn" data-route="settings" onclick="navigate('settings')" aria-label="Settings" title="Settings"><span class="util-icon">&#9881;</span></button>
@@ -531,6 +532,54 @@
     </div>
   </div>
 
+  <div id="page-agents" class="page">
+    <div class="agents-layout">
+      <div class="agents-left">
+        <div class="agents-tabs">
+          <button class="agents-tab active" onclick="switchAgentsTab('history',this)">History</button>
+          <button class="agents-tab" onclick="switchAgentsTab('templates',this)">Templates</button>
+          <button class="agents-tab" onclick="switchAgentsTab('active',this)">Active</button>
+        </div>
+
+        <!-- History tab -->
+        <div id="agents-tab-history" class="agents-tab-content active">
+          <div style="padding:8px 12px;display:flex;gap:6px">
+            <select id="agents-filter-status" class="field-input" style="font-size:.7rem;padding:4px 8px" onchange="loadAgentHistory()">
+              <option value="">All statuses</option>
+              <option value="done">Done</option>
+              <option value="error">Error</option>
+              <option value="timeout">Timeout</option>
+            </select>
+          </div>
+          <div id="agents-history-list" style="overflow-y:auto;flex:1"></div>
+        </div>
+
+        <!-- Templates tab -->
+        <div id="agents-tab-templates" class="agents-tab-content">
+          <div style="padding:8px 12px">
+            <button class="action-btn primary" style="width:100%;font-size:.72rem" onclick="showTemplateForm()">+ New Template</button>
+          </div>
+          <div id="agents-templates-list" style="overflow-y:auto;flex:1"></div>
+        </div>
+
+        <!-- Active tab -->
+        <div id="agents-tab-active" class="agents-tab-content">
+          <div id="agents-active-list" style="overflow-y:auto;flex:1"></div>
+        </div>
+      </div>
+
+      <div class="agents-right">
+        <div id="agents-detail-empty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted)">
+          <div style="font-size:2.5rem">&#129302;</div>
+          <h2 style="font-family:var(--mono);font-size:1rem;color:var(--accent);letter-spacing:2px">AGENTS</h2>
+          <p style="font-size:.82rem;max-width:400px;text-align:center;line-height:1.6">View agent run history, create reusable agent templates, and monitor active agents.</p>
+        </div>
+        <div id="agents-detail-view" style="display:none;flex:1;overflow-y:auto;padding:24px 32px"></div>
+        <div id="agents-template-form" style="display:none;flex:1;overflow-y:auto;padding:24px 32px"></div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- Scripts -->
@@ -541,6 +590,7 @@
 <script src="/js/secrets.js"></script>
 <script src="/js/cron.js"></script>
 <script src="/js/dashboards.js"></script>
+<script src="/js/agents.js"></script>
 <script src="/js/shortcuts.js"></script>
 <script>
 // Desktop sidebar collapse toggle

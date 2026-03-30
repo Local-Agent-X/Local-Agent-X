@@ -1243,11 +1243,19 @@ function importSettings() {
 
 async function shouldShowOnboarding() {
   if (localStorage.getItem('sax_onboarded')) return false;
-  // Check server-side flag (survives port changes)
   try {
+    // Check server-side onboarded flag
     const r = await apiFetch('/api/settings');
     const s = await r.json();
     if (s.onboarded) { localStorage.setItem('sax_onboarded', '1'); return false; }
+    // Check if any AI provider is already configured (skip onboarding)
+    const p = await apiFetch('/api/providers');
+    const d = await p.json();
+    if (d.providers && d.providers.length > 0) {
+      localStorage.setItem('sax_onboarded', '1');
+      apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ onboarded: true }) }).catch(() => {});
+      return false;
+    }
   } catch {}
   return true;
 }

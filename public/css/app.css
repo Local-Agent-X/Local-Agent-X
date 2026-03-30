@@ -272,9 +272,6 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .app-card-status-archived{background:var(--yellow,#ffc107);color:#000}
 
 /* ── Agents Page ── */
-.agents-layout{display:grid;grid-template-columns:340px 1fr;flex:1;overflow:hidden}
-.agents-left{border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
-.agents-right{display:flex;flex-direction:column;overflow-y:auto}
 .agents-tabs{display:flex;border-bottom:1px solid var(--border);padding:0}
 .agents-tab{flex:1;background:none;border:none;color:var(--muted);font-family:var(--mono);font-size:.7rem;padding:10px 8px;cursor:pointer;border-bottom:2px solid transparent;text-transform:uppercase;letter-spacing:.5px}
 .agents-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
@@ -491,9 +488,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
   .field-row{flex-direction:column}
 
   /* Secrets & cron responsive */
-  .secrets-layout,.cron-layout,.agents-layout{grid-template-columns:1fr;grid-template-rows:auto 1fr}
-  .secrets-left,.cron-left,.agents-left{border-right:none;border-bottom:1px solid var(--border);max-height:40vh}
-  .secrets-right,.cron-right,.agents-right{padding:16px}
+  .secrets-layout,.cron-layout{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .secrets-left,.cron-left{border-right:none;border-bottom:1px solid var(--border);max-height:40vh}
+  .secrets-right,.cron-right{padding:16px}
 
   /* Chat input responsive */
   #input-wrapper{gap:6px}

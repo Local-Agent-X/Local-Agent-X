@@ -62,6 +62,17 @@ function connectChatWs() {
         });
         var preview = lines.slice(0, 6).join('\n');
         if (preview.length > 600) preview = preview.slice(0, 600) + '...';
+        // If aggressive filter stripped everything, show a condensed summary of what the agent did
+        if (!preview && fullResult.length > 0) {
+          var wrote = (fullResult.match(/Wrote /g) || []).length;
+          var read = (fullResult.match(/Read /g) || []).length;
+          var edited = (fullResult.match(/Edited /g) || []).length;
+          var parts = [];
+          if (wrote) parts.push('wrote ' + wrote + ' file' + (wrote > 1 ? 's' : ''));
+          if (edited) parts.push('edited ' + edited + ' file' + (edited > 1 ? 's' : ''));
+          if (read) parts.push('read ' + read + ' file' + (read > 1 ? 's' : ''));
+          preview = parts.length > 0 ? 'Agent ' + parts.join(', ') + '.' : fullResult.slice(0, 200);
+        }
         var hasMore = fullResult.length > preview.length + 50;
         var agentMsg = statusIcon + ' **Agent ' + statusLabel + '**\n\n' +
           (preview || '_No readable output_') +

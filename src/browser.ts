@@ -186,12 +186,25 @@ export class BrowserManager {
     const chromePath = findChromeExecutable();
 
     if (chromePath) {
-      const cdpPort = 9222 + (randomBytes(2).readUInt16BE(0) % 1000);
+      const cdpPort = 9800; // Fixed port — allows reconnecting to existing Chrome
 
       // Use a dedicated SAX profile (not the user's main profile — avoids conflicts)
-      // But copy cookies from the default profile on first run for realistic fingerprint
       const userDataDir = join(homedir(), ".sax", "chrome-profile");
       if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true });
+
+      const cdpUrl = `http://127.0.0.1:${cdpPort}`;
+
+      // Try to connect to an existing Chrome instance first (survives server restarts)
+      try {
+        const res = await fetch(`${cdpUrl}/json/version`, { signal: AbortSignal.timeout(2000) });
+        if (res.ok) {
+          const browser = await pw.chromium.connectOverCDP(cdpUrl);
+          console.log(`[browser] Reconnected to existing Chrome on port ${cdpPort}`);
+          return browser;
+        }
+      } catch {
+        // No existing Chrome — launch a new one
+      }
 
       const args = [
         `--remote-debugging-port=${cdpPort}`,
@@ -207,7 +220,6 @@ export class BrowserManager {
       });
 
       // Wait for CDP to be ready
-      const cdpUrl = `http://127.0.0.1:${cdpPort}`;
       let ready = false;
       for (let i = 0; i < 20; i++) {
         try {
@@ -231,7 +243,6 @@ export class BrowserManager {
           return browser;
         } catch (e) {
           console.log(`[browser] CDP connect failed: ${(e as Error).message}`);
-          // Kill the spawned process
           try { this.chromeProcess.kill(); } catch {}
           this.chromeProcess = null;
         }

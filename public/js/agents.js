@@ -478,8 +478,9 @@ function renderOrgChart(container) {
   }
 
   // Add "You (Board)" as the root
-  let html = '<div class="org-tree">';
-  html += '<div class="org-node org-board">&#128100; You (Board)</div>';
+  let html = '<div style="text-align:center;margin-bottom:12px;color:var(--muted);font-size:.72rem">Drag agents onto other agents to set reporting structure</div>';
+  html += '<div class="org-tree">';
+  html += '<div class="org-node org-board" ondragover="orgDragOver(event)" ondrop="orgDrop(event)" data-id="">&#128100; You (Board)</div>';
   html += '<div class="org-children">';
   for (const root of roots) {
     html += renderOrgNode(root, childMap);
@@ -499,6 +500,7 @@ function renderOrgNode(agent, childMap) {
   let html = `<div class="org-branch">`;
   html += `<div class="org-node" draggable="true" data-id="${agent.id}"
     ondragstart="orgDragStart(event,'${agent.id}')"
+    ondragend="orgDragEnd()"
     ondragover="orgDragOver(event)"
     ondrop="orgDrop(event)"
     onclick="showHiredAgent('${agent.id}')">
@@ -522,41 +524,56 @@ function orgDragStart(e, agentId) {
   _orgDragId = agentId;
   e.dataTransfer.effectAllowed = 'move';
   e.dataTransfer.setData('text/plain', agentId);
-  e.target.closest('.org-node').classList.add('org-dragging');
+  var node = e.target.closest('.org-node');
+  if (node) node.classList.add('org-dragging');
 }
 
 function orgDragOver(e) {
   e.preventDefault();
   e.dataTransfer.dropEffect = 'move';
-  const node = e.target.closest('.org-node, .org-dropzone');
-  if (node) node.classList.add('org-drop-target');
+  // Clear previous highlights
+  document.querySelectorAll('.org-drop-target').forEach(function(el) { el.classList.remove('org-drop-target'); });
+  var node = e.target.closest('.org-node, .org-dropzone');
+  if (node && node.dataset.id !== _orgDragId) node.classList.add('org-drop-target');
+}
+
+function orgDragEnd() {
+  _orgDragId = null;
+  document.querySelectorAll('.org-dragging, .org-drop-target').forEach(function(el) {
+    el.classList.remove('org-dragging', 'org-drop-target');
+  });
 }
 
 function orgDrop(e) {
   e.preventDefault();
-  document.querySelectorAll('.org-dragging, .org-drop-target').forEach(el => {
+  document.querySelectorAll('.org-dragging, .org-drop-target').forEach(function(el) {
     el.classList.remove('org-dragging', 'org-drop-target');
   });
-  const targetNode = e.target.closest('.org-node, .org-dropzone');
+  var targetNode = e.target.closest('.org-node, .org-dropzone');
   if (!targetNode || !_orgDragId) return;
-  const targetId = targetNode.dataset.id || targetNode.dataset.target || '';
-  if (targetId === _orgDragId) return; // Can't report to self
+  var targetId = targetNode.dataset.id || targetNode.dataset.target || '';
+  if (targetId === _orgDragId) return;
 
-  // Update the hierarchy
   updateAgentHierarchy(_orgDragId, targetId || null);
   _orgDragId = null;
 }
 
 async function updateAgentHierarchy(agentId, reportsTo) {
+  // Show immediate feedback
+  var container = document.getElementById('orgchart-container');
+  if (container) container.style.opacity = '0.5';
   try {
-    await fetch(`${API}/api/agents/templates/${agentId}`, {
+    await fetch(API + '/api/agents/templates/' + agentId, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + AUTH_TOKEN },
       body: JSON.stringify({ reportsTo: reportsTo || '' })
     });
-    // Reload
-    loadOrgChart();
-  } catch {}
+    // Reload the chart with fresh data
+    await loadOrgChart();
+  } catch (err) {
+    console.error('Failed to update hierarchy:', err);
+  }
+  if (container) container.style.opacity = '1';
 }
 
 // ── History ──

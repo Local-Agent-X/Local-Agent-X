@@ -2007,9 +2007,12 @@ export function startServer(config: SAXConfig) {
         name: body.name, description: body.description || "",
         agentIds: body.agentIds || [], workspace: body.workspace,
       });
-      // Auto-hire the agents
-      for (const agentId of (body.agentIds || [])) {
-        agentTemplateStore.hire(agentId, {});
+      // Auto-hire the agents — if CEO is included, others report to CEO
+      const agentIds: string[] = body.agentIds || [];
+      const hasCeo = agentIds.includes("builtin-ceo");
+      for (const agentId of agentIds) {
+        const reportsTo = (hasCeo && agentId !== "builtin-ceo") ? "builtin-ceo" : undefined;
+        agentTemplateStore.hire(agentId, { reportsTo });
         projectStore.addAgent(project.id, agentId);
       }
       json(200, project);

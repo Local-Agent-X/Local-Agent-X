@@ -154,6 +154,8 @@ export interface Issue {
   priority: IssuePriority;
   project?: string;
   parentIssue?: string;  // for sub-tasks
+  lockedBy?: string;     // agent ID that has checkout lock
+  lockedAt?: number;     // when lock was acquired
   blockedBy?: string[];  // issue IDs this is waiting on
   comments: IssueComment[];
   needsApproval?: boolean;  // true = sitting in inbox
@@ -462,6 +464,41 @@ export class IssueStore {
     this.issues = this.issues.filter(i => i.id !== id);
     if (this.issues.length < len) { this.persist(); return true; }
     return false;
+  }
+
+  /** Checkout: lock an issue so only one agent works on it */
+  checkout(id: string, agentId: string): Issue | null {
+    const issue = this.get(id);
+    if (!issue) return null;
+    if (issue.lockedBy && issue.lockedBy !== agentId) return null; // Already locked by someone else
+    issue.lockedBy = agentId;
+    issue.lockedAt = Date.now();
+    if (issue.status === "open") issue.status = "in-progress";
+    issue.updatedAt = Date.now();
+    this.persist();
+    return issue;
+  }
+
+  /** Release: unlock an issue */
+  release(id: string, agentId: string): boolean {
+    const issue = this.get(id);
+    if (!issue) return false;
+    if (issue.lockedBy && issue.lockedBy !== agentId) return false; // Not yours to release
+    issue.lockedBy = undefined;
+    issue.lockedAt = undefined;
+    issue.updatedAt = Date.now();
+    this.persist();
+    return true;
+  }
+
+  /** Search issues by keyword in title + description */
+  search(query: string): Issue[] {
+    const q = query.toLowerCase();
+    return this.issues.filter(i =>
+      i.title.toLowerCase().includes(q) ||
+      i.description.toLowerCase().includes(q) ||
+      i.comments.some(c => c.content.toLowerCase().includes(q))
+    ).sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   /** Get stats for dashboard */

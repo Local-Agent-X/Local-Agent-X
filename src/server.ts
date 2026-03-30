@@ -1920,12 +1920,17 @@ export function startServer(config: SAXConfig) {
       if (!result) { json(404, { error: "Template not found" }); return; }
       // Set up heartbeat cron job if schedule provided
       if (result.heartbeatSchedule && result.heartbeatEnabled) {
-        const heartbeatPrompt = `You are ${result.name} (${result.role}). You are waking up for your scheduled check-in.\n\n` +
-          `1. Check your assigned issues: look at open and in-progress tasks assigned to you\n` +
-          `2. Review any comments or updates since your last check-in\n` +
-          `3. Continue working on your highest priority task\n` +
-          `4. If you're blocked, create an approval request explaining what you need\n` +
-          `5. Update your task status and leave a comment on what you did\n\n` +
+        const heartbeatPrompt = `You are ${result.name} (${result.role}), agent ID: ${result.id}. You are waking up for your scheduled check-in.\n\n` +
+          `FIRST: Call agent_whoami with agentId="${result.id}" to see your assigned issues and recent activity.\n\n` +
+          `THEN follow this procedure:\n` +
+          `1. Review your assigned issues — pick the highest priority open/in-progress one\n` +
+          `2. Call issue_checkout to lock it so no one else works on it\n` +
+          `3. Read any new comments since your last check-in\n` +
+          `4. Do the work using your available tools\n` +
+          `5. Call issue_update to report what you did (add a comment with results)\n` +
+          `6. If done, set status to "done". If blocked, set to "blocked" and use issue_request_approval\n` +
+          `7. Call issue_release when finished\n` +
+          `8. If another agent needs to know something, use agent_wakeup to message them\n\n` +
           `Your instructions: ${result.systemPrompt}`;
         try {
           cronService.create(`heartbeat:${result.id}`, result.heartbeatSchedule, heartbeatPrompt, true);

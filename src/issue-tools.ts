@@ -56,11 +56,24 @@ const issueCreate: ToolDefinition = {
     // Auto-scope to the assigning agent's project if not specified
     const assignee = String(args.assignee || "");
     const projectId = args.project ? String(args.project) : (assignee ? getAgentProjectId(assignee) : undefined);
-    // Security: if assigning to another agent, verify same project
+    // Security: cross-project assignment gets auto-escalated to inbox
     if (assignee && projectId) {
       const targetProject = getAgentProjectId(assignee);
       if (targetProject && targetProject !== projectId) {
-        return err(`Cannot assign to ${assignee} — they belong to a different project. Cross-project assignment requires user approval.`);
+        // Create approval request instead of blocking
+        store.create({
+          title: `Cross-project task for ${assignee}: ${String(args.title || "")}`,
+          description: `An agent wants to assign work to ${assignee} (different project).\n\nOriginal task: ${String(args.description || args.title || "")}`,
+          assignee: "",
+          status: "open",
+          priority: "high",
+          needsApproval: true,
+          approvalType: "cross-project",
+          approvalData: { targetAgent: assignee, originalTitle: String(args.title || ""), originalDescription: String(args.description || "") },
+          createdBy: "agent",
+          projectId,
+        });
+        return ok(`Cross-project assignment requires approval. Sent to user inbox. ${assignee} is in a different project.`);
       }
     }
     const issue = store.create({
@@ -355,11 +368,25 @@ const agentWakeup: ToolDefinition = {
     const target = templateStore.get(targetId);
     if (!target || !target.hired) return err(`Agent ${targetId} not found or not hired`);
 
-    // SECURITY: Cross-project communication blocked
+    // SECURITY: Cross-project communication goes through approval
     if (issue.projectId) {
       const targetProject = projectStore.getAgentProject(targetId);
       if (targetProject && targetProject.id !== issue.projectId) {
-        return err(`BLOCKED: Agent ${target.name} belongs to project "${targetProject.name}" but this issue is in a different project. Cross-project communication is not allowed. Use issue_request_approval to ask the user to relay the message.`);
+        // Don't block — create an approval request instead
+        const approvalStore = IssueStore.getInstance();
+        approvalStore.create({
+          title: `Cross-project message: ${target.name}`,
+          description: `Agent wants to send a message to ${target.name} (project: ${targetProject.name}) on issue ${issueId}:\n\n"${message}"`,
+          assignee: "",
+          status: "open",
+          priority: "high",
+          needsApproval: true,
+          approvalType: "cross-project",
+          approvalData: { sourceIssue: issueId, targetAgent: targetId, message },
+          createdBy: "agent",
+          projectId: issue.projectId,
+        });
+        return ok(`Cross-project message requires approval. Sent to user inbox for review. ${target.name} is in project "${targetProject.name}" — you are in a different project.`);
       }
     }
 

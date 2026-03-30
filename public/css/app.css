@@ -171,6 +171,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 #mic-btn.speaking{border-color:var(--accent);color:var(--accent);opacity:.7}
 @keyframes pulse-mic{0%,100%{box-shadow:0 0 0 0 rgba(255,51,51,.3)}50%{box-shadow:0 0 12px 4px rgba(255,51,51,.2)}}
 #voice-indicator{position:fixed;top:12px;right:12px;font-family:var(--mono);font-size:.68rem;padding:5px 10px;border-radius:6px;z-index:1000;display:none;letter-spacing:.5px}
+.desktop-frame #voice-indicator{top:44px}
+.desktop-frame #tts-toggle{top:44px}
+.desktop-frame #agents-toggle{top:44px}
 #voice-indicator.listening{display:block;background:rgba(255,51,51,.15);color:var(--danger);border:1px solid var(--danger)}
 #voice-indicator.speaking{display:block;background:rgba(64,240,240,.1);color:var(--accent);border:1px solid var(--accent)}
 #tts-toggle{position:fixed;top:12px;right:140px;font-family:var(--mono);font-size:.65rem;padding:4px 8px;border-radius:5px;background:var(--surface);border:1px solid var(--border);color:var(--muted);cursor:pointer;z-index:1000;transition:all .15s}

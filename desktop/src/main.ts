@@ -6,11 +6,6 @@
  * hotkey, native notifications, and close-to-tray behavior.
  */
 
-// Treat localhost as secure origin (required for getUserMedia/mic access)
-const { app: _app } = require("electron");
-_app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", "http://127.0.0.1");
-_app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
-
 import {
   app,
   BrowserWindow,
@@ -26,6 +21,12 @@ import { ChildProcess, spawn } from "child_process";
 import { homedir } from "os";
 import { createTray, destroyTray } from "./tray";
 import { registerAutostart, unregisterAutostart, isAutostartEnabled } from "./autostart";
+
+// ── Chromium flags (must be set before app.ready) ─────────
+app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", "http://127.0.0.1:7007,http://127.0.0.1:6868,http://127.0.0.1:6969,http://127.0.0.1");
+app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
+app.commandLine.appendSwitch("enable-media-stream");
+app.commandLine.appendSwitch("use-fake-ui-for-media-stream"); // Auto-grant mic without prompt
 
 // ── Config ────────────────────────────────────────────────
 

@@ -111,23 +111,25 @@ function parseMultipart(body: Buffer, boundary: string): MultipartPart[] {
 
 /** Extract all useful output from an agent's message history — assistant text + tool results */
 function extractAgentOutput(messages: Array<{ role: string; content?: unknown }>): string {
-  const parts: string[] = [];
+  const assistantParts: string[] = [];
+  const toolParts: string[] = [];
   for (const msg of messages) {
     if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.trim()) {
-      parts.push(msg.content.trim());
+      assistantParts.push(msg.content.trim());
     }
-    // Tool results contain the actual work output
+    // Tool results as secondary info
     if (msg.role === "tool" && typeof msg.content === "string" && msg.content.trim()) {
       const trimmed = msg.content.trim();
-      // Skip blocked/error messages, keep actual results
       if (!trimmed.startsWith("BLOCKED") && trimmed.length > 10) {
-        // Truncate very long tool results but keep meaningful chunks
-        parts.push(trimmed.length > 500 ? trimmed.slice(0, 500) + "..." : trimmed);
+        toolParts.push(trimmed.length > 500 ? trimmed.slice(0, 500) + "..." : trimmed);
       }
     }
   }
-  // Cap total output at 5000 chars
-  let output = parts.join("\n\n");
+  // Prefer assistant text (the agent's own summary). Fall back to tool output if no text.
+  let output = assistantParts.join("\n\n");
+  if (!output && toolParts.length > 0) {
+    output = toolParts.join("\n\n");
+  }
   if (output.length > 5000) output = output.slice(0, 5000) + "\n\n[truncated]";
   return output;
 }
@@ -3424,7 +3426,13 @@ export function startServer(config: SAXConfig) {
         apiKey: agentApiKey,
         model: agentModel,
         provider: agentProvider,
-        systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the following task thoroughly. Use the tools available to create files, run commands, and get the job done. When finished, write a clear summary of what you found or accomplished.`) + parentContext,
+        systemPrompt: (systemPrompt || `You are a ${role} agent spawned by the orchestrator Primal. Complete the following task thoroughly. Use the tools available to get the job done.
+
+CRITICAL REPORTING RULE: You MUST end with a clear text summary of what happened. Your final message must describe:
+- What you did (actions taken)
+- What you found (results, data, observations)
+- Any blockers (login required, errors, access denied, page not loading)
+This summary is how your results get reported back to the user. If you produce no text summary, the user sees "No readable output." ALWAYS write a final summary, even if the task failed.`) + parentContext,
         tools: spawnedAgentTools,
         security,
         toolPolicy,

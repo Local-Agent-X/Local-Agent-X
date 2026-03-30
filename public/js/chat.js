@@ -634,6 +634,13 @@ async function startVoiceMode() {
       audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
     });
 
+    // Debug: check track state
+    const tracks = vadStream.getAudioTracks();
+    console.log('[voice] Audio tracks:', tracks.length, tracks.map(t => ({ label: t.label, enabled: t.enabled, muted: t.muted, readyState: t.readyState })));
+    if (tracks.length > 0 && tracks[0].muted) {
+      console.warn('[voice] Track is muted — Electron may be blocking audio capture');
+    }
+
     vadContext = new AudioContext({ sampleRate: 16000 });
     const source = vadContext.createMediaStreamSource(vadStream);
     vadAnalyser = vadContext.createAnalyser();

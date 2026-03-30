@@ -353,16 +353,6 @@ function createWindow(): void {
     mainWindow = null;
   });
 
-  // Auto-grant microphone and camera permissions (needed for voice chat)
-  mainWindow.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
-    const allowed = ["media", "microphone", "camera", "audioCapture", "videoCapture"];
-    callback(allowed.includes(permission));
-  });
-  mainWindow.webContents.session.setPermissionCheckHandler((_webContents, permission) => {
-    const allowed = ["media", "microphone", "camera", "audioCapture", "videoCapture"];
-    return allowed.includes(permission);
-  });
-
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("http") && !url.includes("127.0.0.1")) {
       shell.openExternal(url);
@@ -476,6 +466,13 @@ function setupIPC(): void {
 
 app.on("ready", async () => {
   saxConfig = loadSAXConfig();
+
+  // Grant mic/camera permissions globally before any window is created
+  const { session } = require("electron");
+  session.defaultSession.setPermissionRequestHandler((_wc: any, permission: string, callback: (granted: boolean) => void) => {
+    callback(true); // Allow all permissions (single-user local app)
+  });
+  session.defaultSession.setPermissionCheckHandler(() => true);
 
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {

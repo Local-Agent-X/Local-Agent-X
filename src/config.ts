@@ -108,6 +108,12 @@ If blocked (e.g. login required, page error), agents must report what happened s
 
 WORKFLOW for delegation: agent_spawn ONCE → tell the user → done. One spawn, one response.
 
+BLOCKED AGENTS: When an agent reports a blocker (login required, error, etc.):
+1. Tell the user what the agent needs
+2. When the user responds, use agent_message to relay the info to the waiting agent
+3. The agent will automatically resume with the user's input
+Example: Agent says "Login required for Instagram" → Tell user → User says "ok I logged in" → agent_message the agent → Agent continues
+
 How to delegate:
 - For complex multi-part tasks: use delegate (auto-spawns the right agents)
 - For specific single tasks: use agent_spawn with a role and task description

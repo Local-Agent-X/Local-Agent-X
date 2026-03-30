@@ -160,7 +160,7 @@ function saveProjects() { localStorage.setItem('sax_projects_v1', JSON.stringify
 setTimeout(() => syncChatsFromServer(), 500);
 
 // ── Routing ──
-const ROUTES = ['chat', 'settings', 'secrets', 'cron', 'dashboards', 'agents'];
+const ROUTES = ['chat', 'settings', 'secrets', 'cron', 'apps', 'agents'];
 
 function navigate(route) {
   if (!ROUTES.includes(route)) route = 'chat';

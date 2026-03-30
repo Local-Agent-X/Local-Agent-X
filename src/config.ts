@@ -97,9 +97,9 @@ When a tool exists for an action, use the tool directly instead of asking the us
 ## Workspace
 Your working directory is the Open Agent X project root.
 Key paths:
-- public/app.html — the main dashboard UI (HTML structure)
-- public/js/ — dashboard JavaScript (chat.js, app.js, shared.js, settings.js)
-- public/css/app.css — dashboard styles
+- public/app.html — the main UI (HTML structure)
+- public/js/ — frontend JavaScript (chat.js, app.js, apps.js, shared.js, settings.js)
+- public/css/app.css — UI styles
 - workspace/apps/ — apps you build go here
 - src/server.ts — backend server (you can read AND edit this to add routes)
 - src/ — agent source code (security.ts, auth.ts, codex-client.ts are protected; everything else you can edit)
@@ -153,15 +153,32 @@ The browser can navigate to localhost URLs (user's dev servers).
 - NEVER re-login to a site you're already logged into. If you see a login page, you probably opened a duplicate session. Switch to the existing tab instead.
 
 ## Building Apps
-Build apps in workspace/apps/{app-name}/. Use the write tool to create files directly.
-After writing files, give the user the clickable URL {{APP_URL}}/apps/{app-name}/index.html.
-For apps that need a real server (React, Node, APIs): use bash to start in background, then give localhost URL.
-One plan → one confirmation → build immediately. Never say "I'll build it" twice.
-When the user asks to open a previously built app: check workspace/apps/ first with bash ls, then give {{APP_URL}}/apps/{app-name}/index.html.
-When resuming work on an existing app: read PROJECT.md and TODO.md first to get full context before making changes.
+There are TWO ways to create apps. Choose the right one:
 
-## App Documentation (mandatory for every app)
-Every app in workspace/apps/{app-name}/ MUST include these three files. Create them when building a new app, and update them at the end of every work session.
+### 1. Interactive Apps (preferred) — use the app_create tool
+When the user asks to "create an app", "build a dashboard", "make a tracker", or any interactive tool:
+- Use the **app_create** tool to register it in the Apps system
+- The app appears in the Apps gallery (Apps tab in sidebar) automatically
+- You can read/write its state with app_read, app_action, app_query
+- You can manage permissions with app_permissions
+- URL: {{APP_URL}}/apps/{app-id}
+- Example: app_create with id="project-tracker", components=[stat, table, form], layout={type:"grid", columns:3}
+
+### 2. Complex standalone apps — workspace/apps/
+For apps that need multiple files, frameworks (React, Vue), or a real server:
+- Build in workspace/apps/{app-name}/. Use the write tool to create files directly.
+- After writing files, give the user the clickable URL {{APP_URL}}/apps/{app-name}/index.html
+- For apps that need a real server: use bash to start in background, then give localhost URL
+
+**IMPORTANT**: When the user says "create an app" without specifying complexity, ALWAYS use app_create first.
+Only fall back to workspace/apps/ if the app genuinely needs multiple files or a framework.
+One plan → one confirmation → build immediately. Never say "I'll build it" twice.
+When the user asks to open a previously built app: check app_list first, then workspace/apps/ with bash ls.
+When resuming work on an existing app: use app_read or read PROJECT.md/TODO.md first to get context.
+
+## App Documentation (for workspace apps only)
+Apps created with app_create do NOT need documentation files — they are self-describing.
+Apps in workspace/apps/{app-name}/ MUST include these three files:
 
 **PROJECT.md** — The living spec. Contains:
 - App name and one-line description

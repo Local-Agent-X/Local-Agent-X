@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { runAgent } from "./agent.js";
 import { allTools, createHttpRequestTool } from "./tools.js";
-import { dashboardTools } from "./dashboard-tools.js";
+import { appTools } from "./app-tools.js";
 import { issueTools } from "./issue-tools.js";
 import { SecurityLayer } from "./security.js";
 import { loadToolPolicy } from "./tool-policy.js";
@@ -68,8 +68,8 @@ import { createSwarmTools } from "./swarm/index.js";
 import { createPrimalTools } from "./swarm/primal.js";
 import { EventBus } from "./event-bus.js";
 import { startHotReload, stopHotReload, isHotReloadActive } from "./hot-reload.js";
-import { DashboardRegistry } from "./dashboard-runtime.js";
-import { renderDashboard } from "./dashboard-renderer.js";
+import { AppRegistry } from "./app-runtime.js";
+import { renderApp } from "./app-renderer.js";
 import { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore, type AgentRun, type IssueStatus, type IssuePriority } from "./agent-store.js";
 import { resolveSession, linkIdentities, unlinkIdentity, getIdentityGroups, buildChannelContext, type ChannelType } from "./session-router.js";
 import { enqueue, getLaneStatus, getActiveTasks, setLaneConcurrency, drainAll, type LaneName } from "./execution-lanes.js";
@@ -494,7 +494,7 @@ export function startServer(config: SAXConfig) {
   const swarmTools = createSwarmTools();
   const primalTools = createPrimalTools();
 
-  const allAgentTools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools, ...dashboardTools, ...issueTools];
+  const allAgentTools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools, ...appTools, ...issueTools];
 
   // Primal only gets agent control tools — forces delegation, no direct work
   const PRIMAL_ALLOWED = new Set([
@@ -2118,97 +2118,141 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
-    // ── Dashboard API ──
+    // ── Apps API (formerly Dashboards) ──
+    // Supports both /api/apps/* and /api/dashboards/* for backward compatibility
 
-    const dashReg = DashboardRegistry.getInstance();
+    const appReg = AppRegistry.getInstance();
 
-    if (method === "GET" && url.pathname === "/api/dashboards") {
-      const list = dashReg.list();
+    // Normalize: treat /api/dashboards as alias for /api/apps
+    const appPath = url.pathname.replace(/^\/api\/dashboards/, "/api/apps").replace(/^\/dashboards\//, "/apps/");
+
+    if (method === "GET" && appPath === "/api/apps") {
+      const list = appReg.list();
       const port = config.port || 4800;
-      json(200, list.map(d => ({
+      json(200, list.map((d: import("./app-runtime.js").AppDefinition) => ({
         id: d.id, name: d.name, description: d.description,
         components: d.components.length, layout: d.layout.type,
-        url: `http://127.0.0.1:${port}/dashboards/${d.id}`,
+        url: `http://127.0.0.1:${port}/apps/${d.id}`,
         updatedAt: d.updatedAt,
+        status: d.status,
+        version: d.version,
+        visibility: d.permissions?.visibility || "team",
       })));
       return;
     }
 
-    // Serve rendered dashboard HTML
-    const dashMatch = url.pathname.match(/^\/dashboards\/([a-zA-Z0-9_-]+)\/?$/);
-    if (method === "GET" && dashMatch) {
-      const def = dashReg.get(dashMatch[1]);
-      if (!def) { json(404, { error: "Dashboard not found" }); return; }
-      const html = renderDashboard(def, config.port || 4800);
-      res.writeHead(200, { "Content-Type": "text/html", ...(req ? corsHeaders(req) : {}) });
+    // Serve rendered app HTML
+    const appMatch = url.pathname.match(/^\/(apps|dashboards)\/([a-zA-Z0-9_-]+)\/?$/);
+    if (method === "GET" && appMatch) {
+      const def = appReg.get(appMatch[2]);
+      if (!def) { json(404, { error: "App not found" }); return; }
+      if (def.status === "suspended") { json(403, { error: "App is suspended" }); return; }
+      const html = renderApp(def, config.port || 4800);
+      const cspHeaders: Record<string, string> = {
+        "Content-Type": "text/html",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "SAMEORIGIN",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+      };
+      res.writeHead(200, { ...cspHeaders, ...(req ? corsHeaders(req) : {}) });
       res.end(html);
       return;
     }
 
-    if (method === "GET" && url.pathname.startsWith("/api/dashboards/") && url.pathname.split("/").length === 4) {
-      const id = url.pathname.split("/")[3];
-      const def = dashReg.get(id);
-      if (!def) { json(404, { error: "Dashboard not found" }); return; }
+    if (method === "GET" && appPath.startsWith("/api/apps/") && appPath.split("/").length === 4) {
+      const id = appPath.split("/")[3];
+      const def = appReg.get(id);
+      if (!def) { json(404, { error: "App not found" }); return; }
       json(200, def);
       return;
     }
 
-    if (method === "DELETE" && url.pathname.startsWith("/api/dashboards/") && url.pathname.split("/").length === 4) {
-      const id = url.pathname.split("/")[3];
-      const deleted = dashReg.delete(id);
-      json(deleted ? 200 : 404, deleted ? { ok: true } : { error: "Not found" });
+    if (method === "DELETE" && appPath.startsWith("/api/apps/") && appPath.split("/").length === 4) {
+      const id = appPath.split("/")[3];
+      const result = appReg.delete(id);
+      json(result.deleted ? 200 : 404, result.deleted ? { ok: true } : { error: result.error || "Not found" });
       return;
     }
 
-    // Dashboard state
-    if (method === "GET" && url.pathname.match(/^\/api\/dashboards\/[^/]+\/state$/)) {
-      const id = url.pathname.split("/")[3];
-      const state = dashReg.getState(id);
-      if (!state) { json(404, { error: "Dashboard not found" }); return; }
+    // App lifecycle (suspend/activate/archive)
+    if (method === "PATCH" && appPath.startsWith("/api/apps/") && appPath.split("/").length === 4) {
+      const id = appPath.split("/")[3];
+      const body = await safeParseBody(req);
+      if (!body) { json(400, { error: "Invalid JSON" }); return; }
+      if (body.status === "suspended") {
+        const result = appReg.suspend(id);
+        json(result.success ? 200 : 400, result.success ? { ok: true } : { error: result.error });
+      } else if (body.status === "active") {
+        const result = appReg.activate(id);
+        json(result.success ? 200 : 400, result.success ? { ok: true } : { error: result.error });
+      } else if (body.status === "archived") {
+        const result = appReg.archive(id);
+        json(result.success ? 200 : 400, result.success ? { ok: true } : { error: result.error });
+      } else {
+        json(400, { error: "Invalid status. Use: active, suspended, archived" });
+      }
+      return;
+    }
+
+    // App state
+    if (method === "GET" && appPath.match(/^\/api\/apps\/[^/]+\/state$/)) {
+      const id = appPath.split("/")[3];
+      const state = appReg.getState(id);
+      if (!state) { json(404, { error: "App not found" }); return; }
       json(200, state);
       return;
     }
 
-    if (method === "POST" && url.pathname.match(/^\/api\/dashboards\/[^/]+\/state$/)) {
-      const id = url.pathname.split("/")[3];
+    if (method === "POST" && appPath.match(/^\/api\/apps\/[^/]+\/state$/)) {
+      const id = appPath.split("/")[3];
       const body = await safeParseBody(req);
       if (!body) { json(400, { error: "Invalid JSON" }); return; }
-      const updated = dashReg.updateComponentValues(id, body.values || body);
-      if (!updated) { json(404, { error: "Dashboard not found" }); return; }
-      broadcastAll({ type: "dashboard:state", dashboardId: id });
+      const updated = appReg.updateComponentValues(id, body.values || body);
+      if (updated.error) { json(updated.state ? 429 : 404, { error: updated.error }); return; }
+      broadcastAll({ type: "app:state", appId: id });
       json(200, { ok: true });
       return;
     }
 
-    // Dashboard events (from frontend user interactions)
-    if (method === "POST" && url.pathname.match(/^\/api\/dashboards\/[^/]+\/events$/)) {
-      const id = url.pathname.split("/")[3];
+    // App events (from frontend user interactions)
+    if (method === "POST" && appPath.match(/^\/api\/apps\/[^/]+\/events$/)) {
+      const id = appPath.split("/")[3];
       const body = await safeParseBody(req);
       if (!body) { json(400, { error: "Invalid JSON" }); return; }
-      const event = dashReg.pushEvent(id, {
-        dashboardId: id,
+      const result = appReg.pushEvent(id, {
+        appId: id,
         type: body.type || "unknown",
         sourceComponent: body.sourceComponent,
         data: body.data,
       });
-      broadcastAll({ type: "dashboard:event", dashboardId: id, event });
-      json(200, event);
+      if (result.error) { json(429, { error: result.error }); return; }
+      broadcastAll({ type: "app:event", appId: id, event: result.event });
+      json(200, result.event);
       return;
     }
 
-    if (method === "GET" && url.pathname.match(/^\/api\/dashboards\/[^/]+\/events$/)) {
-      const id = url.pathname.split("/")[3];
+    if (method === "GET" && appPath.match(/^\/api\/apps\/[^/]+\/events$/)) {
+      const id = appPath.split("/")[3];
       const since = url.searchParams.get("since") ? parseInt(url.searchParams.get("since")!, 10) : undefined;
-      json(200, dashReg.getEvents(id, since));
+      json(200, appReg.getEvents(id, since));
+      return;
+    }
+
+    // App audit log
+    if (method === "GET" && appPath.match(/^\/api\/apps\/[^/]+\/audit$/)) {
+      const id = appPath.split("/")[3];
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 200);
+      json(200, appReg.getAuditLog(id, limit));
       return;
     }
 
     // Consume actions (frontend reports it processed them)
-    if (method === "POST" && url.pathname.match(/^\/api\/dashboards\/[^/]+\/actions\/consume$/)) {
-      const id = url.pathname.split("/")[3];
+    if (method === "POST" && appPath.match(/^\/api\/apps\/[^/]+\/actions\/consume$/)) {
+      const id = appPath.split("/")[3];
       const body = await safeParseBody(req);
       if (!body || !Array.isArray(body.actionIds)) { json(400, { error: "actionIds array required" }); return; }
-      dashReg.consumeActions(id, body.actionIds);
+      appReg.consumeActions(id, body.actionIds);
       json(200, { ok: true });
       return;
     }

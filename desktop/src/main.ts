@@ -353,6 +353,16 @@ function createWindow(): void {
     mainWindow = null;
   });
 
+  // Auto-grant microphone and camera permissions (needed for voice chat)
+  mainWindow.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
+    const allowed = ["media", "microphone", "camera", "audioCapture", "videoCapture"];
+    callback(allowed.includes(permission));
+  });
+  mainWindow.webContents.session.setPermissionCheckHandler((_webContents, permission) => {
+    const allowed = ["media", "microphone", "camera", "audioCapture", "videoCapture"];
+    return allowed.includes(permission);
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("http") && !url.includes("127.0.0.1")) {
       shell.openExternal(url);

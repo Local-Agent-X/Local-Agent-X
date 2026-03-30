@@ -6,6 +6,7 @@ import { timingSafeEqual, randomBytes } from "node:crypto";
 import { runAgent } from "./agent.js";
 import { allTools, createHttpRequestTool } from "./tools.js";
 import { dashboardTools } from "./dashboard-tools.js";
+import { issueTools } from "./issue-tools.js";
 import { SecurityLayer } from "./security.js";
 import { loadToolPolicy } from "./tool-policy.js";
 import { getApiKey } from "./auth.js";
@@ -493,7 +494,7 @@ export function startServer(config: SAXConfig) {
   const swarmTools = createSwarmTools();
   const primalTools = createPrimalTools();
 
-  const allAgentTools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools, ...dashboardTools];
+  const allAgentTools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools, ...dashboardTools, ...issueTools];
 
   // Primal only gets agent control tools — forces delegation, no direct work
   const PRIMAL_ALLOWED = new Set([

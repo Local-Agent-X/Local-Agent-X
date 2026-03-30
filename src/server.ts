@@ -317,8 +317,8 @@ export function startServer(config: SAXConfig) {
       }
     } catch {}
 
-    let provider: "codex" | "xai" | "openai" | "anthropic" | "local";
-    if (savedProvider && ["codex", "xai", "openai", "anthropic", "local"].includes(savedProvider)) {
+    let provider: "codex" | "xai" | "openai" | "anthropic" | "local" | "gemini" | "custom";
+    if (savedProvider && ["codex", "xai", "openai", "anthropic", "local", "gemini", "custom"].includes(savedProvider)) {
       provider = savedProvider as typeof provider;
     } else if (loadAnthropicTokens()) {
       provider = "anthropic";
@@ -1485,15 +1485,21 @@ export function startServer(config: SAXConfig) {
         if (existsSync(sp)) { const s = JSON.parse(readFileSync(sp, "utf-8")); currentProvider = s.provider || "xai"; currentModel = s.model || ""; }
       } catch {}
 
+      const hasGeminiKey = secretsStore.has("GEMINI_API_KEY");
+      const hasCustomKey = secretsStore.has("CUSTOM_API_KEY");
+
+      // Order: xAI, Google, OpenAI Codex, Anthropic, OpenAI API, Ollama, Custom
+      if (hasXaiKey) providers.push({ id: "xai", name: "xAI Grok", models: ["grok-3-mini", "grok-3", "grok-2"], active: currentProvider === "xai" });
+      if (hasGeminiKey) providers.push({ id: "gemini", name: "Google Gemini", models: ["gemini-2.0-flash", "gemini-2.5-pro-preview-05-06", "gemini-2.5-flash-preview-05-20"], active: currentProvider === "gemini" });
       if (hasOpenAIOAuth) providers.push({ id: "codex", name: "OpenAI Codex", models: ["gpt-5.3-codex", "gpt-4o", "gpt-4o-mini", "o3-pro"], active: currentProvider === "codex" });
       if (hasAnthropicOAuth) providers.push({ id: "anthropic", name: "Anthropic", models: ["claude-sonnet-4-6", "claude-haiku-4-5"], active: currentProvider === "anthropic" });
-      if (hasXaiKey) providers.push({ id: "xai", name: "xAI Grok", models: ["grok-3-mini", "grok-3", "grok-2"], active: currentProvider === "xai" });
       if (hasOpenAIKey) providers.push({ id: "openai", name: "OpenAI API", models: ["gpt-4o", "gpt-4o-mini", "o3-pro"], active: currentProvider === "openai" });
       if (hasOllama) {
         let ollamaModels: string[] = [];
         try { const r = await fetch("http://127.0.0.1:11434/api/tags"); const d = await r.json() as any; ollamaModels = (d.models || []).map((m: any) => m.name); } catch {}
         providers.push({ id: "local", name: "Ollama", models: ollamaModels, active: currentProvider === "local" });
       }
+      if (hasCustomKey) providers.push({ id: "custom", name: "Custom Provider", models: ["custom-model"], active: currentProvider === "custom" });
       json(200, { providers, current: { provider: currentProvider, model: currentModel } });
       return;
     }
@@ -2017,8 +2023,8 @@ export function startServer(config: SAXConfig) {
           }
         } catch {}
 
-        let provider: "codex" | "xai" | "openai" | "anthropic" | "local";
-        if (savedProvider && ["codex", "xai", "openai", "anthropic", "local"].includes(savedProvider)) {
+        let provider: "codex" | "xai" | "openai" | "anthropic" | "local" | "gemini" | "custom";
+        if (savedProvider && ["codex", "xai", "openai", "anthropic", "local", "gemini", "custom"].includes(savedProvider)) {
           provider = savedProvider as typeof provider;
         } else if (loadAnthropicTokens()) {
           provider = "anthropic";
@@ -2029,6 +2035,7 @@ export function startServer(config: SAXConfig) {
         }
 
         let apiKey: string;
+        let customBaseURL: string | undefined;
         if (provider === "local") {
           apiKey = "ollama";
         } else if (provider === "anthropic") {
@@ -2036,6 +2043,13 @@ export function startServer(config: SAXConfig) {
         } else if (provider === "xai") {
           apiKey = secretsStore.get("XAI_API_KEY") || "";
           if (!apiKey) { sseWrite(res, { type: "error", message: "No xAI API key configured. Go to Settings → AI tab and enter your key." }); res.end(); return; }
+        } else if (provider === "gemini") {
+          apiKey = secretsStore.get("GEMINI_API_KEY") || "";
+          if (!apiKey) { sseWrite(res, { type: "error", message: "No Google API key configured. Go to Settings → AI tab and enter your key from ai.google.dev." }); res.end(); return; }
+        } else if (provider === "custom") {
+          apiKey = secretsStore.get("CUSTOM_API_KEY") || "";
+          if (!apiKey) { sseWrite(res, { type: "error", message: "No API key configured for custom provider. Go to Settings → AI tab." }); res.end(); return; }
+          try { const sp = join(dataDir, "settings.json"); if (existsSync(sp)) { const ss = JSON.parse(readFileSync(sp, "utf-8")); customBaseURL = ss.customBaseUrl || undefined; } } catch {}
         } else if (provider === "openai" && !config.openaiApiKey) {
           apiKey = secretsStore.get("OPENAI_API_KEY") || await getApiKey(config.openaiApiKey);
         } else {
@@ -2225,8 +2239,9 @@ export function startServer(config: SAXConfig) {
 
         const result = await runAgent(message, sanitizeHistory(historyToSend), {
           apiKey,
-          model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
+          model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : provider === "gemini" ? "gemini-2.0-flash" : config.model),
           provider,
+          baseURL: customBaseURL,
           systemPrompt: enrichedPrompt,
           tools: primalOnlyTools,
           security,

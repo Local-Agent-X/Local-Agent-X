@@ -209,7 +209,9 @@ function loadToolsList() {
 
 const PROVIDER_KEY_CONFIG = {
   xai: { label: 'xAI API Key', placeholder: 'xai-...', hint: 'Get your key at console.x.ai', secretName: 'XAI_API_KEY' },
+  gemini: { label: 'Google API Key', placeholder: 'AIza...', hint: 'Get your key at ai.google.dev', secretName: 'GEMINI_API_KEY' },
   openai: { label: 'OpenAI API Key', placeholder: 'sk-...', hint: 'Get your key at platform.openai.com/api-keys', secretName: 'OPENAI_API_KEY' },
+  custom: { label: 'API Key', placeholder: 'Enter API key...', hint: 'Key for your custom OpenAI-compatible provider', secretName: 'CUSTOM_API_KEY' },
 };
 
 function updateApiKeyField(provider) {
@@ -1278,9 +1280,11 @@ function showOnboarding() {
           <p class="onboarding-desc">Select which AI model to use. You can change this later in Settings.</p>
           <div class="onboarding-options">
             <button class="onboarding-option" onclick="selectOnboardProvider('xai')"><strong>xAI Grok</strong><br><span style="color:var(--muted);font-size:.72rem">API key required</span></button>
+            <button class="onboarding-option" onclick="selectOnboardProvider('gemini')"><strong>Google Gemini</strong><br><span style="color:var(--muted);font-size:.72rem">API key from ai.google.dev</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('codex')"><strong>OpenAI Codex</strong><br><span style="color:var(--muted);font-size:.72rem">Free with ChatGPT</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('anthropic')"><strong>Anthropic Claude</strong><br><span style="color:var(--muted);font-size:.72rem">Free for subscribers</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('local')"><strong>Local (Ollama)</strong><br><span style="color:var(--muted);font-size:.72rem">Runs on your GPU</span></button>
+            <button class="onboarding-option" onclick="selectOnboardProvider('custom')" style="opacity:.7"><strong>Custom Provider</strong><br><span style="color:var(--muted);font-size:.72rem">Any OpenAI-compatible API</span></button>
           </div>
         </div>
         <div class="onboarding-step" data-step="2">
@@ -1451,7 +1455,7 @@ function finishOnboarding() {
   // Also save server-side so it survives port changes
   apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ onboarded: true }) }).catch(() => {});
   if (_onboardProvider) {
-    const defaults = { codex: 'gpt-5.3-codex', anthropic: 'claude-sonnet-4-20250514', xai: 'grok-3-mini', local: '' };
+    const defaults = { codex: 'gpt-5.3-codex', anthropic: 'claude-sonnet-4-20250514', xai: 'grok-3-mini', gemini: 'gemini-2.0-flash', local: '', custom: '' };
     const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
     s.provider = _onboardProvider;
     if (defaults[_onboardProvider]) s.model = defaults[_onboardProvider];

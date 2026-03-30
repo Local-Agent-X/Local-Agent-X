@@ -151,7 +151,12 @@ function md(s) {
     const ulMatch = line.match(/^(\s*)[-*] (.+)$/);
     const olMatch = line.match(/^(\s*)\d+\. (.+)$/);
 
-    if (ulMatch) {
+    // Detect "1. **Bold header**" pattern — render as section header, not list item
+    if (olMatch && olMatch[2].match(/^<strong>.+<\/strong>$/) && olMatch[1] === '') {
+      if (inUl) { result.push('</ul>'); inUl = false; }
+      if (inOl) { result.push('</ol>'); inOl = false; }
+      result.push(`<h4 class="md-h" style="font-size:.88rem;margin-top:14px">${olMatch[2]}</h4>`);
+    } else if (ulMatch) {
       if (!inUl) { if (inOl) { result.push('</ol>'); inOl = false; } result.push('<ul style="margin:4px 0;padding-left:20px">'); inUl = true; }
       result.push(`<li>${ulMatch[2]}</li>`);
     } else if (olMatch) {

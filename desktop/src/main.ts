@@ -6,6 +6,11 @@
  * hotkey, native notifications, and close-to-tray behavior.
  */
 
+// Treat localhost as secure origin (required for getUserMedia/mic access)
+const { app: _app } = require("electron");
+_app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", "http://127.0.0.1");
+_app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
+
 import {
   app,
   BrowserWindow,

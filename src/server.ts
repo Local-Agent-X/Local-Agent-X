@@ -69,7 +69,7 @@ import { EventBus } from "./event-bus.js";
 import { startHotReload, stopHotReload, isHotReloadActive } from "./hot-reload.js";
 import { DashboardRegistry } from "./dashboard-runtime.js";
 import { renderDashboard } from "./dashboard-renderer.js";
-import { AgentRunStore, AgentTemplateStore, type AgentRun } from "./agent-store.js";
+import { AgentRunStore, AgentTemplateStore, IssueStore, type AgentRun, type IssueStatus, type IssuePriority } from "./agent-store.js";
 import { resolveSession, linkIdentities, unlinkIdentity, getIdentityGroups, buildChannelContext, type ChannelType } from "./session-router.js";
 import { enqueue, getLaneStatus, getActiveTasks, setLaneConcurrency, drainAll, type LaneName } from "./execution-lanes.js";
 import { withFallback, buildFallbackChain, recordSuccess, recordFailure, getProviderHealthStatus, resetProviderHealth, isProviderAvailable, type ProviderId } from "./model-fallback.js";
@@ -1907,6 +1907,146 @@ export function startServer(config: SAXConfig) {
       } catch (e) {
         json(500, { error: (e as Error).message });
       }
+      return;
+    }
+
+    // ── Hire / Fire Agents ──
+
+    if (method === "POST" && url.pathname.match(/^\/api\/agents\/templates\/[^/]+\/hire$/)) {
+      const id = url.pathname.split("/")[4];
+      const body = await safeParseBody(req);
+      const result = agentTemplateStore.hire(id, { reportsTo: body?.reportsTo, heartbeatSchedule: body?.heartbeatSchedule });
+      if (!result) { json(404, { error: "Template not found" }); return; }
+      // Set up heartbeat cron job if schedule provided
+      if (result.heartbeatSchedule && result.heartbeatEnabled) {
+        const heartbeatPrompt = `You are ${result.name} (${result.role}). You are waking up for your scheduled check-in.\n\n` +
+          `1. Check your assigned issues: look at open and in-progress tasks assigned to you\n` +
+          `2. Review any comments or updates since your last check-in\n` +
+          `3. Continue working on your highest priority task\n` +
+          `4. If you're blocked, create an approval request explaining what you need\n` +
+          `5. Update your task status and leave a comment on what you did\n\n` +
+          `Your instructions: ${result.systemPrompt}`;
+        try {
+          cronService.create(`heartbeat:${result.id}`, result.heartbeatSchedule, heartbeatPrompt, true);
+          console.log(`[heartbeat] Created heartbeat for ${result.name}: ${result.heartbeatSchedule}`);
+        } catch (e) { console.warn(`[heartbeat] Failed to create: ${(e as Error).message}`); }
+      }
+      json(200, result);
+      return;
+    }
+
+    if (method === "POST" && url.pathname.match(/^\/api\/agents\/templates\/[^/]+\/fire$/)) {
+      const id = url.pathname.split("/")[4];
+      // Remove heartbeat cron job
+      try { cronService.delete(`heartbeat:${id}`); } catch {}
+      json(agentTemplateStore.fire(id) ? 200 : 404, { ok: true });
+      return;
+    }
+
+    if (method === "GET" && url.pathname === "/api/agents/hired") {
+      json(200, agentTemplateStore.listHired());
+      return;
+    }
+
+    // ── Issues / Tasks ──
+
+    const issueStore = IssueStore.getInstance();
+
+    if (method === "GET" && url.pathname === "/api/issues") {
+      const assignee = url.searchParams.get("assignee") || undefined;
+      const status = (url.searchParams.get("status") || undefined) as IssueStatus | undefined;
+      const project = url.searchParams.get("project") || undefined;
+      json(200, issueStore.list({ assignee, status, project }));
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/issues") {
+      const body = await safeParseBody(req);
+      if (!body || !body.title) { json(400, { error: "title required" }); return; }
+      const issue = issueStore.create({
+        title: body.title,
+        description: body.description || "",
+        assignee: body.assignee || "",
+        status: body.status || "open",
+        priority: body.priority || "medium",
+        project: body.project,
+        parentIssue: body.parentIssue,
+        blockedBy: body.blockedBy,
+        needsApproval: body.needsApproval || false,
+        approvalType: body.approvalType,
+        approvalData: body.approvalData,
+        createdBy: body.createdBy || "user",
+      });
+      broadcastAll({ type: "issue:created", issue });
+      json(200, issue);
+      return;
+    }
+
+    if (method === "GET" && url.pathname.match(/^\/api\/issues\/SAX-\d+$/)) {
+      const id = url.pathname.split("/").pop()!;
+      const issue = issueStore.get(id);
+      if (!issue) { json(404, { error: "Issue not found" }); return; }
+      json(200, issue);
+      return;
+    }
+
+    if (method === "PUT" && url.pathname.match(/^\/api\/issues\/SAX-\d+$/)) {
+      const id = url.pathname.split("/").pop()!;
+      const body = await safeParseBody(req);
+      if (!body) { json(400, { error: "Invalid JSON" }); return; }
+      const updated = issueStore.update(id, body);
+      if (!updated) { json(404, { error: "Issue not found" }); return; }
+      broadcastAll({ type: "issue:updated", issue: updated });
+      json(200, updated);
+      return;
+    }
+
+    if (method === "DELETE" && url.pathname.match(/^\/api\/issues\/SAX-\d+$/)) {
+      const id = url.pathname.split("/").pop()!;
+      json(issueStore.delete(id) ? 200 : 404, { ok: true });
+      return;
+    }
+
+    // Issue comments
+    if (method === "POST" && url.pathname.match(/^\/api\/issues\/SAX-\d+\/comments$/)) {
+      const id = url.pathname.split("/")[3];
+      const body = await safeParseBody(req);
+      if (!body || !body.content) { json(400, { error: "content required" }); return; }
+      const comment = issueStore.comment(id, body.author || "user", body.content);
+      if (!comment) { json(404, { error: "Issue not found" }); return; }
+      json(200, comment);
+      return;
+    }
+
+    // ── Inbox / Approvals ──
+
+    if (method === "GET" && url.pathname === "/api/inbox") {
+      json(200, issueStore.inbox());
+      return;
+    }
+
+    if (method === "POST" && url.pathname.match(/^\/api\/issues\/SAX-\d+\/approve$/)) {
+      const id = url.pathname.split("/")[3];
+      const issue = issueStore.approve(id);
+      if (!issue) { json(404, { error: "Issue not found" }); return; }
+      broadcastAll({ type: "inbox:approved", issue });
+      json(200, issue);
+      return;
+    }
+
+    if (method === "POST" && url.pathname.match(/^\/api\/issues\/SAX-\d+\/reject$/)) {
+      const id = url.pathname.split("/")[3];
+      const body = await safeParseBody(req);
+      const issue = issueStore.reject(id, body?.reason);
+      if (!issue) { json(404, { error: "Issue not found" }); return; }
+      broadcastAll({ type: "inbox:rejected", issue });
+      json(200, issue);
+      return;
+    }
+
+    // Issue stats (for dashboard)
+    if (method === "GET" && url.pathname === "/api/issues/stats") {
+      json(200, issueStore.stats());
       return;
     }
 

@@ -3498,6 +3498,25 @@ This summary is how your results get reported back to the user. If you produce n
         maxIterations: config.maxIterations,
         temperature: config.temperature,
         signal: agentAbort.signal,
+        pauseCallback: async (reason: string) => {
+          eventBus.emit("primal:agent-output", { agentId, output: `[BLOCKER] ${reason}` });
+          eventBus.emit("primal:agent-blocked", { agentId, reason, role });
+          console.log(`[primal] Agent ${agentId} blocked: ${reason.slice(0, 100)}`);
+          return new Promise<string>((resolve) => {
+            const handler = (data: any) => {
+              if (data.agentId === agentId) {
+                eventBus.off("primal:agent-user-input", handler);
+                resolve(data.message);
+              }
+            };
+            eventBus.on("primal:agent-user-input", handler);
+            // Auto-timeout after 5 minutes
+            setTimeout(() => {
+              eventBus.off("primal:agent-user-input", handler);
+              resolve("User did not respond. Complete the task with what you have or report what's needed.");
+            }, 300000);
+          });
+        },
         onEvent: (event) => {
           if (event.type === "stream" && event.delta) {
             eventBus.emit("primal:agent-output", { agentId, output: event.delta });
@@ -3561,6 +3580,9 @@ This summary is how your results get reported back to the user. If you produce n
       const toolName = data.output.replace("[tool] ", "").replace("...", "").trim();
       if (toolName && !meta.toolsUsed.includes(toolName)) meta.toolsUsed.push(toolName);
     }
+  });
+  eventBus.on("primal:agent-blocked", (data: any) => {
+    broadcastAll({ type: "agent-blocked", agentId: data.agentId, reason: data.reason, role: data.role });
   });
   eventBus.on("primal:agent-result", (data: any) => {
     broadcastAll({ type: "agent-complete", ...data });

@@ -663,6 +663,12 @@ export function createPrimalTools(): ToolDefinition[] {
         try {
           const primal = PrimalOrchestrator.getInstance();
           primal.messageAgent(String(args.agent_id), String(args.message));
+          // Also emit event to unblock paused agents waiting for user input
+          const eventBus = EventBus.getInstance();
+          eventBus.emit("primal:agent-user-input", {
+            agentId: String(args.agent_id),
+            message: String(args.message),
+          });
           return ok(`Message sent to ${args.agent_id}.`);
         } catch (e) {
           return err(`Failed to message agent: ${String(e)}`);

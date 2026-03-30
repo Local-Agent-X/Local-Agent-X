@@ -40,6 +40,7 @@ interface AgentOptions {
   images?: ImageAttachment[];
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
+  pauseCallback?: (reason: string) => Promise<string>;
 }
 
 function toolsToOpenAI(tools: ToolDefinition[]): ChatCompletionTool[] {
@@ -574,6 +575,16 @@ async function runCodexAgentHttp(
 
     const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
     messages.push(...toolResults);
+
+    // Check if agent is reporting a blocker — pause and wait for user input
+    if (assistantContent && /\b(login required|password needed|authentication required|access denied|need.+log.?in|blocked|cannot access)\b/i.test(assistantContent)) {
+      if (options.pauseCallback) {
+        onEvent?.({ type: "stream", delta: "\n\n[Waiting for user input...]" });
+        const userResponse = await options.pauseCallback(assistantContent);
+        messages.push({ role: "user", content: userResponse });
+        continue;
+      }
+    }
   }
 
   return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "max_iterations" };
@@ -769,6 +780,16 @@ async function runStandardAgent(
 
     const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
     messages.push(...toolResults);
+
+    // Check if agent is reporting a blocker — pause and wait for user input
+    if (assistantContent && /\b(login required|password needed|authentication required|access denied|need.+log.?in|blocked|cannot access)\b/i.test(assistantContent)) {
+      if (options.pauseCallback) {
+        onEvent?.({ type: "stream", delta: "\n\n[Waiting for user input...]" });
+        const userResponse = await options.pauseCallback(assistantContent);
+        messages.push({ role: "user", content: userResponse });
+        continue;
+      }
+    }
   }
 
   return {
@@ -863,6 +884,16 @@ async function runAnthropicAgent(
 
     const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
     messages.push(...toolResults);
+
+    // Check if agent is reporting a blocker — pause and wait for user input
+    if (assistantContent && /\b(login required|password needed|authentication required|access denied|need.+log.?in|blocked|cannot access)\b/i.test(assistantContent)) {
+      if (options.pauseCallback) {
+        onEvent?.({ type: "stream", delta: "\n\n[Waiting for user input...]" });
+        const userResponse = await options.pauseCallback(assistantContent);
+        messages.push({ role: "user", content: userResponse });
+        continue;
+      }
+    }
   }
 
   return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "max_iterations" };

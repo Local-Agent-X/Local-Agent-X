@@ -6,6 +6,9 @@
  * Uses long polling (getUpdates) — no webhook, no public URL needed.
  */
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
 // ── Types ──
 
 export interface TelegramBridgeConfig {
@@ -294,29 +297,28 @@ export class TelegramBridge {
 
   private loadAllowedChats(): void {
     try {
-      const { existsSync, readFileSync } = require("node:fs");
-      const { join } = require("node:path");
       const cfgPath = join(this.dataDir, "telegram-config.json");
       if (existsSync(cfgPath)) {
         const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
         if (Array.isArray(cfg.allowedChatIds) && cfg.allowedChatIds.length > 0) {
-          this.allowedChatIds = new Set(cfg.allowedChatIds);
+          this.allowedChatIds = new Set(cfg.allowedChatIds.map(String));
           this.ownerVerified = true;
           console.log(`[telegram] Loaded ${this.allowedChatIds.size} allowed chat(s) from config`);
         }
       }
     } catch (e) {
-      // Config exists but failed to load — lock the bot down (deny all) rather than being open
-      console.error("[telegram] Failed to load telegram-config.json — bot locked down for safety:", (e as Error).message);
-      this.ownerVerified = true; // prevents auto-lock to a stranger
+      console.error("[telegram] Failed to load telegram-config.json:", (e as Error).message);
+      // Don't set ownerVerified — allow auto-lock to work on next message
+      // so the real owner can reclaim the bot after a config corruption
     }
   }
 
   private saveAllowedChats(): void {
     try {
-      const { writeFileSync } = require("node:fs");
-      const { join } = require("node:path");
-      writeFileSync(join(this.dataDir, "telegram-config.json"), JSON.stringify({ allowedChatIds: [...this.allowedChatIds] }, null, 2));
+      writeFileSync(
+        join(this.dataDir, "telegram-config.json"),
+        JSON.stringify({ allowedChatIds: [...this.allowedChatIds] }, null, 2),
+      );
     } catch (e) {
       console.error("[telegram] Failed to save config:", (e as Error).message);
     }

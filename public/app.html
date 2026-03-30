@@ -37,10 +37,9 @@
 
   <!-- Chat search (feature 87) -->
   <div id="chat-search-bar">
-    <input id="chat-search-input" type="search" placeholder="Search chats..." oninput="onChatSearch(this.value)" aria-label="Search conversations" autocomplete="off" />
-    <div style="display:flex;gap:4px;margin-top:4px">
-      <button class="sidebar-action-btn" onclick="openGlobalSearch()" title="Search across all sessions">Deep Search</button>
-      <button class="sidebar-action-btn" onclick="autoSummarize()" title="Summarize old sessions">Summarize</button>
+    <div style="display:flex;gap:4px;align-items:center">
+      <input id="chat-search-input" type="search" placeholder="Search chats..." oninput="onChatSearch(this.value)" aria-label="Search conversations" autocomplete="off" style="flex:1" />
+      <button class="sidebar-icon-btn" onclick="openGlobalSearch()" title="Deep search across all sessions">&#128269;</button>
     </div>
   </div>
 
@@ -58,9 +57,10 @@
   </div>
 
   <div id="utility-bar" role="toolbar" aria-label="Navigation">
-    <button class="util-btn" data-route="cron" onclick="navigate('cron')" aria-label="Cron jobs"><span class="util-icon">&#9200;</span> Cron</button>
-    <button class="util-btn" data-route="secrets" onclick="navigate('secrets')" aria-label="Secrets vault"><span class="util-icon">&#128273;</span> Secrets</button>
-    <button class="util-btn" data-route="settings" onclick="navigate('settings')" aria-label="Settings"><span class="util-icon">&#9881;</span> Settings</button>
+    <button class="util-btn" data-route="dashboards" onclick="navigate('dashboards')" aria-label="Dashboards" title="Dashboards"><span class="util-icon">&#9638;</span></button>
+    <button class="util-btn" data-route="cron" onclick="navigate('cron')" aria-label="Cron jobs" title="Cron Jobs"><span class="util-icon">&#9200;</span></button>
+    <button class="util-btn" data-route="secrets" onclick="navigate('secrets')" aria-label="Secrets vault" title="Secrets"><span class="util-icon">&#128273;</span></button>
+    <button class="util-btn" data-route="settings" onclick="navigate('settings')" aria-label="Settings" title="Settings"><span class="util-icon">&#9881;</span></button>
   </div>
 
   <div id="sidebar-footer">
@@ -258,6 +258,17 @@
               <option value="unrestricted">Unrestricted — read any file on the computer</option>
             </select>
             <div class="field-hint" id="file-access-hint">Default: agent can read your Downloads, Documents, Desktop, and Pictures folders.</div>
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Self-Modify Mode</div>
+          <div class="section-desc">Power dev only. Lets the agent modify its own source code, create pages inside the app, and hot-reload changes. Core security files are always protected.</div>
+          <div class="field">
+            <label class="field-label" style="display:flex;align-items:center;gap:10px;cursor:pointer">
+              <input type="checkbox" id="cfg-self-modify" onchange="setSelfModify(this.checked)" style="width:18px;height:18px;accent-color:var(--accent)">
+              Enable Self-Modification
+            </label>
+            <div class="field-hint" id="self-modify-hint">Disabled. The agent cannot write to src/ files.</div>
           </div>
         </div>
         <div class="section-card">
@@ -501,6 +512,25 @@
     </div>
   </div>
 
+  <div id="page-dashboards" class="page">
+    <div style="max-width:900px;margin:0 auto;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <h2 style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px">DASHBOARDS</h2>
+        <button class="action-btn primary" onclick="promptCreateDashboard()">+ New Dashboard</button>
+      </div>
+      <div id="dashboards-empty" style="text-align:center;padding:60px 20px;color:var(--muted)">
+        <div style="font-size:3rem;margin-bottom:12px">&#9638;</div>
+        <p style="font-size:.9rem;margin-bottom:8px">No dashboards yet</p>
+        <p style="font-size:.78rem">Ask the agent to create one, or click + New Dashboard to start a chat.</p>
+      </div>
+      <div id="dashboards-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px"></div>
+      <div id="custom-pages-section" style="margin-top:32px;display:none">
+        <h3 style="font-family:var(--mono);font-size:.75rem;color:var(--muted);letter-spacing:1px;margin-bottom:12px">CUSTOM PAGES</h3>
+        <div id="custom-pages-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- Scripts -->
@@ -510,6 +540,7 @@
 <script src="/js/settings.js"></script>
 <script src="/js/secrets.js"></script>
 <script src="/js/cron.js"></script>
+<script src="/js/dashboards.js"></script>
 <script src="/js/shortcuts.js"></script>
 <script>
 // Desktop sidebar collapse toggle

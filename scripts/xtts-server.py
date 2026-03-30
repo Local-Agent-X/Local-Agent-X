@@ -28,8 +28,11 @@ def get_tts():
     if _tts is None:
         print("[xtts] Loading XTTS v2 model (first request, may take 30-60s)...")
         import torch
+        # Auto-agree to CPML license (non-commercial use)
+        os.environ["COQUI_TOS_AGREED"] = "1"
         from TTS.api import TTS
         _device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"[xtts] Using device: {_device} (CUDA available: {torch.cuda.is_available()})")
         _tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(_device)
         print(f"[xtts] Model loaded on {_device}")
     return _tts

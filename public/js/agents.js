@@ -65,13 +65,54 @@ function switchOrg(orgId) {
 }
 
 function showNewOrgForm() {
-  const name = prompt('Organization name:');
-  if (!name) return;
-  const desc = prompt('Description (optional):') || '';
-  fetch(`${API}/api/projects`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-    body: JSON.stringify({ name, description: desc, agentIds: [] })
-  }).then(() => { loadOrgs(); }).catch(() => {});
+  openAgentForm();
+  const form = document.getElementById('agents-template-form');
+  if (!form) return;
+  form.innerHTML = `
+    <h2 style="font-family:var(--mono);font-size:1rem;color:var(--accent);margin-bottom:16px">New Organization</h2>
+    <div class="field"><label class="field-label">Name</label><input class="field-input" id="org-name" placeholder="e.g. Marketing Team, My Startup"></div>
+    <div class="field"><label class="field-label">Description</label><textarea class="field-input" id="org-desc" rows="3" style="resize:vertical" placeholder="What this organization does..."></textarea></div>
+    <div class="field"><label class="field-label">Workspace folder (optional)</label><input class="field-input" id="org-workspace" placeholder="e.g. ./workspace/marketing"></div>
+    <div style="margin-top:12px">
+      <div class="field-label" style="margin-bottom:8px">Quick Start — hire agents for this org:</div>
+      <div id="org-agent-picks" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="action-btn primary" onclick="createOrg()">Create Organization</button>
+      <button class="action-btn secondary" onclick="closeAgentDetail()">Cancel</button>
+    </div>
+  `;
+  // Load agent templates as checkboxes
+  fetch(\`\${API}/api/agents/templates\`, { headers: { Authorization: \`Bearer \${AUTH_TOKEN}\` } })
+    .then(r => r.json())
+    .then(templates => {
+      const el = document.getElementById('org-agent-picks');
+      if (!el || !Array.isArray(templates)) return;
+      el.innerHTML = templates.map(t => \`
+        <label style="display:flex;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:.72rem;cursor:pointer">
+          <input type="checkbox" value="\${t.id}" style="accent-color:var(--accent)"> \${t.icon || ''} \${esc(t.name)}
+        </label>
+      \`).join('');
+    }).catch(() => {});
+}
+
+async function createOrg() {
+  const name = document.getElementById('org-name')?.value.trim();
+  const desc = document.getElementById('org-desc')?.value.trim();
+  const workspace = document.getElementById('org-workspace')?.value.trim();
+  if (!name) { alert('Name is required'); return; }
+  // Get selected agents
+  const checks = document.querySelectorAll('#org-agent-picks input:checked');
+  const agentIds = Array.from(checks).map(c => c.value);
+  try {
+    await fetch(\`\${API}/api/projects/from-starter\`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: \`Bearer \${AUTH_TOKEN}\` },
+      body: JSON.stringify({ name, description: desc, workspace, agentIds })
+    });
+    closeAgentDetail();
+    loadOrgs();
+    loadTeam();
+  } catch {}
 }
 
 // ── Tab switching ──
@@ -100,7 +141,16 @@ async function loadTeam() {
   list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:.78rem">Loading team...</div>';
   try {
     const r = await fetch(`${API}/api/agents/hired`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-    const agents = await r.json();
+    let agents = await r.json();
+    // Filter by selected org
+    if (_currentOrg && Array.isArray(agents)) {
+      const pr = await fetch(`${API}/api/projects/${_currentOrg}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+      const proj = await pr.json();
+      if (proj && Array.isArray(proj.agentIds)) {
+        const orgSet = new Set(proj.agentIds);
+        agents = agents.filter(a => orgSet.has(a.id));
+      }
+    }
     if (!Array.isArray(agents) || agents.length === 0) {
       list.innerHTML = `<div style="text-align:center;padding:30px;color:var(--muted)">
         <div style="font-size:2rem;margin-bottom:8px">&#129302;</div>
@@ -111,16 +161,12 @@ async function loadTeam() {
       return;
     }
     list.innerHTML = agents.map(a => `
-      <div class="agent-history-item working" onclick="showHiredAgent('${a.id}')">
-        <div class="agent-history-header">
-          <span class="agent-role-badge">${esc(a.role)}</span>
-          <span style="font-size:.8rem">${a.icon || ''}</span>
-        </div>
-        <div class="agent-history-name">${esc(a.name)}</div>
-        <div class="agent-history-task">${esc(a.description || a.systemPrompt.slice(0, 60))}</div>
-        <div class="agent-history-meta">
-          <span>${a.heartbeatEnabled ? 'Heartbeat: ' + esc(a.heartbeatSchedule || '') : 'No heartbeat'}</span>
-          ${a.reportsTo ? '<span>Reports to: ' + esc(a.reportsTo) + '</span>' : ''}
+      <div class="org-node" style="cursor:pointer;text-align:center;padding:16px" onclick="showHiredAgent('${a.id}')">
+        <div style="font-size:2rem;margin-bottom:6px">${a.icon || '&#129302;'}</div>
+        <div class="org-node-name">${esc(a.name)}</div>
+        <div class="org-node-role">${esc(a.role)}</div>
+        <div style="margin-top:8px;display:flex;gap:4px;justify-content:center;flex-wrap:wrap">
+          ${a.heartbeatEnabled ? '<span class="agent-role-badge" style="background:rgba(76,175,80,.15);color:#4caf50">Active</span>' : '<span class="agent-role-badge">Manual</span>'}
         </div>
       </div>
     `).join('');

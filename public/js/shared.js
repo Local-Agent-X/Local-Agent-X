@@ -87,55 +87,108 @@ function sanitizeHtml(html) {
 // Markdown renderer
 function md(s) {
   if (!s) return '';
-  let h = esc(s);
-  // Code blocks with copy button (feature 91)
+
+  // Placeholders for protected content
+  const placeholders = [];
+  function ph(html) { const i = placeholders.length; placeholders.push(html); return '\x00PH' + i + '\x00'; }
+
+  let h = s;
+
+  // 1. Extract code blocks first (protect from further processing)
   h = h.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const id = 'cb-' + Math.random().toString(36).slice(2, 8);
-    return `<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang">${lang || 'code'}</span><button class="code-copy-btn" onclick="copyCodeBlock('${id}')" aria-label="Copy code">Copy</button></div><pre class="code-block" id="${id}"><code>${code}</code></pre></div>`;
+    return ph(`<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang">${lang || 'code'}</span><button class="code-copy-btn" onclick="copyCodeBlock('${id}')" aria-label="Copy code">Copy</button></div><pre class="code-block" id="${id}"><code>${esc(code)}</code></pre></div>`);
   });
-  h = h.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+
+  // 2. Extract inline images and links before escaping
+  h = h.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, src) => {
+    const safeSrc = /^(https?:\/\/|data:image\/)/.test(src) ? src : '#';
+    return ph(`<img src="${safeSrc}" alt="${esc(alt)}" class="inline-chat-img" onclick="openLightbox(this.src)" />`);
+  });
+  h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
+    const safeUrl = sanitizeUrl(url);
+    return ph(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
+  });
+
+  // 3. Escape HTML
+  h = esc(h);
+
+  // 4. Inline formatting
+  h = h.replace(/`([^`]+)`/g, (_, c) => ph(`<code class="inline-code">${c}</code>`));
   h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  h = h.replace(/^- (.+)$/gm, '<li style="margin-left:16px;list-style:disc">$1</li>');
-  h = h.replace(/^\d+\. (.+)$/gm, '<li style="margin-left:16px;list-style:decimal">$1</li>');
+  h = h.replace(/~~(.+?)~~/g, '<del>$1</del>');
+
+  // 5. Horizontal rules
+  h = h.replace(/^(-{3,}|\*{3,}|_{3,})$/gm, '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0">');
+
+  // 6. Headers
+  h = h.replace(/^#### (.+)$/gm, '<h5 class="md-h" style="font-size:.82rem">$1</h5>');
   h = h.replace(/^### (.+)$/gm, '<h4 class="md-h">$1</h4>');
   h = h.replace(/^## (.+)$/gm, '<h3 class="md-h">$1</h3>');
   h = h.replace(/^# (.+)$/gm, '<h2 class="md-h">$1</h2>');
-  // Inline image rendering (feature 92) — render image URLs and base64 inline
-  const imgPlaceholders = [];
-  h = h.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, src) => {
-    const idx = imgPlaceholders.length;
-    const safeSrc = /^(https?:\/\/|data:image\/)/.test(src) ? src : '#';
-    imgPlaceholders.push(`<img src="${safeSrc}" alt="${esc(alt)}" class="inline-chat-img" onclick="openLightbox(this.src)" />`);
-    return '%%IMG' + idx + '%%';
+
+  // 7. Blockquotes
+  h = h.replace(/^&gt; (.+)$/gm, '<blockquote style="border-left:3px solid var(--accent-dim);padding-left:12px;margin:8px 0;color:var(--muted)">$1</blockquote>');
+
+  // 8. Tables
+  h = h.replace(/^(\|.+\|)\n(\|[-| :]+\|)\n((?:\|.+\|\n?)+)/gm, (_, header, sep, body) => {
+    const heads = header.split('|').filter(c => c.trim()).map(c => `<th style="padding:6px 10px;border-bottom:2px solid var(--border);text-align:left;font-size:.78rem">${c.trim()}</th>`).join('');
+    const rows = body.trim().split('\n').map(row => {
+      const cells = row.split('|').filter(c => c.trim()).map(c => `<td style="padding:5px 10px;border-bottom:1px solid var(--border);font-size:.78rem">${c.trim()}</td>`).join('');
+      return `<tr>${cells}</tr>`;
+    }).join('');
+    return ph(`<table style="border-collapse:collapse;margin:8px 0;width:100%;font-family:var(--mono)"><thead><tr>${heads}</tr></thead><tbody>${rows}</tbody></table>`);
   });
-  const urlPlaceholders = [];
-  h = h.replace(/(https?:\/\/[^\s<"']+\.(?:png|jpg|jpeg|gif|webp|svg))(\s|$|<br>)/gi, (match, url, after) => {
-    const idx = imgPlaceholders.length;
-    const safeUrl = sanitizeUrl(url);
-    imgPlaceholders.push(`<img src="${safeUrl}" alt="image" class="inline-chat-img" onclick="openLightbox(this.src)" />`);
-    return '%%IMG' + idx + '%%' + after;
+
+  // 9. Lists — process line by line for proper grouping
+  const lines = h.split('\n');
+  const result = [];
+  let inUl = false, inOl = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const ulMatch = line.match(/^(\s*)[-*] (.+)$/);
+    const olMatch = line.match(/^(\s*)\d+\. (.+)$/);
+
+    if (ulMatch) {
+      if (!inUl) { if (inOl) { result.push('</ol>'); inOl = false; } result.push('<ul style="margin:4px 0;padding-left:20px">'); inUl = true; }
+      result.push(`<li>${ulMatch[2]}</li>`);
+    } else if (olMatch) {
+      if (!inOl) { if (inUl) { result.push('</ul>'); inUl = false; } result.push('<ol style="margin:4px 0;padding-left:20px">'); inOl = true; }
+      result.push(`<li>${olMatch[2]}</li>`);
+    } else {
+      if (inUl) { result.push('</ul>'); inUl = false; }
+      if (inOl) { result.push('</ol>'); inOl = false; }
+      result.push(line);
+    }
+  }
+  if (inUl) result.push('</ul>');
+  if (inOl) result.push('</ol>');
+  h = result.join('\n');
+
+  // 10. Auto-link bare URLs
+  h = h.replace(/(https?:\/\/[^\s<"']+\.(?:png|jpg|jpeg|gif|webp|svg))(\s|$)/gi, (_, url, after) => {
+    return ph(`<img src="${sanitizeUrl(url)}" alt="image" class="inline-chat-img" onclick="openLightbox(this.src)" />`) + after;
   });
-  h = h.replace(/(https?:\/\/[^\s<"']+)/g, (match) => {
-    const idx = urlPlaceholders.length;
-    const safeUrl = sanitizeUrl(match);
-    urlPlaceholders.push(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${match}</a>`);
-    return '%%URL' + idx + '%%';
+  h = h.replace(/(https?:\/\/[^\s<"'\x00]+)/g, (match) => {
+    return ph(`<a href="${sanitizeUrl(match)}" target="_blank" rel="noopener noreferrer" class="md-link">${match}</a>`);
   });
-  // Base64 image data inline (feature 92)
-  h = h.replace(/(data:image\/[a-z+]+;base64,[A-Za-z0-9+/=]+)/g, (match) => {
-    const idx = imgPlaceholders.length;
-    imgPlaceholders.push(`<img src="${match}" alt="image" class="inline-chat-img" onclick="openLightbox(this.src)" />`);
-    return '%%IMG' + idx + '%%';
-  });
+
+  // 11. Paragraphs — double newlines become paragraph breaks, single become <br>
+  h = h.replace(/\n{2,}/g, '</p><p>');
   h = h.replace(/\n/g, '<br>');
-  for (let i = 0; i < urlPlaceholders.length; i++) {
-    h = h.replace('%%URL' + i + '%%', urlPlaceholders[i]);
+  h = '<p>' + h + '</p>';
+  // Clean up empty paragraphs and paragraphs wrapping block elements
+  h = h.replace(/<p><\/p>/g, '');
+  h = h.replace(/<p>(<(?:h[2-5]|ul|ol|table|div|blockquote|hr|pre))/g, '$1');
+  h = h.replace(/(<\/(?:h[2-5]|ul|ol|table|div|blockquote|hr|pre)>)<\/p>/g, '$1');
+
+  // 12. Restore placeholders
+  for (let i = 0; i < placeholders.length; i++) {
+    h = h.replace('\x00PH' + i + '\x00', placeholders[i]);
   }
-  for (let i = 0; i < imgPlaceholders.length; i++) {
-    h = h.replace('%%IMG' + i + '%%', imgPlaceholders[i]);
-  }
-  // Final sweep: strip any event handlers or script injections
+
   return sanitizeHtml(h);
 }
 

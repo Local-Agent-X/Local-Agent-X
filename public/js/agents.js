@@ -1,6 +1,7 @@
 // ── Agents Page ──
 
 async function init_agents() {
+  loadOrgs();
   loadTeam();
   loadInbox();
   loadIssues();
@@ -9,6 +10,69 @@ async function init_agents() {
   loadActiveAgents();
 }
 window.init_agents = init_agents;
+
+// ── Slide-out detail panel ──
+
+function openAgentPanel() {
+  const overlay = document.getElementById('agents-detail-overlay');
+  const panel = document.getElementById('agents-detail-panel');
+  const detail = document.getElementById('agents-detail-view');
+  const form = document.getElementById('agents-template-form');
+  if (overlay) overlay.style.display = '';
+  if (panel) panel.style.display = '';
+  if (detail) detail.style.display = '';
+  if (form) form.style.display = 'none';
+}
+
+function openAgentForm() {
+  const overlay = document.getElementById('agents-detail-overlay');
+  const panel = document.getElementById('agents-detail-panel');
+  const detail = document.getElementById('agents-detail-view');
+  const form = document.getElementById('agents-template-form');
+  if (overlay) overlay.style.display = '';
+  if (panel) panel.style.display = '';
+  if (detail) detail.style.display = 'none';
+  if (form) form.style.display = '';
+}
+
+function closeAgentDetail() {
+  const overlay = document.getElementById('agents-detail-overlay');
+  const panel = document.getElementById('agents-detail-panel');
+  if (overlay) overlay.style.display = 'none';
+  if (panel) panel.style.display = 'none';
+}
+
+// ── Organization management ──
+
+let _currentOrg = '';
+
+async function loadOrgs() {
+  const sel = document.getElementById('agents-org-select');
+  if (!sel) return;
+  try {
+    const r = await fetch(`${API}/api/projects`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const projects = await r.json();
+    sel.innerHTML = '<option value="">All Organizations</option>' +
+      (Array.isArray(projects) ? projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('') : '');
+  } catch {}
+}
+
+function switchOrg(orgId) {
+  _currentOrg = orgId;
+  loadTeam();
+  loadIssues();
+  loadOrgChart();
+}
+
+function showNewOrgForm() {
+  const name = prompt('Organization name:');
+  if (!name) return;
+  const desc = prompt('Description (optional):') || '';
+  fetch(`${API}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+    body: JSON.stringify({ name, description: desc, agentIds: [] })
+  }).then(() => { loadOrgs(); }).catch(() => {});
+}
 
 // ── Tab switching ──
 
@@ -64,12 +128,8 @@ async function loadTeam() {
 }
 
 async function showHiredAgent(id) {
-  const empty = document.getElementById('agents-detail-empty');
+  openAgentPanel();
   const detail = document.getElementById('agents-detail-view');
-  const form = document.getElementById('agents-template-form');
-  if (empty) empty.style.display = 'none';
-  if (form) form.style.display = 'none';
-  if (detail) detail.style.display = '';
   try {
     const r = await fetch(`${API}/api/agents/templates`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     const templates = await r.json();
@@ -123,8 +183,7 @@ async function fireAgent(id) {
   try {
     await fetch(`${API}/api/agents/templates/${id}/fire`, { method: 'POST', headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     loadTeam();
-    document.getElementById('agents-detail-view').style.display = 'none';
-    document.getElementById('agents-detail-empty').style.display = '';
+    closeAgentDetail();
   } catch {}
 }
 
@@ -212,12 +271,8 @@ async function loadIssues() {
 }
 
 async function showIssueDetail(id) {
-  const empty = document.getElementById('agents-detail-empty');
+  openAgentPanel();
   const detail = document.getElementById('agents-detail-view');
-  const form = document.getElementById('agents-template-form');
-  if (empty) empty.style.display = 'none';
-  if (form) form.style.display = 'none';
-  if (detail) detail.style.display = '';
   try {
     const r = await fetch(`${API}/api/issues/${id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     const i = await r.json();
@@ -301,18 +356,13 @@ async function deleteIssue(id) {
   try {
     await fetch(`${API}/api/issues/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     loadIssues();
-    document.getElementById('agents-detail-view').style.display = 'none';
-    document.getElementById('agents-detail-empty').style.display = '';
+    closeAgentDetail();
   } catch {}
 }
 
 function showIssueForm(assignee) {
-  const empty = document.getElementById('agents-detail-empty');
-  const detail = document.getElementById('agents-detail-view');
+  openAgentForm();
   const form = document.getElementById('agents-template-form');
-  if (empty) empty.style.display = 'none';
-  if (detail) detail.style.display = 'none';
-  if (form) form.style.display = '';
   form.innerHTML = `
     <h2 style="font-family:var(--mono);font-size:1rem;color:var(--accent);margin-bottom:16px">New Issue</h2>
     <div class="field"><label class="field-label">Title</label><input class="field-input" id="issue-title" placeholder="e.g. Build landing page"></div>
@@ -496,12 +546,8 @@ async function loadAgentHistory() {
 }
 
 async function showAgentDetail(id) {
-  const empty = document.getElementById('agents-detail-empty');
+  openAgentPanel();
   const detail = document.getElementById('agents-detail-view');
-  const form = document.getElementById('agents-template-form');
-  if (empty) empty.style.display = 'none';
-  if (form) form.style.display = 'none';
-  if (detail) detail.style.display = '';
   try {
     const r = await fetch(`${API}/api/agents/history/${id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     const run = await r.json();
@@ -554,8 +600,7 @@ async function deleteAgentRun(id) {
   try {
     await fetch(`${API}/api/agents/history/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     loadAgentHistory();
-    document.getElementById('agents-detail-view').style.display = 'none';
-    document.getElementById('agents-detail-empty').style.display = '';
+    closeAgentDetail();
   } catch {}
 }
 
@@ -585,12 +630,8 @@ async function loadAgentTemplates() {
 }
 
 function showTemplateForm(existing) {
-  const empty = document.getElementById('agents-detail-empty');
-  const detail = document.getElementById('agents-detail-view');
+  openAgentForm();
   const form = document.getElementById('agents-template-form');
-  if (empty) empty.style.display = 'none';
-  if (detail) detail.style.display = 'none';
-  if (form) form.style.display = '';
   const t = existing || { id: '', name: '', role: '', systemPrompt: '', description: '', allowedTools: [] };
   const isEdit = !!t.id;
   form.innerHTML = `
@@ -669,10 +710,7 @@ async function deleteTemplate(id) {
 }
 
 function cancelTemplateForm() {
-  const form = document.getElementById('agents-template-form');
-  const empty = document.getElementById('agents-detail-empty');
-  if (form) form.style.display = 'none';
-  if (empty) empty.style.display = '';
+  closeAgentDetail();
 }
 
 async function spawnFromTemplate(id) {

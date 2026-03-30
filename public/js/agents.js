@@ -25,6 +25,7 @@ function switchAgentsTab(tab, btn) {
   if (tab === 'history') loadAgentHistory();
   if (tab === 'templates') loadAgentTemplates();
   if (tab === 'active') loadActiveAgents();
+  if (tab === 'orgchart') loadOrgChart();
 }
 
 // ── Team (hired agents) ──
@@ -345,6 +346,120 @@ async function createIssue() {
     });
     loadIssues();
     cancelTemplateForm();
+  } catch {}
+}
+
+// ── Org Chart (drag-and-drop hierarchy) ──
+
+let _orgAgents = [];
+let _orgDragId = null;
+
+async function loadOrgChart() {
+  const container = document.getElementById('orgchart-container');
+  if (!container) return;
+  container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div>';
+  try {
+    const r = await fetch(`${API}/api/agents/hired`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    _orgAgents = await r.json();
+    if (!Array.isArray(_orgAgents) || _orgAgents.length === 0) {
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:2rem;margin-bottom:8px">&#129302;</div><div>No agents hired. Go to Templates to hire your team.</div></div>';
+      return;
+    }
+    renderOrgChart(container);
+  } catch { container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:20px">Failed to load</div>'; }
+}
+
+function renderOrgChart(container) {
+  // Build tree: root nodes have no reportsTo or reportsTo not in hired list
+  const hiredIds = new Set(_orgAgents.map(a => a.id));
+  const roots = _orgAgents.filter(a => !a.reportsTo || !hiredIds.has(a.reportsTo));
+  const childMap = {};
+  for (const a of _orgAgents) {
+    if (a.reportsTo && hiredIds.has(a.reportsTo)) {
+      if (!childMap[a.reportsTo]) childMap[a.reportsTo] = [];
+      childMap[a.reportsTo].push(a);
+    }
+  }
+
+  // Add "You (Board)" as the root
+  let html = '<div class="org-tree">';
+  html += '<div class="org-node org-board">&#128100; You (Board)</div>';
+  html += '<div class="org-children">';
+  for (const root of roots) {
+    html += renderOrgNode(root, childMap);
+  }
+  // Unassigned drop zone
+  html += `<div class="org-dropzone" data-target="" ondragover="orgDragOver(event)" ondrop="orgDrop(event)">
+    <span style="color:var(--muted);font-size:.7rem">Drop here to unassign</span>
+  </div>`;
+  html += '</div></div>';
+
+  container.innerHTML = html;
+}
+
+function renderOrgNode(agent, childMap) {
+  const children = childMap[agent.id] || [];
+  const hasChildren = children.length > 0;
+  let html = `<div class="org-branch">`;
+  html += `<div class="org-node" draggable="true" data-id="${agent.id}"
+    ondragstart="orgDragStart(event,'${agent.id}')"
+    ondragover="orgDragOver(event)"
+    ondrop="orgDrop(event)"
+    onclick="showHiredAgent('${agent.id}')">
+    <div class="org-node-icon">${agent.icon || '&#129302;'}</div>
+    <div class="org-node-name">${esc(agent.name)}</div>
+    <div class="org-node-role">${esc(agent.role)}</div>
+    ${agent.heartbeatEnabled ? '<div class="org-node-heartbeat">&#128154; Active</div>' : ''}
+  </div>`;
+  if (hasChildren) {
+    html += '<div class="org-children">';
+    for (const child of children) {
+      html += renderOrgNode(child, childMap);
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function orgDragStart(e, agentId) {
+  _orgDragId = agentId;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', agentId);
+  e.target.closest('.org-node').classList.add('org-dragging');
+}
+
+function orgDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  const node = e.target.closest('.org-node, .org-dropzone');
+  if (node) node.classList.add('org-drop-target');
+}
+
+function orgDrop(e) {
+  e.preventDefault();
+  document.querySelectorAll('.org-dragging, .org-drop-target').forEach(el => {
+    el.classList.remove('org-dragging', 'org-drop-target');
+  });
+  const targetNode = e.target.closest('.org-node, .org-dropzone');
+  if (!targetNode || !_orgDragId) return;
+  const targetId = targetNode.dataset.id || targetNode.dataset.target || '';
+  if (targetId === _orgDragId) return; // Can't report to self
+
+  // Update the hierarchy
+  updateAgentHierarchy(_orgDragId, targetId || null);
+  _orgDragId = null;
+}
+
+async function updateAgentHierarchy(agentId, reportsTo) {
+  try {
+    await fetch(`${API}/api/agents/templates/${agentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ reportsTo: reportsTo || '' })
+    });
+    // Reload
+    loadOrgChart();
   } catch {}
 }
 

@@ -86,4 +86,5 @@ export interface SAXConfig {
   retentionDays: number;
   autoUpdate: boolean;
   logLevel: "basic" | "detailed" | "full-audit";
+  ariRequired?: boolean;
 }

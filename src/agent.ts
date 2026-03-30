@@ -26,7 +26,7 @@ interface AgentOptions {
   apiKey: string;
   model: string;
   baseURL?: string;
-  provider: "xai" | "openai" | "codex" | "anthropic" | "local";
+  provider: "xai" | "openai" | "codex" | "anthropic" | "local" | "gemini" | "custom";
   systemPrompt: string;
   tools: ToolDefinition[];
   security: SecurityLayer;
@@ -594,7 +594,16 @@ async function runStandardAgent(
     signal,
   } = options;
 
-  const baseURL = options.baseURL || (options.provider === "local" ? "http://127.0.0.1:11434/v1" : options.provider === "xai" ? "https://api.x.ai/v1" : "https://api.openai.com/v1");
+  const providerURLs: Record<string, string> = {
+    local: "http://127.0.0.1:11434/v1",
+    xai: "https://api.x.ai/v1",
+    gemini: "https://generativelanguage.googleapis.com/v1beta/openai/",
+    openai: "https://api.openai.com/v1",
+    codex: "https://api.openai.com/v1",
+    anthropic: "https://api.openai.com/v1",
+    custom: "https://api.openai.com/v1",
+  };
+  const baseURL = options.baseURL || providerURLs[options.provider] || "https://api.openai.com/v1";
   const client = new OpenAI({ apiKey, baseURL });
   const toolMap = new Map(tools.map((t) => [t.name, t]));
 

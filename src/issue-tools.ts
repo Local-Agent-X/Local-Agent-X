@@ -164,10 +164,186 @@ const agentList: ToolDefinition = {
   },
 };
 
+// ── Task Checkout/Release (locking) ──
+
+const issueCheckout: ToolDefinition = {
+  name: "issue_checkout",
+  description:
+    "Lock an issue so only you can work on it. Prevents other agents from picking it up. " +
+    "Automatically sets status to in-progress. Returns null if already locked by another agent.",
+  parameters: {
+    type: "object",
+    properties: {
+      id: { type: "string", description: "Issue ID (e.g. 'SAX-1')" },
+      agentId: { type: "string", description: "Your agent template ID" },
+    },
+    required: ["id", "agentId"],
+  },
+  async execute(args) {
+    const store = IssueStore.getInstance();
+    const result = store.checkout(String(args.id), String(args.agentId));
+    if (!result) return err(`Cannot checkout ${args.id} — either not found or locked by another agent`);
+    return ok(`Checked out ${result.id}: "${result.title}" — locked to ${args.agentId}`);
+  },
+};
+
+const issueRelease: ToolDefinition = {
+  name: "issue_release",
+  description: "Release your lock on an issue so other agents can pick it up.",
+  parameters: {
+    type: "object",
+    properties: {
+      id: { type: "string", description: "Issue ID" },
+      agentId: { type: "string", description: "Your agent template ID" },
+    },
+    required: ["id", "agentId"],
+  },
+  async execute(args) {
+    const store = IssueStore.getInstance();
+    return store.release(String(args.id), String(args.agentId))
+      ? ok(`Released lock on ${args.id}`)
+      : err(`Cannot release ${args.id} — not found or not locked by you`);
+  },
+};
+
+// ── Issue Search ──
+
+const issueSearch: ToolDefinition = {
+  name: "issue_search",
+  description: "Search issues by keyword. Searches titles, descriptions, and comments.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Search query" },
+    },
+    required: ["query"],
+  },
+  async execute(args) {
+    const store = IssueStore.getInstance();
+    const results = store.search(String(args.query || ""));
+    if (results.length === 0) return ok("No issues found matching that query.");
+    const lines = results.map(i =>
+      `${i.id} [${i.status}] ${i.priority} — ${i.title}${i.assignee ? ` (${i.assignee})` : ""}`
+    );
+    return ok(`${results.length} result(s):\n\n${lines.join("\n")}`);
+  },
+};
+
+// ── Agent Self-Identity ──
+
+const agentWhoAmI: ToolDefinition = {
+  name: "agent_whoami",
+  description:
+    "Get your own identity, role, assigned issues, and team context. " +
+    "Use this when you wake up or start a task to understand who you are and what you should be working on.",
+  parameters: {
+    type: "object",
+    properties: {
+      agentId: { type: "string", description: "Your agent template ID (if known)" },
+    },
+  },
+  async execute(args) {
+    const templateStore = AgentTemplateStore.getInstance();
+    const issueStore = IssueStore.getInstance();
+
+    // Try to find the agent
+    const agentId = String(args.agentId || "");
+    const agent = agentId ? templateStore.get(agentId) : null;
+
+    if (!agent) {
+      // No specific identity — return general team context
+      const hired = templateStore.listHired();
+      const stats = issueStore.stats();
+      return ok(
+        `No specific agent identity provided.\n\n` +
+        `Team: ${hired.length} hired agent(s)\n` +
+        `Issues: ${stats.open} open, ${stats.inProgress} in progress, ${stats.blocked} blocked, ${stats.pendingApproval} pending approval`
+      );
+    }
+
+    // Get this agent's assigned issues
+    const myIssues = issueStore.list({ assignee: agentId });
+    const openIssues = myIssues.filter(i => i.status === "open" || i.status === "in-progress");
+    const blockedIssues = myIssues.filter(i => i.status === "blocked");
+
+    // Get recent comments on my issues (last 24h)
+    const recentComments: string[] = [];
+    const dayAgo = Date.now() - 86400000;
+    for (const issue of myIssues) {
+      for (const c of issue.comments) {
+        if (c.createdAt > dayAgo && c.author !== agentId) {
+          recentComments.push(`${issue.id}: ${c.author} said: "${c.content.slice(0, 100)}"`);
+        }
+      }
+    }
+
+    const parts = [
+      `You are: ${agent.icon || ""} ${agent.name} (${agent.role})`,
+      agent.reportsTo ? `Reports to: ${agent.reportsTo}` : null,
+      `Heartbeat: ${agent.heartbeatEnabled ? agent.heartbeatSchedule : "Off"}`,
+      `\nAssigned issues (${openIssues.length} active):`,
+      ...openIssues.map(i => `  ${i.id} [${i.status}] ${i.priority.toUpperCase()} — ${i.title}${i.lockedBy ? ` (locked by ${i.lockedBy})` : ""}`),
+      blockedIssues.length > 0 ? `\nBlocked (${blockedIssues.length}):` : null,
+      ...blockedIssues.map(i => `  ${i.id} — ${i.title}`),
+      recentComments.length > 0 ? `\nRecent activity (last 24h):` : null,
+      ...recentComments.slice(0, 10),
+    ].filter(Boolean);
+
+    return ok(parts.join("\n"));
+  },
+};
+
+// ── Agent Wakeup (mention another agent) ──
+
+const agentWakeup: ToolDefinition = {
+  name: "agent_wakeup",
+  description:
+    "Wake up another hired agent by mentioning them in an issue comment. " +
+    "This is how agents communicate — leave a comment on a shared issue and wake the other agent to read it. " +
+    "The woken agent will check its issues and see your comment.",
+  parameters: {
+    type: "object",
+    properties: {
+      issueId: { type: "string", description: "Issue ID to comment on" },
+      targetAgentId: { type: "string", description: "Agent template ID to wake up" },
+      message: { type: "string", description: "Message to leave as a comment (the agent will read this)" },
+    },
+    required: ["issueId", "targetAgentId", "message"],
+  },
+  async execute(args) {
+    const issueStore = IssueStore.getInstance();
+    const templateStore = AgentTemplateStore.getInstance();
+    const issueId = String(args.issueId || "");
+    const targetId = String(args.targetAgentId || "");
+    const message = String(args.message || "");
+
+    const issue = issueStore.get(issueId);
+    if (!issue) return err(`Issue ${issueId} not found`);
+
+    const target = templateStore.get(targetId);
+    if (!target || !target.hired) return err(`Agent ${targetId} not found or not hired`);
+
+    // Leave the comment with @-mention
+    issueStore.comment(issueId, "agent", `@${target.name}: ${message}`);
+
+    // If the issue isn't assigned to the target, note that
+    const context = issue.assignee === targetId
+      ? "They are assigned to this issue and will see the comment."
+      : "Note: this issue is not assigned to them — consider reassigning if needed.";
+
+    return ok(`Wakeup sent to ${target.name} on ${issueId}.\nComment posted: "@${target.name}: ${message}"\n${context}`);
+  },
+};
+
 export const issueTools: ToolDefinition[] = [
   issueCreate,
   issueList,
   issueUpdate,
   issueRequestApproval,
+  issueCheckout,
+  issueRelease,
+  issueSearch,
   agentList,
+  agentWhoAmI,
+  agentWakeup,
 ];

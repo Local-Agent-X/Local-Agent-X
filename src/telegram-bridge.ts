@@ -42,6 +42,7 @@ export class TelegramBridge {
   private offset = 0;
   private processingLock = new Set<string>();
   private allowedChatIds: Set<string> = new Set();
+  private ownerVerified = false;  // true once we've confirmed config loaded or owner locked
 
   constructor(config: TelegramBridgeConfig) {
     this.dataDir = config.dataDir;
@@ -229,16 +230,18 @@ export class TelegramBridge {
     const from = msg.from;
     const senderName = [from?.first_name, from?.last_name].filter(Boolean).join(" ") || chatId;
 
-    // Auto-lock: if no allowed chats configured yet, lock to the first person who messages
-    if (this.allowedChatIds.size === 0) {
+    // Auto-lock: only on genuinely fresh setup (no config file ever existed)
+    if (this.allowedChatIds.size === 0 && !this.ownerVerified) {
       this.allowedChatIds.add(chatId);
+      this.ownerVerified = true;
       this.saveAllowedChats();
       console.log(`[telegram] Auto-locked to chat ${chatId} (${senderName}) — first user to message`);
       await this.sendMessage(chatId, `Locked to your account. Only you can use this bot now.`);
     }
 
     if (!this.allowedChatIds.has(chatId)) {
-      console.log(`[telegram] Blocked message from ${chatId} (not in allowed list)`);
+      console.log(`[telegram] Blocked message from unauthorized chat ${chatId} (${senderName})`);
+      await this.sendMessage(chatId, `Access denied. This bot is locked to its owner.`);
       return;
     }
 
@@ -296,9 +299,17 @@ export class TelegramBridge {
       const cfgPath = join(this.dataDir, "telegram-config.json");
       if (existsSync(cfgPath)) {
         const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-        if (Array.isArray(cfg.allowedChatIds)) this.allowedChatIds = new Set(cfg.allowedChatIds);
+        if (Array.isArray(cfg.allowedChatIds) && cfg.allowedChatIds.length > 0) {
+          this.allowedChatIds = new Set(cfg.allowedChatIds);
+          this.ownerVerified = true;
+          console.log(`[telegram] Loaded ${this.allowedChatIds.size} allowed chat(s) from config`);
+        }
       }
-    } catch {}
+    } catch (e) {
+      // Config exists but failed to load — lock the bot down (deny all) rather than being open
+      console.error("[telegram] Failed to load telegram-config.json — bot locked down for safety:", (e as Error).message);
+      this.ownerVerified = true; // prevents auto-lock to a stranger
+    }
   }
 
   private saveAllowedChats(): void {

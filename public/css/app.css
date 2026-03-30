@@ -302,6 +302,24 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .agent-detail-field{font-size:.8rem;display:flex;flex-direction:column;gap:2px}
 .agent-detail-label{font-size:.65rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
 
+/* ── Org Chart ── */
+.org-tree{display:flex;flex-direction:column;align-items:center;gap:0;padding:20px}
+.org-board{background:var(--accent);color:#000;font-weight:700;font-size:.82rem;border-radius:10px;padding:10px 24px;cursor:default}
+.org-children{display:flex;flex-wrap:wrap;justify-content:center;gap:16px;position:relative;padding-top:20px}
+.org-children::before{content:'';position:absolute;top:0;left:50%;width:1px;height:20px;background:var(--border)}
+.org-branch{display:flex;flex-direction:column;align-items:center;position:relative}
+.org-branch::before{content:'';position:absolute;top:-20px;left:50%;width:1px;height:20px;background:var(--border)}
+.org-node{background:var(--surface);border:2px solid var(--border);border-radius:10px;padding:12px 16px;text-align:center;cursor:grab;min-width:140px;transition:border-color .15s,box-shadow .15s,transform .15s;user-select:none}
+.org-node:hover{border-color:var(--accent);box-shadow:0 0 12px rgba(64,240,240,.1)}
+.org-node.org-dragging{opacity:.5;transform:scale(.95)}
+.org-node.org-drop-target{border-color:var(--accent);box-shadow:0 0 20px rgba(64,240,240,.2);transform:scale(1.03)}
+.org-node-icon{font-size:1.5rem;margin-bottom:4px}
+.org-node-name{font-family:var(--mono);font-size:.78rem;font-weight:600;color:var(--text)}
+.org-node-role{font-size:.65rem;color:var(--muted);margin-top:2px}
+.org-node-heartbeat{font-size:.6rem;margin-top:4px}
+.org-dropzone{border:2px dashed var(--border);border-radius:10px;padding:16px 24px;text-align:center;min-width:140px;transition:border-color .15s}
+.org-dropzone.org-drop-target{border-color:var(--accent)}
+
 /* ── Mission Control ── */
 .mc-stat-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center}
 .mc-stat-value{font-size:1.8rem;font-weight:700;color:var(--accent);font-family:var(--mono)}

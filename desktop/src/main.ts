@@ -203,7 +203,7 @@ function createWindow(): void {
     titleBarStyle: "hidden",
     titleBarOverlay: {
       color: "#0a0a0f",
-      symbolColor: "#00ff41",
+      symbolColor: "#40f0f0",
       height: 32,
     },
     backgroundColor: "#0a0a0f",
@@ -301,7 +301,7 @@ function createWindow(): void {
             if (openMenu === dd) { closeAllMenus(); return; }
             closeAllMenus();
             dd.style.display='block';
-            btn.style.color='#00ff41';
+            btn.style.color='#40f0f0';
             btn.style.background='#1a1a2f';
             openMenu = dd;
           };
@@ -309,7 +309,7 @@ function createWindow(): void {
             if (openMenu && openMenu !== dd) {
               closeAllMenus();
               dd.style.display='block';
-              btn.style.color='#00ff41';
+              btn.style.color='#40f0f0';
               btn.style.background='#1a1a2f';
               openMenu = dd;
             }

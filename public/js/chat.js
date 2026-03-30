@@ -63,32 +63,18 @@ function connectChatWs() {
     } else if (msg.type === 'agent-complete' && msg.agentId) {
       if (typeof updateAgentFeed === 'function') {
         updateAgentFeed(msg.agentId, { status: msg.success ? 'done' : 'error', output: msg.result ? '[Result] ' + msg.result.slice(0, 500) : '' });
-        // Build a clean, compact summary for the chat — not the full dump
+        // Build a concise one-liner for chat — full details on Agents page
         var statusIcon = msg.success ? '\u2705' : '\u274C';
-        var statusLabel = msg.success ? 'completed' : 'failed';
         var fullResult = msg.result || '';
-        // Extract first meaningful paragraph (skip tool output noise)
+        // Extract first meaningful sentence as the summary
         var lines = fullResult.split('\n').filter(function(l) {
           var t = l.trim();
-          return t.length > 20 && !t.startsWith('[tool]') && !t.startsWith('Wrote ') && !t.startsWith('Read ') && !t.startsWith('Edited ') && !t.startsWith('BLOCKED');
+          return t.length > 10 && !t.startsWith('[tool]') && !t.startsWith('Wrote ') && !t.startsWith('Read ') && !t.startsWith('Edited ') && !t.startsWith('BLOCKED') && !t.startsWith('---') && !t.startsWith('#');
         });
-        var preview = lines.slice(0, 6).join('\n');
-        if (preview.length > 600) preview = preview.slice(0, 600) + '...';
-        // If aggressive filter stripped everything, show a condensed summary of what the agent did
-        if (!preview && fullResult.length > 0) {
-          var wrote = (fullResult.match(/Wrote /g) || []).length;
-          var read = (fullResult.match(/Read /g) || []).length;
-          var edited = (fullResult.match(/Edited /g) || []).length;
-          var parts = [];
-          if (wrote) parts.push('wrote ' + wrote + ' file' + (wrote > 1 ? 's' : ''));
-          if (edited) parts.push('edited ' + edited + ' file' + (edited > 1 ? 's' : ''));
-          if (read) parts.push('read ' + read + ' file' + (read > 1 ? 's' : ''));
-          preview = parts.length > 0 ? 'Agent ' + parts.join(', ') + '.' : fullResult.slice(0, 200);
-        }
-        var hasMore = fullResult.length > preview.length + 50;
-        var agentMsg = statusIcon + ' **Agent ' + statusLabel + '**\n\n' +
-          (preview || '_No readable output_') +
-          (hasMore ? '\n\n_Full results available on the Agents page_' : '');
+        var firstLine = (lines[0] || '').trim();
+        // Cap at ~150 chars for a clean one-liner
+        if (firstLine.length > 150) firstLine = firstLine.slice(0, 147) + '...';
+        var agentMsg = statusIcon + ' ' + (firstLine || (msg.success ? 'Done.' : 'Agent failed.'));
         addMessageEl('assistant', agentMsg);
         if (activeChat) {
           activeChat.messages.push({ role: 'assistant', content: agentMsg });

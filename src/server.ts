@@ -3428,10 +3428,17 @@ export function startServer(config: SAXConfig) {
         provider: agentProvider,
         systemPrompt: (systemPrompt || `You are a ${role} agent spawned by the orchestrator Primal. Complete the following task thoroughly. Use the tools available to get the job done.
 
+BLOCKING SITUATIONS — STOP IMMEDIATELY and report back when:
+- A login/password page appears: DO NOT try to find a way around it. DO NOT keep clicking. Just report "Login required for [site]. User needs to log in manually."
+- Access denied or 403/401 errors: Report the error and stop.
+- A page is broken or not loading: Report what you see and stop.
+- You've tried 3+ browser actions without progress: Stop and report what's happening.
+Do NOT loop trying to solve authentication problems. You cannot log in for the user.
+
 CRITICAL REPORTING RULE: You MUST end with a clear text summary of what happened. Your final message must describe:
 - What you did (actions taken)
 - What you found (results, data, observations)
-- Any blockers (login required, errors, access denied, page not loading)
+- Any blockers encountered
 This summary is how your results get reported back to the user. If you produce no text summary, the user sees "No readable output." ALWAYS write a final summary, even if the task failed.`) + parentContext,
         tools: spawnedAgentTools,
         security,

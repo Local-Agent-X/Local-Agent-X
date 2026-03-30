@@ -31,6 +31,7 @@ function init_settings() {
   checkVoiceCaps();
   loadToolsList();
   loadFileAccessMode();
+  loadSelfModify();
   loadIntegrations();
   waCheckStatus();
   tgCheckStatus();
@@ -286,6 +287,12 @@ const PROVIDER_MODELS = {
     { value: 'o3', label: 'o3' },
     { value: 'o4-mini', label: 'o4-mini' },
   ],
+  gemini: [
+    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (default)' },
+    { value: 'gemini-2.5-pro-preview-05-06', label: 'Gemini 2.5 Pro' },
+    { value: 'gemini-2.5-flash-preview-05-20', label: 'Gemini 2.5 Flash' },
+    { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+  ],
 };
 
 async function onProviderChange(provider, keepModel) {
@@ -337,9 +344,16 @@ async function onProviderChange(provider, keepModel) {
       modelInput.style.display = '';
     }
     if (ollamaStatus) ollamaStatus.style.display = 'none';
-    if (hint) hint.textContent = '';
+    if (hint) {
+      if (provider === 'custom') hint.innerHTML = 'Enter the model name from your provider. <br><label class="field-label" style="margin-top:8px">Base URL</label><input class="field-input" id="cfg-custom-url" placeholder="https://api.example.com/v1" value="" style="margin-top:4px" /><div style="font-size:.6rem;color:var(--muted);margin-top:4px">Any OpenAI-compatible API endpoint (e.g. https://api.deepseek.com/v1)</div>';
+      else hint.textContent = '';
+    }
   }
   updateApiKeyField(provider);
+  // Load custom base URL if saved
+  if (provider === 'custom') {
+    try { const r = await apiFetch('/api/settings'); const s = await r.json(); const el = document.getElementById('cfg-custom-url'); if (el && s.customBaseUrl) el.value = s.customBaseUrl; } catch {}
+  }
 }
 
 async function loadLocalModels() {
@@ -438,6 +452,8 @@ async function saveSettings() {
   const currentPort = location.port || '7007';
   const settingsPayload = { provider: s.provider, model: s.model, temperature: s.temperature };
   if (s.port) settingsPayload.port = s.port;
+  const customUrl = document.getElementById('cfg-custom-url');
+  if (customUrl && customUrl.value) settingsPayload.customBaseUrl = customUrl.value;
   await apiPost('/api/settings', settingsPayload);
   // If port changed, tell user to restart the app
   if (s.port && String(s.port) !== String(currentPort)) {
@@ -864,6 +880,35 @@ async function setFileAccessMode(mode) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
       body: JSON.stringify({ mode })
+    });
+  } catch {}
+}
+
+// ── Self-Modify Mode ──
+
+async function loadSelfModify() {
+  try {
+    const r = await fetch(`${API}/api/security/self-modify`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const d = await r.json();
+    const cb = document.getElementById('cfg-self-modify');
+    if (cb) cb.checked = !!d.enabled;
+    const hint = document.getElementById('self-modify-hint');
+    if (hint) hint.textContent = d.enabled
+      ? 'Enabled. The agent can modify non-core src/ files and hot-reload changes.'
+      : 'Disabled. The agent cannot write to src/ files.';
+  } catch {}
+}
+
+async function setSelfModify(enabled) {
+  const hint = document.getElementById('self-modify-hint');
+  if (hint) hint.textContent = enabled
+    ? 'Enabled. The agent can modify non-core src/ files and hot-reload changes.'
+    : 'Disabled. The agent cannot write to src/ files.';
+  try {
+    await fetch(`${API}/api/security/self-modify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ enabled })
     });
   } catch {}
 }

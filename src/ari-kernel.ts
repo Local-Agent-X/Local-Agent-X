@@ -19,6 +19,7 @@ const ARI_BASE_URL = `http://127.0.0.1:${ARI_PORT}`;
 let firewall: Firewall | null = null;
 let sidecarProcess: ReturnType<typeof import("node:child_process").spawn> | null = null;
 let currentPreset: string = "workspace-assistant";
+let ariIsRequired: boolean = false;
 
 // Map session policy presets to ARI presets
 const SESSION_TO_ARI_PRESET: Record<string, string> = {
@@ -36,8 +37,9 @@ export function getAriPresetForSession(sessionPreset: string): string {
  * Start the AriKernel sidecar process.
  * Returns true if started successfully, false if unavailable.
  */
-export async function startAriKernel(auditDbPath: string, preset?: string): Promise<boolean> {
+export async function startAriKernel(auditDbPath: string, preset?: string, required?: boolean): Promise<boolean> {
   currentPreset = preset || "workspace-assistant";
+  ariIsRequired = required ?? false;
 
   // Priority 1: Sidecar mode (secure — separate process, can't be bypassed by compromised agent)
   try {
@@ -145,6 +147,9 @@ export async function ariEvaluate(
   taintLabels?: string[]
 ): Promise<{ allowed: boolean; reason: string; quarantined?: boolean }> {
   if (!firewall) {
+    if (ariIsRequired) {
+      return { allowed: false, reason: "AriKernel required but not active — tool call blocked" };
+    }
     return { allowed: true, reason: "AriKernel not active" };
   }
 
@@ -228,8 +233,11 @@ export async function ariEvaluate(
 
     return { allowed: true, reason: "ARI allowed" };
   } catch (e) {
-    // AriKernel error — fail open silently (built-in SecurityLayer still applies)
-    // Don't log every evaluation error — it's noisy and the tool runs anyway
+    if (ariIsRequired) {
+      console.warn(`[ari] Tool call blocked due to ARI error (ariRequired=true): ${(e as Error).message}`);
+      return { allowed: false, reason: "ARI error — tool call blocked (ariRequired mode)" };
+    }
+    // AriKernel error — fail open (built-in SecurityLayer still applies)
     return { allowed: true, reason: "ARI error (fail-open, built-in security active)" };
   }
 }

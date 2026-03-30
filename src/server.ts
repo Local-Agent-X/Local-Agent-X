@@ -158,6 +158,8 @@ function safeErrorMessage(err: unknown): string {
 
 // ── CORS: loopback-only for mutations ──
 
+let serverPort = "7007"; // Updated in startServer()
+
 const LOOPBACK_ORIGINS = new Set([
   "http://localhost",
   "http://127.0.0.1",
@@ -172,7 +174,10 @@ function isLoopbackOrigin(origin: string | undefined): boolean {
   try {
     const parsed = new URL(origin);
     const base = `${parsed.protocol}//${parsed.hostname}`;
-    return LOOPBACK_ORIGINS.has(base);
+    if (!LOOPBACK_ORIGINS.has(base)) return false;
+    // Only allow our own server port — blocks other localhost services from making cross-origin requests
+    const originPort = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+    return originPort === serverPort;
   } catch {
     return false;
   }
@@ -303,6 +308,7 @@ setInterval(() => {
 }, 600_000);
 
 export function startServer(config: SAXConfig) {
+  serverPort = String(config.port || 7007);
   const security = new SecurityLayer(config.workspace);
   const publicDir = join(import.meta.dirname || ".", "..", "public");
   const dataDir = join(homedir(), ".sax");
@@ -3639,8 +3645,9 @@ This summary is how your results get reported back to the user. If you produce n
 
     // Start AriKernel (runtime security enforcement)
     const ariAuditDb = join(dataDir, "ari-audit.db");
-    startAriKernel(ariAuditDb).then(active => {
+    startAriKernel(ariAuditDb, undefined, config.ariRequired).then(active => {
       if (active) console.log(`  [ari] Audit log: ${ariAuditDb}`);
+      else if (config.ariRequired) console.error(`  [ari] ⚠ CRITICAL: ariRequired=true but ARI failed to start — all tool calls will be blocked`);
     });
 
     // Start cron scheduler

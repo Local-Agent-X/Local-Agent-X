@@ -3380,6 +3380,57 @@ export function startServer(config: SAXConfig) {
         console.log(`[primal] Agent ${agentId} received parent context from session ${parentSessionId}`);
       }
     }
+
+    // --- Build agent briefing with memory context and available secrets ---
+    let agentBriefing = "";
+    try {
+      // Load USER.md for user context
+      let userContext = "";
+      const userMdPath = join(dataDir, "memory", "USER.md");
+      if (existsSync(userMdPath)) {
+        try {
+          userContext = readFileSync(userMdPath, "utf-8").slice(0, 500);
+        } catch {}
+      }
+
+      // Load MIND.md for known facts
+      let mindContext = "";
+      const mindMdPath = join(dataDir, "memory", "MIND.md");
+      if (existsSync(mindMdPath)) {
+        try {
+          mindContext = readFileSync(mindMdPath, "utf-8").slice(0, 500);
+        } catch {}
+      }
+
+      // List available secret names (not values) so agent knows what it can request
+      const availableSecrets = secretsStore.list().map(s => s.name);
+      const secretsList = availableSecrets.length > 0
+        ? availableSecrets.join(", ")
+        : "(none stored)";
+
+      agentBriefing = `
+
+--- AGENT BRIEFING (from Primal) ---
+## User Context
+${userContext || "(no user profile found)"}
+
+## Known Facts
+${mindContext || "(no known facts found)"}
+
+## Available Credentials
+The following secrets are available via the request_secret tool: ${secretsList}
+
+## Escalation Rules
+- If you need a password/login: check if a relevant secret exists above, request it via request_secret. If no secret exists, STOP and report "Login required — no stored credentials for [service]"
+- If you hit an error you can't resolve in 2 attempts: STOP and report the error
+- If the task is ambiguous: STOP and ask for clarification via your summary
+--- END BRIEFING ---
+`;
+      console.log(`[primal] Agent ${agentId} briefing built (user: ${userContext.length}ch, mind: ${mindContext.length}ch, secrets: ${availableSecrets.length})`);
+    } catch (briefErr: any) {
+      console.warn(`[primal] Agent ${agentId} briefing failed:`, briefErr.message);
+    }
+
     // Session declared outside try so catch can access partial results
     const agentSession: Session = {
       id: `agent-${agentId}`,
@@ -3439,7 +3490,7 @@ CRITICAL REPORTING RULE: You MUST end with a clear text summary of what happened
 - What you did (actions taken)
 - What you found (results, data, observations)
 - Any blockers encountered
-This summary is how your results get reported back to the user. If you produce no text summary, the user sees "No readable output." ALWAYS write a final summary, even if the task failed.`) + parentContext,
+This summary is how your results get reported back to the user. If you produce no text summary, the user sees "No readable output." ALWAYS write a final summary, even if the task failed.`) + parentContext + agentBriefing,
         tools: spawnedAgentTools,
         security,
         toolPolicy,

@@ -231,10 +231,20 @@ function createWindow(): void {
         const menus = [
           { label:'File', items:['New Session','Restart Server','—','Quit'] },
           { label:'Edit', items:['Undo','Redo','—','Cut','Copy','Paste'] },
-          { label:'View', items:['Reload','Toggle DevTools','—','Zoom In','Zoom Out','Reset Zoom'] },
+          { label:'View', items:['Reload','Toggle Agents','Toggle DevTools','—','Zoom In','Zoom Out','Reset Zoom'] },
           { label:'Window', items:['Minimize','Close to Tray'] },
           { label:'Help', items:['About'] }
         ];
+
+        let openMenu = null;
+        function closeAllMenus() {
+          document.querySelectorAll('.dtb-dd').forEach(d => d.style.display='none');
+          document.querySelectorAll('.dtb-btn').forEach(b => { b.style.color='#888'; b.style.background=''; });
+          openMenu = null;
+        }
+        document.addEventListener('click', (e) => {
+          if (!e.target.closest('#desktop-titlebar')) closeAllMenus();
+        });
 
         const favicon = document.createElement('img');
         favicon.src = '/favicon.png';
@@ -243,13 +253,14 @@ function createWindow(): void {
 
         menus.forEach(menu => {
           const btn = document.createElement('div');
+          btn.className = 'dtb-btn';
           btn.textContent = menu.label;
           btn.style.cssText = 'padding:4px 8px;color:#888;cursor:pointer;-webkit-app-region:no-drag;position:relative;';
-          btn.onmouseenter = () => { btn.style.color='#00ff41'; btn.style.background='#1a1a2f'; };
-          btn.onmouseleave = () => { btn.style.color='#888'; btn.style.background=''; if(dd)dd.style.display='none'; };
 
           const dd = document.createElement('div');
-          dd.style.cssText = 'display:none;position:absolute;top:100%;left:0;background:#0a0a0f;border:1px solid #1a1a2f;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,0.5);z-index:100000;';
+          dd.className = 'dtb-dd';
+          dd.style.cssText = 'display:none;position:absolute;top:100%;left:0;background:#0a0a0f;border:1px solid #1a1a2f;min-width:180px;box-shadow:0 4px 12px rgba(0,0,0,0.5);z-index:100000;padding:4px 0;';
+
           menu.items.forEach(item => {
             if (item === '—') {
               const sep = document.createElement('div');
@@ -261,15 +272,17 @@ function createWindow(): void {
               it.style.cssText = 'padding:6px 12px;color:#ccc;cursor:pointer;';
               it.onmouseenter = () => it.style.background='#1a1a2f';
               it.onmouseleave = () => it.style.background='';
-              it.onclick = () => {
-                dd.style.display='none';
+              it.onclick = (e) => {
+                e.stopPropagation();
+                closeAllMenus();
                 if(window.desktop) {
                   if(item==='Quit') window.desktop.quit();
                   if(item==='Restart Server') window.desktop.restartServer();
                   if(item==='New Session') window.startNewSession?.();
-                  if(item==='Toggle DevTools') require?.('electron')?.remote?.getCurrentWindow?.()?.webContents?.toggleDevTools?.();
+                  if(item==='Toggle DevTools') window.desktop.toggleDevTools();
                 }
                 if(item==='Reload') location.reload();
+                if(item==='Toggle Agents') { const b=document.getElementById('agents-toggle'); if(b) b.click(); }
                 if(item==='Zoom In') document.body.style.zoom=(parseFloat(document.body.style.zoom||'1')+0.1)+'';
                 if(item==='Zoom Out') document.body.style.zoom=(parseFloat(document.body.style.zoom||'1')-0.1)+'';
                 if(item==='Reset Zoom') document.body.style.zoom='1';
@@ -279,13 +292,34 @@ function createWindow(): void {
               dd.appendChild(it);
             }
           });
+
           btn.appendChild(dd);
-          btn.onclick = () => { dd.style.display = dd.style.display==='none'?'block':'none'; };
+
+          // Click to toggle, hover to switch between open menus
+          btn.onclick = (e) => {
+            e.stopPropagation();
+            if (openMenu === dd) { closeAllMenus(); return; }
+            closeAllMenus();
+            dd.style.display='block';
+            btn.style.color='#00ff41';
+            btn.style.background='#1a1a2f';
+            openMenu = dd;
+          };
+          btn.onmouseenter = () => {
+            if (openMenu && openMenu !== dd) {
+              closeAllMenus();
+              dd.style.display='block';
+              btn.style.color='#00ff41';
+              btn.style.background='#1a1a2f';
+              openMenu = dd;
+            }
+          };
+
           bar.appendChild(btn);
         });
 
         document.body.prepend(bar);
-        document.body.style.paddingTop = '32px';
+        document.body.classList.add('desktop-frame');
       })();
     `);
   });
@@ -419,6 +453,9 @@ function setupIPC(): void {
   });
 
   ipcMain.handle("toggle-window", () => toggleWindow());
+  ipcMain.handle("toggle-devtools", () => {
+    if (mainWindow) mainWindow.webContents.toggleDevTools();
+  });
   ipcMain.handle("quit-app", () => {
     isQuitting = true;
     app.quit();

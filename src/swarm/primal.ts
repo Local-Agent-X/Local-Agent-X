@@ -46,6 +46,8 @@ interface SpawnConfig {
   systemPrompt?: string;
   tools?: string[];
   parentSessionId?: string;
+  parentAgentId?: string;
+  templateId?: string;
 }
 
 type AgentUpdateCallback = (agentId: string, update: {
@@ -131,7 +133,10 @@ export class PrimalOrchestrator {
       name: config.name,
       role: config.role,
       task: config.task,
+      systemPrompt: config.systemPrompt || "",
       parentSessionId: config.parentSessionId,
+      parentAgentId: config.parentAgentId || null,
+      templateId: config.templateId || null,
     });
 
     this.runAgentAsync(agentId);

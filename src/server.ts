@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { runAgent } from "./agent.js";
 import { allTools, createHttpRequestTool } from "./tools.js";
+import { dashboardTools } from "./dashboard-tools.js";
 import { SecurityLayer } from "./security.js";
 import { loadToolPolicy } from "./tool-policy.js";
 import { getApiKey } from "./auth.js";
@@ -66,6 +67,13 @@ import { createSwarmTools } from "./swarm/index.js";
 import { createPrimalTools } from "./swarm/primal.js";
 import { EventBus } from "./event-bus.js";
 import { startHotReload, stopHotReload, isHotReloadActive } from "./hot-reload.js";
+import { DashboardRegistry } from "./dashboard-runtime.js";
+import { renderDashboard } from "./dashboard-renderer.js";
+import { AgentRunStore, AgentTemplateStore, type AgentRun } from "./agent-store.js";
+import { resolveSession, linkIdentities, unlinkIdentity, getIdentityGroups, buildChannelContext, type ChannelType } from "./session-router.js";
+import { enqueue, getLaneStatus, getActiveTasks, setLaneConcurrency, drainAll, type LaneName } from "./execution-lanes.js";
+import { withFallback, buildFallbackChain, recordSuccess, recordFailure, getProviderHealthStatus, resetProviderHealth, isProviderAvailable, type ProviderId } from "./model-fallback.js";
+import { formatForChannel, getChannelConfig } from "./channel-formatter.js";
 import { generateFullSpec } from "./api-docs.js";
 import { ConfigWatcher } from "./config-hot-reload.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
@@ -98,6 +106,29 @@ function parseMultipart(body: Buffer, boundary: string): MultipartPart[] {
     pos = nextStart;
   }
   return parts;
+}
+
+/** Extract all useful output from an agent's message history — assistant text + tool results */
+function extractAgentOutput(messages: Array<{ role: string; content?: unknown }>): string {
+  const parts: string[] = [];
+  for (const msg of messages) {
+    if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.trim()) {
+      parts.push(msg.content.trim());
+    }
+    // Tool results contain the actual work output
+    if (msg.role === "tool" && typeof msg.content === "string" && msg.content.trim()) {
+      const trimmed = msg.content.trim();
+      // Skip blocked/error messages, keep actual results
+      if (!trimmed.startsWith("BLOCKED") && trimmed.length > 10) {
+        // Truncate very long tool results but keep meaningful chunks
+        parts.push(trimmed.length > 500 ? trimmed.slice(0, 500) + "..." : trimmed);
+      }
+    }
+  }
+  // Cap total output at 5000 chars
+  let output = parts.join("\n\n");
+  if (output.length > 5000) output = output.slice(0, 5000) + "\n\n[truncated]";
+  return output;
 }
 
 // Session ID validation: alphanumeric + dash/underscore, max 64 chars
@@ -361,7 +392,13 @@ export function startServer(config: SAXConfig) {
       apiKey = await getApiKey(config.openaiApiKey);
     }
 
-    const session = getOrCreateSession(sessionId);
+    // Cross-channel session routing: resolve to canonical session if identity is linked
+    const channelType = platform.toLowerCase() as ChannelType;
+    const route = resolveSession(channelType, from, sessionId);
+    const resolvedSessionId = route.sessionKey;
+    const channelContext = buildChannelContext(route);
+
+    const session = getOrCreateSession(resolvedSessionId);
     if (session.messages.length === 0) {
       session.title = `${platform}: ${name}`;
     }
@@ -371,13 +408,16 @@ export function startServer(config: SAXConfig) {
       autoSearchContext(memoryIndex, text),
     ]);
 
+    const channelConfig = getChannelConfig(channelType);
     const integrationsContext = integrations.getAgentContext();
     const enrichedPrompt = config.systemPrompt + contextBlock + relevantMemories + integrationsContext +
-      `\n\n[${platform} bridge] This message is from ${name} (${from}) via ${platform}. ` +
-      `Keep responses concise — ${platform} messages should be shorter than web UI responses. ` +
-      `Use plain text (no HTML). Markdown is OK but keep it minimal.`;
+      `\n\n[${platform} bridge] ${channelContext}. Message from ${name} (${from}). ` +
+      `Keep responses concise — max ~${channelConfig.maxTextLength === Infinity ? "unlimited" : channelConfig.maxTextLength} chars. ` +
+      (channelConfig.markdownFlavor === "plain" ? "Use plain text only. " :
+       channelConfig.markdownFlavor === "whatsapp" ? "Use minimal formatting (*bold*, _italic_ only). " :
+       "Markdown is OK but keep it minimal. ");
 
-    const result = await runAgent(text, session.messages, {
+    const result = await enqueue("main", () => runAgent(text, session.messages, {
       apiKey,
       model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
       provider,
@@ -385,10 +425,10 @@ export function startServer(config: SAXConfig) {
       tools: primalOnlyTools,
       security,
       toolPolicy,
-      sessionId,
+      sessionId: resolvedSessionId,
       maxIterations: config.maxIterations,
       temperature: config.temperature,
-    });
+    }), { label: `bridge:${platform}:${from}` });
 
     session.messages = result.messages.filter(
       (m) => m.role !== "system" && (m.content || (m as any).tool_calls)
@@ -396,10 +436,14 @@ export function startServer(config: SAXConfig) {
     session.updatedAt = Date.now();
     saveSession(session);
 
-    return result.messages
+    // Format response for the specific channel
+    const rawResponse = result.messages
       .filter((m) => m.role === "assistant" && typeof m.content === "string")
       .map((m) => m.content as string)
       .pop() || "Done.";
+
+    const chunks = formatForChannel(rawResponse, channelType);
+    return chunks.join("\n\n");
   }
 
   // Initialize WhatsApp bridge
@@ -449,7 +493,7 @@ export function startServer(config: SAXConfig) {
   const swarmTools = createSwarmTools();
   const primalTools = createPrimalTools();
 
-  const allAgentTools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools];
+  const allAgentTools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools, ...dashboardTools];
 
   // Primal only gets agent control tools — forces delegation, no direct work
   const PRIMAL_ALLOWED = new Set([
@@ -1505,7 +1549,7 @@ export function startServer(config: SAXConfig) {
       const hasXaiKey = secretsStore.has("XAI_API_KEY");
       const hasOpenAIKey = !!config.openaiApiKey || secretsStore.has("OPENAI_API_KEY");
       let hasOllama = false;
-      try { const r = await fetch("http://127.0.0.1:11434/api/tags"); hasOllama = r.ok; } catch {}
+      try { const r = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(2000) }); hasOllama = r.ok; } catch {}
 
       // Read current provider/model from settings
       let currentProvider = "xai", currentModel = "grok-3-mini";
@@ -1525,7 +1569,7 @@ export function startServer(config: SAXConfig) {
       if (hasOpenAIKey) providers.push({ id: "openai", name: "OpenAI API", models: ["gpt-4o", "gpt-4o-mini", "o3-pro"], active: currentProvider === "openai" });
       if (hasOllama) {
         let ollamaModels: string[] = [];
-        try { const r = await fetch("http://127.0.0.1:11434/api/tags"); const d = await r.json() as any; ollamaModels = (d.models || []).map((m: any) => m.name); } catch {}
+        try { const r = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(3000) }); const d = await r.json() as any; ollamaModels = (d.models || []).map((m: any) => m.name); } catch {}
         providers.push({ id: "local", name: "Ollama", models: ollamaModels, active: currentProvider === "local" });
       }
       if (hasCustomKey) providers.push({ id: "custom", name: "Custom Provider", models: ["custom-model"], active: currentProvider === "custom" });
@@ -1564,7 +1608,7 @@ export function startServer(config: SAXConfig) {
 
     if (method === "GET" && url.pathname === "/api/models/local") {
       try {
-        const ollamaRes = await fetch("http://127.0.0.1:11434/api/tags");
+        const ollamaRes = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(3000) });
         if (!ollamaRes.ok) { json(502, { error: "Ollama returned " + ollamaRes.status }); return; }
         const data = await ollamaRes.json() as { models?: Array<{ name: string; size: number; modified_at: string }> };
         const models = (data.models || []).map((m: { name: string; size: number; modified_at: string }) => ({
@@ -1690,6 +1734,274 @@ export function startServer(config: SAXConfig) {
       const filePath = join(publicDir, `${pageName}.html`);
       try { const { unlinkSync } = await import("node:fs"); unlinkSync(filePath); } catch {}
       json(200, { ok: true, deleted: pageName });
+      return;
+    }
+
+    // ── Execution Lanes API ──
+
+    if (method === "GET" && url.pathname === "/api/lanes") {
+      json(200, getLaneStatus());
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/lanes/concurrency") {
+      const body = await safeParseBody(req);
+      if (!body || !body.lane || !body.maxConcurrent) { json(400, { error: "lane and maxConcurrent required" }); return; }
+      setLaneConcurrency(body.lane as LaneName, parseInt(String(body.maxConcurrent), 10));
+      json(200, { ok: true });
+      return;
+    }
+
+    // ── Identity Links API (cross-channel sessions) ──
+
+    if (method === "GET" && url.pathname === "/api/identity-links") {
+      json(200, getIdentityGroups());
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/identity-links") {
+      const body = await safeParseBody(req);
+      if (!body || !body.identity1 || !body.identity2) { json(400, { error: "identity1 and identity2 required" }); return; }
+      const group = linkIdentities(body.identity1, body.identity2, body.displayName);
+      json(200, group);
+      return;
+    }
+
+    if (method === "DELETE" && url.pathname === "/api/identity-links") {
+      const body = await safeParseBody(req);
+      if (!body || !body.channel || !body.id) { json(400, { error: "channel and id required" }); return; }
+      json(unlinkIdentity(body.channel, body.id) ? 200 : 404, { ok: true });
+      return;
+    }
+
+    // ── Provider Health API (model fallbacks) ──
+
+    if (method === "GET" && url.pathname === "/api/providers/health") {
+      json(200, getProviderHealthStatus());
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/providers/health/reset") {
+      const body = await safeParseBody(req);
+      if (!body || !body.provider) { json(400, { error: "provider required" }); return; }
+      resetProviderHealth(body.provider as ProviderId);
+      json(200, { ok: true });
+      return;
+    }
+
+    // ── Agents API ──
+
+    // Agent run history
+    if (method === "GET" && url.pathname === "/api/agents/history") {
+      const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+      const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+      const sessionId = url.searchParams.get("sessionId") || undefined;
+      const status = url.searchParams.get("status") || undefined;
+      json(200, agentRunStore.list({ limit, offset, sessionId, status }));
+      return;
+    }
+
+    if (method === "GET" && url.pathname.match(/^\/api\/agents\/history\/[^/]+$/) && !url.pathname.includes("tree")) {
+      const id = url.pathname.split("/").pop()!;
+      const run = agentRunStore.get(id);
+      if (!run) { json(404, { error: "Run not found" }); return; }
+      json(200, run);
+      return;
+    }
+
+    if (method === "DELETE" && url.pathname.match(/^\/api\/agents\/history\/[^/]+$/)) {
+      const id = url.pathname.split("/").pop()!;
+      json(agentRunStore.delete(id) ? 200 : 404, { ok: true });
+      return;
+    }
+
+    if (method === "DELETE" && url.pathname === "/api/agents/history") {
+      const count = agentRunStore.clearAll();
+      json(200, { ok: true, deleted: count });
+      return;
+    }
+
+    // Active agents
+    if (method === "GET" && url.pathname === "/api/agents/active") {
+      try {
+        const primal = (await import("./swarm/primal.js")).PrimalOrchestrator.getInstance();
+        const statuses = primal.getAgentStatus();
+        json(200, statuses);
+      } catch { json(200, []); }
+      return;
+    }
+
+    // Agent hierarchy tree for a session
+    if (method === "GET" && url.pathname.match(/^\/api\/agents\/tree\/[^/]+$/)) {
+      const sessionId = url.pathname.split("/").pop()!;
+      const runs = agentRunStore.getTree(sessionId);
+      // Build tree structure
+      const rootRuns = runs.filter(r => !r.parentAgentId);
+      const childMap = new Map<string, typeof runs>();
+      for (const r of runs) {
+        if (r.parentAgentId) {
+          const arr = childMap.get(r.parentAgentId) || [];
+          arr.push(r);
+          childMap.set(r.parentAgentId, arr);
+        }
+      }
+      function buildNode(run: typeof runs[0]): any {
+        return { ...run, children: (childMap.get(run.id) || []).map(buildNode) };
+      }
+      json(200, rootRuns.map(buildNode));
+      return;
+    }
+
+    // Agent templates CRUD
+    if (method === "GET" && url.pathname === "/api/agents/templates") {
+      json(200, agentTemplateStore.list());
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/agents/templates") {
+      const body = await safeParseBody(req);
+      if (!body || !body.name || !body.role) { json(400, { error: "name and role required" }); return; }
+      const tpl = agentTemplateStore.create({
+        name: body.name, role: body.role,
+        systemPrompt: body.systemPrompt || "",
+        allowedTools: body.allowedTools || [],
+        description: body.description || "",
+        icon: body.icon,
+      });
+      json(200, tpl);
+      return;
+    }
+
+    if (method === "PUT" && url.pathname.match(/^\/api\/agents\/templates\/[^/]+$/)) {
+      const id = url.pathname.split("/").pop()!;
+      const body = await safeParseBody(req);
+      if (!body) { json(400, { error: "Invalid JSON" }); return; }
+      const updated = agentTemplateStore.update(id, body);
+      if (!updated) { json(404, { error: "Template not found" }); return; }
+      json(200, updated);
+      return;
+    }
+
+    if (method === "DELETE" && url.pathname.match(/^\/api\/agents\/templates\/[^/]+$/)) {
+      const id = url.pathname.split("/").pop()!;
+      json(agentTemplateStore.delete(id) ? 200 : 404, { ok: true });
+      return;
+    }
+
+    // Spawn from template
+    if (method === "POST" && url.pathname.match(/^\/api\/agents\/templates\/[^/]+\/spawn$/)) {
+      const id = url.pathname.split("/")[4];
+      const tpl = agentTemplateStore.get(id);
+      if (!tpl) { json(404, { error: "Template not found" }); return; }
+      const body = await safeParseBody(req);
+      const task = body?.task || "Execute your role";
+      try {
+        const primal = (await import("./swarm/primal.js")).PrimalOrchestrator.getInstance();
+        const agentId = primal.spawnAgent({
+          name: tpl.name, role: tpl.role, task,
+          systemPrompt: tpl.systemPrompt,
+          tools: tpl.allowedTools.length > 0 ? tpl.allowedTools : undefined,
+          templateId: tpl.id,
+        });
+        json(200, { ok: true, agentId });
+      } catch (e) {
+        json(500, { error: (e as Error).message });
+      }
+      return;
+    }
+
+    // ── Dashboard API ──
+
+    const dashReg = DashboardRegistry.getInstance();
+
+    if (method === "GET" && url.pathname === "/api/dashboards") {
+      const list = dashReg.list();
+      const port = config.port || 4800;
+      json(200, list.map(d => ({
+        id: d.id, name: d.name, description: d.description,
+        components: d.components.length, layout: d.layout.type,
+        url: `http://127.0.0.1:${port}/dashboards/${d.id}`,
+        updatedAt: d.updatedAt,
+      })));
+      return;
+    }
+
+    // Serve rendered dashboard HTML
+    const dashMatch = url.pathname.match(/^\/dashboards\/([a-zA-Z0-9_-]+)\/?$/);
+    if (method === "GET" && dashMatch) {
+      const def = dashReg.get(dashMatch[1]);
+      if (!def) { json(404, { error: "Dashboard not found" }); return; }
+      const html = renderDashboard(def, config.port || 4800);
+      res.writeHead(200, { "Content-Type": "text/html", ...(req ? corsHeaders(req) : {}) });
+      res.end(html);
+      return;
+    }
+
+    if (method === "GET" && url.pathname.startsWith("/api/dashboards/") && url.pathname.split("/").length === 4) {
+      const id = url.pathname.split("/")[3];
+      const def = dashReg.get(id);
+      if (!def) { json(404, { error: "Dashboard not found" }); return; }
+      json(200, def);
+      return;
+    }
+
+    if (method === "DELETE" && url.pathname.startsWith("/api/dashboards/") && url.pathname.split("/").length === 4) {
+      const id = url.pathname.split("/")[3];
+      const deleted = dashReg.delete(id);
+      json(deleted ? 200 : 404, deleted ? { ok: true } : { error: "Not found" });
+      return;
+    }
+
+    // Dashboard state
+    if (method === "GET" && url.pathname.match(/^\/api\/dashboards\/[^/]+\/state$/)) {
+      const id = url.pathname.split("/")[3];
+      const state = dashReg.getState(id);
+      if (!state) { json(404, { error: "Dashboard not found" }); return; }
+      json(200, state);
+      return;
+    }
+
+    if (method === "POST" && url.pathname.match(/^\/api\/dashboards\/[^/]+\/state$/)) {
+      const id = url.pathname.split("/")[3];
+      const body = await safeParseBody(req);
+      if (!body) { json(400, { error: "Invalid JSON" }); return; }
+      const updated = dashReg.updateComponentValues(id, body.values || body);
+      if (!updated) { json(404, { error: "Dashboard not found" }); return; }
+      broadcastAll({ type: "dashboard:state", dashboardId: id });
+      json(200, { ok: true });
+      return;
+    }
+
+    // Dashboard events (from frontend user interactions)
+    if (method === "POST" && url.pathname.match(/^\/api\/dashboards\/[^/]+\/events$/)) {
+      const id = url.pathname.split("/")[3];
+      const body = await safeParseBody(req);
+      if (!body) { json(400, { error: "Invalid JSON" }); return; }
+      const event = dashReg.pushEvent(id, {
+        dashboardId: id,
+        type: body.type || "unknown",
+        sourceComponent: body.sourceComponent,
+        data: body.data,
+      });
+      broadcastAll({ type: "dashboard:event", dashboardId: id, event });
+      json(200, event);
+      return;
+    }
+
+    if (method === "GET" && url.pathname.match(/^\/api\/dashboards\/[^/]+\/events$/)) {
+      const id = url.pathname.split("/")[3];
+      const since = url.searchParams.get("since") ? parseInt(url.searchParams.get("since")!, 10) : undefined;
+      json(200, dashReg.getEvents(id, since));
+      return;
+    }
+
+    // Consume actions (frontend reports it processed them)
+    if (method === "POST" && url.pathname.match(/^\/api\/dashboards\/[^/]+\/actions\/consume$/)) {
+      const id = url.pathname.split("/")[3];
+      const body = await safeParseBody(req);
+      if (!body || !Array.isArray(body.actionIds)) { json(400, { error: "actionIds array required" }); return; }
+      dashReg.consumeActions(id, body.actionIds);
+      json(200, { ok: true });
       return;
     }
 
@@ -2325,7 +2637,8 @@ export function startServer(config: SAXConfig) {
         // Set parent session ID so spawned agents get parent context
         try { const { PrimalOrchestrator: PO } = await import("./swarm/primal.js"); PO.getInstance().currentSessionId = sessionId; } catch {}
 
-        const result = await runAgent(message, sanitizeHistory(historyToSend), {
+        // Execute through the main lane (serialized — one chat at a time)
+        const result = await enqueue("main", () => runAgent(message, sanitizeHistory(historyToSend), {
           apiKey,
           model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : provider === "gemini" ? "gemini-2.0-flash" : config.model),
           provider,
@@ -2359,7 +2672,7 @@ export function startServer(config: SAXConfig) {
             }
             onEvent(event);
           },
-        });
+        }), { label: `chat:${sessionId}`, timeout: 600_000 });
 
         activeOnEvent = undefined;
 
@@ -2702,6 +3015,14 @@ export function startServer(config: SAXConfig) {
         console.log(`[primal] Agent ${agentId} received parent context from session ${parentSessionId}`);
       }
     }
+    // Session declared outside try so catch can access partial results
+    const agentSession: Session = {
+      id: `agent-${agentId}`,
+      title: `Agent: ${role}`,
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
     try {
       // Resolve API key and provider from saved settings (same as chat handler)
       let agentProvider: "codex" | "anthropic" | "openai" | "xai" | "local" = "codex";
@@ -2715,13 +3036,6 @@ export function startServer(config: SAXConfig) {
         ? await getAnthKey()
         : await getKey(config.openaiApiKey);
 
-      const agentSession: Session = {
-        id: `agent-${agentId}`,
-        title: `Agent: ${role}`,
-        messages: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
       // Match model to provider (same logic as main chat)
       let savedModel = "";
       try {
@@ -2735,18 +3049,19 @@ export function startServer(config: SAXConfig) {
         !t.name.startsWith("agent_") && !t.name.startsWith("swarm_") && t.name !== "delegate"
       );
 
-      // Timeout: 2 minutes per agent
+      // Timeout: 5 minutes per agent (building apps needs time)
       const agentAbort = new AbortController();
       const agentTimeout = setTimeout(() => {
         agentAbort.abort();
-        console.warn(`[primal] Agent ${agentId} (${role}) timed out after 2 minutes`);
-      }, 120000);
+        console.warn(`[primal] Agent ${agentId} (${role}) timed out after 5 minutes`);
+      }, 300000);
 
-      const result = await runAgent(task, agentSession.messages, {
+      // Execute through the agent lane (parallel — multiple agents can run)
+      await enqueue("agent", () => runAgent(task, agentSession.messages, {
         apiKey: agentApiKey,
         model: agentModel,
         provider: agentProvider,
-        systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the following task thoroughly. Use the tools available to create files, run commands, and get the job done. Report your results when finished.`) + parentContext,
+        systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the following task thoroughly. Use the tools available to create files, run commands, and get the job done. When finished, write a clear summary of what you found or accomplished.`) + parentContext,
         tools: spawnedAgentTools,
         security,
         toolPolicy,
@@ -2767,27 +3082,74 @@ export function startServer(config: SAXConfig) {
             event.requiresApproval = false;
           }
         },
-      });
+      }), { label: `agent:${agentId}`, timeout: 300_000 });
       clearTimeout(agentTimeout);
-      const finalMessage = result.messages.filter((m: any) => m.role === "assistant").pop();
-      const content = typeof finalMessage?.content === "string" ? finalMessage.content : JSON.stringify(finalMessage?.content || "");
-      eventBus.emit("primal:agent-result", { agentId, result: content, success: true });
-      console.log(`[primal] Agent ${agentId} (${role}) completed`);
+      // Collect ALL useful output: assistant messages + tool results
+      const allOutput = extractAgentOutput(agentSession.messages);
+      eventBus.emit("primal:agent-result", { agentId, result: allOutput, success: true });
+      console.log(`[primal] Agent ${agentId} (${role}) completed (${agentSession.messages.length} messages)`);
     } catch (e) {
-      eventBus.emit("primal:agent-result", { agentId, result: safeErrorMessage(e), success: false });
-      console.error(`[primal] Agent ${agentId} (${role}) failed:`, (e as Error).message);
+      // On timeout/error, still capture partial work
+      const partialOutput = extractAgentOutput(agentSession.messages);
+      const errorMsg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e);
+      const output = partialOutput
+        ? `[${errorMsg}]\n\nPartial results before failure:\n\n${partialOutput}`
+        : errorMsg;
+      eventBus.emit("primal:agent-result", { agentId, result: output, success: false });
+      console.error(`[primal] Agent ${agentId} (${role}) failed: ${errorMsg} (${agentSession.messages.length} messages captured)`);
     }
   });
 
-  // Forward agent events to WebSocket clients (Mission Control UI)
+  // Agent persistence stores
+  const agentRunStore = AgentRunStore.getInstance();
+  const agentTemplateStore = AgentTemplateStore.getInstance();
+
+  // Track spawned agent metadata for persistence (before they complete)
+  const pendingAgentMeta = new Map<string, { name: string; role: string; task: string; systemPrompt: string; parentAgentId: string | null; sessionId: string; startedAt: number; toolsUsed: string[] }>();
+
+  // Forward agent events to WebSocket clients + persist
   eventBus.on("primal:agent-spawn", (data: any) => {
+    console.log(`[primal] Broadcasting agent-spawn: ${data.agentId} (${data.role})`);
     broadcastAll({ type: "agent-spawn", ...data });
+    // Track metadata for when the agent completes
+    pendingAgentMeta.set(data.agentId, {
+      name: data.name, role: data.role, task: data.task,
+      systemPrompt: data.systemPrompt || "",
+      parentAgentId: data.parentAgentId || null,
+      sessionId: data.parentSessionId || "",
+      startedAt: Date.now(), toolsUsed: [],
+    });
   });
   eventBus.on("primal:agent-output", (data: any) => {
     broadcastAll({ type: "agent-output", ...data });
+    // Track tool usage
+    const meta = pendingAgentMeta.get(data.agentId);
+    if (meta && typeof data.output === "string" && data.output.startsWith("[tool]")) {
+      const toolName = data.output.replace("[tool] ", "").replace("...", "").trim();
+      if (toolName && !meta.toolsUsed.includes(toolName)) meta.toolsUsed.push(toolName);
+    }
   });
   eventBus.on("primal:agent-result", (data: any) => {
     broadcastAll({ type: "agent-complete", ...data });
+    // Persist completed run
+    const meta = pendingAgentMeta.get(data.agentId);
+    if (meta) {
+      const run: AgentRun = {
+        id: data.agentId,
+        parentAgentId: meta.parentAgentId,
+        sessionId: meta.sessionId,
+        name: meta.name, role: meta.role, task: meta.task,
+        systemPrompt: meta.systemPrompt,
+        status: data.success === false ? "error" : "done",
+        output: [], result: data.result || "",
+        toolsUsed: meta.toolsUsed, tokensUsed: data.tokens || 0,
+        startedAt: meta.startedAt, completedAt: Date.now(),
+        error: data.success === false ? data.result : undefined,
+      };
+      agentRunStore.save(run);
+      pendingAgentMeta.delete(data.agentId);
+      console.log(`[primal] Saved agent run: ${data.agentId}`);
+    }
   });
   eventBus.on("primal:agent-redirect", (data: any) => {
     broadcastAll({ type: "agent-update", ...data, status: "redirected" });

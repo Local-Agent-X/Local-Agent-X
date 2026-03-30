@@ -169,6 +169,9 @@ export class TelegramBridge {
   }
 
   private async pollLoop(token: string): Promise<void> {
+    let consecutiveErrors = 0;
+    const MAX_ERRORS = 10;
+
     while (this.polling) {
       try {
         const result = await this.apiCall(token, "getUpdates", {
@@ -176,25 +179,44 @@ export class TelegramBridge {
         }, true);
 
         if (!result.ok) {
-          console.error("[telegram] Poll error:", result.description);
+          consecutiveErrors++;
           if (result.error_code === 401) {
             this.state = "error";
             this.lastError = "Bot token is invalid or revoked.";
             this.polling = false;
             return;
           }
-          await new Promise(r => setTimeout(r, 5000));
+          if (consecutiveErrors >= MAX_ERRORS) {
+            console.error(`[telegram] ${consecutiveErrors} consecutive errors — stopping. Reconnect from Settings.`);
+            this.state = "error";
+            this.lastError = result.description || "Too many poll errors";
+            this.polling = false;
+            return;
+          }
+          const delay = Math.min(5000 * Math.pow(2, consecutiveErrors - 1), 60000);
+          console.error(`[telegram] Poll error (${consecutiveErrors}/${MAX_ERRORS}): ${result.description}`);
+          await new Promise(r => setTimeout(r, delay));
           continue;
         }
 
+        consecutiveErrors = 0;
         for (const update of result.result || []) {
           this.offset = update.update_id + 1;
           this.handleUpdate(update, token);
         }
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
-        console.error("[telegram] Poll error:", (e as Error).message);
-        await new Promise(r => setTimeout(r, 5000));
+        consecutiveErrors++;
+        if (consecutiveErrors >= MAX_ERRORS) {
+          console.error(`[telegram] ${consecutiveErrors} consecutive errors — stopping. Reconnect from Settings.`);
+          this.state = "error";
+          this.lastError = (e as Error).message;
+          this.polling = false;
+          return;
+        }
+        const delay = Math.min(5000 * Math.pow(2, consecutiveErrors - 1), 60000);
+        console.error(`[telegram] Poll error (${consecutiveErrors}/${MAX_ERRORS}): ${(e as Error).message}`);
+        await new Promise(r => setTimeout(r, delay));
       }
     }
   }

@@ -630,9 +630,23 @@ async function toggleMic() {
 async function startVoiceMode() {
   stopSpeaking();
   try {
-    vadStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 }
-    });
+    // Try to use a saved mic device, or find a real hardware mic (skip virtual devices like Steam)
+    let audioConstraints = { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 };
+    const savedMic = localStorage.getItem('sax_mic_device');
+    if (savedMic) {
+      audioConstraints.deviceId = { exact: savedMic };
+    } else {
+      // Auto-detect: skip virtual audio devices
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter(d => d.kind === 'audioinput');
+        const realMic = mics.find(d => !d.label.toLowerCase().includes('steam') && !d.label.toLowerCase().includes('virtual') && !d.label.toLowerCase().includes('cable'));
+        if (realMic) audioConstraints.deviceId = { exact: realMic.deviceId };
+        console.log('[voice] Available mics:', mics.map(d => d.label));
+        console.log('[voice] Selected:', realMic?.label || 'default');
+      } catch {}
+    }
+    vadStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
 
     // Debug: check track state
     const tracks = vadStream.getAudioTracks();

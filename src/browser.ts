@@ -636,34 +636,33 @@ export class BrowserManager {
   }
 }
 
-// Per-session browser instances — keyed by session ID, no global mutable state
-const instances = new Map<string, BrowserManager>();
+// Shared browser instance — Chrome can only open one user-data-dir at a time,
+// so all sessions/agents share a single browser with separate tabs.
+let sharedInstance: BrowserManager | null = null;
 
 /**
- * Get browser manager for a specific session. Thread-safe — no global state.
- * Each caller passes the session ID explicitly to avoid race conditions.
+ * Get browser manager. All sessions share a single Chrome instance to avoid
+ * conflicts from multiple processes trying to lock the same user-data-dir.
+ * Each agent/session uses separate tabs within the shared browser.
  */
-export function getBrowserManager(sessionId: string = "default"): BrowserManager {
-  let instance = instances.get(sessionId);
-  if (!instance) {
-    instance = new BrowserManager();
-    instances.set(sessionId, instance);
+export function getBrowserManager(_sessionId: string = "default"): BrowserManager {
+  if (!sharedInstance) {
+    sharedInstance = new BrowserManager();
   }
-  return instance;
+  return sharedInstance;
 }
 
-export async function closeBrowser(sessionId: string = "default"): Promise<void> {
-  const instance = instances.get(sessionId);
-  if (instance) {
-    await instance.close();
-    instances.delete(sessionId);
+export async function closeBrowser(_sessionId: string = "default"): Promise<void> {
+  if (sharedInstance) {
+    await sharedInstance.close();
+    sharedInstance = null;
   }
 }
 
 export async function closeAllBrowsers(): Promise<void> {
-  for (const [id, instance] of instances) {
-    await instance.close();
-    instances.delete(id);
+  if (sharedInstance) {
+    await sharedInstance.close();
+    sharedInstance = null;
   }
 }
 

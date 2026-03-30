@@ -10,7 +10,23 @@
  */
 
 import type { ToolDefinition, ToolResult } from "./types.js";
-import { IssueStore, AgentTemplateStore, type IssueStatus, type IssuePriority } from "./agent-store.js";
+import { IssueStore, AgentTemplateStore, ProjectStore, type IssueStatus, type IssuePriority } from "./agent-store.js";
+
+/** Check if an agent can access an issue (same project or no project scoping) */
+function canAccessIssue(agentId: string, issue: { projectId?: string }): boolean {
+  if (!issue.projectId) return true; // Unscoped issues are accessible to all
+  const projectStore = ProjectStore.getInstance();
+  const agentProject = projectStore.getAgentProject(agentId);
+  if (!agentProject) return true; // Unscoped agent can access everything
+  return agentProject.id === issue.projectId;
+}
+
+/** Get the project ID for an agent (if scoped) */
+function getAgentProjectId(agentId: string): string | undefined {
+  const projectStore = ProjectStore.getInstance();
+  const project = projectStore.getAgentProject(agentId);
+  return project?.id;
+}
 
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
@@ -37,20 +53,31 @@ const issueCreate: ToolDefinition = {
   },
   async execute(args) {
     const store = IssueStore.getInstance();
+    // Auto-scope to the assigning agent's project if not specified
+    const assignee = String(args.assignee || "");
+    const projectId = args.project ? String(args.project) : (assignee ? getAgentProjectId(assignee) : undefined);
+    // Security: if assigning to another agent, verify same project
+    if (assignee && projectId) {
+      const targetProject = getAgentProjectId(assignee);
+      if (targetProject && targetProject !== projectId) {
+        return err(`Cannot assign to ${assignee} — they belong to a different project. Cross-project assignment requires user approval.`);
+      }
+    }
     const issue = store.create({
       title: String(args.title || ""),
       description: String(args.description || ""),
-      assignee: String(args.assignee || ""),
+      assignee,
       status: "open",
       priority: (args.priority as IssuePriority) || "medium",
       needsApproval: !!args.needsApproval,
       approvalType: args.approvalType ? String(args.approvalType) : undefined,
       project: args.project ? String(args.project) : undefined,
+      projectId,
       blockedBy: Array.isArray(args.blockedBy) ? args.blockedBy.map(String) : undefined,
       createdBy: "agent",
     });
     const approval = issue.needsApproval ? " (sent to user inbox for approval)" : "";
-    return ok(`Created ${issue.id}: "${issue.title}"${issue.assignee ? ` assigned to ${issue.assignee}` : ""}${approval}`);
+    return ok(`Created ${issue.id}: "${issue.title}"${issue.assignee ? ` assigned to ${issue.assignee}` : ""}${projectId ? ` [project: ${projectId}]` : ""}${approval}`);
   },
 };
 
@@ -67,11 +94,15 @@ const issueList: ToolDefinition = {
   },
   async execute(args) {
     const store = IssueStore.getInstance();
-    const issues = store.list({
+    let issues = store.list({
       assignee: args.assignee ? String(args.assignee) : undefined,
       status: args.status as IssueStatus | undefined,
       project: args.project ? String(args.project) : undefined,
     });
+    // Project scoping: if requesting agent is in a project, only show that project's issues
+    if (args.assignee) {
+      issues = issues.filter(i => canAccessIssue(String(args.assignee), i));
+    }
     if (issues.length === 0) return ok("No issues found matching the filter.");
     const lines = issues.map(i =>
       `${i.id} [${i.status}] ${i.priority.toUpperCase()} — ${i.title}${i.assignee ? ` (${i.assignee})` : ""}${i.needsApproval ? " ⏳ PENDING APPROVAL" : ""}`
@@ -313,6 +344,7 @@ const agentWakeup: ToolDefinition = {
   async execute(args) {
     const issueStore = IssueStore.getInstance();
     const templateStore = AgentTemplateStore.getInstance();
+    const projectStore = ProjectStore.getInstance();
     const issueId = String(args.issueId || "");
     const targetId = String(args.targetAgentId || "");
     const message = String(args.message || "");
@@ -322,6 +354,14 @@ const agentWakeup: ToolDefinition = {
 
     const target = templateStore.get(targetId);
     if (!target || !target.hired) return err(`Agent ${targetId} not found or not hired`);
+
+    // SECURITY: Cross-project communication blocked
+    if (issue.projectId) {
+      const targetProject = projectStore.getAgentProject(targetId);
+      if (targetProject && targetProject.id !== issue.projectId) {
+        return err(`BLOCKED: Agent ${target.name} belongs to project "${targetProject.name}" but this issue is in a different project. Cross-project communication is not allowed. Use issue_request_approval to ask the user to relay the message.`);
+      }
+    }
 
     // Leave the comment with @-mention
     issueStore.comment(issueId, "agent", `@${target.name}: ${message}`);

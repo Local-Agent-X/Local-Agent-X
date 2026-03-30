@@ -2,6 +2,7 @@
  * Mission Chaining — output of one mission feeds as input to the next.
  */
 
+import { randomBytes } from "node:crypto";
 import type { Mission } from "../missions.js";
 import type { ToolDefinition } from "../types.js";
 
@@ -30,7 +31,7 @@ export interface ChainExecutionState {
 const activeChains = new Map<string, ChainExecutionState>();
 
 function generateChainId(): string {
-  return `chain_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return `chain_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`;
 }
 
 export function createChain(chain: MissionChain): MissionChain {

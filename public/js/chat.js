@@ -41,6 +41,18 @@ function connectChatWs() {
       }
     }
 
+    // ── Desktop notifications for important events ──
+    if (msg.type === 'issue:created' && msg.issue?.needsApproval) {
+      if (window.desktop) window.desktop.showNotification('Approval Needed', msg.issue.title);
+      else if (Notification.permission === 'granted') new Notification('Approval Needed', { body: msg.issue.title });
+    }
+    if (msg.type === 'inbox:approved') {
+      if (window.desktop) window.desktop.showNotification('Approved', msg.issue?.title || 'Request approved');
+    }
+    if (msg.type === 'agent-complete' && msg.agentId) {
+      if (window.desktop) window.desktop.showNotification('Agent Finished', msg.result?.slice(0, 100) || 'Task complete');
+    }
+
     // ── Agent feed events (inline — no monkey-patching needed) ──
     if (msg.type === 'agent-spawn' && msg.agentId) {
       if (typeof addAgentFeed === 'function') addAgentFeed({ id: msg.agentId, name: msg.name, role: msg.role, status: msg.status || 'working', currentTask: msg.task });
@@ -280,8 +292,8 @@ async function sendMessage() {
               if (Date.now() - lastSaveTime > 2000) { savePartial(); lastSaveTime = Date.now(); }
               break;
             case 'tool_start':
-              toolEvents.push({ type: 'start', name: event.toolName, args: event.args });
-              if (viewing) { bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args)); }
+              toolEvents.push({ type: 'start', name: event.toolName, args: event.args, riskLevel: event.riskLevel });
+              if (viewing) { bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args, event.riskLevel, event.context)); }
               break;
             case 'tool_end': {
               toolEvents.push({ type: 'end', name: event.toolName, allowed: event.allowed, result: (event.result||'').slice(0, 500) });
@@ -356,7 +368,7 @@ async function sendMessage() {
             try {
               const event = JSON.parse(line.slice(6));
               if (event.type === 'stream') { content += event.delta; if (isViewingThis()) bodyEl.innerHTML = md(content); }
-              if (event.type === 'tool_start' && isViewingThis()) { bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args)); }
+              if (event.type === 'tool_start' && isViewingThis()) { bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args, event.riskLevel, event.context)); }
               if (event.type === 'tool_end' && isViewingThis()) { const cards = bodyEl.querySelectorAll('.tool-card'); const last = cards[cards.length-1]; if(last){last.querySelector('.indicator').className='indicator '+(event.allowed?'allowed':'blocked');} }
               if (event.type === 'done') { savePartial(); }
             } catch {}
@@ -560,9 +572,14 @@ function toolSummary(name, args) {
   }
 }
 
-function makeToolCard(name, args) {
+function makeToolCard(name, args, riskLevel, context) {
   const card = document.createElement('div'); card.className = 'tool-card';
-  card.innerHTML = `<div class="tool-header" onclick="this.parentElement.classList.toggle('open')"><span class="indicator"></span><span class="tool-name">${esc(name)}</span><span style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(toolSummary(name, args))}</span><span style="color:var(--muted);font-size:.65rem">&#9654;</span></div><div class="tool-detail">executing...</div>`;
+  const riskClass = riskLevel === 'high' ? 'risk-high' : riskLevel === 'medium' ? 'risk-medium' : '';
+  const riskBadge = riskLevel === 'high' ? '<span class="risk-badge high">HIGH RISK</span>'
+    : riskLevel === 'medium' ? '<span class="risk-badge medium">ELEVATED</span>' : '';
+  card.innerHTML = `<div class="tool-header ${riskClass}" onclick="this.parentElement.classList.toggle('open')"><span class="indicator"></span><span class="tool-name">${esc(name)}</span>${riskBadge}<span style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(toolSummary(name, args))}</span><span style="color:var(--muted);font-size:.65rem">&#9654;</span></div>`
+    + (context && riskLevel !== 'low' ? `<div class="tool-context">${esc(context)}</div>` : '')
+    + `<div class="tool-detail">executing...</div>`;
   return card;
 }
 
@@ -1141,6 +1158,7 @@ function updateStatusBar() {
     </span>
     <span class="status-item" aria-label="Token usage"><span class="status-icon">&#9998;</span> ${tokenInfo}</span>
     <span class="status-item" aria-label="Server uptime"><span class="status-icon">&#9200;</span> ${uptime}</span>
+    <span class="status-item" title="All data stays on your machine. API calls go to your selected provider." style="cursor:help"><span class="status-icon">&#128274;</span> Local</span>
   `;
 }
 
@@ -1383,7 +1401,39 @@ function _updateAgentCount() {
 // Agent feed events are now handled inline in chatWs.onmessage (no monkey-patching)
 
 // Init chat on page load
-function init_chat() { renderMessages(); initStatusBar(); _renderAgentFeedsList(); }
+function init_chat() { renderMessages(); initStatusBar(); _renderAgentFeedsList(); loadMissionControl(); }
+
+// ── Mission Control Dashboard (empty chat state) ──
+async function loadMissionControl() {
+  const mc = document.getElementById('mission-control');
+  if (!mc) return;
+  try {
+    const r = await fetch(`${API}/api/dashboard/stats`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const s = await r.json();
+    const el = id => document.getElementById(id);
+    if (el('mc-agents')) el('mc-agents').textContent = s.agents?.hired || 0;
+    if (el('mc-tasks')) el('mc-tasks').textContent = (s.issues?.inProgress || 0) + (s.issues?.open || 0);
+    if (el('mc-inbox')) el('mc-inbox').textContent = s.inbox || 0;
+    if (el('mc-projects')) el('mc-projects').textContent = s.projects || 0;
+    // Load hired agents as cards
+    const row = document.getElementById('mc-agents-row');
+    if (row) {
+      const ar = await fetch(`${API}/api/agents/hired`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+      const agents = await ar.json();
+      if (Array.isArray(agents) && agents.length > 0) {
+        row.innerHTML = agents.map(a => `
+          <div class="mc-agent-card" onclick="navigate('agents')">
+            <div class="mc-agent-name">${a.icon || ''} ${a.name || a.id}</div>
+            <div class="mc-agent-role">${a.role}</div>
+            <div class="mc-agent-status">${a.heartbeatEnabled ? 'Heartbeat: ' + (a.heartbeatSchedule || 'on') : 'Manual'}</div>
+          </div>
+        `).join('');
+      } else {
+        row.innerHTML = '<div style="color:var(--muted);font-size:.78rem;width:100%;text-align:center">No agents hired yet</div>';
+      }
+    }
+  } catch {}
+}
 
 // ═══════════════════════════════════════════════
 // Feature 1: Conversation Branching

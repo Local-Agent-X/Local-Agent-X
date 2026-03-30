@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 const logDir = join(homedir(), ".sax", "logs");
-if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
+if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true, mode: 0o700 });
 
 // Rotate if log exceeds 5MB
 const logPath = join(logDir, "server.log");

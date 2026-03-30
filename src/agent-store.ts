@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { randomBytes } from "node:crypto";
 
 const SAX_DIR = join(homedir(), ".sax");
 const RUNS_DIR = join(SAX_DIR, "agent-runs");
@@ -36,11 +37,17 @@ export class ProjectStore {
   private static instance: ProjectStore;
   private projects: Project[] = [];
 
-  private constructor() { this.load(); }
+  private constructor() { this.load(); this.seedStarterTemplates(); }
 
   static getInstance(): ProjectStore {
     if (!ProjectStore.instance) ProjectStore.instance = new ProjectStore();
     return ProjectStore.instance;
+  }
+
+  /** Seed starter project templates on first run */
+  private seedStarterTemplates(): void {
+    if (this.projects.length > 0) return; // Already has projects
+    // Don't auto-create — just make templates available via API
   }
 
   private load(): void {
@@ -56,7 +63,7 @@ export class ProjectStore {
   }
 
   create(project: Omit<Project, "id" | "createdAt" | "updatedAt">): Project {
-    const id = "proj-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+    const id = "proj-" + Date.now().toString(36) + "-" + randomBytes(3).toString("hex");
     const full: Project = { ...project, id, createdAt: Date.now(), updatedAt: Date.now() };
     this.projects.push(full);
     this.persist();
@@ -304,7 +311,7 @@ export class AgentTemplateStore {
   }
 
   create(template: Omit<AgentTemplate, "id" | "createdAt" | "updatedAt">): AgentTemplate {
-    const id = "tpl-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+    const id = "tpl-" + Date.now().toString(36) + "-" + randomBytes(3).toString("hex");
     const full: AgentTemplate = {
       ...template,
       id,
@@ -531,7 +538,7 @@ export class IssueStore {
     const issue = this.get(id);
     if (!issue) return null;
     const c: IssueComment = {
-      id: `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
+      id: `c-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
       author, content, createdAt: Date.now(),
     };
     issue.comments.push(c);

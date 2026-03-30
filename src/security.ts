@@ -23,6 +23,19 @@ const SENSITIVE_PATTERNS = [
   /[/\\]secrets?\./i,
   /[/\\]password/i,
   /[/\\]\.git[/\\]config/i,
+  /[/\\]\.docker[/\\]config\.json/i,         // Docker credentials
+  /[/\\]\.kube[/\\]config/i,                 // Kubernetes config
+  /\.pem$/i,                                  // PEM certificates/keys
+  /\.key$/i,                                  // Private key files
+  /\.p12$/i,                                  // PKCS12 files
+  /\.pfx$/i,                                  // PFX files
+  /\.jks$/i,                                  // Java keystore
+  /[/\\]\.config[/\\]gcloud/i,               // Google Cloud config
+  /[/\\]\.azure[/\\]/i,                       // Azure config
+  /[/\\]\.terraform[/\\]/i,                   // Terraform state
+  /terraform\.tfstate/i,                      // Terraform state file
+  /[/\\]\.vault-token/i,                      // HashiCorp Vault token
+  /[/\\]\.boto$/i,                            // AWS boto config
 ];
 
 // ── Shell security: metacharacters that indicate shell injection ──
@@ -31,7 +44,7 @@ const SHELL_METACHARACTERS = /[;&|`$(){}<>\r\n]/;
 
 // Commands that should never be executed, even without metacharacters
 const BLOCKED_COMMANDS = [
-  /\brm\s+(-[a-zA-Z]*f|-[a-zA-Z]*r)\b/i,  // rm with -f or -r flags
+  /\brm\s+.*(-[a-zA-Z]*f|-[a-zA-Z]*r)\b/i,  // rm with -f or -r flags (catches split flags like `rm -a -f`)
   /\bsudo\b/i,
   /\bchmod\s+777\b/i,
   /\bmkfs\b/i,
@@ -45,7 +58,7 @@ const BLOCKED_COMMANDS = [
   /\bruby\s+-e\b/i,
   /\bphp\s+-r\b/i,
   // Encoding / obfuscation
-  /\bbase64\s+(-d|--decode)\b/i,
+  /\bbase64\s+(-[a-zA-Z]*d|--decode)\b/i,  // catches -d, -di, -id, --decode
   /\bpowershell\b.*-enc/i,
   // Windows-specific
   /\bnet\s+user\b/i,
@@ -101,14 +114,46 @@ const BLOCKED_COMMANDS = [
   /\bscreen\s+-[dD]/i,                       // detached screen session
   /\btmux\s+new/i,                           // tmux session (persistence)
   /\bxterm\b.*-e/i,                          // xterm reverse shell
+  // ── Additional network exfiltration vectors ──
+  /\bpython[23]?\s+-m\s+http\.server\b/i,    // Python HTTP server
+  /\bpython[23]?\s+-m\s+smtpd\b/i,           // Python SMTP server
+  /\bphp\s+-S\b/i,                           // PHP built-in server
+  /\bnpx\s+serve\b/i,                        // npx serve
+  /\bdnscat\b/i,                             // DNS tunnel
+  /\bchisel\b/i,                             // TCP tunnel
+  // ── Credential access ──
+  /\bmimikatz\b/i,                           // Windows credential dumper
+  /\bhashdump\b/i,                           // Hash dumper
+  /\bcredential\s+manager/i,                 // Windows credential manager
+  /\bsecurity\s+find-generic-password/i,     // macOS keychain access
+  // ── Disk/partition manipulation ──
+  /\bfdisk\b/i,                              // Partition table editor
+  /\bparted\b/i,                             // Partition editor
+  /\bmount\s+/i,                             // Mount filesystems
+  /\bumount\s+/i,                            // Unmount filesystems
 ];
 
 // ── SSRF: IP address validation helpers ──
 
+/** Strictly parse a decimal IPv4 address — rejects octal (0177) and hex (0x7f) formats */
+function parseStrictIPv4(ip: string): number[] | null {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return null;
+  const nums: number[] = [];
+  for (const part of parts) {
+    // Reject octal (leading zeros) and hex (0x prefix) — only strict decimal
+    if (!/^\d+$/.test(part) || (part.length > 1 && part.startsWith("0"))) return null;
+    const n = Number(part);
+    if (isNaN(n) || n < 0 || n > 255) return null;
+    nums.push(n);
+  }
+  return nums;
+}
+
 /** Check if an IPv4 address is private/loopback/link-local/reserved */
 function isPrivateIPv4(ip: string): boolean {
-  const parts = ip.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((p) => isNaN(p) || p < 0 || p > 255)) return true; // malformed → block
+  const parts = parseStrictIPv4(ip);
+  if (!parts) return true; // malformed or non-decimal → block (fail-closed)
 
   const [a, b] = parts;
   if (a === 127) return true;                          // 127.0.0.0/8 loopback
@@ -122,25 +167,56 @@ function isPrivateIPv4(ip: string): boolean {
   return false;
 }
 
+/** Normalize an IPv6 address to its canonical compressed form */
+function normalizeIPv6(ip: string): string {
+  const cleaned = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  // Expand :: notation to full form, then re-compress
+  let groups: string[];
+  if (cleaned.includes("::")) {
+    const [left, right] = cleaned.split("::");
+    const leftGroups = left ? left.split(":") : [];
+    const rightGroups = right ? right.split(":") : [];
+    const missing = 8 - leftGroups.length - rightGroups.length;
+    groups = [...leftGroups, ...Array(missing).fill("0"), ...rightGroups];
+  } else {
+    groups = cleaned.split(":");
+  }
+  // Normalize each group (strip leading zeros)
+  groups = groups.map(g => (parseInt(g, 16) || 0).toString(16));
+  // Re-compress: find longest run of zeros
+  const full = groups.join(":");
+  return full;
+}
+
 /** Check if an IPv6 address is private/loopback/link-local */
 function isPrivateIPv6(ip: string): boolean {
-  const normalized = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  const normalized = normalizeIPv6(ip);
 
-  // Loopback
-  if (normalized === "::1") return true;
-  // Unspecified
-  if (normalized === "::") return true;
+  // Loopback (::1 and all equivalent forms like 0:0:0:0:0:0:0:1)
+  if (normalized === "0:0:0:0:0:0:0:1" || normalized === "::1") return true;
+  // Unspecified (:: and 0:0:0:0:0:0:0:0)
+  if (normalized === "0:0:0:0:0:0:0:0" || normalized === "::") return true;
   // Link-local
-  if (normalized.startsWith("fe80:")) return true;
+  if (normalized.startsWith("fe80:") || /^fe[89ab][0-9a-f]:/.test(normalized)) return true;
   // Unique local (fc00::/7)
   if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true;
 
-  // IPv4-mapped IPv6 (::ffff:a.b.c.d)
-  const v4mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  // IPv4-mapped IPv6 (::ffff:a.b.c.d) — check original form for dotted notation
+  const original = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  const v4mapped = original.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   if (v4mapped) return isPrivateIPv4(v4mapped[1]);
 
+  // IPv4-mapped IPv6 hex form (::ffff:7f00:1 = 127.0.0.1)
+  const v4mappedHex = normalized.match(/^0:0:0:0:0:ffff:([0-9a-f]+):([0-9a-f]+)$/);
+  if (v4mappedHex) {
+    const hi = parseInt(v4mappedHex[1], 16);
+    const lo = parseInt(v4mappedHex[2], 16);
+    const reconstructed = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+    return isPrivateIPv4(reconstructed);
+  }
+
   // IPv4-compatible IPv6 (::a.b.c.d)
-  const v4compat = normalized.match(/^::(\d+\.\d+\.\d+\.\d+)$/);
+  const v4compat = original.match(/^::(\d+\.\d+\.\d+\.\d+)$/);
   if (v4compat) return isPrivateIPv4(v4compat[1]);
 
   return false;
@@ -154,6 +230,10 @@ const BLOCKED_HOSTNAMES = new Set([
   "ip6-loopback",
   "metadata.google.internal",
   "metadata.internal",
+  "metadata",
+  "instance-data",                        // AWS EC2 metadata alias
+  "kubernetes.default.svc",               // K8s in-cluster API
+  "kubernetes.default",                    // K8s in-cluster API
 ]);
 
 // ── Tool call context ──
@@ -352,10 +432,18 @@ export class SecurityLayer {
     if (rel.startsWith("..")) {
       const homeDir = resolve(process.env.HOME || process.env.USERPROFILE || "");
 
-      // Unrestricted mode: allow reads/writes anywhere (except core protected files)
+      // Unrestricted mode: allow reads/writes anywhere (except core protected files and system dirs)
       if (this.fileAccessMode === "unrestricted") {
-        // Writes outside workspace still blocked for safety in non-workspace dirs
+        // Hard-block writes to system directories — even unrestricted mode can't touch these
         if (action === "write" || action === "edit") {
+          const SYSTEM_DIRS = process.platform === "win32"
+            ? [/^[A-Z]:\\Windows\\/i, /^[A-Z]:\\Program Files/i, /^[A-Z]:\\ProgramData\\/i, /^[A-Z]:\\System/i]
+            : [/^\/etc\//, /^\/sys\//, /^\/proc\//, /^\/boot\//, /^\/usr\/(?:bin|sbin|lib)\//, /^\/sbin\//, /^\/bin\//, /^\/dev\//];
+          for (const sysDir of SYSTEM_DIRS) {
+            if (sysDir.test(realPath)) {
+              return { allowed: false, reason: `Blocked: cannot write to system directory even in unrestricted mode` };
+            }
+          }
           const projectRoot = resolve(this.workspace, "..");
           const inProject = !relative(projectRoot, realPath).startsWith("..");
           const inHome = !relative(homeDir, realPath).startsWith("..");
@@ -528,11 +616,19 @@ export class SecurityLayer {
     }
 
     // Check if it's a literal IP address
-    // IPv4
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    // IPv4 — strict decimal only; octal (0177.0.0.1) and hex (0x7f.0.0.1) are blocked
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || /^0x[0-9a-f]/i.test(host) || /^0[0-7]+\./.test(host)) {
       if (isPrivateIPv4(host)) {
         return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv4 address` };
       }
+    }
+    // Block hex integer IPs (e.g., 0x7f000001 = 127.0.0.1)
+    if (/^0x[0-9a-f]+$/i.test(host)) {
+      return { allowed: false, reason: `Blocked: hex-encoded IP address "${host}" (SSRF protection)` };
+    }
+    // Block long-form decimal IPs (e.g., 2130706433 = 127.0.0.1)
+    if (/^\d{8,}$/.test(host)) {
+      return { allowed: false, reason: `Blocked: decimal-encoded IP address "${host}" (SSRF protection)` };
     }
 
     // IPv6 (in URL, appears as [::1])
@@ -557,7 +653,14 @@ export class SecurityLayer {
     if (this.egressAllowlist.size > 0) {
       const allowed = this.egressAllowlist.has(host) ||
         // Check wildcard subdomains: *.example.com matches sub.example.com
-        Array.from(this.egressAllowlist).some(d => d.startsWith("*.") && (host === d.slice(2) || host.endsWith("." + d.slice(2))));
+        // Require at least 2 labels in the wildcard domain (*.com is too broad)
+        Array.from(this.egressAllowlist).some(d => {
+          if (!d.startsWith("*.")) return false;
+          const baseDomain = d.slice(2);
+          // Reject overly broad wildcards like *.com, *.org, *.net
+          if (baseDomain.split(".").length < 2) return false;
+          return host === baseDomain || host.endsWith("." + baseDomain);
+        });
       if (!allowed) {
         return { allowed: false, reason: `Blocked: ${host} is not in the egress allowlist. Add it to ~/.sax/egress-allowlist.json to permit.` };
       }
@@ -606,8 +709,13 @@ export class SecurityLayer {
           };
         }
       }
-    } catch {
-      // DNS resolution failed — allow (might be valid host that's temporarily unresolvable)
+    } catch (dnsErr) {
+      // DNS resolution failed — fail closed for security (block unknown hosts)
+      console.warn(`[security] DNS resolution failed for ${host}: ${(dnsErr as Error).message}`);
+      return {
+        allowed: false,
+        reason: `Blocked: DNS resolution failed for ${host} (fail-closed SSRF protection)`,
+      };
     }
 
     return { allowed: true, reason: "Web fetch allowed (DNS validated)" };
@@ -692,14 +800,25 @@ const REDACT_PATTERNS = [
   /Bearer\s+([a-zA-Z0-9._\-]{20,})/gi,
   // Key=value patterns (only for known sensitive keys)
   /(?:api[_-]?key|token|secret|password|authorization|access_key|private_key)\s*[:=]\s*["']?([^\s"',]{12,})/gi,
-  // PEM private keys
-  /-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(RSA\s+)?PRIVATE\s+KEY-----/g,
+  // PEM private keys — all common types
+  /-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----[\s\S]*?-----END\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+|PGP\s+)?PRIVATE\s+KEY(?:\s+BLOCK)?-----/g,
+  // Anthropic API keys
+  /\b(sk-ant-[a-zA-Z0-9_-]{20,})/g,
+  // Vercel tokens
+  /\b(vercel_[a-zA-Z0-9_-]{20,})/g,
+  // npm tokens
+  /\b(npm_[a-zA-Z0-9]{36,})/g,
+  // Supabase keys
+  /\b(sbp_[a-zA-Z0-9]{20,})/g,
+  // Generic long base64 secrets (40+ chars of base64 after a key-like label)
+  /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)\s*[:=]\s*["']?([A-Za-z0-9+/=]{40,})/gi,
 ];
 
-/** Mask a secret value: show first 4 chars + ... + last 4 chars */
+/** Mask a secret value: show only prefix for identification, never suffix */
 function maskValue(value: string): string {
-  if (value.length <= 12) return "***REDACTED***";
-  return value.slice(0, 4) + "..." + value.slice(-4);
+  if (value.length <= 12) return "[REDACTED]";
+  // Show only first 4 chars for identification — never leak suffix
+  return value.slice(0, 4) + "...[REDACTED]";
 }
 
 /** Redact potential credentials from a string before it reaches chat/LLM */

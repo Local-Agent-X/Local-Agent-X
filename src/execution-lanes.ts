@@ -15,6 +15,7 @@
  * - Graceful drain on shutdown
  */
 
+import { randomBytes } from "node:crypto";
 import { EventBus } from "./event-bus.js";
 
 // ── Types ──
@@ -109,7 +110,7 @@ export function enqueue<T = unknown>(
 
   return new Promise<T>((resolve, reject) => {
     const task: LaneTask = {
-      id: `${lane}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: `${lane}-${Date.now()}-${randomBytes(3).toString("hex")}`,
       lane,
       priority: opts?.priority || 0,
       timeout: opts?.timeout || DEFAULT_TIMEOUT,

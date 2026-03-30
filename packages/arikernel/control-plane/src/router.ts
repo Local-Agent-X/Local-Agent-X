@@ -56,6 +56,8 @@ export async function handleDecision(
 				error: "Duplicate requestNonce — request already processed",
 			});
 		}
+	} else {
+		console.warn("[control-plane] WARNING: No nonce store configured — replay protection disabled. Configure a nonce store for production use.");
 	}
 
 	// Enrich taint labels with any global registry taints for resources in parameters

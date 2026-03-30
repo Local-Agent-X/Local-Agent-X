@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -165,7 +165,8 @@ export class ToolChainAnalyzer {
 
   private checkExfiltration(sink: DataAccess): ExfilPattern | null {
     // Look back through recent history for sensitive reads
-    const lookback = 300_000; // 5 minutes
+    // 15-minute window — longer than upstream's 5min to catch delayed exfil attempts
+    const lookback = 900_000; // 15 minutes
     const now = Date.now();
 
     for (const source of this.history) {
@@ -189,41 +190,55 @@ export class ToolChainAnalyzer {
     return null;
   }
 
-  /** Detect tool call loops (upstream-style: generic repeat + ping-pong) */
+  /** Detect tool call loops (upstream-style: generic repeat + ping-pong + multi-pattern) */
   private detectLoops(currentHash: string): string | null {
     const recent = this.callHashes.slice(-30);
 
-    // Generic repeat: same exact call 10+ times
+    // Generic repeat: same exact call 5+ times (lowered from 10 — catch loops faster)
     let repeatCount = 0;
     for (let i = recent.length - 1; i >= 0; i--) {
       if (recent[i] === currentHash) repeatCount++;
       else break;
     }
-    if (repeatCount >= 10) {
+    if (repeatCount >= 5) {
       return `Tool loop detected: same call repeated ${repeatCount} times. Agent may be stuck.`;
     }
 
-    // Ping-pong: A-B-A-B pattern (6+ alternations)
-    if (recent.length >= 12) {
-      const last12 = recent.slice(-12);
+    // Ping-pong: A-B-A-B pattern (4+ alternations = 8 calls)
+    if (recent.length >= 8) {
+      const last8 = recent.slice(-8);
       let pingPong = true;
-      for (let i = 2; i < last12.length; i++) {
-        if (last12[i] !== last12[i % 2 === 0 ? 0 : 1]) {
+      for (let i = 0; i < last8.length; i++) {
+        if (last8[i] !== last8[i % 2]) {
           pingPong = false;
           break;
         }
       }
-      if (pingPong && last12[0] !== last12[1]) {
+      if (pingPong && last8[0] !== last8[1]) {
         return "Ping-pong loop detected: two tool calls alternating repeatedly.";
       }
     }
 
-    // Global circuit breaker: 50+ tool calls in session
-    if (this.callHashes.length >= 50) {
-      // Only trigger if most are the same few calls
-      const uniqueRecent = new Set(this.callHashes.slice(-50));
+    // Triple-pattern loop: A-B-C-A-B-C (3+ cycles = 9 calls)
+    if (recent.length >= 9) {
+      const last9 = recent.slice(-9);
+      let tripleLoop = true;
+      for (let i = 3; i < last9.length; i++) {
+        if (last9[i] !== last9[i % 3]) {
+          tripleLoop = false;
+          break;
+        }
+      }
+      if (tripleLoop && last9[0] !== last9[1] && last9[1] !== last9[2]) {
+        return "Triple-pattern loop detected: three tool calls cycling repeatedly.";
+      }
+    }
+
+    // Global circuit breaker: 40+ tool calls with low diversity
+    if (this.callHashes.length >= 40) {
+      const uniqueRecent = new Set(this.callHashes.slice(-40));
       if (uniqueRecent.size <= 5) {
-        return `Circuit breaker: 50+ calls with only ${uniqueRecent.size} unique patterns. Agent is stuck.`;
+        return `Circuit breaker: ${this.callHashes.length}+ calls with only ${uniqueRecent.size} unique patterns. Agent is stuck.`;
       }
     }
 
@@ -242,7 +257,7 @@ export class ToolChainAnalyzer {
 
 /** Generate a set of canary phrases unique to this session */
 export function generateCanaries(): string[] {
-  const id = createHash("sha256").update(String(Date.now()) + Math.random()).digest("hex").slice(0, 8);
+  const id = randomBytes(8).toString("hex"); // 64 bits of cryptographic entropy
   return [
     `CANARY-${id}-ALPHA`,
     `SENTINEL-${id}-BRAVO`,
@@ -265,11 +280,37 @@ export function canaryPromptBlock(canaries: string[]): string {
   );
 }
 
-/** Check if agent output contains any canary tokens */
+/** Check if agent output contains any canary tokens (includes fuzzy matching for evasion) */
 export function checkCanaries(output: string, canaries: string[]): string | null {
+  // Normalize output: strip zero-width chars, collapse whitespace, normalize Unicode
+  const normalized = output
+    .replace(/[\u200B-\u200F\u2028\u2029\uFEFF\u00AD]/g, "")  // strip invisible chars
+    .replace(/[\r\n\t]+/g, " ")  // collapse whitespace
+    .normalize("NFKC");  // normalize Unicode
+
   for (const canary of canaries) {
-    if (output.includes(canary)) {
+    // Direct match
+    if (normalized.includes(canary)) {
       return `CANARY TRIPPED: "${canary}" found in agent output. Prompt injection detected — LLM may be compromised.`;
+    }
+    // Case-insensitive match (attacker might change case)
+    if (normalized.toLowerCase().includes(canary.toLowerCase())) {
+      return `CANARY TRIPPED: "${canary}" found (case-variant) in agent output. Prompt injection detected.`;
+    }
+    // Split-token detection: check if canary parts appear in sequence within a short window
+    const parts = canary.split("-");
+    if (parts.length >= 3) {
+      const prefix = parts[0];  // e.g. "CANARY"
+      const id = parts[1];      // e.g. hex ID
+      const suffix = parts[2];  // e.g. "ALPHA"
+      // Check if all 3 parts appear within 200 chars of each other
+      const prefixIdx = normalized.indexOf(prefix);
+      if (prefixIdx >= 0) {
+        const window = normalized.slice(prefixIdx, prefixIdx + 200);
+        if (window.includes(id) && window.includes(suffix)) {
+          return `CANARY TRIPPED: "${canary}" fragments found in close proximity. Prompt injection detected.`;
+        }
+      }
     }
   }
   return null;
@@ -296,15 +337,22 @@ const CLASSIFICATION_PATTERNS: Array<{ label: DataLabel; pattern: RegExp; confid
   // Credentials
   { label: "credentials", pattern: /\b(sk-|ghp_|github_pat_|xox[bpas]-|glpat-|AKIA|Bearer\s+[A-Za-z0-9])/i, confidence: 0.95 },
   { label: "credentials", pattern: /(?:api[_-]?key|token|password|secret)\s*[:=]\s*["']?[^\s"',]{8,}/i, confidence: 0.85 },
+  { label: "credentials", pattern: /\b(AIza[0-9A-Za-z_-]{35})\b/, confidence: 0.95 },  // Google API key
+  { label: "credentials", pattern: /\b(ya29\.[0-9A-Za-z_-]+)\b/, confidence: 0.9 },     // Google OAuth token
+  { label: "credentials", pattern: /\b(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/, confidence: 0.85 },  // JWT
   // PII
   { label: "pii", pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z]{2,}\b/i, confidence: 0.8 },
-  { label: "pii", pattern: /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/, confidence: 0.7 },
-  { label: "pii", pattern: /\b\d{3}-\d{2}-\d{4}\b/, confidence: 0.95 }, // SSN
-  // Secrets
-  { label: "secrets", pattern: /-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----/, confidence: 0.99 },
+  { label: "pii", pattern: /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/, confidence: 0.7 },           // US phone
+  { label: "pii", pattern: /\b\+\d{1,3}[-.\s]?\d{1,4}[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b/, confidence: 0.7 },  // International phone
+  { label: "pii", pattern: /\(\d{3}\)\s*\d{3}[-.]?\d{4}\b/, confidence: 0.75 },           // (234) 567-8900
+  { label: "pii", pattern: /\b\d{3}-\d{2}-\d{4}\b/, confidence: 0.95 },                   // SSN
+  // Secrets — expanded PEM types
+  { label: "secrets", pattern: /-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|ENCRYPTED\s+)?PRIVATE\s+KEY-----/, confidence: 0.99 },
   { label: "secrets", pattern: /-----BEGIN\s+CERTIFICATE-----/, confidence: 0.8 },
-  // Financial
-  { label: "financial", pattern: /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b/, confidence: 0.85 },
+  { label: "secrets", pattern: /-----BEGIN\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----/, confidence: 0.99 },
+  // Financial — with basic Luhn pre-filter (length check)
+  { label: "financial", pattern: /\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\b/, confidence: 0.85 },
+  { label: "financial", pattern: /\b\d{4}[\s-]\d{4}[\s-]\d{4}[\s-]\d{4}\b/, confidence: 0.8 },  // Spaced card numbers
   // Internal paths
   { label: "internal_path", pattern: /[/\\]\.ssh[/\\]|[/\\]\.aws[/\\]|[/\\]\.env\b/i, confidence: 0.9 },
   { label: "internal_path", pattern: /[/\\]etc[/\\](passwd|shadow|hosts)\b/i, confidence: 0.9 },
@@ -439,7 +487,7 @@ export class CryptoAuditTrail {
 
   constructor(dataDir: string) {
     const auditDir = join(dataDir, "audit");
-    if (!existsSync(auditDir)) mkdirSync(auditDir, { recursive: true });
+    if (!existsSync(auditDir)) mkdirSync(auditDir, { recursive: true, mode: 0o700 });
     // Daily audit files
     const date = new Date().toISOString().slice(0, 10);
     this.filePath = join(auditDir, `${date}.jsonl`);

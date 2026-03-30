@@ -2,6 +2,7 @@
  * Mission Progress Tracking — step-by-step progress state machine.
  */
 
+import { randomBytes } from "node:crypto";
 import type { ToolDefinition } from "../types.js";
 
 export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
@@ -29,7 +30,7 @@ export interface MissionProgress {
 const executions = new Map<string, MissionProgress>();
 
 function generateExecId(): string {
-  return `exec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  return `exec_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`;
 }
 
 export function startExecution(missionName: string, stepIds: string[]): MissionProgress {

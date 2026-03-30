@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+
 /**
  * Session Router — cross-channel session continuity.
  *
@@ -142,7 +144,7 @@ export function linkIdentities(
 
   // New group
   const newGroup: IdentityGroup = {
-    canonicalId: `peer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    canonicalId: `peer-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
     displayName: displayName || identity1.displayName || identity2.displayName || "Unknown",
     identities: [identity1, identity2],
     createdAt: Date.now(),

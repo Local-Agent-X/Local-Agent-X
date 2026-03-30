@@ -77,7 +77,29 @@ export class RateLimiter {
 	release(principalId: string): void {
 		const current = this.concurrentExecs.get(principalId) ?? 0;
 		if (current > 0) this.concurrentExecs.set(principalId, current - 1);
+		else this.concurrentExecs.delete(principalId); // Clean up zero entries
 		if (this.globalConcurrent > 0) this.globalConcurrent--;
+	}
+
+	/**
+	 * Recalculate globalConcurrent from the sum of individual entries.
+	 * Guards against counter drift from unexpected error paths that may
+	 * skip release(). Safe to call periodically or after error recovery.
+	 */
+	reconcileGlobalConcurrent(): void {
+		let sum = 0;
+		const toDelete: string[] = [];
+		this.concurrentExecs.forEach((count, key) => {
+			if (count <= 0) {
+				toDelete.push(key);
+			} else {
+				sum += count;
+			}
+		});
+		for (const key of toDelete) {
+			this.concurrentExecs.delete(key);
+		}
+		this.globalConcurrent = sum;
 	}
 
 	/** Check firewall count limits. */

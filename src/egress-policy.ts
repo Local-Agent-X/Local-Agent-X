@@ -24,7 +24,7 @@ const POLICY_FILE = join(homedir(), ".sax", "egress-policy.json");
 
 function ensureDir(): void {
   const dir = join(homedir(), ".sax");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
 function loadPolicy(): EgressPolicyStore {

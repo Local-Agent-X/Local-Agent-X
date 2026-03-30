@@ -70,7 +70,7 @@ export class CronService {
   constructor(dataDir: string) {
     this.dataDir = dataDir;
     const cronDir = join(dataDir, "cron");
-    if (!existsSync(cronDir)) mkdirSync(cronDir, { recursive: true });
+    if (!existsSync(cronDir)) mkdirSync(cronDir, { recursive: true, mode: 0o700 });
     this.jobsFile = join(cronDir, "jobs.json");
     this.settingsFile = join(cronDir, "settings.json");
     this.loadJobs();

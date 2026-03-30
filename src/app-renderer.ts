@@ -447,11 +447,42 @@ export function renderApp(def: AppDefinition, port?: number): string {
     return d.innerHTML;
   }
 
-  // Basic sanitize for setHtml actions
+  // Robust sanitize for setHtml actions — allowlist approach
   function sanitizeDom(html) {
-    return html.replace(/<script\\b[^<]*(?:(?!<\\/script>)<[^<]*)*<\\/script>/gi, '')
-               .replace(/<iframe\\b[^>]*>[\\s\\S]*?<\\/iframe>/gi, '')
-               .replace(/\\bon\\w+\\s*=/gi, 'data-x=');
+    // Remove all dangerous tags (block, not allowlist — covers null-byte and case variants)
+    var dangerous = [
+      /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
+      /<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi,
+      /<object\b[^>]*>[\s\S]*?<\/object>/gi,
+      /<embed\b[^>]*\/?>/gi,
+      /<applet\b[^>]*>[\s\S]*?<\/applet>/gi,
+      /<link\b[^>]*\/?>/gi,
+      /<base\b[^>]*\/?>/gi,
+      /<meta\b[^>]*\/?>/gi,
+      /<style\b[^>]*>[\s\S]*?<\/style>/gi,
+      /<svg\b[^>]*>[\s\S]*?<\/svg>/gi,
+      /<math\b[^>]*>[\s\S]*?<\/math>/gi,
+      /<form\b[^>]*>[\s\S]*?<\/form>/gi,
+      /<textarea\b[^>]*>[\s\S]*?<\/textarea>/gi,
+      /<template\b[^>]*>[\s\S]*?<\/template>/gi,
+    ];
+    var result = html;
+    // Strip null bytes first (bypass technique)
+    result = result.replace(/\x00/g, '');
+    for (var i = 0; i < dangerous.length; i++) {
+      result = result.replace(dangerous[i], '');
+    }
+    // Remove all event handlers (on*=)
+    result = result.replace(/\bon\w+\s*=/gi, 'data-blocked-handler=');
+    // Remove javascript: and data: URLs in attributes
+    result = result.replace(/\bhref\s*=\s*["']?\s*javascript:/gi, 'href="blocked:');
+    result = result.replace(/\bhref\s*=\s*["']?\s*data:/gi, 'href="blocked:');
+    result = result.replace(/\bsrc\s*=\s*["']?\s*javascript:/gi, 'src="blocked:');
+    result = result.replace(/\bsrc\s*=\s*["']?\s*data:/gi, 'src="blocked:');
+    // Remove style attributes with expressions (IE-compat attack vector)
+    result = result.replace(/\bstyle\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
+    result = result.replace(/\bstyle\s*=\s*["'][^"']*url\s*\(/gi, 'style="');
+    return result;
   }
 
   // Poll every 2 seconds

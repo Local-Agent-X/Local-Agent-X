@@ -9,6 +9,10 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes, createHash } from "node:crypto";
 
+const verifyAttempts = new Map<string, number[]>();
+const VERIFY_MAX_ATTEMPTS = 5;
+const VERIFY_WINDOW_MS = 60_000;
+
 const AUTH_DIR = join(homedir(), ".sax", "voice-auth");
 const TMP_DIR = join(homedir(), ".sax", "voice-tmp");
 if (!existsSync(AUTH_DIR)) mkdirSync(AUTH_DIR, { recursive: true });
@@ -146,6 +150,15 @@ export function verify(
   audioBuffer: Buffer,
   threshold = 0.82,
 ): AuthResult {
+  const now = Date.now();
+  const attempts = verifyAttempts.get(userId) || [];
+  const recentAttempts = attempts.filter(t => now - t < VERIFY_WINDOW_MS);
+  if (recentAttempts.length >= VERIFY_MAX_ATTEMPTS) {
+    return { authenticated: false, userId, label: "", confidence: 0, threshold };
+  }
+  recentAttempts.push(now);
+  verifyAttempts.set(userId, recentAttempts);
+
   const vps = loadVoiceprints();
   const vp = vps.find((v) => v.userId === userId);
 

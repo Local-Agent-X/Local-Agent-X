@@ -141,7 +141,12 @@ function isValidSessionId(id: string): boolean {
 function safeErrorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
   // Remove absolute file paths (C:\..., /home/..., etc.)
-  let safe = raw.replace(/[A-Z]:\\[^\s:'"]+/gi, "[path]").replace(/\/(?:home|usr|tmp|var|Users|root|etc|mnt|opt)\b[^\s:'"]+/gi, "[path]");
+  let safe = raw
+    .replace(/[A-Z]:\\[^\s:'"]+/gi, "[path]")
+    .replace(/\/(?:home|usr|tmp|var|Users|root|etc|mnt|opt|srv|run|proc|sys|boot|dev)\b[^\s:'"]+/gi, "[path]")
+    .replace(/(?:\.\.\/){2,}[^\s:'"]+/g, "[path]")
+    .replace(/\\\\[^\s:'"]+/g, "[path]")
+    .replace(/\bnode_modules[/\\][^\s:'"]+/g, "[module]");
   // Remove stack-trace-like lines
   safe = safe.replace(/\s+at\s+.+\(.+\)/g, "");
   // Cap length
@@ -677,6 +682,62 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // System Status — comprehensive status for the settings dashboard
+    if (method === "GET" && url.pathname === "/api/system-status") {
+      const { getSandboxMode, isDockerAvailable } = await import("./sandbox.js");
+      const threatData = getThreatDashboard();
+      const providerHealth = getProviderHealthStatus();
+      const tStats = getToolStats();
+      const uptime = process.uptime();
+      json(200, {
+        profile: config.profile,
+        toolApproval: config.toolApproval,
+        retentionDays: config.retentionDays,
+        autoUpdate: config.autoUpdate,
+        logLevel: config.logLevel,
+        sandbox: {
+          mode: getSandboxMode(),
+          dockerAvailable: isDockerAvailable(),
+        },
+        security: {
+          threatsBlocked: threatData.stats?.totalBlocked || 0,
+          threatLevel: threatData.currentThreatLevel || "normal",
+          recentEvents: (threatData.recentEvents || []).slice(0, 5),
+        },
+        providers: providerHealth,
+        tools: {
+          totalCalls: Object.values(tStats).reduce((sum, t) => sum + (t.totalCalls || 0), 0),
+          successRate: getToolSuccessRate(),
+          recentFailures: getRecentFailures(5),
+        },
+        uptime: Math.floor(uptime),
+        memoryUsage: process.memoryUsage().heapUsed,
+        nodeVersion: process.version,
+      });
+      return;
+    }
+
+    // Profile switch
+    if (method === "POST" && url.pathname === "/api/profile") {
+      const body = await readBody(req);
+      const { profile } = JSON.parse(body);
+      if (!["home", "dev", "enterprise"].includes(profile)) {
+        json(400, { error: "Invalid profile. Use: home, dev, enterprise" });
+        return;
+      }
+      const { PROFILE_DEFAULTS } = await import("./config.js");
+      const defaults = PROFILE_DEFAULTS[profile as keyof typeof PROFILE_DEFAULTS];
+      config.profile = profile;
+      config.toolApproval = defaults.toolApproval;
+      config.retentionDays = defaults.retentionDays;
+      config.autoUpdate = defaults.autoUpdate;
+      config.logLevel = defaults.logLevel;
+      const { saveConfig } = await import("./config.js");
+      saveConfig(config);
+      json(200, { ok: true, profile, applied: defaults });
+      return;
+    }
+
     // ── Update checker: compare local version against GitHub ──
     if (method === "GET" && url.pathname === "/api/updates/check") {
       try {
@@ -781,7 +842,7 @@ export function startServer(config: SAXConfig) {
       if (!sourceId || !isValidSessionId(sourceId)) { json(400, { error: "Invalid session ID" }); return; }
       const source = getOrCreateSession(sourceId);
       if (atIndex < 0 || atIndex >= source.messages.length) { json(400, { error: "Invalid message index" }); return; }
-      const forkId = `fork-${sourceId.slice(0, 20)}-${Date.now().toString(36)}`;
+      const forkId = `fork-${randomBytes(8).toString("hex")}`;
       const forkedMessages = source.messages.slice(0, atIndex + 1);
       const forkSession: Session = {
         id: forkId,
@@ -959,12 +1020,17 @@ export function startServer(config: SAXConfig) {
 
       // Parse multipart boundary from content-type
       const contentType = req.headers["content-type"] || "";
-      const boundaryMatch = contentType.match(/boundary=(.+)/);
+      // Validate boundary: strip quotes, limit length, restrict charset
+      const boundaryMatch = contentType.match(/boundary=(?:"([^"]{1,70})"|([^\s;]{1,70}))/);
       if (!boundaryMatch) {
         json(400, { error: "Multipart form data required" });
         return;
       }
-      const boundary = boundaryMatch[1];
+      const boundary = boundaryMatch[1] || boundaryMatch[2];
+      if (!boundary || boundary.length > 70 || /[^\x20-\x7e]/.test(boundary)) {
+        json(400, { error: "Invalid multipart boundary" });
+        return;
+      }
       const parts = parseMultipart(body, boundary);
 
       // Magic number validation for common file types
@@ -1911,9 +1977,38 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
-    // ── Projects API ──
-
     const projectStore = ProjectStore.getInstance();
+
+    // ── Starter Project Templates ──
+    if (method === "GET" && url.pathname === "/api/projects/starters") {
+      json(200, [
+        { name: "Content Creator", description: "Social media content pipeline: research trends, write posts, design visuals, schedule publishing.", agents: ["builtin-researcher", "builtin-writer", "builtin-browser"], icon: "🎨" },
+        { name: "Small Business", description: "Business operations: customer research, report writing, data analysis, task management.", agents: ["builtin-researcher", "builtin-writer", "builtin-analyst"], icon: "🏢" },
+        { name: "Student Researcher", description: "Academic research: find sources, summarize papers, organize notes, write drafts.", agents: ["builtin-researcher", "builtin-deep-researcher", "builtin-writer"], icon: "📚" },
+        { name: "Dev Team", description: "Software development: write code, review PRs, run tests, research solutions.", agents: ["builtin-coder", "builtin-reviewer", "builtin-researcher"], icon: "💻" },
+        { name: "Marketing Agency", description: "Marketing ops: research competitors, write copy, analyze data, manage campaigns.", agents: ["builtin-researcher", "builtin-writer", "builtin-analyst", "builtin-browser"], icon: "📣" },
+      ]);
+      return;
+    }
+
+    // Create project from starter template
+    if (method === "POST" && url.pathname === "/api/projects/from-starter") {
+      const body = await safeParseBody(req);
+      if (!body || !body.name) { json(400, { error: "name required" }); return; }
+      const project = projectStore.create({
+        name: body.name, description: body.description || "",
+        agentIds: body.agentIds || [], workspace: body.workspace,
+      });
+      // Auto-hire the agents
+      for (const agentId of (body.agentIds || [])) {
+        agentTemplateStore.hire(agentId, {});
+        projectStore.addAgent(project.id, agentId);
+      }
+      json(200, project);
+      return;
+    }
+
+    // ── Projects API ──
 
     if (method === "GET" && url.pathname === "/api/projects") {
       json(200, projectStore.list());
@@ -2115,6 +2210,22 @@ export function startServer(config: SAXConfig) {
     // Issue stats (for dashboard)
     if (method === "GET" && url.pathname === "/api/issues/stats") {
       json(200, issueStore.stats());
+      return;
+    }
+
+    // Combined mission control stats
+    if (method === "GET" && url.pathname === "/api/dashboard/stats") {
+      const issueStats = issueStore.stats();
+      const hired = agentTemplateStore.listHired();
+      const projects = projectStore.list();
+      const laneInfo = getLaneStatus();
+      json(200, {
+        agents: { hired: hired.length, active: laneInfo.agent?.active || 0 },
+        issues: issueStats,
+        projects: projects.length,
+        lanes: laneInfo,
+        inbox: issueStats.pendingApproval,
+      });
       return;
     }
 

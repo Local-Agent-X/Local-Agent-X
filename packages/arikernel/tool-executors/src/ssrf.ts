@@ -14,6 +14,61 @@ import https from "node:https";
 import { isIP } from "node:net";
 
 /**
+ * Compress an IPv6 address string to its canonical short form.
+ *
+ * Handles:
+ *   - Removing leading zeros from each group (0001 → 1)
+ *   - Collapsing the longest run of all-zero groups to "::"
+ *   - Uncompressed loopback 0:0:0:0:0:0:0:1 → ::1
+ *   - Uncompressed unspecified 0:0:0:0:0:0:0:0 → ::
+ *   - Already-compressed addresses pass through unchanged
+ *
+ * Input must be a valid lowercased IPv6 string (no zone ID).
+ */
+function normalizeIPv6(ip: string): string {
+	// If already contains "::", it is already in compressed form.
+	// Still strip leading zeros from each group for consistency.
+	const parts = ip.split(":");
+	// Each part: strip leading zeros, but keep at least one digit
+	const stripped = parts.map((p) => p.replace(/^0+(?=.)/, "") || "0");
+
+	// If already compressed (fewer than 8 groups), just return stripped form
+	if (stripped.length < 8) {
+		return stripped.join(":");
+	}
+
+	// Find the longest run of consecutive "0" groups for :: compression
+	let bestStart = -1;
+	let bestLen = 0;
+	let curStart = -1;
+	let curLen = 0;
+
+	for (let i = 0; i < 8; i++) {
+		if (stripped[i] === "0") {
+			if (curStart === -1) curStart = i;
+			curLen++;
+			if (curLen > bestLen) {
+				bestStart = curStart;
+				bestLen = curLen;
+			}
+		} else {
+			curStart = -1;
+			curLen = 0;
+		}
+	}
+
+	// Only compress if there are at least 2 consecutive zero groups (or all 8 for ::)
+	if (bestLen >= 2 || (bestLen === 1 && stripped.every((p) => p === "0"))) {
+		if (bestLen === 8) return "::";
+		const before = stripped.slice(0, bestStart);
+		const after = stripped.slice(bestStart + bestLen);
+		return (before.length === 0 ? ":" : before.join(":")) + ":" + (after.length === 0 ? "" : after.join(":"));
+	}
+
+	return stripped.join(":");
+}
+
+/**
  * Normalize an IP string to a canonical form and, for IPv4-mapped IPv6
  * addresses (::ffff:x.x.x.x), extract the inner IPv4 address so that
  * private-range checks cannot be bypassed with alternate encodings.
@@ -45,7 +100,11 @@ function normalizeIP(ip: string): { version: 4 | 6; canonical: string } {
 			const ipv4 = `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
 			return { version: 4, canonical: ipv4 };
 		}
-		return { version: 6, canonical: lower };
+		// Normalize uncompressed IPv6 to compressed form so that alternate
+		// representations of loopback (0:0:0:0:0:0:0:1, 0000:0000:...:0001)
+		// and unspecified (0:0:0:0:0:0:0:0) are correctly identified as private.
+		const normalized = normalizeIPv6(lower);
+		return { version: 6, canonical: normalized };
 	}
 
 	// kind === 0 — not a valid IP; fail closed

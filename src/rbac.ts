@@ -81,15 +81,21 @@ export class RBACManager {
   private tokens: Map<string, TokenEntry> = new Map();
   private filePath: string;
   private operatorTokenHash: string;
+  private authCallCount = 0;
 
   constructor(dataDir: string, operatorToken: string) {
-    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     this.filePath = join(dataDir, "tokens.json");
     this.operatorTokenHash = hashToken(operatorToken);
     this.load();
 
-    // Ensure operator token exists
-    if (!this.findByHash(this.operatorTokenHash)) {
+    // Ensure operator token exists — clear stale operator entries to prevent duplication
+    const existingOp = this.findByHash(this.operatorTokenHash);
+    if (!existingOp) {
+      // Remove any previous operator-default entries (prevents duplication on token change)
+      if (this.tokens.has("operator-default")) {
+        this.tokens.delete("operator-default");
+      }
       this.tokens.set("operator-default", {
         id: "operator-default",
         name: "Default operator token",
@@ -127,6 +133,9 @@ export class RBACManager {
 
   /** Authenticate a bearer token and return the role. Timing-safe. */
   authenticate(bearerToken: string): { valid: boolean; entry?: TokenEntry } {
+    // Auto-prune expired tokens periodically (every 100 auth calls)
+    if (++this.authCallCount % 100 === 0) this.pruneExpired();
+
     const incomingHash = hashToken(bearerToken);
 
     for (const entry of this.tokens.values()) {
@@ -151,9 +160,9 @@ export class RBACManager {
   checkEndpoint(role: Role, method: string, pathname: string): RBACDecision {
     const perms = ROLE_PERMISSIONS[role];
 
-    // Check denied endpoints
+    // Check denied endpoints — exact match or path prefix (with / boundary)
     for (const denied of perms.deniedEndpoints) {
-      if (pathname.startsWith(denied)) {
+      if (pathname === denied || pathname.startsWith(denied + "/")) {
         return { allowed: false, role, reason: `Role "${role}" cannot access ${pathname}` };
       }
     }
@@ -232,11 +241,18 @@ export class RBACManager {
     }
 
     // For other tokens: revoke old, create new with same role/name
+    // Preserve the original absolute expiry time (not shrinking relative window)
     const role = old.role;
     const name = old.name;
-    const expiresIn = old.expiresAt ? old.expiresAt - Date.now() : undefined;
+    const originalExpiresAt = old.expiresAt;
     this.tokens.delete(id);
-    return this.createToken(name, role, expiresIn && expiresIn > 0 ? expiresIn : undefined);
+    const result = this.createToken(name, role);
+    // Restore original absolute expiry if set
+    if (originalExpiresAt && originalExpiresAt > Date.now()) {
+      result.entry.expiresAt = originalExpiresAt;
+      this.save();
+    }
+    return result;
   }
 
   /** Prune all expired tokens */

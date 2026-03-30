@@ -77,23 +77,27 @@ function getRiskLevel(toolName: string, args: Record<string, unknown>, security?
 function buildApprovalContext(toolName: string, args: Record<string, unknown>): string {
   switch (toolName) {
     case "bash":
-      return `Shell: ${String(args.command || "").slice(0, 200)}`;
+      return `Run command: "${String(args.command || "").slice(0, 150)}"`;
     case "write":
-      return `Write ${String(args.path || "")} (${String(args.content || "").length} chars)`;
+      return `Create file: ${String(args.path || "").split(/[/\\]/).pop()} (${String(args.content || "").length} chars)`;
     case "edit":
-      return `Edit ${String(args.path || "")}`;
+      return `Edit file: ${String(args.path || "").split(/[/\\]/).pop()}`;
     case "read":
-      return `Read ${String(args.path || "")}`;
+      return `Read file: ${String(args.path || "").split(/[/\\]/).pop()}`;
     case "browser": {
       const a = String(args.action || "");
-      if (a === "navigate" || a === "new_tab") return `Browser → ${args.url || ""}`;
-      if (a === "evaluate") return `Browser JS: ${String(args.script || "").slice(0, 100)}`;
+      if (a === "navigate" || a === "new_tab") return `Open website: ${args.url || ""}`;
+      if (a === "evaluate") return `Run script in browser: ${String(args.script || "").slice(0, 80)}`;
       return `Browser: ${a}`;
     }
     case "http_request":
-      return `${args.method || "GET"} ${String(args.url || "").slice(0, 100)}`;
+      return `API call: ${args.method || "GET"} ${String(args.url || "").slice(0, 100)}`;
+    case "web_fetch":
+      return `Fetch webpage: ${String(args.url || "").slice(0, 100)}`;
+    case "build_app":
+      return `Build app: ${String(args.name || "")}`;
     default:
-      return `${toolName} ${JSON.stringify(args).slice(0, 100)}`;
+      return `${toolName}: ${JSON.stringify(args).slice(0, 80)}`;
   }
 }
 
@@ -115,8 +119,9 @@ async function executeToolCalls(
     let args: Record<string, unknown>;
     try {
       args = JSON.parse(tc.arguments);
-    } catch {
-      args = {};
+    } catch (parseErr) {
+      console.warn(`[agent] Malformed JSON in tool call arguments for ${tc.name}: ${(parseErr as Error).message}`);
+      args = { _raw: tc.arguments };
     }
 
     // Build rich approval context for risky tool calls

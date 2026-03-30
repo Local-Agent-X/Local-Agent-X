@@ -130,6 +130,34 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
+  // Ctrl+N — New chat
+  if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+    e.preventDefault();
+    if (typeof newChat === 'function') newChat();
+    return;
+  }
+
+  // Ctrl+J — Navigate to agents
+  if ((e.ctrlKey || e.metaKey) && e.key === 'j') {
+    e.preventDefault();
+    if (typeof navigate === 'function') navigate('agents');
+    return;
+  }
+
+  // Ctrl+Shift+A — Toggle agents panel
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'A') {
+    e.preventDefault();
+    if (typeof toggleAgentFeeds === 'function') toggleAgentFeeds();
+    return;
+  }
+
+  // Ctrl+, — Settings
+  if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+    e.preventDefault();
+    if (typeof navigate === 'function') navigate('settings');
+    return;
+  }
+
   // Escape — Close modals/overlays
   if (e.key === 'Escape') {
     if (commandPaletteOpen) { closeCommandPalette(); return; }

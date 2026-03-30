@@ -37,7 +37,7 @@ class FileAuditTrail {
 
   constructor() {
     this.logDir = join(homedir(), ".sax", "audit", "file-access");
-    if (!existsSync(this.logDir)) mkdirSync(this.logDir, { recursive: true });
+    if (!existsSync(this.logDir)) mkdirSync(this.logDir, { recursive: true, mode: 0o700 });
   }
 
   /** Record a file access event */

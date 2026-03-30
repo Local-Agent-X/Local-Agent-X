@@ -83,17 +83,17 @@ function showNewOrgForm() {
     </div>
   `;
   // Load agent templates as checkboxes
-  fetch(\`\${API}/api/agents/templates\`, { headers: { Authorization: \`Bearer \${AUTH_TOKEN}\` } })
-    .then(r => r.json())
-    .then(templates => {
-      const el = document.getElementById('org-agent-picks');
+  fetch(API + '/api/agents/templates', { headers: { Authorization: 'Bearer ' + AUTH_TOKEN } })
+    .then(function(r) { return r.json(); })
+    .then(function(templates) {
+      var el = document.getElementById('org-agent-picks');
       if (!el || !Array.isArray(templates)) return;
-      el.innerHTML = templates.map(t => \`
-        <label style="display:flex;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:.72rem;cursor:pointer">
-          <input type="checkbox" value="\${t.id}" style="accent-color:var(--accent)"> \${t.icon || ''} \${esc(t.name)}
-        </label>
-      \`).join('');
-    }).catch(() => {});
+      el.innerHTML = templates.map(function(t) {
+        return '<label style="display:flex;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:.72rem;cursor:pointer">' +
+          '<input type="checkbox" value="' + t.id + '" style="accent-color:var(--accent)"> ' + (t.icon || '') + ' ' + esc(t.name) +
+          '</label>';
+      }).join('');
+    }).catch(function() {});
 }
 
 async function createOrg() {
@@ -105,8 +105,8 @@ async function createOrg() {
   const checks = document.querySelectorAll('#org-agent-picks input:checked');
   const agentIds = Array.from(checks).map(c => c.value);
   try {
-    await fetch(\`\${API}/api/projects/from-starter\`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: \`Bearer \${AUTH_TOKEN}\` },
+    await fetch(API + '/api/projects/from-starter', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + AUTH_TOKEN },
       body: JSON.stringify({ name, description: desc, workspace, agentIds })
     });
     closeAgentDetail();

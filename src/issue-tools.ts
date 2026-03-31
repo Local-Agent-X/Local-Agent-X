@@ -139,11 +139,13 @@ const issueUpdate: ToolDefinition = {
   },
   async execute(args) {
     const store = IssueStore.getInstance();
+    const templateStore = AgentTemplateStore.getInstance();
     const id = String(args.id || "");
     const issue = store.get(id);
     if (!issue) return err(`Issue ${id} not found`);
 
     const updates: string[] = [];
+    const prevStatus = issue.status;
 
     if (args.status) {
       store.update(id, { status: args.status as IssueStatus });
@@ -158,6 +160,22 @@ const issueUpdate: ToolDefinition = {
       updates.push(`comment added`);
     }
 
+    // HIERARCHY: auto-notify manager when status changes to done or blocked
+    const newStatus = String(args.status || prevStatus);
+    if (args.status && (newStatus === "done" || newStatus === "blocked") && issue.assignee) {
+      const assignedAgent = templateStore.get(issue.assignee);
+      if (assignedAgent?.reportsTo) {
+        const manager = templateStore.get(assignedAgent.reportsTo);
+        if (manager && manager.hired) {
+          const statusMsg = newStatus === "done"
+            ? `Task completed: ${issue.title}`
+            : `Task blocked: ${issue.title} — needs help`;
+          store.comment(id, "system", `Auto-notified manager ${manager.name}: ${statusMsg}`);
+          updates.push(`manager ${manager.name} notified`);
+        }
+      }
+    }
+
     return ok(`Updated ${id}: ${updates.join(", ") || "no changes"}`);
   },
 };
@@ -165,7 +183,8 @@ const issueUpdate: ToolDefinition = {
 const issueRequestApproval: ToolDefinition = {
   name: "issue_request_approval",
   description:
-    "Request user approval for something. Creates an issue in the user's inbox that they must approve or reject. " +
+    "Request approval for something. If you have a manager, the request goes to them first. " +
+    "If you don't have a manager (or your manager is the board), it goes to the user's inbox. " +
     "Use this when you need permission for: hiring a new agent, making an expensive API call, deploying code, " +
     "or any action that should have human oversight.",
   parameters: {
@@ -174,11 +193,35 @@ const issueRequestApproval: ToolDefinition = {
       title: { type: "string", description: "What you're requesting approval for" },
       description: { type: "string", description: "Explain why this is needed and what will happen if approved" },
       approvalType: { type: "string", description: "Category: 'hire', 'action', 'spend', 'deploy'" },
+      requestingAgent: { type: "string", description: "Your agent template ID (if known)" },
     },
     required: ["title", "description"],
   },
   async execute(args) {
     const store = IssueStore.getInstance();
+    const templateStore = AgentTemplateStore.getInstance();
+
+    // Check if the requesting agent has a manager
+    const requestingId = String(args.requestingAgent || "");
+    const requestingAgent = requestingId ? templateStore.get(requestingId) : null;
+    const manager = requestingAgent?.reportsTo ? templateStore.get(requestingAgent.reportsTo) : null;
+
+    if (manager && manager.hired && manager.role !== "ceo") {
+      // Route to manager first — they can approve or escalate to board
+      const issue = store.create({
+        title: String(args.title || ""),
+        description: `From ${requestingAgent?.name || "agent"}: ${String(args.description || "")}\n\n[Manager ${manager.name} can approve this or escalate to the board]`,
+        assignee: manager.id,
+        status: "open",
+        priority: "high",
+        needsApproval: true,
+        approvalType: String(args.approvalType || "action"),
+        createdBy: requestingId || "agent",
+      });
+      return ok(`Approval request ${issue.id} sent to manager ${manager.name}: "${issue.title}"\nThey can approve or escalate to the board.`);
+    }
+
+    // No manager or CEO is the manager — goes straight to user inbox
     const issue = store.create({
       title: String(args.title || ""),
       description: String(args.description || ""),
@@ -187,9 +230,9 @@ const issueRequestApproval: ToolDefinition = {
       priority: "high",
       needsApproval: true,
       approvalType: String(args.approvalType || "action"),
-      createdBy: "agent",
+      createdBy: requestingId || "agent",
     });
-    return ok(`Approval request ${issue.id} sent to user inbox: "${issue.title}"\nWaiting for user to approve or reject.`);
+    return ok(`Approval request ${issue.id} sent to board (user inbox): "${issue.title}"\nWaiting for approval.`);
   },
 };
 
@@ -321,11 +364,30 @@ const agentWhoAmI: ToolDefinition = {
       }
     }
 
+    // Check if this agent is a manager (has direct reports)
+    const allHired = templateStore.listHired();
+    const directReports = allHired.filter(a => a.reportsTo === agentId);
+    const isManager = directReports.length > 0;
+
+    // If manager, get subordinates' issue status
+    const subordinateInfo: string[] = [];
+    if (isManager) {
+      for (const report of directReports) {
+        const reportIssues = issueStore.list({ assignee: report.id });
+        const active = reportIssues.filter(i => i.status === "in-progress").length;
+        const blocked = reportIssues.filter(i => i.status === "blocked").length;
+        const done = reportIssues.filter(i => i.status === "done").length;
+        subordinateInfo.push(`  ${report.icon || "•"} ${report.name} (${report.role}): ${active} active, ${blocked} blocked, ${done} done`);
+      }
+    }
+
     const parts = [
       `You are: ${agent.icon || ""} ${agent.name} (${agent.role})`,
-      agent.reportsTo ? `Reports to: ${agent.reportsTo}` : null,
+      agent.reportsTo ? `Reports to: ${agent.reportsTo}` : `Reports to: Board (user)`,
       `Heartbeat: ${agent.heartbeatEnabled ? agent.heartbeatSchedule : "Off"}`,
-      `\nAssigned issues (${openIssues.length} active):`,
+      isManager ? `\nYou manage ${directReports.length} agent(s):` : null,
+      ...subordinateInfo,
+      `\nYour assigned issues (${openIssues.length} active):`,
       ...openIssues.map(i => `  ${i.id} [${i.status}] ${i.priority.toUpperCase()} — ${i.title}${i.lockedBy ? ` (locked by ${i.lockedBy})` : ""}`),
       blockedIssues.length > 0 ? `\nBlocked (${blockedIssues.length}):` : null,
       ...blockedIssues.map(i => `  ${i.id} — ${i.title}`),

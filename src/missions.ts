@@ -253,7 +253,7 @@ import { researchMissions } from "./missions/packs/research.js";
 import { communicationMissions } from "./missions/packs/communication.js";
 import { createAllMissionTools } from "./missions/index.js";
 
-function getAllMissions(): Mission[] {
+export function getAllMissions(): Mission[] {
   return [
     instagramPost,
     ...socialMissions,
@@ -350,21 +350,21 @@ function buildCaptionInjector(caption: string): string {
 export function createMissionTools(): ToolDefinition[] {
   return [
     {
-      name: "mission_list",
-      description: "List all available missions. Use this when the user asks what you can do autonomously or wants to see available workflows.",
+      name: "protocol_list",
+      description: "List all available protocols (pre-built workflows the agent knows). Use when the user asks what you can do, your skills, or available protocols.",
       parameters: { type: "object", properties: {} },
       async execute() {
         const all = getAllMissions();
         const list = all.map(pb =>
           `• **${pb.name}**: ${pb.description}\n  Triggers: ${pb.triggers.slice(0, 3).map(t => `"${t}"`).join(", ")}...`
         ).join("\n\n");
-        return { content: `Available missions (${all.length}):\n\n${list}` };
+        return { content: `Available protocols (${all.length}):\n\n${list}` };
       },
     },
 
     {
-      name: "mission_get",
-      description: "Get a mission's full steps, rules, and user preferences. Call this BEFORE executing a multi-step workflow like posting to Instagram. The rules contain critical lessons (e.g., how to format captions that don't break).",
+      name: "protocol_get",
+      description: "Get a protocol's full steps, rules, and user preferences. Call this BEFORE executing a multi-step workflow like posting to Instagram. The rules contain critical lessons (e.g., how to format captions that don't break).",
       parameters: {
         type: "object",
         properties: {

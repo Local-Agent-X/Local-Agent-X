@@ -1464,7 +1464,36 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
-    // ── Missions API ──
+    // ── Protocols API (built-in workflows) ──
+    if (method === "GET" && url.pathname === "/api/protocols") {
+      try {
+        const { getAllMissions } = await import("./missions.js");
+        const catMap: Record<string, string> = {
+          instagram: "Social Media", twitter: "Social Media", facebook: "Social Media", tiktok: "Social Media",
+          git: "Developer", deploy: "Developer", test: "Developer", pr: "Developer",
+          research: "Research", summarize: "Research", fact: "Research", citation: "Research",
+          email: "Communication", slack: "Communication", discord: "Communication", whatsapp: "Communication",
+          smart: "Smart Home", light: "Smart Home", thermostat: "Smart Home", security: "Smart Home",
+        };
+        function getCategory(name: string): string {
+          for (const [key, cat] of Object.entries(catMap)) { if (name.includes(key)) return cat; }
+          return "General";
+        }
+        const protocols = getAllMissions().map(m => ({
+          name: m.name,
+          description: m.description,
+          triggers: m.triggers.slice(0, 3),
+          steps: m.steps.length,
+          category: getCategory(m.name),
+        }));
+        json(200, { protocols });
+      } catch (e) {
+        json(200, { protocols: [] });
+      }
+      return;
+    }
+
+    // ── Missions API (scheduled tasks) ──
     if (method === "GET" && url.pathname === "/api/missions") {
       const schedules = cronService.list();
       json(200, { schedules });

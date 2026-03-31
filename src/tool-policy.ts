@@ -302,7 +302,8 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
       priority: 100,
     },
 
-    // Missions — multi-step workflows (internal)
+    // Protocols & missions
+    { id: "allow-protocols", tool: "protocol_*", decision: "allow", reason: "Protocol browsing and execution", priority: 50 },
     { id: "allow-missions", tool: "mission_*", decision: "allow", reason: "Mission workflows (internal)", priority: 50 },
 
     // Scheduled missions (cron)

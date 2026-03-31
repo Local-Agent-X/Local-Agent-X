@@ -1464,8 +1464,15 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
-    // ── Cron Jobs ──
-    if (method === "GET" && url.pathname === "/api/cron") {
+    // ── Missions API ──
+    if (method === "GET" && url.pathname === "/api/missions") {
+      const schedules = cronService.list();
+      json(200, { schedules });
+      return;
+    }
+
+    // ── Scheduled Missions (also serves /api/cron for backward compat) ──
+    if (method === "GET" && (url.pathname === "/api/cron" || url.pathname === "/api/schedules")) {
       json(200, { jobs: cronService.list(), settings: cronService.getSettings() });
       return;
     }

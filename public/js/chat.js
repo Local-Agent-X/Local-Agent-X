@@ -360,9 +360,9 @@ async function sendMessage() {
             } catch {}
           }
         }
-      } catch (e2) { if (isViewingThis()) bodyEl.textContent = 'Connection error: ' + e2.message; }
+      } catch (e2) { if (isViewingThis()) showRetryError(bodyEl, finalText, e2.message); }
     } else {
-      if (isViewingThis()) bodyEl.textContent = 'Connection error: ' + e.message;
+      if (isViewingThis()) showRetryError(bodyEl, finalText, e.message);
     }
   }
   flushTTS();
@@ -598,6 +598,28 @@ function cancelSecret() {
 }
 
 // ── Upload ──
+// ── Retry with error hints ──
+function showRetryError(el, originalMessage, errorMsg) {
+  let hint = 'Check your internet connection and try again.';
+  if (errorMsg.includes('timeout') || errorMsg.includes('Timeout')) hint = 'The server took too long to respond. It may be processing a heavy task — try again in a moment.';
+  else if (errorMsg.includes('Failed to fetch') || errorMsg.includes('network')) hint = 'Could not reach the server. Make sure Open Agent X is running.';
+  else if (errorMsg.includes('401') || errorMsg.includes('Unauthorized')) hint = 'Authentication failed. Try refreshing the page.';
+  else if (errorMsg.includes('429')) hint = 'Too many requests. Wait a moment and try again.';
+  else if (errorMsg.includes('500') || errorMsg.includes('Internal')) hint = 'Server error. Check the server logs for details.';
+
+  el.innerHTML = `<div class="error-retry">
+    <div style="color:var(--danger);font-size:.82rem;margin-bottom:6px">Something went wrong</div>
+    <div style="color:var(--muted);font-size:.75rem;margin-bottom:12px">${esc(hint)}</div>
+    <button class="action-btn primary" style="font-size:.75rem;padding:6px 16px" onclick="retryMessage('${esc(originalMessage.replace(/'/g, "\\'"))}')">Retry</button>
+  </div>`;
+}
+
+function retryMessage(text) {
+  const input = document.getElementById('msg-input');
+  if (input) { input.value = text; }
+  sendMessage();
+}
+
 function triggerUpload() { document.getElementById('file-input')?.click(); }
 function handleFileUpload(event) {
   addFilesToUpload(Array.from(event.target.files || []));

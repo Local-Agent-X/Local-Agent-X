@@ -158,8 +158,20 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
+  // ? — Show keyboard shortcuts (only when not typing in an input)
+  if (e.key === '?' && !e.ctrlKey && !e.metaKey && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {
+    e.preventDefault();
+    const overlay = document.getElementById('shortcuts-overlay');
+    if (overlay) overlay.style.display = overlay.style.display === 'flex' ? 'none' : 'flex';
+    return;
+  }
+
   // Escape — Close modals/overlays
   if (e.key === 'Escape') {
+    const so = document.getElementById('shortcuts-overlay');
+    if (so && so.style.display === 'flex') { so.style.display = 'none'; return; }
+    const np = document.getElementById('notif-panel');
+    if (np && np.classList.contains('open')) { np.classList.remove('open'); return; }
     if (commandPaletteOpen) { closeCommandPalette(); return; }
     // Close lightbox
     const lb = document.getElementById('img-preview-overlay');

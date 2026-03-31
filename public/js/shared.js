@@ -97,7 +97,8 @@ function md(s) {
   // 1. Extract code blocks first (protect from further processing)
   h = h.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const id = 'cb-' + Math.random().toString(36).slice(2, 8);
-    return ph(`<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang">${lang || 'code'}</span><button class="code-copy-btn" onclick="copyCodeBlock('${id}')" aria-label="Copy code">Copy</button></div><pre class="code-block" id="${id}"><code>${esc(code)}</code></pre></div>`);
+    const langClass = lang ? ` class="language-${lang}"` : '';
+    return ph(`<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang">${lang || 'code'}</span><button class="code-copy-btn" onclick="copyCodeBlock('${id}')" aria-label="Copy code">Copy</button></div><pre class="code-block" id="${id}"><code${langClass}>${esc(code)}</code></pre></div>`);
   });
 
   // 2. Extract inline images and links before escaping
@@ -195,6 +196,28 @@ function md(s) {
   }
 
   return sanitizeHtml(h);
+}
+
+// Apply syntax highlighting to code blocks (runs after md() output is inserted into DOM)
+function highlightCodeBlocks(container) {
+  if (typeof hljs === 'undefined') return;
+  const el = container || document;
+  el.querySelectorAll('pre code[class*="language-"]').forEach(block => {
+    if (!block.dataset.highlighted) { hljs.highlightElement(block); block.dataset.highlighted = 'true'; }
+  });
+}
+
+// Auto-highlight after any innerHTML update (debounced)
+let _hlDebounce;
+const _hlObserver = typeof MutationObserver !== 'undefined' ? new MutationObserver(() => {
+  clearTimeout(_hlDebounce);
+  _hlDebounce = setTimeout(() => highlightCodeBlocks(), 100);
+}) : null;
+if (_hlObserver) {
+  document.addEventListener('DOMContentLoaded', () => {
+    const msgs = document.getElementById('messages');
+    if (msgs) _hlObserver.observe(msgs, { childList: true, subtree: true });
+  });
 }
 
 // Copy code block to clipboard (feature 91)

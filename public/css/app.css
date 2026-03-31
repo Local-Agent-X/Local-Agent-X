@@ -60,6 +60,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .project-delete:hover{color:var(--danger);background:#2a1010}
 .project-chats{display:none;padding:2px 0 4px 20px}
 .project-item.expanded+.project-chats{display:block}
+.chat-group-label{padding:6px 12px 2px;font-size:.6rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
 #chats-section{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
 #chats-header{padding:8px 12px 4px;font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px;flex-shrink:0}
 #chat-list{flex:1;overflow-y:auto;padding:4px 8px;scrollbar-width:thin;scrollbar-color:#222 transparent}
@@ -105,6 +106,16 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .page-body{flex:1;overflow-y:auto;padding:20px 32px}
 .page-body-centered{flex:1;overflow-y:auto;padding:20px 32px;max-width:700px}
 /* Protocol cards */
+/* Error retry */
+.error-retry{padding:16px;border:1px solid var(--danger);border-radius:10px;background:rgba(255,51,51,.05);text-align:center}
+/* Notification center */
+.notif-panel{position:fixed;top:0;right:0;width:320px;height:100vh;background:var(--surface);border-left:1px solid var(--border);z-index:1000;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .2s}
+.notif-panel.open{transform:translateX(0)}
+.notif-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.notif-list{flex:1;overflow-y:auto;padding:8px}
+.notif-item{padding:10px 12px;border-bottom:1px solid var(--border);font-size:.75rem}
+.notif-item .notif-time{font-size:.6rem;color:var(--muted);margin-top:4px}
+.notif-badge{position:absolute;top:-4px;right:-4px;background:var(--danger);color:#fff;font-size:.55rem;min-width:14px;height:14px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700}
 .protocol-card{padding:16px;border-radius:10px;border:1px solid var(--border);background:var(--surface);cursor:pointer;transition:border-color .2s}
 .protocol-card:hover{border-color:var(--accent)}
 .protocol-name{font-family:var(--mono);font-size:.85rem;color:var(--text);font-weight:600;margin-bottom:6px}

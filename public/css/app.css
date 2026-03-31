@@ -94,6 +94,13 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 #main{flex:1;display:flex;flex-direction:column;min-width:0}
 .page{display:none;flex:1;flex-direction:column;overflow:hidden}
 .page.active{display:flex}
+/* Protocol cards */
+.protocol-card{padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);cursor:pointer;transition:border-color .15s}
+.protocol-card:hover{border-color:var(--accent)}
+.protocol-name{font-family:var(--mono);font-size:.78rem;color:var(--text);font-weight:600;margin-bottom:3px}
+.protocol-desc{font-size:.68rem;color:var(--muted);line-height:1.35;margin-bottom:6px}
+.protocol-footer{display:flex;justify-content:space-between;align-items:center;font-size:.6rem;font-family:var(--mono);color:var(--muted)}
+.protocol-trigger{color:var(--accent)}
 
 /* ── Chat ── */
 #messages{flex:1;overflow-y:auto;padding:24px 20px;display:flex;flex-direction:column;gap:20px;scrollbar-width:thin;scrollbar-color:#1a1a2e transparent;align-items:center}

@@ -6,10 +6,10 @@ function init_protocols() { loadProtocols(); }
 async function loadProtocols() {
   const el = document.getElementById('protocols-list');
   const countEl = document.getElementById('protocol-count');
-  if (!el) return;
+  if (!el) { console.error('[protocols] No #protocols-list element'); return; }
   el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">Loading protocols...</div>';
   try {
-    const data = await apiJson('/api/protocols');
+    const data = await apiFetch('/api/protocols').then(r => r.json());
     const protocols = data.protocols || [];
     if (countEl) countEl.textContent = protocols.length + ' protocols';
     if (protocols.length === 0) {
@@ -57,6 +57,11 @@ async function loadProtocols() {
   } catch (e) {
     el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--danger)">Failed to load protocols.</div>';
   }
+}
+
+// Auto-init if page is already active (handles direct URL navigation)
+if (document.getElementById('page-protocols')?.classList.contains('active')) {
+  loadProtocols();
 }
 
 function useProtocol(trigger) {

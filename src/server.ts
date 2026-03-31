@@ -436,7 +436,7 @@ export function startServer(config: SAXConfig) {
       model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
       provider,
       systemPrompt: enrichedPrompt,
-      tools: primalOnlyTools,
+      tools: allAgentTools,
       security,
       toolPolicy,
       sessionId: resolvedSessionId,
@@ -509,25 +509,7 @@ export function startServer(config: SAXConfig) {
 
   const allAgentTools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools, ...appTools, ...issueTools];
 
-  // Primal only gets agent control tools — forces delegation, no direct work
-  const PRIMAL_ALLOWED = new Set([
-    // Agent delegation
-    "agent_spawn", "agent_redirect", "agent_pause", "agent_resume",
-    "agent_cancel", "agent_status", "agent_output", "agent_message",
-    "delegate", "swarm_create", "swarm_status", "swarm_cancel",
-    "swarm_list_roles", "swarm_result",
-    // Lightweight tools Primal can use directly (no agent needed)
-    "memory_search", "memory_save", "memory_recall", "memory_reflect",
-    "memory_update_profile", "memory_get", "memory_stats",
-    "view_image", "generate_image", "generate_video",
-    "request_secret", "list_secrets",
-    "mission_list", "mission_get", "mission_save_preference",
-    "cron_list", "cron_create", "cron_delete",
-    "camera_capture", "screen_capture", "ocr",
-    "read", "bash", "browser",
-  ]);
-  const primalOnlyTools = allAgentTools.filter(t => PRIMAL_ALLOWED.has(t.name));
-  // Full tools for spawned agents (they do the actual work)
+  // All tools available to the agent — no restrictions by name
   const tools = allAgentTools;
 
   // In-memory session cache (backed by disk) — capped to prevent OOM
@@ -3042,7 +3024,7 @@ export function startServer(config: SAXConfig) {
           provider,
           baseURL: customBaseURL,
           systemPrompt: enrichedPrompt,
-          tools: primalOnlyTools,
+          tools: allAgentTools,
           security,
           toolPolicy,
           threatEngine,

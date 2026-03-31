@@ -9,7 +9,7 @@ async function loadProtocols() {
   if (!el) return;
   el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">Loading protocols...</div>';
   try {
-    const data = await apiGet('/api/protocols');
+    const data = await apiJson('/api/protocols');
     const protocols = data.protocols || [];
     if (countEl) countEl.textContent = protocols.length + ' protocols';
     if (protocols.length === 0) {

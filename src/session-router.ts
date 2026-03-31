@@ -9,7 +9,7 @@ import { randomBytes } from "node:crypto";
  * Identity links: ~/.sax/identity-links.json
  * Session key format: "channel:identifier" → canonical peer ID
  *
- * More robust than upstream's approach:
+ * More robust than typical approaches:
  * - Auto-detection of same user across channels (by name matching + manual linking)
  * - Bidirectional sync: new messages on any channel update the shared session
  * - Channel-aware context: the agent knows WHICH channel the user is on right now

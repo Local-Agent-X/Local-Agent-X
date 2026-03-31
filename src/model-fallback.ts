@@ -4,7 +4,7 @@
  * When a provider fails (429, 500, timeout, auth error), automatically
  * tries the next provider in the fallback chain.
  *
- * More robust than upstream's approach:
+ * More robust than typical approaches:
  * - Health tracking per provider (circuit breaker pattern)
  * - Adaptive backoff based on error type (rate limit vs server error vs timeout)
  * - Provider health scores that affect selection order

@@ -89,7 +89,7 @@ Open Agent X is designed as a **single-user personal agent** running on a local 
 - [ ] Enable HTTPS in settings for encrypted localhost traffic
 - [ ] Monitor `~/.sax/audit/` logs for anomalies
 - [ ] Export logs to SIEM via `GET /api/logs/export` (NDJSON format)
-- [ ] Do NOT expose port 4800 to the network
+- [ ] Do NOT expose port 7007 to the network
 - [ ] Do NOT share the bearer token across users
 - [ ] Rotate auth token periodically via `POST /api/auth/rotate`
 

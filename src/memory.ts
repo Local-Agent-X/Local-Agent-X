@@ -1,7 +1,7 @@
 /**
  * Open Agent X — Memory System v2
  *
- * Phase 1: Parity with upstream
+ * Phase 1: Core memory features
  *   - Query expansion with stop word filtering
  *   - Provider-aware embedding cache
  *   - Retry logic with exponential backoff
@@ -158,7 +158,7 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
 };
 
 // ══════════════════════════════════════════════════════════
-//  STOP WORDS (100+ English — from upstream's query expansion)
+//  STOP WORDS (100+ English — for query expansion)
 // ══════════════════════════════════════════════════════════
 
 const STOP_WORDS = new Set([

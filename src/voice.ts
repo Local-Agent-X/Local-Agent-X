@@ -16,7 +16,7 @@ import { randomBytes } from "node:crypto";
 
 // ── Paths ──
 
-const VOICE_DIR = join(homedir(), ".upstream", "workspace", "voice-chat");
+const VOICE_DIR = join(homedir(), ".sax", "workspace", "voice-chat");
 const WHISPER_EXE = join(VOICE_DIR, "whisper-bin", "Release", "whisper-cli.exe");
 const WHISPER_MODEL = join(VOICE_DIR, "whisper-bin", "models", "ggml-base.en.bin");
 const PIPER_EXE = join(VOICE_DIR, "piper", "piper", "piper.exe");

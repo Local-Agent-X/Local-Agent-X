@@ -5,7 +5,7 @@ import { join } from "node:path";
 /**
  * THREAT ENGINE — Advanced behavioral security for Open Agent X
  *
- * Five integrated systems that exceed upstream's per-call evaluation:
+ * Five integrated behavioral security systems:
  *
  * 1. TOOL CHAIN ANALYSIS: Tracks sequences of tool calls and blocks
  *    exfiltration patterns (read sensitive data → send externally).
@@ -43,7 +43,7 @@ interface ExfilPattern {
   description: string;
 }
 
-// Tool call hashing for loop detection (inspired by upstream)
+// Tool call hashing for loop detection
 function hashToolCall(name: string, args: Record<string, unknown>): string {
   return createHash("sha256").update(`${name}:${JSON.stringify(args)}`).digest("hex").slice(0, 16);
 }
@@ -165,7 +165,7 @@ export class ToolChainAnalyzer {
 
   private checkExfiltration(sink: DataAccess): ExfilPattern | null {
     // Look back through recent history for sensitive reads
-    // 15-minute window — longer than upstream's 5min to catch delayed exfil attempts
+    // 15-minute window to catch delayed exfil attempts
     const lookback = 900_000; // 15 minutes
     const now = Date.now();
 
@@ -190,7 +190,7 @@ export class ToolChainAnalyzer {
     return null;
   }
 
-  /** Detect tool call loops (upstream-style: generic repeat + ping-pong + multi-pattern) */
+  /** Detect tool call loops (generic repeat + ping-pong + multi-pattern) */
   private detectLoops(currentHash: string): string | null {
     const recent = this.callHashes.slice(-30);
 

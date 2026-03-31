@@ -209,7 +209,7 @@ function renderLayout(layout: LayoutDefinition, components: ComponentDefinition[
 // ── Main Render Function ────────────────────────────────────
 
 export function renderApp(def: AppDefinition, port?: number): string {
-  const apiBase = `http://127.0.0.1:${port || 4800}`;
+  const apiBase = `http://127.0.0.1:${port || 7007}`;
   const nonce = randomBytes(16).toString("base64");
   const componentsHtml = renderLayout(def.layout, def.components);
   const statusBadge = def.status !== "active"

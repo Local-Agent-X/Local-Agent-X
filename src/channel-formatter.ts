@@ -7,7 +7,7 @@
  * - Web UI: unlimited, full HTML/markdown
  * - CLI: plain text, ANSI colors
  *
- * More robust than upstream's approach:
+ * More robust than typical approaches:
  * - Smart chunking that preserves structure (never splits mid-code-block)
  * - Markdown dialect conversion (not just truncation)
  * - Media adaptation per channel

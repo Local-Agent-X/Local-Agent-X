@@ -200,7 +200,7 @@ export class WhatsAppBridge {
   // ── Private ──
 
   private async startSocket(): Promise<void> {
-    // Following upstream's proven Baileys integration pattern
+    // Baileys integration
     const baileys = await import("@whiskeysockets/baileys");
     const makeWASocket = (baileys as any).default ?? baileys.makeWASocket;
     const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore } = baileys;
@@ -289,7 +289,7 @@ export class WhatsAppBridge {
         const me = this.sock?.user;
         this.phoneNumber = me?.id?.split(":")[0] || me?.id || null;
         console.log(`[whatsapp] Connected as ${this.phoneNumber}`);
-        // Send available presence like upstream does
+        // Send available presence
         try { this.sock.sendPresenceUpdate("available"); } catch {}
       }
     });
@@ -388,7 +388,7 @@ export class WhatsAppBridge {
         const safeText = text.slice(0, 80).replace(/[\x00-\x1f\x7f]/g, "");
         console.log(`[whatsapp] → ${safeName} (${phone}): ${safeText}${text.length > 80 ? "..." : ""}`);
 
-        // Mark as read (skip for self-chat like upstream)
+        // Mark as read (skip for self-chat)
         if (!isSamePhone) {
           try { await this.sock.readMessages([{ remoteJid, id: msgId, fromMe: false }]); } catch {}
         }

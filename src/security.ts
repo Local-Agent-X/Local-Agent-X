@@ -258,7 +258,7 @@ const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
 
 /**
  * Security layer that evaluates tool calls before execution.
- * Principles (inspired by upstream):
+ * Principles:
  * - Fail closed: ambiguity → block
  * - Defense in depth: multiple validation stages
  * - DNS pinning: resolve hostname, then validate resolved IP
@@ -513,7 +513,7 @@ export class SecurityLayer {
   // ── Shell Command ──
 
   private evaluateShellCommand(command: string): SecurityDecision {
-    // Obfuscation detection (inspired by upstream exec-obfuscation-detect)
+    // Obfuscation detection
     try {
       const obfuscationResult = this.detectObfuscation(command);
       if (obfuscationResult) {

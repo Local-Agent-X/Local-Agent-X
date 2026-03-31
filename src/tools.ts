@@ -226,8 +226,8 @@ const bashTool: ToolDefinition = {
       if (CREDENTIAL_PATTERNS.some((p) => p.test(key))) continue;
       // Block values that contain null bytes
       if (value.includes("\0")) continue;
-      // Block values that look like base64 secrets (80+ chars, only base64 chars)
-      if (value.length >= 80 && /^[A-Za-z0-9+/=]+$/.test(value)) continue;
+      // Block values that look like base64-encoded secrets or API keys (32+ chars, base64/URL-safe chars)
+      if (value.length >= 32 && /^[A-Za-z0-9+/=_-]+$/.test(value)) continue;
       // Allow everything else
       sanitizedEnv[key] = value;
     }

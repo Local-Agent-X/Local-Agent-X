@@ -485,11 +485,11 @@ function renderOrgChart(container) {
   for (const root of roots) {
     html += renderOrgNode(root, childMap);
   }
-  // Unassigned drop zone
-  html += `<div class="org-dropzone" data-target="" ondragover="orgDragOver(event)" ondrop="orgDrop(event)">
+  html += '</div></div>';
+  // Unassigned drop zone — outside the tree so it doesn't affect centering
+  html += `<div class="org-dropzone" data-target="" ondragover="orgDragOver(event)" ondrop="orgDrop(event)" style="margin:20px auto;max-width:200px;text-align:center">
     <span style="color:var(--muted);font-size:.7rem">Drop here to unassign</span>
   </div>`;
-  html += '</div></div>';
 
   container.innerHTML = html;
 }

@@ -954,11 +954,14 @@ function initDragDrop() {
   }
 
   dropZone.addEventListener('dragenter', (e) => {
+    // Only show file drop overlay if dragging actual files (not internal drags like org chart)
+    if (!e.dataTransfer?.types?.includes('Files')) return;
     e.preventDefault();
     dragCounter++;
     dropOverlay.classList.add('visible');
   });
   dropZone.addEventListener('dragover', (e) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
   });

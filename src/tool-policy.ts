@@ -386,7 +386,7 @@ export class LiveToolPolicy extends ToolPolicy {
     try {
       if (!existsSync(this.policyPath)) return;
       const raw = JSON.parse(readFileSync(this.policyPath, "utf-8")) as ToolPolicyConfig;
-      const merged = mergeWithDefaults(raw);
+      const merged = mergeWithDefaults(raw, this.policyPath);
       this.currentInner = new ToolPolicy(merged);
       console.log(`[policy] Hot-reloaded ${merged.rules.length} rules`);
     } catch (e) {
@@ -396,16 +396,24 @@ export class LiveToolPolicy extends ToolPolicy {
 }
 
 /** Merge user policy with defaults — user rules take priority, but missing default rules are added */
-function mergeWithDefaults(user: ToolPolicyConfig): ToolPolicyConfig {
+function mergeWithDefaults(user: ToolPolicyConfig, policyPath?: string): ToolPolicyConfig {
   const userIds = new Set(user.rules.map(r => r.id));
   const missing = DEFAULT_POLICY.rules.filter(r => !userIds.has(r.id));
   if (missing.length > 0) {
     console.log(`[policy] Merging ${missing.length} default rules not in user policy`);
   }
-  return {
+  const merged = {
     defaultDecision: user.defaultDecision,
     rules: [...user.rules, ...missing],
   };
+  // Persist merged policy so new rules survive restarts
+  if (missing.length > 0 && policyPath) {
+    try {
+      writeFileSync(policyPath, JSON.stringify(merged, null, 2), { encoding: "utf-8", mode: 0o600 });
+      console.log(`[policy] Saved merged policy (${merged.rules.length} rules) to ${policyPath}`);
+    } catch {}
+  }
+  return merged;
 }
 
 /** Load tool policy from ~/.sax/tool-policy.json or use defaults */
@@ -422,7 +430,7 @@ export function loadToolPolicy(dataDir: string): LiveToolPolicy {
           continue;
         }
       }
-      const merged = mergeWithDefaults(raw);
+      const merged = mergeWithDefaults(raw, policyPath);
       console.log(`[policy] Loaded ${merged.rules.length} rules from ${policyPath}`);
       return new LiveToolPolicy(new ToolPolicy(merged), policyPath);
     } catch (e) {

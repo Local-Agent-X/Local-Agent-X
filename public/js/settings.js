@@ -31,7 +31,7 @@ function init_settings() {
   checkVoiceCaps();
   loadToolsList();
   loadFileAccessMode();
-  loadSelfModify();
+  // loadSelfModify removed — platform files always protected
   loadIntegrations();
   waCheckStatus();
   tgCheckStatus();
@@ -884,34 +884,7 @@ async function setFileAccessMode(mode) {
   } catch {}
 }
 
-// ── Self-Modify Mode ──
-
-async function loadSelfModify() {
-  try {
-    const r = await fetch(`${API}/api/security/self-modify`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-    const d = await r.json();
-    const cb = document.getElementById('cfg-self-modify');
-    if (cb) cb.checked = !!d.enabled;
-    const hint = document.getElementById('self-modify-hint');
-    if (hint) hint.textContent = d.enabled
-      ? 'Enabled. The agent can modify non-core src/ files and hot-reload changes.'
-      : 'Disabled. The agent cannot write to src/ files.';
-  } catch {}
-}
-
-async function setSelfModify(enabled) {
-  const hint = document.getElementById('self-modify-hint');
-  if (hint) hint.textContent = enabled
-    ? 'Enabled. The agent can modify non-core src/ files and hot-reload changes.'
-    : 'Disabled. The agent cannot write to src/ files.';
-  try {
-    await fetch(`${API}/api/security/self-modify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ enabled })
-    });
-  } catch {}
-}
+// Self-modify mode removed — platform files always protected
 
 // ── Settings Search ──
 

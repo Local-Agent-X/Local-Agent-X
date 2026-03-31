@@ -8,6 +8,7 @@ import { allTools, createHttpRequestTool } from "./tools.js";
 import { appTools } from "./app-tools.js";
 import { issueTools } from "./issue-tools.js";
 import { SecurityLayer } from "./security.js";
+import { detectInjection } from "./sanitize.js";
 import { loadToolPolicy } from "./tool-policy.js";
 import { getApiKey } from "./auth.js";
 import {
@@ -201,6 +202,9 @@ function corsHeaders(req: IncomingMessage): Record<string, string> {
 function jsonResponse(res: ServerResponse, status: number, data: unknown, req?: IncomingMessage) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
     ...(req ? corsHeaders(req) : {}),
   };
   res.writeHead(status, headers);
@@ -419,6 +423,17 @@ export function startServer(config: SAXConfig) {
        channelConfig.markdownFlavor === "whatsapp" ? "Use minimal formatting (*bold*, _italic_ only). " :
        "Markdown is OK but keep it minimal. ");
 
+    // Bridge security: detect prompt injection in incoming messages
+    const injectionHits = detectInjection(text);
+    const injectionScore = injectionHits.reduce((max, h) => Math.max(max, h.score), 0);
+    if (injectionScore >= 0.85) {
+      console.warn(`[bridge] BLOCKED high-confidence injection from ${platform}:${from} (score=${injectionScore.toFixed(2)}): ${injectionHits.map(h => h.label).join(", ")}`);
+      return `I can't process that message — it was flagged by security filters.`;
+    }
+    if (injectionScore >= 0.5) {
+      console.warn(`[bridge] Injection warning from ${platform}:${from} (score=${injectionScore.toFixed(2)}): ${injectionHits.map(h => h.label).join(", ")}`);
+    }
+
     const result = await enqueue("main", () => runAgent(text, session.messages, {
       apiKey,
       model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
@@ -427,6 +442,8 @@ export function startServer(config: SAXConfig) {
       tools: allAgentTools,
       security,
       toolPolicy,
+      rbac,
+      callerRole: "user" as const,
       sessionId: resolvedSessionId,
       maxIterations: savedMaxIterations || config.maxIterations,
       temperature: savedTemperature ?? config.temperature,
@@ -1384,8 +1401,14 @@ export function startServer(config: SAXConfig) {
     // Transcribe audio (STT)
     if (method === "POST" && url.pathname === "/api/voice/transcribe") {
       try {
+        const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // 25MB limit for audio
         const chunks: Buffer[] = [];
-        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let audioSize = 0;
+        for await (const chunk of req) {
+          audioSize += (chunk as Buffer).length;
+          if (audioSize > MAX_AUDIO_BYTES) { json(413, { error: "Audio too large. Maximum size is 25MB." }); req.destroy(); return; }
+          chunks.push(chunk as Buffer);
+        }
         const audioBuffer = Buffer.concat(chunks);
 
         if (audioBuffer.length < 1000) {
@@ -3684,11 +3707,14 @@ This summary is how your results get reported back to the user. If you produce n
 
   server.listen(config.port, "127.0.0.1", () => {
     const maskedToken = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
-    const realUrl = `http://127.0.0.1:${config.port}/?token=${config.authToken}`;
     const maskedUrl = `http://127.0.0.1:${config.port}/?token=${maskedToken}`;
     console.log(`\n  Open Agent X running at http://127.0.0.1:${config.port}`);
     console.log(`  Auth token: ${maskedToken}`);
     // OSC 8 terminal hyperlink: real URL is clickable, but display shows masked token
+    // Token is written to a temp file readable only by current user, not exposed in logs/history
+    const tokenFilePath = join(dataDir, ".startup-url");
+    const realUrl = `http://127.0.0.1:${config.port}/?token=${config.authToken}`;
+    writeFileSync(tokenFilePath, realUrl, { mode: 0o600 });
     console.log(`\n  ► Open: \x1b]8;;${realUrl}\x1b\\${maskedUrl}\x1b]8;;\x1b\\\n`);
     console.log(`  Memory: ${dataDir}/memory/`);
     console.log(`  Sessions: ${dataDir}/sessions/`);

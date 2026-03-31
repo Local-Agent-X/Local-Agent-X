@@ -239,7 +239,9 @@ export function synthesizePiper(text: string): Buffer {
     proc.stdin.end();
 
     // Wait synchronously (Piper is fast)
-    execSync(`powershell -Command "Wait-Process -Id ${proc.pid} -Timeout 15"`, {
+    const safePid = Number(proc.pid);
+    if (!Number.isInteger(safePid) || safePid <= 0) throw new Error("Invalid process ID");
+    execSync(`powershell -Command "Wait-Process -Id ${safePid} -Timeout 15"`, {
       timeout: 16_000,
       stdio: "ignore",
     });

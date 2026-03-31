@@ -429,12 +429,12 @@ function showMoveMenu(chatId,e){
   menu.className='move-menu';
   // Option to remove from project
   if(chat.projectId){
-    menu.innerHTML+=`<div class="move-menu-item remove" onclick="moveChat('${chatId}',null,event)">Remove from project</div>`;
+    const removeEl=document.createElement('div');removeEl.className='move-menu-item remove';removeEl.textContent='Remove from project';removeEl.onclick=function(ev){moveChat(chatId,null,ev)};menu.appendChild(removeEl);
   }
   // List all projects
   projects.forEach(p=>{
     if(p.id!==chat.projectId){
-      menu.innerHTML+=`<div class="move-menu-item" onclick="moveChat('${chatId}','${p.id}',event)">${esc(p.name)}</div>`;
+      const item=document.createElement('div');item.className='move-menu-item';item.textContent=p.name;item.onclick=function(ev){moveChat(chatId,p.id,ev)};menu.appendChild(item);
     }
   });
   if(projects.length===0 && !chat.projectId){
@@ -612,7 +612,7 @@ async function refreshAuthStatus(){
     const d=await r.json();
     const discBtn=document.getElementById('btn-oauth-disconnect');
     if(d.authenticated){
-      el.innerHTML=`<span style="color:var(--accent)">● Connected</span> — ${d.method==='oauth'?'OpenAI OAuth':'API Key'}`;
+      el.innerHTML=`<span style="color:var(--accent)">● Connected</span> — ${d.method==='oauth'?'OpenAI OAuth':'API Key'}`;  // d.method only compared, never rendered
       btn.textContent='✓ ALREADY CONNECTED';
       btn.style.opacity='.5';
       if(d.method==='oauth' && discBtn) discBtn.style.display='block';
@@ -711,19 +711,19 @@ async function checkAiServer(type){
     const r=await fetch(`http://127.0.0.1:${port}/health`,{signal:AbortSignal.timeout(3000)});
     const d=await r.json();
     if(d.model_loaded){
-      el.innerHTML=`<span style="color:var(--accent)">● ${type} server running</span> — ${d.device} | Model loaded`;
+      el.innerHTML=`<span style="color:var(--accent)">● ${esc(type)} server running</span> — ${esc(d.device)} | Model loaded`;
     } else {
       el.innerHTML=`<span style="color:#f59e0b">● ${type} server starting</span> — model loading...`;
     }
   }catch{
-    el.innerHTML=`<span style="color:var(--danger)">● ${type} server offline</span> — click Start to launch`;
+    el.innerHTML=`<span style="color:var(--danger)">● ${esc(type)} server offline</span> — click Start to launch`;
   }
 }
 
 async function startAiServer(type){
   const el=document.getElementById('ai-status');
   const script=type==='image'?'workspace/sd-server/server.py':'workspace/sd-server/video-server.py';
-  el.innerHTML=`<span style="color:#f59e0b">⏳ Starting ${type} server...</span> (first run downloads ~4GB model)`;
+  el.innerHTML=`<span style="color:#f59e0b">⏳ Starting ${esc(type)} server...</span> (first run downloads ~4GB model)`;
 
   try{
     // Use the agent's bash tool via chat API to start the server
@@ -745,15 +745,15 @@ async function startAiServer(type){
         const h=await fetch(`http://127.0.0.1:${port}/health`,{signal:AbortSignal.timeout(2000)});
         const d=await h.json();
         if(d.model_loaded){ready=true;break;}
-        el.innerHTML=`<span style="color:#f59e0b">⏳ Loading ${type} model to GPU... (${(i+1)*5}s)</span>`;
+        el.innerHTML=`<span style="color:#f59e0b">⏳ Loading ${esc(type)} model to GPU... (${(i+1)*5}s)</span>`;
       }catch{
-        el.innerHTML=`<span style="color:#f59e0b">⏳ Starting ${type} server... (${(i+1)*5}s)</span>`;
+        el.innerHTML=`<span style="color:#f59e0b">⏳ Starting ${esc(type)} server... (${(i+1)*5}s)</span>`;
       }
     }
     if(ready){
-      el.innerHTML=`<span style="color:var(--accent)">● ${type} server ready!</span>`;
+      el.innerHTML=`<span style="color:var(--accent)">● ${esc(type)} server ready!</span>`;
     }else{
-      el.innerHTML=`<span style="color:var(--danger)">● ${type} server timed out</span> — try starting manually: python ${script}`;
+      el.innerHTML=`<span style="color:var(--danger)">● ${esc(type)} server timed out</span> — try starting manually: python ${esc(script)}`;
     }
   }catch(e){
     el.innerHTML=`<span style="color:var(--danger)">● Failed: ${esc(e.message)}</span>`;

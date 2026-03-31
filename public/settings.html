@@ -620,41 +620,6 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
         </div>
         <div class="toggle on" id="tog-browser" onclick="toggleToolPolicy('browser', this)"></div>
       </div>
-      <div class="toggle-row">
-        <div>
-          <div class="toggle-label">Browser JS Eval</div>
-          <div class="toggle-desc">Allow JavaScript execution in browser pages</div>
-        </div>
-        <div class="toggle" id="tog-eval" onclick="toggleSwitch(this)"></div>
-      </div>
-    </div>
-
-    <!-- Sandbox section removed — Docker sandboxing is an enterprise feature -->
-
-    <div class="section">
-      <div class="section-title">Threat Engine</div>
-      <div class="section-desc">Behavioral security monitoring.</div>
-      <div class="toggle-row">
-        <div>
-          <div class="toggle-label">Exfiltration Detection</div>
-          <div class="toggle-desc">Block sensitive data reads followed by external sends</div>
-        </div>
-        <div class="toggle on" id="tog-exfil" onclick="toggleSwitch(this)"></div>
-      </div>
-      <div class="toggle-row">
-        <div>
-          <div class="toggle-label">Canary Tokens</div>
-          <div class="toggle-desc">Detect prompt injection via hidden tokens in system prompt</div>
-        </div>
-        <div class="toggle on" id="tog-canary" onclick="toggleSwitch(this)"></div>
-      </div>
-      <div class="toggle-row">
-        <div>
-          <div class="toggle-label">Credential Redaction</div>
-          <div class="toggle-desc">Mask API keys and secrets in tool output</div>
-        </div>
-        <div class="toggle on" id="tog-redact" onclick="toggleSwitch(this)"></div>
-      </div>
     </div>
 
   </div>

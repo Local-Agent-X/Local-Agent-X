@@ -27,8 +27,8 @@ export const instagramStoryMission: Mission = {
 };
 
 export const twitterPostMission: Mission = {
-  name: "twitter_post",
-  description: "Post a tweet/thread on Twitter/X with optional media, polls, and scheduling.",
+  name: "x_post",
+  description: "Post on X (formerly Twitter) with optional media, polls, threads, and scheduling.",
   triggers: ["tweet", "post on twitter", "post on x", "tweet this", "share on twitter", "post to x"],
   learnablePreferences: ["twitter_username", "tweet_style", "default_hashtags_twitter", "thread_style"],
   rules: [

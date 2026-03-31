@@ -24,7 +24,11 @@
 [data-theme="light"] pre { background: #f0f0f8 !important; border-color: var(--border) !important; }
 [data-theme="light"] code { background: #e8e8f0 !important; }
 [data-theme="light"] #new-chat-btn:hover { color: #fff; }
-*{box-sizing:border-box;margin:0;padding:0}
+*{box-sizing:border-box;margin:0;padding:0;scrollbar-width:thin;scrollbar-color:#1a1a2e transparent}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#2a2a4e}
 body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}
 /* simple-mode removed — all features visible to all users */
 /* Electron desktop: title bar pushes entire app down */

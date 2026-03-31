@@ -145,12 +145,8 @@
       <h1 style="font-family:var(--mono);font-size:.9rem;color:var(--accent);letter-spacing:2px">SETTINGS</h1>
       <div style="flex:1"></div>
       <span id="save-status" style="font-family:var(--mono);font-size:.68rem;color:var(--muted)"></span>
-      <label style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:.68rem;color:var(--muted);cursor:pointer" title="Simple mode hides technical features">
-        <input type="checkbox" id="cfg-user-mode" onchange="setUserMode(this.checked ? 'simple' : 'power')" style="accent-color:var(--accent)">
-        Simple Mode
-      </label>
-      <!-- Settings import/export (feature 98) -->
-      <button class="action-btn secondary power-only" onclick="exportSettings()" aria-label="Export settings as JSON" title="Export settings">Export</button>
+      <!-- Settings import/export -->
+      <button class="action-btn secondary" onclick="exportSettings()" aria-label="Export settings as JSON" title="Export settings">Export</button>
       <button class="action-btn secondary" onclick="importSettings()" aria-label="Import settings from JSON" title="Import settings">Import</button>
       <button class="action-btn primary" onclick="saveSettings()">SAVE</button>
     </div>
@@ -162,11 +158,11 @@
       <button class="tab-pill" onclick="switchTab('ai')">AI & Models</button>
       <button class="tab-pill" onclick="switchTab('image')">Image & Video</button>
       <button class="tab-pill" onclick="switchTab('voice')">Voice</button>
-      <button class="tab-pill power-only" onclick="switchTab('security')">Security</button>
-      <button class="tab-pill power-only" onclick="switchTab('tools')">Tools</button>
+      <button class="tab-pill" onclick="switchTab('security')">Security</button>
+      <button class="tab-pill" onclick="switchTab('tools')">Tools</button>
       <button class="tab-pill" onclick="switchTab('whatsapp')">Communication</button>
       <button class="tab-pill" onclick="switchTab('integrations')">API Integrations</button>
-      <button class="tab-pill power-only" onclick="switchTab('sync')">Agent Sync</button>
+      <button class="tab-pill" onclick="switchTab('sync')">Agent Sync</button>
     </div>
     <div class="settings-content">
       <!-- General -->

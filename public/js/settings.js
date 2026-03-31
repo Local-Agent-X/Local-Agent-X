@@ -450,7 +450,8 @@ async function saveSettings() {
   }
   // Save provider + model to server (no API key in settings.json)
   const currentPort = location.port || '7007';
-  const settingsPayload = { provider: s.provider, model: s.model, temperature: s.temperature };
+  const maxIter = parseInt(document.getElementById('cfg-maxiter')?.value || '25', 10);
+  const settingsPayload = { provider: s.provider, model: s.model, temperature: s.temperature, maxIterations: maxIter };
   if (s.port) settingsPayload.port = s.port;
   const customUrl = document.getElementById('cfg-custom-url');
   if (customUrl && customUrl.value) settingsPayload.customBaseUrl = customUrl.value;

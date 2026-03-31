@@ -595,7 +595,7 @@ const buildAppTool: ToolDefinition = {
       } catch { backend = "claude"; }
     }
     const appDir = resolve("workspace", "apps", appName);
-    const port = process.env.SAX_PORT || "4800";
+    const port = process.env.SAX_PORT || "7007";
     const appUrl = `http://127.0.0.1:${port}/apps/${appName}/index.html`;
 
     mkdirSync(appDir, { recursive: true });
@@ -795,7 +795,7 @@ ${content}
       else registry.push({ name, title, createdAt: Date.now() });
       writeFileSync(registryPath, JSON.stringify(registry, null, 2), "utf-8");
 
-      const port = process.env.SAX_PORT || "4800";
+      const port = process.env.SAX_PORT || "7007";
       return { content: `Page created: http://127.0.0.1:${port}/${name}.html\nTitle: ${title}\nRegistered in sidebar.` };
     } catch (e) {
       return { content: `Failed to create page: ${(e as Error).message}`, isError: true };

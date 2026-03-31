@@ -1,6 +1,6 @@
 /**
  * ChatGPT Codex Responses API client.
- * Uses the same endpoint and headers as upstream's pi-ai library.
+ * Uses the same endpoint and headers as the pi-ai library.
  * This lets $20/mo ChatGPT subscribers use the API for free.
  *
  * Endpoint: https://chatgpt.com/backend-api/codex/responses

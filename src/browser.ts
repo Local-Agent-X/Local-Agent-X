@@ -86,7 +86,7 @@ export class BrowserManager {
   private injectTokenIfLocal(url: string): string {
     try {
       const u = new URL(url);
-      const appPort = _saxPort || process.env.SAX_PORT || "4800";
+      const appPort = _saxPort || process.env.SAX_PORT || "7007";
       if ((u.hostname === "127.0.0.1" || u.hostname === "localhost") && u.port === appPort) {
         const token = _saxAuthToken;
         if (token && !u.searchParams.has("token")) {
@@ -109,7 +109,7 @@ export class BrowserManager {
 
   /** Check if the browser is currently on our own app. */
   isOnOwnApp(): boolean {
-    const port = process.env.SAX_PORT || "4800";
+    const port = process.env.SAX_PORT || "7007";
     return new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${port}`, "i").test(this.getCurrentUrl());
   }
 

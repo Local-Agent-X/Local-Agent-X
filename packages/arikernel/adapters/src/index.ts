@@ -21,8 +21,3 @@ export {
 	type LlamaIndexToolOptions,
 	type LlamaIndexToolMapping,
 } from "./llamaindex.js";
-export {
-	upstreamAdapter,
-	type upstreamSkillRegistration,
-	type upstreamSkillHandler,
-} from "./upstream.js";

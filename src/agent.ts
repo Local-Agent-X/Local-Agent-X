@@ -235,13 +235,13 @@ async function executeToolCalls(
         result = { content: `BLOCKED by threat engine: ${threat.reason}`, isError: true };
       }
       // If session is in restricted mode (high threat score), block external tools
-      // Exception: browser interacting with our own app (localhost:4800) is always safe
+      // Exception: browser interacting with our own app (localhost:7007) is always safe
       if (threatEngine.isRestricted() && ["http_request", "web_fetch", "browser"].includes(tc.name)) {
         let isOwnApp = false;
         if (tc.name === "browser") {
           const urlArg = String(args.url || "");
           // Navigating to our own app
-          const appPort = process.env.SAX_PORT || "4800";
+          const appPort = process.env.SAX_PORT || "7007";
           if (new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${appPort}`, "i").test(urlArg)) {
             isOwnApp = true;
           } else if (!urlArg) {

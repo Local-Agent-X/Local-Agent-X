@@ -439,7 +439,7 @@ export function startServer(config: SAXConfig) {
       model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model),
       provider,
       systemPrompt: enrichedPrompt,
-      tools: allAgentTools,
+      tools: bridgeTools,
       security,
       toolPolicy,
       rbac,
@@ -513,6 +513,11 @@ export function startServer(config: SAXConfig) {
   const primalTools = createPrimalTools();
 
   const allAgentTools = [...allTools, httpRequestTool, ...memoryTools, ...secretTools, ...browserTools, ...imageTools, ...missionTools, ...extendedMissionTools, ...cronTools, ...swarmTools, ...primalTools, ...appTools, ...issueTools];
+
+  // Restricted tool set for bridge channels (WhatsApp, Telegram) — defense-in-depth
+  // Even with RBAC enforcing "user" role, physically exclude high-risk tools so they
+  // can't be invoked even if RBAC has a bypass or misconfiguration
+  const bridgeTools = [...allTools, ...memoryTools, ...imageTools, ...missionTools, ...issueTools];
 
   // All tools available to the agent — no restrictions by name
   const tools = allAgentTools;
@@ -1579,7 +1584,7 @@ export function startServer(config: SAXConfig) {
 
     // ── Credential rotation ──
     if (method === "POST" && url.pathname === "/api/auth/rotate") {
-      const newToken = randomBytes(24).toString("hex");
+      const newToken = randomBytes(32).toString("hex");
       // Update config file
       const configPath = join(dataDir, "config.json");
       try {
@@ -1588,6 +1593,8 @@ export function startServer(config: SAXConfig) {
         writeFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
         // Invalidate old token immediately by updating in-memory config
         config.authToken = newToken;
+        // Re-initialize RBAC with new token — revokes old operator token, creates new with 90-day expiry
+        Object.assign(rbac, new RBACManager(dataDir, newToken));
         setBrowserAuthContext(newToken, String(config.port));
         const masked = newToken.slice(0, 4) + "****" + newToken.slice(-4);
         console.log(`[auth] Token rotated. New token: ${masked}`);
@@ -3236,9 +3243,16 @@ export function startServer(config: SAXConfig) {
     if (method === "GET" && url.pathname === "/api/auth/status") {
       const { loadTokens } = await import("./auth.js");
       const tokens = loadTokens();
+      // Include token expiry info so the UI can warn before lockout
+      const operatorEntry = rbac.listTokens().find((t: any) => t.id === "operator-default");
+      const expiresAt = operatorEntry?.expiresAt || null;
+      const daysRemaining = expiresAt ? Math.max(0, Math.ceil((expiresAt - Date.now()) / (24 * 60 * 60 * 1000))) : null;
       json(200, {
         authenticated: !!tokens || !!config.openaiApiKey,
         method: config.openaiApiKey ? "api_key" : tokens ? "oauth" : "none",
+        tokenExpiresAt: expiresAt,
+        tokenDaysRemaining: daysRemaining,
+        tokenExpiringSoon: daysRemaining !== null && daysRemaining <= 7,
       });
       return;
     }
@@ -3439,7 +3453,7 @@ export function startServer(config: SAXConfig) {
         if (ext === "html") {
           headers["Content-Security-Policy"] =
             "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-            "img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'";
+            "img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'";
           headers["X-Content-Type-Options"] = "nosniff";
           headers["X-Frame-Options"] = "DENY";
           headers["Referrer-Policy"] = "no-referrer";

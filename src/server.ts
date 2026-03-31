@@ -1743,8 +1743,49 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
-    // Self-modify mode removed — platform files (src/, public/) are always protected.
-    // Users build custom interfaces via the apps system (app_create).
+    // ── Tool Policy Toggle API ──
+
+    if (method === "GET" && url.pathname === "/api/tool-policy/status") {
+      // Read current policy and return toggle states for key tools
+      const policyPath = join(dataDir, "tool-policy.json");
+      try {
+        const policy = existsSync(policyPath) ? JSON.parse(readFileSync(policyPath, "utf-8")) : { defaultDecision: "deny", rules: [] };
+        const bashRule = policy.rules.find((r: any) => r.id === "allow-bash-limited");
+        const httpRule = policy.rules.find((r: any) => r.id === "allow-http-limited");
+        const browserRule = policy.rules.find((r: any) => r.id === "allow-browser");
+        json(200, {
+          bash: bashRule ? bashRule.decision !== "deny" : true,
+          http: httpRule ? httpRule.decision !== "deny" : true,
+          browser: browserRule ? browserRule.decision !== "deny" : true,
+        });
+      } catch { json(200, { bash: true, http: true, browser: true }); }
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/tool-policy/toggle") {
+      const body = await readBody(req);
+      const { tool, enabled } = JSON.parse(body);
+      const ruleMap: Record<string, string> = { bash: "allow-bash-limited", http: "allow-http-limited", browser: "allow-browser" };
+      const ruleId = ruleMap[tool];
+      if (!ruleId) { json(400, { error: "Unknown tool. Use: bash, http, browser" }); return; }
+
+      const policyPath = join(dataDir, "tool-policy.json");
+      try {
+        let policy = existsSync(policyPath) ? JSON.parse(readFileSync(policyPath, "utf-8")) : { defaultDecision: "deny", rules: [] };
+        const rule = policy.rules.find((r: any) => r.id === ruleId);
+        if (rule) {
+          rule.decision = enabled ? "allow" : "deny";
+        } else {
+          policy.rules.push({ id: ruleId, tool: tool === "http" ? "http_request" : tool, decision: enabled ? "allow" : "deny", reason: enabled ? "Enabled via settings" : "Disabled via settings", priority: 40 });
+        }
+        writeFileSync(policyPath, JSON.stringify(policy, null, 2), { encoding: "utf-8", mode: 0o600 });
+        // LiveToolPolicy hot-reloads from file watch, so the change takes effect immediately
+        json(200, { ok: true, tool, enabled });
+      } catch (e) {
+        json(500, { error: "Failed to update policy: " + (e instanceof Error ? e.message : String(e)) });
+      }
+      return;
+    }
 
     // ── Custom Pages API ──
 

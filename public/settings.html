@@ -604,21 +604,21 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
           <div class="toggle-label">Shell Access (bash)</div>
           <div class="toggle-desc">Allow shell command execution (rate limited)</div>
         </div>
-        <div class="toggle on" id="tog-bash" onclick="toggleSwitch(this)"></div>
+        <div class="toggle on" id="tog-bash" onclick="toggleToolPolicy('bash', this)"></div>
       </div>
       <div class="toggle-row">
         <div>
           <div class="toggle-label">HTTP Requests</div>
           <div class="toggle-desc">Allow outbound API calls (operator only)</div>
         </div>
-        <div class="toggle on" id="tog-http" onclick="toggleSwitch(this)"></div>
+        <div class="toggle on" id="tog-http" onclick="toggleToolPolicy('http', this)"></div>
       </div>
       <div class="toggle-row">
         <div>
           <div class="toggle-label">Browser</div>
           <div class="toggle-desc">Allow Playwright browser control (operator only)</div>
         </div>
-        <div class="toggle on" id="tog-browser" onclick="toggleSwitch(this)"></div>
+        <div class="toggle on" id="tog-browser" onclick="toggleToolPolicy('browser', this)"></div>
       </div>
       <div class="toggle-row">
         <div>
@@ -629,23 +629,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
       </div>
     </div>
 
-    <div class="section">
-      <div class="section-title">Sandbox</div>
-      <div class="section-desc">Container isolation for shell commands. Docker mode runs every command in a locked-down container.</div>
-      <div id="sandbox-status" class="status-badge warn" style="margin-bottom:10px"><span class="status-dot"></span> Checking...</div>
-      <div class="field">
-        <label class="field-label">Execution Mode</label>
-        <select class="field-select" id="cfg-sandbox" onchange="switchSandbox(this.value)">
-          <option value="host">Host (default — no isolation)</option>
-          <option value="docker">Docker Container (secure — requires Docker)</option>
-        </select>
-      </div>
-      <div class="field-hint">Docker mode drops all capabilities, disables network, and restricts filesystem access.</div>
-      <div class="btn-row">
-        <button class="action-btn secondary" id="docker-download-btn" style="display:none" onclick="window.open('https://www.docker.com/products/docker-desktop/','_blank')">Download Docker Desktop</button>
-        <button class="action-btn secondary" onclick="checkSandbox()">Refresh Status</button>
-      </div>
-    </div>
+    <!-- Sandbox section removed — Docker sandboxing is an enterprise feature -->
 
     <div class="section">
       <div class="section-title">Threat Engine</div>
@@ -782,7 +766,7 @@ function switchTab(id) {
   event.target.classList.add('active');
   // Lazy-load: only check servers when user opens the tab
   if (id === 'image') { checkServer('image'); checkServer('video'); }
-  if (id === 'security') { checkSandbox(); }
+  if (id === 'security') { loadToolPolicy(); }
 }
 
 // ── Toggles ──
@@ -931,7 +915,32 @@ function loadToolsList() {
   }).join('');
 }
 
-// ── Sandbox ──
+// ── Tool Policy Toggles ──
+async function loadToolPolicy() {
+  try {
+    const d = await apiGet('/api/tool-policy/status');
+    const bashEl = document.getElementById('tog-bash');
+    const httpEl = document.getElementById('tog-http');
+    const browserEl = document.getElementById('tog-browser');
+    if (bashEl) bashEl.classList.toggle('on', d.bash !== false);
+    if (httpEl) httpEl.classList.toggle('on', d.http !== false);
+    if (browserEl) browserEl.classList.toggle('on', d.browser !== false);
+  } catch {}
+}
+
+async function toggleToolPolicy(tool, el) {
+  el.classList.toggle('on');
+  const enabled = el.classList.contains('on');
+  try {
+    await apiPost('/api/tool-policy/toggle', { tool, enabled });
+  } catch (e) {
+    // Revert on failure
+    el.classList.toggle('on');
+    alert('Failed to update tool policy: ' + e.message);
+  }
+}
+
+// ── Sandbox (removed) ──
 async function checkSandbox() {
   const statusEl = document.getElementById('sandbox-status');
   const downloadBtn = document.getElementById('docker-download-btn');
@@ -996,7 +1005,6 @@ async function saveSettings() {
     ttsEngine: document.getElementById('cfg-tts-engine').value,
     ttsVoice: document.getElementById('cfg-tts-voice').value,
     ttsSpeed: parseFloat(document.getElementById('cfg-tts-speed').value),
-    sandbox: document.getElementById('cfg-sandbox').value,
     retentionDays: parseInt(document.getElementById('cfg-retention')?.value || '90'),
     toolApproval: document.getElementById('cfg-tool-approval')?.value || 'confirm-risky',
     autoUpdate: document.getElementById('tog-autoupdate')?.classList.contains('on') ?? true,
@@ -1024,7 +1032,7 @@ function loadSettings() {
     if (s.ttsEngine) document.getElementById('cfg-tts-engine').value = s.ttsEngine;
     if (s.ttsVoice) document.getElementById('cfg-tts-voice').value = s.ttsVoice;
     if (s.ttsSpeed) document.getElementById('cfg-tts-speed').value = s.ttsSpeed;
-    if (s.sandbox) document.getElementById('cfg-sandbox').value = s.sandbox;
+    // sandbox setting removed
     if (s.retentionDays) { const el = document.getElementById('cfg-retention'); if (el) el.value = s.retentionDays; }
     if (s.toolApproval) { const el = document.getElementById('cfg-tool-approval'); if (el) el.value = s.toolApproval; }
     if (s.autoUpdate !== undefined) { const el = document.getElementById('tog-autoupdate'); if (el) el.classList.toggle('on', s.autoUpdate); }
@@ -1293,7 +1301,6 @@ renderSidebar();
 loadSettings();
 loadSystemStatus();
 checkAuth();
-checkSandbox();
 // Image/video server checks deferred — only run when user opens that tab
 // to avoid console spam when servers aren't running
 checkVoice();

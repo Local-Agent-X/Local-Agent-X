@@ -248,7 +248,7 @@ export function dryRunMission(mission: Mission, context: Record<string, unknown>
 import { loadCustomMissions } from "./missions/builder.js";
 import { socialMissions } from "./missions/packs/social.js";
 import { developerMissions } from "./missions/packs/developer.js";
-import { smarthomeMissions } from "./missions/packs/smarthome.js";
+// Smart home pack removed — no smart home APIs available in the platform
 import { researchMissions } from "./missions/packs/research.js";
 import { communicationMissions } from "./missions/packs/communication.js";
 import { createAllMissionTools } from "./missions/index.js";
@@ -258,7 +258,6 @@ export function getAllMissions(): Mission[] {
     instagramPost,
     ...socialMissions,
     ...developerMissions,
-    ...smarthomeMissions,
     ...researchMissions,
     ...communicationMissions,
     ...loadCustomMissions(),

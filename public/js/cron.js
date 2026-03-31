@@ -11,7 +11,7 @@ function init_cron() { loadCronJobs(); }
 
 async function loadCronJobs() {
   try {
-    const data = await apiGet('/api/cron');
+    const data = await apiJson('/api/cron');
     cronJobs = data.jobs || [];
   } catch {
     // Fallback to localStorage if server is unreachable

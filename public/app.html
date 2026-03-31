@@ -6,6 +6,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* wss://127.0.0.1:* wss://localhost:*; img-src 'self' data: https: blob:; font-src 'self'; media-src 'self' blob: mediastream:;">
 <meta http-equiv="Permissions-Policy" content="microphone=*, camera=*">
 <title>Open Agent X</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css"/>
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
 <link rel="stylesheet" href="/css/app.css"/>
@@ -64,6 +66,7 @@
     <button class="util-btn" data-route="missions" onclick="navigate('missions')" aria-label="Missions" title="Missions"><span class="util-icon">&#9889;</span></button>
     <button class="util-btn" data-route="secrets" onclick="navigate('secrets')" aria-label="Secrets vault" title="Secrets"><span class="util-icon">&#128273;</span></button>
     <button class="util-btn" data-route="settings" onclick="navigate('settings')" aria-label="Settings" title="Settings"><span class="util-icon">&#9881;</span></button>
+    <button class="util-btn" onclick="toggleNotifPanel()" aria-label="Notifications" title="Notifications" style="position:relative"><span class="util-icon">&#128276;</span><span id="notif-badge" class="notif-badge" style="display:none"></span></button>
   </div>
 
   <div id="sidebar-footer">
@@ -82,6 +85,34 @@
   <!-- VOICE INDICATORS (global) -->
   <div id="voice-indicator" role="status" aria-live="polite"></div>
   <button id="agents-toggle" onclick="toggleAgentFeeds()" aria-label="Toggle agents panel" title="Show/hide agents panel" style="position:fixed;top:8px;right:16px;z-index:200;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-family:var(--mono);font-size:.68rem;color:var(--muted);transition:all .15s">AGENTS <span id="agents-toggle-count" style="color:var(--accent)">0</span></button>
+
+  <!-- ══ NOTIFICATION CENTER ══ -->
+  <div id="notif-panel" class="notif-panel">
+    <div class="notif-header">
+      <span style="font-family:var(--mono);font-size:.8rem;color:var(--accent)">NOTIFICATIONS</span>
+      <button onclick="toggleNotifPanel()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.2rem">&times;</button>
+    </div>
+    <div class="notif-list" id="notif-list"><div style="padding:20px;text-align:center;color:var(--muted);font-size:.75rem">No notifications yet</div></div>
+  </div>
+
+  <!-- ══ KEYBOARD SHORTCUTS OVERLAY ══ -->
+  <div id="shortcuts-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2000;display:none;align-items:center;justify-content:center" onclick="this.style.display='none'">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:400px;width:90%" onclick="event.stopPropagation()">
+      <h3 style="font-family:var(--mono);color:var(--accent);font-size:.85rem;margin-bottom:16px">KEYBOARD SHORTCUTS</h3>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:.75rem">
+        <kbd style="background:var(--bg);padding:2px 8px;border-radius:4px;font-family:var(--mono);color:var(--accent)">Ctrl+K</kbd><span>Command palette</span>
+        <kbd style="background:var(--bg);padding:2px 8px;border-radius:4px;font-family:var(--mono);color:var(--accent)">Ctrl+Enter</kbd><span>Send message</span>
+        <kbd style="background:var(--bg);padding:2px 8px;border-radius:4px;font-family:var(--mono);color:var(--accent)">Ctrl+N</kbd><span>New chat</span>
+        <kbd style="background:var(--bg);padding:2px 8px;border-radius:4px;font-family:var(--mono);color:var(--accent)">Ctrl+J</kbd><span>Agents page</span>
+        <kbd style="background:var(--bg);padding:2px 8px;border-radius:4px;font-family:var(--mono);color:var(--accent)">Ctrl+,</kbd><span>Settings</span>
+        <kbd style="background:var(--bg);padding:2px 8px;border-radius:4px;font-family:var(--mono);color:var(--accent)">Ctrl+Shift+F</kbd><span>Global search</span>
+        <kbd style="background:var(--bg);padding:2px 8px;border-radius:4px;font-family:var(--mono);color:var(--accent)">Ctrl+Shift+A</kbd><span>Toggle agents panel</span>
+        <kbd style="background:var(--bg);padding:2px 8px;border-radius:4px;font-family:var(--mono);color:var(--accent)">/</kbd><span>Focus input</span>
+        <kbd style="background:var(--bg);padding:2px 8px;border-radius:4px;font-family:var(--mono);color:var(--accent)">?</kbd><span>Show this help</span>
+        <kbd style="background:var(--bg);padding:2px 8px;border-radius:4px;font-family:var(--mono);color:var(--accent)">Esc</kbd><span>Close overlays</span>
+      </div>
+    </div>
+  </div>
 
   <!-- ══ CHAT PAGE ══ -->
   <div id="page-chat" class="page active">
@@ -601,6 +632,7 @@
 <script src="/js/secrets.js"></script>
 <script src="/js/cron.js"></script>
 <script src="/js/protocols.js"></script>
+<script src="/js/notifications.js"></script>
 <script src="/js/apps.js"></script>
 <script src="/js/agents.js"></script>
 <script src="/js/shortcuts.js"></script>

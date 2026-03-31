@@ -279,10 +279,48 @@ function deleteChat(id, e) {
   if (!confirm('Delete this chat?')) return;
   chats = chats.filter(c => c.id !== id);
   if (activeChat && activeChat.id === id) activeChat = null;
-  markDeleted(id); // Record tombstone so sync doesn't bring it back
+  markDeleted(id);
   saveChats(); renderSidebar();
   if (window.renderMessages) renderMessages();
   apiFetch(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+}
+
+function renameChat(id, e) {
+  e.stopPropagation();
+  const chat = chats.find(c => c.id === id);
+  if (!chat) return;
+  const newTitle = prompt('Rename chat:', chat.title);
+  if (!newTitle || newTitle === chat.title) return;
+  chat.title = newTitle;
+  saveChats(); renderSidebar();
+  apiFetch(`/api/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: newTitle }) }).catch(() => {});
+}
+
+function archiveChat(id, e) {
+  e.stopPropagation();
+  const chat = chats.find(c => c.id === id);
+  if (!chat) return;
+  chat.archived = true;
+  if (activeChat && activeChat.id === id) activeChat = null;
+  saveChats(); renderSidebar();
+  if (window.renderMessages) renderMessages();
+}
+
+function exportChat(id, e) {
+  e.stopPropagation();
+  const chat = chats.find(c => c.id === id);
+  if (!chat) return;
+  let md = '# ' + (chat.title || 'Chat') + '\n\n';
+  for (const m of (chat.messages || [])) {
+    const role = m.role === 'user' ? 'You' : 'Agent';
+    md += '**' + role + ':** ' + (m.content || '') + '\n\n---\n\n';
+  }
+  const blob = new Blob([md], { type: 'text/markdown' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (chat.title || 'chat').replace(/[^a-z0-9]/gi, '_') + '.md';
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 // ── Sidebar rendering ──
@@ -325,7 +363,7 @@ function renderChatList() {
   const el = document.getElementById('chat-list');
   if (!el) return;
 
-  let unassigned = chats.filter(c => !c.projectId);
+  let unassigned = chats.filter(c => !c.projectId && !c.archived);
 
   // Apply search filter
   if (chatSearchQuery) {
@@ -360,9 +398,10 @@ function renderChatList() {
       <span class="chat-title">${isPinned ? '<span class="pin-icon" title="Pinned">&#128204;</span> ' : ''}${esc(c.title)}</span>
       ${tags.length ? `<span class="chat-tags-inline">${tags.map(t => `<span class="tag-pill-sm">${esc(t)}</span>`).join('')}</span>` : ''}
       <span class="chat-actions">
+        <button class="chat-action-btn" onclick="renameChat('${c.id}',event)" title="Rename" aria-label="Rename chat">&#9998;</button>
         <button class="chat-action-btn" onclick="togglePinChat('${c.id}',event)" title="${isPinned ? 'Unpin' : 'Pin'}" aria-label="${isPinned ? 'Unpin chat' : 'Pin chat'}">${isPinned ? '&#128204;' : '&#128392;'}</button>
-        <button class="chat-action-btn" onclick="showTagMenu('${c.id}',event)" title="Tags" aria-label="Manage tags">&#127991;</button>
-        ${projects.length ? `<button class="chat-action-btn" onclick="showMoveMenu('${c.id}',event)" title="Move" aria-label="Move to project">&#8618;</button>` : ''}
+        <button class="chat-action-btn" onclick="exportChat('${c.id}',event)" title="Export" aria-label="Export chat">&#128190;</button>
+        <button class="chat-action-btn" onclick="archiveChat('${c.id}',event)" title="Archive" aria-label="Archive chat">&#128230;</button>
         <button class="chat-action-btn delete" onclick="deleteChat('${c.id}',event)" title="Delete" aria-label="Delete chat">&times;</button>
       </span>
     </div>
@@ -393,9 +432,34 @@ function renderChatList() {
     ).join('')}</div>`;
   }
 
-  // Regular conversations
-  el.innerHTML = tagBarHtml + sortWithPins(regularChats).map(renderItem).join('')
-    || '<div style="padding:8px 12px;font-size:.72rem;color:var(--muted)">No chats yet. Click + New Chat.</div>';
+  // Group regular conversations by date
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const yesterdayStart = todayStart - 86400000;
+  const weekStart = todayStart - 7 * 86400000;
+
+  const groups = { pinned: [], today: [], yesterday: [], week: [], older: [] };
+  for (const c of sortWithPins(regularChats)) {
+    if (pinnedChatIds.includes(c.id)) { groups.pinned.push(c); continue; }
+    const t = c.updatedAt || c.createdAt || 0;
+    if (t >= todayStart) groups.today.push(c);
+    else if (t >= yesterdayStart) groups.yesterday.push(c);
+    else if (t >= weekStart) groups.week.push(c);
+    else groups.older.push(c);
+  }
+
+  let html = tagBarHtml;
+  const renderGroup = (label, items) => {
+    if (items.length === 0) return '';
+    return `<div class="chat-group-label">${label}</div>` + items.map(renderItem).join('');
+  };
+  html += renderGroup('Pinned', groups.pinned);
+  html += renderGroup('Today', groups.today);
+  html += renderGroup('Yesterday', groups.yesterday);
+  html += renderGroup('This Week', groups.week);
+  html += renderGroup('Older', groups.older);
+
+  el.innerHTML = html || '<div style="padding:8px 12px;font-size:.72rem;color:var(--muted)">No chats yet. Click + New Chat.</div>';
 }
 
 function renderSidebar() {

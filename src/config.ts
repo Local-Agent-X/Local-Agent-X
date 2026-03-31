@@ -13,11 +13,11 @@ import type { SAXConfig, DeploymentProfile, ProfileDefaults } from "./types.js";
 export const PROFILE_DEFAULTS: Record<DeploymentProfile, ProfileDefaults> = {
   home: {
     sandboxMode: "host",
-    toolApproval: "confirm-risky",
+    toolApproval: "confirm-all",
     retentionDays: 90,
     autoUpdate: true,
     networkExposure: "localhost",
-    logLevel: "basic",
+    logLevel: "detailed",
   },
   dev: {
     sandboxMode: "host",

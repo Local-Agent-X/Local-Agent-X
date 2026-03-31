@@ -244,13 +244,11 @@ export class TelegramBridge {
     const from = msg.from;
     const senderName = [from?.first_name, from?.last_name].filter(Boolean).join(" ") || chatId;
 
-    // Auto-lock: only on genuinely fresh setup (no config file ever existed)
+    // Security: require explicit owner configuration — no auto-lock to first message
     if (this.allowedChatIds.size === 0 && !this.ownerVerified) {
-      this.allowedChatIds.add(chatId);
-      this.ownerVerified = true;
-      this.saveAllowedChats();
-      console.log(`[telegram] Auto-locked to chat ${chatId} (${senderName}) — first user to message`);
-      await this.sendMessage(chatId, `Locked to your account. Only you can use this bot now.`);
+      console.warn(`[telegram] Rejected message from ${chatId} (${senderName}) — no owner configured yet`);
+      await this.sendMessage(chatId, `This bot has no owner configured yet. Please set your chat ID in the web UI settings before using Telegram.`);
+      return;
     }
 
     if (!this.allowedChatIds.has(chatId)) {

@@ -346,7 +346,8 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
           // Parse and emit tool calls from full response
           const toolCalls = parseToolCalls(fullText);
           for (const tc of toolCalls) {
-            console.log(`[claude] Tool call: ${tc.name}(${JSON.stringify(tc.arguments).slice(0, 100)})`);
+            const redactedArgs = JSON.stringify(tc.arguments).slice(0, 100).replace(/(?:password|secret|token|key|api_key|apiKey|authorization|bearer)["']?\s*[:=]\s*["']?[^"',}\s]{3}[^"',}]*/gi, (m) => m.slice(0, m.indexOf(":") + 4) + "***REDACTED***");
+            console.log(`[claude] Tool call: ${tc.name}(${redactedArgs})`);
             yield { type: "tool_call", id: `call_${Date.now()}_${tc.name}`, name: tc.name, arguments: JSON.stringify(tc.arguments) };
           }
           yield { type: "done", usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0 } };

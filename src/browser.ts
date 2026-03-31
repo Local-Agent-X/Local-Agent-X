@@ -194,34 +194,45 @@ export class BrowserManager {
 
       const cdpUrl = `http://127.0.0.1:${cdpPort}`;
 
-      // Try to connect to an existing Chrome instance first (survives server restarts)
+      // Try to connect to an existing agent Chrome instance (survives server restarts)
       try {
         const res = await fetch(`${cdpUrl}/json/version`, { signal: AbortSignal.timeout(2000) });
         if (res.ok) {
+          // Verify this is OUR agent chrome, not the user's personal browser
+          const versionData = await res.json() as { webSocketDebuggerUrl?: string; Browser?: string };
           const browser = await pw.chromium.connectOverCDP(cdpUrl);
-          console.log(`[browser] Reconnected to existing Chrome on port ${cdpPort}`);
+          const contexts = browser.contexts();
+          // If this Chrome has pages open at SAX URLs or the user-data-dir matches, it's ours
+          console.log(`[browser] Reconnected to existing agent Chrome on port ${cdpPort}`);
           return browser;
         }
       } catch {
         // No existing Chrome — launch a new one
       }
 
+      // CRITICAL: On Windows, Chrome merges into any already-running Chrome process
+      // unless we force a completely separate instance. These flags prevent merging:
       const args = [
         `--remote-debugging-port=${cdpPort}`,
         `--user-data-dir=${userDataDir}`,
+        "--no-process-per-site",             // Prevent merging into existing Chrome
+        "--disable-features=RendererCodeIntegrity", // Avoid conflicts with running Chrome
         ...STEALTH_ARGS,
         "--window-size=1280,800",
       ];
 
-      console.log(`[browser] Spawning Chrome directly: ${chromePath}`);
+      console.log(`[browser] Spawning agent Chrome: ${chromePath} (profile: ${userDataDir})`);
       this.chromeProcess = spawn(chromePath, args, {
         stdio: "ignore",
-        detached: false,
+        detached: true,  // Detach so it runs as truly separate process from user's Chrome
+        env: { ...process.env, CHROME_USER_DATA_DIR: userDataDir },
       });
+      // Unref so server can exit without waiting for Chrome
+      this.chromeProcess.unref();
 
       // Wait for CDP to be ready
       let ready = false;
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < 30; i++) {
         try {
           const res = await fetch(`${cdpUrl}/json/version`, {
             signal: AbortSignal.timeout(1000),
@@ -239,7 +250,7 @@ export class BrowserManager {
       if (ready) {
         try {
           const browser = await pw.chromium.connectOverCDP(cdpUrl);
-          console.log(`[browser] Connected via CDP on port ${cdpPort} — real Chrome, no automation markers`);
+          console.log(`[browser] Connected via CDP on port ${cdpPort} — dedicated agent Chrome session`);
           return browser;
         } catch (e) {
           console.log(`[browser] CDP connect failed: ${(e as Error).message}`);
@@ -247,29 +258,44 @@ export class BrowserManager {
           this.chromeProcess = null;
         }
       } else {
-        console.log("[browser] Chrome CDP didn't become ready in time");
+        console.log("[browser] Agent Chrome CDP didn't become ready in time — trying Playwright");
         try { this.chromeProcess?.kill(); } catch {}
         this.chromeProcess = null;
       }
     }
 
-    // Fallback: Playwright launch (has automation markers but still works for most sites)
-    console.log("[browser] Falling back to Playwright chromium.launch()");
+    // Fallback: Use Playwright's persistent context — this ALWAYS creates an isolated session
+    // even if user's Chrome is running, because Playwright manages its own Chromium binary
+    console.log("[browser] Launching Playwright persistent context (fully isolated)");
+    const persistDir = join(homedir(), ".sax", "chrome-profile-pw");
+    if (!existsSync(persistDir)) mkdirSync(persistDir, { recursive: true });
     try {
-      const b = await pw.chromium.launch({
+      const ctx = await pw.chromium.launchPersistentContext(persistDir, {
         channel: "chrome",
         headless: false,
         args: STEALTH_ARGS,
+        viewport: { width: 1280, height: 800 },
       });
-      console.log(`[browser] Playwright Chrome (headed) v${b.version()}`);
-      return b;
+      console.log("[browser] Playwright persistent context (Chrome channel)");
+      return ctx.browser()!;
     } catch {
-      const b = await pw.chromium.launch({
-        headless: false,
-        args: STEALTH_ARGS,
-      });
-      console.log(`[browser] Playwright Chromium (headed) v${b.version()}`);
-      return b;
+      try {
+        const ctx = await pw.chromium.launchPersistentContext(persistDir, {
+          headless: false,
+          args: STEALTH_ARGS,
+          viewport: { width: 1280, height: 800 },
+        });
+        console.log("[browser] Playwright persistent context (bundled Chromium)");
+        return ctx.browser()!;
+      } catch {
+        // Final fallback — plain launch, no persistence
+        const b = await pw.chromium.launch({
+          headless: false,
+          args: STEALTH_ARGS,
+        });
+        console.log(`[browser] Playwright Chromium (no persistence) v${b.version()}`);
+        return b;
+      }
     }
   }
 

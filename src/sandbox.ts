@@ -108,11 +108,22 @@ export function execInSandbox(
   }
 }
 
+// Runtime override — set via API, persists in memory for this process
+let runtimeMode: SandboxMode | null = null;
+
 /**
  * Get the current sandbox configuration.
- * Reads from SAX_SANDBOX env var or config.
+ * Priority: runtime override > env var > auto-detect.
  */
 export function getSandboxMode(): SandboxMode {
+  // Runtime override (set from settings UI)
+  if (runtimeMode) {
+    if (runtimeMode === "docker" && !isDockerAvailable()) {
+      console.warn("[sandbox] Runtime mode is docker but Docker not available. Falling back to host.");
+      return "host";
+    }
+    return runtimeMode;
+  }
   const envMode = process.env.SAX_SANDBOX;
   // Explicit override
   if (envMode === "host") return "host";
@@ -129,4 +140,14 @@ export function getSandboxMode(): SandboxMode {
     return "docker";
   }
   return "host";
+}
+
+/** Set sandbox mode at runtime (from settings API) */
+export function setSandboxMode(mode: SandboxMode): { ok: boolean; actual: SandboxMode; error?: string } {
+  if (mode === "docker" && !isDockerAvailable()) {
+    return { ok: false, actual: "host", error: "Docker is not installed or not running. Install Docker Desktop first." };
+  }
+  runtimeMode = mode;
+  console.log(`[sandbox] Mode set to: ${mode}`);
+  return { ok: true, actual: mode };
 }

@@ -631,15 +631,20 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 
     <div class="section">
       <div class="section-title">Sandbox</div>
-      <div class="section-desc">Container isolation for shell commands.</div>
+      <div class="section-desc">Container isolation for shell commands. Docker mode runs every command in a locked-down container.</div>
+      <div id="sandbox-status" class="status-badge warn" style="margin-bottom:10px"><span class="status-dot"></span> Checking...</div>
       <div class="field">
         <label class="field-label">Execution Mode</label>
-        <select class="field-select" id="cfg-sandbox">
+        <select class="field-select" id="cfg-sandbox" onchange="switchSandbox(this.value)">
           <option value="host">Host (default — no isolation)</option>
           <option value="docker">Docker Container (secure — requires Docker)</option>
         </select>
       </div>
       <div class="field-hint">Docker mode drops all capabilities, disables network, and restricts filesystem access.</div>
+      <div class="btn-row">
+        <button class="action-btn secondary" id="docker-download-btn" style="display:none" onclick="window.open('https://www.docker.com/products/docker-desktop/','_blank')">Download Docker Desktop</button>
+        <button class="action-btn secondary" onclick="checkSandbox()">Refresh Status</button>
+      </div>
     </div>
 
     <div class="section">
@@ -921,6 +926,55 @@ function loadToolsList() {
       <span style="color:${color}">${t.status}</span>
     </div>`;
   }).join('');
+}
+
+// ── Sandbox ──
+async function checkSandbox() {
+  const statusEl = document.getElementById('sandbox-status');
+  const downloadBtn = document.getElementById('docker-download-btn');
+  const selectEl = document.getElementById('cfg-sandbox');
+  try {
+    const d = await apiGet('/api/sandbox');
+    if (selectEl) selectEl.value = d.mode;
+    if (d.dockerAvailable) {
+      statusEl.className = 'status-badge ok';
+      statusEl.innerHTML = '<span class="status-dot"></span> Docker available — mode: ' + d.mode;
+      if (downloadBtn) downloadBtn.style.display = 'none';
+    } else {
+      if (d.mode === 'host') {
+        statusEl.className = 'status-badge warn';
+        statusEl.innerHTML = '<span class="status-dot"></span> Running on host — Docker not installed';
+      } else {
+        statusEl.className = 'status-badge err';
+        statusEl.innerHTML = '<span class="status-dot"></span> Docker not available — falling back to host';
+      }
+      if (downloadBtn) downloadBtn.style.display = '';
+    }
+  } catch {
+    statusEl.className = 'status-badge err';
+    statusEl.innerHTML = '<span class="status-dot"></span> Could not check sandbox status';
+  }
+}
+
+async function switchSandbox(mode) {
+  const statusEl = document.getElementById('sandbox-status');
+  try {
+    const d = await apiPost('/api/sandbox', { mode });
+    if (d.ok) {
+      statusEl.className = 'status-badge ok';
+      statusEl.innerHTML = '<span class="status-dot"></span> Switched to: ' + d.actual;
+    } else {
+      statusEl.className = 'status-badge err';
+      statusEl.innerHTML = '<span class="status-dot"></span> ' + (d.error || 'Failed to switch');
+      document.getElementById('cfg-sandbox').value = d.actual || 'host';
+      if (d.error && d.error.includes('Docker')) {
+        document.getElementById('docker-download-btn').style.display = '';
+      }
+    }
+  } catch (e) {
+    statusEl.className = 'status-badge err';
+    statusEl.innerHTML = '<span class="status-dot"></span> Error: ' + e.message;
+  }
 }
 
 // ── Save ──
@@ -1236,6 +1290,7 @@ renderSidebar();
 loadSettings();
 loadSystemStatus();
 checkAuth();
+checkSandbox();
 checkServer('image');
 checkServer('video');
 checkVoice();

@@ -63,6 +63,13 @@ export function setupChatWebSocket(server: Server, authToken: string) {
     const subscriptions = new Set<string>();
     clients.set(ws, subscriptions);
 
+    // Auto-close WebSocket connections after 24 hours to force re-authentication
+    const WS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+    const maxAgeTimer = setTimeout(() => {
+      ws.close(4002, "Session expired — please reconnect");
+    }, WS_MAX_AGE_MS);
+    ws.on("close", () => clearTimeout(maxAgeTimer));
+
     // Send list of currently active chats
     ws.send(JSON.stringify({
       type: "active_chats",

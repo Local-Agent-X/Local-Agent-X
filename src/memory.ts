@@ -31,6 +31,7 @@ import {
   readdirSync,
   statSync,
   unlinkSync,
+  chmodSync,
   watch,
 } from "node:fs";
 import { join, basename, resolve, relative, isAbsolute } from "node:path";
@@ -443,6 +444,8 @@ export class MemoryIndex {
     let db: InstanceType<typeof Database>;
     try {
       db = new Database(dbPath);
+      // Restrict DB file to owner-only access (contains PII, memories, facts)
+      try { chmodSync(dbPath, 0o600); } catch {}
     } catch (e) {
       // DB locked or corrupted — back up and recreate
       console.warn(`[memory] Cannot open database: ${(e as Error).message}`);

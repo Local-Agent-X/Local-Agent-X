@@ -344,23 +344,7 @@ export function startServer(config: SAXConfig) {
   // Initialize cron scheduler
   const cronService = new CronService(dataDir);
 
-  // Hot-reload: activate if self-modify mode is enabled
-  if (security.selfModify) {
-    const projectRoot = resolve(config.workspace, "..");
-    startHotReload(projectRoot);
-
-    // Notify WebSocket clients when public assets change
-    EventBus.on("hot-reload:asset", (data) => {
-      broadcastAll({ type: "hot-reload", data });
-    });
-
-    // Log src changes (tsx --watch handles the actual restart in dev mode)
-    EventBus.on("hot-reload:module", (data) => {
-      const ev = data as { path: string };
-      console.log(`[hot-reload] Module changed: ${ev.path} — tsx will handle restart`);
-      broadcastAll({ type: "hot-reload", data });
-    });
-  }
+  // Hot-reload: disabled — platform files are not agent-modifiable
 
   // Initialize API integrations registry
   const integrations = new IntegrationRegistry(dataDir);
@@ -1759,32 +1743,8 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
-    // ── Self-Modify Mode API (power dev) ──
-
-    if (method === "GET" && url.pathname === "/api/security/self-modify") {
-      json(200, { enabled: security.selfModify });
-      return;
-    }
-
-    if (method === "POST" && url.pathname === "/api/security/self-modify") {
-      let body: Record<string, unknown>;
-      try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return; }
-      const enabled = body.enabled === true;
-      security.setSelfModify(enabled);
-      // Start/stop hot-reload dynamically
-      const projectRoot = resolve(config.workspace, "..");
-      if (enabled && !isHotReloadActive()) {
-        startHotReload(projectRoot);
-        EventBus.on("hot-reload:asset", (data) => broadcastAll({ type: "hot-reload", data }));
-        EventBus.on("hot-reload:module", (data) => {
-          broadcastAll({ type: "hot-reload", data });
-        });
-      } else if (!enabled && isHotReloadActive()) {
-        stopHotReload();
-      }
-      json(200, { ok: true, enabled });
-      return;
-    }
+    // Self-modify mode removed — platform files (src/, public/) are always protected.
+    // Users build custom interfaces via the apps system (app_create).
 
     // ── Custom Pages API ──
 

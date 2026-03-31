@@ -272,12 +272,10 @@ export class SecurityLayer {
   private auditLog: Array<{ timestamp: number; tool: string; decision: SecurityDecision }> = [];
   private egressAllowlist: Set<string> = new Set();
   fileAccessMode: FileAccessMode = "common";
-  selfModify: boolean = false;
 
   constructor(workspace: string, fileAccessMode?: FileAccessMode) {
     this.workspace = resolve(workspace);
     this.fileAccessMode = fileAccessMode || this.loadFileAccessMode();
-    this.selfModify = this.loadSelfModifyMode();
     // Load egress allowlist from ~/.sax/egress-allowlist.json
     try {
       const allowlistPath = join(homedir(), ".sax", "egress-allowlist.json");
@@ -291,30 +289,6 @@ export class SecurityLayer {
       console.warn(`[security] Failed to load egress allowlist: ${(e as Error).message}`);
     }
     console.log(`[security] File access mode: ${this.fileAccessMode}`);
-    console.log(`[security] Self-modify mode: ${this.selfModify ? "ENABLED (power dev)" : "disabled"}`);
-  }
-
-  private loadSelfModifyMode(): boolean {
-    try {
-      const cfgPath = join(homedir(), ".sax", "security.json");
-      if (existsSync(cfgPath)) {
-        const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-        return cfg.selfModify === true;
-      }
-    } catch {}
-    return false;
-  }
-
-  setSelfModify(enabled: boolean): void {
-    this.selfModify = enabled;
-    try {
-      const cfgPath = join(homedir(), ".sax", "security.json");
-      let cfg: Record<string, unknown> = {};
-      if (existsSync(cfgPath)) cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-      cfg.selfModify = enabled;
-      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
-    } catch {}
-    console.log(`[security] Self-modify mode ${enabled ? "ENABLED" : "disabled"}`);
   }
 
   private loadFileAccessMode(): FileAccessMode {
@@ -502,22 +476,21 @@ export class SecurityLayer {
         /[/\\]\.sax[/\\]auth\.json$/i,         // OAuth tokens
       ];
       for (const pattern of coreProtectedFiles) {
-        // Check BOTH the requested path and the real path (symlink target)
         if (pattern.test(resolved) || pattern.test(realPath)) {
           return {
             allowed: false,
-            reason: `Blocked: core file (checked both path and symlink target). These files are always protected regardless of self-modify mode.`,
+            reason: `Blocked: protected platform file. Use the apps system to build custom interfaces.`,
           };
         }
       }
 
-      // Self-modify gate: block writes to src/ unless selfModify mode is enabled
-      // Core files above are ALWAYS blocked even with selfModify on
-      const isSrcFile = /[/\\]src[/\\]/i.test(resolved) || /[/\\]src[/\\]/i.test(realPath);
-      if (isSrcFile && !this.selfModify) {
+      // Block all writes to platform source — src/ and public/ are the platform itself
+      // Users build custom apps via the apps system, not by editing platform files
+      const isPlatformFile = /[/\\](src|public)[/\\]/i.test(resolved) || /[/\\](src|public)[/\\]/i.test(realPath);
+      if (isPlatformFile) {
         return {
           allowed: false,
-          reason: `Blocked: cannot write to src/ files — self-modify mode is disabled. Enable it in Settings > Security for power dev access.`,
+          reason: `Blocked: cannot modify platform files (src/ or public/). Use app_create to build custom apps instead.`,
         };
       }
     }

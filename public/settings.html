@@ -325,7 +325,6 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
   <button class="tab-pill" onclick="switchTab('image')">Image & Video</button>
   <button class="tab-pill" onclick="switchTab('voice')">Voice</button>
   <button class="tab-pill" onclick="switchTab('security')">Security</button>
-  <button class="tab-pill" onclick="switchTab('tools')">Tools</button>
   <button class="tab-pill" onclick="switchTab('whatsapp')">Communication</button>
   <button class="tab-pill" onclick="switchTab('integrations')">API Integrations</button>
   <button class="tab-pill" onclick="switchTab('sync')">Agent Sync</button>
@@ -620,17 +619,6 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
         </div>
         <div class="toggle on" id="tog-browser" onclick="toggleToolPolicy('browser', this)"></div>
       </div>
-    </div>
-
-  </div>
-
-  <!-- ═══ TOOLS ═══ -->
-  <div id="tab-tools" class="tab-content">
-
-    <div class="section">
-      <div class="section-title">Agent Capabilities</div>
-      <div class="section-desc">Everything your agent can do. Controlled by the tool policy — toggle tools on/off in the Security tab.</div>
-      <div id="tools-live" style="margin-top:12px">Loading...</div>
     </div>
 
   </div>
@@ -1279,7 +1267,7 @@ checkAuth();
 // Image/video server checks deferred — only run when user opens that tab
 // to avoid console spam when servers aren't running
 checkVoice();
-loadToolsList();
+// Tools tab removed
 loadIntegrations();
 waCheckStatus();
 </script>

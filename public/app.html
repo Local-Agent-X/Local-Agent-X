@@ -444,63 +444,61 @@
   </div>
 
   <!-- ══ SECRETS PAGE ══ -->
-  <div id="page-secrets" class="page">
-    <div class="secrets-layout">
-      <div class="secrets-left">
-        <h2 style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px;margin-bottom:12px">SECRETS VAULT</h2>
+  <div id="page-secrets" class="page" style="overflow-y:auto">
+    <div style="max-width:600px;margin:0 auto;padding:20px;width:100%">
+      <h2 style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px;margin-bottom:6px">SECRETS VAULT</h2>
+      <p style="font-size:.75rem;color:var(--muted);margin-bottom:16px">API keys and tokens. AES-256-GCM encrypted. Referenced as <code style="color:var(--accent);font-size:.68rem">{{NAME}}</code></p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div class="field"><label class="field-label">Name</label><input class="field-input" id="new-secret-name" placeholder="GITHUB_TOKEN"/></div>
-        <div class="field"><label class="field-label">Value</label><input class="field-input" id="new-secret-value" type="password" placeholder="ghp_xxx" autocomplete="off"/></div>
         <div class="field"><label class="field-label">Service</label><input class="field-input" id="new-secret-service" placeholder="GitHub"/></div>
-        <button class="action-btn primary" style="width:100%;margin:8px 0" onclick="addSecret()">Add Secret</button>
-        <div style="font-size:.65rem;color:var(--muted);margin-bottom:16px">AES-256-GCM encrypted. Referenced as <code style="color:var(--accent);font-size:.62rem">{{NAME}}</code></div>
-        <div style="display:flex;justify-content:space-between;font-size:.68rem;font-family:var(--mono);color:var(--muted);margin-bottom:8px"><span>STORED</span><span id="secret-count">0</span></div>
-        <div id="secrets-list"></div>
       </div>
-      <div class="secrets-right">
-        <div id="secret-detail-empty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted)">
-          <h2 style="font-family:var(--mono);font-size:1.1rem;color:var(--accent);letter-spacing:2px">SECRETS VAULT</h2>
-          <p style="font-size:.85rem;max-width:400px;text-align:center;line-height:1.6">Add API keys and tokens. Encrypted at rest, never shown in chat.</p>
-        </div>
-        <div id="secret-detail-view" style="display:none">
-          <h2 id="detail-name" style="font-family:var(--mono);font-size:1.1rem;color:var(--accent)"></h2>
-          <div id="detail-service" style="font-size:.78rem;color:var(--muted);margin-bottom:12px"></div>
-          <div id="detail-meta" style="font-size:.75rem;color:var(--muted);margin-bottom:16px"></div>
-          <div class="section-card"><div class="section-title">Usage</div><code id="detail-usage" style="display:block;font-family:var(--mono);font-size:.85rem;color:var(--accent);padding:8px;background:var(--bg);border-radius:6px;margin-top:8px"></code></div>
-          <div class="btn-row" style="margin-top:16px"><button class="action-btn primary" onclick="updateSecretValue()">Update Value</button><button class="action-btn danger" onclick="deleteSecretItem()">Delete</button></div>
-        </div>
+      <div class="field"><label class="field-label">Value</label><input class="field-input" id="new-secret-value" type="password" placeholder="ghp_xxx" autocomplete="off"/></div>
+      <button class="action-btn primary" style="width:100%;margin:10px 0" onclick="addSecret()">Add Secret</button>
+      <div style="display:flex;justify-content:space-between;font-size:.68rem;font-family:var(--mono);color:var(--muted);margin:16px 0 8px"><span>STORED</span><span id="secret-count">0</span></div>
+      <div id="secrets-list"></div>
+      <!-- Detail view (shown inline when a secret is selected) -->
+      <div id="secret-detail-empty" style="display:none"></div>
+      <div id="secret-detail-view" style="display:none;margin-top:16px;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)">
+        <h2 id="detail-name" style="font-family:var(--mono);font-size:.9rem;color:var(--accent);margin-bottom:4px"></h2>
+        <div id="detail-service" style="font-size:.75rem;color:var(--muted);margin-bottom:8px"></div>
+        <div id="detail-meta" style="font-size:.72rem;color:var(--muted);margin-bottom:12px"></div>
+        <div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Usage:</div>
+        <code id="detail-usage" style="display:block;font-family:var(--mono);font-size:.8rem;color:var(--accent);padding:8px;background:var(--bg);border-radius:6px;margin-bottom:12px"></code>
+        <div class="btn-row"><button class="action-btn primary" onclick="updateSecretValue()">Update Value</button><button class="action-btn danger" onclick="deleteSecretItem()">Delete</button></div>
       </div>
     </div>
   </div>
 
   <!-- ══ CRON JOBS PAGE ══ -->
-  <div id="page-missions" class="page">
-    <div class="cron-layout">
-      <div class="cron-left">
-        <h2 style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px;margin-bottom:12px">MISSIONS</h2>
-        <div class="field"><label class="field-label">Mission Name</label><input class="field-input" id="new-cron-name" placeholder="Daily report"/></div>
-        <div class="field"><label class="field-label">Schedule</label><input class="field-input" id="new-cron-schedule" placeholder="every 1h / daily 9am / */30 * * * *"/></div>
-        <div class="field"><label class="field-label">Agent Instructions</label><textarea class="field-input" id="new-cron-prompt" rows="3" placeholder="Check my email and summarize..." style="resize:vertical"></textarea></div>
-        <button class="action-btn primary" style="width:100%;margin:8px 0" onclick="addCronJob()">Schedule Mission</button>
-        <div style="display:flex;justify-content:space-between;font-size:.68rem;font-family:var(--mono);color:var(--muted);margin:12px 0 8px"><span>SCHEDULED MISSIONS</span><span id="cron-count">0</span></div>
-        <div id="cron-list"></div>
+  <div id="page-missions" class="page" style="overflow-y:auto">
+    <div style="max-width:600px;margin:0 auto;padding:20px;width:100%">
+      <h2 style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px;margin-bottom:6px">MISSIONS</h2>
+      <p style="font-size:.75rem;color:var(--muted);margin-bottom:16px">Schedule recurring tasks. Set a prompt and a schedule — the agent executes it automatically.</p>
+      <div class="field"><label class="field-label">Mission Name</label><input class="field-input" id="new-cron-name" placeholder="Daily report"/></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div class="field"><label class="field-label">Schedule</label><input class="field-input" id="new-cron-schedule" placeholder="every 1h / daily 9am"/></div>
+        <div></div>
       </div>
-      <div class="cron-right">
-        <div id="cron-detail-empty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted)">
-          <h2 style="font-family:var(--mono);font-size:1.1rem;color:var(--accent);letter-spacing:2px">MISSIONS</h2>
-          <p style="font-size:.85rem;max-width:400px;text-align:center;line-height:1.6">Schedule recurring tasks for your agent. Set a prompt and a schedule — the agent executes it automatically.</p>
+      <div class="field"><label class="field-label">Agent Instructions</label><textarea class="field-input" id="new-cron-prompt" rows="3" placeholder="Check my email and summarize..." style="resize:vertical"></textarea></div>
+      <button class="action-btn primary" style="width:100%;margin:10px 0" onclick="addCronJob()">Schedule Mission</button>
+      <div style="display:flex;justify-content:space-between;font-size:.68rem;font-family:var(--mono);color:var(--muted);margin:16px 0 8px"><span>SCHEDULED MISSIONS</span><span id="cron-count">0</span></div>
+      <div id="cron-list"></div>
+      <!-- Detail view (shown inline when a mission is selected) -->
+      <div id="cron-detail-empty" style="display:none"></div>
+      <div id="cron-detail-view" style="display:none;margin-top:16px;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)">
+        <h2 id="cron-detail-name" style="font-family:var(--mono);font-size:.9rem;color:var(--accent);margin-bottom:8px"></h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px;font-family:var(--mono);font-size:.75rem">
+          <div><span style="color:var(--muted)">Schedule:</span> <span id="cron-detail-schedule"></span></div>
+          <div><span style="color:var(--muted)">Status:</span> <span id="cron-detail-status"></span></div>
+          <div><span style="color:var(--muted)">Last run:</span> <span id="cron-detail-lastrun"></span></div>
         </div>
-        <div id="cron-detail-view" style="display:none">
-          <h2 id="cron-detail-name" style="font-family:var(--mono);font-size:1.1rem;color:var(--accent)"></h2>
-          <div style="margin:12px 0;font-family:var(--mono);font-size:.78rem"><span style="color:var(--muted)">Schedule:</span> <span id="cron-detail-schedule"></span></div>
-          <div style="margin-bottom:12px;font-family:var(--mono);font-size:.78rem"><span style="color:var(--muted)">Status:</span> <span id="cron-detail-status"></span></div>
-          <div style="margin-bottom:12px;font-family:var(--mono);font-size:.78rem"><span style="color:var(--muted)">Last run:</span> <span id="cron-detail-lastrun"></span></div>
-          <div id="cron-detail-result" style="margin-bottom:16px;font-family:var(--mono);font-size:.72rem;color:var(--muted);max-height:80px;overflow-y:auto"></div>
-          <div class="section-card"><div class="section-title">Instructions</div><pre id="cron-detail-prompt" style="font-family:var(--mono);font-size:.82rem;white-space:pre-wrap;margin-top:8px;color:var(--text)"></pre></div>
-          <div class="btn-row" style="margin-top:16px">
-            <button class="action-btn primary" onclick="runCronJobNow()">Run Now</button>
-            <button class="action-btn secondary" onclick="toggleCronJob()">Pause / Resume</button>
-            <button class="action-btn danger" onclick="deleteCronJob()">Delete</button>
-          </div>
+        <div id="cron-detail-result" style="margin-bottom:12px;font-family:var(--mono);font-size:.72rem;color:var(--muted);max-height:60px;overflow-y:auto"></div>
+        <div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Instructions:</div>
+        <pre id="cron-detail-prompt" style="font-family:var(--mono);font-size:.8rem;white-space:pre-wrap;color:var(--text);padding:10px;background:var(--bg);border-radius:6px;margin-bottom:12px"></pre>
+        <div class="btn-row">
+          <button class="action-btn primary" onclick="runCronJobNow()">Run Now</button>
+          <button class="action-btn secondary" onclick="toggleCronJob()">Pause / Resume</button>
+          <button class="action-btn danger" onclick="deleteCronJob()">Delete</button>
         </div>
       </div>
     </div>

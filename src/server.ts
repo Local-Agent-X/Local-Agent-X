@@ -356,12 +356,16 @@ export function startServer(config: SAXConfig) {
 
     let savedProvider: string | null = null;
     let savedModel: string | null = null;
+    let savedTemperature: number | null = null;
+    let savedMaxIterations: number | null = null;
     try {
       const settingsPath = join(dataDir, "settings.json");
       if (existsSync(settingsPath)) {
         const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
         savedProvider = s.provider || null;
         savedModel = s.model || null;
+        if (typeof s.temperature === "number") savedTemperature = s.temperature;
+        if (typeof s.maxIterations === "number") savedMaxIterations = s.maxIterations;
       }
     } catch {}
 
@@ -424,8 +428,8 @@ export function startServer(config: SAXConfig) {
       security,
       toolPolicy,
       sessionId: resolvedSessionId,
-      maxIterations: config.maxIterations,
-      temperature: config.temperature,
+      maxIterations: savedMaxIterations || config.maxIterations,
+      temperature: savedTemperature ?? config.temperature,
     }), { label: `bridge:${platform}:${from}` });
 
     session.messages = result.messages.filter(
@@ -2795,12 +2799,16 @@ export function startServer(config: SAXConfig) {
 
         let savedProvider: string | null = null;
         let savedModel: string | null = null;
+        let savedTemperature: number | null = null;
+        let savedMaxIterations: number | null = null;
         try {
           const settingsPath = join(dataDir, "settings.json");
           if (existsSync(settingsPath)) {
             const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
             savedProvider = savedSettings.provider || null;
             savedModel = savedSettings.model || null;
+            if (typeof savedSettings.temperature === "number") savedTemperature = savedSettings.temperature;
+            if (typeof savedSettings.maxIterations === "number") savedMaxIterations = savedSettings.maxIterations;
           }
         } catch {}
 
@@ -3033,8 +3041,8 @@ export function startServer(config: SAXConfig) {
           callerRole: requestRole,
           sessionId,
           images: imageAttachments,
-          maxIterations: config.maxIterations,
-          temperature: config.temperature,
+          maxIterations: savedMaxIterations || config.maxIterations,
+          temperature: savedTemperature ?? config.temperature,
           signal: wsChat.abort.signal, // Abort from WS stop button
           onEvent: (event) => {
             // Canary check with rolling buffer — catches canaries split across chunk boundaries

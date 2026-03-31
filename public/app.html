@@ -60,6 +60,7 @@
   <div id="utility-bar" role="toolbar" aria-label="Navigation">
     <button class="util-btn" data-route="apps" onclick="navigate('apps')" aria-label="Apps" title="Apps"><span class="util-icon">&#9638;</span></button>
     <button class="util-btn" data-route="agents" onclick="navigate('agents')" aria-label="Agents" title="Agents"><span class="util-icon">&#129302;</span></button>
+    <button class="util-btn" data-route="protocols" onclick="navigate('protocols')" aria-label="Protocols" title="Protocols"><span class="util-icon">&#128274;</span></button>
     <button class="util-btn" data-route="missions" onclick="navigate('missions')" aria-label="Missions" title="Missions"><span class="util-icon">&#9889;</span></button>
     <button class="util-btn" data-route="secrets" onclick="navigate('secrets')" aria-label="Secrets vault" title="Secrets"><span class="util-icon">&#128273;</span></button>
     <button class="util-btn" data-route="settings" onclick="navigate('settings')" aria-label="Settings" title="Settings"><span class="util-icon">&#9881;</span></button>
@@ -505,6 +506,17 @@
     </div>
   </div>
 
+  <div id="page-protocols" class="page">
+    <div style="max-width:900px;margin:0 auto;padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <h2 style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px">PROTOCOLS</h2>
+        <span style="font-size:.75rem;color:var(--muted);font-family:var(--mono)" id="protocol-count"></span>
+      </div>
+      <p style="font-size:.82rem;color:var(--muted);margin-bottom:20px;line-height:1.5">Pre-built workflows your agent knows. Say the trigger phrase in chat and the agent follows the protocol automatically.</p>
+      <div id="protocols-list" style="display:grid;gap:12px"></div>
+    </div>
+  </div>
+
   <div id="page-apps" class="page">
     <div style="max-width:900px;margin:0 auto;padding:20px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
@@ -602,6 +614,7 @@
 <script src="/js/settings.js"></script>
 <script src="/js/secrets.js"></script>
 <script src="/js/cron.js"></script>
+<script src="/js/protocols.js"></script>
 <script src="/js/apps.js"></script>
 <script src="/js/agents.js"></script>
 <script src="/js/shortcuts.js"></script>

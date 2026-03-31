@@ -229,8 +229,8 @@ export class CronService {
 export function createCronTools(cron: CronService): ToolDefinition[] {
   return [
     {
-      name: "cron_list",
-      description: "List all scheduled cron jobs",
+      name: "schedule_list",
+      description: "List all scheduled missions/jobs",
       parameters: { type: "object", properties: {} },
       async execute() {
         const jobs = cron.list();
@@ -242,8 +242,8 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
       },
     },
     {
-      name: "cron_create",
-      description: "Create a new scheduled job. Schedule can be a cron expression ('*/5 * * * *') or interval ('5m', '1h', '30s'). Prompt is what the agent will execute each run.",
+      name: "schedule_create",
+      description: "Schedule a recurring mission/task. Schedule can be an interval ('5m', '1h', '30s') or cron expression ('*/5 * * * *'). Prompt is what the agent will execute each run.",
       parameters: {
         type: "object",
         properties: {
@@ -259,8 +259,8 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
       },
     },
     {
-      name: "cron_delete",
-      description: "Delete a scheduled job by ID",
+      name: "schedule_delete",
+      description: "Delete a scheduled mission by ID",
       parameters: {
         type: "object",
         properties: { id: { type: "string", description: "Job ID" } },
@@ -272,8 +272,8 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
       },
     },
     {
-      name: "cron_toggle",
-      description: "Enable or disable a scheduled job",
+      name: "schedule_toggle",
+      description: "Enable or disable a scheduled mission",
       parameters: {
         type: "object",
         properties: { id: { type: "string", description: "Job ID" } },

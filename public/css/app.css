@@ -26,11 +26,7 @@
 [data-theme="light"] #new-chat-btn:hover { color: #fff; }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}
-/* User mode: simple hides power-user features */
-body.simple-mode .power-only{display:none !important}
-body.simple-mode .section-card.power-only{display:none !important}
-body.simple-mode .tab-pill.power-only{display:none !important}
-body.simple-mode .util-btn.power-only{display:none !important}
+/* simple-mode removed — all features visible to all users */
 /* Electron desktop: title bar pushes entire app down */
 body.desktop-frame{height:calc(100vh - 32px);margin-top:32px}
 body.desktop-frame #sidebar-expand-btn{top:52px !important}

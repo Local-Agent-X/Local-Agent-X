@@ -746,6 +746,30 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // Sandbox status & control
+    if (method === "GET" && url.pathname === "/api/sandbox") {
+      const { getSandboxMode, isDockerAvailable } = await import("./sandbox.js");
+      json(200, {
+        mode: getSandboxMode(),
+        dockerAvailable: isDockerAvailable(),
+        dockerDownloadUrl: "https://www.docker.com/products/docker-desktop/",
+      });
+      return;
+    }
+
+    if (method === "POST" && url.pathname === "/api/sandbox") {
+      const body = await readBody(req);
+      const { mode } = JSON.parse(body);
+      if (mode !== "host" && mode !== "docker") {
+        json(400, { error: "Invalid mode. Use: host, docker" });
+        return;
+      }
+      const { setSandboxMode } = await import("./sandbox.js");
+      const result = setSandboxMode(mode);
+      json(result.ok ? 200 : 400, result);
+      return;
+    }
+
     // ── Update checker: compare local version against GitHub ──
     if (method === "GET" && url.pathname === "/api/updates/check") {
       try {

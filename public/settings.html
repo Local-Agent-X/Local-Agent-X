@@ -628,28 +628,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
   <div id="tab-tools" class="tab-content">
 
     <div class="section">
-      <div class="section-title">Available Tools</div>
-      <div class="section-desc">Tools the agent can use. Managed by the tool policy system.</div>
-      <div id="tools-list" style="font-family:var(--mono);font-size:.75rem;color:var(--muted)">Loading...</div>
-    </div>
-
-    <div class="section">
-      <div class="section-title">Rate Limits</div>
-      <div class="section-desc">Maximum tool calls per session.</div>
-      <div class="field-row">
-        <div class="field">
-          <label class="field-label">Shell (bash)</label>
-          <input class="field-input" id="cfg-rate-bash" type="number" value="30"/>
-        </div>
-        <div class="field">
-          <label class="field-label">HTTP Requests</label>
-          <input class="field-input" id="cfg-rate-http" type="number" value="60"/>
-        </div>
-        <div class="field">
-          <label class="field-label">Browser</label>
-          <input class="field-input" id="cfg-rate-browser" type="number" value="100"/>
-        </div>
-      </div>
+      <div class="section-title">Agent Capabilities</div>
+      <div class="section-desc">Everything your agent can do. Controlled by the tool policy — toggle tools on/off in the Security tab.</div>
+      <div id="tools-live" style="margin-top:12px">Loading...</div>
     </div>
 
   </div>
@@ -855,29 +836,58 @@ async function checkVoice() {
 
 // ── Tools list ──
 function loadToolsList() {
-  const tools = [
-    { name: 'read', desc: 'Read files', status: 'allowed' },
-    { name: 'write', desc: 'Write files', status: 'allowed' },
-    { name: 'edit', desc: 'Edit files', status: 'allowed' },
-    { name: 'bash', desc: 'Shell commands', status: 'rate-limited' },
-    { name: 'web_fetch', desc: 'Fetch web pages', status: 'operator-only' },
-    { name: 'http_request', desc: 'API calls', status: 'operator-only' },
-    { name: 'browser', desc: 'Browser control', status: 'operator-only' },
-    { name: 'generate_image', desc: 'Image generation', status: 'rate-limited' },
-    { name: 'generate_video', desc: 'Video generation', status: 'rate-limited' },
-    { name: 'memory_search', desc: 'Search memory', status: 'allowed' },
-    { name: 'memory_save', desc: 'Save to memory', status: 'allowed' },
-    { name: 'memory_get', desc: 'Read memory files', status: 'allowed' },
-    { name: 'request_secret', desc: 'Request credentials', status: 'allowed' },
+  const categories = [
+    { name: 'Files & Code', icon: '&#128196;', tools: [
+      { name: 'read', desc: 'Read files from your computer' },
+      { name: 'write', desc: 'Create or overwrite files' },
+      { name: 'edit', desc: 'Find-and-replace edits in files' },
+      { name: 'bash', desc: 'Run shell commands' },
+    ]},
+    { name: 'Web & Browser', icon: '&#127760;', tools: [
+      { name: 'browser', desc: 'Control Chrome — navigate, click, fill forms, screenshot' },
+      { name: 'http_request', desc: 'Call external APIs' },
+      { name: 'web_fetch', desc: 'Read web pages as text' },
+    ]},
+    { name: 'Memory & Knowledge', icon: '&#129504;', tools: [
+      { name: 'memory_search', desc: 'Search long-term memory' },
+      { name: 'memory_save', desc: 'Save facts and context' },
+      { name: 'memory_recall', desc: 'Recall by entity, time, or topic' },
+      { name: 'memory_reflect', desc: 'Update opinions and confidence' },
+    ]},
+    { name: 'Media', icon: '&#127912;', tools: [
+      { name: 'generate_image', desc: 'Create images from text (local GPU)' },
+      { name: 'generate_video', desc: 'Create short videos from text' },
+      { name: 'camera_capture', desc: 'Take a photo from webcam' },
+      { name: 'screen_capture', desc: 'Screenshot your desktop' },
+      { name: 'ocr', desc: 'Extract text from images' },
+    ]},
+    { name: 'Automation', icon: '&#9889;', tools: [
+      { name: 'mission_*', desc: 'Multi-step workflows with scheduling' },
+      { name: 'cron_*', desc: 'Schedule recurring tasks' },
+      { name: 'swarm_*', desc: 'Spawn multiple agents for complex goals' },
+      { name: 'delegate', desc: 'Hand off tasks to specialized agents' },
+    ]},
+    { name: 'Apps & Integrations', icon: '&#128293;', tools: [
+      { name: 'app_create', desc: 'Build interactive mini-apps' },
+      { name: 'app_update', desc: 'Modify existing apps' },
+      { name: 'request_secret', desc: 'Securely request API keys' },
+    ]},
   ];
-  const el = document.getElementById('tools-list');
-  el.innerHTML = tools.map(t => {
-    const color = t.status === 'allowed' ? 'var(--accent)' : t.status === 'rate-limited' ? 'var(--warn)' : 'var(--info)';
-    return `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
-      <span style="color:var(--text)">${t.name}</span>
-      <span style="color:${color}">${t.status}</span>
-    </div>`;
-  }).join('');
+  const el = document.getElementById('tools-live');
+  if (!el) return;
+  el.innerHTML = categories.map(cat => `
+    <div style="margin-bottom:16px">
+      <div style="font-family:var(--mono);font-size:.78rem;color:var(--accent);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+        <span>${cat.icon}</span> ${cat.name}
+      </div>
+      ${cat.tools.map(t => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 12px;border-bottom:1px solid var(--border)">
+          <span style="font-family:var(--mono);font-size:.75rem;color:var(--text)">${esc(t.name)}</span>
+          <span style="font-size:.7rem;color:var(--muted)">${esc(t.desc)}</span>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
 }
 
 // ── Tool Policy Toggles ──

@@ -59,9 +59,7 @@ function getRiskLevel(toolName: string, args: Record<string, unknown>, security?
   if (toolName === "bash") return "high";
   if (toolName === "write" || toolName === "edit") {
     const path = String(args.path || "");
-    // When self-modify is enabled, src/ writes are medium risk (not high)
-    // since the power dev has explicitly opted in
-    if (/src\//.test(path)) return security?.selfModify ? "medium" : "high";
+    if (/src\//.test(path) || /public\//.test(path)) return "high";
     return "medium";
   }
   if (toolName === "browser") {

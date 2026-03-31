@@ -283,17 +283,7 @@
             <div class="field-hint" id="file-access-hint">Default: agent can read your Downloads, Documents, Desktop, and Pictures folders.</div>
           </div>
         </div>
-        <div class="section-card power-only">
-          <div class="section-title">Self-Modify Mode</div>
-          <div class="section-desc">Power dev only. Lets the agent modify its own source code, create pages inside the app, and hot-reload changes. Core security files are always protected.</div>
-          <div class="field">
-            <label class="field-label" style="display:flex;align-items:center;gap:10px;cursor:pointer">
-              <input type="checkbox" id="cfg-self-modify" onchange="setSelfModify(this.checked)" style="width:18px;height:18px;accent-color:var(--accent)">
-              Enable Self-Modification
-            </label>
-            <div class="field-hint" id="self-modify-hint">Disabled. The agent cannot write to src/ files.</div>
-          </div>
-        </div>
+        <!-- Self-modify mode removed: platform files are always protected. Users build custom apps via the Apps system. -->
         <div class="section-card power-only">
           <div class="section-title">Sandbox</div>
           <div class="field"><label class="field-label">Execution Mode</label><select class="field-select" id="cfg-sandbox"><option value="host">Host (no isolation)</option><option value="docker">Docker (secure)</option></select></div>

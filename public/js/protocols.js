@@ -40,11 +40,11 @@ async function loadProtocols() {
         <div style="font-family:var(--mono);font-size:.7rem;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px">
           <span style="font-size:.85rem">${categoryIcons[cat] || '&#9889;'}</span> ${esc(cat)}
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
           ${items.map(p => `
             <div class="protocol-card" onclick="useProtocol('${esc(p.triggers[0] || p.name)}')">
               <div class="protocol-name">${esc(p.name.replace(/_/g, ' '))}</div>
-              <div class="protocol-desc">${esc(p.description.length > 80 ? p.description.slice(0, 77) + '...' : p.description)}</div>
+              <div class="protocol-desc">${esc(p.description)}</div>
               <div class="protocol-footer">
                 <span>${p.steps} steps</span>
                 <span class="protocol-trigger">"${esc(p.triggers[0] || p.name)}"</span>

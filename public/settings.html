@@ -780,6 +780,9 @@ function switchTab(id) {
   document.querySelectorAll('.tab-pill').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + id).classList.add('active');
   event.target.classList.add('active');
+  // Lazy-load: only check servers when user opens the tab
+  if (id === 'image') { checkServer('image'); checkServer('video'); }
+  if (id === 'security') { checkSandbox(); }
 }
 
 // ── Toggles ──
@@ -1291,8 +1294,8 @@ loadSettings();
 loadSystemStatus();
 checkAuth();
 checkSandbox();
-checkServer('image');
-checkServer('video');
+// Image/video server checks deferred — only run when user opens that tab
+// to avoid console spam when servers aren't running
 checkVoice();
 loadToolsList();
 loadIntegrations();

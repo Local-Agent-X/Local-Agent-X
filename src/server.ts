@@ -1469,7 +1469,7 @@ export function startServer(config: SAXConfig) {
       try {
         const { getAllMissions } = await import("./missions.js");
         const catMap: Record<string, string> = {
-          instagram: "Social Media", twitter: "Social Media", facebook: "Social Media", tiktok: "Social Media",
+          instagram: "Social Media", twitter: "Social Media", facebook: "Social Media", tiktok: "Social Media", x_post: "Social Media",
           git: "Developer", deploy: "Developer", test: "Developer", pr: "Developer",
           research: "Research", summarize: "Research", fact: "Research", citation: "Research",
           email: "Communication", slack: "Communication", discord: "Communication", whatsapp: "Communication",

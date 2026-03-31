@@ -7,13 +7,13 @@ async function loadProtocols() {
   const el = document.getElementById('protocols-list');
   const countEl = document.getElementById('protocol-count');
   if (!el) { console.error('[protocols] No #protocols-list element'); return; }
-  el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">Loading protocols...</div>';
+  el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">Loading...</div>';
   try {
     const data = await apiFetch('/api/protocols').then(r => r.json());
     const protocols = data.protocols || [];
     if (countEl) countEl.textContent = protocols.length + ' protocols';
     if (protocols.length === 0) {
-      el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">No protocols found.</div>';
+      el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">No protocols yet. Teach your agent by walking it through a task, then say "save that as a protocol."</div>';
       return;
     }
     // Group by category
@@ -28,32 +28,32 @@ async function loadProtocols() {
       'Developer': '&#128187;',
       'Research': '&#128270;',
       'Communication': '&#128172;',
-      'Smart Home': '&#127968;',
       'General': '&#9889;',
     };
-    el.innerHTML = Object.entries(groups).map(([cat, items]) => `
-      <div style="margin-bottom:20px">
-        <div style="font-family:var(--mono);font-size:.78rem;color:var(--accent);margin-bottom:10px;display:flex;align-items:center;gap:6px">
-          <span>${categoryIcons[cat] || '&#9889;'}</span> ${esc(cat)}
-          <span style="color:var(--muted);font-size:.65rem">(${items.length})</span>
+    const order = ['Social Media', 'Research', 'Communication', 'Developer', 'General'];
+    const sorted = order.filter(c => groups[c]).concat(Object.keys(groups).filter(c => !order.includes(c)));
+
+    el.innerHTML = sorted.map(cat => {
+      const items = groups[cat];
+      return `
+      <div style="margin-bottom:24px">
+        <div style="font-family:var(--mono);font-size:.7rem;color:var(--accent);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px">
+          <span style="font-size:.85rem">${categoryIcons[cat] || '&#9889;'}</span> ${esc(cat)}
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px">
           ${items.map(p => `
-            <div style="padding:14px;border-radius:10px;border:1px solid var(--border);background:var(--surface);cursor:pointer;transition:all .2s"
-                 onmouseenter="this.style.borderColor='var(--accent)'"
-                 onmouseleave="this.style.borderColor='var(--border)'"
-                 onclick="useProtocol('${esc(p.triggers[0] || p.name)}')">
-              <div style="font-family:var(--mono);font-size:.82rem;color:var(--text);font-weight:600;margin-bottom:4px">${esc(p.name.replace(/_/g, ' '))}</div>
-              <div style="font-size:.72rem;color:var(--muted);line-height:1.4;margin-bottom:8px">${esc(p.description)}</div>
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <span style="font-size:.65rem;color:var(--muted);font-family:var(--mono)">${p.steps} steps</span>
-                <span style="font-size:.6rem;color:var(--accent);font-family:var(--mono)">say: "${esc(p.triggers[0] || p.name)}"</span>
+            <div class="protocol-card" onclick="useProtocol('${esc(p.triggers[0] || p.name)}')">
+              <div class="protocol-name">${esc(p.name.replace(/_/g, ' '))}</div>
+              <div class="protocol-desc">${esc(p.description.length > 80 ? p.description.slice(0, 77) + '...' : p.description)}</div>
+              <div class="protocol-footer">
+                <span>${p.steps} steps</span>
+                <span class="protocol-trigger">"${esc(p.triggers[0] || p.name)}"</span>
               </div>
             </div>
           `).join('')}
         </div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
   } catch (e) {
     el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--danger)">Failed to load protocols.</div>';
   }
@@ -65,7 +65,6 @@ if (document.getElementById('page-protocols')?.classList.contains('active')) {
 }
 
 function useProtocol(trigger) {
-  // Navigate to chat and pre-fill the trigger phrase
   navigate('chat');
   const input = document.getElementById('msg-input');
   if (input) {

@@ -2033,6 +2033,28 @@ export function startServer(config: SAXConfig) {
       return;
     }
 
+    // Hire agent (activate template as persistent employee)
+    if (method === "POST" && url.pathname.match(/^\/api\/agents\/templates\/[^/]+\/hire$/)) {
+      const id = url.pathname.split("/")[4];
+      const body = await safeParseBody(req);
+      const result = agentTemplateStore.hire(id, {
+        reportsTo: body?.reportsTo,
+        heartbeatSchedule: body?.heartbeatSchedule,
+      });
+      if (!result) { json(404, { error: "Template not found" }); return; }
+      json(200, result);
+      return;
+    }
+
+    // Fire agent (deactivate)
+    if (method === "POST" && url.pathname.match(/^\/api\/agents\/templates\/[^/]+\/fire$/)) {
+      const id = url.pathname.split("/")[4];
+      const fired = agentTemplateStore.fire(id);
+      if (!fired) { json(404, { error: "Agent not found" }); return; }
+      json(200, { ok: true });
+      return;
+    }
+
     // Spawn from template
     if (method === "POST" && url.pathname.match(/^\/api\/agents\/templates\/[^/]+\/spawn$/)) {
       const id = url.pathname.split("/")[4];

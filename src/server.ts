@@ -2187,17 +2187,31 @@ export function startServer(config: SAXConfig) {
       if (!result) { json(404, { error: "Template not found" }); return; }
       // Set up heartbeat cron job if schedule provided
       if (result.heartbeatSchedule && result.heartbeatEnabled) {
-        const heartbeatPrompt = `You are ${result.name} (${result.role}), agent ID: ${result.id}. You are waking up for your scheduled check-in.\n\n` +
-          `FIRST: Call agent_whoami with agentId="${result.id}" to see your assigned issues and recent activity.\n\n` +
-          `THEN follow this procedure:\n` +
+        // Role-aware heartbeat: managers review subordinates, workers do tasks
+        const isManager = result.role === "ceo" || agentTemplateStore.listHired().some(a => a.reportsTo === result.id);
+        const managerProcedure = `THEN follow this MANAGER procedure:\n` +
+          `1. Call agent_team_list to see your team\n` +
+          `2. Call issue_list to see ALL open issues — check what your reports are working on\n` +
+          `3. Review completed tasks: look for issues with status "done" from your reports. Leave a comment with feedback.\n` +
+          `4. Review blocked tasks: if a report is blocked, help unblock them — reassign, break down the task, or escalate\n` +
+          `5. Check for unassigned work: if there are open issues nobody owns, assign them to the right team member\n` +
+          `6. If the team needs a new capability, use issue_request_approval to ask the board to hire\n` +
+          `7. Create a brief status update comment on your own highest-priority issue\n` +
+          `8. If any report hasn't made progress, use agent_wakeup to check on them\n`;
+
+        const workerProcedure = `THEN follow this procedure:\n` +
           `1. Review your assigned issues — pick the highest priority open/in-progress one\n` +
           `2. Call issue_checkout to lock it so no one else works on it\n` +
           `3. Read any new comments since your last check-in\n` +
           `4. Do the work using your available tools\n` +
           `5. Call issue_update to report what you did (add a comment with results)\n` +
-          `6. If done, set status to "done". If blocked, set to "blocked" and use issue_request_approval\n` +
-          `7. Call issue_release when finished\n` +
-          `8. If another agent needs to know something, use agent_wakeup to message them\n\n` +
+          `6. If done, set status to "done" — your manager will be auto-notified\n` +
+          `7. If blocked, set to "blocked" and add a comment explaining why — your manager will see it\n` +
+          `8. Call issue_release when finished\n`;
+
+        const heartbeatPrompt = `You are ${result.name} (${result.role}), agent ID: ${result.id}. You are waking up for your scheduled check-in.\n\n` +
+          `FIRST: Call agent_whoami with agentId="${result.id}" to see your assigned issues and recent activity.\n\n` +
+          (isManager ? managerProcedure : workerProcedure) + `\n` +
           `Your instructions: ${result.systemPrompt}`;
         try {
           cronService.create(`heartbeat:${result.id}`, result.heartbeatSchedule, heartbeatPrompt, true);
@@ -2349,7 +2363,7 @@ export function startServer(config: SAXConfig) {
 
     if (method === "GET" && appPath === "/api/apps") {
       const list = appReg.list();
-      const port = config.port || 4800;
+      const port = config.port || 7007;
       json(200, list.map((d: import("./app-runtime.js").AppDefinition) => ({
         id: d.id, name: d.name, description: d.description,
         components: d.components.length, layout: d.layout.type,
@@ -2368,7 +2382,7 @@ export function startServer(config: SAXConfig) {
       const def = appReg.get(appMatch[2]);
       if (!def) { json(404, { error: "App not found" }); return; }
       if (def.status === "suspended") { json(403, { error: "App is suspended" }); return; }
-      const html = renderApp(def, config.port || 4800);
+      const html = renderApp(def, config.port || 7007);
       const cspHeaders: Record<string, string> = {
         "Content-Type": "text/html",
         "X-Content-Type-Options": "nosniff",

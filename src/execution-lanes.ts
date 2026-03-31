@@ -7,7 +7,7 @@
  * - Agent: parallel (3 at a time) — spawned sub-agents
  * - Background: parallel (2 at a time) — memory consolidation, sync
  *
- * More robust than upstream's approach:
+ * More robust than typical approaches:
  * - Priority within lanes (urgent tasks jump the queue)
  * - Backpressure: rejects new tasks when queue is full (configurable)
  * - Per-task timeout with cleanup

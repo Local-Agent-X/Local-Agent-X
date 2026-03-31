@@ -109,7 +109,7 @@ const appCreate: ToolDefinition = {
     if (result.error) return err(result.error);
 
     // Generate and save HTML
-    const port = parseInt(process.env.SAX_PORT || "4800", 10);
+    const port = parseInt(process.env.SAX_PORT || "7007", 10);
     const html = renderApp(def, port);
     const dir = join(homedir(), ".sax", "apps", rawId);
     writeFileSync(join(dir, "index.html"), html, "utf-8");
@@ -162,7 +162,7 @@ const appUpdate: ToolDefinition = {
     if (result.error) return err(result.error);
 
     // Re-render HTML
-    const port = parseInt(process.env.SAX_PORT || "4800", 10);
+    const port = parseInt(process.env.SAX_PORT || "7007", 10);
     const html = renderApp(result.app!, port);
     const dir = join(homedir(), ".sax", "apps", id);
     writeFileSync(join(dir, "index.html"), html, "utf-8");
@@ -373,7 +373,7 @@ const appList: ToolDefinition = {
     const apps = registry.list(actor);
     if (apps.length === 0) return ok("No apps created yet.");
 
-    const port = process.env.SAX_PORT || "4800";
+    const port = process.env.SAX_PORT || "7007";
     const lines = apps.map(a => {
       const status = a.status !== "active" ? ` [${a.status.toUpperCase()}]` : "";
       return `- ${a.name} (${a.id})${status} — ${a.components.length} components, ${a.layout.type} layout, v${a.version}\n  URL: http://127.0.0.1:${port}/apps/${a.id}`;

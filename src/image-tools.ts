@@ -203,7 +203,7 @@ const generateImageTool: ToolDefinition = {
         prompt: string;
       };
 
-      const localUrl = `http://127.0.0.1:4800/images/${data.filename}`;
+      const localUrl = `http://127.0.0.1:7007/images/${data.filename}`;
 
       return ok(
         `Image generated!\n` +
@@ -291,7 +291,7 @@ const generateVideoTool: ToolDefinition = {
         prompt: string;
       };
 
-      const localUrl = `http://127.0.0.1:4800/videos/${data.filename}`;
+      const localUrl = `http://127.0.0.1:7007/videos/${data.filename}`;
 
       return ok(
         `Video generated!\n` +

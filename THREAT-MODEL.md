@@ -41,7 +41,7 @@ Open Agent X operates as a **single-user personal AI agent** on a local workstat
 ## Attack Surfaces
 
 ### 1. Network Surface
-- **Exposed**: HTTP server on `127.0.0.1:4800` (loopback only)
+- **Exposed**: HTTP server on `127.0.0.1:7007` (loopback only)
 - **Risk**: Low for remote attacks. Cross-origin attacks mitigated by CORS loopback-only + CSRF guard.
 - **Residual risk**: Local malware can reach loopback.
 

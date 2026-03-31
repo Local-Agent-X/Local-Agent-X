@@ -7,7 +7,7 @@ import { randomBytes } from "node:crypto";
  * with unique boundary markers before injecting into LLM context.
  * Prevents prompt injection attacks from malicious web content.
  *
- * Inspired by upstream's external-content.ts — but we go further:
+ * Content sanitization — designed to go further than typical approaches:
  * - Unique random boundary IDs per wrap (prevents spoofing)
  * - Homoglyph detection for Unicode trickery
  * - Suspicious pattern detection with scoring

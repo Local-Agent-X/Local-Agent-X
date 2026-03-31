@@ -322,6 +322,11 @@ export class WhatsAppBridge {
 
         if (text && (typeof text !== "string" || text.length > 10000)) continue;
 
+        // Sanitize: strip zero-width, RTL/LTR overrides, and other invisible control characters
+        // that could be used to hide prompt injection payloads
+        const sanitizedText = text?.replace(/[\u200B-\u200F\u2028-\u202F\uFEFF\u00AD\u034F\u061C\u180E\u2060-\u2069\uFFF9-\uFFFB]/g, "")
+          .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "") || null;
+
         // Resolve the sender's phone number (handles @lid JIDs)
         let senderPhone = remoteJid.split("@")[0];
         if (remoteJid.endsWith("@lid") && lidLookup) {
@@ -349,7 +354,7 @@ export class WhatsAppBridge {
         // If we're currently replying to this JID, skip (it's the agent's own reply coming back)
         if (fromMe && replyingTo.has(remoteJid)) continue;
 
-        if (!text) {
+        if (!sanitizedText) {
           const msgType = Object.keys(msg.message || {})[0] || "unknown";
           console.log(`[whatsapp] Ignoring ${msgType} from ${remoteJid}`);
           continue;
@@ -400,7 +405,7 @@ export class WhatsAppBridge {
         this.processingLock.add(phone);
         replyingTo.add(replyJid);
         try {
-          const reply = await this.onMessage({ from: phone, name, text, sessionId });
+          const reply = await this.onMessage({ from: phone, name, text: sanitizedText, sessionId });
           if (reply) {
             await this.sendToJid(replyJid, reply);
           }

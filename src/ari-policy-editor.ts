@@ -140,6 +140,9 @@ export function evaluateCustomPolicies(
     // Pattern match
     if (rule.pattern) {
       try {
+        // Guard against ReDoS: reject overly complex patterns
+        if (rule.pattern.length > 200) continue;
+        if (/(\.\*){3,}|(\([^)]*\+\)[^)]*){2,}|(\([^)]*\)\{[^}]+\}\s*){3,}/.test(rule.pattern)) continue;
         if (!new RegExp(rule.pattern, "i").test(argsStr)) continue;
       } catch {
         continue; // Invalid regex — skip

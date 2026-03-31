@@ -56,9 +56,8 @@ export class TelegramBridge {
 
   /** Connect: validate token via getMe, start long polling */
   async connect(): Promise<{ state: ConnectionState; botUsername?: string; botName?: string }> {
-    if (this.state === "connected") {
-      return { state: "connected", botUsername: this.botUser?.username, botName: this.botUser?.first_name };
-    }
+    // Always stop any existing poll before (re)connecting — prevents duplicate pollers
+    this.stopPolling();
 
     const token = this.getToken();
     if (!token) {
@@ -74,6 +73,18 @@ export class TelegramBridge {
       const me = await this.apiCall(token, "getMe", undefined, false);
       if (!me.ok) throw new Error(me.description || "Invalid bot token");
       this.botUser = me.result;
+
+      // Flush any stale Telegram-side long-poll so we don't get "terminated by other getUpdates"
+      try {
+        const flush = await this.apiCall(token, "getUpdates", { offset: -1, timeout: 0 }, false);
+        if (flush.ok && flush.result?.length) {
+          this.offset = flush.result[flush.result.length - 1].update_id + 1;
+        }
+      } catch {}
+
+      // Re-load allowed chats in case config was updated while disconnected
+      this.loadAllowedChats();
+
       this.state = "connected";
       console.log(`[telegram] Connected as @${this.botUser!.username} (${this.botUser!.first_name})`);
       this.startPolling(token);

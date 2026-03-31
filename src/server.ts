@@ -524,7 +524,7 @@ export function startServer(config: SAXConfig) {
     "mission_list", "mission_get", "mission_save_preference",
     "cron_list", "cron_create", "cron_delete",
     "camera_capture", "screen_capture", "ocr",
-    "read", "bash",
+    "read", "bash", "browser",
   ]);
   const primalOnlyTools = allAgentTools.filter(t => PRIMAL_ALLOWED.has(t.name));
   // Full tools for spawned agents (they do the actual work)

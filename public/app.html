@@ -60,7 +60,7 @@
   <div id="utility-bar" role="toolbar" aria-label="Navigation">
     <button class="util-btn" data-route="apps" onclick="navigate('apps')" aria-label="Apps" title="Apps"><span class="util-icon">&#9638;</span></button>
     <button class="util-btn" data-route="agents" onclick="navigate('agents')" aria-label="Agents" title="Agents"><span class="util-icon">&#129302;</span></button>
-    <button class="util-btn" data-route="cron" onclick="navigate('cron')" aria-label="Cron jobs" title="Cron Jobs"><span class="util-icon">&#9200;</span></button>
+    <button class="util-btn" data-route="missions" onclick="navigate('missions')" aria-label="Missions" title="Missions"><span class="util-icon">&#9889;</span></button>
     <button class="util-btn" data-route="secrets" onclick="navigate('secrets')" aria-label="Secrets vault" title="Secrets"><span class="util-icon">&#128273;</span></button>
     <button class="util-btn" data-route="settings" onclick="navigate('settings')" aria-label="Settings" title="Settings"><span class="util-icon">&#9881;</span></button>
   </div>
@@ -472,25 +472,21 @@
   </div>
 
   <!-- ══ CRON JOBS PAGE ══ -->
-  <div id="page-cron" class="page">
+  <div id="page-missions" class="page">
     <div class="cron-layout">
       <div class="cron-left">
-        <h2 style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px;margin-bottom:12px">CRON JOBS</h2>
-        <div class="field"><label class="field-label">Job Name</label><input class="field-input" id="new-cron-name" placeholder="Daily report"/></div>
+        <h2 style="font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:1px;margin-bottom:12px">MISSIONS</h2>
+        <div class="field"><label class="field-label">Mission Name</label><input class="field-input" id="new-cron-name" placeholder="Daily report"/></div>
         <div class="field"><label class="field-label">Schedule</label><input class="field-input" id="new-cron-schedule" placeholder="every 1h / daily 9am / */30 * * * *"/></div>
-        <div class="field"><label class="field-label">Agent Prompt</label><textarea class="field-input" id="new-cron-prompt" rows="3" placeholder="Check my email and summarize..." style="resize:vertical"></textarea></div>
-        <div class="toggle-row" style="margin:8px 0">
-          <div><div class="toggle-label" style="font-size:.75rem">System job</div><div class="toggle-desc" style="font-size:.65rem">Also create Windows Task — wakes Agent X if not running</div></div>
-          <div class="toggle" id="tog-cron-system" onclick="toggleSwitch(this)"></div>
-        </div>
-        <button class="action-btn primary" style="width:100%;margin:8px 0" onclick="addCronJob()">Add Job</button>
-        <div style="display:flex;justify-content:space-between;font-size:.68rem;font-family:var(--mono);color:var(--muted);margin:12px 0 8px"><span>SCHEDULED JOBS</span><span id="cron-count">0</span></div>
+        <div class="field"><label class="field-label">Agent Instructions</label><textarea class="field-input" id="new-cron-prompt" rows="3" placeholder="Check my email and summarize..." style="resize:vertical"></textarea></div>
+        <button class="action-btn primary" style="width:100%;margin:8px 0" onclick="addCronJob()">Schedule Mission</button>
+        <div style="display:flex;justify-content:space-between;font-size:.68rem;font-family:var(--mono);color:var(--muted);margin:12px 0 8px"><span>SCHEDULED MISSIONS</span><span id="cron-count">0</span></div>
         <div id="cron-list"></div>
       </div>
       <div class="cron-right">
         <div id="cron-detail-empty" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted)">
-          <h2 style="font-family:var(--mono);font-size:1.1rem;color:var(--accent);letter-spacing:2px">CRON JOBS</h2>
-          <p style="font-size:.85rem;max-width:400px;text-align:center;line-height:1.6">Schedule recurring agent tasks. The agent runs your prompt on a schedule.</p>
+          <h2 style="font-family:var(--mono);font-size:1.1rem;color:var(--accent);letter-spacing:2px">MISSIONS</h2>
+          <p style="font-size:.85rem;max-width:400px;text-align:center;line-height:1.6">Schedule recurring tasks for your agent. Set a prompt and a schedule — the agent executes it automatically.</p>
         </div>
         <div id="cron-detail-view" style="display:none">
           <h2 id="cron-detail-name" style="font-family:var(--mono);font-size:1.1rem;color:var(--accent)"></h2>
@@ -498,10 +494,10 @@
           <div style="margin-bottom:12px;font-family:var(--mono);font-size:.78rem"><span style="color:var(--muted)">Status:</span> <span id="cron-detail-status"></span></div>
           <div style="margin-bottom:12px;font-family:var(--mono);font-size:.78rem"><span style="color:var(--muted)">Last run:</span> <span id="cron-detail-lastrun"></span></div>
           <div id="cron-detail-result" style="margin-bottom:16px;font-family:var(--mono);font-size:.72rem;color:var(--muted);max-height:80px;overflow-y:auto"></div>
-          <div class="section-card"><div class="section-title">Prompt</div><pre id="cron-detail-prompt" style="font-family:var(--mono);font-size:.82rem;white-space:pre-wrap;margin-top:8px;color:var(--text)"></pre></div>
+          <div class="section-card"><div class="section-title">Instructions</div><pre id="cron-detail-prompt" style="font-family:var(--mono);font-size:.82rem;white-space:pre-wrap;margin-top:8px;color:var(--text)"></pre></div>
           <div class="btn-row" style="margin-top:16px">
             <button class="action-btn primary" onclick="runCronJobNow()">Run Now</button>
-            <button class="action-btn secondary" onclick="toggleCronJob()">Toggle Pause</button>
+            <button class="action-btn secondary" onclick="toggleCronJob()">Pause / Resume</button>
             <button class="action-btn danger" onclick="deleteCronJob()">Delete</button>
           </div>
         </div>

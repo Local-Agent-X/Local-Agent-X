@@ -305,8 +305,9 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     // Missions — multi-step workflows (internal)
     { id: "allow-missions", tool: "mission_*", decision: "allow", reason: "Mission workflows (internal)", priority: 50 },
 
-    // Cron — scheduled job management (internal)
-    { id: "allow-cron", tool: "cron_*", decision: "allow", reason: "Cron job management (internal)", priority: 50 },
+    // Scheduled missions (cron)
+    { id: "allow-cron", tool: "cron_*", decision: "allow", reason: "Scheduled missions (legacy)", priority: 50 },
+    { id: "allow-schedule", tool: "schedule_*", decision: "allow", reason: "Scheduled missions", priority: 50 },
 
     // Agent delegation — required for Primal orchestrator
     { id: "allow-agent-spawn", tool: "agent_spawn", decision: "allow", reason: "Agent delegation", priority: 50 },

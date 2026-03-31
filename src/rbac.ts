@@ -96,12 +96,14 @@ export class RBACManager {
       if (this.tokens.has("operator-default")) {
         this.tokens.delete("operator-default");
       }
+      const TOKEN_EXPIRY_DAYS = 90;
       this.tokens.set("operator-default", {
         id: "operator-default",
         name: "Default operator token",
         role: "operator",
         tokenHash: this.operatorTokenHash,
         createdAt: Date.now(),
+        expiresAt: Date.now() + TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
       });
       this.save();
     }

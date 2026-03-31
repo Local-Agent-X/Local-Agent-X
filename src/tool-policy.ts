@@ -326,6 +326,19 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     { id: "allow-screen", tool: "screen_*", decision: "allow", reason: "Screen capture", priority: 50 },
     { id: "allow-ocr", tool: "ocr", decision: "allow", reason: "OCR text extraction", priority: 50 },
 
+    // Apps — in-platform app builder
+    { id: "allow-apps", tool: "app_*", decision: "allow", reason: "App creation and management", priority: 50 },
+
+    // Issues / Tasks — agent task management and approvals
+    { id: "allow-issues", tool: "issue_*", decision: "allow", reason: "Issue and task management", priority: 50 },
+
+    // Agent team management
+    { id: "allow-agent-team", tool: "agent_team_*", decision: "allow", reason: "Agent team management", priority: 50 },
+
+    // Build app / create page
+    { id: "allow-build-app", tool: "build_app", decision: "allow", reason: "Build workspace apps", priority: 50 },
+    { id: "allow-create-page", tool: "create_page", decision: "allow", reason: "Create custom pages", priority: 50 },
+
     // ── Everything else is DENIED by default ──
     // No catch-all "allow *" rule. Unknown tools are blocked.
   ],

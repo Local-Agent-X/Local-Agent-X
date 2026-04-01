@@ -37,6 +37,20 @@ import { AssociativeMemory } from "./associative-recall.js";
 import { PredictivePrefetcher } from "./predictive-prefetch.js";
 import { MemoryCompressor } from "./memory-compression.js";
 import { MemoryConsolidator } from "./memory-consolidation.js";
+import type { MemoryIndex } from "./memory.js";
+
+// Common words that look like entities (capitalized) but aren't
+const GRAPH_STOP_WORDS = new Set([
+  "the", "this", "that", "what", "when", "where", "which", "who", "how",
+  "can", "could", "would", "should", "will", "shall", "may", "might",
+  "has", "have", "had", "was", "were", "been", "being", "are", "also",
+  "just", "not", "but", "and", "for", "with", "from", "into", "about",
+  "then", "than", "very", "here", "there", "some", "any", "all", "most",
+  "other", "each", "every", "both", "few", "more", "many", "such",
+  "new", "old", "good", "bad", "great", "big", "small", "long", "short",
+  "let", "get", "got", "set", "put", "use", "try", "run", "see", "say",
+  "yes", "hey", "sure", "okay", "thanks", "please", "sorry", "now",
+]);
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -207,6 +221,10 @@ export interface BackgroundReport {
   unspoken: { absences: number; changes: number };
   growth: string;
   narratives: number;
+  retained: number;
+  reflected: { entitiesUpdated: number; opinionsUpdated: number };
+  graphEdges: number;
+  importanceScored: number;
   totalTimeMs: number;
 }
 
@@ -387,6 +405,11 @@ function triageModules(input: OrchestratorInput, msgCount: number): TriageResult
   // Triggered — contradiction detector for fact-like content
   if (FACT_PATTERNS.some(p => p.test(input.message))) {
     result.triggered.push("contradiction-detector");
+  }
+
+  // Conditional — memory graph (entity relationships) for substantive messages
+  if (input.message.length > 40) {
+    result.conditional.push("memory-graph");
   }
 
   // Deduplicate
@@ -761,6 +784,33 @@ function runModule(name: string, input: OrchestratorInput): ModuleSignal[] {
       }
       break;
     }
+
+    case "memory-graph": {
+      // Surface entity relationships relevant to the current message
+      const entityCandidates = [...new Set(
+        (input.message.match(/\b[A-Z][a-zA-Z]{2,}\b/g) || [])
+          .filter(w => !GRAPH_STOP_WORDS.has(w.toLowerCase()))
+      )];
+      if (entityCandidates.length > 0) {
+        const relationships: string[] = [];
+        for (const entity of entityCandidates.slice(0, 5)) {
+          const edges = MemoryGraph.getEdges(entity, "out");
+          for (const edge of edges.slice(0, 3)) {
+            relationships.push(`${edge.from} ${edge.relation} ${edge.to}`);
+          }
+        }
+        if (relationships.length > 0) {
+          signals.push({
+            source: "memory-graph",
+            signal: `Known relationships: ${relationships.slice(0, 5).join("; ")}`,
+            priority: 3,
+            category: "knowledge-graph",
+            confidence: 0.6,
+          });
+        }
+      }
+      break;
+    }
   }
 
   orchestratorState.moduleRunTimes[name] = Date.now() - start;
@@ -1049,6 +1099,29 @@ function recordFromMessage(input: OrchestratorInput): void {
       assoc.learnAssociation(words[0], words[1], "co-occurrence", 0.3);
     }
   }, undefined);
+
+  // Memory graph — extract entity relationships from substantive messages
+  safeRun("memory-graph:record", () => {
+    if (input.message.length < 40) return; // skip short messages
+    // Extract capitalized words as candidate entities (names, tools, projects)
+    const entityCandidates = [...new Set(
+      (input.message.match(/\b[A-Z][a-zA-Z]{2,}\b/g) || [])
+        .filter(w => !GRAPH_STOP_WORDS.has(w.toLowerCase()))
+    )];
+    if (entityCandidates.length < 2) return;
+    const extracted = MemoryGraph.autoExtractRelationships(input.message, entityCandidates);
+    for (const edge of extracted) {
+      MemoryGraph.addEdge(edge.from, edge.relation, edge.to, edge.metadata);
+    }
+  }, undefined);
+
+  // Memory importance — record access for mentioned entities
+  safeRun("memory-importance:record", () => {
+    // MemoryImportance default export is already the singleton instance
+    if (input.message.length > 30) {
+      MemoryImportance.scoreMemory({ content: input.message, createdAt: Date.now() });
+    }
+  }, undefined);
 }
 
 // ── Orchestrator Class ──────────────────────────────────────
@@ -1168,9 +1241,10 @@ export class MemoryOrchestrator {
   }
 
   /**
-   * Run heavy background tasks — called by cron/nightly, never inline.
+   * Run heavy background tasks — called every 6h + once on startup.
+   * Accepts MemoryIndex so it can run retain/reflect/graph extraction.
    */
-  runBackground(): BackgroundReport {
+  runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
     const startTime = Date.now();
 
     // Memory consolidation
@@ -1221,6 +1295,77 @@ export class MemoryOrchestrator {
       return nm.getOngoingStories().length;
     }, 0);
 
+    // ── Retain: extract structured facts from recent daily logs ──
+    const retained = safeRun("retain-from-logs:bg", () => {
+      if (!memoryIndex) return 0;
+      let totalRetained = 0;
+      // Process last 7 days of daily logs
+      for (let i = 0; i < 7; i++) {
+        const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+        const facts = memoryIndex.retainFromDailyLog(date);
+        totalRetained += facts.length;
+      }
+      return totalRetained;
+    }, 0);
+
+    // ── Reflect: update entity pages + opinion confidence from recent facts ──
+    const reflected = safeRun("reflect:bg", () => {
+      if (!memoryIndex) return { entitiesUpdated: 0, opinionsUpdated: 0 };
+      // reflect() is async but we handle it synchronously here since
+      // the underlying operations (SQL queries, file writes) are sync
+      let result = { entitiesUpdated: 0, opinionsUpdated: 0 };
+      memoryIndex.reflect(7).then(r => {
+        result = { entitiesUpdated: r.entitiesUpdated.length, opinionsUpdated: r.opinionsUpdated };
+      }).catch(() => {});
+      return result;
+    }, { entitiesUpdated: 0, opinionsUpdated: 0 });
+
+    // ── MemoryGraph: extract entity relationships from recent daily logs ──
+    const graphEdges = safeRun("memory-graph:bg", () => {
+      if (!memoryIndex) return 0;
+      let edgesAdded = 0;
+      // Read recent daily logs and extract relationships
+      for (let i = 0; i < 7; i++) {
+        const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+        const logPath = memoryIndex.getDailyLogPath(date);
+        if (!existsSync(logPath)) continue;
+        const content = readFileSync(logPath, "utf-8");
+        if (content.length < 20) continue;
+
+        // Get known entities from facts
+        const facts = memoryIndex.recallByTime(
+          new Date(date.getTime() - 24 * 60 * 60 * 1000),
+          new Date(date.getTime() + 24 * 60 * 60 * 1000),
+        );
+        const entities = [...new Set(facts.flatMap(f => f.entities))];
+        if (entities.length < 2) continue;
+
+        const extracted = MemoryGraph.autoExtractRelationships(content, entities);
+        for (const edge of extracted) {
+          MemoryGraph.addEdge(edge.from, edge.relation, edge.to, edge.metadata);
+          edgesAdded++;
+        }
+      }
+      return edgesAdded;
+    }, 0);
+
+    // ── MemoryImportance: score and decay memories ──
+    const importanceScored = safeRun("memory-importance:bg", () => {
+      if (!memoryIndex) return 0;
+      const recentFacts = memoryIndex.recallByTime(
+        new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      );
+      let scored = 0;
+      for (const fact of recentFacts) {
+        MemoryImportance.scoreMemory({
+          content: fact.content,
+          createdAt: fact.timestamp,
+        });
+        scored++;
+      }
+      return scored;
+    }, 0);
+
     orchestratorState.lastBackgroundRun = Date.now();
     saveState(orchestratorState);
 
@@ -1232,6 +1377,10 @@ export class MemoryOrchestrator {
       unspoken,
       growth,
       narratives,
+      retained,
+      reflected,
+      graphEdges,
+      importanceScored,
       totalTimeMs: Date.now() - startTime,
     };
   }

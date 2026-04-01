@@ -149,18 +149,10 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .msg-attachments img:hover{transform:scale(1.03);border-color:var(--accent)}
 .att-badge{padding:6px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--border);font-size:.75rem;font-family:var(--mono);color:var(--muted);display:flex;align-items:center;gap:6px}
 .tool-card{margin:8px 0;border-radius:8px;border:1px solid var(--border);overflow:hidden;font-size:.82rem}
-.tool-card.risk-high-card{border-color:var(--danger)}
-.tool-card.risk-medium-card{border-color:var(--warn)}
 .tool-header{padding:8px 12px;background:#111125;display:flex;align-items:center;gap:8px;cursor:pointer;font-family:var(--mono)}
-.tool-header.risk-high{background:#1a0d0d;border-left:3px solid var(--danger)}
-.tool-header.risk-medium{background:#1a1a0d;border-left:3px solid var(--warn)}
 .tool-header .indicator{width:8px;height:8px;border-radius:50%}
 .tool-header .indicator.allowed{background:var(--accent);box-shadow:0 0 6px var(--accent-dim)}
 .tool-header .indicator.blocked{background:var(--danger);box-shadow:0 0 6px rgba(255,51,51,.4)}
-.risk-badge{font-size:.6rem;font-weight:700;letter-spacing:.5px;padding:2px 6px;border-radius:4px;flex-shrink:0}
-.risk-badge.high{background:rgba(255,51,51,.15);color:var(--danger);border:1px solid rgba(255,51,51,.3)}
-.risk-badge.medium{background:rgba(255,170,0,.12);color:var(--warn);border:1px solid rgba(255,170,0,.25)}
-.tool-context{padding:6px 12px;background:#12121f;font-size:.72rem;color:var(--muted);border-top:1px solid var(--border);font-style:italic}
 .tool-name{color:var(--accent)}
 .tool-detail{display:none;padding:10px 12px;background:#0d0d18;font-family:var(--mono);font-size:.78rem;color:var(--muted);white-space:pre-wrap;max-height:200px;overflow-y:auto}
 .tool-card.open .tool-detail{display:block}

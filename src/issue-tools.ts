@@ -456,12 +456,23 @@ const agentWakeup: ToolDefinition = {
     // Leave the comment with @-mention
     issueStore.comment(issueId, "agent", `@${target.name}: ${message}`);
 
-    // If the issue isn't assigned to the target, note that
-    const context = issue.assignee === targetId
-      ? "They are assigned to this issue and will see the comment."
-      : "Note: this issue is not assigned to them — consider reassigning if needed.";
+    // ACTUALLY wake the agent — trigger a real run via EventBus
+    const wakeupTask = `You were woken up by a message on issue ${issueId}.\n\n` +
+      `Message: "${message}"\n\n` +
+      `First call agent_whoami with agentId="${targetId}" to see your full context, then check issue ${issueId} and respond appropriately.`;
 
-    return ok(`Wakeup sent to ${target.name} on ${issueId}.\nComment posted: "@${target.name}: ${message}"\n${context}`);
+    EventBus.emit("primal:agent-run", {
+      agentId: `wake-${targetId}-${Date.now().toString(36)}`,
+      name: target.name,
+      role: target.role,
+      systemPrompt: target.systemPrompt,
+      tools: target.allowedTools,
+      task: wakeupTask,
+      parentSessionId: null,
+      templateId: target.id,
+    });
+
+    return ok(`Woke up ${target.name}. They will check issue ${issueId} and see your message.`);
   },
 };
 

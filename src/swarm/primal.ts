@@ -18,6 +18,7 @@ export interface PrimalAgent extends SwarmAgent {
   startedAt: number;
   tokensUsed: number;
   messageQueue: string[];
+  templateId?: string;
 }
 
 export interface PrimalAgentStatus {
@@ -118,6 +119,7 @@ export class PrimalOrchestrator {
       startedAt: Date.now(),
       tokensUsed: 0,
       messageQueue: [],
+      templateId: config.templateId,
     };
 
     this.agents.set(agentId, agent);
@@ -388,6 +390,7 @@ export class PrimalOrchestrator {
           tools: agent.tools,
           task: agent.currentTask,
           parentSessionId: this.currentSessionId || undefined,
+          templateId: agent.templateId,
         });
 
         const result = await resultPromise;

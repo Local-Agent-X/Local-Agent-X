@@ -26,16 +26,23 @@ import { isIP } from "node:net";
  * Input must be a valid lowercased IPv6 string (no zone ID).
  */
 function normalizeIPv6(ip: string): string {
-	// If already contains "::", it is already in compressed form.
-	// Still strip leading zeros from each group for consistency.
-	const parts = ip.split(":");
+	// Expand compressed "::" into explicit zero groups to get exactly 8 groups,
+	// then re-compress to canonical form.
+	let parts = ip.split(":");
+
+	// If the address contains "::", expand it to fill 8 groups
+	const doubleColonIdx = ip.indexOf("::");
+	if (doubleColonIdx !== -1) {
+		// Split on "::" — gives before and after segments
+		const [beforeStr, afterStr] = ip.split("::");
+		const before = beforeStr ? beforeStr.split(":") : [];
+		const after = afterStr ? afterStr.split(":") : [];
+		const missing = 8 - before.length - after.length;
+		parts = [...before, ...Array(missing).fill("0"), ...after];
+	}
+
 	// Each part: strip leading zeros, but keep at least one digit
 	const stripped = parts.map((p) => p.replace(/^0+(?=.)/, "") || "0");
-
-	// If already compressed (fewer than 8 groups), just return stripped form
-	if (stripped.length < 8) {
-		return stripped.join(":");
-	}
 
 	// Find the longest run of consecutive "0" groups for :: compression
 	let bestStart = -1;

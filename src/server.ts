@@ -37,7 +37,22 @@ import { AppRegistry } from "./app-runtime.js";
 import { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore, type AgentRun } from "./agent-store.js";
 import { ConfigWatcher } from "./config-hot-reload.js";
 import { createSwarmTools } from "./swarm/index.js";
-import { createPrimalTools } from "./swarm/primal.js";
+import { createHandlerTools } from "./swarm/handler.js";
+import { createSqlTools } from "./sql-tools.js";
+import { createEmailTools } from "./email-tools.js";
+import { createCalendarTools } from "./calendar-tools.js";
+import { createContactsTools } from "./contacts-tools.js";
+import { createCloudStorageTools } from "./cloud-storage-tools.js";
+import { createNotificationTools } from "./notification-tools.js";
+import { createSpreadsheetTools } from "./spreadsheet-tools.js";
+import { createPdfTools } from "./pdf-tools.js";
+import { createPaymentTools } from "./payment-tools.js";
+import { createSmsTools } from "./sms-tools.js";
+import { createVoiceTools } from "./voice-tools.js";
+import { createClipboardTools } from "./clipboard-tools.js";
+import { createCrmTools } from "./crm-tools.js";
+import { createBookkeepingTools } from "./bookkeeping-tools.js";
+import { createEcommerceTools } from "./ecommerce-tools.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 import type { ServerContext } from "./server-context.js";
 import { parseMultipart, extractAgentOutput, safeErrorMessage, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard, setServerPort } from "./server-utils.js";
@@ -127,7 +142,21 @@ export function startServer(config: SAXConfig) {
   const httpRequestTool = createHttpRequestTool(secretsStore);
   let activeBrowserSessionId = "default";
   const browserTools = createBrowserTools(() => activeBrowserSessionId);
-  const allAgentTools = [...allTools, httpRequestTool, ...createMemoryTools(memoryIndex), ...secretTools, ...browserTools, ...imageTools, ...createMissionTools(), ...createAllMissionTools(), ...createCronTools(cronService), ...createSwarmTools(), ...createPrimalTools(), ...appTools, ...issueTools];
+  const allAgentTools = [
+    ...allTools, httpRequestTool,
+    ...createMemoryTools(memoryIndex), ...secretTools, ...browserTools, ...imageTools,
+    ...createMissionTools(), ...createAllMissionTools(), ...createCronTools(cronService),
+    ...createSwarmTools(), ...createHandlerTools(), ...appTools, ...issueTools,
+    // Business & personal assistant tools
+    ...createSqlTools(secretsStore), ...createEmailTools(secretsStore),
+    ...createCalendarTools(secretsStore), ...createContactsTools(secretsStore),
+    ...createCloudStorageTools(secretsStore), ...createNotificationTools(secretsStore),
+    ...createSpreadsheetTools(secretsStore), ...createPdfTools(),
+    ...createPaymentTools(secretsStore), ...createSmsTools(secretsStore),
+    ...createVoiceTools(secretsStore), ...createClipboardTools(),
+    ...createCrmTools(secretsStore), ...createBookkeepingTools(secretsStore),
+    ...createEcommerceTools(secretsStore),
+  ];
   const bridgeTools = [...allTools, ...memoryTools, ...browserTools, ...imageTools, ...createMissionTools(), ...issueTools];
 
   // Session management
@@ -277,11 +306,11 @@ export function startServer(config: SAXConfig) {
   runMigrations(dataDir).catch(e => console.warn("[migrations]", e.message));
   const chatWs = setupChatWebSocket(server, config.authToken);
 
-  // Event bus: primal agent execution
+  // Event bus: handler agent execution
   const eventBus = EventBus.getInstance();
   const pendingMeta = new Map<string, { name: string; role: string; task: string; systemPrompt: string; parentAgentId: string | null; sessionId: string; startedAt: number; toolsUsed: string[] }>();
 
-  // Event payload types for primal agent system
+  // Event payload types for handler agent system
   interface AgentRunEvent { agentId: string; task: string; systemPrompt: string; role: string; parentSessionId?: string; templateId?: string }
   interface AgentSpawnEvent { agentId: string; name: string; role: string; task: string; systemPrompt?: string; parentAgentId?: string; parentSessionId?: string }
   interface AgentOutputEvent { agentId: string; output: string }
@@ -290,10 +319,10 @@ export function startServer(config: SAXConfig) {
   interface AgentUserInputEvent { agentId: string; message: string }
   interface AgentRedirectEvent { agentId: string; [key: string]: unknown }
 
-  eventBus.on("primal:agent-run", async (data: unknown) => {
+  eventBus.on("handler:agent-run", async (data: unknown) => {
     const { agentId, task, systemPrompt, role, parentSessionId } = data as AgentRunEvent;
     const templateId = (data as AgentRunEvent).templateId;
-    console.log(`[primal] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
+    console.log(`[handler] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
 
     // Resolve template for identity + tool restrictions
     const template = templateId ? agentTemplateStore.get(templateId) : null;
@@ -324,24 +353,24 @@ export function startServer(config: SAXConfig) {
         spawnedTools = spawnedTools.filter(t => allowed.has(t.name));
       }
 
-      const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); console.warn(`[primal] Agent ${agentId} timed out`); }, config.agentTimeoutMs);
+      const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); console.warn(`[handler] Agent ${agentId} timed out`); }, config.agentTimeoutMs);
       const agentResult = await enqueue("agent", () => runAgent(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + identityBlock + parentContext + briefing,
         tools: spawnedTools, security, toolPolicy, sessionId: `agent-${agentId}`, maxIterations: config.maxIterations, temperature: config.temperature, signal: ac.signal,
-        pauseCallback: async (reason: string) => { eventBus.emit("primal:agent-output", { agentId, output: `[BLOCKER] ${reason}` }); eventBus.emit("primal:agent-blocked", { agentId, reason, role }); return new Promise<string>(r => { const h = (d: unknown) => { const evt = d as AgentUserInputEvent; if (evt.agentId === agentId) { eventBus.off("primal:agent-user-input", h); r(evt.message); } }; eventBus.on("primal:agent-user-input", h); setTimeout(() => { eventBus.off("primal:agent-user-input", h); r("User did not respond."); }, config.agentTimeoutMs); }); },
-        onEvent: (event) => { if (event.type === "stream" && event.delta) eventBus.emit("primal:agent-output", { agentId, output: event.delta }); if (event.type === "tool_start") { console.log(`[primal] Agent ${agentId} tool: ${event.toolName}`); eventBus.emit("primal:agent-output", { agentId, output: `[tool] ${event.toolName}...` }); } if (event.type === "tool_start" && event.requiresApproval) event.requiresApproval = false; },
+        pauseCallback: async (reason: string) => { eventBus.emit("handler:agent-output", { agentId, output: `[BLOCKER] ${reason}` }); eventBus.emit("handler:agent-blocked", { agentId, reason, role }); return new Promise<string>(r => { const h = (d: unknown) => { const evt = d as AgentUserInputEvent; if (evt.agentId === agentId) { eventBus.off("handler:agent-user-input", h); r(evt.message); } }; eventBus.on("handler:agent-user-input", h); setTimeout(() => { eventBus.off("handler:agent-user-input", h); r("User did not respond."); }, config.agentTimeoutMs); }); },
+        onEvent: (event) => { if (event.type === "stream" && event.delta) eventBus.emit("handler:agent-output", { agentId, output: event.delta }); if (event.type === "tool_start") { console.log(`[handler] Agent ${agentId} tool: ${event.toolName}`); eventBus.emit("handler:agent-output", { agentId, output: `[tool] ${event.toolName}...` }); } if (event.type === "tool_start" && event.requiresApproval) event.requiresApproval = false; },
       }), { label: `agent:${agentId}`, timeout: config.agentTimeoutMs });
       clearTimeout(to); if (agentResult?.messages) agentSession.messages.push(...agentResult.messages);
-      eventBus.emit("primal:agent-result", { agentId, result: extractAgentOutput(agentSession.messages), success: true });
-    } catch (e) { const p = extractAgentOutput(agentSession.messages), msg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e); eventBus.emit("primal:agent-result", { agentId, result: p ? `[${msg}]\n\n${p}` : msg, success: false }); }
+      eventBus.emit("handler:agent-result", { agentId, result: extractAgentOutput(agentSession.messages), success: true });
+    } catch (e) { const p = extractAgentOutput(agentSession.messages), msg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e); eventBus.emit("handler:agent-result", { agentId, result: p ? `[${msg}]\n\n${p}` : msg, success: false }); }
   });
 
   // Forward agent events to WS + persist
-  eventBus.on("primal:agent-spawn", (d: unknown) => { const evt = d as AgentSpawnEvent; broadcastAll({ type: "agent-spawn", ...evt }); pendingMeta.set(evt.agentId, { name: evt.name, role: evt.role, task: evt.task, systemPrompt: evt.systemPrompt || "", parentAgentId: evt.parentAgentId || null, sessionId: evt.parentSessionId || "", startedAt: Date.now(), toolsUsed: [] }); });
-  eventBus.on("primal:agent-output", (d: unknown) => { const evt = d as AgentOutputEvent; broadcastAll({ type: "agent-output", ...evt }); const m = pendingMeta.get(evt.agentId); if (m && typeof evt.output === "string" && evt.output.startsWith("[tool]")) { const t = evt.output.replace("[tool] ", "").replace("...", "").trim(); if (t && !m.toolsUsed.includes(t)) m.toolsUsed.push(t); } });
-  eventBus.on("primal:agent-blocked", (d: unknown) => { const evt = d as AgentBlockedEvent; broadcastAll({ type: "agent-blocked", agentId: evt.agentId, reason: evt.reason, role: evt.role }); });
-  eventBus.on("primal:agent-result", (d: unknown) => { const evt = d as AgentResultEvent; broadcastAll({ type: "agent-complete", ...evt }); const m = pendingMeta.get(evt.agentId); if (m) { agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status: evt.success === false ? "error" : "done", output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: evt.success === false ? evt.result : undefined } as AgentRun); pendingMeta.delete(evt.agentId); } });
-  eventBus.on("primal:agent-redirect", (d: unknown) => { const evt = d as AgentRedirectEvent; broadcastAll({ type: "agent-update", ...evt, status: "redirected" }); });
+  eventBus.on("handler:agent-spawn", (d: unknown) => { const evt = d as AgentSpawnEvent; broadcastAll({ type: "agent-spawn", ...evt }); pendingMeta.set(evt.agentId, { name: evt.name, role: evt.role, task: evt.task, systemPrompt: evt.systemPrompt || "", parentAgentId: evt.parentAgentId || null, sessionId: evt.parentSessionId || "", startedAt: Date.now(), toolsUsed: [] }); });
+  eventBus.on("handler:agent-output", (d: unknown) => { const evt = d as AgentOutputEvent; broadcastAll({ type: "agent-output", ...evt }); const m = pendingMeta.get(evt.agentId); if (m && typeof evt.output === "string" && evt.output.startsWith("[tool]")) { const t = evt.output.replace("[tool] ", "").replace("...", "").trim(); if (t && !m.toolsUsed.includes(t)) m.toolsUsed.push(t); } });
+  eventBus.on("handler:agent-blocked", (d: unknown) => { const evt = d as AgentBlockedEvent; broadcastAll({ type: "agent-blocked", agentId: evt.agentId, reason: evt.reason, role: evt.role }); });
+  eventBus.on("handler:agent-result", (d: unknown) => { const evt = d as AgentResultEvent; broadcastAll({ type: "agent-complete", ...evt }); const m = pendingMeta.get(evt.agentId); if (m) { agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status: evt.success === false ? "error" : "done", output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: evt.success === false ? evt.result : undefined } as AgentRun); pendingMeta.delete(evt.agentId); } });
+  eventBus.on("handler:agent-redirect", (d: unknown) => { const evt = d as AgentRedirectEvent; broadcastAll({ type: "agent-update", ...evt, status: "redirected" }); });
 
   // Config hot-reload
   new ConfigWatcher().start(join(dataDir, "config.json"), () => console.log("[config] Hot-reloaded"));

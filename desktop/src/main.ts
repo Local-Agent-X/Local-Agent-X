@@ -361,8 +361,34 @@ function createWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // External links → system browser
     if (url.startsWith("http") && !url.includes("127.0.0.1")) {
       shell.openExternal(url);
+      return { action: "deny" };
+    }
+    // Local app links (e.g. /apps/xyz) → open in frameless Electron window with auth
+    if (url.includes("127.0.0.1")) {
+      const appWin = new BrowserWindow({
+        width: 1000,
+        height: 700,
+        icon: ICON_PATH,
+        backgroundColor: "#0a0a0f",
+        frame: false,
+        titleBarStyle: "hidden",
+        titleBarOverlay: {
+          color: "#0a0a0f",
+          symbolColor: "#40f0f0",
+          height: 32,
+        },
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      });
+      const separator = url.includes("?") ? "&" : "?";
+      appWin.loadURL(`${url}${separator}token=${saxConfig.authToken}`);
+      return { action: "deny" };
     }
     return { action: "deny" };
   });

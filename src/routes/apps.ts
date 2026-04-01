@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeParseBody, corsHeaders } from "../server-utils.js";
 import { renderApp } from "../app-renderer.js";
@@ -10,13 +12,33 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
 
   if (method === "GET" && appPath === "/api/apps") {
     const port = ctx.config.port || 7007;
-    json(200, appReg.list().map((d: AppDefinition) => ({
+    const registered = appReg.list().map((d: AppDefinition) => ({
       id: d.id, name: d.name, description: d.description,
       components: d.components.length, layout: d.layout.type,
       url: `http://127.0.0.1:${port}/apps/${d.id}`,
       updatedAt: d.updatedAt, status: d.status, version: d.version,
       visibility: d.permissions?.visibility || "team",
-    })));
+    }));
+    // Also scan workspace/apps/ for HTML apps not in the registry
+    const registeredIds = new Set(registered.map(a => a.id));
+    const wsAppsDir = resolve(ctx.config.workspace, "apps");
+    if (existsSync(wsAppsDir)) {
+      try {
+        for (const d of readdirSync(wsAppsDir, { withFileTypes: true })) {
+          if (!d.isDirectory() || d.name === "_audit" || registeredIds.has(d.name)) continue;
+          const indexPath = join(wsAppsDir, d.name, "index.html");
+          if (!existsSync(indexPath)) continue;
+          const st = statSync(indexPath);
+          registered.push({
+            id: d.name, name: d.name.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+            description: "HTML app", components: 1, layout: "custom",
+            url: `http://127.0.0.1:${port}/apps/${d.name}/index.html`,
+            updatedAt: st.mtimeMs, status: "active", version: 1, visibility: "team",
+          });
+        }
+      } catch (e) { console.warn("[apps] workspace scan error:", (e as Error).message); }
+    }
+    json(200, registered);
     return true;
   }
 

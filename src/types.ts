@@ -36,6 +36,14 @@ export interface Session {
   messages: ChatCompletionMessageParam[];
   createdAt: number;
   updatedAt: number;
+  /** Summary of compacted (older) messages */
+  compactedSummary?: string;
+  /** Index at which compaction was applied */
+  compactedAt?: number;
+  /** Session ID this session was forked from */
+  forkedFrom?: string;
+  /** Message index at which the fork was taken */
+  forkAtIndex?: number;
 }
 
 // ── Server Types ──
@@ -87,4 +95,23 @@ export interface SAXConfig {
   autoUpdate: boolean;
   logLevel: "basic" | "detailed" | "full-audit";
   ariRequired?: boolean;
+
+  // ── Externalized service URLs ──
+  ollamaUrl: string;
+  sdServerUrl: string;
+  videoServerUrl: string;
+  xttsServerUrl: string;
+
+  // ── Externalized limits & timeouts ──
+  browserCdpPort: number;
+  browserIdleTimeoutMs: number;
+  rateLimitMax: number;
+  rateLimitRefillPerSec: number;
+  maxRequestBodyBytes: number;
+  maxUploadBytes: number;
+  maxAudioBytes: number;
+  authMaxFailures: number;
+  authLockoutMs: number;
+  agentTimeoutMs: number;
+  maxCachedSessions: number;
 }

@@ -11,7 +11,10 @@ function err(content: string): ToolResult {
   return { content, isError: true };
 }
 
-const SD_SERVER_URL = "http://127.0.0.1:7860";
+import { getRuntimeConfig } from "./config.js";
+
+/** Stable Diffusion server URL — configurable via config.sdServerUrl */
+function getSDServerUrl(): string { return getRuntimeConfig().sdServerUrl; }
 
 /**
  * Image generation via local Stable Diffusion server.
@@ -169,7 +172,7 @@ const generateImageTool: ToolDefinition = {
     const guidance = Number(args.guidance) || 7.5;
 
     try {
-      const healthRes = await fetch(`${SD_SERVER_URL}/health`, {
+      const healthRes = await fetch(`${getSDServerUrl()}/health`, {
         signal: AbortSignal.timeout(2000),
       });
       if (!healthRes.ok) throw new Error("not ok");
@@ -182,7 +185,7 @@ const generateImageTool: ToolDefinition = {
     }
 
     try {
-      const res = await fetch(`${SD_SERVER_URL}/generate`, {
+      const res = await fetch(`${getSDServerUrl()}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, width, height, steps, guidance }),
@@ -203,7 +206,7 @@ const generateImageTool: ToolDefinition = {
         prompt: string;
       };
 
-      const localUrl = `http://127.0.0.1:7007/images/${data.filename}`;
+      const localUrl = `http://127.0.0.1:${getRuntimeConfig().port}/images/${data.filename}`;
 
       return ok(
         `Image generated!\n` +
@@ -222,7 +225,8 @@ const generateImageTool: ToolDefinition = {
   },
 };
 
-const VIDEO_SERVER_URL = "http://127.0.0.1:7861";
+/** Video generation server URL — configurable via config.videoServerUrl */
+function getVideoServerUrl(): string { return getRuntimeConfig().videoServerUrl; }
 
 const generateVideoTool: ToolDefinition = {
   name: "generate_video",
@@ -258,7 +262,7 @@ const generateVideoTool: ToolDefinition = {
 
     // Check if video server is running
     try {
-      const healthRes = await fetch(`${VIDEO_SERVER_URL}/health`, {
+      const healthRes = await fetch(`${getVideoServerUrl()}/health`, {
         signal: AbortSignal.timeout(2000),
       });
       if (!healthRes.ok) throw new Error("not ok");
@@ -271,7 +275,7 @@ const generateVideoTool: ToolDefinition = {
     }
 
     try {
-      const res = await fetch(`${VIDEO_SERVER_URL}/generate`, {
+      const res = await fetch(`${getVideoServerUrl()}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, num_frames: numFrames, steps }),
@@ -291,7 +295,7 @@ const generateVideoTool: ToolDefinition = {
         prompt: string;
       };
 
-      const localUrl = `http://127.0.0.1:7007/videos/${data.filename}`;
+      const localUrl = `http://127.0.0.1:${getRuntimeConfig().port}/videos/${data.filename}`;
 
       return ok(
         `Video generated!\n` +

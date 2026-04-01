@@ -200,9 +200,12 @@ export async function runCodexAgentHttp(
   const { apiKey, model, systemPrompt, tools, security, maxIterations = 25, onEvent, signal } = options;
   const toolMap = new Map(tools.map((t) => [t.name, t]));
 
-  let userContent: any = userMessage;
+  type VisionContentPart =
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } };
+  let userContent: string | VisionContentPart[] = userMessage;
   if (options.images && options.images.length > 0) {
-    const parts: any[] = [{ type: "text", text: userMessage }];
+    const parts: VisionContentPart[] = [{ type: "text", text: userMessage }];
     for (const img of options.images) {
       try {
         const { readFileSync } = await import("node:fs");
@@ -215,7 +218,7 @@ export async function runCodexAgentHttp(
     userContent = parts;
   }
 
-  let messages: ChatCompletionMessageParam[] = [...history, { role: "user", content: userContent }];
+  let messages: ChatCompletionMessageParam[] = [...history, { role: "user", content: userContent } as ChatCompletionMessageParam];
   let totalInput = 0, totalOutput = 0;
   let previousResponseId: string | undefined;
   const codexTools = tools.map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters }));

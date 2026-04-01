@@ -12,6 +12,34 @@ import { ariEvaluate, isAriActive } from "./ari-kernel.js";
 import { recordSensitiveRead, checkEgressTaint, isSensitivePath } from "./data-lineage.js";
 import { compactIfNeeded } from "./context-manager.js";
 
+/** Extended tool result that may include image data for vision analysis */
+interface ToolResultWithImage extends ToolResult {
+  _image?: { path: string; question: string; mime: string; b64: string };
+}
+
+/** ChatCompletionMessageParam with tool_calls visible (OpenAI types hide this on some message subtypes) */
+interface AssistantMessageWithToolCalls {
+  role: "assistant";
+  content: string | null;
+  tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
+}
+
+/** Tool message with tool_call_id */
+interface ToolMessageParam {
+  role: "tool";
+  tool_call_id: string;
+  content: string;
+}
+
+/** User message with vision content parts */
+interface VisionUserMessage {
+  role: "user";
+  content: Array<
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string; detail?: string } }
+  >;
+}
+
 // ── OpenAI tool format conversion ──
 
 export function toolsToOpenAI(tools: ToolDefinition[]): ChatCompletionTool[] {
@@ -125,7 +153,7 @@ export async function executeToolCalls(
         } else {
           const result = ariResult.reason;
           onEvent?.({ type: "tool_end", toolName: tc.name, result, allowed: false });
-          results.push({ role: "tool", tool_call_id: tc.id, content: result } as any);
+          results.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
           continue;
         }
       }
@@ -135,7 +163,7 @@ export async function executeToolCalls(
     const policyBlock = checkSessionPolicy(sessionId || "default", tc.name);
     if (policyBlock) {
       onEvent?.({ type: "tool_end", toolName: tc.name, result: policyBlock, allowed: false });
-      results.push({ role: "tool", tool_call_id: tc.id, content: policyBlock } as any);
+      results.push({ role: "tool", tool_call_id: tc.id, content: policyBlock } as ChatCompletionMessageParam);
       continue;
     }
 
@@ -185,7 +213,7 @@ export async function executeToolCalls(
         if (egressCheck.blocked) {
           result = { content: `BLOCKED by data lineage: ${egressCheck.reason}`, isError: true };
           onEvent?.({ type: "tool_end", toolName: tc.name, result: result.content, allowed: false });
-          results.push({ role: "tool", tool_call_id: tc.id, content: result.content } as any);
+          results.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
           continue;
         }
       }
@@ -243,20 +271,21 @@ export async function executeToolCalls(
     });
 
     // Check if tool returned an image for vision analysis
-    const imageData = (result as any)._image;
+    const imageData = (result as ToolResultWithImage)._image;
     if (imageData) {
       results.push({
         role: "tool",
         tool_call_id: tc.id,
         content: `Image loaded: ${imageData.path}\nQuestion: ${imageData.question}`,
-      });
-      results.push({
+      } as ChatCompletionMessageParam);
+      const visionMsg: VisionUserMessage = {
         role: "user",
         content: [
           { type: "text", text: `[Image from ${imageData.path}] ${imageData.question}` },
           { type: "image_url", image_url: { url: `data:${imageData.mime};base64,${imageData.b64}`, detail: "auto" } },
         ],
-      } as any);
+      };
+      results.push(visionMsg as ChatCompletionMessageParam);
     } else {
       results.push({
         role: "tool",

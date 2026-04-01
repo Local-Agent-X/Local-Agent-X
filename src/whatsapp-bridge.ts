@@ -52,6 +52,7 @@ export class WhatsAppBridge {
   private processingLock = new Set<string>();
   private processedMessages = new Set<string>();
   private phoneNumber: string | null = null;
+  private selfLid: string | null = null; // Owner's @lid JID for self-chat detection
   private lastError: string | null = null;
   private allowedNumbers: Set<string> = new Set(); // Empty = owner-only (default-deny)
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -288,7 +289,9 @@ export class WhatsAppBridge {
         this.qrDataUrl = null;
         const me = this.sock?.user;
         this.phoneNumber = me?.id?.split(":")[0] || me?.id || null;
-        console.log(`[whatsapp] Connected as ${this.phoneNumber}`);
+        // Strip both @lid suffix AND :device suffix from lid (e.g. "ABC123:5@lid" → "ABC123")
+        this.selfLid = me?.lid?.replace(/@.*$/, "").split(":")[0] || null;
+        console.log(`[whatsapp] Connected as ${this.phoneNumber} (lid=${this.selfLid})`);
         // Send available presence
         try { this.sock.sendPresenceUpdate("available"); } catch {}
       }
@@ -327,22 +330,23 @@ export class WhatsAppBridge {
         const sanitizedText = text?.replace(/[\u200B-\u200F\u2028-\u202F\uFEFF\u00AD\u034F\u061C\u180E\u2060-\u2069\uFFF9-\uFFFB]/g, "")
           .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "") || null;
 
-        // Resolve the sender's phone number (handles @lid JIDs)
+        // Self-chat detection: match remoteJid against known owner JIDs.
+        // Do NOT rely on LID resolution (it can return wrong mappings).
+        // Instead, compare the exact JID against the two forms we know:
+        //   1. "ownerPhone@s.whatsapp.net" (legacy)
+        //   2. "ownerLid@lid" (post-migration)
+        const selfJid = this.phoneNumber ? `${this.phoneNumber}@s.whatsapp.net` : null;
+        const selfLidJid = this.selfLid ? `${this.selfLid}@lid` : null;
+        const isSelfChat = fromMe && (remoteJid === selfJid || remoteJid === selfLidJid);
+
+        // Resolve sender phone for access control (incoming messages from others)
         let senderPhone = remoteJid.split("@")[0];
-        if (remoteJid.endsWith("@lid") && lidLookup) {
+        if (!isSelfChat && remoteJid.endsWith("@lid") && lidLookup) {
           try {
-            // Try to resolve LID to real phone number
-            const resolved = await lidLookup.get?.(remoteJid) || await lidLookup.jidToLid?.(remoteJid);
+            const resolved = await lidLookup.get?.(remoteJid);
             if (resolved) senderPhone = String(resolved).split("@")[0];
           } catch {}
         }
-
-        // Self-chat detection:
-        // - @lid JIDs with fromMe=true = "Message Yourself" chat (self-chat)
-        // - @s.whatsapp.net with same phone + fromMe=true = also self-chat
-        const isSamePhone = senderPhone === this.phoneNumber;
-        const isLidSelfChat = fromMe && remoteJid.endsWith("@lid");
-        const isSelfChat = isSamePhone || isLidSelfChat;
 
         console.log(`[whatsapp] MSG: fromMe=${fromMe} jid=${remoteJid} phone=${senderPhone} selfChat=${isSelfChat} text="${String(text || "").slice(0, 50).replace(/[\x00-\x1f\x7f]/g, "")}"`);
 
@@ -389,7 +393,7 @@ export class WhatsAppBridge {
         console.log(`[whatsapp] → ${safeName} (${phone}): ${safeText}${text.length > 80 ? "..." : ""}`);
 
         // Mark as read (skip for self-chat)
-        if (!isSamePhone) {
+        if (!isSelfChat) {
           try { await this.sock.readMessages([{ remoteJid, id: msgId, fromMe: false }]); } catch {}
         }
 

@@ -1,10 +1,13 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { RouteHandler } from "../server-context.js";
-import { isValidSessionId, readBody, safeErrorMessage, sseWrite, corsHeaders, jsonResponse, BANNED_KEYS } from "../server-utils.js";
+import type { ServerEvent } from "../types.js";
+import { isValidSessionId, readBody, safeErrorMessage, sseWrite, corsHeaders, jsonResponse, BANNED_KEYS, safeParseBody } from "../server-utils.js";
 import { runAgent } from "../agent.js";
 import { detectInjection } from "../sanitize.js";
+import { ChatRequestSchema, CompactSchema, validateBody } from "../route-schemas.js";
 import { ThreatEngine } from "../threat-engine.js";
 import { enqueue } from "../execution-lanes.js";
 import { buildContextBlock, autoSearchContext, autoExtractAndSave } from "../memory.js";
@@ -17,10 +20,10 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
 
   // Context compaction
   if (method === "POST" && url.pathname === "/api/compact") {
-    let body: Record<string, unknown>;
-    try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return true; }
-    const sessionId = (body.sessionId as string) || "default";
-    if (!isValidSessionId(sessionId)) { json(400, { error: "Invalid session ID" }); return true; }
+    const raw = await safeParseBody(req);
+    const parsed = validateBody(raw, CompactSchema);
+    if (!parsed.success) { json(400, { error: parsed.error }); return true; }
+    const sessionId = parsed.data.sessionId!;
     const session = ctx.getOrCreateSession(sessionId);
     if (session.messages.length < 10) { json(200, { ok: false, reason: `Only ${session.messages.length} messages (need 10+)` }); return true; }
     const KEEP_RECENT = Math.min(20, session.messages.length - 5);
@@ -34,8 +37,8 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       else if (m.role === "assistant" && typeof m.content === "string") summaryLines.push(`[Agent] ${m.content.split("\n").filter(l => l.trim()).slice(0, 2).join(" ").slice(0, 200)}`);
     }
     const compactSummary = `[COMPACTED CONTEXT — ${oldMessages.length} messages summarized]\n${summaryLines.join("\n")}\n[END COMPACTED CONTEXT — ${recentMessages.length} recent messages follow]`;
-    (session as any).compactedSummary = compactSummary;
-    (session as any).compactedAt = oldMessages.length;
+    session.compactedSummary = compactSummary;
+    session.compactedAt = oldMessages.length;
     ctx.sessionStore.save(session);
     json(200, { ok: true, compactedAt: oldMessages.length, oldCount: oldMessages.length, recentCount: recentMessages.length });
     return true;
@@ -43,14 +46,13 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
 
   // Main chat SSE endpoint
   if (method === "POST" && url.pathname === "/api/chat") {
-    let body: Record<string, unknown>;
-    try { body = JSON.parse(await readBody(req), (key, value) => BANNED_KEYS.has(key) ? undefined : value); }
-    catch { json(400, { error: "Invalid JSON body" }); return true; }
-    if (typeof body.message !== "string" || !body.message.trim()) { json(400, { error: "message is required" }); return true; }
-    const message: string = body.message;
-    const sessionId = typeof body.sessionId === "string" ? body.sessionId : "default";
-    const attachments = Array.isArray(body.attachments) ? body.attachments as Array<{ name: string; url: string; isImage: boolean }> : [];
-    if (!isValidSessionId(sessionId)) { json(400, { error: "Invalid session ID" }); return true; }
+    const raw = await safeParseBody(req);
+    if (!raw) { json(400, { error: "Invalid JSON body" }); return true; }
+    const parsed = validateBody(raw, ChatRequestSchema);
+    if (!parsed.success) { json(400, { error: parsed.error }); return true; }
+    const { message, attachments: _attachments } = parsed.data;
+    const sessionId = parsed.data.sessionId!;
+    const attachments = _attachments!;
 
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", ...corsHeaders(req) });
 
@@ -84,7 +86,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       else apiKey = await getApiKey(ctx.config.openaiApiKey);
 
       const wsChat = ctx.chatWs.startChat(sessionId);
-      const onEvent = (event: any) => { sseWrite(res, event); wsChat.onEvent(event); };
+      const onEvent = (event: ServerEvent) => { sseWrite(res, event); wsChat.onEvent(event); };
       ctx.setActiveOnEvent(onEvent);
 
       heartbeat = setInterval(() => { if (!res.destroyed) res.write(": heartbeat\n\n"); else clearInterval(heartbeat); }, 15_000);
@@ -119,9 +121,9 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         const { processMessage } = await import("../memory-orchestrator.js");
         const orch = await processMessage({
           message, sessionId,
-          sessionMessages: session.messages.slice(-20).map((m: any) => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" })),
+          sessionMessages: session.messages.slice(-20).map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" })),
           timeOfDay: new Date().getHours(), dayOfWeek: new Date().getDay(),
-          agentPreviousMessage: session.messages.filter((m: any) => m.role === "assistant").pop()?.content as string || undefined,
+          agentPreviousMessage: session.messages.filter(m => m.role === "assistant").pop()?.content as string || undefined,
         });
         memoryContext = orch.contextInjection ? `\n\n${orch.contextInjection}` : "";
         memoryNotifications = orch.notifications || [];
@@ -151,12 +153,14 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       });
 
       // Sanitize orphaned tool results
+      type MsgRecord = Record<string, unknown>;
       const sanitizeHistory = (msgs: typeof session.messages) => {
         const validCallIds = new Set<string>();
         const result = [];
         for (const m of msgs) {
-          if (m.role === "assistant" && (m as any).tool_calls) { for (const tc of (m as any).tool_calls) validCallIds.add(tc.id); result.push(m); }
-          else if (m.role === "tool") { if ((m as any).tool_call_id && validCallIds.has((m as any).tool_call_id)) result.push(m); }
+          const rec = m as unknown as MsgRecord;
+          if (m.role === "assistant" && rec.tool_calls) { for (const tc of rec.tool_calls as Array<{ id: string }>) validCallIds.add(tc.id); result.push(m); }
+          else if (m.role === "tool") { if (rec.tool_call_id && validCallIds.has(rec.tool_call_id as string)) result.push(m); }
           else result.push(m);
         }
         return result;
@@ -178,14 +182,14 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       };
 
       let historyToSend = session.messages;
-      const compactedSummary = (session as any).compactedSummary as string | undefined;
-      const compactedAt = (session as any).compactedAt as number | undefined;
+      const compactedSummary = session.compactedSummary;
+      const compactedAt = session.compactedAt;
       if (compactedSummary && compactedAt) {
         const cutPoint = findSafeCutPoint(session.messages, compactedAt);
-        historyToSend = [{ role: "system", content: compactedSummary } as any, ...session.messages.slice(cutPoint)];
+        historyToSend = [{ role: "system", content: compactedSummary } as ChatCompletionMessageParam, ...session.messages.slice(cutPoint)];
       } else if (session.messages.length > 40) {
         const cutPoint = findSafeCutPoint(session.messages, session.messages.length - 40);
-        historyToSend = [{ role: "system", content: buildSummary(session.messages.slice(0, cutPoint)) } as any, ...session.messages.slice(cutPoint)];
+        historyToSend = [{ role: "system", content: buildSummary(session.messages.slice(0, cutPoint)) } as ChatCompletionMessageParam, ...session.messages.slice(cutPoint)];
       }
 
       try { const { PrimalOrchestrator: PO } = await import("../swarm/primal.js"); PO.getInstance().currentSessionId = sessionId; } catch {}
@@ -211,7 +215,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       }), { label: `chat:${sessionId}`, timeout: 600_000 });
 
       ctx.setActiveOnEvent(undefined);
-      session.messages = result.messages.filter((m) => m.role !== "system" && (m.content || (m as any).tool_calls));
+      session.messages = result.messages.filter((m) => m.role !== "system" && (m.content || (m as unknown as MsgRecord).tool_calls));
       session.updatedAt = Date.now();
 
       const assistantReply = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).join("\n");
@@ -224,7 +228,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       try {
         const { CrossSessionLearner } = await import("../cross-session-learning.js");
         const csl = CrossSessionLearner.getInstance();
-        const toolCalls = result.messages.filter((m: any) => m.tool_calls).flatMap((m: any) => m.tool_calls || []);
+        const toolCalls = result.messages.filter(m => (m as unknown as MsgRecord).tool_calls).flatMap(m => ((m as unknown as MsgRecord).tool_calls as Array<{ function?: { name: string }; name?: string }>) || []);
         for (const tc of toolCalls) csl.recordAction(sessionId, { type: "tool", details: tc.function?.name || tc.name || "unknown", timestamp: Date.now() });
       } catch {}
 

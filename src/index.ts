@@ -17,6 +17,10 @@ try {
 
 const logStream = createWriteStream(logPath, { flags: "a" });
 
+// Close log stream on exit to flush pending writes
+process.on("SIGINT", () => logStream.end());
+process.on("SIGTERM", () => logStream.end());
+
 function timestamp(): string {
   return new Date().toISOString();
 }
@@ -54,7 +58,7 @@ process.on("unhandledRejection", (reason) => {
   console.error("[CRASH GUARD] Unhandled rejection:", reason);
 });
 
-import { loadConfig } from "./config.js";
+import { loadConfig, setRuntimeConfig } from "./config.js";
 import { startServer } from "./server.js";
 import { loadTokens } from "./auth.js";
 
@@ -65,6 +69,7 @@ console.log(`
 `);
 
 const config = loadConfig();
+setRuntimeConfig(config);
 
 // Check auth status
 const tokens = loadTokens();

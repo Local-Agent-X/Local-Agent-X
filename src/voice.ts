@@ -69,7 +69,9 @@ export async function detectCapabilities(): Promise<VoiceCapabilities> {
   // Check XTTS server availability
   let xttsAvailable = false;
   try {
-    const r = await fetch("http://127.0.0.1:7862/health", { signal: AbortSignal.timeout(1000) });
+    const { getRuntimeConfig } = await import("./config.js");
+    const xttsUrl = getRuntimeConfig().xttsServerUrl;
+    const r = await fetch(`${xttsUrl}/health`, { signal: AbortSignal.timeout(1000) });
     if (r.ok) xttsAvailable = true;
   } catch {}
 

@@ -48,7 +48,7 @@ export interface SessionRoute {
   isLinked: boolean;        // Whether this identity is part of a linked group
 }
 
-// ── Identity Link Store ──
+// ── Identity Link Store (atomic read-modify-write) ──
 
 let identityGroups: IdentityGroup[] = [];
 
@@ -60,8 +60,24 @@ function loadLinks(): void {
   } catch { identityGroups = []; }
 }
 
+/** Atomic write: write to temp file then rename (prevents partial writes on crash) */
 function saveLinks(): void {
-  writeFileSync(LINKS_FILE, JSON.stringify(identityGroups, null, 2), "utf-8");
+  const tmpFile = LINKS_FILE + ".tmp";
+  writeFileSync(tmpFile, JSON.stringify(identityGroups, null, 2), "utf-8");
+  const { renameSync } = require("node:fs");
+  renameSync(tmpFile, LINKS_FILE);
+}
+
+/**
+ * Read-modify-write wrapper: reload from disk, apply mutation, write back.
+ * Ensures we never overwrite another caller's changes — the reload picks up
+ * any writes that landed between our last read and now.
+ */
+function mutateLinks<T>(fn: () => T): T {
+  loadLinks();
+  const result = fn();
+  saveLinks();
+  return result;
 }
 
 // Load on module init
@@ -105,73 +121,67 @@ export function linkIdentities(
   identity2: ChannelIdentity,
   displayName?: string,
 ): IdentityGroup {
-  loadLinks();
-  const group1 = findGroupByIdentity(identity1.channel, identity1.id);
-  const group2 = findGroupByIdentity(identity2.channel, identity2.id);
+  return mutateLinks(() => {
+    const group1 = findGroupByIdentity(identity1.channel, identity1.id);
+    const group2 = findGroupByIdentity(identity2.channel, identity2.id);
 
-  if (group1 && group2) {
-    if (group1.canonicalId === group2.canonicalId) return group1; // Already linked
-    // Merge group2 into group1
-    for (const id of group2.identities) {
-      if (!group1.identities.some(i => i.channel === id.channel && i.id === id.id)) {
-        group1.identities.push(id);
+    if (group1 && group2) {
+      if (group1.canonicalId === group2.canonicalId) return group1;
+      for (const id of group2.identities) {
+        if (!group1.identities.some(i => i.channel === id.channel && i.id === id.id)) {
+          group1.identities.push(id);
+        }
       }
+      group1.updatedAt = Date.now();
+      if (displayName) group1.displayName = displayName;
+      identityGroups = identityGroups.filter(g => g.canonicalId !== group2.canonicalId);
+      return group1;
     }
-    group1.updatedAt = Date.now();
-    if (displayName) group1.displayName = displayName;
-    identityGroups = identityGroups.filter(g => g.canonicalId !== group2.canonicalId);
-    saveLinks();
-    return group1;
-  }
 
-  if (group1) {
-    if (!group1.identities.some(i => i.channel === identity2.channel && i.id === identity2.id)) {
-      group1.identities.push(identity2);
+    if (group1) {
+      if (!group1.identities.some(i => i.channel === identity2.channel && i.id === identity2.id)) {
+        group1.identities.push(identity2);
+      }
+      group1.updatedAt = Date.now();
+      return group1;
     }
-    group1.updatedAt = Date.now();
-    saveLinks();
-    return group1;
-  }
 
-  if (group2) {
-    if (!group2.identities.some(i => i.channel === identity1.channel && i.id === identity1.id)) {
-      group2.identities.push(identity1);
+    if (group2) {
+      if (!group2.identities.some(i => i.channel === identity1.channel && i.id === identity1.id)) {
+        group2.identities.push(identity1);
+      }
+      group2.updatedAt = Date.now();
+      return group2;
     }
-    group2.updatedAt = Date.now();
-    saveLinks();
-    return group2;
-  }
 
-  // New group
-  const newGroup: IdentityGroup = {
-    canonicalId: `peer-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
-    displayName: displayName || identity1.displayName || identity2.displayName || "Unknown",
-    identities: [identity1, identity2],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-  identityGroups.push(newGroup);
-  saveLinks();
-  return newGroup;
+    const newGroup: IdentityGroup = {
+      canonicalId: `peer-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
+      displayName: displayName || identity1.displayName || identity2.displayName || "Unknown",
+      identities: [identity1, identity2],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    identityGroups.push(newGroup);
+    return newGroup;
+  });
 }
 
 /**
  * Unlink a specific identity from its group.
  */
 export function unlinkIdentity(channel: ChannelType, channelUserId: string): boolean {
-  loadLinks();
-  const group = findGroupByIdentity(channel, channelUserId);
-  if (!group) return false;
+  return mutateLinks(() => {
+    const group = findGroupByIdentity(channel, channelUserId);
+    if (!group) return false;
 
-  group.identities = group.identities.filter(i => !(i.channel === channel && i.id === channelUserId));
-  if (group.identities.length <= 1) {
-    // Group has 0-1 members, remove it
-    identityGroups = identityGroups.filter(g => g.canonicalId !== group.canonicalId);
-  } else {
-    group.updatedAt = Date.now();
-  }
-  saveLinks();
-  return true;
+    group.identities = group.identities.filter(i => !(i.channel === channel && i.id === channelUserId));
+    if (group.identities.length <= 1) {
+      identityGroups = identityGroups.filter(g => g.canonicalId !== group.canonicalId);
+    } else {
+      group.updatedAt = Date.now();
+    }
+    return true;
+  });
 }
 
 /**

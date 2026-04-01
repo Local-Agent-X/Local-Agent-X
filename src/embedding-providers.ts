@@ -6,6 +6,7 @@
  */
 
 import type { EmbeddingProvider } from "./memory.js";
+import { getRuntimeConfig } from "./config.js";
 
 // ── Provider type union ──
 
@@ -376,7 +377,7 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
 
   constructor(opts?: { model?: string; baseUrl?: string }) {
     this.model = opts?.model ?? "nomic-embed-text";
-    this.baseUrl = (opts?.baseUrl ?? "http://localhost:11434").replace(
+    this.baseUrl = (opts?.baseUrl ?? getRuntimeConfig().ollamaUrl).replace(
       /\/$/,
       ""
     );

@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ServerEvent } from "./types.js";
 import { redactCredentials } from "./security.js";
+import { getRuntimeConfig } from "./config.js";
 
 // ── Multipart parser ──
 export interface MultipartPart { filename?: string; name?: string; data: Buffer; contentType?: string }
@@ -135,7 +136,7 @@ export function sseWrite(res: ServerResponse, event: ServerEvent) {
 export async function readBody(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
   let size = 0;
-  const MAX_BODY = 10 * 1024 * 1024;
+  const MAX_BODY = getRuntimeConfig().maxRequestBodyBytes;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
     if (size > MAX_BODY) throw new Error("Request body too large");
@@ -147,13 +148,13 @@ export async function readBody(req: IncomingMessage): Promise<string> {
 const BANNED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 export { BANNED_KEYS };
 
-export async function safeParseBody(req: IncomingMessage): Promise<any> {
+export async function safeParseBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
   const raw = await readBody(req);
   try {
-    return JSON.parse(raw, (key, value) => {
+    return JSON.parse(raw, (key: string, value: unknown) => {
       if (BANNED_KEYS.has(key)) return undefined;
       return value;
-    });
+    }) as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -162,8 +163,6 @@ export async function safeParseBody(req: IncomingMessage): Promise<any> {
 // ── Rate Limiting: token bucket per auth token (falls back to IP) ──
 
 const rateLimits = new Map<string, { tokens: number; lastRefill: number }>();
-const RATE_LIMIT_MAX = 120;
-const RATE_LIMIT_REFILL_PER_SEC = 10;
 
 export function getRateLimitKey(req: IncomingMessage): string {
   const auth = req.headers.authorization || "";
@@ -173,6 +172,9 @@ export function getRateLimitKey(req: IncomingMessage): string {
 }
 
 export function checkRateLimit(key: string): boolean {
+  const cfg = getRuntimeConfig();
+  const RATE_LIMIT_MAX = cfg.rateLimitMax;
+  const RATE_LIMIT_REFILL_PER_SEC = cfg.rateLimitRefillPerSec;
   const now = Date.now();
   let bucket = rateLimits.get(key);
   if (!bucket) {
@@ -197,11 +199,12 @@ setInterval(() => {
 }, 300_000);
 
 // ── Auth Flood Guard ──
-const AUTH_MAX_FAILURES = 20;
-const AUTH_LOCKOUT_MS = 60 * 1000;
 const authFloodGuard = new Map<string, { failures: number; lockedUntil: number }>();
 
 export function recordAuthFailure(ip: string): void {
+  const cfg = getRuntimeConfig();
+  const AUTH_MAX_FAILURES = cfg.authMaxFailures;
+  const AUTH_LOCKOUT_MS = cfg.authLockoutMs;
   const entry = authFloodGuard.get(ip) || { failures: 0, lockedUntil: 0 };
   entry.failures++;
   if (entry.failures >= AUTH_MAX_FAILURES) {

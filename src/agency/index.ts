@@ -1,23 +1,23 @@
-// Swarm System -- Multi-agent orchestration for complex goals
+// Agency System -- Multi-agent orchestration for complex goals
 
 import type { ToolDefinition, ToolResult } from "../types.js";
-import type { SwarmConfig, SwarmResult, SwarmStatus } from "./types.js";
-import { SwarmOrchestrator } from "./swarm-orchestrator.js";
+import type { AgencyConfig, AgencyResult, AgencyStatus } from "./types.js";
+import { AgencyOrchestrator } from "./agency-orchestrator.js";
 import { listRoles } from "./agent-roles.js";
 import { EventBus } from "../event-bus.js";
 
 // Re-export all modules
 export * from "./types.js";
 export * from "./handler.js";
-export * from "./swarm-orchestrator.js";
+export * from "./agency-orchestrator.js";
 export * from "./message-bus.js";
 export * from "./agent-roles.js";
 export * from "./planner.js";
 
-// Active swarm registry
-const activeSwarms = new Map<string, { orchestrator: SwarmOrchestrator; result?: SwarmResult }>();
+// Active agency registry
+const activeOperations = new Map<string, { orchestrator: AgencyOrchestrator; result?: AgencyResult }>();
 
-const DEFAULT_CONFIG: SwarmConfig = {
+const DEFAULT_CONFIG: AgencyConfig = {
   maxAgents: 10,
   maxConcurrent: 5,
   timeout: 120_000,
@@ -26,22 +26,22 @@ const DEFAULT_CONFIG: SwarmConfig = {
 };
 
 /**
- * Convenience function: create a swarm, plan it, and execute it.
+ * Convenience function: create a agency, plan it, and execute it.
  */
-export async function createSwarm(
+export async function createOperation(
   goal: string,
-  config?: Partial<SwarmConfig>
-): Promise<SwarmResult> {
-  const merged: SwarmConfig = { ...DEFAULT_CONFIG, ...config };
-  const orchestrator = new SwarmOrchestrator(merged);
-  const plan = orchestrator.planSwarm(goal);
+  config?: Partial<AgencyConfig>
+): Promise<AgencyResult> {
+  const merged: AgencyConfig = { ...DEFAULT_CONFIG, ...config };
+  const orchestrator = new AgencyOrchestrator(merged);
+  const plan = orchestrator.planOperation(goal);
 
-  activeSwarms.set(plan.id, { orchestrator });
+  activeOperations.set(plan.id, { orchestrator });
 
-  await EventBus.emit("swarm:created", { planId: plan.id, goal });
+  await EventBus.emit("agency:created", { planId: plan.id, goal });
 
-  const result = await orchestrator.executeSwarm(plan);
-  activeSwarms.set(plan.id, { orchestrator, result });
+  const result = await orchestrator.executeOperation(plan);
+  activeOperations.set(plan.id, { orchestrator, result });
 
   return result;
 }
@@ -55,14 +55,14 @@ function err(content: string): ToolResult {
 }
 
 /**
- * Returns tool definitions for the agent to manage swarms.
+ * Returns tool definitions for the agent to manage agencys.
  */
-export function createSwarmTools(): ToolDefinition[] {
+export function createAgencyTools(): ToolDefinition[] {
   return [
     {
-      name: "swarm_create",
+      name: "agency_create",
       description:
-        "Create and execute a new agent swarm to accomplish a complex goal. " +
+        "Create and execute a new agent operation to accomplish a complex goal. " +
         "The goal is automatically decomposed into tasks, assigned to specialized agents, " +
         "and executed with dependency management.",
       parameters: {
@@ -70,7 +70,7 @@ export function createSwarmTools(): ToolDefinition[] {
         properties: {
           goal: {
             type: "string",
-            description: "The high-level goal for the swarm to accomplish",
+            description: "The high-level goal for the agency to accomplish",
           },
           max_agents: {
             type: "number",
@@ -97,51 +97,51 @@ export function createSwarmTools(): ToolDefinition[] {
       },
       async execute(args) {
         try {
-          const config: Partial<SwarmConfig> = {};
+          const config: Partial<AgencyConfig> = {};
           if (args.max_agents) config.maxAgents = Number(args.max_agents);
           if (args.max_concurrent) config.maxConcurrent = Number(args.max_concurrent);
           if (args.timeout) config.timeout = Number(args.timeout);
           if (args.provider) config.provider = String(args.provider);
           if (args.model) config.model = String(args.model);
 
-          const result = await createSwarm(String(args.goal), config);
+          const result = await createOperation(String(args.goal), config);
           return ok(
-            `Swarm ${result.planId} ${result.success ? "completed" : "failed"}.\n\n` +
+            `Agency ${result.planId} ${result.success ? "completed" : "failed"}.\n\n` +
             `Tasks: ${result.results.size} completed\n` +
             `Tokens: ${result.tokensUsed}\n` +
             `Time: ${(result.elapsed / 1000).toFixed(1)}s\n\n` +
             `Summary:\n${result.summary}`
           );
         } catch (e) {
-          return err(`Failed to create swarm: ${String(e)}`);
+          return err(`Failed to create agency: ${String(e)}`);
         }
       },
     },
     {
-      name: "swarm_status",
-      description: "Check the status of a running or completed swarm.",
+      name: "agency_status",
+      description: "Check the status of a running or completed agency.",
       parameters: {
         type: "object",
         properties: {
           plan_id: {
             type: "string",
-            description: "The plan ID to check. Omit to list all active swarms.",
+            description: "The plan ID to check. Omit to list all active agencys.",
           },
         },
         required: [],
       },
       async execute(args) {
         if (args.plan_id) {
-          const entry = activeSwarms.get(String(args.plan_id));
-          if (!entry) return err(`Swarm ${args.plan_id} not found.`);
+          const entry = activeOperations.get(String(args.plan_id));
+          if (!entry) return err(`Agency ${args.plan_id} not found.`);
           const status = entry.orchestrator.getStatus();
-          return ok(formatStatus(status));
+          return ok(formatOpStatus(status));
         }
 
         // List all
-        if (activeSwarms.size === 0) return ok("No active swarms.");
+        if (activeOperations.size === 0) return ok("No active operations.");
         const lines: string[] = [];
-        for (const [id, entry] of activeSwarms) {
+        for (const [id, entry] of activeOperations) {
           const s = entry.orchestrator.getStatus();
           lines.push(`${id}: ${s.status} - ${s.goal} (${s.tasksCompleted}/${s.tasks.length} tasks)`);
         }
@@ -149,8 +149,8 @@ export function createSwarmTools(): ToolDefinition[] {
       },
     },
     {
-      name: "swarm_cancel",
-      description: "Cancel a running swarm.",
+      name: "agency_cancel",
+      description: "Cancel a running agency.",
       parameters: {
         type: "object",
         properties: {
@@ -162,15 +162,15 @@ export function createSwarmTools(): ToolDefinition[] {
         required: ["plan_id"],
       },
       async execute(args) {
-        const entry = activeSwarms.get(String(args.plan_id));
-        if (!entry) return err(`Swarm ${args.plan_id} not found.`);
-        entry.orchestrator.cancelSwarm();
-        return ok(`Swarm ${args.plan_id} cancelled.`);
+        const entry = activeOperations.get(String(args.plan_id));
+        if (!entry) return err(`Agency ${args.plan_id} not found.`);
+        entry.orchestrator.cancelOperation();
+        return ok(`Agency ${args.plan_id} cancelled.`);
       },
     },
     {
-      name: "swarm_list_roles",
-      description: "List all available agent roles for swarm agents.",
+      name: "agency_list_roles",
+      description: "List all available agent roles for agency agents.",
       parameters: {
         type: "object",
         properties: {},
@@ -185,8 +185,8 @@ export function createSwarmTools(): ToolDefinition[] {
       },
     },
     {
-      name: "swarm_result",
-      description: "Get the final result of a completed swarm.",
+      name: "agency_result",
+      description: "Get the final result of a completed agency.",
       parameters: {
         type: "object",
         properties: {
@@ -198,9 +198,9 @@ export function createSwarmTools(): ToolDefinition[] {
         required: ["plan_id"],
       },
       async execute(args) {
-        const entry = activeSwarms.get(String(args.plan_id));
-        if (!entry) return err(`Swarm ${args.plan_id} not found.`);
-        if (!entry.result) return err(`Swarm ${args.plan_id} has not completed yet.`);
+        const entry = activeOperations.get(String(args.plan_id));
+        if (!entry) return err(`Agency ${args.plan_id} not found.`);
+        if (!entry.result) return err(`Agency ${args.plan_id} has not completed yet.`);
 
         const r = entry.result;
         return ok(
@@ -216,7 +216,7 @@ export function createSwarmTools(): ToolDefinition[] {
   ];
 }
 
-function formatStatus(s: SwarmStatus): string {
+function formatOpStatus(s: AgencyStatus): string {
   const lines = [
     `Plan: ${s.planId}`,
     `Goal: ${s.goal}`,

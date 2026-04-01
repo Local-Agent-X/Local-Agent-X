@@ -137,8 +137,8 @@ async function testModuleImports(): Promise<void> {
     "./demo-recorder.js",
     "./demo-runner.js",
     "./benchmark-suite.js",
-    "./swarm/index.js",
-    "./swarm/handler.js",
+    "./agency/index.js",
+    "./agency/handler.js",
     "./security-tests.js",
     "./threat-dashboard.js",
     "./ari-policy-editor.js",
@@ -177,7 +177,7 @@ async function testToolRegistration(): Promise<void> {
     "agent_spawn",
     "agent_status",
     "delegate",
-    "swarm_create",
+    "agency_create",
     "mission_list",
     "bash",
     "read",
@@ -189,8 +189,8 @@ async function testToolRegistration(): Promise<void> {
   // Check tools by importing each module that creates them
   const toolSources: Record<string, () => Promise<string[]>> = {
     "base tools": async () => { const m = await import("./tools.js"); const t = typeof (m.allTools as any) === "function" ? (m.allTools as any)() : m.allTools; return Array.isArray(t) ? t.map((x: any) => x.name || "") : []; },
-    "swarm tools": async () => { const m = await import("./swarm/index.js"); return m.createSwarmTools().map((t: any) => t.name); },
-    "handler tools": async () => { const m = await import("./swarm/handler.js"); return m.createHandlerTools().map((t: any) => t.name); },
+    "swarm tools": async () => { const m = await import("./agency/index.js"); return m.createAgencyTools().map((t: any) => t.name); },
+    "handler tools": async () => { const m = await import("./agency/handler.js"); return m.createHandlerTools().map((t: any) => t.name); },
     "mission tools": async () => { const m = await import("./missions.js"); return m.createMissionTools().map((t: any) => t.name); },
     "browser tools": async () => { const m = await import("./browser-tools.js"); return m.createBrowserTools(() => "default").map((t: any) => t.name); },
   };

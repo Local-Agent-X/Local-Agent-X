@@ -1,11 +1,11 @@
-// Swarm System Types
+// Agency System Types
 
 export type AgentStatus = "idle" | "working" | "waiting" | "done" | "error";
 export type PlanStatus = "planning" | "running" | "completed" | "failed";
 export type TaskStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 export type MessageType = "task-result" | "request-info" | "share-context" | "status-update";
 
-export interface SwarmAgent {
+export interface AgencyAgent {
   id: string;
   name: string;
   role: string;
@@ -16,7 +16,7 @@ export interface SwarmAgent {
   result?: string;
 }
 
-export interface SwarmTask {
+export interface AgencyTask {
   id: string;
   description: string;
   assignedTo?: string;
@@ -27,16 +27,16 @@ export interface SwarmTask {
   completedAt?: number;
 }
 
-export interface SwarmPlan {
+export interface AgencyPlan {
   id: string;
   goal: string;
-  tasks: SwarmTask[];
-  agents: SwarmAgent[];
+  tasks: AgencyTask[];
+  agents: AgencyAgent[];
   createdAt: number;
   status: PlanStatus;
 }
 
-export interface SwarmMessage {
+export interface AgencyMessage {
   from: string;
   to: string;
   type: MessageType;
@@ -44,7 +44,7 @@ export interface SwarmMessage {
   timestamp: number;
 }
 
-export interface SwarmConfig {
+export interface AgencyConfig {
   maxAgents: number;
   maxConcurrent: number;
   timeout: number;
@@ -52,12 +52,12 @@ export interface SwarmConfig {
   model: string;
 }
 
-export interface SwarmStatus {
+export interface AgencyStatus {
   planId: string;
   goal: string;
   status: PlanStatus;
-  agents: SwarmAgent[];
-  tasks: SwarmTask[];
+  agents: AgencyAgent[];
+  tasks: AgencyTask[];
   tokensUsed: number;
   apiCalls: number;
   elapsed: number;
@@ -66,7 +66,7 @@ export interface SwarmStatus {
   tasksRemaining: number;
 }
 
-export interface SwarmResult {
+export interface AgencyResult {
   planId: string;
   goal: string;
   success: boolean;

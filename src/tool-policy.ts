@@ -315,8 +315,8 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     { id: "allow-delegate", tool: "delegate", decision: "allow", reason: "Task delegation", priority: 50 },
     { id: "allow-agent-ops", tool: "agent_*", decision: "allow", reason: "Agent management", priority: 50 },
 
-    // Swarm — multi-agent orchestration
-    { id: "allow-swarm", tool: "swarm_*", decision: "allow", reason: "Swarm orchestration", priority: 50 },
+    // Agency — multi-agent orchestration
+    { id: "allow-agency", tool: "agency_*", decision: "allow", reason: "Agency orchestration", priority: 50 },
 
     // Web search — safe, read-only
     { id: "allow-web-search", tool: "web_search", decision: "allow", reason: "Web search", priority: 50 },

@@ -1,17 +1,17 @@
-// Swarm Message Bus -- Inter-agent communication layer
+// Agency Message Bus -- Inter-agent communication layer
 
-import type { SwarmMessage, MessageType } from "./types.js";
+import type { AgencyMessage, MessageType } from "./types.js";
 import { EventBus } from "../event-bus.js";
 
-type MessageHandler = (message: SwarmMessage) => void | Promise<void>;
+type MessageHandler = (message: AgencyMessage) => void | Promise<void>;
 
-export class SwarmMessageBus {
-  private messages: SwarmMessage[] = [];
+export class AgencyMessageBus {
+  private messages: AgencyMessage[] = [];
   private subscribers = new Map<string, Set<MessageHandler>>();
   private contextPool = new Map<string, unknown>();
 
   send(from: string, to: string, type: MessageType, payload: unknown): void {
-    const msg: SwarmMessage = {
+    const msg: AgencyMessage = {
       from,
       to,
       type,
@@ -27,14 +27,14 @@ export class SwarmMessageBus {
       }
     }
 
-    EventBus.emit("swarm:message", { from, to, type });
+    EventBus.emit("agency:message", { from, to, type });
   }
 
   broadcast(from: string, type: MessageType, payload: unknown): void {
     const timestamp = Date.now();
     for (const [agentId] of this.subscribers) {
       if (agentId === from) continue;
-      const msg: SwarmMessage = { from, to: agentId, type, payload, timestamp };
+      const msg: AgencyMessage = { from, to: agentId, type, payload, timestamp };
       this.messages.push(msg);
 
       const handlers = this.subscribers.get(agentId);
@@ -44,7 +44,7 @@ export class SwarmMessageBus {
         }
       }
     }
-    EventBus.emit("swarm:broadcast", { from, type });
+    EventBus.emit("agency:broadcast", { from, type });
   }
 
   subscribe(agentId: string, handler: MessageHandler): void {
@@ -60,11 +60,11 @@ export class SwarmMessageBus {
     this.subscribers.delete(agentId);
   }
 
-  getMessages(agentId: string): SwarmMessage[] {
+  getMessages(agentId: string): AgencyMessage[] {
     return this.messages.filter((m) => m.to === agentId);
   }
 
-  getConversation(agent1: string, agent2: string): SwarmMessage[] {
+  getConversation(agent1: string, agent2: string): AgencyMessage[] {
     return this.messages.filter(
       (m) =>
         (m.from === agent1 && m.to === agent2) ||
@@ -84,7 +84,7 @@ export class SwarmMessageBus {
     return [...this.contextPool.keys()];
   }
 
-  getHistory(): SwarmMessage[] {
+  getHistory(): AgencyMessage[] {
     return [...this.messages];
   }
 

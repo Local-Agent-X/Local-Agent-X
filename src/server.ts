@@ -36,8 +36,8 @@ import { EventBus } from "./event-bus.js";
 import { AppRegistry } from "./app-runtime.js";
 import { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore, type AgentRun } from "./agent-store.js";
 import { ConfigWatcher } from "./config-hot-reload.js";
-import { createSwarmTools } from "./swarm/index.js";
-import { createHandlerTools } from "./swarm/handler.js";
+import { createAgencyTools } from "./agency/index.js";
+import { createHandlerTools } from "./agency/handler.js";
 import { createSqlTools } from "./sql-tools.js";
 import { createEmailTools } from "./email-tools.js";
 import { createCalendarTools } from "./calendar-tools.js";
@@ -146,7 +146,7 @@ export function startServer(config: SAXConfig) {
     ...allTools, httpRequestTool,
     ...createMemoryTools(memoryIndex), ...secretTools, ...browserTools, ...imageTools,
     ...createMissionTools(), ...createAllMissionTools(), ...createCronTools(cronService),
-    ...createSwarmTools(), ...createHandlerTools(), ...appTools, ...issueTools,
+    ...createAgencyTools(), ...createHandlerTools(), ...appTools, ...issueTools,
     // Business & personal assistant tools
     ...createSqlTools(secretsStore), ...createEmailTools(secretsStore),
     ...createCalendarTools(secretsStore), ...createContactsTools(secretsStore),
@@ -346,7 +346,7 @@ export function startServer(config: SAXConfig) {
 
       // Build tool list: respect template.allowedTools if set, otherwise give all non-recursive tools
       // Agents now GET issue_* and agent_* tools (they're real employees, not disposable workers)
-      let spawnedTools = allAgentTools.filter(t => !t.name.startsWith("swarm_") && t.name !== "delegate");
+      let spawnedTools = allAgentTools.filter(t => !t.name.startsWith("agency_") && t.name !== "delegate");
       if (template?.allowedTools && template.allowedTools.length > 0) {
         // Template restricts tools — enforce it. Always include issue_* and agent_* for coordination.
         const allowed = new Set([...template.allowedTools, "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval", "agent_whoami", "agent_team_list", "agent_wakeup"]);

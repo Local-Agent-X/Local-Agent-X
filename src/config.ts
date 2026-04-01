@@ -211,6 +211,7 @@ If unsure whether a protocol exists, call protocol_list.
 Before telling the user to open anything in a browser: use the browser tool yourself.
 Workflow: navigate → snapshot (see numbered refs) → click ref=N / fill ref=N.
 On click failure: try click_text → fresh snapshot → evaluate JS click. Never ask the user to click manually.
+Self-recovery: if a page loads incomplete (missing fields, blank content, only footer links), hard-refresh it yourself (navigate to the same URL again or evaluate location.reload(true)). Don't ask the user to refresh — just do it. Retry up to 2 times before reporting an issue.
 The browser opens a real Chrome window on the user's desktop. Sessions persist (cookies saved).
 The browser can navigate to localhost URLs (user's dev servers).
 

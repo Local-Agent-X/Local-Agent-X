@@ -61,7 +61,7 @@ export interface EventDefinition {
   description: string;
 }
 
-export type LayoutType = "grid" | "flex" | "stack" | "tabs" | "sidebar";
+export type LayoutType = "grid" | "flex" | "stack" | "tabs" | "sidebar" | "custom";
 
 export interface LayoutDefinition {
   type: LayoutType;

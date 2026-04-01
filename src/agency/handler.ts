@@ -2,15 +2,15 @@
 
 import { EventBus } from "../event-bus.js";
 import type {
-  SwarmAgent,
+  AgencyAgent,
   AgentStatus,
 } from "./types.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { SwarmMessageBus } from "./message-bus.js";
+import { AgencyMessageBus } from "./message-bus.js";
 
 // -- Types ------------------------------------------------------------------
 
-export interface FieldAgent extends SwarmAgent {
+export interface FieldAgent extends AgencyAgent {
   output: string[];
   streamCallback?: (agentId: string, chunk: string) => void;
   abortController?: AbortController;
@@ -77,13 +77,13 @@ let singleton: Handler | null = null;
 
 export class Handler {
   private agents = new Map<string, FieldAgent>();
-  private messageBus: SwarmMessageBus;
+  private messageBus: AgencyMessageBus;
   private updateCallbacks: AgentUpdateCallback[] = [];
   /** Current parent session ID — set by the server before each chat turn */
   public currentSessionId: string = "";
 
   constructor() {
-    this.messageBus = new SwarmMessageBus();
+    this.messageBus = new AgencyMessageBus();
   }
 
   static getInstance(): Handler {

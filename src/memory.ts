@@ -2478,7 +2478,7 @@ export function autoExtractAndSave(
   // "your name is X" / "call yourself X" / "I'll call you X" / "you are X now"
   const renamePatterns = [
     /(?:your name is|call yourself|you are|i'?ll call you|name you|be called)\s+["']?([A-Z][a-zA-Z0-9_ -]{0,20})["']?/i,
-    /^([A-Z][a-zA-Z]{1,15})(?:\.|!|\s*$)/, // Just a name as a response (e.g. "Primal.")
+    /^([A-Z][a-zA-Z]{1,15})(?:\.|!|\s*$)/, // Just a name as a response (e.g. "Atlas.")
   ];
 
   for (const pattern of renamePatterns) {

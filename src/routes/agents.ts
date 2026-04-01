@@ -38,8 +38,8 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
   // Active agents
   if (method === "GET" && url.pathname === "/api/agents/active") {
     try {
-      const primal = (await import("../swarm/primal.js")).PrimalOrchestrator.getInstance();
-      json(200, primal.getAgentStatus());
+      const handler = (await import("../swarm/handler.js")).Handler.getInstance();
+      json(200, handler.getAgentStatus());
     } catch { json(200, []); }
     return true;
   }
@@ -129,8 +129,8 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     const body = await safeParseBody(req);
     const task = (body?.task as string) || "Execute your role";
     try {
-      const primal = (await import("../swarm/primal.js")).PrimalOrchestrator.getInstance();
-      json(200, { ok: true, agentId: primal.spawnAgent({
+      const handler = (await import("../swarm/handler.js")).Handler.getInstance();
+      json(200, { ok: true, agentId: handler.spawnAgent({
         name: tpl.name, role: tpl.role, task,
         systemPrompt: tpl.systemPrompt,
         tools: tpl.allowedTools.length > 0 ? tpl.allowedTools : undefined,

@@ -66,7 +66,7 @@ function parseTranscriptXml(xml: string): string | null {
 
 /** Fetch transcript via yt-dlp (most reliable) */
 async function fetchTranscriptYtDlp(videoId: string): Promise<string | null> {
-  const outPath = join(tmpdir(), `primal_yt_${videoId}`);
+  const outPath = join(tmpdir(), `oax_yt_${videoId}`);
   const subFile = `${outPath}.en.srv1`;
   try {
     // Clean up any previous run

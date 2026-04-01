@@ -2,13 +2,14 @@
 
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { SwarmConfig, SwarmResult, SwarmStatus } from "./types.js";
-import { SwarmOrchestrator } from "./orchestrator.js";
+import { SwarmOrchestrator } from "./swarm-orchestrator.js";
 import { listRoles } from "./agent-roles.js";
 import { EventBus } from "../event-bus.js";
 
 // Re-export all modules
 export * from "./types.js";
-export * from "./orchestrator.js";
+export * from "./handler.js";
+export * from "./swarm-orchestrator.js";
 export * from "./message-bus.js";
 export * from "./agent-roles.js";
 export * from "./planner.js";

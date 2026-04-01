@@ -148,6 +148,24 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
     ctx.cronService.updateSettings(body);
     json(200, { ok: true, settings: ctx.cronService.getSettings() }); return true;
   }
+  // Cron reports
+  if (method === "GET" && url.pathname.match(/^\/api\/cron\/[^/]+\/reports$/)) {
+    const id = url.pathname.split("/")[3];
+    const { existsSync: exists, readdirSync } = await import("node:fs");
+    const reportDir = (await import("node:path")).join(ctx.dataDir, "cron", "reports", id);
+    if (!exists(reportDir)) { json(200, { reports: [] }); return true; }
+    const files = readdirSync(reportDir).filter(f => f.endsWith(".md")).sort().reverse();
+    json(200, { reports: files.map(f => ({ name: f, path: `/api/cron/${id}/reports/${f}` })) }); return true;
+  }
+  if (method === "GET" && url.pathname.match(/^\/api\/cron\/[^/]+\/reports\/[^/]+\.md$/)) {
+    const parts = url.pathname.split("/");
+    const id = parts[3], file = parts[5];
+    if (!/^[\w-]+\.md$/.test(file)) { json(400, { error: "Invalid file name" }); return true; }
+    const { existsSync: exists, readFileSync: readF } = await import("node:fs");
+    const reportPath = (await import("node:path")).join(ctx.dataDir, "cron", "reports", id, file);
+    if (!exists(reportPath)) { json(404, { error: "Report not found" }); return true; }
+    json(200, { content: readF(reportPath, "utf-8") }); return true;
+  }
 
   // ── Voice ──
   if (method === "GET" && url.pathname === "/api/voice/capabilities") {

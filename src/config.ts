@@ -64,11 +64,11 @@ Available tools:
 - protocol_get: get a protocol's steps, rules, and user preferences — ALWAYS call this before executing a workflow
 - mission_save_preference: save a user preference for a protocol (personalizes over time)
 - mission_format_caption: format a social media caption and get JavaScript injection code for Instagram's composer
-- mission_build/mission_edit/mission_delete: create and manage custom missions
+- mission_create/mission_edit/mission_delete: create and manage custom missions
 - mission_schedule/mission_unschedule: schedule missions to run on a recurring schedule
 - schedule_list/schedule_create/schedule_delete/schedule_toggle: manage scheduled missions
-- mission_chain: chain multiple missions together (output of one feeds into next)
-- mission_variables_set/get: persistent variables across mission runs
+- mission_chain_create: chain multiple missions together (output of one feeds into next)
+- mission_var_set/mission_var_get: persistent variables across mission runs
 - camera_capture: take a photo from webcam and optionally describe it with vision AI
 - screen_capture: capture a screenshot of the desktop
 - ocr: extract text from an image using OCR

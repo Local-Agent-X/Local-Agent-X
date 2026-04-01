@@ -235,6 +235,8 @@ async function sendMessage() {
   // Feature 5: Mood detection — update indicator
   detectMood(text);
 
+  let content = '';
+  let toolEvents = [];
   try {
     const res = await fetch(`${API}/api/chat`, {
       method: 'POST',
@@ -243,8 +245,7 @@ async function sendMessage() {
     });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = '', content = '';
-    let toolEvents = [];
+    let buffer = '';
     let lastSaveTime = 0;
 
     // Always save to the ORIGINAL chat object, not whatever activeChat is now
@@ -332,35 +333,42 @@ async function sendMessage() {
     // If user navigated back, re-render to show completed response
     if (isViewingThis()) renderMessages();
   } catch (e) {
-    // Auto-retry once on network error (browser launch can be slow)
-    if (!content && e.message && (e.message.includes('network') || e.message.includes('Failed to fetch'))) {
-      try {
-        if (isViewingThis()) bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
-        const res2 = await fetch(`${API}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-          body: JSON.stringify({ message: finalText, sessionId: streamSessionId, attachments: msgAttachments || [] }),
-        });
-        const reader2 = res2.body.getReader();
-        const decoder2 = new TextDecoder();
-        let buffer2 = '';
-        while (true) {
-          const { done, value } = await reader2.read();
-          if (done) break;
-          buffer2 += decoder2.decode(value, { stream: true });
-          const lines = buffer2.split('\n'); buffer2 = lines.pop();
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            try {
-              const event = JSON.parse(line.slice(6));
-              if (event.type === 'stream') { content += event.delta; if (isViewingThis()) bodyEl.innerHTML = md(content); }
-              if (event.type === 'tool_start' && isViewingThis()) { bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args, event.riskLevel, event.context)); }
-              if (event.type === 'tool_end' && isViewingThis()) { const cards = bodyEl.querySelectorAll('.tool-card'); const last = cards[cards.length-1]; if(last){last.querySelector('.indicator').className='indicator '+(event.allowed?'allowed':'blocked');} }
-              if (event.type === 'done') { savePartial(); }
-            } catch {}
+    // Silent auto-retry up to 3 times on network errors before showing error to user
+    if (!content && e.message && (e.message.includes('network') || e.message.includes('Failed to fetch') || e.message.includes('CONNECTION'))) {
+      let retrySuccess = false;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          if (isViewingThis()) bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
+          await new Promise(r => setTimeout(r, attempt * 2000)); // 2s, 4s, 6s backoff
+          const res2 = await fetch(`${API}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+            body: JSON.stringify({ message: finalText, sessionId: streamSessionId, attachments: msgAttachments || [] }),
+          });
+          const reader2 = res2.body.getReader();
+          const decoder2 = new TextDecoder();
+          let buffer2 = '';
+          while (true) {
+            const { done, value } = await reader2.read();
+            if (done) break;
+            buffer2 += decoder2.decode(value, { stream: true });
+            const lines = buffer2.split('\n'); buffer2 = lines.pop();
+            for (const line of lines) {
+              if (!line.startsWith('data: ')) continue;
+              try {
+                const event = JSON.parse(line.slice(6));
+                if (event.type === 'stream') { content += event.delta; if (isViewingThis()) bodyEl.innerHTML = md(content); }
+                if (event.type === 'tool_start' && isViewingThis()) { bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args, event.riskLevel, event.context)); }
+                if (event.type === 'tool_end' && isViewingThis()) { const cards = bodyEl.querySelectorAll('.tool-card'); const last = cards[cards.length-1]; if(last){last.querySelector('.indicator').className='indicator '+(event.allowed?'allowed':'blocked');} }
+                if (event.type === 'done') { savePartial(); }
+              } catch {}
+            }
           }
-        }
-      } catch (e2) { if (isViewingThis()) showRetryError(bodyEl, finalText, e2.message); }
+          retrySuccess = true;
+          break;
+        } catch { /* retry */ }
+      }
+      if (!retrySuccess && isViewingThis()) showRetryError(bodyEl, finalText, e.message);
     } else {
       if (isViewingThis()) showRetryError(bodyEl, finalText, e.message);
     }
@@ -560,11 +568,7 @@ function toolSummary(name, args) {
 
 function makeToolCard(name, args, riskLevel, context) {
   const card = document.createElement('div'); card.className = 'tool-card';
-  const riskClass = riskLevel === 'high' ? 'risk-high' : riskLevel === 'medium' ? 'risk-medium' : '';
-  const riskBadge = riskLevel === 'high' ? '<span class="risk-badge high">HIGH RISK</span>'
-    : riskLevel === 'medium' ? '<span class="risk-badge medium">ELEVATED</span>' : '';
-  card.innerHTML = `<div class="tool-header ${riskClass}" onclick="this.parentElement.classList.toggle('open')"><span class="indicator"></span><span class="tool-name">${esc(name)}</span>${riskBadge}<span style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(toolSummary(name, args))}</span><span style="color:var(--muted);font-size:.65rem">&#9654;</span></div>`
-    + (context && riskLevel !== 'low' ? `<div class="tool-context">${esc(context)}</div>` : '')
+  card.innerHTML = `<div class="tool-header" onclick="this.parentElement.classList.toggle('open')"><span class="indicator"></span><span class="tool-name">${esc(name)}</span><span style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(toolSummary(name, args))}</span><span style="color:var(--muted);font-size:.65rem">&#9654;</span></div>`
     + `<div class="tool-detail">executing...</div>`;
   return card;
 }

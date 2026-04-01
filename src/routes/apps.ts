@@ -1,0 +1,125 @@
+import type { RouteHandler } from "../server-context.js";
+import { jsonResponse, safeParseBody, corsHeaders } from "../server-utils.js";
+import { renderApp } from "../app-renderer.js";
+import type { AppDefinition } from "../app-runtime.js";
+
+export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
+  const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
+  const appReg = ctx.appRegistry;
+  const appPath = url.pathname.replace(/^\/api\/dashboards/, "/api/apps").replace(/^\/dashboards\//, "/apps/");
+
+  if (method === "GET" && appPath === "/api/apps") {
+    const port = ctx.config.port || 7007;
+    json(200, appReg.list().map((d: AppDefinition) => ({
+      id: d.id, name: d.name, description: d.description,
+      components: d.components.length, layout: d.layout.type,
+      url: `http://127.0.0.1:${port}/apps/${d.id}`,
+      updatedAt: d.updatedAt, status: d.status, version: d.version,
+      visibility: d.permissions?.visibility || "team",
+    })));
+    return true;
+  }
+
+  // Serve rendered app HTML
+  const appMatch = url.pathname.match(/^\/(apps|dashboards)\/([a-zA-Z0-9_-]+)\/?$/);
+  if (method === "GET" && appMatch) {
+    const def = appReg.get(appMatch[2]);
+    if (!def) { json(404, { error: "App not found" }); return true; }
+    if (def.status === "suspended") { json(403, { error: "App is suspended" }); return true; }
+    const html = renderApp(def, ctx.config.port || 7007);
+    const cspHeaders: Record<string, string> = {
+      "Content-Type": "text/html", "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "SAMEORIGIN", "Referrer-Policy": "strict-origin-when-cross-origin",
+      "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    };
+    res.writeHead(200, { ...cspHeaders, ...(req ? corsHeaders(req) : {}) });
+    res.end(html);
+    return true;
+  }
+
+  if (method === "GET" && appPath.startsWith("/api/apps/") && appPath.split("/").length === 4) {
+    const id = appPath.split("/")[3];
+    const def = appReg.get(id);
+    if (!def) { json(404, { error: "App not found" }); return true; }
+    json(200, def); return true;
+  }
+
+  if (method === "DELETE" && appPath.startsWith("/api/apps/") && appPath.split("/").length === 4) {
+    const id = appPath.split("/")[3];
+    const result = appReg.delete(id);
+    json(result.deleted ? 200 : 404, result.deleted ? { ok: true } : { error: result.error || "Not found" }); return true;
+  }
+
+  // App lifecycle
+  if (method === "PATCH" && appPath.startsWith("/api/apps/") && appPath.split("/").length === 4) {
+    const id = appPath.split("/")[3];
+    const body = await safeParseBody(req);
+    if (!body) { json(400, { error: "Invalid JSON" }); return true; }
+    if (body.status === "suspended") {
+      const r = appReg.suspend(id); json(r.success ? 200 : 400, r.success ? { ok: true } : { error: r.error });
+    } else if (body.status === "active") {
+      const r = appReg.activate(id); json(r.success ? 200 : 400, r.success ? { ok: true } : { error: r.error });
+    } else if (body.status === "archived") {
+      const r = appReg.archive(id); json(r.success ? 200 : 400, r.success ? { ok: true } : { error: r.error });
+    } else {
+      json(400, { error: "Invalid status. Use: active, suspended, archived" });
+    }
+    return true;
+  }
+
+  // App state
+  if (method === "GET" && appPath.match(/^\/api\/apps\/[^/]+\/state$/)) {
+    const id = appPath.split("/")[3];
+    const state = appReg.getState(id);
+    if (!state) { json(404, { error: "App not found" }); return true; }
+    json(200, state); return true;
+  }
+
+  if (method === "POST" && appPath.match(/^\/api\/apps\/[^/]+\/state$/)) {
+    const id = appPath.split("/")[3];
+    const body = await safeParseBody(req);
+    if (!body) { json(400, { error: "Invalid JSON" }); return true; }
+    const updated = appReg.updateComponentValues(id, body.values || body);
+    if (updated.error) { json(updated.state ? 429 : 404, { error: updated.error }); return true; }
+    ctx.broadcastAll({ type: "app:state", appId: id });
+    json(200, { ok: true }); return true;
+  }
+
+  // App events
+  if (method === "POST" && appPath.match(/^\/api\/apps\/[^/]+\/events$/)) {
+    const id = appPath.split("/")[3];
+    const body = await safeParseBody(req);
+    if (!body) { json(400, { error: "Invalid JSON" }); return true; }
+    const result = appReg.pushEvent(id, {
+      appId: id, type: body.type || "unknown",
+      sourceComponent: body.sourceComponent, data: body.data,
+    });
+    if (result.error) { json(429, { error: result.error }); return true; }
+    ctx.broadcastAll({ type: "app:event", appId: id, event: result.event });
+    json(200, result.event); return true;
+  }
+
+  if (method === "GET" && appPath.match(/^\/api\/apps\/[^/]+\/events$/)) {
+    const id = appPath.split("/")[3];
+    const since = url.searchParams.get("since") ? parseInt(url.searchParams.get("since")!, 10) : undefined;
+    json(200, appReg.getEvents(id, since)); return true;
+  }
+
+  // App audit log
+  if (method === "GET" && appPath.match(/^\/api\/apps\/[^/]+\/audit$/)) {
+    const id = appPath.split("/")[3];
+    const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10), 200);
+    json(200, appReg.getAuditLog(id, limit)); return true;
+  }
+
+  // Consume actions
+  if (method === "POST" && appPath.match(/^\/api\/apps\/[^/]+\/actions\/consume$/)) {
+    const id = appPath.split("/")[3];
+    const body = await safeParseBody(req);
+    if (!body || !Array.isArray(body.actionIds)) { json(400, { error: "actionIds array required" }); return true; }
+    appReg.consumeActions(id, body.actionIds);
+    json(200, { ok: true }); return true;
+  }
+
+  return false;
+};

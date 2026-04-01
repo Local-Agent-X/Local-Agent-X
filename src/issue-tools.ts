@@ -11,6 +11,7 @@
 
 import type { ToolDefinition, ToolResult } from "./types.js";
 import { IssueStore, AgentTemplateStore, ProjectStore, type IssueStatus, type IssuePriority } from "./agent-store.js";
+import { EventBus } from "./event-bus.js";
 
 /** Check if an agent can access an issue (same project or no project scoping) */
 function canAccessIssue(agentId: string, issue: { projectId?: string }): boolean {

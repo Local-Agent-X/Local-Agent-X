@@ -9,6 +9,7 @@ import type { ThreatEngine } from "./threat-engine.js";
 import type { RBACManager, Role } from "./rbac.js";
 import { streamAnthropicResponse } from "./anthropic-client.js";
 import { executeToolCalls, toolsToOpenAI, checkAndCompact } from "./tool-executor.js";
+import { getRuntimeConfig } from "./config.js";
 
 interface ImageAttachment {
   url: string;
@@ -60,7 +61,7 @@ export async function runStandardAgent(
   } = options;
 
   const providerURLs: Record<string, string> = {
-    local: "http://127.0.0.1:11434/v1",
+    local: `${getRuntimeConfig().ollamaUrl}/v1`,
     xai: "https://api.x.ai/v1",
     gemini: "https://generativelanguage.googleapis.com/v1beta/openai/",
     openai: "https://api.openai.com/v1",
@@ -90,7 +91,7 @@ export async function runStandardAgent(
         console.warn(`[agent] Could not read image ${img.name}:`, e);
       }
     }
-    userContent = parts as any;
+    userContent = parts as ChatCompletionMessageParam["content"];
   } else {
     userContent = userMessage;
   }

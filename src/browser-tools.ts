@@ -328,10 +328,20 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
       } catch (e) {
         const message = (e as Error).message;
         if (message.includes("Timeout")) {
-          return err(`Browser timeout: ${message}. The element may not exist or the page may still be loading.`);
+          // Auto-recovery: snapshot the page anyway — it may be partially usable
+          try {
+            const snap = await manager.snapshot();
+            return err(`Browser timeout (page may still be loading). Current page state:\n\n${snap}`);
+          } catch {
+            return err(`Browser timeout: ${message}. Page could not be read.`);
+          }
         }
         if (message.includes("selector resolved to")) {
           return err(`Selector issue: ${message}. Try a different CSS selector.`);
+        }
+        if (message.includes("Target closed") || message.includes("has been closed")) {
+          // Auto-recovery: browser crashed — next call to getPage() will relaunch
+          return err(`Browser crashed and has been restarted. Please retry your last action.`);
         }
         return err(`Browser error: ${message}`);
       }

@@ -6,6 +6,16 @@ import { jsonResponse, readBody, safeParseBody, safeErrorMessage, corsHeaders } 
 import { getToolStats, getToolSuccessRate, getRecentFailures } from "../tool-tracker.js";
 import { getProviderHealthStatus } from "../model-fallback.js";
 import { getThreatDashboard } from "../threat-dashboard.js";
+
+/** Typed cache for update check results stored on the module scope */
+interface UpdateCheckResult { localVersion: string; localCommit: string; remoteVersion: string; remoteCommit: string; updateAvailable: boolean; releaseNotes: string }
+let _updateCache: { data: UpdateCheckResult; time: number } | null = null;
+
+/** GitHub commit response shape */
+interface GitHubCommitResponse { sha?: string; commit?: { message?: string } }
+
+/** GitHub package.json response shape */
+interface GitHubPackageResponse { version?: string }
 import { getCrashReport, getTopCrashPatterns } from "../crash-analytics.js";
 import { getContextUsage } from "../context-usage.js";
 import { runStartupTests } from "../startup-test.js";
@@ -14,6 +24,7 @@ import { PluginManager } from "../plugin-system.js";
 import { setBrowserAuthContext } from "../browser.js";
 import { redactCredentials } from "../security.js";
 import { IntegrationRegistry } from "../integrations.js";
+import { getRuntimeConfig } from "../config.js";
 
 export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -84,21 +95,20 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
       const localVersion = localPkg.version || "0.0.0";
       let localCommit = "";
       try { const { execSync } = await import("node:child_process"); localCommit = execSync("git rev-parse --short HEAD", { cwd: join(import.meta.dirname || ".", ".."), encoding: "utf-8" }).trim(); } catch {}
-      const cacheKey = "_updateCache";
       const now = Date.now();
-      if ((globalThis as any)[cacheKey] && now - (globalThis as any)[cacheKey].time < 3600000) {
-        json(200, { ...(globalThis as any)[cacheKey].data, localVersion, localCommit, cached: true }); return true;
+      if (_updateCache && now - _updateCache.time < 3600000) {
+        json(200, { ..._updateCache.data, localVersion, localCommit, cached: true }); return true;
       }
       let remoteVersion = localVersion, remoteCommit = "", updateAvailable = false, releaseNotes = "";
       try {
         const commitRes = await fetch("https://api.github.com/repos/petermanrique101-sys/Open-Agent-X/commits/main", { headers: { Accept: "application/vnd.github.v3+json", "User-Agent": "Open-Agent-X" } });
-        if (commitRes.ok) { const d = await commitRes.json() as any; remoteCommit = d.sha?.slice(0, 7) || ""; releaseNotes = d.commit?.message?.split("\n")[0] || ""; }
+        if (commitRes.ok) { const d = await commitRes.json() as GitHubCommitResponse; remoteCommit = d.sha?.slice(0, 7) || ""; releaseNotes = d.commit?.message?.split("\n")[0] || ""; }
         const pkgRes = await fetch("https://raw.githubusercontent.com/petermanrique101-sys/Open-Agent-X/main/package.json", { headers: { "User-Agent": "Open-Agent-X" } });
-        if (pkgRes.ok) { remoteVersion = ((await pkgRes.json()) as any).version || localVersion; }
+        if (pkgRes.ok) { remoteVersion = (await pkgRes.json() as GitHubPackageResponse).version || localVersion; }
         updateAvailable = (remoteCommit && localCommit && remoteCommit !== localCommit) || remoteVersion !== localVersion;
       } catch {}
-      const result = { localVersion, localCommit, remoteVersion, remoteCommit, updateAvailable, releaseNotes };
-      (globalThis as any)[cacheKey] = { data: result, time: now };
+      const result: UpdateCheckResult = { localVersion, localCommit, remoteVersion, remoteCommit, updateAvailable, releaseNotes };
+      _updateCache = { data: result, time: now };
       json(200, result);
     } catch (e) { json(200, { updateAvailable: false, error: safeErrorMessage(e) }); }
     return true;
@@ -119,7 +129,7 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
     const sessionId = url.searchParams.get("sessionId");
     if (sessionId) {
       const session = ctx.getOrCreateSession(sessionId);
-      if (session) { json(200, getContextUsage(session.messages as any, 128000)); return true; }
+      if (session) { json(200, getContextUsage(session.messages as Array<{ role: string; content: string | Array<{ type: string; text?: string }> }>, 128000)); return true; }
     }
     json(200, { used: 0, max: 128000, percentage: 0, remaining: 128000 }); return true;
   }
@@ -184,7 +194,8 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
     const hasXaiKey = ctx.secretsStore.has("XAI_API_KEY");
     const hasOpenAIKey = !!ctx.config.openaiApiKey || ctx.secretsStore.has("OPENAI_API_KEY");
     let hasOllama = false;
-    try { const r = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(2000) }); hasOllama = r.ok; } catch {}
+    const ollamaUrl = getRuntimeConfig().ollamaUrl;
+    try { const r = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(2000) }); hasOllama = r.ok; } catch {}
     let currentProvider = "xai", currentModel = "grok-3-mini";
     try { const sp = join(ctx.dataDir, "settings.json"); if (existsSync(sp)) { const s = JSON.parse(readFileSync(sp, "utf-8")); currentProvider = s.provider || "xai"; currentModel = s.model || ""; } } catch {}
     const hasGeminiKey = ctx.secretsStore.has("GEMINI_API_KEY");
@@ -196,7 +207,7 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
     if (hasOpenAIKey) providers.push({ id: "openai", name: "OpenAI API", models: ["gpt-4o", "gpt-4o-mini", "o3-pro"], active: currentProvider === "openai" });
     if (hasOllama) {
       let ollamaModels: string[] = [];
-      try { const r = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(3000) }); const d = await r.json() as any; ollamaModels = (d.models || []).map((m: any) => m.name); } catch {}
+      try { const r = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) }); const d = await r.json() as { models?: Array<{ name: string }> }; ollamaModels = (d.models || []).map(m => m.name); } catch {}
       providers.push({ id: "local", name: "Ollama", models: ollamaModels, active: currentProvider === "local" });
     }
     if (hasCustomKey) providers.push({ id: "custom", name: "Custom Provider", models: ["custom-model"], active: currentProvider === "custom" });
@@ -222,7 +233,7 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
   // Local models
   if (method === "GET" && url.pathname === "/api/models/local") {
     try {
-      const ollamaRes = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(3000) });
+      const ollamaRes = await fetch(`${getRuntimeConfig().ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
       if (!ollamaRes.ok) { json(502, { error: "Ollama returned " + ollamaRes.status }); return true; }
       const data = await ollamaRes.json() as { models?: Array<{ name: string; size: number; modified_at: string }> };
       json(200, { models: (data.models || []).map(m => ({ name: m.name, size: m.size, modified: m.modified_at })) });
@@ -261,13 +272,13 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
   // History export
   if (method === "GET" && url.pathname === "/api/history") {
     const sessions = ctx.sessionStore.list();
-    json(200, { sessions: sessions.map((s: any) => ({ id: s.id, title: s.title, messageCount: s.messageCount, updatedAt: s.updatedAt })), exportedAt: Date.now() });
+    json(200, { sessions: sessions.map(s => ({ id: s.id, title: s.title, messageCount: s.messageCount, updatedAt: s.updatedAt })), exportedAt: Date.now() });
     return true;
   }
   if (method === "GET" && url.pathname.startsWith("/api/history/")) {
     const id = url.pathname.split("/").pop()!;
     const session = ctx.getOrCreateSession(id);
-    const redacted = session.messages.map((m: any) => ({ role: m.role, content: typeof m.content === "string" ? redactCredentials(m.content) : m.content }));
+    const redacted = session.messages.map(m => ({ role: m.role, content: typeof m.content === "string" ? redactCredentials(m.content) : m.content }));
     json(200, { ...session, messages: redacted }); return true;
   }
 

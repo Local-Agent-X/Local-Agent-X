@@ -192,6 +192,13 @@ const bashTool: ToolDefinition = {
     const command = String(args.command);
     const timeout = (args.timeout as number) || 120_000;
 
+    // Block commands that open the system default browser (security: prevents using
+    // user's real browser with cookies/sessions — use the browser tool instead)
+    const BROWSER_OPEN_CMDS = /\b(start\s+(https?:|www\.|"?https?:)|explorer\s+(https?:|"?https?:)|open\s+(https?:|"?https?:)|xdg-open\s+(https?:|"?https?:)|sensible-browser|wslview\s|powershell.*Start-Process.*https?:|rundll32\s+url\.dll)\b/i;
+    if (BROWSER_OPEN_CMDS.test(command)) {
+      return err("Cannot open URLs in the system browser — use the browser tool instead.");
+    }
+
     // Sanitize environment: strip variables that look like secrets/credentials
     const SAFE_ENV_KEYS = new Set([
       "PATH", "HOME", "USER", "USERNAME", "USERPROFILE", "SHELL",
@@ -298,25 +305,38 @@ const webFetchTool: ToolDefinition = {
     try {
       // Manual redirect handling with DNS pinning on each hop
       let currentUrl = url;
-      let res = await fetch(currentUrl, {
-        headers: {
-          "User-Agent": "SecretAgentX/0.1",
-          Accept: "text/html,application/json,text/plain",
-        },
-        signal: AbortSignal.timeout(30_000),
-        redirect: "manual",
-      });
-      let redirects = 0;
-      while (res.status >= 300 && res.status < 400 && res.headers.get("location") && redirects < 5) {
-        currentUrl = new URL(res.headers.get("location")!, currentUrl).toString();
-        const redirectPin = await dnsPin(currentUrl);
-        if (redirectPin) return err(`Redirect blocked: ${redirectPin}`);
-        res = await fetch(currentUrl, {
-          headers: { "User-Agent": "SecretAgentX/0.1", Accept: "text/html,application/json,text/plain" },
+      const doFetch = async () => {
+        let r = await fetch(currentUrl, {
+          headers: {
+            "User-Agent": "SecretAgentX/0.1",
+            Accept: "text/html,application/json,text/plain",
+          },
           signal: AbortSignal.timeout(30_000),
           redirect: "manual",
         });
-        redirects++;
+        let redirects = 0;
+        while (r.status >= 300 && r.status < 400 && r.headers.get("location") && redirects < 5) {
+          currentUrl = new URL(r.headers.get("location")!, currentUrl).toString();
+          const redirectPin = await dnsPin(currentUrl);
+          if (redirectPin) throw new Error(`Redirect blocked: ${redirectPin}`);
+          r = await fetch(currentUrl, {
+            headers: { "User-Agent": "SecretAgentX/0.1", Accept: "text/html,application/json,text/plain" },
+            signal: AbortSignal.timeout(30_000),
+            redirect: "manual",
+          });
+          redirects++;
+        }
+        return r;
+      };
+
+      // Auto-retry on 429/503/504 with exponential backoff
+      let res = await doFetch();
+      const RETRYABLE = [429, 503, 504];
+      for (let attempt = 1; attempt <= 3 && RETRYABLE.includes(res.status); attempt++) {
+        const retryAfter = parseInt(res.headers.get("retry-after") || "", 10);
+        const delay = retryAfter > 0 ? retryAfter * 1000 : attempt * 2000;
+        await new Promise(r => setTimeout(r, delay));
+        res = await doFetch();
       }
 
       if (!res.ok && !(res.status >= 300 && res.status < 400)) {
@@ -445,36 +465,48 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         const SENSITIVE_HEADERS = ["authorization", "cookie", "proxy-authorization", "x-api-key"];
         const MAX_REDIRECTS = 5;
         let currentUrl = url;
-        let res = await fetch(currentUrl, fetchOpts);
-        let redirectCount = 0;
 
-        while (res.status >= 300 && res.status < 400 && res.headers.get("location") && redirectCount < MAX_REDIRECTS) {
-          const location = new URL(res.headers.get("location")!, currentUrl).toString();
-          const origOrigin = new URL(currentUrl).origin;
-          const newOrigin = new URL(location).origin;
+        const doFetch = async () => {
+          let r = await fetch(currentUrl, fetchOpts);
+          let redirectCount = 0;
 
-          // DNS pin the redirect target
-          const redirectPin = await dnsPin(location);
-          if (redirectPin) return err(`Redirect blocked: ${redirectPin}`);
+          while (r.status >= 300 && r.status < 400 && r.headers.get("location") && redirectCount < MAX_REDIRECTS) {
+            const location = new URL(r.headers.get("location")!, currentUrl).toString();
+            const origOrigin = new URL(currentUrl).origin;
+            const newOrigin = new URL(location).origin;
 
-          // Strip sensitive headers if redirecting cross-origin
-          const redirectHeaders = { ...headers };
-          if (origOrigin !== newOrigin) {
-            for (const h of SENSITIVE_HEADERS) {
-              for (const key of Object.keys(redirectHeaders)) {
-                if (key.toLowerCase() === h) delete redirectHeaders[key];
+            const redirectPin = await dnsPin(location);
+            if (redirectPin) throw new Error(`Redirect blocked: ${redirectPin}`);
+
+            const redirectHeaders = { ...headers };
+            if (origOrigin !== newOrigin) {
+              for (const h of SENSITIVE_HEADERS) {
+                for (const key of Object.keys(redirectHeaders)) {
+                  if (key.toLowerCase() === h) delete redirectHeaders[key];
+                }
               }
             }
-          }
 
-          currentUrl = location;
-          res = await fetch(currentUrl, {
-            ...fetchOpts,
-            headers: redirectHeaders,
-            body: res.status === 303 ? undefined : fetchOpts.body, // 303 = GET with no body
-            method: res.status === 303 ? "GET" : method,
-          });
-          redirectCount++;
+            currentUrl = location;
+            r = await fetch(currentUrl, {
+              ...fetchOpts,
+              headers: redirectHeaders,
+              body: r.status === 303 ? undefined : fetchOpts.body,
+              method: r.status === 303 ? "GET" : method,
+            });
+            redirectCount++;
+          }
+          return r;
+        };
+
+        // Auto-retry on 429/503/504 with exponential backoff
+        let res = await doFetch();
+        const RETRYABLE = [429, 503, 504];
+        for (let attempt = 1; attempt <= 3 && RETRYABLE.includes(res.status); attempt++) {
+          const retryAfter = parseInt(res.headers.get("retry-after") || "", 10);
+          const delay = retryAfter > 0 ? retryAfter * 1000 : attempt * 2000;
+          await new Promise(r => setTimeout(r, delay));
+          res = await doFetch();
         }
 
         const statusLine = `${res.status} ${res.statusText}`;
@@ -803,9 +835,58 @@ ${content}
   },
 };
 
+// ── Screen Capture ──
+
+const screenCaptureTool: ToolDefinition = {
+  name: "screen_capture",
+  description:
+    "Capture a screenshot of the desktop. Returns the image for visual analysis. " +
+    "Use this when the user asks you to look at their screen, take a screenshot, or describe what's on screen. " +
+    "Optionally capture a specific monitor or region.",
+  parameters: {
+    type: "object",
+    properties: {
+      monitor: { type: "number", description: "Monitor index (0-based). Omit for primary." },
+      region: {
+        type: "object",
+        description: "Capture a specific region instead of full screen",
+        properties: {
+          x: { type: "number" }, y: { type: "number" },
+          width: { type: "number" }, height: { type: "number" },
+        },
+        required: ["x", "y", "width", "height"],
+      },
+      scale: { type: "number", description: "Scale factor 0.1-1.0 to reduce size (default 0.5)" },
+      question: { type: "string", description: "What to analyze about the screen (default: describe it)" },
+    },
+    required: [],
+  },
+  async execute(args) {
+    try {
+      const { captureScreen } = await import("./screen-capture.js");
+      const scale = Math.min(1, Math.max(0.1, Number(args.scale) || 0.5));
+      const result = captureScreen({
+        monitor: args.monitor != null ? Number(args.monitor) : undefined,
+        region: args.region as any,
+        format: "jpg",
+        quality: 80,
+        scale,
+      });
+      const b64 = result.image.toString("base64");
+      const question = String(args.question || "Describe what's on the screen.");
+      return {
+        content: `[IMAGE:image/jpeg:${b64.slice(0, 100)}...${b64.length} bytes]\nScreen capture: ${result.width}x${result.height}\nQuestion: ${question}\n\nPlease analyze this screenshot.`,
+        _image: { mime: "image/jpeg", b64, path: "screen-capture", question },
+      } as any;
+    } catch (e) {
+      return { content: `Screen capture failed: ${(e as Error).message}`, isError: true };
+    }
+  },
+};
+
 // ── Export All ──
 
-export const allTools: ToolDefinition[] = [readTool, writeTool, editTool, bashTool, webFetchTool, viewImageTool, buildAppTool, youtubeAnalyzeTool, createPageTool];
+export const allTools: ToolDefinition[] = [readTool, writeTool, editTool, bashTool, webFetchTool, viewImageTool, screenCaptureTool, buildAppTool, youtubeAnalyzeTool, createPageTool];
 
 /** Dynamic getter for hot-reload — returns the current tools array */
 export function getAllTools(): ToolDefinition[] {

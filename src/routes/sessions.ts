@@ -74,9 +74,9 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
       id: forkId, title: `Fork: ${source.title}`,
       messages: JSON.parse(JSON.stringify(forkedMessages)),
       createdAt: Date.now(), updatedAt: Date.now(),
+      forkedFrom: sourceId,
+      forkAtIndex: atIndex,
     };
-    (forkSession as any).forkedFrom = sourceId;
-    (forkSession as any).forkAtIndex = atIndex;
     ctx.saveSession(forkSession);
     json(200, { ok: true, forkId, title: forkSession.title, messageCount: forkedMessages.length });
     return true;
@@ -90,12 +90,12 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     const forks: Array<{ id: string; title: string; forkAtIndex: number; createdAt: number }> = [];
     for (const meta of allSessions) {
       const s = ctx.sessionStore.load(meta.id);
-      if (s && (s as any).forkedFrom === sourceId) {
-        forks.push({ id: s.id, title: s.title, forkAtIndex: (s as any).forkAtIndex || 0, createdAt: s.createdAt });
+      if (s && s.forkedFrom === sourceId) {
+        forks.push({ id: s.id, title: s.title, forkAtIndex: s.forkAtIndex || 0, createdAt: s.createdAt });
       }
     }
     const thisSession = ctx.sessionStore.load(sourceId);
-    const parent = thisSession ? (thisSession as any).forkedFrom || null : null;
+    const parent = thisSession?.forkedFrom || null;
     json(200, { forks, parent });
     return true;
   }
@@ -137,7 +137,7 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
   if (method === "POST" && url.pathname === "/api/sessions/import") {
     try {
       const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
-      json(200, await importSession(body)); return true;
+      json(200, await importSession(body as unknown as string)); return true;
     } catch (e) { json(400, { error: safeErrorMessage(e) }); return true; }
   }
 

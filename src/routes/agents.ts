@@ -2,8 +2,9 @@ import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage, readBody } from "../server-utils.js";
 import { getLaneStatus, setLaneConcurrency, type LaneName } from "../execution-lanes.js";
 import { getProviderHealthStatus, resetProviderHealth, type ProviderId } from "../model-fallback.js";
-import { resolveSession, linkIdentities, unlinkIdentity, getIdentityGroups } from "../session-router.js";
-import type { IssueStatus } from "../agent-store.js";
+import { resolveSession, linkIdentities, unlinkIdentity, getIdentityGroups, type ChannelType } from "../session-router.js";
+import type { IssueStatus, AgentTemplate, Issue, Project } from "../agent-store.js";
+import { AgentTemplateSchema, CreateIssueSchema, IssueCommentSchema, CreateProjectSchema, LinkIdentitiesSchema, validateBody } from "../route-schemas.js";
 
 export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -56,7 +57,8 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
         childMap.set(r.parentAgentId, arr);
       }
     }
-    function buildNode(run: typeof runs[0]): any {
+    interface AgentTreeNode extends Record<string, unknown> { id: string; children: AgentTreeNode[] }
+    function buildNode(run: typeof runs[0]): AgentTreeNode {
       return { ...run, children: (childMap.get(run.id) || []).map(buildNode) };
     }
     json(200, rootRuns.map(buildNode)); return true;
@@ -68,19 +70,17 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
   }
 
   if (method === "POST" && url.pathname === "/api/agents/templates") {
-    const body = await safeParseBody(req);
-    if (!body || !body.name || !body.role) { json(400, { error: "name and role required" }); return true; }
-    json(200, ctx.agentTemplateStore.create({
-      name: body.name, role: body.role, systemPrompt: body.systemPrompt || "",
-      allowedTools: body.allowedTools || [], description: body.description || "", icon: body.icon,
-    })); return true;
+    const raw = await safeParseBody(req);
+    const parsed = validateBody(raw, AgentTemplateSchema);
+    if (!parsed.success) { json(400, { error: parsed.error }); return true; }
+    json(200, ctx.agentTemplateStore.create(parsed.data as Omit<AgentTemplate, "id" | "createdAt" | "updatedAt">)); return true;
   }
 
   if (method === "PUT" && url.pathname.match(/^\/api\/agents\/templates\/[^/]+$/)) {
     const id = url.pathname.split("/").pop()!;
     const body = await safeParseBody(req);
     if (!body) { json(400, { error: "Invalid JSON" }); return true; }
-    const updated = ctx.agentTemplateStore.update(id, body);
+    const updated = ctx.agentTemplateStore.update(id, body as Partial<AgentTemplate>);
     if (!updated) { json(404, { error: "Template not found" }); return true; }
     json(200, updated); return true;
   }
@@ -94,7 +94,7 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
   if (method === "POST" && url.pathname.match(/^\/api\/agents\/templates\/[^/]+\/hire$/)) {
     const id = url.pathname.split("/")[4];
     const body = await safeParseBody(req);
-    const result = ctx.agentTemplateStore.hire(id, { reportsTo: body?.reportsTo, heartbeatSchedule: body?.heartbeatSchedule });
+    const result = ctx.agentTemplateStore.hire(id, { reportsTo: body?.reportsTo as string | undefined, heartbeatSchedule: body?.heartbeatSchedule as string | undefined });
     if (!result) { json(404, { error: "Template not found" }); return true; }
     // Set up heartbeat cron job if schedule provided
     if (result.heartbeatSchedule && result.heartbeatEnabled) {
@@ -127,7 +127,7 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     const tpl = ctx.agentTemplateStore.get(id);
     if (!tpl) { json(404, { error: "Template not found" }); return true; }
     const body = await safeParseBody(req);
-    const task = body?.task || "Execute your role";
+    const task = (body?.task as string) || "Execute your role";
     try {
       const primal = (await import("../swarm/primal.js")).PrimalOrchestrator.getInstance();
       json(200, { ok: true, agentId: primal.spawnAgent({
@@ -150,14 +150,10 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
   }
 
   if (method === "POST" && url.pathname === "/api/issues") {
-    const body = await safeParseBody(req);
-    if (!body || !body.title) { json(400, { error: "title required" }); return true; }
-    const issue = ctx.issueStore.create({
-      title: body.title, description: body.description || "", assignee: body.assignee || "",
-      status: body.status || "open", priority: body.priority || "medium", project: body.project,
-      parentIssue: body.parentIssue, blockedBy: body.blockedBy, needsApproval: body.needsApproval || false,
-      approvalType: body.approvalType, approvalData: body.approvalData, createdBy: body.createdBy || "user",
-    });
+    const raw = await safeParseBody(req);
+    const parsed = validateBody(raw, CreateIssueSchema);
+    if (!parsed.success) { json(400, { error: parsed.error }); return true; }
+    const issue = ctx.issueStore.create(parsed.data as Omit<Issue, "id" | "comments" | "createdAt" | "updatedAt">);
     ctx.broadcastAll({ type: "issue:created", issue });
     json(200, issue); return true;
   }
@@ -173,7 +169,7 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     const id = url.pathname.split("/").pop()!;
     const body = await safeParseBody(req);
     if (!body) { json(400, { error: "Invalid JSON" }); return true; }
-    const updated = ctx.issueStore.update(id, body);
+    const updated = ctx.issueStore.update(id, body as Partial<Issue>);
     if (!updated) { json(404, { error: "Issue not found" }); return true; }
     ctx.broadcastAll({ type: "issue:updated", issue: updated });
     json(200, updated); return true;
@@ -187,9 +183,10 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
   // Issue comments
   if (method === "POST" && url.pathname.match(/^\/api\/issues\/SAX-\d+\/comments$/)) {
     const id = url.pathname.split("/")[3];
-    const body = await safeParseBody(req);
-    if (!body || !body.content) { json(400, { error: "content required" }); return true; }
-    const comment = ctx.issueStore.comment(id, body.author || "user", body.content);
+    const raw = await safeParseBody(req);
+    const parsed = validateBody(raw, IssueCommentSchema);
+    if (!parsed.success) { json(400, { error: parsed.error }); return true; }
+    const comment = ctx.issueStore.comment(id, parsed.data.author as string, parsed.data.content);
     if (!comment) { json(404, { error: "Issue not found" }); return true; }
     json(200, comment); return true;
   }
@@ -208,7 +205,7 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
   if (method === "POST" && url.pathname.match(/^\/api\/issues\/SAX-\d+\/reject$/)) {
     const id = url.pathname.split("/")[3];
     const body = await safeParseBody(req);
-    const issue = ctx.issueStore.reject(id, body?.reason);
+    const issue = ctx.issueStore.reject(id, body?.reason as string | undefined);
     if (!issue) { json(404, { error: "Issue not found" }); return true; }
     ctx.broadcastAll({ type: "inbox:rejected", issue });
     json(200, issue); return true;
@@ -246,14 +243,15 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     json(200, getIdentityGroups()); return true;
   }
   if (method === "POST" && url.pathname === "/api/identity-links") {
-    const body = await safeParseBody(req);
-    if (!body || !body.identity1 || !body.identity2) { json(400, { error: "identity1 and identity2 required" }); return true; }
-    json(200, linkIdentities(body.identity1, body.identity2, body.displayName)); return true;
+    const raw = await safeParseBody(req);
+    const parsed = validateBody(raw, LinkIdentitiesSchema);
+    if (!parsed.success) { json(400, { error: parsed.error }); return true; }
+    json(200, linkIdentities(parsed.data.identity1, parsed.data.identity2, parsed.data.displayName)); return true;
   }
   if (method === "DELETE" && url.pathname === "/api/identity-links") {
     const body = await safeParseBody(req);
     if (!body || !body.channel || !body.id) { json(400, { error: "channel and id required" }); return true; }
-    json(unlinkIdentity(body.channel, body.id) ? 200 : 404, { ok: true }); return true;
+    json(unlinkIdentity(body.channel as ChannelType, body.id as string) ? 200 : 404, { ok: true }); return true;
   }
 
   // Provider health
@@ -281,8 +279,8 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
   if (method === "POST" && url.pathname === "/api/projects/from-starter") {
     const body = await safeParseBody(req);
     if (!body || !body.name) { json(400, { error: "name required" }); return true; }
-    const project = ctx.projectStore.create({ name: body.name, description: body.description || "", agentIds: body.agentIds || [], workspace: body.workspace });
-    const agentIds: string[] = body.agentIds || [];
+    const project = ctx.projectStore.create({ name: body.name as string, description: (body.description as string) || "", agentIds: (body.agentIds as string[]) || [], workspace: body.workspace as string | undefined });
+    const agentIds: string[] = (body.agentIds as string[]) || [];
     const hasCeo = agentIds.includes("builtin-ceo");
     for (const agentId of agentIds) {
       ctx.agentTemplateStore.hire(agentId, { reportsTo: (hasCeo && agentId !== "builtin-ceo") ? "builtin-ceo" : undefined });
@@ -297,7 +295,7 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
   if (method === "POST" && url.pathname === "/api/projects") {
     const body = await safeParseBody(req);
     if (!body || !body.name) { json(400, { error: "name required" }); return true; }
-    json(200, ctx.projectStore.create({ name: body.name, description: body.description || "", workspace: body.workspace, agentIds: body.agentIds || [], secretKeys: body.secretKeys, allowedTools: body.allowedTools })); return true;
+    json(200, ctx.projectStore.create({ name: body.name as string, description: (body.description as string) || "", workspace: body.workspace as string | undefined, agentIds: (body.agentIds as string[]) || [], secretKeys: body.secretKeys as string[] | undefined, allowedTools: body.allowedTools as string[] | undefined })); return true;
   }
   if (method === "GET" && url.pathname.match(/^\/api\/projects\/proj-[^/]+$/)) {
     const id = url.pathname.split("/").pop()!;
@@ -309,7 +307,7 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     const id = url.pathname.split("/").pop()!;
     const body = await safeParseBody(req);
     if (!body) { json(400, { error: "Invalid JSON" }); return true; }
-    const updated = ctx.projectStore.update(id, body);
+    const updated = ctx.projectStore.update(id, body as Partial<Project>);
     if (!updated) { json(404, { error: "Project not found" }); return true; }
     json(200, updated); return true;
   }
@@ -321,13 +319,13 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     const id = url.pathname.split("/")[3];
     const body = await safeParseBody(req);
     if (!body || !body.agentId) { json(400, { error: "agentId required" }); return true; }
-    json(ctx.projectStore.addAgent(id, body.agentId) ? 200 : 404, { ok: true }); return true;
+    json(ctx.projectStore.addAgent(id, body.agentId as string) ? 200 : 404, { ok: true }); return true;
   }
   if (method === "DELETE" && url.pathname.match(/^\/api\/projects\/proj-[^/]+\/agents$/)) {
     const id = url.pathname.split("/")[3];
     const body = await safeParseBody(req);
     if (!body || !body.agentId) { json(400, { error: "agentId required" }); return true; }
-    json(ctx.projectStore.removeAgent(id, body.agentId) ? 200 : 404, { ok: true }); return true;
+    json(ctx.projectStore.removeAgent(id, body.agentId as string) ? 200 : 404, { ok: true }); return true;
   }
 
   // Active chats

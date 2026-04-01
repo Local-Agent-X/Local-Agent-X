@@ -5,6 +5,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { wrapExternalContent } from "./sanitize.js";
+import { getRuntimeConfig } from "./config.js";
 
 /**
  * Browser Manager for Open Agent X
@@ -24,7 +25,7 @@ export function setBrowserAuthContext(token: string, port: string): void {
   _saxPort = port;
 }
 
-const IDLE_TIMEOUT = 10 * 60 * 1000; // 10 minutes
+function getIdleTimeout(): number { return getRuntimeConfig().browserIdleTimeoutMs; }
 const NAV_TIMEOUT = 30_000;
 const ACTION_TIMEOUT = 10_000;
 const MAX_TEXT_LENGTH = 8_000;
@@ -79,7 +80,7 @@ export class BrowserManager {
 
   private resetIdle(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => this.close(), IDLE_TIMEOUT);
+    this.idleTimer = setTimeout(() => this.close(), getIdleTimeout());
   }
 
   /** Auto-inject auth token for localhost app URLs so pages load authenticated. */
@@ -186,7 +187,7 @@ export class BrowserManager {
     const chromePath = findChromeExecutable();
 
     if (chromePath) {
-      const cdpPort = 9800; // Fixed port — allows reconnecting to existing Chrome
+      const cdpPort = getRuntimeConfig().browserCdpPort; // Configurable — allows reconnecting to existing Chrome
 
       // Use a dedicated SAX profile (not the user's main profile — avoids conflicts)
       const userDataDir = join(homedir(), ".sax", "chrome-profile");
@@ -471,17 +472,30 @@ export class BrowserManager {
     return `Page: ${title} (${url})\n${lines.length} elements:\n\n${lines.join("\n")}`;
   }
 
-  /** Click an element by ref number (from snapshot). Auto-snapshots after click. */
+  /** Click an element by ref number (from snapshot). Auto-snapshots after click. Auto-recovers stale refs. */
   async clickByRef(ref: number): Promise<string> {
     const page = await this.getPage();
-    const info = this.refMap.get(ref);
+    let info = this.refMap.get(ref);
     if (!info) {
-      return `Ref [${ref}] not found. Use 'snapshot' action first to get current refs.`;
+      // Auto-recovery: take fresh snapshot and search by ref
+      await this.snapshot();
+      info = this.refMap.get(ref);
+      if (!info) {
+        return `Ref [${ref}] not found even after re-snapshot. Page may have changed — here are the current refs:\n\n${await this.snapshot()}`;
+      }
     }
 
     // Resolve via getByRole (most reliable cross-DOM method)
-    const locator = page.getByRole(info.role as any, { name: info.name, exact: false });
-    const count = await locator.count();
+    let locator = page.getByRole(info.role as any, { name: info.name, exact: false });
+    let count = await locator.count();
+
+    if (count === 0) {
+      // Auto-recovery: page may have re-rendered — take fresh snapshot and retry by role/name
+      await page.waitForTimeout(2000);
+      await this.snapshot();
+      locator = page.getByRole(info.role as any, { name: info.name, exact: false });
+      count = await locator.count();
+    }
 
     if (count === 0) {
       // Fallback: find by text content
@@ -489,31 +503,40 @@ export class BrowserManager {
       if ((await textLocator.count()) > 0) {
         await textLocator.first().click({ timeout: ACTION_TIMEOUT });
         await page.waitForTimeout(1000);
-        // Auto-snapshot so agent sees what changed
         const snap = await this.snapshot();
-        return `Clicked "${info.name}" (found by text).\nPage: ${page.url()}\n\n${snap}`;
+        return `Clicked "${info.name}" (found by text after retry).\nPage: ${page.url()}\n\n${snap}`;
       }
-      return `Could not find element [${ref}] ${info.role} "${info.name}" on the page. Page may have changed — take a new snapshot.`;
+      return `Could not find element [${ref}] ${info.role} "${info.name}" after retry. Current page:\n\n${await this.snapshot()}`;
     }
 
     await locator.first().click({ timeout: ACTION_TIMEOUT });
     await page.waitForTimeout(1000);
-    // Auto-snapshot so agent sees what changed after click
     const snap = await this.snapshot();
     return `Clicked [${ref}] ${info.role} "${info.name}"\nPage: ${page.url()}\n\n${snap}`;
   }
 
-  /** Fill an element by ref number. */
+  /** Fill an element by ref number. Auto-recovers stale refs. */
   async fillByRef(ref: number, value: string): Promise<string> {
     const page = await this.getPage();
-    const info = this.refMap.get(ref);
+    let info = this.refMap.get(ref);
     if (!info) {
-      return `Ref [${ref}] not found. Use 'snapshot' action first to get current refs.`;
+      // Auto-recovery: take fresh snapshot and search by ref
+      await this.snapshot();
+      info = this.refMap.get(ref);
+      if (!info) {
+        return `Ref [${ref}] not found even after re-snapshot. Current page:\n\n${await this.snapshot()}`;
+      }
     }
 
-    const locator = page.getByRole(info.role as any, { name: info.name, exact: false });
+    let locator = page.getByRole(info.role as any, { name: info.name, exact: false });
     if ((await locator.count()) === 0) {
-      return `Could not find element [${ref}] ${info.role} "${info.name}". Take a new snapshot.`;
+      // Auto-recovery: wait for SPA re-render, re-snapshot, retry
+      await page.waitForTimeout(2000);
+      await this.snapshot();
+      locator = page.getByRole(info.role as any, { name: info.name, exact: false });
+      if ((await locator.count()) === 0) {
+        return `Could not find element [${ref}] ${info.role} "${info.name}" after retry. Current page:\n\n${await this.snapshot()}`;
+      }
     }
 
     await locator.first().fill(value, { timeout: ACTION_TIMEOUT });

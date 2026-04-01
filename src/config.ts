@@ -107,6 +107,16 @@ DELEGATE TO AN AGENT when:
 AGENT REPORTING: Spawned agents MUST include a clear summary in their final assistant message.
 If blocked (e.g. login required, page error), agents must report what happened so you can relay it to the user.
 
+## Self-Recovery (applies to ALL tools)
+NEVER stop and ask the user to fix something you can fix yourself. Try first, ask second.
+- **Tool returns an error**: read the error message. If the fix is obvious (retry, different flag, wait and retry), do it. Only ask the user after 2 failed attempts.
+- **HTTP 429/503/504**: the tools auto-retry with backoff. If still failing, wait 10 seconds and try once more before reporting.
+- **Command not found**: try the obvious alternative (e.g. "python3" → "python", "npm" → "npx").
+- **Permission denied**: try a different approach (e.g. write to a temp dir, use a different path). Don't ask the user to chmod.
+- **File not found**: check if the path is slightly wrong (case sensitivity, missing extension). Search for it before giving up.
+- **Timeout**: retry once. If it fails again, report it but continue the rest of the task.
+- **Partial failure in multi-step task**: complete the steps that work, report which one failed, suggest a fix. Don't abandon the entire task because one step failed.
+
 WORKFLOW for delegation: agent_spawn ONCE → tell the user → done. One spawn, one response.
 
 BLOCKED AGENTS: When an agent reports a blocker (login required, error, etc.):
@@ -211,9 +221,20 @@ If unsure whether a protocol exists, call protocol_list.
 Before telling the user to open anything in a browser: use the browser tool yourself.
 Workflow: navigate → snapshot (see numbered refs) → click ref=N / fill ref=N.
 On click failure: try click_text → fresh snapshot → evaluate JS click. Never ask the user to click manually.
-Self-recovery: if a page loads incomplete (missing fields, blank content, only footer links), hard-refresh it yourself (navigate to the same URL again or evaluate location.reload(true)). Don't ask the user to refresh — just do it. Retry up to 2 times before reporting an issue.
 The browser opens a real Chrome window on the user's desktop. Sessions persist (cookies saved).
 The browser can navigate to localhost URLs (user's dev servers).
+
+### Self-Recovery (CRITICAL — never ask the user to fix these)
+You MUST handle these situations yourself without stopping or asking the user:
+- **Page loads incomplete** (missing fields, blank content, only footer links): hard-refresh with evaluate("location.reload(true)"), then re-snapshot. Retry up to 2 times.
+- **Ref not found**: take a fresh snapshot immediately, find the element by name/role in the new refs, and retry. Never tell the user to "take a snapshot".
+- **Popup/modal/cookie banner blocking content**: close it first — try clicking "Close", "Decline", "Accept", "X", or "No thanks". If no button works, press Escape via evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))"). Then re-snapshot.
+- **Page timeout**: retry navigation once. If it times out again, snapshot anyway — the page may be usable despite incomplete load.
+- **Element disappears after click** (SPA re-render): wait 2 seconds, take a fresh snapshot, locate the element again by name/role.
+- **Login page appears unexpectedly** (session expired): tell the user their session expired and ask them to log in — but do NOT stop the task. Wait for them, then continue.
+- **CAPTCHA/challenge page**: tell the user to solve it in the browser window, wait, then continue.
+- **Form submitted but nothing happened**: wait 3 seconds, snapshot to check if something changed. If still the same, try clicking submit again.
+- **Slow SPA content** (spinners, loading states): wait up to 5 seconds, re-snapshot. Content often loads after initial paint.
 
 ### Tool Selection: Research vs Browser
 - For looking up information, searching the web, or answering questions: use **web_search** first. It's faster and doesn't need a browser.
@@ -319,6 +340,25 @@ const configSchema = z.object({
   retentionDays: z.number().int().min(7).max(365).default(90),
   autoUpdate: z.boolean().default(true),
   logLevel: z.enum(["basic", "detailed", "full-audit"]).default("basic"),
+
+  // Service URLs
+  ollamaUrl: z.string().default("http://127.0.0.1:11434"),
+  sdServerUrl: z.string().default("http://127.0.0.1:7860"),
+  videoServerUrl: z.string().default("http://127.0.0.1:7861"),
+  xttsServerUrl: z.string().default("http://127.0.0.1:7862"),
+
+  // Limits & timeouts
+  browserCdpPort: z.number().int().min(1).max(65535).default(9800),
+  browserIdleTimeoutMs: z.number().int().min(60000).default(600000),
+  rateLimitMax: z.number().int().min(1).default(120),
+  rateLimitRefillPerSec: z.number().int().min(1).default(10),
+  maxRequestBodyBytes: z.number().int().min(1).default(10485760),
+  maxUploadBytes: z.number().int().min(1).default(104857600),
+  maxAudioBytes: z.number().int().min(1).default(26214400),
+  authMaxFailures: z.number().int().min(1).default(20),
+  authLockoutMs: z.number().int().min(1000).default(60000),
+  agentTimeoutMs: z.number().int().min(10000).default(300000),
+  maxCachedSessions: z.number().int().min(1).default(200),
 });
 
 function getConfigDir(): string {
@@ -361,6 +401,17 @@ export function loadConfig(): SAXConfig {
   if (process.env.SAX_WORKSPACE) raw.workspace = process.env.SAX_WORKSPACE;
   if (process.env.SAX_MODEL) raw.model = process.env.SAX_MODEL;
 
+  // Service URL overrides
+  if (process.env.SAX_OLLAMA_URL) raw.ollamaUrl = process.env.SAX_OLLAMA_URL;
+  if (process.env.SAX_SD_SERVER_URL) raw.sdServerUrl = process.env.SAX_SD_SERVER_URL;
+  if (process.env.SAX_VIDEO_SERVER_URL) raw.videoServerUrl = process.env.SAX_VIDEO_SERVER_URL;
+  if (process.env.SAX_XTTS_SERVER_URL) raw.xttsServerUrl = process.env.SAX_XTTS_SERVER_URL;
+
+  // Limit/timeout overrides
+  if (process.env.SAX_AGENT_TIMEOUT_MS) raw.agentTimeoutMs = parseInt(process.env.SAX_AGENT_TIMEOUT_MS, 10);
+  if (process.env.SAX_MAX_UPLOAD_BYTES) raw.maxUploadBytes = parseInt(process.env.SAX_MAX_UPLOAD_BYTES, 10);
+  if (process.env.SAX_RATE_LIMIT_MAX) raw.rateLimitMax = parseInt(process.env.SAX_RATE_LIMIT_MAX, 10);
+
   // Environment variable for profile override
   if (process.env.SAX_PROFILE) raw.profile = process.env.SAX_PROFILE;
 
@@ -394,4 +445,21 @@ export function saveConfig(config: SAXConfig): void {
 
 export function getAuthPath(): string {
   return join(getConfigDir(), "auth.json");
+}
+
+// ── Runtime config store ──
+// Set once at startup, readable from any module without threading config through every call.
+
+let _runtimeConfig: SAXConfig | null = null;
+
+export function setRuntimeConfig(config: SAXConfig): void {
+  _runtimeConfig = config;
+}
+
+export function getRuntimeConfig(): SAXConfig {
+  if (!_runtimeConfig) {
+    // Fallback: load from disk (should only happen in tests or edge cases)
+    _runtimeConfig = loadConfig();
+  }
+  return _runtimeConfig;
 }

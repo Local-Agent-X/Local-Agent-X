@@ -44,6 +44,19 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     return true;
   }
 
+  // Agent redirect (HTTP fallback for when WS is unavailable)
+  if (method === "POST" && url.pathname.match(/^\/api\/agents\/[^/]+\/redirect$/)) {
+    const agentId = url.pathname.split("/")[3];
+    const body = await safeParseBody(req);
+    if (!body || typeof body.instruction !== "string") { json(400, { error: "instruction (string) required" }); return true; }
+    try {
+      const handler = (await import("../agency/handler.js")).Handler.getInstance();
+      handler.redirectAgent(agentId, body.instruction);
+      json(200, { ok: true, agentId, instruction: body.instruction });
+    } catch (e) { json(404, { error: safeErrorMessage(e) }); }
+    return true;
+  }
+
   // Agent hierarchy tree
   if (method === "GET" && url.pathname.match(/^\/api\/agents\/tree\/[^/]+$/)) {
     const sessionId = url.pathname.split("/").pop()!;
@@ -337,7 +350,8 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return true; }
     const sid = String(body.sessionId || "");
     if (!sid) { json(400, { error: "sessionId required" }); return true; }
-    json(200, { ok: true, stopped: sid }); return true;
+    const stopped = ctx.chatWs.stopChat(sid);
+    json(200, { ok: true, stopped: sid, wasActive: stopped }); return true;
   }
 
   return false;

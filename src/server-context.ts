@@ -38,7 +38,7 @@ export interface ServerContext {
   getOrCreateSession: (id: string) => Session;
   saveSession: (session: Session) => void;
   chatWs: { startChat: (sessionId: string) => { onEvent: (event: ServerEvent) => void; abort: AbortController }; getActiveChats: () => string[] };
-  broadcastAll: (event: any) => void;
+  broadcastAll: (event: Record<string, unknown>) => void;
   activeOnEvent: ((event: ServerEvent) => void) | undefined;
   setActiveOnEvent: (fn: ((event: ServerEvent) => void) | undefined) => void;
   activeBrowserSessionId: string;

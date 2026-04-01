@@ -3,7 +3,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
 import { timingSafeEqual, randomBytes } from "node:crypto";
-import { runAgent } from "./agent.js";
+import { runAgent, type AgentOptions } from "./agent.js";
 import { allTools, createHttpRequestTool } from "./tools.js";
 import { appTools } from "./app-tools.js";
 import { issueTools } from "./issue-tools.js";
@@ -72,10 +72,10 @@ export function startServer(config: SAXConfig) {
       if (existsSync(sp)) return JSON.parse(readFileSync(sp, "utf-8"));
     } catch {} return {};
   }
-  async function resolveProviderAndKey(saved: any): Promise<{ provider: string; apiKey: string; model: string }> {
+  async function resolveProviderAndKey(saved: Record<string, unknown>): Promise<{ provider: string; apiKey: string; model: string }> {
     const { loadTokens } = await import("./auth.js");
     const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
-    let provider = saved.provider || "";
+    let provider = String(saved.provider || "");
     if (!["codex", "xai", "openai", "anthropic", "local", "gemini", "custom"].includes(provider)) {
       provider = loadAnthropicTokens() ? "anthropic" : (loadTokens() && !config.openaiApiKey) ? "codex" : "xai";
     }
@@ -85,7 +85,7 @@ export function startServer(config: SAXConfig) {
     else if (provider === "xai") apiKey = secretsStore.get("XAI_API_KEY") || "";
     else if (provider === "openai" && !config.openaiApiKey) apiKey = secretsStore.get("OPENAI_API_KEY") || await getApiKey(config.openaiApiKey);
     else apiKey = await getApiKey(config.openaiApiKey);
-    const model = saved.model || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model);
+    const model = String(saved.model || "") || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model);
     return { provider, apiKey, model };
   }
 
@@ -106,11 +106,11 @@ export function startServer(config: SAXConfig) {
     const injectionScore = detectInjection(text).reduce((max, h) => Math.max(max, h.score), 0);
     if (injectionScore >= 0.85) return `I can't process that message — it was flagged by security filters.`;
     const result = await enqueue("main", () => runAgent(text, session.messages, {
-      apiKey, model, provider: provider as any, systemPrompt: enrichedPrompt, tools: bridgeTools, security, toolPolicy, rbac, callerRole: "user" as const,
+      apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: enrichedPrompt, tools: bridgeTools, security, toolPolicy, rbac, callerRole: "user" as const,
       sessionId: route.sessionKey, maxIterations: (typeof saved.maxIterations === "number" ? saved.maxIterations : null) || config.maxIterations,
       temperature: typeof saved.temperature === "number" ? saved.temperature : config.temperature,
     }), { label: `bridge:${platform}:${from}` });
-    session.messages = result.messages.filter(m => m.role !== "system" && (m.content || (m as any).tool_calls));
+    session.messages = result.messages.filter(m => m.role !== "system" && (m.content || (m as unknown as Record<string, unknown>).tool_calls));
     session.updatedAt = Date.now(); saveSession(session);
     return formatForChannel(result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "Done.", channelType).join("\n\n");
   }
@@ -128,10 +128,10 @@ export function startServer(config: SAXConfig) {
   let activeBrowserSessionId = "default";
   const browserTools = createBrowserTools(() => activeBrowserSessionId);
   const allAgentTools = [...allTools, httpRequestTool, ...createMemoryTools(memoryIndex), ...secretTools, ...browserTools, ...imageTools, ...createMissionTools(), ...createAllMissionTools(), ...createCronTools(cronService), ...createSwarmTools(), ...createPrimalTools(), ...appTools, ...issueTools];
-  const bridgeTools = [...allTools, ...memoryTools, ...imageTools, ...createMissionTools(), ...issueTools];
+  const bridgeTools = [...allTools, ...memoryTools, ...browserTools, ...imageTools, ...createMissionTools(), ...issueTools];
 
   // Session management
-  const MAX_CACHED = 200;
+  const MAX_CACHED = config.maxCachedSessions;
   const sessions = new Map<string, Session>();
   function getOrCreateSession(id: string): Session {
     let s = sessions.get(id);
@@ -198,7 +198,7 @@ export function startServer(config: SAXConfig) {
     if (method === "POST" && url.pathname === "/api/upload") {
       const uploadsDir = join(dataDir, "uploads"); mkdirSync(uploadsDir, { recursive: true });
       const chunks: Buffer[] = []; let totalSize = 0;
-      for await (const chunk of req) { totalSize += (chunk as Buffer).length; if (totalSize > 100 * 1024 * 1024) { json(413, { error: "File too large. Max 100MB." }); req.destroy(); return; } chunks.push(chunk as Buffer); }
+      for await (const chunk of req) { totalSize += (chunk as Buffer).length; if (totalSize > config.maxUploadBytes) { json(413, { error: `File too large. Max ${Math.round(config.maxUploadBytes / 1048576)}MB.` }); req.destroy(); return; } chunks.push(chunk as Buffer); }
       const ct = req.headers["content-type"] || "";
       const bm = ct.match(/boundary=(?:"([^"]{1,70})"|([^\s;]{1,70}))/);
       if (!bm) { json(400, { error: "Multipart form data required" }); return; }
@@ -281,36 +281,67 @@ export function startServer(config: SAXConfig) {
   const eventBus = EventBus.getInstance();
   const pendingMeta = new Map<string, { name: string; role: string; task: string; systemPrompt: string; parentAgentId: string | null; sessionId: string; startedAt: number; toolsUsed: string[] }>();
 
-  eventBus.on("primal:agent-run", async (data: any) => {
-    const { agentId, task, systemPrompt, role, parentSessionId } = data;
+  // Event payload types for primal agent system
+  interface AgentRunEvent { agentId: string; task: string; systemPrompt: string; role: string; parentSessionId?: string; templateId?: string }
+  interface AgentSpawnEvent { agentId: string; name: string; role: string; task: string; systemPrompt?: string; parentAgentId?: string; parentSessionId?: string }
+  interface AgentOutputEvent { agentId: string; output: string }
+  interface AgentBlockedEvent { agentId: string; reason: string; role: string }
+  interface AgentResultEvent { agentId: string; result: string; success: boolean; tokens?: number }
+  interface AgentUserInputEvent { agentId: string; message: string }
+  interface AgentRedirectEvent { agentId: string; [key: string]: unknown }
+
+  eventBus.on("primal:agent-run", async (data: unknown) => {
+    const { agentId, task, systemPrompt, role, parentSessionId } = data as AgentRunEvent;
+    const templateId = (data as AgentRunEvent).templateId;
     console.log(`[primal] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
+
+    // Resolve template for identity + tool restrictions
+    const template = templateId ? agentTemplateStore.get(templateId) : null;
+    const projectStore = ProjectStore.getInstance();
+    const agentProject = template ? projectStore.getAgentProject(template.id) : null;
+
     let parentContext = "";
-    if (parentSessionId) { const ps = sessions.get(parentSessionId); if (ps?.messages.length) { parentContext = `\n\n--- PARENT CONTEXT ---\n${ps.messages.slice(-10).filter((m: any) => typeof m.content === "string").map((m: any) => `${m.role === "user" ? "User" : "Agent"}: ${(m.content as string).slice(0, 200)}`).join("\n")}\n--- END ---\n`; } }
+    if (parentSessionId) { const ps = sessions.get(parentSessionId); if (ps?.messages.length) { parentContext = `\n\n--- PARENT CONTEXT ---\n${ps.messages.slice(-10).filter(m => typeof m.content === "string").map(m => `${m.role === "user" ? "User" : "Agent"}: ${(m.content as string).slice(0, 200)}`).join("\n")}\n--- END ---\n`; } }
     let briefing = "";
     try { const uMd = join(dataDir, "memory", "USER.md"), mMd = join(dataDir, "memory", "MIND.md"); const u = existsSync(uMd) ? readFileSync(uMd, "utf-8").slice(0, 500) : "", m = existsSync(mMd) ? readFileSync(mMd, "utf-8").slice(0, 500) : ""; briefing = `\n\n--- BRIEFING ---\nUser: ${u || "(none)"}\nFacts: ${m || "(none)"}\nSecrets: ${secretsStore.list().map(s => s.name).join(", ") || "(none)"}\n--- END ---\n`; } catch {}
+
+    // Build identity block so agent knows who it is
+    const identityBlock = template
+      ? `\n\n--- YOUR IDENTITY ---\nAgent ID: ${template.id}\nName: ${template.name}\nRole: ${template.role}\n${template.reportsTo ? `Reports to: ${template.reportsTo}` : "Reports to: Board (user)"}\n${agentProject ? `Project: ${agentProject.name}` : ""}\nUse agent_whoami with agentId="${template.id}" to see your full status and assigned issues.\n--- END IDENTITY ---\n`
+      : `\n\nYour agent ID: ${agentId}\n`;
+
     const agentSession: Session = { id: `agent-${agentId}`, title: `Agent: ${role}`, messages: [], createdAt: Date.now(), updatedAt: Date.now() };
     try {
       const saved = loadSavedSettings();
       const { provider, apiKey, model } = await resolveProviderAndKey(saved);
-      const spawnedTools = allAgentTools.filter(t => !t.name.startsWith("agent_") && !t.name.startsWith("swarm_") && t.name !== "delegate");
-      const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); console.warn(`[primal] Agent ${agentId} timed out`); }, 300000);
+
+      // Build tool list: respect template.allowedTools if set, otherwise give all non-recursive tools
+      // Agents now GET issue_* and agent_* tools (they're real employees, not disposable workers)
+      let spawnedTools = allAgentTools.filter(t => !t.name.startsWith("swarm_") && t.name !== "delegate");
+      if (template?.allowedTools && template.allowedTools.length > 0) {
+        // Template restricts tools — enforce it. Always include issue_* and agent_* for coordination.
+        const allowed = new Set([...template.allowedTools, "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval", "agent_whoami", "agent_team_list", "agent_wakeup"]);
+        spawnedTools = spawnedTools.filter(t => allowed.has(t.name));
+      }
+
+      const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); console.warn(`[primal] Agent ${agentId} timed out`); }, config.agentTimeoutMs);
       const agentResult = await enqueue("agent", () => runAgent(task, agentSession.messages, {
-        apiKey, model, provider: provider as any, systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + parentContext + briefing,
+        apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + identityBlock + parentContext + briefing,
         tools: spawnedTools, security, toolPolicy, sessionId: `agent-${agentId}`, maxIterations: config.maxIterations, temperature: config.temperature, signal: ac.signal,
-        pauseCallback: async (reason: string) => { eventBus.emit("primal:agent-output", { agentId, output: `[BLOCKER] ${reason}` }); eventBus.emit("primal:agent-blocked", { agentId, reason, role }); return new Promise<string>(r => { const h = (d: any) => { if (d.agentId === agentId) { eventBus.off("primal:agent-user-input", h); r(d.message); } }; eventBus.on("primal:agent-user-input", h); setTimeout(() => { eventBus.off("primal:agent-user-input", h); r("User did not respond."); }, 300000); }); },
+        pauseCallback: async (reason: string) => { eventBus.emit("primal:agent-output", { agentId, output: `[BLOCKER] ${reason}` }); eventBus.emit("primal:agent-blocked", { agentId, reason, role }); return new Promise<string>(r => { const h = (d: unknown) => { const evt = d as AgentUserInputEvent; if (evt.agentId === agentId) { eventBus.off("primal:agent-user-input", h); r(evt.message); } }; eventBus.on("primal:agent-user-input", h); setTimeout(() => { eventBus.off("primal:agent-user-input", h); r("User did not respond."); }, config.agentTimeoutMs); }); },
         onEvent: (event) => { if (event.type === "stream" && event.delta) eventBus.emit("primal:agent-output", { agentId, output: event.delta }); if (event.type === "tool_start") { console.log(`[primal] Agent ${agentId} tool: ${event.toolName}`); eventBus.emit("primal:agent-output", { agentId, output: `[tool] ${event.toolName}...` }); } if (event.type === "tool_start" && event.requiresApproval) event.requiresApproval = false; },
-      }), { label: `agent:${agentId}`, timeout: 300_000 });
+      }), { label: `agent:${agentId}`, timeout: config.agentTimeoutMs });
       clearTimeout(to); if (agentResult?.messages) agentSession.messages.push(...agentResult.messages);
       eventBus.emit("primal:agent-result", { agentId, result: extractAgentOutput(agentSession.messages), success: true });
     } catch (e) { const p = extractAgentOutput(agentSession.messages), msg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e); eventBus.emit("primal:agent-result", { agentId, result: p ? `[${msg}]\n\n${p}` : msg, success: false }); }
   });
 
   // Forward agent events to WS + persist
-  eventBus.on("primal:agent-spawn", (d: any) => { broadcastAll({ type: "agent-spawn", ...d }); pendingMeta.set(d.agentId, { name: d.name, role: d.role, task: d.task, systemPrompt: d.systemPrompt || "", parentAgentId: d.parentAgentId || null, sessionId: d.parentSessionId || "", startedAt: Date.now(), toolsUsed: [] }); });
-  eventBus.on("primal:agent-output", (d: any) => { broadcastAll({ type: "agent-output", ...d }); const m = pendingMeta.get(d.agentId); if (m && typeof d.output === "string" && d.output.startsWith("[tool]")) { const t = d.output.replace("[tool] ", "").replace("...", "").trim(); if (t && !m.toolsUsed.includes(t)) m.toolsUsed.push(t); } });
-  eventBus.on("primal:agent-blocked", (d: any) => broadcastAll({ type: "agent-blocked", agentId: d.agentId, reason: d.reason, role: d.role }));
-  eventBus.on("primal:agent-result", (d: any) => { broadcastAll({ type: "agent-complete", ...d }); const m = pendingMeta.get(d.agentId); if (m) { agentRunStore.save({ id: d.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status: d.success === false ? "error" : "done", output: [], result: d.result || "", toolsUsed: m.toolsUsed, tokensUsed: d.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: d.success === false ? d.result : undefined } as AgentRun); pendingMeta.delete(d.agentId); } });
-  eventBus.on("primal:agent-redirect", (d: any) => broadcastAll({ type: "agent-update", ...d, status: "redirected" }));
+  eventBus.on("primal:agent-spawn", (d: unknown) => { const evt = d as AgentSpawnEvent; broadcastAll({ type: "agent-spawn", ...evt }); pendingMeta.set(evt.agentId, { name: evt.name, role: evt.role, task: evt.task, systemPrompt: evt.systemPrompt || "", parentAgentId: evt.parentAgentId || null, sessionId: evt.parentSessionId || "", startedAt: Date.now(), toolsUsed: [] }); });
+  eventBus.on("primal:agent-output", (d: unknown) => { const evt = d as AgentOutputEvent; broadcastAll({ type: "agent-output", ...evt }); const m = pendingMeta.get(evt.agentId); if (m && typeof evt.output === "string" && evt.output.startsWith("[tool]")) { const t = evt.output.replace("[tool] ", "").replace("...", "").trim(); if (t && !m.toolsUsed.includes(t)) m.toolsUsed.push(t); } });
+  eventBus.on("primal:agent-blocked", (d: unknown) => { const evt = d as AgentBlockedEvent; broadcastAll({ type: "agent-blocked", agentId: evt.agentId, reason: evt.reason, role: evt.role }); });
+  eventBus.on("primal:agent-result", (d: unknown) => { const evt = d as AgentResultEvent; broadcastAll({ type: "agent-complete", ...evt }); const m = pendingMeta.get(evt.agentId); if (m) { agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status: evt.success === false ? "error" : "done", output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: evt.success === false ? evt.result : undefined } as AgentRun); pendingMeta.delete(evt.agentId); } });
+  eventBus.on("primal:agent-redirect", (d: unknown) => { const evt = d as AgentRedirectEvent; broadcastAll({ type: "agent-update", ...evt, status: "redirected" }); });
 
   // Config hot-reload
   new ConfigWatcher().start(join(dataDir, "config.json"), () => console.log("[config] Hot-reloaded"));
@@ -331,7 +362,7 @@ export function startServer(config: SAXConfig) {
       const { provider, apiKey, model } = await resolveProviderAndKey(saved);
       const session = getOrCreateSession(`cron-${jobId}`);
       const cronSecurity = new SecurityLayer(resolve(process.env.SAX_WORKSPACE || join(homedir(), ".sax", "workspace")), "workspace");
-      const result = await runAgent(prompt, session.messages, { apiKey, model: provider === "anthropic" ? "claude-haiku-4-5" : model, provider: provider as any, systemPrompt: config.systemPrompt, tools: allAgentTools, security: cronSecurity, toolPolicy, sessionId: `cron-${jobId}`, maxIterations: config.maxIterations });
+      const result = await runAgent(prompt, session.messages, { apiKey, model: provider === "anthropic" ? "claude-haiku-4-5" : model, provider: provider as AgentOptions["provider"], systemPrompt: config.systemPrompt, tools: allAgentTools, security: cronSecurity, toolPolicy, sessionId: `cron-${jobId}`, maxIterations: config.maxIterations });
       session.messages = result.messages.filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);
       return result.messages.filter(m => m.role === "assistant" && m.content).map(m => String(m.content)).join("\n").slice(0, 500) || "Completed";
     });
@@ -354,6 +385,6 @@ export function startServer(config: SAXConfig) {
     agentSync.startHeartbeat();
   });
 
-  process.on("SIGINT", async () => { clearInterval(memBgTimer); agentSync.stopHeartbeat(); await agentSync.push().catch(() => {}); await closeAllBrowsers(); memoryIndex.close(); secretsStore.destroy(); process.exit(0); });
+  process.on("SIGINT", async () => { clearInterval(memBgTimer); cronService.stop(); agentSync.stopHeartbeat(); EventBus.removeAllListeners(); await agentSync.push().catch(() => {}); await closeAllBrowsers(); memoryIndex.close(); secretsStore.destroy(); process.exit(0); });
   return server;
 }

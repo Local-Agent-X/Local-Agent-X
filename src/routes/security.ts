@@ -25,7 +25,7 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
   }
   if (method === "POST" && url.pathname === "/api/security/policies") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
-    json(200, createPolicy(body)); return true;
+    json(200, createPolicy(body as Omit<import("../ari-policy-editor.js").PolicyRule, "id" | "createdAt" | "updatedAt">)); return true;
   }
   if (method === "DELETE" && url.pathname.startsWith("/api/security/policies/")) {
     const id = url.pathname.split("/").pop()!;
@@ -36,7 +36,7 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
   }
   if (method === "POST" && url.pathname === "/api/security/egress") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
-    json(200, addEgressRule(body.domain, body.action, body.reason)); return true;
+    json(200, addEgressRule(body.domain as string, body.action as "allow" | "block", body.reason as string | undefined)); return true;
   }
   if (method === "GET" && url.pathname === "/api/security/audit") {
     const query = Object.fromEntries(url.searchParams.entries());
@@ -70,7 +70,7 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
     if (!["workspace", "common", "unrestricted"].includes(mode)) {
       json(400, { error: "mode must be: workspace, common, or unrestricted" }); return true;
     }
-    ctx.security.setFileAccessMode(mode as any);
+    ctx.security.setFileAccessMode(mode as "workspace" | "common" | "unrestricted");
     json(200, { ok: true, mode }); return true;
   }
 
@@ -78,10 +78,10 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
   if (method === "GET" && url.pathname === "/api/tool-policy/status") {
     const policyPath = join(ctx.dataDir, "tool-policy.json");
     try {
-      const policy = existsSync(policyPath) ? JSON.parse(readFileSync(policyPath, "utf-8")) : { defaultDecision: "deny", rules: [] };
-      const bashRule = policy.rules.find((r: any) => r.id === "allow-bash-limited");
-      const httpRule = policy.rules.find((r: any) => r.id === "allow-http-limited");
-      const browserRule = policy.rules.find((r: any) => r.id === "allow-browser");
+      const policy = existsSync(policyPath) ? JSON.parse(readFileSync(policyPath, "utf-8")) as { defaultDecision: string; rules: Array<{ id: string; decision: string }> } : { defaultDecision: "deny", rules: [] as Array<{ id: string; decision: string }> };
+      const bashRule = policy.rules.find((r) => r.id === "allow-bash-limited");
+      const httpRule = policy.rules.find((r) => r.id === "allow-http-limited");
+      const browserRule = policy.rules.find((r) => r.id === "allow-browser");
       json(200, {
         bash: bashRule ? bashRule.decision !== "deny" : true,
         http: httpRule ? httpRule.decision !== "deny" : true,
@@ -98,8 +98,8 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
     if (!ruleId) { json(400, { error: "Unknown tool. Use: bash, http, browser" }); return true; }
     const policyPath = join(ctx.dataDir, "tool-policy.json");
     try {
-      let policy = existsSync(policyPath) ? JSON.parse(readFileSync(policyPath, "utf-8")) : { defaultDecision: "deny", rules: [] };
-      const rule = policy.rules.find((r: any) => r.id === ruleId);
+      let policy = existsSync(policyPath) ? JSON.parse(readFileSync(policyPath, "utf-8")) as { defaultDecision: string; rules: Array<{ id: string; tool?: string; decision: string; reason?: string; priority?: number }> } : { defaultDecision: "deny" as string, rules: [] as Array<{ id: string; tool?: string; decision: string; reason?: string; priority?: number }> };
+      const rule = policy.rules.find((r) => r.id === ruleId);
       if (rule) {
         rule.decision = enabled ? "allow" : "deny";
       } else {

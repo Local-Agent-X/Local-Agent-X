@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody, safeParseBody, safeErrorMessage, corsHeaders } from "../server-utils.js";
+import { getRuntimeConfig } from "../config.js";
 
 export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -23,7 +24,7 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
   if (method === "POST" && url.pathname === "/api/whatsapp/send") {
     try {
       const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
-      const { to, message: msg } = body;
+      const { to, message: msg } = body as { to?: string; message?: string };
       if (!to || !msg) { json(400, { error: "to and message are required" }); return true; }
       const ok = await ctx.whatsappBridge.sendMessage(to, msg);
       json(ok ? 200 : 500, { ok, error: ok ? undefined : "Failed to send" });
@@ -33,7 +34,7 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
   if (method === "POST" && url.pathname === "/api/whatsapp/allowed-numbers") {
     try {
       const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
-      ctx.whatsappBridge.setAllowedNumbers(body.numbers || []);
+      ctx.whatsappBridge.setAllowedNumbers((body.numbers || []) as string[]);
       json(200, { ok: true, numbers: body.numbers || [] });
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
@@ -53,7 +54,7 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
   if (method === "POST" && url.pathname === "/api/telegram/send") {
     try {
       const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
-      const { chatId, message: msg } = body;
+      const { chatId, message: msg } = body as { chatId?: string; message?: string };
       if (!chatId || !msg) { json(400, { error: "chatId and message are required" }); return true; }
       json(await ctx.telegramBridge.sendMessage(chatId, msg) ? 200 : 500, { ok: true });
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
@@ -157,7 +158,7 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
     const voiceId = url.pathname.split("/").pop() || "";
     if (!/^[a-zA-Z0-9_-]+$/.test(voiceId)) { json(400, { error: "Invalid voice ID" }); return true; }
     try {
-      const r = await fetch(`http://127.0.0.1:7862/voices/${voiceId}/preview`);
+      const r = await fetch(`${getRuntimeConfig().xttsServerUrl}/voices/${voiceId}/preview`);
       if (r.ok && r.body) {
         const buf = Buffer.from(await r.arrayBuffer());
         res.writeHead(200, { "Content-Type": "audio/wav", "Content-Length": String(buf.length) });
@@ -168,7 +169,7 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
   }
   if (method === "POST" && url.pathname === "/api/voice/start-xtts") {
     try {
-      try { const h = await fetch("http://127.0.0.1:7862/health", { signal: AbortSignal.timeout(1000) }); if (h.ok) { json(200, { ok: true, status: "already running" }); return true; } } catch {}
+      try { const h = await fetch(`${getRuntimeConfig().xttsServerUrl}/health`, { signal: AbortSignal.timeout(1000) }); if (h.ok) { json(200, { ok: true, status: "already running" }); return true; } } catch {}
       const { spawn } = await import("node:child_process");
       const scriptPath = join(process.cwd(), "scripts", "xtts-server.py");
       const child = spawn("python", [scriptPath], { detached: true, stdio: "ignore", env: { ...process.env, XTTS_PORT: "7862" } });
@@ -180,7 +181,7 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
   }
   if (method === "POST" && url.pathname === "/api/voice/transcribe") {
     try {
-      const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+      const MAX_AUDIO_BYTES = getRuntimeConfig().maxAudioBytes;
       const chunks: Buffer[] = [];
       let audioSize = 0;
       for await (const chunk of req) {
@@ -265,7 +266,7 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
     body.builtin = false; body.installed = false; body.enabled = true;
     if (!body.endpoints) body.endpoints = [];
     if (!body.headers) body.headers = {};
-    ctx.integrations.addIntegration(body);
+    ctx.integrations.addIntegration(body as unknown as import("../integrations.js").IntegrationConfig);
     json(200, { ok: true, id: body.id }); return true;
   }
   if (method === "DELETE" && url.pathname.startsWith("/api/integrations/")) {
@@ -297,7 +298,7 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
       const r = await fetch(testUrl, { headers, signal: controller.signal });
       clearTimeout(timeout);
       json(200, { ok: r.ok, status: r.status, statusText: r.statusText });
-    } catch (e: any) { json(200, { ok: false, error: e.message }); }
+    } catch (e) { json(200, { ok: false, error: (e as Error).message }); }
     return true;
   }
 
@@ -324,7 +325,7 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
   if (method === "GET" && url.pathname === "/api/auth/status") {
     const { loadTokens } = await import("../auth.js");
     const tokens = loadTokens();
-    const operatorEntry = ctx.rbac.listTokens().find((t: any) => t.id === "operator-default");
+    const operatorEntry = ctx.rbac.listTokens().find(t => t.id === "operator-default");
     const expiresAt = operatorEntry?.expiresAt || null;
     const daysRemaining = expiresAt ? Math.max(0, Math.ceil((expiresAt - Date.now()) / (24 * 60 * 60 * 1000))) : null;
     json(200, {

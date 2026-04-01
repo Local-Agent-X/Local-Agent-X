@@ -79,7 +79,7 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     const id = appPath.split("/")[3];
     const body = await safeParseBody(req);
     if (!body) { json(400, { error: "Invalid JSON" }); return true; }
-    const updated = appReg.updateComponentValues(id, body.values || body);
+    const updated = appReg.updateComponentValues(id, (body.values || body) as Record<string, unknown>);
     if (updated.error) { json(updated.state ? 429 : 404, { error: updated.error }); return true; }
     ctx.broadcastAll({ type: "app:state", appId: id });
     json(200, { ok: true }); return true;
@@ -91,8 +91,8 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     const body = await safeParseBody(req);
     if (!body) { json(400, { error: "Invalid JSON" }); return true; }
     const result = appReg.pushEvent(id, {
-      appId: id, type: body.type || "unknown",
-      sourceComponent: body.sourceComponent, data: body.data,
+      appId: id, type: (body.type as string) || "unknown",
+      sourceComponent: body.sourceComponent as string | undefined, data: body.data,
     });
     if (result.error) { json(429, { error: result.error }); return true; }
     ctx.broadcastAll({ type: "app:event", appId: id, event: result.event });

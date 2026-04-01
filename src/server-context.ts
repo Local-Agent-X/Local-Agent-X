@@ -37,7 +37,7 @@ export interface ServerContext {
   bridgeTools: ToolDefinition[];
   getOrCreateSession: (id: string) => Session;
   saveSession: (session: Session) => void;
-  chatWs: { startChat: (sessionId: string) => { onEvent: (event: ServerEvent) => void; abort: AbortController }; getActiveChats: () => string[] };
+  chatWs: { startChat: (sessionId: string) => { onEvent: (event: ServerEvent) => void; abort: AbortController }; getActiveChats: () => string[]; stopChat: (sessionId: string) => boolean; getAbortSignal: (sessionId: string) => AbortSignal | undefined };
   broadcastAll: (event: Record<string, unknown>) => void;
   activeOnEvent: ((event: ServerEvent) => void) | undefined;
   setActiveOnEvent: (fn: ((event: ServerEvent) => void) | undefined) => void;

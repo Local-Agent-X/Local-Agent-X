@@ -1,8 +1,8 @@
-// Swarm Planner -- Automatic task decomposition and dependency resolution
+// Agency Planner -- Automatic task decomposition and dependency resolution
 
 import type {
-  SwarmTask,
-  SwarmPlan,
+  AgencyTask,
+  AgencyPlan,
   DependencyGraph,
   TaskStatus,
 } from "./types.js";
@@ -21,7 +21,7 @@ type PatternKind = "pipeline" | "fan-out" | "loop";
 interface DecompositionPattern {
   kind: PatternKind;
   match: (goal: string) => boolean;
-  apply: (goal: string) => SwarmTask[];
+  apply: (goal: string) => AgencyTask[];
 }
 
 // Heuristic keyword sets for pattern matching
@@ -76,7 +76,7 @@ const patterns: DecompositionPattern[] = [
     match: (goal) => matchKeywords(goal, PIPELINE_KEYWORDS),
     apply(goal) {
       const parts = splitGoalIntoParts(goal);
-      const tasks: SwarmTask[] = [];
+      const tasks: AgencyTask[] = [];
       let prevId: string | null = null;
       for (const part of parts) {
         const id = nextTaskId();
@@ -96,7 +96,7 @@ const patterns: DecompositionPattern[] = [
     match: (goal) => matchKeywords(goal, FANOUT_KEYWORDS),
     apply(goal) {
       const parts = splitGoalIntoParts(goal);
-      const tasks: SwarmTask[] = [];
+      const tasks: AgencyTask[] = [];
       // All parallel tasks
       const parallelIds: string[] = [];
       for (const part of parts) {
@@ -152,13 +152,13 @@ const patterns: DecompositionPattern[] = [
   },
 ];
 
-export class SwarmPlanner {
-  decompose(goal: string): SwarmTask[] {
+export class AgencyPlanner {
+  decompose(goal: string): AgencyTask[] {
     // Try each pattern in order; first match wins
     for (const pattern of patterns) {
       if (pattern.match(goal)) {
         const tasks = pattern.apply(goal);
-        EventBus.emit("swarm:decompose", { goal, pattern: pattern.kind, taskCount: tasks.length });
+        EventBus.emit("agency:decompose", { goal, pattern: pattern.kind, taskCount: tasks.length });
         return tasks;
       }
     }
@@ -173,7 +173,7 @@ export class SwarmPlanner {
     ];
   }
 
-  assignRoles(tasks: SwarmTask[]): Map<string, AgentRole> {
+  assignRoles(tasks: AgencyTask[]): Map<string, AgentRole> {
     const available = listRoles();
     const assignments = new Map<string, AgentRole>();
 
@@ -185,7 +185,7 @@ export class SwarmPlanner {
     return assignments;
   }
 
-  buildDependencyGraph(tasks: SwarmTask[]): DependencyGraph {
+  buildDependencyGraph(tasks: AgencyTask[]): DependencyGraph {
     const nodes = tasks.map((t) => t.id);
     const edges = new Map<string, string[]>();
 
@@ -197,11 +197,11 @@ export class SwarmPlanner {
     return { nodes, edges, order };
   }
 
-  optimize(plan: SwarmPlan): SwarmPlan {
+  optimize(plan: AgencyPlan): AgencyPlan {
     const tasks = [...plan.tasks];
 
     // Merge small independent tasks that share the same likely role
-    const independentGroups = new Map<string, SwarmTask[]>();
+    const independentGroups = new Map<string, AgencyTask[]>();
     for (const task of tasks) {
       if (task.dependsOn.length === 0 && task.description.length < 40) {
         const roleKey = guessRoleKey(task.description);
@@ -216,10 +216,10 @@ export class SwarmPlanner {
 
     // Merge groups of 2+ small tasks into one
     const merged: Set<string> = new Set();
-    const newTasks: SwarmTask[] = [];
+    const newTasks: AgencyTask[] = [];
     for (const [, group] of independentGroups) {
       if (group.length >= 2) {
-        const combined: SwarmTask = {
+        const combined: AgencyTask = {
           id: nextTaskId(),
           description: group.map((t) => t.description).join("; "),
           dependsOn: [],
@@ -286,7 +286,7 @@ function topologicalSort(
   }
 
   if (order.length !== nodes.length) {
-    throw new Error("Circular dependency detected in swarm task graph");
+    throw new Error("Circular dependency detected in agency task graph");
   }
 
   return order;

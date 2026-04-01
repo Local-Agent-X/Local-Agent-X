@@ -38,7 +38,7 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
   // Active agents
   if (method === "GET" && url.pathname === "/api/agents/active") {
     try {
-      const handler = (await import("../swarm/handler.js")).Handler.getInstance();
+      const handler = (await import("../agency/handler.js")).Handler.getInstance();
       json(200, handler.getAgentStatus());
     } catch { json(200, []); }
     return true;
@@ -129,7 +129,7 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     const body = await safeParseBody(req);
     const task = (body?.task as string) || "Execute your role";
     try {
-      const handler = (await import("../swarm/handler.js")).Handler.getInstance();
+      const handler = (await import("../agency/handler.js")).Handler.getInstance();
       json(200, { ok: true, agentId: handler.spawnAgent({
         name: tpl.name, role: tpl.role, task,
         systemPrompt: tpl.systemPrompt,

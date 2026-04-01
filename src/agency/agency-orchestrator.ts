@@ -1,22 +1,22 @@
 import { randomBytes } from "node:crypto";
-// Swarm Orchestrator -- Main coordinator for multi-agent task execution
+// Agency Orchestrator -- Main coordinator for multi-agent task execution
 
 import type {
-  SwarmAgent,
-  SwarmTask,
-  SwarmPlan,
-  SwarmConfig,
-  SwarmStatus,
-  SwarmResult,
+  AgencyAgent,
+  AgencyTask,
+  AgencyPlan,
+  AgencyConfig,
+  AgencyStatus,
+  AgencyResult,
   AgentStatus,
   PlanStatus,
 } from "./types.js";
-import { SwarmPlanner } from "./planner.js";
-import { SwarmMessageBus } from "./message-bus.js";
+import { AgencyPlanner } from "./planner.js";
+import { AgencyMessageBus } from "./message-bus.js";
 import { getRole } from "./agent-roles.js";
 import { EventBus } from "../event-bus.js";
 
-type ProgressCallback = (status: SwarmStatus) => void;
+type ProgressCallback = (status: AgencyStatus) => void;
 
 let agentCounter = 0;
 function nextAgentId(): string {
@@ -27,11 +27,11 @@ function planId(): string {
   return `plan-${Date.now().toString(36)}-${randomBytes(4).toString("hex")}`;
 }
 
-export class SwarmOrchestrator {
-  private config: SwarmConfig;
-  private planner: SwarmPlanner;
-  private messageBus: SwarmMessageBus;
-  private activePlan: SwarmPlan | null = null;
+export class AgencyOrchestrator {
+  private config: AgencyConfig;
+  private planner: AgencyPlanner;
+  private messageBus: AgencyMessageBus;
+  private activePlan: AgencyPlan | null = null;
   private cancelled = false;
   private progressCallbacks: ProgressCallback[] = [];
   private startTime = 0;
@@ -40,17 +40,17 @@ export class SwarmOrchestrator {
   private runningCount = 0;
   private abortController: AbortController | null = null;
 
-  constructor(config: SwarmConfig) {
+  constructor(config: AgencyConfig) {
     this.config = config;
-    this.planner = new SwarmPlanner();
-    this.messageBus = new SwarmMessageBus();
+    this.planner = new AgencyPlanner();
+    this.messageBus = new AgencyMessageBus();
   }
 
-  planSwarm(goal: string): SwarmPlan {
+  planOperation(goal: string): AgencyPlan {
     const tasks = this.planner.decompose(goal);
     const roleMap = this.planner.assignRoles(tasks);
 
-    const agents: SwarmAgent[] = [];
+    const agents: AgencyAgent[] = [];
     for (const [taskId, role] of roleMap) {
       const agent = this.spawnAgent(role.name, role.systemPrompt, role.suggestedTools);
       const task = tasks.find((t) => t.id === taskId);
@@ -60,7 +60,7 @@ export class SwarmOrchestrator {
       agents.push(agent);
     }
 
-    let plan: SwarmPlan = {
+    let plan: AgencyPlan = {
       id: planId(),
       goal,
       tasks,
@@ -74,7 +74,7 @@ export class SwarmOrchestrator {
     return plan;
   }
 
-  async executeSwarm(plan: SwarmPlan): Promise<SwarmResult> {
+  async executeOperation(plan: AgencyPlan): Promise<AgencyResult> {
     this.activePlan = plan;
     this.cancelled = false;
     this.startTime = Date.now();
@@ -84,7 +84,7 @@ export class SwarmOrchestrator {
     this.abortController = new AbortController();
 
     plan.status = "running";
-    await EventBus.emit("swarm:start", { planId: plan.id, goal: plan.goal });
+    await EventBus.emit("agency:start", { planId: plan.id, goal: plan.goal });
     this.emitProgress();
 
     const graph = this.planner.buildDependencyGraph(plan.tasks);
@@ -96,7 +96,7 @@ export class SwarmOrchestrator {
       while (completed.size < plan.tasks.length) {
         if (this.cancelled) {
           plan.status = "failed";
-          await EventBus.emit("swarm:error", { planId: plan.id, error: "Cancelled" });
+          await EventBus.emit("agency:error", { planId: plan.id, error: "Cancelled" });
           break;
         }
 
@@ -133,7 +133,7 @@ export class SwarmOrchestrator {
 
               // Share result via message bus
               this.messageBus.publishContext(task.id, outcome.value);
-              await EventBus.emit("swarm:task-complete", {
+              await EventBus.emit("agency:task-complete", {
                 planId: plan.id,
                 taskId: task.id,
               });
@@ -145,7 +145,7 @@ export class SwarmOrchestrator {
                 outcome.status === "rejected" ? String(outcome.reason) : "No result";
               task.result = `FAILED: ${reason}`;
               results.set(task.id, task.result);
-              await EventBus.emit("swarm:error", {
+              await EventBus.emit("agency:error", {
                 planId: plan.id,
                 taskId: task.id,
                 error: reason,
@@ -186,7 +186,7 @@ export class SwarmOrchestrator {
         }
       }
 
-      const result: SwarmResult = {
+      const result: AgencyResult = {
         planId: plan.id,
         goal: plan.goal,
         success: plan.status === "completed",
@@ -197,7 +197,7 @@ export class SwarmOrchestrator {
         summary: summaryParts.join("\n\n") || "No results produced.",
       };
 
-      await EventBus.emit("swarm:complete", {
+      await EventBus.emit("agency:complete", {
         planId: plan.id,
         success: result.success,
         elapsed: result.elapsed,
@@ -212,7 +212,7 @@ export class SwarmOrchestrator {
       return result;
     } catch (err) {
       plan.status = "failed";
-      await EventBus.emit("swarm:error", {
+      await EventBus.emit("agency:error", {
         planId: plan.id,
         error: String(err),
       });
@@ -224,7 +224,7 @@ export class SwarmOrchestrator {
         tokensUsed: this.tokensUsed,
         apiCalls: this.apiCalls,
         elapsed: Date.now() - this.startTime,
-        summary: `Swarm failed: ${String(err)}`,
+        summary: `Operation failed: ${String(err)}`,
       };
     }
   }
@@ -233,7 +233,7 @@ export class SwarmOrchestrator {
     role: string,
     systemPrompt: string,
     tools: string[]
-  ): SwarmAgent {
+  ): AgencyAgent {
     if (
       this.activePlan &&
       this.activePlan.agents.length >= this.config.maxAgents
@@ -244,7 +244,7 @@ export class SwarmOrchestrator {
     }
 
     const roleDef = getRole(role);
-    const agent: SwarmAgent = {
+    const agent: AgencyAgent = {
       id: nextAgentId(),
       name: `${role}-${Date.now().toString(36)}`,
       role,
@@ -257,7 +257,7 @@ export class SwarmOrchestrator {
     this.messageBus.subscribe(agent.id, (msg) => {
       if (msg.type === "request-info") {
         // Agents can respond to info requests through the bus
-        EventBus.emit("swarm:info-request", {
+        EventBus.emit("agency:info-request", {
           from: msg.from,
           to: agent.id,
           payload: msg.payload,
@@ -268,7 +268,7 @@ export class SwarmOrchestrator {
     return agent;
   }
 
-  assignTask(agentId: string, task: SwarmTask): void {
+  assignTask(agentId: string, task: AgencyTask): void {
     if (!this.activePlan) return;
     const agent = this.activePlan.agents.find((a) => a.id === agentId);
     if (!agent) throw new Error(`Agent ${agentId} not found`);
@@ -278,7 +278,7 @@ export class SwarmOrchestrator {
     agent.status = "idle";
   }
 
-  getStatus(): SwarmStatus {
+  getStatus(): AgencyStatus {
     const plan = this.activePlan;
     if (!plan) {
       return {
@@ -313,7 +313,7 @@ export class SwarmOrchestrator {
     };
   }
 
-  cancelSwarm(): void {
+  cancelOperation(): void {
     this.cancelled = true;
     if (this.abortController) {
       this.abortController.abort();
@@ -340,14 +340,14 @@ export class SwarmOrchestrator {
     this.progressCallbacks.push(callback);
   }
 
-  getMessageBus(): SwarmMessageBus {
+  getMessageBus(): AgencyMessageBus {
     return this.messageBus;
   }
 
   // Internal: execute a single task with its assigned agent
   private async executeTask(
-    plan: SwarmPlan,
-    task: SwarmTask,
+    plan: AgencyPlan,
+    task: AgencyTask,
     previousResults: Map<string, string>
   ): Promise<string> {
     if (this.cancelled) throw new Error("Cancelled");
@@ -362,7 +362,7 @@ export class SwarmOrchestrator {
       agent.currentTask = task.id;
     }
 
-    await EventBus.emit("swarm:task-start", {
+    await EventBus.emit("agency:task-start", {
       planId: plan.id,
       taskId: task.id,
       agentId: task.assignedTo,
@@ -421,12 +421,12 @@ export class SwarmOrchestrator {
   // through agent.ts. This returns a placeholder indicating the task prompt
   // that should be sent to the configured provider/model.
   private async runHeadlessAgent(
-    task: SwarmTask,
+    task: AgencyTask,
     prompt: string,
-    agent: SwarmAgent | undefined
+    agent: AgencyAgent | undefined
   ): Promise<string> {
     // Emit the task for external execution. The server/agent layer hooks into
-    // "swarm:agent-run" to actually call the LLM and return the response.
+    // "agency:agent-run" to actually call the LLM and return the response.
     const responsePromise = new Promise<string>((resolve, reject) => {
       const timeoutHandle = setTimeout(() => {
         reject(new Error(`Agent task timed out: ${task.id}`));
@@ -436,7 +436,7 @@ export class SwarmOrchestrator {
         const d = data as { taskId: string; result?: string; error?: string; tokens?: number };
         if (d.taskId !== task.id) return;
         clearTimeout(timeoutHandle);
-        EventBus.off("swarm:agent-result", handler);
+        EventBus.off("agency:agent-result", handler);
         if (d.tokens) this.tokensUsed += d.tokens;
         if (d.error) {
           reject(new Error(d.error));
@@ -445,10 +445,10 @@ export class SwarmOrchestrator {
         }
       };
 
-      EventBus.on("swarm:agent-result", handler);
+      EventBus.on("agency:agent-result", handler);
     });
 
-    await EventBus.emit("swarm:agent-run", {
+    await EventBus.emit("agency:agent-run", {
       taskId: task.id,
       agentId: agent?.id,
       role: agent?.role,

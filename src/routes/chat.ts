@@ -192,7 +192,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         historyToSend = [{ role: "system", content: buildSummary(session.messages.slice(0, cutPoint)) } as ChatCompletionMessageParam, ...session.messages.slice(cutPoint)];
       }
 
-      try { const { Handler: AO } = await import("../swarm/handler.js"); AO.getInstance().currentSessionId = sessionId; } catch {}
+      try { const { Handler: AO } = await import("../agency/handler.js"); AO.getInstance().currentSessionId = sessionId; } catch {}
 
       const result = await enqueue("main", () => runAgent(message, sanitizeHistory(historyToSend), {
         apiKey,

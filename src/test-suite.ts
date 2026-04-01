@@ -138,7 +138,7 @@ async function testModuleImports(): Promise<void> {
     "./demo-runner.js",
     "./benchmark-suite.js",
     "./swarm/index.js",
-    "./swarm/primal.js",
+    "./swarm/handler.js",
     "./security-tests.js",
     "./threat-dashboard.js",
     "./ari-policy-editor.js",
@@ -190,7 +190,7 @@ async function testToolRegistration(): Promise<void> {
   const toolSources: Record<string, () => Promise<string[]>> = {
     "base tools": async () => { const m = await import("./tools.js"); const t = typeof (m.allTools as any) === "function" ? (m.allTools as any)() : m.allTools; return Array.isArray(t) ? t.map((x: any) => x.name || "") : []; },
     "swarm tools": async () => { const m = await import("./swarm/index.js"); return m.createSwarmTools().map((t: any) => t.name); },
-    "primal tools": async () => { const m = await import("./swarm/primal.js"); return m.createPrimalTools().map((t: any) => t.name); },
+    "handler tools": async () => { const m = await import("./swarm/handler.js"); return m.createHandlerTools().map((t: any) => t.name); },
     "mission tools": async () => { const m = await import("./missions.js"); return m.createMissionTools().map((t: any) => t.name); },
     "browser tools": async () => { const m = await import("./browser-tools.js"); return m.createBrowserTools(() => "default").map((t: any) => t.name); },
   };

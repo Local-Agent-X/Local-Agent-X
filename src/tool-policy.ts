@@ -310,7 +310,7 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     { id: "allow-cron", tool: "cron_*", decision: "allow", reason: "Scheduled missions (legacy)", priority: 50 },
     { id: "allow-schedule", tool: "schedule_*", decision: "allow", reason: "Scheduled missions", priority: 50 },
 
-    // Agent delegation — required for Primal orchestrator
+    // Agent delegation — required for Agent Handler
     { id: "allow-agent-spawn", tool: "agent_spawn", decision: "allow", reason: "Agent delegation", priority: 50 },
     { id: "allow-delegate", tool: "delegate", decision: "allow", reason: "Task delegation", priority: 50 },
     { id: "allow-agent-ops", tool: "agent_*", decision: "allow", reason: "Agent management", priority: 50 },
@@ -338,6 +338,53 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     // Build app / create page
     { id: "allow-build-app", tool: "build_app", decision: "allow", reason: "Build workspace apps", priority: 50 },
     { id: "allow-create-page", tool: "create_page", decision: "allow", reason: "Create custom pages", priority: 50 },
+
+    // ── Business & Personal Assistant tools ──
+
+    // SQL — rate limited, readonly by default
+    { id: "allow-sql", tool: "sql_*", decision: "allow", reason: "SQL database access (readonly default)", priority: 40, constraints: { maxCallsPerSession: 50 } },
+
+    // Email
+    { id: "allow-email", tool: "email_*", decision: "allow", reason: "Email read/send (API token gated)", priority: 50 },
+
+    // Calendar
+    { id: "allow-calendar", tool: "calendar_*", decision: "allow", reason: "Calendar management (API token gated)", priority: 50 },
+
+    // Contacts
+    { id: "allow-contacts", tool: "contacts_*", decision: "allow", reason: "Contact management", priority: 50 },
+
+    // Cloud storage
+    { id: "allow-cloud", tool: "cloud_*", decision: "allow", reason: "Cloud file access (API token gated)", priority: 50 },
+
+    // Notifications
+    { id: "allow-notify", tool: "notify*", decision: "allow", reason: "Push notifications", priority: 50 },
+
+    // Spreadsheets
+    { id: "allow-spreadsheet", tool: "spreadsheet_*", decision: "allow", reason: "Spreadsheet read/write", priority: 50 },
+
+    // PDF
+    { id: "allow-pdf", tool: "pdf_*", decision: "allow", reason: "PDF read/generate/merge/fill", priority: 50 },
+
+    // Payments — rate limited for safety
+    { id: "allow-payment", tool: "payment_*", decision: "allow", reason: "Payment/invoice operations (API key gated)", priority: 40, constraints: { maxCallsPerSession: 30 } },
+
+    // SMS — rate limited
+    { id: "allow-sms", tool: "sms_*", decision: "allow", reason: "SMS send/receive via Twilio", priority: 40, constraints: { maxCallsPerSession: 20 } },
+
+    // Voice
+    { id: "allow-voice", tool: "voice_*", decision: "allow", reason: "Voice transcription, TTS, calls", priority: 40, constraints: { maxCallsPerSession: 20 } },
+
+    // Clipboard
+    { id: "allow-clipboard", tool: "clipboard_*", decision: "allow", reason: "System clipboard access", priority: 50 },
+
+    // CRM
+    { id: "allow-crm", tool: "crm_*", decision: "allow", reason: "CRM contact/deal management", priority: 50 },
+
+    // Bookkeeping
+    { id: "allow-accounting", tool: "accounting_*", decision: "allow", reason: "Bookkeeping/accounting operations", priority: 50 },
+
+    // E-commerce
+    { id: "allow-shop", tool: "shop_*", decision: "allow", reason: "E-commerce order/product/customer management", priority: 50 },
 
     // ── Everything else is DENIED by default ──
     // No catch-all "allow *" rule. Unknown tools are blocked.

@@ -1,4 +1,4 @@
-// Primal Orchestrator -- Master agent that stays responsive and delegates all work
+// Agent Handler -- Master agent that stays responsive and delegates all field work
 
 import { EventBus } from "../event-bus.js";
 import type {
@@ -10,7 +10,7 @@ import { SwarmMessageBus } from "./message-bus.js";
 
 // -- Types ------------------------------------------------------------------
 
-export interface PrimalAgent extends SwarmAgent {
+export interface FieldAgent extends SwarmAgent {
   output: string[];
   streamCallback?: (agentId: string, chunk: string) => void;
   abortController?: AbortController;
@@ -21,7 +21,7 @@ export interface PrimalAgent extends SwarmAgent {
   templateId?: string;
 }
 
-export interface PrimalAgentStatus {
+export interface FieldAgentStatus {
   id: string;
   name: string;
   role: string;
@@ -36,7 +36,7 @@ export interface PrimalAgentStatus {
 
 export interface DelegationResult {
   planId: string;
-  agents: PrimalAgentStatus[];
+  agents: FieldAgentStatus[];
   tasks: string[];
 }
 
@@ -71,12 +71,12 @@ function err(content: string): ToolResult {
   return { content, isError: true };
 }
 
-// -- PrimalOrchestrator (singleton) -----------------------------------------
+// -- Handler (singleton) --------------------------------------------------
 
-let singleton: PrimalOrchestrator | null = null;
+let singleton: Handler | null = null;
 
-export class PrimalOrchestrator {
-  private agents = new Map<string, PrimalAgent>();
+export class Handler {
+  private agents = new Map<string, FieldAgent>();
   private messageBus: SwarmMessageBus;
   private updateCallbacks: AgentUpdateCallback[] = [];
   /** Current parent session ID — set by the server before each chat turn */
@@ -86,9 +86,9 @@ export class PrimalOrchestrator {
     this.messageBus = new SwarmMessageBus();
   }
 
-  static getInstance(): PrimalOrchestrator {
+  static getInstance(): Handler {
     if (!singleton) {
-      singleton = new PrimalOrchestrator();
+      singleton = new Handler();
     }
     return singleton;
   }
@@ -105,9 +105,9 @@ export class PrimalOrchestrator {
   // -- Spawn ----------------------------------------------------------------
 
   spawnAgent(config: SpawnConfig): string {
-    const agentId = uid("primal-agent");
+    const agentId = uid("field-agent");
 
-    const agent: PrimalAgent = {
+    const agent: FieldAgent = {
       id: agentId,
       name: config.name,
       role: config.role,
@@ -130,7 +130,7 @@ export class PrimalOrchestrator {
       }
     });
 
-    EventBus.emit("primal:agent-spawn", {
+    EventBus.emit("handler:agent-spawn", {
       agentId,
       name: config.name,
       role: config.role,
@@ -158,7 +158,7 @@ export class PrimalOrchestrator {
 
     this.notifyUpdate(agentId, { type: "status", data: `Redirected: ${newInstruction}` });
 
-    EventBus.emit("primal:agent-redirect", {
+    EventBus.emit("handler:agent-redirect", {
       agentId,
       newInstruction,
     });
@@ -180,7 +180,7 @@ export class PrimalOrchestrator {
 
     this.notifyUpdate(agentId, { type: "status", data: "paused" });
 
-    EventBus.emit("primal:agent-pause", { agentId });
+    EventBus.emit("handler:agent-pause", { agentId });
   }
 
   resumeAgent(agentId: string): void {
@@ -198,7 +198,7 @@ export class PrimalOrchestrator {
 
     this.notifyUpdate(agentId, { type: "status", data: "resumed" });
 
-    EventBus.emit("primal:agent-resume", { agentId });
+    EventBus.emit("handler:agent-resume", { agentId });
   }
 
   // -- Cancel ---------------------------------------------------------------
@@ -221,12 +221,12 @@ export class PrimalOrchestrator {
 
     this.notifyUpdate(agentId, { type: "status", data: "cancelled" });
 
-    EventBus.emit("primal:agent-cancel", { agentId });
+    EventBus.emit("handler:agent-cancel", { agentId });
   }
 
   // -- Status / Output ------------------------------------------------------
 
-  getAgentStatus(agentId?: string): PrimalAgentStatus | PrimalAgentStatus[] {
+  getAgentStatus(agentId?: string): FieldAgentStatus | FieldAgentStatus[] {
     if (agentId) {
       const agent = this.agents.get(agentId);
       if (!agent) throw new Error(`Agent ${agentId} not found`);
@@ -256,7 +256,7 @@ export class PrimalOrchestrator {
     agent.messageQueue.push(message);
     agent.output.push(`[message-in] ${message}`);
 
-    this.messageBus.send("primal", agentId, "share-context", message);
+    this.messageBus.send("handler", agentId, "share-context", message);
 
     this.notifyUpdate(agentId, { type: "output", data: message });
   }
@@ -266,7 +266,7 @@ export class PrimalOrchestrator {
   delegateTask(goal: string): DelegationResult {
     const planId = uid("plan");
     const segments = this.decompose(goal);
-    const spawned: PrimalAgentStatus[] = [];
+    const spawned: FieldAgentStatus[] = [];
     const taskList: string[] = [];
 
     for (const seg of segments) {
@@ -280,14 +280,14 @@ export class PrimalOrchestrator {
       taskList.push(seg.task);
     }
 
-    EventBus.emit("primal:delegation", { planId, goal, agentCount: spawned.length });
+    EventBus.emit("handler:delegation", { planId, goal, agentCount: spawned.length });
 
     return { planId, agents: spawned, tasks: taskList };
   }
 
   // -- Private --------------------------------------------------------------
 
-  private buildStatus(agent: PrimalAgent): PrimalAgentStatus {
+  private buildStatus(agent: FieldAgent): FieldAgentStatus {
     const total = agent.output.length;
     const done = agent.status === "done" || agent.status === "error";
     return {
@@ -362,7 +362,7 @@ export class PrimalOrchestrator {
             }
 
             clearTimeout(timeout);
-            EventBus.off("primal:agent-result", handler);
+            EventBus.off("handler:agent-result", handler);
 
             if (d.tokens) agent.tokensUsed += d.tokens;
 
@@ -373,16 +373,16 @@ export class PrimalOrchestrator {
             }
           };
 
-          EventBus.on("primal:agent-result", handler);
+          EventBus.on("handler:agent-result", handler);
 
           if (agent.abortController?.signal.aborted) {
             clearTimeout(timeout);
-            EventBus.off("primal:agent-result", handler);
+            EventBus.off("handler:agent-result", handler);
             reject(new Error("Aborted"));
           }
         });
 
-        await EventBus.emit("primal:agent-run", {
+        await EventBus.emit("handler:agent-run", {
           agentId,
           name: agent.name,
           role: agent.role,
@@ -401,7 +401,7 @@ export class PrimalOrchestrator {
 
         this.notifyUpdate(agentId, { type: "complete", data: result });
 
-        EventBus.emit("primal:agent-done", { agentId, result });
+        EventBus.emit("handler:agent-done", { agentId, result });
       } catch (e) {
         const msg = String(e);
         if (!agent.abortController?.signal.aborted) {
@@ -409,7 +409,7 @@ export class PrimalOrchestrator {
           agent.result = msg;
           agent.output.push(`[error] ${msg}`);
           this.notifyUpdate(agentId, { type: "error", data: msg });
-          EventBus.emit("primal:agent-error", { agentId, error: msg });
+          EventBus.emit("handler:agent-error", { agentId, error: msg });
         }
       }
     };
@@ -452,9 +452,9 @@ export class PrimalOrchestrator {
   }
 }
 
-// -- Primal Tools -----------------------------------------------------------
+// -- Handler Tools ---------------------------------------------------------------
 
-export function createPrimalTools(): ToolDefinition[] {
+export function createHandlerTools(): ToolDefinition[] {
   return [
     {
       name: "agent_spawn",
@@ -478,16 +478,16 @@ export function createPrimalTools(): ToolDefinition[] {
       },
       async execute(args) {
         try {
-          const primal = PrimalOrchestrator.getInstance();
-          const agentId = primal.spawnAgent({
+          const handler = Handler.getInstance();
+          const agentId = handler.spawnAgent({
             name: String(args.name),
             role: String(args.role),
             task: String(args.task),
             systemPrompt: args.system_prompt ? String(args.system_prompt) : undefined,
             tools: Array.isArray(args.tools) ? args.tools.map(String) : undefined,
-            parentSessionId: primal.currentSessionId || undefined,
+            parentSessionId: handler.currentSessionId || undefined,
           });
-          const status = primal.getAgentStatus(agentId) as PrimalAgentStatus;
+          const status = handler.getAgentStatus(agentId) as FieldAgentStatus;
           return ok(
             `Agent spawned: ${agentId}\n` +
             `Name: ${status.name}\n` +
@@ -513,8 +513,8 @@ export function createPrimalTools(): ToolDefinition[] {
       },
       async execute(args) {
         try {
-          const primal = PrimalOrchestrator.getInstance();
-          primal.redirectAgent(String(args.agent_id), String(args.instruction));
+          const handler = Handler.getInstance();
+          handler.redirectAgent(String(args.agent_id), String(args.instruction));
           return ok(`Agent ${args.agent_id} redirected to: ${args.instruction}`);
         } catch (e) {
           return err(`Failed to redirect agent: ${String(e)}`);
@@ -533,8 +533,8 @@ export function createPrimalTools(): ToolDefinition[] {
       },
       async execute(args) {
         try {
-          const primal = PrimalOrchestrator.getInstance();
-          primal.pauseAgent(String(args.agent_id));
+          const handler = Handler.getInstance();
+          handler.pauseAgent(String(args.agent_id));
           return ok(`Agent ${args.agent_id} paused.`);
         } catch (e) {
           return err(`Failed to pause agent: ${String(e)}`);
@@ -553,8 +553,8 @@ export function createPrimalTools(): ToolDefinition[] {
       },
       async execute(args) {
         try {
-          const primal = PrimalOrchestrator.getInstance();
-          primal.resumeAgent(String(args.agent_id));
+          const handler = Handler.getInstance();
+          handler.resumeAgent(String(args.agent_id));
           return ok(`Agent ${args.agent_id} resumed.`);
         } catch (e) {
           return err(`Failed to resume agent: ${String(e)}`);
@@ -573,8 +573,8 @@ export function createPrimalTools(): ToolDefinition[] {
       },
       async execute(args) {
         try {
-          const primal = PrimalOrchestrator.getInstance();
-          primal.cancelAgent(String(args.agent_id));
+          const handler = Handler.getInstance();
+          handler.cancelAgent(String(args.agent_id));
           return ok(`Agent ${args.agent_id} cancelled.`);
         } catch (e) {
           return err(`Failed to cancel agent: ${String(e)}`);
@@ -594,8 +594,8 @@ export function createPrimalTools(): ToolDefinition[] {
       },
       async execute(args) {
         try {
-          const primal = PrimalOrchestrator.getInstance();
-          const result = primal.getAgentStatus(
+          const handler = Handler.getInstance();
+          const result = handler.getAgentStatus(
             args.agent_id ? String(args.agent_id) : undefined
           );
 
@@ -640,8 +640,8 @@ export function createPrimalTools(): ToolDefinition[] {
       },
       async execute(args) {
         try {
-          const primal = PrimalOrchestrator.getInstance();
-          const output = primal.getAgentOutput(String(args.agent_id));
+          const handler = Handler.getInstance();
+          const output = handler.getAgentOutput(String(args.agent_id));
           const tail = args.tail ? Number(args.tail) : 50;
           const lines = output.slice(-tail);
           if (lines.length === 0) return ok("No output yet.");
@@ -664,11 +664,11 @@ export function createPrimalTools(): ToolDefinition[] {
       },
       async execute(args) {
         try {
-          const primal = PrimalOrchestrator.getInstance();
-          primal.messageAgent(String(args.agent_id), String(args.message));
+          const handler = Handler.getInstance();
+          handler.messageAgent(String(args.agent_id), String(args.message));
           // Also emit event to unblock paused agents waiting for user input
           const eventBus = EventBus.getInstance();
-          eventBus.emit("primal:agent-user-input", {
+          eventBus.emit("handler:agent-user-input", {
             agentId: String(args.agent_id),
             message: String(args.message),
           });
@@ -692,8 +692,8 @@ export function createPrimalTools(): ToolDefinition[] {
       },
       async execute(args) {
         try {
-          const primal = PrimalOrchestrator.getInstance();
-          const result = primal.delegateTask(String(args.goal));
+          const handler = Handler.getInstance();
+          const result = handler.delegateTask(String(args.goal));
           const agentLines = result.agents.map(
             (a) => `  ${a.id} [${a.role}] "${a.name}" -> ${a.currentTask}`
           );

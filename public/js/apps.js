@@ -30,7 +30,7 @@ async function loadApps() {
       const visibilityIcon = a.visibility === 'private' ? '&#128274;' : a.visibility === 'public' ? '&#127760;' : '&#128101;';
 
       return `
-      <div class="app-card${statusClass}" onclick="openApp('${esc(a.id)}')">
+      <div class="app-card${statusClass}" onclick="openApp('${esc(a.url || '/apps/' + a.id)}')">
         <div class="app-card-header">
           <span class="app-card-name">${esc(a.name)}</span>
           <div style="display:flex;gap:6px;align-items:center">
@@ -44,7 +44,7 @@ async function loadApps() {
           <span title="${esc(a.visibility || 'team')}">${visibilityIcon} ${timeAgo(a.updatedAt)}</span>
         </div>
         <div class="app-card-actions" onclick="event.stopPropagation()">
-          <button class="app-action-btn" onclick="openApp('${esc(a.id)}')" title="Open in new tab">Open</button>
+          <button class="app-action-btn" onclick="openApp('${esc(a.url || '/apps/' + a.id)}')" title="Open in new tab">Open</button>
           <button class="app-action-btn" onclick="exportApp('${esc(a.id)}','${esc(a.name)}')" title="Export as standalone HTML">Export</button>
           ${a.status === 'active'
             ? `<button class="app-action-btn" onclick="suspendApp('${esc(a.id)}','${esc(a.name)}')" title="Suspend app">Suspend</button>`
@@ -89,8 +89,10 @@ async function loadCustomPages() {
   }
 }
 
-function openApp(id) {
-  window.open('/apps/' + id, '_blank');
+function openApp(urlOrId) {
+  // Accept full URL or just an ID
+  const target = urlOrId.startsWith('http') || urlOrId.startsWith('/') ? urlOrId : '/apps/' + urlOrId;
+  window.open(target, '_blank');
 }
 
 async function deleteApp(id, name) {

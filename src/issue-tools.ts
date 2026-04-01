@@ -461,7 +461,7 @@ const agentWakeup: ToolDefinition = {
       `Message: "${message}"\n\n` +
       `First call agent_whoami with agentId="${targetId}" to see your full context, then check issue ${issueId} and respond appropriately.`;
 
-    EventBus.emit("primal:agent-run", {
+    EventBus.emit("handler:agent-run", {
       agentId: `wake-${targetId}-${Date.now().toString(36)}`,
       name: target.name,
       role: target.role,

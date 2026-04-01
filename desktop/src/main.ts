@@ -23,10 +23,15 @@ import { createTray, destroyTray } from "./tray";
 import { registerAutostart, unregisterAutostart, isAutostartEnabled } from "./autostart";
 
 // ── Chromium flags (must be set before app.ready) ─────────
-app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", "http://127.0.0.1:7007,http://127.0.0.1:6868,http://127.0.0.1:6969,http://127.0.0.1");
+// Only mark our own server origin as secure — not every loopback port.
+// The port is read from config at runtime, but Chromium flags must be set
+// before app.ready, so we read the config file early here.
+const _earlyPort = (() => { try { const p = require("path"); const f = require("fs"); const c = p.join(require("os").homedir(), ".sax", "config.json"); if (f.existsSync(c)) { return JSON.parse(f.readFileSync(c, "utf-8")).port || 7007; } } catch {} return 7007; })();
+app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", `http://127.0.0.1:${_earlyPort}`);
 app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
 app.commandLine.appendSwitch("enable-media-stream");
-app.commandLine.appendSwitch("use-fake-ui-for-media-stream"); // Auto-grant mic without prompt
+// Removed use-fake-ui-for-media-stream — the permission request handler
+// in app.ready now controls media grants explicitly.
 
 // ── Config ────────────────────────────────────────────────
 
@@ -367,7 +372,9 @@ function createWindow(): void {
       return { action: "deny" };
     }
     // Local app links (e.g. /apps/xyz) → open in frameless Electron window with auth
-    if (url.includes("127.0.0.1")) {
+    // Only attach token to our own server origin, not arbitrary loopback services
+    const appOrigin = `http://127.0.0.1:${saxConfig.port}`;
+    if (url.startsWith(appOrigin)) {
       const appWin = new BrowserWindow({
         width: 1000,
         height: 700,
@@ -381,6 +388,7 @@ function createWindow(): void {
           height: 32,
         },
         webPreferences: {
+          preload: join(__dirname, "preload.js"),
           contextIsolation: true,
           nodeIntegration: false,
           sandbox: true,
@@ -500,12 +508,28 @@ function setupIPC(): void {
 app.on("ready", async () => {
   saxConfig = loadSAXConfig();
 
-  // Grant mic/camera permissions globally before any window is created
+  // Grant only the permissions the app actually needs — not a blanket allow
   const { session } = require("electron");
-  session.defaultSession.setPermissionRequestHandler((_wc: any, permission: string, callback: (granted: boolean) => void) => {
-    callback(true); // Allow all permissions (single-user local app)
+  const ALLOWED_PERMISSIONS = new Set([
+    "media",            // mic/camera for voice features
+    "mediaKeySystem",   // DRM key system (media playback)
+    "notifications",    // desktop notifications
+    "clipboard-read",   // paste support
+    "clipboard-sanitized-write",
+  ]);
+  const APP_ORIGIN = `http://127.0.0.1:${saxConfig.port}`;
+  session.defaultSession.setPermissionRequestHandler((webContents: any, permission: string, callback: (granted: boolean) => void) => {
+    const requestOrigin = webContents?.getURL?.() || "";
+    if (requestOrigin.startsWith(APP_ORIGIN) && ALLOWED_PERMISSIONS.has(permission)) {
+      callback(true);
+    } else {
+      console.warn(`[desktop] Denied permission "${permission}" for ${requestOrigin}`);
+      callback(false);
+    }
   });
-  session.defaultSession.setPermissionCheckHandler(() => true);
+  session.defaultSession.setPermissionCheckHandler((_wc: any, permission: string, requestingOrigin: string) => {
+    return requestingOrigin.startsWith(APP_ORIGIN) && ALLOWED_PERMISSIONS.has(permission);
+  });
 
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {

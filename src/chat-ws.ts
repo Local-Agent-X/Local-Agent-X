@@ -120,6 +120,35 @@ export function setupChatWebSocket(server: Server, authToken: string) {
         // but we register the client's subscription
         subscriptions.add(sessionId);
       }
+
+      // Agent redirect: forward to Handler
+      if (type === "agent-redirect" && msg.agentId && msg.instruction) {
+        try {
+          const { Handler } = require("./agency/handler.js");
+          const handler = Handler.getInstance();
+          handler.redirectAgent(String(msg.agentId), String(msg.instruction));
+        } catch (e) {
+          ws.send(JSON.stringify({ type: "error", message: `Redirect failed: ${e}` }));
+        }
+      }
+
+      // Agent control: pause/resume/cancel
+      if (type === "agent-control" && msg.agentId && msg.action) {
+        try {
+          const { Handler } = require("./agency/handler.js");
+          const handler = Handler.getInstance();
+          const agentId = String(msg.agentId);
+          switch (msg.action) {
+            case "pause":  handler.pauseAgent(agentId); break;
+            case "resume": handler.resumeAgent(agentId); break;
+            case "cancel": handler.cancelAgent(agentId); break;
+            default:
+              ws.send(JSON.stringify({ type: "error", message: `Unknown action: ${msg.action}` }));
+          }
+        } catch (e) {
+          ws.send(JSON.stringify({ type: "error", message: `Agent control failed: ${e}` }));
+        }
+      }
     });
 
     ws.on("close", () => {
@@ -176,6 +205,23 @@ export function setupChatWebSocket(server: Server, authToken: string) {
      */
     getAbortSignal(sessionId: string): AbortSignal | undefined {
       return activeChats.get(sessionId)?.abortController.signal;
+    },
+
+    /**
+     * Stop a chat by session ID (used by the HTTP fallback when WS is unavailable).
+     * Returns true if the chat was active and aborted.
+     */
+    stopChat(sessionId: string): boolean {
+      const chat = activeChats.get(sessionId);
+      if (chat && !chat.done) {
+        chat.abortController.abort();
+        broadcastToSession(sessionId, { type: "error", message: "Stopped by user" });
+        broadcastToSession(sessionId, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+        chat.done = true;
+        broadcastActiveChats();
+        return true;
+      }
+      return false;
     },
 
     /**

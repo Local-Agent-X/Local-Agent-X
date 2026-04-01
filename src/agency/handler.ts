@@ -19,6 +19,8 @@ export interface FieldAgent extends AgencyAgent {
   tokensUsed: number;
   messageQueue: string[];
   templateId?: string;
+  /** Captured at spawn time to avoid the singleton race on Handler.currentSessionId */
+  parentSessionId?: string;
 }
 
 export interface FieldAgentStatus {
@@ -106,6 +108,8 @@ export class Handler {
 
   spawnAgent(config: SpawnConfig): string {
     const agentId = uid("field-agent");
+    // Capture the session ID at spawn time so concurrent chats don't cross-pollinate
+    const parentSessionId = config.parentSessionId || this.currentSessionId || "";
 
     const agent: FieldAgent = {
       id: agentId,
@@ -120,6 +124,7 @@ export class Handler {
       tokensUsed: 0,
       messageQueue: [],
       templateId: config.templateId,
+      parentSessionId,
     };
 
     this.agents.set(agentId, agent);
@@ -136,7 +141,7 @@ export class Handler {
       role: config.role,
       task: config.task,
       systemPrompt: config.systemPrompt || "",
-      parentSessionId: config.parentSessionId,
+      parentSessionId,
       parentAgentId: config.parentAgentId || null,
       templateId: config.templateId || null,
     });
@@ -389,7 +394,7 @@ export class Handler {
           systemPrompt: agent.systemPrompt,
           tools: agent.tools,
           task: agent.currentTask,
-          parentSessionId: this.currentSessionId || undefined,
+          parentSessionId: agent.parentSessionId || undefined,
           templateId: agent.templateId,
         });
 

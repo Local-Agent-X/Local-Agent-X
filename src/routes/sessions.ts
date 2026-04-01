@@ -151,6 +151,21 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     } catch (e) { json(404, { error: safeErrorMessage(e) }); return true; }
   }
 
+  // Rename session (PATCH)
+  if (method === "PATCH" && url.pathname.startsWith("/api/sessions/")) {
+    const id = url.pathname.split("/").pop()!;
+    if (!isValidSessionId(id)) { json(400, { error: "Invalid session ID" }); return true; }
+    const body = await safeParseBody(req);
+    if (!body || typeof body.title !== "string") { json(400, { error: "title (string) required" }); return true; }
+    const session = ctx.sessionStore.load(id);
+    if (!session) { json(404, { error: "Session not found" }); return true; }
+    session.title = body.title;
+    session.updatedAt = Date.now();
+    ctx.saveSession(session);
+    json(200, { ok: true, id, title: session.title });
+    return true;
+  }
+
   // Get session
   if (method === "GET" && url.pathname.startsWith("/api/sessions/")) {
     const id = url.pathname.split("/").pop()!;

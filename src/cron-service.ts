@@ -18,6 +18,7 @@ export interface CronJob {
   systemJob?: boolean;
   lastRun?: string;
   lastResult?: string;
+  lastReportPath?: string;
   createdAt: string;
 }
 
@@ -26,7 +27,8 @@ interface CronSettings {
   maxConcurrent: number;
 }
 
-type ExecuteHandler = (jobId: string, prompt: string) => Promise<string>;
+interface ExecuteResult { output: string; reportPath?: string }
+type ExecuteHandler = (jobId: string, prompt: string) => Promise<string | ExecuteResult>;
 
 // Parse simple interval strings like "5m", "1h", "30s"
 function parseInterval(schedule: string): number | null {
@@ -135,9 +137,11 @@ export class CronService {
     this.running.add(job.id);
     try {
       console.log(`[cron] Running job: ${job.name} (${job.id})`);
-      const result = await this.executeHandler(job.id, job.prompt);
+      const raw = await this.executeHandler(job.id, job.prompt);
+      const result = typeof raw === "string" ? { output: raw } : raw;
       job.lastRun = new Date().toISOString();
-      job.lastResult = result.slice(0, 500);
+      job.lastResult = result.output.slice(0, 500);
+      if (result.reportPath) job.lastReportPath = result.reportPath;
       this.saveJobs();
     } catch (e) {
       console.error(`[cron] Job failed: ${job.name}:`, (e as Error).message);

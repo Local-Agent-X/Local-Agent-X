@@ -61,6 +61,36 @@ function renderCronDetail() {
   document.getElementById('cron-detail-lastrun').textContent = lastRun;
   const resultEl = document.getElementById('cron-detail-result');
   if (resultEl) resultEl.textContent = selectedJob.lastResult || '';
+  loadCronReports(selectedJob.id);
+}
+
+async function loadCronReports(jobId) {
+  const el = document.getElementById('cron-reports');
+  if (!el) return;
+  try {
+    const data = await apiJson(`/api/cron/${jobId}/reports`);
+    const reports = data.reports || [];
+    if (reports.length === 0) {
+      el.innerHTML = '<div style="color:var(--muted);font-size:.78rem;padding:4px 0">No reports yet</div>';
+      return;
+    }
+    el.innerHTML = reports.slice(0, 10).map(r => {
+      const date = r.name.replace('.md', '').replace(/T/, ' ').replace(/-/g, (m, i) => i > 9 ? ':' : '-').slice(0, 19);
+      return `<div class="report-link" onclick="viewCronReport('${jobId}','${esc(r.name)}')" style="cursor:pointer;padding:4px 8px;font-size:.78rem;color:var(--accent);border-bottom:1px solid var(--border)">${date}</div>`;
+    }).join('');
+  } catch { el.innerHTML = ''; }
+}
+
+async function viewCronReport(jobId, fileName) {
+  try {
+    const data = await apiJson(`/api/cron/${jobId}/reports/${fileName}`);
+    const content = data.content || 'Empty report';
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:999;display:flex;align-items:center;justify-content:center';
+    modal.onclick = e => { if (e.target === modal) modal.remove(); };
+    modal.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;max-width:700px;width:90%;max-height:80vh;overflow:auto;padding:24px;white-space:pre-wrap;font-size:.82rem;line-height:1.5">${esc(content)}<div style="margin-top:16px;text-align:right"><button onclick="this.closest('[style*=fixed]').remove()" class="btn btn-sm">Close</button></div></div>`;
+    document.body.appendChild(modal);
+  } catch (e) { alert('Failed to load report: ' + e.message); }
 }
 
 async function addCronJob() {

@@ -884,9 +884,78 @@ const screenCaptureTool: ToolDefinition = {
   },
 };
 
+// ── Camera Capture ──
+
+const cameraCaptureTool: ToolDefinition = {
+  name: "camera_capture",
+  description:
+    "Take a photo from the webcam. Returns the image for visual analysis. " +
+    "Use this when the user asks you to see them, take a photo, or use the camera.",
+  parameters: {
+    type: "object",
+    properties: {
+      device: { type: "string", description: "Video device name (auto-detected if omitted)" },
+      question: { type: "string", description: "What to analyze about the image (default: describe it)" },
+    },
+    required: [],
+  },
+  async execute(args) {
+    try {
+      const { captureFrame } = await import("./camera-tool.js");
+      const result = captureFrame({
+        device: args.device ? String(args.device) : undefined,
+        format: "jpg",
+        quality: 85,
+      });
+      const b64 = result.image.toString("base64");
+      const question = String(args.question || "Describe what you see.");
+      return {
+        content: `[IMAGE:image/jpeg:${b64.slice(0, 100)}...${b64.length} bytes]\nCamera: ${result.deviceName} (${result.width}x${result.height})\nQuestion: ${question}\n\nPlease analyze this image.`,
+        _image: { mime: "image/jpeg", b64, path: "camera-capture", question },
+      } as any;
+    } catch (e) {
+      return { content: `Camera capture failed: ${(e as Error).message}`, isError: true };
+    }
+  },
+};
+
+// ── OCR ──
+
+const ocrTool: ToolDefinition = {
+  name: "ocr",
+  description:
+    "Extract text from an image using OCR (Tesseract). " +
+    "Use this when the user asks to read text from an image, screenshot, or photo.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "Path to the image file" },
+      language: { type: "string", description: "OCR language (default: eng). Use eng+fra for multi-language." },
+    },
+    required: ["path"],
+  },
+  async execute(args) {
+    try {
+      const filePath = resolve(String(args.path));
+      if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
+      const { recognizeTextNative, recognizeText } = await import("./ocr-tool.js");
+      let result;
+      try {
+        result = recognizeTextNative(filePath, { language: args.language ? String(args.language) : undefined });
+      } catch {
+        result = await recognizeText(filePath, { language: args.language ? String(args.language) : undefined });
+      }
+      if (!result.text) return { content: "No text detected in image.", isError: false };
+      return { content: `OCR Result (${result.processingMs}ms, lang=${result.language}):\n\n${result.text}` };
+    } catch (e) {
+      return { content: `OCR failed: ${(e as Error).message}`, isError: true };
+    }
+  },
+};
+
 // ── Export All ──
 
-export const allTools: ToolDefinition[] = [readTool, writeTool, editTool, bashTool, webFetchTool, viewImageTool, screenCaptureTool, buildAppTool, youtubeAnalyzeTool, createPageTool];
+export const allTools: ToolDefinition[] = [readTool, writeTool, editTool, bashTool, webFetchTool, viewImageTool, screenCaptureTool, cameraCaptureTool, ocrTool, buildAppTool, youtubeAnalyzeTool, createPageTool];
 
 /** Dynamic getter for hot-reload — returns the current tools array */
 export function getAllTools(): ToolDefinition[] {

@@ -357,14 +357,33 @@ export function startServer(config: SAXConfig) {
     printAuditReport(runSecurityAudit({ authToken: config.authToken, workspace: config.workspace }));
     startAriKernel(join(dataDir, "ari-audit.db"), undefined, config.ariRequired).then(a => { if (a) console.log(`  [ari] Audit active`); else if (config.ariRequired) console.error(`  [ari] CRITICAL: ARI failed`); });
     // Cron
+    const cronReportsDir = join(dataDir, "cron", "reports");
+    if (!existsSync(cronReportsDir)) mkdirSync(cronReportsDir, { recursive: true });
     cronService.onExecute(async (jobId, prompt) => {
       const saved = loadSavedSettings();
       const { provider, apiKey, model } = await resolveProviderAndKey(saved);
-      const session = getOrCreateSession(`cron-${jobId}`);
       const cronSecurity = new SecurityLayer(resolve(process.env.SAX_WORKSPACE || join(homedir(), ".sax", "workspace")), "workspace");
-      const result = await runAgent(prompt, session.messages, { apiKey, model: provider === "anthropic" ? "claude-haiku-4-5" : model, provider: provider as AgentOptions["provider"], systemPrompt: config.systemPrompt, tools: allAgentTools, security: cronSecurity, toolPolicy, sessionId: `cron-${jobId}`, maxIterations: config.maxIterations });
+      // Fresh session each run — don't pollute with stale history
+      const sessionId = `cron-${jobId}-${Date.now()}`;
+      const result = await runAgent(prompt, [], { apiKey, model: provider === "anthropic" ? "claude-haiku-4-5" : model, provider: provider as AgentOptions["provider"], systemPrompt: config.systemPrompt, tools: allAgentTools, security: cronSecurity, toolPolicy, sessionId, maxIterations: config.maxIterations });
+      // Save the session for history
+      const session = getOrCreateSession(sessionId);
       session.messages = result.messages.filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);
-      return result.messages.filter(m => m.role === "assistant" && m.content).map(m => String(m.content)).join("\n").slice(0, 500) || "Completed";
+      // Extract output using the robust helper
+      const output = extractAgentOutput(result.messages);
+      if (!output) {
+        console.error(`[cron] Job ${jobId} produced no output (stopReason: ${result.stopReason})`);
+        return { output: "ERROR: Agent produced no output — check provider/model config" };
+      }
+      // Save full report to file
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      const jobDir = join(cronReportsDir, jobId);
+      if (!existsSync(jobDir)) mkdirSync(jobDir, { recursive: true });
+      const reportPath = join(jobDir, `${ts}.md`);
+      const job = cronService.get(jobId);
+      writeFileSync(reportPath, `# ${job?.name || jobId} — ${new Date().toLocaleDateString()}\n\n${output}`, "utf-8");
+      console.log(`[cron] Report saved: ${reportPath}`);
+      return { output: output.slice(0, 500), reportPath };
     });
     cronService.start();
     // Memory background (every 6h + 30s after startup)

@@ -555,7 +555,8 @@ function setupIPC(): void {
     if (mainWindow) mainWindow.webContents.toggleDevTools();
   });
   ipcMain.handle("open-file", (_e: any, relativePath: string) => {
-    const filePath = join(process.cwd(), relativePath);
+    // Go up one level from desktop/ to project root where workspace/ lives
+    const filePath = join(process.cwd(), "..", relativePath);
     console.log(`[desktop] Opening file: ${filePath}`);
     return shell.openPath(filePath);
   });

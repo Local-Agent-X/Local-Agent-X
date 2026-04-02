@@ -121,6 +121,15 @@ function md(s) {
   // 3. Escape HTML
   h = esc(h);
 
+  // 3.5. Auto-linkify bare workspace file paths (e.g., workspace/report.docx)
+  h = h.replace(/(?:^|\s)((?:\.\/)?workspace\/[^\s<>"]+\.(?:docx?|xlsx?|pptx?|pdf|csv))/gi, (match, filePath) => {
+    const token = AUTH_TOKEN || '';
+    const clean = filePath.replace(/^\.\//, '');
+    const fileName = clean.split('/').pop();
+    const fileUrl = '/files/' + clean.replace(/^workspace\//, '') + (token ? '?token=' + token : '');
+    return match.replace(filePath, ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link file-link">📄 ${fileName}</a>`));
+  });
+
   // 4. Inline formatting
   h = h.replace(/`([^`]+)`/g, (_, c) => ph(`<code class="inline-code">${c}</code>`));
   h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');

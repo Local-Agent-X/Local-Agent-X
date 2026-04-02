@@ -354,6 +354,7 @@ function createWindow(): void {
 
   // Intercept navigation to document files — open with system default app instead
   mainWindow.webContents.on("will-navigate", (e, url) => {
+    console.log(`[desktop] will-navigate: ${url}`);
     const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv)$/i;
     try {
       const pathname = new URL(url).pathname;
@@ -396,6 +397,7 @@ function createWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    console.log(`[desktop] windowOpenHandler: ${url}`);
     // External links → system browser
     if (url.startsWith("http") && !url.includes("127.0.0.1")) {
       shell.openExternal(url);
@@ -420,11 +422,10 @@ function createWindow(): void {
         return { action: "deny" };
       }
 
-      // Other /files/ links (non-document) → open in system browser for download
+      // /files/ links → let Electron's built-in download handler process them
+      // The will-download session handler above will auto-open doc files
       if (pathname.startsWith("/files/")) {
-        const separator = url.includes("?") ? "&" : "?";
-        shell.openExternal(`${url}${separator}token=${saxConfig.authToken}`);
-        return { action: "deny" };
+        return { action: "allow" };
       }
     }
 
@@ -574,6 +575,23 @@ app.on("ready", async () => {
     "clipboard-sanitized-write",
   ]);
   const APP_ORIGIN = `http://127.0.0.1:${saxConfig.port}`;
+  // Auto-open downloaded document files instead of just saving them
+  session.defaultSession.on("will-download", (_event: any, item: any) => {
+    const filename = item.getFilename();
+    const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv)$/i;
+    if (DOC_EXTENSIONS.test(filename)) {
+      // Save to temp, then open with system default app
+      const savePath = join(require("os").tmpdir(), filename);
+      item.setSavePath(savePath);
+      item.once("done", (_e: any, state: string) => {
+        if (state === "completed") {
+          console.log(`[desktop] Opening downloaded file: ${savePath}`);
+          shell.openPath(savePath);
+        }
+      });
+    }
+  });
+
   session.defaultSession.setPermissionRequestHandler((webContents: any, permission: string, callback: (granted: boolean) => void) => {
     const requestOrigin = webContents?.getURL?.() || "";
     if (requestOrigin.startsWith(APP_ORIGIN) && ALLOWED_PERMISSIONS.has(permission)) {

@@ -167,7 +167,7 @@ async function executeSingleTool(
     return msgs;
   }
   // Inject session ID for tools that need session-scoped state
-  if (tc.name === "enter_plan_mode" || tc.name === "exit_plan_mode" || tc.name === "skill_run") {
+  if (tc.name === "enter_plan_mode" || tc.name === "exit_plan_mode" || tc.name === "skill_run" || tc.name === "usage_report") {
     args._sessionId = sessionId || "default";
   }
 

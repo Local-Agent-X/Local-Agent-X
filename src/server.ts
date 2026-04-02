@@ -378,22 +378,16 @@ export function startServer(config: SAXConfig) {
         spawnedTools = spawnedTools.filter(t => allowed.has(t.name));
       }
 
-      // Create isolated worktree for agent (if git repo)
-      // Skip worktree for Codex provider — its tool execution path (agent-codex.ts/codex-ws.ts)
-      // bypasses tool-executor.ts, so worktree path rewriting and security enforcement won't apply.
+      // Create isolated worktree for all delegated agents (all providers including Codex)
       let worktreeBlock = "";
-      if (provider === "codex") {
-        console.log(`[handler] Agent ${agentId} using Codex — worktree isolation skipped (legacy shared-workspace mode)`);
-      } else {
-        try {
-          const { createWorktree } = await import("./agency/worktree.js");
-          worktreeInfo = createWorktree(agentId);
-          if (worktreeInfo) {
-            security.addAllowedPath(worktreeInfo.path, `agent-${agentId}`);
-            worktreeBlock = `\n\n--- WORKTREE ---\nYou are working in an isolated git worktree at: ${worktreeInfo.path}\nIMPORTANT: Always cd to this directory before running bash commands or reading/writing files.\nYour changes will be merged back when you finish.\n--- END WORKTREE ---\n`;
-          }
-        } catch { /* not a git repo or git not available */ }
-      }
+      try {
+        const { createWorktree } = await import("./agency/worktree.js");
+        worktreeInfo = createWorktree(agentId);
+        if (worktreeInfo) {
+          security.addAllowedPath(worktreeInfo.path, `agent-${agentId}`);
+          worktreeBlock = `\n\n--- WORKTREE ---\nYou are working in an isolated git worktree at: ${worktreeInfo.path}\nIMPORTANT: Always cd to this directory before running bash commands or reading/writing files.\nYour changes will be merged back when you finish.\n--- END WORKTREE ---\n`;
+        }
+      } catch { /* not a git repo or git not available */ }
 
       console.log(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : ""}`);
       const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); console.warn(`[handler] Agent ${agentId} timed out`); }, config.agentTimeoutMs);

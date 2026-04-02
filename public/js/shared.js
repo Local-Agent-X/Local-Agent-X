@@ -110,7 +110,7 @@ function md(s) {
     // Workspace-relative file links → serve via /files/ route (with auth token)
     const wsMatch = url.match(/^\.?\/?workspace\/(.+)$/);
     if (wsMatch) {
-      const token = new URLSearchParams(window.location.search).get('token') || '';
+      const token = AUTH_TOKEN || new URLSearchParams(window.location.search).get('token') || '';
       const fileUrl = '/files/' + wsMatch[1].replace(/^\/+/, '') + (token ? '?token=' + token : '');
       return ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
     }

@@ -121,21 +121,21 @@ function md(s) {
     if (wsMatch) {
       const token = AUTH_TOKEN || '';
       const fileUrl = '/files/' + wsMatch[1].replace(/^\/+/, '') + (token ? '?token=' + token : '');
-      return ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
+      return ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link file-download">${esc(text)}</a>`);
     }
     // /files/ links (already resolved by LLM or tool output) → add auth token
     const filesMatch = normalizedUrl.match(/^\/files\/(.+)$/);
     if (filesMatch) {
       const token = AUTH_TOKEN || '';
       const fileUrl = normalizedUrl + (token ? (normalizedUrl.includes('?') ? '&' : '?') + 'token=' + token : '');
-      return ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
+      return ph(`<a href="${fileUrl}" class="md-link file-download">${esc(text)}</a>`);
     }
     // Relative paths to document files → convert to /files/ route
     const docMatch = normalizedUrl.match(/^[^\/].*\.(docx?|xlsx?|pptx?|pdf|csv)$/i);
     if (docMatch) {
       const token = AUTH_TOKEN || '';
       const fileUrl = '/files/' + normalizedUrl.replace(/^\.\//, '') + (token ? '?token=' + token : '');
-      return ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
+      return ph(`<a href="${fileUrl}" class="md-link file-download">${esc(text)}</a>`);
     }
     const safeUrl = sanitizeUrl(normalizedUrl);
     return ph(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
@@ -236,6 +236,29 @@ function md(s) {
 
   return sanitizeHtml(h);
 }
+
+// Global click handler for file download links — works in both browser and Electron
+document.addEventListener('click', (e) => {
+  const link = e.target.closest?.('.file-download');
+  if (!link) return;
+  e.preventDefault();
+  const href = link.getAttribute('href');
+  if (!href) return;
+  // Fetch the file as a blob and trigger browser download
+  fetch(href).then(r => {
+    if (!r.ok) throw new Error(`${r.status}`);
+    return r.blob();
+  }).then(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = href.split('/').pop().split('?')[0] || 'download';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }).catch(err => console.warn('File download failed:', err));
+});
 
 // Apply syntax highlighting to code blocks (runs after md() output is inserted into DOM)
 function highlightCodeBlocks(container) {

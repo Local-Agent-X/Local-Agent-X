@@ -245,26 +245,15 @@ document.addEventListener('click', (e) => {
   const href = link.getAttribute('href');
   if (!href) return;
 
-  const isElectron = typeof window.electronAPI !== 'undefined' || navigator.userAgent.includes('Electron');
+  const isElectron = window.desktop?.isDesktop;
 
-  if (isElectron) {
-    // In Electron: navigate directly — the will-download handler auto-opens the file
-    window.location.href = href;
+  if (isElectron && window.desktop?.openFile) {
+    // In Electron: ask main process to open the file directly from disk
+    const filename = href.split('/files/')[1]?.split('?')[0];
+    if (filename) window.desktop.openFile('workspace/' + decodeURIComponent(filename));
   } else {
-    // In browser: fetch as blob and trigger save dialog
-    fetch(href).then(r => {
-      if (!r.ok) throw new Error(`${r.status}`);
-      return r.blob();
-    }).then(blob => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = href.split('/').pop().split('?')[0] || 'download';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }).catch(err => console.warn('File download failed:', err));
+    // Browser: open in new tab (server sends Content-Disposition: attachment for docs)
+    window.open(href, '_blank');
   }
 });
 

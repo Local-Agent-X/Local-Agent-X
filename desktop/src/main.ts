@@ -554,6 +554,11 @@ function setupIPC(): void {
   ipcMain.handle("toggle-devtools", () => {
     if (mainWindow) mainWindow.webContents.toggleDevTools();
   });
+  ipcMain.handle("open-file", (_e: any, relativePath: string) => {
+    const filePath = join(process.cwd(), relativePath);
+    console.log(`[desktop] Opening file: ${filePath}`);
+    return shell.openPath(filePath);
+  });
   ipcMain.handle("quit-app", () => {
     isQuitting = true;
     app.quit();

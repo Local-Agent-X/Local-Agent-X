@@ -61,6 +61,8 @@ import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAg
 export function startServer(config: SAXConfig) {
   setServerPort(String(config.port || 7007));
   const security = new SecurityLayer(config.workspace);
+  // Initialize hook engine with security layer so hook commands go through the same checks
+  import("./hooks/hook-engine.js").then(({ initHookEngine }) => initHookEngine(security)).catch(() => {});
   const publicDir = join(import.meta.dirname || ".", "..", "public");
   const dataDir = join(homedir(), ".sax");
   for (const d of ["apps", "images", "videos"]) mkdirSync(join(resolve(config.workspace), d), { recursive: true });

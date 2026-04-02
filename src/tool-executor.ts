@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { isPlanMode, READ_ONLY_TOOLS } from "./plan-tools.js";
+import { getHookEngine } from "./hooks/hook-engine.js";
 
 /** Extended tool result that may include image data for vision analysis */
 interface ToolResultWithImage extends ToolResult {
@@ -155,6 +156,9 @@ async function executeSingleTool(
   try { args = JSON.parse(tc.arguments); }
   catch { args = { _raw: tc.arguments }; }
 
+  // Derive call context from session ID pattern (agent-* = delegated, cron-* = cron)
+  const callContext = sessionId?.startsWith("agent-") ? "delegated" : sessionId?.startsWith("cron-") ? "cron" : "local";
+
   // Plan mode: block non-read-only tools (session-scoped)
   if (isPlanMode(sessionId) && !READ_ONLY_TOOLS.has(tc.name)) {
     const result = `BLOCKED: Plan mode is active. Only read-only tools are allowed. Use exit_plan_mode to restore full access.`;
@@ -195,7 +199,7 @@ async function executeSingleTool(
   }
 
   // Layer 1: SecurityLayer
-  const secDecision = security.evaluate({ toolName: tc.name, args, sessionId: sessionId || "default" });
+  const secDecision = security.evaluate({ toolName: tc.name, args, sessionId: sessionId || "default", callContext: callContext as "local" | "api" | "delegated" | "cron" });
 
   // Layer 2: RBAC
   let rbacBlocked = false, rbacReason = "";
@@ -236,6 +240,18 @@ async function executeSingleTool(
     if (!tool) {
       result = { content: `Unknown tool: ${tc.name}`, isError: true };
     } else {
+      // PreToolUse hook — can block execution
+      const hookEngine = getHookEngine();
+      if (hookEngine.hasHooks) {
+        const preHook = await hookEngine.fire({ event: "PreToolUse", toolName: tc.name, toolArgs: args, sessionId, callContext });
+        if (!preHook.continue) {
+          result = { content: `BLOCKED by hook: ${preHook.reason || "PreToolUse hook returned false"}`, isError: true };
+          onEvent?.({ type: "tool_end", toolName: tc.name, result: result.content, allowed: false });
+          msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
+          return msgs;
+        }
+      }
+
       try {
         result = await tool.execute(args, signal);
         if (tc.name === "read" && isSensitivePath(String(args.path || ""))) {
@@ -271,6 +287,18 @@ async function executeSingleTool(
   // Result budgeting
   if (!result.isError) {
     result = { ...result, content: budgetResult(result.content) };
+  }
+
+  // PostToolUse / PostToolUseFailure hooks — fire AFTER threat engine + budgeting
+  // Hooks only see the final (sanitized, budgeted) result, not raw output
+  const hookEngine = getHookEngine();
+  if (hookEngine.hasHooks && allowed) {
+    const hookEvent = result.isError ? "PostToolUseFailure" : "PostToolUse";
+    hookEngine.fireDetached({
+      event: hookEvent, toolName: tc.name, toolArgs: args,
+      ...(result.isError ? { toolError: result.content } : { toolResult: result.content?.slice(0, 2000) }),
+      sessionId, callContext,
+    });
   }
 
   onEvent?.({ type: "tool_end", toolName: tc.name, result: result.content, allowed });

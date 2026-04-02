@@ -345,6 +345,7 @@ export function startServer(config: SAXConfig) {
       : `\n\nYour agent ID: ${agentId}\n`;
 
     const agentSession: Session = { id: `agent-${agentId}`, title: `Agent: ${role}`, messages: [], createdAt: Date.now(), updatedAt: Date.now() };
+    let worktreeInfo: { path: string; branch: string } | null = null;
     try {
       const saved = loadSavedSettings();
       const { provider, apiKey, model } = await resolveProviderAndKey(saved);
@@ -361,17 +362,53 @@ export function startServer(config: SAXConfig) {
         spawnedTools = spawnedTools.filter(t => allowed.has(t.name));
       }
 
-      console.log(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools`);
+      // Create isolated worktree for agent (if git repo)
+      // Skip worktree for Codex provider — its tool execution path (agent-codex.ts/codex-ws.ts)
+      // bypasses tool-executor.ts, so worktree path rewriting and security enforcement won't apply.
+      let worktreeBlock = "";
+      if (provider === "codex") {
+        console.log(`[handler] Agent ${agentId} using Codex — worktree isolation skipped (legacy shared-workspace mode)`);
+      } else {
+        try {
+          const { createWorktree } = await import("./agency/worktree.js");
+          worktreeInfo = createWorktree(agentId);
+          if (worktreeInfo) {
+            security.addAllowedPath(worktreeInfo.path, `agent-${agentId}`);
+            worktreeBlock = `\n\n--- WORKTREE ---\nYou are working in an isolated git worktree at: ${worktreeInfo.path}\nIMPORTANT: Always cd to this directory before running bash commands or reading/writing files.\nYour changes will be merged back when you finish.\n--- END WORKTREE ---\n`;
+          }
+        } catch { /* not a git repo or git not available */ }
+      }
+
+      console.log(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : ""}`);
       const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); console.warn(`[handler] Agent ${agentId} timed out`); }, config.agentTimeoutMs);
       const agentResult = await enqueue("agent", () => runAgent(task, agentSession.messages, {
-        apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + identityBlock + parentContext + briefing,
+        apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + identityBlock + parentContext + briefing + worktreeBlock,
         tools: spawnedTools, security, toolPolicy, sessionId: `agent-${agentId}`, maxIterations: config.maxIterations, temperature: config.temperature, signal: ac.signal,
         pauseCallback: async (reason: string) => { eventBus.emit("handler:agent-output", { agentId, output: `[BLOCKER] ${reason}` }); eventBus.emit("handler:agent-blocked", { agentId, reason, role }); return new Promise<string>(r => { const h = (d: unknown) => { const evt = d as AgentUserInputEvent; if (evt.agentId === agentId) { eventBus.off("handler:agent-user-input", h); r(evt.message); } }; eventBus.on("handler:agent-user-input", h); setTimeout(() => { eventBus.off("handler:agent-user-input", h); r("User did not respond."); }, config.agentTimeoutMs); }); },
         onEvent: (event) => { if (event.type === "stream" && event.delta) eventBus.emit("handler:agent-output", { agentId, output: event.delta }); if (event.type === "tool_start") { console.log(`[handler] Agent ${agentId} tool: ${event.toolName}`); eventBus.emit("handler:agent-output", { agentId, output: `[tool] ${event.toolName}...` }); } if (event.type === "tool_progress") { eventBus.emit("handler:agent-output", { agentId, output: `[progress] ${event.message}` }); } if (event.type === "tool_start" && event.requiresApproval) event.requiresApproval = false; },
       }), { label: `agent:${agentId}`, timeout: config.agentTimeoutMs });
       clearTimeout(to); if (agentResult?.messages) agentSession.messages.push(...agentResult.messages);
+
+      // Merge worktree changes back and revoke path access
+      if (worktreeInfo) {
+        security.removeAllowedPath(worktreeInfo.path, `agent-${agentId}`);
+        try {
+          const { mergeWorktree } = await import("./agency/worktree.js");
+          const mergeResult = mergeWorktree(agentId);
+          const mergeMsg = mergeResult.merged
+            ? (mergeResult.files > 0 ? `[Merged ${mergeResult.files} files back to main]` : "[No file changes]")
+            : `[Merge failed: ${mergeResult.error}]`;
+          eventBus.emit("handler:agent-output", { agentId, output: mergeMsg });
+        } catch (e) { console.warn(`[worktree] Merge error: ${(e as Error).message}`); }
+      }
+
       eventBus.emit("handler:agent-result", { agentId, result: extractAgentOutput(agentSession.messages), success: true });
-    } catch (e) { const p = extractAgentOutput(agentSession.messages), msg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e); eventBus.emit("handler:agent-result", { agentId, result: p ? `[${msg}]\n\n${p}` : msg, success: false }); }
+    } catch (e) {
+      // Cleanup worktree on failure + revoke path access
+      if (worktreeInfo) security.removeAllowedPath(worktreeInfo.path, `agent-${agentId}`);
+      try { const { cleanupWorktree } = await import("./agency/worktree.js"); cleanupWorktree(agentId); } catch {}
+      const p = extractAgentOutput(agentSession.messages), msg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e); eventBus.emit("handler:agent-result", { agentId, result: p ? `[${msg}]\n\n${p}` : msg, success: false });
+    }
   });
 
   // Forward agent events to WS + persist
@@ -442,6 +479,6 @@ export function startServer(config: SAXConfig) {
     agentSync.startHeartbeat();
   });
 
-  process.on("SIGINT", async () => { clearInterval(memBgTimer); cronService.stop(); agentSync.stopHeartbeat(); EventBus.removeAllListeners(); await agentSync.push().catch(() => {}); await closeAllBrowsers(); memoryIndex.close(); secretsStore.destroy(); process.exit(0); });
+  process.on("SIGINT", async () => { clearInterval(memBgTimer); cronService.stop(); agentSync.stopHeartbeat(); EventBus.removeAllListeners(); await agentSync.push().catch(() => {}); await closeAllBrowsers(); memoryIndex.close(); secretsStore.destroy(); try { const { cleanupAllWorktrees } = await import("./agency/worktree.js"); cleanupAllWorktrees(); } catch {} process.exit(0); });
   return server;
 }

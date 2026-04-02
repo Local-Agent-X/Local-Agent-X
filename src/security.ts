@@ -271,7 +271,27 @@ export class SecurityLayer {
   private workspace: string;
   private auditLog: Array<{ timestamp: number; tool: string; decision: SecurityDecision }> = [];
   private egressAllowlist: Set<string> = new Set();
+  private sessionAllowedPaths = new Map<string, Set<string>>();
   fileAccessMode: FileAccessMode = "common";
+
+  /** Allow an additional path for a specific session (e.g., agent worktree) */
+  addAllowedPath(p: string, sessionId?: string): void {
+    const key = sessionId || "_global";
+    if (!this.sessionAllowedPaths.has(key)) this.sessionAllowedPaths.set(key, new Set());
+    this.sessionAllowedPaths.get(key)!.add(resolve(p));
+  }
+  removeAllowedPath(p: string, sessionId?: string): void {
+    const key = sessionId || "_global";
+    this.sessionAllowedPaths.get(key)?.delete(resolve(p));
+  }
+  /** Check if a path is in the allowed set for a session */
+  private isInAllowedPaths(realPath: string, sessionId?: string): boolean {
+    const check = (key: string) => {
+      const paths = this.sessionAllowedPaths.get(key);
+      return paths ? [...paths].some(p => !require("node:path").relative(p, realPath).startsWith("..")) : false;
+    };
+    return check(sessionId || "_global") || check("_global");
+  }
 
   constructor(workspace: string, fileAccessMode?: FileAccessMode) {
     this.workspace = resolve(workspace);
@@ -335,7 +355,7 @@ export class SecurityLayer {
       case "read":
       case "write":
       case "edit":
-        decision = this.evaluateFileAccess(toolName, String(args.path || ""));
+        decision = this.evaluateFileAccess(toolName, String(args.path || ""), ctx.sessionId);
         break;
       case "bash":
         decision = this.evaluateShellCommand(String(args.command || ""));
@@ -372,7 +392,7 @@ export class SecurityLayer {
 
   // ── File Access ──
 
-  private evaluateFileAccess(action: string, rawPath: string): SecurityDecision {
+  private evaluateFileAccess(action: string, rawPath: string, sessionId?: string): SecurityDecision {
     if (rawPath.includes("\x00")) {
       return { allowed: false, reason: "Blocked: null byte in file path" };
     }
@@ -421,15 +441,17 @@ export class SecurityLayer {
           const projectRoot = resolve(this.workspace, "..");
           const inProject = !relative(projectRoot, realPath).startsWith("..");
           const inHome = !relative(homeDir, realPath).startsWith("..");
-          if (!inProject && !inHome) {
+          const inAllowed = this.isInAllowedPaths(realPath, sessionId);
+          if (!inProject && !inHome && !inAllowed) {
             return { allowed: false, reason: "Blocked: cannot write outside home directory even in unrestricted mode" };
           }
         }
         // Reads: allowed everywhere
       } else {
-        // Workspace + Common modes: block writes outside workspace
+        // Workspace + Common modes: block writes outside workspace (allow worktree paths)
         if (action === "write" || action === "edit") {
-          return { allowed: false, reason: "Blocked: cannot write files outside workspace directory" };
+          const inWt = this.isInAllowedPaths(realPath, sessionId);
+          if (!inWt) return { allowed: false, reason: "Blocked: cannot write files outside workspace directory" };
         }
 
         // Reads: check based on mode
@@ -437,19 +459,18 @@ export class SecurityLayer {
         const saxDir = resolve(homeDir, ".sax");
         const inProject = !relative(projectRoot, realPath).startsWith("..");
         const inSax = !relative(saxDir, realPath).startsWith("..");
+        const inExtraAllowed = this.isInAllowedPaths(realPath, sessionId);
 
         if (this.fileAccessMode === "workspace") {
-          // Strict: only project + .sax
-          if (!inProject && !inSax) {
+          if (!inProject && !inSax && !inExtraAllowed) {
             return { allowed: false, reason: "Blocked: workspace mode — reads restricted to project directory only. Change to 'common' mode in Settings to access Downloads, Documents, etc." };
           }
         } else {
-          // Common (default): project + .sax + user directories
           const userDirs = ["Downloads", "Documents", "Desktop", "Pictures", "Videos", "Music"].map(
             (d) => resolve(homeDir, d)
           );
           const inUserDir = userDirs.some((d) => !relative(d, realPath).startsWith(".."));
-          if (!inProject && !inSax && !inUserDir) {
+          if (!inProject && !inSax && !inUserDir && !inExtraAllowed) {
             return { allowed: false, reason: "Blocked: cannot read files outside project and user directories. Change to 'unrestricted' mode in Settings for full access." };
           }
         }

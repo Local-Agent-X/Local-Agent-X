@@ -272,6 +272,7 @@ const bashTool: ToolDefinition = {
         maxBuffer: 1024 * 1024 * 10, // 10MB
         shell: process.platform === "win32" ? "cmd.exe" : "/bin/bash",
         env: sanitizedEnv,
+        cwd: (args._cwd as string) || undefined, // Worktree override
         windowsHide: true,
       });
       return ok(output || "(no output)");

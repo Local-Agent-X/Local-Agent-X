@@ -237,27 +237,35 @@ function md(s) {
   return sanitizeHtml(h);
 }
 
-// Global click handler for file download links — works in both browser and Electron
+// Global click handler for file download links
 document.addEventListener('click', (e) => {
   const link = e.target.closest?.('.file-download');
   if (!link) return;
   e.preventDefault();
   const href = link.getAttribute('href');
   if (!href) return;
-  // Fetch the file as a blob and trigger browser download
-  fetch(href).then(r => {
-    if (!r.ok) throw new Error(`${r.status}`);
-    return r.blob();
-  }).then(blob => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = href.split('/').pop().split('?')[0] || 'download';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }).catch(err => console.warn('File download failed:', err));
+
+  const isElectron = typeof window.electronAPI !== 'undefined' || navigator.userAgent.includes('Electron');
+
+  if (isElectron) {
+    // In Electron: navigate directly — the will-download handler auto-opens the file
+    window.location.href = href;
+  } else {
+    // In browser: fetch as blob and trigger save dialog
+    fetch(href).then(r => {
+      if (!r.ok) throw new Error(`${r.status}`);
+      return r.blob();
+    }).then(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = href.split('/').pop().split('?')[0] || 'download';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }).catch(err => console.warn('File download failed:', err));
+  }
 });
 
 // Apply syntax highlighting to code blocks (runs after md() output is inserted into DOM)

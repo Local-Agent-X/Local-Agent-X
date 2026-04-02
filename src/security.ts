@@ -249,12 +249,15 @@ interface ToolCallContext {
 
 // Tools blocked in non-local contexts (API calls, delegated agents, cron jobs)
 const CONTEXT_RESTRICTED_TOOLS: Record<string, CallContext[]> = {
-  bash: ["delegated", "cron"],           // Shell too dangerous for delegated/automated
-  write: ["delegated"],                   // No file writes from delegated agents
-  edit: ["delegated"],                    // No file edits from delegated agents
+  bash: ["cron"],                         // Shell blocked in cron (no worktree isolation)
   browser: ["cron"],                      // No browser in automated jobs
-  generate_image: ["delegated", "cron"],  // Resource-intensive, block in automation
+  generate_image: ["cron"],               // Resource-intensive, block in cron
 };
+
+// Tools that require worktree isolation for delegated agents.
+// If a delegated agent has a worktree (session in allowedPaths), these are safe.
+// If not (e.g. Codex agents), block them to prevent uncontrolled writes.
+const WORKTREE_REQUIRED_TOOLS = new Set(["write", "edit", "bash"]);
 
 /**
  * Security layer that evaluates tool calls before execution.
@@ -347,6 +350,20 @@ export class SecurityLayer {
         allowed: false,
         reason: `Blocked: tool "${toolName}" is not allowed in ${callCtx} context`,
       };
+    }
+
+    // Delegated agents using write/edit/bash must have worktree isolation.
+    // Agents with worktrees have an entry in sessionAllowedPaths (added by server.ts).
+    // Codex agents are skipped for worktree creation, so they won't have one.
+    if (callCtx === "delegated" && WORKTREE_REQUIRED_TOOLS.has(toolName)) {
+      const sessionKey = ctx.sessionId;
+      const hasWorktree = this.sessionAllowedPaths.has(sessionKey) && this.sessionAllowedPaths.get(sessionKey)!.size > 0;
+      if (!hasWorktree) {
+        return {
+          allowed: false,
+          reason: `Blocked: delegated agent "${toolName}" requires worktree isolation (not available for this provider)`,
+        };
+      }
     }
 
     let decision: SecurityDecision;

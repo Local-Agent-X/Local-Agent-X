@@ -253,18 +253,35 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       } catch {}
 
       ctx.saveSession(session);
-      sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+
+      // Track real token usage and cost
+      const realUsage = result.usage || { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+      let costUsd: number | undefined;
+      try {
+        const { trackUsage } = await import("../cost-tracker.js");
+        const usedModel = savedModel || ctx.config.model;
+        const record = trackUsage(sessionId, usedModel, provider, realUsage.promptTokens, realUsage.completionTokens);
+        costUsd = record.costUsd;
+      } catch {}
+      sseWrite(res, { type: "done", usage: realUsage, ...(costUsd !== undefined ? { costUsd } : {}) } as ServerEvent);
       clearInterval(heartbeat);
       res.end();
 
-      if (sessionId.startsWith("wa-") && assistantReply) ctx.whatsappBridge.sendMessage(sessionId.slice(3), assistantReply).catch(() => {});
-      if (sessionId.startsWith("tg-") && assistantReply) ctx.telegramBridge.sendMessage(sessionId.slice(3), assistantReply).catch(() => {});
+      // Format output for bridge channels (plain text for WhatsApp/Telegram)
+      let bridgeReply = assistantReply;
+      try {
+        const { formatOutput, detectStyle } = await import("../output-styles.js");
+        const style = detectStyle(sessionId);
+        if (style !== "rich") bridgeReply = formatOutput(assistantReply, style);
+      } catch {}
+      if (sessionId.startsWith("wa-") && bridgeReply) ctx.whatsappBridge.sendMessage(sessionId.slice(3), bridgeReply).catch(() => {});
+      if (sessionId.startsWith("tg-") && bridgeReply) ctx.telegramBridge.sendMessage(sessionId.slice(3), bridgeReply).catch(() => {});
       ctx.agentSync.onChatEnd().catch(() => {});
     } catch (e) {
       // Clear skill restrictions on error too — don't leave session stuck in whitelist mode
       try { const { clearSessionAllowedTools } = await import("../session-policy.js"); clearSessionAllowedTools(sessionId); } catch {}
       sseWrite(res, { type: "error", message: safeErrorMessage(e) });
-      sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+      sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } } as ServerEvent);
       clearInterval(heartbeat);
       res.end();
     }

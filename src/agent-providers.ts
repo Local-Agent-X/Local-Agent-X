@@ -11,6 +11,34 @@ import { streamAnthropicResponse } from "./anthropic-client.js";
 import { executeToolCalls, toolsToOpenAI, checkAndCompact } from "./tool-executor.js";
 import { getRuntimeConfig } from "./config.js";
 
+// ── Self-Reflection: checks for unresolved errors after the agent loop ──
+
+function detectUnresolvedErrors(messages: ChatCompletionMessageParam[]): string[] {
+  const errors: string[] = [];
+  // Check last N tool results for failures that were never addressed
+  const recentMsgs = messages.slice(-20);
+  for (const m of recentMsgs) {
+    if (m.role !== "tool" || typeof m.content !== "string") continue;
+    const c = m.content;
+    if (/\b(BLOCKED|error|failed|timed? ?out|not found|permission denied|ENOENT|EACCES|EPERM)\b/i.test(c) && c.length < 500) {
+      errors.push(c.slice(0, 200));
+    }
+  }
+  // Check if the last assistant message acknowledges errors or just ignores them
+  const lastAssistant = [...recentMsgs].reverse().find(m => m.role === "assistant" && typeof m.content === "string");
+  if (lastAssistant && typeof lastAssistant.content === "string") {
+    // If assistant mentions the error/problem, it's probably addressed
+    if (/\b(error|failed|couldn't|unable|issue|problem|unfortunately|sorry)\b/i.test(lastAssistant.content)) {
+      return []; // Agent acknowledged the issue
+    }
+  }
+  return errors;
+}
+
+function buildReflectionPrompt(errors: string[]): string {
+  return `[Self-check] The following tool errors occurred but may not have been addressed in your response. If any are relevant to the user's request, briefly acknowledge what went wrong and suggest a fix. If they're irrelevant (e.g., optional lookups), ignore them.\n\nErrors:\n${errors.map((e, i) => `${i + 1}. ${e}`).join("\n")}`;
+}
+
 interface ImageAttachment {
   url: string;
   filePath?: string;
@@ -195,6 +223,14 @@ export async function runStandardAgent(
     messages.push(assistantMsg);
 
     if (toolCalls.length === 0) {
+      // Self-reflection: check for unresolved tool errors before returning
+      const unresolvedErrors = detectUnresolvedErrors(messages);
+      if (unresolvedErrors.length > 0 && iteration < maxIterations - 1) {
+        // Give the agent one more chance to address unresolved errors
+        messages.push({ role: "user", content: buildReflectionPrompt(unresolvedErrors) } as ChatCompletionMessageParam);
+        continue; // Re-enter the loop for one more iteration
+      }
+
       onEvent?.({
         type: "done",
         usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },
@@ -318,6 +354,13 @@ export async function runAnthropicAgent(
     }
 
     if (toolCalls.length === 0) {
+      // Self-reflection: check for unresolved tool errors before returning
+      const unresolvedErrors = detectUnresolvedErrors(messages);
+      if (unresolvedErrors.length > 0 && iteration < maxIterations - 1) {
+        messages.push({ role: "user", content: buildReflectionPrompt(unresolvedErrors) } as ChatCompletionMessageParam);
+        continue;
+      }
+
       onEvent?.({ type: "done", usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput } });
       return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
     }

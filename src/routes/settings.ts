@@ -361,5 +361,30 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
     json(200, { ok: true, deleted: pageName }); return true;
   }
 
+  // Usage/cost report API
+  if (method === "GET" && url.pathname === "/api/usage") {
+    try {
+      const { getUsageSummary, getTodayCost } = await import("../cost-tracker.js");
+      const period = url.searchParams.get("period") || "today";
+      if (period === "today") {
+        json(200, getTodayCost());
+      } else {
+        const since = period === "week" ? Date.now() - 7 * 86400000 : period === "month" ? Date.now() - 30 * 86400000 : undefined;
+        json(200, getUsageSummary({ since }));
+      }
+    } catch (e) { json(500, { error: (e as Error).message }); }
+    return true;
+  }
+
+  // Doctor / self-diagnostics API
+  if (method === "GET" && url.pathname === "/api/doctor") {
+    try {
+      const { runDoctor } = await import("../doctor.js");
+      const report = await runDoctor();
+      json(200, report);
+    } catch (e) { json(500, { error: (e as Error).message }); }
+    return true;
+  }
+
   return false;
 };

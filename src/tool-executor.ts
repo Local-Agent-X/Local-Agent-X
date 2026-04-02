@@ -198,7 +198,43 @@ async function executeSingleTool(
     return msgs;
   }
 
-  // Layer 1: SecurityLayer
+  // Worktree enforcement: rewrite paths BEFORE security checks so security evaluates the actual path
+  if (sessionId?.startsWith("agent-")) {
+    try {
+      const agentId = sessionId.slice(6);
+      const { getWorktreePath } = await import("./agency/worktree.js");
+      const wtPath = getWorktreePath(agentId);
+      if (wtPath) {
+        const pathTools = ["read", "write", "edit", "glob", "grep"];
+        if (pathTools.includes(tc.name) && args.path) {
+          const rawPath = String(args.path);
+          const isAbsolute = rawPath.startsWith("/") || rawPath.includes(":");
+          if (isAbsolute) {
+            // Block absolute paths for search tools in worktree agents — prevents escape
+            if (["glob", "grep"].includes(tc.name)) {
+              const { resolve, relative } = require("node:path") as typeof import("node:path");
+              const resolved = resolve(rawPath);
+              if (relative(wtPath, resolved).startsWith("..")) {
+                // Path escapes worktree — force it back to worktree root
+                args.path = wtPath;
+              }
+            }
+            // For read/write/edit, absolute paths go through security layer as-is
+          } else {
+            // Relative paths: prepend worktree root
+            args.path = require("node:path").join(wtPath, rawPath);
+          }
+        }
+        // No path arg: default search root to worktree for glob/grep
+        if (["glob", "grep"].includes(tc.name) && !args.path) {
+          args.path = wtPath;
+        }
+        if (tc.name === "bash") args._cwd = wtPath;
+      }
+    } catch { /* worktree module not available */ }
+  }
+
+  // Layer 1: SecurityLayer (now sees rewritten worktree paths)
   const secDecision = security.evaluate({ toolName: tc.name, args, sessionId: sessionId || "default", callContext: callContext as "local" | "api" | "delegated" | "cron" });
 
   // Layer 2: RBAC
@@ -257,6 +293,8 @@ async function executeSingleTool(
         onEvent?.({ type: "tool_progress", toolName: tc.name, toolCallId: tc.id, message });
       };
       args._onProgress = progressFn;
+
+      // (worktree rewrite moved before security evaluation)
 
       try {
         result = await tool.execute(args, signal);

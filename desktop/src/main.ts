@@ -38,7 +38,19 @@ app.commandLine.appendSwitch("enable-media-stream");
 const SAX_DIR = join(homedir(), ".sax");
 const CONFIG_PATH = join(SAX_DIR, "config.json");
 const DESKTOP_SETTINGS_PATH = join(SAX_DIR, "desktop-settings.json");
-const PROJECT_ROOT = resolve(__dirname, "..", "..");
+// In packaged mode __dirname is inside app.asar — use config to find the live repo
+const PROJECT_ROOT = (() => {
+  const devRoot = resolve(__dirname, "..", "..");
+  if (!app.isPackaged) return devRoot;
+  // Packaged: read projectRoot from ~/.sax/config.json so we always run latest code
+  try {
+    const cfg = JSON.parse(readFileSync(join(homedir(), ".sax", "config.json"), "utf-8"));
+    if (cfg.projectRoot && existsSync(join(cfg.projectRoot, "dist", "index.js"))) {
+      return resolve(cfg.projectRoot);
+    }
+  } catch {}
+  return devRoot;
+})();
 const ICON_PATH = join(PROJECT_ROOT, "public", "icon.ico");
 
 interface SAXConfig {
@@ -340,6 +352,21 @@ function createWindow(): void {
     mainWindow?.show();
   });
 
+  // Intercept navigation to document files — open with system default app instead
+  mainWindow.webContents.on("will-navigate", (e, url) => {
+    const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv|txt|md|html?|json|xml|zip|png|jpe?g|gif|svg|mp[34]|wav)$/i;
+    try {
+      const pathname = new URL(url).pathname;
+      if (DOC_EXTENSIONS.test(pathname)) {
+        e.preventDefault();
+        const filePath = join(process.cwd(), decodeURIComponent(pathname));
+        shell.openPath(filePath).then((err) => {
+          if (err) console.warn(`[desktop] Failed to open ${filePath}: ${err}`);
+        });
+      }
+    } catch { /* not a valid URL — let it navigate normally */ }
+  });
+
   // Disable Ctrl+R / Ctrl+Shift+R / F5 hard refresh (causes port/localStorage issues)
   mainWindow.webContents.on("before-input-event", (_e, input) => {
     if (input.key === "F5" || (input.control && input.key.toLowerCase() === "r")) {
@@ -371,9 +398,32 @@ function createWindow(): void {
       shell.openExternal(url);
       return { action: "deny" };
     }
+    // Local file links → detect document/file extensions and open with system default app
+    const appOrigin = `http://127.0.0.1:${saxConfig.port}`;
+    if (url.startsWith(appOrigin)) {
+      const pathname = new URL(url).pathname;
+
+      // File downloads (e.g. /files/report.docx) → open in system browser for download
+      if (pathname.startsWith("/files/")) {
+        const separator = url.includes("?") ? "&" : "?";
+        shell.openExternal(`${url}${separator}token=${saxConfig.authToken}`);
+        return { action: "deny" };
+      }
+
+      // Document links (workspace/*.docx, *.xlsx, *.pptx, *.pdf, etc.) → open with system app
+      const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv|txt|md|html?|json|xml|zip|png|jpe?g|gif|svg|mp[34]|wav)$/i;
+      if (DOC_EXTENSIONS.test(pathname)) {
+        // Resolve to actual file path on disk
+        const filePath = join(process.cwd(), decodeURIComponent(pathname));
+        shell.openPath(filePath).then((err) => {
+          if (err) console.warn(`[desktop] Failed to open ${filePath}: ${err}`);
+        });
+        return { action: "deny" };
+      }
+    }
+
     // Local app links (e.g. /apps/xyz) → open in frameless Electron window with auth
     // Only attach token to our own server origin, not arbitrary loopback services
-    const appOrigin = `http://127.0.0.1:${saxConfig.port}`;
     if (url.startsWith(appOrigin)) {
       const appWin = new BrowserWindow({
         width: 1000,

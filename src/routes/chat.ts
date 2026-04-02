@@ -147,7 +147,22 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // Tool prompt section (teaches LLM best practices per tool)
       let toolPromptSection = "";
       try { const { buildToolPromptSection } = await import("../tool-prompt-builder.js"); toolPromptSection = buildToolPromptSection(ctx.allAgentTools); } catch {}
-      const enrichedPrompt = ctx.config.systemPrompt + providerHint + toolPromptSection + contextBlock + relevantMemories + smartContext + memoryContext + notificationHint + integrationsContext + threatEngine.getCanaryBlock();
+
+      // Build system prompt via modular context builder (ordered sections, cacheable static parts)
+      const { createChatContextBuilder } = await import("../context-builder.js");
+      const contextBuilder = createChatContextBuilder({
+        systemPrompt: ctx.config.systemPrompt,
+        providerHint,
+        toolPromptSection,
+        contextBlock,
+        relevantMemories,
+        smartContext,
+        memoryContext,
+        notificationHint,
+        integrationsContext,
+        canaryBlock: threatEngine.getCanaryBlock(),
+      });
+      const enrichedPrompt = await contextBuilder.build();
 
       const uploadsDir = join(ctx.dataDir, "uploads");
       const imageAttachments = attachments.filter(a => a.isImage && a.url).map(a => {

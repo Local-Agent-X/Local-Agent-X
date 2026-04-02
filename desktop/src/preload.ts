@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld("desktop", {
   toggleDevTools: () => ipcRenderer.invoke("toggle-devtools"),
   quit: () => ipcRenderer.invoke("quit-app"),
 
+  // File operations
+  openFile: (relativePath: string) => ipcRenderer.invoke("open-file", relativePath),
+
   // Check if running inside desktop app
   isDesktop: true,
 });

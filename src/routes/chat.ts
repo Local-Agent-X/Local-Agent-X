@@ -144,7 +144,10 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         notificationHint = "\n\n[Naturally weave into your response: " + topNotifs.map(n => n.message).join(" | ") + "]";
       }
 
-      const enrichedPrompt = ctx.config.systemPrompt + providerHint + contextBlock + relevantMemories + smartContext + memoryContext + notificationHint + integrationsContext + threatEngine.getCanaryBlock();
+      // Tool prompt section (teaches LLM best practices per tool)
+      let toolPromptSection = "";
+      try { const { buildToolPromptSection } = await import("../tool-prompt-builder.js"); toolPromptSection = buildToolPromptSection(ctx.allAgentTools); } catch {}
+      const enrichedPrompt = ctx.config.systemPrompt + providerHint + toolPromptSection + contextBlock + relevantMemories + smartContext + memoryContext + notificationHint + integrationsContext + threatEngine.getCanaryBlock();
 
       const uploadsDir = join(ctx.dataDir, "uploads");
       const imageAttachments = attachments.filter(a => a.isImage && a.url).map(a => {

@@ -345,7 +345,7 @@ export class Handler {
         const resultPromise = new Promise<string>((resolve, reject) => {
           const timeout = setTimeout(() => {
             reject(new Error("Agent execution timed out"));
-          }, 300_000);
+          }, 600_000); // 10 min — agents need time for multi-step tasks
 
           const handler = (data: unknown) => {
             const d = data as {

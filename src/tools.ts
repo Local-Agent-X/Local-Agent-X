@@ -953,11 +953,103 @@ const ocrTool: ToolDefinition = {
   },
 };
 
+// ── Sprint 1+ Tools ──
+
+import { globTool } from "./glob-tool.js";
+import { grepTool } from "./grep-tool.js";
+import { webSearchTool } from "./web-search-tool.js";
+import { askUserTool } from "./ask-user-tool.js";
+import { spreadsheetTools } from "./spreadsheet-tools.js";
+import { documentTools } from "./document-tools.js";
+import { presentationTools } from "./presentation-tools.js";
+import { pdfTools } from "./pdf-tools.js";
+import { emailTools } from "./email-tools.js";
+import { calendarTools } from "./calendar-tools.js";
+import { clipboardTools } from "./clipboard-tools.js";
+import { sqlTools } from "./sql-tools.js";
+import { taskTools } from "./task-tools.js";
+import { planTools } from "./plan-tools.js";
+import { configTools } from "./config-tool.js";
+import { ToolRegistry, createToolSearchTool } from "./tool-search.js";
+import { withPrompt, buildToolPromptSection } from "./tool-prompt-builder.js";
+
+// ── Tool Prompts (teach the LLM best practices) ──
+
+const toolPrompts: Record<string, () => string> = {
+  read: () => "Use read for files instead of bash cat/head/tail. Supports offset/limit for large files.",
+  write: () => "Use write for new files instead of bash echo/heredoc. Read existing files before overwriting.",
+  edit: () => "Use edit for targeted find-and-replace instead of bash sed/awk. Read the file first.",
+  bash: () => "Only use bash for shell commands. Never use it for file read/write/search — use dedicated tools.",
+  glob: () => "Use glob for finding files by name pattern. Faster than bash find/ls.",
+  grep: () => "ALWAYS use grep for content search. Never bash grep/rg. Supports regex, type filtering, 3 output modes.",
+  web_search: () => "Use web_search to find URLs, then web_fetch to read specific pages.",
+  spreadsheet_read: () => "Use for Excel/CSV reading. Never write Python pandas scripts.",
+  spreadsheet_write: () => "Pass data as JSON array of objects. Keys become headers.",
+  document_create: () => "Use markdown formatting with \\n newlines. # for headings, - for bullets, **bold**.",
+  presentation_from_outline: () => "Outline MUST use # for slide titles and - for bullets, separated by \\n.",
+  pdf_create: () => "Use # for headings, \\n\\n for paragraph breaks.",
+  sql_query: () => "Read-only by default. Run sql_schema first to see available tables.",
+  ask_user: () => "Use when you need clarification. Don't guess — ask.",
+  enter_plan_mode: () => "Enter plan mode to research before making changes. Only read tools available.",
+  task_create: () => "Use for multi-step work. Tasks persist across messages.",
+};
+
+// ── Apply prompts to tools ──
+
+function applyPrompts(tools: ToolDefinition[]): ToolDefinition[] {
+  for (const t of tools) {
+    const fn = toolPrompts[t.name];
+    if (fn) withPrompt(t, fn);
+  }
+  return tools;
+}
+
+// ── Singleton registry (tools register themselves here) ──
+const _registry = new ToolRegistry();
+const _toolSearchTool = createToolSearchTool(_registry);
+
 // ── Export All ──
 
-export const allTools: ToolDefinition[] = [readTool, writeTool, editTool, bashTool, webFetchTool, viewImageTool, screenCaptureTool, cameraCaptureTool, ocrTool, buildAppTool, youtubeAnalyzeTool, createPageTool];
+export const allTools: ToolDefinition[] = applyPrompts([
+  // Core (always loaded — sent to LLM immediately)
+  readTool, writeTool, editTool, bashTool, webFetchTool,
+  globTool, grepTool, webSearchTool, askUserTool, _toolSearchTool,
+  // Vision & Media
+  viewImageTool, screenCaptureTool, cameraCaptureTool, ocrTool,
+  buildAppTool, youtubeAnalyzeTool, createPageTool,
+  // Office Suite
+  ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools,
+  // Communication & Data
+  ...emailTools, ...calendarTools, ...clipboardTools, ...sqlTools,
+  // Agent Intelligence
+  ...taskTools, ...planTools, ...configTools,
+]);
 
-/** Dynamic getter for hot-reload — returns the current tools array */
+// ── Tool Registry (for deferred loading) ──
+
+// Core tools: always sent to the LLM (eager)
+const EAGER_TOOLS = new Set([
+  "read", "write", "edit", "bash", "web_fetch", "glob", "grep",
+  "web_search", "ask_user", "view_image", "build_app", "create_page",
+  "task_create", "task_update", "task_list", "task_get",
+  "enter_plan_mode", "exit_plan_mode", "tool_search",
+]);
+
+export function buildToolRegistry(): { registry: ToolRegistry; eagerTools: ToolDefinition[]; toolSearchTool: ToolDefinition; promptSection: string } {
+  // Register all tools in the singleton registry (idempotent — skips if already registered)
+  for (const tool of allTools) {
+    if (_registry.get(tool.name)) continue;
+    const defer = !EAGER_TOOLS.has(tool.name);
+    _registry.register(tool, { defer, tags: [], searchHint: tool.description.slice(0, 80) });
+  }
+
+  const eagerTools = _registry.getEagerTools();
+  const promptSection = buildToolPromptSection(allTools);
+
+  return { registry: _registry, eagerTools, toolSearchTool: _toolSearchTool, promptSection };
+}
+
+/** Dynamic getter for hot-reload — returns ALL tools (eager + deferred) */
 export function getAllTools(): ToolDefinition[] {
   return allTools;
 }

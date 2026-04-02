@@ -277,10 +277,7 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
       progressTimer = setTimeout(() => {
         progressInterval = setInterval(() => {
           dotCount++;
-          const msgs = ["⏳ Reading files...", "🔍 Analyzing...", "🧠 Planning...", "⚡ Working...", "🔧 Still working..."];
-          const msg = msgs[Math.min(dotCount - 1, msgs.length - 1)];
-          console.log(`[claude] ${msg} (${10 + dotCount * 5}s)`);
-          progressYields.push({ type: "text", delta: `\n*${msg}*\n` });
+          console.log(`[claude] Still waiting... (${10 + dotCount * 5}s)`);
         }, 5000);
       }, 10000); // Only start after 10s of no response
     };

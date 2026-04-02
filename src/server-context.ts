@@ -12,6 +12,7 @@ import type { AgentSync } from "./sync.js";
 import type { AppRegistry } from "./app-runtime.js";
 import type { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore } from "./agent-store.js";
 import type { ToolDefinition, SAXConfig, ServerEvent, Session } from "./types.js";
+import type { ToolRegistry } from "./tool-search.js";
 
 export interface ServerContext {
   config: SAXConfig;
@@ -34,6 +35,7 @@ export interface ServerContext {
   issueStore: IssueStore;
   projectStore: ProjectStore;
   allAgentTools: ToolDefinition[];
+  toolRegistry?: ToolRegistry;
   bridgeTools: ToolDefinition[];
   getOrCreateSession: (id: string) => Session;
   saveSession: (session: Session) => void;

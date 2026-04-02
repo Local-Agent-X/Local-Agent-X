@@ -166,8 +166,8 @@ async function executeSingleTool(
     msgs.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
     return msgs;
   }
-  // Inject session ID for plan mode tools
-  if (tc.name === "enter_plan_mode" || tc.name === "exit_plan_mode") {
+  // Inject session ID for tools that need session-scoped state
+  if (tc.name === "enter_plan_mode" || tc.name === "exit_plan_mode" || tc.name === "skill_run") {
     args._sessionId = sessionId || "default";
   }
 

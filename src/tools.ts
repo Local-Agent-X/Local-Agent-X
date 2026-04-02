@@ -971,6 +971,7 @@ import { taskTools } from "./task-tools.js";
 import { planTools } from "./plan-tools.js";
 import { configTools } from "./config-tool.js";
 import { ToolRegistry, createToolSearchTool } from "./tool-search.js";
+import { skillTools } from "./skills/index.js";
 import { withPrompt, buildToolPromptSection } from "./tool-prompt-builder.js";
 
 // ── Tool Prompts (teach the LLM best practices) ──
@@ -1023,6 +1024,8 @@ export const allTools: ToolDefinition[] = applyPrompts([
   ...emailTools, ...calendarTools, ...clipboardTools, ...sqlTools,
   // Agent Intelligence
   ...taskTools, ...planTools, ...configTools,
+  // Skills
+  ...skillTools,
 ]);
 
 // ── Tool Registry (for deferred loading) ──

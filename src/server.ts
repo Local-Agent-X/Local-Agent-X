@@ -4,7 +4,7 @@ import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { runAgent, type AgentOptions } from "./agent.js";
-import { allTools, createHttpRequestTool } from "./tools.js";
+import { allTools, createHttpRequestTool, buildToolRegistry } from "./tools.js";
 import { appTools } from "./app-tools.js";
 import { issueTools } from "./issue-tools.js";
 import { SecurityLayer } from "./security.js";
@@ -142,18 +142,19 @@ export function startServer(config: SAXConfig) {
   const httpRequestTool = createHttpRequestTool(secretsStore);
   let activeBrowserSessionId = "default";
   const browserTools = createBrowserTools(() => activeBrowserSessionId);
+  // Build tool registry for deferred loading
+  const { registry: toolRegistry } = buildToolRegistry();
+
   const allAgentTools = [
     ...allTools, httpRequestTool,
     ...createMemoryTools(memoryIndex), ...secretTools, ...browserTools, ...imageTools,
-    ...createMissionTools(), ...createAllMissionTools(), ...createCronTools(cronService),
+    ...createMissionTools(), ...createCronTools(cronService),
     ...createAgencyTools(), ...createHandlerTools(), ...appTools, ...issueTools,
-    // Business & personal assistant tools
-    ...createSqlTools(secretsStore), ...createEmailTools(secretsStore),
-    ...createCalendarTools(secretsStore), ...createContactsTools(secretsStore),
+    // Remaining stub factories (contacts, cloud, notifications, payments, sms, voice, crm, bookkeeping, ecommerce)
+    ...createContactsTools(secretsStore),
     ...createCloudStorageTools(secretsStore), ...createNotificationTools(secretsStore),
-    ...createSpreadsheetTools(secretsStore), ...createPdfTools(),
     ...createPaymentTools(secretsStore), ...createSmsTools(secretsStore),
-    ...createVoiceTools(secretsStore), ...createClipboardTools(),
+    ...createVoiceTools(secretsStore),
     ...createCrmTools(secretsStore), ...createBookkeepingTools(secretsStore),
     ...createEcommerceTools(secretsStore),
   ];
@@ -216,7 +217,7 @@ export function startServer(config: SAXConfig) {
     const ctx: ServerContext = {
       config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, secretsStore, cronService, integrations,
       whatsappBridge, telegramBridge, agentSync, appRegistry: AppRegistry.getInstance(), agentRunStore, agentTemplateStore, issueStore, projectStore,
-      allAgentTools, bridgeTools, getOrCreateSession, saveSession, chatWs, broadcastAll,
+      allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession, chatWs, broadcastAll,
       activeOnEvent, setActiveOnEvent: (fn) => { activeOnEvent = fn; }, activeBrowserSessionId, setActiveBrowserSessionId: (id) => { activeBrowserSessionId = id; },
     };
     // Route delegation
@@ -344,15 +345,19 @@ export function startServer(config: SAXConfig) {
       const saved = loadSavedSettings();
       const { provider, apiKey, model } = await resolveProviderAndKey(saved);
 
-      // Build tool list: respect template.allowedTools if set, otherwise give all non-recursive tools
+      // Build tool list: respect template.allowedTools if set, otherwise give role-appropriate tools
       // Agents now GET issue_* and agent_* tools (they're real employees, not disposable workers)
-      let spawnedTools = allAgentTools.filter(t => !t.name.startsWith("agency_") && t.name !== "delegate");
+      const CORE_AGENT_TOOLS = new Set(["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image", "ask_user",
+        "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval",
+        "agent_whoami", "agent_team_list", "agent_wakeup", "task_create", "task_update", "task_list", "task_get"]);
+      let spawnedTools = allAgentTools.filter(t => CORE_AGENT_TOOLS.has(t.name));
       if (template?.allowedTools && template.allowedTools.length > 0) {
         // Template restricts tools — enforce it. Always include issue_* and agent_* for coordination.
         const allowed = new Set([...template.allowedTools, "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval", "agent_whoami", "agent_team_list", "agent_wakeup"]);
         spawnedTools = spawnedTools.filter(t => allowed.has(t.name));
       }
 
+      console.log(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools`);
       const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); console.warn(`[handler] Agent ${agentId} timed out`); }, config.agentTimeoutMs);
       const agentResult = await enqueue("agent", () => runAgent(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + identityBlock + parentContext + briefing,

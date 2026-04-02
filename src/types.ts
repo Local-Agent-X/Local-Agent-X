@@ -12,6 +12,7 @@ export interface ToolDefinition {
 export interface ToolResult {
   content: string;
   isError?: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 export interface AgentTurn {

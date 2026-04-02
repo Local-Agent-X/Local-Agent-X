@@ -11,6 +11,11 @@ import { checkSessionPolicy } from "./session-policy.js";
 import { ariEvaluate, isAriActive } from "./ari-kernel.js";
 import { recordSensitiveRead, checkEgressTaint, isSensitivePath } from "./data-lineage.js";
 import { compactIfNeeded } from "./context-manager.js";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import { isPlanMode, READ_ONLY_TOOLS } from "./plan-tools.js";
 
 /** Extended tool result that may include image data for vision analysis */
 interface ToolResultWithImage extends ToolResult {
@@ -38,6 +43,29 @@ interface VisionUserMessage {
     | { type: "text"; text: string }
     | { type: "image_url"; image_url: { url: string; detail?: string } }
   >;
+}
+
+// ── Result budgeting ──
+// Large tool results get saved to disk with a preview returned to context.
+// This prevents blowing up the conversation window with huge file reads or web fetches.
+
+const RESULT_BUDGET_DIR = join(tmpdir(), "sax-results");
+const DEFAULT_MAX_RESULT_SIZE = 50_000; // chars
+
+function budgetResult(content: string, maxSize: number = DEFAULT_MAX_RESULT_SIZE): string {
+  if (content.length <= maxSize) return content;
+  try {
+    mkdirSync(RESULT_BUDGET_DIR, { recursive: true });
+    const hash = createHash("sha256").update(content).digest("hex").slice(0, 12);
+    const path = join(RESULT_BUDGET_DIR, `${hash}.txt`);
+    writeFileSync(path, content, "utf-8");
+    const preview = content.slice(0, maxSize - 200);
+    const lastNewline = preview.lastIndexOf("\n");
+    const cleanPreview = lastNewline > 0 ? preview.slice(0, lastNewline) : preview;
+    return `${cleanPreview}\n\n... [truncated — full result (${content.length} chars) saved to ${path}]`;
+  } catch {
+    return content.slice(0, maxSize) + `\n\n... [truncated at ${maxSize} chars]`;
+  }
 }
 
 // ── OpenAI tool format conversion ──
@@ -108,7 +136,160 @@ export function buildApprovalContext(toolName: string, args: Record<string, unkn
   }
 }
 
-// ── Security-layered tool execution ──
+// ── Single tool execution (used by both serial and parallel paths) ──
+
+async function executeSingleTool(
+  tc: { id: string; name: string; arguments: string },
+  toolMap: Map<string, ToolDefinition>,
+  security: SecurityLayer,
+  toolPolicy?: ToolPolicy,
+  threatEngine?: ThreatEngine,
+  rbac?: RBACManager,
+  callerRole?: Role,
+  sessionId?: string,
+  onEvent?: (event: ServerEvent) => void,
+  signal?: AbortSignal
+): Promise<ChatCompletionMessageParam[]> {
+  const msgs: ChatCompletionMessageParam[] = [];
+  let args: Record<string, unknown>;
+  try { args = JSON.parse(tc.arguments); }
+  catch { args = { _raw: tc.arguments }; }
+
+  // Plan mode: block non-read-only tools (session-scoped)
+  if (isPlanMode(sessionId) && !READ_ONLY_TOOLS.has(tc.name)) {
+    const result = `BLOCKED: Plan mode is active. Only read-only tools are allowed. Use exit_plan_mode to restore full access.`;
+    onEvent?.({ type: "tool_end", toolName: tc.name, result, allowed: false });
+    msgs.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
+    return msgs;
+  }
+  // Inject session ID for plan mode tools
+  if (tc.name === "enter_plan_mode" || tc.name === "exit_plan_mode") {
+    args._sessionId = sessionId || "default";
+  }
+
+  const riskLevel = getRiskLevel(tc.name, args, security);
+  const approvalContext = buildApprovalContext(tc.name, args);
+  onEvent?.({ type: "tool_start", toolName: tc.name, args, riskLevel, context: approvalContext, requiresApproval: riskLevel === "high" });
+
+  // Layer -1: AriKernel
+  const isInternalTool = tc.name.startsWith("agent_") || tc.name.startsWith("swarm_") ||
+    tc.name.startsWith("mission_") || tc.name.startsWith("cron_") ||
+    ["delegate", "generate_image", "generate_video", "camera_capture", "screen_capture", "ocr",
+     "memory_search", "memory_save", "playbook_list", "playbook_get"].includes(tc.name);
+  if (isAriActive()) {
+    const actionMap: Record<string, string> = { read: "read", write: "write", edit: "write", bash: "exec" };
+    const ariResult = await ariEvaluate(tc.name, actionMap[tc.name] || "exec", args);
+    if (!ariResult.allowed && !isInternalTool) {
+      onEvent?.({ type: "tool_end", toolName: tc.name, result: ariResult.reason, allowed: false });
+      msgs.push({ role: "tool", tool_call_id: tc.id, content: ariResult.reason } as ChatCompletionMessageParam);
+      return msgs;
+    }
+  }
+
+  // Layer 0: Session policy
+  const policyBlock = checkSessionPolicy(sessionId || "default", tc.name);
+  if (policyBlock) {
+    onEvent?.({ type: "tool_end", toolName: tc.name, result: policyBlock, allowed: false });
+    msgs.push({ role: "tool", tool_call_id: tc.id, content: policyBlock } as ChatCompletionMessageParam);
+    return msgs;
+  }
+
+  // Layer 1: SecurityLayer
+  const secDecision = security.evaluate({ toolName: tc.name, args, sessionId: sessionId || "default" });
+
+  // Layer 2: RBAC
+  let rbacBlocked = false, rbacReason = "";
+  if (rbac && callerRole) {
+    const d = rbac.checkTool(callerRole, tc.name);
+    if (!d.allowed) { rbacBlocked = true; rbacReason = d.reason; }
+  }
+
+  // Layer 3: ToolPolicy
+  let policyBlocked = false, policyReason = "";
+  if (secDecision.allowed && !rbacBlocked && toolPolicy) {
+    const d = toolPolicy.evaluate(tc.name, args, sessionId || "default");
+    if (!d.allowed) { policyBlocked = true; policyReason = d.reason; }
+  }
+
+  const allowed = secDecision.allowed && !rbacBlocked && !policyBlocked;
+  let result: ToolResult;
+
+  if (!secDecision.allowed) {
+    result = { content: `BLOCKED by security: ${secDecision.reason}`, isError: true };
+  } else if (rbacBlocked) {
+    result = { content: `BLOCKED by RBAC: ${rbacReason}`, isError: true };
+  } else if (policyBlocked) {
+    result = { content: `BLOCKED by policy: ${policyReason}`, isError: true };
+  } else {
+    // Data lineage egress check
+    if (["http_request", "web_fetch"].includes(tc.name)) {
+      const egressCheck = checkEgressTaint(sessionId || "default");
+      if (egressCheck.blocked) {
+        result = { content: `BLOCKED by data lineage: ${egressCheck.reason}`, isError: true };
+        onEvent?.({ type: "tool_end", toolName: tc.name, result: result.content, allowed: false });
+        msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
+        return msgs;
+      }
+    }
+
+    const tool = toolMap.get(tc.name);
+    if (!tool) {
+      result = { content: `Unknown tool: ${tc.name}`, isError: true };
+    } else {
+      try {
+        result = await tool.execute(args, signal);
+        if (tc.name === "read" && isSensitivePath(String(args.path || ""))) {
+          recordSensitiveRead(sessionId || "default", "sensitive_file", String(args.path));
+        }
+      } catch (e) {
+        result = { content: `Tool error: ${(e as Error).message}`, isError: true };
+      }
+    }
+  }
+
+  // Layer 4: ThreatEngine
+  if (threatEngine) {
+    const threat = threatEngine.evaluateToolResult(tc.name, args, result.content, allowed);
+    if (threat.blocked) {
+      result = { content: `BLOCKED by threat engine: ${threat.reason}`, isError: true };
+    }
+    if (threatEngine.isRestricted() && ["http_request", "web_fetch", "browser"].includes(tc.name)) {
+      let isOwnApp = false;
+      if (tc.name === "browser") {
+        const urlArg = String(args.url || "");
+        const appPort = process.env.SAX_PORT || "7007";
+        if (new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${appPort}`, "i").test(urlArg)) {
+          isOwnApp = true;
+        }
+      }
+      if (!isOwnApp) {
+        result = { content: `BLOCKED: Session threat level elevated. External tool calls restricted.`, isError: true };
+      }
+    }
+  }
+
+  // Result budgeting
+  if (!result.isError) {
+    result = { ...result, content: budgetResult(result.content) };
+  }
+
+  onEvent?.({ type: "tool_end", toolName: tc.name, result: result.content, allowed });
+
+  const imageData = (result as ToolResultWithImage)._image;
+  if (imageData) {
+    msgs.push({ role: "tool", tool_call_id: tc.id, content: `Image loaded: ${imageData.path}\nQuestion: ${imageData.question}` } as ChatCompletionMessageParam);
+    msgs.push({ role: "user", content: [
+      { type: "text", text: `[Image from ${imageData.path}] ${imageData.question}` },
+      { type: "image_url", image_url: { url: `data:${imageData.mime};base64,${imageData.b64}`, detail: "auto" } },
+    ]} as ChatCompletionMessageParam);
+  } else {
+    msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content });
+  }
+
+  return msgs;
+}
+
+// ── Security-layered tool execution (orchestrator) ──
 
 export async function executeToolCalls(
   toolCalls: Array<{ id: string; name: string; arguments: string }>,
@@ -124,175 +305,39 @@ export async function executeToolCalls(
 ): Promise<ChatCompletionMessageParam[]> {
   const results: ChatCompletionMessageParam[] = [];
 
-  for (const tc of toolCalls) {
-    let args: Record<string, unknown>;
-    try {
-      args = JSON.parse(tc.arguments);
-    } catch (parseErr) {
-      console.warn(`[agent] Malformed JSON in tool call arguments for ${tc.name}: ${(parseErr as Error).message}`);
-      args = { _raw: tc.arguments };
-    }
+  // Execute tools in order, batching adjacent concurrent-safe tools together.
+  // This preserves the original call order while parallelizing where safe.
+  let i = 0;
+  while (i < toolCalls.length) {
+    const tc = toolCalls[i];
+    const tool = toolMap.get(tc.name);
+    const isConcurrent = tool && "concurrencySafe" in tool && (tool as { concurrencySafe?: boolean }).concurrencySafe;
 
-    // Build rich approval context for risky tool calls
-    const riskLevel = getRiskLevel(tc.name, args, security);
-    const approvalContext = buildApprovalContext(tc.name, args);
-    const requiresApproval = riskLevel === "high";
-    onEvent?.({ type: "tool_start", toolName: tc.name, args, riskLevel, context: approvalContext, requiresApproval });
-
-    // Layer -1: AriKernel (taint tracking, behavioral rules, quarantine)
-    const isInternalTool = tc.name.startsWith("agent_") || tc.name.startsWith("swarm_") ||
-      tc.name.startsWith("mission_") || tc.name.startsWith("cron_") ||
-      ["delegate", "generate_image", "generate_video", "camera_capture", "screen_capture", "ocr",
-       "memory_search", "memory_save", "playbook_list", "playbook_get"].includes(tc.name);
-    if (isAriActive()) {
-      const actionMap: Record<string, string> = { read: "read", write: "write", edit: "write", bash: "exec" };
-      const ariResult = await ariEvaluate(tc.name, actionMap[tc.name] || "exec", args);
-      if (!ariResult.allowed) {
-        if (isInternalTool) {
-          console.warn(`[ari] Internal tool ${tc.name} flagged but allowed: ${ariResult.reason}`);
-        } else {
-          const result = ariResult.reason;
-          onEvent?.({ type: "tool_end", toolName: tc.name, result, allowed: false });
-          results.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
-          continue;
-        }
+    if (isConcurrent) {
+      // Collect adjacent concurrent-safe tools into a batch
+      const batch: typeof toolCalls = [tc];
+      while (i + 1 < toolCalls.length) {
+        const next = toolCalls[i + 1];
+        const nextTool = toolMap.get(next.name);
+        if (nextTool && "concurrencySafe" in nextTool && (nextTool as { concurrencySafe?: boolean }).concurrencySafe) {
+          batch.push(next);
+          i++;
+        } else break;
       }
-    }
-
-    // Layer 0: Session policy (per-session overrides — high-security, read-only, etc.)
-    const policyBlock = checkSessionPolicy(sessionId || "default", tc.name);
-    if (policyBlock) {
-      onEvent?.({ type: "tool_end", toolName: tc.name, result: policyBlock, allowed: false });
-      results.push({ role: "tool", tool_call_id: tc.id, content: policyBlock } as ChatCompletionMessageParam);
-      continue;
-    }
-
-    // Layer 1: SecurityLayer (SSRF, shell, file access, path traversal)
-    const secDecision = security.evaluate({
-      toolName: tc.name,
-      args,
-      sessionId: sessionId || "default",
-    });
-
-    // Layer 2: RBAC tool permission
-    let rbacBlocked = false;
-    let rbacReason = "";
-    if (rbac && callerRole) {
-      const rbacDecision = rbac.checkTool(callerRole, tc.name);
-      if (!rbacDecision.allowed) {
-        rbacBlocked = true;
-        rbacReason = rbacDecision.reason;
-      }
-    }
-
-    // Layer 3: ToolPolicy (configurable allow/deny rules, rate limits, host constraints)
-    let policyBlocked = false;
-    let policyReason = "";
-    if (secDecision.allowed && !rbacBlocked && toolPolicy) {
-      const policyDecision = toolPolicy.evaluate(tc.name, args, sessionId || "default");
-      if (!policyDecision.allowed) {
-        policyBlocked = true;
-        policyReason = policyDecision.reason;
-      }
-    }
-
-    const allowed = secDecision.allowed && !rbacBlocked && !policyBlocked;
-    let result: ToolResult;
-
-    if (!secDecision.allowed) {
-      result = { content: `BLOCKED by security: ${secDecision.reason}`, isError: true };
-    } else if (rbacBlocked) {
-      result = { content: `BLOCKED by RBAC: ${rbacReason}`, isError: true };
-    } else if (policyBlocked) {
-      result = { content: `BLOCKED by policy: ${policyReason}`, isError: true };
-    } else {
-      // Data lineage: block egress if session has tainted data
-      const egressTools = ["http_request", "web_fetch"];
-      if (egressTools.includes(tc.name)) {
-        const egressCheck = checkEgressTaint(sessionId || "default");
-        if (egressCheck.blocked) {
-          result = { content: `BLOCKED by data lineage: ${egressCheck.reason}`, isError: true };
-          onEvent?.({ type: "tool_end", toolName: tc.name, result: result.content, allowed: false });
-          results.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
-          continue;
-        }
-      }
-
-      const tool = toolMap.get(tc.name);
-      if (!tool) {
-        result = { content: `Unknown tool: ${tc.name}`, isError: true };
+      if (batch.length > 1) {
+        const parallelResults = await Promise.all(
+          batch.map((b) => executeSingleTool(b, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal))
+        );
+        results.push(...parallelResults.flat());
       } else {
-        try {
-          result = await tool.execute(args, signal);
-          // Data lineage: record sensitive reads for taint tracking
-          if (tc.name === "read" && isSensitivePath(String(args.path || ""))) {
-            recordSensitiveRead(sessionId || "default", "sensitive_file", String(args.path));
-          }
-        } catch (e) {
-          result = { content: `Tool error: ${(e as Error).message}`, isError: true };
-        }
+        const msgs = await executeSingleTool(batch[0], toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal);
+        results.push(...msgs);
       }
-    }
-
-    // Layer 4: ThreatEngine post-execution analysis
-    if (threatEngine) {
-      const threat = threatEngine.evaluateToolResult(tc.name, args, result.content, allowed);
-      if (threat.blocked) {
-        result = { content: `BLOCKED by threat engine: ${threat.reason}`, isError: true };
-      }
-      if (threatEngine.isRestricted() && ["http_request", "web_fetch", "browser"].includes(tc.name)) {
-        let isOwnApp = false;
-        if (tc.name === "browser") {
-          const urlArg = String(args.url || "");
-          const appPort = process.env.SAX_PORT || "7007";
-          if (new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${appPort}`, "i").test(urlArg)) {
-            isOwnApp = true;
-          } else if (!urlArg) {
-            try {
-              const { getBrowserManager } = await import("./browser.js");
-              isOwnApp = getBrowserManager(sessionId || "default").isOnOwnApp();
-            } catch {}
-          }
-        }
-        if (!isOwnApp) {
-          result = {
-            content: `BLOCKED: Session threat level is ${threat.threatLevel} (score: ${threat.threatScore}). External tool calls are restricted. Resolve security concerns first.`,
-            isError: true,
-          };
-        }
-      }
-    }
-
-    onEvent?.({
-      type: "tool_end",
-      toolName: tc.name,
-      result: result.content,
-      allowed,
-    });
-
-    // Check if tool returned an image for vision analysis
-    const imageData = (result as ToolResultWithImage)._image;
-    if (imageData) {
-      results.push({
-        role: "tool",
-        tool_call_id: tc.id,
-        content: `Image loaded: ${imageData.path}\nQuestion: ${imageData.question}`,
-      } as ChatCompletionMessageParam);
-      const visionMsg: VisionUserMessage = {
-        role: "user",
-        content: [
-          { type: "text", text: `[Image from ${imageData.path}] ${imageData.question}` },
-          { type: "image_url", image_url: { url: `data:${imageData.mime};base64,${imageData.b64}`, detail: "auto" } },
-        ],
-      };
-      results.push(visionMsg as ChatCompletionMessageParam);
     } else {
-      results.push({
-        role: "tool",
-        tool_call_id: tc.id,
-        content: result.content,
-      });
+      const msgs = await executeSingleTool(tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal);
+      results.push(...msgs);
     }
+    i++;
   }
 
   return results;

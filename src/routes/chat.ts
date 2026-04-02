@@ -218,6 +218,8 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       }), { label: `chat:${sessionId}`, timeout: 600_000 });
 
       ctx.setActiveOnEvent(undefined);
+      // Clear any skill tool restrictions so they don't leak into the next message
+      try { const { clearSessionAllowedTools } = await import("../session-policy.js"); clearSessionAllowedTools(sessionId); } catch {}
       session.messages = result.messages.filter((m) => m.role !== "system" && (m.content || (m as unknown as MsgRecord).tool_calls));
       session.updatedAt = Date.now();
 
@@ -244,6 +246,8 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       if (sessionId.startsWith("tg-") && assistantReply) ctx.telegramBridge.sendMessage(sessionId.slice(3), assistantReply).catch(() => {});
       ctx.agentSync.onChatEnd().catch(() => {});
     } catch (e) {
+      // Clear skill restrictions on error too — don't leave session stuck in whitelist mode
+      try { const { clearSessionAllowedTools } = await import("../session-policy.js"); clearSessionAllowedTools(sessionId); } catch {}
       sseWrite(res, { type: "error", message: safeErrorMessage(e) });
       sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
       clearInterval(heartbeat);

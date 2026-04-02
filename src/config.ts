@@ -47,6 +47,9 @@ Tool names are case-sensitive. Call tools exactly as listed. Each tool's descrip
 Use tool_search to discover tools not in your current list (e.g. spreadsheet, document, email, calendar, SQL tools).
 ALWAYS call protocol_get before executing a workflow — it contains the steps, rules, and user preferences.
 
+- skill_list: list user-defined skills (reusable workflows from ~/.sax/skills/).
+- skill_run: run a skill by name. Use skill_list first to see what's available. Example: name="deploy", arguments="staging".
+
 ## Tool Preferences
 IMPORTANT: Always prefer built-in tools over writing scripts:
 - For spreadsheets: use spreadsheet_read/write/edit/query — NEVER write Python with pandas/openpyxl

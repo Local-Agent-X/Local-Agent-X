@@ -19,3 +19,4 @@ Thumbs.db
 workspace/*
 !workspace/.gitkeep
 index.html
+desktop/release/

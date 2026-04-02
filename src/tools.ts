@@ -1037,6 +1037,39 @@ export const allTools: ToolDefinition[] = applyPrompts([
       return { content: `Dream prompt ready. Execute this consolidation:\n\n${buildDreamPrompt()}`, metadata: { isDreamPrompt: true } };
     },
   } satisfies ToolDefinition,
+  // Doctor (self-diagnostics)
+  {
+    name: "doctor",
+    description: "Run system self-diagnostics. Checks API keys, connectivity, dependencies, config, workspace, database, and tools. Returns actionable results.",
+    parameters: { type: "object", properties: {}, required: [] },
+    async execute(): Promise<{ content: string }> {
+      const { runDoctor, formatDoctorReport } = await import("./doctor.js");
+      const report = await runDoctor();
+      return { content: formatDoctorReport(report) };
+    },
+  } satisfies ToolDefinition,
+  // Usage/Cost tracking
+  {
+    name: "usage_report",
+    description: "Get token usage and cost report. Shows spending by model, session, and time period. Use 'today' for today's costs, 'session' for current session, or 'all' for everything.",
+    parameters: { type: "object", properties: { period: { type: "string", enum: ["today", "session", "week", "all"], description: "Time period for the report" }, sessionId: { type: "string", description: "Specific session ID (optional)" } }, required: [] },
+    async execute(args): Promise<{ content: string }> {
+      const { getUsageSummary, getTodayCost } = await import("./cost-tracker.js");
+      const period = (args.period as string) || "today";
+      if (period === "today") {
+        const today = getTodayCost();
+        return { content: `Today's usage: ${today.inputTokens.toLocaleString()} input + ${today.outputTokens.toLocaleString()} output tokens | Cost: $${today.costUsd.toFixed(2)}` };
+      }
+      const since = period === "week" ? Date.now() - 7 * 86400000 : undefined;
+      const sessionFilter = period === "session" ? (args.sessionId as string || args._sessionId as string || undefined) : (args.sessionId as string | undefined);
+      const summary = getUsageSummary({ since, sessionId: sessionFilter });
+      const lines = [`Usage Report (${period})`, `Total: ${summary.totalInputTokens.toLocaleString()} in + ${summary.totalOutputTokens.toLocaleString()} out | $${summary.totalCostUsd.toFixed(2)}`, "", "By Model:"];
+      for (const [model, data] of Object.entries(summary.byModel)) {
+        lines.push(`  ${model}: ${data.input.toLocaleString()} in + ${data.output.toLocaleString()} out | $${data.cost.toFixed(4)}`);
+      }
+      return { content: lines.join("\n") };
+    },
+  } satisfies ToolDefinition,
 ]);
 
 // ── Tool Registry (for deferred loading) ──

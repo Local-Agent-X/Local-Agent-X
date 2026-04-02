@@ -19,6 +19,54 @@ interface MigrationVersion {
 
 const registeredMigrations: Migration[] = [];
 
+// ── Built-in Migrations ──
+
+// v1: Ensure config has all required fields with defaults
+registerBuiltinMigration({
+  version: 1,
+  name: "config-defaults",
+  up: (dataDir: string) => {
+    const cfgPath = join(homedir(), ".sax", "config.json");
+    if (!existsSync(cfgPath)) return;
+    try {
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+      let changed = false;
+      const defaults: Record<string, unknown> = {
+        maxIterations: 25, temperature: 0.7, profile: "home",
+        toolApproval: "confirm-risky", retentionDays: 90,
+        logLevel: "basic", browserCdpPort: 9800,
+        browserIdleTimeoutMs: 600000, agentTimeoutMs: 300000,
+      };
+      for (const [key, value] of Object.entries(defaults)) {
+        if (cfg[key] === undefined) { cfg[key] = value; changed = true; }
+      }
+      if (changed) writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
+    } catch {}
+  },
+});
+
+// v2: Add projectRoot for desktop app (loads latest code from repo)
+registerBuiltinMigration({
+  version: 2,
+  name: "add-project-root",
+  up: () => {
+    const cfgPath = join(homedir(), ".sax", "config.json");
+    if (!existsSync(cfgPath)) return;
+    try {
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+      if (!cfg.projectRoot) {
+        cfg.projectRoot = process.cwd();
+        writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
+      }
+    } catch {}
+  },
+});
+
+function registerBuiltinMigration(m: Migration): void {
+  const existing = registeredMigrations.find(x => x.version === m.version);
+  if (!existing) { registeredMigrations.push(m); registeredMigrations.sort((a, b) => a.version - b.version); }
+}
+
 function versionFilePath(): string {
   return join(homedir(), ".sax", "migration-version.json");
 }

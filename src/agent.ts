@@ -36,18 +36,45 @@ export interface AgentOptions {
   pauseCallback?: (reason: string) => Promise<string>;
 }
 
-// ── Main Entry Point ──
+// ── Main Entry Point (with query pipeline) ──
 
 export async function runAgent(
   userMessage: string,
   history: ChatCompletionMessageParam[],
   options: AgentOptions
 ): Promise<AgentTurn> {
+  // Run pre-middleware (model routing, context enrichment)
+  let pipelineCtx: import("./query-pipeline.js").QueryContext | null = null;
+  try {
+    const { getDefaultPipeline } = await import("./query-pipeline.js");
+    const pipeline = getDefaultPipeline();
+    pipelineCtx = await pipeline.runPre({
+      userMessage, history, systemPrompt: options.systemPrompt,
+      model: options.model, provider: options.provider,
+      temperature: options.temperature || 0.7,
+      sessionId: options.sessionId || "default", meta: {},
+    });
+  } catch {}
+
+  // Execute the agent
+  let turn: AgentTurn;
   if (options.provider === "codex") {
-    return runCodexAgent(userMessage, history, options);
+    turn = await runCodexAgent(userMessage, history, options);
+  } else if (options.provider === "anthropic") {
+    turn = await runAnthropicAgent(userMessage, history, options);
+  } else {
+    turn = await runStandardAgent(userMessage, history, options);
   }
-  if (options.provider === "anthropic") {
-    return runAnthropicAgent(userMessage, history, options);
+
+  // Run post-middleware (cost tracking, quality scoring, logging)
+  if (pipelineCtx) {
+    try {
+      const { getDefaultPipeline } = await import("./query-pipeline.js");
+      const pipeline = getDefaultPipeline();
+      const result = await pipeline.runPost({ turn, context: pipelineCtx });
+      turn = result.turn;
+    } catch {}
   }
-  return runStandardAgent(userMessage, history, options);
+
+  return turn;
 }

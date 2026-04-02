@@ -107,6 +107,13 @@ function md(s) {
     return ph(`<img src="${safeSrc}" alt="${esc(alt)}" class="inline-chat-img" onclick="openLightbox(this.src)" />`);
   });
   h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
+    // Workspace-relative file links → serve via /files/ route (with auth token)
+    const wsMatch = url.match(/^\.?\/?workspace\/(.+)$/);
+    if (wsMatch) {
+      const token = new URLSearchParams(window.location.search).get('token') || '';
+      const fileUrl = '/files/' + wsMatch[1].replace(/^\/+/, '') + (token ? '?token=' + token : '');
+      return ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
+    }
     const safeUrl = sanitizeUrl(url);
     return ph(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
   });

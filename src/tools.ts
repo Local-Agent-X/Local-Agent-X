@@ -970,6 +970,7 @@ import { clipboardTools } from "./clipboard-tools.js";
 import { sqlTools } from "./sql-tools.js";
 import { taskTools } from "./task-tools.js";
 import { planTools } from "./plan-tools.js";
+import { buildDreamPrompt } from "./memory-dream.js";
 import { configTools } from "./config-tool.js";
 import { ToolRegistry, createToolSearchTool } from "./tool-search.js";
 import { skillTools } from "./skills/index.js";
@@ -1027,6 +1028,15 @@ export const allTools: ToolDefinition[] = applyPrompts([
   ...taskTools, ...planTools, ...configTools,
   // Skills
   ...skillTools,
+  // Dream (manual trigger for memory consolidation)
+  {
+    name: "memory_dream",
+    description: "Trigger a memory consolidation (dream). Reviews recent sessions and reorganizes memory files. Runs automatically every 24h but can be triggered manually.",
+    parameters: { type: "object", properties: {}, required: [] },
+    async execute(): Promise<{ content: string; metadata?: Record<string, unknown> }> {
+      return { content: `Dream prompt ready. Execute this consolidation:\n\n${buildDreamPrompt()}`, metadata: { isDreamPrompt: true } };
+    },
+  } satisfies ToolDefinition,
 ]);
 
 // ── Tool Registry (for deferred loading) ──

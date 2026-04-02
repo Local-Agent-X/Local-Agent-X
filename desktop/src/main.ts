@@ -354,12 +354,15 @@ function createWindow(): void {
 
   // Intercept navigation to document files — open with system default app instead
   mainWindow.webContents.on("will-navigate", (e, url) => {
-    const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv|txt|md|html?|json|xml|zip|png|jpe?g|gif|svg|mp[34]|wav)$/i;
+    const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv)$/i;
     try {
       const pathname = new URL(url).pathname;
       if (DOC_EXTENSIONS.test(pathname)) {
         e.preventDefault();
-        const filePath = join(process.cwd(), decodeURIComponent(pathname));
+        const relativePath = pathname.startsWith("/files/")
+          ? join("workspace", decodeURIComponent(pathname.slice(7)))
+          : decodeURIComponent(pathname.slice(1));
+        const filePath = join(process.cwd(), relativePath);
         shell.openPath(filePath).then((err) => {
           if (err) console.warn(`[desktop] Failed to open ${filePath}: ${err}`);
         });
@@ -403,21 +406,24 @@ function createWindow(): void {
     if (url.startsWith(appOrigin)) {
       const pathname = new URL(url).pathname;
 
-      // File downloads (e.g. /files/report.docx) → open in system browser for download
-      if (pathname.startsWith("/files/")) {
-        const separator = url.includes("?") ? "&" : "?";
-        shell.openExternal(`${url}${separator}token=${saxConfig.authToken}`);
-        return { action: "deny" };
-      }
-
-      // Document links (workspace/*.docx, *.xlsx, *.pptx, *.pdf, etc.) → open with system app
-      const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv|txt|md|html?|json|xml|zip|png|jpe?g|gif|svg|mp[34]|wav)$/i;
+      // Document file extensions → open with system default app (Word, Excel, etc.)
+      const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv)$/i;
       if (DOC_EXTENSIONS.test(pathname)) {
-        // Resolve to actual file path on disk
-        const filePath = join(process.cwd(), decodeURIComponent(pathname));
+        // /files/foo.docx → workspace/foo.docx on disk
+        const relativePath = pathname.startsWith("/files/")
+          ? join("workspace", decodeURIComponent(pathname.slice(7)))
+          : decodeURIComponent(pathname.slice(1));
+        const filePath = join(process.cwd(), relativePath);
         shell.openPath(filePath).then((err) => {
           if (err) console.warn(`[desktop] Failed to open ${filePath}: ${err}`);
         });
+        return { action: "deny" };
+      }
+
+      // Other /files/ links (non-document) → open in system browser for download
+      if (pathname.startsWith("/files/")) {
+        const separator = url.includes("?") ? "&" : "?";
+        shell.openExternal(`${url}${separator}token=${saxConfig.authToken}`);
         return { action: "deny" };
       }
     }

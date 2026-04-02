@@ -31,6 +31,11 @@ export interface ToolPolicyRule {
     blockedArgs?: string[];      // Reject if any arg contains these strings
     maxCallsPerSession?: number; // Rate limit per session
   };
+  /** Match on specific argument values. Keys are arg names, values are glob patterns.
+   *  Example: { "command": "git *" } matches bash calls where command starts with "git ".
+   *  Example: { "path": "workspace/*" } matches file tools writing to workspace/.
+   *  All specified patterns must match for the rule to apply. */
+  argMatch?: Record<string, string>;
   priority?: number;     // Higher = evaluated first (default: 0)
 }
 
@@ -41,6 +46,20 @@ export interface ToolPolicyConfig {
 
 // Track call counts per session per tool
 const sessionCallCounts = new Map<string, Map<string, number>>();
+
+/** Match an argument value against a glob pattern.
+ *  Supports: "git *" matches "git status", "workspace/*" matches "workspace/foo.txt",
+ *  "*.ts" matches "index.ts", exact match for no wildcards. */
+function matchArgPattern(pattern: string, value: string): boolean {
+  if (pattern === "*") return true;
+  if (pattern === value) return true;
+  // Convert glob to regex: * → .*, escape other regex chars
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+  try {
+    if (checkRegexSafety(escaped) !== null) return false; // unsafe pattern — reject
+    return new RegExp(`^${escaped}$`, "i").test(value);
+  } catch { return false; }
+}
 
 /** Match a tool name against a glob pattern */
 function matchGlob(pattern: string, name: string): boolean {
@@ -79,10 +98,24 @@ export class ToolPolicy {
   private config: ToolPolicyConfig;
 
   constructor(config: ToolPolicyConfig) {
+    // Validate argMatch patterns at load time — reject unsafe patterns instead of failing open
+    const validRules = config.rules.filter((rule) => {
+      if (!rule.argMatch) return true;
+      for (const [argName, pattern] of Object.entries(rule.argMatch)) {
+        const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+        const safety = checkRegexSafety(escaped);
+        if (safety !== null) {
+          console.warn(`[policy] Rule "${rule.id}" has unsafe argMatch pattern for "${argName}": ${safety} — rule rejected`);
+          return false;
+        }
+      }
+      return true;
+    });
+
     // Sort rules by priority (highest first)
     this.config = {
       ...config,
-      rules: [...config.rules].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0)),
+      rules: [...validRules].sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0)),
     };
   }
 
@@ -104,6 +137,16 @@ export class ToolPolicy {
       if (rule.action) {
         const toolAction = String(args.action || "");
         if (rule.action !== toolAction && rule.action !== "*") continue;
+      }
+
+      // Check argument pattern matching — all specified patterns must match
+      if (rule.argMatch) {
+        let allMatch = true;
+        for (const [argName, pattern] of Object.entries(rule.argMatch)) {
+          const argValue = String(args[argName] ?? "");
+          if (!matchArgPattern(pattern, argValue)) { allMatch = false; break; }
+        }
+        if (!allMatch) continue; // Rule doesn't apply to these args
       }
 
       // Check constraints
@@ -225,6 +268,22 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     // Secrets — request triggers UI prompt, list shows names only
     { id: "allow-request-secret", tool: "request_secret", decision: "allow", reason: "Secret request (user confirms via UI)", priority: 50 },
     { id: "allow-list-secrets", tool: "list_secrets", decision: "allow", reason: "List secret names (no values exposed)", priority: 50 },
+
+    // ── ARGUMENT-MATCHED rules (deny dangerous patterns before general allow) ──
+
+    // Block destructive bash commands
+    { id: "deny-bash-rm-rf", tool: "bash", decision: "deny", reason: "Blocked: rm -rf is too dangerous for automated execution", priority: 90, argMatch: { command: "rm -rf *" } },
+    { id: "deny-bash-format", tool: "bash", decision: "deny", reason: "Blocked: format/fdisk commands", priority: 90, argMatch: { command: "format *" } },
+    { id: "deny-bash-del-system", tool: "bash", decision: "deny", reason: "Blocked: cannot delete system files", priority: 90, argMatch: { command: "del /f /s /q C:\\Windows*" } },
+
+    // Block writes to system/protected paths
+    { id: "deny-write-system", tool: "write", decision: "deny", reason: "Blocked: cannot write to system directories", priority: 90, argMatch: { path: "C:\\Windows*" } },
+    { id: "deny-edit-system", tool: "edit", decision: "deny", reason: "Blocked: cannot edit system files", priority: 90, argMatch: { path: "C:\\Windows*" } },
+    { id: "deny-write-node-modules", tool: "write", decision: "deny", reason: "Blocked: do not write directly to node_modules", priority: 80, argMatch: { path: "*node_modules*" } },
+    { id: "deny-edit-node-modules", tool: "edit", decision: "deny", reason: "Blocked: do not edit directly in node_modules", priority: 80, argMatch: { path: "*node_modules*" } },
+
+    // Allow git commands at normal priority (useful documentation that argMatch works)
+    { id: "allow-bash-git", tool: "bash", decision: "allow", reason: "Git commands allowed", priority: 50, argMatch: { command: "git *" } },
 
     // ── ALLOWED but RATE-LIMITED tools (can be abused) ──
 

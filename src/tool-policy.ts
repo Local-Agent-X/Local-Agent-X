@@ -386,6 +386,37 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     // E-commerce
     { id: "allow-shop", tool: "shop_*", decision: "allow", reason: "E-commerce order/product/customer management", priority: 50 },
 
+    // Search tools — safe, read-only
+    { id: "allow-glob", tool: "glob", decision: "allow", reason: "File pattern search (read-only)", priority: 50 },
+    { id: "allow-grep", tool: "grep", decision: "allow", reason: "Content search (read-only)", priority: 50 },
+    { id: "allow-tool-search", tool: "tool_search", decision: "allow", reason: "Discover available tools", priority: 50 },
+
+    // User interaction
+    { id: "allow-ask-user", tool: "ask_user", decision: "allow", reason: "Agent asks user for clarification", priority: 50 },
+
+    // Document tools
+    { id: "allow-document", tool: "document_*", decision: "allow", reason: "Word document create/read/edit", priority: 50 },
+    { id: "allow-presentation", tool: "presentation_*", decision: "allow", reason: "PowerPoint create/edit", priority: 50 },
+
+    // YouTube
+    { id: "allow-youtube", tool: "youtube_*", decision: "allow", reason: "YouTube analysis", priority: 50 },
+
+    // Task management — session-scoped tracking
+    { id: "allow-task", tool: "task_*", decision: "allow", reason: "Task tracking (session-scoped)", priority: 50 },
+
+    // Plan mode
+    { id: "allow-enter-plan", tool: "enter_plan_mode", decision: "allow", reason: "Enter read-only plan mode", priority: 50 },
+    { id: "allow-exit-plan", tool: "exit_plan_mode", decision: "allow", reason: "Exit plan mode", priority: 50 },
+
+    // Config
+    { id: "allow-config", tool: "config_*", decision: "allow", reason: "Agent configuration read/write", priority: 50 },
+
+    // Skills
+    { id: "allow-skills", tool: "skill_*", decision: "allow", reason: "User-defined skill workflows", priority: 50 },
+
+    // Playbook (legacy)
+    { id: "allow-playbook", tool: "playbook_*", decision: "allow", reason: "Legacy playbook tools", priority: 50 },
+
     // ── Everything else is DENIED by default ──
     // No catch-all "allow *" rule. Unknown tools are blocked.
   ],

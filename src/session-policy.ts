@@ -75,6 +75,22 @@ export function clearSessionPolicy(sessionId: string): void {
   sessionPolicies.delete(sessionId);
 }
 
+/** Set a tool whitelist on a session (used by skill restrictions). Stores the policy if not already stored. */
+export function setSessionAllowedTools(sessionId: string, tools: Set<string>): void {
+  let policy = sessionPolicies.get(sessionId);
+  if (!policy) {
+    policy = { preset: "default", ...PRESETS["default"], blockedTools: new Set(), allowedTools: new Set() };
+    sessionPolicies.set(sessionId, policy);
+  }
+  policy.allowedTools = tools;
+}
+
+/** Clear the tool whitelist on a session (restores full tool access). */
+export function clearSessionAllowedTools(sessionId: string): void {
+  const policy = sessionPolicies.get(sessionId);
+  if (policy) policy.allowedTools = new Set();
+}
+
 /**
  * Check if a tool call is allowed by session policy.
  * Returns null if allowed, or a reason string if blocked.

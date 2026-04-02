@@ -107,28 +107,37 @@ function md(s) {
     return ph(`<img src="${safeSrc}" alt="${esc(alt)}" class="inline-chat-img" onclick="openLightbox(this.src)" />`);
   });
   h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
+    // Normalize absolute paths and file:// URLs to relative workspace paths
+    let normalizedUrl = url;
+    // file:///C:/Users/.../workspace/foo.docx → workspace/foo.docx
+    const fileProtoMatch = normalizedUrl.match(/^file:\/\/\/.*?[/\\]workspace[/\\](.+)$/i);
+    if (fileProtoMatch) normalizedUrl = 'workspace/' + fileProtoMatch[1].replace(/\\/g, '/');
+    // C:\Users\...\workspace\foo.docx or /c/Users/.../workspace/foo.docx → workspace/foo.docx
+    const absMatch = normalizedUrl.match(/^(?:[A-Za-z]:[/\\]|\/[a-z]\/).*?[/\\]workspace[/\\](.+)$/i);
+    if (absMatch) normalizedUrl = 'workspace/' + absMatch[1].replace(/\\/g, '/');
+
     // Workspace-relative file links → serve via /files/ route (with auth token)
-    const wsMatch = url.match(/^\.?\/?workspace\/(.+)$/);
+    const wsMatch = normalizedUrl.match(/^\.?\/?workspace\/(.+)$/);
     if (wsMatch) {
       const token = AUTH_TOKEN || '';
       const fileUrl = '/files/' + wsMatch[1].replace(/^\/+/, '') + (token ? '?token=' + token : '');
       return ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
     }
     // /files/ links (already resolved by LLM or tool output) → add auth token
-    const filesMatch = url.match(/^\/files\/(.+)$/);
+    const filesMatch = normalizedUrl.match(/^\/files\/(.+)$/);
     if (filesMatch) {
       const token = AUTH_TOKEN || '';
-      const fileUrl = url + (token ? (url.includes('?') ? '&' : '?') + 'token=' + token : '');
+      const fileUrl = normalizedUrl + (token ? (normalizedUrl.includes('?') ? '&' : '?') + 'token=' + token : '');
       return ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
     }
     // Relative paths to document files → convert to /files/ route
-    const docMatch = url.match(/^[^\/].*\.(docx?|xlsx?|pptx?|pdf|csv)$/i);
+    const docMatch = normalizedUrl.match(/^[^\/].*\.(docx?|xlsx?|pptx?|pdf|csv)$/i);
     if (docMatch) {
       const token = AUTH_TOKEN || '';
-      const fileUrl = '/files/' + url.replace(/^\.\//, '') + (token ? '?token=' + token : '');
+      const fileUrl = '/files/' + normalizedUrl.replace(/^\.\//, '') + (token ? '?token=' + token : '');
       return ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
     }
-    const safeUrl = sanitizeUrl(url);
+    const safeUrl = sanitizeUrl(normalizedUrl);
     return ph(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
   });
 

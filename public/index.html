@@ -851,17 +851,27 @@ async function sendMessage(){
               // Feed to TTS sentence-by-sentence as text arrives
               feedTTS(event.delta);
               break;
-            case 'tool_start':
+            case 'tool_start':{
               bodyEl.innerHTML=content?esc(content):'';
-              bodyEl.appendChild(makeToolCard(event.toolName,event.args));
+              const card=makeToolCard(event.toolName,event.args);
+              if(event.toolCallId) card.dataset.toolCallId=event.toolCallId;
+              bodyEl.appendChild(card);
               break;
+            }
+            case 'tool_progress':{
+              const pCard=event.toolCallId?bodyEl.querySelector(`[data-tool-call-id="${event.toolCallId}"]`):bodyEl.querySelector('.tool-card:last-child');
+              if(pCard){
+                const detail=pCard.querySelector('.tool-detail');
+                if(detail) detail.textContent=event.message;
+              }
+              break;
+            }
             case 'tool_end':{
-              const cards=bodyEl.querySelectorAll('.tool-card');
-              const last=cards[cards.length-1];
-              if(last){
-                const ind=last.querySelector('.indicator');
+              const eCard=event.toolCallId?bodyEl.querySelector(`[data-tool-call-id="${event.toolCallId}"]`):bodyEl.querySelector('.tool-card:last-child');
+              if(eCard){
+                const ind=eCard.querySelector('.indicator');
                 ind.className='indicator '+(event.allowed?'allowed':'blocked');
-                last.querySelector('.tool-detail').textContent=event.result.slice(0,2000);
+                eCard.querySelector('.tool-detail').textContent=event.result.slice(0,2000);
               }
               break;
             }

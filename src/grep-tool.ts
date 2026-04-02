@@ -83,12 +83,16 @@ async function fallbackSearch(args: Record<string, unknown>, limit: number): Pro
   const ctx = typeof args.context === "number" ? (args.context as number) : 0;
   const root = String(args.path || process.cwd());
   const lines: string[] = [];
+  const onProgress = args._onProgress as ((msg: string) => void) | undefined;
 
   const rootStat = await stat(root).catch(() => null);
   const files = rootStat?.isFile() ? [root] : walkDir(root, args.type as string, args.glob as string);
 
+  let scanned = 0;
   for await (const file of files) {
     if (lines.length >= limit) break;
+    scanned++;
+    if (onProgress && scanned % 50 === 0) onProgress(`Searched ${scanned} files, ${lines.length} results so far...`);
     let content: string;
     try { content = await readFile(file, "utf-8"); } catch { continue; }
     const fileLines = content.split("\n");

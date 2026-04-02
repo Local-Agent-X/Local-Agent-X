@@ -110,8 +110,22 @@ function md(s) {
     // Workspace-relative file links → serve via /files/ route (with auth token)
     const wsMatch = url.match(/^\.?\/?workspace\/(.+)$/);
     if (wsMatch) {
-      const token = AUTH_TOKEN || new URLSearchParams(window.location.search).get('token') || '';
+      const token = AUTH_TOKEN || '';
       const fileUrl = '/files/' + wsMatch[1].replace(/^\/+/, '') + (token ? '?token=' + token : '');
+      return ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
+    }
+    // /files/ links (already resolved by LLM or tool output) → add auth token
+    const filesMatch = url.match(/^\/files\/(.+)$/);
+    if (filesMatch) {
+      const token = AUTH_TOKEN || '';
+      const fileUrl = url + (token ? (url.includes('?') ? '&' : '?') + 'token=' + token : '');
+      return ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
+    }
+    // Relative paths to document files → convert to /files/ route
+    const docMatch = url.match(/^[^\/].*\.(docx?|xlsx?|pptx?|pdf|csv)$/i);
+    if (docMatch) {
+      const token = AUTH_TOKEN || '';
+      const fileUrl = '/files/' + url.replace(/^\.\//, '') + (token ? '?token=' + token : '');
       return ph(`<a href="${fileUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
     }
     const safeUrl = sanitizeUrl(url);

@@ -252,8 +252,8 @@ export function startServer(config: SAXConfig) {
       }
       json(200, { files: uploaded }); return;
     }
-    // Static auth for /uploads/, /videos/, /images/
-    if (method === "GET" && ["/uploads/", "/videos/", "/images/"].some(r => url.pathname.startsWith(r))) {
+    // Static auth for /uploads/, /videos/, /images/, /files/
+    if (method === "GET" && ["/uploads/", "/videos/", "/images/", "/files/"].some(r => url.pathname.startsWith(r))) {
       const provided = ((req.headers.authorization || "").startsWith("Bearer ") ? (req.headers.authorization || "").slice(7) : "") || url.searchParams.get("token") || "";
       if (!provided || provided.length !== config.authToken.length || !timingSafeEqual(Buffer.from(provided), Buffer.from(config.authToken))) { json(401, { error: "Authentication required" }); return; }
     }
@@ -273,6 +273,22 @@ export function startServer(config: SAXConfig) {
         if (rel.startsWith("..") || url.pathname.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return; }
         if (existsSync(file)) { const ext = file.split(".").pop() || ""; const ct: Record<string, string> = { mp4: "video/mp4", webm: "video/webm", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml" }; res.writeHead(200, { "Content-Type": ct[ext] || "application/octet-stream" }); res.end(readFileSync(file)); return; }
       }
+    }
+    // Serve workspace files (documents, exports, downloads)
+    if (method === "GET" && url.pathname.startsWith("/files/")) {
+      const filePath = decodeURIComponent(url.pathname.slice(7)); // strip "/files/"
+      const wsDir = resolve(config.workspace);
+      const file = resolve(wsDir, filePath), rel = relative(wsDir, file);
+      if (rel.startsWith("..") || filePath.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return; }
+      if (!existsSync(file)) { json(404, { error: "File not found" }); return; }
+      const ext = (file.split(".").pop() || "").toLowerCase();
+      const ct: Record<string, string> = { docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv", md: "text/markdown", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg", html: "text/html", css: "text/css", js: "application/javascript" };
+      const inlineable = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "pdf", "txt", "json", "csv", "md", "html", "css", "js", "mp4", "webm"]);
+      const filename = file.split(/[/\\]/).pop() || "download";
+      const h: Record<string, string> = { ...corsHeaders(req), "Content-Type": ct[ext] || "application/octet-stream", "X-Content-Type-Options": "nosniff" };
+      if (!inlineable.has(ext)) h["Content-Disposition"] = `attachment; filename="${filename}"`;
+      if (ext === "svg") h["Content-Security-Policy"] = "script-src 'none'";
+      res.writeHead(200, h); res.end(readFileSync(file)); return;
     }
     // Serve workspace apps
     if (method === "GET" && url.pathname.startsWith("/apps/")) {
@@ -473,6 +489,41 @@ export function startServer(config: SAXConfig) {
     };
     memBgTimer = setInterval(runMemBg, 6 * 60 * 60 * 1000);
     setTimeout(runMemBg, 30_000);
+
+    // Memory dream agent — periodic deep reflection (checks every 2 hours, runs if 24h+ since last)
+    const runDreamCheck = async () => {
+      try {
+        const { shouldDream, buildDreamPrompt, startDream, completeDream, failDream } = await import("./memory-dream.js");
+        if (!shouldDream()) return;
+        console.log("[dream] Starting memory consolidation...");
+        startDream();
+        const saved = loadSavedSettings();
+        const { provider, apiKey, model } = await resolveProviderAndKey(saved);
+        // Use a fast/cheap model for dreaming — Haiku for Anthropic, default for others
+        const dreamModel = provider === "anthropic" ? "claude-haiku-4-5" : model;
+        const dreamPrompt = buildDreamPrompt();
+        const dreamSession: Session = { id: `dream-${Date.now()}`, title: "Memory Dream", messages: [], createdAt: Date.now(), updatedAt: Date.now() };
+        // Dream agent only gets read/write/edit tools — no bash, no network
+        const dreamTools = allAgentTools.filter(t => ["read", "write", "edit", "glob", "grep", "memory_search", "memory_save"].includes(t.name));
+        const result = await runAgent(dreamPrompt, [], {
+          apiKey, model: dreamModel, provider: provider as AgentOptions["provider"],
+          systemPrompt: "You are a memory consolidation agent. Your job is to organize and improve the user's memory files based on recent sessions. Be concise and focused.",
+          tools: dreamTools, security, toolPolicy, sessionId: `dream-${Date.now()}`,
+          maxIterations: 15, temperature: 0.3,
+        });
+        dreamSession.messages = result.messages.filter(m => m.role !== "system");
+        dreamSession.updatedAt = Date.now();
+        saveSession(dreamSession);
+        const recentCount = sessionStore.list().filter(s => s.updatedAt > Date.now() - 24 * 60 * 60 * 1000).length;
+        completeDream(recentCount);
+        console.log("[dream] Memory consolidation finished");
+      } catch (e) {
+        console.warn("[dream] Failed:", (e as Error).message);
+        try { const { failDream } = await import("./memory-dream.js"); failDream(); } catch {}
+      }
+    };
+    setInterval(runDreamCheck, 2 * 60 * 60 * 1000); // Check every 2 hours
+    setTimeout(runDreamCheck, 5 * 60 * 1000); // First check 5 minutes after startup
     // Sync
     const syncCfg = agentSync.getConfig();
     if (syncCfg.enabled && syncCfg.autoDownload) agentSync.pull().then(r => { if (r.success) console.log(`[sync] Startup pull: ${r.message}`); }).catch(() => {});

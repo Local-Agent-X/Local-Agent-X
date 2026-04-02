@@ -49,6 +49,7 @@ ALWAYS call protocol_get before executing a workflow — it contains the steps, 
 
 - skill_list: list user-defined skills (reusable workflows from ~/.sax/skills/).
 - skill_run: run a skill by name. Use skill_list first to see what's available. Example: name="deploy", arguments="staging".
+- memory_dream: trigger a memory consolidation (dream). Reviews recent sessions and organizes memory files. Runs automatically every 24h but can be triggered manually.
 
 ## Tool Preferences
 IMPORTANT: Always prefer built-in tools over writing scripts:

@@ -162,7 +162,7 @@ async function executeSingleTool(
   // Plan mode: block non-read-only tools (session-scoped)
   if (isPlanMode(sessionId) && !READ_ONLY_TOOLS.has(tc.name)) {
     const result = `BLOCKED: Plan mode is active. Only read-only tools are allowed. Use exit_plan_mode to restore full access.`;
-    onEvent?.({ type: "tool_end", toolName: tc.name, result, allowed: false });
+    onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result, allowed: false });
     msgs.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
     return msgs;
   }
@@ -173,7 +173,7 @@ async function executeSingleTool(
 
   const riskLevel = getRiskLevel(tc.name, args, security);
   const approvalContext = buildApprovalContext(tc.name, args);
-  onEvent?.({ type: "tool_start", toolName: tc.name, args, riskLevel, context: approvalContext, requiresApproval: riskLevel === "high" });
+  onEvent?.({ type: "tool_start", toolName: tc.name, toolCallId: tc.id, args, riskLevel, context: approvalContext, requiresApproval: riskLevel === "high" });
 
   // Layer -1: AriKernel
   const isInternalTool = tc.name.startsWith("agent_") || tc.name.startsWith("swarm_") ||
@@ -184,7 +184,7 @@ async function executeSingleTool(
     const actionMap: Record<string, string> = { read: "read", write: "write", edit: "write", bash: "exec" };
     const ariResult = await ariEvaluate(tc.name, actionMap[tc.name] || "exec", args);
     if (!ariResult.allowed && !isInternalTool) {
-      onEvent?.({ type: "tool_end", toolName: tc.name, result: ariResult.reason, allowed: false });
+      onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: ariResult.reason, allowed: false });
       msgs.push({ role: "tool", tool_call_id: tc.id, content: ariResult.reason } as ChatCompletionMessageParam);
       return msgs;
     }
@@ -193,7 +193,7 @@ async function executeSingleTool(
   // Layer 0: Session policy
   const policyBlock = checkSessionPolicy(sessionId || "default", tc.name);
   if (policyBlock) {
-    onEvent?.({ type: "tool_end", toolName: tc.name, result: policyBlock, allowed: false });
+    onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: policyBlock, allowed: false });
     msgs.push({ role: "tool", tool_call_id: tc.id, content: policyBlock } as ChatCompletionMessageParam);
     return msgs;
   }
@@ -230,7 +230,7 @@ async function executeSingleTool(
       const egressCheck = checkEgressTaint(sessionId || "default");
       if (egressCheck.blocked) {
         result = { content: `BLOCKED by data lineage: ${egressCheck.reason}`, isError: true };
-        onEvent?.({ type: "tool_end", toolName: tc.name, result: result.content, allowed: false });
+        onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
         msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
         return msgs;
       }
@@ -246,11 +246,17 @@ async function executeSingleTool(
         const preHook = await hookEngine.fire({ event: "PreToolUse", toolName: tc.name, toolArgs: args, sessionId, callContext });
         if (!preHook.continue) {
           result = { content: `BLOCKED by hook: ${preHook.reason || "PreToolUse hook returned false"}`, isError: true };
-          onEvent?.({ type: "tool_end", toolName: tc.name, result: result.content, allowed: false });
+          onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
           msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
           return msgs;
         }
       }
+
+      // Inject progress callback for tools that support streaming updates
+      const progressFn = (message: string) => {
+        onEvent?.({ type: "tool_progress", toolName: tc.name, toolCallId: tc.id, message });
+      };
+      args._onProgress = progressFn;
 
       try {
         result = await tool.execute(args, signal);
@@ -301,7 +307,7 @@ async function executeSingleTool(
     });
   }
 
-  onEvent?.({ type: "tool_end", toolName: tc.name, result: result.content, allowed });
+  onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed });
 
   const imageData = (result as ToolResultWithImage)._image;
   if (imageData) {

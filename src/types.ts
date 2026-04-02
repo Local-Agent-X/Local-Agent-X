@@ -51,8 +51,9 @@ export interface Session {
 
 export type ServerEvent =
   | { type: "stream"; delta: string }
-  | { type: "tool_start"; toolName: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean }
-  | { type: "tool_end"; toolName: string; result: string; allowed: boolean }
+  | { type: "tool_start"; toolName: string; toolCallId?: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean }
+  | { type: "tool_progress"; toolName: string; toolCallId?: string; message: string }
+  | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean }
   | { type: "done"; usage: AgentTurn["usage"] }
   | { type: "error"; message: string }
   | { type: "secret_request"; name: string; service?: string; reason: string }

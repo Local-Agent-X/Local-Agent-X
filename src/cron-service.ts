@@ -39,24 +39,64 @@ function parseInterval(schedule: string): number | null {
   return parseInt(num) * (multipliers[unit] || 60000);
 }
 
-// Simple cron expression parser (minute hour dom month dow)
-function getNextCronMs(schedule: string): number | null {
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length !== 5) return null;
-  // For simplicity, support basic patterns: "*/N * * * *" (every N minutes)
-  const minPart = parts[0];
-  if (minPart.startsWith("*/")) {
-    const interval = parseInt(minPart.slice(2));
-    if (!isNaN(interval)) return interval * 60000;
+// Check if a cron field matches a value. Supports: *, N, star-slash-N, N-M, comma lists
+function cronFieldMatches(field: string, value: number, max: number): boolean {
+  for (const part of field.split(",")) {
+    const trimmed = part.trim();
+    if (trimmed === "*") return true;
+    if (trimmed.startsWith("*/")) {
+      const step = parseInt(trimmed.slice(2));
+      if (!isNaN(step) && step > 0 && value % step === 0) return true;
+    } else if (trimmed.includes("-")) {
+      const [lo, hi] = trimmed.split("-").map(Number);
+      if (!isNaN(lo) && !isNaN(hi) && value >= lo && value <= hi) return true;
+    } else {
+      if (parseInt(trimmed) === value) return true;
+    }
   }
-  // Default: run every hour for unrecognized patterns
-  return 3600000;
+  return false;
 }
 
-function getIntervalMs(schedule: string): number {
-  const ms = parseInterval(schedule) || getNextCronMs(schedule) || 3600000;
-  if (ms < 60000) return 60000; // minimum 1 minute
-  return ms;
+/** Calculate ms until next cron match (minute hour dom month dow). Returns null for non-cron. */
+function msUntilNextCron(schedule: string): number | null {
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [minField, hourField, domField, monField, dowField] = parts;
+
+  const now = new Date();
+  // Scan up to 48 hours ahead to find next match
+  for (let offset = 1; offset <= 2880; offset++) {
+    const candidate = new Date(now.getTime() + offset * 60_000);
+    const min = candidate.getMinutes();
+    const hour = candidate.getHours();
+    const dom = candidate.getDate();
+    const mon = candidate.getMonth() + 1;
+    const dow = candidate.getDay(); // 0=Sun
+    if (
+      cronFieldMatches(minField, min, 59) &&
+      cronFieldMatches(hourField, hour, 23) &&
+      cronFieldMatches(domField, dom, 31) &&
+      cronFieldMatches(monField, mon, 12) &&
+      cronFieldMatches(dowField, dow, 6)
+    ) {
+      return offset * 60_000;
+    }
+  }
+  // Fallback: 24h if no match found in scan window
+  return 24 * 3600_000;
+}
+
+/** For simple interval schedules, return fixed ms. For cron expressions, return null. */
+function getIntervalMs(schedule: string): number | null {
+  const interval = parseInterval(schedule);
+  if (interval) return Math.max(interval, 60000);
+  // Check if it's a */N pattern (uniform interval cron)
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length === 5 && parts[0].startsWith("*/") && parts.slice(1).every(p => p === "*")) {
+    const step = parseInt(parts[0].slice(2));
+    if (!isNaN(step)) return Math.max(step * 60000, 60000);
+  }
+  return null; // Full cron expression — needs dynamic scheduling
 }
 
 export class CronService {
@@ -113,8 +153,9 @@ export class CronService {
   }
 
   stop(): void {
-    for (const [id, timer] of this.timers) {
+    for (const [, timer] of this.timers) {
       clearInterval(timer);
+      clearTimeout(timer as unknown as ReturnType<typeof setTimeout>);
     }
     this.timers.clear();
   }
@@ -124,9 +165,28 @@ export class CronService {
     const existing = this.timers.get(job.id);
     if (existing) clearInterval(existing);
 
-    const intervalMs = getIntervalMs(job.schedule);
-    const timer = setInterval(() => this.executeJob(job), intervalMs);
-    this.timers.set(job.id, timer);
+    const fixedMs = getIntervalMs(job.schedule);
+    if (fixedMs) {
+      // Simple interval — use setInterval
+      const timer = setInterval(() => this.executeJob(job), fixedMs);
+      this.timers.set(job.id, timer);
+    } else {
+      // Full cron expression — schedule next run dynamically
+      this.scheduleCronRun(job);
+    }
+  }
+
+  private scheduleCronRun(job: CronJob): void {
+    const ms = msUntilNextCron(job.schedule);
+    if (!ms) return;
+    const timer = setTimeout(async () => {
+      await this.executeJob(job);
+      // Re-schedule for next occurrence
+      if (job.enabled) this.scheduleCronRun(job);
+    }, ms);
+    this.timers.set(job.id, timer as unknown as ReturnType<typeof setInterval>);
+    const nextRun = new Date(Date.now() + ms);
+    console.log(`[cron] ${job.name}: next run at ${nextRun.toLocaleString()} (${Math.round(ms / 60000)}m from now)`);
   }
 
   private async executeJob(job: CronJob): Promise<void> {

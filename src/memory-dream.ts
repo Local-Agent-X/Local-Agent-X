@@ -26,6 +26,7 @@ interface DreamState {
   lastDreamAt: number;
   lastDreamSessionCount: number;
   dreaming: boolean;
+  dreamStartedAt?: number; // Track when dream started for crash recovery
 }
 
 function loadDreamState(): DreamState {
@@ -55,7 +56,17 @@ function countRecentSessions(since: number): number {
 /** Check if it's time to dream */
 export function shouldDream(minHours = 24, minSessions = 5): boolean {
   const state = loadDreamState();
-  if (state.dreaming) return false; // already running
+  // Crash recovery: if dreaming flag is stuck for 30+ minutes, force-release it
+  if (state.dreaming) {
+    const stuckMinutes = (Date.now() - (state.dreamStartedAt || 0)) / 60_000;
+    if (stuckMinutes > 30) {
+      console.warn(`[dream] Stuck lock detected (${Math.round(stuckMinutes)}m) — force-releasing`);
+      state.dreaming = false;
+      saveDreamState(state);
+    } else {
+      return false; // legitimately running
+    }
+  }
   const hoursSince = (Date.now() - state.lastDreamAt) / 3_600_000;
   if (hoursSince < minHours) return false;
   const sessions = countRecentSessions(state.lastDreamAt);
@@ -138,6 +149,7 @@ Return a summary of what changed.`;
 export function startDream(): void {
   const state = loadDreamState();
   state.dreaming = true;
+  state.dreamStartedAt = Date.now();
   saveDreamState(state);
 }
 

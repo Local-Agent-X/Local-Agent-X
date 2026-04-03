@@ -67,7 +67,7 @@ export function startServer(config: SAXConfig) {
   import("./skills/skill-loader.js").then(({ getSkillRegistry }) => getSkillRegistry(config.workspace)).catch(() => {});
   const publicDir = join(import.meta.dirname || ".", "..", "public");
   const dataDir = join(homedir(), ".sax");
-  for (const d of ["apps", "images", "videos"]) mkdirSync(join(resolve(config.workspace), d), { recursive: true });
+  for (const d of ["apps", "images", "videos", "missions"]) mkdirSync(join(resolve(config.workspace), d), { recursive: true });
   mkdirSync(join(dataDir, "uploads"), { recursive: true });
   const toolPolicy = loadToolPolicy(dataDir);
   const rbac = new RBACManager(dataDir, config.authToken);
@@ -466,8 +466,17 @@ export function startServer(config: SAXConfig) {
       if (!existsSync(jobDir)) mkdirSync(jobDir, { recursive: true });
       const reportPath = join(jobDir, `${ts}.md`);
       const job = cronService.get(jobId);
-      writeFileSync(reportPath, `# ${job?.name || jobId} — ${new Date().toLocaleDateString()}\n\n${output}`, "utf-8");
-      console.log(`[cron] Report saved: ${reportPath}`);
+      const reportContent = `# ${job?.name || jobId} — ${new Date().toLocaleDateString()}\n\n${output}`;
+      writeFileSync(reportPath, reportContent, "utf-8");
+      // Also save to workspace/missions/{slug}/ so agents can find reports easily
+      const slug = (job?.name || jobId).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+$/, "");
+      const missionDir = join(resolve(config.workspace), "missions", slug);
+      mkdirSync(missionDir, { recursive: true });
+      const wsCopy = join(missionDir, `${ts}.md`);
+      writeFileSync(wsCopy, reportContent, "utf-8");
+      // Also keep a latest.md symlink-style copy for quick access
+      writeFileSync(join(missionDir, "latest.md"), reportContent, "utf-8");
+      console.log(`[cron] Report saved: ${reportPath} + ${wsCopy}`);
       return { output: output.slice(0, 500), reportPath };
     });
     cronService.start();

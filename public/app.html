@@ -546,12 +546,23 @@
   </div>
 
   <div id="page-apps" class="page">
-    <div class="page-header"><h2>APPS</h2><div style="flex:1"></div><button class="action-btn primary" onclick="promptCreateApp()">+ New App</button></div>
+    <div class="page-header"><h2>APPS</h2><div style="flex:1"></div></div>
     <div class="page-body">
-      <div id="apps-empty" style="text-align:center;padding:60px 20px;color:var(--muted)">
-        <div style="font-size:3rem;margin-bottom:12px">&#9638;</div>
-        <p style="font-size:.9rem;margin-bottom:8px">No apps yet</p>
-        <p style="font-size:.78rem">Ask the agent to create one, or click + New App to start a chat.</p>
+      <!-- Inline chat box for building apps -->
+      <div id="apps-chat-box">
+        <div id="apps-chat-wrapper">
+          <textarea id="apps-chat-input" placeholder="Describe the app you want to build..." rows="3"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAppsChatMessage()}"></textarea>
+          <button id="apps-chat-send" onclick="sendAppsChatMessage()" aria-label="Send">&#9650;</button>
+        </div>
+        <div id="apps-chat-bar">
+          <select id="apps-provider-select" onchange="onAppsProviderChange(this.value)"></select>
+          <select id="apps-model-select" onchange="onAppsModelChange(this.value)"></select>
+          <span id="apps-chat-hint">e.g. "Build me a kanban board" or "Create a markdown editor with live preview"</span>
+        </div>
+      </div>
+      <div id="apps-empty" style="text-align:center;padding:40px 20px;color:var(--muted);display:none">
+        <p style="font-size:.78rem">No apps yet — describe what you want above and the agent will build it.</p>
       </div>
       <div id="apps-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px"></div>
       <div id="custom-pages-section" style="margin-top:32px;display:none">
@@ -633,6 +644,7 @@
 </div>
 
 <!-- Scripts -->
+<script src="/js/spring.js"></script>
 <script src="/js/shared.js"></script>
 <script src="/js/app.js"></script>
 <script src="/js/chat.js"></script>
@@ -645,13 +657,24 @@
 <script src="/js/agents.js"></script>
 <script src="/js/shortcuts.js"></script>
 <script>
-// Desktop sidebar collapse toggle
+// Desktop sidebar collapse toggle (spring-animated)
 function toggleSidebarCollapse() {
   const sidebar = document.getElementById('sidebar');
   const expandBtn = document.getElementById('sidebar-expand-btn');
   if (!sidebar) return;
-  const collapsed = sidebar.classList.toggle('collapsed');
-  if (expandBtn) expandBtn.style.display = collapsed ? 'block' : 'none';
+  const collapsed = !sidebar.classList.contains('collapsed');
+  // Disable CSS transition — spring handles it
+  sidebar.style.transition = 'none';
+  if (collapsed) {
+    sidebar.classList.add('collapsed');
+    Spring.animate(sidebar, 'width', 0, { from: 280, preset: 'stiff', unit: 'px', onUpdate: v => { sidebar.style.minWidth = v + 'px'; }, onDone: () => { sidebar.style.transition = ''; } });
+    if (expandBtn) expandBtn.style.display = 'block';
+  } else {
+    sidebar.classList.remove('collapsed');
+    sidebar.style.overflow = 'hidden';
+    Spring.animate(sidebar, 'width', 280, { from: 0, preset: 'stiff', unit: 'px', onUpdate: v => { sidebar.style.minWidth = v + 'px'; }, onDone: () => { sidebar.style.overflow = ''; sidebar.style.transition = ''; } });
+    if (expandBtn) expandBtn.style.display = 'none';
+  }
   localStorage.setItem('sidebar-collapsed', collapsed ? '1' : '');
 }
 // Restore sidebar state on load

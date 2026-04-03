@@ -515,6 +515,10 @@ function addMessageEl(role, text, attachments) {
   const timeHtml = timeStr ? `<span class="msg-time">${timeStr}</span>` : '';
   div.innerHTML = `<div class="msg-label">${role === 'user' ? 'You' : 'Assistant'}</div><div class="msg-body">${attachHtml}${bodyContent}</div><div class="msg-footer">${timeHtml}</div>`;
   el.appendChild(div);
+  // Spring entrance for new messages
+  if (typeof Spring !== 'undefined') {
+    Spring.fadeIn(div, { preset: 'stiff', slide: true, slideFrom: 8 });
+  }
   // Scroll after images load (they change height)
   const imgs = div.querySelectorAll('.msg-attachments img');
   if (imgs.length) {
@@ -1239,16 +1243,18 @@ function toggleAgentFeeds() {
   var toggleBtn = document.getElementById('agents-toggle');
   if (!panel) return;
   agentFeedsOpen = !agentFeedsOpen;
+  // Disable CSS transition — spring handles it
+  panel.style.transition = 'none';
   if (agentFeedsOpen) {
     panel.classList.remove('collapsed');
     panel.classList.add('active');
     panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9654;';
     if (toggleBtn) toggleBtn.style.display = 'none';
+    panel.style.overflow = 'hidden';
+    Spring.animate(panel, 'width', 320, { from: 0, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.style.overflow = 'visible'; panel.style.transition = ''; } });
   } else {
-    panel.classList.remove('active');
-    panel.classList.add('collapsed');
     panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9664;';
-    if (toggleBtn) toggleBtn.style.display = '';
+    Spring.animate(panel, 'width', 0, { from: 320, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.classList.remove('active'); panel.classList.add('collapsed'); if (toggleBtn) toggleBtn.style.display = ''; panel.style.transition = ''; } });
   }
 }
 
@@ -1398,6 +1404,10 @@ function _renderAgentFeedsList() {
     list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);font-family:var(--mono);font-size:.72rem">No active agents</div>';
   } else {
     list.innerHTML = ids.map(function(id) { return renderAgentCard(agentFeedsData[id]); }).join('');
+    // Stagger-animate agent feed cards
+    if (typeof Spring !== 'undefined') {
+      Spring.staggerIn(Array.from(list.querySelectorAll('.agent-feed-card')), { delay: 50, preset: 'stiff' });
+    }
   }
   _updateAgentCount();
 }
@@ -1574,6 +1584,11 @@ function openGlobalSearch() {
   const overlay = document.getElementById('global-search-overlay');
   if (!overlay) return;
   overlay.style.display = 'flex';
+  // Spring entrance for the search dialog
+  var dialog = overlay.querySelector('div');
+  if (dialog && typeof Spring !== 'undefined') {
+    Spring.fadeIn(dialog, { preset: 'stiff', scale: true, scaleFrom: 0.94 });
+  }
   const input = document.getElementById('global-search-input');
   if (input) { input.value = ''; input.focus(); }
   document.getElementById('global-search-results').innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:.78rem">Type to search across all conversations</div>';
@@ -1582,7 +1597,13 @@ function openGlobalSearch() {
 
 function closeGlobalSearch() {
   const overlay = document.getElementById('global-search-overlay');
-  if (overlay) overlay.style.display = 'none';
+  if (!overlay) return;
+  var dialog = overlay.querySelector('div');
+  if (dialog && typeof Spring !== 'undefined') {
+    Spring.fadeOut(dialog, { preset: 'stiff', scale: true, scaleTo: 0.94, onDone: function() { overlay.style.display = 'none'; } });
+  } else {
+    overlay.style.display = 'none';
+  }
 }
 
 function debounceGlobalSearch(query) {

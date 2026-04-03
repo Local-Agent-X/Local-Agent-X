@@ -5,7 +5,7 @@
  * Jobs persist to disk so they survive restarts.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition } from "./types.js";
 
@@ -287,6 +287,44 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
         const job = cron.toggle(String(args.id));
         if (!job) return { content: "Job not found." };
         return { content: `Job "${job.name}" is now ${job.enabled ? "enabled" : "disabled"}.` };
+      },
+    },
+    {
+      name: "schedule_reports",
+      description: "List or read saved reports for a scheduled mission. Without read_latest, lists all reports. With read_latest, returns the most recent report content.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Job ID (optional — if omitted, searches by name)" },
+          name: { type: "string", description: "Job name to search (partial match)" },
+          read_latest: { type: "boolean", description: "If true, return the full content of the latest report" },
+        },
+      },
+      async execute(args) {
+        // Find the job
+        let job: CronJob | null = null;
+        if (args.id) {
+          job = cron.get(String(args.id));
+        } else if (args.name) {
+          const needle = String(args.name).toLowerCase();
+          job = cron.list().find(j => j.name.toLowerCase().includes(needle)) || null;
+        }
+        if (!job) return { content: "No matching job found. Use schedule_list to see all jobs." };
+
+        const reportsDir = join(cron["dataDir"], "cron", "reports", job.id);
+        if (!existsSync(reportsDir)) return { content: `Job "${job.name}" has no saved reports yet.` };
+
+        const files = readdirSync(reportsDir).filter(f => f.endsWith(".md")).sort();
+        if (files.length === 0) return { content: `Job "${job.name}" has no saved reports yet.` };
+
+        if (args.read_latest) {
+          const latest = files[files.length - 1];
+          const content = readFileSync(join(reportsDir, latest), "utf-8");
+          return { content: `## Latest report: ${latest}\n\n${content}` };
+        }
+
+        const listing = files.map((f, i) => `${i + 1}. ${f}`).join("\n");
+        return { content: `## ${job.name} — ${files.length} reports\n\nReport dir: ${reportsDir}\nWorkspace: workspace/missions/${job.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}/\n\n${listing}` };
       },
     },
   ];

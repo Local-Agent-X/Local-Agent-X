@@ -164,10 +164,29 @@ const ROUTES = ['chat', 'settings', 'secrets', 'protocols', 'missions', 'apps', 
 
 function navigate(route) {
   if (!ROUTES.includes(route)) route = 'chat';
+  const prevRoute = currentRoute();
   location.hash = '#' + route;
+
   ROUTES.forEach(r => {
     const page = document.getElementById('page-' + r);
-    if (page) page.classList.toggle('active', r === route);
+    if (!page) return;
+    if (r === route) {
+      page.classList.add('active');
+      // Spring fade-in for the incoming page (don't set inline display — CSS class handles it)
+      if (r !== prevRoute && typeof Spring !== 'undefined') {
+        page.style.opacity = '0';
+        page.style.transform = 'translateY(12px)';
+        Spring.animate(page, 'opacity', 1, { from: 0, preset: 'stiff' });
+        Spring.animate(page, 'y', 0, { from: 12, preset: 'stiff', unit: 'px', onDone: () => { page.style.transform = ''; } });
+      }
+    } else {
+      // Clear any leftover inline styles from Spring before hiding
+      Spring.stop(page);
+      page.style.opacity = '';
+      page.style.transform = '';
+      page.style.display = '';
+      page.classList.remove('active');
+    }
   });
   // Highlight active util button
   document.querySelectorAll('.util-btn').forEach(b => {

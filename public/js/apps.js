@@ -1,9 +1,79 @@
 // ── Apps Gallery ──
 // Enterprise app management UI with status indicators, permissions, and inline controls
 
+const APPS_PROVIDERS = [
+  { value: 'xai', label: 'xAI Grok' },
+  { value: 'gemini', label: 'Google Gemini' },
+  { value: 'codex', label: 'OpenAI Codex' },
+  { value: 'anthropic', label: 'Anthropic Claude' },
+  { value: 'openai', label: 'OpenAI API' },
+  { value: 'local', label: 'Local (Ollama)' },
+  { value: 'custom', label: 'Custom' },
+];
+
+const APPS_MODELS = {
+  codex: ['gpt-5.3-codex','gpt-4.1','gpt-4.1-mini','gpt-4.1-nano','o3','o4-mini'],
+  anthropic: ['claude-sonnet-4-20250514','claude-opus-4-20250514','claude-haiku-4-20250514','claude-3-5-sonnet-20241022'],
+  xai: ['grok-3-mini','grok-3','grok-2'],
+  openai: ['gpt-4o','gpt-4o-mini','gpt-4.1','gpt-4.1-mini','o3','o4-mini'],
+  gemini: ['gemini-2.0-flash','gemini-2.5-pro-preview-05-06','gemini-2.5-flash-preview-05-20','gemini-1.5-pro'],
+};
+
 async function init_apps() {
+  initAppsModelSelector();
   await loadApps();
   await loadCustomPages();
+}
+
+async function initAppsModelSelector() {
+  const provSel = document.getElementById('apps-provider-select');
+  const modelSel = document.getElementById('apps-model-select');
+  if (!provSel || !modelSel) return;
+
+  // Populate providers
+  provSel.innerHTML = APPS_PROVIDERS.map(p => `<option value="${p.value}">${p.label}</option>`).join('');
+
+  // Load current settings from server
+  try {
+    const r = await apiFetch('/api/settings');
+    const s = await r.json();
+    if (s.provider) provSel.value = s.provider;
+    populateAppsModels(s.provider || provSel.value, s.model);
+  } catch {
+    populateAppsModels(provSel.value);
+  }
+}
+
+function populateAppsModels(provider, currentModel) {
+  const modelSel = document.getElementById('apps-model-select');
+  if (!modelSel) return;
+  const models = APPS_MODELS[provider] || [];
+  if (models.length) {
+    modelSel.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+    modelSel.style.display = '';
+    if (currentModel && models.includes(currentModel)) modelSel.value = currentModel;
+  } else {
+    modelSel.innerHTML = '<option value="">default</option>';
+    modelSel.style.display = provider === 'local' ? 'none' : '';
+  }
+}
+
+function onAppsProviderChange(provider) {
+  populateAppsModels(provider);
+  // Save to server
+  const model = document.getElementById('apps-model-select')?.value || '';
+  apiPost('/api/settings', { provider, model }).catch(() => {});
+  // Sync settings page dropdowns if they exist
+  const cfgProv = document.getElementById('cfg-provider');
+  if (cfgProv) { cfgProv.value = provider; if (typeof onProviderChange === 'function') onProviderChange(provider); }
+}
+
+function onAppsModelChange(model) {
+  const provider = document.getElementById('apps-provider-select')?.value;
+  apiPost('/api/settings', { provider, model }).catch(() => {});
+  // Sync settings page model if it exists
+  const cfgModel = document.getElementById('cfg-model');
+  if (cfgModel) cfgModel.value = model;
 }
 
 async function loadApps() {
@@ -22,6 +92,7 @@ async function loadApps() {
     }
 
     if (empty) empty.style.display = 'none';
+    grid.style.display = 'grid';
     grid.innerHTML = apps.map(a => {
       const statusClass = a.status !== 'active' ? ` app-card-${esc(a.status)}` : '';
       const statusBadge = a.status !== 'active'
@@ -55,6 +126,10 @@ async function loadApps() {
         </div>
       </div>`;
     }).join('');
+    // Stagger-animate app cards in
+    if (typeof Spring !== 'undefined') {
+      Spring.staggerIn(Array.from(grid.querySelectorAll('.app-card')), { delay: 40, preset: 'stiff' });
+    }
   } catch (e) {
     grid.innerHTML = '<p style="color:var(--muted)">Failed to load apps</p>';
   }
@@ -169,12 +244,30 @@ async function exportApp(id, name) {
   }
 }
 
-function promptCreateApp() {
+function sendAppsChatMessage() {
+  const input = document.getElementById('apps-chat-input');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  // Navigate to chat and send the message with app-building context
   navigate('chat');
-  const input = document.getElementById('message-input');
-  if (input) {
-    input.value = 'Create an app for me: ';
-    input.focus();
+  const chatInput = document.getElementById('msg-input');
+  if (chatInput) {
+    chatInput.value = 'Build me an app: ' + text;
+    // Trigger send after a tick so chat page is fully active
+    setTimeout(() => sendMessage(), 50);
+  }
+}
+
+function promptCreateApp() {
+  const input = document.getElementById('apps-chat-input');
+  if (input) { input.focus(); return; }
+  navigate('chat');
+  const chatInput = document.getElementById('msg-input');
+  if (chatInput) {
+    chatInput.value = 'Create an app for me: ';
+    chatInput.focus();
   }
 }
 
@@ -211,3 +304,6 @@ function pollAppChanges() {
 setInterval(pollAppChanges, 5000);
 
 window.init_apps = init_apps;
+window.sendAppsChatMessage = sendAppsChatMessage;
+window.onAppsProviderChange = onAppsProviderChange;
+window.onAppsModelChange = onAppsModelChange;

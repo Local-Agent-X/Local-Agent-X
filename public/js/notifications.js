@@ -40,9 +40,17 @@ function updateNotifBadge() {
 
 function toggleNotifPanel() {
   const panel = document.getElementById('notif-panel');
-  if (panel) {
-    panel.classList.toggle('open');
-    if (panel.classList.contains('open')) renderNotifications();
+  if (!panel) return;
+  const opening = !panel.classList.contains('open');
+  if (opening) {
+    panel.classList.add('open');
+    // Disable CSS transition, let spring handle it
+    panel.style.transition = 'none';
+    Spring.animate(panel, 'x', 0, { from: 320, preset: 'stiff', unit: 'px', onDone: () => { panel.style.transition = ''; panel.style.transform = ''; } });
+    renderNotifications();
+  } else {
+    panel.style.transition = 'none';
+    Spring.animate(panel, 'x', 320, { from: 0, preset: 'stiff', unit: 'px', onDone: () => { panel.classList.remove('open'); panel.style.transform = ''; panel.style.transition = ''; } });
   }
 }
 

@@ -48,6 +48,23 @@ function escapeJs(s: string): string {
     .replace(/<\//g, "<\\/");
 }
 
+/** Safely convert any value to a display string (handles objects, arrays, nulls) */
+function safeStr(val: unknown): string {
+  if (val === null || val === undefined) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  if (Array.isArray(val)) return val.map(safeStr).join(", ");
+  if (typeof val === "object") {
+    const obj = val as Record<string, unknown>;
+    // Extract the most likely display property
+    const display = obj.label ?? obj.name ?? obj.title ?? obj.text ?? obj.value ?? obj.id ?? obj.key;
+    if (display !== undefined && typeof display !== "object") return String(display);
+    // Last resort: compact JSON
+    try { return JSON.stringify(val); } catch { return ""; }
+  }
+  return String(val);
+}
+
 // ── Component Rendering ─────────────────────────────────────
 
 function renderComponent(comp: ComponentDefinition): string {
@@ -56,30 +73,30 @@ function renderComponent(comp: ComponentDefinition): string {
 
   switch (comp.type) {
     case "text":
-      return `<div class="app-text" id="${id}">${escapeHtml(String(props.content || ""))}</div>`;
+      return `<div class="app-text" id="${id}">${escapeHtml(safeStr(props.content || ""))}</div>`;
 
     case "stat":
       return `<div class="app-stat" id="${id}">
-        <div class="app-stat-label">${escapeHtml(String(props.label || ""))}</div>
-        <div class="app-stat-value" data-bind="value">${escapeHtml(String(props.value || "0"))}</div>
-        ${props.unit ? `<div class="app-stat-unit">${escapeHtml(String(props.unit))}</div>` : ""}
+        <div class="app-stat-label">${escapeHtml(safeStr(props.label || ""))}</div>
+        <div class="app-stat-value" data-bind="value">${escapeHtml(safeStr(props.value || "0"))}</div>
+        ${props.unit ? `<div class="app-stat-unit">${escapeHtml(safeStr(props.unit))}</div>` : ""}
       </div>`;
 
     case "button":
-      return `<button class="app-btn" id="${id}" onclick="appEvent('click','${escapeJs(comp.id)}')">${escapeHtml(String(props.label || "Button"))}</button>`;
+      return `<button class="app-btn" id="${id}" onclick="appEvent('click','${escapeJs(comp.id)}')">${escapeHtml(safeStr(props.label || "Button"))}</button>`;
 
     case "input":
       return `<div class="app-field" id="${id}-wrap">
-        ${props.label ? `<label class="app-label">${escapeHtml(String(props.label))}</label>` : ""}
-        <input class="app-input" id="${id}" type="${escapeHtml(String(props.inputType || "text"))}" placeholder="${escapeHtml(String(props.placeholder || ""))}" value="${escapeHtml(String(props.value || ""))}" oninput="appEvent('input','${escapeJs(comp.id)}',this.value)">
+        ${props.label ? `<label class="app-label">${escapeHtml(safeStr(props.label))}</label>` : ""}
+        <input class="app-input" id="${id}" type="${escapeHtml(safeStr(props.inputType || "text"))}" placeholder="${escapeHtml(safeStr(props.placeholder || ""))}" value="${escapeHtml(safeStr(props.value || ""))}" oninput="appEvent('input','${escapeJs(comp.id)}',this.value)">
       </div>`;
 
     case "select": {
       const options = (Array.isArray(props.options) ? props.options : []) as string[];
       return `<div class="app-field" id="${id}-wrap">
-        ${props.label ? `<label class="app-label">${escapeHtml(String(props.label))}</label>` : ""}
+        ${props.label ? `<label class="app-label">${escapeHtml(safeStr(props.label))}</label>` : ""}
         <select class="app-select" id="${id}" onchange="appEvent('change','${escapeJs(comp.id)}',this.value)">
-          ${options.map(o => `<option value="${escapeHtml(String(o))}">${escapeHtml(String(o))}</option>`).join("")}
+          ${options.map(o => `<option value="${escapeHtml(safeStr(o))}">${escapeHtml(safeStr(o))}</option>`).join("")}
         </select>
       </div>`;
     }
@@ -87,17 +104,17 @@ function renderComponent(comp: ComponentDefinition): string {
     case "toggle":
       return `<label class="app-toggle" id="${id}-wrap">
         <input type="checkbox" id="${id}" ${props.checked ? "checked" : ""} onchange="appEvent('toggle','${escapeJs(comp.id)}',this.checked)">
-        <span class="app-toggle-label">${escapeHtml(String(props.label || ""))}</span>
+        <span class="app-toggle-label">${escapeHtml(safeStr(props.label || ""))}</span>
       </label>`;
 
     case "table": {
-      const columns = (Array.isArray(props.columns) ? props.columns : []) as string[];
+      const columns = (Array.isArray(props.columns) ? props.columns : []) as unknown[];
       const rows = (Array.isArray(props.rows) ? props.rows : []) as unknown[][];
       return `<div class="app-table-wrap" id="${id}">
         <table class="app-table">
-          <thead><tr>${columns.map(c => `<th>${escapeHtml(String(c))}</th>`).join("")}</tr></thead>
+          <thead><tr>${columns.map(c => `<th>${escapeHtml(safeStr(c))}</th>`).join("")}</tr></thead>
           <tbody data-bind="rows">${rows.map(row =>
-            `<tr>${(Array.isArray(row) ? row : []).map(cell => `<td>${escapeHtml(String(cell))}</td>`).join("")}</tr>`
+            `<tr>${(Array.isArray(row) ? row : []).map(cell => `<td>${escapeHtml(safeStr(cell))}</td>`).join("")}</tr>`
           ).join("")}</tbody>
         </table>
       </div>`;
@@ -105,61 +122,61 @@ function renderComponent(comp: ComponentDefinition): string {
 
     case "chart":
       return `<div class="app-chart" id="${id}">
-        <canvas id="${id}-canvas" width="${escapeHtml(String(props.width || 400))}" height="${escapeHtml(String(props.height || 250))}"></canvas>
-        <div class="app-chart-label">${escapeHtml(String(props.label || ""))}</div>
+        <canvas id="${id}-canvas" width="${escapeHtml(safeStr(props.width || 400))}" height="${escapeHtml(safeStr(props.height || 250))}"></canvas>
+        <div class="app-chart-label">${escapeHtml(safeStr(props.label || ""))}</div>
       </div>`;
 
     case "list": {
       const items = (Array.isArray(props.items) ? props.items : []) as string[];
       return `<div class="app-list" id="${id}">
-        ${props.label ? `<div class="app-list-label">${escapeHtml(String(props.label))}</div>` : ""}
-        <ul data-bind="items">${items.map(i => `<li>${escapeHtml(String(i))}</li>`).join("")}</ul>
+        ${props.label ? `<div class="app-list-label">${escapeHtml(safeStr(props.label))}</div>` : ""}
+        <ul data-bind="items">${items.map(i => `<li>${escapeHtml(safeStr(i))}</li>`).join("")}</ul>
       </div>`;
     }
 
     case "image":
       return `<div class="app-image" id="${id}">
-        <img src="${escapeHtml(String(props.src || ""))}" alt="${escapeHtml(String(props.alt || ""))}" style="max-width:100%">
+        <img src="${escapeHtml(safeStr(props.src || ""))}" alt="${escapeHtml(safeStr(props.alt || ""))}" style="max-width:100%">
       </div>`;
 
     case "form": {
       const fields = comp.children || [];
       return `<form class="app-form" id="${id}" onsubmit="event.preventDefault();appEvent('submit','${escapeJs(comp.id)}',Object.fromEntries(new FormData(this)))">
         ${fields.map(renderComponent).join("\n")}
-        <button class="app-btn" type="submit">${escapeHtml(String(props.submitLabel || "Submit"))}</button>
+        <button class="app-btn" type="submit">${escapeHtml(safeStr(props.submitLabel || "Submit"))}</button>
       </form>`;
     }
 
     case "progress":
       return `<div class="app-progress" id="${id}">
-        ${props.label ? `<div class="app-progress-label">${escapeHtml(String(props.label))}</div>` : ""}
+        ${props.label ? `<div class="app-progress-label">${escapeHtml(safeStr(props.label))}</div>` : ""}
         <div class="app-progress-bar"><div class="app-progress-fill" data-bind="value" style="width:${Math.min(100, Math.max(0, Number(props.value || 0)))}%"></div></div>
-        ${props.showValue ? `<div class="app-progress-value" data-bind="text">${escapeHtml(String(props.value || "0"))}%</div>` : ""}
+        ${props.showValue ? `<div class="app-progress-value" data-bind="text">${escapeHtml(safeStr(props.value || "0"))}%</div>` : ""}
       </div>`;
 
     case "alert": {
-      const severity = String(props.severity || "info");
+      const severity = safeStr(props.severity || "info");
       return `<div class="app-alert app-alert-${escapeHtml(severity)}" id="${id}">
-        ${props.title ? `<strong>${escapeHtml(String(props.title))}</strong> ` : ""}
-        <span data-bind="value">${escapeHtml(String(props.message || ""))}</span>
+        ${props.title ? `<strong>${escapeHtml(safeStr(props.title))}</strong> ` : ""}
+        <span data-bind="value">${escapeHtml(safeStr(props.message || ""))}</span>
         ${props.dismissible ? `<button class="app-alert-close" onclick="this.parentElement.remove();appEvent('dismiss','${escapeJs(comp.id)}')">&times;</button>` : ""}
       </div>`;
     }
 
     case "code":
       return `<div class="app-code" id="${id}">
-        ${props.label ? `<div class="app-code-label">${escapeHtml(String(props.label))}</div>` : ""}
-        <pre><code data-bind="value">${escapeHtml(String(props.content || ""))}</code></pre>
+        ${props.label ? `<div class="app-code-label">${escapeHtml(safeStr(props.label))}</div>` : ""}
+        <pre><code data-bind="value">${escapeHtml(safeStr(props.content || ""))}</code></pre>
       </div>`;
 
     case "badge":
-      return `<span class="app-badge app-badge-${escapeHtml(String(props.variant || "default"))}" id="${id}" data-bind="value">${escapeHtml(String(props.text || ""))}</span>`;
+      return `<span class="app-badge app-badge-${escapeHtml(safeStr(props.variant || "default"))}" id="${id}" data-bind="value">${escapeHtml(safeStr(props.text || ""))}</span>`;
 
     case "divider":
       return `<hr class="app-divider" id="${id}">`;
 
     case "custom":
-      return `<div class="app-custom" id="${id}">${sanitizeHtml(String(props.html || ""))}</div>`;
+      return `<div class="app-custom" id="${id}">${sanitizeHtml(safeStr(props.html || ""))}</div>`;
 
     default:
       return `<div class="app-unknown" id="${id}">[Unknown: ${escapeHtml(String(comp.type))}]</div>`;
@@ -189,7 +206,7 @@ function renderLayout(layout: LayoutDefinition, components: ComponentDefinition[
     case "tabs": {
       return `<div class="app-tabs">
         <div class="app-tab-bar">${components.map((c, i) =>
-          `<button class="app-tab-btn${i === 0 ? " active" : ""}" onclick="switchTab(this,${i})">${escapeHtml(String(c.props.tabLabel || c.id))}</button>`
+          `<button class="app-tab-btn${i === 0 ? " active" : ""}" onclick="switchTab(this,${i})">${escapeHtml(safeStr(c.props.tabLabel || c.id))}</button>`
         ).join("")}</div>
         ${components.map((c, i) =>
           `<div class="app-tab-panel${i === 0 ? " active" : ""}" data-tab="${i}">${renderComponent(c)}</div>`
@@ -447,41 +464,25 @@ export function renderApp(def: AppDefinition, port?: number): string {
     return d.innerHTML;
   }
 
-  // Robust sanitize for setHtml actions — allowlist approach
+  // Robust sanitize for setHtml actions — builds regexes from strings
+  // to avoid embedding literal HTML tag patterns in the page source
   function sanitizeDom(html) {
-    // Remove all dangerous tags (block, not allowlist — covers null-byte and case variants)
-    var dangerous = [
-      /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
-      /<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi,
-      /<object\b[^>]*>[\s\S]*?<\/object>/gi,
-      /<embed\b[^>]*\/?>/gi,
-      /<applet\b[^>]*>[\s\S]*?<\/applet>/gi,
-      /<link\b[^>]*\/?>/gi,
-      /<base\b[^>]*\/?>/gi,
-      /<meta\b[^>]*\/?>/gi,
-      /<style\b[^>]*>[\s\S]*?<\/style>/gi,
-      /<svg\b[^>]*>[\s\S]*?<\/svg>/gi,
-      /<math\b[^>]*>[\s\S]*?<\/math>/gi,
-      /<form\b[^>]*>[\s\S]*?<\/form>/gi,
-      /<textarea\b[^>]*>[\s\S]*?<\/textarea>/gi,
-      /<template\b[^>]*>[\s\S]*?<\/template>/gi,
-    ];
-    var result = html;
-    // Strip null bytes first (bypass technique)
-    result = result.replace(/\x00/g, '');
-    for (var i = 0; i < dangerous.length; i++) {
-      result = result.replace(dangerous[i], '');
+    function stripTag(r, t, sc) {
+      if (sc) return r.replace(new RegExp('<' + t + '\\\\b[^>]*/?>','gi'), '');
+      return r.replace(new RegExp('<' + t + '\\\\b[^>]*>[\\\\s\\\\S]*?</' + t + '>','gi'), '');
     }
-    // Remove all event handlers (on*=)
-    result = result.replace(/\bon\w+\s*=/gi, 'data-blocked-handler=');
-    // Remove javascript: and data: URLs in attributes
-    result = result.replace(/\bhref\s*=\s*["']?\s*javascript:/gi, 'href="blocked:');
-    result = result.replace(/\bhref\s*=\s*["']?\s*data:/gi, 'href="blocked:');
-    result = result.replace(/\bsrc\s*=\s*["']?\s*javascript:/gi, 'src="blocked:');
-    result = result.replace(/\bsrc\s*=\s*["']?\s*data:/gi, 'src="blocked:');
-    // Remove style attributes with expressions (IE-compat attack vector)
-    result = result.replace(/\bstyle\s*=\s*["'][^"']*expression\s*\(/gi, 'style="');
-    result = result.replace(/\bstyle\s*=\s*["'][^"']*url\s*\(/gi, 'style="');
+    var result = html.replace(/\\x00/g, '');
+    var paired = ['scr'+'ipt','iframe','object','applet','style','svg','math','form','textarea','template'];
+    var solo = ['embed','link','base','meta'];
+    for (var i = 0; i < paired.length; i++) result = stripTag(result, paired[i], false);
+    for (var j = 0; j < solo.length; j++) result = stripTag(result, solo[j], true);
+    result = result.replace(/\\bon\\w+\\s*=/gi, 'data-blocked-handler=');
+    result = result.replace(/\\bhref\\s*=\\s*["']?\\s*javascript:/gi, 'href="blocked:');
+    result = result.replace(/\\bhref\\s*=\\s*["']?\\s*data:/gi, 'href="blocked:');
+    result = result.replace(/\\bsrc\\s*=\\s*["']?\\s*javascript:/gi, 'src="blocked:');
+    result = result.replace(/\\bsrc\\s*=\\s*["']?\\s*data:/gi, 'src="blocked:');
+    result = result.replace(/\\bstyle\\s*=\\s*["'][^"']*expression\\s*\\(/gi, 'style="');
+    result = result.replace(/\\bstyle\\s*=\\s*["'][^"']*url\\s*\\(/gi, 'style="');
     return result;
   }
 

@@ -45,6 +45,11 @@ function openCommandPalette() {
     document.body.appendChild(overlay);
   }
   overlay.classList.add('visible');
+  // Spring entrance for the palette dialog
+  const palette = document.getElementById('cmd-palette');
+  if (palette && typeof Spring !== 'undefined') {
+    Spring.fadeIn(palette, { preset: 'stiff', scale: true, scaleFrom: 0.92 });
+  }
   const input = document.getElementById('cmd-search');
   input.value = '';
   input.focus();
@@ -162,7 +167,16 @@ document.addEventListener('keydown', (e) => {
   if (e.key === '?' && !e.ctrlKey && !e.metaKey && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {
     e.preventDefault();
     const overlay = document.getElementById('shortcuts-overlay');
-    if (overlay) overlay.style.display = overlay.style.display === 'flex' ? 'none' : 'flex';
+    if (overlay) {
+      const showing = overlay.style.display !== 'flex';
+      if (showing) {
+        overlay.style.display = 'flex';
+        const dialog = overlay.querySelector('div');
+        if (dialog && typeof Spring !== 'undefined') Spring.fadeIn(dialog, { preset: 'stiff', scale: true, scaleFrom: 0.92 });
+      } else {
+        overlay.style.display = 'none';
+      }
+    }
     return;
   }
 

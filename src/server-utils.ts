@@ -33,26 +33,45 @@ export function parseMultipart(body: Buffer, boundary: string): MultipartPart[] 
   return parts;
 }
 
+/** Extract text from a message content field (handles string and content-block arrays) */
+function extractText(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .filter((b: any) => b && b.type === "text" && typeof b.text === "string")
+      .map((b: any) => b.text.trim())
+      .filter(Boolean)
+      .join("\n\n");
+  }
+  return "";
+}
+
 /** Extract all useful output from an agent's message history */
 export function extractAgentOutput(messages: Array<{ role: string; content?: unknown }>): string {
   const assistantParts: string[] = [];
   const toolParts: string[] = [];
   for (const msg of messages) {
-    if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.trim()) {
-      assistantParts.push(msg.content.trim());
+    if (msg.role === "assistant") {
+      const text = extractText(msg.content);
+      if (text) assistantParts.push(text);
     }
-    if (msg.role === "tool" && typeof msg.content === "string" && msg.content.trim()) {
-      const trimmed = msg.content.trim();
-      if (!trimmed.startsWith("BLOCKED") && trimmed.length > 10) {
-        toolParts.push(trimmed.length > 500 ? trimmed.slice(0, 500) + "..." : trimmed);
+    if (msg.role === "tool") {
+      const text = extractText(msg.content);
+      if (text && !text.startsWith("BLOCKED") && text.length > 10) {
+        toolParts.push(text.length > 500 ? text.slice(0, 500) + "..." : text);
       }
     }
   }
-  let output = assistantParts.join("\n\n");
+  // Prefer the LAST substantial assistant message (final report) over early planning chatter
+  let output = "";
+  if (assistantParts.length > 0) {
+    const lastSubstantial = [...assistantParts].reverse().find(p => p.length > 200);
+    output = lastSubstantial || assistantParts.join("\n\n");
+  }
   if (!output && toolParts.length > 0) {
     output = toolParts.join("\n\n");
   }
-  if (output.length > 5000) output = output.slice(0, 5000) + "\n\n[truncated]";
+  if (output.length > 50000) output = output.slice(0, 50000) + "\n\n[truncated]";
   return output;
 }
 

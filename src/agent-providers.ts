@@ -134,6 +134,9 @@ export async function runStandardAgent(
   let totalCompletionTokens = 0;
   let stdLastToolKey = "";
   let stdSameToolCount = 0;
+  // Track same-tool-name usage to detect discovery loops (e.g. glob with different args each time)
+  const toolNameCounts = new Map<string, number>();
+  const DISCOVERY_LOOP_THRESHOLD = 8; // same tool called 8+ times = likely stuck
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     messages = checkAndCompact(messages, model, onEvent);
@@ -242,7 +245,7 @@ export async function runStandardAgent(
       };
     }
 
-    // Detect tool call loops
+    // Detect tool call loops — exact same call repeated 3x
     const stdToolKey = toolCalls.map((tc) => `${tc.name}:${tc.arguments}`).join("|");
     if (stdToolKey === stdLastToolKey) {
       stdSameToolCount++;
@@ -257,6 +260,20 @@ export async function runStandardAgent(
     } else {
       stdSameToolCount = 1;
       stdLastToolKey = stdToolKey;
+    }
+
+    // Detect discovery loops — same tool called many times with different args (e.g. glob stuck)
+    for (const tc of toolCalls) {
+      toolNameCounts.set(tc.name, (toolNameCounts.get(tc.name) || 0) + 1);
+    }
+    const discoveryLoopTool = [...toolNameCounts.entries()].find(([name, count]) =>
+      count >= DISCOVERY_LOOP_THRESHOLD && ["glob", "web_search", "read"].includes(name)
+    );
+    if (discoveryLoopTool) {
+      const [toolName, count] = discoveryLoopTool;
+      onEvent?.({ type: "stream", delta: `\n\n(Discovery loop detected: ${toolName} called ${count} times — produce output with what you have)` });
+      messages.push({ role: "user", content: `SYSTEM: You have called ${toolName} ${count} times. Stop searching and produce your final output with the information you already have. Do not make any more ${toolName} calls.` } as ChatCompletionMessageParam);
+      toolNameCounts.set(toolName, 0); // Reset to give the agent one chance to comply
     }
 
     const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);

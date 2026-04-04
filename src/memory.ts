@@ -2448,22 +2448,22 @@ export async function autoSearchContext(
  * This is the safety net: even if the LLM forgets to call memory_save,
  * critical facts still get captured.
  */
-export function autoExtractAndSave(
+export async function autoExtractAndSave(
   memory: MemoryIndex,
   userMessage: string,
   assistantResponse: string
-): void {
+): Promise<void> {
   // Memory taint protection: skip auto-extraction if the message contains
   // external content markers or injection patterns. This prevents:
   //   malicious webpage content → pasted into chat → auto-extracted to profile files
   try {
-    const { checkMemoryTaint } = require("./sanitize.js");
-    const taint = checkMemoryTaint(userMessage);
+    const sanitize = await import("./sanitize.js");
+    const taint = sanitize.checkMemoryTaint(userMessage);
     if (!taint.safe) {
       console.log(`[memory] Auto-extract skipped: ${taint.reason}`);
       return;
     }
-    const taintReply = checkMemoryTaint(assistantResponse);
+    const taintReply = sanitize.checkMemoryTaint(assistantResponse);
     if (!taintReply.safe) {
       console.log(`[memory] Auto-extract skipped (assistant): ${taintReply.reason}`);
       return;

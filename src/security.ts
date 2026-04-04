@@ -291,7 +291,7 @@ export class SecurityLayer {
   private isInAllowedPaths(realPath: string, sessionId?: string): boolean {
     const check = (key: string) => {
       const paths = this.sessionAllowedPaths.get(key);
-      return paths ? [...paths].some(p => !require("node:path").relative(p, realPath).startsWith("..")) : false;
+      return paths ? [...paths].some(p => !relative(p, realPath).startsWith("..")) : false;
     };
     return check(sessionId || "_global") || check("_global");
   }

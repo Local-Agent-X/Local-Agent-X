@@ -12,7 +12,7 @@ import { ariEvaluate, isAriActive } from "./ari-kernel.js";
 import { recordSensitiveRead, checkEgressTaint, isSensitivePath } from "./data-lineage.js";
 import { compactIfNeeded } from "./context-manager.js";
 import { writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, relative } from "node:path";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { isPlanMode, READ_ONLY_TOOLS } from "./plan-tools.js";
@@ -212,7 +212,6 @@ async function executeSingleTool(
           if (isAbsolute) {
             // Block absolute paths for search tools in worktree agents — prevents escape
             if (["glob", "grep"].includes(tc.name)) {
-              const { resolve, relative } = require("node:path") as typeof import("node:path");
               const resolved = resolve(rawPath);
               if (relative(wtPath, resolved).startsWith("..")) {
                 // Path escapes worktree — force it back to worktree root
@@ -222,7 +221,7 @@ async function executeSingleTool(
             // For read/write/edit, absolute paths go through security layer as-is
           } else {
             // Relative paths: prepend worktree root
-            args.path = require("node:path").join(wtPath, rawPath);
+            args.path = join(wtPath, rawPath);
           }
         }
         // No path arg: default search root to worktree for glob/grep

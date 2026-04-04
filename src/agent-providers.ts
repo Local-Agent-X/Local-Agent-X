@@ -1,4 +1,6 @@
 import OpenAI from "openai";
+import { readdirSync, existsSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import type {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions.js";
@@ -412,9 +414,7 @@ function extractAppName(response: string, userMessage: string): string {
   const wsMatch = response.match(/workspace\/apps\/([a-zA-Z0-9_-]+)/);
   if (wsMatch) return wsMatch[1];
   try {
-    const { readdirSync, existsSync } = require("fs");
-    const { resolve } = require("path");
-    const appsDir = resolve("workspace", "apps");
+    const appsDir = resolvePath("workspace", "apps");
     if (existsSync(appsDir)) {
       const apps = readdirSync(appsDir) as string[];
       const msg = userMessage.toLowerCase();

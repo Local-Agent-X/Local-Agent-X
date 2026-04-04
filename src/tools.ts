@@ -65,7 +65,10 @@ const readTool: ToolDefinition = {
       const numbered = slice.map((line, i) => `${offset + i + 1}\t${line}`).join("\n");
       const total = lines.length;
       const shown = slice.length;
-      const header = shown < total ? `[Lines ${offset + 1}-${offset + shown} of ${total}]\n` : "";
+      let header = shown < total ? `[Lines ${offset + 1}-${offset + shown} of ${total}]\n` : "";
+      if (total > 10000 && shown < total) {
+        header = `⚠ LARGE FILE (${total} lines). Do NOT read this file line-by-line. Use bash with python -c to process it instead.\n` + header;
+      }
       // Detect prompt injection patterns in file content
       // Skip for workspace/apps/ files (agent-written code, not external content)
       const isAgentCode = filePath.replace(/\\/g, "/").includes("workspace/apps/");
@@ -176,7 +179,9 @@ const editTool: ToolDefinition = {
 const bashTool: ToolDefinition = {
   name: "bash",
   description:
-    "Execute a shell command and return its output. Use for running scripts, installing packages, git operations, etc.",
+    process.platform === "win32"
+      ? "Execute a PowerShell command. Use Get-ChildItem, Get-Content, Select-Object, etc. For processing large JSON/CSV files, use: python -c \"import json; ...\" instead of reading them line by line."
+      : "Execute a bash command. For processing large JSON/CSV files, use: python -c \"import json; ...\" instead of reading them line by line.",
   parameters: {
     type: "object",
     properties: {

@@ -283,9 +283,15 @@ const bashTool: ToolDefinition = {
             resolve(stdout || "(no output)");
           }
         });
-        // Force kill on timeout (Windows doesn't always honor exec timeout)
+        // Force kill entire process tree on timeout (Windows child processes survive kill)
         const killTimer = setTimeout(() => {
-          try { child.kill("SIGKILL"); } catch {}
+          try {
+            if (process.platform === "win32" && child.pid) {
+              exec(`taskkill /F /T /PID ${child.pid}`, { windowsHide: true }, () => {});
+            } else {
+              child.kill("SIGKILL");
+            }
+          } catch {}
           reject(new Error(`Command timed out after ${timeout / 1000}s`));
         }, timeout + 1000);
         child.on("exit", () => clearTimeout(killTimer));

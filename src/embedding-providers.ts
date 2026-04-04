@@ -40,7 +40,14 @@ async function fetchWithRetry(
   baseDelay = 1000
 ): Promise<Response> {
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const res = await fetch(url, init);
+    const timeoutSignal = AbortSignal.timeout(30_000);
+    const mergedInit = { ...init };
+    if (init.signal) {
+      mergedInit.signal = AbortSignal.any([init.signal, timeoutSignal]);
+    } else {
+      mergedInit.signal = timeoutSignal;
+    }
+    const res = await fetch(url, mergedInit);
     if (res.status === 429 && attempt < retries) {
       const delay = baseDelay * 2 ** attempt + Math.random() * 500;
       console.warn(

@@ -120,6 +120,7 @@ export class EmbeddedRuntime extends EventEmitter {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body,
+        signal: AbortSignal.timeout(60_000),
       });
 
       if (!response.ok) {
@@ -169,6 +170,7 @@ export class EmbeddedRuntime extends EventEmitter {
         method: "POST",
         headers: { "Content-Type": "application/octet-stream" },
         body: buffer.toString("base64"),
+        signal: AbortSignal.timeout(30_000),
       });
       if (!response.ok) {
         throw new Error(`STT failed: ${response.status}`);

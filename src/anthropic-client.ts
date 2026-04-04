@@ -118,6 +118,7 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
   try {
     const response = await fetch(`${API_BASE}/v1/messages`, {
       method: "POST", headers, body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
     });
 
     if (!response.ok) {

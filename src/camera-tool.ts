@@ -183,6 +183,7 @@ export async function captureAndDescribe(
         ],
       }],
     }),
+    signal: AbortSignal.timeout(30_000),
   });
 
   if (!resp.ok) throw new Error(`Vision API error: ${resp.status}`);

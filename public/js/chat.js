@@ -177,8 +177,28 @@ function renderMessages() {
     if (msg.role === 'user') {
       const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
       addMessageEl('user', displayText, msg.attachments, msg.timestamp);
-    } else if (msg.role === 'assistant' && msg.content) {
-      addMessageEl('assistant', msg.content, null, msg.timestamp);
+    } else if (msg.role === 'assistant' && (msg.content || msg._tools)) {
+      // Clean up stale streaming flags on render
+      if (msg._streaming) delete msg._streaming;
+      addMessageEl('assistant', msg.content || '', null, msg.timestamp);
+      // Render saved tool cards
+      if (msg._tools && msg._tools.length > 0) {
+        const lastBubble = el.querySelector('.msg-row:last-child .bubble');
+        if (lastBubble) {
+          for (const te of msg._tools) {
+            if (te.type === 'start') {
+              const card = makeToolCard(te.name, te.args, te.riskLevel);
+              // Mark as done if there's a matching end event
+              const endEvt = msg._tools.find(t => t.type === 'end' && t.name === te.name);
+              if (endEvt) {
+                card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
+                card.querySelector('.tool-detail').textContent = (endEvt.result || '').slice(0, 200) || '✓ Done';
+              }
+              lastBubble.appendChild(card);
+            }
+          }
+        }
+      }
     }
   }
   el.scrollTop = el.scrollHeight;

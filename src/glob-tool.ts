@@ -25,6 +25,7 @@ async function globFiles(pattern: string, cwd: string, limit: number): Promise<F
     onlyFiles: true,
     absolute: true,
     suppressErrors: true,
+    ignore: ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/vendor/**", "**/.next/**", "**/__pycache__/**"],
   });
 
   const entries: FileEntry[] = [];

@@ -50,10 +50,8 @@ const BLOCKED_COMMANDS = [
   /\bmkfs\b/i,
   /\bdd\s+.*of=/i,
   /\bformat\b.*[/\\]/i,
-  // Language-wrapper escapes
+  // Language-wrapper escapes (allow python -c and node -e for data transforms)
   /\beval\b/i,
-  /\bpython[23]?\s+-c\b/i,
-  /\bnode\s+-e\b/i,
   /\bperl\s+-e\b/i,
   /\bruby\s+-e\b/i,
   /\bphp\s+-r\b/i,

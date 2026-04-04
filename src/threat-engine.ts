@@ -79,7 +79,7 @@ export class ToolChainAnalyzer {
       const ENCODING_PATTERNS = /\bbase64\b|\bxxd\b|\bod\s+-[xA]|\bopenssl\s+enc\b|\bhex\b.*encode|\bencode.*\bhex\b|\bprintf\s+'%x/i;
       if (ENCODING_PATTERNS.test(cmd)) {
         // Mark this as a sensitive data transform — inherits taint from any prior sensitive read
-        const hasPriorSensitive = this.history.some(h => h.sensitive && Date.now() - h.timestamp < 30_000);
+        const hasPriorSensitive = this.history.some(h => h.sensitive && Date.now() - h.timestamp < 120_000);
         if (hasPriorSensitive) {
           return {
             blocked: true,
@@ -194,13 +194,13 @@ export class ToolChainAnalyzer {
   private detectLoops(currentHash: string): string | null {
     const recent = this.callHashes.slice(-30);
 
-    // Generic repeat: same exact call 5+ times (lowered from 10 — catch loops faster)
+    // Generic repeat: same exact call 12+ times consecutively
     let repeatCount = 0;
     for (let i = recent.length - 1; i >= 0; i--) {
       if (recent[i] === currentHash) repeatCount++;
       else break;
     }
-    if (repeatCount >= 5) {
+    if (repeatCount >= 12) {
       return `Tool loop detected: same call repeated ${repeatCount} times. Agent may be stuck.`;
     }
 

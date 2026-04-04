@@ -369,6 +369,9 @@ export function startServer(config: SAXConfig) {
       // Build tool list: respect template.allowedTools if set, otherwise give role-appropriate tools
       // Agents now GET issue_* and agent_* tools (they're real employees, not disposable workers)
       const CORE_AGENT_TOOLS = new Set(["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image", "ask_user",
+        "http_request", "ocr", "memory_search", "memory_save", "memory_recall", "memory_update_profile",
+        "document_create", "document_edit", "spreadsheet_create", "spreadsheet_read", "pdf_create",
+        "schedule_list", "schedule_reports",
         "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval",
         "agent_whoami", "agent_team_list", "agent_wakeup", "task_create", "task_update", "task_list", "task_get"]);
       let spawnedTools = allAgentTools.filter(t => CORE_AGENT_TOOLS.has(t.name));

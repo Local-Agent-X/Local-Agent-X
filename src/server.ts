@@ -457,8 +457,18 @@ export function startServer(config: SAXConfig) {
       // Save the session for history
       const session = getOrCreateSession(sessionId);
       session.messages = result.messages.filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);
-      // Extract output using the robust helper
-      const output = extractAgentOutput(result.messages);
+      // Extract output — include sub-agent results if the parent delegated
+      let output = extractAgentOutput(result.messages);
+      try {
+        const { Handler } = await import("./agency/handler.js");
+        const handler = Handler.getInstance();
+        const subResults = await handler.waitForSessionAgents(sessionId, 300_000);
+        if (subResults.length > 0) {
+          const subOutput = subResults.join("\n\n---\n\n");
+          output = subOutput.length > output.length ? subOutput : output + "\n\n---\n\n" + subOutput;
+          console.log(`[cron] Job ${jobId}: collected ${subResults.length} sub-agent result(s)`);
+        }
+      } catch (e) { console.warn(`[cron] Sub-agent wait error:`, (e as Error).message); }
       if (!output) {
         console.error(`[cron] Job ${jobId} produced no output (stopReason: ${result.stopReason})`);
         return { output: "ERROR: Agent produced no output — check provider/model config" };

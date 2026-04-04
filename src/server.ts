@@ -327,6 +327,24 @@ export function startServer(config: SAXConfig) {
   runMigrations(dataDir).catch(e => console.warn("[migrations]", e.message));
   const chatWs = setupChatWebSocket(server, config.authToken);
 
+  // Register WS chat handler — triggers the same chat pipeline as HTTP
+  chatWs.onChat(async (sessionId, message, attachments) => {
+    try {
+      // Make an internal fetch to the chat endpoint — reuses all the same logic
+      const body = JSON.stringify({ message, sessionId, attachments: attachments || [] });
+      const res = await fetch(`http://127.0.0.1:${config.port}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.authToken}` },
+        body,
+        signal: AbortSignal.timeout(600_000),
+      });
+      // Consume the SSE response (events already flow via WS broadcastToSession)
+      if (res.body) { for await (const _ of res.body) { /* drain */ } }
+    } catch (e) {
+      console.warn(`[ws-chat] Error:`, (e as Error).message);
+    }
+  });
+
   // Event bus: handler agent execution
   const eventBus = EventBus.getInstance();
   const pendingMeta = new Map<string, { name: string; role: string; task: string; systemPrompt: string; parentAgentId: string | null; sessionId: string; startedAt: number; toolsUsed: string[] }>();

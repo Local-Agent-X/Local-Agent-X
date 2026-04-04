@@ -1469,7 +1469,15 @@ function _updateAgentCount() {
 // Agent feed events are now handled inline in chatWs.onmessage (no monkey-patching)
 
 // Init chat on page load
-function init_chat() { renderMessages(); initStatusBar(); _renderAgentFeedsList(); loadMissionControl(); }
+function init_chat() {
+  // Always clear stale streaming state on page load
+  streamingSessionId = null;
+  const stopBtn = document.getElementById('stop-btn');
+  if (stopBtn) stopBtn.style.display = 'none';
+  const sendBtn = document.getElementById('send-btn');
+  if (sendBtn) sendBtn.disabled = false;
+  renderMessages(); initStatusBar(); _renderAgentFeedsList(); loadMissionControl();
+}
 
 // ── Mission Control Dashboard (empty chat state) ──
 async function loadMissionControl() {

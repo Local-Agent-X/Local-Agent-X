@@ -2,7 +2,7 @@
  * Execution Lanes — concurrent task scheduling with isolation.
  *
  * Each lane has its own queue and concurrency limit:
- * - Main: serialized (1 at a time) — user chat, auto-reply
+ * - Main: parallel (3 at a time) — user chat, auto-reply
  * - Cron: parallel (3 at a time) — scheduled jobs
  * - Agent: parallel (3 at a time) — spawned sub-agents
  * - Background: parallel (2 at a time) — memory consolidation, sync
@@ -53,7 +53,7 @@ interface LaneState {
 // ── Lane Configuration ──
 
 const DEFAULT_CONFIG: Record<LaneName, { maxConcurrent: number; maxQueueSize: number }> = {
-  main: { maxConcurrent: 1, maxQueueSize: 50 },
+  main: { maxConcurrent: 3, maxQueueSize: 50 },
   cron: { maxConcurrent: 3, maxQueueSize: 20 },
   agent: { maxConcurrent: 3, maxQueueSize: 10 },
   background: { maxConcurrent: 2, maxQueueSize: 30 },

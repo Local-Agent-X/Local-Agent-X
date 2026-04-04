@@ -406,7 +406,7 @@ const configSchema = z.object({
   maxAudioBytes: z.number().int().min(1).default(26214400),
   authMaxFailures: z.number().int().min(1).default(20),
   authLockoutMs: z.number().int().min(1000).default(60000),
-  agentTimeoutMs: z.number().int().min(10000).default(300000),
+  agentTimeoutMs: z.number().int().min(10000).default(600000),
   maxCachedSessions: z.number().int().min(1).default(200),
 });
 

@@ -66,15 +66,10 @@ function connectChatWs() {
         // Build a concise one-liner for chat — full details on Agents page
         var statusIcon = msg.success ? '\u2705' : '\u274C';
         var fullResult = msg.result || '';
-        // Extract first meaningful sentence as the summary
-        var lines = fullResult.split('\n').filter(function(l) {
-          var t = l.trim();
-          return t.length > 10 && !t.startsWith('[tool]') && !t.startsWith('Wrote ') && !t.startsWith('Read ') && !t.startsWith('Edited ') && !t.startsWith('BLOCKED') && !t.startsWith('---') && !t.startsWith('#');
-        });
-        var firstLine = (lines[0] || '').trim();
-        // Cap at ~150 chars for a clean one-liner
-        if (firstLine.length > 150) firstLine = firstLine.slice(0, 147) + '...';
-        var agentMsg = statusIcon + ' ' + (firstLine || (msg.success ? 'Done.' : 'Agent failed.'));
+        // Show the full agent result, not just a one-liner
+        var agentMsg = statusIcon + ' **Agent ' + (msg.name || msg.agentId || '') + ' ' + (msg.success ? 'completed' : 'failed') + ':**\n\n' + (fullResult || (msg.success ? 'Done.' : 'Agent failed.'));
+        // Cap at 5000 chars to prevent UI overflow
+        if (agentMsg.length > 5000) agentMsg = agentMsg.slice(0, 5000) + '\n\n[truncated — full result saved to session]';
         addMessageEl('assistant', agentMsg);
         if (activeChat) {
           activeChat.messages.push({ role: 'assistant', content: agentMsg });

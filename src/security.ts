@@ -561,8 +561,9 @@ export class SecurityLayer {
       // Don't crash on obfuscation check failure — allow the command through
     }
 
-    // Block non-pipe shell metacharacters outright (command chaining, subshells, redirects)
-    if (/[;&`$(){}<>\r\n]/.test(command)) {
+    // Block dangerous shell metacharacters (command chaining, subshells, command substitution)
+    // Allow: | (pipes, controlled below), > < (redirects), * ? (globs)
+    if (/[;&`\r\n]/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
       return {
         allowed: false,
         reason: `Blocked: shell metacharacters detected. Use separate tool calls instead of chaining commands.`,

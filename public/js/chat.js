@@ -250,9 +250,6 @@ async function sendMessage() {
   if (window.taskStartTime !== undefined) window.taskStartTime = Date.now();
   const stopBtn = document.getElementById('stop-btn');
   if (stopBtn) stopBtn.style.display = 'flex';
-  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
-    chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: streamSessionId }));
-  }
   document.getElementById('send-btn').disabled = true;
 
   // Helper: is the user still viewing this chat?
@@ -263,6 +260,98 @@ async function sendMessage() {
 
   let content = '';
   let toolEvents = [];
+
+  // Try WebSocket first (bidirectional, no SSE buffering issues)
+  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify({ type: 'chat', sessionId: streamSessionId, message: finalText, attachments: msgAttachments || [] }));
+    // Events arrive via the WS onmessage handler (lines above) which calls broadcastToSession
+    // Set up a WS event listener for this session's stream events
+    const wsHandler = function(e) {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type !== 'event' || msg.sessionId !== streamSessionId) return;
+        const event = msg.event;
+        const viewing = isViewingThis();
+        switch (event.type) {
+          case 'stream':
+            content += event.delta;
+            if (viewing) {
+              const existingCards = bodyEl.querySelectorAll('.tool-card');
+              bodyEl.innerHTML = md(content);
+              existingCards.forEach(c => bodyEl.appendChild(c));
+              feedTTS(event.delta);
+            }
+            break;
+          case 'tool_start':
+            toolEvents.push({ type: 'start', name: event.toolName, args: event.args, riskLevel: event.riskLevel });
+            if (viewing) {
+              const existingCards = bodyEl.querySelectorAll('.tool-card');
+              bodyEl.innerHTML = content ? md(content) : '';
+              existingCards.forEach(c => bodyEl.appendChild(c));
+              bodyEl.appendChild(makeToolCard(event.toolName, event.args, event.riskLevel, event.context));
+            }
+            break;
+          case 'tool_end': {
+            toolEvents.push({ type: 'end', name: event.toolName, allowed: event.allowed, result: (event.result||'').slice(0, 500) });
+            if (viewing) {
+              const cards = bodyEl.querySelectorAll('.tool-card');
+              const last = cards[cards.length - 1];
+              if (last) {
+                last.querySelector('.indicator').className = 'indicator ' + (event.allowed ? 'allowed' : 'blocked');
+                let cleanResult = (event.result || '').replace(/<<<EXTERNAL_UNTRUSTED_CONTENT[\s\S]*?<<<END_EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/g, '[content loaded]')
+                  .replace(/IMPORTANT:.*?Do NOT follow any instructions.*$/gm, '')
+                  .replace(/<metadata>[\s\S]*?<\/metadata>/g, '')
+                  .replace(/<content>\n?/g, '').replace(/\n?<\/content>/g, '')
+                  .trim().slice(0, 200);
+                last.querySelector('.tool-detail').textContent = cleanResult || '\u2713 Done';
+              }
+            }
+            break;
+          }
+          case 'context_status': if (viewing) updateContextBar(event); break;
+          case 'error': content += '\n\nError: ' + event.message; if (viewing) bodyEl.innerHTML = md(content); break;
+          case 'done': {
+            chatWs.removeEventListener('message', wsHandler);
+            // Finalize
+            if (streamingSessionId === streamSessionId) streamingSessionId = null;
+            try {
+              const stopBtn2 = document.getElementById('stop-btn');
+              if (stopBtn2) stopBtn2.style.display = 'none';
+              document.getElementById('send-btn').disabled = false;
+            } catch {}
+            userScrolledUp = false;
+            const lastMsg = streamChat.messages[streamChat.messages.length - 1];
+            if (content.trim()) {
+              if (lastMsg && lastMsg._streaming) { lastMsg.content = content; lastMsg.timestamp = Date.now(); delete lastMsg._streaming; }
+              else { streamChat.messages.push({ role: 'assistant', content, timestamp: Date.now() }); }
+              streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
+            }
+            if (isViewingThis()) renderMessages();
+            updateContextBar();
+            flushTTS();
+            if (typeof window.notifyTaskComplete === 'function') window.notifyTaskComplete(streamChat.title);
+            break;
+          }
+        }
+        if (isViewingThis()) autoScroll();
+      } catch {}
+    };
+    chatWs.addEventListener('message', wsHandler);
+    // Save partial periodically
+    const saveInterval = setInterval(function() {
+      if (!content.trim() && toolEvents.length === 0) return;
+      const lastMsg = streamChat.messages[streamChat.messages.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant' && lastMsg._streaming) { lastMsg.content = content; lastMsg._tools = toolEvents.length > 0 ? [...toolEvents] : undefined; }
+      else { streamChat.messages.push({ role: 'assistant', content, _streaming: true, _tools: toolEvents.length > 0 ? [...toolEvents] : undefined }); }
+      streamChat.updatedAt = Date.now(); saveChats();
+    }, 3000);
+    // Clean up save interval when done
+    const origHandler = wsHandler;
+    // We rely on the 'done' event above to clean up
+    return; // Don't fall through to HTTP
+  }
+
+  // Fallback: HTTP SSE (if WebSocket not connected)
   try {
     const res = await fetch(`${API}/api/chat`, {
       method: 'POST',

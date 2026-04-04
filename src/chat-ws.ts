@@ -36,6 +36,10 @@ const activeChats = new Map<string, ActiveChat>();
 // Connected clients — each client subscribes to sessionIds
 const clients = new Map<WebSocket, Set<string>>();
 
+// Chat handler — set by server to process WS chat messages
+type ChatHandler = (sessionId: string, message: string, attachments: any[]) => void;
+let chatHandler: ChatHandler | null = null;
+
 export function setupChatWebSocket(server: Server, authToken: string) {
   const wss = new WebSocketServer({ server, path: "/ws/chat" });
 
@@ -115,10 +119,11 @@ export function setupChatWebSocket(server: Server, authToken: string) {
       }
 
       if (type === "chat" && sessionId && msg.message) {
-        // Chat request handled externally — this is just the signaling layer
-        // The actual chat is triggered via the existing /api/chat endpoint
-        // but we register the client's subscription
+        // Handle chat via WebSocket — trigger the chat handler directly
         subscriptions.add(sessionId);
+        if (chatHandler) {
+          chatHandler(sessionId, String(msg.message), (msg.attachments || []) as any[]);
+        }
       }
 
       // Agent redirect: forward to Handler
@@ -229,6 +234,11 @@ export function setupChatWebSocket(server: Server, authToken: string) {
      */
     getActiveChats(): string[] {
       return [...activeChats.keys()].filter(id => !activeChats.get(id)!.done);
+    },
+
+    /** Register the handler for WS-initiated chat messages */
+    onChat(handler: ChatHandler) {
+      chatHandler = handler;
     },
   };
 }

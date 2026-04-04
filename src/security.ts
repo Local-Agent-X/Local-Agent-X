@@ -561,19 +561,22 @@ export class SecurityLayer {
 
     // Block dangerous shell metacharacters (command chaining, subshells, command substitution)
     // Allow: | (pipes, controlled below), > < (redirects), * ? (globs)
-    // Block dangerous shell metacharacters but allow safe chaining (&&, ||)
-    if (/[`\r\n]/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
-      return {
-        allowed: false,
-        reason: `Blocked: shell metacharacters detected (backtick or command substitution).`,
-      };
-    }
-    // Block ; (sequential chaining) and single & (background) but allow && and ||
-    if (/;/.test(command) || /(?<![&|])&(?![&|])/.test(command)) {
-      return {
-        allowed: false,
-        reason: `Blocked: use && instead of ; for chaining, and don't background processes with &.`,
-      };
+    // Block dangerous shell metacharacters — platform-aware
+    if (process.platform === "win32") {
+      // PowerShell: backtick is the escape char, ${} is variable syntax, {} is script blocks — all normal
+      // Only block actual dangerous patterns: Invoke-Expression, iex, & (call operator at start)
+      if (/\r\n/.test(command)) {
+        return { allowed: false, reason: "Blocked: multi-line commands not allowed." };
+      }
+    } else {
+      // Bash: block backtick, $(), ${} (command substitution)
+      if (/[`\r\n]/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
+        return { allowed: false, reason: "Blocked: shell metacharacters detected (backtick or command substitution)." };
+      }
+      // Block ; (sequential chaining) and single & (background) but allow && and ||
+      if (/;/.test(command) || /(?<![&|])&(?![&|])/.test(command)) {
+        return { allowed: false, reason: "Blocked: use && instead of ; for chaining, and don't background processes with &." };
+      }
     }
 
     // Allow at most 5 pipes (e.g., `ls | grep foo | sort | head | cut`).

@@ -51,6 +51,7 @@ export async function refreshTokens(tokens: OAuthTokens): Promise<OAuthTokens> {
       client_id: CLIENT_ID,
       refresh_token: tokens.refreshToken,
     }),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!res.ok) {
@@ -179,6 +180,7 @@ export function initiateOAuthLogin(): { authUrl: string; promise: Promise<OAuthT
             redirect_uri: `http://localhost:${CALLBACK_PORT}${CALLBACK_PATH}`,
             code_verifier: pendingLogin.verifier,
           }),
+          signal: AbortSignal.timeout(15_000),
         });
 
         if (!tokenRes.ok) {

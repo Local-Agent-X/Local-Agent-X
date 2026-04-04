@@ -163,6 +163,7 @@ export class ComputeRouter extends EventEmitter {
       method: "POST",
       headers,
       body: JSON.stringify({ type: task.type, payload: task.payload }),
+      signal: AbortSignal.timeout(60_000),
     });
 
     if (!response.ok) {

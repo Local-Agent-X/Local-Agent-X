@@ -246,6 +246,25 @@ export class Handler {
     return [...agent.output];
   }
 
+  /** Wait for all agents spawned by a parent session to finish, return their results */
+  async waitForSessionAgents(parentSessionId: string, timeoutMs = 300_000): Promise<string[]> {
+    const deadline = Date.now() + timeoutMs;
+    const results: string[] = [];
+    while (Date.now() < deadline) {
+      const children = [...this.agents.values()].filter(a => a.parentSessionId === parentSessionId);
+      if (children.length === 0) break; // No agents spawned
+      const allDone = children.every(a => a.status === "done" || a.status === "error");
+      if (allDone) {
+        for (const child of children) {
+          if (child.result) results.push(child.result);
+        }
+        break;
+      }
+      await new Promise(r => setTimeout(r, 3000)); // Poll every 3s
+    }
+    return results;
+  }
+
   // -- Subscriptions --------------------------------------------------------
 
   onAgentUpdate(callback: AgentUpdateCallback): void {

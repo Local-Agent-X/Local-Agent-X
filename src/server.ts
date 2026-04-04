@@ -428,7 +428,27 @@ export function startServer(config: SAXConfig) {
   eventBus.on("handler:agent-spawn", (d: unknown) => { const evt = d as AgentSpawnEvent; broadcastAll({ type: "agent-spawn", ...evt }); pendingMeta.set(evt.agentId, { name: evt.name, role: evt.role, task: evt.task, systemPrompt: evt.systemPrompt || "", parentAgentId: evt.parentAgentId || null, sessionId: evt.parentSessionId || "", startedAt: Date.now(), toolsUsed: [] }); });
   eventBus.on("handler:agent-output", (d: unknown) => { const evt = d as AgentOutputEvent; broadcastAll({ type: "agent-output", ...evt }); const m = pendingMeta.get(evt.agentId); if (m && typeof evt.output === "string" && evt.output.startsWith("[tool]")) { const t = evt.output.replace("[tool] ", "").replace("...", "").trim(); if (t && !m.toolsUsed.includes(t)) m.toolsUsed.push(t); } });
   eventBus.on("handler:agent-blocked", (d: unknown) => { const evt = d as AgentBlockedEvent; broadcastAll({ type: "agent-blocked", agentId: evt.agentId, reason: evt.reason, role: evt.role }); });
-  eventBus.on("handler:agent-result", (d: unknown) => { const evt = d as AgentResultEvent; broadcastAll({ type: "agent-complete", ...evt }); const m = pendingMeta.get(evt.agentId); if (m) { agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status: evt.success === false ? "error" : "done", output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: evt.success === false ? evt.result : undefined } as AgentRun); pendingMeta.delete(evt.agentId); } });
+  eventBus.on("handler:agent-result", (d: unknown) => {
+    const evt = d as AgentResultEvent;
+    broadcastAll({ type: "agent-complete", ...evt });
+    const m = pendingMeta.get(evt.agentId);
+    if (m) {
+      agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status: evt.success === false ? "error" : "done", output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: evt.success === false ? evt.result : undefined } as AgentRun);
+      // Append agent result to the parent chat session so it persists
+      if (m.sessionId && evt.result) {
+        try {
+          const parentSession = sessionStore.load(m.sessionId);
+          if (parentSession) {
+            const label = evt.success === false ? `Agent ${m.name} failed` : `Agent ${m.name} completed`;
+            parentSession.messages.push({ role: "assistant", content: `**${label}:**\n\n${evt.result}` } as any);
+            parentSession.updatedAt = Date.now();
+            sessionStore.save(parentSession);
+          }
+        } catch {}
+      }
+      pendingMeta.delete(evt.agentId);
+    }
+  });
   eventBus.on("handler:agent-redirect", (d: unknown) => { const evt = d as AgentRedirectEvent; broadcastAll({ type: "agent-update", ...evt, status: "redirected" }); });
 
   // Config hot-reload

@@ -388,7 +388,7 @@ export function startServer(config: SAXConfig) {
         worktreeInfo = createWorktree(agentId);
         if (worktreeInfo) {
           security.addAllowedPath(worktreeInfo.path, `agent-${agentId}`);
-          worktreeBlock = `\n\n--- WORKTREE ---\nYou are working in an isolated git worktree at: ${worktreeInfo.path}\nIMPORTANT: Always cd to this directory before running bash commands or reading/writing files.\nYour changes will be merged back when you finish.\n--- END WORKTREE ---\n`;
+          worktreeBlock = `\n\n--- WORKTREE ---\nYou are working in an isolated git worktree at: ${worktreeInfo.path}\nFor code changes: cd to this directory before running bash commands.\nFor OUTPUT FILES (reports, summaries, exports): ALWAYS write to ${resolve(config.workspace)}/ — the worktree gets cleaned up so files written there will be DELETED.\n--- END WORKTREE ---\n`;
         }
       } catch { /* not a git repo or git not available */ }
 

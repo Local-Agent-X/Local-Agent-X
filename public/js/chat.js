@@ -178,25 +178,36 @@ function renderMessages() {
       const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
       addMessageEl('user', displayText, msg.attachments, msg.timestamp);
     } else if (msg.role === 'assistant' && (msg.content || msg._tools)) {
-      // Clean up stale streaming flags on render
-      if (msg._streaming) delete msg._streaming;
+      // Clean up stale streaming state on render
+      if (msg._streaming) {
+        delete msg._streaming;
+        // If tools have no matching end events, mark them as interrupted
+        if (msg._tools) {
+          for (const te of msg._tools) {
+            if (te.type === 'start' && !msg._tools.find(t => t.type === 'end' && t.name === te.name)) {
+              msg._tools.push({ type: 'end', name: te.name, allowed: true, result: '(interrupted)' });
+            }
+          }
+        }
+      }
       addMessageEl('assistant', msg.content || '', null, msg.timestamp);
       // Render saved tool cards
       if (msg._tools && msg._tools.length > 0) {
         const lastBubble = el.querySelector('.msg-row:last-child .bubble');
         if (lastBubble) {
-          for (const te of msg._tools) {
-            if (te.type === 'start') {
-              const card = makeToolCard(te.name, te.args, te.riskLevel);
-              // Mark as done if there's a matching end event
-              const endEvt = msg._tools.find(t => t.type === 'end' && t.name === te.name);
-              if (endEvt) {
-                card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
-                card.querySelector('.tool-detail').textContent = (endEvt.result || '').slice(0, 200) || '✓ Done';
+          try {
+            for (const te of msg._tools) {
+              if (te.type === 'start') {
+                const card = makeToolCard(te.name, te.args || '', te.riskLevel);
+                const endEvt = msg._tools.find(t => t.type === 'end' && t.name === te.name);
+                if (endEvt) {
+                  card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
+                  card.querySelector('.tool-detail').textContent = (endEvt.result || '').slice(0, 200) || '✓ Done';
+                }
+                lastBubble.appendChild(card);
               }
-              lastBubble.appendChild(card);
             }
-          }
+          } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
         }
       }
     }
@@ -407,15 +418,16 @@ async function sendMessage() {
   flushTTS();
   // Browser notification for completed long tasks (feature 96)
   if (typeof window.notifyTaskComplete === 'function') window.notifyTaskComplete(streamChat.title);
-  // Only clear streaming state if THIS stream is still the active one
+  // ALWAYS clear streaming state — must happen before anything that could throw
   if (streamingSessionId === streamSessionId) streamingSessionId = null;
   // Always hide stop button and re-enable send when stream ends
-  const stopBtn2 = document.getElementById('stop-btn');
-  if (stopBtn2) stopBtn2.style.display = 'none';
-  document.getElementById('send-btn').disabled = false;
-  // Re-render if viewing this chat to ensure response shows
-  if (isViewingThis()) renderMessages();
-  updateContextBar();
+  try {
+    const stopBtn2 = document.getElementById('stop-btn');
+    if (stopBtn2) stopBtn2.style.display = 'none';
+    document.getElementById('send-btn').disabled = false;
+    if (isViewingThis()) renderMessages();
+    updateContextBar();
+  } catch (renderErr) { console.error('[chat] finalize render error:', renderErr); }
 }
 
 // ── Context health indicator ──

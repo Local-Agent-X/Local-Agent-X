@@ -239,19 +239,12 @@ const bashTool: ToolDefinition = {
       sanitizedEnv[key] = value;
     }
 
-    // Auto-translate common Linux commands to Windows equivalents
+    // PowerShell on Windows: most Unix aliases (ls, cat, mkdir, etc.) work natively
+    // Only translate flags that PowerShell doesn't understand
     let cmd = command;
     if (process.platform === "win32") {
-      // mkdir -p → mkdir (cmd.exe creates parents by default)
-      cmd = cmd.replace(/\bmkdir\s+-p\s+/g, "mkdir ");
-      // ls → dir
-      cmd = cmd.replace(/^ls\b/, "dir");
-      // rm -rf → rmdir /s /q (for directories)
-      cmd = cmd.replace(/\brm\s+-rf?\s+/g, "rmdir /s /q ");
-      // cat → type
-      cmd = cmd.replace(/^cat\b/, "type");
-      // touch → echo. >
-      cmd = cmd.replace(/^touch\s+(.+)$/, "echo. > $1");
+      // mkdir -p → New-Item -ItemType Directory -Force (PowerShell mkdir doesn't take -p)
+      cmd = cmd.replace(/\bmkdir\s+-p\s+/g, "New-Item -ItemType Directory -Force -Path ");
     }
 
     // Use container sandbox if enabled (SAX_SANDBOX=docker)
@@ -271,7 +264,7 @@ const bashTool: ToolDefinition = {
           encoding: "utf-8",
           timeout,
           maxBuffer: 1024 * 1024 * 10, // 10MB
-          shell: process.platform === "win32" ? "cmd.exe" : "/bin/bash",
+          shell: process.platform === "win32" ? "powershell.exe" : "/bin/bash",
           env: sanitizedEnv,
           cwd: (args._cwd as string) || undefined, // Worktree override
           windowsHide: true,

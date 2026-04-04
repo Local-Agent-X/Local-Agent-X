@@ -561,10 +561,18 @@ export class SecurityLayer {
 
     // Block dangerous shell metacharacters (command chaining, subshells, command substitution)
     // Allow: | (pipes, controlled below), > < (redirects), * ? (globs)
-    if (/[;&`\r\n]/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
+    // Block dangerous shell metacharacters but allow safe chaining (&&, ||)
+    if (/[`\r\n]/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
       return {
         allowed: false,
-        reason: `Blocked: shell metacharacters detected. Use separate tool calls instead of chaining commands.`,
+        reason: `Blocked: shell metacharacters detected (backtick or command substitution).`,
+      };
+    }
+    // Block ; (sequential chaining) and single & (background) but allow && and ||
+    if (/;/.test(command) || /(?<![&|])&(?![&|])/.test(command)) {
+      return {
+        allowed: false,
+        reason: `Blocked: use && instead of ; for chaining, and don't background processes with &.`,
       };
     }
 

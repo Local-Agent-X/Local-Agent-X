@@ -275,12 +275,23 @@ async function sendMessage() {
           switch (event.type) {
             case 'stream':
               content += event.delta;
-              if (viewing) { bodyEl.innerHTML = md(content); feedTTS(event.delta); }
+              if (viewing) {
+                // Preserve tool cards while updating text content
+                const existingCards = bodyEl.querySelectorAll('.tool-card');
+                bodyEl.innerHTML = md(content);
+                existingCards.forEach(c => bodyEl.appendChild(c));
+                feedTTS(event.delta);
+              }
               if (Date.now() - lastSaveTime > 2000) { savePartial(); lastSaveTime = Date.now(); }
               break;
             case 'tool_start':
               toolEvents.push({ type: 'start', name: event.toolName, args: event.args, riskLevel: event.riskLevel });
-              if (viewing) { bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args, event.riskLevel, event.context)); }
+              if (viewing) {
+                const existingCards = bodyEl.querySelectorAll('.tool-card');
+                bodyEl.innerHTML = content ? md(content) : '';
+                existingCards.forEach(c => bodyEl.appendChild(c));
+                bodyEl.appendChild(makeToolCard(event.toolName, event.args, event.riskLevel, event.context));
+              }
               break;
             case 'tool_end': {
               toolEvents.push({ type: 'end', name: event.toolName, allowed: event.allowed, result: (event.result||'').slice(0, 500) });
@@ -378,12 +389,12 @@ async function sendMessage() {
   if (typeof window.notifyTaskComplete === 'function') window.notifyTaskComplete(streamChat.title);
   // Only clear streaming state if THIS stream is still the active one
   if (streamingSessionId === streamSessionId) streamingSessionId = null;
-  // Only update UI if user is still viewing this chat
-  if (isViewingThis()) {
-    const stopBtn2 = document.getElementById('stop-btn');
-    if (stopBtn2) stopBtn2.style.display = 'none';
-    document.getElementById('send-btn').disabled = false;
-  }
+  // Always hide stop button and re-enable send when stream ends
+  const stopBtn2 = document.getElementById('stop-btn');
+  if (stopBtn2) stopBtn2.style.display = 'none';
+  document.getElementById('send-btn').disabled = false;
+  // Re-render if viewing this chat to ensure response shows
+  if (isViewingThis()) renderMessages();
   updateContextBar();
 }
 

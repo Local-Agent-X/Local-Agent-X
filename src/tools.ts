@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, exec } from "node:child_process";
 import { resolve, dirname, join } from "node:path";
 import { promises as dns } from "node:dns";
 import type { ToolDefinition, ToolResult } from "./types.js";
@@ -264,22 +264,35 @@ const bashTool: ToolDefinition = {
       return err(result.stderr || result.stdout || `Exit code: ${result.exitCode}`);
     }
 
-    // Host execution (default) — with sanitized environment
+    // Host execution (default) — async to avoid blocking the event loop
     try {
-      const output = execSync(cmd, {
-        encoding: "utf-8",
-        timeout,
-        maxBuffer: 1024 * 1024 * 10, // 10MB
-        shell: process.platform === "win32" ? "cmd.exe" : "/bin/bash",
-        env: sanitizedEnv,
-        cwd: (args._cwd as string) || undefined, // Worktree override
-        windowsHide: true,
+      const output = await new Promise<string>((resolve, reject) => {
+        const child = exec(cmd, {
+          encoding: "utf-8",
+          timeout,
+          maxBuffer: 1024 * 1024 * 10, // 10MB
+          shell: process.platform === "win32" ? "cmd.exe" : "/bin/bash",
+          env: sanitizedEnv,
+          cwd: (args._cwd as string) || undefined, // Worktree override
+          windowsHide: true,
+        }, (error, stdout, stderr) => {
+          if (error) {
+            const out = [stdout, stderr].filter(Boolean).join("\n");
+            reject(new Error(out || error.message));
+          } else {
+            resolve(stdout || "(no output)");
+          }
+        });
+        // Force kill on timeout (Windows doesn't always honor exec timeout)
+        const killTimer = setTimeout(() => {
+          try { child.kill("SIGKILL"); } catch {}
+          reject(new Error(`Command timed out after ${timeout / 1000}s`));
+        }, timeout + 1000);
+        child.on("exit", () => clearTimeout(killTimer));
       });
-      return ok(output || "(no output)");
+      return ok(output);
     } catch (e) {
-      const error = e as { stdout?: string; stderr?: string; message: string };
-      const output = [error.stdout, error.stderr].filter(Boolean).join("\n");
-      return err(output || error.message);
+      return err((e as Error).message);
     }
   },
 };

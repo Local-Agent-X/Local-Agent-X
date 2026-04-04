@@ -185,12 +185,12 @@ export async function* streamCodexResponse(params: {
   const maxRetries = 3;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      // No fetch-level timeout — we handle silence detection in the stream reader instead.
-      // This lets long builds run as long as data keeps flowing.
+      // 120s connect timeout — once streaming starts, silence detection (90s) takes over.
       res = await fetch(CODEX_URL, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(120_000),
       });
 
       if (res.ok) break;

@@ -76,6 +76,7 @@ export async function refreshAnthropicTokens(tokens: AnthropicTokens): Promise<A
       client_id: CLIENT_ID,
       refresh_token: tokens.refreshToken,
     }),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!res.ok) {

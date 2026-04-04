@@ -576,12 +576,12 @@ export class SecurityLayer {
       };
     }
 
-    // Allow at most 2 pipes (e.g., `ls | grep foo | head`). More than that is suspicious.
+    // Allow at most 5 pipes (e.g., `ls | grep foo | sort | head | cut`).
     const pipeCount = (command.match(/\|/g) || []).length;
-    if (pipeCount > 2) {
+    if (pipeCount > 5) {
       return {
         allowed: false,
-        reason: `Blocked: too many pipes (${pipeCount}). Maximum 2 pipes allowed per command.`,
+        reason: `Blocked: too many pipes (${pipeCount}). Maximum 5 pipes allowed per command.`,
       };
     }
 

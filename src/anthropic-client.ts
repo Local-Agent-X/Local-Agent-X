@@ -202,10 +202,143 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
  * - No tools + API key → Direct HTTP
  */
 export async function* streamAnthropicResponse(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  if (options.token === "cli" || isOAuthToken(options.token)) {
+  if (options.token === "cli") {
+    // OAuth via "cli" sentinel — extract actual token and use direct SDK
+    try {
+      const { loadAnthropicTokens } = await import("./auth-anthropic.js");
+      const tokens = loadAnthropicTokens();
+      if (tokens?.accessToken) {
+        yield* streamViaOAuthSDK({ ...options, token: tokens.accessToken });
+        return;
+      }
+    } catch {}
+    // Fallback to CLI proxy if token extraction fails
     yield* streamViaCliWithTools(options);
+  } else if (isOAuthToken(options.token)) {
+    yield* streamViaOAuthSDK(options);
   } else {
     yield* streamViaAPI(options);
+  }
+}
+
+/** Direct Anthropic SDK with OAuth — uses Claude Code identity headers (same approach as upstream) */
+async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator<StreamEvent> {
+  const { token, model, messages, systemPrompt, tools, temperature = 1, maxTokens = 8192 } = options;
+
+  // Map tool names to Claude Code format (bash → Bash, read → Read, etc.)
+  const CC_TOOL_MAP: Record<string, string> = {
+    bash: "Bash", read: "Read", write: "Write", edit: "Edit",
+    grep: "Grep", glob: "Glob", web_fetch: "WebFetch", web_search: "WebSearch",
+  };
+  const toCC = (name: string) => CC_TOOL_MAP[name] || name;
+  const fromCC = (name: string) => {
+    for (const [k, v] of Object.entries(CC_TOOL_MAP)) { if (v === name) return k; }
+    return name;
+  };
+
+  const anthropicTools = tools?.map(t => ({
+    name: toCC(t.name), description: t.description, input_schema: t.parameters,
+  }));
+
+  const body: Record<string, unknown> = {
+    model,
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages: convertMessages(messages),
+    stream: true,
+    temperature,
+  };
+  if (anthropicTools?.length) body.tools = anthropicTools;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${token}`,
+    "anthropic-version": "2023-06-01",
+    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14",
+    "user-agent": "claude-cli/2.1.83",
+    "x-app": "cli",
+    "anthropic-dangerous-direct-browser-access": "true",
+    "accept": "application/json",
+  };
+
+  console.log("[anthropic] Using direct OAuth SDK with Claude Code identity headers");
+
+  try {
+    const response = await fetch(`${API_BASE}/v1/messages`, {
+      method: "POST", headers, body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[anthropic] OAuth SDK error ${response.status}:`, errorText.slice(0, 200));
+      yield { type: "error", error: `Anthropic ${response.status}: ${errorText.slice(0, 500)}` };
+      return;
+    }
+
+    // Parse SSE stream — same as streamViaAPI
+    const reader = response.body?.getReader();
+    if (!reader) { yield { type: "error", error: "No response body" }; return; }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let inputTokens = 0, outputTokens = 0;
+    let currentToolId = "", currentToolName = "", currentToolArgs = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const data = line.slice(6).trim();
+        if (data === "[DONE]") continue;
+
+        try {
+          const event = JSON.parse(data);
+
+          if (event.type === "message_start" && event.message?.usage) {
+            inputTokens = event.message.usage.input_tokens || 0;
+          }
+
+          if (event.type === "content_block_start") {
+            if (event.content_block?.type === "tool_use") {
+              currentToolId = event.content_block.id || "";
+              currentToolName = fromCC(event.content_block.name || "");
+              currentToolArgs = "";
+            }
+          }
+
+          if (event.type === "content_block_delta") {
+            if (event.delta?.type === "text_delta") {
+              yield { type: "text", delta: event.delta.text || "" };
+            }
+            if (event.delta?.type === "input_json_delta") {
+              currentToolArgs += event.delta.partial_json || "";
+            }
+          }
+
+          if (event.type === "content_block_stop" && currentToolId) {
+            yield { type: "tool_call", id: currentToolId, name: currentToolName, arguments: currentToolArgs };
+            currentToolId = "";
+          }
+
+          if (event.type === "message_delta" && event.usage) {
+            outputTokens = event.usage.output_tokens || 0;
+          }
+
+          if (event.type === "message_stop") {
+            yield { type: "done", usage: { inputTokens, outputTokens } };
+          }
+        } catch {}
+      }
+    }
+  } catch (e) {
+    yield { type: "error", error: (e as Error).message };
   }
 }
 

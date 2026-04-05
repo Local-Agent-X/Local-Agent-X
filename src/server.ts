@@ -298,8 +298,8 @@ export function startServer(config: SAXConfig) {
         const ext = appFile.split(".").pop() || "", ct: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", png: "image/png", svg: "image/svg+xml" };
         const h: Record<string, string> = { "Content-Type": ct[ext] || "application/octet-stream" };
         if (ext === "html") {
-          h["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:*; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self'";
-          h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "DENY"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
+          h["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'self'; form-action 'self'";
+          h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "SAMEORIGIN"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
           let html = readFileSync(appFile, "utf-8");
           const iso = `<script>sessionStorage.removeItem('sax_token');localStorage.removeItem('sax_token');delete window.__AUTH_TOKEN__;history.replaceState(null,'',location.pathname);</script>`;
           html = html.includes("<head>") ? html.replace("<head>", "<head>" + iso) : html.includes("<body>") ? html.replace("<body>", "<body>" + iso) : iso + html;
@@ -315,7 +315,7 @@ export function startServer(config: SAXConfig) {
       if (existsSync(fp)) {
         const ext = fp.split(".").pop() || "", ct: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", svg: "image/svg+xml", png: "image/png", ico: "image/x-icon" };
         const h: Record<string, string> = { "Content-Type": ct[ext] || "application/octet-stream" };
-        if (ext === "html") { h["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'"; h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "DENY"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()"; }
+        if (ext === "html") { h["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'self' http://127.0.0.1:* http://localhost:*; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"; h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "SAMEORIGIN"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()"; }
         res.writeHead(200, h); res.end(readFileSync(fp)); return;
       }
     }
@@ -388,7 +388,7 @@ export function startServer(config: SAXConfig) {
       // Agents now GET issue_* and agent_* tools (they're real employees, not disposable workers)
       const CORE_AGENT_TOOLS = new Set(["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image", "ask_user",
         "http_request", "ocr", "memory_search", "memory_save", "memory_recall", "memory_update_profile",
-        "document_create", "document_edit", "spreadsheet_create", "spreadsheet_read", "pdf_create",
+        "document_create", "document_edit", "spreadsheet_write", "spreadsheet_read", "pdf_create",
         "schedule_list", "schedule_reports",
         "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval",
         "agent_whoami", "agent_team_list", "agent_wakeup", "task_create", "task_update", "task_list", "task_get"]);
@@ -410,7 +410,18 @@ export function startServer(config: SAXConfig) {
         }
       } catch { /* not a git repo or git not available */ }
 
-      console.log(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : ""}`);
+      // If no worktree, strip mutation tools — agent can only read/search, not write code
+      if (!worktreeInfo) {
+        const MUTATION_TOOLS = new Set(["write", "edit", "bash"]);
+        const before = spawnedTools.length;
+        spawnedTools = spawnedTools.filter(t => !MUTATION_TOOLS.has(t.name));
+        if (spawnedTools.length < before) {
+          console.warn(`[handler] Agent ${agentId}: no worktree — removed write/edit/bash (read-only mode)`);
+          worktreeBlock = `\n\n--- READ-ONLY MODE ---\nNo worktree available. You can read/search files and use web tools, but cannot write files or run bash commands. Write output to workspace/ using document_create or other workspace tools.\n--- END ---\n`;
+        }
+      }
+
+      console.log(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : " (read-only)"}`);
       const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); console.warn(`[handler] Agent ${agentId} timed out`); }, config.agentTimeoutMs);
       const agentResult = await enqueue("agent", () => runAgent(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + `\n\nEXECUTION RULES:\n- Platform: ${process.platform === "win32" ? "Windows. The bash tool runs PowerShell. Use PowerShell commands (Get-ChildItem, Select-Object, etc.) not Unix commands. Use Windows paths (C:\\Users\\...) not Unix paths (/mnt/c/...)." : "Linux/macOS. The bash tool runs /bin/bash."}\n- STRATEGY: List first, then peek, then act. Never start by reading a huge file — check its size, look at the first few lines, understand the structure, THEN process.\n- For large files (>1MB): use python -c to extract what you need in ONE command. Never use the read tool on large files.\n- For JSON: use python -c "import json; d=json.load(open('file.json')); print(len(d), type(d))" to understand structure first.\n- Bash commands time out at 120s. If something might take longer, break it into steps.\n- If a command fails, try a DIFFERENT approach. Don't repeat.\n- Save results to workspace/ as you go.\n- You have ~25 tool calls max. Each one should do real work.\n` + identityBlock + parentContext + briefing + worktreeBlock,
@@ -421,6 +432,7 @@ export function startServer(config: SAXConfig) {
       clearTimeout(to); if (agentResult?.messages) agentSession.messages.push(...agentResult.messages);
 
       // Merge worktree changes back and revoke path access
+      let mergeSuccess = true;
       if (worktreeInfo) {
         security.removeAllowedPath(worktreeInfo.path, `agent-${agentId}`);
         try {
@@ -430,10 +442,12 @@ export function startServer(config: SAXConfig) {
             ? (mergeResult.files > 0 ? `[Merged ${mergeResult.files} files back to main]` : "[No file changes]")
             : `[Merge failed: ${mergeResult.error}]`;
           eventBus.emit("handler:agent-output", { agentId, output: mergeMsg });
-        } catch (e) { console.warn(`[worktree] Merge error: ${(e as Error).message}`); }
+          if (!mergeResult.merged && mergeResult.files > 0) mergeSuccess = false;
+        } catch (e) { console.warn(`[worktree] Merge error: ${(e as Error).message}`); mergeSuccess = false; }
       }
 
-      eventBus.emit("handler:agent-result", { agentId, result: extractAgentOutput(agentSession.messages), success: true });
+      const agentOutput = extractAgentOutput(agentSession.messages);
+      eventBus.emit("handler:agent-result", { agentId, result: mergeSuccess ? agentOutput : `[Agent completed but merge failed — file changes lost]\n\n${agentOutput}`, success: mergeSuccess });
     } catch (e) {
       // Cleanup worktree on failure + revoke path access
       if (worktreeInfo) security.removeAllowedPath(worktreeInfo.path, `agent-${agentId}`);
@@ -534,15 +548,54 @@ export function startServer(config: SAXConfig) {
     // Memory background (every 6h + 30s after startup)
     const runMemBg = async () => {
       try { const { MemoryOrchestrator: MO } = await import("./memory-orchestrator.js"); const r = MO.getInstance().runBackground(memoryIndex); console.log(`[memory-bg] ${r.totalTimeMs}ms`); } catch (e) { console.warn("[memory-bg]", (e as Error).message); }
+      // Retain structured facts from recent daily logs
       try {
-        const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000, stale = sessionStore.list().filter(s => s.updatedAt < cutoff && s.messageCount > 4);
+        let totalRetained = 0;
+        for (let i = 0; i < 3; i++) {
+          const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+          const facts = memoryIndex.retainFromDailyLog(date);
+          totalRetained += facts.length;
+        }
+        if (totalRetained > 0) console.log(`[memory-bg] Retained ${totalRetained} facts from daily logs`);
+      } catch (e) { console.warn("[memory-bg] Retain:", (e as Error).message); }
+      // Run reflection (entity pages + opinion confidence)
+      try {
+        const reflectResult = await memoryIndex.reflect(7);
+        if (reflectResult.entitiesUpdated.length > 0 || reflectResult.opinionsUpdated > 0) {
+          console.log(`[memory-bg] Reflect: ${reflectResult.entitiesUpdated.length} entities, ${reflectResult.opinionsUpdated} opinions`);
+        }
+      } catch (e) { console.warn("[memory-bg] Reflect:", (e as Error).message); }
+      // Run nightly consolidation (merge duplicates, promote to MIND.md, entity pages)
+      try {
+        const { MemoryConsolidator: MC } = await import("./memory-consolidation.js");
+        const report = MC.getInstance().consolidate();
+        if (report.mergedCount > 0 || report.promotedCount > 0) {
+          console.log(`[memory-bg] Consolidation: merged=${report.mergedCount} promoted=${report.promotedCount} entities=${report.entityPagesUpdated}`);
+        }
+      } catch (e) { console.warn("[memory-bg] Consolidation:", (e as Error).message); }
+      // Session summaries — process recent sessions (not just stale ones)
+      try {
+        const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000, recent = sessionStore.list().filter(s => s.updatedAt > cutoff && s.messageCount > 2);
         const dir = join(dataDir, "memory", "session-summaries"); mkdirSync(dir, { recursive: true }); let n = 0;
-        for (const meta of stale.slice(0, 20)) { const sf = join(dir, `${meta.id}.md`); if (existsSync(sf)) continue; const sess = sessionStore.load(meta.id); if (!sess) continue; writeFileSync(sf, `# ${sess.title}\n\n${new Date(sess.createdAt).toISOString().split("T")[0]} | ${sess.messages.length} messages`, "utf-8"); n++; }
-        if (n > 0) console.log(`[memory-bg] Summarized ${n} stale sessions`);
+        for (const meta of recent.slice(0, 30)) {
+          const sf = join(dir, `${meta.id}.md`);
+          if (existsSync(sf)) continue;
+          const sess = sessionStore.load(meta.id);
+          if (!sess) continue;
+          // Write real summary content, not just title + date
+          const userMsgs = sess.messages.filter(m => m.role === "user" && typeof m.content === "string").map(m => (m.content as string).slice(0, 200));
+          const agentMsgs = sess.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => (m.content as string).split("\n").filter(l => l.trim())[0]?.slice(0, 200) || "");
+          const summary = `# ${sess.title}\n\nDate: ${new Date(sess.createdAt).toISOString().split("T")[0]}\nMessages: ${sess.messages.length}\n\n## Key Exchanges\n${userMsgs.slice(0, 10).map((u, i) => `- User: ${u}\n  Agent: ${agentMsgs[i] || "..."}`).join("\n")}\n`;
+          writeFileSync(sf, summary, "utf-8");
+          n++;
+        }
+        if (n > 0) console.log(`[memory-bg] Summarized ${n} sessions`);
       } catch (e) { console.warn("[memory-bg] Summarization:", (e as Error).message); }
     };
     memBgTimer = setInterval(runMemBg, 6 * 60 * 60 * 1000);
     setTimeout(runMemBg, 30_000);
+    // Schedule nightly consolidation at 3 AM
+    import("./memory-consolidation.js").then(({ MemoryConsolidator: MC }) => { MC.getInstance().scheduleNightly(); console.log("[memory] Nightly consolidation scheduled for 3 AM"); }).catch(e => console.warn("[memory] Failed to schedule nightly:", (e as Error).message));
 
     // Memory dream agent — periodic deep reflection (checks every 2 hours, runs if 24h+ since last)
     const runDreamCheck = async () => {

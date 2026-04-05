@@ -191,8 +191,8 @@ export function setupChatWebSocket(server: Server, authToken: string) {
           // Broadcast to all subscribed clients
           broadcastToSession(sessionId, event);
 
-          // Mark done on completion
-          if (event.type === "done" || event.type === "error") {
+          // Mark done only on real completion — non-terminal errors should not end the chat
+          if (event.type === "done") {
             chat.done = true;
             // Clean up after 5 minutes
             setTimeout(() => {

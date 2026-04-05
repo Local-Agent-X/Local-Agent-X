@@ -284,12 +284,13 @@ async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator<Stream
       const errorText = await response.text();
       console.error(`[anthropic] OAuth SDK error ${response.status}:`, errorText.slice(0, 200));
       yield { type: "error", error: `Anthropic ${response.status}: ${errorText.slice(0, 500)}` };
+      yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
       return;
     }
 
     // Parse SSE stream — same as streamViaAPI
     const reader = response.body?.getReader();
-    if (!reader) { yield { type: "error", error: "No response body" }; return; }
+    if (!reader) { yield { type: "error", error: "No response body" }; yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } }; return; }
 
     const decoder = new TextDecoder();
     let buffer = "";
@@ -350,6 +351,7 @@ async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator<Stream
     }
   } catch (e) {
     yield { type: "error", error: (e as Error).message };
+    yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
   }
 }
 

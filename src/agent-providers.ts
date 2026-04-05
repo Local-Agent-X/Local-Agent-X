@@ -210,8 +210,12 @@ export async function runStandardAgent(
     } catch (e) {
       const errMsg = (e as Error).message || "Stream error";
       console.error("[agent] Standard stream error:", errMsg);
-      onEvent?.({ type: "stream", delta: `\n\nError: ${errMsg}` });
-      break;
+      onEvent?.({ type: "error", message: errMsg });
+      return {
+        messages,
+        usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },
+        stopReason: "error",
+      };
     }
 
     const assistantMsg: ChatCompletionMessageParam = {
@@ -334,6 +338,7 @@ export async function runAnthropicAgent(
       temperature,
     });
 
+    let streamError: string | null = null;
     for await (const event of stream) {
       if (event.type === "text") {
         assistantContent += event.delta;
@@ -344,8 +349,12 @@ export async function runAnthropicAgent(
         totalInput += event.usage?.inputTokens || 0;
         totalOutput += event.usage?.outputTokens || 0;
       } else if (event.type === "error") {
-        onEvent?.({ type: "error", message: event.error || "Anthropic error" });
+        streamError = event.error || "Anthropic error";
+        onEvent?.({ type: "error", message: streamError });
       }
+    }
+    if (streamError) {
+      return { messages, usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "error" };
     }
 
     const assistantMsg: ChatCompletionMessageParam = { role: "assistant", content: assistantContent || null };
@@ -356,8 +365,9 @@ export async function runAnthropicAgent(
     }
     messages.push(assistantMsg);
 
-    // Auto-route to build_app if Claude tried to write files directly
-    if (toolCalls.length === 0 && detectBuildIntent(assistantContent, userMessage)) {
+    // Auto-route to build_app if Claude tried to write files directly (skip for IDE sessions)
+    const hasBuildApp = tools.some(t => t.name === "build_app");
+    if (toolCalls.length === 0 && hasBuildApp && detectBuildIntent(assistantContent, userMessage)) {
       const appName = extractAppName(assistantContent, userMessage);
       const buildPrompt = extractBuildPrompt(assistantContent, userMessage);
       console.log(`[agent] Auto-routing to build_app: ${appName}`);

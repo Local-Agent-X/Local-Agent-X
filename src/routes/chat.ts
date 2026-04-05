@@ -212,11 +212,16 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
 
       try { const { Handler: AO } = await import("../agency/handler.js"); AO.getInstance().currentSessionId = sessionId; } catch {}
 
+      // IDE sessions: strip delegation tools so the agent works directly with file tools
+      const IDE_BLOCKED_TOOLS = new Set(["agent_spawn", "delegate", "build_app", "agent_status", "agent_cancel", "agent_pause", "agent_resume", "agent_message"]);
+      const isIdeSession = sessionId.startsWith("ide-");
+      const sessionTools = isIdeSession ? ctx.allAgentTools.filter(t => !IDE_BLOCKED_TOOLS.has(t.name)) : ctx.allAgentTools;
+
       const result = await enqueue("main", () => runAgent(message, sanitizeHistory(historyToSend), {
         apiKey,
         model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : provider === "gemini" ? "gemini-2.0-flash" : ctx.config.model),
         provider, baseURL: customBaseURL, systemPrompt: enrichedPrompt,
-        tools: ctx.allAgentTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
+        tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
         threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
         images: imageAttachments, maxIterations: savedMaxIterations || ctx.config.maxIterations,
         temperature: savedTemperature ?? ctx.config.temperature,
@@ -226,7 +231,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
             canaryBuffer += event.delta; fullResponseText += event.delta;
             if (canaryBuffer.length > 200) canaryBuffer = canaryBuffer.slice(-200);
             const canaryTrip = threatEngine.checkOutput(canaryBuffer) || (fullResponseText.length % 500 < 10 ? threatEngine.checkOutput(fullResponseText) : null);
-            if (canaryTrip) { sseWrite(res, { type: "error", message: "Security alert: prompt injection detected." }); return; }
+            if (canaryTrip) { sseWrite(res, { type: "error", message: "Security alert: prompt injection detected." }); wsChat.abort.abort(); return; }
           }
           onEvent(event);
         },

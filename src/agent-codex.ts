@@ -260,8 +260,12 @@ export async function runCodexAgentHttp(
     } catch (e) {
       const errMsg = (e as Error).message || "Stream error";
       console.error("[agent] Codex HTTP stream error:", errMsg);
-      onEvent?.({ type: "stream", delta: `\n\nError: ${errMsg}` });
-      break;
+      onEvent?.({ type: "error", message: errMsg });
+      return {
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
+        stopReason: "error",
+      };
     }
 
     const assistantMsg: ChatCompletionMessageParam = { role: "assistant", content: assistantContent || null };

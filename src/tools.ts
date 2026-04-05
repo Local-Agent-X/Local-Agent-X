@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { execSync, exec } from "node:child_process";
+import { execSync, exec, spawn } from "node:child_process";
 import { resolve, dirname, join } from "node:path";
 import { promises as dns } from "node:dns";
 import type { ToolDefinition, ToolResult } from "./types.js";
@@ -193,9 +193,11 @@ const bashTool: ToolDefinition = {
     },
     required: ["command"],
   },
-  async execute(args) {
+  async execute(args, signal?: AbortSignal) {
     const command = String(args.command);
     const timeout = (args.timeout as number) || 120_000;
+    // Thread abort signal so canary trips / user stops kill bash immediately
+    if (!args._signal && signal) args._signal = signal;
 
     // Block commands that open the system default browser (security: prevents using
     // user's real browser with cookies/sessions — use the browser tool instead)
@@ -262,37 +264,78 @@ const bashTool: ToolDefinition = {
       return err(result.stderr || result.stdout || `Exit code: ${result.exitCode}`);
     }
 
-    // Host execution (default) — async to avoid blocking the event loop
+    // Host execution — spawn() for immediate abort, streaming output, process-tree control
     try {
-      const output = await new Promise<string>((resolve, reject) => {
-        const child = exec(cmd, {
-          encoding: "utf-8",
-          timeout,
-          maxBuffer: 1024 * 1024 * 10, // 10MB
-          shell: process.platform === "win32" ? "powershell.exe" : "/bin/bash",
+      const output = await new Promise<string>((resolveP, rejectP) => {
+        let settled = false;
+        const settle = (fn: typeof resolveP | typeof rejectP, val: string) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(killTimer);
+          fn(val);
+        };
+
+        const isWin = process.platform === "win32";
+        const shell = isWin ? "powershell.exe" : "/bin/bash";
+        const shellArgs = isWin ? ["-NoProfile", "-Command", cmd] : ["-c", cmd];
+
+        const child = spawn(shell, shellArgs, {
           env: sanitizedEnv,
-          cwd: (args._cwd as string) || undefined, // Worktree override
+          cwd: (args._cwd as string) || undefined,
           windowsHide: true,
-        }, (error, stdout, stderr) => {
-          if (error) {
-            const out = [stdout, stderr].filter(Boolean).join("\n");
-            reject(new Error(out || error.message));
-          } else {
-            resolve(stdout || "(no output)");
-          }
+          stdio: ["ignore", "pipe", "pipe"],
         });
-        // Force kill entire process tree on timeout (Windows child processes survive kill)
-        const killTimer = setTimeout(() => {
+
+        // Kill entire process tree (not just shell)
+        const killTree = () => {
           try {
-            if (process.platform === "win32" && child.pid) {
-              exec(`taskkill /F /T /PID ${child.pid}`, { windowsHide: true }, () => {});
-            } else {
-              child.kill("SIGKILL");
+            if (isWin && child.pid) {
+              spawn("taskkill", ["/F", "/T", "/PID", String(child.pid)], { windowsHide: true, stdio: "ignore" });
+            } else if (child.pid) {
+              try { process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
             }
           } catch {}
-          reject(new Error(`Command timed out after ${timeout / 1000}s`));
-        }, timeout + 1000);
-        child.on("exit", () => clearTimeout(killTimer));
+        };
+
+        // Immediate abort on signal (security-triggered canary, user stop)
+        const abortSignal = args._signal as AbortSignal | undefined;
+        if (abortSignal) {
+          if (abortSignal.aborted) { killTree(); settle(rejectP, "Aborted"); return; }
+          abortSignal.addEventListener("abort", () => { killTree(); settle(rejectP, "Aborted by signal"); }, { once: true });
+        }
+
+        // Timeout with tree kill
+        const killTimer = setTimeout(() => {
+          killTree();
+          settle(rejectP, `Command timed out after ${timeout / 1000}s`);
+        }, timeout);
+
+        // Capture output with size cap
+        const MAX_OUTPUT = 10 * 1024 * 1024; // 10MB
+        let stdout = "", stderr = "";
+        let totalBytes = 0;
+
+        child.stdout.setEncoding("utf-8");
+        child.stderr.setEncoding("utf-8");
+
+        child.stdout.on("data", (chunk: string) => {
+          totalBytes += chunk.length;
+          if (totalBytes <= MAX_OUTPUT) stdout += chunk;
+        });
+        child.stderr.on("data", (chunk: string) => {
+          totalBytes += chunk.length;
+          if (totalBytes <= MAX_OUTPUT) stderr += chunk;
+        });
+
+        child.on("error", (e) => settle(rejectP, e.message));
+        child.on("exit", (code) => {
+          if (code === 0 || code === null) {
+            settle(resolveP, stdout || "(no output)");
+          } else {
+            const out = [stdout, stderr].filter(Boolean).join("\n");
+            settle(rejectP, out || `Exit code: ${code}`);
+          }
+        });
       });
       return ok(output);
     } catch (e) {
@@ -1048,10 +1091,26 @@ export const allTools: ToolDefinition[] = applyPrompts([
   // Dream (manual trigger for memory consolidation)
   {
     name: "memory_dream",
-    description: "Trigger a memory consolidation (dream). Reviews recent sessions and reorganizes memory files. Runs automatically every 24h but can be triggered manually.",
+    description: "Trigger a memory consolidation (dream). Reviews recent sessions, extracts facts, runs reflection and consolidation, and reorganizes memory files. Returns a summary of what was processed.",
     parameters: { type: "object", properties: {}, required: [] },
     async execute(): Promise<{ content: string; metadata?: Record<string, unknown> }> {
-      return { content: `Dream prompt ready. Execute this consolidation:\n\n${buildDreamPrompt()}`, metadata: { isDreamPrompt: true } };
+      const results: string[] = [];
+      // 1. Run consolidation (merge duplicates, promote to MIND.md)
+      try {
+        const { MemoryConsolidator } = await import("./memory-consolidation.js");
+        const report = MemoryConsolidator.getInstance().consolidate();
+        results.push(`Consolidation: merged=${report.mergedCount} promoted=${report.promotedCount} entities=${report.entityPagesUpdated} contradictions=${report.contradictionsFound}`);
+      } catch (e) { results.push(`Consolidation failed: ${(e as Error).message}`); }
+      // 2. Mark dream as complete
+      try {
+        const { completeDream, startDream } = await import("./memory-dream.js");
+        startDream();
+        completeDream(0);
+        results.push("Dream state updated");
+      } catch (e) { results.push(`Dream state update failed: ${(e as Error).message}`); }
+      // 3. Also provide the LLM dream prompt so the agent can do deeper consolidation
+      results.push("\n--- LLM Dream Prompt (for deeper consolidation) ---\n" + buildDreamPrompt());
+      return { content: results.join("\n"), metadata: { isDreamPrompt: true } };
     },
   } satisfies ToolDefinition,
   // Doctor (self-diagnostics)

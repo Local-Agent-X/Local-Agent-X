@@ -170,16 +170,48 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         return { name: a.name, url: a.url, filePath: join(uploadsDir, fname) };
       });
 
-      // Sanitize orphaned tool results
+      // Sanitize orphaned tool calls AND orphaned tool results
       type MsgRecord = Record<string, unknown>;
       const sanitizeHistory = (msgs: typeof session.messages) => {
-        const validCallIds = new Set<string>();
+        // First pass: collect all tool_call IDs and tool_result IDs
+        const callIds = new Set<string>();
+        const resultIds = new Set<string>();
+        for (const m of msgs) {
+          const rec = m as unknown as MsgRecord;
+          if (m.role === "assistant" && rec.tool_calls) {
+            for (const tc of rec.tool_calls as Array<{ id: string }>) callIds.add(tc.id);
+          }
+          if (m.role === "tool" && rec.tool_call_id) {
+            resultIds.add(rec.tool_call_id as string);
+          }
+        }
+        // Find orphaned call IDs (calls without results — from aborted runs)
+        const orphanedCallIds = new Set([...callIds].filter(id => !resultIds.has(id)));
+
         const result = [];
         for (const m of msgs) {
           const rec = m as unknown as MsgRecord;
-          if (m.role === "assistant" && rec.tool_calls) { for (const tc of rec.tool_calls as Array<{ id: string }>) validCallIds.add(tc.id); result.push(m); }
-          else if (m.role === "tool") { if (rec.tool_call_id && validCallIds.has(rec.tool_call_id as string)) result.push(m); }
-          else result.push(m);
+          if (m.role === "assistant" && rec.tool_calls) {
+            if (orphanedCallIds.size > 0) {
+              // Strip orphaned tool_calls from this message
+              const cleanedCalls = (rec.tool_calls as Array<{ id: string }>).filter(tc => !orphanedCallIds.has(tc.id));
+              if (cleanedCalls.length === 0) {
+                // All tool calls were orphaned — keep as text-only message
+                result.push({ role: m.role, content: m.content || "" });
+              } else {
+                result.push({ ...m, tool_calls: cleanedCalls } as typeof m);
+              }
+            } else {
+              result.push(m);
+            }
+          } else if (m.role === "tool") {
+            // Drop tool results without matching call
+            if (rec.tool_call_id && callIds.has(rec.tool_call_id as string) && !orphanedCallIds.has(rec.tool_call_id as string)) {
+              result.push(m);
+            }
+          } else {
+            result.push(m);
+          }
         }
         return result;
       };

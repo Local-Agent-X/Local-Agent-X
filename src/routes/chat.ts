@@ -92,43 +92,50 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       heartbeat = setInterval(() => { if (!res.destroyed) res.write(": heartbeat\n\n"); else clearInterval(heartbeat); }, 15_000);
       ctx.setActiveBrowserSessionId(sessionId);
 
-      const [contextBlock, relevantMemories] = await Promise.all([buildContextBlock(ctx.memoryIndex), autoSearchContext(ctx.memoryIndex, message)]);
+      // Detect trivial tool requests that don't need memory/context injection
+      const isTrivialToolRequest = /^(run\s+(bash|command)|execute|bash)\s*(with|:)/i.test(message.trim()) || /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
 
-      // Smart context from session summaries
-      let smartContext = "";
-      try {
-        const summaryDir = join(ctx.dataDir, "memory", "session-summaries");
-        if (existsSync(summaryDir)) {
-          const summaryFiles = readdirSync(summaryDir).filter(f => f.endsWith(".md"));
-          const queryWords = message.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-          if (queryWords.length > 0 && summaryFiles.length > 0) {
-            const scored = summaryFiles.map(f => {
-              const content = readFileSync(join(summaryDir, f), "utf-8");
-              const lower = content.toLowerCase();
-              let score = 0;
-              for (const w of queryWords) { if (lower.includes(w)) score++; }
-              return { content: content.slice(0, 400), score };
-            }).filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 2);
-            if (scored.length > 0) smartContext = "\n\n--- RELATED PAST SESSIONS ---\n" + scored.map(s => s.content).join("\n---\n") + "\n--- END ---";
-          }
-        }
-      } catch {}
-
-      // Memory orchestrator
-      let memoryContext = "";
+      let contextBlock = "", relevantMemories = "", smartContext = "", memoryContext = "";
       let memoryNotifications: Array<{type: string, message: string, priority: number}> = [];
-      try {
-        const { processMessage } = await import("../memory-orchestrator.js");
-        const orch = await processMessage({
-          message, sessionId,
-          sessionMessages: session.messages.slice(-20).map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" })),
-          timeOfDay: new Date().getHours(), dayOfWeek: new Date().getDay(),
-          agentPreviousMessage: session.messages.filter(m => m.role === "assistant").pop()?.content as string || undefined,
-        });
-        memoryContext = orch.contextInjection ? `\n\n${orch.contextInjection}` : "";
-        memoryNotifications = orch.notifications || [];
-        if (orch.debug) console.log(`[memory] Orchestrator: ${orch.debug.modulesActivated.length} modules, ${orch.debug.totalTimeMs}ms`);
-      } catch (e) { console.warn("[memory] Orchestrator error:", (e as Error).message); }
+
+      if (!isTrivialToolRequest) {
+        [contextBlock, relevantMemories] = await Promise.all([buildContextBlock(ctx.memoryIndex), autoSearchContext(ctx.memoryIndex, message)]);
+
+        // Smart context from session summaries
+        try {
+          const summaryDir = join(ctx.dataDir, "memory", "session-summaries");
+          if (existsSync(summaryDir)) {
+            const summaryFiles = readdirSync(summaryDir).filter(f => f.endsWith(".md"));
+            const queryWords = message.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+            if (queryWords.length > 0 && summaryFiles.length > 0) {
+              const scored = summaryFiles.map(f => {
+                const content = readFileSync(join(summaryDir, f), "utf-8");
+                const lower = content.toLowerCase();
+                let score = 0;
+                for (const w of queryWords) { if (lower.includes(w)) score++; }
+                return { content: content.slice(0, 400), score };
+              }).filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 2);
+              if (scored.length > 0) smartContext = "\n\n--- RELATED PAST SESSIONS ---\n" + scored.map(s => s.content).join("\n---\n") + "\n--- END ---";
+            }
+          }
+        } catch {}
+
+        // Memory orchestrator
+        try {
+          const { processMessage } = await import("../memory-orchestrator.js");
+          const orch = await processMessage({
+            message, sessionId,
+            sessionMessages: session.messages.slice(-20).map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" })),
+            timeOfDay: new Date().getHours(), dayOfWeek: new Date().getDay(),
+            agentPreviousMessage: session.messages.filter(m => m.role === "assistant").pop()?.content as string || undefined,
+          });
+          memoryContext = orch.contextInjection ? `\n\n${orch.contextInjection}` : "";
+          memoryNotifications = orch.notifications || [];
+          if (orch.debug) console.log(`[memory] Orchestrator: ${orch.debug.modulesActivated.length} modules, ${orch.debug.totalTimeMs}ms`);
+        } catch (e) { console.warn("[memory] Orchestrator error:", (e as Error).message); }
+      } else {
+        console.log(`[chat] Trivial tool request — skipping memory injection`);
+      }
 
       const threatEngine = new ThreatEngine(ctx.dataDir, sessionId);
       let canaryBuffer = "";
@@ -276,12 +283,15 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       session.updatedAt = Date.now();
 
       const assistantReply = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).join("\n");
-      try { autoExtractAndSave(ctx.memoryIndex, message, assistantReply); } catch {}
-      try {
-        const userSnippet = message.slice(0, 300).replace(/\n/g, " ");
-        const agentSnippet = assistantReply.slice(0, 300).replace(/\n/g, " ");
-        if (userSnippet.length > 10) { ctx.memoryIndex.appendDailyLog(`[${sessionId}] User: ${userSnippet}`); if (agentSnippet.length > 10) ctx.memoryIndex.appendDailyLog(`[${sessionId}] Agent: ${agentSnippet}`); }
-      } catch {}
+      // Skip memory save for trivial tool-test messages (prevents noise from polluting future context)
+      if (!isTrivialToolRequest) {
+        try { autoExtractAndSave(ctx.memoryIndex, message, assistantReply); } catch {}
+        try {
+          const userSnippet = message.slice(0, 300).replace(/\n/g, " ");
+          const agentSnippet = assistantReply.slice(0, 300).replace(/\n/g, " ");
+          if (userSnippet.length > 10) { ctx.memoryIndex.appendDailyLog(`[${sessionId}] User: ${userSnippet}`); if (agentSnippet.length > 10) ctx.memoryIndex.appendDailyLog(`[${sessionId}] Agent: ${agentSnippet}`); }
+        } catch {}
+      }
       try {
         const { CrossSessionLearner } = await import("../cross-session-learning.js");
         const csl = CrossSessionLearner.getInstance();

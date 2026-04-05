@@ -203,13 +203,24 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
  */
 export async function* streamAnthropicResponse(options: StreamOptions): AsyncGenerator<StreamEvent> {
   if (options.token === "cli") {
-    // OAuth via "cli" sentinel — extract actual token and use direct SDK
+    // OAuth via "cli" sentinel — extract token, refresh if expired, use direct SDK
     try {
-      const { loadAnthropicTokens } = await import("./auth-anthropic.js");
-      const tokens = loadAnthropicTokens();
-      if (tokens?.accessToken) {
-        yield* streamViaOAuthSDK({ ...options, token: tokens.accessToken });
-        return;
+      const { loadAnthropicTokens, refreshAnthropicTokens } = await import("./auth-anthropic.js");
+      let tokens = loadAnthropicTokens();
+      if (tokens) {
+        // Refresh if expired or within 5 min of expiry
+        if (tokens.expiresAt && Date.now() >= tokens.expiresAt) {
+          console.log("[anthropic] OAuth token expired — refreshing");
+          try {
+            tokens = await refreshAnthropicTokens(tokens);
+          } catch (e) {
+            console.warn("[anthropic] Token refresh failed:", (e as Error).message);
+          }
+        }
+        if (tokens.accessToken) {
+          yield* streamViaOAuthSDK({ ...options, token: tokens.accessToken });
+          return;
+        }
       }
     } catch {}
     // Fallback to CLI proxy if token extraction fails

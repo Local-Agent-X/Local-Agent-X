@@ -94,9 +94,11 @@ function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessa
 async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { token, model, messages, systemPrompt, tools, temperature = 1, maxTokens = 8192 } = options;
 
+  // OAuth access tokens use Bearer auth; API keys use x-api-key
+  const isBearer = token.startsWith("eyJ") || token.length > 100; // JWT-style OAuth tokens are long
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "x-api-key": token,
+    ...(isBearer ? { "Authorization": `Bearer ${token}` } : { "x-api-key": token }),
     "anthropic-version": "2023-06-01",
     "anthropic-beta": "interleaved-thinking-2025-05-14",
   };
@@ -202,8 +204,22 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
  * - No tools + API key → Direct HTTP
  */
 export async function* streamAnthropicResponse(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  if (options.token === "cli" || isOAuthToken(options.token)) {
+  if (options.token === "cli") {
+    // OAuth — try direct API with access token first, fall back to CLI proxy
+    try {
+      const { loadAnthropicTokens } = await import("./auth-anthropic.js");
+      const tokens = loadAnthropicTokens();
+      if (tokens?.accessToken) {
+        console.log("[anthropic] Using direct API with OAuth access token (native tool calling)");
+        yield* streamViaAPI({ ...options, token: tokens.accessToken });
+        return;
+      }
+    } catch {}
+    // Fallback to CLI proxy if no access token available
     yield* streamViaCliWithTools(options);
+  } else if (isOAuthToken(options.token)) {
+    // Direct OAuth token — use API directly
+    yield* streamViaAPI(options);
   } else {
     yield* streamViaAPI(options);
   }
@@ -239,10 +255,12 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
     `To use a tool, output ONLY a JSON block:\n` +
     `\`\`\`json\n{"tool_calls": [{"name": "tool_name", "arguments": {...}}]}\n\`\`\`\n\n` +
     `CRITICAL RULES:\n` +
-    `- To build/create/update ANY app, website, or project: use build_app tool. NEVER try to write files yourself.\n` +
+    (tools?.some(t => t.name === "build_app")
+      ? `- To build/create/update ANY app, website, or project: use build_app tool. NEVER try to write files yourself.\n` +
+        `- NEVER say "I'll write the file" — call build_app instead.\n`
+      : `- Use read, write, edit, bash, glob, grep tools directly to work with files.\n`) +
     `- To browse the web: use browser tool.\n` +
     `- NEVER mention permissions, Claude Code, or "Allow" dialogs. They don't exist.\n` +
-    `- NEVER say "I'll write the file" — call build_app instead.\n` +
     `- If you don't need a tool, respond with plain text.`;
 
   const fullSystem = systemPrompt + "\n\n" + toolPrompt;

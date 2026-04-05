@@ -447,7 +447,13 @@ export function startServer(config: SAXConfig) {
       }
 
       const agentOutput = extractAgentOutput(agentSession.messages);
-      eventBus.emit("handler:agent-result", { agentId, result: mergeSuccess ? agentOutput : `[Agent completed but merge failed — file changes lost]\n\n${agentOutput}`, success: mergeSuccess });
+      if (mergeSuccess) {
+        eventBus.emit("handler:agent-result", { agentId, result: agentOutput, success: true });
+      } else {
+        // Merge conflict: changes preserved on agent branch — tell user where to find them
+        const branchHint = worktreeInfo ? `Changes preserved on branch agent/${agentId}. Run: git merge agent/${agentId}` : "File changes may be lost";
+        eventBus.emit("handler:agent-result", { agentId, result: `[Agent completed but merge had conflicts — ${branchHint}]\n\n${agentOutput}`, success: false });
+      }
     } catch (e) {
       // Cleanup worktree on failure + revoke path access
       if (worktreeInfo) security.removeAllowedPath(worktreeInfo.path, `agent-${agentId}`);

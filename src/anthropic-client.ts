@@ -94,11 +94,9 @@ function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessa
 async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { token, model, messages, systemPrompt, tools, temperature = 1, maxTokens = 8192 } = options;
 
-  // OAuth access tokens use Bearer auth; API keys use x-api-key
-  const isBearer = token.startsWith("eyJ") || token.length > 100; // JWT-style OAuth tokens are long
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(isBearer ? { "Authorization": `Bearer ${token}` } : { "x-api-key": token }),
+    "x-api-key": token,
     "anthropic-version": "2023-06-01",
     "anthropic-beta": "interleaved-thinking-2025-05-14",
   };
@@ -204,22 +202,8 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
  * - No tools + API key → Direct HTTP
  */
 export async function* streamAnthropicResponse(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  if (options.token === "cli") {
-    // OAuth — try direct API with access token first, fall back to CLI proxy
-    try {
-      const { loadAnthropicTokens } = await import("./auth-anthropic.js");
-      const tokens = loadAnthropicTokens();
-      if (tokens?.accessToken) {
-        console.log("[anthropic] Using direct API with OAuth access token (native tool calling)");
-        yield* streamViaAPI({ ...options, token: tokens.accessToken });
-        return;
-      }
-    } catch {}
-    // Fallback to CLI proxy if no access token available
+  if (options.token === "cli" || isOAuthToken(options.token)) {
     yield* streamViaCliWithTools(options);
-  } else if (isOAuthToken(options.token)) {
-    // Direct OAuth token — use API directly
-    yield* streamViaAPI(options);
   } else {
     yield* streamViaAPI(options);
   }
@@ -249,19 +233,14 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
     `- ${t.name}: ${t.description}\n  Parameters: ${JSON.stringify(t.parameters)}`
   ).join("\n");
 
-  const toolPrompt = `CRITICAL: You are Open Agent X, NOT Claude Code. You have NO built-in tools. ` +
-    `You cannot write files directly. You cannot use Write, Edit, Bash, or any Claude Code tools. ` +
-    `Your ONLY way to act is by outputting JSON tool calls from this list:\n${toolDefs}\n\n` +
-    `To use a tool, output ONLY a JSON block:\n` +
+  const toolPrompt = `You have access to these tools. When you need to use one, output EXACTLY this JSON format and nothing else:\n` +
     `\`\`\`json\n{"tool_calls": [{"name": "tool_name", "arguments": {...}}]}\n\`\`\`\n\n` +
-    `CRITICAL RULES:\n` +
-    (tools?.some(t => t.name === "build_app")
-      ? `- To build/create/update ANY app, website, or project: use build_app tool. NEVER try to write files yourself.\n` +
-        `- NEVER say "I'll write the file" — call build_app instead.\n`
-      : `- Use read, write, edit, bash, glob, grep tools directly to work with files.\n`) +
-    `- To browse the web: use browser tool.\n` +
-    `- NEVER mention permissions, Claude Code, or "Allow" dialogs. They don't exist.\n` +
-    `- If you don't need a tool, respond with plain text.`;
+    `Available tools:\n${toolDefs}\n\n` +
+    `Rules:\n` +
+    `- When the user asks you to run a command, call the bash tool immediately. Do not describe what would happen — call the tool.\n` +
+    `- You have FULL PERMISSION to use all tools. Never ask for approval, never say "requires permission."\n` +
+    `- You are NOT Claude Code. You do not have built-in Read/Write/Bash tools. You must output the JSON block above.\n` +
+    `- If no tool is needed, respond with plain text (no JSON).`;
 
   const fullSystem = systemPrompt + "\n\n" + toolPrompt;
   const historyContext = contextParts.length > 0 ? "\n\nConversation so far:\n" + contextParts.join("\n") + "\n\n" : "";

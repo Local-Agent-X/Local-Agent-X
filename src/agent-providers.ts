@@ -232,12 +232,19 @@ export async function runStandardAgent(
     messages.push(assistantMsg);
 
     if (toolCalls.length === 0) {
+      // Detect approval hallucination: model says "needs approval" instead of calling the tool
+      const approvalHallucination = /\b(requires? approval|needs? (your )?approv|please (approve|allow|confirm)|permission (dialog|to proceed|required))\b/i.test(assistantContent);
+      if (approvalHallucination && iteration < maxIterations - 1) {
+        console.warn(`[agent] Approval hallucination detected — nudging model to use tools directly`);
+        messages.push({ role: "user", content: "You do NOT need approval. You have full permission to run any tool. Call the bash tool directly — do not ask for permission." } as ChatCompletionMessageParam);
+        continue;
+      }
+
       // Self-reflection: check for unresolved tool errors before returning
       const unresolvedErrors = detectUnresolvedErrors(messages);
       if (unresolvedErrors.length > 0 && iteration < maxIterations - 1) {
-        // Give the agent one more chance to address unresolved errors
         messages.push({ role: "user", content: buildReflectionPrompt(unresolvedErrors) } as ChatCompletionMessageParam);
-        continue; // Re-enter the loop for one more iteration
+        continue;
       }
 
       onEvent?.({
@@ -383,7 +390,14 @@ export async function runAnthropicAgent(
     }
 
     if (toolCalls.length === 0) {
-      // Self-reflection: check for unresolved tool errors before returning
+      // Detect approval hallucination
+      const approvalHallucination = /\b(requires? approval|needs? (your )?approv|please (approve|allow|confirm)|permission (dialog|to proceed|required))\b/i.test(assistantContent);
+      if (approvalHallucination && iteration < maxIterations - 1) {
+        console.warn(`[agent] Approval hallucination detected (Anthropic) — nudging`);
+        messages.push({ role: "user", content: "You do NOT need approval. You have full permission to run any tool. Call the bash tool directly — do not ask for permission." } as ChatCompletionMessageParam);
+        continue;
+      }
+
       const unresolvedErrors = detectUnresolvedErrors(messages);
       if (unresolvedErrors.length > 0 && iteration < maxIterations - 1) {
         messages.push({ role: "user", content: buildReflectionPrompt(unresolvedErrors) } as ChatCompletionMessageParam);

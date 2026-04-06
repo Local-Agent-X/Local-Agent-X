@@ -250,9 +250,18 @@ export class Handler {
   async waitForSessionAgents(parentSessionId: string, timeoutMs = 300_000): Promise<string[]> {
     const deadline = Date.now() + timeoutMs;
     const results: string[] = [];
+    let sawChildren = false;
     while (Date.now() < deadline) {
       const children = [...this.agents.values()].filter(a => a.parentSessionId === parentSessionId);
-      if (children.length === 0) break; // No agents spawned
+      if (children.length > 0) sawChildren = true;
+      // Only exit-on-zero if we already saw children (they all finished and were cleaned up)
+      // or we've been waiting 30s with nothing spawning (no delegation happened)
+      if (children.length === 0) {
+        if (sawChildren) break;
+        if (Date.now() - (deadline - timeoutMs) > 30_000) break;
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
       const allDone = children.every(a => a.status === "done" || a.status === "error");
       if (allDone) {
         for (const child of children) {
@@ -360,9 +369,22 @@ export class Handler {
 
         if (agent.abortController?.signal.aborted) return;
 
+        // Subscribe to tool activity for live monitoring
+        const outputHandler = (data: unknown) => {
+          const d = data as { agentId: string; output?: string };
+          if (d.agentId !== agentId || typeof d.output !== "string") return;
+          // Keep last 50 activity entries per agent (tool calls, progress, errors)
+          if (d.output.startsWith("[tool]") || d.output.startsWith("[progress]") || d.output.startsWith("[error]") || d.output.startsWith("[BLOCKER]")) {
+            agent.output.push(d.output);
+            if (agent.output.length > 50) agent.output.shift();
+          }
+        };
+        EventBus.on("handler:agent-output", outputHandler);
+
         // Emit the run request for the external LLM layer to pick up
         const resultPromise = new Promise<string>((resolve, reject) => {
           const timeout = setTimeout(() => {
+            EventBus.off("handler:agent-output", outputHandler);
             reject(new Error("Agent execution timed out"));
           }, 600_000); // 10 min — agents need time for multi-step tasks
 
@@ -387,6 +409,7 @@ export class Handler {
 
             clearTimeout(timeout);
             EventBus.off("handler:agent-result", handler);
+            EventBus.off("handler:agent-output", outputHandler);
 
             if (d.tokens) agent.tokensUsed += d.tokens;
 
@@ -402,6 +425,7 @@ export class Handler {
           if (agent.abortController?.signal.aborted) {
             clearTimeout(timeout);
             EventBus.off("handler:agent-result", handler);
+            EventBus.off("handler:agent-output", outputHandler);
             reject(new Error("Aborted"));
           }
         });

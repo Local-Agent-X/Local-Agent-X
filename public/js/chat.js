@@ -219,7 +219,7 @@ async function sendMessage() {
   // Capture attachments before clearing
   const msgAttachments = pendingUploads.length ? pendingUploads.map(f => ({
     name: f.name, size: f.size, type: f.type, isImage: f.isImage,
-    url: f.url || f.dataUrl || null
+    url: f.url || null, dataUrl: f.dataUrl || null
   })) : null;
   const hasImages = msgAttachments && msgAttachments.some(a => a.isImage);
   const nonImageFiles = msgAttachments ? msgAttachments.filter(a => !a.isImage) : [];
@@ -624,10 +624,11 @@ function addMessageEl(role, text, attachments) {
   let attachHtml = '';
   if (attachments && attachments.length) {
     attachHtml = '<div class="msg-attachments">' + attachments.map(a => {
-      if (a.isImage && a.url) {
-        return `<img src="${esc(a.url)}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
-      } else if (a.isImage && a.dataUrl) {
+      if (a.isImage && a.dataUrl) {
         return `<img src="${esc(a.dataUrl)}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
+      } else if (a.isImage && a.url) {
+        const authedUrl = a.url + (a.url.includes('?') ? '&' : '?') + 'token=' + AUTH_TOKEN;
+        return `<img src="${esc(authedUrl)}" alt="${esc(a.name)}" onclick="openLightbox(this.src)" title="${esc(a.name)}" loading="lazy" />`;
       } else if (a.isImage) {
         return `<div class="att-badge"><span>&#128444;</span> ${esc(a.name)}</div>`;
       } else {

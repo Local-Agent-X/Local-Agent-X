@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* wss://127.0.0.1:* wss://localhost:*; img-src 'self' data: https: blob:; font-src 'self'; media-src 'self' blob: mediastream:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* wss://127.0.0.1:* wss://localhost:*; img-src 'self' data: https: blob:; font-src 'self'; media-src 'self' blob: mediastream:; frame-src 'self' http://127.0.0.1:* http://localhost:*;">
 <meta http-equiv="Permissions-Policy" content="microphone=*, camera=*">
 <title>Open Agent X</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css"/>
@@ -570,6 +570,50 @@
         <div id="custom-pages-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px"></div>
       </div>
     </div>
+
+    <!-- IDE View (hidden by default, shown when editing an app) -->
+    <div id="apps-ide" style="display:none">
+      <!-- Top bar -->
+      <div id="ide-topbar">
+        <button id="ide-back-btn" onclick="exitIdeView()" title="Back to Apps">&#8592; Apps</button>
+        <span id="ide-app-name"></span>
+        <div style="flex:1"></div>
+        <button class="ide-topbar-btn" onclick="toggleIdeChat()" title="Toggle chat panel">Chat</button>
+        <button class="ide-topbar-btn" onclick="toggleIdeFiles()" title="Toggle file tree">Files</button>
+        <button class="ide-topbar-btn" onclick="ideRefreshPreview()" title="Refresh preview">Refresh</button>
+        <button class="ide-topbar-btn" onclick="openApp(window._ideAppUrl)" title="Open in new tab">Pop Out</button>
+      </div>
+      <!-- Status bar -->
+      <div id="ide-status-bar"><span class="ide-status-dot"></span><span class="ide-status-text">Ready</span></div>
+      <!-- Three-panel layout -->
+      <div id="ide-panels">
+        <!-- Left: Chat -->
+        <div id="ide-chat-panel" class="ide-panel">
+          <div id="ide-chat-messages"></div>
+          <div id="ide-chat-input-area">
+            <textarea id="ide-chat-input" placeholder="Describe changes..." rows="2"
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendIdeChatMessage()}"></textarea>
+            <button id="ide-chat-send" onclick="sendIdeChatMessage()" aria-label="Send">&#9650;</button>
+          </div>
+        </div>
+        <!-- Center: Preview -->
+        <div id="ide-preview-panel" class="ide-panel">
+          <iframe id="ide-preview-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+        </div>
+        <!-- Right: File tree -->
+        <div id="ide-files-panel" class="ide-panel">
+          <div id="ide-files-header">Files</div>
+          <div id="ide-file-tree"></div>
+          <div id="ide-file-viewer" style="display:none">
+            <div id="ide-file-viewer-header">
+              <button onclick="ideCloseFileViewer()" title="Back to tree">&#8592;</button>
+              <span id="ide-file-viewer-name"></span>
+            </div>
+            <pre id="ide-file-viewer-content"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="page-agents" class="page">
@@ -654,6 +698,8 @@
 <script src="/js/protocols.js"></script>
 <script src="/js/notifications.js"></script>
 <script src="/js/apps.js"></script>
+<script src="/js/apps-ide.js"></script>
+<script src="/js/apps-ide-agents.js"></script>
 <script src="/js/agents.js"></script>
 <script src="/js/shortcuts.js"></script>
 <script>

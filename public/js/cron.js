@@ -3,6 +3,7 @@
 
 let cronJobs = [];
 let selectedJob = null;
+let cronStatusTimer = null;
 
 // Alias so the router's init_missions call works
 function init_missions() { loadCronJobs(); }
@@ -44,6 +45,58 @@ function selectCronJob(id) {
   selectedJob = cronJobs.find(j => j.id === id) || null;
   renderCronList();
   renderCronDetail();
+  startCronStatusPolling();
+}
+
+function startCronStatusPolling() {
+  if (cronStatusTimer) { clearInterval(cronStatusTimer); cronStatusTimer = null; }
+  if (!selectedJob) return;
+  const poll = async () => {
+    if (!selectedJob) { if (cronStatusTimer) { clearInterval(cronStatusTimer); cronStatusTimer = null; } return; }
+    try {
+      const data = await apiJson(`/api/cron/${selectedJob.id}/status`);
+      renderCronLiveStatus(data);
+      // When job finishes, refresh reports list
+      if (!data.running) {
+        loadCronReports(selectedJob.id);
+      }
+    } catch {}
+  };
+  poll();
+  cronStatusTimer = setInterval(poll, 2500);
+}
+
+function renderCronLiveStatus(data) {
+  const box = document.getElementById('cron-live-status');
+  if (!box) return;
+  if (!data || !data.running) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  const elapsed = document.getElementById('cron-live-elapsed');
+  const agents = document.getElementById('cron-live-agents');
+  const subs = data.subAgents || [];
+  if (subs.length === 0) {
+    if (elapsed) elapsed.textContent = '';
+    if (agents) agents.innerHTML = '<span style="color:var(--muted)">Planning...</span>';
+    return;
+  }
+  // Show longest-running sub-agent's elapsed time in header
+  const maxElapsed = Math.max(...subs.map(s => s.elapsed || 0));
+  if (elapsed) elapsed.textContent = formatElapsed(maxElapsed);
+  if (agents) {
+    agents.innerHTML = subs.map(a => {
+      const tools = (a.recentTools && a.recentTools.length) ? a.recentTools.slice(-3).join(' → ') : '(working)';
+      const tok = a.tokensUsed ? ` · ${(a.tokensUsed/1000).toFixed(1)}K tok` : '';
+      return `<div style="margin-bottom:4px"><span style="color:var(--accent)">▸</span> <b>${esc(a.name || a.role || 'agent')}</b> <span style="color:var(--muted)">${esc(a.status)}${tok}</span><br><span style="color:var(--muted);margin-left:14px">${esc(tools)}</span></div>`;
+    }).join('');
+  }
+}
+
+function formatElapsed(ms) {
+  const s = Math.floor(ms/1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s/60);
+  const rem = s % 60;
+  return `${m}m ${rem}s`;
 }
 
 function renderCronDetail() {
@@ -70,15 +123,31 @@ async function loadCronReports(jobId) {
   try {
     const data = await apiJson(`/api/cron/${jobId}/reports`);
     const reports = data.reports || [];
+    const countEl = document.getElementById('cron-reports-count');
+    if (countEl) countEl.textContent = reports.length ? `${reports.length} total` : '';
     if (reports.length === 0) {
       el.innerHTML = '<div style="color:var(--muted);font-size:.78rem;padding:4px 0">No reports yet</div>';
       return;
     }
-    el.innerHTML = reports.slice(0, 10).map(r => {
+    el.innerHTML = reports.map(r => {
       const date = r.name.replace('.md', '').replace(/T/, ' ').replace(/-/g, (m, i) => i > 9 ? ':' : '-').slice(0, 19);
-      return `<div class="report-link" onclick="viewCronReport('${jobId}','${esc(r.name)}')" style="cursor:pointer;padding:4px 8px;font-size:.78rem;color:var(--accent);border-bottom:1px solid var(--border)">${date}</div>`;
+      return `<div style="display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:.78rem;border-bottom:1px solid var(--border)">
+        <span onclick="viewCronReport('${jobId}','${esc(r.name)}')" style="cursor:pointer;color:var(--accent);flex:1">${date}</span>
+        <span onclick="deleteCronReport('${jobId}','${esc(r.name)}')" title="Delete report" style="cursor:pointer;color:var(--muted);padding:0 4px">×</span>
+      </div>`;
     }).join('');
   } catch { el.innerHTML = ''; }
+}
+
+async function deleteCronReport(jobId, fileName) {
+  if (!confirm(`Delete report ${fileName}?`)) return;
+  try {
+    await fetch(API + '/api/cron/' + jobId + '/reports/' + fileName, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + AUTH_TOKEN }
+    });
+    loadCronReports(jobId);
+  } catch (e) { alert('Failed: ' + e.message); }
 }
 
 async function viewCronReport(jobId, fileName) {
@@ -142,5 +211,6 @@ async function runCronJobNow() {
     await apiPost('/api/cron/' + selectedJob.id + '/run', {});
     selectedJob.lastRun = new Date().toISOString();
     renderCronDetail();
+    startCronStatusPolling();
   } catch (e) { alert('Failed: ' + e.message); }
 }

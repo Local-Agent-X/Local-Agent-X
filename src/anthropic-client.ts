@@ -201,11 +201,38 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
  * - No tools + API key → Direct HTTP
  */
 export async function* streamAnthropicResponse(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  if (options.token === "cli" || usesAnthropicSubscriptionAuth(options.token)) {
-    // CLI proxy — routes through Claude CLI which handles auth, rate limits, and tool calling natively
-    // This avoids the API-level 429s that hit the direct SDK path on subscription accounts
-    console.log("[anthropic] Using CLI proxy (avoids subscription API rate limits)");
+  if (options.token === "cli") {
+    // Try direct SDK first (faster — no process spawn), fall back to CLI proxy on 429
+    try {
+      const { loadAnthropicTokens, refreshAnthropicTokens } = await import("./auth-anthropic.js");
+      let tokens = loadAnthropicTokens();
+      if (tokens) {
+        if (tokens.expiresAt && Date.now() >= tokens.expiresAt) {
+          try { tokens = await refreshAnthropicTokens(tokens); } catch {}
+        }
+        if (tokens?.accessToken) {
+          // Collect events — if we hit 429, switch to CLI proxy
+          const events: StreamEvent[] = [];
+          let hit429 = false;
+          for await (const event of streamViaOAuthSDK({ ...options, token: tokens.accessToken })) {
+            if (event.type === "error" && typeof event.error === "string" && event.error.includes("429")) {
+              hit429 = true;
+              break;
+            }
+            events.push(event);
+          }
+          if (!hit429) {
+            // Direct SDK succeeded — yield all collected events
+            for (const e of events) yield e;
+            return;
+          }
+          console.log("[anthropic] Direct SDK got 429 — falling back to CLI proxy");
+        }
+      }
+    } catch {}
     yield* streamViaCliWithTools(options);
+  } else if (usesAnthropicSubscriptionAuth(options.token)) {
+    yield* streamViaOAuthSDK({ ...options, token: unwrapAnthropicSubscriptionToken(options.token) });
   } else {
     yield* streamViaAPI(options);
   }

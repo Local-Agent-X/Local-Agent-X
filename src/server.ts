@@ -511,6 +511,11 @@ export function startServer(config: SAXConfig) {
       const cronSecurity = new SecurityLayer(resolve(process.env.SAX_WORKSPACE || join(homedir(), ".sax", "workspace")), "workspace");
       // Fresh session each run — don't pollute with stale history
       const sessionId = `cron-${jobId}-${Date.now()}`;
+      // Register session on Handler so spawned sub-agents inherit parentSessionId for result collection
+      try {
+        const { Handler } = await import("./agency/handler.js");
+        Handler.getInstance().currentSessionId = sessionId;
+      } catch {}
       const result = await runAgent(prompt, [], { apiKey, model: provider === "anthropic" ? "claude-haiku-4-5" : model, provider: provider as AgentOptions["provider"], systemPrompt: config.systemPrompt, tools: allAgentTools, security: cronSecurity, toolPolicy, sessionId, maxIterations: config.maxIterations });
       // Save the session for history
       const session = getOrCreateSession(sessionId);

@@ -208,11 +208,19 @@
         </div>
         <div class="section-card">
           <div class="section-title">Anthropic Authentication</div>
-          <div class="section-desc">Connect to Anthropic via OAuth to use Claude models (free for Claude subscribers).</div>
+          <div class="section-desc">Use a Claude setup-token if you want the most reliable Claude subscription path. Legacy OAuth is still available below.</div>
           <div id="anthropic-auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div id="claude-cli-status" class="status-badge warn" style="margin-top:6px"><span class="status-dot"></span> Checking Claude CLI...</div>
+          <div class="field" style="margin-top:10px">
+            <label class="field-label">Claude Setup-Token (Preferred)</label>
+            <div style="display:flex;gap:8px">
+              <input class="field-input" id="anthropic-setup-token" type="password" placeholder="Paste token from claude setup-token" autocomplete="off" style="flex:1"/>
+              <button id="btn-anthropic-save-token" class="action-btn primary" onclick="saveAnthropicSetupToken()">Save Token</button>
+            </div>
+            <div class="field-hint">Run <code>claude setup-token</code> in Claude CLI, then paste the token here. This is more reliable than legacy OAuth for Sonnet/Opus.</div>
+          </div>
           <div class="btn-row">
-            <button id="btn-anthropic-login" class="action-btn primary" onclick="doAnthropicLogin()">Sign In with Claude</button>
+            <button id="btn-anthropic-login" class="action-btn" onclick="doAnthropicLogin()">Use Legacy OAuth</button>
             <button id="btn-anthropic-disconnect" class="action-btn danger" onclick="doAnthropicDisconnect()" style="display:none">Disconnect</button>
             <button id="btn-install-claude-cli" class="action-btn" onclick="installClaudeCli()" style="display:none">Install Claude CLI</button>
           </div>
@@ -233,7 +241,7 @@
       <div id="stab-ai" class="tab-pane">
         <div class="section-card">
           <div class="section-title">Model Provider</div>
-          <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-provider" onchange="onProviderChange(this.value)"><option value="xai">xAI Grok</option><option value="gemini">Google Gemini</option><option value="codex">OpenAI Codex (ChatGPT OAuth — free)</option><option value="anthropic">Anthropic Claude (OAuth — free for subscribers)</option><option value="openai">OpenAI API (direct key)</option><option value="local">Local Model (Ollama)</option><option value="custom">Custom Provider</option></select></div>
+          <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-provider" onchange="onProviderChange(this.value)"><option value="xai">xAI Grok</option><option value="gemini">Google Gemini</option><option value="codex">OpenAI Codex (ChatGPT OAuth — free)</option><option value="anthropic">Anthropic Claude (subscription auth)</option><option value="openai">OpenAI API (direct key)</option><option value="local">Local Model (Ollama)</option><option value="custom">Custom Provider</option></select></div>
           <div class="field"><label class="field-label">Model</label><select class="field-select" id="cfg-model-select"></select><input class="field-input" id="cfg-model" value="" placeholder="Custom model name..." style="display:none"/><div class="field-hint" id="cfg-model-hint"></div><div id="ollama-status" style="display:none;margin-top:8px"></div></div>
           <div class="field" id="api-key-field" style="display:none"><label class="field-label" id="api-key-label">API Key</label><div style="display:flex;gap:8px"><input class="field-input" id="cfg-api-key" type="password" placeholder="Enter API key..." autocomplete="off" style="flex:1"/><button class="action-btn" onclick="toggleApiKeyVisibility()" style="min-width:60px" id="btn-toggle-key">Show</button></div><div class="field-hint" id="api-key-hint"></div><div id="api-key-status" style="margin-top:4px"></div></div>
           <div style="margin:12px 0;font-size:.68rem;border:1px solid var(--border);border-radius:8px;overflow:hidden">
@@ -242,7 +250,7 @@
               <tr style="background:var(--bg)"><th style="padding:8px 10px;text-align:left;color:var(--accent);font-size:.6rem;letter-spacing:.5px">PROVIDER</th><th style="padding:8px 10px;text-align:left;color:var(--muted);font-size:.6rem">ACCESS</th><th style="padding:8px 10px;text-align:left;color:var(--muted);font-size:.6rem">AUTH</th><th style="padding:8px 10px;text-align:left;color:var(--muted);font-size:.6rem">BEST FOR</th></tr>
               <tr style="border-top:1px solid var(--border)"><td style="padding:6px 10px;color:var(--text)">xAI Grok</td><td style="padding:6px 10px;color:var(--muted)">API key (pay-per-use)</td><td style="padding:6px 10px">Key</td><td style="padding:6px 10px;color:var(--muted)">Fast, unfiltered, cool AF</td></tr>
               <tr style="border-top:1px solid var(--border)"><td style="padding:6px 10px;color:var(--text)">OpenAI Codex</td><td style="padding:6px 10px;color:var(--muted)">ChatGPT subscription</td><td style="padding:6px 10px">OAuth</td><td style="padding:6px 10px;color:var(--muted)">General use</td></tr>
-              <tr style="border-top:1px solid var(--border)"><td style="padding:6px 10px;color:var(--text)">Claude</td><td style="padding:6px 10px;color:var(--muted)">Claude subscription</td><td style="padding:6px 10px">OAuth</td><td style="padding:6px 10px;color:var(--muted)">Reasoning, code</td></tr>
+              <tr style="border-top:1px solid var(--border)"><td style="padding:6px 10px;color:var(--text)">Claude</td><td style="padding:6px 10px;color:var(--muted)">Claude subscription</td><td style="padding:6px 10px">OAuth</td><td style="padding:6px 10px;color:var(--muted)">Reasoning, code (Extra Usage may apply)</td></tr>
               <tr style="border-top:1px solid var(--border)"><td style="padding:6px 10px;color:var(--text)">Gemini</td><td style="padding:6px 10px;color:var(--muted)">API key (free tier available)</td><td style="padding:6px 10px">Key</td><td style="padding:6px 10px;color:var(--muted)">Multimodal</td></tr>
               <tr style="border-top:1px solid var(--border)"><td style="padding:6px 10px;color:var(--text)">Ollama</td><td style="padding:6px 10px;color:var(--muted)">Local (runs on your GPU)</td><td style="padding:6px 10px">None</td><td style="padding:6px 10px;color:var(--muted)">Privacy, offline</td></tr>
             </table>

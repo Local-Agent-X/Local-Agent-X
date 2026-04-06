@@ -452,7 +452,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
         <label class="field-label">Provider</label>
         <select class="field-select" id="cfg-provider" onchange="onProviderChange(this.value)">
           <option value="codex">OpenAI Codex (ChatGPT OAuth — free)</option>
-          <option value="anthropic">Anthropic Claude (OAuth — free for subscribers)</option>
+          <option value="anthropic">Anthropic Claude (subscription auth)</option>
           <option value="xai">xAI (Grok)</option>
           <option value="openai">OpenAI API (direct key)</option>
           <option value="local">Local Model (Ollama)</option>
@@ -462,7 +462,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
         <label class="field-label">Model</label>
         <input class="field-input" id="cfg-model" value="grok-3-mini"/>
         <select class="field-select" id="cfg-model-select" style="display:none"></select>
-        <div class="field-hint" id="cfg-model-hint">Codex: gpt-5.3-codex | Anthropic: claude-sonnet-4-20250514 | xAI: grok-3-mini | OpenAI: gpt-4o</div>
+        <div class="field-hint" id="cfg-model-hint">Codex: gpt-5.3-codex | Anthropic: claude-sonnet-4-6 | xAI: grok-3-mini | OpenAI: gpt-4o</div>
         <div id="ollama-status" style="display:none;margin-top:8px"></div>
       </div>
       <div class="field-row">

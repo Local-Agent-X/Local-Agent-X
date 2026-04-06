@@ -14,12 +14,17 @@ interface ModelPricing { input: number; output: number }
 
 const PRICING: Record<string, ModelPricing> = {
   // Anthropic (dated + short aliases)
-  "claude-sonnet-4-5-20250514": { input: 3, output: 15 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
+  "claude-sonnet-4-5": { input: 3, output: 15 },
+  "claude-sonnet-4-5-20250929": { input: 3, output: 15 },
   "claude-sonnet-4": { input: 3, output: 15 },
+  "claude-opus-4-6": { input: 5, output: 25 },
+  "claude-opus-4-5": { input: 5, output: 25 },
+  "claude-opus-4-5-20251101": { input: 5, output: 25 },
   "claude-opus-4-20250514": { input: 15, output: 75 },
   "claude-opus-4": { input: 15, output: 75 },
-  "claude-haiku-4-5": { input: 0.80, output: 4 },
+  "claude-haiku-4-5": { input: 1, output: 5 },
+  "claude-haiku-4-5-20251001": { input: 1, output: 5 },
   "claude-haiku-3-5-20241022": { input: 0.80, output: 4 },
   // OpenAI
   "gpt-5.3-codex": { input: 2, output: 8 },

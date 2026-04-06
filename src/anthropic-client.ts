@@ -6,6 +6,7 @@
 
 import { spawn } from "child_process";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import { buildAnthropicRateLimitHint, normalizeAnthropicModel, unwrapAnthropicSubscriptionToken, usesAnthropicSubscriptionAuth } from "./anthropic-models.js";
 
 interface StreamEvent {
   type: "text" | "tool_call" | "done" | "error";
@@ -28,10 +29,6 @@ interface StreamOptions {
 }
 
 const API_BASE = "https://api.anthropic.com";
-
-function isOAuthToken(token: string): boolean {
-  return token.includes("sk-ant-oat");
-}
 
 function extractUserPrompt(messages: ChatCompletionMessageParam[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -93,6 +90,7 @@ function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessa
 
 async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { token, model, messages, systemPrompt, tools, temperature = 1, maxTokens = 8192 } = options;
+  const resolvedModel = normalizeAnthropicModel(model, "api");
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -102,7 +100,7 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
   };
 
   const body: Record<string, unknown> = {
-    model,
+    model: resolvedModel,
     max_tokens: maxTokens,
     system: systemPrompt,
     messages: convertMessages(messages),
@@ -123,7 +121,8 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
 
     if (!response.ok) {
       const errorText = await response.text();
-      yield { type: "error", error: `Anthropic ${response.status}: ${errorText.slice(0, 500)}` };
+      const hint = buildAnthropicRateLimitHint(response.status, token);
+      yield { type: "error", error: `Anthropic ${response.status}: ${errorText.slice(0, 500)}${hint}` };
       return;
     }
 
@@ -202,57 +201,27 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
  * - No tools + API key → Direct HTTP
  */
 export async function* streamAnthropicResponse(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  if (options.token === "cli") {
-    // OAuth via "cli" sentinel — extract token, refresh if expired, use direct SDK
-    try {
-      const { loadAnthropicTokens, refreshAnthropicTokens } = await import("./auth-anthropic.js");
-      let tokens = loadAnthropicTokens();
-      if (tokens) {
-        // Refresh if expired or within 5 min of expiry
-        if (tokens.expiresAt && Date.now() >= tokens.expiresAt) {
-          console.log("[anthropic] OAuth token expired — refreshing");
-          try {
-            tokens = await refreshAnthropicTokens(tokens);
-          } catch (e) {
-            console.warn("[anthropic] Token refresh failed:", (e as Error).message);
-          }
-        }
-        if (tokens.accessToken) {
-          yield* streamViaOAuthSDK({ ...options, token: tokens.accessToken });
-          return;
-        }
-      }
-    } catch {}
-    // Fallback to CLI proxy if token extraction fails
+  if (options.token === "cli" || usesAnthropicSubscriptionAuth(options.token)) {
+    // CLI proxy — routes through Claude CLI which handles auth, rate limits, and tool calling natively
+    // This avoids the API-level 429s that hit the direct SDK path on subscription accounts
+    console.log("[anthropic] Using CLI proxy (avoids subscription API rate limits)");
     yield* streamViaCliWithTools(options);
-  } else if (isOAuthToken(options.token)) {
-    yield* streamViaOAuthSDK(options);
   } else {
     yield* streamViaAPI(options);
   }
 }
 
-/** Direct Anthropic SDK with OAuth — uses Claude Code identity headers (same approach as upstream) */
+/** Direct Anthropic request with subscription auth — keep OAuth beta, avoid Claude Code identity spoofing. */
 async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { token, model, messages, systemPrompt, tools, temperature = 1, maxTokens = 8192 } = options;
-
-  // Map tool names to Claude Code format (bash → Bash, read → Read, etc.)
-  const CC_TOOL_MAP: Record<string, string> = {
-    bash: "Bash", read: "Read", write: "Write", edit: "Edit",
-    grep: "Grep", glob: "Glob", web_fetch: "WebFetch", web_search: "WebSearch",
-  };
-  const toCC = (name: string) => CC_TOOL_MAP[name] || name;
-  const fromCC = (name: string) => {
-    for (const [k, v] of Object.entries(CC_TOOL_MAP)) { if (v === name) return k; }
-    return name;
-  };
+  const resolvedModel = normalizeAnthropicModel(model, "subscription");
 
   const anthropicTools = tools?.map(t => ({
-    name: toCC(t.name), description: t.description, input_schema: t.parameters,
+    name: t.name, description: t.description, input_schema: t.parameters,
   }));
 
   const body: Record<string, unknown> = {
-    model,
+    model: resolvedModel,
     max_tokens: maxTokens,
     system: systemPrompt,
     messages: convertMessages(messages),
@@ -265,14 +234,15 @@ async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator<Stream
     "Content-Type": "application/json",
     "Authorization": `Bearer ${token}`,
     "anthropic-version": "2023-06-01",
-    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14",
-    "user-agent": "claude-cli/2.1.83",
-    "x-app": "cli",
-    "anthropic-dangerous-direct-browser-access": "true",
+    "anthropic-beta": "oauth-2025-04-20,interleaved-thinking-2025-05-14",
+    "user-agent": "open-agent-x/0.1",
     "accept": "application/json",
   };
 
-  console.log("[anthropic] Using direct OAuth SDK with Claude Code identity headers");
+  if (resolvedModel !== model) {
+    console.log(`[anthropic] Normalized subscription model ${model} -> ${resolvedModel}`);
+  }
+  console.log("[anthropic] Using direct subscription-auth messages API");
 
   try {
     const response = await fetch(`${API_BASE}/v1/messages`, {
@@ -283,7 +253,8 @@ async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator<Stream
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`[anthropic] OAuth SDK error ${response.status}:`, errorText.slice(0, 200));
-      yield { type: "error", error: `Anthropic ${response.status}: ${errorText.slice(0, 500)}` };
+      const hint = buildAnthropicRateLimitHint(response.status, token);
+      yield { type: "error", error: `Anthropic ${response.status}: ${errorText.slice(0, 500)}${hint}` };
       yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
       return;
     }
@@ -320,7 +291,7 @@ async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator<Stream
           if (event.type === "content_block_start") {
             if (event.content_block?.type === "tool_use") {
               currentToolId = event.content_block.id || "";
-              currentToolName = fromCC(event.content_block.name || "");
+              currentToolName = event.content_block.name || "";
               currentToolArgs = "";
             }
           }

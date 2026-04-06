@@ -130,7 +130,12 @@ async function loadCronReports(jobId) {
       return;
     }
     el.innerHTML = reports.map(r => {
-      const date = r.name.replace('.md', '').replace(/T/, ' ').replace(/-/g, (m, i) => i > 9 ? ':' : '-').slice(0, 19);
+      // Filename is toISOString() with ":" and "." replaced by "-", e.g. 2026-04-06T07-15-19-348Z.md
+      // Reconstruct a parseable ISO string then display in local time.
+      const raw = r.name.replace(/\.md$/, '');
+      const iso = raw.replace(/T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/, 'T$1:$2:$3.$4Z');
+      const d = new Date(iso);
+      const date = isNaN(d.getTime()) ? raw : d.toLocaleString();
       return `<div style="display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:.78rem;border-bottom:1px solid var(--border)">
         <span onclick="viewCronReport('${jobId}','${esc(r.name)}')" style="cursor:pointer;color:var(--accent);flex:1">${date}</span>
         <span onclick="deleteCronReport('${jobId}','${esc(r.name)}')" title="Delete report" style="cursor:pointer;color:var(--muted);padding:0 4px">×</span>

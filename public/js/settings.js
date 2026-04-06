@@ -92,28 +92,54 @@ async function checkAnthropicAuth() {
     if (!el) return;
     if (d.authenticated && !d.expired) {
       el.className = 'status-badge ok';
-      el.innerHTML = '<span class="status-dot"></span> Connected — Anthropic OAuth';
-      if (loginBtn) { loginBtn.textContent = 'Already Connected'; loginBtn.disabled = true; }
+      const label = d.method === 'token' ? 'Connected — Claude setup-token' : 'Connected — Anthropic OAuth (legacy)';
+      el.innerHTML = '<span class="status-dot"></span> ' + label;
+      if (loginBtn) { loginBtn.textContent = 'Use Legacy OAuth'; loginBtn.disabled = false; }
       if (discBtn) discBtn.style.display = '';
     } else {
       el.className = 'status-badge err';
       el.innerHTML = '<span class="status-dot"></span> Not connected';
-      if (loginBtn) { loginBtn.textContent = 'Sign In with Claude'; loginBtn.disabled = false; }
+      if (loginBtn) { loginBtn.textContent = 'Use Legacy OAuth'; loginBtn.disabled = false; }
       if (discBtn) discBtn.style.display = 'none';
     }
     // Claude CLI status
     if (cliEl) {
       if (d.cliInstalled) {
         cliEl.className = 'status-badge ok';
-        cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI installed';
+        cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI installed — run claude setup-token for the preferred Anthropic path';
         if (cliBtn) cliBtn.style.display = 'none';
       } else {
         cliEl.className = 'status-badge err';
-        cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI not found — required for Claude to work';
+        cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI not found — install it to generate a setup-token';
         if (cliBtn) cliBtn.style.display = '';
       }
     }
   } catch {}
+}
+
+async function saveAnthropicSetupToken() {
+  const input = document.getElementById('anthropic-setup-token');
+  const btn = document.getElementById('btn-anthropic-save-token');
+  const el = document.getElementById('anthropic-auth-status');
+  if (!input || !btn) return;
+  const token = String(input.value || '').trim();
+  if (!token) {
+    if (el) { el.className = 'status-badge err'; el.innerHTML = '<span class="status-dot"></span> Paste a Claude setup-token first'; }
+    return;
+  }
+  btn.disabled = true;
+  const prev = btn.textContent;
+  btn.textContent = 'Saving...';
+  try {
+    await apiPost('/api/auth/anthropic/setup-token', { token });
+    input.value = '';
+    await checkAnthropicAuth();
+  } catch (e) {
+    if (el) { el.className = 'status-badge err'; el.innerHTML = '<span class="status-dot"></span> ' + esc(e.message || 'Failed to save token'); }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prev || 'Save Token';
+  }
 }
 
 async function installClaudeCli() {
@@ -145,7 +171,7 @@ async function doAnthropicLogin() {
 }
 
 async function doAnthropicDisconnect() {
-  if (!confirm('Disconnect from Anthropic?')) return;
+  if (!confirm('Disconnect from Anthropic and remove the saved setup-token or OAuth session?')) return;
   await apiFetch('/api/auth/anthropic/logout', { method: 'POST' });
   checkAnthropicAuth();
 }
@@ -271,9 +297,9 @@ const PROVIDER_MODELS = {
   anthropic: [
     { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (default)' },
     { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-    { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
-    { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
-    { value: 'claude-opus-4-20250514', label: 'Claude Opus 4' },
+    { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+    { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
+    { value: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
   ],
   xai: [
     { value: 'grok-3-mini', label: 'Grok 3 Mini (default)' },
@@ -1324,7 +1350,7 @@ function showOnboarding() {
             <button class="onboarding-option" onclick="selectOnboardProvider('xai')"><strong>xAI Grok</strong><br><span style="color:var(--muted);font-size:.72rem">API key required</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('gemini')"><strong>Google Gemini</strong><br><span style="color:var(--muted);font-size:.72rem">API key from ai.google.dev</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('codex')"><strong>OpenAI Codex</strong><br><span style="color:var(--muted);font-size:.72rem">Free with ChatGPT</span></button>
-            <button class="onboarding-option" onclick="selectOnboardProvider('anthropic')"><strong>Anthropic Claude</strong><br><span style="color:var(--muted);font-size:.72rem">Free for subscribers</span></button>
+            <button class="onboarding-option" onclick="selectOnboardProvider('anthropic')"><strong>Anthropic Claude</strong><br><span style="color:var(--muted);font-size:.72rem">Subscription auth</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('local')"><strong>Local (Ollama)</strong><br><span style="color:var(--muted);font-size:.72rem">Runs on your GPU</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('custom')" style="opacity:.7"><strong>Custom Provider</strong><br><span style="color:var(--muted);font-size:.72rem">Any OpenAI-compatible API</span></button>
           </div>
@@ -1401,10 +1427,10 @@ function populateConnectStep() {
       <span style="color:var(--muted);font-size:.75rem">Requires a ChatGPT account (free tier works)</span>
     `;
   } else if (_onboardProvider === 'anthropic') {
-    desc.textContent = 'Sign in with your Anthropic account to use Claude models.';
+    desc.textContent = 'Sign in with your Anthropic account to use Claude models. Anthropic may require Extra Usage for external-tool traffic.';
     container.innerHTML = `
       <button class="action-btn primary" onclick="onboardOAuth('anthropic')" style="padding:10px 32px;font-size:1rem">Sign In with Claude</button>
-      <span style="color:var(--muted);font-size:.75rem">Free for Claude subscribers</span>
+      <span style="color:var(--muted);font-size:.75rem">Subscription auth; Anthropic may require Extra Usage</span>
     `;
   } else if (_onboardProvider === 'xai') {
     desc.textContent = 'Enter your xAI API key to use Grok models.';
@@ -1497,7 +1523,7 @@ function finishOnboarding() {
   // Also save server-side so it survives port changes
   apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ onboarded: true }) }).catch(() => {});
   if (_onboardProvider) {
-    const defaults = { codex: 'gpt-5.3-codex', anthropic: 'claude-sonnet-4-20250514', xai: 'grok-3-mini', gemini: 'gemini-2.0-flash', local: '', custom: '' };
+    const defaults = { codex: 'gpt-5.3-codex', anthropic: 'claude-sonnet-4-6', xai: 'grok-3-mini', gemini: 'gemini-2.0-flash', local: '', custom: '' };
     const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
     s.provider = _onboardProvider;
     if (defaults[_onboardProvider]) s.model = defaults[_onboardProvider];

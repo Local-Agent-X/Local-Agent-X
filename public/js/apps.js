@@ -116,6 +116,7 @@ async function loadApps() {
         </div>
         <div class="app-card-actions" onclick="event.stopPropagation()">
           <button class="app-action-btn" onclick="openApp('${esc(a.url || '/apps/' + a.id)}')" title="Open in new tab">Open</button>
+          <button class="app-action-btn edit" onclick="enterIdeView('${esc(a.id)}','${esc(a.name)}','${esc(a.url || '/apps/' + a.id)}')" title="Edit in IDE">Edit</button>
           <button class="app-action-btn" onclick="exportApp('${esc(a.id)}','${esc(a.name)}')" title="Export as standalone HTML">Export</button>
           ${a.status === 'active'
             ? `<button class="app-action-btn" onclick="suspendApp('${esc(a.id)}','${esc(a.name)}')" title="Suspend app">Suspend</button>`
@@ -250,14 +251,9 @@ function sendAppsChatMessage() {
   const text = input.value.trim();
   if (!text) return;
   input.value = '';
-  // Navigate to chat and send the message with app-building context
-  navigate('chat');
-  const chatInput = document.getElementById('msg-input');
-  if (chatInput) {
-    chatInput.value = 'Build me an app: ' + text;
-    // Trigger send after a tick so chat page is fully active
-    setTimeout(() => sendMessage(), 50);
-  }
+  // Enter IDE view for new app creation
+  const slug = text.slice(0, 40).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'new-app';
+  enterIdeView(slug, text.slice(0, 50), null, text);
 }
 
 function promptCreateApp() {

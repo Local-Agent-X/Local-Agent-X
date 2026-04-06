@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeParseBody, corsHeaders } from "../server-utils.js";
@@ -141,6 +141,46 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     if (!body || !Array.isArray(body.actionIds)) { json(400, { error: "actionIds array required" }); return true; }
     appReg.consumeActions(id, body.actionIds);
     json(200, { ok: true }); return true;
+  }
+
+  // List files in a workspace app directory
+  const filesMatch = appPath.match(/^\/api\/apps\/([a-zA-Z0-9_-]+)\/files$/);
+  if (method === "GET" && filesMatch) {
+    const id = filesMatch[1];
+    const appDir = resolve(ctx.config.workspace, "apps", id);
+    if (!existsSync(appDir)) { json(404, { error: "App directory not found" }); return true; }
+    try {
+      const files: string[] = [];
+      const scan = (dir: string, prefix: string) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+          const rel = prefix ? prefix + "/" + entry.name : entry.name;
+          if (entry.isDirectory()) { scan(join(dir, entry.name), rel); }
+          else { files.push(rel); }
+        }
+      };
+      scan(appDir, "");
+      json(200, files);
+    } catch (e) { json(500, { error: (e as Error).message }); }
+    return true;
+  }
+
+  // Read a single file from a workspace app directory
+  const fileMatch = appPath.match(/^\/api\/apps\/([a-zA-Z0-9_-]+)\/files\/(.+)$/);
+  if (method === "GET" && fileMatch) {
+    const id = fileMatch[1];
+    const filename = decodeURIComponent(fileMatch[2]);
+    const appDir = resolve(ctx.config.workspace, "apps", id);
+    const filePath = resolve(appDir, filename);
+    // Path traversal check
+    if (!filePath.startsWith(appDir)) { json(403, { error: "Path traversal blocked" }); return true; }
+    if (!existsSync(filePath)) { json(404, { error: "File not found" }); return true; }
+    try {
+      const content = readFileSync(filePath, "utf-8");
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", ...(req ? corsHeaders(req) : {}) });
+      res.end(content);
+    } catch (e) { json(500, { error: (e as Error).message }); }
+    return true;
   }
 
   return false;

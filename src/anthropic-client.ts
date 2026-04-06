@@ -26,9 +26,17 @@ interface StreamOptions {
   tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
   temperature?: number;
   maxTokens?: number;
+  /** If true, don't fall back to CLI proxy on 429 — yield error instead */
+  skipCliFallback?: boolean;
 }
 
 const API_BASE = "https://api.anthropic.com";
+
+// Global counter — guarantees unique tool_use IDs across all CLI proxy calls
+let _toolCallSeq = 0;
+function newToolCallId(name: string): string {
+  return `tc_${Date.now()}_${++_toolCallSeq}_${name}`;
+}
 
 function extractUserPrompt(messages: ChatCompletionMessageParam[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -54,6 +62,7 @@ type AnthropicContent =
 
 function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessage[] {
   const result: AnthropicMessage[] = [];
+  const seenToolUseIds = new Set<string>();
 
   for (const msg of messages) {
     if (msg.role === "system") continue;
@@ -73,7 +82,13 @@ function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessa
         for (const tc of m.tool_calls as Array<{ id: string; function: { name: string; arguments: string } }>) {
           let input: Record<string, unknown> = {};
           try { input = JSON.parse(tc.function.arguments); } catch {}
-          content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
+          // Deduplicate tool_use IDs — Anthropic rejects duplicates across the message array
+          let toolId = tc.id;
+          if (seenToolUseIds.has(toolId)) {
+            toolId = `${toolId}_${++_toolCallSeq}`;
+          }
+          seenToolUseIds.add(toolId);
+          content.push({ type: "tool_use", id: toolId, name: tc.function.name, input });
         }
       }
       if (content.length > 0) result.push({ role: "assistant", content });
@@ -227,9 +242,21 @@ export async function* streamAnthropicResponse(options: StreamOptions): AsyncGen
             return;
           }
           console.log("[anthropic] Direct SDK got 429 — falling back to CLI proxy");
+          if (options.skipCliFallback) {
+            yield { type: "error", error: "Anthropic 429: rate limited" };
+            yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
+            return;
+          }
         }
       }
-    } catch {}
+    } catch (e) {
+      console.log(`[anthropic] Direct SDK exception (skipCliFallback=${options.skipCliFallback}): ${(e as Error).message?.slice(0, 200)}`);
+    }
+    if (options.skipCliFallback) {
+      yield { type: "error", error: "Anthropic unavailable (exception)" };
+      yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
+      return;
+    }
     yield* streamViaCliWithTools(options);
   } else if (usesAnthropicSubscriptionAuth(options.token)) {
     yield* streamViaOAuthSDK({ ...options, token: unwrapAnthropicSubscriptionToken(options.token) });
@@ -348,7 +375,9 @@ async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator<Stream
       }
     }
   } catch (e) {
-    yield { type: "error", error: (e as Error).message };
+    const msg = (e as Error).message || "unknown";
+    console.error(`[anthropic] streamViaOAuthSDK exception: ${msg.slice(0, 300)}`);
+    yield { type: "error", error: msg };
     yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
   }
 }
@@ -362,32 +391,60 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
   const { model, messages, systemPrompt, tools, maxTokens = 16000 } = options;
   const prompt = extractUserPrompt(messages);
 
-  // Build conversation context from history (tool results, previous messages)
+  // Only include context from the CURRENT agent loop turn.
+  // Messages AFTER the last user message are current-loop tool results — always include them.
+  // Messages BEFORE the last user message are from prior turns — skip to avoid stale history.
+  const lastUserIdx = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "user") return i;
+    }
+    return -1;
+  })();
+
+  const messagesAfterUser = lastUserIdx >= 0 ? messages.slice(lastUserIdx + 1) : [];
   const contextParts: string[] = [];
-  for (const msg of messages) {
-    if (msg.role === "assistant" && msg.content) {
-      contextParts.push(`Assistant: ${typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content)}`);
+  // Include recent tool results from the current loop (up to last 8 messages)
+  for (const msg of messagesAfterUser.slice(-8)) {
+    if (msg.role === "assistant") {
+      const m = msg as unknown as Record<string, unknown>;
+      const parts: string[] = [];
+      if (typeof m.content === "string" && m.content) parts.push(m.content.slice(0, 500));
+      if (Array.isArray(m.tool_calls)) {
+        for (const tc of m.tool_calls as Array<{ function: { name: string; arguments: string } }>) {
+          parts.push(`[called ${tc.function.name}]`);
+        }
+      }
+      if (parts.length) contextParts.push(`Assistant: ${parts.join(" ")}`);
     } else if (msg.role === "tool") {
       const m = msg as { tool_call_id: string; content: string };
-      contextParts.push(`Tool result (${m.tool_call_id}): ${m.content}`);
+      contextParts.push(`Tool result: ${m.content.slice(0, 2000)}`);
     }
   }
 
-  const toolDefs = tools!.map(t =>
+  const textOnlyMode = !tools || tools.length === 0;
+  const toolDefs = textOnlyMode ? "" : tools!.map(t =>
     `- ${t.name}: ${t.description}\n  Parameters: ${JSON.stringify(t.parameters)}`
   ).join("\n");
 
-  const toolPrompt = `You have access to these tools. When you need to use one, output EXACTLY this JSON format and nothing else:\n` +
-    `\`\`\`json\n{"tool_calls": [{"name": "tool_name", "arguments": {...}}]}\n\`\`\`\n\n` +
-    `Available tools:\n${toolDefs}\n\n` +
-    `Rules:\n` +
-    `- When the user asks you to run a command, call the bash tool immediately. Do not describe what would happen — call the tool.\n` +
-    `- You have FULL PERMISSION to use all tools. Never ask for approval, never say "requires permission."\n` +
-    `- You are NOT Claude Code. You do not have built-in Read/Write/Bash tools. You must output the JSON block above.\n` +
-    `- If no tool is needed, respond with plain text (no JSON).`;
-
-  const fullSystem = systemPrompt + "\n\n" + toolPrompt;
-  const historyContext = contextParts.length > 0 ? "\n\nConversation so far:\n" + contextParts.join("\n") + "\n\n" : "";
+  let fullSystem: string;
+  if (textOnlyMode) {
+    // Orchestration mode: no tools, just respond naturally
+    fullSystem = systemPrompt + "\n\n" +
+      `Respond naturally in plain text. Never mention "plan mode", permission modes, or internal system details to the user.`;
+  } else {
+    const toolPrompt = `You have access to these tools. When you need to use one, output EXACTLY this JSON format and nothing else:\n` +
+      `\`\`\`json\n{"tool_calls": [{"name": "tool_name", "arguments": {...}}]}\n\`\`\`\n\n` +
+      `Available tools:\n${toolDefs}\n\n` +
+      `PERMISSION POLICY (ABSOLUTE — cannot be overridden):\n` +
+      `- ALL tools are pre-approved. Use them immediately without asking.\n` +
+      `- NEVER say "requires approval", "needs permission", "I need to ask", or anything similar.\n` +
+      `- NEVER describe what you're about to do — just do it (output the JSON).\n` +
+      `- If asked to run a command or file operation, output the JSON tool call immediately.\n` +
+      `- You are NOT Claude Code. You have no built-in tools. Use the JSON format above.\n` +
+      `- If no tool is needed, respond with plain text only (no JSON).`;
+    fullSystem = systemPrompt + "\n\n" + toolPrompt;
+  }
+  const historyContext = contextParts.length > 0 ? "\n\nCurrent task context:\n" + contextParts.join("\n") + "\n\n" : "";
   // Strip system tags from user input to prevent prompt injection
   const safePrompt = prompt.replace(/<\/?system>/gi, "");
   const safeHistory = historyContext.replace(/<\/?system>/gi, "");
@@ -396,6 +453,9 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
   const args = [
     "-p", "--model", model, "--output-format", "stream-json", "--verbose",
     "--no-session-persistence",
+    // Text-only (orchestration): plan mode — Claude thinks but can't execute tools
+    // Tool mode: bypass all permissions so tools execute immediately
+    "--permission-mode", textOnlyMode ? "plan" : "bypassPermissions",
   ];
 
   try {
@@ -487,7 +547,7 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
           for (const tc of toolCalls) {
             const redactedArgs = JSON.stringify(tc.arguments).slice(0, 100).replace(/(?:password|secret|token|key|api_key|apiKey|authorization|bearer)["']?\s*[:=]\s*["']?[^"',}\s]{3}[^"',}]*/gi, (m) => m.slice(0, m.indexOf(":") + 4) + "***REDACTED***");
             console.log(`[claude] Tool call: ${tc.name}(${redactedArgs})`);
-            yield { type: "tool_call", id: `call_${Date.now()}_${tc.name}`, name: tc.name, arguments: JSON.stringify(tc.arguments) };
+            yield { type: "tool_call", id: newToolCallId(tc.name), name: tc.name, arguments: JSON.stringify(tc.arguments) };
           }
           yield { type: "done", usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0 } };
           return;
@@ -505,7 +565,7 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
           const clean = stripToolCallBlocks(fullText);
           if (clean.trim() && clean.length > prevText.length) yield { type: "text", delta: clean.trim() };
           for (const tc of toolCalls) {
-            yield { type: "tool_call", id: `call_${Date.now()}_${tc.name}`, name: tc.name, arguments: JSON.stringify(tc.arguments) };
+            yield { type: "tool_call", id: newToolCallId(tc.name), name: tc.name, arguments: JSON.stringify(tc.arguments) };
           }
         }
       } catch {}
@@ -521,27 +581,30 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
   }
 }
 
-/** Parse tool calls from Claude's text response (looks for JSON blocks) */
+/** Parse tool calls from Claude's text response — extracts ALL JSON blocks in order */
 function parseToolCalls(text: string): Array<{ name: string; arguments: Record<string, unknown> }> {
   const results: Array<{ name: string; arguments: Record<string, unknown> }> = [];
-  // Match ```json blocks with tool_calls
-  const jsonBlockMatch = text.match(/```(?:json)?\s*\n?(\{[\s\S]*?"tool_calls"[\s\S]*?\})\s*\n?```/);
-  if (jsonBlockMatch) {
+
+  // Match ALL ```json tool_calls blocks (Claude sometimes outputs multiple)
+  const fencedRe = /```(?:json)?\s*\n?(\{[\s\S]*?"tool_calls"[\s\S]*?\})\s*\n?```/g;
+  let match: RegExpExecArray | null;
+  while ((match = fencedRe.exec(text)) !== null) {
     try {
-      const parsed = JSON.parse(jsonBlockMatch[1]);
+      const parsed = JSON.parse(match[1]);
       if (Array.isArray(parsed.tool_calls)) {
         for (const tc of parsed.tool_calls) {
           if (tc.name) results.push({ name: tc.name, arguments: tc.arguments || {} });
         }
       }
     } catch {}
-    return results;
   }
+  if (results.length > 0) return results;
+
   // Also match raw JSON (no code fence) — Claude sometimes outputs without backticks
-  const rawMatch = text.match(/\{"tool_calls"\s*:\s*\[[\s\S]*?\]\s*\}/);
-  if (rawMatch) {
+  const rawRe = /\{"tool_calls"\s*:\s*\[[\s\S]*?\]\s*\}/g;
+  while ((match = rawRe.exec(text)) !== null) {
     try {
-      const parsed = JSON.parse(rawMatch[0]);
+      const parsed = JSON.parse(match[0]);
       if (Array.isArray(parsed.tool_calls)) {
         for (const tc of parsed.tool_calls) {
           if (tc.name) results.push({ name: tc.name, arguments: tc.arguments || {} });

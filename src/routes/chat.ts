@@ -76,9 +76,15 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       else provider = "xai";
 
       let apiKey: string;
+      let codexApiKey: string | undefined;
       let customBaseURL: string | undefined;
       if (provider === "local") apiKey = "ollama";
-      else if (provider === "anthropic") apiKey = await getAnthropicApiKey();
+      else if (provider === "anthropic") {
+        apiKey = await getAnthropicApiKey();
+        // Resolve Codex key for tool execution (Anthropic orchestrates, Codex executes)
+        try { codexApiKey = await getApiKey(ctx.config.openaiApiKey); } catch {}
+        if (!codexApiKey) codexApiKey = ctx.secretsStore.get("OPENAI_API_KEY") || undefined;
+      }
       else if (provider === "xai") { apiKey = ctx.secretsStore.get("XAI_API_KEY") || ""; if (!apiKey) { sseWrite(res, { type: "error", message: "No xAI API key configured." }); res.end(); return true; } }
       else if (provider === "gemini") { apiKey = ctx.secretsStore.get("GEMINI_API_KEY") || ""; if (!apiKey) { sseWrite(res, { type: "error", message: "No Google API key configured." }); res.end(); return true; } }
       else if (provider === "custom") { apiKey = ctx.secretsStore.get("CUSTOM_API_KEY") || ""; if (!apiKey) { sseWrite(res, { type: "error", message: "No API key for custom provider." }); res.end(); return true; } try { const sp = join(ctx.dataDir, "settings.json"); if (existsSync(sp)) { const ss = JSON.parse(readFileSync(sp, "utf-8")); customBaseURL = ss.customBaseUrl || undefined; } } catch {} }
@@ -260,6 +266,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         apiKey,
         model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : provider === "gemini" ? "gemini-2.0-flash" : ctx.config.model),
         provider, baseURL: customBaseURL, systemPrompt: enrichedPrompt,
+        codexApiKey,
         tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
         threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
         images: imageAttachments, maxIterations: savedMaxIterations || ctx.config.maxIterations,

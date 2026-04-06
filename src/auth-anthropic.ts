@@ -30,8 +30,9 @@ const SCOPES = "org:create_api_key user:profile user:inference user:sessions:cla
 
 export interface AnthropicTokens {
   accessToken: string;
-  refreshToken: string;
-  expiresAt: number;
+  refreshToken?: string;
+  expiresAt?: number;
+  method?: "oauth" | "token";
   provider: "anthropic";
 }
 
@@ -54,8 +55,9 @@ export function loadAnthropicTokens(): AnthropicTokens | null {
   if (!existsSync(authPath)) return null;
   try {
     const data = JSON.parse(readFileSync(authPath, "utf-8"));
-    if (data.accessToken && data.refreshToken && data.expiresAt) {
-      return { ...data, provider: "anthropic" } as AnthropicTokens;
+    if (data.accessToken) {
+      const method = data.method || (data.refreshToken ? "oauth" : "token");
+      return { ...data, provider: "anthropic", method } as AnthropicTokens;
     }
   } catch {}
   return null;
@@ -68,6 +70,7 @@ function saveAnthropicTokens(tokens: AnthropicTokens): void {
 // ── Token Refresh ──
 
 export async function refreshAnthropicTokens(tokens: AnthropicTokens): Promise<AnthropicTokens> {
+  if (tokens.method === "token") return tokens;
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -94,6 +97,7 @@ export async function refreshAnthropicTokens(tokens: AnthropicTokens): Promise<A
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
     expiresAt: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000, // 5 min buffer
+    method: "oauth",
     provider: "anthropic",
   };
 
@@ -106,10 +110,12 @@ export async function refreshAnthropicTokens(tokens: AnthropicTokens): Promise<A
 export async function getAnthropicApiKey(): Promise<string> {
   // Check for direct API key in env (console API keys use direct HTTP)
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
+  if (process.env.ANTHROPIC_OAUTH_TOKEN) return `oauth:${process.env.ANTHROPIC_OAUTH_TOKEN.trim()}`;
 
-  // OAuth tokens → use "cli" sentinel to route through Claude CLI proxy
-  // Claude CLI handles all OAuth auth, token refresh, and model access natively
+  // Saved subscription token → direct bearer auth.
+  // Saved legacy OAuth tokens → use the refresh-capable "cli" sentinel path.
   const tokens = loadAnthropicTokens();
+  if (tokens?.method === "token") return `oauth:${tokens.accessToken}`;
   if (tokens) return "cli";
 
   // Check if Claude CLI is available (it has its own credentials)
@@ -120,6 +126,24 @@ export async function getAnthropicApiKey(): Promise<string> {
   } catch {}
 
   throw new Error("No Anthropic API key or OAuth tokens. Sign in via Settings → General.");
+}
+
+export function isAnthropicTokenExpired(tokens: AnthropicTokens | null): boolean {
+  if (!tokens) return false;
+  if (tokens.method === "token") return false;
+  return !!tokens.expiresAt && Date.now() > tokens.expiresAt;
+}
+
+export function saveAnthropicSetupToken(token: string): void {
+  const trimmed = token.trim();
+  if (!trimmed || trimmed.length < 20) {
+    throw new Error("Anthropic setup-token looks invalid.");
+  }
+  saveAnthropicTokens({
+    accessToken: trimmed,
+    method: "token",
+    provider: "anthropic",
+  });
 }
 
 // ── OAuth Login Flow ──
@@ -202,6 +226,7 @@ export function initiateAnthropicLogin(): { authUrl: string; promise: Promise<vo
           accessToken: data.access_token,
           refreshToken: data.refresh_token,
           expiresAt: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000,
+          method: "oauth",
           provider: "anthropic",
         };
 

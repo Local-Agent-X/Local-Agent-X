@@ -367,12 +367,22 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
     catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }
+  if (method === "POST" && url.pathname === "/api/auth/anthropic/setup-token") {
+    try {
+      const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+      const token = String((body as { token?: string }).token || "").trim();
+      const { saveAnthropicSetupToken } = await import("../auth-anthropic.js");
+      saveAnthropicSetupToken(token);
+      json(200, { ok: true, method: "token" });
+    } catch (e) { json(400, { error: safeErrorMessage(e) }); }
+    return true;
+  }
   if (method === "GET" && url.pathname === "/api/auth/anthropic/status") {
-    const { loadAnthropicTokens } = await import("../auth-anthropic.js");
+    const { loadAnthropicTokens, isAnthropicTokenExpired } = await import("../auth-anthropic.js");
     const tokens = loadAnthropicTokens();
     let cliInstalled = false;
     try { const { execSync } = await import("node:child_process"); execSync("claude --version", { timeout: 5000, stdio: "pipe" }); cliInstalled = true; } catch {}
-    json(200, { authenticated: !!tokens, method: tokens ? "oauth" : "none", expired: tokens ? Date.now() > tokens.expiresAt : false, cliInstalled }); return true;
+    json(200, { authenticated: !!tokens, method: tokens?.method || (tokens ? "oauth" : "none"), expired: isAnthropicTokenExpired(tokens), cliInstalled }); return true;
   }
   if (method === "POST" && url.pathname === "/api/auth/anthropic/install-cli") {
     try {

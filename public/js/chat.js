@@ -309,9 +309,14 @@ async function sendMessage() {
             break;
           }
           case 'context_status': if (viewing) updateContextBar(event); break;
-          case 'error': content += '\n\nError: ' + event.message; if (viewing) bodyEl.innerHTML = md(content); break;
+          case 'error':
+            if (saveInterval) clearInterval(saveInterval);
+            content += '\n\nError: ' + event.message;
+            if (viewing) bodyEl.innerHTML = md(content);
+            break;
           case 'done': {
             chatWs.removeEventListener('message', wsHandler);
+            if (saveInterval) clearInterval(saveInterval);
             // Finalize
             if (streamingSessionId === streamSessionId) streamingSessionId = null;
             try {

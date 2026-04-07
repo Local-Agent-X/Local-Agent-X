@@ -268,6 +268,18 @@ export async function runCodexAgentHttp(
       };
     }
 
+    // Detect empty response (no text, no tool calls) — usually content moderation or model failure.
+    // Without this guard, the loop exits with end_turn and chat.ts filters out the null-content
+    // assistant message, leaving an orphaned user message in the session.
+    if (toolCalls.length === 0 && !assistantContent.trim()) {
+      const placeholder = "_(The model returned an empty response. This usually means OpenAI content moderation blocked the reply. Try rephrasing or starting a new chat.)_";
+      const errorMsg: ChatCompletionMessageParam = { role: "assistant", content: placeholder };
+      messages.push(errorMsg);
+      onEvent?.({ type: "stream", delta: placeholder });
+      onEvent?.({ type: "done", usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput } });
+      return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
+    }
+
     const assistantMsg: ChatCompletionMessageParam = { role: "assistant", content: assistantContent || null };
     if (toolCalls.length > 0) { (assistantMsg as unknown as Record<string, unknown>).tool_calls = toolCalls.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } })); }
     messages.push(assistantMsg);

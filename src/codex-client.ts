@@ -28,12 +28,16 @@ interface CodexStreamEvent {
   call_id?: string;
   // response.completed / response.done
   response?: {
+    id?: string;
     output?: Array<{
       type: string;
       content?: Array<{ type?: string; text?: string }>;
       name?: string;
       call_id?: string;
       arguments?: string;
+      // Reasoning items
+      summary?: Array<{ type?: string; text?: string }>;
+      encrypted_content?: string;
     }>;
     usage?: {
       input_tokens?: number;
@@ -351,6 +355,18 @@ export async function* streamCodexResponse(params: {
               }
             }
           }
+        }
+
+        // Diagnostic: if Codex returned NOTHING (no text, no tool calls),
+        // log the full output array so we can see what shape the response
+        // actually had — reasoning items, refusal items, empty array, etc.
+        // This is the only way to know WHY the model returned nothing.
+        if (!fullText.trim() && toolCalls.size === 0) {
+          const outputSnapshot = event.response?.output ?? null;
+          const outputTypes = Array.isArray(outputSnapshot) ? outputSnapshot.map((o) => o?.type || "?").join(",") : "none";
+          console.warn(
+            `[codex] Empty response. usage=${usage.inputTokens}in/${usage.outputTokens}out output_types=[${outputTypes}] sample=${JSON.stringify(outputSnapshot).slice(0, 800)}`
+          );
         }
       }
     }

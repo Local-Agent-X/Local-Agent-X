@@ -4,6 +4,7 @@ import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { runAgent, type AgentOptions } from "./agent.js";
+import { stripEphemeralMessages } from "./agent-providers.js";
 import { allTools, createHttpRequestTool, buildToolRegistry } from "./tools.js";
 import { appTools } from "./app-tools.js";
 import { issueTools } from "./issue-tools.js";
@@ -129,7 +130,7 @@ export function startServer(config: SAXConfig) {
       sessionId: route.sessionKey, maxIterations: (typeof saved.maxIterations === "number" ? saved.maxIterations : null) || config.maxIterations,
       temperature: typeof saved.temperature === "number" ? saved.temperature : config.temperature,
     }), { label: `bridge:${platform}:${from}` });
-    session.messages = result.messages.filter(m => m.role !== "system" && (m.content || (m as unknown as Record<string, unknown>).tool_calls));
+    session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system" && (m.content || (m as unknown as Record<string, unknown>).tool_calls));
     session.updatedAt = Date.now(); saveSession(session);
     return formatForChannel(result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "Done.", channelType).join("\n\n");
   }
@@ -519,7 +520,7 @@ export function startServer(config: SAXConfig) {
       const result = await runAgent(prompt, [], { apiKey, model: provider === "anthropic" ? "claude-haiku-4-5" : model, provider: provider as AgentOptions["provider"], systemPrompt: config.systemPrompt, tools: allAgentTools, security: cronSecurity, toolPolicy, sessionId, maxIterations: config.maxIterations });
       // Save the session for history
       const session = getOrCreateSession(sessionId);
-      session.messages = result.messages.filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);
+      session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);
       // Extract output — include sub-agent results if the parent delegated
       let output = extractAgentOutput(result.messages);
       try {

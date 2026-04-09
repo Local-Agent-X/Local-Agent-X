@@ -13,6 +13,7 @@
     "build": "npm run build:ari && tsc",
     "postinstall": "npm run build:ari",
     "test": "tsx src/test-suite.ts",
+    "test:replay": "tsx src/replay-test.ts",
     "setup-ai": "node scripts/setup-ai.js"
   },
   "dependencies": {

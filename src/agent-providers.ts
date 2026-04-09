@@ -12,6 +12,60 @@ import type { RBACManager, Role } from "./rbac.js";
 import { streamAnthropicResponse } from "./anthropic-client.js";
 import { executeToolCalls, toolsToOpenAI, checkAndCompact } from "./tool-executor.js";
 import { getRuntimeConfig } from "./config.js";
+import { scoreResponse } from "./quality-scorer.js";
+
+// Quality gate: emit a quality score for telemetry and decide if the response
+// is bad enough to warrant one extra self-correction loop. We deliberately
+// keep the bar low so this only fires on near-empty / clearly-incomplete
+// responses, not on stylistic disagreements.
+function runQualityGate(
+  assistantContent: string,
+  messages: ChatCompletionMessageParam[],
+  toolsAvailable: boolean,
+  toolsUsedSoFar: number,
+  sessionId: string | undefined,
+  onEvent?: (event: ServerEvent) => void
+): { acceptable: boolean; nudge?: string } {
+  const recent = messages.slice(-15);
+  const hasErrors = recent.some((m) => {
+    if (m.role !== "tool" || typeof m.content !== "string") return false;
+    return /\b(BLOCKED|error|failed|not found|permission denied|ENOENT|EACCES)\b/i.test(m.content);
+  });
+
+  const score = scoreResponse(assistantContent || "", {
+    expectedMinLength: 1,
+    expectedMaxLength: 8000,
+    toolsAvailable,
+    toolsUsed: toolsUsedSoFar,
+    hasErrors,
+    isComplete: assistantContent.trim().length > 0,
+    sessionId,
+  });
+
+  onEvent?.({ type: "stream", delta: "" }); // keep stream alive for clients
+  // Note: we intentionally do not emit a typed quality_score event yet —
+  // ServerEvent doesn't include one and we don't want to break consumers.
+  // The score is persisted via quality-scorer's session map and can be
+  // surfaced through /api/quality.
+
+  // Hard fail conditions: empty response with no tool work, or critical errors ignored.
+  const empty = !assistantContent || assistantContent.trim().length < 5;
+  const ignoredErrors = hasErrors && !/\b(error|failed|couldn't|unable|issue|problem|sorry)\b/i.test(assistantContent || "");
+
+  if (empty && toolsUsedSoFar === 0) {
+    return {
+      acceptable: false,
+      nudge: "Your previous response was empty. Either call a tool to make progress or produce a substantive answer for the user. Do not return nothing.",
+    };
+  }
+  if (ignoredErrors && score.overall < 50) {
+    return {
+      acceptable: false,
+      nudge: "Tool errors occurred but you did not address them. Either fix the underlying problem or tell the user clearly what failed and why.",
+    };
+  }
+  return { acceptable: true };
+}
 
 // ── Self-Reflection: checks for unresolved errors after the agent loop ──
 
@@ -247,6 +301,14 @@ export async function runStandardAgent(
         continue;
       }
 
+      // Quality gate — last-resort nudge for empty / critically-bad responses
+      const totalToolsUsed = [...toolNameCounts.values()].reduce((sum, n) => sum + n, 0);
+      const gate = runQualityGate(assistantContent, messages, tools.length > 0, totalToolsUsed, options.sessionId, onEvent);
+      if (!gate.acceptable && iteration < maxIterations - 1) {
+        messages.push({ role: "user", content: gate.nudge! } as ChatCompletionMessageParam);
+        continue;
+      }
+
       onEvent?.({
         type: "done",
         usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },
@@ -401,6 +463,17 @@ export async function runAnthropicAgent(
       const unresolvedErrors = detectUnresolvedErrors(messages);
       if (unresolvedErrors.length > 0 && iteration < maxIterations - 1) {
         messages.push({ role: "user", content: buildReflectionPrompt(unresolvedErrors) } as ChatCompletionMessageParam);
+        continue;
+      }
+
+      // Quality gate — last-resort nudge for empty / critically-bad responses
+      const totalToolsUsedAnthropic = messages.reduce((sum, m) => {
+        const tc = (m as unknown as { tool_calls?: unknown[] }).tool_calls;
+        return sum + (Array.isArray(tc) ? tc.length : 0);
+      }, 0);
+      const gate = runQualityGate(assistantContent, messages, tools.length > 0, totalToolsUsedAnthropic, options.sessionId, onEvent);
+      if (!gate.acceptable && iteration < maxIterations - 1) {
+        messages.push({ role: "user", content: gate.nudge! } as ChatCompletionMessageParam);
         continue;
       }
 

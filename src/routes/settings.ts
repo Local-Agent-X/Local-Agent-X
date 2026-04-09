@@ -119,6 +119,63 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
     json(200, { stats: getToolStats(), successRate: getToolSuccessRate(), recentFailures: getRecentFailures(20) }); return true;
   }
 
+  // Top failing tools — ranked by failure rate over recent calls
+  if (method === "GET" && url.pathname === "/api/tools/top-failures") {
+    const stats = getToolStats();
+    const limit = parseInt(url.searchParams.get("limit") || "10", 10);
+    const ranked = Object.entries(stats)
+      .filter(([, s]) => (s.totalCalls || 0) >= 3) // ignore noise
+      .map(([name, s]) => ({
+        name,
+        totalCalls: s.totalCalls || 0,
+        failures: s.failures || 0,
+        failureRate: s.totalCalls ? (s.failures || 0) / s.totalCalls : 0,
+        avgDurationMs: Math.round(s.avgDurationMs || 0),
+        lastFailure: s.lastFailure,
+        lastFailureTime: s.lastFailureTime,
+      }))
+      .filter((t) => t.failures > 0)
+      .sort((a, b) => b.failureRate - a.failureRate || b.failures - a.failures)
+      .slice(0, limit);
+    json(200, { tools: ranked, recent: getRecentFailures(20) }); return true;
+  }
+
+  // Circuit breaker snapshot — which (session, tool) breakers are tripped
+  if (method === "GET" && url.pathname === "/api/circuit-breakers") {
+    const { getCircuitSnapshot } = await import("../circuit-breaker.js");
+    json(200, { breakers: getCircuitSnapshot() }); return true;
+  }
+
+  // Correction history — patterns the user has flagged
+  if (method === "GET" && url.pathname === "/api/corrections") {
+    try {
+      const { CorrectionLearner } = await import("../correction-learning.js");
+      const learner = CorrectionLearner.getInstance();
+      const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+      const history = learner.getCorrectionHistory().slice(-limit);
+      json(200, {
+        recent: history,
+        patterns: learner.getFrequentMistakes(),
+      });
+    } catch (e) {
+      json(500, { error: (e as Error).message });
+    }
+    return true;
+  }
+
+  // Response quality scores (per session)
+  if (method === "GET" && url.pathname === "/api/quality") {
+    const { getAverageQuality } = await import("../quality-scorer.js");
+    const sessionId = url.searchParams.get("sessionId") || undefined;
+    json(200, { average: getAverageQuality(sessionId) }); return true;
+  }
+
+  // Worker sessions (IDE worker pattern)
+  if (method === "GET" && url.pathname === "/api/workers") {
+    const { listWorkerSessions } = await import("../worker-session.js");
+    json(200, { workers: listWorkerSessions() }); return true;
+  }
+
   // Crashes
   if (method === "GET" && url.pathname === "/api/crashes") {
     json(200, { report: getCrashReport(), topPatterns: getTopCrashPatterns(10) }); return true;

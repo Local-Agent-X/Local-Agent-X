@@ -119,6 +119,8 @@ export const grepTool: ToolDefinition = {
   description:
     "Search file contents using regex. Uses ripgrep when available, falls back to Node.js recursive search. " +
     "Supports file type and glob filtering, context lines, and three output modes.",
+  readOnly: true,
+  concurrencySafe: true,
   parameters: {
     type: "object",
     properties: {

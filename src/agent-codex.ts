@@ -130,11 +130,18 @@ export async function runCodexAgentHttp(
       };
     }
 
-    // Detect empty response (no text, no tool calls) — usually content moderation or model failure.
-    // Without this guard, the loop exits with end_turn and chat.ts filters out the null-content
-    // assistant message, leaving an orphaned user message in the session.
+    // Detect empty response (no text, no tool calls).
+    // Real causes (in order of frequency):
+    //   1. gpt-5.3-codex is a CODING model — it returns nothing for casual
+    //      chat messages like "hey". This is NOT moderation.
+    //   2. The system prompt is too long / biases the model to call a tool
+    //      that doesn't fit the user's request.
+    //   3. Actual content moderation (rare for benign messages).
+    // The placeholder is marked __EMPTY_CODEX_RESPONSE__ so the bridge
+    // handler can detect it and fall back to a different provider, and so
+    // stripEphemeralMessages can scrub it from the saved session.
     if (toolCalls.length === 0 && !assistantContent.trim()) {
-      const placeholder = "_(The model returned an empty response. This usually means OpenAI content moderation blocked the reply. Try rephrasing or starting a new chat.)_";
+      const placeholder = "__EMPTY_CODEX_RESPONSE__ (gpt-5.3-codex returned no output. This model is optimized for coding tasks; casual chat messages often produce empty responses. Trying a fallback provider...)";
       const errorMsg: ChatCompletionMessageParam = { role: "assistant", content: placeholder };
       messages.push(errorMsg);
       onEvent?.({ type: "stream", delta: placeholder });

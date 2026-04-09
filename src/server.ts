@@ -4,7 +4,7 @@ import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { runAgent, type AgentOptions } from "./agent.js";
-import { stripEphemeralMessages } from "./agent-providers.js";
+import { stripEphemeralMessages, sanitizeHistory, truncateHistory } from "./agent-providers.js";
 import { allTools, createHttpRequestTool, buildToolRegistry } from "./tools.js";
 import { appTools } from "./app-tools.js";
 import { issueTools } from "./issue-tools.js";
@@ -115,6 +115,20 @@ export function startServer(config: SAXConfig) {
     const { provider, apiKey, model } = await resolveProviderAndKey(saved);
     const channelType = platform.toLowerCase() as ChannelType;
     const route = resolveSession(channelType, from, sessionId);
+
+    // /reset, /clear, /new — wipe this bridge chat's session history (in-memory + on disk).
+    // Useful when the session gets stuck in a broken state (empty responses, loop noise).
+    const trimmed = text.trim().toLowerCase();
+    if (trimmed === "/reset" || trimmed === "/clear" || trimmed === "/new") {
+      try {
+        sessions.delete(route.sessionKey);
+        sessionStore.delete(route.sessionKey);
+        return "Fresh start. Conversation history cleared.";
+      } catch (e) {
+        return `Reset failed: ${(e as Error).message}`;
+      }
+    }
+
     const session = getOrCreateSession(route.sessionKey);
     if (session.messages.length === 0) session.title = `${platform}: ${name}`;
     const [contextBlock, relevantMemories] = await Promise.all([buildContextBlock(memoryIndex), autoSearchContext(memoryIndex, text)]);
@@ -125,11 +139,61 @@ export function startServer(config: SAXConfig) {
       (channelConfig.markdownFlavor === "plain" ? "Use plain text only. " : channelConfig.markdownFlavor === "whatsapp" ? "Use minimal formatting. " : "");
     const injectionScore = detectInjection(text).reduce((max, h) => Math.max(max, h.score), 0);
     if (injectionScore >= 0.85) return `I can't process that message — it was flagged by security filters.`;
-    const result = await enqueue("main", () => runAgent(text, session.messages, {
-      apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: enrichedPrompt, tools: bridgeTools, security, toolPolicy, rbac, callerRole: "user" as const,
+
+    const baseOpts = {
+      systemPrompt: enrichedPrompt, tools: bridgeTools, security, toolPolicy, rbac, callerRole: "user" as const,
       sessionId: route.sessionKey, maxIterations: (typeof saved.maxIterations === "number" ? saved.maxIterations : null) || config.maxIterations,
       temperature: typeof saved.temperature === "number" ? saved.temperature : config.temperature,
+    };
+
+    // CRITICAL: sanitize + truncate history before sending to the provider.
+    // Without this, accumulated bridge sessions (e.g. 119+ messages of mixed
+    // grok/codex tool-call formats) cause the OpenAI Responses API to silently
+    // return zero output items — the user sees the empty-response placeholder
+    // for benign messages like "hey". Web chat already does this; bridge did not.
+    const cleanHistory = truncateHistory(sanitizeHistory(session.messages), 30);
+
+    let result = await enqueue("main", () => runAgent(text, cleanHistory, {
+      apiKey, model, provider: provider as AgentOptions["provider"], ...baseOpts,
     }), { label: `bridge:${platform}:${from}` });
+
+    // Empty-response fallback: if Codex returned the empty-response sentinel,
+    // automatically retry on a fallback provider so the user actually gets
+    // an answer instead of the placeholder text.
+    const lastAssistantText = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "";
+    const isEmptyResponse = lastAssistantText.startsWith("__EMPTY_CODEX_RESPONSE__") || lastAssistantText.includes("model returned an empty response") || lastAssistantText.trim().length === 0;
+    if (isEmptyResponse && provider === "codex") {
+      // Try xAI first (fast, no moderation), then Anthropic, then OpenAI direct.
+      const fallbacks: Array<{ provider: string; model: string; key: string }> = [];
+      const xaiKey = secretsStore.get("XAI_API_KEY");
+      if (xaiKey) fallbacks.push({ provider: "xai", model: "grok-3-mini", key: xaiKey });
+      try {
+        const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
+        if (loadAnthropicTokens()) {
+          const anthKey = await getAnthropicApiKey();
+          if (anthKey) fallbacks.push({ provider: "anthropic", model: "claude-haiku-4-5", key: anthKey });
+        }
+      } catch {}
+      const openaiKey = secretsStore.get("OPENAI_API_KEY") || (config.openaiApiKey ? await getApiKey(config.openaiApiKey) : "");
+      if (openaiKey) fallbacks.push({ provider: "openai", model: "gpt-4o-mini", key: openaiKey });
+
+      for (const fb of fallbacks) {
+        console.log(`[bridge] Codex returned empty response — falling back to ${fb.provider}/${fb.model}`);
+        try {
+          const fbResult = await enqueue("main", () => runAgent(text, cleanHistory, {
+            apiKey: fb.key, model: fb.model, provider: fb.provider as AgentOptions["provider"], ...baseOpts,
+          }), { label: `bridge:${platform}:${from}:fallback` });
+          const fbText = fbResult.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "";
+          if (fbText.trim() && !fbText.startsWith("__EMPTY_CODEX_RESPONSE__") && !fbText.includes("model returned an empty response")) {
+            result = fbResult;
+            break;
+          }
+        } catch (e) {
+          console.error(`[bridge] Fallback to ${fb.provider} failed:`, (e as Error).message);
+        }
+      }
+    }
+
     session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system" && (m.content || (m as unknown as Record<string, unknown>).tool_calls));
     session.updatedAt = Date.now(); saveSession(session);
     return formatForChannel(result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "Done.", channelType).join("\n\n");

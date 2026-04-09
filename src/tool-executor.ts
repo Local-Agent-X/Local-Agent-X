@@ -17,6 +17,38 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { isPlanMode, READ_ONLY_TOOLS } from "./plan-tools.js";
 import { getHookEngine } from "./hooks/hook-engine.js";
+import { withRetry } from "./auto-retry.js";
+import { checkCircuit, recordCircuitFailure, recordCircuitSuccess } from "./circuit-breaker.js";
+import { recordToolCall as recordToolStat } from "./tool-tracker.js";
+import { checkToolRateLimit, recordToolCall as recordRateLimit } from "./tool-rate-limiter.js";
+
+// Tools whose failures are usually transient (network, rate limit) and worth retrying.
+const RETRYABLE_TOOLS = new Set([
+  "http_request",
+  "web_fetch",
+  "web_search",
+  "browser",
+]);
+
+// Tools whose failures are deterministic — never retry.
+const NEVER_RETRY = new Set(["bash", "write", "edit", "agent_spawn", "delegate"]);
+
+function isTransientError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes("timeout") ||
+    msg.includes("timed out") ||
+    msg.includes("etimedout") ||
+    msg.includes("econnrefused") ||
+    msg.includes("econnreset") ||
+    msg.includes("enotfound") ||
+    msg.includes("rate limit") ||
+    msg.includes("429") ||
+    msg.includes("503") ||
+    msg.includes("504") ||
+    msg.includes("network")
+  );
+}
 
 /** Extended tool result that may include image data for vision analysis */
 interface ToolResultWithImage extends ToolResult {
@@ -287,6 +319,24 @@ async function executeSingleTool(
         }
       }
 
+      // Circuit breaker — refuse calls to tools that have repeatedly failed in this session
+      const circuit = checkCircuit(sessionId, tc.name);
+      if (!circuit.allowed) {
+        result = { content: `BLOCKED by circuit breaker: ${circuit.reason}`, isError: true };
+        onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
+        msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
+        return msgs;
+      }
+
+      // Per-tool rate limit (sliding window)
+      const rate = checkToolRateLimit(tc.name, sessionId);
+      if (!rate.allowed) {
+        result = { content: `BLOCKED by rate limit: ${rate.reason}`, isError: true };
+        onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
+        msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
+        return msgs;
+      }
+
       // Inject progress callback for tools that support streaming updates
       const progressFn = (message: string) => {
         onEvent?.({ type: "tool_progress", toolName: tc.name, toolCallId: tc.id, message });
@@ -295,13 +345,36 @@ async function executeSingleTool(
 
       // (worktree rewrite moved before security evaluation)
 
+      const startedAt = Date.now();
+      const shouldRetry = RETRYABLE_TOOLS.has(tc.name) && !NEVER_RETRY.has(tc.name);
+
       try {
-        result = await tool.execute(args, signal);
+        if (shouldRetry) {
+          result = await withRetry(() => tool.execute(args, signal), {
+            maxRetries: 2,
+            baseDelayMs: 500,
+            maxDelayMs: 4000,
+            shouldRetry: (err) => isTransientError(err),
+          });
+        } else {
+          result = await tool.execute(args, signal);
+        }
         if (tc.name === "read" && isSensitivePath(String(args.path || ""))) {
           recordSensitiveRead(sessionId || "default", "sensitive_file", String(args.path));
         }
       } catch (e) {
         result = { content: `Tool error: ${(e as Error).message}`, isError: true };
+      }
+
+      // Record stats + breaker state + rate-limit consumption
+      const durationMs = Date.now() - startedAt;
+      const succeeded = !result.isError;
+      try { recordToolStat(tc.name, sessionId || "default", succeeded, durationMs, result.isError ? result.content?.slice(0, 200) : undefined); } catch { /* tracker should never break the call */ }
+      try { recordRateLimit(tc.name, sessionId); } catch { /* same */ }
+      if (succeeded) {
+        recordCircuitSuccess(sessionId, tc.name);
+      } else {
+        recordCircuitFailure(sessionId, tc.name);
       }
     }
   }
@@ -376,21 +449,27 @@ export async function executeToolCalls(
 ): Promise<ChatCompletionMessageParam[]> {
   const results: ChatCompletionMessageParam[] = [];
 
-  // Execute tools in order, batching adjacent concurrent-safe tools together.
+  // Execute tools in order, batching adjacent concurrent-safe / read-only tools together.
+  // Read-only tools are implicitly safe to parallelize (they never mutate state).
   // This preserves the original call order while parallelizing where safe.
+  const isParallelSafe = (t: ToolDefinition | undefined): boolean => {
+    if (!t) return false;
+    return Boolean(t.readOnly) || Boolean(t.concurrencySafe);
+  };
+
   let i = 0;
   while (i < toolCalls.length) {
     const tc = toolCalls[i];
     const tool = toolMap.get(tc.name);
-    const isConcurrent = tool && "concurrencySafe" in tool && (tool as { concurrencySafe?: boolean }).concurrencySafe;
+    const isConcurrent = isParallelSafe(tool);
 
     if (isConcurrent) {
-      // Collect adjacent concurrent-safe tools into a batch
+      // Collect adjacent parallel-safe tools into a batch
       const batch: typeof toolCalls = [tc];
       while (i + 1 < toolCalls.length) {
         const next = toolCalls[i + 1];
         const nextTool = toolMap.get(next.name);
-        if (nextTool && "concurrencySafe" in nextTool && (nextTool as { concurrencySafe?: boolean }).concurrencySafe) {
+        if (isParallelSafe(nextTool)) {
           batch.push(next);
           i++;
         } else break;

@@ -85,6 +85,9 @@ jobs:
         run: npm test
         continue-on-error: true
 
+      - name: Replay regression check
+        run: npm run test:replay
+
   build:
     name: Build
     runs-on: ubuntu-latest

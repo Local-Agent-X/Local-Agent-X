@@ -45,6 +45,8 @@ export const globTool: ToolDefinition = {
   description:
     "Fast file pattern matching. Returns files matching a glob pattern, sorted by modification time (newest first). " +
     "Supports patterns like **/*.ts, src/**/*.tsx, *.json.",
+  readOnly: true,
+  concurrencySafe: true,
   parameters: {
     type: "object",
     properties: {

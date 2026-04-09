@@ -262,26 +262,72 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       const isIdeSession = sessionId.startsWith("ide-");
       const sessionTools = isIdeSession ? ctx.allAgentTools.filter(t => !IDE_BLOCKED_TOOLS.has(t.name)) : ctx.allAgentTools;
 
-      const result = await enqueue("main", () => runAgent(message, sanitizeHistory(historyToSend), {
-        apiKey,
-        model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : provider === "gemini" ? "gemini-2.0-flash" : ctx.config.model),
-        provider, baseURL: customBaseURL, systemPrompt: enrichedPrompt,
+      const baseRunOpts = {
+        baseURL: customBaseURL, systemPrompt: enrichedPrompt,
         codexApiKey,
         tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
         threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
         images: imageAttachments, maxIterations: savedMaxIterations || ctx.config.maxIterations,
         temperature: savedTemperature ?? ctx.config.temperature,
         signal: wsChat.abort.signal,
-        onEvent: (event) => {
-          if (event.type === "stream" && event.delta) {
-            canaryBuffer += event.delta; fullResponseText += event.delta;
-            if (canaryBuffer.length > 200) canaryBuffer = canaryBuffer.slice(-200);
-            const canaryTrip = threatEngine.checkOutput(canaryBuffer) || (fullResponseText.length % 500 < 10 ? threatEngine.checkOutput(fullResponseText) : null);
-            if (canaryTrip) { sseWrite(res, { type: "error", message: "Security alert: prompt injection detected." }); wsChat.abort.abort(); return; }
-          }
-          onEvent(event);
-        },
+      };
+      const wrappedOnEvent = (event: ServerEvent) => {
+        if (event.type === "stream" && event.delta) {
+          canaryBuffer += event.delta; fullResponseText += event.delta;
+          if (canaryBuffer.length > 200) canaryBuffer = canaryBuffer.slice(-200);
+          const canaryTrip = threatEngine.checkOutput(canaryBuffer) || (fullResponseText.length % 500 < 10 ? threatEngine.checkOutput(fullResponseText) : null);
+          if (canaryTrip) { sseWrite(res, { type: "error", message: "Security alert: prompt injection detected." }); wsChat.abort.abort(); return; }
+        }
+        onEvent(event);
+      };
+
+      let result = await enqueue("main", () => runAgent(message, sanitizeHistory(historyToSend), {
+        apiKey,
+        model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : provider === "gemini" ? "gemini-2.0-flash" : ctx.config.model),
+        provider, ...baseRunOpts,
+        onEvent: wrappedOnEvent,
       }), { label: `chat:${sessionId}`, timeout: 600_000 });
+
+      // Empty-response fallback: if Codex returned the empty-response sentinel,
+      // automatically retry with another provider so the user actually gets
+      // a reply instead of the placeholder. Mirrors the bridge handler.
+      const lastAssistantText = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "";
+      const isEmptyResponse =
+        lastAssistantText.startsWith("__EMPTY_CODEX_RESPONSE__") ||
+        lastAssistantText.includes("model returned an empty response") ||
+        lastAssistantText.trim().length === 0;
+      if (isEmptyResponse && provider === "codex") {
+        const fallbacks: Array<{ provider: string; model: string; key: string }> = [];
+        const xaiKey = ctx.secretsStore.get("XAI_API_KEY");
+        if (xaiKey) fallbacks.push({ provider: "xai", model: "grok-3-mini", key: xaiKey });
+        try {
+          if (loadAnthropicTokens()) {
+            const anthKey = await getAnthropicApiKey();
+            if (anthKey) fallbacks.push({ provider: "anthropic", model: "claude-haiku-4-5", key: anthKey });
+          }
+        } catch {}
+        const oaiKey = ctx.secretsStore.get("OPENAI_API_KEY") || (ctx.config.openaiApiKey ? await getApiKey(ctx.config.openaiApiKey) : "");
+        if (oaiKey) fallbacks.push({ provider: "openai", model: "gpt-4o-mini", key: oaiKey });
+
+        for (const fb of fallbacks) {
+          console.log(`[chat] Codex returned empty response — falling back to ${fb.provider}/${fb.model}`);
+          sseWrite(res, { type: "stream", delta: `\n\n_(retrying via ${fb.provider}...)_\n\n` } as ServerEvent);
+          try {
+            const fbResult = await enqueue("main", () => runAgent(message, sanitizeHistory(historyToSend), {
+              apiKey: fb.key, model: fb.model, provider: fb.provider as Parameters<typeof runAgent>[2]["provider"],
+              ...baseRunOpts,
+              onEvent: wrappedOnEvent,
+            }), { label: `chat:${sessionId}:fallback`, timeout: 600_000 });
+            const fbText = fbResult.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "";
+            if (fbText.trim() && !fbText.startsWith("__EMPTY_CODEX_RESPONSE__") && !fbText.includes("model returned an empty response")) {
+              result = fbResult;
+              break;
+            }
+          } catch (e) {
+            console.error(`[chat] Fallback to ${fb.provider} failed:`, (e as Error).message);
+          }
+        }
+      }
 
       ctx.setActiveOnEvent(undefined);
       // Clear any skill tool restrictions so they don't leak into the next message

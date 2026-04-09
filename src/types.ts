@@ -7,6 +7,10 @@ export interface ToolDefinition {
   description: string;
   parameters: Record<string, unknown>;
   execute: (args: Record<string, unknown>, signal?: AbortSignal) => Promise<ToolResult>;
+  /** Tool only reads state, never mutates. Eligible for parallel batching. */
+  readOnly?: boolean;
+  /** Explicit opt-in to parallel execution alongside adjacent concurrent-safe tools. */
+  concurrencySafe?: boolean;
 }
 
 export interface ToolResult {

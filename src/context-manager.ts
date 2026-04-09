@@ -21,7 +21,28 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "gpt-4o-mini": 128_000,
   "grok-3-mini": 131_072,
   "grok-3": 131_072,
+  // Anthropic Claude 4.x family — 200k base window
+  "claude-sonnet-4-5": 200_000,
+  "claude-sonnet-4-6": 200_000,
+  "claude-opus-4-5": 200_000,
+  "claude-opus-4-6": 200_000,
+  "claude-haiku-4-5": 200_000,
+  // Anthropic Opus 4.6 with 1M context beta
+  "claude-opus-4-6[1m]": 1_000_000,
+  // Gemini 2.x family
+  "gemini-2.0-flash": 1_000_000,
+  "gemini-2.5-pro-preview-05-06": 1_000_000,
+  "gemini-2.5-flash-preview-05-20": 1_000_000,
 };
+function lookupContextWindow(model: string): number {
+  if (MODEL_CONTEXTS[model]) return MODEL_CONTEXTS[model];
+  const lower = model.toLowerCase();
+  if (lower.includes("claude")) return 200_000;
+  if (lower.includes("gemini")) return 1_000_000;
+  if (lower.includes("gpt-4") || lower.includes("gpt-5") || lower.includes("o3")) return 128_000;
+  if (lower.includes("grok")) return 131_072;
+  return DEFAULT_CONTEXT;
+}
 // Ollama models typically have smaller context; use conservative default
 const DEFAULT_CONTEXT = 128_000;
 
@@ -80,7 +101,7 @@ export function getContextStatus(
   messages: ChatCompletionMessageParam[],
   model: string
 ): ContextStatus {
-  const maxTokens = MODEL_CONTEXTS[model] || DEFAULT_CONTEXT;
+  const maxTokens = lookupContextWindow(model);
   const usedTokens = totalTokens(messages);
   const percentage = Math.round((usedTokens / maxTokens) * 100);
 
@@ -88,14 +109,17 @@ export function getContextStatus(
   let shouldCompact = false;
   let forceCompact = false;
 
-  if (percentage >= 95) {
+  // Lowered thresholds: compact earlier so a single huge tool result on the
+  // next iteration doesn't push us past the model's hard limit before we
+  // ever get a chance to react.
+  if (percentage >= 90) {
     level = "critical";
     forceCompact = true;
     shouldCompact = true;
-  } else if (percentage >= 85) {
+  } else if (percentage >= 75) {
     level = "compact";
     shouldCompact = true;
-  } else if (percentage >= 70) {
+  } else if (percentage >= 60) {
     level = "warning";
   }
 

@@ -43,6 +43,8 @@ const readTool: ToolDefinition = {
   name: "read",
   description:
     "Read a file from the filesystem. Returns the file contents with line numbers. Use offset and limit for large files.",
+  readOnly: true,
+  concurrencySafe: true,
   parameters: {
     type: "object",
     properties: {

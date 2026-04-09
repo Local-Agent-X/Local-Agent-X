@@ -7,8 +7,6 @@ import type { ToolPolicy } from "./tool-policy.js";
 import type { ThreatEngine } from "./threat-engine.js";
 import type { RBACManager, Role } from "./rbac.js";
 import { streamCodexResponse } from "./codex-client.js";
-import { runCodexWs, type CodexTool as WsTool } from "./codex-ws.js";
-import { checkSessionPolicy } from "./session-policy.js";
 import { executeToolCalls, checkAndCompact } from "./tool-executor.js";
 
 interface ImageAttachment {
@@ -38,159 +36,23 @@ interface AgentOptions {
   pauseCallback?: (reason: string) => Promise<string>;
 }
 
-// ── Codex (ChatGPT subscription) Agent Loop — WebSocket ──
+// ── Codex (ChatGPT subscription) Agent Loop ──
+//
+// Codex tool calls are routed through the canonical tool-executor in
+// runCodexAgentHttp(), so they get the same security, hooks, retry,
+// circuit breaker, rate limiting, and tracker treatment as Anthropic/xAI.
+// (The previous WebSocket path was disabled in production and bypassed
+// the executor entirely — it has been removed to prevent that drift.)
 
 export async function runCodexAgent(
   userMessage: string,
   history: ChatCompletionMessageParam[],
   options: AgentOptions
 ): Promise<AgentTurn> {
-  const {
-    apiKey,
-    model,
-    systemPrompt,
-    tools,
-    security,
-    maxIterations = 25,
-    onEvent,
-    signal,
-  } = options;
-
-  const toolMap = new Map(tools.map((t) => [t.name, t]));
-
-  const messages: ChatCompletionMessageParam[] = [
-    ...history,
-    { role: "user", content: userMessage },
-  ];
-
-  const codexTools: WsTool[] = tools.map((t) => ({
-    type: "function" as const,
-    name: t.name,
-    description: t.description,
-    parameters: t.parameters,
-  }));
-
-  const turnMessages: ChatCompletionMessageParam[] = [];
-  let totalInput = 0;
-  let totalOutput = 0;
-
-  // WebSocket disabled — Codex OAuth returns 500. Use HTTP.
   return runCodexAgentHttp(userMessage, history, options);
-
-  // eslint-disable-next-line no-unreachable
-  try {
-    await runCodexWs({
-      token: apiKey,
-      model,
-      messages,
-      systemPrompt,
-      tools: codexTools,
-      maxIterations,
-
-      events: {
-        onText(delta) {
-          onEvent?.({ type: "stream", delta });
-        },
-        onToolCall(id, name, args) {
-          onEvent?.({ type: "tool_start", toolName: name, args: JSON.parse(args || "{}") });
-        },
-        onToolResult(id, name, result) {
-          onEvent?.({
-            type: "tool_end",
-            toolName: name,
-            result,
-            allowed: true,
-          });
-          turnMessages.push({
-            role: "assistant",
-            content: null,
-            tool_calls: [{
-              id,
-              type: "function",
-              function: { name, arguments: "" },
-            }],
-          } as unknown as ChatCompletionMessageParam);
-          turnMessages.push({
-            role: "tool",
-            tool_call_id: id,
-            content: result,
-          } as unknown as ChatCompletionMessageParam);
-        },
-        onDone(usage) {
-          totalInput = usage.inputTokens;
-          totalOutput = usage.outputTokens;
-          onEvent?.({
-            type: "done",
-            usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
-          });
-        },
-        onError(error) {
-          console.log(`[agent] WS error (will fallback): ${error}`);
-        },
-      },
-
-      async executeToolCall(name: string, argsJson: string): Promise<string> {
-        let args: Record<string, unknown>;
-        try {
-          args = JSON.parse(argsJson);
-        } catch {
-          args = {};
-        }
-
-        const pBlock = checkSessionPolicy(options.sessionId || "default", name);
-        if (pBlock) return pBlock;
-
-        const decision = security.evaluate({
-          toolName: name,
-          args,
-          sessionId: options.sessionId || "default",
-        });
-
-        if (!decision.allowed) {
-          return `BLOCKED by security: ${decision.reason}`;
-        }
-
-        if (options.toolPolicy) {
-          const policyResult = options.toolPolicy.evaluate(name, args, options.sessionId);
-          if (!policyResult.allowed) {
-            return `BLOCKED by policy: ${policyResult.reason}`;
-          }
-        }
-
-        const tool = toolMap.get(name);
-        if (!tool) {
-          return `Unknown tool: ${name}`;
-        }
-
-        try {
-          const result = await tool.execute(args, signal);
-
-          if (options.threatEngine) {
-            const threat = options.threatEngine.evaluateToolResult(name, args, result.content, true);
-            if (threat.blocked) {
-              return `BLOCKED by threat engine: ${threat.reason}`;
-            }
-          }
-
-          return result.content;
-        } catch (e) {
-          return `Tool error: ${(e as Error).message}`;
-        }
-      },
-    });
-  } catch (e) {
-    console.log(`[agent] WS unavailable, using HTTP: ${(e as Error).message}`);
-    return runCodexAgentHttp(userMessage, history, options);
-  }
-
-  return {
-    messages: [{ role: "system", content: systemPrompt }, ...messages, ...turnMessages],
-    usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
-    stopReason: "end_turn",
-  };
 }
 
-// ── HTTP fallback ──
+// ── HTTP path (canonical) ──
 
 export async function runCodexAgentHttp(
   userMessage: string,

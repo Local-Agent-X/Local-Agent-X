@@ -114,12 +114,18 @@ export class TelegramBridge {
     const chunks = this.splitMessage(text, 4000);
     for (const chunk of chunks) {
       try {
+        // The channel-formatter produces MarkdownV2-escaped text (escaping
+        // ( ) . ! - + = | { } # > ~ etc.). Telegram's legacy "Markdown"
+        // mode doesn't recognize those escapes and renders the literal
+        // backslashes — so we MUST send with MarkdownV2 to match.
         let result = await this.apiCall(token, "sendMessage", {
-          chat_id: chatId, text: chunk, parse_mode: "Markdown",
+          chat_id: chatId, text: chunk, parse_mode: "MarkdownV2",
         }, false);
-        // Markdown failed — fall back to plain text
+        // Parse failed — strip backslash escapes and send as plain text
+        // so the user at least gets a readable message.
         if (!result.ok && result.description?.includes("parse")) {
-          result = await this.apiCall(token, "sendMessage", { chat_id: chatId, text: chunk }, false);
+          const plain = chunk.replace(/\\([_*\[\]()~>#+\-=|{}.!`])/g, "$1");
+          result = await this.apiCall(token, "sendMessage", { chat_id: chatId, text: plain }, false);
         }
         if (!result.ok) {
           console.error(`[telegram] Send failed: ${result.description}`);

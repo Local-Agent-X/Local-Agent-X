@@ -30,7 +30,7 @@ interface CodexStreamEvent {
   response?: {
     output?: Array<{
       type: string;
-      content?: Array<{ text?: string }>;
+      content?: Array<{ type?: string; text?: string }>;
       name?: string;
       call_id?: string;
       arguments?: string;
@@ -318,7 +318,9 @@ export async function* streamCodexResponse(params: {
           usage.inputTokens = event.response.usage.input_tokens || 0;
           usage.outputTokens = event.response.usage.output_tokens || 0;
         }
-        // Extract any tool calls from completed response
+        // Extract any tool calls AND text from completed response.
+        // Some Codex responses arrive as a single completed event without streaming
+        // output_text.delta events first — we still need to surface that text.
         if (event.response?.output) {
           for (const item of event.response.output) {
             if (item.type === "function_call" && item.call_id) {
@@ -334,6 +336,18 @@ export async function* streamCodexResponse(params: {
                   name: item.name || "",
                   arguments: item.arguments || "",
                 };
+              }
+            }
+            // Recover text from message items if we never saw streaming deltas
+            if (item.type === "message" && Array.isArray(item.content)) {
+              for (const part of item.content) {
+                if (part.type === "output_text" && typeof part.text === "string" && part.text.length > fullText.length) {
+                  const missing = part.text.slice(fullText.length);
+                  if (missing) {
+                    fullText += missing;
+                    yield { type: "text", delta: missing };
+                  }
+                }
               }
             }
           }

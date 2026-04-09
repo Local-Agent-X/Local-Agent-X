@@ -286,7 +286,8 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       ctx.setActiveOnEvent(undefined);
       // Clear any skill tool restrictions so they don't leak into the next message
       try { const { clearSessionAllowedTools } = await import("../session-policy.js"); clearSessionAllowedTools(sessionId); } catch {}
-      session.messages = result.messages.filter((m) => m.role !== "system" && (m.content || (m as unknown as MsgRecord).tool_calls));
+      const { stripEphemeralMessages } = await import("../agent-providers.js");
+      session.messages = stripEphemeralMessages(result.messages).filter((m) => m.role !== "system" && (m.content || (m as unknown as MsgRecord).tool_calls));
       session.updatedAt = Date.now();
 
       const assistantReply = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).join("\n");

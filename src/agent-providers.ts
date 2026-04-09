@@ -68,24 +68,55 @@ function runQualityGate(
 }
 
 // ── Self-Reflection: checks for unresolved errors after the agent loop ──
+//
+// IMPORTANT: this function MUST only fire on errors that occurred AFTER the
+// agent's last text response. Otherwise it loops forever on stale errors that
+// the agent has already acknowledged in plain English (which is hard to
+// detect reliably with a regex). Loop detection here was the cause of an
+// incident where ~37% of a Telegram session was [Self-check] noise from a
+// single stale RBAC block 26 messages back.
 
 function detectUnresolvedErrors(messages: ChatCompletionMessageParam[]): string[] {
-  const errors: string[] = [];
-  // Check last N tool results for failures that were never addressed
+  // If there is ALREADY a [Self-check] user message in the recent window,
+  // we have already nudged the agent on this error. Do not nudge again.
   const recentMsgs = messages.slice(-20);
   for (const m of recentMsgs) {
+    if (m.role === "user" && typeof m.content === "string" && m.content.startsWith("[Self-check]")) {
+      return [];
+    }
+  }
+
+  // Find the index of the most recent assistant text response (non-tool-call).
+  // Only errors that came AFTER that index count as "unresolved" — anything
+  // before it has had its chance to be acknowledged.
+  let lastAssistantTextIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === "assistant" && typeof m.content === "string" && m.content.trim().length > 0) {
+      lastAssistantTextIdx = i;
+      break;
+    }
+  }
+
+  const errors: string[] = [];
+  const startIdx = Math.max(lastAssistantTextIdx + 1, messages.length - 20);
+  for (let i = startIdx; i < messages.length; i++) {
+    const m = messages[i];
     if (m.role !== "tool" || typeof m.content !== "string") continue;
     const c = m.content;
     if (/\b(BLOCKED|error|failed|timed? ?out|not found|permission denied|ENOENT|EACCES|EPERM)\b/i.test(c) && c.length < 500) {
       errors.push(c.slice(0, 200));
     }
   }
-  // Check if the last assistant message acknowledges errors or just ignores them
+
+  // Even within the post-response window, if the agent already acknowledged
+  // the problem in any form, don't nudge.
   const lastAssistant = [...recentMsgs].reverse().find(m => m.role === "assistant" && typeof m.content === "string");
-  if (lastAssistant && typeof lastAssistant.content === "string") {
-    // If assistant mentions the error/problem, it's probably addressed
-    if (/\b(error|failed|couldn't|unable|issue|problem|unfortunately|sorry)\b/i.test(lastAssistant.content)) {
-      return []; // Agent acknowledged the issue
+  if (errors.length > 0 && lastAssistant && typeof lastAssistant.content === "string") {
+    // Broad acknowledgment vocabulary — covers all the words the original
+    // narrow regex missed (block, repeat, skipped, switched, tried, moved on, …).
+    if (/\b(error|failed|couldn't|unable|issue|problem|unfortunately|sorry|block(ed)?|denied|skip(ped)?|switch(ed)?|tried|moved on|gave up|cannot|can't|workaround|alternative|instead|fallback|repeat)\b/i.test(lastAssistant.content)) {
+      return [];
     }
   }
   return errors;
@@ -93,6 +124,20 @@ function detectUnresolvedErrors(messages: ChatCompletionMessageParam[]): string[
 
 function buildReflectionPrompt(errors: string[]): string {
   return `[Self-check] The following tool errors occurred but may not have been addressed in your response. If any are relevant to the user's request, briefly acknowledge what went wrong and suggest a fix. If they're irrelevant (e.g., optional lookups), ignore them.\n\nErrors:\n${errors.map((e, i) => `${i + 1}. ${e}`).join("\n")}`;
+}
+
+/** Strip ephemeral self-check / quality-gate user messages before persisting a session. */
+export function stripEphemeralMessages(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
+  return messages.filter((m) => {
+    if (m.role === "user" && typeof m.content === "string") {
+      if (m.content.startsWith("[Self-check]")) return false;
+      if (m.content.startsWith("Your previous response was empty.")) return false;
+      if (m.content.startsWith("Tool errors occurred but you did not address them.")) return false;
+      if (m.content.startsWith("You do NOT need approval.")) return false;
+      if (m.content.startsWith("SYSTEM: You have called ")) return false;
+    }
+    return true;
+  });
 }
 
 interface ImageAttachment {
@@ -190,6 +235,7 @@ export async function runStandardAgent(
   let totalCompletionTokens = 0;
   let stdLastToolKey = "";
   let stdSameToolCount = 0;
+  let selfCheckFired = false; // cap at one self-check injection per agent run
   // Track same-tool-name usage to detect discovery loops (e.g. glob with different args each time)
   const toolNameCounts = new Map<string, number>();
   const DISCOVERY_LOOP_THRESHOLD = 8; // same tool called 8+ times = likely stuck
@@ -294,9 +340,12 @@ export async function runStandardAgent(
         continue;
       }
 
-      // Self-reflection: check for unresolved tool errors before returning
-      const unresolvedErrors = detectUnresolvedErrors(messages);
+      // Self-reflection: check for unresolved tool errors before returning.
+      // Cap at one injection per run — repeated self-checks were a major
+      // source of session pollution and apparent unresponsiveness.
+      const unresolvedErrors = !selfCheckFired ? detectUnresolvedErrors(messages) : [];
       if (unresolvedErrors.length > 0 && iteration < maxIterations - 1) {
+        selfCheckFired = true;
         messages.push({ role: "user", content: buildReflectionPrompt(unresolvedErrors) } as ChatCompletionMessageParam);
         continue;
       }
@@ -387,6 +436,7 @@ export async function runAnthropicAgent(
   ];
 
   let totalInput = 0, totalOutput = 0;
+  let selfCheckFiredAnthropic = false;
   const anthropicTools = tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
@@ -460,8 +510,9 @@ export async function runAnthropicAgent(
         continue;
       }
 
-      const unresolvedErrors = detectUnresolvedErrors(messages);
+      const unresolvedErrors = !selfCheckFiredAnthropic ? detectUnresolvedErrors(messages) : [];
       if (unresolvedErrors.length > 0 && iteration < maxIterations - 1) {
+        selfCheckFiredAnthropic = true;
         messages.push({ role: "user", content: buildReflectionPrompt(unresolvedErrors) } as ChatCompletionMessageParam);
         continue;
       }

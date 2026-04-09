@@ -443,13 +443,27 @@ export class Handler {
 
         const result = await resultPromise;
 
+        // Detect content-moderation / empty-response sentinel from Codex path.
+        // Sub-agents that return only the placeholder are NOT done — they
+        // were blocked. Mark as error so the parent can react and the UI
+        // doesn't silently swallow the failure.
+        const isEmptyResponseSentinel =
+          typeof result === "string" &&
+          (result.includes("model returned an empty response") ||
+            result.includes("content moderation blocked"));
+
         agent.result = result;
-        agent.status = "done";
-        agent.output.push(result);
-
-        this.notifyUpdate(agentId, { type: "complete", data: result });
-
-        EventBus.emit("handler:agent-done", { agentId, result });
+        if (isEmptyResponseSentinel) {
+          agent.status = "error";
+          agent.output.push(`[blocked] ${result}`);
+          this.notifyUpdate(agentId, { type: "error", data: result });
+          EventBus.emit("handler:agent-error", { agentId, error: result });
+        } else {
+          agent.status = "done";
+          agent.output.push(result);
+          this.notifyUpdate(agentId, { type: "complete", data: result });
+          EventBus.emit("handler:agent-done", { agentId, result });
+        }
       } catch (e) {
         const msg = String(e);
         if (!agent.abortController?.signal.aborted) {

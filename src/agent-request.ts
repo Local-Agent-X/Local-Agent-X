@@ -274,10 +274,10 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     // Sub-agents provide their own prompt
     systemPrompt = systemPromptOverride;
   } else {
-    // Use compact prompt for Codex (128k context) to save ~6k tokens
-    const basePrompt = isCodexProvider
-      ? (await import("./config.js")).COMPACT_SYSTEM_PROMPT
-      : config.systemPrompt;
+    // Use full prompt for all providers. The empty-response issue was caused
+    // by reasoning: { effort: "low" } in codex-client.ts, not prompt size.
+    // The full prompt contains behavioral instructions the agent needs.
+    const basePrompt = config.systemPrompt;
 
     const { createChatContextBuilder } = await import("./context-builder.js");
     const contextBuilder = createChatContextBuilder({

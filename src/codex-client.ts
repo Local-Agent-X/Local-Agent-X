@@ -121,12 +121,10 @@ export async function* streamCodexResponse(params: {
     reasoning: { effort: "high", summary: "auto" },
   };
 
-  // Pass previous_response_id for incremental mode — when only sending
-  // new tool results instead of the full conversation history, this tells
-  // the API which response to continue from.
-  if (params.previousResponseId) {
-    body.previous_response_id = params.previousResponseId;
-  }
+  // NOTE: previous_response_id is NOT supported on the Codex subscription
+  // endpoint (chatgpt.com/backend-api). Sending it causes 400 Bad Request.
+  // Incremental mode will need to work via message-level optimization
+  // instead of API-level response chaining.
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;

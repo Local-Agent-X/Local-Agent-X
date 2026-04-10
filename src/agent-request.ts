@@ -229,13 +229,21 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     try { [contextBlock] = await Promise.all([buildContextBlock(memoryIndex)]); } catch {}
     if (isTrivialToolRequest) console.log(`[chat] Trivial tool request — skipping memory injection`);
   } else {
-    // Bridge/cron — lightweight context only
+    // Bridge/cron/Codex — lightweight context only (skip autoSearch to save tokens)
     try {
-      [contextBlock, relevantMemories] = await Promise.all([
-        buildContextBlock(memoryIndex),
-        autoSearchContext(memoryIndex, message),
-      ]);
+      contextBlock = await buildContextBlock(memoryIndex);
     } catch {}
+  }
+
+  // For Codex (128k context), cap the memory context block. The full
+  // core_memory dump can be 5,000+ tokens of retained facts — essential
+  // for 200k+ models but overkill for casual chat on a tight budget.
+  // Keep identity + profile + today context, trim core_memory to first 2k chars.
+  if (isCodexProvider && contextBlock.length > 3000) {
+    contextBlock = contextBlock.replace(
+      /<core_memory>([\s\S]*?)<\/core_memory>/,
+      (_, content: string) => `<core_memory>\n${content.slice(0, 2000)}\n[...truncated for context budget]\n</core_memory>`
+    );
   }
 
   // 4. Build system prompt

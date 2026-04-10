@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "node --max-old-space-size=512 --import=tsx --watch src/index.ts",
+    "dev": "node --max-old-space-size=512 --import=tsx --watch-path=src --watch src/index.ts",
     "start": "node --max-old-space-size=512 dist/index.js",
     "build:ari": "node scripts/build-ari.js",
     "build": "npm run build:ari && tsc",

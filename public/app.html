@@ -188,6 +188,7 @@
     <div class="settings-tabs">
       <button class="tab-pill active" onclick="switchTab('general')">Account</button>
       <button class="tab-pill" onclick="switchTab('ai')">AI & Models</button>
+      <button class="tab-pill" onclick="switchTab('memory')">Memory</button>
       <button class="tab-pill" onclick="switchTab('image')">Media</button>
       <button class="tab-pill" onclick="switchTab('security')">Security</button>
       <button class="tab-pill" onclick="switchTab('whatsapp')">Communication</button>
@@ -256,6 +257,16 @@
             </table>
           </div>
           <div class="field-row"><div class="field"><label class="field-label">Temperature</label><input class="field-input" id="cfg-temperature" type="number" step="0.1" min="0" max="2" value="0.7"/><div class="field-hint">Controls creativity vs accuracy. Lower (0.1-0.3) = focused and precise, less hallucination. Higher (0.7-1.5) = more creative but may make things up. Default 0.7 is a good balance.</div></div><div class="field"><label class="field-label">Max Iterations</label><input class="field-input" id="cfg-maxiter" type="number" min="1" max="100" value="25"/><div class="field-hint">How many tool calls the agent can make per message. Higher = more thorough but slower. Lower = faster but may stop before finishing complex tasks. Default 25 works for most tasks.</div></div></div>
+        </div>
+      </div>
+      <!-- Memory & Embeddings -->
+      <div id="stab-memory" class="tab-pane">
+        <div class="section-card">
+          <div class="section-title">Memory Embeddings</div>
+          <div class="section-desc">Embeddings power semantic search — find memories by meaning, not just keywords. Choose a provider below.</div>
+          <div id="emb-status" class="status-badge" style="display:none"><span class="status-dot"></span> <span id="emb-status-text"></span></div>
+          <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-emb-provider" onchange="onEmbProviderChange(this.value)"><option value="ollama">Ollama (Local, Free)</option><option value="openai">OpenAI</option><option value="gemini">Google Gemini</option><option value="local">Built-in (No server needed)</option><option value="none">None (Keyword search only)</option></select></div>
+          <div class="field"><label class="field-label">Model</label><select class="field-select" id="cfg-emb-model-select" style="display:none"></select><input class="field-input" id="cfg-emb-model" placeholder="e.g. nomic-embed-text, text-embedding-3-small" value=""/><div class="field-hint" id="cfg-emb-hint">For Ollama: nomic-embed-text (default), mxbai-embed-large, all-minilm. For OpenAI: text-embedding-3-small, text-embedding-3-large.</div></div>
         </div>
       </div>
       <!-- Image & Video -->

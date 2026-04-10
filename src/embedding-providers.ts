@@ -377,7 +377,7 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   readonly name = "ollama";
   model: string;
   readonly dimensions = 768;
-  readonly maxBatchSize = 64;
+  readonly maxBatchSize = 10;
 
   private baseUrl: string;
   private healthy: boolean | null = null;
@@ -430,8 +430,13 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
       const json = (await res.json()) as { embeddings: number[][] };
       return json.embeddings ?? texts.map(() => emptyVector(this.dimensions));
     } catch (err: any) {
-      console.warn(`[ollama-embed] Batch failed: ${err?.message ?? err}`);
-      return texts.map(() => emptyVector(this.dimensions));
+      console.warn(`[ollama-embed] Batch failed: ${err?.message ?? err}, falling back to individual`);
+      // Fallback: embed one at a time
+      const results: number[][] = [];
+      for (const text of texts) {
+        results.push(await this.embed(text));
+      }
+      return results;
     }
   }
 

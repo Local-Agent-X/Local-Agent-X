@@ -130,27 +130,11 @@ export async function runCodexAgentHttp(
       };
     }
 
-    // Detect empty response (no text, no tool calls).
-    // Real causes (in order of frequency):
-    //   1. gpt-5.3-codex is a CODING model — it returns nothing for casual
-    //      chat messages like "hey". This is NOT moderation.
-    //   2. The system prompt is too long / biases the model to call a tool
-    //      that doesn't fit the user's request.
-    //   3. Actual content moderation (rare for benign messages).
-    // The placeholder is marked __EMPTY_CODEX_RESPONSE__ so the bridge
-    // handler can detect it and fall back to a different provider, and so
-    // stripEphemeralMessages can scrub it from the saved session.
+    // Empty response — log for diagnostics but do NOT inject sentinel text
+    // into the message history. That pollutes future turns and breaks
+    // alternating-role expectations on the next request.
     if (toolCalls.length === 0 && !assistantContent.trim()) {
-      // Internal sentinel — DO NOT stream to the client. The caller
-      // (chat.ts / server.ts bridge handler) detects this marker and
-      // falls back to another provider. Streaming it leaks ugly debug
-      // text into the chat UI.
-      const sentinel = "__EMPTY_CODEX_RESPONSE__";
-      const errorMsg: ChatCompletionMessageParam = { role: "assistant", content: sentinel };
-      messages.push(errorMsg);
-      // Don't stream the sentinel — just emit done so the SSE connection closes cleanly
-      onEvent?.({ type: "done", usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput } });
-      return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
+      console.warn(`[agent] Codex returned empty response (iteration ${iteration}, ${totalInput}in/${totalOutput}out tokens)`);
     }
 
     const assistantMsg: ChatCompletionMessageParam = { role: "assistant", content: assistantContent || null };

@@ -422,23 +422,7 @@ Examples of runtime-first vs code-edit:
 - accounting_transactions / accounting_invoices / accounting_invoice_create / accounting_pnl / accounting_categorize: QuickBooks, Xero
 - shop_orders / shop_order_get / shop_order_update / shop_products / shop_inventory_update / shop_customers: Shopify, WooCommerce
 
-All business tools use secrets for API credentials. If a required secret is missing, use request_secret to ask the user for it.
-
-## Anti-patterns (lessons from past failures — do NOT repeat)
-These rules exist because each one corresponds to a specific incident that broke an agent run. Treat them as hard rules.
-
-1. **Do not call agent_status / agent_output unprompted after spawning.** Spawn → tell the user → STOP. Polling looks like helpfulness but burns context and triggers loop detection.
-2. **Do not re-call the same tool with the same arguments more than 3 times.** The circuit breaker will eventually refuse you. If a tool failed twice with the same args, change strategy — different args, different tool, or report failure.
-3. **Do not search for files via glob/grep more than ~8 times in one task.** That is a discovery loop. Stop searching and produce output with what you have.
-4. **Do not read files over 10 000 lines with the read tool.** Use python -c or PowerShell to extract what you need in one command.
-5. **Do not invent tools or guess tool names.** Tool names are case-sensitive and exact. If unsure, call tool_search.
-6. **Do not ask for user approval before running a tool.** The security layer handles approvals. "Should I proceed?" is an anti-pattern — just call the tool.
-7. **Do not narrate routine tool calls.** Narrate only when it adds value (multi-step work, sensitive actions). For a single read/glob/bash, just call it.
-8. **Do not silently ignore tool errors.** If a tool returned an error and it is relevant to the task, address it before producing your final answer. Do not just claim success.
-9. **Do not write to absolute paths outside the workspace** (C:\\Windows, /etc, /usr, etc.). Use workspace/ relative paths or the configured working directory.
-10. **Do not summarize what you just did at the end of every response.** The user can see the diff. Final summaries are noise unless the user explicitly asked for one.
-11. **Do not report a task as complete when tool calls failed.** If write/edit/bash returned an error, the task is NOT done. Surface the error and try a fix.
-12. **Do not call memory_save for ephemeral state** (debug output, current task progress, things already in memory). Only retain durable facts about the user, project, or world.`;
+All business tools use secrets for API credentials. If a required secret is missing, use request_secret to ask the user for it.`;
 
 const configSchema = z.object({
   port: z.number().int().min(1).max(65535).default(7007),

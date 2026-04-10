@@ -6,7 +6,7 @@ import type { SecurityLayer } from "./security.js";
 import type { ToolPolicy } from "./tool-policy.js";
 import type { ThreatEngine } from "./threat-engine.js";
 import type { RBACManager, Role } from "./rbac.js";
-import { streamCodexResponse } from "./codex-client.js";
+import { streamCodexResponse, type ReasoningItem } from "./codex-client.js";
 import { executeToolCalls, checkAndCompact } from "./tool-executor.js";
 
 interface ImageAttachment {
@@ -83,6 +83,9 @@ export async function runCodexAgentHttp(
   let messages: ChatCompletionMessageParam[] = [...history, { role: "user", content: userContent } as ChatCompletionMessageParam];
   let totalInput = 0, totalOutput = 0;
   let previousResponseId: string | undefined;
+  // Track how many messages existed before each turn so we can compute
+  // incremental input (tool results only) for the next request.
+  let lastContextLength = 0;
   const codexTools = tools.map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters }));
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
@@ -92,10 +95,33 @@ export async function runCodexAgentHttp(
 
     let assistantContent = "";
     const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+    let turnReasoning: ReasoningItem[] = [];
 
-    const streamMessages = previousResponseId
-      ? messages.slice(-toolCalls.length * 2)
-      : messages;
+    // Incremental mode: when we have a previousResponseId AND the only new
+    // messages since our last turn are tool results, send just those results
+    // instead of the full conversation. This saves input tokens and avoids
+    // re-sending the entire history on every tool-call loop.
+    let streamMessages: ChatCompletionMessageParam[];
+    let turnPreviousResponseId: string | undefined;
+    if (previousResponseId && lastContextLength > 0) {
+      const newMessages = messages.slice(lastContextLength);
+      const allToolResults = newMessages.length > 0 && newMessages.every(
+        (m) => m.role === "tool" || (m.role === "assistant" && (m as unknown as Record<string, unknown>).tool_calls)
+      );
+      if (allToolResults) {
+        // Incremental: only send the new tool result messages
+        streamMessages = newMessages;
+        turnPreviousResponseId = previousResponseId;
+      } else {
+        // Full context restart — something other than tool results was added
+        streamMessages = messages;
+        turnPreviousResponseId = undefined;
+      }
+    } else {
+      streamMessages = messages;
+    }
+
+    lastContextLength = messages.length;
 
     const forceToolUse = iteration > 0 && iteration < 4;
 
@@ -106,7 +132,7 @@ export async function runCodexAgentHttp(
         messages: streamMessages,
         systemPrompt,
         tools: codexTools,
-        previousResponseId,
+        previousResponseId: turnPreviousResponseId,
         forceToolUse,
         sessionId: options.sessionId,
       });
@@ -114,16 +140,24 @@ export async function runCodexAgentHttp(
       for await (const event of stream) {
         if (event.type === "text") { assistantContent += event.delta; onEvent?.({ type: "stream", delta: event.delta }); }
         else if (event.type === "tool_call") { toolCalls.push({ id: event.id, name: event.name, arguments: event.arguments }); }
+        else if (event.type === "reasoning") { turnReasoning.push(event.item); }
         else if (event.type === "done") {
           totalInput += event.usage.inputTokens;
           totalOutput += event.usage.outputTokens;
           if (event.responseId) previousResponseId = event.responseId;
+          // Merge any reasoning from the done event that wasn't streamed
+          if (event.reasoning.length > 0 && turnReasoning.length === 0) {
+            turnReasoning = event.reasoning;
+          }
         }
       }
     } catch (e) {
       const errMsg = (e as Error).message || "Stream error";
       console.error("[agent] Codex HTTP stream error:", errMsg);
       onEvent?.({ type: "error", message: errMsg });
+      // On error, invalidate previousResponseId so the next attempt
+      // sends the full context instead of trying incremental mode
+      previousResponseId = undefined;
       return {
         messages: [{ role: "system", content: systemPrompt }, ...messages],
         usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
@@ -135,12 +169,20 @@ export async function runCodexAgentHttp(
     // the first attempt but succeeds on immediate retry.
     if (toolCalls.length === 0 && !assistantContent.trim()) {
       console.warn(`[agent] Codex returned empty response (iteration ${iteration}, ${totalInput}in/${totalOutput}out tokens) — retrying`);
+      // Retry without previousResponseId to force full context
+      previousResponseId = undefined;
       try {
         let retryText = "";
-        const retryStream = streamCodexResponse({ token: apiKey, model, messages: streamMessages, systemPrompt, tools: codexTools });
+        const retryStream = streamCodexResponse({ token: apiKey, model, messages, systemPrompt, tools: codexTools });
         for await (const event of retryStream) {
           if (event.type === "text") { retryText += event.delta; onEvent?.({ type: "stream", delta: event.delta }); }
-          else if (event.type === "done") { totalInput += event.usage.inputTokens; totalOutput += event.usage.outputTokens; }
+          else if (event.type === "reasoning") { turnReasoning.push(event.item); }
+          else if (event.type === "done") {
+            totalInput += event.usage.inputTokens;
+            totalOutput += event.usage.outputTokens;
+            if (event.responseId) previousResponseId = event.responseId;
+            if (event.reasoning.length > 0 && turnReasoning.length === 0) turnReasoning = event.reasoning;
+          }
         }
         if (retryText.trim()) assistantContent = retryText;
       } catch (e) {
@@ -148,8 +190,19 @@ export async function runCodexAgentHttp(
       }
     }
 
+    // Build the assistant message, attaching reasoning items as _reasoning
+    // metadata so they can be replayed in convertMessagesToInput() on the
+    // next turn. The Responses API requires reasoning to be present.
     const assistantMsg: ChatCompletionMessageParam = { role: "assistant", content: assistantContent || null };
-    if (toolCalls.length > 0) { (assistantMsg as unknown as Record<string, unknown>).tool_calls = toolCalls.map((tc) => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } })); }
+    const assistantRecord = assistantMsg as unknown as Record<string, unknown>;
+    if (toolCalls.length > 0) {
+      assistantRecord.tool_calls = toolCalls.map((tc) => ({
+        id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments },
+      }));
+    }
+    if (turnReasoning.length > 0) {
+      assistantRecord._reasoning = turnReasoning;
+    }
     messages.push(assistantMsg);
 
     if (toolCalls.length === 0) {

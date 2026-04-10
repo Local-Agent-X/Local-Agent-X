@@ -81,6 +81,23 @@ export function startServer(config: SAXConfig) {
   const memoryTools = createMemoryTools(memoryIndex);
   ensurePersonalityFiles(join(dataDir, "memory"));
   const secretsStore = new SecretsStore(dataDir);
+
+  // Wire up embedding provider for semantic memory search
+  import("./embedding-providers.js").then(({ createEmbeddingProvider }) => {
+    try {
+      const sp = join(dataDir, "settings.json");
+      const settings = existsSync(sp) ? JSON.parse(readFileSync(sp, "utf-8")) : {};
+      const embProvider = settings.embeddingProvider || "ollama";
+      const embModel = settings.embeddingModel || undefined;
+      let apiKey: string | undefined;
+      if (embProvider === "openai") apiKey = secretsStore.get("OPENAI_API_KEY") || config.openaiApiKey;
+      else if (embProvider === "gemini") apiKey = secretsStore.get("GEMINI_API_KEY");
+      const provider = createEmbeddingProvider({ provider: embProvider, apiKey, model: embModel });
+      memoryIndex.setEmbeddingProvider(provider);
+      console.log(`[memory] Embedding provider: ${provider.name}/${provider.model} (${provider.dimensions}d)`);
+    } catch (e) { console.warn(`[memory] Embedding provider setup failed: ${(e as Error).message}`); }
+  }).catch(e => console.warn(`[memory] Embedding providers not available: ${(e as Error).message} — keyword search only`));
+
   import("./image-tools.js").then(m => m.initImageTools?.(secretsStore)).catch(() => {});
   const cronService = new CronService(dataDir);
   const integrations = new IntegrationRegistry(dataDir);
@@ -105,7 +122,7 @@ export function startServer(config: SAXConfig) {
     else if (provider === "xai") apiKey = secretsStore.get("XAI_API_KEY") || "";
     else if (provider === "openai" && !config.openaiApiKey) apiKey = secretsStore.get("OPENAI_API_KEY") || await getApiKey(config.openaiApiKey);
     else apiKey = await getApiKey(config.openaiApiKey);
-    const model = String(saved.model || "") || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model);
+    const model = String(saved.model || "") || (provider === "codex" ? "gpt-5.4-mini" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model);
     return { provider, apiKey, model };
   }
 

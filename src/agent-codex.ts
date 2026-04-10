@@ -130,12 +130,10 @@ export async function runCodexAgentHttp(
       };
     }
 
-    // Empty response — retry once. Codex sometimes returns empty on the first
-    // attempt but succeeds on immediate retry. Don't push a null-content
-    // assistant message (pollutes session, user sees nothing).
+    // Empty response — retry once silently. Codex sometimes returns empty on
+    // the first attempt but succeeds on immediate retry.
     if (toolCalls.length === 0 && !assistantContent.trim()) {
       console.warn(`[agent] Codex returned empty response (iteration ${iteration}, ${totalInput}in/${totalOutput}out tokens) — retrying`);
-      // One retry with the same parameters
       try {
         let retryText = "";
         const retryStream = streamCodexResponse({ token: apiKey, model, messages: streamMessages, systemPrompt, tools: codexTools });
@@ -143,17 +141,9 @@ export async function runCodexAgentHttp(
           if (event.type === "text") { retryText += event.delta; onEvent?.({ type: "stream", delta: event.delta }); }
           else if (event.type === "done") { totalInput += event.usage.inputTokens; totalOutput += event.usage.outputTokens; }
         }
-        if (retryText.trim()) {
-          assistantContent = retryText;
-        } else {
-          console.warn(`[agent] Codex retry also empty — returning graceful message`);
-          assistantContent = "I'm having trouble responding to that right now. Could you rephrase or try again?";
-          onEvent?.({ type: "stream", delta: assistantContent });
-        }
+        if (retryText.trim()) assistantContent = retryText;
       } catch (e) {
         console.error(`[agent] Codex retry failed:`, (e as Error).message);
-        assistantContent = "I'm having trouble responding to that right now. Could you rephrase or try again?";
-        onEvent?.({ type: "stream", delta: assistantContent });
       }
     }
 

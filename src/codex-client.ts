@@ -174,10 +174,6 @@ export async function* streamCodexResponse(params: {
     text: { verbosity: "medium" },
     include: ["reasoning.encrypted_content"],
     store: false,
-    // NOTE: Do NOT send reasoning unconditionally. upstream (pi-ai) only
-    // sends it when explicitly requested. Unconditional reasoning: { effort: "low" }
-    // was causing ~30-40% empty responses — the model spends tokens on
-    // reasoning and produces empty text output.
   };
 
   if (params.tools && params.tools.length > 0) {

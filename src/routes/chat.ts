@@ -260,7 +260,16 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // IDE sessions: strip delegation tools so the agent works directly with file tools
       const IDE_BLOCKED_TOOLS = new Set(["agent_spawn", "delegate", "build_app", "agent_status", "agent_cancel", "agent_pause", "agent_resume", "agent_message"]);
       const isIdeSession = sessionId.startsWith("ide-");
-      const sessionTools = isIdeSession ? ctx.allAgentTools.filter(t => !IDE_BLOCKED_TOOLS.has(t.name)) : ctx.allAgentTools;
+      // Codex (128k context): use the slimmed bridge tool set to save ~8k tokens.
+      // allAgentTools includes stubs, cron, agency, app tools that consume tokens
+      // but rarely get called in casual conversation. The bridge tools cover all
+      // the important ones (filesystem, memory, browser, images, missions, issues).
+      const isCodex = provider === "codex";
+      const sessionTools = isIdeSession
+        ? ctx.allAgentTools.filter(t => !IDE_BLOCKED_TOOLS.has(t.name))
+        : isCodex
+          ? ctx.bridgeTools
+          : ctx.allAgentTools;
 
       const baseRunOpts = {
         baseURL: customBaseURL, systemPrompt: enrichedPrompt,

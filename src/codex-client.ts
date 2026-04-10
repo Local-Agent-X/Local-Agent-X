@@ -9,6 +9,14 @@
  */
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import {
+  convertMessagesToInput,
+  encodeToolCallId,
+  parseReasoningItem,
+  type ReasoningItem,
+} from "./codex-message-convert.js";
+
+export type { ReasoningItem } from "./codex-message-convert.js";
 
 const CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
 
@@ -59,74 +67,6 @@ function extractAccountIdFromJwt(token: string): string | null {
   }
 }
 
-function convertMessagesToInput(
-  messages: ChatCompletionMessageParam[]
-): unknown[] {
-  const input: unknown[] = [];
-  for (const msg of messages) {
-    if (msg.role === "system") continue; // handled separately as instructions
-    if (msg.role === "user") {
-      let content: unknown[];
-      if (typeof msg.content === "string") {
-        content = [{ type: "input_text", text: msg.content }];
-      } else if (Array.isArray(msg.content)) {
-        // Convert Chat Completions vision format to Responses API format
-        content = (msg.content as unknown as Array<Record<string, unknown>>).map((part) => {
-          if (part.type === "text") return { type: "input_text", text: part.text };
-          if (part.type === "image_url") {
-            const iu = part.image_url as { url: string; detail?: string };
-            return { type: "input_image", image_url: iu.url, detail: iu.detail || "auto" };
-          }
-          return part;
-        });
-      } else {
-        content = [{ type: "input_text", text: String(msg.content || "") }];
-      }
-      input.push({
-        type: "message",
-        role: "user",
-        content,
-      });
-    } else if (msg.role === "assistant") {
-      const m = msg as unknown as Record<string, unknown>;
-      if (m.tool_calls) {
-        // Add function calls as output items
-        for (const tc of m.tool_calls as Array<{
-          id: string;
-          function: { name: string; arguments: string };
-        }>) {
-          input.push({
-            type: "function_call",
-            name: tc.function.name,
-            call_id: tc.id,
-            arguments: tc.function.arguments,
-          });
-        }
-      }
-      if (msg.content) {
-        input.push({
-          type: "message",
-          role: "assistant",
-          content: [
-            {
-              type: "output_text",
-              text: typeof msg.content === "string" ? msg.content : "",
-            },
-          ],
-        });
-      }
-    } else if (msg.role === "tool") {
-      const m = msg as { tool_call_id?: string; content?: string };
-      input.push({
-        type: "function_call_output",
-        call_id: m.tool_call_id,
-        output: typeof m.content === "string" ? m.content : "",
-      });
-    }
-  }
-  return input;
-}
-
 export interface CodexResponse {
   text: string;
   toolCalls: Array<{
@@ -134,6 +74,7 @@ export interface CodexResponse {
     name: string;
     arguments: string;
   }>;
+  reasoning: ReasoningItem[];
   usage: { inputTokens: number; outputTokens: number };
 }
 
@@ -150,7 +91,8 @@ export async function* streamCodexResponse(params: {
 }): AsyncGenerator<
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
-  | { type: "done"; usage: { inputTokens: number; outputTokens: number }; responseId?: string }
+  | { type: "reasoning"; item: ReasoningItem }
+  | { type: "done"; usage: { inputTokens: number; outputTokens: number }; responseId?: string; reasoning: ReasoningItem[] }
 > {
   const accountId = extractAccountIdFromJwt(params.token);
 
@@ -178,6 +120,13 @@ export async function* streamCodexResponse(params: {
     // "low" caused ~40% empty responses; omitting entirely also failed.
     reasoning: { effort: "high", summary: "auto" },
   };
+
+  // Pass previous_response_id for incremental mode — when only sending
+  // new tool results instead of the full conversation history, this tells
+  // the API which response to continue from.
+  if (params.previousResponseId) {
+    body.previous_response_id = params.previousResponseId;
+  }
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;
@@ -234,11 +183,15 @@ export async function* streamCodexResponse(params: {
   const decoder = new TextDecoder();
   let buffer = "";
   let fullText = "";
+  // Tool calls keyed by item_id (used in streaming events as the lookup key).
+  // Each entry stores the compound id (call_id|item_id), name, and arguments.
   const toolCalls = new Map<
     string,
-    { id: string; name: string; arguments: string }
+    { id: string; callId: string; itemId: string; name: string; arguments: string }
   >();
   let usage = { inputTokens: 0, outputTokens: 0 };
+  let responseId: string | undefined;
+  const reasoningItems: ReasoningItem[] = [];
 
   // Silence-based timeout: abort if no data arrives for 90 seconds
   // Resets every time data flows — so long builds stay alive as long as output is streaming
@@ -293,51 +246,67 @@ export async function* streamCodexResponse(params: {
         yield { type: "text", delta: event.delta };
       }
 
-      // Function call arguments delta — call_id may be top-level or as item_id
+      // Capture tool name + IDs from output_item.added events.
+      // This fires BEFORE function_call_arguments deltas and carries:
+      //   item.id    = "fc_..." (the output item ID, used as item_id in deltas)
+      //   item.call_id = "call_..." (the call ID used for function_call_output)
+      if (event.type === "response.output_item.added") {
+        const rawItem = event as unknown as Record<string, unknown>;
+        const item = rawItem.item as Record<string, unknown> | undefined;
+        if (item?.type === "function_call") {
+          const itemId = (item.id as string) || "";
+          const callId = (item.call_id as string) || "";
+          const lookupKey = itemId || callId;
+          if (lookupKey) {
+            const existing = toolCalls.get(lookupKey) || {
+              id: encodeToolCallId(callId, itemId),
+              callId,
+              itemId,
+              name: "",
+              arguments: "",
+            };
+            if (item.name) existing.name = item.name as string;
+            if (callId) existing.callId = callId;
+            if (itemId) existing.itemId = itemId;
+            existing.id = encodeToolCallId(existing.callId, existing.itemId);
+            toolCalls.set(lookupKey, existing);
+          }
+        }
+      }
+
+      // Function call arguments delta — item_id is the lookup key (matches
+      // the item.id from output_item.added). Some events use call_id instead.
       if (event.type === "response.function_call_arguments.delta") {
         const rawDelta = event as unknown as Record<string, unknown>;
-        const deltaId = event.call_id || (rawDelta.item_id as string) || "";
-        if (deltaId) {
-          const existing = toolCalls.get(deltaId) || {
-            id: deltaId,
+        const lookupKey = (rawDelta.item_id as string) || event.call_id || "";
+        if (lookupKey) {
+          const existing = toolCalls.get(lookupKey) || {
+            id: lookupKey,
+            callId: event.call_id || lookupKey,
+            itemId: (rawDelta.item_id as string) || "",
             name: event.name || "",
             arguments: "",
           };
           if (event.name) existing.name = event.name;
           existing.arguments += event.delta || "";
-          toolCalls.set(deltaId, existing);
+          toolCalls.set(lookupKey, existing);
         }
       }
 
-      // Function call done — extract from done event if deltas didn't capture it
+      // Function call done — yield the complete tool call with compound ID
       if (event.type === "response.function_call_arguments.done") {
         const rawEvent = event as unknown as Record<string, unknown>;
-        const callId = event.call_id || (rawEvent.item_id as string) || "";
-        const tc = callId ? toolCalls.get(callId) : undefined;
+        const lookupKey = (rawEvent.item_id as string) || event.call_id || "";
+        const tc = lookupKey ? toolCalls.get(lookupKey) : undefined;
         if (tc && tc.name) {
           yield { type: "tool_call", id: tc.id, name: tc.name, arguments: tc.arguments };
-        } else if (callId) {
-          // Done event has full arguments but name may be missing — check output_item.added events
+        } else if (lookupKey) {
           const name = tc?.name || (rawEvent.name as string) || "";
           const args = (rawEvent.arguments as string) || tc?.arguments || "";
+          const callId = event.call_id || (rawEvent.call_id as string) || lookupKey;
+          const itemId = (rawEvent.item_id as string) || "";
           if (name || args) {
-            yield { type: "tool_call", id: callId, name, arguments: args };
-          }
-        }
-      }
-
-      // Capture tool name from output_item.added events (comes before function_call deltas)
-      if (event.type === "response.output_item.added") {
-        const rawItem = event as unknown as Record<string, unknown>;
-        const item = rawItem.item as Record<string, unknown> | undefined;
-        // item.id = the item_id used in delta/done events; item.call_id = legacy format
-        if (item?.type === "function_call") {
-          // The item's id field is the same as item_id used in delta/done events
-          const id = (item.id as string) || (item.call_id as string) || "";
-          if (id) {
-            const existing = toolCalls.get(id) || { id, name: "", arguments: "" };
-            if (item.name) existing.name = item.name as string;
-            toolCalls.set(id, existing);
+            yield { type: "tool_call", id: encodeToolCallId(callId, itemId), name, arguments: args };
           }
         }
       }
@@ -347,25 +316,48 @@ export async function* streamCodexResponse(params: {
         event.type === "response.completed" ||
         event.type === "response.done"
       ) {
+        // Capture the response ID for previous_response_id on the next turn
+        if (event.response?.id) {
+          responseId = event.response.id;
+        }
+
         if (event.response?.usage) {
           usage.inputTokens = event.response.usage.input_tokens || 0;
           usage.outputTokens = event.response.usage.output_tokens || 0;
         }
-        // Extract any tool calls AND text from completed response.
+        // Extract tool calls, text, AND reasoning from the completed response.
         // Some Codex responses arrive as a single completed event without streaming
         // output_text.delta events first — we still need to surface that text.
         if (event.response?.output) {
           for (const item of event.response.output) {
+            // Capture reasoning items for replay on the next turn.
+            // These contain encrypted_content and summary that must be
+            // sent back verbatim — the API rejects requests without them.
+            if (item.type === "reasoning") {
+              const reasoningItem = parseReasoningItem(item as unknown as Record<string, unknown>);
+              if (reasoningItem) {
+                reasoningItems.push(reasoningItem);
+                yield { type: "reasoning", item: reasoningItem };
+              }
+              continue;
+            }
+
             if (item.type === "function_call" && item.call_id) {
-              if (!toolCalls.has(item.call_id)) {
-                toolCalls.set(item.call_id, {
-                  id: item.call_id,
+              // Use the item's own id (fc_...) as lookup key to avoid duplicates
+              const lookupKey = (item as unknown as Record<string, unknown>).id as string || item.call_id;
+              if (!toolCalls.has(lookupKey)) {
+                const itemId = (item as unknown as Record<string, unknown>).id as string || "";
+                const compoundId = encodeToolCallId(item.call_id, itemId);
+                toolCalls.set(lookupKey, {
+                  id: compoundId,
+                  callId: item.call_id,
+                  itemId,
                   name: item.name || "",
                   arguments: item.arguments || "",
                 });
                 yield {
                   type: "tool_call",
-                  id: item.call_id,
+                  id: compoundId,
                   name: item.name || "",
                   arguments: item.arguments || "",
                 };
@@ -389,7 +381,6 @@ export async function* streamCodexResponse(params: {
         // Diagnostic: if Codex returned NOTHING (no text, no tool calls),
         // log the full output array so we can see what shape the response
         // actually had — reasoning items, refusal items, empty array, etc.
-        // This is the only way to know WHY the model returned nothing.
         if (!fullText.trim() && toolCalls.size === 0) {
           const outputSnapshot = event.response?.output ?? null;
           const outputTypes = Array.isArray(outputSnapshot) ? outputSnapshot.map((o) => o?.type || "?").join(",") : "none";
@@ -404,5 +395,5 @@ export async function* streamCodexResponse(params: {
   // Clean up silence timer
   if (silenceTimer) clearTimeout(silenceTimer);
 
-  yield { type: "done", usage };
+  yield { type: "done", usage, responseId, reasoning: reasoningItems };
 }

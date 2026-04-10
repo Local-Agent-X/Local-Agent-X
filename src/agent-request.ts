@@ -133,7 +133,7 @@ export async function resolveProvider(
   }
 
   const model = String(saved.model || "") ||
-    (provider === "codex" ? "gpt-5.3-codex" :
+    (provider === "codex" ? "gpt-5.4-mini" :
      provider === "anthropic" ? "claude-sonnet-4-6" :
      provider === "gemini" ? "gemini-2.0-flash" :
      config.model);

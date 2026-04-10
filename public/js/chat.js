@@ -308,6 +308,9 @@ async function sendMessage() {
             }
             break;
           }
+          case 'tool_progress':
+            if (viewing) updateToolProgress(bodyEl, event.toolName, event.message);
+            break;
           case 'context_status': if (viewing) updateContextBar(event); break;
           case 'error':
             if (saveInterval) clearInterval(saveInterval);
@@ -432,6 +435,9 @@ async function sendMessage() {
               savePartial();
               break;
             }
+            case 'tool_progress':
+              if (viewing) updateToolProgress(bodyEl, event.toolName, event.message);
+              break;
             case 'secret_request': if (viewing) showSecretModal(event.name, event.service, event.reason); break;
             case 'context_status': if (viewing) updateContextBar(event); break;
             case 'error': content += '\n\nError: ' + event.message; if (viewing) bodyEl.innerHTML = md(content); break;
@@ -491,6 +497,7 @@ async function sendMessage() {
                 if (event.type === 'stream') { content += event.delta; if (isViewingThis()) bodyEl.innerHTML = md(content); }
                 if (event.type === 'tool_start' && isViewingThis()) { bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args, event.riskLevel, event.context)); }
                 if (event.type === 'tool_end' && isViewingThis()) { const cards = bodyEl.querySelectorAll('.tool-card'); const last = cards[cards.length-1]; if(last){last.querySelector('.indicator').className='indicator '+(event.allowed?'allowed':'blocked');} }
+                if (event.type === 'tool_progress' && isViewingThis()) { updateToolProgress(bodyEl, event.toolName, event.message); }
                 if (event.type === 'done') { savePartial(); }
               } catch {}
             }
@@ -704,10 +711,46 @@ function toolSummary(name, args) {
 }
 
 function makeToolCard(name, args, riskLevel, context) {
-  const card = document.createElement('div'); card.className = 'tool-card';
-  card.innerHTML = `<div class="tool-header" onclick="this.parentElement.classList.toggle('open')"><span class="indicator"></span><span class="tool-name">${esc(name)}</span><span style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(toolSummary(name, args))}</span><span style="color:var(--muted);font-size:.65rem">&#9654;</span></div>`
+  const card = document.createElement('div'); card.className = 'tool-card'; card.setAttribute('data-tool-name', name);
+  card.innerHTML = `<div class="tool-header" onclick="this.parentElement.classList.toggle('open')"><span class="indicator"></span><span class="tool-name">${esc(name)}</span><span class="tool-summary" style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(toolSummary(name, args))}</span><span style="color:var(--muted);font-size:.65rem">&#9654;</span></div>`
     + `<div class="tool-detail">executing...</div>`;
   return card;
+}
+
+function updateToolProgress(container, toolName, message) {
+  // Find the last tool card matching this tool name
+  const cards = container.querySelectorAll('.tool-card[data-tool-name="' + toolName + '"]');
+  let card = cards.length > 0 ? cards[cards.length - 1] : null;
+  // Fallback: last tool card regardless of name
+  if (!card) { const all = container.querySelectorAll('.tool-card'); card = all.length > 0 ? all[all.length - 1] : null; }
+  if (!card) return;
+
+  // Parse message format: "45%|237/1102 conversations, 500 chunks|conversations-003.json"
+  const parts = message.split('|');
+  const pctStr = parts[0] || '';
+  const detail = parts[1] || message;
+  const file = parts[2] || '';
+  const pct = parseInt(pctStr) || 0;
+
+  // Update summary text in header
+  const summary = card.querySelector('.tool-summary');
+  if (summary) summary.textContent = detail;
+
+  // Create or update progress bar in detail area
+  let bar = card.querySelector('.tool-progress-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'tool-progress-bar';
+    bar.innerHTML = '<div class="tool-progress-fill"></div><span class="tool-progress-label"></span>';
+    const detailEl = card.querySelector('.tool-detail');
+    if (detailEl) { detailEl.textContent = ''; detailEl.appendChild(bar); }
+    // Auto-open the card to show progress
+    card.classList.add('open');
+  }
+  const fill = bar.querySelector('.tool-progress-fill');
+  const label = bar.querySelector('.tool-progress-label');
+  if (fill) fill.style.width = pct + '%';
+  if (label) label.textContent = pct + '% — ' + detail + (file ? ' (' + file + ')' : '');
 }
 
 // ── Secret modal ──

@@ -146,6 +146,7 @@ export async function* streamCodexResponse(params: {
   temperature?: number;
   previousResponseId?: string;
   forceToolUse?: boolean;
+  sessionId?: string;
 }): AsyncGenerator<
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
@@ -173,13 +174,21 @@ export async function* streamCodexResponse(params: {
     text: { verbosity: "medium" },
     include: ["reasoning.encrypted_content"],
     store: false,
-    reasoning: { effort: "low" },
+    // NOTE: Do NOT send reasoning unconditionally. upstream (pi-ai) only
+    // sends it when explicitly requested. Unconditional reasoning: { effort: "low" }
+    // was causing ~30-40% empty responses — the model spends tokens on
+    // reasoning and produces empty text output.
   };
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;
     body.tool_choice = "auto";
     body.parallel_tool_calls = true;
+  }
+
+  // Prompt caching: reuse cached prompt across turns in the same session
+  if (params.sessionId) {
+    body.prompt_cache_key = params.sessionId;
   }
 
   // Codex endpoint does not support temperature

@@ -153,46 +153,9 @@ export function startServer(config: SAXConfig) {
     // for benign messages like "hey". Web chat already does this; bridge did not.
     const cleanHistory = truncateHistory(sanitizeHistory(session.messages), 30);
 
-    let result = await enqueue("main", () => runAgent(text, cleanHistory, {
+    const result = await enqueue("main", () => runAgent(text, cleanHistory, {
       apiKey, model, provider: provider as AgentOptions["provider"], ...baseOpts,
     }), { label: `bridge:${platform}:${from}` });
-
-    // Empty-response fallback: if Codex returned the empty-response sentinel,
-    // automatically retry on a fallback provider so the user actually gets
-    // an answer instead of the placeholder text.
-    const lastAssistantText = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "";
-    const isEmptyResponse = lastAssistantText.startsWith("__EMPTY_CODEX_RESPONSE__") || lastAssistantText.includes("model returned an empty response") || lastAssistantText.trim().length === 0;
-    if (isEmptyResponse && provider === "codex") {
-      // Try xAI first (fast, no moderation), then Anthropic, then OpenAI direct.
-      const fallbacks: Array<{ provider: string; model: string; key: string }> = [];
-      const xaiKey = secretsStore.get("XAI_API_KEY");
-      if (xaiKey) fallbacks.push({ provider: "xai", model: "grok-3-mini", key: xaiKey });
-      try {
-        const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
-        if (loadAnthropicTokens()) {
-          const anthKey = await getAnthropicApiKey();
-          if (anthKey) fallbacks.push({ provider: "anthropic", model: "claude-haiku-4-5", key: anthKey });
-        }
-      } catch {}
-      const openaiKey = secretsStore.get("OPENAI_API_KEY") || (config.openaiApiKey ? await getApiKey(config.openaiApiKey) : "");
-      if (openaiKey) fallbacks.push({ provider: "openai", model: "gpt-4o-mini", key: openaiKey });
-
-      for (const fb of fallbacks) {
-        console.log(`[bridge] Codex returned empty response — falling back to ${fb.provider}/${fb.model}`);
-        try {
-          const fbResult = await enqueue("main", () => runAgent(text, cleanHistory, {
-            apiKey: fb.key, model: fb.model, provider: fb.provider as AgentOptions["provider"], ...baseOpts,
-          }), { label: `bridge:${platform}:${from}:fallback` });
-          const fbText = fbResult.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "";
-          if (fbText.trim() && !fbText.startsWith("__EMPTY_CODEX_RESPONSE__") && !fbText.includes("model returned an empty response")) {
-            result = fbResult;
-            break;
-          }
-        } catch (e) {
-          console.error(`[bridge] Fallback to ${fb.provider} failed:`, (e as Error).message);
-        }
-      }
-    }
 
     session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system" && (m.content || (m as unknown as Record<string, unknown>).tool_calls));
     session.updatedAt = Date.now(); saveSession(session);

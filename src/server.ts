@@ -4,7 +4,7 @@ import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { runAgent, type AgentOptions } from "./agent.js";
-import { stripEphemeralMessages, sanitizeHistory, truncateHistory } from "./agent-providers.js";
+import { stripEphemeralMessages } from "./agent-providers.js";
 import { allTools, createHttpRequestTool, buildToolRegistry } from "./tools.js";
 import { appTools } from "./app-tools.js";
 import { issueTools } from "./issue-tools.js";
@@ -111,8 +111,6 @@ export function startServer(config: SAXConfig) {
 
   // Bridge message handler (shared by WhatsApp & Telegram)
   async function bridgeMessageHandler(platform: string, { from, name, text, sessionId }: { from: string; name: string; text: string; sessionId: string }): Promise<string> {
-    const saved = loadSavedSettings();
-    const { provider, apiKey, model } = await resolveProviderAndKey(saved);
     const channelType = platform.toLowerCase() as ChannelType;
     const route = resolveSession(channelType, from, sessionId);
 
@@ -131,30 +129,31 @@ export function startServer(config: SAXConfig) {
 
     const session = getOrCreateSession(route.sessionKey);
     if (session.messages.length === 0) session.title = `${platform}: ${name}`;
-    const [contextBlock, relevantMemories] = await Promise.all([buildContextBlock(memoryIndex), autoSearchContext(memoryIndex, text)]);
-    const channelConfig = getChannelConfig(channelType);
-    const enrichedPrompt = config.systemPrompt + contextBlock + relevantMemories + integrations.getAgentContext() +
-      `\n\n[${platform} bridge] ${buildChannelContext(route)}. Message from ${name} (${from}). ` +
-      `Keep responses concise — max ~${channelConfig.maxTextLength === Infinity ? "unlimited" : channelConfig.maxTextLength} chars. ` +
-      (channelConfig.markdownFlavor === "plain" ? "Use plain text only. " : channelConfig.markdownFlavor === "whatsapp" ? "Use minimal formatting. " : "");
     const injectionScore = detectInjection(text).reduce((max, h) => Math.max(max, h.score), 0);
     if (injectionScore >= 0.85) return `I can't process that message — it was flagged by security filters.`;
 
-    const baseOpts = {
-      systemPrompt: enrichedPrompt, tools: bridgeTools, security, toolPolicy, rbac, callerRole: "user" as const,
-      sessionId: route.sessionKey, maxIterations: (typeof saved.maxIterations === "number" ? saved.maxIterations : null) || config.maxIterations,
-      temperature: typeof saved.temperature === "number" ? saved.temperature : config.temperature,
-    };
+    const { prepareAgentRequest } = await import("./agent-request.js");
+    const prepared = await prepareAgentRequest({
+      channel: channelType as "telegram" | "whatsapp",
+      message: text, sessionMessages: session.messages, sessionId: route.sessionKey,
+      config, dataDir, memoryIndex, integrations, secretsStore,
+      allAgentTools, bridgeTools, skipMemory: true, maxHistory: 30,
+    });
 
-    // CRITICAL: sanitize + truncate history before sending to the provider.
-    // Without this, accumulated bridge sessions (e.g. 119+ messages of mixed
-    // grok/codex tool-call formats) cause the OpenAI Responses API to silently
-    // return zero output items — the user sees the empty-response placeholder
-    // for benign messages like "hey". Web chat already does this; bridge did not.
-    const cleanHistory = truncateHistory(sanitizeHistory(session.messages), 30);
+    // Append bridge-specific context to the system prompt
+    const channelConfig = getChannelConfig(channelType);
+    const bridgePrompt = prepared.systemPrompt +
+      `\n\n[${platform} bridge] ${buildChannelContext(route)}. Message from ${name} (${from}). ` +
+      `Keep responses concise — max ~${channelConfig.maxTextLength === Infinity ? "unlimited" : channelConfig.maxTextLength} chars. ` +
+      (channelConfig.markdownFlavor === "plain" ? "Use plain text only. " : channelConfig.markdownFlavor === "whatsapp" ? "Use minimal formatting. " : "");
 
-    const result = await enqueue("main", () => runAgent(text, cleanHistory, {
-      apiKey, model, provider: provider as AgentOptions["provider"], ...baseOpts,
+    const result = await enqueue("main", () => runAgent(text, prepared.cleanHistory, {
+      apiKey: prepared.apiKey, model: prepared.model,
+      provider: prepared.provider as AgentOptions["provider"],
+      systemPrompt: bridgePrompt, tools: prepared.tools,
+      security, toolPolicy, rbac, callerRole: "user" as const,
+      sessionId: route.sessionKey, maxIterations: prepared.maxIterations,
+      temperature: prepared.temperature,
     }), { label: `bridge:${platform}:${from}` });
 
     session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system" && (m.content || (m as unknown as Record<string, unknown>).tool_calls));
@@ -409,8 +408,8 @@ export function startServer(config: SAXConfig) {
     const agentSession: Session = { id: `agent-${agentId}`, title: `Agent: ${role}`, messages: [], createdAt: Date.now(), updatedAt: Date.now() };
     let worktreeInfo: { path: string; branch: string } | null = null;
     try {
-      const saved = loadSavedSettings();
-      const { provider, apiKey, model } = await resolveProviderAndKey(saved);
+      const { resolveProvider } = await import("./agent-request.js");
+      const { provider, apiKey, model } = await resolveProvider(config, secretsStore, dataDir);
 
       // Build tool list: respect template.allowedTools if set, otherwise give role-appropriate tools
       // Agents now GET issue_* and agent_* tools (they're real employees, not disposable workers)
@@ -534,17 +533,20 @@ export function startServer(config: SAXConfig) {
     const cronReportsDir = join(dataDir, "cron", "reports");
     if (!existsSync(cronReportsDir)) mkdirSync(cronReportsDir, { recursive: true });
     cronService.onExecute(async (jobId, prompt) => {
-      const saved = loadSavedSettings();
-      const { provider, apiKey, model } = await resolveProviderAndKey(saved);
       const cronSecurity = new SecurityLayer(resolve(process.env.SAX_WORKSPACE || join(homedir(), ".sax", "workspace")), "workspace");
-      // Fresh session each run — don't pollute with stale history
       const sessionId = `cron-${jobId}-${Date.now()}`;
-      // Register session on Handler so spawned sub-agents inherit parentSessionId for result collection
       try {
         const { Handler } = await import("./agency/handler.js");
         Handler.getInstance().currentSessionId = sessionId;
       } catch {}
-      const result = await runAgent(prompt, [], { apiKey, model: provider === "anthropic" ? "claude-haiku-4-5" : model, provider: provider as AgentOptions["provider"], systemPrompt: config.systemPrompt, tools: allAgentTools, security: cronSecurity, toolPolicy, sessionId, maxIterations: config.maxIterations });
+      const { prepareAgentRequest } = await import("./agent-request.js");
+      const prepared = await prepareAgentRequest({
+        channel: "cron", message: prompt, sessionMessages: [], sessionId,
+        config, dataDir, memoryIndex, integrations, secretsStore,
+        allAgentTools, bridgeTools, skipMemory: true,
+      });
+      const cronModel = prepared.provider === "anthropic" ? "claude-haiku-4-5" : prepared.model;
+      const result = await runAgent(prompt, [], { apiKey: prepared.apiKey, model: cronModel, provider: prepared.provider as AgentOptions["provider"], systemPrompt: prepared.systemPrompt, tools: prepared.tools, security: cronSecurity, toolPolicy, sessionId, maxIterations: config.maxIterations });
       // Save the session for history
       const session = getOrCreateSession(sessionId);
       session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);

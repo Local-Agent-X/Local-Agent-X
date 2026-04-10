@@ -38,6 +38,7 @@ import { join, basename, resolve, relative, isAbsolute } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import Database from "better-sqlite3";
 import type { Session } from "./types.js";
+import { chunkConversationPairs, extractSessionPairs, chunkText as chunkTextNew } from "./memory-chunking.js";
 
 // ══════════════════════════════════════════════════════════
 //  ATOMIC FILE OPERATIONS
@@ -132,7 +133,7 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
 
   maxResults: 6,
   minScore: 0.35,
-  candidateMultiplier: 4,
+  candidateMultiplier: 8,
   snippetMaxChars: 700,
 
   vectorWeight: 0.7,
@@ -220,6 +221,15 @@ export interface MemorySearchResult {
   source: "memory" | "sessions" | "entities";
   entities?: string[];
   kind?: FactKind;
+  metadata?: ChunkMetadata;
+}
+
+export interface ChunkMetadata {
+  project?: string;
+  topic?: string;
+  date?: string;
+  source_type?: "agent-x-session" | "chatgpt-import" | "claude-import" | "codex-import" | "slack-import" | "memory-file" | "entity-page" | "import";
+  session_id?: string;
 }
 
 interface Chunk {
@@ -231,6 +241,7 @@ interface Chunk {
   text: string;
   hash: string;
   embedding?: number[];
+  metadata?: ChunkMetadata;
 }
 
 interface FileRecord {
@@ -520,7 +531,7 @@ export class MemoryIndex {
 
   // ── Schema with migration support ──
 
-  private static readonly CURRENT_SCHEMA_VERSION = 3;
+  private static readonly CURRENT_SCHEMA_VERSION = 4;
 
   private initSchema(): void {
     // Create meta table first (needed for version check)
@@ -631,6 +642,21 @@ export class MemoryIndex {
         this.db.exec(`
           CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_dedup
             ON facts(kind, content, entities);
+        `);
+      }
+
+      if (fromVersion < 4) {
+        try { this.db.exec(`ALTER TABLE chunks ADD COLUMN metadata TEXT DEFAULT NULL`); } catch { /* column may already exist */ }
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_metadata ON chunks(metadata)`);
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS conversation_ingest_log (
+            conversation_id TEXT PRIMARY KEY,
+            title TEXT,
+            create_time REAL,
+            message_count INTEGER,
+            source_format TEXT,
+            ingested_at INTEGER NOT NULL
+          )
         `);
       }
 
@@ -873,20 +899,35 @@ export class MemoryIndex {
   private async indexFile(file: FileRecord): Promise<void> {
     this.removeFile(file.path);
 
-    let content: string;
+    let chunks: Chunk[];
+
     if (file.source === "sessions") {
-      content = this.flattenSession(file.path);
+      // Conversation-pair chunking: preserves Q+A semantic units
+      const messages = extractSessionPairs(file.path);
+      if (messages.length < 2) return;
+      const sessionId = basename(file.path, ".json");
+      let sessionDate: string | undefined;
+      try {
+        const sess = JSON.parse(readFileSync(file.path, "utf-8"));
+        if (sess.createdAt) sessionDate = new Date(sess.createdAt).toISOString().split("T")[0];
+      } catch {}
+      const metadata: ChunkMetadata = { source_type: "agent-x-session", session_id: sessionId, date: sessionDate };
+      chunks = chunkConversationPairs(messages, file.path, file.source, metadata) as Chunk[];
     } else {
       const raw = safeReadTextFile(file.path);
-      if (!raw) return; // Binary file or read error — skip
-      content = raw;
+      if (!raw) return;
+      if (!raw.trim()) return;
+      const maxChunkChars = this.config.chunkTokens * this.config.charsPerToken;
+      const overlapChars = this.config.chunkOverlap * this.config.charsPerToken;
+      const metadata: ChunkMetadata = {
+        source_type: file.source === "entities" ? "entity-page" : "memory-file",
+        date: this.extractDateFromPath(file.path),
+      };
+      chunks = chunkText(raw, file.path, file.source, maxChunkChars, overlapChars) as Chunk[];
+      for (const c of chunks) c.metadata = metadata;
     }
 
-    if (!content.trim()) return;
-
-    const maxChunkChars = this.config.chunkTokens * this.config.charsPerToken;
-    const overlapChars = this.config.chunkOverlap * this.config.charsPerToken;
-    const chunks = chunkText(content, file.path, file.source, maxChunkChars, overlapChars);
+    if (chunks.length === 0) return;
 
     // Embed with retry
     if (this.embeddingProvider) {
@@ -895,8 +936,8 @@ export class MemoryIndex {
 
     // Insert chunks in a transaction
     const insertChunk = this.db.prepare(`
-      INSERT INTO chunks (path, source, start_line, end_line, text, hash, embedding, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO chunks (path, source, start_line, end_line, text, hash, embedding, updated_at, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertFts = this.hasFts
@@ -917,7 +958,8 @@ export class MemoryIndex {
           chunk.text,
           chunk.hash,
           chunk.embedding ? JSON.stringify(chunk.embedding) : null,
-          now
+          now,
+          chunk.metadata ? JSON.stringify(chunk.metadata) : null
         );
 
         const chunkId = result.lastInsertRowid;
@@ -945,6 +987,57 @@ export class MemoryIndex {
     });
 
     insertMany();
+  }
+
+  // ── Public indexing for external ingest (conversation imports) ──
+
+  async indexChunks(chunks: Chunk[], virtualPath: string, source: string): Promise<void> {
+    this.removeFile(virtualPath);
+    if (chunks.length === 0) return;
+    if (this.embeddingProvider) await this.embedChunksWithRetry(chunks);
+
+    const insertChunk = this.db.prepare(`
+      INSERT INTO chunks (path, source, start_line, end_line, text, hash, embedding, updated_at, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const insertFts = this.hasFts ? this.db.prepare(`INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)`) : null;
+    const now = Date.now();
+
+    const insertMany = this.db.transaction(() => {
+      for (const chunk of chunks) {
+        const result = insertChunk.run(
+          virtualPath, source, chunk.startLine, chunk.endLine, chunk.text, chunk.hash,
+          chunk.embedding ? JSON.stringify(chunk.embedding) : null, now,
+          chunk.metadata ? JSON.stringify(chunk.metadata) : null
+        );
+        const chunkId = result.lastInsertRowid;
+        if (insertFts) insertFts.run(chunkId, chunk.text);
+        if (this.hasVec && chunk.embedding) {
+          try { this.db.prepare("INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)").run(chunkId, new Float32Array(chunk.embedding)); } catch {}
+        }
+      }
+      this.db.prepare("INSERT OR REPLACE INTO files (path, source, hash, mtime, size) VALUES (?, ?, ?, ?, ?)").run(virtualPath, source, `ingest:${now}`, now, 0);
+    });
+    insertMany();
+  }
+
+  isConversationIngested(conversationId: string): boolean {
+    const row = this.db.prepare("SELECT 1 FROM conversation_ingest_log WHERE conversation_id = ?").get(conversationId);
+    return !!row;
+  }
+
+  markConversationIngested(conversationId: string, title: string, createTime: number, messageCount: number, sourceFormat: string): void {
+    this.db.prepare(
+      "INSERT OR REPLACE INTO conversation_ingest_log (conversation_id, title, create_time, message_count, source_format, ingested_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(conversationId, title, createTime, messageCount, sourceFormat, Date.now());
+  }
+
+  getIngestStats(): { total: number; byFormat: Record<string, number> } {
+    const total = (this.db.prepare("SELECT COUNT(*) as c FROM conversation_ingest_log").get() as { c: number }).c;
+    const rows = this.db.prepare("SELECT source_format, COUNT(*) as c FROM conversation_ingest_log GROUP BY source_format").all() as Array<{ source_format: string; c: number }>;
+    const byFormat: Record<string, number> = {};
+    for (const r of rows) byFormat[r.source_format] = r.c;
+    return { total, byFormat };
   }
 
   private removeFile(path: string): void {
@@ -980,6 +1073,11 @@ export class MemoryIndex {
   }
 
   // ── Session flattening with credential redaction ──
+
+  private extractDateFromPath(path: string): string | undefined {
+    const match = basename(path).match(/^(\d{4}-\d{2}-\d{2})/);
+    return match ? match[1] : undefined;
+  }
 
   private flattenSession(path: string): string {
     try {
@@ -1249,6 +1347,14 @@ export class MemoryIndex {
       entities?: string[];
       since?: Date;
       kind?: FactKind;
+      // Metadata filters
+      project?: string;
+      sourceType?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      // LLM reranking (optional — sends top candidates to a fast LLM for reranking)
+      rerank?: boolean;
+      rerankModel?: string;
     }
   ): Promise<MemorySearchResult[]> {
     await this.sync();
@@ -1314,19 +1420,41 @@ export class MemoryIndex {
       // Relax minScore for keyword-only results (they score lower)
       if (!this.embeddingProvider && merged.length > 0) {
         const relaxedMin = Math.min(minScore, this.config.textWeight);
-        return this.postProcess(merged, maxResults, relaxedMin, options);
+        let processed = this.postProcess(merged, maxResults * 3, relaxedMin, { ...options, query });
+        if (options?.rerank && processed.length > 0) {
+          try { const { rerankWithLLM } = await import("./memory-reranker.js"); processed = await rerankWithLLM(query, processed, { provider: "ollama", model: options.rerankModel }); } catch {}
+        }
+        return processed.slice(0, maxResults);
       }
     }
 
-    return this.postProcess(merged, maxResults, minScore, options);
+    let processed = this.postProcess(merged, maxResults * 3, minScore, { ...options, query });
+
+    // Optional LLM reranking pass
+    if (options?.rerank && processed.length > 0) {
+      try {
+        const { rerankWithLLM } = await import("./memory-reranker.js");
+        processed = await rerankWithLLM(query, processed, { provider: "ollama", model: options.rerankModel });
+      } catch (e) { console.warn("[memory] Rerank failed:", (e as Error).message); }
+    }
+
+    return processed.slice(0, maxResults);
   }
 
   private postProcess(
     results: MemorySearchResult[],
     maxResults: number,
     minScore: number,
-    options?: { since?: Date; entities?: string[]; kind?: FactKind }
+    options?: { since?: Date; entities?: string[]; kind?: FactKind; project?: string; sourceType?: string; dateFrom?: string; dateTo?: string; query?: string }
   ): MemorySearchResult[] {
+    // Session grouping: boost chunks from sessions that already have a high-scoring hit
+    results = this.applySessionGrouping(results);
+
+    // Temporal query boost: extract dates from query and boost matching chunks
+    if (options?.query) {
+      results = applyTemporalQueryBoost(results, options.query);
+    }
+
     // Apply temporal decay
     if (this.config.temporalDecayEnabled) {
       results = applyTemporalDecay(results, this.config.temporalHalfLifeDays);
@@ -1356,7 +1484,49 @@ export class MemoryIndex {
       });
     }
 
+    // Metadata filters (project, source_type, date range)
+    if (options?.project || options?.sourceType || options?.dateFrom || options?.dateTo) {
+      results = results.filter((r) => {
+        const meta = r.metadata;
+        if (!meta) return false; // no metadata = can't match metadata filters
+        if (options.project && meta.project !== options.project) return false;
+        if (options.sourceType && meta.source_type !== options.sourceType) return false;
+        if (options.dateFrom && (!meta.date || meta.date < options.dateFrom)) return false;
+        if (options.dateTo && (!meta.date || meta.date > options.dateTo)) return false;
+        return true;
+      });
+    }
+
     return results.filter((r) => r.score >= minScore).slice(0, maxResults);
+  }
+
+  // ── Session grouping: boost chunks from sessions that scored high ──
+  private applySessionGrouping(results: MemorySearchResult[]): MemorySearchResult[] {
+    if (results.length === 0) return results;
+    // Find top-scoring sessions
+    const sessionScores = new Map<string, number>();
+    for (const r of results) {
+      const sid = r.metadata?.session_id;
+      if (!sid) continue;
+      const existing = sessionScores.get(sid) || 0;
+      if (r.score > existing) sessionScores.set(sid, r.score);
+    }
+    if (sessionScores.size === 0) return results;
+
+    // Boost other chunks from high-scoring sessions (20% of the top session's score)
+    const GROUPING_BOOST = 0.2;
+    for (const r of results) {
+      const sid = r.metadata?.session_id;
+      if (!sid) continue;
+      const topScore = sessionScores.get(sid) || 0;
+      if (r.score < topScore) {
+        r.score = Math.min(1, r.score + topScore * GROUPING_BOOST);
+      }
+    }
+
+    // Re-sort by score
+    results.sort((a, b) => b.score - a.score);
+    return results;
   }
 
   private searchKeyword(
@@ -1371,7 +1541,7 @@ export class MemoryIndex {
       // Query FTS, then join back to chunks for full data
       const rows = this.db
         .prepare(
-          `SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text,
+          `SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text, c.metadata,
                   bm25(chunks_fts) as rank
            FROM chunks_fts f
            JOIN chunks c ON c.id = f.rowid
@@ -1386,6 +1556,7 @@ export class MemoryIndex {
         start_line: number;
         end_line: number;
         text: string;
+        metadata: string | null;
         rank: number;
       }>;
 
@@ -1399,6 +1570,7 @@ export class MemoryIndex {
           endLine: r.end_line,
           text: r.text,
           hash: "",
+          metadata: r.metadata ? JSON.parse(r.metadata) : undefined,
           score: bm25RankToScore(r.rank),
         }));
     } catch {
@@ -2076,6 +2248,47 @@ function applyTemporalDecay(
 }
 
 // ══════════════════════════════════════════════════════════
+//  TEMPORAL QUERY BOOST
+// ══════════════════════════════════════════════════════════
+
+/** Extract date references from a query and boost chunks whose metadata.date matches */
+function applyTemporalQueryBoost(results: MemorySearchResult[], query: string): MemorySearchResult[] {
+  // Extract date patterns from query: "March 2026", "2026-03", "last week", month names
+  const months: Record<string, string> = {
+    january: "01", february: "02", march: "03", april: "04", may: "05", june: "06",
+    july: "07", august: "08", september: "09", october: "10", november: "11", december: "12",
+  };
+  const queryLower = query.toLowerCase();
+  const targetDates: string[] = [];
+
+  // Match "Month Year" patterns
+  for (const [name, num] of Object.entries(months)) {
+    const yearMatch = queryLower.match(new RegExp(name + "\\s+(\\d{4})"));
+    if (yearMatch) targetDates.push(`${yearMatch[1]}-${num}`);
+    else if (queryLower.includes(name)) targetDates.push(`-${num}-`); // partial match
+  }
+  // Match ISO dates
+  const isoMatch = queryLower.match(/(\d{4}-\d{2}-\d{2})/g);
+  if (isoMatch) targetDates.push(...isoMatch);
+
+  if (targetDates.length === 0) return results;
+
+  const TEMPORAL_BOOST = 0.15;
+  for (const r of results) {
+    const chunkDate = r.metadata?.date || "";
+    if (!chunkDate) continue;
+    for (const target of targetDates) {
+      if (chunkDate.includes(target)) {
+        r.score = Math.min(1, r.score + TEMPORAL_BOOST);
+        break;
+      }
+    }
+  }
+  results.sort((a, b) => b.score - a.score);
+  return results;
+}
+
+// ══════════════════════════════════════════════════════════
 //  MMR DIVERSITY RE-RANKING (with score normalization)
 // ══════════════════════════════════════════════════════════
 
@@ -2183,6 +2396,12 @@ function toSearchResult(
   const entityMatches = chunk.text.match(/@([\w-]+)/g) || [];
   const entities = entityMatches.map((m) => m.slice(1));
 
+  // Parse metadata from JSON if it came from DB
+  let metadata = chunk.metadata;
+  if (!metadata && (chunk as any).metadataRaw) {
+    try { metadata = JSON.parse((chunk as any).metadataRaw); } catch {}
+  }
+
   return {
     path: chunk.path,
     startLine: chunk.startLine,
@@ -2191,6 +2410,7 @@ function toSearchResult(
     snippet: chunk.text.slice(0, snippetMaxChars),
     source: chunk.source as "memory" | "sessions" | "entities",
     entities: entities.length > 0 ? entities : undefined,
+    metadata,
   };
 }
 
@@ -2584,6 +2804,13 @@ export function createMemoryTools(memory: MemoryIndex) {
             type: "string",
             description: "Only return results after this date (ISO format, e.g. 2026-03-01)",
           },
+          project: { type: "string", description: "Filter by project name" },
+          source_type: {
+            type: "string",
+            description: "Filter by source type: agent-x-session, chatgpt-import, claude-import, memory-file, entity-page, import",
+          },
+          date_from: { type: "string", description: "Start date filter (ISO format)" },
+          date_to: { type: "string", description: "End date filter (ISO format)" },
         },
         required: ["query"],
       },
@@ -2593,12 +2820,20 @@ export function createMemoryTools(memory: MemoryIndex) {
         const sources = args.sources as string[] | undefined;
         const entity = args.entity ? String(args.entity) : undefined;
         const since = args.since ? new Date(String(args.since)) : undefined;
+        const project = args.project ? String(args.project) : undefined;
+        const sourceType = args.source_type ? String(args.source_type) : undefined;
+        const dateFrom = args.date_from ? String(args.date_from) : undefined;
+        const dateTo = args.date_to ? String(args.date_to) : undefined;
 
         const results = await memory.search(query, {
           maxResults,
           sources,
           entities: entity ? [entity] : undefined,
           since,
+          project,
+          sourceType,
+          dateFrom,
+          dateTo,
         });
 
         if (results.length === 0) {
@@ -2948,6 +3183,51 @@ export function createMemoryTools(memory: MemoryIndex) {
         return {
           content: `Updated ${filename} (${action}${action === "replace_section" ? `: ${args.section_heading}` : ""})`,
         };
+      },
+    },
+
+    // Conversation ingest tool
+    {
+      name: "memory_ingest",
+      description:
+        "Ingest conversation history from exported chat files into long-term memory. " +
+        "Supports ChatGPT, Claude.ai, Claude Code, OpenAI Codex CLI, Slack, and generic JSON. " +
+        "Auto-detects format. Incremental — skips already-ingested conversations.",
+      parameters: {
+        type: "object",
+        properties: {
+          directory: { type: "string", description: "Path to directory containing export files" },
+          file: { type: "string", description: "Path to a single export file (alternative to directory)" },
+        },
+      },
+      async execute(args: Record<string, unknown>) {
+        const dir = args.directory ? String(args.directory) : undefined;
+        const file = args.file ? String(args.file) : undefined;
+        const target = dir || file;
+        if (!target) return { content: "Provide either 'directory' or 'file' parameter.", isError: true };
+        const onProgress = typeof args._onProgress === "function" ? args._onProgress as (msg: string) => void : undefined;
+
+        try {
+          const { ingestConversations } = await import("./conversation-ingest.js");
+          const result = await ingestConversations(memory, target, (p) => {
+            const total = p.totalConversations || 1;
+            const done = p.processed + p.skipped;
+            const pct = Math.round((done / total) * 100);
+            onProgress?.(`${pct}%|${done}/${total} conversations, ${p.chunksCreated} chunks|${p.currentFile}`);
+          });
+          const fmtList = Object.entries(result.formats).map(([k, v]) => `${k}: ${v}`).join(", ");
+          return {
+            content: [
+              `Ingest complete.`,
+              `Conversations: ${result.processed} processed, ${result.skipped} skipped, ${result.errors} errors`,
+              `Chunks created: ${result.chunksCreated}`,
+              `Formats: ${fmtList || "none"}`,
+              `Total in database: ${memory.getIngestStats().total}`,
+            ].join("\n"),
+          };
+        } catch (e) {
+          return { content: `Ingest failed: ${(e as Error).message}`, isError: true };
+        }
       },
     },
   ];

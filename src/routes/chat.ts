@@ -1,19 +1,14 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { RouteHandler } from "../server-context.js";
 import type { ServerEvent } from "../types.js";
-import { isValidSessionId, readBody, safeErrorMessage, sseWrite, corsHeaders, jsonResponse, BANNED_KEYS, safeParseBody } from "../server-utils.js";
+import { isValidSessionId, safeErrorMessage, sseWrite, corsHeaders, jsonResponse, safeParseBody } from "../server-utils.js";
 import { runAgent } from "../agent.js";
 import { detectInjection } from "../sanitize.js";
 import { ChatRequestSchema, CompactSchema, validateBody } from "../route-schemas.js";
 import { ThreatEngine } from "../threat-engine.js";
 import { enqueue } from "../execution-lanes.js";
-import { buildContextBlock, autoSearchContext, autoExtractAndSave } from "../memory.js";
-import { formatForChannel, getChannelConfig } from "../channel-formatter.js";
-import { resolveSession, buildChannelContext, type ChannelType } from "../session-router.js";
-import { getApiKey } from "../auth.js";
+import { autoExtractAndSave } from "../memory.js";
 
 export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx, requestRole) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -61,225 +56,44 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
 
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     try {
-      const { loadTokens } = await import("../auth.js");
-      const { loadAnthropicTokens, getAnthropicApiKey } = await import("../auth-anthropic.js");
-      let savedProvider: string | null = null, savedModel: string | null = null, savedTemperature: number | null = null, savedMaxIterations: number | null = null;
-      try {
-        const sp = join(ctx.dataDir, "settings.json");
-        if (existsSync(sp)) { const s = JSON.parse(readFileSync(sp, "utf-8")); savedProvider = s.provider || null; savedModel = s.model || null; if (typeof s.temperature === "number") savedTemperature = s.temperature; if (typeof s.maxIterations === "number") savedMaxIterations = s.maxIterations; }
-      } catch {}
+      const { prepareAgentRequest } = await import("../agent-request.js");
 
-      let provider: "codex" | "xai" | "openai" | "anthropic" | "local" | "gemini" | "custom";
-      if (savedProvider && ["codex", "xai", "openai", "anthropic", "local", "gemini", "custom"].includes(savedProvider)) provider = savedProvider as typeof provider;
-      else if (loadAnthropicTokens()) provider = "anthropic";
-      else if (loadTokens() && !ctx.config.openaiApiKey) provider = "codex";
-      else provider = "xai";
+      // Unified request preparation: provider, context, history, tools — one call
+      const prepared = await prepareAgentRequest({
+        channel: sessionId.startsWith("ide-") ? "web" : "web",
+        message, sessionMessages: session.messages, sessionId,
+        config: ctx.config, dataDir: ctx.dataDir,
+        memoryIndex: ctx.memoryIndex, integrations: ctx.integrations,
+        secretsStore: ctx.secretsStore,
+        allAgentTools: ctx.allAgentTools, bridgeTools: ctx.bridgeTools,
+        attachments, uploadsDir: join(ctx.dataDir, "uploads"),
+      });
 
-      let apiKey: string;
-      let codexApiKey: string | undefined;
-      let customBaseURL: string | undefined;
-      if (provider === "local") apiKey = "ollama";
-      else if (provider === "anthropic") {
-        apiKey = await getAnthropicApiKey();
-        // Resolve Codex key for tool execution (Anthropic orchestrates, Codex executes)
-        try { codexApiKey = await getApiKey(ctx.config.openaiApiKey); } catch {}
-        if (!codexApiKey) codexApiKey = ctx.secretsStore.get("OPENAI_API_KEY") || undefined;
+      // Abort early if no API key
+      if (!prepared.apiKey) {
+        sseWrite(res, { type: "error", message: `No API key configured for ${prepared.provider}.` });
+        res.end(); return true;
       }
-      else if (provider === "xai") { apiKey = ctx.secretsStore.get("XAI_API_KEY") || ""; if (!apiKey) { sseWrite(res, { type: "error", message: "No xAI API key configured." }); res.end(); return true; } }
-      else if (provider === "gemini") { apiKey = ctx.secretsStore.get("GEMINI_API_KEY") || ""; if (!apiKey) { sseWrite(res, { type: "error", message: "No Google API key configured." }); res.end(); return true; } }
-      else if (provider === "custom") { apiKey = ctx.secretsStore.get("CUSTOM_API_KEY") || ""; if (!apiKey) { sseWrite(res, { type: "error", message: "No API key for custom provider." }); res.end(); return true; } try { const sp = join(ctx.dataDir, "settings.json"); if (existsSync(sp)) { const ss = JSON.parse(readFileSync(sp, "utf-8")); customBaseURL = ss.customBaseUrl || undefined; } } catch {} }
-      else if (provider === "openai" && !ctx.config.openaiApiKey) apiKey = ctx.secretsStore.get("OPENAI_API_KEY") || await getApiKey(ctx.config.openaiApiKey);
-      else apiKey = await getApiKey(ctx.config.openaiApiKey);
+
+      // IDE sessions: strip delegation tools
+      const IDE_BLOCKED_TOOLS = new Set(["agent_spawn", "delegate", "build_app", "agent_status", "agent_cancel", "agent_pause", "agent_resume", "agent_message"]);
+      const isIdeSession = sessionId.startsWith("ide-");
+      const sessionTools = isIdeSession ? prepared.tools.filter(t => !IDE_BLOCKED_TOOLS.has(t.name)) : prepared.tools;
 
       const wsChat = ctx.chatWs.startChat(sessionId);
       const onEvent = (event: ServerEvent) => { sseWrite(res, event); wsChat.onEvent(event); };
       ctx.setActiveOnEvent(onEvent);
-
       heartbeat = setInterval(() => { if (!res.destroyed) res.write(": heartbeat\n\n"); else clearInterval(heartbeat); }, 15_000);
       ctx.setActiveBrowserSessionId(sessionId);
 
-      // Detect trivial tool requests that don't need memory/context injection
-      const isTrivialToolRequest = /^(run\s+(bash|command)|execute|bash)\s*(with|:)/i.test(message.trim()) || /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
+      try { const { Handler: AO } = await import("../agency/handler.js"); AO.getInstance().currentSessionId = sessionId; } catch {}
 
-      let contextBlock = "", relevantMemories = "", smartContext = "", memoryContext = "";
-      let memoryNotifications: Array<{type: string, message: string, priority: number}> = [];
-
-      if (!isTrivialToolRequest) {
-        [contextBlock, relevantMemories] = await Promise.all([buildContextBlock(ctx.memoryIndex), autoSearchContext(ctx.memoryIndex, message)]);
-
-        // Smart context from session summaries
-        try {
-          const summaryDir = join(ctx.dataDir, "memory", "session-summaries");
-          if (existsSync(summaryDir)) {
-            const summaryFiles = readdirSync(summaryDir).filter(f => f.endsWith(".md"));
-            const queryWords = message.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-            if (queryWords.length > 0 && summaryFiles.length > 0) {
-              const scored = summaryFiles.map(f => {
-                const content = readFileSync(join(summaryDir, f), "utf-8");
-                const lower = content.toLowerCase();
-                let score = 0;
-                for (const w of queryWords) { if (lower.includes(w)) score++; }
-                return { content: content.slice(0, 400), score };
-              }).filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 2);
-              if (scored.length > 0) smartContext = "\n\n--- RELATED PAST SESSIONS ---\n" + scored.map(s => s.content).join("\n---\n") + "\n--- END ---";
-            }
-          }
-        } catch {}
-
-        // Memory orchestrator
-        try {
-          const { processMessage } = await import("../memory-orchestrator.js");
-          const orch = await processMessage({
-            message, sessionId,
-            sessionMessages: session.messages.slice(-20).map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" })),
-            timeOfDay: new Date().getHours(), dayOfWeek: new Date().getDay(),
-            agentPreviousMessage: session.messages.filter(m => m.role === "assistant").pop()?.content as string || undefined,
-          });
-          memoryContext = orch.contextInjection ? `\n\n${orch.contextInjection}` : "";
-          memoryNotifications = orch.notifications || [];
-          if (orch.debug) console.log(`[memory] Orchestrator: ${orch.debug.modulesActivated.length} modules, ${orch.debug.totalTimeMs}ms`);
-        } catch (e) { console.warn("[memory] Orchestrator error:", (e as Error).message); }
-      } else {
-        console.log(`[chat] Trivial tool request — skipping memory injection`);
-      }
-
+      // Threat engine canary (append to system prompt for injection detection)
       const threatEngine = new ThreatEngine(ctx.dataDir, sessionId);
+      const systemPrompt = prepared.systemPrompt + threatEngine.getCanaryBlock();
       let canaryBuffer = "";
       let fullResponseText = "";
 
-      const providerNames: Record<string, string> = { codex: "OpenAI Codex", anthropic: "Anthropic Claude", xai: "xAI Grok", openai: "OpenAI", local: "Local (Ollama)" };
-      const providerHint = `\n\n[System: You are currently powered by ${providerNames[provider] || provider}, model: ${savedModel || "default"}.]`;
-      const integrationsContext = ctx.integrations.getAgentContext();
-
-      let notificationHint = "";
-      if (memoryNotifications.length > 0) {
-        const topNotifs = memoryNotifications.sort((a, b) => b.priority - a.priority).slice(0, 2);
-        notificationHint = "\n\n[Naturally weave into your response: " + topNotifs.map(n => n.message).join(" | ") + "]";
-      }
-
-      // Tool prompt section (teaches LLM best practices per tool)
-      let toolPromptSection = "";
-      try { const { buildToolPromptSection } = await import("../tool-prompt-builder.js"); toolPromptSection = buildToolPromptSection(ctx.allAgentTools); } catch {}
-
-      // Build system prompt via modular context builder (ordered sections, cacheable static parts)
-      const { createChatContextBuilder } = await import("../context-builder.js");
-      const contextBuilder = createChatContextBuilder({
-        systemPrompt: ctx.config.systemPrompt,
-        providerHint,
-        toolPromptSection,
-        contextBlock,
-        relevantMemories,
-        smartContext,
-        memoryContext,
-        notificationHint,
-        integrationsContext,
-        canaryBlock: threatEngine.getCanaryBlock(),
-      });
-      const enrichedPrompt = await contextBuilder.build();
-
-      const uploadsDir = join(ctx.dataDir, "uploads");
-      const imageAttachments = attachments.filter(a => a.isImage && a.url).map(a => {
-        const fname = a.url.replace(/^\/uploads\//, "");
-        return { name: a.name, url: a.url, filePath: join(uploadsDir, fname) };
-      });
-
-      // Sanitize orphaned tool calls AND orphaned tool results
-      type MsgRecord = Record<string, unknown>;
-      const sanitizeHistory = (msgs: typeof session.messages) => {
-        // First pass: collect all tool_call IDs and tool_result IDs
-        const callIds = new Set<string>();
-        const resultIds = new Set<string>();
-        for (const m of msgs) {
-          const rec = m as unknown as MsgRecord;
-          if (m.role === "assistant" && rec.tool_calls) {
-            for (const tc of rec.tool_calls as Array<{ id: string }>) callIds.add(tc.id);
-          }
-          if (m.role === "tool" && rec.tool_call_id) {
-            resultIds.add(rec.tool_call_id as string);
-          }
-        }
-        // Find orphaned call IDs (calls without results — from aborted runs)
-        const orphanedCallIds = new Set([...callIds].filter(id => !resultIds.has(id)));
-
-        const result = [];
-        for (const m of msgs) {
-          const rec = m as unknown as MsgRecord;
-          if (m.role === "assistant" && rec.tool_calls) {
-            if (orphanedCallIds.size > 0) {
-              // Strip orphaned tool_calls from this message
-              const cleanedCalls = (rec.tool_calls as Array<{ id: string }>).filter(tc => !orphanedCallIds.has(tc.id));
-              if (cleanedCalls.length === 0) {
-                // All tool calls were orphaned — keep as text-only message
-                result.push({ role: m.role, content: m.content || "" });
-              } else {
-                result.push({ ...m, tool_calls: cleanedCalls } as typeof m);
-              }
-            } else {
-              result.push(m);
-            }
-          } else if (m.role === "tool") {
-            // Drop tool results without matching call
-            if (rec.tool_call_id && callIds.has(rec.tool_call_id as string) && !orphanedCallIds.has(rec.tool_call_id as string)) {
-              result.push(m);
-            }
-          } else {
-            result.push(m);
-          }
-        }
-        return result;
-      };
-
-      // Context management
-      const findSafeCutPoint = (msgs: typeof session.messages, targetIdx: number): number => {
-        for (let i = targetIdx; i < msgs.length; i++) { if (msgs[i].role === "user") return i; }
-        for (let i = targetIdx; i >= 0; i--) { if (msgs[i].role === "user") return i; }
-        return targetIdx;
-      };
-      const buildSummary = (msgs: typeof session.messages): string => {
-        const parts: string[] = [];
-        for (const m of msgs) {
-          if (m.role === "user" && typeof m.content === "string") parts.push(`User: ${m.content.slice(0, 150).replace(/\n/g, " ")}`);
-          else if (m.role === "assistant" && typeof m.content === "string") parts.push(`Agent: ${m.content.split("\n").filter(l => l.trim())[0]?.slice(0, 150) || ""}`);
-        }
-        return `[Earlier in this conversation (${msgs.length} messages summarized):\n${parts.join("\n")}\n...end of summary]`;
-      };
-
-      let historyToSend = session.messages;
-      const compactedSummary = session.compactedSummary;
-      const compactedAt = session.compactedAt;
-      if (compactedSummary && compactedAt) {
-        const cutPoint = findSafeCutPoint(session.messages, compactedAt);
-        historyToSend = [{ role: "system", content: compactedSummary } as ChatCompletionMessageParam, ...session.messages.slice(cutPoint)];
-      } else if (session.messages.length > 40) {
-        const cutPoint = findSafeCutPoint(session.messages, session.messages.length - 40);
-        historyToSend = [{ role: "system", content: buildSummary(session.messages.slice(0, cutPoint)) } as ChatCompletionMessageParam, ...session.messages.slice(cutPoint)];
-      }
-
-      try { const { Handler: AO } = await import("../agency/handler.js"); AO.getInstance().currentSessionId = sessionId; } catch {}
-
-      // IDE sessions: strip delegation tools so the agent works directly with file tools
-      const IDE_BLOCKED_TOOLS = new Set(["agent_spawn", "delegate", "build_app", "agent_status", "agent_cancel", "agent_pause", "agent_resume", "agent_message"]);
-      const isIdeSession = sessionId.startsWith("ide-");
-      // Codex (128k context): use the slimmed bridge tool set to save ~8k tokens.
-      // allAgentTools includes stubs, cron, agency, app tools that consume tokens
-      // but rarely get called in casual conversation. The bridge tools cover all
-      // the important ones (filesystem, memory, browser, images, missions, issues).
-      const isCodex = provider === "codex";
-      const sessionTools = isIdeSession
-        ? ctx.allAgentTools.filter(t => !IDE_BLOCKED_TOOLS.has(t.name))
-        : isCodex
-          ? ctx.bridgeTools
-          : ctx.allAgentTools;
-
-      const baseRunOpts = {
-        baseURL: customBaseURL, systemPrompt: enrichedPrompt,
-        codexApiKey,
-        tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
-        threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
-        images: imageAttachments, maxIterations: savedMaxIterations || ctx.config.maxIterations,
-        temperature: savedTemperature ?? ctx.config.temperature,
-        signal: wsChat.abort.signal,
-      };
       const wrappedOnEvent = (event: ServerEvent) => {
         if (event.type === "stream" && event.delta) {
           canaryBuffer += event.delta; fullResponseText += event.delta;
@@ -290,10 +104,14 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         onEvent(event);
       };
 
-      const result = await enqueue("main", () => runAgent(message, sanitizeHistory(historyToSend), {
-        apiKey,
-        model: savedModel || (provider === "codex" ? "gpt-5.3-codex" : provider === "anthropic" ? "claude-sonnet-4-6" : provider === "gemini" ? "gemini-2.0-flash" : ctx.config.model),
-        provider, ...baseRunOpts,
+      const result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
+        apiKey: prepared.apiKey, model: prepared.model,
+        provider: prepared.provider as Parameters<typeof runAgent>[2]["provider"],
+        baseURL: prepared.customBaseURL, systemPrompt, codexApiKey: prepared.codexApiKey,
+        tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
+        threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
+        images: prepared.images, maxIterations: prepared.maxIterations,
+        temperature: prepared.temperature, signal: wsChat.abort.signal,
         onEvent: wrappedOnEvent,
       }), { label: `chat:${sessionId}`, timeout: 600_000 });
 
@@ -301,12 +119,14 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // Clear any skill tool restrictions so they don't leak into the next message
       try { const { clearSessionAllowedTools } = await import("../session-policy.js"); clearSessionAllowedTools(sessionId); } catch {}
       const { stripEphemeralMessages } = await import("../agent-providers.js");
+      type MsgRecord = Record<string, unknown>;
       session.messages = stripEphemeralMessages(result.messages).filter((m) => m.role !== "system" && (m.content || (m as unknown as MsgRecord).tool_calls));
       session.updatedAt = Date.now();
 
       const assistantReply = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).join("\n");
-      // Skip memory save for trivial tool-test messages (prevents noise from polluting future context)
-      if (!isTrivialToolRequest) {
+      // Save memory for non-trivial messages
+      const isTrivial = /^(run\s+(bash|command)|execute|bash)\s*(with|:)/i.test(message.trim()) || /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
+      if (!isTrivial) {
         try { autoExtractAndSave(ctx.memoryIndex, message, assistantReply); } catch {}
         try {
           const userSnippet = message.slice(0, 300).replace(/\n/g, " ");
@@ -317,7 +137,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       try {
         const { CrossSessionLearner } = await import("../cross-session-learning.js");
         const csl = CrossSessionLearner.getInstance();
-        const toolCalls = result.messages.filter(m => (m as unknown as MsgRecord).tool_calls).flatMap(m => ((m as unknown as MsgRecord).tool_calls as Array<{ function?: { name: string }; name?: string }>) || []);
+        const toolCalls = result.messages.filter(m => (m as unknown as Record<string, unknown>).tool_calls).flatMap(m => ((m as unknown as Record<string, unknown>).tool_calls as Array<{ function?: { name: string }; name?: string }>) || []);
         for (const tc of toolCalls) csl.recordAction(sessionId, { type: "tool", details: tc.function?.name || tc.name || "unknown", timestamp: Date.now() });
       } catch {}
 
@@ -328,8 +148,8 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       let costUsd: number | undefined;
       try {
         const { trackUsage } = await import("../cost-tracker.js");
-        const usedModel = savedModel || ctx.config.model;
-        const record = trackUsage(sessionId, usedModel, provider, realUsage.promptTokens, realUsage.completionTokens);
+        const usedModel = prepared.model || ctx.config.model;
+        const record = trackUsage(sessionId, usedModel, prepared.provider, realUsage.promptTokens, realUsage.completionTokens);
         costUsd = record.costUsd;
       } catch {}
       sseWrite(res, { type: "done", usage: realUsage, ...(costUsd !== undefined ? { costUsd } : {}) } as ServerEvent);

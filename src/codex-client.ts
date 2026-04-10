@@ -186,11 +186,6 @@ export async function* streamCodexResponse(params: {
     body.parallel_tool_calls = true;
   }
 
-  // Prompt caching: reuse cached prompt across turns in the same session
-  if (params.sessionId) {
-    body.prompt_cache_key = params.sessionId;
-  }
-
   // Codex endpoint does not support temperature
 
   // Retry logic for transient failures (503, 429, network errors)

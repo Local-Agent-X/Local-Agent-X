@@ -108,6 +108,7 @@ export async function runCodexAgentHttp(
         tools: codexTools,
         previousResponseId,
         forceToolUse,
+        sessionId: options.sessionId,
       });
 
       for await (const event of stream) {

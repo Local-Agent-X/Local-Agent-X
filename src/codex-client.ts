@@ -174,6 +174,9 @@ export async function* streamCodexResponse(params: {
     text: { verbosity: "medium" },
     include: ["reasoning.encrypted_content"],
     store: false,
+    // Reasoning effort "high" required for tool-calling to work reliably.
+    // "low" caused ~40% empty responses; omitting entirely also failed.
+    reasoning: { effort: "high", summary: "auto" },
   };
 
   if (params.tools && params.tools.length > 0) {
@@ -290,26 +293,52 @@ export async function* streamCodexResponse(params: {
         yield { type: "text", delta: event.delta };
       }
 
-      // Function call arguments delta
-      if (
-        event.type === "response.function_call_arguments.delta" &&
-        event.call_id
-      ) {
-        const existing = toolCalls.get(event.call_id) || {
-          id: event.call_id,
-          name: event.name || "",
-          arguments: "",
-        };
-        if (event.name) existing.name = event.name;
-        existing.arguments += event.delta || "";
-        toolCalls.set(event.call_id, existing);
+      // Function call arguments delta — call_id may be top-level or as item_id
+      if (event.type === "response.function_call_arguments.delta") {
+        const rawDelta = event as unknown as Record<string, unknown>;
+        const deltaId = event.call_id || (rawDelta.item_id as string) || "";
+        if (deltaId) {
+          const existing = toolCalls.get(deltaId) || {
+            id: deltaId,
+            name: event.name || "",
+            arguments: "",
+          };
+          if (event.name) existing.name = event.name;
+          existing.arguments += event.delta || "";
+          toolCalls.set(deltaId, existing);
+        }
       }
 
-      // Function call done
-      if (event.type === "response.function_call_arguments.done" && event.call_id) {
-        const tc = toolCalls.get(event.call_id);
-        if (tc) {
+      // Function call done — extract from done event if deltas didn't capture it
+      if (event.type === "response.function_call_arguments.done") {
+        const rawEvent = event as unknown as Record<string, unknown>;
+        const callId = event.call_id || (rawEvent.item_id as string) || "";
+        const tc = callId ? toolCalls.get(callId) : undefined;
+        if (tc && tc.name) {
           yield { type: "tool_call", id: tc.id, name: tc.name, arguments: tc.arguments };
+        } else if (callId) {
+          // Done event has full arguments but name may be missing — check output_item.added events
+          const name = tc?.name || (rawEvent.name as string) || "";
+          const args = (rawEvent.arguments as string) || tc?.arguments || "";
+          if (name || args) {
+            yield { type: "tool_call", id: callId, name, arguments: args };
+          }
+        }
+      }
+
+      // Capture tool name from output_item.added events (comes before function_call deltas)
+      if (event.type === "response.output_item.added") {
+        const rawItem = event as unknown as Record<string, unknown>;
+        const item = rawItem.item as Record<string, unknown> | undefined;
+        // item.id = the item_id used in delta/done events; item.call_id = legacy format
+        if (item?.type === "function_call") {
+          // The item's id field is the same as item_id used in delta/done events
+          const id = (item.id as string) || (item.call_id as string) || "";
+          if (id) {
+            const existing = toolCalls.get(id) || { id, name: "", arguments: "" };
+            if (item.name) existing.name = item.name as string;
+            toolCalls.set(id, existing);
+          }
         }
       }
 

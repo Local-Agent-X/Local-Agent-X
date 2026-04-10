@@ -170,7 +170,12 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   const isTrivialToolRequest = /^(run\s+(bash|command)|execute|bash)\s*(with|:)/i.test(message.trim()) ||
     /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
 
-  const shouldRunMemory = !skipMemory && !isTrivialToolRequest;
+  // Skip heavy memory orchestrator for Codex (128k context). The orchestrator's
+  // 7+ modules (emotional memory, growth tracker, anticipatory care, etc.) add
+  // rich context that's great for 200k+ models but pushes Codex past the point
+  // where it returns empty responses. Basic context (identity, profile) still runs.
+  const isCodexProvider = resolved.provider === "codex";
+  const shouldRunMemory = !skipMemory && !isTrivialToolRequest && !isCodexProvider;
 
   if (shouldRunMemory) {
     [contextBlock, relevantMemories] = await Promise.all([
@@ -248,10 +253,13 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   }
 
   let toolPromptSection = "";
-  try {
-    const { buildToolPromptSection } = await import("./tool-prompt-builder.js");
-    toolPromptSection = buildToolPromptSection(allAgentTools);
-  } catch {}
+  // Tool prompt section adds per-tool usage guidance — skip for Codex to save tokens
+  if (!isCodexProvider) {
+    try {
+      const { buildToolPromptSection } = await import("./tool-prompt-builder.js");
+      toolPromptSection = buildToolPromptSection(allAgentTools);
+    } catch {}
+  }
 
   let systemPrompt: string;
   if (systemPromptOverride) {

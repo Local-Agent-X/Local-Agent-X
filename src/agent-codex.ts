@@ -141,10 +141,14 @@ export async function runCodexAgentHttp(
     // handler can detect it and fall back to a different provider, and so
     // stripEphemeralMessages can scrub it from the saved session.
     if (toolCalls.length === 0 && !assistantContent.trim()) {
-      const placeholder = "__EMPTY_CODEX_RESPONSE__ (gpt-5.3-codex returned no output. This model is optimized for coding tasks; casual chat messages often produce empty responses. Trying a fallback provider...)";
-      const errorMsg: ChatCompletionMessageParam = { role: "assistant", content: placeholder };
+      // Internal sentinel — DO NOT stream to the client. The caller
+      // (chat.ts / server.ts bridge handler) detects this marker and
+      // falls back to another provider. Streaming it leaks ugly debug
+      // text into the chat UI.
+      const sentinel = "__EMPTY_CODEX_RESPONSE__";
+      const errorMsg: ChatCompletionMessageParam = { role: "assistant", content: sentinel };
       messages.push(errorMsg);
-      onEvent?.({ type: "stream", delta: placeholder });
+      // Don't stream the sentinel — just emit done so the SSE connection closes cleanly
       onEvent?.({ type: "done", usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput } });
       return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
     }

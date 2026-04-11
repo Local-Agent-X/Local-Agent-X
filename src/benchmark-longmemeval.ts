@@ -24,6 +24,10 @@ const K = process.argv.includes("--k")
   ? parseInt(process.argv[process.argv.indexOf("--k") + 1])
   : 10;
 
+const EMB_MODEL = process.argv.includes("--emb-model")
+  ? process.argv[process.argv.indexOf("--emb-model") + 1]
+  : "nomic-embed-text";
+
 const LIMIT = process.argv.includes("--limit")
   ? parseInt(process.argv[process.argv.indexOf("--limit") + 1])
   : 0;
@@ -57,8 +61,9 @@ async function main() {
 
   try {
     const { createEmbeddingProvider } = await import("./embedding-providers.js");
-    memory.setEmbeddingProvider(createEmbeddingProvider({ provider: "ollama" }));
-    console.log("Embedding: ollama/nomic-embed-text");
+    const embProvider = createEmbeddingProvider({ provider: "ollama", model: EMB_MODEL });
+    memory.setEmbeddingProvider(embProvider);
+    console.log(`Embedding: ollama/${EMB_MODEL} (${embProvider.dimensions}d)`);
   } catch { console.log("Keyword search only"); }
 
   const scores: Record<string, { hits: number; total: number }> = {};
@@ -72,6 +77,7 @@ async function main() {
     if (!scores[qType]) scores[qType] = { hits: 0, total: 0 };
 
     // Build set of answer session IDs for this question
+    try {
     const answerIds = new Set(item.answer_session_ids);
 
     // Phase 1: Ingest sessions using real session IDs from haystack_session_ids
@@ -103,7 +109,10 @@ async function main() {
 
     // Phase 2: Search with session grouping, temporal boost, and optional rerank
     const useRerank = process.argv.includes("--rerank");
-    const results = await memory.search(item.question, { maxResults: K, minScore: 0.001, rerank: useRerank });
+    const rerankProvider = process.argv.includes("--rerank-provider")
+      ? process.argv[process.argv.indexOf("--rerank-provider") + 1]
+      : undefined;
+    const results = await memory.search(item.question, { maxResults: K, minScore: 0.001, rerank: useRerank, rerankModel: rerankProvider ? `provider:${rerankProvider}` : undefined });
 
     // Phase 3: Check if ANY returned chunk comes from an answer session
     // This is how MemPalace measures — did you retrieve the right session?
@@ -130,6 +139,11 @@ async function main() {
     // Cleanup
     for (const p of sessionPaths) {
       try { (memory as any).removeFile(p); } catch {}
+    }
+    } catch (e) {
+      console.warn(`\n[bench] Question ${qi + 1} failed: ${(e as Error).message}`);
+      scores[qType].total++;
+      totalQueries++;
     }
   }
 

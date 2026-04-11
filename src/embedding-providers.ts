@@ -376,11 +376,12 @@ export class MistralEmbeddings implements ExtendedEmbeddingProvider {
 export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   readonly name = "ollama";
   model: string;
-  readonly dimensions = 768;
+  dimensions: number;
   readonly maxBatchSize = 10;
 
   private baseUrl: string;
   private healthy: boolean | null = null;
+  private dimensionsDetected = false;
 
   constructor(opts?: { model?: string; baseUrl?: string }) {
     this.model = opts?.model ?? "nomic-embed-text";
@@ -388,23 +389,39 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
       /\/$/,
       ""
     );
+    // Default dimensions per known model, auto-detected on first embed call
+    const knownDims: Record<string, number> = {
+      "nomic-embed-text": 768, "mxbai-embed-large": 1024,
+      "snowflake-arctic-embed:335m": 768, "all-minilm": 384,
+      "bge-large": 1024, "bge-base": 768,
+    };
+    this.dimensions = knownDims[this.model] || 768;
   }
 
   async embed(text: string): Promise<number[]> {
     if (!(await this.ensureHealthy())) return emptyVector(this.dimensions);
+    if (!text || !text.trim()) return emptyVector(this.dimensions);
+    // Truncate to ~512 tokens (~2000 chars) for models with smaller context windows
+    const truncated = text.trim().slice(0, 2000);
     try {
       const res = await fetch(`${this.baseUrl}/api/embed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: this.model, input: text }),
+        body: JSON.stringify({ model: this.model, input: truncated }),
       });
       if (!res.ok) {
         throw new Error(`Ollama embed HTTP ${res.status}`);
       }
       const json = (await res.json()) as { embeddings: number[][] };
-      return json.embeddings?.[0] ?? emptyVector(this.dimensions);
+      const vec = json.embeddings?.[0] ?? emptyVector(this.dimensions);
+      // Auto-detect dimensions from first result
+      if (!this.dimensionsDetected && vec.length > 0) {
+        this.dimensions = vec.length;
+        this.dimensionsDetected = true;
+      }
+      return vec;
     } catch (err: any) {
-      console.warn(`[ollama-embed] Failed: ${err?.message ?? err}`);
+      // Suppress noisy per-chunk errors — batch fallback handles it
       return emptyVector(this.dimensions);
     }
   }
@@ -418,19 +435,26 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
     if (!(await this.ensureHealthy())) {
       return texts.map(() => emptyVector(this.dimensions));
     }
+    // Filter out empty strings and truncate long text
+    const cleaned = texts.map(t => (t && t.trim()) ? t.trim().slice(0, 2000) : null);
+    const validTexts = cleaned.filter((t): t is string => t !== null);
+    if (validTexts.length === 0) return texts.map(() => emptyVector(this.dimensions));
     try {
       const res = await fetch(`${this.baseUrl}/api/embed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: this.model, input: texts }),
+        body: JSON.stringify({ model: this.model, input: validTexts }),
       });
       if (!res.ok) {
         throw new Error(`Ollama batch embed HTTP ${res.status}`);
       }
       const json = (await res.json()) as { embeddings: number[][] };
-      return json.embeddings ?? texts.map(() => emptyVector(this.dimensions));
+      const validResults = json.embeddings ?? validTexts.map(() => emptyVector(this.dimensions));
+      // Map results back to original positions
+      let vi = 0;
+      return cleaned.map(t => t !== null ? validResults[vi++] || emptyVector(this.dimensions) : emptyVector(this.dimensions));
     } catch (err: any) {
-      console.warn(`[ollama-embed] Batch failed: ${err?.message ?? err}, falling back to individual`);
+      // Batch failed — fall back silently to individual embeds
       // Fallback: embed one at a time
       const results: number[][] = [];
       for (const text of texts) {

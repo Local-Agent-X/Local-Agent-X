@@ -480,7 +480,8 @@ async function saveSettings() {
   const maxIter = parseInt(document.getElementById('cfg-maxiter')?.value || '25', 10);
   const embProvider = document.getElementById('cfg-emb-provider')?.value || 'ollama';
   const embModel = document.getElementById('cfg-emb-model')?.value || '';
-  const settingsPayload = { provider: s.provider, model: s.model, temperature: s.temperature, maxIterations: maxIter, embeddingProvider: embProvider === 'none' ? undefined : embProvider, embeddingModel: embModel || undefined };
+  const rerankModel = document.getElementById('cfg-rerank-model')?.value || '';
+  const settingsPayload = { provider: s.provider, model: s.model, temperature: s.temperature, maxIterations: maxIter, embeddingProvider: embProvider === 'none' ? undefined : embProvider, embeddingModel: embModel || undefined, rerankModel: rerankModel || undefined };
   if (s.port) settingsPayload.port = s.port;
   const customUrl = document.getElementById('cfg-custom-url');
   if (customUrl && customUrl.value) settingsPayload.customBaseUrl = customUrl.value;
@@ -517,7 +518,9 @@ async function loadSettings() {
     // Embedding settings
     set('cfg-emb-provider', s.embeddingProvider || 'ollama');
     set('cfg-emb-model', s.embeddingModel || '');
+    set('cfg-rerank-model', s.rerankModel || '');
     onEmbProviderChange(s.embeddingProvider || 'ollama');
+    loadRerankModels(s.rerankModel);
     // Show/hide XTTS sections based on engine
     if (s.ttsEngine) onTtsEngineChange(s.ttsEngine);
     // Show local model dropdown if provider is local
@@ -583,6 +586,42 @@ async function onEmbProviderChange(provider) {
   }
 }
 window.onEmbProviderChange = onEmbProviderChange;
+
+async function loadRerankModels(saved) {
+  const modelSelect = document.getElementById('cfg-rerank-model-select');
+  const modelInput = document.getElementById('cfg-rerank-model');
+  if (!modelSelect || !modelInput) return;
+
+  try {
+    const data = await apiJson('/api/models/local');
+    const models = (data.models || []).map(function(m) { return m.name; });
+    if (models.length === 0) {
+      modelSelect.style.display = 'none';
+      modelInput.style.display = '';
+      return;
+    }
+    // Show dropdown, hide text input
+    modelSelect.style.display = '';
+    modelInput.style.display = 'none';
+    // Exclude embedding-only models, sort reasoning models first
+    var reasoningModels = ['qwen2', 'llama3', 'mistral', 'phi', 'gemma', 'deepseek', 'codellama'];
+    var sorted = models.slice().sort(function(a, b) {
+      if (a.includes('embed') && !b.includes('embed')) return 1;
+      if (!a.includes('embed') && b.includes('embed')) return -1;
+      var aR = reasoningModels.some(function(r) { return a.includes(r); }) ? 0 : 1;
+      var bR = reasoningModels.some(function(r) { return b.includes(r); }) ? 0 : 1;
+      return aR - bR || a.localeCompare(b);
+    }).filter(function(m) { return !m.includes('embed'); });
+    modelSelect.innerHTML = '<option value="">(disabled — no reranking)</option>' +
+      sorted.map(function(m) { return '<option value="' + esc(m) + '">' + esc(m) + '</option>'; }).join('');
+    if (saved && sorted.includes(saved)) modelSelect.value = saved;
+    if (modelInput) modelInput.value = modelSelect.value;
+    modelSelect.onchange = function() { if (modelInput) modelInput.value = modelSelect.value; };
+  } catch {
+    modelSelect.style.display = 'none';
+    modelInput.style.display = '';
+  }
+}
 
 // ── XTTS Voice Cloning ──
 

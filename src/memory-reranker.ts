@@ -23,9 +23,13 @@ export async function rerankWithLLM(
   results: MemorySearchResult[],
   options: RerankOptions = {},
 ): Promise<MemorySearchResult[]> {
-  const topN = options.topN || 30;
+  const topN = options.topN || 50;
   const candidates = results.slice(0, topN);
   if (candidates.length === 0) return results;
+  // Small delay to avoid rate limiting on API providers
+  if (options.provider === "anthropic" || options.provider === "openai") {
+    await new Promise(r => setTimeout(r, 200));
+  }
 
   const numbered = candidates.map((r, i) =>
     `[${i + 1}] ${r.snippet.slice(0, 250).replace(/\n/g, " ")}`
@@ -59,7 +63,7 @@ async function callLLM(prompt: string, count: number, options: RerankOptions): P
   const provider = options.provider || "ollama";
 
   if (provider === "ollama") {
-    const model = options.model || "llama3:8b";
+    const model = options.model || "qwen2:7b";
     try {
       const res = await fetch("http://localhost:11434/api/generate", {
         method: "POST",
@@ -77,6 +81,51 @@ async function callLLM(prompt: string, count: number, options: RerankOptions): P
       return parseScores(response, count);
     } catch (e) {
       console.warn("[reranker] Ollama call failed:", (e as Error).message);
+      return [];
+    }
+  }
+
+  if (provider === "anthropic") {
+    try {
+      // Check for direct API key first (env var), then fall back to auth system
+      let apiKey = process.env.ANTHROPIC_API_KEY || "";
+      if (!apiKey) {
+        try {
+          const { getAnthropicApiKey } = await import("./auth-anthropic.js");
+          apiKey = await getAnthropicApiKey();
+        } catch {}
+      }
+      if (!apiKey) { console.warn("[reranker] No Anthropic API key"); return []; }
+      const model = options.model || "claude-haiku-4-5-20251001";
+
+      // Direct API call
+      const token = apiKey.startsWith("oauth:") ? apiKey.slice(6) : apiKey;
+      const isOAuth = apiKey.startsWith("oauth:");
+      const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": "2023-06-01" };
+      if (isOAuth) headers["Authorization"] = `Bearer ${token}`;
+      else headers["x-api-key"] = token;
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model, max_tokens: 200, temperature: 0,
+          messages: [{ role: "user", content: prompt }],
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.warn(`[reranker] Anthropic ${res.status}: ${body.slice(0, 100)}`);
+        return [];
+      }
+      const data = await res.json() as { content?: Array<{ text?: string }> };
+      const text = data.content?.[0]?.text || "";
+      const scores = parseScores(text, count);
+      if (scores.length > 0) console.log(`[reranker] Haiku scored ${scores.length} candidates`);
+      else console.warn(`[reranker] Haiku returned unparseable: ${text.slice(0, 80)}`);
+      return scores;
+    } catch (e) {
+      console.warn("[reranker] Anthropic call failed:", (e as Error).message);
       return [];
     }
   }

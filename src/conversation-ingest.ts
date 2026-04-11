@@ -71,11 +71,23 @@ export async function ingestConversations(
 ): Promise<IngestResult> {
   const files = scanExportFiles(path);
   const result: IngestResult = { totalConversations: 0, processed: 0, skipped: 0, chunksCreated: 0, errors: 0, formats: {} };
-  const progress: IngestProgress = { totalFiles: files.length, currentFile: "", totalConversations: 0, processed: 0, skipped: 0, chunksCreated: 0, errors: 0 };
+
+  // Pre-count total conversations across all files for accurate progress
+  let globalTotal = 0;
+  for (const filePath of files) {
+    try {
+      const content = readFileSync(filePath, "utf-8");
+      const ext = extname(filePath).toLowerCase();
+      const parsed = parseExportFile(content, ext);
+      globalTotal += parsed.length;
+    } catch { /* skip unreadable files */ }
+  }
+
+  const progress: IngestProgress = { totalFiles: files.length, currentFile: "", totalConversations: globalTotal, processed: 0, skipped: 0, chunksCreated: 0, errors: 0 };
+  onProgress?.(progress);
 
   for (const filePath of files) {
     progress.currentFile = basename(filePath);
-    onProgress?.(progress);
 
     try {
       const fileResult = await ingestSingleFile(memory, filePath, onProgress ? (p) => {
@@ -83,7 +95,6 @@ export async function ingestConversations(
         progress.skipped = result.skipped + p.skipped;
         progress.chunksCreated = result.chunksCreated + p.chunksCreated;
         progress.errors = result.errors + p.errors;
-        progress.totalConversations = result.totalConversations + p.totalConversations;
         onProgress(progress);
       } : undefined);
 
@@ -170,7 +181,9 @@ async function ingestSingleFile(
       }
 
       // Index chunks through the memory system
+      console.log(`[ingest] Indexing ${chunks.length} chunks for ${convo.id.slice(0, 8)}...`);
       await memory.indexChunks(chunks, virtualPath, "sessions");
+      console.log(`[ingest] Indexed ${chunks.length} chunks for ${convo.id.slice(0, 8)}.`);
 
       // Mark as ingested
       memory.markConversationIngested(convo.id, convo.title, convo.createTime || 0, convo.messages.length, convo.source);

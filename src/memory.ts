@@ -802,11 +802,11 @@ export class MemoryIndex {
         }
       }
 
-      // Remove chunks for deleted files
+      // Remove chunks for deleted files (skip import/ virtual paths — those aren't real files)
       const allPaths = new Set(allFiles.map((f) => f.path));
       const dbFiles = this.db.prepare("SELECT path FROM files").all() as { path: string }[];
       for (const { path } of dbFiles) {
-        if (!allPaths.has(path)) {
+        if (!allPaths.has(path) && !path.startsWith("import/")) {
           this.removeFile(path);
         }
       }
@@ -994,31 +994,40 @@ export class MemoryIndex {
   async indexChunks(chunks: Chunk[], virtualPath: string, source: string): Promise<void> {
     this.removeFile(virtualPath);
     if (chunks.length === 0) return;
-    if (this.embeddingProvider) await this.embedChunksWithRetry(chunks);
+    try {
+      if (this.embeddingProvider) await this.embedChunksWithRetry(chunks);
+    } catch (e) {
+      // Continue without embeddings — keyword search still works
+    }
 
-    const insertChunk = this.db.prepare(`
-      INSERT INTO chunks (path, source, start_line, end_line, text, hash, embedding, updated_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const insertFts = this.hasFts ? this.db.prepare(`INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)`) : null;
     const now = Date.now();
+    try {
+      const insertChunk = this.db.prepare(`
+        INSERT INTO chunks (path, source, start_line, end_line, text, hash, embedding, updated_at, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const insertFts = this.hasFts ? this.db.prepare(`INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)`) : null;
 
-    const insertMany = this.db.transaction(() => {
       for (const chunk of chunks) {
-        const result = insertChunk.run(
-          virtualPath, source, chunk.startLine, chunk.endLine, chunk.text, chunk.hash,
-          chunk.embedding ? JSON.stringify(chunk.embedding) : null, now,
-          chunk.metadata ? JSON.stringify(chunk.metadata) : null
-        );
-        const chunkId = result.lastInsertRowid;
-        if (insertFts) insertFts.run(chunkId, chunk.text);
-        if (this.hasVec && chunk.embedding) {
-          try { this.db.prepare("INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)").run(chunkId, new Float32Array(chunk.embedding)); } catch {}
+        try {
+          const result = insertChunk.run(
+            virtualPath, source, chunk.startLine, chunk.endLine, chunk.text, chunk.hash,
+            chunk.embedding ? JSON.stringify(chunk.embedding) : null, now,
+            chunk.metadata ? JSON.stringify(chunk.metadata) : null
+          );
+          const chunkId = result.lastInsertRowid;
+          if (insertFts) try { insertFts.run(chunkId, chunk.text); } catch {}
+          if (this.hasVec && chunk.embedding) {
+            try { this.db.prepare("INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)").run(chunkId, new Float32Array(chunk.embedding)); } catch {}
+          }
+        } catch (e) {
+          console.warn(`[memory] Chunk insert failed:`, (e as Error).message);
         }
       }
       this.db.prepare("INSERT OR REPLACE INTO files (path, source, hash, mtime, size) VALUES (?, ?, ?, ?, ?)").run(virtualPath, source, `ingest:${now}`, now, 0);
-    });
-    insertMany();
+    } catch (e) {
+      console.error(`[memory] indexChunks transaction failed for ${virtualPath}:`, (e as Error).message);
+    }
   }
 
   isConversationIngested(conversationId: string): boolean {
@@ -1422,7 +1431,9 @@ export class MemoryIndex {
         const relaxedMin = Math.min(minScore, this.config.textWeight);
         let processed = this.postProcess(merged, maxResults * 3, relaxedMin, { ...options, query });
         if (options?.rerank && processed.length > 0) {
-          try { const { rerankWithLLM } = await import("./memory-reranker.js"); processed = await rerankWithLLM(query, processed, { provider: "ollama", model: options.rerankModel }); } catch {}
+          try { const { rerankWithLLM } = await import("./memory-reranker.js"); const rProvider = options.rerankModel?.startsWith("provider:") ? options.rerankModel.split(":")[1] : "ollama";
+        const rModel = options.rerankModel?.startsWith("provider:") ? undefined : options.rerankModel;
+        processed = await rerankWithLLM(query, processed, { provider: rProvider, model: rModel }); } catch (e) { console.warn("[memory] Rerank error:", (e as Error).message); }
         }
         return processed.slice(0, maxResults);
       }
@@ -1434,7 +1445,9 @@ export class MemoryIndex {
     if (options?.rerank && processed.length > 0) {
       try {
         const { rerankWithLLM } = await import("./memory-reranker.js");
-        processed = await rerankWithLLM(query, processed, { provider: "ollama", model: options.rerankModel });
+        const rProvider = options.rerankModel?.startsWith("provider:") ? options.rerankModel.split(":")[1] : "ollama";
+        const rModel = options.rerankModel?.startsWith("provider:") ? undefined : options.rerankModel;
+        processed = await rerankWithLLM(query, processed, { provider: rProvider, model: rModel });
       } catch (e) { console.warn("[memory] Rerank failed:", (e as Error).message); }
     }
 

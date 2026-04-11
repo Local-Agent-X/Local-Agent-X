@@ -128,7 +128,11 @@ function walkMappingTree(mapping: Record<string, Record<string, unknown>>): Pars
       const contentObj = msg.content as Record<string, unknown> | string | undefined;
       const parts = typeof contentObj === "object" && contentObj !== null ? (contentObj as Record<string, unknown>).parts as unknown[] : undefined;
       const text = Array.isArray(parts)
-        ? parts.filter((p: unknown) => typeof p === "string" && p).join(" ").trim()
+        ? parts.map((p: unknown) => {
+            if (typeof p === "string") return p;
+            if (typeof p === "object" && p !== null && typeof (p as Record<string, unknown>).text === "string") return (p as Record<string, unknown>).text as string;
+            return "";
+          }).filter(Boolean).join(" ").trim()
         : typeof contentObj === "string" ? contentObj.trim() : "";
 
       if (text && (role === "user" || role === "assistant")) {

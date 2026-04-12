@@ -123,7 +123,8 @@ export async function runCodexAgentHttp(
 
     lastContextLength = messages.length;
 
-    const forceToolUse = iteration > 0 && iteration < 4;
+    // Only force tool use on iteration 1 (right after a nudge), not on every turn
+    const forceToolUse = false; // Disabled — tool_choice "required" causes loops
 
     try {
       const stream = streamCodexResponse({
@@ -206,6 +207,15 @@ export async function runCodexAgentHttp(
     messages.push(assistantMsg);
 
     if (toolCalls.length === 0) {
+      // Hallucination detection: if the model claims to have CREATED something
+      // without calling a tool, nudge it ONCE (not for deletions or queries)
+      const creationClaim = /\b(created|scheduled|saved|built|deployed|sent|posted)\b.*\b(task|schedule|mission|job|file|app|message|memory|fact)\b/i.test(assistantContent);
+      const hasToolLikeIds = /\b(sched_|job_|id:|ID:)\s*[a-zA-Z0-9_-]{6,}/i.test(assistantContent);
+      if ((creationClaim || hasToolLikeIds) && iteration === 0) {
+        console.warn(`[agent] Hallucination detected — model claimed creation without tool call, nudging once`);
+        messages.push({ role: "user", content: "You claimed to have created or scheduled something but you did NOT actually call a tool. The action did NOT happen. Call the actual tool now." } as ChatCompletionMessageParam);
+        continue;
+      }
       onEvent?.({ type: "done", usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput } });
       return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
     }

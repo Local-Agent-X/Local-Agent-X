@@ -128,7 +128,7 @@ export async function* streamCodexResponse(params: {
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;
-    body.tool_choice = "auto";
+    body.tool_choice = params.forceToolUse ? "required" : "auto";
     body.parallel_tool_calls = true;
   }
 

@@ -1066,6 +1066,43 @@ export class MemoryIndex {
     return { total, byFormat };
   }
 
+  // ── Forget (delete memories) ──
+
+  forgetFacts(pattern: string): number {
+    const facts = this.db.prepare("SELECT id FROM facts WHERE content LIKE ?").all(`%${pattern}%`) as Array<{ id: number }>;
+    for (const f of facts) {
+      this.db.prepare("DELETE FROM entity_mentions WHERE fact_id = ?").run(f.id);
+      if (this.hasFts) try { this.db.prepare("DELETE FROM facts_fts WHERE rowid = ?").run(f.id); } catch {}
+      this.db.prepare("DELETE FROM facts WHERE id = ?").run(f.id);
+    }
+    return facts.length;
+  }
+
+  findFacts(pattern: string): Array<{ id: number; content: string }> {
+    return this.db.prepare("SELECT id, content FROM facts WHERE content LIKE ?").all(`%${pattern}%`) as Array<{ id: number; content: string }>;
+  }
+
+  forgetChunks(pathPattern: string): number {
+    const chunks = this.db.prepare("SELECT id FROM chunks WHERE path LIKE ?").all(`%${pathPattern}%`) as Array<{ id: number }>;
+    for (const c of chunks) {
+      if (this.hasFts) try { this.db.prepare("DELETE FROM chunks_fts WHERE rowid = ?").run(c.id); } catch {}
+      if (this.hasVec) try { this.db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?").run(c.id); } catch {}
+    }
+    this.db.prepare("DELETE FROM chunks WHERE path LIKE ?").run(`%${pathPattern}%`);
+    this.db.prepare("DELETE FROM files WHERE path LIKE ?").run(`%${pathPattern}%`);
+    return chunks.length;
+  }
+
+  forgetConversation(conversationId: string): number {
+    const deleted = this.forgetChunks(conversationId);
+    this.db.prepare("DELETE FROM conversation_ingest_log WHERE conversation_id = ?").run(conversationId);
+    return deleted;
+  }
+
+  countChunks(pathPattern: string): number {
+    return (this.db.prepare("SELECT COUNT(*) as c FROM chunks WHERE path LIKE ?").get(`%${pathPattern}%`) as { c: number }).c;
+  }
+
   private removeFile(path: string): void {
     // Wrap all deletions in a single transaction to prevent orphaned rows
     const doRemove = this.db.transaction(() => {
@@ -3103,6 +3140,88 @@ export function createMemoryTools(memory: MemoryIndex) {
             `sqlite-vec: ${stats.hasVec ? "active" : "unavailable (using in-memory cosine)"}`,
           ].join("\n"),
         };
+      },
+    },
+
+    {
+      name: "memory_forget",
+      description:
+        "Delete specific memories. Use when the user asks to forget something, remove incorrect info, or delete test data. " +
+        "Can delete by: search query (finds and removes matching chunks), fact content (removes specific retained facts), " +
+        "conversation ID (removes all chunks from a specific imported conversation), or path pattern.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query — finds matching chunks and deletes them" },
+          fact: { type: "string", description: "Exact or partial fact text to remove from retained facts" },
+          conversation_id: { type: "string", description: "Conversation ID to remove (from imported chats)" },
+          path: { type: "string", description: "Path pattern to delete chunks from (e.g. 'import/chatgpt/abc123')" },
+          confirm: { type: "boolean", description: "Must be true to actually delete. If false or missing, shows what would be deleted." },
+        },
+      },
+      async execute(args: Record<string, unknown>) {
+        const query = args.query ? String(args.query) : undefined;
+        const fact = args.fact ? String(args.fact) : undefined;
+        const conversationId = args.conversation_id ? String(args.conversation_id) : undefined;
+        const pathPattern = args.path ? String(args.path) : undefined;
+        const confirm = args.confirm === true;
+
+        const results: string[] = [];
+
+        if (fact) {
+          const matching = memory.findFacts(fact);
+          if (!confirm) {
+            results.push(`Would delete ${matching.length} fact(s):`);
+            matching.slice(0, 10).forEach(f => results.push(`  - ${f.content.slice(0, 80)}`));
+          } else {
+            const deleted = memory.forgetFacts(fact);
+            results.push(`Deleted ${deleted} fact(s)`);
+          }
+        }
+
+        if (query) {
+          const searchResults = await memory.search(query, { maxResults: 20, minScore: 0.3 });
+          if (!confirm) {
+            results.push(`Would delete ${searchResults.length} matching memory chunk(s):`);
+            searchResults.slice(0, 10).forEach(r => results.push(`  - [${r.source}] ${r.snippet.slice(0, 60)}`));
+          } else {
+            let deleted = 0;
+            for (const r of searchResults) {
+              deleted += memory.forgetChunks(r.path);
+            }
+            results.push(`Deleted ${deleted} chunk(s) matching "${query}"`);
+          }
+        }
+
+        if (conversationId) {
+          const count = memory.countChunks(conversationId);
+          if (!confirm) {
+            results.push(`Would delete ${count} chunk(s) from conversation ${conversationId}`);
+          } else {
+            const deleted = memory.forgetConversation(conversationId);
+            results.push(`Deleted ${deleted} chunk(s) from conversation ${conversationId}`);
+          }
+        }
+
+        if (pathPattern) {
+          const count = memory.countChunks(pathPattern);
+          if (!confirm) {
+            results.push(`Would delete ${count} chunk(s) matching path "${pathPattern}"`);
+          } else {
+            const deleted = memory.forgetChunks(pathPattern);
+            results.push(`Deleted ${deleted} chunk(s) matching "${pathPattern}"`);
+          }
+        }
+
+        if (results.length === 0) {
+          return { content: "Provide at least one of: query, fact, conversation_id, or path to specify what to forget.", isError: true };
+        }
+
+        if (!confirm) {
+          results.push("\nTo confirm deletion, call memory_forget again with confirm: true");
+        }
+
+        return { content: results.join("\n") };
       },
     },
 

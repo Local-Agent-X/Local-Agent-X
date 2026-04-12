@@ -176,8 +176,8 @@ function parseClaudeAIMessages(msgs: any[], id: string, title?: string): ParsedC
   const messages: ParsedMessage[] = [];
   for (const item of msgs) {
     if (!item || typeof item !== "object") continue;
-    const role = item.role;
-    const text = extractContent(item.content);
+    const role = item.role || item.sender; // Claude privacy export uses "sender"
+    const text = extractContent(item.content) || extractContent(item.text); // Claude privacy export uses "text"
     if (!text) continue;
     if (role === "user" || role === "human") messages.push({ role: "user", content: text });
     else if (role === "assistant" || role === "ai") messages.push({ role: "assistant", content: text });

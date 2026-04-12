@@ -394,6 +394,8 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
       "nomic-embed-text": 768, "mxbai-embed-large": 1024,
       "snowflake-arctic-embed:335m": 768, "all-minilm": 384,
       "bge-large": 1024, "bge-base": 768,
+      "gte-large": 1024, "thenlper/gte-large": 1024,
+      "BAAI/bge-large-en-v1.5": 1024, "e5-large": 1024,
     };
     this.dimensions = knownDims[this.model] || 768;
   }
@@ -450,6 +452,11 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
       }
       const json = (await res.json()) as { embeddings: number[][] };
       const validResults = json.embeddings ?? validTexts.map(() => emptyVector(this.dimensions));
+      // Auto-detect dimensions from first successful result
+      if (!this.dimensionsDetected && validResults[0]?.length > 0) {
+        this.dimensions = validResults[0].length;
+        this.dimensionsDetected = true;
+      }
       // Map results back to original positions
       let vi = 0;
       return cleaned.map(t => t !== null ? validResults[vi++] || emptyVector(this.dimensions) : emptyVector(this.dimensions));

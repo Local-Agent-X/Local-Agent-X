@@ -271,6 +271,26 @@
           <div class="section-desc">After search finds candidates, a reasoning model scores their relevance. Improves accuracy on complex questions.</div>
           <div class="field"><label class="field-label">Reranker Model</label><select class="field-select" id="cfg-rerank-model-select"></select><input class="field-input" id="cfg-rerank-model" placeholder="e.g. qwen2:7b, llama3:8b" value="" style="display:none"/><div class="field-hint" id="cfg-rerank-hint">Any Ollama chat model works. Smarter models = better reranking but slower. Select disabled for no reranking.</div></div>
         </div>
+        <div class="section-card" style="margin-top:16px">
+          <div class="section-title">Import Conversations</div>
+          <div class="section-desc">Import chat history from other AI platforms. Supports ChatGPT, Claude.ai, Claude Code, Codex CLI, Slack, and generic JSON exports. Auto-detects format.</div>
+          <div class="field">
+            <label class="field-label">Select export folder or files</label>
+            <input type="file" id="ingest-file-input" multiple accept=".json,.jsonl,.txt,.md" style="display:none" onchange="handleIngestFiles(this.files)">
+            <div style="display:flex;gap:10px;align-items:center">
+              <button class="action-btn primary" onclick="document.getElementById('ingest-file-input').click()">Choose Files</button>
+              <span id="ingest-file-count" style="font-size:.72rem;color:var(--muted);font-family:var(--mono)"></span>
+            </div>
+            <div class="field-hint">Select your exported conversation JSON files (e.g. conversations-000.json from ChatGPT export).</div>
+          </div>
+          <div id="ingest-progress" style="display:none;margin-top:12px">
+            <div style="position:relative;height:22px;background:var(--bg);border-radius:6px;overflow:hidden">
+              <div id="ingest-progress-fill" style="height:100%;background:linear-gradient(90deg,var(--accent-dim),var(--accent));border-radius:6px;transition:width .3s;width:0%"></div>
+              <span id="ingest-progress-label" style="position:absolute;top:0;left:0;right:0;height:100%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:.65rem;color:var(--text)">0%</span>
+            </div>
+          </div>
+          <div id="ingest-result" style="display:none;margin-top:12px;font-family:var(--mono);font-size:.72rem;color:var(--text);background:var(--surface);padding:12px;border-radius:8px;border:1px solid var(--border)"></div>
+        </div>
       </div>
       <!-- Image & Video -->
       <div id="stab-image" class="tab-pane">

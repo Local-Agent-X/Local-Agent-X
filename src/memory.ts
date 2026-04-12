@@ -484,6 +484,15 @@ export class MemoryIndex {
       // quick_check failed — continue anyway, schema init will create tables
     }
 
+    // Load sqlite-vec extension if available
+    try {
+      const sqliteVec = require("sqlite-vec");
+      sqliteVec.load(db);
+      console.log("[memory] sqlite-vec loaded");
+    } catch {
+      // sqlite-vec not installed — will fall back to in-memory cosine
+    }
+
     return db;
   }
 
@@ -1172,12 +1181,13 @@ export class MemoryIndex {
   private async embedWithRetry(texts: string[]): Promise<number[][]> {
     const { retryMaxAttempts, retryBaseDelayMs, retryMaxDelayMs } = this.config;
     const startTime = Date.now();
-    const TOTAL_TIMEOUT_MS = 30_000;
+    // Scale timeout with batch size — 15s per text, min 60s, max 300s
+    const TOTAL_TIMEOUT_MS = Math.min(300_000, Math.max(60_000, texts.length * 15_000));
 
     for (let attempt = 1; attempt <= retryMaxAttempts; attempt++) {
       // Global timeout check
       if (Date.now() - startTime > TOTAL_TIMEOUT_MS) {
-        console.warn("[memory] Embedding total timeout exceeded (30s)");
+        console.warn(`[memory] Embedding total timeout exceeded (${TOTAL_TIMEOUT_MS / 1000}s)`);
         break;
       }
 

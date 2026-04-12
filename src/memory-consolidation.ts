@@ -262,7 +262,9 @@ export class MemoryConsolidator {
   // ── Promotion candidates: facts mentioned 3+ times ────────
 
   getPromotionCandidates(): FactEntry[] {
-    const allFacts = this.loadAllRecentFacts(30);
+    // Try SQLite facts first (from memory_save retain), fall back to daily log parsing
+    let allFacts = this.loadSqliteFacts(30);
+    if (allFacts.length === 0) allFacts = this.loadAllRecentFacts(30);
     const mindContent = existsSync(MIND_PATH)
       ? readFileSync(MIND_PATH, "utf-8")
       : "";
@@ -326,6 +328,27 @@ export class MemoryConsolidator {
   }
 
   // ── Private helpers ───────────────────────────────────────
+
+  private loadSqliteFacts(days: number): FactEntry[] {
+    try {
+      const Database = require("better-sqlite3");
+      const dbPath = join(SAX_DIR, "memory.db");
+      if (!existsSync(dbPath)) return [];
+      const db = new Database(dbPath, { readonly: true });
+      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+      const rows = db.prepare("SELECT content, entities, confidence, timestamp FROM facts WHERE timestamp > ? ORDER BY timestamp DESC").all(cutoff) as Array<{ content: string; entities: string; confidence: number; timestamp: number }>;
+      db.close();
+      return rows.map(r => ({
+        content: r.content,
+        entity: (() => { try { const e = JSON.parse(r.entities); return Array.isArray(e) && e.length > 0 ? e[0] : undefined; } catch { return undefined; } })(),
+        confidence: r.confidence,
+        accessCount: 1,
+        createdAt: r.timestamp,
+      }));
+    } catch {
+      return [];
+    }
+  }
 
   private loadTodayFacts(): FactEntry[] {
     const logPath = join(MEMORY_DIR, `${todayDateStr()}.md`);

@@ -196,10 +196,17 @@ export function buildCompactionPrompt(
   }
 
   // Split: old messages to summarize, recent messages to keep
+  // CRITICAL: always preserve the last user message — it's what the user just said
   const systemMsgs = messages.filter(m => m.role === "system");
   const nonSystem = messages.filter(m => m.role !== "system");
   const oldMessages = nonSystem.slice(0, -keepLast);
-  const recentMessages = nonSystem.slice(-keepLast);
+  let recentMessages = nonSystem.slice(-keepLast);
+  // Ensure the very last user message is always included
+  const lastUserIdx = nonSystem.findLastIndex(m => m.role === "user");
+  if (lastUserIdx >= 0 && lastUserIdx < nonSystem.length - keepLast) {
+    // The last user message got compacted out — force include it
+    recentMessages = [nonSystem[lastUserIdx], ...recentMessages];
+  }
 
   // Extract task state and key facts before discarding
   const taskState = extractTaskState(messages);

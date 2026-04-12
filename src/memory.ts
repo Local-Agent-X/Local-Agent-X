@@ -40,6 +40,13 @@ import Database from "better-sqlite3";
 import type { Session } from "./types.js";
 import { chunkConversationPairs, extractSessionPairs, chunkText as chunkTextNew } from "./memory-chunking.js";
 
+// Load sqlite-vec at module level (ESM-safe)
+let _sqliteVecLoad: ((db: any) => void) | null = null;
+try {
+  const mod = await import("sqlite-vec");
+  _sqliteVecLoad = mod.load;
+} catch {}
+
 // ══════════════════════════════════════════════════════════
 //  ATOMIC FILE OPERATIONS
 // ══════════════════════════════════════════════════════════
@@ -485,12 +492,13 @@ export class MemoryIndex {
     }
 
     // Load sqlite-vec extension if available
-    try {
-      const sqliteVec = require("sqlite-vec");
-      sqliteVec.load(db);
-      console.log("[memory] sqlite-vec loaded");
-    } catch {
-      // sqlite-vec not installed — will fall back to in-memory cosine
+    if (_sqliteVecLoad) {
+      try {
+        _sqliteVecLoad(db);
+        console.log("[memory] sqlite-vec loaded");
+      } catch (e) {
+        console.log("[memory] sqlite-vec load failed:", (e as Error).message?.slice(0, 100));
+      }
     }
 
     return db;

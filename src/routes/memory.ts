@@ -64,5 +64,86 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
     return true;
   }
 
+  // Ingest uploaded conversation files
+  if (method === "POST" && url.pathname === "/api/memory/ingest") {
+    const contentType = req.headers["content-type"] || "";
+    if (!contentType.includes("multipart/form-data")) { json(400, { error: "Multipart form data required" }); return true; }
+    try {
+      const { mkdirSync, writeFileSync, unlinkSync } = await import("fs");
+      const { join } = await import("path");
+      const { tmpdir } = await import("os");
+      // Read multipart body
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const body = Buffer.concat(chunks);
+      const boundary = contentType.match(/boundary=(?:"([^"]+)"|([^\s;]+))/)?.[1] || contentType.match(/boundary=(?:"([^"]+)"|([^\s;]+))/)?.[2];
+      if (!boundary) { json(400, { error: "No boundary in content-type" }); return true; }
+      // Parse multipart to extract files
+      const tmpDir = join(tmpdir(), "sax-ingest-" + Date.now());
+      mkdirSync(tmpDir, { recursive: true });
+      const files: string[] = [];
+      const parts = body.toString("binary").split("--" + boundary).filter(p => p.includes("filename="));
+      for (const part of parts) {
+        const nameMatch = part.match(/filename="([^"]+)"/);
+        if (!nameMatch) continue;
+        const filename = nameMatch[1].replace(/[^a-zA-Z0-9._-]/g, "_");
+        const headerEnd = part.indexOf("\r\n\r\n");
+        if (headerEnd < 0) continue;
+        const fileContent = part.slice(headerEnd + 4).replace(/\r\n$/, "").replace(/--\r\n$/, "").replace(/--$/, "");
+        const filePath = join(tmpDir, filename);
+        writeFileSync(filePath, fileContent, "binary");
+        files.push(filePath);
+      }
+      if (files.length === 0) { json(400, { error: "No files found in upload" }); return true; }
+      // Run ingest
+      const { ingestConversations } = await import("../conversation-ingest.js");
+      const result = await ingestConversations(ctx.memoryIndex, tmpDir);
+      // Clean up temp files
+      for (const f of files) try { unlinkSync(f); } catch {}
+      try { const { rmSync } = await import("fs"); rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      json(200, result);
+    } catch (e) {
+      json(500, { error: "Ingest failed: " + (e as Error).message });
+    }
+    return true;
+  }
+
+  // Debug: test indexChunks directly
+  if (method === "POST" && url.pathname === "/api/memory/test-index") {
+    try {
+      const { chunkConversationPairs } = await import("../memory-chunking.js");
+      const testMessages = [
+        { role: "user" as const, content: "This is a test message for debugging indexChunks" },
+        { role: "assistant" as const, content: "I received your test message. This confirms the ingest pipeline works." },
+      ];
+      const chunks = chunkConversationPairs(testMessages, "import/test/debug-" + Date.now(), "sessions", { source_type: "import", session_id: "test-debug" });
+      console.log(`[test-index] Created ${chunks.length} chunks, calling indexChunks...`);
+      await ctx.memoryIndex.indexChunks(chunks, "import/test/debug-" + Date.now(), "sessions");
+      console.log(`[test-index] indexChunks returned`);
+      // Verify
+      const stats = ctx.memoryIndex.getStats();
+      json(200, { ok: true, chunksCreated: chunks.length, totalChunks: stats.totalChunks });
+    } catch (e) {
+      json(500, { error: (e as Error).message, stack: (e as Error).stack?.slice(0, 500) });
+    }
+    return true;
+  }
+
+  // Ingest from a local directory path
+  if (method === "POST" && url.pathname === "/api/memory/ingest-path") {
+    let body: Record<string, unknown>;
+    try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON body" }); return true; }
+    const path = body.path as string;
+    if (!path) { json(400, { error: "path required" }); return true; }
+    try {
+      const { ingestConversations } = await import("../conversation-ingest.js");
+      const result = await ingestConversations(ctx.memoryIndex, path);
+      json(200, result);
+    } catch (e) {
+      json(500, { error: "Ingest failed: " + (e as Error).message });
+    }
+    return true;
+  }
+
   return false;
 };

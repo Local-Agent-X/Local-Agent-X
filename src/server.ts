@@ -220,11 +220,68 @@ export function startServer(config: SAXConfig) {
     sessions.set(id, s); if (sessions.size > MAX_CACHED) sessions.delete(sessions.keys().next().value!); return s;
   }
   const writeQueues = new Map<string, Promise<void>>();
+  // Track how many Q+A pairs have been indexed per session
+  const sessionIndexedPairs = new Map<string, number>();
+
   function saveSession(session: Session): void {
     const prev = writeQueues.get(session.id) ?? Promise.resolve();
-    const next = prev.then(() => { sessions.set(session.id, session); sessionStore.save(session); memoryIndex.markDirty(); }).catch(e => console.error(`[session] Save failed:`, e));
+    const next = prev.then(async () => {
+      sessions.set(session.id, session);
+      sessionStore.save(session);
+      memoryIndex.markDirty();
+      // Incrementally index new conversation pairs for immediate memory search
+      try { await indexSessionIncrementally(session); } catch (e) { console.warn(`[memory] Incremental index failed:`, (e as Error).message); }
+    }).catch(e => console.error(`[session] Save failed:`, e));
     writeQueues.set(session.id, next);
     next.finally(() => { if (writeQueues.get(session.id) === next) writeQueues.delete(session.id); });
+  }
+
+  async function indexSessionIncrementally(session: Session): Promise<void> {
+    // Skip system sessions (dream, ingest, etc.)
+    if (session.id.startsWith("dream-") || session.id.startsWith("ide-")) return;
+    console.log(`[memory-live] Indexing session ${session.id} (${session.messages?.length || 0} messages)`);
+    const { extractSessionPairs, chunkConversationPairs } = await import("./memory-chunking.js");
+    const messages = extractSessionPairs(join(dataDir, "sessions", session.id + ".json"));
+    if (messages.length < 2) return;
+
+    // Build Q+A pairs from messages
+    const pairs: Array<{ user: string; assistant: string }> = [];
+    let i = 0;
+    while (i < messages.length) {
+      if (messages[i].role === "user") {
+        const userContent = messages[i].content;
+        let assistantContent = "";
+        i++;
+        while (i < messages.length && messages[i].role === "assistant") {
+          assistantContent += (assistantContent ? "\n\n" : "") + messages[i].content;
+          i++;
+        }
+        if (assistantContent) pairs.push({ user: userContent, assistant: assistantContent });
+      } else { i++; }
+    }
+
+    const alreadyIndexed = sessionIndexedPairs.get(session.id) || 0;
+    if (pairs.length <= alreadyIndexed) return; // Nothing new
+
+    // Only chunk the NEW pairs
+    const newPairs = pairs.slice(alreadyIndexed);
+    const newMessages = newPairs.flatMap(p => [
+      { role: "user" as const, content: p.user },
+      { role: "assistant" as const, content: p.assistant },
+    ]);
+
+    const sessionDate = session.createdAt ? new Date(session.createdAt).toISOString().split("T")[0] : undefined;
+    const metadata = { source_type: "agent-x-session" as const, session_id: session.id, date: sessionDate };
+    const virtualPath = `session-live/${session.id}/${pairs.length}`;
+    const chunks = chunkConversationPairs(newMessages, virtualPath, "sessions", metadata);
+
+    if (chunks.length > 0) {
+      await memoryIndex.indexChunks(chunks, virtualPath, "sessions");
+      sessionIndexedPairs.set(session.id, pairs.length);
+      console.log(`[memory-live] Indexed ${chunks.length} new chunks from ${newPairs.length} pairs (session ${session.id}, total pairs: ${pairs.length})`);
+    } else {
+      console.log(`[memory-live] No new pairs to index for ${session.id}`);
+    }
   }
 
   // Stores

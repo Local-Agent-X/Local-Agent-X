@@ -28,6 +28,10 @@ const EMB_MODEL = process.argv.includes("--emb-model")
   ? process.argv[process.argv.indexOf("--emb-model") + 1]
   : "nomic-embed-text";
 
+const EMB_URL = process.argv.includes("--emb-url")
+  ? process.argv[process.argv.indexOf("--emb-url") + 1]
+  : undefined;
+
 const LIMIT = process.argv.includes("--limit")
   ? parseInt(process.argv[process.argv.indexOf("--limit") + 1])
   : 0;
@@ -61,9 +65,10 @@ async function main() {
 
   try {
     const { createEmbeddingProvider } = await import("./embedding-providers.js");
-    const embProvider = createEmbeddingProvider({ provider: "ollama", model: EMB_MODEL });
+    const embProvider = createEmbeddingProvider({ provider: "ollama", model: EMB_MODEL, baseUrl: EMB_URL });
     memory.setEmbeddingProvider(embProvider);
-    console.log(`Embedding: ollama/${EMB_MODEL} (${embProvider.dimensions}d)`);
+    const source = EMB_URL ? `(${EMB_URL})` : "ollama";
+    console.log(`Embedding: ${source}/${EMB_MODEL} (${embProvider.dimensions}d)`);
   } catch { console.log("Keyword search only"); }
 
   const scores: Record<string, { hits: number; total: number }> = {};

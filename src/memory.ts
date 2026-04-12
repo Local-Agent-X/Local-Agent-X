@@ -811,11 +811,11 @@ export class MemoryIndex {
         }
       }
 
-      // Remove chunks for deleted files (skip import/ virtual paths — those aren't real files)
+      // Remove chunks for deleted files (skip virtual paths — those aren't real files)
       const allPaths = new Set(allFiles.map((f) => f.path));
       const dbFiles = this.db.prepare("SELECT path FROM files").all() as { path: string }[];
       for (const { path } of dbFiles) {
-        if (!allPaths.has(path) && !path.startsWith("import/")) {
+        if (!allPaths.has(path) && !path.startsWith("import/") && !path.startsWith("session-live/")) {
           this.removeFile(path);
         }
       }

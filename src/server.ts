@@ -620,7 +620,10 @@ export function startServer(config: SAXConfig) {
         allAgentTools, bridgeTools, skipMemory: true,
       });
       const cronModel = prepared.provider === "anthropic" ? "claude-haiku-4-5" : prepared.model;
-      const result = await runAgent(prompt, [], { apiKey: prepared.apiKey, model: cronModel, provider: prepared.provider as AgentOptions["provider"], systemPrompt: prepared.systemPrompt, tools: prepared.tools, security: cronSecurity, toolPolicy, sessionId, maxIterations: config.maxIterations });
+      // Cron jobs use a minimal system prompt focused on the task — NOT the full agent prompt
+      // which contains rules about Instagram, agents, memory saving that confuse the model
+      const cronSystemPrompt = `You are a focused task execution agent. Your ONLY job is to complete the task described below. Do not list protocols, do not search memories unless the task requires it, do not do anything other than what is asked. Use the tools available to complete the task thoroughly and return the results.\n\nTask:\n${prompt}`;
+      const result = await runAgent(prompt, [], { apiKey: prepared.apiKey, model: cronModel, provider: prepared.provider as AgentOptions["provider"], systemPrompt: cronSystemPrompt, tools: prepared.tools, security: cronSecurity, toolPolicy, sessionId, maxIterations: config.maxIterations });
       // Save the session for history
       const session = getOrCreateSession(sessionId);
       session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);

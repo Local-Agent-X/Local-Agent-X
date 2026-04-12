@@ -11,7 +11,10 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
 
   // List sessions
   if (method === "GET" && url.pathname === "/api/sessions") {
-    json(200, ctx.sessionStore.list());
+    // Hide system sessions (dream, cron, IDE) from the sidebar
+    const all = ctx.sessionStore.list();
+    const visible = all.filter(s => !s.id.startsWith("dream-") && !s.id.startsWith("cron-") && !s.id.startsWith("ide-"));
+    json(200, visible);
     return true;
   }
 

@@ -201,11 +201,14 @@ export function buildCompactionPrompt(
   const nonSystem = messages.filter(m => m.role !== "system");
   const oldMessages = nonSystem.slice(0, -keepLast);
   let recentMessages = nonSystem.slice(-keepLast);
-  // Ensure the very last user message is always included
+  // Ensure the very last user message is always included (but don't duplicate)
   const lastUserIdx = nonSystem.findLastIndex(m => m.role === "user");
   if (lastUserIdx >= 0 && lastUserIdx < nonSystem.length - keepLast) {
-    // The last user message got compacted out — force include it
-    recentMessages = [nonSystem[lastUserIdx], ...recentMessages];
+    // The last user message got compacted out — force include it at the front
+    // Only add if not already in recentMessages (avoid duplicates)
+    if (!recentMessages.includes(nonSystem[lastUserIdx])) {
+      recentMessages = [nonSystem[lastUserIdx], ...recentMessages];
+    }
   }
 
   // Extract task state and key facts before discarding

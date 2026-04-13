@@ -52,9 +52,12 @@ export function buildReflectionPrompt(errors: string[]): string {
 
 // ── Hallucination Detection ──
 
-const APPROVAL_HALLUCINATION_RE = /\b(requires? approval|needs? (your )?approv|please (approve|allow|confirm)|permission (dialog|to proceed|required))\b/i;
-const CREATION_HALLUCINATION_RE = /\b(created|scheduled|saved|built|deployed|sent|posted)\b.*\b(task|schedule|mission|job|file|app|message|memory|fact)\b/i;
-const TOOL_ID_HALLUCINATION_RE = /\b(sched_|job_|id:|ID:)\s*[a-zA-Z0-9_-]{6,}/i;
+// Tightened regexes: only match when the agent is asking for permission or claiming actions
+// "I approve" or "this was approved" should NOT match — only "requires approval", "needs your approval", etc.
+const APPROVAL_HALLUCINATION_RE = /\b(requires? approval|needs? your approv(al)?|please (approve|allow|confirm) (this|the|before)|permission required|permission to proceed)\b/i;
+// Only match "I created/scheduled X" (first person claims), not "the file was created" or "we deployed yesterday"
+const CREATION_HALLUCINATION_RE = /\bI('ve| have)? (created|scheduled|saved|built|deployed|sent|posted) (a |the |your )?(task|schedule|mission|job|file|app|message|memory|fact)\b/i;
+const TOOL_ID_HALLUCINATION_RE = /\b(sched_|job_|cron_)[a-zA-Z0-9_-]{6,}/i;
 
 /** Returns a nudge message if the assistant hallucinated approval, or null. */
 export function checkApprovalHallucination(text: string): string | null {

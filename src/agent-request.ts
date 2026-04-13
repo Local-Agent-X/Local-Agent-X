@@ -346,8 +346,8 @@ const CORE_TOOL_NAMES = new Set([
   // Planning & tasks
   "enter_plan_mode", "exit_plan_mode",
   "task_create", "task_update", "task_list", "task_get",
-  // Missions
-  "mission_list", "mission_get", "mission_schedule_create",
+  // Protocols & scheduling
+  "protocol_list", "protocol_get", "mission_schedule_create",
   "mission_schedule_list", "mission_schedule_delete", "mission_schedule_toggle",
   // Agents
   "agent_spawn", "delegate", "agent_status", "agent_cancel", "agent_message", "agent_output",
@@ -406,8 +406,7 @@ function filterToolsForMessage(allTools: ToolDefinition[], message: string): Too
 
   const filtered = allTools.filter(t => included.has(t.name));
 
-  // Safety: if filtering dropped below 30 tools, just send everything
-  // (message might not have obvious keywords but still needs tools)
-  if (filtered.length < 30) return filtered;
+  // Safety: if filtering was too aggressive, send everything
+  if (filtered.length < 30) return allTools;
   return filtered;
 }

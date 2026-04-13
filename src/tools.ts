@@ -42,7 +42,7 @@ function err(content: string): ToolResult {
 const readTool: ToolDefinition = {
   name: "read",
   description:
-    "Read a file from the filesystem. Returns the file contents with line numbers. Use offset and limit for large files.",
+    "Read a file from the filesystem. Returns the full file contents with line numbers. Files under 1000 lines are returned in full — do NOT chunk with offset/limit unless the file is very large (1000+ lines).",
   readOnly: true,
   concurrencySafe: true,
   parameters: {
@@ -61,8 +61,11 @@ const readTool: ToolDefinition = {
     try {
       const content = readFileSync(filePath, "utf-8");
       const lines = content.split("\n");
-      const offset = Math.max(0, ((args.offset as number) || 1) - 1);
-      const limit = (args.limit as number) || lines.length;
+      // For files under 1000 lines, always return the full file regardless of offset/limit
+      // This prevents models from unnecessarily chunking reads on small-to-medium files
+      const forceFullRead = lines.length < 1000;
+      const offset = forceFullRead ? 0 : Math.max(0, ((args.offset as number) || 1) - 1);
+      const limit = forceFullRead ? lines.length : ((args.limit as number) || lines.length);
       const slice = lines.slice(offset, offset + limit);
       const numbered = slice.map((line, i) => `${offset + i + 1}\t${line}`).join("\n");
       const total = lines.length;
@@ -664,155 +667,46 @@ const viewImageTool: ToolDefinition = {
 
 const buildAppTool: ToolDefinition = {
   name: "build_app",
-  description: "Build a web app in workspace/apps/. Delegates to Claude Code or Codex for native file writing. Use this for creating or updating apps, websites, games, and multi-file projects. Returns the app URL when done.",
+  description: "Build or edit a web app in workspace/apps/. Uses a persistent worker session with your current AI provider — no subprocess, keeps context across edits. Returns the app URL when done.",
   parameters: {
     type: "object",
     properties: {
       name: { type: "string", description: "App directory name (e.g. 'marios-numberblocks', 'todo-app')" },
       prompt: { type: "string", description: "Detailed description of what to build or change. Be specific about features, styling, behavior." },
-      backend: { type: "string", enum: ["claude", "codex", "auto"], description: "Which AI builder to use. 'auto' (default) matches the active chat provider. 'claude' = Claude Code, 'codex' = ChatGPT/Codex" },
     },
     required: ["name", "prompt"],
   },
   async execute(args) {
     const appName = String(args.name || "app").replace(/[^a-zA-Z0-9_-]/g, "-");
     const prompt = String(args.prompt || "");
-    // Auto-detect: match builder to active chat provider
-    let backend = String(args.backend || "auto");
-    if (backend === "auto") {
-      // Check which provider is active from settings
-      try {
-        const settingsPath = join(process.env.HOME || process.env.USERPROFILE || "", ".sax", "settings.json");
-        if (existsSync(settingsPath)) {
-          const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
-          backend = (s.provider === "codex" || s.provider === "openai") ? "codex" : "claude";
-        } else { backend = "claude"; }
-      } catch { backend = "claude"; }
-    }
     const appDir = resolve("workspace", "apps", appName);
     const port = process.env.SAX_PORT || "7007";
     const appUrl = `http://127.0.0.1:${port}/apps/${appName}/index.html`;
 
     mkdirSync(appDir, { recursive: true });
 
-    // Check if app exists (update vs create)
     const isUpdate = existsSync(resolve(appDir, "index.html"));
-    const contextFiles: string[] = [];
-    if (isUpdate) {
-      // Read existing project context
-      for (const f of ["PROJECT.md", "TODO.md", "CHANGELOG.md", "index.html"]) {
-        const p = resolve(appDir, f);
-        if (existsSync(p)) {
-          try { contextFiles.push(`=== ${f} ===\n${readFileSync(p, "utf-8").slice(0, 3000)}`); } catch {}
-        }
-      }
-    }
 
-    const context = contextFiles.length > 0
-      ? `\n\nExisting app context:\n${contextFiles.join("\n\n")}`
-      : "";
-
-    const builderPrompt = `You are building a web app in the directory: ${appDir}
-App name: ${appName}
-Task: ${isUpdate ? "UPDATE existing app" : "CREATE new app"}
-${context}
-
-Instructions: ${prompt}
-
-RULES:
-- Write ALL files to ${appDir}/ (use absolute paths)
-- The main entry point MUST be index.html
-- Create PROJECT.md with app description and status
-- For single-page apps: put everything in index.html (inline CSS/JS is fine)
-- Make it look polished — use modern CSS, good colors, responsive design
-- The app will be served at ${appUrl}
-- If using images from the web, use full URLs (https://)
-- Do NOT ask questions — just build it based on the instructions
-- After writing files, output: APP_READY: ${appUrl}`;
+    // Build the task prompt with app context
+    const taskPrompt = `${isUpdate ? "UPDATE" : "CREATE"} the app "${appName}" in ${appDir}\n\nInstructions: ${prompt}\n\nRules:\n- Write ALL files to ${appDir}/ (use absolute paths)\n- Main entry point: index.html\n- For single-page apps: inline CSS/JS in index.html is fine\n- Make it polished — modern CSS, good colors, responsive\n- App URL: ${appUrl}`;
 
     try {
-      if (backend === "codex") {
-        return await buildWithCodex(builderPrompt, appDir, appUrl);
+      const { getOrCreateWorkerSession, dispatchToWorker } = await import("./worker-session.js");
+      const worker = getOrCreateWorkerSession(appDir, appName);
+      const output = await dispatchToWorker(worker.id, taskPrompt);
+
+      if (existsSync(resolve(appDir, "index.html"))) {
+        return { content: `App ${isUpdate ? "updated" : "built"}!\n\nOpen it here: ${appUrl}\n\n${output.slice(-500)}` };
       }
-      return await buildWithClaude(builderPrompt, appDir, appUrl);
+      return { content: `Worker finished but index.html not found.\n\n${output.slice(-1000)}`, isError: true };
     } catch (e) {
+      if (existsSync(resolve(appDir, "index.html"))) {
+        return { content: `App ${isUpdate ? "updated" : "built"} (with warnings)!\n\nOpen it here: ${appUrl}\n\nWarning: ${(e as Error).message.slice(0, 300)}` };
+      }
       return { content: `Build failed: ${(e as Error).message}`, isError: true };
     }
   },
 };
-
-async function buildWithClaude(prompt: string, appDir: string, appUrl: string): Promise<ToolResult> {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const execFileAsync = promisify(execFile);
-
-  try {
-    // Use stdin for prompt to avoid Windows command line length limits
-    const { spawn: spawnChild } = await import("node:child_process");
-    const stdout = await new Promise<string>((resolve, reject) => {
-      const proc = spawnChild("claude", [
-        "-p",
-        "--model", "claude-sonnet-4-6",
-        "--output-format", "text",
-        "--no-session-persistence",
-        "--max-turns", "25",
-        "--tools", "Write,Edit,Read,Bash",
-        "--disallowedTools", "WebFetch,WebSearch",
-      ], {
-        cwd: appDir,
-        stdio: ["pipe", "pipe", "pipe"],
-        shell: process.platform === "win32",
-      });
-      proc.stdin?.write(prompt);
-      proc.stdin?.end();
-      let out = "", errOut = "";
-      proc.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
-      proc.stderr?.on("data", (d: Buffer) => { errOut += d.toString(); });
-      const timer = setTimeout(() => { proc.kill(); reject(new Error("Build timed out after 3 minutes")); }, 180_000);
-      proc.on("close", (code) => { clearTimeout(timer); code === 0 ? resolve(out) : reject(new Error(errOut || `Exit code ${code}`)); });
-    });
-
-    const output = stdout.trim();
-    if (output.includes("APP_READY") || existsSync(resolve(appDir, "index.html"))) {
-      return { content: `App built successfully!\n\nOpen it here: ${appUrl}\n\nBuilder output:\n${output.slice(-500)}` };
-    }
-    return { content: `Builder finished but index.html not found. Output:\n${output.slice(-1000)}`, isError: true };
-  } catch (e) {
-    const errMsg = (e as { stderr?: string; message: string }).stderr || (e as Error).message;
-    // Check if it built files despite the error (timeout, etc.)
-    if (existsSync(resolve(appDir, "index.html"))) {
-      return { content: `App built (with warnings)!\n\nOpen it here: ${appUrl}\n\nWarning: ${errMsg.slice(0, 300)}` };
-    }
-    return { content: `Claude Code build failed: ${errMsg.slice(0, 500)}`, isError: true };
-  }
-}
-
-async function buildWithCodex(prompt: string, appDir: string, appUrl: string): Promise<ToolResult> {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const execFileAsync = promisify(execFile);
-
-  try {
-    // Use codex CLI if available, otherwise fall back to claude
-    const { stdout } = await execFileAsync("codex", [
-      "--prompt", prompt,
-      "--full-auto",
-    ], {
-      cwd: appDir,
-      timeout: 120_000,
-      windowsHide: true,
-      shell: process.platform === "win32",
-    });
-
-    if (existsSync(resolve(appDir, "index.html"))) {
-      return { content: `App built with Codex!\n\nOpen it here: ${appUrl}\n\n${stdout.slice(-500)}` };
-    }
-    return { content: `Codex finished but index.html not found. Output:\n${stdout.slice(-1000)}`, isError: true };
-  } catch {
-    // Codex CLI not available — fall back to Claude
-    return buildWithClaude(prompt, appDir, appUrl);
-  }
-}
 
 import { youtubeAnalyzeTool } from "./youtube-tool.js";
 

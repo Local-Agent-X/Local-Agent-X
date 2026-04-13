@@ -187,8 +187,8 @@ export async function ariEvaluate(
     mission_build: "internal",
     mission_edit: "internal",
     mission_delete: "internal",
-    mission_schedule: "internal",
-    mission_unschedule: "internal",
+    mission_schedule_create: "internal",
+    mission_schedule_delete: "internal",
     mission_chain: "internal",
     mission_variables_set: "internal",
     mission_variables_get: "internal",
@@ -199,9 +199,9 @@ export async function ariEvaluate(
     camera_capture: "internal",
     screen_capture: "internal",
     ocr: "internal",
-    cron_list: "internal",
-    cron_create: "internal",
-    cron_delete: "internal",
+    mission_schedule_list: "internal",
+    mission_schedule_toggle: "internal",
+    mission_schedule_reports: "internal",
   };
 
   const toolClass = toolClassMap[toolName] || "shell";

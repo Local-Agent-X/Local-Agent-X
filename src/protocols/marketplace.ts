@@ -1,16 +1,16 @@
 /**
- * Mission Marketplace API — install/list/search community missions.
- * Community missions are fetched from a registry and installed locally.
+ * Protocol Marketplace API — install/list/search community protocols.
+ * Community protocols are fetched from a registry and installed locally.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { Mission } from "../missions.js";
+import type { Protocol } from "../protocols.js";
 import type { ToolDefinition } from "../types.js";
-import { loadCustomMissions, saveCustomMissions } from "./builder.js";
+import { loadCustomProtocols, saveCustomProtocols } from "./builder.js";
 
-const MARKETPLACE_REGISTRY_URL = "https://raw.githubusercontent.com/open-agent-x/mission-marketplace/main/registry.json";
+const MARKETPLACE_REGISTRY_URL = "https://raw.githubusercontent.com/open-agent-x/protocol-marketplace/main/registry.json";
 const CACHE_PATH = join(homedir(), ".sax", "marketplace-cache.json");
 
 interface MarketplaceEntry {
@@ -20,7 +20,7 @@ interface MarketplaceEntry {
   version: string;
   tags: string[];
   downloads: number;
-  mission: Mission;
+  protocol: Protocol;
 }
 
 interface MarketplaceCache {
@@ -60,7 +60,7 @@ export async function fetchRegistry(): Promise<MarketplaceEntry[]> {
   }
 }
 
-export function searchMissions(entries: MarketplaceEntry[], query: string): MarketplaceEntry[] {
+export function searchProtocols(entries: MarketplaceEntry[], query: string): MarketplaceEntry[] {
   const q = query.toLowerCase();
   return entries.filter(e =>
     e.name.toLowerCase().includes(q) ||
@@ -69,23 +69,23 @@ export function searchMissions(entries: MarketplaceEntry[], query: string): Mark
   );
 }
 
-export function installMission(entry: MarketplaceEntry): Mission {
-  const missions = loadCustomMissions();
-  const existing = missions.findIndex(m => m.name === entry.mission.name);
+export function installProtocol(entry: MarketplaceEntry): Protocol {
+  const protocols = loadCustomProtocols();
+  const existing = protocols.findIndex(m => m.name === entry.protocol.name);
   if (existing >= 0) {
-    missions[existing] = entry.mission;
+    protocols[existing] = entry.protocol;
   } else {
-    missions.push(entry.mission);
+    protocols.push(entry.protocol);
   }
-  saveCustomMissions(missions);
-  return entry.mission;
+  saveCustomProtocols(protocols);
+  return entry.protocol;
 }
 
 export function createMarketplaceTools(): ToolDefinition[] {
   return [
     {
       name: "marketplace_search",
-      description: "Search the mission marketplace for community-created missions.",
+      description: "Search the protocol marketplace for community-created protocols.",
       parameters: {
         type: "object",
         properties: {
@@ -96,12 +96,12 @@ export function createMarketplaceTools(): ToolDefinition[] {
       async execute(args) {
         try {
           const entries = await fetchRegistry();
-          const results = searchMissions(entries, String(args.query));
-          if (results.length === 0) return { content: "No missions found matching your query." };
+          const results = searchProtocols(entries, String(args.query));
+          if (results.length === 0) return { content: "No protocols found matching your query." };
           const list = results.map(e =>
             `• **${e.name}** v${e.version} by ${e.author}\n  ${e.description}\n  Tags: ${e.tags.join(", ")} | Downloads: ${e.downloads}`
           ).join("\n\n");
-          return { content: `Found ${results.length} mission(s):\n\n${list}` };
+          return { content: `Found ${results.length} protocol(s):\n\n${list}` };
         } catch (e: any) {
           return { content: `Marketplace search failed: ${e.message}`, isError: true };
         }
@@ -109,11 +109,11 @@ export function createMarketplaceTools(): ToolDefinition[] {
     },
     {
       name: "marketplace_install",
-      description: "Install a mission from the marketplace.",
+      description: "Install a protocol from the marketplace.",
       parameters: {
         type: "object",
         properties: {
-          name: { type: "string", description: "Mission name to install" },
+          name: { type: "string", description: "Protocol name to install" },
         },
         required: ["name"],
       },
@@ -121,9 +121,9 @@ export function createMarketplaceTools(): ToolDefinition[] {
         try {
           const entries = await fetchRegistry();
           const entry = entries.find(e => e.name === String(args.name));
-          if (!entry) return { content: `Mission "${args.name}" not found in marketplace.` };
-          const mission = installMission(entry);
-          return { content: `Installed "${mission.name}" with ${mission.steps.length} steps.` };
+          if (!entry) return { content: `Protocol not found in marketplace.` };
+          const protocol = installProtocol(entry);
+          return { content: `Installed "${protocol.name}" with ${protocol.steps.length} steps.` };
         } catch (e: any) {
           return { content: `Install failed: ${e.message}`, isError: true };
         }
@@ -131,14 +131,14 @@ export function createMarketplaceTools(): ToolDefinition[] {
     },
     {
       name: "marketplace_list",
-      description: "List all missions available in the marketplace.",
+      description: "List all protocols available in the marketplace.",
       parameters: { type: "object", properties: {} },
       async execute() {
         try {
           const entries = await fetchRegistry();
           if (entries.length === 0) return { content: "Marketplace is empty or unavailable." };
           const list = entries.map(e => `• **${e.name}** — ${e.description} (v${e.version})`).join("\n");
-          return { content: `Marketplace missions (${entries.length}):\n\n${list}` };
+          return { content: `Marketplace protocols (${entries.length}):\n\n${list}` };
         } catch (e: any) {
           return { content: `Failed to list marketplace: ${e.message}`, isError: true };
         }

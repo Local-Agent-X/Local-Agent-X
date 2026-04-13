@@ -1,12 +1,12 @@
 /**
- * Mission System for Open Agent X
+ * Protocol System for Open Agent X
  *
- * Missions are built-in multi-step procedures the agent can execute.
- * Unlike one-shot tools, missions maintain state across steps and
+ * Protocols are built-in multi-step workflows the agent can execute.
+ * Unlike one-shot tools, protocols maintain state across steps and
  * encode hard-won knowledge (e.g., Instagram's caption formatting quirks).
  *
- * Built-in missions ship with the app. User preferences (account names,
- * default hashtags, posting style) are stored per-user in ~/.sax/mission-prefs/.
+ * Built-in protocols ship with the app. User preferences (account names,
+ * default hashtags, posting style) are stored per-user in ~/.sax/protocol-prefs/.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -16,7 +16,7 @@ import type { ToolDefinition } from "./types.js";
 
 // ── Types ──
 
-export interface MissionCondition {
+export interface ProtocolCondition {
   /** Variable or output key to evaluate */
   field: string;
   /** Comparison operator */
@@ -25,7 +25,7 @@ export interface MissionCondition {
   value?: unknown;
 }
 
-export interface MissionStep {
+export interface ProtocolStep {
   id: string;
   instruction: string;
   /** Tool calls the agent should make for this step */
@@ -35,34 +35,34 @@ export interface MissionStep {
   /** Validation to run after step completes */
   validate?: string;
   /** Condition that must be true to execute this step (if branch) */
-  condition?: MissionCondition;
+  condition?: ProtocolCondition;
   /** Step ID to jump to if condition is false (else branch) */
   elseStep?: string;
   /** Step ID to jump to after this step completes (instead of next sequential step) */
   nextStep?: string;
 }
 
-export interface Mission {
+export interface Protocol {
   name: string;
   description: string;
-  /** When the agent should suggest this mission */
+  /** When the agent should suggest this protocol */
   triggers: string[];
-  steps: MissionStep[];
+  steps: ProtocolStep[];
   /** Hard-won lessons encoded as rules */
   rules: string[];
-  /** What user preferences this mission can learn */
+  /** What user preferences this protocol can learn */
   learnablePreferences: string[];
 }
 
-export interface MissionPreferences {
+export interface ProtocolPreferences {
   [missionName: string]: Record<string, unknown>;
 }
 
 // ── User Preferences (per-user, persisted) ──
 
-const prefsDir = join(homedir(), ".sax", "mission-prefs");
+const prefsDir = join(homedir(), ".sax", "protocol-prefs");
 
-function loadPrefs(): MissionPreferences {
+function loadPrefs(): ProtocolPreferences {
   const path = join(prefsDir, "prefs.json");
   if (existsSync(path)) {
     try { return JSON.parse(readFileSync(path, "utf-8")); } catch {}
@@ -70,14 +70,14 @@ function loadPrefs(): MissionPreferences {
   return {};
 }
 
-function savePrefs(prefs: MissionPreferences): void {
+function savePrefs(prefs: ProtocolPreferences): void {
   if (!existsSync(prefsDir)) mkdirSync(prefsDir, { recursive: true });
   writeFileSync(join(prefsDir, "prefs.json"), JSON.stringify(prefs, null, 2), "utf-8");
 }
 
-// ── Built-in Missions ──
+// ── Built-in Protocols ──
 
-const instagramPost: Mission = {
+const instagramPost: Protocol = {
   name: "instagram_post",
   description: "Post photos/videos to Instagram with a formatted caption. Handles carousel ordering, cropping guidance, caption formatting (line breaks that actually work), and publishing.",
   triggers: [
@@ -171,7 +171,7 @@ const instagramPost: Mission = {
 
 // ── Conditional Step Evaluation ──
 
-export function evaluateCondition(condition: MissionCondition, context: Record<string, unknown>): boolean {
+export function evaluateCondition(condition: ProtocolCondition, context: Record<string, unknown>): boolean {
   const fieldValue = context[condition.field];
   switch (condition.operator) {
     case "exists": return fieldValue !== undefined && fieldValue !== null;
@@ -186,7 +186,7 @@ export function evaluateCondition(condition: MissionCondition, context: Record<s
   }
 }
 
-export function resolveNextStep(step: MissionStep, steps: MissionStep[], context: Record<string, unknown>): MissionStep | null {
+export function resolveNextStep(step: ProtocolStep, steps: ProtocolStep[], context: Record<string, unknown>): ProtocolStep | null {
   if (step.condition) {
     const result = evaluateCondition(step.condition, context);
     if (!result && step.elseStep) {
@@ -221,8 +221,8 @@ export interface DryRunResult {
   conditionalSteps: number;
 }
 
-export function dryRunMission(mission: Mission, context: Record<string, unknown> = {}): DryRunResult {
-  const drySteps = mission.steps.map(step => {
+export function dryRunProtocol(protocol: Protocol, context: Record<string, unknown> = {}): DryRunResult {
+  const drySteps = protocol.steps.map(step => {
     const conditionMet = step.condition ? evaluateCondition(step.condition, context) : true;
     return {
       id: step.id,
@@ -235,7 +235,7 @@ export function dryRunMission(mission: Mission, context: Record<string, unknown>
   });
 
   return {
-    missionName: mission.name,
+    missionName: protocol.name,
     steps: drySteps,
     totalSteps: drySteps.length,
     userActionSteps: drySteps.filter(s => s.requiresUserAction).length,
@@ -245,28 +245,28 @@ export function dryRunMission(mission: Mission, context: Record<string, unknown>
 
 // ── Registry ──
 
-import { loadCustomMissions } from "./missions/builder.js";
-import { socialMissions } from "./missions/packs/social.js";
-import { developerMissions } from "./missions/packs/developer.js";
+import { loadCustomProtocols } from "./protocols/builder.js";
+import { socialProtocols } from "./protocols/packs/social.js";
+import { developerProtocols } from "./protocols/packs/developer.js";
 // Smart home pack removed — no smart home APIs available in the platform
-import { researchMissions } from "./missions/packs/research.js";
-import { communicationMissions } from "./missions/packs/communication.js";
-import { createAllMissionTools } from "./missions/index.js";
+import { researchProtocols } from "./protocols/packs/research.js";
+import { communicationProtocols } from "./protocols/packs/communication.js";
+import { createAllProtocolTools } from "./protocols/index.js";
 
-export function getAllMissions(): Mission[] {
+export function getAllProtocols(): Protocol[] {
   return [
     instagramPost,
-    ...socialMissions,
-    ...developerMissions,
-    ...researchMissions,
-    ...communicationMissions,
-    ...loadCustomMissions(),
+    ...socialProtocols,
+    ...developerProtocols,
+    ...researchProtocols,
+    ...communicationProtocols,
+    ...loadCustomProtocols(),
   ];
 }
 
-function findMission(query: string): Mission | undefined {
+function findProtocol(query: string): Protocol | undefined {
   const q = query.toLowerCase();
-  return getAllMissions().find(pb =>
+  return getAllProtocols().find(pb =>
     pb.triggers.some(t => q.includes(t)) || q.includes(pb.name)
   );
 }
@@ -346,14 +346,14 @@ function buildCaptionInjector(caption: string): string {
 
 // ── Tool Exports ──
 
-export function createMissionTools(): ToolDefinition[] {
+export function createCoreProtocolTools(): ToolDefinition[] {
   return [
     {
       name: "protocol_list",
-      description: "List all available protocols (pre-built workflows the agent knows). Use when the user asks what you can do, your skills, or available protocols.",
+      description: "List all available protocols (pre-built workflows the agent knows). Use when the user asks what you can do, your capabilities, or available protocols.",
       parameters: { type: "object", properties: {} },
       async execute() {
-        const all = getAllMissions();
+        const all = getAllProtocols();
         const list = all.map(pb =>
           `• **${pb.name}**: ${pb.description}\n  Triggers: ${pb.triggers.slice(0, 3).map(t => `"${t}"`).join(", ")}...`
         ).join("\n\n");
@@ -367,14 +367,14 @@ export function createMissionTools(): ToolDefinition[] {
       parameters: {
         type: "object",
         properties: {
-          name: { type: "string", description: "Mission name or trigger phrase (e.g., 'instagram_post' or 'post on instagram')" },
+          name: { type: "string", description: "Protocol name or trigger phrase (e.g., 'instagram_post' or 'post on instagram')" },
         },
         required: ["name"],
       },
       async execute(args) {
-        const pb = findMission(String(args.name || ""));
+        const pb = findProtocol(String(args.name || ""));
         if (!pb) {
-          return { content: `No mission found for "${args.name}". Use mission_list to see available missions.` };
+          return { content: `No protocol found for "${args.name}". Use protocol_list to see all available protocols.` };
         }
 
         const prefs = loadPrefs()[pb.name] || {};
@@ -388,30 +388,30 @@ export function createMissionTools(): ToolDefinition[] {
         ).join("\n\n");
 
         return {
-          content: `# Mission: ${pb.name}\n${pb.description}\n\n## RULES (follow these strictly):\n${rulesText}\n\n## STEPS:\n${stepsText}${prefsText}`,
+          content: `# Protocol: ${pb.name}\n${pb.description}\n\n## RULES (follow these strictly):\n${rulesText}\n\n## STEPS:\n${stepsText}${prefsText}`,
         };
       },
     },
 
     {
-      name: "mission_save_preference",
-      description: "Save a user preference for a mission. This lets the mission personalize to each user over time (e.g., their Instagram username, default hashtags, preferred caption style).",
+      name: "protocol_save_preference",
+      description: "Save a user preference for a protocol. This lets the protocol personalize to each user over time (e.g., their Instagram username, default hashtags, preferred caption style).",
       parameters: {
         type: "object",
         properties: {
-          mission: { type: "string", description: "Mission name" },
+          protocol: { type: "string", description: "Protocol name" },
           key: { type: "string", description: "Preference key (e.g., 'instagram_username', 'default_hashtags')" },
           value: { type: "string", description: "Preference value" },
         },
-        required: ["mission", "key", "value"],
+        required: ["protocol", "key", "value"],
       },
       async execute(args) {
-        const pbName = String(args.mission || "");
+        const pbName = String(args.protocol || "");
         const key = String(args.key || "");
         const value = String(args.value || "");
 
-        const pb = findMission(pbName);
-        if (!pb) return { content: `Unknown mission: "${pbName}"` };
+        const pb = findProtocol(pbName);
+        if (!pb) return { content: `Unknown protocol: "${pbName}"` };
         if (!pb.learnablePreferences.includes(key)) {
           return { content: `"${key}" is not a learnable preference for ${pb.name}. Valid: ${pb.learnablePreferences.join(", ")}` };
         }
@@ -426,7 +426,7 @@ export function createMissionTools(): ToolDefinition[] {
     },
 
     {
-      name: "mission_format_caption",
+      name: "protocol_format_caption",
       description: "Format a caption for Instagram posting. Returns the properly formatted caption AND the JavaScript code to inject it into Instagram's composer without breaking line breaks or duplicating text. ALWAYS use this before inserting a caption.",
       parameters: {
         type: "object",
@@ -468,22 +468,22 @@ export function createMissionTools(): ToolDefinition[] {
     },
 
     {
-      name: "mission_dry_run",
-      description: "Preview a mission's execution plan without actually running it. Shows which steps would execute, which require user action, and evaluates conditions against provided context.",
+      name: "protocol_dry_run",
+      description: "Preview a protocol's execution plan without actually running it. Shows which steps would execute, which require user action, and evaluates conditions against provided context.",
       parameters: {
         type: "object",
         properties: {
-          name: { type: "string", description: "Mission name or trigger phrase" },
+          name: { type: "string", description: "Protocol name or trigger phrase" },
           context: { type: "object", description: "Context variables to evaluate conditions against" },
         },
         required: ["name"],
       },
       async execute(args) {
-        const pb = findMission(String(args.name || ""));
-        if (!pb) return { content: `No mission found for "${args.name}".` };
+        const pb = findProtocol(String(args.name || ""));
+        if (!pb) return { content: `No protocol found for "${args.name}".` };
 
         const ctx = (args.context as Record<string, unknown>) ?? {};
-        const result = dryRunMission(pb, ctx);
+        const result = dryRunProtocol(pb, ctx);
 
         const stepsText = result.steps.map((s, i) =>
           `  ${i + 1}. [${s.id}] ${s.instruction}${s.requiresUserAction ? " ⏸️" : ""}${s.hasCondition ? ` 🔀 (${s.conditionSummary})` : ""}${s.wouldExecuteTools.length ? `\n     Tools: ${s.wouldExecuteTools.map(t => t.tool).join(", ")}` : ""}`
@@ -495,7 +495,7 @@ export function createMissionTools(): ToolDefinition[] {
       },
     },
 
-    // Include all submodule tools (builder, marketplace, templates, scheduler, chain, progress, rollback, variables)
-    ...createAllMissionTools(),
+    // Include all submodule tools (builder, marketplace, templates, chain, progress, rollback, variables)
+    ...createAllProtocolTools(),
   ];
 }

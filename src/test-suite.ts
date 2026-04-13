@@ -191,7 +191,7 @@ async function testToolRegistration(): Promise<void> {
     "base tools": async () => { const m = await import("./tools.js"); const t = typeof (m.allTools as any) === "function" ? (m.allTools as any)() : m.allTools; return Array.isArray(t) ? t.map((x: any) => x.name || "") : []; },
     "swarm tools": async () => { const m = await import("./agency/index.js"); return m.createAgencyTools().map((t: any) => t.name); },
     "handler tools": async () => { const m = await import("./agency/handler.js"); return m.createHandlerTools().map((t: any) => t.name); },
-    "mission tools": async () => { const m = await import("./missions.js"); return m.createMissionTools().map((t: any) => t.name); },
+    "mission tools": async () => { const m = await import("./protocols.js"); return m.createCoreProtocolTools().map((t: any) => t.name); },
     "browser tools": async () => { const m = await import("./browser-tools.js"); return m.createBrowserTools(() => "default").map((t: any) => t.name); },
   };
   const allToolNames: string[] = [];

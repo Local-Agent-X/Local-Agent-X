@@ -1,10 +1,10 @@
 /**
- * Developer Mission Pack — git, deploy, test, PR review missions.
+ * Developer Protocol Pack — git, deploy, test, PR review protocols.
  */
 
-import type { Mission } from "../../missions.js";
+import type { Protocol } from "../../protocols.js";
 
-export const gitWorkflowMission: Mission = {
+export const gitWorkflowMission: Protocol = {
   name: "git_workflow",
   description: "Complete git workflow: branch, commit, push with conventional commit messages.",
   triggers: ["git workflow", "commit and push", "create branch and commit", "git branch"],
@@ -25,7 +25,7 @@ export const gitWorkflowMission: Mission = {
   ],
 };
 
-export const deployMission: Mission = {
+export const deployMission: Protocol = {
   name: "deploy",
   description: "Deploy application to staging or production with pre-flight checks.",
   triggers: ["deploy", "deploy to production", "deploy to staging", "ship it", "push to prod"],
@@ -48,7 +48,7 @@ export const deployMission: Mission = {
   ],
 };
 
-export const testRunnerMission: Mission = {
+export const testRunnerMission: Protocol = {
   name: "test_runner",
   description: "Run tests with coverage, identify failures, and suggest fixes.",
   triggers: ["run tests", "test suite", "check tests", "run the tests"],
@@ -69,7 +69,7 @@ export const testRunnerMission: Mission = {
   ],
 };
 
-export const prReviewMission: Mission = {
+export const prReviewMission: Protocol = {
   name: "pr_review",
   description: "Review a pull request: check diff, run tests, provide structured feedback.",
   triggers: ["review pr", "review pull request", "pr review", "check this pr"],
@@ -92,7 +92,7 @@ export const prReviewMission: Mission = {
   ],
 };
 
-export const developerMissions: Mission[] = [
+export const developerProtocols: Protocol[] = [
   gitWorkflowMission,
   deployMission,
   testRunnerMission,

@@ -1,18 +1,18 @@
 /**
- * Mission Chaining — output of one mission feeds as input to the next.
+ * Protocol Chaining — output of one protocol feeds as input to the next.
  */
 
 import { randomBytes } from "node:crypto";
-import type { Mission } from "../missions.js";
+import type { Protocol } from "../protocols.js";
 import type { ToolDefinition } from "../types.js";
 
 export interface ChainLink {
-  missionName: string;
+  protocolName: string;
   inputMapping?: Record<string, string>;
   outputKey?: string;
 }
 
-export interface MissionChain {
+export interface ProtocolChain {
   name: string;
   description: string;
   links: ChainLink[];
@@ -34,14 +34,14 @@ function generateChainId(): string {
   return `chain_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`;
 }
 
-export function createChain(chain: MissionChain): MissionChain {
+export function createChain(chain: ProtocolChain): ProtocolChain {
   if (chain.links.length < 2) {
-    throw new Error("A chain must have at least 2 missions");
+    throw new Error("A chain must have at least 2 protocols");
   }
   return chain;
 }
 
-export function startChain(chain: MissionChain): string {
+export function startChain(chain: ProtocolChain): string {
   const id = generateChainId();
   activeChains.set(id, {
     chainName: chain.name,
@@ -97,7 +97,7 @@ export function failChain(chainId: string, error: string): void {
   }
 }
 
-const chainDefinitions = new Map<string, MissionChain>();
+const chainDefinitions = new Map<string, ProtocolChain>();
 
 function getChainLinks(chainId: string): ChainLink[] | undefined {
   const state = activeChains.get(chainId);
@@ -108,8 +108,8 @@ function getChainLinks(chainId: string): ChainLink[] | undefined {
 export function createChainTools(): ToolDefinition[] {
   return [
     {
-      name: "mission_chain_create",
-      description: "Create a mission chain where output of one mission feeds into the next.",
+      name: "protocol_chain_create",
+      description: "Create a protocol chain where output of one protocol feeds into the next.",
       parameters: {
         type: "object",
         properties: {
@@ -120,13 +120,13 @@ export function createChainTools(): ToolDefinition[] {
             items: {
               type: "object",
               properties: {
-                missionName: { type: "string" },
-                inputMapping: { type: "object", description: "Maps param names to output keys from previous missions" },
-                outputKey: { type: "string", description: "Key to store this mission's output under" },
+                protocolName: { type: "string" },
+                inputMapping: { type: "object", description: "Maps param names to output keys from previous protocols" },
+                outputKey: { type: "string", description: "Key to store this protocol's output under" },
               },
-              required: ["missionName"],
+              required: ["protocolName"],
             },
-            description: "Ordered list of missions in the chain",
+            description: "Ordered list of protocols in the chain",
           },
         },
         required: ["name", "description", "links"],
@@ -139,15 +139,15 @@ export function createChainTools(): ToolDefinition[] {
             links: args.links as ChainLink[],
           });
           chainDefinitions.set(chain.name, chain);
-          return { content: `Created chain "${chain.name}" with ${chain.links.length} missions: ${chain.links.map(l => l.missionName).join(" → ")}` };
+          return { content: `Created chain "${chain.name}" with ${chain.links.length} missions: ${chain.links.map(l => l.protocolName).join(" → ")}` };
         } catch (e: any) {
           return { content: e.message, isError: true };
         }
       },
     },
     {
-      name: "mission_chain_start",
-      description: "Start executing a mission chain.",
+      name: "protocol_chain_start",
+      description: "Start executing a protocol chain.",
       parameters: {
         type: "object",
         properties: {
@@ -161,18 +161,18 @@ export function createChainTools(): ToolDefinition[] {
         const id = startChain(chain);
         const firstLink = chain.links[0];
         return {
-          content: `Chain started. ID: ${id}\nFirst mission: ${firstLink.missionName}\nExecute it and call mission_chain_advance with the output.`,
+          content: `Chain started. ID: ${id}\nFirst protocol: ${firstLink.protocolName}\nExecute it and call protocol_chain_advance with the output.`,
         };
       },
     },
     {
-      name: "mission_chain_advance",
-      description: "Advance a chain to the next mission, providing output from the current one.",
+      name: "protocol_chain_advance",
+      description: "Advance a chain to the next protocol, providing output from the current one.",
       parameters: {
         type: "object",
         properties: {
           chainId: { type: "string", description: "Chain execution ID" },
-          output: { type: "string", description: "Output from the current mission step" },
+          output: { type: "string", description: "Output from the current protocol step" },
         },
         required: ["chainId", "output"],
       },
@@ -185,7 +185,7 @@ export function createChainTools(): ToolDefinition[] {
         }
         const inputs = resolveInputs(chainId, nextLink);
         return {
-          content: `Next mission: ${nextLink.missionName}\nInputs from previous missions: ${JSON.stringify(inputs)}`,
+          content: `Next protocol: ${nextLink.protocolName}\nInputs from previous protocols: ${JSON.stringify(inputs)}`,
         };
       },
     },

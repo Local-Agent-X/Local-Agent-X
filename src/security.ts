@@ -499,7 +499,6 @@ export class SecurityLayer {
         /[/\\]src[/\\]security\.ts$/i,        // Security layer — guardrails
         /[/\\]src[/\\]auth\.ts$/i,            // Auth — token handling
         /[/\\]src[/\\]codex-client\.ts$/i,    // API client — token transport
-        /[/\\]src[/\\]codex-ws\.ts$/i,        // WebSocket client
         /[/\\]src[/\\]keychain\.ts$/i,        // Encryption key management
         /[/\\]src[/\\]sanitize\.ts$/i,        // Prompt injection defense
         /[/\\]src[/\\]threat-engine\.ts$/i,   // Threat detection / canary tokens

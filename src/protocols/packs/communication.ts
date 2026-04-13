@@ -1,10 +1,10 @@
 /**
- * Communication Mission Pack — email, Slack, Discord, WhatsApp missions.
+ * Communication Protocol Pack — email, Slack, Discord, WhatsApp protocols.
  */
 
-import type { Mission } from "../../missions.js";
+import type { Protocol } from "../../protocols.js";
 
-export const emailMission: Mission = {
+export const emailMission: Protocol = {
   name: "send_email",
   description: "Compose and send an email with proper formatting, attachments, and follow-up tracking.",
   triggers: ["send email", "email", "compose email", "write an email", "send a message via email"],
@@ -28,7 +28,7 @@ export const emailMission: Mission = {
   ],
 };
 
-export const slackMission: Mission = {
+export const slackMission: Protocol = {
   name: "send_slack",
   description: "Send messages on Slack: DMs, channels, threads, with formatting and reactions.",
   triggers: ["send slack", "slack message", "message on slack", "post in slack", "dm on slack"],
@@ -50,7 +50,7 @@ export const slackMission: Mission = {
   ],
 };
 
-export const discordMission: Mission = {
+export const discordMission: Protocol = {
   name: "send_discord",
   description: "Send messages on Discord: servers, channels, DMs, with embeds and reactions.",
   triggers: ["send discord", "discord message", "post on discord", "dm on discord", "message discord"],
@@ -72,7 +72,7 @@ export const discordMission: Mission = {
   ],
 };
 
-export const whatsappMission: Mission = {
+export const whatsappMission: Protocol = {
   name: "send_whatsapp",
   description: "Send WhatsApp messages: text, media, voice notes via WhatsApp Web.",
   triggers: ["send whatsapp", "whatsapp message", "message on whatsapp", "text on whatsapp"],
@@ -96,7 +96,7 @@ export const whatsappMission: Mission = {
   ],
 };
 
-export const communicationMissions: Mission[] = [
+export const communicationProtocols: Protocol[] = [
   emailMission,
   slackMission,
   discordMission,

@@ -295,10 +295,11 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     systemPrompt = await contextBuilder.build();
   }
 
-  // 5. Select tools based on provider + channel
-  const isCodex = resolved.provider === "codex";
+  // 5. Select tools based on channel (bridges get a smaller set)
+  //    For web/codex: filter to core + message-relevant tools to reduce schema overhead.
+  //    tool_search is always included so the agent can discover anything else.
   const isBridge = channel === "telegram" || channel === "whatsapp";
-  const tools = (isCodex || isBridge) ? bridgeTools : allAgentTools;
+  const tools = isBridge ? bridgeTools : filterToolsForMessage(allAgentTools, message);
 
   // 6. Process image attachments
   const images: Array<{ url: string; filePath?: string; name: string }> = [];
@@ -324,4 +325,89 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     temperature: resolved.temperature,
     maxIterations: resolved.maxIterations,
   };
+}
+
+// ── Smart Tool Filtering ──
+// Always include core tools. Add extras if the user's message hints at them.
+// tool_search is always included so the agent can discover anything else.
+
+const CORE_TOOL_NAMES = new Set([
+  // Filesystem & code
+  "read", "write", "edit", "bash", "glob", "grep",
+  // Web & search
+  "web_fetch", "web_search",
+  // Interaction
+  "ask_user", "tool_search",
+  // Vision
+  "view_image", "screen_capture",
+  // Memory
+  "memory_search", "memory_save", "memory_recall", "memory_get",
+  "memory_forget", "memory_reflect", "memory_update_profile", "memory_stats",
+  // Planning & tasks
+  "enter_plan_mode", "exit_plan_mode",
+  "task_create", "task_update", "task_list", "task_get",
+  // Missions
+  "mission_list", "mission_get", "mission_schedule_create",
+  "mission_schedule_list", "mission_schedule_delete", "mission_schedule_toggle",
+  // Agents
+  "agent_spawn", "delegate", "agent_status", "agent_cancel", "agent_message", "agent_output",
+  // Browser
+  "browser",
+  // Apps
+  "build_app", "create_page", "app_list",
+  // Secrets
+  "request_secret", "list_secrets",
+  // HTTP
+  "http_request",
+]);
+
+// Keywords that trigger including specific tool groups
+const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
+  { keywords: /spreadsheet|excel|xlsx|csv|sheet/i, toolPrefixes: ["spreadsheet_"] },
+  { keywords: /document|docx|word/i, toolPrefixes: ["document_"] },
+  { keywords: /presentation|slide|pptx|powerpoint/i, toolPrefixes: ["presentation_"] },
+  { keywords: /pdf/i, toolPrefixes: ["pdf_"] },
+  { keywords: /email|mail|inbox|send.*email/i, toolPrefixes: ["email_"] },
+  { keywords: /calendar|event|meeting|schedule.*event/i, toolPrefixes: ["calendar_"] },
+  { keywords: /clipboard|copy|paste/i, toolPrefixes: ["clipboard_"] },
+  { keywords: /sql|database|query.*table|postgres|sqlite/i, toolPrefixes: ["sql_"] },
+  { keywords: /image|photo|generate.*image|draw|picture/i, toolPrefixes: ["generate_image", "generate_video", "ocr"] },
+  { keywords: /camera|webcam/i, toolPrefixes: ["camera_"] },
+  { keywords: /app|dashboard|tracker/i, toolPrefixes: ["app_"] },
+  { keywords: /issue|ticket|project|kanban/i, toolPrefixes: ["issue_"] },
+  { keywords: /instagram|twitter|tiktok|social|post on/i, toolPrefixes: ["mission_"] },
+  { keywords: /config|setting/i, toolPrefixes: ["config_"] },
+  { keywords: /skill/i, toolPrefixes: ["skill_"] },
+  { keywords: /rollback|undo.*mission/i, toolPrefixes: ["mission_rollback_"] },
+  { keywords: /chain|pipeline/i, toolPrefixes: ["mission_chain_"] },
+  { keywords: /template/i, toolPrefixes: ["mission_template"] },
+  { keywords: /marketplace/i, toolPrefixes: ["marketplace_"] },
+  { keywords: /agency|team|hire/i, toolPrefixes: ["agency_"] },
+];
+
+function filterToolsForMessage(allTools: ToolDefinition[], message: string): ToolDefinition[] {
+  const included = new Set<string>();
+
+  // Always include core tools
+  for (const name of CORE_TOOL_NAMES) included.add(name);
+
+  // Add tools matching user message keywords
+  for (const { keywords, toolPrefixes } of TOOL_KEYWORD_MAP) {
+    if (keywords.test(message)) {
+      for (const tool of allTools) {
+        for (const prefix of toolPrefixes) {
+          if (tool.name.startsWith(prefix) || tool.name === prefix) {
+            included.add(tool.name);
+          }
+        }
+      }
+    }
+  }
+
+  const filtered = allTools.filter(t => included.has(t.name));
+
+  // Safety: if filtering dropped below 30 tools, just send everything
+  // (message might not have obvious keywords but still needs tools)
+  if (filtered.length < 30) return filtered;
+  return filtered;
 }

@@ -1,10 +1,10 @@
 /**
- * Smart Home Mission Pack — IoT control missions.
+ * Smart Home Protocol Pack — IoT control protocols.
  */
 
-import type { Mission } from "../../missions.js";
+import type { Protocol } from "../../protocols.js";
 
-export const lightControlMission: Mission = {
+export const lightControlMission: Protocol = {
   name: "smart_lights",
   description: "Control smart lights: on/off, brightness, color, scenes across rooms.",
   triggers: ["turn on lights", "turn off lights", "set lights", "change light color", "dim lights", "lights on", "lights off"],
@@ -24,7 +24,7 @@ export const lightControlMission: Mission = {
   ],
 };
 
-export const thermostatMission: Mission = {
+export const thermostatMission: Protocol = {
   name: "smart_thermostat",
   description: "Control thermostat: set temperature, mode, schedule.",
   triggers: ["set temperature", "change thermostat", "set ac", "set heating", "make it warmer", "make it cooler"],
@@ -44,7 +44,7 @@ export const thermostatMission: Mission = {
   ],
 };
 
-export const securityMission: Mission = {
+export const securityMission: Protocol = {
   name: "smart_security",
   description: "Control smart home security: arm/disarm alarm, check cameras, lock/unlock doors.",
   triggers: ["arm alarm", "disarm alarm", "check cameras", "lock doors", "unlock door", "security status"],
@@ -66,7 +66,7 @@ export const securityMission: Mission = {
   ],
 };
 
-export const sceneMission: Mission = {
+export const sceneMission: Protocol = {
   name: "smart_scene",
   description: "Activate smart home scenes that control multiple devices at once (movie night, bedtime, away, etc.).",
   triggers: ["movie night", "bedtime mode", "away mode", "activate scene", "good morning", "good night"],
@@ -86,7 +86,7 @@ export const sceneMission: Mission = {
   ],
 };
 
-export const smarthomeMissions: Mission[] = [
+export const smarthomeProtocols: Protocol[] = [
   lightControlMission,
   thermostatMission,
   securityMission,

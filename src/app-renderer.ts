@@ -15,7 +15,8 @@ import { randomBytes } from "node:crypto";
 
 // ── Sanitization ─────────────────────────────────────────────
 
-function escapeHtml(s: string): string {
+function escapeHtml(s: unknown): string {
+  if (typeof s !== "string") return String(s ?? "");
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

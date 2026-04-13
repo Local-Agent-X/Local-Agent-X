@@ -1,5 +1,5 @@
 /**
- * Mission Progress Tracking — step-by-step progress state machine.
+ * Protocol Progress Tracking — step-by-step progress state machine.
  */
 
 import { randomBytes } from "node:crypto";
@@ -16,8 +16,8 @@ export interface StepProgress {
   error?: string;
 }
 
-export interface MissionProgress {
-  missionName: string;
+export interface ProtocolProgress {
+  protocolName: string;
   executionId: string;
   status: "pending" | "running" | "completed" | "failed" | "paused";
   steps: StepProgress[];
@@ -27,16 +27,16 @@ export interface MissionProgress {
   metadata: Record<string, unknown>;
 }
 
-const executions = new Map<string, MissionProgress>();
+const executions = new Map<string, ProtocolProgress>();
 
 function generateExecId(): string {
   return `exec_${Date.now().toString(36)}_${randomBytes(4).toString("hex")}`;
 }
 
-export function startExecution(missionName: string, stepIds: string[]): MissionProgress {
+export function startExecution(protocolName: string, stepIds: string[]): ProtocolProgress {
   const id = generateExecId();
-  const progress: MissionProgress = {
-    missionName,
+  const progress: ProtocolProgress = {
+    protocolName,
     executionId: id,
     status: "running",
     steps: stepIds.map(sid => ({ stepId: sid, status: "pending" })),
@@ -127,15 +127,15 @@ export function resumeExecution(executionId: string): boolean {
   return true;
 }
 
-export function getProgress(executionId: string): MissionProgress | undefined {
+export function getProgress(executionId: string): ProtocolProgress | undefined {
   return executions.get(executionId);
 }
 
-export function getAllExecutions(): MissionProgress[] {
+export function getAllExecutions(): ProtocolProgress[] {
   return Array.from(executions.values());
 }
 
-function formatProgress(prog: MissionProgress): string {
+function formatProgress(prog: ProtocolProgress): string {
   const completed = prog.steps.filter(s => s.status === "completed").length;
   const total = prog.steps.length;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
@@ -147,29 +147,29 @@ function formatProgress(prog: MissionProgress): string {
     return `  ${icon} ${s.stepId}${duration}${s.error ? ` — ${s.error}` : ""}`;
   }).join("\n");
 
-  return `**${prog.missionName}** [${prog.executionId}]\nStatus: ${prog.status} | ${bar} ${pct}% (${completed}/${total})\n${stepLines}`;
+  return `**${prog.protocolName}** [${prog.executionId}]\nStatus: ${prog.status} | ${bar} ${pct}% (${completed}/${total})\n${stepLines}`;
 }
 
 export function createProgressTools(): ToolDefinition[] {
   return [
     {
-      name: "mission_progress_start",
-      description: "Start tracking progress for a mission execution.",
+      name: "protocol_progress_start",
+      description: "Start tracking progress for a protocol execution.",
       parameters: {
         type: "object",
         properties: {
-          missionName: { type: "string" },
+          protocolName: { type: "string" },
           stepIds: { type: "array", items: { type: "string" }, description: "Ordered step IDs" },
         },
-        required: ["missionName", "stepIds"],
+        required: ["protocolName", "stepIds"],
       },
       async execute(args) {
-        const prog = startExecution(String(args.missionName), args.stepIds as string[]);
+        const prog = startExecution(String(args.protocolName), args.stepIds as string[]);
         return { content: `Tracking started.\n\n${formatProgress(prog)}` };
       },
     },
     {
-      name: "mission_progress_update",
+      name: "protocol_progress_update",
       description: "Update the current step: complete, fail, or skip it.",
       parameters: {
         type: "object",
@@ -197,8 +197,8 @@ export function createProgressTools(): ToolDefinition[] {
       },
     },
     {
-      name: "mission_progress_get",
-      description: "Get current progress of a mission execution.",
+      name: "protocol_progress_get",
+      description: "Get current progress of a protocol execution.",
       parameters: {
         type: "object",
         properties: { executionId: { type: "string" } },

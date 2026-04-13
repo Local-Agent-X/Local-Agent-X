@@ -199,8 +199,12 @@ async function executeSingleTool(
     return msgs;
   }
   // Inject session ID for tools that need session-scoped state
-  if (tc.name === "enter_plan_mode" || tc.name === "exit_plan_mode" || tc.name === "skill_run" || tc.name === "usage_report") {
+  if (tc.name === "enter_plan_mode" || tc.name === "exit_plan_mode" || tc.name === "skill_run" || tc.name === "usage_report" || tc.name === "browser") {
     args._sessionId = sessionId || "default";
+  }
+  // Inject onEvent for tools that need to stream events (e.g. request_secret)
+  if (tc.name === "request_secret") {
+    args._onEvent = onEvent;
   }
 
   const riskLevel = getRiskLevel(tc.name, args, security);
@@ -209,7 +213,7 @@ async function executeSingleTool(
 
   // Layer -1: AriKernel
   const isInternalTool = tc.name.startsWith("agent_") || tc.name.startsWith("swarm_") ||
-    tc.name.startsWith("mission_") || tc.name.startsWith("cron_") ||
+    tc.name.startsWith("mission_") ||
     ["delegate", "generate_image", "generate_video", "camera_capture", "screen_capture", "ocr",
      "memory_search", "memory_save", "playbook_list", "playbook_get"].includes(tc.name);
   if (isAriActive()) {

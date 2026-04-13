@@ -1073,8 +1073,8 @@ export class MemoryIndex {
     const facts = this.db.prepare("SELECT id, content FROM facts WHERE content LIKE ?").all(`%${pattern}%`) as Array<{ id: number; content: string }>;
     const affectedEntities = new Set<string>();
     for (const f of facts) {
-      const mentions = this.db.prepare("SELECT entity FROM entity_mentions WHERE fact_id = ?").all(f.id) as Array<{ entity: string }>;
-      for (const m of mentions) affectedEntities.add(m.entity);
+      const mentions = this.db.prepare("SELECT entity_slug FROM entity_mentions WHERE fact_id = ?").all(f.id) as Array<{ entity_slug: string }>;
+      for (const m of mentions) affectedEntities.add(m.entity_slug);
       this.db.prepare("DELETE FROM entity_mentions WHERE fact_id = ?").run(f.id);
       if (this.hasFts) try { this.db.prepare("DELETE FROM facts_fts WHERE rowid = ?").run(f.id); } catch {}
       const hash = createHash("sha256").update(f.content).digest("hex");
@@ -1100,16 +1100,18 @@ export class MemoryIndex {
   }
 
   forgetChunks(pathPattern: string): number {
-    const chunks = this.db.prepare("SELECT id, hash FROM chunks WHERE path LIKE ?").all(`%${pathPattern}%`) as Array<{ id: number; hash: string }>;
-    for (const c of chunks) {
-      if (this.hasFts) try { this.db.prepare("DELETE FROM chunks_fts WHERE rowid = ?").run(c.id); } catch {}
-      if (this.hasVec) try { this.db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?").run(c.id); } catch {}
-      // Clean embedding cache for this chunk's hash
-      try { this.db.prepare("DELETE FROM embedding_cache WHERE hash = ?").run(c.hash); } catch {}
-    }
-    this.db.prepare("DELETE FROM chunks WHERE path LIKE ?").run(`%${pathPattern}%`);
-    this.db.prepare("DELETE FROM files WHERE path LIKE ?").run(`%${pathPattern}%`);
-    return chunks.length;
+    const run = this.db.transaction(() => {
+      const chunks = this.db.prepare("SELECT id, hash FROM chunks WHERE path LIKE ?").all(`%${pathPattern}%`) as Array<{ id: number; hash: string }>;
+      for (const c of chunks) {
+        if (this.hasFts) try { this.db.prepare("DELETE FROM chunks_fts WHERE rowid = ?").run(c.id); } catch {}
+        if (this.hasVec) try { this.db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?").run(c.id); } catch {}
+        try { this.db.prepare("DELETE FROM embedding_cache WHERE hash = ?").run(c.hash); } catch {}
+      }
+      this.db.prepare("DELETE FROM chunks WHERE path LIKE ?").run(`%${pathPattern}%`);
+      this.db.prepare("DELETE FROM files WHERE path LIKE ?").run(`%${pathPattern}%`);
+      return chunks.length;
+    });
+    return run();
   }
 
   forgetConversation(conversationId: string): number {
@@ -1367,6 +1369,12 @@ export class MemoryIndex {
       if (toDelete.length === 0) return 0;
 
       for (const { id } of toDelete) {
+        // Clean embedding cache before deleting
+        const fact = this.db.prepare("SELECT content FROM facts WHERE id = ?").get(id) as { content: string } | undefined;
+        if (fact) {
+          const hash = createHash("sha256").update(fact.content).digest("hex");
+          try { this.db.prepare("DELETE FROM embedding_cache WHERE hash = ?").run(hash); } catch {}
+        }
         this.db.prepare("DELETE FROM entity_mentions WHERE fact_id = ?").run(id);
         if (this.hasFts) {
           try {
@@ -1690,7 +1698,7 @@ export class MemoryIndex {
     for (let offset = 0; offset < totalCount; offset += BATCH_SIZE) {
       const batch = this.db
         .prepare(
-          `SELECT id, path, source, start_line, end_line, text, embedding
+          `SELECT id, path, source, start_line, end_line, text, embedding, metadata
            FROM chunks WHERE embedding IS NOT NULL ${sourceFilter}
            LIMIT ? OFFSET ?`
         )
@@ -1702,6 +1710,7 @@ export class MemoryIndex {
         end_line: number;
         text: string;
         embedding: string;
+        metadata: string | null;
       }>;
 
       for (const row of batch) {
@@ -1725,6 +1734,7 @@ export class MemoryIndex {
             endLine: row.end_line,
             text: row.text,
             hash: "",
+            metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
             score: similarity,
           });
 
@@ -1767,7 +1777,7 @@ export class MemoryIndex {
       const validEntities = parsed.entities.filter((e) => e.length > 0);
 
       const now = Date.now();
-      const entitiesJson = JSON.stringify(validEntities);
+      const entitiesJson = JSON.stringify(validEntities.sort());
 
       // Deduplicate: skip if identical fact already exists (UNIQUE index handles this)
       try {
@@ -1917,20 +1927,22 @@ export class MemoryIndex {
     entitiesUpdated: string[];
     opinionsUpdated: number;
   }> {
-    const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000);
-    const recentFacts = this.recallByTime(since);
-
-    // Collect all mentioned entities
-    const entityFactMap = new Map<string, RetainedFact[]>();
-    for (const fact of recentFacts) {
-      for (const entity of fact.entities) {
-        const slug = slugify(entity);
-        if (!entityFactMap.has(slug)) entityFactMap.set(slug, []);
-        entityFactMap.get(slug)!.push(fact);
+    // Run fact reads + entity page updates in a transaction to prevent races with concurrent storeFact
+    const { entityFactMap, recentFacts } = this.db.transaction(() => {
+      const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000);
+      const facts = this.recallByTime(since);
+      const map = new Map<string, RetainedFact[]>();
+      for (const fact of facts) {
+        for (const entity of fact.entities) {
+          const slug = slugify(entity);
+          if (!map.has(slug)) map.set(slug, []);
+          map.get(slug)!.push(fact);
+        }
       }
-    }
+      return { entityFactMap: map, recentFacts: facts };
+    })();
 
-    // Update entity pages
+    // Update entity pages (file writes outside transaction — they don't need atomicity)
     const entitiesUpdated: string[] = [];
     for (const [slug, facts] of entityFactMap) {
       this.updateEntityPage(slug, facts);

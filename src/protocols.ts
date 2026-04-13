@@ -267,7 +267,8 @@ export function getAllProtocols(): Protocol[] {
 function findProtocol(query: string): Protocol | undefined {
   const q = query.toLowerCase();
   return getAllProtocols().find(pb =>
-    pb.triggers.some(t => q.includes(t)) || q.includes(pb.name)
+    pb.triggers.some(t => q.includes(t.toLowerCase()) || t.toLowerCase().includes(q)) ||
+    q.includes(pb.name.toLowerCase()) || pb.name.toLowerCase().includes(q)
   );
 }
 

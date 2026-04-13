@@ -469,7 +469,7 @@ export async function startServer(config: SAXConfig) {
       const CORE_AGENT_TOOLS = new Set(["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image", "ask_user",
         "http_request", "ocr", "memory_search", "memory_save", "memory_recall", "memory_update_profile",
         "document_create", "document_edit", "spreadsheet_write", "spreadsheet_read", "pdf_create",
-        "protocol_schedule_list", "protocol_schedule_reports",
+        "mission_schedule_list", "mission_schedule_reports",
         "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval",
         "agent_whoami", "agent_team_list", "agent_wakeup", "task_create", "task_update", "task_list", "task_get"]);
       let spawnedTools = allAgentTools.filter(t => CORE_AGENT_TOOLS.has(t.name));

@@ -180,6 +180,7 @@ export async function runCodexAgentHttp(
         const retryStream = streamCodexResponse({ token: apiKey, model, messages, systemPrompt, tools: codexTools });
         for await (const event of retryStream) {
           if (event.type === "text") { retryText += event.delta; onEvent?.({ type: "stream", delta: event.delta }); }
+          else if (event.type === "tool_call") { toolCalls.push({ id: event.id, name: event.name, arguments: event.arguments }); }
           else if (event.type === "reasoning") { turnReasoning.push(event.item); }
           else if (event.type === "done") {
             totalInput += event.usage.inputTokens;

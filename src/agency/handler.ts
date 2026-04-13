@@ -383,8 +383,10 @@ export class Handler {
 
         // Emit the run request for the external LLM layer to pick up
         const resultPromise = new Promise<string>((resolve, reject) => {
+          let resultHandler: ((data: unknown) => void) | null = null;
           const timeout = setTimeout(() => {
             EventBus.off("handler:agent-output", outputHandler);
+            if (resultHandler) EventBus.off("handler:agent-result", resultHandler);
             reject(new Error("Agent execution timed out"));
           }, 600_000); // 10 min — agents need time for multi-step tasks
 
@@ -420,6 +422,7 @@ export class Handler {
             }
           };
 
+          resultHandler = handler;
           EventBus.on("handler:agent-result", handler);
 
           if (agent.abortController?.signal.aborted) {
@@ -474,6 +477,14 @@ export class Handler {
           EventBus.emit("handler:agent-error", { agentId, error: msg });
         }
       }
+      // Clean up completed/errored agents after 5 minutes to prevent unbounded growth
+      setTimeout(() => {
+        const a = this.agents.get(agentId);
+        if (a && (a.status === "done" || a.status === "error")) {
+          this.messageBus.unsubscribe(agentId);
+          this.agents.delete(agentId);
+        }
+      }, 5 * 60 * 1000);
     };
 
     run();

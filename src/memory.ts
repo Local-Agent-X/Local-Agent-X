@@ -1069,11 +1069,28 @@ export class MemoryIndex {
   // ── Forget (delete memories) ──
 
   forgetFacts(pattern: string): number {
-    const facts = this.db.prepare("SELECT id FROM facts WHERE content LIKE ?").all(`%${pattern}%`) as Array<{ id: number }>;
+    // Collect affected entities before deletion so we can rebuild their pages
+    const facts = this.db.prepare("SELECT id, content FROM facts WHERE content LIKE ?").all(`%${pattern}%`) as Array<{ id: number; content: string }>;
+    const affectedEntities = new Set<string>();
     for (const f of facts) {
+      const mentions = this.db.prepare("SELECT entity FROM entity_mentions WHERE fact_id = ?").all(f.id) as Array<{ entity: string }>;
+      for (const m of mentions) affectedEntities.add(m.entity);
       this.db.prepare("DELETE FROM entity_mentions WHERE fact_id = ?").run(f.id);
       if (this.hasFts) try { this.db.prepare("DELETE FROM facts_fts WHERE rowid = ?").run(f.id); } catch {}
+      const hash = createHash("sha256").update(f.content).digest("hex");
+      try { this.db.prepare("DELETE FROM embedding_cache WHERE hash = ?").run(hash); } catch {}
       this.db.prepare("DELETE FROM facts WHERE id = ?").run(f.id);
+    }
+    // Rebuild entity pages for affected entities so markdown stays in sync
+    for (const slug of affectedEntities) {
+      const remaining = this.recallByEntity(slug, MemoryIndex.MAX_FACTS_PER_ENTITY);
+      if (remaining.length > 0) {
+        this.updateEntityPage(slug, remaining);
+      } else {
+        // No facts left — remove the entity page
+        const entityPath = join(this.entitiesDir, `${slug}.md`);
+        try { unlinkSync(entityPath); } catch {}
+      }
     }
     return facts.length;
   }
@@ -1083,10 +1100,12 @@ export class MemoryIndex {
   }
 
   forgetChunks(pathPattern: string): number {
-    const chunks = this.db.prepare("SELECT id FROM chunks WHERE path LIKE ?").all(`%${pathPattern}%`) as Array<{ id: number }>;
+    const chunks = this.db.prepare("SELECT id, hash FROM chunks WHERE path LIKE ?").all(`%${pathPattern}%`) as Array<{ id: number; hash: string }>;
     for (const c of chunks) {
       if (this.hasFts) try { this.db.prepare("DELETE FROM chunks_fts WHERE rowid = ?").run(c.id); } catch {}
       if (this.hasVec) try { this.db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?").run(c.id); } catch {}
+      // Clean embedding cache for this chunk's hash
+      try { this.db.prepare("DELETE FROM embedding_cache WHERE hash = ?").run(c.hash); } catch {}
     }
     this.db.prepare("DELETE FROM chunks WHERE path LIKE ?").run(`%${pathPattern}%`);
     this.db.prepare("DELETE FROM files WHERE path LIKE ?").run(`%${pathPattern}%`);

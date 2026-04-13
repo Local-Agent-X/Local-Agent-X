@@ -86,7 +86,6 @@ export async function* streamCodexResponse(params: {
   tools?: CodexTool[];
   temperature?: number;
   previousResponseId?: string;
-  forceToolUse?: boolean;
   sessionId?: string;
 }): AsyncGenerator<
   | { type: "text"; delta: string }
@@ -128,7 +127,7 @@ export async function* streamCodexResponse(params: {
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;
-    body.tool_choice = params.forceToolUse ? "required" : "auto";
+    body.tool_choice = "auto";
     body.parallel_tool_calls = true;
   }
 

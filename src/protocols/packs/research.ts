@@ -1,10 +1,10 @@
 /**
- * Research Mission Pack — web research, summarize, cite missions.
+ * Research Protocol Pack — web research, summarize, cite protocols.
  */
 
-import type { Mission } from "../../missions.js";
+import type { Protocol } from "../../protocols.js";
 
-export const webResearchMission: Mission = {
+export const webResearchMission: Protocol = {
   name: "web_research",
   description: "Deep web research on a topic: search, browse, collect, and synthesize findings with citations.",
   triggers: ["research", "look up", "find out about", "deep research", "investigate", "what do we know about"],
@@ -27,7 +27,7 @@ export const webResearchMission: Mission = {
   ],
 };
 
-export const summarizeMission: Mission = {
+export const summarizeMission: Protocol = {
   name: "summarize",
   description: "Summarize a document, article, or webpage into key points with configurable detail level.",
   triggers: ["summarize", "tldr", "sum up", "give me the gist", "key points", "summarize this"],
@@ -48,7 +48,7 @@ export const summarizeMission: Mission = {
   ],
 };
 
-export const citationMission: Mission = {
+export const citationMission: Protocol = {
   name: "citation_builder",
   description: "Build properly formatted citations from URLs, DOIs, or reference information.",
   triggers: ["cite this", "build citation", "format reference", "bibliography", "cite source"],
@@ -69,7 +69,7 @@ export const citationMission: Mission = {
   ],
 };
 
-export const factCheckMission: Mission = {
+export const factCheckMission: Protocol = {
   name: "fact_check",
   description: "Verify claims by cross-referencing multiple authoritative sources.",
   triggers: ["fact check", "is this true", "verify this claim", "check if", "is it true that"],
@@ -90,7 +90,7 @@ export const factCheckMission: Mission = {
   ],
 };
 
-export const researchMissions: Mission[] = [
+export const researchProtocols: Protocol[] = [
   webResearchMission,
   summarizeMission,
   citationMission,

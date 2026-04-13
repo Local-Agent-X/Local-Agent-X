@@ -13,7 +13,7 @@ async function loadProtocols() {
     const protocols = data.protocols || [];
     if (countEl) countEl.textContent = protocols.length + ' protocols';
     if (protocols.length === 0) {
-      el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">No protocols yet. Teach your agent by walking it through a task, then say "save that as a protocol."</div>';
+      el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)">No protocols yet. Add a SKILL.md file to ~/.sax/skills/my-protocol/ to create one.</div>';
       return;
     }
     // Group by category

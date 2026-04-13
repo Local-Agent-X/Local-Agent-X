@@ -70,6 +70,19 @@ export function listWorkerSessions(): WorkerSession[] {
   return [...sessions.values()].sort((a, b) => b.lastActivity - a.lastActivity);
 }
 
+/** Remove idle worker sessions older than maxIdleMs (default 30 minutes). */
+export function cleanupIdleWorkers(maxIdleMs = 30 * 60 * 1000): number {
+  const now = Date.now();
+  let cleaned = 0;
+  for (const [id, s] of sessions) {
+    if (!s.busy && now - s.lastActivity > maxIdleMs) {
+      sessions.delete(id);
+      cleaned++;
+    }
+  }
+  return cleaned;
+}
+
 export function getWorkerSession(id: string): WorkerSession | undefined {
   return sessions.get(id);
 }

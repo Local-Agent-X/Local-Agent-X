@@ -13,7 +13,7 @@ function init_cron() { loadCronJobs(); }
 async function loadCronJobs() {
   try {
     const data = await apiJson('/api/cron');
-    cronJobs = data.jobs || [];
+    cronJobs = data.missions || data.jobs || [];
   } catch {
     // Fallback to localStorage if server is unreachable
     try { cronJobs = JSON.parse(localStorage.getItem('sax_cron_v1') || '[]'); } catch { cronJobs = []; }

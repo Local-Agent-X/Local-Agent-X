@@ -361,13 +361,8 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
       priority: 100,
     },
 
-    // Protocols & missions
-    { id: "allow-protocols", tool: "protocol_*", decision: "allow", reason: "Protocol browsing and execution", priority: 50 },
-    { id: "allow-missions", tool: "mission_*", decision: "allow", reason: "Mission workflows (internal)", priority: 50 },
-
-    // Scheduled missions (cron)
-    { id: "allow-cron", tool: "cron_*", decision: "allow", reason: "Scheduled missions (legacy)", priority: 50 },
-    { id: "allow-schedule", tool: "schedule_*", decision: "allow", reason: "Scheduled missions", priority: 50 },
+    // Protocols
+    { id: "allow-protocols", tool: "protocol_*", decision: "allow", reason: "Protocol browsing, workflows, and execution", priority: 50 },
 
     // Agent delegation — required for Agent Handler
     { id: "allow-agent-spawn", tool: "agent_spawn", decision: "allow", reason: "Agent delegation", priority: 50 },

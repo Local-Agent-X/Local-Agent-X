@@ -1,22 +1,22 @@
 /**
- * Mission Templates — base templates for common mission categories.
+ * Protocol Templates — base templates for common protocol categories.
  */
 
-import type { Mission, MissionStep } from "../missions.js";
+import type { Protocol, ProtocolStep } from "../protocols.js";
 import type { ToolDefinition } from "../types.js";
 
-export interface MissionTemplate {
+export interface ProtocolTemplate {
   id: string;
   category: "social-media" | "developer" | "research" | "communication";
   name: string;
   description: string;
-  baseSteps: MissionStep[];
+  baseSteps: ProtocolStep[];
   baseRules: string[];
   defaultTriggers: string[];
   defaultPreferences: string[];
 }
 
-const socialMediaTemplate: MissionTemplate = {
+const socialMediaTemplate: ProtocolTemplate = {
   id: "social-media",
   category: "social-media",
   name: "Social Media Post",
@@ -39,7 +39,7 @@ const socialMediaTemplate: MissionTemplate = {
   defaultPreferences: ["username", "default_hashtags", "posting_style"],
 };
 
-const developerTemplate: MissionTemplate = {
+const developerTemplate: ProtocolTemplate = {
   id: "developer",
   category: "developer",
   name: "Developer Workflow",
@@ -61,7 +61,7 @@ const developerTemplate: MissionTemplate = {
   defaultPreferences: ["default_branch", "test_command", "deploy_target"],
 };
 
-const researchTemplate: MissionTemplate = {
+const researchTemplate: ProtocolTemplate = {
   id: "research",
   category: "research",
   name: "Research Workflow",
@@ -84,7 +84,7 @@ const researchTemplate: MissionTemplate = {
   defaultPreferences: ["citation_format", "summary_length", "preferred_sources"],
 };
 
-const communicationTemplate: MissionTemplate = {
+const communicationTemplate: ProtocolTemplate = {
   id: "communication",
   category: "communication",
   name: "Communication Workflow",
@@ -107,27 +107,27 @@ const communicationTemplate: MissionTemplate = {
   defaultPreferences: ["email_signature", "default_tone", "preferred_platform"],
 };
 
-export const TEMPLATES: MissionTemplate[] = [
+export const TEMPLATES: ProtocolTemplate[] = [
   socialMediaTemplate,
   developerTemplate,
   researchTemplate,
   communicationTemplate,
 ];
 
-export function getTemplate(id: string): MissionTemplate | undefined {
+export function getTemplate(id: string): ProtocolTemplate | undefined {
   return TEMPLATES.find(t => t.id === id || t.category === id);
 }
 
-export function missionFromTemplate(
-  template: MissionTemplate,
+export function protocolFromTemplate(
+  template: ProtocolTemplate,
   overrides: {
     name: string;
     description?: string;
-    extraSteps?: MissionStep[];
+    extraSteps?: ProtocolStep[];
     extraRules?: string[];
     triggers?: string[];
   }
-): Mission {
+): Protocol {
   return {
     name: overrides.name,
     description: overrides.description ?? template.description,
@@ -141,8 +141,8 @@ export function missionFromTemplate(
 export function createTemplateTools(): ToolDefinition[] {
   return [
     {
-      name: "mission_templates_list",
-      description: "List available mission templates (social-media, developer, research, communication).",
+      name: "protocol_templates_list",
+      description: "List available protocol templates (social-media, developer, research, communication).",
       parameters: { type: "object", properties: {} },
       async execute() {
         const list = TEMPLATES.map(t =>
@@ -152,13 +152,13 @@ export function createTemplateTools(): ToolDefinition[] {
       },
     },
     {
-      name: "mission_from_template",
-      description: "Create a new mission from a template.",
+      name: "protocol_from_template",
+      description: "Create a new protocol from a template.",
       parameters: {
         type: "object",
         properties: {
           templateId: { type: "string", description: "Template ID (social-media, developer, research, communication)" },
-          name: { type: "string", description: "Name for the new mission" },
+          name: { type: "string", description: "Name for the new protocol" },
           description: { type: "string", description: "Optional description override" },
           triggers: { type: "array", items: { type: "string" }, description: "Trigger phrases" },
           extraRules: { type: "array", items: { type: "string" }, description: "Additional rules" },
@@ -168,13 +168,13 @@ export function createTemplateTools(): ToolDefinition[] {
       async execute(args) {
         const template = getTemplate(String(args.templateId));
         if (!template) return { content: `Template "${args.templateId}" not found.` };
-        const mission = missionFromTemplate(template, {
+        const protocol = protocolFromTemplate(template, {
           name: String(args.name),
           description: args.description ? String(args.description) : undefined,
           triggers: args.triggers as string[] | undefined,
           extraRules: args.extraRules as string[] | undefined,
         });
-        return { content: `Created mission "${mission.name}" from ${template.id} template with ${mission.steps.length} steps.` };
+        return { content: `Created protocol "${protocol.name}" from ${template.id} template with ${protocol.steps.length} steps.` };
       },
     },
   ];

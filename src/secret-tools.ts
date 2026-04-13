@@ -60,7 +60,9 @@ export function createSecretTools(
       }
 
       // Emit SSE event to trigger the frontend modal
-      onEvent?.({
+      // Prefer per-request _onEvent (session-scoped) over constructor onEvent (may be stale global)
+      const emit = (args._onEvent as ((event: ServerEvent) => void) | undefined) || onEvent;
+      emit?.({
         type: "secret_request",
         name,
         service,

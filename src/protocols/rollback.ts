@@ -1,5 +1,5 @@
 /**
- * Mission Rollback — records state before each step and can undo.
+ * Protocol Rollback — records state before each step and can undo.
  */
 
 import type { ToolDefinition } from "../types.js";
@@ -13,7 +13,7 @@ export interface StateSnapshot {
 
 export interface RollbackSession {
   executionId: string;
-  missionName: string;
+  protocolName: string;
   snapshots: StateSnapshot[];
   currentIndex: number;
   rolledBack: boolean;
@@ -21,10 +21,10 @@ export interface RollbackSession {
 
 const sessions = new Map<string, RollbackSession>();
 
-export function createRollbackSession(executionId: string, missionName: string): RollbackSession {
+export function createRollbackSession(executionId: string, protocolName: string): RollbackSession {
   const session: RollbackSession = {
     executionId,
-    missionName,
+    protocolName,
     snapshots: [],
     currentIndex: -1,
     rolledBack: false,
@@ -88,24 +88,24 @@ export function getSession(executionId: string): RollbackSession | undefined {
 export function createRollbackTools(): ToolDefinition[] {
   return [
     {
-      name: "mission_rollback_init",
-      description: "Initialize rollback tracking for a mission execution.",
+      name: "protocol_rollback_init",
+      description: "Initialize rollback tracking for a protocol execution.",
       parameters: {
         type: "object",
         properties: {
           executionId: { type: "string" },
-          missionName: { type: "string" },
+          protocolName: { type: "string" },
         },
-        required: ["executionId", "missionName"],
+        required: ["executionId", "protocolName"],
       },
       async execute(args) {
-        const session = createRollbackSession(String(args.executionId), String(args.missionName));
-        return { content: `Rollback tracking initialized for ${session.missionName} [${session.executionId}].` };
+        const session = createRollbackSession(String(args.executionId), String(args.protocolName));
+        return { content: `Rollback tracking initialized for ${session.protocolName} [${session.executionId}].` };
       },
     },
     {
-      name: "mission_rollback_snapshot",
-      description: "Save a state snapshot before executing a mission step.",
+      name: "protocol_rollback_snapshot",
+      description: "Save a state snapshot before executing a protocol step.",
       parameters: {
         type: "object",
         properties: {
@@ -128,7 +128,7 @@ export function createRollbackTools(): ToolDefinition[] {
       },
     },
     {
-      name: "mission_rollback_undo",
+      name: "protocol_rollback_undo",
       description: "Roll back to a previous step's state.",
       parameters: {
         type: "object",
@@ -151,8 +151,8 @@ export function createRollbackTools(): ToolDefinition[] {
       },
     },
     {
-      name: "mission_rollback_history",
-      description: "View all saved snapshots for a mission execution.",
+      name: "protocol_rollback_history",
+      description: "View all saved snapshots for a protocol execution.",
       parameters: {
         type: "object",
         properties: { executionId: { type: "string" } },

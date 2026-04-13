@@ -12,65 +12,7 @@ import type { RBACManager, Role } from "./rbac.js";
 import { streamAnthropicResponse } from "./anthropic-client.js";
 import { executeToolCalls, toolsToOpenAI, checkAndCompact } from "./tool-executor.js";
 import { getRuntimeConfig } from "./config.js";
-
-// ── Self-Reflection: checks for unresolved errors after the agent loop ──
-//
-// IMPORTANT: this function MUST only fire on errors that occurred AFTER the
-// agent's last text response. Otherwise it loops forever on stale errors that
-// the agent has already acknowledged in plain English (which is hard to
-// detect reliably with a regex). Loop detection here was the cause of an
-// incident where ~37% of a Telegram session was [Self-check] noise from a
-// single stale RBAC block 26 messages back.
-
-function detectUnresolvedErrors(messages: ChatCompletionMessageParam[]): string[] {
-  // If there is ALREADY a [Self-check] user message in the recent window,
-  // we have already nudged the agent on this error. Do not nudge again.
-  const recentMsgs = messages.slice(-20);
-  for (const m of recentMsgs) {
-    if (m.role === "user" && typeof m.content === "string" && m.content.startsWith("[Self-check]")) {
-      return [];
-    }
-  }
-
-  // Find the index of the most recent assistant text response (non-tool-call).
-  // Only errors that came AFTER that index count as "unresolved" — anything
-  // before it has had its chance to be acknowledged.
-  let lastAssistantTextIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role === "assistant" && typeof m.content === "string" && m.content.trim().length > 0) {
-      lastAssistantTextIdx = i;
-      break;
-    }
-  }
-
-  const errors: string[] = [];
-  const startIdx = Math.max(lastAssistantTextIdx + 1, messages.length - 20);
-  for (let i = startIdx; i < messages.length; i++) {
-    const m = messages[i];
-    if (m.role !== "tool" || typeof m.content !== "string") continue;
-    const c = m.content;
-    if (/\b(BLOCKED|error|failed|timed? ?out|not found|permission denied|ENOENT|EACCES|EPERM)\b/i.test(c) && c.length < 500) {
-      errors.push(c.slice(0, 200));
-    }
-  }
-
-  // Even within the post-response window, if the agent already acknowledged
-  // the problem in any form, don't nudge.
-  const lastAssistant = [...recentMsgs].reverse().find(m => m.role === "assistant" && typeof m.content === "string");
-  if (errors.length > 0 && lastAssistant && typeof lastAssistant.content === "string") {
-    // Broad acknowledgment vocabulary — covers all the words the original
-    // narrow regex missed (block, repeat, skipped, switched, tried, moved on, …).
-    if (/\b(error|failed|couldn't|unable|issue|problem|unfortunately|sorry|block(ed)?|denied|skip(ped)?|switch(ed)?|tried|moved on|gave up|cannot|can't|workaround|alternative|instead|fallback|repeat)\b/i.test(lastAssistant.content)) {
-      return [];
-    }
-  }
-  return errors;
-}
-
-function buildReflectionPrompt(errors: string[]): string {
-  return `[Self-check] The following tool errors occurred but may not have been addressed in your response. If any are relevant to the user's request, briefly acknowledge what went wrong and suggest a fix. If they're irrelevant (e.g., optional lookups), ignore them.\n\nErrors:\n${errors.map((e, i) => `${i + 1}. ${e}`).join("\n")}`;
-}
+import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkToolLoops, createLoopState } from "./agent-guards.js";
 
 /** Strip ephemeral self-check / quality-gate user messages before persisting a session. */
 export function stripEphemeralMessages(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
@@ -80,7 +22,8 @@ export function stripEphemeralMessages(messages: ChatCompletionMessageParam[]): 
       if (m.content.startsWith("Your previous response was empty.")) return false;
       if (m.content.startsWith("Tool errors occurred but you did not address them.")) return false;
       if (m.content.startsWith("You do NOT need approval.")) return false;
-      if (m.content.startsWith("SYSTEM: You have called ")) return false;
+      if (m.content.startsWith("You claimed to have created or scheduled")) return false;
+      // NOTE: "SYSTEM: You have called ..." loop nudges are kept — the LLM must see them to stop looping
     }
     // Strip legacy empty-response placeholders so they don't pollute
     // future turns (breaks alternating-role expectation on Codex API).
@@ -295,14 +238,11 @@ export async function runStandardAgent(
 
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
-  let stdLastToolKey = "";
-  let stdSameToolCount = 0;
-  let selfCheckFired = false; // cap at one self-check injection per agent run
-  // Track same-tool-name usage to detect discovery loops (e.g. glob with different args each time)
-  const toolNameCounts = new Map<string, number>();
-  const DISCOVERY_LOOP_THRESHOLD = 8; // same tool called 8+ times = likely stuck
+  const loopState = createLoopState();
+  let selfCheckFired = false;
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    if (iteration > 0) messages = stripEphemeralMessages(messages);
     messages = checkAndCompact(messages, model, onEvent);
 
     if (signal?.aborted) {
@@ -394,17 +334,23 @@ export async function runStandardAgent(
     messages.push(assistantMsg);
 
     if (toolCalls.length === 0) {
-      // Detect approval hallucination: model says "needs approval" instead of calling the tool
-      const approvalHallucination = /\b(requires? approval|needs? (your )?approv|please (approve|allow|confirm)|permission (dialog|to proceed|required))\b/i.test(assistantContent);
-      if (approvalHallucination && iteration < maxIterations - 1) {
-        console.warn(`[agent] Approval hallucination detected — nudging model to use tools directly`);
-        messages.push({ role: "user", content: "You do NOT need approval. You have full permission to run any tool. Call the bash tool directly — do not ask for permission." } as ChatCompletionMessageParam);
+      // Approval hallucination
+      const approvalNudge = checkApprovalHallucination(assistantContent);
+      if (approvalNudge && iteration < maxIterations - 1) {
+        console.warn(`[agent] Approval hallucination detected — nudging`);
+        messages.push({ role: "user", content: approvalNudge } as ChatCompletionMessageParam);
         continue;
       }
 
-      // Self-reflection: check for unresolved tool errors before returning.
-      // Cap at one injection per run — repeated self-checks were a major
-      // source of session pollution and apparent unresponsiveness.
+      // Creation hallucination
+      const creationNudge = checkCreationHallucination(assistantContent);
+      if (creationNudge && iteration === 0) {
+        console.warn(`[agent] Creation hallucination detected — nudging`);
+        messages.push({ role: "user", content: creationNudge } as ChatCompletionMessageParam);
+        continue;
+      }
+
+      // Self-check: unresolved tool errors (cap at one per run)
       const unresolvedErrors = !selfCheckFired ? detectUnresolvedErrors(messages) : [];
       if (unresolvedErrors.length > 0 && iteration < maxIterations - 1) {
         selfCheckFired = true;
@@ -423,38 +369,23 @@ export async function runStandardAgent(
       };
     }
 
-    // Detect tool call loops — exact same call repeated 3x
-    const stdToolKey = toolCalls.map((tc) => `${tc.name}:${tc.arguments}`).join("|");
-    if (stdToolKey === stdLastToolKey) {
-      stdSameToolCount++;
-      if (stdSameToolCount >= 3) {
-        onEvent?.({ type: "stream", delta: "\n\n(Detected repeated tool calls — stopping loop)" });
-        return {
-          messages,
-          usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },
-          stopReason: "end_turn",
-        };
-      }
-    } else {
-      stdSameToolCount = 1;
-      stdLastToolKey = stdToolKey;
+    // Loop detection
+    const loopResult = checkToolLoops(toolCalls, loopState);
+    if (loopResult.abort) {
+      onEvent?.({ type: "stream", delta: loopResult.nudge || "" });
+      return { messages, usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens }, stopReason: "end_turn" };
+    }
+    if (loopResult.nudge) {
+      messages.push({ role: "user", content: loopResult.nudge } as ChatCompletionMessageParam);
     }
 
-    // Detect discovery loops — same tool called many times with different args (e.g. glob stuck)
-    for (const tc of toolCalls) {
-      toolNameCounts.set(tc.name, (toolNameCounts.get(tc.name) || 0) + 1);
+    let toolResults;
+    try {
+      toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
+    } catch (e) {
+      console.error("[agent] Tool execution error (Standard):", (e as Error).message);
+      toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];
     }
-    const discoveryLoopTool = [...toolNameCounts.entries()].find(([name, count]) =>
-      count >= DISCOVERY_LOOP_THRESHOLD && ["glob", "web_search", "read"].includes(name)
-    );
-    if (discoveryLoopTool) {
-      const [toolName, count] = discoveryLoopTool;
-      onEvent?.({ type: "stream", delta: `\n\n(Discovery loop detected: ${toolName} called ${count} times — produce output with what you have)` });
-      messages.push({ role: "user", content: `SYSTEM: You have called ${toolName} ${count} times. Stop searching and produce your final output with the information you already have. Do not make any more ${toolName} calls.` } as ChatCompletionMessageParam);
-      toolNameCounts.set(toolName, 0); // Reset to give the agent one chance to comply
-    }
-
-    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
     messages.push(...toolResults);
 
     if (assistantContent && /\b(login required|password needed|authentication required|access denied|need.+log.?in|blocked|cannot access)\b/i.test(assistantContent)) {
@@ -491,9 +422,11 @@ export async function runAnthropicAgent(
 
   let totalInput = 0, totalOutput = 0;
   let selfCheckFiredAnthropic = false;
+  const loopStateAnthropic = createLoopState();
   const anthropicTools = tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    if (iteration > 0) messages = stripEphemeralMessages(messages);
     messages = checkAndCompact(messages, model, onEvent);
     if (signal?.aborted) {
       return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "abort" };
@@ -556,11 +489,17 @@ export async function runAnthropicAgent(
     }
 
     if (toolCalls.length === 0) {
-      // Detect approval hallucination
-      const approvalHallucination = /\b(requires? approval|needs? (your )?approv|please (approve|allow|confirm)|permission (dialog|to proceed|required))\b/i.test(assistantContent);
-      if (approvalHallucination && iteration < maxIterations - 1) {
+      const approvalNudge = checkApprovalHallucination(assistantContent);
+      if (approvalNudge && iteration < maxIterations - 1) {
         console.warn(`[agent] Approval hallucination detected (Anthropic) — nudging`);
-        messages.push({ role: "user", content: "You do NOT need approval. You have full permission to run any tool. Call the bash tool directly — do not ask for permission." } as ChatCompletionMessageParam);
+        messages.push({ role: "user", content: approvalNudge } as ChatCompletionMessageParam);
+        continue;
+      }
+
+      const creationNudge = checkCreationHallucination(assistantContent);
+      if (creationNudge && iteration === 0) {
+        console.warn(`[agent] Creation hallucination detected (Anthropic) — nudging`);
+        messages.push({ role: "user", content: creationNudge } as ChatCompletionMessageParam);
         continue;
       }
 
@@ -575,7 +514,23 @@ export async function runAnthropicAgent(
       return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
     }
 
-    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
+    // Loop detection
+    const loopResult = checkToolLoops(toolCalls, loopStateAnthropic);
+    if (loopResult.abort) {
+      onEvent?.({ type: "stream", delta: loopResult.nudge || "" });
+      return { messages, usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
+    }
+    if (loopResult.nudge) {
+      messages.push({ role: "user", content: loopResult.nudge } as ChatCompletionMessageParam);
+    }
+
+    let toolResults;
+    try {
+      toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
+    } catch (e) {
+      console.error("[agent] Tool execution error (Anthropic):", (e as Error).message);
+      toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];
+    }
     messages.push(...toolResults);
 
     if (assistantContent && /\b(login required|password needed|authentication required|access denied|need.+log.?in|blocked|cannot access)\b/i.test(assistantContent)) {

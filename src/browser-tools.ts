@@ -135,7 +135,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
     },
     async execute(args) {
       const action = String(args.action || "");
-      const sessionId = getSessionId ? getSessionId() : "default";
+      // Use session ID from tool executor (per-request, no global state) or fall back to getter
+      const sessionId = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
       const manager = getBrowserManager(sessionId);
 
       // Validate engine if provided

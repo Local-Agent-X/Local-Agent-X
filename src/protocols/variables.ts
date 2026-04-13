@@ -1,6 +1,6 @@
 /**
- * Mission Variables — user-defined variables that persist across runs.
- * Stored in ~/.sax/mission-variables.json
+ * Protocol Variables — user-defined variables that persist across runs.
+ * Stored in ~/.sax/protocol-variables.json
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -8,11 +8,11 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import type { ToolDefinition } from "../types.js";
 
-const VARIABLES_PATH = join(homedir(), ".sax", "mission-variables.json");
+const VARIABLES_PATH = join(homedir(), ".sax", "protocol-variables.json");
 
 export interface VariableScope {
   global: Record<string, unknown>;
-  missions: Record<string, Record<string, unknown>>;
+  protocols: Record<string, Record<string, unknown>>;
 }
 
 function ensureDir(): void {
@@ -24,7 +24,7 @@ export function loadVariables(): VariableScope {
   if (existsSync(VARIABLES_PATH)) {
     try { return JSON.parse(readFileSync(VARIABLES_PATH, "utf-8")); } catch {}
   }
-  return { global: {}, missions: {} };
+  return { global: {}, protocols: {} };
 }
 
 export function saveVariables(vars: VariableScope): void {
@@ -32,30 +32,30 @@ export function saveVariables(vars: VariableScope): void {
   writeFileSync(VARIABLES_PATH, JSON.stringify(vars, null, 2), "utf-8");
 }
 
-export function getVariable(key: string, missionName?: string): unknown {
+export function getVariable(key: string, protocolName?: string): unknown {
   const vars = loadVariables();
-  if (missionName && vars.missions[missionName]?.[key] !== undefined) {
-    return vars.missions[missionName][key];
+  if (protocolName && vars.protocols[protocolName]?.[key] !== undefined) {
+    return vars.protocols[protocolName][key];
   }
   return vars.global[key];
 }
 
-export function setVariable(key: string, value: unknown, missionName?: string): void {
+export function setVariable(key: string, value: unknown, protocolName?: string): void {
   const vars = loadVariables();
-  if (missionName) {
-    if (!vars.missions[missionName]) vars.missions[missionName] = {};
-    vars.missions[missionName][key] = value;
+  if (protocolName) {
+    if (!vars.protocols[protocolName]) vars.protocols[protocolName] = {};
+    vars.protocols[protocolName][key] = value;
   } else {
     vars.global[key] = value;
   }
   saveVariables(vars);
 }
 
-export function deleteVariable(key: string, missionName?: string): boolean {
+export function deleteVariable(key: string, protocolName?: string): boolean {
   const vars = loadVariables();
-  if (missionName) {
-    if (vars.missions[missionName]?.[key] === undefined) return false;
-    delete vars.missions[missionName][key];
+  if (protocolName) {
+    if (vars.protocols[protocolName]?.[key] === undefined) return false;
+    delete vars.protocols[protocolName][key];
   } else {
     if (vars.global[key] === undefined) return false;
     delete vars.global[key];
@@ -64,18 +64,18 @@ export function deleteVariable(key: string, missionName?: string): boolean {
   return true;
 }
 
-export function listVariables(missionName?: string): Record<string, unknown> {
+export function listVariables(protocolName?: string): Record<string, unknown> {
   const vars = loadVariables();
-  if (missionName) {
-    return { ...vars.global, ...vars.missions[missionName] };
+  if (protocolName) {
+    return { ...vars.global, ...vars.protocols[protocolName] };
   }
   return vars.global;
 }
 
-export function interpolateVariables(text: string, missionName?: string): string {
+export function interpolateVariables(text: string, protocolName?: string): string {
   const vars = loadVariables();
-  const merged = missionName
-    ? { ...vars.global, ...(vars.missions[missionName] ?? {}) }
+  const merged = protocolName
+    ? { ...vars.global, ...(vars.protocols[protocolName] ?? {}) }
     : vars.global;
 
   return text.replace(/\{\{(\w+)\}\}/g, (match, key) => {
@@ -87,67 +87,67 @@ export function interpolateVariables(text: string, missionName?: string): string
 export function createVariableTools(): ToolDefinition[] {
   return [
     {
-      name: "mission_var_set",
-      description: "Set a mission variable (persists across runs). Use missionName for mission-scoped vars, omit for global.",
+      name: "protocol_var_set",
+      description: "Set a protocol variable (persists across runs). Use protocolName for protocol-scoped vars, omit for global.",
       parameters: {
         type: "object",
         properties: {
           key: { type: "string", description: "Variable name" },
           value: { type: "string", description: "Variable value" },
-          missionName: { type: "string", description: "Optional: scope to a specific mission" },
+          protocolName: { type: "string", description: "Optional: scope to a specific protocol" },
         },
         required: ["key", "value"],
       },
       async execute(args) {
-        setVariable(String(args.key), args.value, args.missionName ? String(args.missionName) : undefined);
-        const scope = args.missionName ? `mission:${args.missionName}` : "global";
+        setVariable(String(args.key), args.value, args.protocolName ? String(args.protocolName) : undefined);
+        const scope = args.protocolName ? `protocol:${args.protocolName}` : "global";
         return { content: `Set {{${args.key}}} = "${args.value}" (${scope})` };
       },
     },
     {
-      name: "mission_var_get",
-      description: "Get a mission variable's value.",
+      name: "protocol_var_get",
+      description: "Get a protocol variable's value.",
       parameters: {
         type: "object",
         properties: {
           key: { type: "string" },
-          missionName: { type: "string" },
+          protocolName: { type: "string" },
         },
         required: ["key"],
       },
       async execute(args) {
-        const val = getVariable(String(args.key), args.missionName ? String(args.missionName) : undefined);
+        const val = getVariable(String(args.key), args.protocolName ? String(args.protocolName) : undefined);
         if (val === undefined) return { content: `Variable "{{${args.key}}}" not set.` };
         return { content: `{{${args.key}}} = ${JSON.stringify(val)}` };
       },
     },
     {
-      name: "mission_var_delete",
-      description: "Delete a mission variable.",
+      name: "protocol_var_delete",
+      description: "Delete a protocol variable.",
       parameters: {
         type: "object",
         properties: {
           key: { type: "string" },
-          missionName: { type: "string" },
+          protocolName: { type: "string" },
         },
         required: ["key"],
       },
       async execute(args) {
-        const deleted = deleteVariable(String(args.key), args.missionName ? String(args.missionName) : undefined);
+        const deleted = deleteVariable(String(args.key), args.protocolName ? String(args.protocolName) : undefined);
         return { content: deleted ? `Deleted {{${args.key}}}.` : `Variable "{{${args.key}}}" not found.` };
       },
     },
     {
-      name: "mission_var_list",
-      description: "List all mission variables, optionally filtered by mission.",
+      name: "protocol_var_list",
+      description: "List all protocol variables, optionally filtered by protocol.",
       parameters: {
         type: "object",
         properties: {
-          missionName: { type: "string", description: "Optional mission to include scoped vars" },
+          protocolName: { type: "string", description: "Optional protocol to include scoped vars" },
         },
       },
       async execute(args) {
-        const vars = listVariables(args.missionName ? String(args.missionName) : undefined);
+        const vars = listVariables(args.protocolName ? String(args.protocolName) : undefined);
         const entries = Object.entries(vars);
         if (entries.length === 0) return { content: "No variables set." };
         const list = entries.map(([k, v]) => `• **{{${k}}}** = ${JSON.stringify(v)}`).join("\n");
@@ -155,18 +155,18 @@ export function createVariableTools(): ToolDefinition[] {
       },
     },
     {
-      name: "mission_var_interpolate",
+      name: "protocol_var_interpolate",
       description: "Replace {{variable}} placeholders in text with their values.",
       parameters: {
         type: "object",
         properties: {
           text: { type: "string", description: "Text with {{variable}} placeholders" },
-          missionName: { type: "string" },
+          protocolName: { type: "string" },
         },
         required: ["text"],
       },
       async execute(args) {
-        const result = interpolateVariables(String(args.text), args.missionName ? String(args.missionName) : undefined);
+        const result = interpolateVariables(String(args.text), args.protocolName ? String(args.protocolName) : undefined);
         return { content: result };
       },
     },

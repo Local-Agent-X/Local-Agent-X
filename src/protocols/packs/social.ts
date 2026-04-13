@@ -1,10 +1,10 @@
 /**
- * Social Media Mission Pack — Instagram, Twitter/X, Facebook, TikTok missions.
+ * Social Media Protocol Pack — Instagram, Twitter/X, Facebook, TikTok protocols.
  */
 
-import type { Mission } from "../../missions.js";
+import type { Protocol } from "../../protocols.js";
 
-export const instagramStoryMission: Mission = {
+export const instagramStoryMission: Protocol = {
   name: "instagram_story",
   description: "Post a story to Instagram with stickers, text overlays, and music.",
   triggers: ["post instagram story", "ig story", "share to my story", "instagram story"],
@@ -26,7 +26,7 @@ export const instagramStoryMission: Mission = {
   ],
 };
 
-export const twitterPostMission: Mission = {
+export const twitterPostMission: Protocol = {
   name: "x_post",
   description: "Post on X (formerly Twitter) with optional media, polls, threads, and scheduling.",
   triggers: ["tweet", "post on twitter", "post on x", "tweet this", "share on twitter", "post to x"],
@@ -49,7 +49,7 @@ export const twitterPostMission: Mission = {
   ],
 };
 
-export const facebookPostMission: Mission = {
+export const facebookPostMission: Protocol = {
   name: "facebook_post",
   description: "Create a Facebook post with text, photos, links, or video.",
   triggers: ["post on facebook", "facebook post", "share on fb", "post to facebook"],
@@ -72,7 +72,7 @@ export const facebookPostMission: Mission = {
   ],
 };
 
-export const tiktokPostMission: Mission = {
+export const tiktokPostMission: Protocol = {
   name: "tiktok_post",
   description: "Upload and publish a video to TikTok with caption, sounds, and effects.",
   triggers: ["post on tiktok", "tiktok post", "upload to tiktok", "share on tiktok"],
@@ -95,7 +95,7 @@ export const tiktokPostMission: Mission = {
   ],
 };
 
-export const socialMissions: Mission[] = [
+export const socialProtocols: Protocol[] = [
   instagramStoryMission,
   twitterPostMission,
   facebookPostMission,

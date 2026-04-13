@@ -79,10 +79,10 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
     json(200, await ctx.agentSync.pull()); return true;
   }
 
-  // ── Protocols ──
+  // ── Protocols (reusable workflows: built-in protocols + user-defined skills) ──
   if (method === "GET" && url.pathname === "/api/protocols") {
     try {
-      const { getAllMissions } = await import("../missions.js");
+      const { getAllProtocols } = await import("../protocols.js");
       const catMap: Record<string, string> = {
         instagram: "Social Media", twitter: "Social Media", facebook: "Social Media", tiktok: "Social Media",
         git: "Developer", deploy: "Developer", test: "Developer", pr: "Developer",
@@ -94,21 +94,31 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
         for (const [key, cat] of Object.entries(catMap)) { if (name.includes(key)) return cat; }
         return "General";
       }
-      const protocols = getAllMissions().map(m => ({
+      // Built-in protocol workflows
+      const protocols = getAllProtocols().map(m => ({
         name: m.name, description: m.description,
         triggers: m.triggers.slice(0, 3), steps: m.steps.length, category: getCategory(m.name),
       }));
+      // User-defined skills (SKILL.md files)
+      try {
+        const { getSkillRegistry } = await import("../skills/skill-loader.js");
+        const registry = getSkillRegistry();
+        registry.reload();
+        for (const s of registry.list()) {
+          protocols.push({
+            name: s.metadata.name, description: s.metadata.description || "",
+            triggers: [s.id], steps: 0, category: getCategory(s.id) === "General" ? "Custom" : getCategory(s.id),
+          });
+        }
+      } catch {}
       json(200, { protocols });
     } catch { json(200, { protocols: [] }); }
     return true;
   }
 
-  // ── Missions/Cron ──
-  if (method === "GET" && url.pathname === "/api/missions") {
-    json(200, { schedules: ctx.cronService.list() }); return true;
-  }
-  if (method === "GET" && (url.pathname === "/api/cron" || url.pathname === "/api/schedules")) {
-    json(200, { jobs: ctx.cronService.list(), settings: ctx.cronService.getSettings() }); return true;
+  // ── Scheduled Missions ──
+  if (method === "GET" && (url.pathname === "/api/missions" || url.pathname === "/api/cron" || url.pathname === "/api/schedules")) {
+    json(200, { missions: ctx.cronService.list(), settings: ctx.cronService.getSettings() }); return true;
   }
   if (method === "POST" && url.pathname === "/api/cron") {
     const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean };

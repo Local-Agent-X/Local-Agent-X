@@ -1,10 +1,11 @@
 /**
- * Skill System Types — markdown-based reusable workflows.
+ * Protocol System Types — markdown-based reusable workflows.
  *
- * Skills are simpler than protocols/missions:
+ * Protocols are the agent's reusable prompt workflows:
  * - Just a SKILL.md file with YAML frontmatter
- * - Dropped into ~/.sax/skills/my-skill/ or workspace/.sax/skills/my-skill/
+ * - Dropped into ~/.sax/skills/my-protocol/ or workspace/.sax/skills/my-protocol/
  * - Zero code needed — the frontmatter defines metadata, the body is the prompt
+ * - Missions are a separate concept (cron jobs / scheduled tasks)
  */
 
 export interface SkillMetadata {

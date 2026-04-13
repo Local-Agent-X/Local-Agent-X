@@ -293,8 +293,8 @@ export class CronService {
 export function createCronTools(cron: CronService): ToolDefinition[] {
   return [
     {
-      name: "schedule_list",
-      description: "List all scheduled missions/jobs",
+      name: "mission_schedule_list",
+      description: "List all scheduled missions",
       parameters: { type: "object", properties: {} },
       async execute() {
         const jobs = cron.list();
@@ -306,8 +306,8 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
       },
     },
     {
-      name: "schedule_create",
-      description: "Schedule a recurring mission/task. Schedule can be an interval ('5m', '1h', '30s') or cron expression ('*/5 * * * *'). Prompt is what the agent will execute each run.",
+      name: "mission_schedule_create",
+      description: "Schedule a recurring mission. Schedule can be an interval ('5m', '1h', '30s') or cron expression ('*/5 * * * *'). Prompt is what the agent will execute each run.",
       parameters: {
         type: "object",
         properties: {
@@ -323,7 +323,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
       },
     },
     {
-      name: "schedule_delete",
+      name: "mission_schedule_delete",
       description: "Delete a scheduled mission by ID",
       parameters: {
         type: "object",
@@ -336,7 +336,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
       },
     },
     {
-      name: "schedule_toggle",
+      name: "mission_schedule_toggle",
       description: "Enable or disable a scheduled mission",
       parameters: {
         type: "object",
@@ -350,7 +350,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
       },
     },
     {
-      name: "schedule_reports",
+      name: "mission_schedule_reports",
       description: "List or read saved reports for a scheduled mission. Without read_latest, lists all reports. With read_latest, returns the most recent report content.",
       parameters: {
         type: "object",
@@ -369,7 +369,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
           const needle = String(args.name).toLowerCase();
           job = cron.list().find(j => j.name.toLowerCase().includes(needle)) || null;
         }
-        if (!job) return { content: "No matching job found. Use schedule_list to see all jobs." };
+        if (!job) return { content: "No matching job found. Use mission_schedule_list to see all missions." };
 
         const reportsDir = join(cron["dataDir"], "cron", "reports", job.id);
         if (!existsSync(reportsDir)) return { content: `Job "${job.name}" has no saved reports yet.` };

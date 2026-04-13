@@ -16,7 +16,7 @@ import { EventBus } from "./event-bus.js";
 
 // Core files that are NEVER hot-reloaded (matches security.ts protected list)
 const CORE_PROTECTED = new Set([
-  "security.ts", "auth.ts", "codex-client.ts", "codex-ws.ts",
+  "security.ts", "auth.ts", "codex-client.ts",
   "keychain.ts", "sanitize.ts", "threat-engine.ts", "rbac.ts",
   "safe-regex.ts", "tool-policy.ts",
 ]);

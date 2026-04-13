@@ -8,6 +8,8 @@ import type { ThreatEngine } from "./threat-engine.js";
 import type { RBACManager, Role } from "./rbac.js";
 import { streamCodexResponse, type ReasoningItem } from "./codex-client.js";
 import { executeToolCalls, checkAndCompact } from "./tool-executor.js";
+import { stripEphemeralMessages } from "./agent-providers.js";
+import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkToolLoops, createLoopState } from "./agent-guards.js";
 
 interface ImageAttachment {
   url: string;
@@ -87,10 +89,13 @@ export async function runCodexAgentHttp(
   // incremental input (tool results only) for the next request.
   let lastContextLength = 0;
   const codexTools = tools.map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters }));
+  const loopState = createLoopState();
+  let selfCheckFired = false;
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal?.aborted) return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "abort" };
 
+    if (iteration > 0) messages = stripEphemeralMessages(messages);
     messages = checkAndCompact(messages, model, onEvent);
 
     let assistantContent = "";
@@ -124,7 +129,6 @@ export async function runCodexAgentHttp(
     lastContextLength = messages.length;
 
     // Only force tool use on iteration 1 (right after a nudge), not on every turn
-    const forceToolUse = false; // Disabled — tool_choice "required" causes loops
 
     try {
       const stream = streamCodexResponse({
@@ -134,7 +138,6 @@ export async function runCodexAgentHttp(
         systemPrompt,
         tools: codexTools,
         previousResponseId: turnPreviousResponseId,
-        forceToolUse,
         sessionId: options.sessionId,
       });
 
@@ -207,20 +210,51 @@ export async function runCodexAgentHttp(
     messages.push(assistantMsg);
 
     if (toolCalls.length === 0) {
-      // Hallucination detection: if the model claims to have CREATED something
-      // without calling a tool, nudge it ONCE (not for deletions or queries)
-      const creationClaim = /\b(created|scheduled|saved|built|deployed|sent|posted)\b.*\b(task|schedule|mission|job|file|app|message|memory|fact)\b/i.test(assistantContent);
-      const hasToolLikeIds = /\b(sched_|job_|id:|ID:)\s*[a-zA-Z0-9_-]{6,}/i.test(assistantContent);
-      if ((creationClaim || hasToolLikeIds) && iteration === 0) {
-        console.warn(`[agent] Hallucination detected — model claimed creation without tool call, nudging once`);
-        messages.push({ role: "user", content: "You claimed to have created or scheduled something but you did NOT actually call a tool. The action did NOT happen. Call the actual tool now." } as ChatCompletionMessageParam);
+      // Approval hallucination: model says "needs approval" instead of calling tool
+      const approvalNudge = checkApprovalHallucination(assistantContent);
+      if (approvalNudge && iteration < maxIterations - 1) {
+        console.warn(`[agent] Approval hallucination detected (Codex) — nudging`);
+        messages.push({ role: "user", content: approvalNudge } as ChatCompletionMessageParam);
         continue;
       }
+
+      // Creation hallucination: model claims it created/scheduled something without a tool call
+      const creationNudge = checkCreationHallucination(assistantContent);
+      if (creationNudge && iteration === 0) {
+        console.warn(`[agent] Creation hallucination detected (Codex) — nudging`);
+        messages.push({ role: "user", content: creationNudge } as ChatCompletionMessageParam);
+        continue;
+      }
+
+      // Self-check: unresolved tool errors
+      const unresolvedErrors = !selfCheckFired ? detectUnresolvedErrors(messages) : [];
+      if (unresolvedErrors.length > 0 && iteration < maxIterations - 1) {
+        selfCheckFired = true;
+        messages.push({ role: "user", content: buildReflectionPrompt(unresolvedErrors) } as ChatCompletionMessageParam);
+        continue;
+      }
+
       onEvent?.({ type: "done", usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput } });
       return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
     }
 
-    const toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
+    // Loop detection
+    const loopResult = checkToolLoops(toolCalls, loopState);
+    if (loopResult.abort) {
+      onEvent?.({ type: "stream", delta: loopResult.nudge || "" });
+      return { messages, usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
+    }
+    if (loopResult.nudge) {
+      messages.push({ role: "user", content: loopResult.nudge } as ChatCompletionMessageParam);
+    }
+
+    let toolResults;
+    try {
+      toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
+    } catch (e) {
+      console.error("[agent] Tool execution error (Codex):", (e as Error).message);
+      toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];
+    }
     messages.push(...toolResults);
 
     if (assistantContent && /\b(login required|password needed|authentication required|access denied|need.+log.?in|blocked|cannot access)\b/i.test(assistantContent)) {

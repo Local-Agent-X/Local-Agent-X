@@ -23,8 +23,8 @@ import { runSecurityAudit, printAuditReport } from "./security-audit.js";
 import { startAriKernel } from "./ari-kernel.js";
 import { CronService, createCronTools } from "./cron-service.js";
 import { imageTools } from "./image-tools.js";
-import { createMissionTools } from "./missions.js";
-import { createAllMissionTools } from "./missions/index.js";
+import { createCoreProtocolTools } from "./protocols.js";
+import { createAllProtocolTools } from "./protocols/index.js";
 import { IntegrationRegistry } from "./integrations.js";
 import { WhatsAppBridge } from "./whatsapp-bridge.js";
 import { TelegramBridge } from "./telegram-bridge.js";
@@ -42,24 +42,15 @@ import { createHandlerTools } from "./agency/handler.js";
 import { createSqlTools } from "./sql-tools.js";
 import { createEmailTools } from "./email-tools.js";
 import { createCalendarTools } from "./calendar-tools.js";
-import { createContactsTools } from "./contacts-tools.js";
-import { createCloudStorageTools } from "./cloud-storage-tools.js";
-import { createNotificationTools } from "./notification-tools.js";
 import { createSpreadsheetTools } from "./spreadsheet-tools.js";
 import { createPdfTools } from "./pdf-tools.js";
-import { createPaymentTools } from "./payment-tools.js";
-import { createSmsTools } from "./sms-tools.js";
-import { createVoiceTools } from "./voice-tools.js";
 import { createClipboardTools } from "./clipboard-tools.js";
-import { createCrmTools } from "./crm-tools.js";
-import { createBookkeepingTools } from "./bookkeeping-tools.js";
-import { createEcommerceTools } from "./ecommerce-tools.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 import type { ServerContext } from "./server-context.js";
 import { parseMultipart, extractAgentOutput, safeErrorMessage, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard, setServerPort } from "./server-utils.js";
 import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes } from "./routes/index.js";
 
-export function startServer(config: SAXConfig) {
+export async function startServer(config: SAXConfig) {
   setServerPort(String(config.port || 7007));
   const security = new SecurityLayer(config.workspace);
   // Initialize hook engine with security layer so hook commands go through the same checks
@@ -78,25 +69,24 @@ export function startServer(config: SAXConfig) {
   const agentSync = new AgentSync(dataDir, () => secretsStore.get("GITHUB_SYNC_TOKEN"));
   const sessionStore = new SessionStore(dataDir);
   const memoryIndex = new MemoryIndex(dataDir);
-  const memoryTools = createMemoryTools(memoryIndex);
   ensurePersonalityFiles(join(dataDir, "memory"));
   const secretsStore = new SecretsStore(dataDir);
 
-  // Wire up embedding provider for semantic memory search
-  import("./embedding-providers.js").then(({ createEmbeddingProvider }) => {
-    try {
-      const sp = join(dataDir, "settings.json");
-      const settings = existsSync(sp) ? JSON.parse(readFileSync(sp, "utf-8")) : {};
-      const embProvider = settings.embeddingProvider || "ollama";
-      const embModel = settings.embeddingModel || undefined;
-      let apiKey: string | undefined;
-      if (embProvider === "openai") apiKey = secretsStore.get("OPENAI_API_KEY") || config.openaiApiKey;
-      else if (embProvider === "gemini") apiKey = secretsStore.get("GEMINI_API_KEY");
-      const provider = createEmbeddingProvider({ provider: embProvider, apiKey, model: embModel });
-      memoryIndex.setEmbeddingProvider(provider);
-      console.log(`[memory] Embedding provider: ${provider.name}/${provider.model} (${provider.dimensions}d)`);
-    } catch (e) { console.warn(`[memory] Embedding provider setup failed: ${(e as Error).message}`); }
-  }).catch(e => console.warn(`[memory] Embedding providers not available: ${(e as Error).message} — keyword search only`));
+  // Wire up embedding provider for semantic memory search (must complete before creating memory tools)
+  try {
+    const { createEmbeddingProvider } = await import("./embedding-providers.js");
+    const sp = join(dataDir, "settings.json");
+    const settings = existsSync(sp) ? JSON.parse(readFileSync(sp, "utf-8")) : {};
+    const embProvider = settings.embeddingProvider || "ollama";
+    const embModel = settings.embeddingModel || undefined;
+    let apiKey: string | undefined;
+    if (embProvider === "openai") apiKey = secretsStore.get("OPENAI_API_KEY") || config.openaiApiKey;
+    else if (embProvider === "gemini") apiKey = secretsStore.get("GEMINI_API_KEY");
+    const provider = createEmbeddingProvider({ provider: embProvider, apiKey, model: embModel });
+    memoryIndex.setEmbeddingProvider(provider);
+    console.log(`[memory] Embedding provider: ${provider.name}/${provider.model} (${provider.dimensions}d)`);
+  } catch (e) { console.warn(`[memory] Embedding provider not available: ${(e as Error).message} — keyword search only`); }
+  const memoryTools = createMemoryTools(memoryIndex);
 
   import("./image-tools.js").then(m => m.initImageTools?.(secretsStore)).catch(() => {});
   const cronService = new CronService(dataDir);
@@ -108,22 +98,6 @@ export function startServer(config: SAXConfig) {
       const sp = join(dataDir, "settings.json");
       if (existsSync(sp)) return JSON.parse(readFileSync(sp, "utf-8"));
     } catch {} return {};
-  }
-  async function resolveProviderAndKey(saved: Record<string, unknown>): Promise<{ provider: string; apiKey: string; model: string }> {
-    const { loadTokens } = await import("./auth.js");
-    const { loadAnthropicTokens, getAnthropicApiKey } = await import("./auth-anthropic.js");
-    let provider = String(saved.provider || "");
-    if (!["codex", "xai", "openai", "anthropic", "local", "gemini", "custom"].includes(provider)) {
-      provider = loadAnthropicTokens() ? "anthropic" : (loadTokens() && !config.openaiApiKey) ? "codex" : "xai";
-    }
-    let apiKey: string;
-    if (provider === "local") apiKey = "ollama";
-    else if (provider === "anthropic") apiKey = await getAnthropicApiKey();
-    else if (provider === "xai") apiKey = secretsStore.get("XAI_API_KEY") || "";
-    else if (provider === "openai" && !config.openaiApiKey) apiKey = secretsStore.get("OPENAI_API_KEY") || await getApiKey(config.openaiApiKey);
-    else apiKey = await getApiKey(config.openaiApiKey);
-    const model = String(saved.model || "") || (provider === "codex" ? "gpt-5.4-mini" : provider === "anthropic" ? "claude-sonnet-4-6" : config.model);
-    return { provider, apiKey, model };
   }
 
   // Bridge message handler (shared by WhatsApp & Telegram)
@@ -195,18 +169,23 @@ export function startServer(config: SAXConfig) {
 
   const allAgentTools = [
     ...allTools, httpRequestTool,
-    ...createMemoryTools(memoryIndex), ...secretTools, ...browserTools, ...imageTools,
-    ...createMissionTools(), ...createCronTools(cronService),
+    ...memoryTools, ...secretTools, ...browserTools, ...imageTools,
+    ...createCoreProtocolTools(), ...createCronTools(cronService),
     ...createAgencyTools(), ...createHandlerTools(), ...appTools, ...issueTools,
-    // Remaining stub factories (contacts, cloud, notifications, payments, sms, voice, crm, bookkeeping, ecommerce)
-    ...createContactsTools(secretsStore),
-    ...createCloudStorageTools(secretsStore), ...createNotificationTools(secretsStore),
-    ...createPaymentTools(secretsStore), ...createSmsTools(secretsStore),
-    ...createVoiceTools(secretsStore),
-    ...createCrmTools(secretsStore), ...createBookkeepingTools(secretsStore),
-    ...createEcommerceTools(secretsStore),
   ];
-  const bridgeTools = [...allTools, ...memoryTools, ...browserTools, ...imageTools, ...createMissionTools(), ...issueTools];
+  const bridgeTools = [...allTools, ...memoryTools, ...browserTools, ...imageTools, ...createCoreProtocolTools(), ...issueTools];
+
+  // Register extra tools and detect duplicates
+  const seenTools = new Set<string>();
+  for (const tool of allAgentTools) {
+    if (seenTools.has(tool.name)) {
+      console.warn(`[tools] Duplicate tool name: "${tool.name}" — later definition wins`);
+    }
+    seenTools.add(tool.name);
+    if (!toolRegistry.get(tool.name)) {
+      toolRegistry.register(tool, { defer: true, tags: [], searchHint: tool.description.slice(0, 80) });
+    }
+  }
 
   // Session management
   const MAX_CACHED = config.maxCachedSessions;
@@ -216,7 +195,7 @@ export function startServer(config: SAXConfig) {
     if (s) { sessions.delete(id); sessions.set(id, s); return s; }
     s = sessionStore.load(id) ?? undefined;
     if (s) { sessions.set(id, s); if (sessions.size > MAX_CACHED) sessions.delete(sessions.keys().next().value!); return s; }
-    s = { id, title: "New Mission", messages: [], createdAt: Date.now(), updatedAt: Date.now() };
+    s = { id, title: "New Chat", messages: [], createdAt: Date.now(), updatedAt: Date.now() };
     sessions.set(id, s); if (sessions.size > MAX_CACHED) sessions.delete(sessions.keys().next().value!); return s;
   }
   const writeQueues = new Map<string, Promise<void>>();
@@ -490,7 +469,7 @@ export function startServer(config: SAXConfig) {
       const CORE_AGENT_TOOLS = new Set(["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image", "ask_user",
         "http_request", "ocr", "memory_search", "memory_save", "memory_recall", "memory_update_profile",
         "document_create", "document_edit", "spreadsheet_write", "spreadsheet_read", "pdf_create",
-        "schedule_list", "schedule_reports",
+        "protocol_schedule_list", "protocol_schedule_reports",
         "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval",
         "agent_whoami", "agent_team_list", "agent_wakeup", "task_create", "task_update", "task_list", "task_get"]);
       let spawnedTools = allAgentTools.filter(t => CORE_AGENT_TOOLS.has(t.name));
@@ -663,6 +642,38 @@ export function startServer(config: SAXConfig) {
       return { output: output.slice(0, 500), reportPath };
     });
     cronService.start();
+
+    // Wire up worker sessions — persistent agents scoped to a working directory
+    // Used by build_app for app editing with the user's chosen provider/model
+    import("./worker-session.js").then(({ registerWorkerRunner }) => {
+      registerWorkerRunner(async (workerSession, message) => {
+        const { prepareAgentRequest } = await import("./agent-request.js");
+        const sessionId = workerSession.id;
+        const session = getOrCreateSession(sessionId);
+        const prepared = await prepareAgentRequest({
+          channel: "web", message, sessionMessages: session.messages, sessionId,
+          config, dataDir, memoryIndex, integrations, secretsStore,
+          allAgentTools, bridgeTools, skipMemory: true,
+        });
+        // Focused system prompt for app work — no personality, no memory, just build
+        const workerPrompt = `You are a focused app builder working in: ${workerSession.workingDir}\nYour job: read the existing code, make the requested changes, and verify they work.\nRules:\n- Read files fully before editing (do NOT chunk reads)\n- Use edit for targeted changes, write for new files\n- After editing, verify the change is correct\n- Be concise in responses — just describe what you changed`;
+        const appTools = allAgentTools.filter(t =>
+          ["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image"].includes(t.name)
+        );
+        const result = await runAgent(message, prepared.cleanHistory, {
+          apiKey: prepared.apiKey, model: prepared.model,
+          provider: prepared.provider as AgentOptions["provider"],
+          systemPrompt: workerPrompt, tools: appTools,
+          security, toolPolicy, sessionId,
+          maxIterations: 15, temperature: prepared.temperature,
+        });
+        session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system");
+        session.updatedAt = Date.now(); saveSession(session);
+        return extractAgentOutput(result.messages);
+      });
+      console.log("[workers] Runner registered");
+    }).catch(() => {});
+
     // Memory background (every 6h + 30s after startup)
     const runMemBg = async () => {
       try { const { MemoryOrchestrator: MO } = await import("./memory-orchestrator.js"); const r = MO.getInstance().runBackground(memoryIndex); console.log(`[memory-bg] ${r.totalTimeMs}ms`); } catch (e) { console.warn("[memory-bg]", (e as Error).message); }
@@ -712,6 +723,10 @@ export function startServer(config: SAXConfig) {
     };
     memBgTimer = setInterval(runMemBg, 6 * 60 * 60 * 1000);
     setTimeout(runMemBg, 30_000);
+    // Clean up idle worker sessions every 10 minutes
+    setInterval(async () => {
+      try { const { cleanupIdleWorkers } = await import("./worker-session.js"); const n = cleanupIdleWorkers(); if (n > 0) console.log(`[workers] Cleaned up ${n} idle worker sessions`); } catch {}
+    }, 10 * 60 * 1000);
     // Schedule nightly consolidation at 3 AM
     import("./memory-consolidation.js").then(({ MemoryConsolidator: MC }) => { MC.getInstance().scheduleNightly(); console.log("[memory] Nightly consolidation scheduled for 3 AM"); }).catch(e => console.warn("[memory] Failed to schedule nightly:", (e as Error).message));
 
@@ -722,8 +737,8 @@ export function startServer(config: SAXConfig) {
         if (!shouldDream()) return;
         console.log("[dream] Starting memory consolidation...");
         startDream();
-        const saved = loadSavedSettings();
-        const { provider, apiKey, model } = await resolveProviderAndKey(saved);
+        const { resolveProvider: rp } = await import("./agent-request.js");
+        const { provider, apiKey, model } = await rp(config, secretsStore, dataDir);
         // Use a fast/cheap model for dreaming — Haiku for Anthropic, default for others
         const dreamModel = provider === "anthropic" ? "claude-haiku-4-5" : model;
         const dreamPrompt = buildDreamPrompt();

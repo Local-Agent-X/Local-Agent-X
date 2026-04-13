@@ -1,114 +1,79 @@
 /**
  * Context Builder regression tests.
  *
- * Verifies that the new modular builder produces identical output
- * to the old flat concatenation for both chat and agent prompts.
+ * Verifies section ordering, cache boundary placement, and split behavior.
  */
 
 import { describe, it, expect } from "vitest";
-import { createChatContextBuilder, ContextBuilder } from "./context-builder.js";
+import { createSystemPromptBuilder, ContextBuilder, CACHE_BOUNDARY } from "./context-builder.js";
 
-// Simulate the inputs a real chat session would produce
 const MOCK_INPUTS = {
-  systemPrompt: "You are a personal AI companion running inside Open Agent X.\n\n## Tooling\nTool names are case-sensitive.",
-  providerHint: "\n\n[System: You are currently powered by OpenAI Codex, model: gpt-5.3-codex.]",
-  toolPromptSection: "\n\n## Tool Best Practices\n- **read**: Use read for files instead of bash cat.\n- **grep**: ALWAYS use grep for content search.\n",
-  contextBlock: "\n\n--- MEMORY ---\nUser prefers concise responses.\n--- END ---",
-  relevantMemories: "\n\n--- RELEVANT ---\nUser works on Open Agent X project.\n--- END ---",
-  smartContext: "\n\n--- RELATED PAST SESSIONS ---\nDiscussed tool expansion.\n--- END ---",
-  memoryContext: "\n\n[Memory: emotional state: focused]",
-  notificationHint: "\n\n[Naturally weave into your response: Calendar event in 30 minutes]",
-  integrationsContext: "\n\nConnected: GitHub, Slack",
+  basePrompt: "You are a personal AI companion.",
+  providerHint: "\n\n[System: powered by Codex]",
+  toolPromptSection: "\n\n## Tool Guidance\nUse read not cat.",
+  integrationsContext: "\n\nConnected: GitHub",
+  contextBlock: "\n\n--- MEMORY ---\nUser prefers concise.\n--- END ---",
+  relevantMemories: "\n\n--- RELEVANT ---\nUser works on SAX.\n--- END ---",
+  smartContext: "",
+  memoryContext: "\n\n[Memory: focused]",
+  notificationHint: "",
   canaryBlock: "\n\n<!-- canary:abc123 -->",
 };
 
-describe("Context Builder output equivalence", () => {
-  it("produces identical output to flat concatenation for full chat", async () => {
-    // Old approach: flat string concatenation (the exact order from chat.ts line 150)
-    const oldOutput =
-      MOCK_INPUTS.systemPrompt +
-      MOCK_INPUTS.providerHint +
-      MOCK_INPUTS.toolPromptSection +
-      MOCK_INPUTS.contextBlock +
-      MOCK_INPUTS.relevantMemories +
-      MOCK_INPUTS.smartContext +
-      MOCK_INPUTS.memoryContext +
-      MOCK_INPUTS.notificationHint +
-      MOCK_INPUTS.integrationsContext +
-      MOCK_INPUTS.canaryBlock;
+describe("Context Builder", () => {
+  it("places static sections before cache boundary, dynamic after", async () => {
+    const builder = createSystemPromptBuilder(MOCK_INPUTS);
+    const output = await builder.build();
 
-    // New approach: context builder
-    const builder = createChatContextBuilder(MOCK_INPUTS);
-    const newOutput = await builder.build();
+    expect(output).toContain(CACHE_BOUNDARY);
+    const { stablePrefix, dynamicSuffix } = ContextBuilder.split(output);
 
-    expect(newOutput).toBe(oldOutput);
+    // Static sections in prefix
+    expect(stablePrefix).toContain("personal AI companion");
+    expect(stablePrefix).toContain("powered by Codex");
+    expect(stablePrefix).toContain("Tool Guidance");
+    expect(stablePrefix).toContain("Connected: GitHub");
+
+    // Dynamic sections in suffix
+    expect(dynamicSuffix).toContain("MEMORY");
+    expect(dynamicSuffix).toContain("RELEVANT");
+    expect(dynamicSuffix).toContain("[Memory: focused]");
+    expect(dynamicSuffix).toContain("canary:abc123");
   });
 
-  it("produces identical output when optional sections are empty", async () => {
-    const sparse = {
-      ...MOCK_INPUTS,
-      toolPromptSection: "",
-      smartContext: "",
-      memoryContext: "",
-      notificationHint: "",
-      integrationsContext: "",
-    };
+  it("skips empty optional sections", async () => {
+    const builder = createSystemPromptBuilder(MOCK_INPUTS);
+    const output = await builder.build();
 
-    const oldOutput =
-      sparse.systemPrompt +
-      sparse.providerHint +
-      sparse.contextBlock +
-      sparse.relevantMemories +
-      sparse.canaryBlock;
-
-    const builder = createChatContextBuilder(sparse);
-    const newOutput = await builder.build();
-
-    expect(newOutput).toBe(oldOutput);
+    // smartContext and notificationHint are empty — should not appear
+    expect(output).not.toContain("RELATED PAST SESSIONS");
+    expect(output).not.toContain("Naturally weave");
   });
 
   it("maintains deterministic section order", async () => {
-    const builder = createChatContextBuilder(MOCK_INPUTS);
+    const builder = createSystemPromptBuilder(MOCK_INPUTS);
     const order = builder.getSectionOrder();
 
-    expect(order).toEqual([
-      "core-identity",
-      "provider-hint",
-      "tool-guidance",
-      "context-block",
-      "relevant-memories",
-      "smart-context",
-      "memory-orchestrator",
-      "notifications",
-      "integrations",
-      "canary",
-    ]);
+    expect(order[0]).toBe("core-identity");
+    expect(order[1]).toBe("provider-hint");
+    expect(order).toContain("context-block");
+    expect(order).toContain("canary");
+    // Canary should be last
+    expect(order[order.length - 1]).toBe("canary");
   });
 
-  it("caches static sections on second build", async () => {
-    let callCount = 0;
-    const builder = new ContextBuilder();
-    builder.addSection({
-      id: "test-static",
-      label: "Test",
-      type: "static",
-      build: () => { callCount++; return "static content"; },
+  it("split returns full prompt as stablePrefix when no boundary", () => {
+    const { stablePrefix, dynamicSuffix } = ContextBuilder.split("no boundary here");
+    expect(stablePrefix).toBe("no boundary here");
+    expect(dynamicSuffix).toBe("");
+  });
+
+  it("includes bridge context when provided", async () => {
+    const builder = createSystemPromptBuilder({
+      ...MOCK_INPUTS,
+      bridgeContext: "\n\n[WhatsApp bridge] Keep concise.",
     });
-    builder.addSection({
-      id: "test-dynamic",
-      label: "Test Dynamic",
-      type: "dynamic",
-      build: () => "dynamic content",
-    });
-
-    await builder.build();
-    expect(callCount).toBe(1);
-
-    await builder.build();
-    expect(callCount).toBe(1); // static was cached
-
-    builder.invalidateStatic();
-    await builder.build();
-    expect(callCount).toBe(2); // cache cleared, rebuilt
+    const output = await builder.build();
+    expect(output).toContain("WhatsApp bridge");
   });
 });

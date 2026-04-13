@@ -107,7 +107,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       const result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
         apiKey: prepared.apiKey, model: prepared.model,
         provider: prepared.provider as Parameters<typeof runAgent>[2]["provider"],
-        baseURL: prepared.customBaseURL, systemPrompt, codexApiKey: prepared.codexApiKey,
+        baseURL: prepared.customBaseURL, systemPrompt,
         tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
         threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
         images: prepared.images, maxIterations: prepared.maxIterations,

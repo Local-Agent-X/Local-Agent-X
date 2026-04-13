@@ -51,6 +51,8 @@ export interface AgentRequestInput {
   systemPromptOverride?: string;
   /** Max messages to keep in history (default 30 for bridges, 40 for web) */
   maxHistory?: number;
+  /** Bridge-specific context string (platform, channel, formatting rules) */
+  bridgeContext?: string;
   /** Image attachments */
   attachments?: Array<{ isImage: boolean; url: string; name: string }>;
   /** Uploads directory for resolving attachment paths */
@@ -279,18 +281,18 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     // The full prompt contains behavioral instructions the agent needs.
     const basePrompt = config.systemPrompt;
 
-    const { createChatContextBuilder } = await import("./context-builder.js");
-    const contextBuilder = createChatContextBuilder({
-      systemPrompt: basePrompt,
+    const { createSystemPromptBuilder } = await import("./context-builder.js");
+    const contextBuilder = createSystemPromptBuilder({
+      basePrompt,
       providerHint,
       toolPromptSection,
+      integrationsContext,
       contextBlock,
       relevantMemories,
       smartContext,
       memoryContext,
       notificationHint,
-      integrationsContext,
-      canaryBlock: "", // Canary injection handled by caller (needs ThreatEngine instance)
+      bridgeContext: input.bridgeContext,
     });
     systemPrompt = await contextBuilder.build();
   }

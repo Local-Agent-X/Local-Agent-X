@@ -124,24 +124,22 @@ export async function startServer(config: SAXConfig) {
     if (injectionScore >= 0.85) return `I can't process that message — it was flagged by security filters.`;
 
     const { prepareAgentRequest } = await import("./agent-request.js");
+    const channelConfig = getChannelConfig(channelType);
+    const bridgeCtx = `\n\n[${platform} bridge] ${buildChannelContext(route)}. Message from ${name} (${from}). ` +
+      `Keep responses concise — max ~${channelConfig.maxTextLength === Infinity ? "unlimited" : channelConfig.maxTextLength} chars. ` +
+      (channelConfig.markdownFlavor === "plain" ? "Use plain text only. " : channelConfig.markdownFlavor === "whatsapp" ? "Use minimal formatting. " : "");
     const prepared = await prepareAgentRequest({
       channel: channelType as "telegram" | "whatsapp",
       message: text, sessionMessages: session.messages, sessionId: route.sessionKey,
       config, dataDir, memoryIndex, integrations, secretsStore,
       allAgentTools, bridgeTools, skipMemory: true, maxHistory: 30,
+      bridgeContext: bridgeCtx,
     });
-
-    // Append bridge-specific context to the system prompt
-    const channelConfig = getChannelConfig(channelType);
-    const bridgePrompt = prepared.systemPrompt +
-      `\n\n[${platform} bridge] ${buildChannelContext(route)}. Message from ${name} (${from}). ` +
-      `Keep responses concise — max ~${channelConfig.maxTextLength === Infinity ? "unlimited" : channelConfig.maxTextLength} chars. ` +
-      (channelConfig.markdownFlavor === "plain" ? "Use plain text only. " : channelConfig.markdownFlavor === "whatsapp" ? "Use minimal formatting. " : "");
 
     const result = await enqueue("main", () => runAgent(text, prepared.cleanHistory, {
       apiKey: prepared.apiKey, model: prepared.model,
       provider: prepared.provider as AgentOptions["provider"],
-      systemPrompt: bridgePrompt, tools: prepared.tools,
+      systemPrompt: prepared.systemPrompt, tools: prepared.tools,
       security, toolPolicy, rbac, callerRole: "user" as const,
       sessionId: route.sessionKey, maxIterations: prepared.maxIterations,
       temperature: prepared.temperature,

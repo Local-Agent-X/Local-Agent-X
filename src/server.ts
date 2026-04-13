@@ -647,25 +647,37 @@ export async function startServer(config: SAXConfig) {
     // Used by build_app for app editing with the user's chosen provider/model
     import("./worker-session.js").then(({ registerWorkerRunner }) => {
       registerWorkerRunner(async (workerSession, message) => {
-        const { prepareAgentRequest } = await import("./agent-request.js");
+        const { resolveProvider } = await import("./agent-request.js");
         const sessionId = workerSession.id;
-        const session = getOrCreateSession(sessionId);
-        const prepared = await prepareAgentRequest({
-          channel: "web", message, sessionMessages: session.messages, sessionId,
-          config, dataDir, memoryIndex, integrations, secretsStore,
-          allAgentTools, bridgeTools, skipMemory: true,
-        });
-        // Focused system prompt for app work — no personality, no memory, just build
-        const workerPrompt = `You are a focused app builder working in: ${workerSession.workingDir}\nYour job: read the existing code, make the requested changes, and verify they work.\nRules:\n- Read files fully before editing (do NOT chunk reads)\n- Use edit for targeted changes, write for new files\n- After editing, verify the change is correct\n- Be concise in responses — just describe what you changed`;
-        const appTools = allAgentTools.filter(t =>
+        const { provider, apiKey, model } = await resolveProvider(config, secretsStore, dataDir);
+
+        const workerPrompt = `You are a focused app builder. Your working directory is: ${workerSession.workingDir}
+
+Your job: build or edit the app as instructed. Write complete, working code.
+
+Rules:
+- Use the write tool to create new files (use absolute paths in ${workerSession.workingDir}/)
+- Use edit for targeted changes to existing files
+- The main entry point MUST be index.html
+- For single-page apps: inline CSS and JS in index.html is fine
+- Make it polished — modern CSS, good colors, responsive design
+- If using images from the web, use full URLs (https://)
+- Do NOT ask questions — just build it
+- When done, confirm what you created/changed`;
+        const workerTools = allAgentTools.filter(t =>
           ["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image"].includes(t.name)
         );
-        const result = await runAgent(message, prepared.cleanHistory, {
-          apiKey: prepared.apiKey, model: prepared.model,
-          provider: prepared.provider as AgentOptions["provider"],
-          systemPrompt: workerPrompt, tools: appTools,
+        // Use minimal history for edits, empty history for new builds
+        const session = getOrCreateSession(sessionId);
+        const hasExistingApp = existsSync(join(workerSession.workingDir, "index.html"));
+        const history = hasExistingApp ? session.messages.slice(-10) : [];
+
+        const result = await runAgent(message, history, {
+          apiKey, model,
+          provider: provider as AgentOptions["provider"],
+          systemPrompt: workerPrompt, tools: workerTools,
           security, toolPolicy, sessionId,
-          maxIterations: 15, temperature: prepared.temperature,
+          maxIterations: 15,
         });
         session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system");
         session.updatedAt = Date.now(); saveSession(session);

@@ -1,189 +1,180 @@
 /**
- * Context Builder — modular, ordered system prompt assembly.
+ * Context Builder — modular, ordered system prompt assembly with cache boundary.
  *
- * Currently a structural refactor only: sections are named and ordered
- * but the builder is recreated per request. Cross-request caching is
- * not yet implemented — that requires changing the factory to accept
- * callbacks instead of snapshot strings.
+ * All entry points (web chat, bridge, cron, sub-agents) use this single builder.
+ * Sections above the cache boundary are stable across turns (cacheable by LLM).
+ * Sections below are dynamic per request.
  *
- * Section types are annotated as static/dynamic to guide future caching:
- * - static: could be cached across requests (core identity, tool guidance)
- * - dynamic: must recompute per request (memory, session context, canary)
+ * Pattern borrowed from upstream: static sections are separated from dynamic
+ * ones by a cache boundary marker. LLM providers that support prompt caching
+ * (Anthropic, OpenAI) can cache the stable prefix and only reprocess the suffix.
  */
 
+export const CACHE_BOUNDARY = "\n<!-- CACHE_BOUNDARY -->\n";
+
 export interface PromptSection {
-  /** Unique identifier for this section */
   id: string;
-  /** Display name for debugging */
   label: string;
-  /** Static sections are computed once and cached. Dynamic sections recompute per call. */
   type: "static" | "dynamic";
-  /** Return the section content. Empty string = section omitted. */
   build: () => string | Promise<string>;
-  /** Optional: return false to skip this section entirely */
   shouldInclude?: () => boolean;
 }
 
 export class ContextBuilder {
   private sections: PromptSection[] = [];
-  private staticCache = new Map<string, string>();
 
-  /** Add a section in order. Sections are concatenated in the order added. */
   addSection(section: PromptSection): this {
     this.sections.push(section);
     return this;
   }
 
-  /** Clear the static cache (call on config reload) */
-  invalidateStatic(): void {
-    this.staticCache.clear();
-  }
-
-  /** Build the full prompt string. Sections concatenated in order. */
+  /** Build the full prompt with cache boundary between static and dynamic sections. */
   async build(): Promise<string> {
-    const parts: string[] = [];
+    const staticParts: string[] = [];
+    const dynamicParts: string[] = [];
 
     for (const section of this.sections) {
-      // Check shouldInclude
       if (section.shouldInclude && !section.shouldInclude()) continue;
-
-      let content: string;
+      const content = await section.build();
+      if (!content) continue;
 
       if (section.type === "static") {
-        // Use cache for static sections
-        if (this.staticCache.has(section.id)) {
-          content = this.staticCache.get(section.id)!;
-        } else {
-          content = await section.build();
-          this.staticCache.set(section.id, content);
-        }
+        staticParts.push(content);
       } else {
-        // Always recompute dynamic sections
-        content = await section.build();
+        dynamicParts.push(content);
       }
-
-      if (content) parts.push(content);
     }
 
-    return parts.join("");
+    if (dynamicParts.length > 0) {
+      return staticParts.join("") + CACHE_BOUNDARY + dynamicParts.join("");
+    }
+    return staticParts.join("");
   }
 
-  /** Get section IDs in order (for debugging/testing) */
+  /** Split a built prompt into cacheable prefix and dynamic suffix. */
+  static split(prompt: string): { stablePrefix: string; dynamicSuffix: string } {
+    const idx = prompt.indexOf(CACHE_BOUNDARY);
+    if (idx === -1) return { stablePrefix: prompt, dynamicSuffix: "" };
+    return {
+      stablePrefix: prompt.slice(0, idx),
+      dynamicSuffix: prompt.slice(idx + CACHE_BOUNDARY.length),
+    };
+  }
+
   getSectionOrder(): string[] {
-    return this.sections.map((s) => s.id);
-  }
-
-  /** Get the number of sections */
-  get sectionCount(): number {
-    return this.sections.length;
+    return this.sections.map(s => s.id);
   }
 }
 
 /**
- * Create a context builder pre-configured with the standard section order.
- * This produces output identical to the old flat concatenation in chat.ts.
+ * Single builder factory for ALL paths — web chat, bridge, cron, sub-agents.
+ * Callers pass what they have; empty strings are auto-skipped.
  */
-export function createChatContextBuilder(opts: {
-  systemPrompt: string;
+export function createSystemPromptBuilder(opts: {
+  basePrompt: string;
   providerHint: string;
-  toolPromptSection: string;
-  contextBlock: string;
-  relevantMemories: string;
-  smartContext: string;
-  memoryContext: string;
-  notificationHint: string;
-  integrationsContext: string;
-  canaryBlock: string;
+  toolPromptSection?: string;
+  integrationsContext?: string;
+  // Dynamic sections
+  contextBlock?: string;
+  relevantMemories?: string;
+  smartContext?: string;
+  memoryContext?: string;
+  notificationHint?: string;
+  canaryBlock?: string;
+  // Bridge-specific
+  bridgeContext?: string;
 }): ContextBuilder {
   const builder = new ContextBuilder();
 
-  // Section 1: Core identity (static — only changes on config reload)
+  // ── Static sections (cacheable across turns) ──
+
   builder.addSection({
-    id: "core-identity",
-    label: "System Prompt",
-    type: "static",
-    build: () => opts.systemPrompt,
+    id: "core-identity", label: "System Prompt", type: "static",
+    build: () => opts.basePrompt,
   });
 
-  // Section 2: Provider hint (static per session)
   builder.addSection({
-    id: "provider-hint",
-    label: "Provider Info",
-    type: "static",
+    id: "provider-hint", label: "Provider", type: "static",
     build: () => opts.providerHint,
   });
 
-  // Section 3: Tool guidance (static — only changes when tools change)
-  builder.addSection({
-    id: "tool-guidance",
-    label: "Tool Best Practices",
-    type: "static",
-    build: () => opts.toolPromptSection,
-    shouldInclude: () => opts.toolPromptSection.length > 0,
-  });
+  if (opts.toolPromptSection) {
+    builder.addSection({
+      id: "tool-guidance", label: "Tool Guidance", type: "static",
+      build: () => opts.toolPromptSection!,
+      shouldInclude: () => opts.toolPromptSection!.length > 0,
+    });
+  }
 
-  // Section 4: Memory context block (dynamic — changes per session)
-  builder.addSection({
-    id: "context-block",
-    label: "Memory Context",
-    type: "dynamic",
-    build: () => opts.contextBlock,
-    shouldInclude: () => opts.contextBlock.length > 0,
-  });
+  if (opts.integrationsContext) {
+    builder.addSection({
+      id: "integrations", label: "Connected APIs", type: "static",
+      build: () => opts.integrationsContext!,
+      shouldInclude: () => opts.integrationsContext!.length > 0,
+    });
+  }
 
-  // Section 5: Relevant memories from search (dynamic — changes per message)
-  builder.addSection({
-    id: "relevant-memories",
-    label: "Relevant Memories",
-    type: "dynamic",
-    build: () => opts.relevantMemories,
-    shouldInclude: () => opts.relevantMemories.length > 0,
-  });
+  // ── Dynamic sections (recomputed per request) ──
 
-  // Section 6: Related past sessions (dynamic)
-  builder.addSection({
-    id: "smart-context",
-    label: "Related Sessions",
-    type: "dynamic",
-    build: () => opts.smartContext,
-    shouldInclude: () => opts.smartContext.length > 0,
-  });
+  if (opts.contextBlock) {
+    builder.addSection({
+      id: "context-block", label: "Memory Context", type: "dynamic",
+      build: () => opts.contextBlock!,
+      shouldInclude: () => opts.contextBlock!.length > 0,
+    });
+  }
 
-  // Section 7: Memory orchestrator output (dynamic)
-  builder.addSection({
-    id: "memory-orchestrator",
-    label: "Memory Orchestrator",
-    type: "dynamic",
-    build: () => opts.memoryContext,
-    shouldInclude: () => opts.memoryContext.length > 0,
-  });
+  if (opts.relevantMemories) {
+    builder.addSection({
+      id: "relevant-memories", label: "Relevant Memories", type: "dynamic",
+      build: () => opts.relevantMemories!,
+      shouldInclude: () => opts.relevantMemories!.length > 0,
+    });
+  }
 
-  // Section 8: Notification hints (dynamic)
-  builder.addSection({
-    id: "notifications",
-    label: "Notifications",
-    type: "dynamic",
-    build: () => opts.notificationHint,
-    shouldInclude: () => opts.notificationHint.length > 0,
-  });
+  if (opts.smartContext) {
+    builder.addSection({
+      id: "smart-context", label: "Related Sessions", type: "dynamic",
+      build: () => opts.smartContext!,
+      shouldInclude: () => opts.smartContext!.length > 0,
+    });
+  }
 
-  // Section 9: Integrations context (static — changes on integration connect/disconnect)
-  builder.addSection({
-    id: "integrations",
-    label: "Connected APIs",
-    type: "static",
-    build: () => opts.integrationsContext,
-    shouldInclude: () => opts.integrationsContext.length > 0,
-  });
+  if (opts.memoryContext) {
+    builder.addSection({
+      id: "memory-orchestrator", label: "Memory Orchestrator", type: "dynamic",
+      build: () => opts.memoryContext!,
+      shouldInclude: () => opts.memoryContext!.length > 0,
+    });
+  }
 
-  // Section 10: Security canary (dynamic — unique per session)
-  builder.addSection({
-    id: "canary",
-    label: "Security Canary",
-    type: "dynamic",
-    build: () => opts.canaryBlock,
-    shouldInclude: () => opts.canaryBlock.length > 0,
-  });
+  if (opts.notificationHint) {
+    builder.addSection({
+      id: "notifications", label: "Notifications", type: "dynamic",
+      build: () => opts.notificationHint!,
+      shouldInclude: () => opts.notificationHint!.length > 0,
+    });
+  }
+
+  if (opts.bridgeContext) {
+    builder.addSection({
+      id: "bridge-context", label: "Bridge Context", type: "dynamic",
+      build: () => opts.bridgeContext!,
+      shouldInclude: () => opts.bridgeContext!.length > 0,
+    });
+  }
+
+  if (opts.canaryBlock) {
+    builder.addSection({
+      id: "canary", label: "Security Canary", type: "dynamic",
+      build: () => opts.canaryBlock!,
+      shouldInclude: () => opts.canaryBlock!.length > 0,
+    });
+  }
 
   return builder;
 }
+
+// Keep backward compat for any code importing the old name
+export const createChatContextBuilder = createSystemPromptBuilder;

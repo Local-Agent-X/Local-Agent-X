@@ -16,6 +16,10 @@ interface StreamEvent {
   arguments?: string;
   usage?: { inputTokens: number; outputTokens: number };
   error?: string;
+  /** Stop reason from the API — populated on done/error */
+  stopReason?: string;
+  /** Classification of why the response ended */
+  classification?: import("./response-classifier.js").ClassificationResult;
 }
 
 interface StreamOptions {
@@ -28,6 +32,8 @@ interface StreamOptions {
   maxTokens?: number;
   /** If true, don't fall back to CLI proxy on 429 — yield error instead */
   skipCliFallback?: boolean;
+  /** Force tool use: "required" makes the model call a tool. "auto" (default) lets it decide. */
+  toolChoice?: "auto" | "required";
 }
 
 const API_BASE = "https://api.anthropic.com";
@@ -104,7 +110,7 @@ function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessa
 }
 
 async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  const { token, model, messages, systemPrompt, tools, temperature = 1, maxTokens = 8192 } = options;
+  const { token, model, messages, systemPrompt, tools, temperature = 1, maxTokens = 8192, toolChoice } = options;
   const resolvedModel = normalizeAnthropicModel(model, "api");
 
   const headers: Record<string, string> = {
@@ -126,7 +132,10 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
   const anthropicTools = tools?.map(t => ({
     name: t.name, description: t.description, input_schema: t.parameters,
   }));
-  if (anthropicTools?.length) body.tools = anthropicTools;
+  if (anthropicTools?.length) {
+    body.tools = anthropicTools;
+    if (toolChoice === "required") body.tool_choice = { type: "any" };
+  }
 
   try {
     const response = await fetch(`${API_BASE}/v1/messages`, {
@@ -154,6 +163,8 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
     let currentToolArgs = "";
     let inputTokens = 0;
     let outputTokens = 0;
+    let stopReason: string | undefined;
+    let sawText = false, sawToolCall = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -185,22 +196,30 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
             }
           } else if (eventType === "content_block_delta") {
             const delta = parsed.delta as Record<string, unknown>;
-            if (delta?.type === "text_delta") yield { type: "text", delta: delta.text as string };
+            if (delta?.type === "text_delta") { sawText = true; yield { type: "text", delta: delta.text as string }; }
             else if (delta?.type === "input_json_delta") currentToolArgs += delta.partial_json as string;
           } else if (eventType === "content_block_stop") {
             if (currentToolId) {
+              sawToolCall = true;
               yield { type: "tool_call", id: currentToolId, name: currentToolName, arguments: currentToolArgs };
               currentToolId = ""; currentToolName = ""; currentToolArgs = "";
             }
           } else if (eventType === "message_delta") {
             const usage = parsed.usage as Record<string, number>;
             if (usage) outputTokens = usage.output_tokens || 0;
+            const delta = parsed.delta as Record<string, unknown>;
+            if (delta?.stop_reason) stopReason = delta.stop_reason as string;
           }
         }
       }
     }
 
-    yield { type: "done", usage: { inputTokens, outputTokens } };
+    const { classifyAnthropicResponse, logClassification } = await import("./response-classifier.js");
+    const classification = classifyAnthropicResponse({
+      hasText: sawText, hasToolCalls: sawToolCall, stopReason, inputTokens, outputTokens,
+    });
+    logClassification("anthropic", resolvedModel, classification);
+    yield { type: "done", usage: { inputTokens, outputTokens }, stopReason, classification };
   } catch (e) {
     yield { type: "error", error: `Anthropic error: ${(e as Error).message?.slice(0, 300)}` };
   }
@@ -217,46 +236,9 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
  */
 export async function* streamAnthropicResponse(options: StreamOptions): AsyncGenerator<StreamEvent> {
   if (options.token === "cli") {
-    // Try direct SDK first (faster — no process spawn), fall back to CLI proxy on 429
-    try {
-      const { loadAnthropicTokens, refreshAnthropicTokens } = await import("./auth-anthropic.js");
-      let tokens = loadAnthropicTokens();
-      if (tokens) {
-        if (tokens.expiresAt && Date.now() >= tokens.expiresAt) {
-          try { tokens = await refreshAnthropicTokens(tokens); } catch {}
-        }
-        if (tokens?.accessToken) {
-          // Collect events — if we hit 429, switch to CLI proxy
-          const events: StreamEvent[] = [];
-          let hit429 = false;
-          for await (const event of streamViaOAuthSDK({ ...options, token: tokens.accessToken })) {
-            if (event.type === "error" && typeof event.error === "string" && event.error.includes("429")) {
-              hit429 = true;
-              break;
-            }
-            events.push(event);
-          }
-          if (!hit429) {
-            // Direct SDK succeeded — yield all collected events
-            for (const e of events) yield e;
-            return;
-          }
-          console.log("[anthropic] Direct SDK got 429 — falling back to CLI proxy");
-          if (options.skipCliFallback) {
-            yield { type: "error", error: "Anthropic 429: rate limited" };
-            yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
-            return;
-          }
-        }
-      }
-    } catch (e) {
-      console.log(`[anthropic] Direct SDK exception (skipCliFallback=${options.skipCliFallback}): ${(e as Error).message?.slice(0, 200)}`);
-    }
-    if (options.skipCliFallback) {
-      yield { type: "error", error: "Anthropic unavailable (exception)" };
-      yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
-      return;
-    }
+    // Anthropic banned third-party apps from using OAuth via direct SDK (April 4, 2026).
+    // Under a Max subscription, direct-SDK gets 429 on every request. Skip it entirely
+    // and go straight to the official CLI proxy — that's the only path that still works.
     yield* streamViaCliWithTools(options);
   } else if (usesAnthropicSubscriptionAuth(options.token)) {
     yield* streamViaOAuthSDK({ ...options, token: unwrapAnthropicSubscriptionToken(options.token) });
@@ -321,6 +303,8 @@ async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator<Stream
     let buffer = "";
     let inputTokens = 0, outputTokens = 0;
     let currentToolId = "", currentToolName = "", currentToolArgs = "";
+    let stopReason: string | undefined;
+    let sawText = false, sawToolCall = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -352,6 +336,7 @@ async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator<Stream
 
           if (event.type === "content_block_delta") {
             if (event.delta?.type === "text_delta") {
+              sawText = true;
               yield { type: "text", delta: event.delta.text || "" };
             }
             if (event.delta?.type === "input_json_delta") {
@@ -360,16 +345,24 @@ async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator<Stream
           }
 
           if (event.type === "content_block_stop" && currentToolId) {
+            sawToolCall = true;
             yield { type: "tool_call", id: currentToolId, name: currentToolName, arguments: currentToolArgs };
             currentToolId = "";
           }
 
-          if (event.type === "message_delta" && event.usage) {
-            outputTokens = event.usage.output_tokens || 0;
+          if (event.type === "message_delta") {
+            if (event.usage) outputTokens = event.usage.output_tokens || 0;
+            if (event.delta?.stop_reason) stopReason = event.delta.stop_reason;
           }
 
           if (event.type === "message_stop") {
-            yield { type: "done", usage: { inputTokens, outputTokens } };
+            const { classifyAnthropicResponse, logClassification } = await import("./response-classifier.js");
+            const classification = classifyAnthropicResponse({
+              hasText: sawText, hasToolCalls: sawToolCall, stopReason,
+              inputTokens, outputTokens,
+            });
+            logClassification("anthropic", "api", classification);
+            yield { type: "done", usage: { inputTokens, outputTokens }, stopReason, classification };
           }
         } catch {}
       }

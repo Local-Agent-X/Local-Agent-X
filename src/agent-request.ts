@@ -356,7 +356,7 @@ const CORE_TOOL_NAMES = new Set([
   // Browser
   "browser",
   // Apps
-  "build_app", "create_page", "app_list",
+  "build_app", "app_create", "app_list",
   // Secrets
   "request_secret", "list_secrets",
   // HTTP
@@ -387,7 +387,26 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
   { keywords: /agency|team|hire/i, toolPrefixes: ["agency_"] },
 ];
 
+// Build intent = minimal tool set. When the user asks to build/create an app,
+// the agent only needs file operations. Fewer tools = smaller context = Codex
+// stops returning empty responses on complex prompts.
+const BUILD_INTENT_TOOLS = new Set([
+  // build_app is the primary tool for new apps — spawns CLI subprocess for reliability
+  "build_app",
+  // Direct file tools for edits and simple tasks
+  "write", "edit", "read", "bash", "glob", "grep",
+  "web_fetch", "web_search", "tool_search",
+  "ask_user", "view_image",
+]);
+const BUILD_INTENT_REGEX = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script)/i;
+
 function filterToolsForMessage(allTools: ToolDefinition[], message: string): ToolDefinition[] {
+  // Build intent: ultra-minimal tool set (~11 tools vs 40+)
+  // This is critical for Codex which returns empty responses when context is bloated
+  if (BUILD_INTENT_REGEX.test(message)) {
+    return allTools.filter(t => BUILD_INTENT_TOOLS.has(t.name));
+  }
+
   const included = new Set<string>();
 
   // Always include core tools
@@ -406,9 +425,5 @@ function filterToolsForMessage(allTools: ToolDefinition[], message: string): Too
     }
   }
 
-  const filtered = allTools.filter(t => included.has(t.name));
-
-  // Safety: if filtering was too aggressive, send everything
-  if (filtered.length < 30) return allTools;
-  return filtered;
+  return allTools.filter(t => included.has(t.name));
 }

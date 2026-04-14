@@ -87,11 +87,12 @@ export async function* streamCodexResponse(params: {
   temperature?: number;
   previousResponseId?: string;
   sessionId?: string;
+  toolChoice?: "auto" | "required";
 }): AsyncGenerator<
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
   | { type: "reasoning"; item: ReasoningItem }
-  | { type: "done"; usage: { inputTokens: number; outputTokens: number }; responseId?: string; reasoning: ReasoningItem[] }
+  | { type: "done"; usage: { inputTokens: number; outputTokens: number; classification?: import("./response-classifier.js").ClassificationResult }; responseId?: string; reasoning: ReasoningItem[] }
 > {
   const accountId = extractAccountIdFromJwt(params.token);
 
@@ -115,9 +116,11 @@ export async function* streamCodexResponse(params: {
     text: { verbosity: "medium" },
     include: ["reasoning.encrypted_content"],
     store: false,
-    // Reasoning effort "high" required for tool-calling to work reliably.
-    // "low" caused ~40% empty responses; omitting entirely also failed.
-    reasoning: { effort: "high", summary: "auto" },
+    // Note: Codex subscription endpoint rejects max_output_tokens (400 error).
+    // It has an internal cap we can't raise — means prompts must stay lean.
+    // "high" causes timeouts on complex prompts. "medium" balances tool reliability
+    // with response time. "low" caused ~40% empty responses.
+    reasoning: { effort: "medium", summary: "auto" },
   };
 
   // NOTE: previous_response_id is NOT supported on the Codex subscription
@@ -127,7 +130,7 @@ export async function* streamCodexResponse(params: {
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;
-    body.tool_choice = "auto";
+    body.tool_choice = params.toolChoice || "auto";
     body.parallel_tool_calls = true;
   }
 
@@ -375,22 +378,62 @@ export async function* streamCodexResponse(params: {
           }
         }
 
-        // Diagnostic: if Codex returned NOTHING (no text, no tool calls),
-        // log the full output array so we can see what shape the response
-        // actually had — reasoning items, refusal items, empty array, etc.
-        if (!fullText.trim() && toolCalls.size === 0) {
-          const outputSnapshot = event.response?.output ?? null;
-          const outputTypes = Array.isArray(outputSnapshot) ? outputSnapshot.map((o) => o?.type || "?").join(",") : "none";
-          console.warn(
-            `[codex] Empty response. usage=${usage.inputTokens}in/${usage.outputTokens}out output_types=[${outputTypes}] sample=${JSON.stringify(outputSnapshot).slice(0, 800)}`
-          );
-        }
+        // Classify the response so upstream knows why it ended the way it did
+        const outputSnapshot = event.response?.output ?? null;
+        const outputTypesArr = Array.isArray(outputSnapshot) ? outputSnapshot.map((o) => o?.type || "?") : [];
+        const { classifyCodexResponse, logClassification } = await import("./response-classifier.js");
+        const classification = classifyCodexResponse({
+          hasText: !!fullText.trim(),
+          hasToolCalls: toolCalls.size > 0,
+          outputTypes: outputTypesArr,
+          status: (event.response as unknown as Record<string, unknown>)?.status as string | undefined,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+        });
+        logClassification("codex", params.model, classification);
+        // Attach classification to the done event so the agent loop can use it
+        (usage as Record<string, unknown>).classification = classification;
       }
     }
   }
 
   // Clean up silence timer
   if (silenceTimer) clearTimeout(silenceTimer);
+
+  // Fallback: if the stream ended without a response.completed event,
+  // yield any tool calls that were collected but never finalized.
+  // Codex sometimes closes the stream after delta events but before
+  // function_call_arguments.done — we'd lose the tool call otherwise.
+  const usageWithMeta = usage as Record<string, unknown>;
+  if (!usageWithMeta.classification) {
+    console.warn(`[codex] Stream ended without response.completed event. hasText=${!!fullText.trim()} toolCalls=${toolCalls.size} usage=${usage.inputTokens}in/${usage.outputTokens}out`);
+
+    // Flush collected tool calls that were never yielded (happens on abnormal stream close)
+    // Only yield if the arguments are valid JSON — partial args from truncated streams
+    // produce broken tool calls with undefined fields.
+    for (const tc of toolCalls.values()) {
+      if (!tc.name) continue;
+      let argsOk = false;
+      try { JSON.parse(tc.arguments); argsOk = true; } catch {}
+      if (argsOk) {
+        console.warn(`[codex] Flushing unyielded tool call: ${tc.name}(${tc.arguments.slice(0, 100)})`);
+        yield { type: "tool_call", id: tc.id, name: tc.name, arguments: tc.arguments };
+      } else {
+        console.error(`[codex] Dropping truncated tool call: ${tc.name}(${tc.arguments.length} bytes of partial JSON). Codex stream closed mid-response — likely hit reasoning budget. Consider reducing prompt complexity or increasing max_tokens.`);
+      }
+    }
+
+    const { classifyCodexResponse, logClassification } = await import("./response-classifier.js");
+    const classification = classifyCodexResponse({
+      hasText: !!fullText.trim(),
+      hasToolCalls: toolCalls.size > 0,
+      outputTypes: [],
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+    });
+    logClassification("codex", params.model, classification);
+    usageWithMeta.classification = classification;
+  }
 
   yield { type: "done", usage, responseId, reasoning: reasoningItems };
 }

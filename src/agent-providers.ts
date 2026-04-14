@@ -259,6 +259,11 @@ export async function runStandardAgent(
   const loopState = createLoopState();
   let selfCheckFired = false;
 
+  // Force tool use on first iteration for build/action intents
+  const BUILD_INTENT_RE = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script|file|document|spreadsheet)/i;
+  const ACTION_INTENT_RE = /\b(schedule|save|remember|send|post|delete|update|run|execute|launch|open|close|deploy|install)\b/i;
+  const shouldForceTools = BUILD_INTENT_RE.test(userMessage) || ACTION_INTENT_RE.test(userMessage);
+
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (iteration > 0) messages = stripEphemeralMessages(messages);
     messages = checkAndCompact(messages, model, onEvent);
@@ -276,6 +281,7 @@ export async function runStandardAgent(
 
     try {
       const useTools = !_localNoToolModels.has(model);
+      // tool_choice: "required" disabled — causes empty responses on some models (Grok, Codex)
       let stream = await client.chat.completions.create({
         model,
         messages,
@@ -296,12 +302,15 @@ export async function runStandardAgent(
         throw err;
       });
 
+      let finishReason: string | undefined;
       for await (const chunk of stream) {
         if (signal?.aborted) {
           stream.controller.abort();
           break;
         }
-        const delta = chunk.choices[0]?.delta;
+        const choice = chunk.choices[0];
+        if (choice?.finish_reason) finishReason = choice.finish_reason;
+        const delta = choice?.delta;
         if (!delta) continue;
 
         if (delta.content) {
@@ -327,9 +336,27 @@ export async function runStandardAgent(
           totalCompletionTokens += chunk.usage.completion_tokens || 0;
         }
       }
+
+      // Classify the response
+      const { classifyOpenAIResponse, logClassification } = await import("./response-classifier.js");
+      const classification = classifyOpenAIResponse({
+        hasText: !!assistantContent.trim(),
+        hasToolCalls: toolCalls.length > 0,
+        finishReason,
+        inputTokens: totalPromptTokens,
+        outputTokens: totalCompletionTokens,
+      });
+      logClassification(options.provider, model, classification);
     } catch (e) {
       const errMsg = (e as Error).message || "Stream error";
       console.error("[agent] Standard stream error:", errMsg);
+      const { classifyOpenAIResponse, logClassification } = await import("./response-classifier.js");
+      const classification = classifyOpenAIResponse({
+        hasText: !!assistantContent.trim(),
+        hasToolCalls: toolCalls.length > 0,
+        errorMessage: errMsg,
+      });
+      logClassification(options.provider, model, classification);
       onEvent?.({ type: "error", message: errMsg });
       return {
         messages,
@@ -443,6 +470,11 @@ export async function runAnthropicAgent(
   const loopStateAnthropic = createLoopState();
   const anthropicTools = tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
 
+  // Force tool use on first iteration for build/action intents
+  const BUILD_INTENT_RE_A = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script|file|document|spreadsheet)/i;
+  const ACTION_INTENT_RE_A = /\b(schedule|save|remember|send|post|delete|update|run|execute|launch|open|close|deploy|install)\b/i;
+  const shouldForceToolsA = BUILD_INTENT_RE_A.test(userMessage) || ACTION_INTENT_RE_A.test(userMessage);
+
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (iteration > 0) messages = stripEphemeralMessages(messages);
     messages = checkAndCompact(messages, model, onEvent);
@@ -460,6 +492,7 @@ export async function runAnthropicAgent(
       systemPrompt,
       tools: anthropicTools,
       temperature,
+      toolChoice: (iteration === 0 && shouldForceToolsA) ? "required" : "auto",
     });
 
     let streamError: string | null = null;

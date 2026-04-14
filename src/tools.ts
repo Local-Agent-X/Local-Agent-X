@@ -663,22 +663,39 @@ const viewImageTool: ToolDefinition = {
   },
 };
 
-// ── Build App (delegates to Claude Code or Codex for multi-file app creation) ──
+// ── Build App (spawns codex-cli or claude-cli for large multi-file builds) ──
+// This is the ONLY reliable way to build large apps on the Codex subscription
+// endpoint — the HTTP API truncates single tool calls with large file contents.
+// The CLIs run their own agent loops with proper context/streaming handling.
 
 const buildAppTool: ToolDefinition = {
   name: "build_app",
-  description: "Build or edit a web app in workspace/apps/. Uses a persistent worker session with your current AI provider — no subprocess, keeps context across edits. Returns the app URL when done.",
+  description: "Build a complete web app in workspace/apps/ using a dedicated CLI subprocess. Use this for NEW apps and LARGE rewrites. For small edits to existing apps, use read + edit directly instead. Returns the app URL when done.",
   parameters: {
     type: "object",
     properties: {
-      name: { type: "string", description: "App directory name (e.g. 'marios-numberblocks', 'todo-app')" },
-      prompt: { type: "string", description: "Detailed description of what to build or change. Be specific about features, styling, behavior." },
+      name: { type: "string", description: "App directory name (e.g. 'trading-bot', 'todo-app')" },
+      prompt: { type: "string", description: "Detailed description of what to build. Be specific about features, styling, behavior." },
+      backend: { type: "string", enum: ["codex", "claude", "auto"], description: "Which CLI to use. 'auto' (default) matches your active provider. 'codex' = codex CLI. 'claude' = claude CLI." },
     },
     required: ["name", "prompt"],
   },
   async execute(args) {
     const appName = String(args.name || "app").replace(/[^a-zA-Z0-9_-]/g, "-");
     const prompt = String(args.prompt || "");
+    let backend = String(args.backend || "auto");
+
+    // Auto-route based on user's active provider
+    if (backend === "auto") {
+      try {
+        const settingsPath = join(process.env.HOME || process.env.USERPROFILE || "", ".sax", "settings.json");
+        if (existsSync(settingsPath)) {
+          const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
+          backend = (s.provider === "codex" || s.provider === "openai") ? "codex" : "claude";
+        } else { backend = "codex"; }
+      } catch { backend = "codex"; }
+    }
+
     const appDir = resolve("workspace", "apps", appName);
     const port = process.env.SAX_PORT || "7007";
     const appUrl = `http://127.0.0.1:${port}/apps/${appName}/index.html`;
@@ -686,27 +703,143 @@ const buildAppTool: ToolDefinition = {
     mkdirSync(appDir, { recursive: true });
 
     const isUpdate = existsSync(resolve(appDir, "index.html"));
+    const contextFiles: string[] = [];
+    if (isUpdate) {
+      for (const f of ["PROJECT.md", "TODO.md", "index.html"]) {
+        const p = resolve(appDir, f);
+        if (existsSync(p)) {
+          try { contextFiles.push(`=== ${f} ===\n${readFileSync(p, "utf-8").slice(0, 3000)}`); } catch {}
+        }
+      }
+    }
+    const context = contextFiles.length > 0 ? `\n\nExisting app context:\n${contextFiles.join("\n\n")}` : "";
 
-    // Build the task prompt with app context
-    const taskPrompt = `${isUpdate ? "UPDATE" : "CREATE"} the app "${appName}" in ${appDir}\n\nInstructions: ${prompt}\n\nRules:\n- Write ALL files to ${appDir}/ (use absolute paths)\n- Main entry point: index.html\n- For single-page apps: inline CSS/JS in index.html is fine\n- Make it polished — modern CSS, good colors, responsive\n- App URL: ${appUrl}`;
+    const builderPrompt = `You are building a web app in the directory: ${appDir}
+App name: ${appName}
+Task: ${isUpdate ? "UPDATE existing app" : "CREATE new app"}
+${context}
+
+Instructions: ${prompt}
+
+RULES:
+- Write ALL files to ${appDir}/ (use absolute paths)
+- The main entry point MUST be index.html
+- Create PROJECT.md with app description and status
+- For single-page apps: put everything in index.html (inline CSS/JS is fine)
+- Make it look polished — use modern CSS, good colors, responsive design
+- The app will be served at ${appUrl}
+- If using images from the web, use full URLs (https://)
+- Do NOT ask questions — just build it based on the instructions
+- After writing files, output: APP_READY: ${appUrl}`;
 
     try {
-      const { getOrCreateWorkerSession, dispatchToWorker } = await import("./worker-session.js");
-      const worker = getOrCreateWorkerSession(appDir, appName);
-      const output = await dispatchToWorker(worker.id, taskPrompt);
-
-      if (existsSync(resolve(appDir, "index.html"))) {
-        return { content: `App ${isUpdate ? "updated" : "built"}!\n\nOpen it here: ${appUrl}\n\n${output.slice(-500)}` };
+      if (backend === "codex") {
+        const result = await buildWithCodex(builderPrompt, appDir, appUrl);
+        // If codex CLI fails, fall back to claude
+        if (result.isError && !existsSync(resolve(appDir, "index.html"))) {
+          console.warn(`[build_app] Codex failed, falling back to Claude CLI`);
+          return await buildWithClaude(builderPrompt, appDir, appUrl);
+        }
+        return result;
       }
-      return { content: `Worker finished but index.html not found.\n\n${output.slice(-1000)}`, isError: true };
+      return await buildWithClaude(builderPrompt, appDir, appUrl);
     } catch (e) {
-      if (existsSync(resolve(appDir, "index.html"))) {
-        return { content: `App ${isUpdate ? "updated" : "built"} (with warnings)!\n\nOpen it here: ${appUrl}\n\nWarning: ${(e as Error).message.slice(0, 300)}` };
-      }
       return { content: `Build failed: ${(e as Error).message}`, isError: true };
     }
   },
 };
+
+async function buildWithCodex(prompt: string, appDir: string, appUrl: string): Promise<ToolResult> {
+  try {
+    const { spawn: spawnChild } = await import("node:child_process");
+    const stdout = await new Promise<string>((resolve, reject) => {
+      // codex CLI (@openai/codex) handles its own agent loop with proper file writes
+      // and streaming. This bypasses the Codex HTTP API's output truncation issue.
+      const proc = spawnChild("codex", [
+        "--full-auto",
+        "--no-color",
+      ], {
+        cwd: appDir,
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: process.platform === "win32",
+      });
+      proc.stdin?.write(prompt);
+      proc.stdin?.end();
+      let out = "", errOut = "";
+      proc.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
+      proc.stderr?.on("data", (d: Buffer) => { errOut += d.toString(); });
+      const timer = setTimeout(() => { proc.kill(); reject(new Error("Codex CLI build timed out after 5 minutes")); }, 300_000);
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        if (code === 0) resolve(out);
+        else reject(new Error(errOut || out || `Codex CLI exit code ${code}`));
+      });
+      proc.on("error", (err) => {
+        clearTimeout(timer);
+        reject(new Error(`Codex CLI not available: ${err.message}. Install with: npm install -g @openai/codex`));
+      });
+    });
+
+    const output = stdout.trim();
+    if (output.includes("APP_READY") || existsSync(resolve(appDir, "index.html"))) {
+      return { content: `App built with Codex CLI!\n\nOpen: ${appUrl}\n\n${output.slice(-500)}` };
+    }
+    return { content: `Codex CLI finished but index.html not found.\n${output.slice(-1000)}`, isError: true };
+  } catch (e) {
+    const errMsg = (e as Error).message || "unknown";
+    if (existsSync(resolve(appDir, "index.html"))) {
+      return { content: `App built (with warnings)!\n\nOpen: ${appUrl}\n\n${errMsg.slice(0, 300)}` };
+    }
+    return { content: `Codex CLI build failed: ${errMsg.slice(0, 500)}`, isError: true };
+  }
+}
+
+async function buildWithClaude(prompt: string, appDir: string, appUrl: string): Promise<ToolResult> {
+  try {
+    const { spawn: spawnChild } = await import("node:child_process");
+    const stdout = await new Promise<string>((resolve, reject) => {
+      const proc = spawnChild("claude", [
+        "-p",
+        "--output-format", "text",
+        "--no-session-persistence",
+        "--max-turns", "25",
+        "--tools", "Write,Edit,Read,Bash",
+        "--disallowedTools", "WebFetch,WebSearch",
+      ], {
+        cwd: appDir,
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: process.platform === "win32",
+      });
+      proc.stdin?.write(prompt);
+      proc.stdin?.end();
+      let out = "", errOut = "";
+      proc.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
+      proc.stderr?.on("data", (d: Buffer) => { errOut += d.toString(); });
+      const timer = setTimeout(() => { proc.kill(); reject(new Error("Claude CLI build timed out after 5 minutes")); }, 300_000);
+      proc.on("close", (code) => {
+        clearTimeout(timer);
+        if (code === 0) resolve(out);
+        else reject(new Error(errOut || `Claude CLI exit code ${code}`));
+      });
+      proc.on("error", (err) => {
+        clearTimeout(timer);
+        reject(new Error(`Claude CLI not available: ${err.message}. Install with: npm install -g @anthropic-ai/claude-code`));
+      });
+    });
+
+    const output = stdout.trim();
+    if (output.includes("APP_READY") || existsSync(resolve(appDir, "index.html"))) {
+      return { content: `App built with Claude CLI!\n\nOpen: ${appUrl}\n\n${output.slice(-500)}` };
+    }
+    return { content: `Claude CLI finished but index.html not found.\n${output.slice(-1000)}`, isError: true };
+  } catch (e) {
+    const errMsg = (e as Error).message || "unknown";
+    if (existsSync(resolve(appDir, "index.html"))) {
+      return { content: `App built (with warnings)!\n\nOpen: ${appUrl}\n\n${errMsg.slice(0, 300)}` };
+    }
+    return { content: `Claude CLI build failed: ${errMsg.slice(0, 500)}`, isError: true };
+  }
+}
 
 import { youtubeAnalyzeTool } from "./youtube-tool.js";
 

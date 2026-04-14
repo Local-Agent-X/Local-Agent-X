@@ -92,6 +92,13 @@ export async function runCodexAgentHttp(
   const loopState = createLoopState();
   let selfCheckFired = false;
 
+  // Detect build/action intent — force tool use on iteration 0 to prevent
+  // the model from responding with text instead of calling a tool.
+  // This mirrors upstream's pattern of using tool_choice:"required" for build requests.
+  const BUILD_INTENT_RE = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script|file|document|spreadsheet)/i;
+  const ACTION_INTENT_RE = /\b(schedule|save|remember|send|post|delete|update|run|execute|launch|open|close|deploy|install)\b/i;
+  const shouldForceTools = BUILD_INTENT_RE.test(userMessage) || ACTION_INTENT_RE.test(userMessage);
+
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal?.aborted) return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "abort" };
 
@@ -128,7 +135,10 @@ export async function runCodexAgentHttp(
 
     lastContextLength = messages.length;
 
-    // Only force tool use on iteration 1 (right after a nudge), not on every turn
+    // Note: Codex subscription endpoint (chatgpt.com/backend-api) returns empty
+    // responses when tool_choice:"required" is sent. Keep as "auto" for Codex.
+    // Build intent is enforced via the system prompt instead.
+    const toolChoice = "auto" as const;
 
     try {
       const stream = streamCodexResponse({
@@ -139,6 +149,7 @@ export async function runCodexAgentHttp(
         tools: codexTools,
         previousResponseId: turnPreviousResponseId,
         sessionId: options.sessionId,
+        toolChoice,
       });
 
       for await (const event of stream) {

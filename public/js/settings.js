@@ -52,6 +52,8 @@ async function checkSettingsAuth() {
     const el = document.getElementById('auth-status');
     const loginBtn = document.getElementById('btn-login');
     const discBtn = document.getElementById('btn-disconnect');
+    const cliEl = document.getElementById('codex-cli-status');
+    const cliBtn = document.getElementById('btn-install-codex-cli');
     if (!el) return;
     if (d.authenticated) {
       el.className = 'status-badge ok'; el.innerHTML = '<span class="status-dot"></span> Connected — ' + (d.method === 'oauth' ? 'OpenAI OAuth' : 'API Key');
@@ -62,7 +64,38 @@ async function checkSettingsAuth() {
       if (loginBtn) loginBtn.disabled = false;
       if (discBtn) discBtn.style.display = 'none';
     }
+    // Codex CLI status — needed for reliable app building via Codex provider
+    if (cliEl) {
+      if (d.cliInstalled) {
+        cliEl.className = 'status-badge ok';
+        cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI installed — app builder will use subprocess for reliable large file writes';
+        if (cliBtn) cliBtn.style.display = 'none';
+      } else {
+        cliEl.className = 'status-badge err';
+        cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI not found — install it for reliable app building via Codex (otherwise falls back to Claude CLI)';
+        if (cliBtn) cliBtn.style.display = '';
+      }
+    }
   } catch {}
+}
+
+async function installCodexCli() {
+  const btn = document.getElementById('btn-install-codex-cli');
+  const cliEl = document.getElementById('codex-cli-status');
+  if (btn) { btn.disabled = true; btn.textContent = 'Installing...'; }
+  if (cliEl) { cliEl.className = 'status-badge warn'; cliEl.innerHTML = '<span class="status-dot"></span> Installing Codex CLI via npm... this may take a minute'; }
+  try {
+    const d = await apiPost('/api/auth/openai/install-cli', {});
+    if (d.ok) {
+      if (cliEl) { cliEl.className = 'status-badge ok'; cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI installed — ' + (d.version || 'ready'); }
+      if (btn) btn.style.display = 'none';
+    } else {
+      throw new Error(d.error || 'Unknown error');
+    }
+  } catch (e) {
+    if (cliEl) { cliEl.className = 'status-badge err'; cliEl.innerHTML = '<span class="status-dot"></span> Install failed: ' + esc(e.message); }
+    if (btn) { btn.disabled = false; btn.textContent = 'Retry Install'; }
+  }
 }
 
 async function doLogin() {
@@ -90,12 +123,18 @@ async function checkAnthropicAuth() {
     const cliEl = document.getElementById('claude-cli-status');
     const cliBtn = document.getElementById('btn-install-claude-cli');
     if (!el) return;
-    if (d.authenticated && !d.expired) {
+    // CLI session is always "valid" — its auth is managed by the CLI, not us
+    const usingCliSession = d.method === 'cli-session';
+    const hasValidAuth = d.authenticated && (usingCliSession || !d.expired);
+    if (hasValidAuth) {
       el.className = 'status-badge ok';
-      const label = d.method === 'token' ? 'Connected — Claude setup-token' : 'Connected — Anthropic OAuth (legacy)';
+      const label =
+        d.method === 'token' ? 'Connected — Claude setup-token' :
+        usingCliSession ? 'Connected — Claude CLI session (chat & builds work via CLI subprocess)' :
+        'Connected — Anthropic OAuth (legacy)';
       el.innerHTML = '<span class="status-dot"></span> ' + label;
       if (loginBtn) { loginBtn.textContent = 'Use Legacy OAuth'; loginBtn.disabled = false; }
-      if (discBtn) discBtn.style.display = '';
+      if (discBtn) discBtn.style.display = usingCliSession ? 'none' : '';
     } else {
       el.className = 'status-badge err';
       el.innerHTML = '<span class="status-dot"></span> Not connected';

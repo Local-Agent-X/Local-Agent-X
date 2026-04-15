@@ -200,6 +200,7 @@ export async function ariEvaluate(
     screen_capture: "internal",
     ocr: "internal",
     mission_schedule_list: "internal",
+    mission_schedule_update: "internal",
     mission_schedule_toggle: "internal",
     mission_schedule_reports: "internal",
   };

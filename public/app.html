@@ -202,10 +202,13 @@
           <div class="section-title">OpenAI Authentication</div>
           <div class="section-desc">Connect to OpenAI via OAuth to use GPT/Codex models.</div>
           <div id="auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
-          <div class="btn-row">
+          <div id="codex-cli-status" class="status-badge warn" style="margin-top:6px"><span class="status-dot"></span> Checking Codex CLI...</div>
+          <div class="btn-row" style="margin-top:10px">
             <button id="btn-login" class="action-btn primary" onclick="doLogin()">Sign In with OpenAI</button>
             <button id="btn-disconnect" class="action-btn danger" onclick="doDisconnect()" style="display:none">Disconnect</button>
+            <button id="btn-install-codex-cli" class="action-btn" onclick="installCodexCli()" style="display:none">Install Codex CLI</button>
           </div>
+          <div class="field-hint" style="margin-top:8px">The Codex CLI enables reliable app building via subprocess — avoids the ChatGPT subscription endpoint's output truncation on large file writes.</div>
         </div>
         <div class="section-card">
           <div class="section-title">Anthropic Authentication</div>

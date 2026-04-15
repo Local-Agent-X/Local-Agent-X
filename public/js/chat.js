@@ -329,9 +329,17 @@ async function sendMessage() {
             } catch {}
             userScrolledUp = false;
             const lastMsg = streamChat.messages[streamChat.messages.length - 1];
-            if (content.trim()) {
-              if (lastMsg && lastMsg._streaming) { lastMsg.content = content; lastMsg.timestamp = Date.now(); delete lastMsg._streaming; }
-              else { streamChat.messages.push({ role: 'assistant', content, timestamp: Date.now() }); }
+            // Persist final message — preserve any content that was streamed/saved during the turn.
+            // Don't overwrite existing content with empty string (race with savePartial interval).
+            if (lastMsg && lastMsg._streaming) {
+              if (content && content.length >= (lastMsg.content || '').length) {
+                lastMsg.content = content;
+              }
+              lastMsg.timestamp = Date.now();
+              delete lastMsg._streaming;
+              streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
+            } else if (content.trim()) {
+              streamChat.messages.push({ role: 'assistant', content, timestamp: Date.now() });
               streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
             }
             if (isViewingThis()) renderMessages();
@@ -455,16 +463,17 @@ async function sendMessage() {
       if (isViewingThis()) autoScroll();
     }
     userScrolledUp = false;
-    // Finalize the ORIGINAL chat
+    // Finalize the ORIGINAL chat — preserve streamed content; don't lose visible bubbles
     const lastMsg = streamChat.messages[streamChat.messages.length - 1];
-    if (content.trim()) {
-      if (lastMsg && lastMsg._streaming) {
+    if (lastMsg && lastMsg._streaming) {
+      if (content && content.length >= (lastMsg.content || '').length) {
         lastMsg.content = content;
-        lastMsg.timestamp = Date.now();
-        delete lastMsg._streaming;
-      } else {
-        streamChat.messages.push({ role: 'assistant', content, timestamp: Date.now() });
       }
+      lastMsg.timestamp = Date.now();
+      delete lastMsg._streaming;
+      streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
+    } else if (content.trim()) {
+      streamChat.messages.push({ role: 'assistant', content, timestamp: Date.now() });
       streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
     }
     // If user navigated back, re-render to show completed response

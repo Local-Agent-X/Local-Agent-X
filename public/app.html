@@ -587,8 +587,27 @@
           <div id="cron-reports" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:6px"></div>
         </div>
         <pre id="cron-detail-prompt" style="font-family:var(--mono);font-size:.8rem;white-space:pre-wrap;color:var(--text);padding:10px;background:var(--bg);border-radius:6px;margin-bottom:12px"></pre>
-        <div class="btn-row">
+        <div id="cron-edit-form" style="display:none;margin-bottom:12px">
+          <div class="field" style="margin-bottom:8px">
+            <label class="field-label">Mission Name</label>
+            <input class="field-input" id="cron-edit-name" type="text"/>
+          </div>
+          <div class="field" style="margin-bottom:8px">
+            <label class="field-label">Schedule (cron expression or interval like 5m, 1h, daily 9am)</label>
+            <input class="field-input" id="cron-edit-schedule" type="text"/>
+          </div>
+          <div class="field" style="margin-bottom:8px">
+            <label class="field-label">Agent Instructions</label>
+            <textarea class="field-input" id="cron-edit-prompt" rows="8" style="font-family:var(--mono);font-size:.8rem;width:100%"></textarea>
+          </div>
+          <div class="btn-row">
+            <button class="action-btn primary" onclick="saveCronJobEdits()">Save Changes</button>
+            <button class="action-btn secondary" onclick="cancelCronEdit()">Cancel</button>
+          </div>
+        </div>
+        <div class="btn-row" id="cron-default-actions">
           <button class="action-btn primary" onclick="runCronJobNow()">Run Now</button>
+          <button class="action-btn secondary" onclick="editCronJob()">Edit</button>
           <button class="action-btn secondary" onclick="toggleCronJob()">Pause / Resume</button>
           <button class="action-btn danger" onclick="deleteCronJob()">Delete</button>
         </div>

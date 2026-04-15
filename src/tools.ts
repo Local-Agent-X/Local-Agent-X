@@ -264,7 +264,7 @@ const bashTool: ToolDefinition = {
     if (sandboxMode === "docker") {
       const result = execInSandbox(cmd);
       if (result.exitCode === 0) {
-        return ok(result.stdout || "(no output)");
+        return ok(result.stdout || "[exit 0 — command succeeded with no output]");
       }
       return err(result.stderr || result.stdout || `Exit code: ${result.exitCode}`);
     }
@@ -335,7 +335,12 @@ const bashTool: ToolDefinition = {
         child.on("error", (e) => settle(rejectP, e.message));
         child.on("exit", (code) => {
           if (code === 0 || code === null) {
-            settle(resolveP, stdout || "(no output)");
+            // Exit code 0 = success. If no stdout, say so explicitly so the model
+            // doesn't interpret silence as failure (PowerShell scripts often complete silently).
+            const result = stdout
+              ? (stderr ? stdout + "\n[stderr]\n" + stderr : stdout)
+              : "[exit 0 — command succeeded with no output]";
+            settle(resolveP, result);
           } else {
             const out = [stdout, stderr].filter(Boolean).join("\n");
             settle(rejectP, out || `Exit code: ${code}`);

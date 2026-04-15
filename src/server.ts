@@ -145,7 +145,11 @@ export async function startServer(config: SAXConfig) {
       temperature: prepared.temperature,
     }), { label: `bridge:${platform}:${from}` });
 
-    session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system" && (m.content || (m as unknown as Record<string, unknown>).tool_calls));
+    session.messages = stripEphemeralMessages(result.messages).filter(m => {
+      if (m.role === "system") return false;
+      if (m.role === "tool") return true; // never drop tool results
+      return m.content || (m as unknown as Record<string, unknown>).tool_calls;
+    });
     session.updatedAt = Date.now(); saveSession(session);
     return formatForChannel(result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "Done.", channelType).join("\n\n");
   }

@@ -685,15 +685,27 @@ const buildAppTool: ToolDefinition = {
     const prompt = String(args.prompt || "");
     let backend = String(args.backend || "auto");
 
-    // Auto-route based on user's active provider
+    // Auto-route based on user's active provider:
+    // - Codex (ChatGPT subscription) → CLI required due to output truncation
+    // - Anthropic OAuth (Claude Max) → CLI required due to API ban
+    // - Everything else (xAI, Gemini, Anthropic API, OpenAI API, local) →
+    //   return a directive for the agent to use write/edit directly
     if (backend === "auto") {
       try {
         const settingsPath = join(process.env.HOME || process.env.USERPROFILE || "", ".sax", "settings.json");
         if (existsSync(settingsPath)) {
           const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
-          backend = (s.provider === "codex" || s.provider === "openai") ? "codex" : "claude";
-        } else { backend = "codex"; }
-      } catch { backend = "codex"; }
+          if (s.provider === "codex") backend = "codex";
+          else if (s.provider === "anthropic") backend = "claude";
+          else {
+            // xAI, Gemini, OpenAI API, local — these work fine with direct write/edit
+            return {
+              content: `For provider "${s.provider}", use the write tool directly instead of build_app. Create files at workspace/apps/${appName}/index.html — the HTTP API doesn't truncate large tool calls like ChatGPT subscription does.`,
+              isError: true,
+            };
+          }
+        } else { backend = "claude"; }
+      } catch { backend = "claude"; }
     }
 
     const appDir = resolve("workspace", "apps", appName);

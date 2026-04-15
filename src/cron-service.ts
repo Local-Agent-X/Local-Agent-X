@@ -108,6 +108,7 @@ export class CronService {
   private settings: CronSettings = { enabled: true, maxConcurrent: 3 };
   private executeHandler: ExecuteHandler | null = null;
   private running = new Set<string>();
+  private lastFileMtime = 0;
 
   constructor(dataDir: string) {
     this.dataDir = dataDir;
@@ -123,13 +124,39 @@ export class CronService {
     if (existsSync(this.jobsFile)) {
       try {
         const data = JSON.parse(readFileSync(this.jobsFile, "utf-8"));
+        this.jobs.clear();
         for (const job of data) this.jobs.set(job.id, job);
+        const { statSync } = require("node:fs");
+        this.lastFileMtime = statSync(this.jobsFile).mtimeMs;
       } catch {}
     }
   }
 
+  /** Re-load jobs from disk if the file was modified externally (e.g., by an agent writing to it). */
+  private reloadIfChanged(): void {
+    if (!existsSync(this.jobsFile)) return;
+    try {
+      const { statSync } = require("node:fs");
+      const mtime = statSync(this.jobsFile).mtimeMs;
+      if (mtime > this.lastFileMtime) {
+        console.log(`[cron] jobs.json changed externally — reloading`);
+        this.loadJobs();
+        // Reschedule any new/changed jobs
+        if (this.settings.enabled) {
+          for (const job of this.jobs.values()) {
+            if (job.enabled && !this.timers.has(job.id)) this.scheduleJob(job);
+          }
+        }
+      }
+    } catch {}
+  }
+
   private saveJobs(): void {
     writeFileSync(this.jobsFile, JSON.stringify([...this.jobs.values()], null, 2), "utf-8");
+    try {
+      const { statSync } = require("node:fs");
+      this.lastFileMtime = statSync(this.jobsFile).mtimeMs;
+    } catch {}
   }
 
   private loadSettings(): void {
@@ -268,12 +295,14 @@ export class CronService {
     return job;
   }
 
-  get(id: string): CronJob | null {
-    return this.jobs.get(id) || null;
+  list(): CronJob[] {
+    this.reloadIfChanged();
+    return [...this.jobs.values()];
   }
 
-  list(): CronJob[] {
-    return [...this.jobs.values()];
+  get(id: string): CronJob | null {
+    this.reloadIfChanged();
+    return this.jobs.get(id) || null;
   }
 
   getSettings(): CronSettings {
@@ -333,6 +362,33 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
       async execute(args) {
         const deleted = cron.delete(String(args.id));
         return { content: deleted ? "Job deleted." : "Job not found." };
+      },
+    },
+    {
+      name: "mission_schedule_update",
+      description: "Update an existing scheduled mission. Provide the id (use mission_schedule_list to find it) and any fields to change: name, schedule, or prompt. Other fields stay the same.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Job ID (from mission_schedule_list)" },
+          name: { type: "string", description: "New name (optional)" },
+          schedule: { type: "string", description: "New cron expression or interval (optional)" },
+          prompt: { type: "string", description: "New prompt that the agent will execute each run (optional)" },
+        },
+        required: ["id"],
+      },
+      async execute(args) {
+        const updates: Record<string, string> = {};
+        if (typeof args.name === "string") updates.name = args.name;
+        if (typeof args.schedule === "string") updates.schedule = args.schedule;
+        if (typeof args.prompt === "string") updates.prompt = args.prompt;
+        if (Object.keys(updates).length === 0) {
+          return { content: "No fields to update. Provide name, schedule, or prompt.", isError: true };
+        }
+        const job = cron.update(String(args.id), updates);
+        if (!job) return { content: `Job "${args.id}" not found.`, isError: true };
+        const changed = Object.keys(updates).join(", ");
+        return { content: `Updated mission "${job.name}" (${changed}).` };
       },
     },
     {

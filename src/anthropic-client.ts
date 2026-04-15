@@ -504,24 +504,28 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
         if (event.type === "assistant") {
           const content = event.message?.content;
           if (Array.isArray(content)) {
-            for (const block of content) {
-              if (block.type === "text" && block.text.length > prevText.length) {
-                const delta = block.text.slice(prevText.length);
-                prevText = block.text;
-                fullText = block.text;
-                // Log all text to server console
-                process.stdout.write(`[claude] ${delta.replace(/\n/g, "\\n").slice(0, 200)}\n`);
-                // Stream to UI — but suppress JSON tool call blocks
-                if (!firstResponse) {
-                  firstResponse = true;
-                  if (progressTimer) clearTimeout(progressTimer);
-                  if (progressInterval) clearInterval(progressInterval);
-                  progressYields.length = 0;
-                }
-                const cleanDelta = filterStreamDelta(delta, suppressing);
-                if (cleanDelta.suppress) { suppressing = true; }
-                else if (cleanDelta.text) { suppressing = false; yield { type: "text", delta: cleanUrls(cleanDelta.text) }; }
+            // Compute the FULL concatenated text from all text blocks in this message.
+            // Claude can return multiple text blocks (e.g. text + reasoning + text)
+            // and tracking prevText against any single block.text breaks the delta
+            // computation when block lengths shrink between blocks.
+            const fullBlockText = content
+              .filter((b: any) => b.type === "text" && typeof b.text === "string")
+              .map((b: any) => b.text)
+              .join("");
+            if (fullBlockText.length > prevText.length) {
+              const delta = fullBlockText.slice(prevText.length);
+              prevText = fullBlockText;
+              fullText = fullBlockText;
+              process.stdout.write(`[claude] ${delta.replace(/\n/g, "\\n").slice(0, 200)}\n`);
+              if (!firstResponse) {
+                firstResponse = true;
+                if (progressTimer) clearTimeout(progressTimer);
+                if (progressInterval) clearInterval(progressInterval);
+                progressYields.length = 0;
               }
+              const cleanDelta = filterStreamDelta(delta, suppressing);
+              if (cleanDelta.suppress) { suppressing = true; }
+              else if (cleanDelta.text) { suppressing = false; yield { type: "text", delta: cleanUrls(cleanDelta.text) }; }
             }
           }
         } else if (event.type === "result") {
@@ -530,7 +534,9 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
             fullText = result;
             const remaining = result.slice(prevText.length);
             const clean = stripToolCallBlocks(remaining);
-            if (clean.trim()) yield { type: "text", delta: clean.trim() };
+            // Don't trim — preserves whitespace at chunk boundaries (was eating leading spaces between sentences)
+            if (clean) yield { type: "text", delta: clean };
+            prevText = result;
           }
           usage = event.usage || {};
           console.log(`[claude] Done: ${result.slice(0, 100).replace(/\n/g, "\\n")}...`);

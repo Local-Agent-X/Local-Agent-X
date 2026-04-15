@@ -349,8 +349,9 @@ const CORE_TOOL_NAMES = new Set([
   "enter_plan_mode", "exit_plan_mode",
   "task_create", "task_update", "task_list", "task_get",
   // Protocols & scheduling
-  "protocol_list", "protocol_get", "mission_schedule_create",
-  "mission_schedule_list", "mission_schedule_delete", "mission_schedule_toggle",
+  "protocol_list", "protocol_get",
+  "mission_schedule_create", "mission_schedule_list", "mission_schedule_update",
+  "mission_schedule_delete", "mission_schedule_toggle",
   // Agents
   "agent_spawn", "delegate", "agent_status", "agent_cancel", "agent_message", "agent_output",
   // Browser

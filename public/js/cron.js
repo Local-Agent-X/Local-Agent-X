@@ -210,6 +210,53 @@ async function deleteCronJob() {
   } catch (e) { alert('Failed: ' + e.message); }
 }
 
+function editCronJob() {
+  if (!selectedJob) return;
+  document.getElementById('cron-edit-name').value = selectedJob.name || '';
+  document.getElementById('cron-edit-schedule').value = selectedJob.schedule || '';
+  document.getElementById('cron-edit-prompt').value = selectedJob.prompt || '';
+  document.getElementById('cron-edit-form').style.display = '';
+  document.getElementById('cron-default-actions').style.display = 'none';
+  const promptEl = document.getElementById('cron-detail-prompt');
+  if (promptEl) promptEl.style.display = 'none';
+}
+
+function cancelCronEdit() {
+  document.getElementById('cron-edit-form').style.display = 'none';
+  document.getElementById('cron-default-actions').style.display = '';
+  const promptEl = document.getElementById('cron-detail-prompt');
+  if (promptEl) promptEl.style.display = '';
+}
+
+async function saveCronJobEdits() {
+  if (!selectedJob) return;
+  const name = document.getElementById('cron-edit-name').value.trim();
+  const schedule = document.getElementById('cron-edit-schedule').value.trim();
+  const prompt = document.getElementById('cron-edit-prompt').value.trim();
+  if (!name || !schedule || !prompt) {
+    alert('Name, schedule, and instructions are all required.');
+    return;
+  }
+  try {
+    const res = await fetch(API + '/api/cron/' + selectedJob.id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + AUTH_TOKEN },
+      body: JSON.stringify({ name, schedule, prompt }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    if (data.job) {
+      // Update local state
+      const idx = cronJobs.findIndex(j => j.id === selectedJob.id);
+      if (idx >= 0) cronJobs[idx] = data.job;
+      selectedJob = data.job;
+      cancelCronEdit();
+      renderCronList();
+      renderCronDetail();
+    }
+  } catch (e) { alert('Save failed: ' + e.message); }
+}
+
 async function runCronJobNow() {
   if (!selectedJob) return;
   try {

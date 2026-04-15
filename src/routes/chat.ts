@@ -120,7 +120,16 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       try { const { clearSessionAllowedTools } = await import("../session-policy.js"); clearSessionAllowedTools(sessionId); } catch {}
       const { stripEphemeralMessages } = await import("../agent-providers.js");
       type MsgRecord = Record<string, unknown>;
-      session.messages = stripEphemeralMessages(result.messages).filter((m) => m.role !== "system" && (m.content || (m as unknown as MsgRecord).tool_calls));
+      // Keep system-stripped messages. Filter rules:
+      // - Drop system messages (rebuilt per request)
+      // - Keep all tool messages (the model needs them to interpret previous tool calls)
+      // - Keep assistant messages with content OR tool_calls
+      // - Drop empty user messages (sanity)
+      session.messages = stripEphemeralMessages(result.messages).filter((m) => {
+        if (m.role === "system") return false;
+        if (m.role === "tool") return true; // never drop tool results
+        return m.content || (m as unknown as MsgRecord).tool_calls;
+      });
       session.updatedAt = Date.now();
 
       const assistantReply = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).join("\n");

@@ -235,13 +235,15 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
  * - No tools + API key → Direct HTTP
  */
 export async function* streamAnthropicResponse(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  if (options.token === "cli") {
-    // Anthropic banned third-party apps from using OAuth via direct SDK (April 4, 2026).
-    // Under a Max subscription, direct-SDK gets 429 on every request. Skip it entirely
-    // and go straight to the official CLI proxy — that's the only path that still works.
+  // Anthropic banned third-party apps from using subscription auth via direct SDK
+  // (April 4, 2026). Under Max subscription, direct-SDK gets 429 on every request.
+  // ALL subscription-style auth (cli sentinel, oauth: prefix, sk-ant-oat tokens,
+  // claude setup-tokens) must go through the official CLI proxy — that's the only
+  // path Anthropic still allows for subscription credentials.
+  // Real pay-as-you-go API keys (sk-ant-api03-*) don't match usesAnthropicSubscriptionAuth
+  // and continue to use direct HTTP via streamViaAPI — those are fine.
+  if (options.token === "cli" || usesAnthropicSubscriptionAuth(options.token)) {
     yield* streamViaCliWithTools(options);
-  } else if (usesAnthropicSubscriptionAuth(options.token)) {
-    yield* streamViaOAuthSDK({ ...options, token: unwrapAnthropicSubscriptionToken(options.token) });
   } else {
     yield* streamViaAPI(options);
   }

@@ -21,6 +21,7 @@ import { withRetry } from "./auto-retry.js";
 import { checkCircuit, recordCircuitFailure, recordCircuitSuccess } from "./circuit-breaker.js";
 import { recordToolCall as recordToolStat } from "./tool-tracker.js";
 import { checkToolRateLimit, recordToolCall as recordRateLimit } from "./tool-rate-limiter.js";
+import { getApprovalManager, DANGEROUS_TOOLS } from "./approval-manager.js";
 
 // Tools whose failures are usually transient (network, rate limit) and worth retrying.
 const RETRYABLE_TOOLS = new Set([
@@ -346,6 +347,25 @@ async function executeSingleTool(
         onEvent?.({ type: "tool_progress", toolName: tc.name, toolCallId: tc.id, message });
       };
       args._onProgress = progressFn;
+
+      // HumanLayer-style approval gate for dangerous tools. Skipped for cron + delegated
+      // agents (no human watching) and for the Ari-whitelisted internal tools.
+      if (DANGEROUS_TOOLS.has(tc.name) && callContext === "local" && onEvent) {
+        const approved = await getApprovalManager().requestApproval({
+          toolName: tc.name,
+          toolCallId: tc.id,
+          sessionId: sessionId || "default",
+          context: approvalContext,
+          args,
+          emit: onEvent,
+        });
+        if (!approved) {
+          result = { content: `BLOCKED by user: declined approval for ${tc.name}`, isError: true };
+          onEvent({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
+          msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
+          return msgs;
+        }
+      }
 
       // (worktree rewrite moved before security evaluation)
 

@@ -137,6 +137,23 @@ export function setupChatWebSocket(server: Server, authToken: string) {
         }
       }
 
+      // Approval response: resolve a pending tool approval
+      if (type === "approval_response" && msg.approvalId) {
+        try {
+          const { getApprovalManager } = require("./approval-manager.js");
+          const resolved = getApprovalManager().resolveApproval(
+            String(msg.approvalId),
+            Boolean(msg.approved),
+            Boolean(msg.rememberForSession),
+          );
+          if (!resolved) {
+            ws.send(JSON.stringify({ type: "error", message: `Unknown or expired approval: ${msg.approvalId}` }));
+          }
+        } catch (e) {
+          ws.send(JSON.stringify({ type: "error", message: `Approval response failed: ${e}` }));
+        }
+      }
+
       // Agent control: pause/resume/cancel
       if (type === "agent-control" && msg.agentId && msg.action) {
         try {

@@ -313,8 +313,42 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // 5. Select tools based on channel (bridges get a smaller set)
   //    For web/codex: filter to core + message-relevant tools to reduce schema overhead.
   //    tool_search is always included so the agent can discover anything else.
+  //
+  //    Pipeline: keyword filter first (fast, always works) → semantic rerank
+  //    via Tool RAG if an embedder is available (more accurate for phrasing
+  //    the keyword regex misses). Falls back to keyword-only result on failure.
   const isBridge = channel === "telegram" || channel === "whatsapp";
-  const tools = isBridge ? bridgeTools : filterToolsForMessage(allAgentTools, message);
+  let tools = isBridge ? bridgeTools : filterToolsForMessage(allAgentTools, message);
+  if (!isBridge) {
+    try {
+      const { getToolRAG } = await import("./tool-rag.js");
+      const rag = getToolRAG();
+      // Use the memory embedder if available (already configured at startup)
+      const embedder = (memoryIndex as unknown as { embeddingProvider?: { embed(t: string): Promise<number[]> } }).embeddingProvider;
+      if (embedder && rag.size === 0) {
+        rag.setEmbedder(embedder);
+        await rag.build(allAgentTools);
+      }
+      if (rag.isReady) {
+        // Semantic select across ALL tools (broader than keyword). Pin the core
+        // set so always-available tools never get filtered out, even if the
+        // user's message doesn't semantically mention them.
+        const semantic = await rag.select(message, allAgentTools, {
+          topK: 22,
+          minScore: 0.25,
+          corePinned: [...CORE_TOOL_NAMES],
+          includeMCP: true,
+        });
+        // Union with keyword result — never narrower than keyword-only
+        const union = new Set(tools.map(t => t.name));
+        for (const t of semantic) union.add(t.name);
+        tools = allAgentTools.filter(t => union.has(t.name));
+      }
+    } catch (e) {
+      // Fail open: use keyword result unchanged
+      console.warn(`[tool-rag] Skipped: ${(e as Error).message}`);
+    }
+  }
 
   // 6. Process image attachments
   const images: Array<{ url: string; filePath?: string; name: string }> = [];

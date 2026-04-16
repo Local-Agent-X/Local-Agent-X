@@ -149,6 +149,24 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .msg-attachments img:hover{transform:scale(1.03);border-color:var(--accent)}
 .att-badge{padding:6px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--border);font-size:.75rem;font-family:var(--mono);color:var(--muted);display:flex;align-items:center;gap:6px}
 .tool-card{margin:8px 0;border-radius:8px;border:1px solid var(--border);overflow:hidden;font-size:.82rem}
+.approval-card{margin:10px 0;padding:12px 14px;border-radius:10px;border:1px solid #f2b01e;background:#2a1f05;font-size:.85rem}
+.approval-card.approved{border-color:var(--accent);background:#0e2318}
+.approval-card.denied,.approval-card.timeout{border-color:var(--danger);background:#2a0e0e;opacity:.75}
+.approval-header{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.approval-icon{color:#f2b01e;font-size:1.1rem}
+.approval-title{font-weight:600}
+.approval-context{color:var(--muted);font-family:var(--mono);font-size:.78rem;margin:6px 0;white-space:pre-wrap;word-break:break-word}
+.approval-args{margin:6px 0;font-family:var(--mono);font-size:.72rem;color:var(--muted)}
+.approval-args pre{white-space:pre-wrap;word-break:break-all;margin:4px 0 0;padding:6px 8px;background:#0d0d18;border-radius:4px;max-height:120px;overflow-y:auto}
+.approval-actions{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+.approval-actions button{padding:6px 14px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:.82rem}
+.approval-actions .btn-approve{background:var(--accent);border-color:var(--accent);color:#001a0a;font-weight:600}
+.approval-actions .btn-approve:hover:not(:disabled){filter:brightness(1.15)}
+.approval-actions .btn-deny{background:transparent;color:var(--fg)}
+.approval-actions .btn-deny:hover:not(:disabled){background:#2a0e0e;border-color:var(--danger);color:var(--danger)}
+.approval-actions button:disabled{opacity:.5;cursor:default}
+.approval-always{display:flex;align-items:center;gap:5px;font-size:.75rem;color:var(--muted);cursor:pointer}
+.approval-status{margin-top:8px;font-size:.75rem;color:var(--muted);font-style:italic}
 .tool-header{padding:8px 12px;background:#111125;display:flex;align-items:center;gap:8px;cursor:pointer;font-family:var(--mono)}
 .tool-header .indicator{width:8px;height:8px;border-radius:50%}
 .tool-header .indicator.allowed{background:var(--accent);box-shadow:0 0 6px var(--accent-dim)}

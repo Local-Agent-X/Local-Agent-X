@@ -61,6 +61,8 @@ export type ServerEvent =
   | { type: "done"; usage: AgentTurn["usage"] }
   | { type: "error"; message: string }
   | { type: "secret_request"; name: string; service?: string; reason: string }
+  | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string }
+  | { type: "approval_timeout"; approvalId: string; toolName: string; toolCallId?: string }
   | { type: "context_status"; percentage: number; level: string; usedTokens: number; maxTokens: number; compacted: boolean };
 
 // ── Auth Types ──

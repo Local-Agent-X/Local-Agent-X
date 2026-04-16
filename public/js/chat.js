@@ -447,6 +447,14 @@ async function sendMessage() {
               if (viewing) updateToolProgress(bodyEl, event.toolName, event.message);
               break;
             case 'secret_request': if (viewing) showSecretModal(event.name, event.service, event.reason); break;
+            case 'approval_requested':
+              if (viewing) bodyEl.appendChild(makeApprovalCard(event.approvalId, event.toolName, event.context, event.argsPreview));
+              break;
+            case 'approval_timeout': {
+              const card = document.querySelector('.approval-card[data-id="' + event.approvalId + '"]');
+              if (card) { card.classList.add('timeout'); card.querySelector('.approval-status').textContent = 'Timed out — denied.'; card.querySelectorAll('button').forEach(b => b.disabled = true); }
+              break;
+            }
             case 'context_status': if (viewing) updateContextBar(event); break;
             case 'error': content += '\n\nError: ' + event.message; if (viewing) bodyEl.innerHTML = md(content); break;
             case 'agent_spawn':
@@ -717,6 +725,38 @@ function toolSummary(name, args) {
     case 'generate_image': return `Generating: ${(args.prompt || '').slice(0, 40)}...`;
     default: return `${name} ${JSON.stringify(args).slice(0, 60)}`;
   }
+}
+
+function makeApprovalCard(approvalId, toolName, context, argsPreview) {
+  const card = document.createElement('div');
+  card.className = 'approval-card';
+  card.setAttribute('data-id', approvalId);
+  card.innerHTML =
+    '<div class="approval-header"><span class="approval-icon">&#9888;</span>'
+    + '<div class="approval-title">Approval needed: <b>' + esc(toolName) + '</b></div></div>'
+    + '<div class="approval-context">' + esc(context || '') + '</div>'
+    + (argsPreview ? '<details class="approval-args"><summary>args</summary><pre>' + esc(argsPreview) + '</pre></details>' : '')
+    + '<div class="approval-actions">'
+    +   '<button class="btn-approve">Approve</button>'
+    +   '<button class="btn-deny">Deny</button>'
+    +   '<label class="approval-always"><input type="checkbox" class="always-cb"> Always for this session</label>'
+    + '</div>'
+    + '<div class="approval-status"></div>';
+
+  const send = (approved) => {
+    const always = card.querySelector('.always-cb').checked;
+    try {
+      if (chatWs && chatWs.readyState === 1) {
+        chatWs.send(JSON.stringify({ type: 'approval_response', approvalId, approved, rememberForSession: approved && always }));
+      }
+    } catch {}
+    card.querySelector('.approval-status').textContent = approved ? (always ? 'Approved (remembered for session)' : 'Approved') : 'Denied';
+    card.classList.add(approved ? 'approved' : 'denied');
+    card.querySelectorAll('button').forEach(b => b.disabled = true);
+  };
+  card.querySelector('.btn-approve').addEventListener('click', () => send(true));
+  card.querySelector('.btn-deny').addEventListener('click', () => send(false));
+  return card;
 }
 
 function makeToolCard(name, args, riskLevel, context) {

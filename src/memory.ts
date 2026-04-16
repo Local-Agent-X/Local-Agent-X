@@ -283,6 +283,11 @@ export interface RetainedFact {
   sourceLine: number;
   timestamp: number;
   lastUpdated: number;
+  // Bi-temporal validity (Zep-style). Facts with valid_to != null are superseded.
+  validFrom?: number;
+  validTo?: number | null;
+  invalidatedBy?: number | null;
+  invalidationReason?: string | null;
 }
 
 export interface EntityPage {
@@ -548,7 +553,7 @@ export class MemoryIndex {
 
   // ── Schema with migration support ──
 
-  private static readonly CURRENT_SCHEMA_VERSION = 4;
+  private static readonly CURRENT_SCHEMA_VERSION = 7;
 
   private initSchema(): void {
     // Create meta table first (needed for version check)
@@ -674,6 +679,64 @@ export class MemoryIndex {
             source_format TEXT,
             ingested_at INTEGER NOT NULL
           )
+        `);
+      }
+
+      // v4 → v5: Entity-relationship graph
+      // Connects entities across facts so we can traverse relationships:
+      // "Mike introduced me to a project" → subject=mike, predicate=introduced, object=project
+      // "Peter decided to ship the mobile release" → subject=peter, predicate=decided, object=mobile-release
+      // During search, chunks/facts connected to query entities get a boost.
+      if (fromVersion < 5) {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS entity_relations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject TEXT NOT NULL,
+            predicate TEXT NOT NULL,
+            object TEXT NOT NULL,
+            fact_id INTEGER,
+            chunk_id INTEGER,
+            confidence REAL NOT NULL DEFAULT 1.0,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE,
+            FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+          );
+          CREATE INDEX IF NOT EXISTS idx_relations_subject ON entity_relations(subject);
+          CREATE INDEX IF NOT EXISTS idx_relations_object ON entity_relations(object);
+          CREATE INDEX IF NOT EXISTS idx_relations_predicate ON entity_relations(predicate);
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_relations_unique
+            ON entity_relations(subject, predicate, object, COALESCE(fact_id, -1), COALESCE(chunk_id, -1));
+        `);
+      }
+
+      // v5 → v6: Bi-temporal validity on facts (Zep-style).
+      //   valid_from      — when the fact became true (usually = timestamp, but can differ)
+      //   valid_to        — when the fact stopped being true (NULL = still valid)
+      //   invalidated_by  — the fact_id that replaced this one (NULL if just retired)
+      //   invalidation_reason — short human-readable note
+      // Default queries filter `valid_to IS NULL` to show only currently-valid facts.
+      // "As-of" queries (`recallAsOf`) return facts that were valid at a given time.
+      if (fromVersion < 6) {
+        try { this.db.exec(`ALTER TABLE facts ADD COLUMN valid_from INTEGER`); } catch {}
+        try { this.db.exec(`ALTER TABLE facts ADD COLUMN valid_to INTEGER`); } catch {}
+        try { this.db.exec(`ALTER TABLE facts ADD COLUMN invalidated_by INTEGER`); } catch {}
+        try { this.db.exec(`ALTER TABLE facts ADD COLUMN invalidation_reason TEXT`); } catch {}
+        // Backfill valid_from from existing timestamps (every existing fact is currently valid)
+        this.db.exec(`UPDATE facts SET valid_from = timestamp WHERE valid_from IS NULL`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_valid_to ON facts(valid_to)`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_valid_from ON facts(valid_from)`);
+      }
+
+      // v6 → v7: Partial unique dedup index. The v3 UNIQUE index on
+      // (kind, content, entities) blocked re-inserting a fact that had been
+      // invalidated — but in bi-temporal land, a fact with valid_to IS NOT NULL
+      // is logically retired and shouldn't prevent the same SPO coming back.
+      // Swap the index for one scoped to currently-valid rows.
+      if (fromVersion < 7) {
+        this.db.exec(`DROP INDEX IF EXISTS idx_facts_dedup`);
+        this.db.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_facts_dedup_valid
+            ON facts(kind, content, entities) WHERE valid_to IS NULL
         `);
       }
 
@@ -1446,6 +1509,11 @@ export class MemoryIndex {
       // LLM reranking (optional — sends top candidates to a fast LLM for reranking)
       rerank?: boolean;
       rerankModel?: string;
+      // HyDE — LLM generates a hypothetical answer, embeds that instead of the
+      // raw query. BM25 still uses the literal query. Helps open-ended questions.
+      hyde?: boolean;
+      hydeProvider?: "ollama" | "anthropic" | "openai" | "auto";
+      hydeModel?: string;
     }
   ): Promise<MemorySearchResult[]> {
     await this.sync();
@@ -1486,7 +1554,15 @@ export class MemoryIndex {
     // Vector search
     if (this.embeddingProvider) {
       try {
-        const queryVec = await this.embeddingProvider.embed(query);
+        // HyDE: embed a hypothetical answer instead of the literal query.
+        // Falls back to literal query if HyDE skipped (short query) or LLM unavailable.
+        let embedText = query;
+        if (options?.hyde) {
+          const { generateHyDE } = await import("./memory-hyde.js");
+          const hyp = await generateHyDE(query, { provider: options.hydeProvider, model: options.hydeModel });
+          if (hyp) embedText = hyp;
+        }
+        const queryVec = await this.embeddingProvider.embed(embedText);
         vectorResults = this.searchVector(queryVec, candidateLimit, options?.sources);
       } catch (e) {
         console.warn("[memory] Vector search failed:", (e as Error).message);
@@ -1550,6 +1626,12 @@ export class MemoryIndex {
       results = applyTemporalQueryBoost(results, options.query);
     }
 
+    // Graph boost DISABLED — tested on LongMemEval-S with regex-extracted relations
+    // and hurt R@5 by ~2 points (94.6% vs 97.2% baseline). Noisy SPO extraction
+    // amplifies through multi-hop traversal. Kept as a callable method for
+    // experimentation; re-enable only with cleaner (LLM-based) extraction.
+    // To restore: results = this.applyGraphBoost(results, options.query);
+
     // Apply temporal decay
     if (this.config.temporalDecayEnabled) {
       results = applyTemporalDecay(results, this.config.temporalHalfLifeDays);
@@ -1596,6 +1678,61 @@ export class MemoryIndex {
   }
 
   // ── Session grouping: boost chunks from sessions that scored high ──
+  /**
+   * Graph boost: extract entities from the query, traverse the relation graph 2 hops out,
+   * then boost results whose content mentions any connected entity.
+   *
+   * Example: query "what did Mike suggest?" → extract entity "mike" → traverse graph
+   * → find (mike, suggested, project-x), (mike, introduced, person-y). Then boost any
+   * result mentioning "project-x" or "person-y" that might not have exact keyword match.
+   *
+   * This catches multi-hop questions that embedding search misses:
+   *   "what did I decide about the project Mike brought up?" — needs (mike → project → decision) traversal
+   */
+  private applyGraphBoost(results: MemorySearchResult[], query: string): MemorySearchResult[] {
+    if (results.length === 0) return results;
+
+    // Guard 1: Require ≥2 entity candidates in query. Single-entity questions
+    // are handled well by hybrid search; graph traversal over one anchor tends
+    // to pull in everything connected to that anchor and amplify noise.
+    const candidates = new Set<string>();
+    const words = query.split(/\s+/);
+    for (const w of words) {
+      const clean = w.replace(/[^a-zA-Z0-9-]/g, "");
+      if (clean.length >= 2 && /^[A-Z]/.test(w)) {
+        candidates.add(slugify(clean));
+      }
+    }
+    if (candidates.size < 2) return results;
+
+    // Guard 2: 1-hop traversal (not 2). Multi-hop on noisy extracted relations
+    // connects unrelated chunks and hurts precision. Keep boost conservative.
+    const connectedEntities = new Set<string>();
+    for (const entity of candidates) {
+      const reachable = this.traverseFrom(entity, 1);
+      for (const r of reachable) connectedEntities.add(r);
+    }
+    if (connectedEntities.size === 0) return results;
+
+    // Guard 3: Skip if the connected set is huge (≥15). That means the graph
+    // is dense enough that "connected" isn't meaningfully selective.
+    if (connectedEntities.size >= 15) return results;
+
+    // Guard 4: Smaller boost (8% instead of 15%). Must be large enough to
+    // reorder near-ties but small enough not to displace strong matches.
+    const GRAPH_BOOST = 0.08;
+    for (const r of results) {
+      if (!r.entities || r.entities.length === 0) continue;
+      const hit = r.entities.some((e) => connectedEntities.has(slugify(e)));
+      if (hit) {
+        r.score = Math.min(1, r.score + GRAPH_BOOST);
+      }
+    }
+
+    results.sort((a, b) => b.score - a.score);
+    return results;
+  }
+
   private applySessionGrouping(results: MemorySearchResult[]): MemorySearchResult[] {
     if (results.length === 0) return results;
     // Find top-scoring sessions
@@ -1828,6 +1965,10 @@ export class MemoryIndex {
           }
         }
 
+        // Extract relationships from the fact content (Mem0-style)
+        // e.g. "Peter decided to ship mobile" → (peter, decided, ship-mobile)
+        try { this.extractRelations(parsed.content, validEntities, factId); } catch {}
+
         // FTS index
         if (this.hasFts) {
           try {
@@ -1850,6 +1991,120 @@ export class MemoryIndex {
     return facts;
   }
 
+  // ── RETAIN SMART: Mem0-style write-time resolver ──
+  //
+  // Parses facts the same way as retain() but runs each through an LLM resolver
+  // that classifies the fact vs. top-K similar existing facts. Based on the
+  // decision, it may invalidate an existing fact (UPDATE/DELETE) or skip (NOOP).
+  //
+  // Slower than retain() because each fact triggers one LLM call. Use for
+  // conversational ingest where preference drift matters; keep retain() for
+  // daily-log batch ingestion where you want speed + dedup only.
+
+  async retainSmart(
+    text: string,
+    sourceFile: string,
+    sourceLine = 0,
+    opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string } }
+  ): Promise<{ facts: RetainedFact[]; decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> }> {
+    const { resolveFact } = await import("./memory-resolver.js");
+    const candidateLimit = opts?.candidateLimit ?? 5;
+    const facts: RetainedFact[] = [];
+    const decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> = [];
+    const lines = text.split("\n");
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line.startsWith("- ")) continue;
+      const bullet = line.slice(2).trim();
+      const parsed = parseFactLine(bullet);
+      if (!parsed || parsed.content.length < 3) continue;
+      const validEntities = parsed.entities.filter((e) => e.length > 0);
+
+      // Find top-K similar existing (valid) facts with overlapping entities
+      const candidates = this.findResolverCandidates(parsed.content, validEntities, candidateLimit);
+      const decision = await resolveFact(parsed.content, candidates, opts?.resolverOpts);
+      decisions.push({ content: parsed.content, op: decision.op, targetId: decision.targetId, reason: decision.reason });
+
+      // NOOP — skip this fact entirely
+      if (decision.op === "NOOP") continue;
+
+      // DELETE — invalidate target, don't insert new fact
+      if (decision.op === "DELETE" && decision.targetId !== undefined) {
+        this.invalidateFact(decision.targetId, { reason: `deleted by resolver: ${decision.reason}` });
+        continue;
+      }
+
+      // ADD or UPDATE — insert new fact, optionally invalidate target first
+      const now = Date.now();
+      const entitiesJson = JSON.stringify(validEntities.sort());
+      try {
+        const result = this.db.prepare(
+          `INSERT INTO facts (kind, content, entities, confidence, evidence_for, evidence_against,
+             source_file, source_line, timestamp, last_updated, valid_from)
+           VALUES (?, ?, ?, ?, '[]', '[]', ?, ?, ?, ?, ?)`
+        ).run(parsed.kind, parsed.content, entitiesJson, parsed.confidence,
+              sourceFile, sourceLine + i + 1, now, now, now);
+        const factId = result.lastInsertRowid as number;
+
+        // UPDATE — invalidate the old fact, point at the new one
+        if (decision.op === "UPDATE" && decision.targetId !== undefined) {
+          this.invalidateFact(decision.targetId, { reason: `superseded by ${factId}: ${decision.reason}`, replacedBy: factId });
+        }
+
+        // Entity mentions + FTS + relations (same as retain)
+        for (const entity of validEntities) {
+          const slug = slugify(entity);
+          if (slug) this.db.prepare("INSERT OR IGNORE INTO entity_mentions (fact_id, entity_slug) VALUES (?, ?)").run(factId, slug);
+        }
+        try { this.extractRelations(parsed.content, validEntities, factId); } catch {}
+        if (this.hasFts) {
+          try { this.db.prepare("INSERT INTO facts_fts (rowid, content) VALUES (?, ?)").run(factId, parsed.content); } catch {}
+        }
+
+        facts.push({
+          id: factId, kind: parsed.kind, content: parsed.content, entities: validEntities,
+          confidence: parsed.confidence, evidenceFor: [], evidenceAgainst: [],
+          sourceFile, sourceLine: sourceLine + i + 1, timestamp: now, lastUpdated: now,
+          validFrom: now, validTo: null,
+        });
+      } catch (e) {
+        const msg = (e as Error).message;
+        console.warn(`[memory] retainSmart failed on "${parsed.content.slice(0, 60)}": ${msg}`);
+      }
+    }
+
+    return { facts, decisions };
+  }
+
+  /** Find top-K candidates for the resolver: valid facts sharing at least one entity. */
+  private findResolverCandidates(content: string, entities: string[], limit: number): Array<{ id: number; content: string; kind: string; timestamp: number }> {
+    if (entities.length === 0) {
+      // No entity anchors — fall back to FTS on content keywords (first 5 words)
+      if (!this.hasFts) return [];
+      const keywords = content.split(/\s+/).slice(0, 5).join(" OR ");
+      try {
+        const rows = this.db.prepare(
+          `SELECT f.id, f.content, f.kind, f.timestamp FROM facts f
+           JOIN facts_fts fts ON fts.rowid = f.id
+           WHERE facts_fts MATCH ? AND f.valid_to IS NULL
+           ORDER BY f.timestamp DESC LIMIT ?`
+        ).all(keywords, limit) as Array<{ id: number; content: string; kind: string; timestamp: number }>;
+        return rows;
+      } catch { return []; }
+    }
+    const slugs = entities.map(e => slugify(e)).filter(Boolean);
+    if (slugs.length === 0) return [];
+    const placeholders = slugs.map(() => "?").join(",");
+    const rows = this.db.prepare(
+      `SELECT DISTINCT f.id, f.content, f.kind, f.timestamp FROM facts f
+       JOIN entity_mentions em ON em.fact_id = f.id
+       WHERE em.entity_slug IN (${placeholders}) AND f.valid_to IS NULL
+       ORDER BY f.timestamp DESC LIMIT ?`
+    ).all(...slugs, limit) as Array<{ id: number; content: string; kind: string; timestamp: number }>;
+    return rows;
+  }
+
   // ── Auto-retain from ## Retain sections in daily logs ──
 
   retainFromDailyLog(date?: Date): RetainedFact[] {
@@ -1865,13 +2120,14 @@ export class MemoryIndex {
 
   // ── RECALL: Query facts by entity, time, kind ──
 
-  recallByEntity(entitySlug: string, limit = 20): RetainedFact[] {
+  recallByEntity(entitySlug: string, limit = 20, opts?: { includeInvalidated?: boolean }): RetainedFact[] {
     const slug = slugify(entitySlug);
+    const validFilter = opts?.includeInvalidated ? "" : "AND f.valid_to IS NULL";
     const rows = this.db
       .prepare(
         `SELECT f.* FROM facts f
          JOIN entity_mentions em ON em.fact_id = f.id
-         WHERE em.entity_slug = ?
+         WHERE em.entity_slug = ? ${validFilter}
          ORDER BY f.timestamp DESC
          LIMIT ?`
       )
@@ -1880,45 +2136,239 @@ export class MemoryIndex {
     return rows.map(rowToFact);
   }
 
-  recallByKind(kind: FactKind, limit = 20): RetainedFact[] {
+  // ── Entity-Relationship Graph ──
+
+  /**
+   * Store a subject-predicate-object relation linked to a fact or chunk.
+   * e.g. ("peter", "decided", "ship-mobile-release", fact_id=42)
+   */
+  storeRelation(opts: {
+    subject: string;
+    predicate: string;
+    object: string;
+    factId?: number;
+    chunkId?: number;
+    confidence?: number;
+  }): void {
+    const subject = slugify(opts.subject);
+    const object = slugify(opts.object);
+    const predicate = opts.predicate.toLowerCase().trim();
+    if (!subject || !predicate || !object) return;
+    try {
+      this.db.prepare(
+        `INSERT OR IGNORE INTO entity_relations
+           (subject, predicate, object, fact_id, chunk_id, confidence, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(subject, predicate, object, opts.factId ?? null, opts.chunkId ?? null, opts.confidence ?? 1.0, Date.now());
+    } catch {}
+  }
+
+  /** Get all relations where the entity appears as subject or object. */
+  getRelationsFor(entity: string, limit = 30): Array<{ subject: string; predicate: string; object: string; factId: number | null; chunkId: number | null }> {
+    const slug = slugify(entity);
+    const rows = this.db.prepare(
+      `SELECT subject, predicate, object, fact_id, chunk_id FROM entity_relations
+       WHERE subject = ? OR object = ?
+       ORDER BY created_at DESC
+       LIMIT ?`
+    ).all(slug, slug, limit) as Array<{ subject: string; predicate: string; object: string; fact_id: number | null; chunk_id: number | null }>;
+    return rows.map(r => ({ subject: r.subject, predicate: r.predicate, object: r.object, factId: r.fact_id, chunkId: r.chunk_id }));
+  }
+
+  /** Traverse the graph: starting from `entity`, find all entities connected within N hops. */
+  traverseFrom(entity: string, maxHops = 2): Set<string> {
+    const visited = new Set<string>();
+    const frontier: Array<{ slug: string; depth: number }> = [{ slug: slugify(entity), depth: 0 }];
+    visited.add(slugify(entity));
+    while (frontier.length > 0) {
+      const { slug, depth } = frontier.shift()!;
+      if (depth >= maxHops) continue;
+      const neighbors = this.db.prepare(
+        `SELECT DISTINCT CASE WHEN subject = ? THEN object ELSE subject END as neighbor
+         FROM entity_relations WHERE subject = ? OR object = ?`
+      ).all(slug, slug, slug) as Array<{ neighbor: string }>;
+      for (const { neighbor } of neighbors) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          frontier.push({ slug: neighbor, depth: depth + 1 });
+        }
+      }
+    }
+    return visited;
+  }
+
+  /**
+   * Extract simple subject-predicate-object relations from a fact.
+   * Heuristic — not LLM-based. Two strategies:
+   *   1. In-sentence SPO: "Peter decided to ship X" → (peter, decided, x)
+   *   2. Entity-as-subject: "Served in Air Force" + entity Jason → (jason, served, air-force)
+   */
+  extractRelations(text: string, entities: string[], factId?: number, chunkId?: number): number {
+    if (!text || entities.length === 0) return 0;
+    // Predicate vocabulary — ONLY action verbs (trimmed "is/has/was/got" — too noisy)
+    const VERBS = "decided|decides|suggested|suggests|introduced|introduces|recommended|recommends|told|asked|wants|wanted|likes|prefers|preferred|owns|owned|uses|used|built|builds|created|creates|shipped|ships|launched|launches|joined|joins|left|leaves|met|meets|works|worked|manages|managed|reports|reported|scheduled|schedules|planned|plans|bought|buys|sold|sells|sent|sends|received|receives|served|serves|retired|retires|lives|lived|moved|moves|started|starts|stopped|stops|finished|finishes|completed|completes|belongs";
+    // Groups: 1=subject, 2=verb, 3=object
+    // \b at end of prepositions prevents "a" from eating "at", "an" from eating "and", etc.
+    const predicateRe = new RegExp(`\\b([A-Z][a-zA-Z]+|my|our|the|W)?\\s*(${VERBS})\\s+(?:(?:about|with|from|into|onto|upon|for|the|an|at|in|on|to|me|us|a)\\s+)?([a-zA-Z][a-zA-Z0-9\\s-]{2,40})`, "gi");
+    // Trim trailing connectives & temporal noise from object
+    const trailingNoiseRe = /\s+(and|or|but|when|while|after|before|last|next|right|just|then|so|because|since|until|over|during|yesterday|today|tomorrow|ago)\b.*$/i;
+    const leadingFillerRe = /^(the|a|an|my|our|their|his|her|its|this|that|these|those)\s+/i;
+
+    let count = 0;
+    const seen = new Set<string>();
+    let match: RegExpExecArray | null;
+    while ((match = predicateRe.exec(text)) !== null) {
+      const subjectRaw = (match[1] || "").toLowerCase();
+      const predicate = match[2].toLowerCase();
+      let objectRaw = match[3].trim();
+      // Strip trailing connectives ("Air Force and retired" → "Air Force")
+      objectRaw = objectRaw.replace(trailingNoiseRe, "").trim();
+      // Strip leading fillers ("the Air Force" → "Air Force", "their iOS app" → "iOS app")
+      objectRaw = objectRaw.replace(leadingFillerRe, "").trim();
+      const object = objectRaw.split(/\s+/).slice(0, 4).join(" ");
+
+      // Resolve subject:
+      //   - pronouns/prepositions/filler → primary entity (fall back to entity context)
+      //   - empty → primary entity (sentence started with verb)
+      //   - explicit name → use it
+      const subjectFillers = new Set([
+        "my", "our", "the", "w", "a", "an", "this", "that", "these", "those",
+        "with", "about", "from", "into", "onto", "upon", "for", "at", "in", "on", "to",
+        "me", "us", "you", "him", "her", "it", "them", "they", "we", "i",
+        "after", "before", "when", "while", "then", "and", "or", "but", "so",
+      ]);
+      let subject = subjectRaw;
+      if (!subject || subjectFillers.has(subject)) {
+        subject = entities[0] || "";
+      }
+      if (!subject) continue;
+
+      // Skip trivial objects
+      if (object.length < 3) continue;
+      // Skip if object is just a pronoun/filler
+      if (/^(the|a|an|me|us|you|him|her|it|them)$/i.test(object)) continue;
+      // Skip self-references and verb-as-object (regex artifacts)
+      if (slugify(object) === subject) continue;
+      if (object.toLowerCase() === predicate) continue;
+
+      const key = `${subject}|${predicate}|${object}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      this.storeRelation({ subject, predicate, object, factId, chunkId });
+      count++;
+    }
+    return count;
+  }
+
+  /** Total relation count — for diagnostics. */
+  relationCount(): number {
+    return (this.db.prepare("SELECT COUNT(*) as n FROM entity_relations").get() as { n: number }).n;
+  }
+
+  recallByKind(kind: FactKind, limit = 20, opts?: { includeInvalidated?: boolean }): RetainedFact[] {
+    const validFilter = opts?.includeInvalidated ? "" : "AND valid_to IS NULL";
     const rows = this.db
-      .prepare("SELECT * FROM facts WHERE kind = ? ORDER BY timestamp DESC LIMIT ?")
+      .prepare(`SELECT * FROM facts WHERE kind = ? ${validFilter} ORDER BY timestamp DESC LIMIT ?`)
       .all(kind, limit) as Array<Record<string, unknown>>;
     return rows.map(rowToFact);
   }
 
-  recallByTime(since: Date, until?: Date, limit = 50): RetainedFact[] {
+  recallByTime(since: Date, until?: Date, limit = 50, opts?: { includeInvalidated?: boolean }): RetainedFact[] {
     const sinceMs = since.getTime();
     const untilMs = until ? until.getTime() : Date.now();
+    const validFilter = opts?.includeInvalidated ? "" : "AND valid_to IS NULL";
     const rows = this.db
       .prepare(
-        `SELECT * FROM facts WHERE timestamp >= ? AND timestamp <= ?
+        `SELECT * FROM facts WHERE timestamp >= ? AND timestamp <= ? ${validFilter}
          ORDER BY timestamp DESC LIMIT ?`
       )
       .all(sinceMs, untilMs, limit) as Array<Record<string, unknown>>;
     return rows.map(rowToFact);
   }
 
-  recallOpinions(entitySlug?: string): RetainedFact[] {
+  recallOpinions(entitySlug?: string, opts?: { includeInvalidated?: boolean }): RetainedFact[] {
+    const validFilter = opts?.includeInvalidated ? "" : "AND f.valid_to IS NULL";
     if (entitySlug) {
       const slug = slugify(entitySlug);
       const rows = this.db
         .prepare(
           `SELECT f.* FROM facts f
            JOIN entity_mentions em ON em.fact_id = f.id
-           WHERE f.kind = 'opinion' AND em.entity_slug = ?
+           WHERE f.kind = 'opinion' AND em.entity_slug = ? ${validFilter}
            ORDER BY f.confidence DESC, f.last_updated DESC`
         )
         .all(slug) as Array<Record<string, unknown>>;
       return rows.map(rowToFact);
     }
 
+    const bareValidFilter = opts?.includeInvalidated ? "" : "AND valid_to IS NULL";
     const rows = this.db
       .prepare(
-        "SELECT * FROM facts WHERE kind = 'opinion' ORDER BY confidence DESC, last_updated DESC"
+        `SELECT * FROM facts WHERE kind = 'opinion' ${bareValidFilter} ORDER BY confidence DESC, last_updated DESC`
       )
       .all() as Array<Record<string, unknown>>;
     return rows.map(rowToFact);
+  }
+
+  /**
+   * Time-travel query: return facts that were valid at a given point in time.
+   *
+   * A fact was valid at time T if:
+   *   valid_from <= T AND (valid_to IS NULL OR valid_to > T)
+   *
+   * Use for "what did I believe in February?" style questions.
+   */
+  recallAsOf(asOf: Date, opts?: { kind?: FactKind; entitySlug?: string; limit?: number }): RetainedFact[] {
+    const t = asOf.getTime();
+    const limit = opts?.limit ?? 50;
+    const conditions: string[] = [
+      "(f.valid_from IS NULL OR f.valid_from <= ?)",
+      "(f.valid_to IS NULL OR f.valid_to > ?)",
+    ];
+    const params: unknown[] = [t, t];
+    let join = "";
+    if (opts?.kind) { conditions.push("f.kind = ?"); params.push(opts.kind); }
+    if (opts?.entitySlug) {
+      join = "JOIN entity_mentions em ON em.fact_id = f.id";
+      conditions.push("em.entity_slug = ?");
+      params.push(slugify(opts.entitySlug));
+    }
+    params.push(limit);
+
+    const rows = this.db
+      .prepare(
+        `SELECT f.* FROM facts f ${join}
+         WHERE ${conditions.join(" AND ")}
+         ORDER BY f.timestamp DESC LIMIT ?`
+      )
+      .all(...params) as Array<Record<string, unknown>>;
+    return rows.map(rowToFact);
+  }
+
+  /**
+   * Mark a fact as invalidated — it stopped being true at `at` (default: now).
+   * Optionally point to the replacement fact via `replacedBy`.
+   * Non-destructive: the fact remains queryable via recallAsOf and
+   * via includeInvalidated:true, just hidden from default recalls.
+   */
+  invalidateFact(id: number, opts?: { reason?: string; replacedBy?: number; at?: Date }): boolean {
+    const at = (opts?.at || new Date()).getTime();
+    const r = this.db
+      .prepare(
+        `UPDATE facts
+         SET valid_to = ?, invalidated_by = ?, invalidation_reason = ?, last_updated = ?
+         WHERE id = ? AND valid_to IS NULL`
+      )
+      .run(at, opts?.replacedBy ?? null, opts?.reason ?? null, at, id);
+    return r.changes > 0;
+  }
+
+  /** Count currently-valid facts vs. invalidated — for diagnostics. */
+  validityStats(): { valid: number; invalidated: number } {
+    const valid = (this.db.prepare("SELECT COUNT(*) as n FROM facts WHERE valid_to IS NULL").get() as { n: number }).n;
+    const invalidated = (this.db.prepare("SELECT COUNT(*) as n FROM facts WHERE valid_to IS NOT NULL").get() as { n: number }).n;
+    return { valid, invalidated };
   }
 
   // ── REFLECT: Update entity pages + opinion confidence ──
@@ -2193,6 +2643,10 @@ function rowToFact(row: Record<string, unknown>): RetainedFact {
     sourceLine: row.source_line as number,
     timestamp: row.timestamp as number,
     lastUpdated: row.last_updated as number,
+    validFrom: (row.valid_from as number | null) ?? undefined,
+    validTo: (row.valid_to as number | null) ?? null,
+    invalidatedBy: (row.invalidated_by as number | null) ?? null,
+    invalidationReason: (row.invalidation_reason as string | null) ?? null,
   };
 }
 
@@ -3409,6 +3863,53 @@ export function createMemoryTools(memory: MemoryIndex) {
         } catch (e) {
           return { content: `Ingest failed: ${(e as Error).message}`, isError: true };
         }
+      },
+    },
+
+    {
+      name: "memory_consolidate",
+      description:
+        "Run sleeptime memory consolidation. Pulls recent conversation chunks, " +
+        "asks an LLM to extract durable facts (preferences, decisions, plans, world facts), " +
+        "and writes them through the resolver so duplicates are skipped and contradictions update " +
+        "existing facts via bi-temporal invalidation. Safe to run repeatedly. " +
+        "Intended for nightly cron — expensive to run ad-hoc unless you just ingested a lot of data.",
+      parameters: {
+        type: "object",
+        properties: {
+          lookbackHours: { type: "number", description: "How far back to look (default 24)" },
+          dryRun: { type: "boolean", description: "Extract facts but don't write them (default false)" },
+          provider: { type: "string", enum: ["ollama", "anthropic", "openai", "auto"], description: "Which LLM to use (default auto)" },
+          model: { type: "string", description: "Override default model for the chosen provider" },
+        },
+      },
+      async execute(args: Record<string, unknown>) {
+        const { runSleeptimeConsolidation } = await import("./memory-sleeptime.js");
+        const result = await runSleeptimeConsolidation(memory, {
+          lookbackHours: typeof args.lookbackHours === "number" ? args.lookbackHours : undefined,
+          dryRun: Boolean(args.dryRun),
+          provider: args.provider as "ollama" | "anthropic" | "openai" | "auto" | undefined,
+          model: typeof args.model === "string" ? args.model : undefined,
+        });
+        const elapsed = ((result.finishedAt - result.startedAt) / 1000).toFixed(1);
+        const ops = result.operations;
+        const lines = [
+          `Consolidation ${args.dryRun ? "(dry run) " : ""}complete in ${elapsed}s`,
+          `  Lookback: ${result.lookbackHours}h`,
+          `  Sessions analyzed: ${result.sessionsAnalyzed}`,
+          `  Chunks analyzed: ${result.chunksAnalyzed}`,
+          `  Facts extracted: ${result.factsExtracted}`,
+          `  Operations: add=${ops.add} update=${ops.update} delete=${ops.delete} noop=${ops.noop}`,
+          result.errors.length > 0 ? `  Errors: ${result.errors.length}` : "",
+        ].filter(Boolean);
+        if (result.decisions.length > 0 && result.decisions.length <= 10) {
+          lines.push("", "Decisions:");
+          for (const d of result.decisions) {
+            const target = d.targetId ? ` → id=${d.targetId}` : "";
+            lines.push(`  [${d.op}${target}] ${d.content} (${d.reason})`);
+          }
+        }
+        return { content: lines.join("\n") };
       },
     },
   ];

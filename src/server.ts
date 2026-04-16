@@ -236,6 +236,22 @@ export async function startServer(config: SAXConfig) {
   ];
   const bridgeTools = [...allTools, ...memoryTools, ...browserTools, ...imageTools, ...createCoreProtocolTools(), ...issueTools];
 
+  // Connect MCP servers and add their tools
+  try {
+    const { MCPManager } = await import("./mcp-client.js");
+    const mcpManager = MCPManager.getInstance(dataDir);
+    await mcpManager.connectAll();
+    const mcpTools = mcpManager.getAllTools();
+    if (mcpTools.length > 0) {
+      allAgentTools.push(...mcpTools);
+      console.log(`[mcp] Added ${mcpTools.length} tools from MCP servers`);
+    }
+    // Clean up MCP servers on shutdown
+    process.on("SIGINT", () => { mcpManager.disconnectAll(); });
+  } catch (e) {
+    console.warn(`[mcp] MCP client init failed: ${(e as Error).message}`);
+  }
+
   // Register extra tools and detect duplicates
   const seenTools = new Set<string>();
   for (const tool of allAgentTools) {

@@ -1332,16 +1332,14 @@ async function loadProviders() {
 }
 
 function updateStatusBar() {
-  const bar = document.getElementById('status-bar');
+  const bar = document.getElementById('status-bar-dynamic');
   if (!bar) return;
-  const uptime = formatUptime(Date.now() - serverStartTime);
-  const tokenInfo = window.lastContextStatus ? `${(window.lastContextStatus.usedTokens / 1000).toFixed(0)}K tokens` : '—';
+  const tokenInfo = window.lastContextStatus ? `${(window.lastContextStatus.usedTokens / 1000).toFixed(0)}K tokens` : '';
   const data = _providersCache;
   const currentProvider = data?.current?.provider || '—';
   const currentModel = data?.current?.model || '—';
   const providers = data?.providers || [];
   const activeP = providers.find(p => p.active) || providers[0];
-  const providerName = activeP?.name || currentProvider;
 
   // Build provider dropdown options
   const providerOpts = providers.map(p =>
@@ -1354,14 +1352,10 @@ function updateStatusBar() {
   ).join('') : `<option value="${esc(currentModel)}">${esc(currentModel)}</option>`;
 
   bar.innerHTML = `
-    <span class="status-item status-selector" aria-label="Provider">
-      <select id="provider-quick-select" class="status-select" onchange="quickSwitchProvider(this.value)" title="Switch provider">${providerOpts}</select>
-    </span>
-    <span class="status-item status-selector" aria-label="Model">
-      <select id="model-quick-select" class="status-select" onchange="quickSwitchModel(this.value)" title="Switch model">${modelOpts}</select>
-    </span>
-    <span class="status-item" aria-label="Token usage"><span class="status-icon">&#9998;</span> ${tokenInfo}</span>
-    <span class="status-item" aria-label="Server uptime"><span class="status-icon">&#9200;</span> ${uptime}</span>
+    <select id="provider-quick-select" class="status-select" onchange="quickSwitchProvider(this.value)" title="Switch provider">${providerOpts}</select>
+    <span style="color:var(--border)">&#9654;</span>
+    <select id="model-quick-select" class="status-select" onchange="quickSwitchModel(this.value)" title="Switch model">${modelOpts}</select>
+    ${tokenInfo ? `<span class="status-item"><span class="status-icon">&#9998;</span> ${tokenInfo}</span>` : ''}
     <span class="status-item" title="All data stays on your machine. API calls go to your selected provider." style="cursor:help"><span class="status-icon">&#128274;</span> Local</span>
   `;
 }
@@ -1618,40 +1612,9 @@ function init_chat() {
   if (stopBtn) stopBtn.style.display = 'none';
   const sendBtn = document.getElementById('send-btn');
   if (sendBtn) sendBtn.disabled = false;
-  renderMessages(); initStatusBar(); _renderAgentFeedsList(); loadMissionControl();
+  renderMessages(); initStatusBar(); _renderAgentFeedsList();
 }
 
-// ── Mission Control Dashboard (empty chat state) ──
-async function loadMissionControl() {
-  const mc = document.getElementById('mission-control');
-  if (!mc) return;
-  try {
-    const r = await fetch(`${API}/api/dashboard/stats`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-    const s = await r.json();
-    const el = id => document.getElementById(id);
-    if (el('mc-agents')) el('mc-agents').textContent = s.agents?.hired || 0;
-    if (el('mc-tasks')) el('mc-tasks').textContent = (s.issues?.inProgress || 0) + (s.issues?.open || 0);
-    if (el('mc-inbox')) el('mc-inbox').textContent = s.inbox || 0;
-    if (el('mc-projects')) el('mc-projects').textContent = s.projects || 0;
-    // Load hired agents as cards
-    const row = document.getElementById('mc-agents-row');
-    if (row) {
-      const ar = await fetch(`${API}/api/agents/hired`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-      const agents = await ar.json();
-      if (Array.isArray(agents) && agents.length > 0) {
-        row.innerHTML = agents.map(a => `
-          <div class="mc-agent-card" onclick="navigate('agents')">
-            <div class="mc-agent-name">${a.icon || ''} ${a.name || a.id}</div>
-            <div class="mc-agent-role">${a.role}</div>
-            <div class="mc-agent-status">${a.heartbeatEnabled ? 'Heartbeat: ' + (a.heartbeatSchedule || 'on') : 'Manual'}</div>
-          </div>
-        `).join('');
-      } else {
-        row.innerHTML = '<div style="color:var(--muted);font-size:.78rem;width:100%;text-align:center">No agents hired yet</div>';
-      }
-    }
-  } catch {}
-}
 
 // ═══════════════════════════════════════════════
 // Feature 1: Conversation Branching

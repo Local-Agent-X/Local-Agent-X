@@ -24,6 +24,18 @@
 [data-theme="light"] pre { background: #f0f0f8 !important; border-color: var(--border) !important; }
 [data-theme="light"] code { background: #e8e8f0 !important; }
 [data-theme="light"] #new-chat-btn:hover { color: #fff; }
+[data-theme="light"] .approval-card { background: #fff8e6; border-color: #e6a816; color: #1a1a2e; }
+[data-theme="light"] .approval-card.approved { background: #e8f7ec; border-color: #2aa84a; color: #1a1a2e; }
+[data-theme="light"] .approval-card.denied, [data-theme="light"] .approval-card.timeout { background: #fbeaea; border-color: #dc3545; color: #1a1a2e; }
+[data-theme="light"] .approval-icon { color: #b58200; }
+[data-theme="light"] .approval-context { color: #444; }
+[data-theme="light"] .approval-args pre { background: #f3f3f8; color: #444; }
+[data-theme="light"] .approval-actions .btn-approve { background: #0a7c2c; border-color: #0a7c2c; color: #fff; }
+[data-theme="light"] .approval-actions .btn-approve:hover:not(:disabled) { filter: brightness(1.1); }
+[data-theme="light"] .approval-actions .btn-deny { background: transparent; color: #555; border-color: #c0c0d0; }
+[data-theme="light"] .approval-actions .btn-deny:hover:not(:disabled) { background: #fbeaea; border-color: #dc3545; color: #dc3545; }
+[data-theme="light"] .approval-always { color: #666; }
+[data-theme="light"] .approval-status { color: #666; }
 *{box-sizing:border-box;margin:0;padding:0;scrollbar-width:thin;scrollbar-color:#1a1a2e transparent}
 ::-webkit-scrollbar{width:6px;height:6px}
 ::-webkit-scrollbar-track{background:transparent}

@@ -311,6 +311,14 @@ async function sendMessage() {
           case 'tool_progress':
             if (viewing) updateToolProgress(bodyEl, event.toolName, event.message);
             break;
+          case 'approval_requested':
+            if (viewing) bodyEl.appendChild(makeApprovalCard(event.approvalId, event.toolName, event.context, event.argsPreview));
+            break;
+          case 'approval_timeout': {
+            const card = document.querySelector('.approval-card[data-id="' + event.approvalId + '"]');
+            if (card) { card.classList.add('timeout'); card.querySelector('.approval-status').textContent = 'Timed out \u2014 denied.'; card.querySelectorAll('button').forEach(b => b.disabled = true); }
+            break;
+          }
           case 'context_status': if (viewing) updateContextBar(event); break;
           case 'error':
             if (saveInterval) clearInterval(saveInterval);

@@ -36,6 +36,14 @@ const LIMIT = process.argv.includes("--limit")
   ? parseInt(process.argv[process.argv.indexOf("--limit") + 1])
   : 0;
 
+const USE_HYDE = process.argv.includes("--hyde");
+const HYDE_MODEL = process.argv.includes("--hyde-model")
+  ? process.argv[process.argv.indexOf("--hyde-model") + 1]
+  : undefined;
+const HYDE_PROVIDER = process.argv.includes("--hyde-provider")
+  ? process.argv[process.argv.indexOf("--hyde-provider") + 1] as "ollama" | "anthropic" | "openai" | "auto"
+  : undefined;
+
 interface BenchmarkItem {
   question_id: string;
   question_type: string;
@@ -117,7 +125,11 @@ async function main() {
     const rerankProvider = process.argv.includes("--rerank-provider")
       ? process.argv[process.argv.indexOf("--rerank-provider") + 1]
       : undefined;
-    const results = await memory.search(item.question, { maxResults: K, minScore: 0.001, rerank: useRerank, rerankModel: rerankProvider ? `provider:${rerankProvider}` : undefined });
+    const results = await memory.search(item.question, {
+      maxResults: K, minScore: 0.001,
+      rerank: useRerank, rerankModel: rerankProvider ? `provider:${rerankProvider}` : undefined,
+      hyde: USE_HYDE, hydeModel: HYDE_MODEL, hydeProvider: HYDE_PROVIDER,
+    });
 
     // Phase 3: Check if ANY returned chunk comes from an answer session
     // This is how MemPalace measures — did you retrieve the right session?

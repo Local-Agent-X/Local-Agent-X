@@ -79,6 +79,65 @@ export async function startServer(config: SAXConfig) {
     const settings = existsSync(sp) ? JSON.parse(readFileSync(sp, "utf-8")) : {};
     const embProvider = settings.embeddingProvider || "ollama";
     const embModel = settings.embeddingModel || undefined;
+
+    // Auto-pull Ollama embedding model if Ollama is running but model not installed.
+    // mxbai-embed-large (1.3GB) scored 97.0% R@5 on LongMemEval — best zero-cost score.
+    // Falls back to nomic-embed-text (137MB) if mxbai pull fails, then to keyword-only search.
+    if (embProvider === "ollama") {
+      const targetModel = embModel || "mxbai-embed-large";
+      const fallbackModel = "nomic-embed-text";
+      try {
+        const ollamaUrl = (settings.ollamaUrl || "http://127.0.0.1:11434").replace(/\/$/, "");
+        // Check if Ollama is reachable
+        const ping = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) }).catch(() => null);
+        if (ping?.ok) {
+          const tags = await ping.json() as { models?: Array<{ name: string }> };
+          const installed = (tags.models || []).map(m => m.name.replace(/:latest$/, ""));
+          if (!installed.includes(targetModel)) {
+            console.log(`[memory] Model "${targetModel}" not found in Ollama. Pulling... (this may take a minute on first run)`);
+            try {
+              const pullRes = await fetch(`${ollamaUrl}/api/pull`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: targetModel, stream: false }),
+                signal: AbortSignal.timeout(300_000), // 5 min for large models
+              });
+              if (pullRes.ok) {
+                console.log(`[memory] Pulled ${targetModel} successfully`);
+              } else {
+                console.warn(`[memory] Failed to pull ${targetModel} — trying ${fallbackModel}`);
+                if (!installed.includes(fallbackModel)) {
+                  await fetch(`${ollamaUrl}/api/pull`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: fallbackModel, stream: false }),
+                    signal: AbortSignal.timeout(120_000),
+                  });
+                  console.log(`[memory] Pulled ${fallbackModel} as fallback`);
+                }
+              }
+            } catch (pullErr) {
+              console.warn(`[memory] Model pull failed: ${(pullErr as Error).message}`);
+              // Try fallback
+              if (!installed.includes(fallbackModel)) {
+                try {
+                  await fetch(`${ollamaUrl}/api/pull`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: fallbackModel, stream: false }),
+                    signal: AbortSignal.timeout(120_000),
+                  });
+                  console.log(`[memory] Pulled ${fallbackModel} as fallback`);
+                } catch {}
+              }
+            }
+          }
+        }
+      } catch (ollamaErr) {
+        console.warn(`[memory] Ollama check failed: ${(ollamaErr as Error).message}`);
+      }
+    }
+
     let apiKey: string | undefined;
     if (embProvider === "openai") apiKey = secretsStore.get("OPENAI_API_KEY") || config.openaiApiKey;
     else if (embProvider === "gemini") apiKey = secretsStore.get("GEMINI_API_KEY");

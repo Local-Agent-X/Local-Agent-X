@@ -1,0 +1,173 @@
+{
+  "benchmark": "LongMemEval-S",
+  "dataset": "xiaowu0162/longmemeval-cleaned/longmemeval_s_cleaned.json",
+  "total_questions": 500,
+  "sessions_per_question": 53,
+  "system": "Open Agent X",
+  "search": "hybrid BM25 (30%) + cosine vector (70%) + session grouping (20%) + temporal boost (15%)",
+  "chunking": "conversation-pair (max 3200 chars)",
+  "storage": "SQLite FTS5 + sqlite-vec",
+  "candidate_pool": "8x multiplier",
+  "reranking": "none (tested, proven unnecessary)",
+  "runs": [
+    {
+      "id": "v1", "date": "2026-04-10", "k": 10,
+      "embedding": "nomic-embed-text", "dimensions": 768, "provider": "ollama",
+      "score": 0.285, "status": "killed",
+      "notes": "Fixed-window chunking, answer text matching"
+    },
+    {
+      "id": "v2", "date": "2026-04-10", "k": 10,
+      "embedding": "nomic-embed-text", "dimensions": 768, "provider": "ollama",
+      "score": 0.591, "status": "killed",
+      "notes": "Conversation-pair chunking, fuzzy answer matching"
+    },
+    {
+      "id": "v3", "date": "2026-04-10", "k": 10,
+      "embedding": "nomic-embed-text", "dimensions": 768, "provider": "ollama",
+      "score": 0.964, "correct": 482, "runtime_seconds": 2883, "status": "complete",
+      "notes": "Session ID matching (MemPalace methodology)",
+      "categories": {
+        "knowledge-update": {"score": 1.0, "correct": 78, "total": 78},
+        "multi-session": {"score": 0.985, "correct": 131, "total": 133},
+        "single-session-assistant": {"score": 1.0, "correct": 56, "total": 56},
+        "single-session-preference": {"score": 0.967, "correct": 29, "total": 30},
+        "single-session-user": {"score": 0.929, "correct": 65, "total": 70},
+        "temporal-reasoning": {"score": 0.925, "correct": 123, "total": 133}
+      }
+    },
+    {
+      "id": "v4", "date": "2026-04-10", "k": 10,
+      "embedding": "nomic-embed-text", "dimensions": 768, "provider": "ollama",
+      "score": 0.978, "correct": 489, "runtime_seconds": 3934, "status": "complete",
+      "notes": "Session grouping + temporal boost + 8x candidates",
+      "categories": {
+        "knowledge-update": {"score": 1.0, "correct": 78, "total": 78},
+        "multi-session": {"score": 0.992, "correct": 132, "total": 133},
+        "single-session-assistant": {"score": 1.0, "correct": 56, "total": 56},
+        "single-session-preference": {"score": 0.967, "correct": 29, "total": 30},
+        "single-session-user": {"score": 0.943, "correct": 66, "total": 70},
+        "temporal-reasoning": {"score": 0.962, "correct": 128, "total": 133}
+      }
+    },
+    {
+      "id": "v5-llama3-rerank", "date": "2026-04-10", "k": 10,
+      "embedding": "nomic-embed-text", "dimensions": 768, "provider": "ollama",
+      "reranker": "llama3:8b",
+      "score": 0.970, "correct": 485, "status": "complete",
+      "notes": "Reranker hurt score"
+    },
+    {
+      "id": "v5-qwen2-rerank", "date": "2026-04-11", "k": 10,
+      "embedding": "nomic-embed-text", "dimensions": 768, "provider": "ollama",
+      "reranker": "qwen2:7b",
+      "score": 0.947, "status": "killed",
+      "notes": "Reranker hurt badly, killed at 65%"
+    },
+    {
+      "id": "v5-no-rerank-batch-fix", "date": "2026-04-11", "k": 10,
+      "embedding": "nomic-embed-text", "dimensions": 768, "provider": "ollama",
+      "score": 0.978, "correct": 489, "runtime_seconds": 3753, "status": "complete",
+      "notes": "Batch embed fix, confirmed same 97.8%",
+      "categories": {
+        "knowledge-update": {"score": 1.0, "correct": 78, "total": 78},
+        "multi-session": {"score": 0.992, "correct": 132, "total": 133},
+        "single-session-assistant": {"score": 1.0, "correct": 56, "total": 56},
+        "single-session-preference": {"score": 0.967, "correct": 29, "total": 30},
+        "single-session-user": {"score": 0.943, "correct": 66, "total": 70},
+        "temporal-reasoning": {"score": 0.962, "correct": 128, "total": 133}
+      }
+    },
+    {
+      "id": "v6-haiku-rerank", "date": "2026-04-11", "k": 10,
+      "embedding": "nomic-embed-text", "dimensions": 768, "provider": "ollama",
+      "reranker": "claude-haiku-4-5", "reranker_provider": "anthropic",
+      "score": 0.978, "correct": 489, "runtime_seconds": 4834, "status": "complete",
+      "notes": "Haiku reranking made zero difference",
+      "categories": {
+        "knowledge-update": {"score": 1.0, "correct": 78, "total": 78},
+        "multi-session": {"score": 0.992, "correct": 132, "total": 133},
+        "single-session-assistant": {"score": 1.0, "correct": 56, "total": 56},
+        "single-session-preference": {"score": 0.933, "correct": 28, "total": 30},
+        "single-session-user": {"score": 0.900, "correct": 63, "total": 70},
+        "temporal-reasoning": {"score": 0.962, "correct": 128, "total": 133}
+      }
+    },
+    {
+      "id": "nomic-r5", "date": "2026-04-11", "k": 5,
+      "embedding": "nomic-embed-text", "dimensions": 768, "provider": "ollama",
+      "status": "killed at 222/500 (94.1%)",
+      "notes": "Below MemPalace pace, killed to try mxbai"
+    },
+    {
+      "id": "mxbai-r5", "date": "2026-04-11", "k": 5,
+      "embedding": "mxbai-embed-large", "dimensions": 1024, "provider": "ollama",
+      "score": 0.970, "correct": 485, "runtime_seconds": 3843, "status": "complete",
+      "notes": "Beat MemPalace 96.6% - first #1 R@5",
+      "categories": {
+        "knowledge-update": {"score": 1.0, "correct": 78, "total": 78},
+        "multi-session": {"score": 0.985, "correct": 131, "total": 133},
+        "single-session-assistant": {"score": 1.0, "correct": 56, "total": 56},
+        "single-session-preference": {"score": 0.967, "correct": 29, "total": 30},
+        "single-session-user": {"score": 0.943, "correct": 66, "total": 70},
+        "temporal-reasoning": {"score": 0.940, "correct": 125, "total": 133}
+      }
+    },
+    {
+      "id": "mxbai-r10", "date": "2026-04-11", "k": 10,
+      "embedding": "mxbai-embed-large", "dimensions": 1024, "provider": "ollama",
+      "score": 0.980, "correct": 490, "runtime_seconds": 3953, "status": "complete",
+      "notes": "Personal best R@10",
+      "categories": {
+        "knowledge-update": {"score": 1.0, "correct": 78, "total": 78},
+        "multi-session": {"score": 0.992, "correct": 132, "total": 133},
+        "single-session-assistant": {"score": 1.0, "correct": 56, "total": 56},
+        "single-session-preference": {"score": 0.967, "correct": 29, "total": 30},
+        "single-session-user": {"score": 0.929, "correct": 65, "total": 70},
+        "temporal-reasoning": {"score": 0.977, "correct": 130, "total": 133}
+      }
+    },
+    {
+      "id": "gte-large-r5", "date": "2026-04-11", "k": 5,
+      "embedding": "thenlper/gte-large", "dimensions": 1024,
+      "provider": "sentence-transformers (Python server port 11435)",
+      "score": 0.972, "correct": 486, "runtime_seconds": 2365, "status": "complete",
+      "notes": "#1 zero-cost R@5 - apples-to-apples with MemPalace/QMG model",
+      "categories": {
+        "knowledge-update": {"score": 1.0, "correct": 78, "total": 78},
+        "multi-session": {"score": 0.970, "correct": 129, "total": 133},
+        "single-session-assistant": {"score": 1.0, "correct": 56, "total": 56},
+        "single-session-preference": {"score": 0.967, "correct": 29, "total": 30},
+        "single-session-user": {"score": 0.929, "correct": 65, "total": 70},
+        "temporal-reasoning": {"score": 0.970, "correct": 129, "total": 133}
+      }
+    },
+    {
+      "id": "gte-large-r10", "date": "2026-04-11", "k": 10,
+      "embedding": "thenlper/gte-large", "dimensions": 1024,
+      "provider": "sentence-transformers (Python server port 11435)",
+      "score": 0.980, "correct": 490, "status": "complete",
+      "notes": "Tied with mxbai R@10",
+      "categories": {
+        "knowledge-update": {"score": 1.0, "correct": 78, "total": 78},
+        "multi-session": {"score": 0.992, "correct": 132, "total": 133},
+        "single-session-assistant": {"score": 1.0, "correct": 56, "total": 56},
+        "single-session-preference": {"score": 0.967, "correct": 29, "total": 30},
+        "single-session-user": {"score": 0.929, "correct": 65, "total": 70},
+        "temporal-reasoning": {"score": 0.977, "correct": 130, "total": 133}
+      }
+    },
+    {
+      "id": "snowflake-r5", "date": "2026-04-11", "k": 5,
+      "embedding": "snowflake-arctic-embed:335m", "dimensions": 768, "provider": "ollama",
+      "status": "killed - embedding timeouts",
+      "notes": "Model too slow, embedding requests timed out"
+    },
+    {
+      "id": "mxbai-r5-early", "date": "2026-04-11", "k": 5,
+      "embedding": "mxbai-embed-large", "dimensions": 1024, "provider": "ollama",
+      "status": "killed at 23/500 (82.6%)",
+      "notes": "Early test, embed errors, behind nomic pace"
+    }
+  ]
+}

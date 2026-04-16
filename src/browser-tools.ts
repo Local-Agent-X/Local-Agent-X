@@ -82,6 +82,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
       "- extract: Get visible text from the page or a specific element.\n" +
       "- screenshot: Capture the current page.\n" +
       "- evaluate: Run JavaScript in the page.\n" +
+      "- act: Natural language action — 'click the login button', 'fill email with test@test.com'. Figures out the right element from a snapshot automatically.\n" +
+      "- observe: Summarize what's actionable on the page — buttons, links, inputs, dropdowns with their ref numbers.\n" +
       "- tabs: List all open tabs with URLs and titles.\n" +
       "- switch_tab: Switch to a tab by index (set 'value' to tab number).\n" +
       "- info: Get current page URL, title, and engine.\n" +
@@ -95,7 +97,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
       properties: {
         action: {
           type: "string",
-          enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "tabs", "switch_tab", "info", "close"],
+          enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "tabs", "switch_tab", "info", "close"],
           description: "The browser action to perform. Use 'snapshot' to see interactive elements with ref numbers, then 'click' with a ref. Use 'new_tab' to open a URL in a new tab without closing the current one.",
         },
         url: {
@@ -321,9 +323,117 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             return ok("Browser session closed.");
           }
 
+          // ── Intelligent Actions (Stagehand-inspired) ──
+          // These accept natural language and figure out which element to interact with.
+          // They work by: snapshot → match instruction to elements → perform action.
+
+          case "act": {
+            // Natural language action: "click the login button", "fill in the search box with 'cats'"
+            const instruction = String(args.text || args.value || "");
+            if (!instruction) return err("'text' parameter required for act. Describe what to do: 'click the login button', 'fill search with cats'.");
+
+            // Get current page state
+            const snap = await manager.snapshot();
+            const lines = snap.split("\n").filter(l => l.trim());
+
+            // Parse instruction to determine action type
+            const lowerInst = instruction.toLowerCase();
+            const isFill = /\b(fill|type|enter|input|write|set)\b/.test(lowerInst);
+            const isClick = /\b(click|press|tap|select|choose|toggle|check|uncheck|submit|open)\b/.test(lowerInst);
+
+            // Extract target text from instruction
+            // "click the login button" → target = "login"
+            // "fill email with test@test.com" → target = "email", value = "test@test.com"
+            const words = instruction.replace(/['"]/g, "").split(/\s+/);
+
+            if (isFill) {
+              // Extract field name and value from instruction
+              const withIdx = words.findIndex(w => w.toLowerCase() === "with");
+              const fieldWords = words.slice(0, withIdx > 0 ? withIdx : words.length).filter(w => !/^(fill|type|enter|input|write|set|in|the|a|an)$/i.test(w));
+              const valueWords = withIdx > 0 ? words.slice(withIdx + 1) : [];
+              const fieldName = fieldWords.join(" ").toLowerCase();
+              const fillValue = valueWords.join(" ") || String(args.value || "");
+
+              // Find matching ref in snapshot
+              const match = lines.find(l => {
+                const lower = l.toLowerCase();
+                return (lower.includes("input") || lower.includes("textbox") || lower.includes("combobox") || lower.includes("searchbox")) &&
+                       fieldName.split(" ").some(w => w.length > 2 && lower.includes(w));
+              });
+              if (match) {
+                const refMatch = match.match(/\[(\d+)\]/);
+                if (refMatch) {
+                  const ref = parseInt(refMatch[1]);
+                  const result = await manager.fillByRef(ref, fillValue);
+                  return ok(`Filled ref [${ref}] with "${fillValue}". ${result}`);
+                }
+              }
+              // Fallback: try click_text on the field label, then fill
+              return err(`Could not find input matching "${fieldName}". Take a snapshot to see available refs.`);
+            }
+
+            if (isClick) {
+              // Find matching element in snapshot
+              const targetWords = words.filter(w => !/^(click|press|tap|select|choose|toggle|submit|open|the|a|an|on|button|link)$/i.test(w));
+              const target = targetWords.join(" ").toLowerCase();
+
+              const match = lines.find(l => {
+                const lower = l.toLowerCase();
+                return target.split(" ").filter(w => w.length > 2).every(w => lower.includes(w));
+              });
+              if (match) {
+                const refMatch = match.match(/\[(\d+)\]/);
+                if (refMatch) {
+                  const ref = parseInt(refMatch[1]);
+                  const result = await manager.clickByRef(ref);
+                  return ok(`Clicked ref [${ref}] (matched "${target}"). ${result}`);
+                }
+              }
+              // Fallback: try click_text
+              try {
+                const result = await manager.clickByText(target);
+                return ok(`Clicked text "${target}". ${result}`);
+              } catch {
+                return err(`Could not find element matching "${target}". Take a snapshot to see available elements.`);
+              }
+            }
+
+            return err(`Could not parse action from "${instruction}". Try: "click the X button" or "fill email with test@test.com".`);
+          }
+
+          case "observe": {
+            // Returns a structured summary of what's actionable on the page
+            const snap = await manager.snapshot();
+            const lines = snap.split("\n").filter(l => l.trim());
+            const buttons = lines.filter(l => /button|submit|btn/i.test(l));
+            const links = lines.filter(l => /link|href/i.test(l));
+            const inputs = lines.filter(l => /input|textbox|combobox|searchbox|textarea/i.test(l));
+            const selects = lines.filter(l => /select|listbox|dropdown|combobox/i.test(l));
+
+            const summary = [
+              `Page: ${await manager.getInfo()}`,
+              "",
+              `Buttons (${buttons.length}):`,
+              ...buttons.slice(0, 15).map(b => `  ${b.trim()}`),
+              buttons.length > 15 ? `  ... and ${buttons.length - 15} more` : "",
+              "",
+              `Links (${links.length}):`,
+              ...links.slice(0, 10).map(l => `  ${l.trim()}`),
+              links.length > 10 ? `  ... and ${links.length - 10} more` : "",
+              "",
+              `Inputs (${inputs.length}):`,
+              ...inputs.slice(0, 10).map(i => `  ${i.trim()}`),
+              "",
+              `Dropdowns (${selects.length}):`,
+              ...selects.slice(0, 5).map(s => `  ${s.trim()}`),
+            ].filter(Boolean).join("\n");
+
+            return ok(summary);
+          }
+
           default:
             return err(
-              `Unknown action: "${action}". Valid actions: navigate, click, fill, select, extract, screenshot, evaluate, tabs, switch_tab, info, close`
+              `Unknown action: "${action}". Valid actions: navigate, click, fill, select, extract, screenshot, evaluate, act, observe, tabs, switch_tab, info, close`
             );
         }
       } catch (e) {

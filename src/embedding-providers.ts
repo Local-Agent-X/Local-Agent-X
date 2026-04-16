@@ -384,7 +384,10 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   private dimensionsDetected = false;
 
   constructor(opts?: { model?: string; baseUrl?: string }) {
-    this.model = opts?.model ?? "nomic-embed-text";
+    // mxbai-embed-large (1024d) scored 97.0% R@5 on LongMemEval — #1 zero-cost.
+    // nomic-embed-text (768d) scored ~95.5% R@5 — fallback if mxbai not available.
+    // Strip ":latest" suffix — Ollama adds it but our knownDims don't include it.
+    this.model = (opts?.model ?? "mxbai-embed-large").replace(/:latest$/, "");
     this.baseUrl = (opts?.baseUrl ?? getRuntimeConfig().ollamaUrl).replace(
       /\/$/,
       ""
@@ -478,9 +481,41 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
         method: "GET",
         signal: AbortSignal.timeout(3000),
       });
-      this.healthy = res.ok;
-      if (!this.healthy) {
+      if (!res.ok) {
         console.warn(`[ollama-embed] Server responded with ${res.status}`);
+        this.healthy = false;
+        return false;
+      }
+      // Verify the model is actually available — do a quick test embed.
+      // First call to a large model (mxbai-embed-large = 1.3GB) can take 30-60s to load into GPU/RAM.
+      try {
+        const testRes = await fetch(`${this.baseUrl}/api/embed`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: this.model, input: ["test"] }),
+          signal: AbortSignal.timeout(60000), // 60s for first model load
+        });
+        if (!testRes.ok) {
+          // Model not available — try fallback to nomic-embed-text
+          if (this.model !== "nomic-embed-text") {
+            console.warn(`[ollama-embed] Model "${this.model}" not available (HTTP ${testRes.status}) — falling back to nomic-embed-text`);
+            this.model = "nomic-embed-text";
+            this.dimensions = 768;
+            const fallbackRes = await fetch(`${this.baseUrl}/api/embed`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: this.model, input: ["test"] }),
+              signal: AbortSignal.timeout(30000),
+            });
+            this.healthy = fallbackRes.ok;
+          } else {
+            this.healthy = false;
+          }
+        } else {
+          this.healthy = true;
+        }
+      } catch {
+        this.healthy = false;
       }
     } catch {
       this.healthy = false;

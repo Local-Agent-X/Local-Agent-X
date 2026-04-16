@@ -5,12 +5,86 @@
  * memory_update_profile, memory_ingest, memory_consolidate — everything the
  * agent can call to read/write persistent memory.
  */
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join, resolve, relative, isAbsolute } from "node:path";
 import type { MemoryIndex } from "../memory.js";
 import type { FactKind, RetainedFact } from "./types.js";
 import { slugify, atomicWriteFileSync } from "./utils.js";
 import { PERSONALITY_FILES } from "./personality.js";
+
+// ── Deep-forget helpers (redact from profile files + daily logs) ──
+
+/** Remove or redact mentions of `term` from USER.md, MIND.md, HEART.md. */
+function redactFromProfileFiles(memDir: string, term: string): number {
+  const termLower = term.toLowerCase();
+  const termRe = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  let filesChanged = 0;
+
+  for (const [, filename] of Object.entries(PERSONALITY_FILES)) {
+    const filePath = join(memDir, filename);
+    if (!existsSync(filePath)) continue;
+    const original = readFileSync(filePath, "utf-8");
+    if (!original.toLowerCase().includes(termLower)) continue;
+
+    // Line-by-line: remove lines that are PRIMARILY about the term,
+    // redact the term from lines that mention it alongside other things.
+    const lines = original.split("\n");
+    const newLines: string[] = [];
+    for (const line of lines) {
+      if (!line.toLowerCase().includes(termLower)) {
+        newLines.push(line);
+        continue;
+      }
+      // If the line is a bullet/list item and >50% of non-filler content is the term, drop it
+      const stripped = line.replace(/^[\s\-*#>]+/, "").trim();
+      if (stripped.toLowerCase() === termLower || stripped.toLowerCase().startsWith(termLower + " ") && stripped.length < term.length + 20) {
+        continue; // drop entire line — it's primarily about the term
+      }
+      // Otherwise redact the term inline (e.g., "kids (PJM, MJM, AJM)" → "kids (PJM, MJM)")
+      let redacted = line.replace(termRe, "").replace(/,\s*,/g, ",").replace(/,\s*\)/g, ")").replace(/\(\s*,/g, "(").replace(/\s{2,}/g, " ").trim();
+      if (redacted) newLines.push(redacted);
+    }
+    const result = newLines.join("\n");
+    if (result !== original) {
+      atomicWriteFileSync(filePath, result);
+      filesChanged++;
+    }
+  }
+  return filesChanged;
+}
+
+/** Redact mentions of `term` from today's daily log + recent logs. */
+function redactFromDailyLogs(memDir: string, term: string, daysBack = 7): number {
+  const termRe = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  let linesRedacted = 0;
+
+  const files: string[] = [];
+  try {
+    for (const f of readdirSync(memDir)) {
+      if (/^\d{4}-\d{2}-\d{2}\.md$/.test(f)) files.push(f);
+    }
+  } catch { return 0; }
+
+  // Only process recent logs (default last 7 days)
+  const cutoff = Date.now() - daysBack * 86_400_000;
+  for (const f of files) {
+    const dateStr = f.replace(".md", "");
+    if (new Date(dateStr).getTime() < cutoff) continue;
+
+    const filePath = join(memDir, f);
+    const content = readFileSync(filePath, "utf-8");
+    if (!content.toLowerCase().includes(term.toLowerCase())) continue;
+
+    const lines = content.split("\n");
+    const newLines = lines.map(line => {
+      if (!line.toLowerCase().includes(term.toLowerCase())) return line;
+      linesRedacted++;
+      return line.replace(termRe, "[REDACTED]");
+    });
+    atomicWriteFileSync(filePath, newLines.join("\n"));
+  }
+  return linesRedacted;
+}
 
 //  MEMORY TOOLS FOR AGENT
 // ══════════════════════════════════════════════════════════
@@ -383,6 +457,19 @@ export function createMemoryTools(memory: MemoryIndex) {
 
         if (results.length === 0) {
           return { content: "Provide at least one of: query, fact, conversation_id, or path to specify what to forget.", isError: true };
+        }
+
+        // Deep forget: also scrub profile files + daily logs so the term
+        // doesn't resurface via USER.md/MIND.md/daily log context injection.
+        if (confirm) {
+          const term = fact || query || "";
+          if (term.length >= 2) {
+            const memDir = (memory as unknown as { memoryDir: string }).memoryDir;
+            const profilesChanged = redactFromProfileFiles(memDir, term);
+            const logsRedacted = redactFromDailyLogs(memDir, term);
+            if (profilesChanged > 0) results.push(`Redacted "${term}" from ${profilesChanged} profile file(s)`);
+            if (logsRedacted > 0) results.push(`Redacted ${logsRedacted} line(s) in daily logs`);
+          }
         }
 
         if (!confirm) {

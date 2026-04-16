@@ -21,6 +21,7 @@ import type { IncomingMessage } from "node:http";
 import type { Server } from "node:http";
 import type { ServerEvent } from "./types.js";
 import { timingSafeEqual } from "node:crypto";
+import { getApprovalManager } from "./approval-manager.js";
 
 interface ActiveChat {
   sessionId: string;
@@ -140,7 +141,6 @@ export function setupChatWebSocket(server: Server, authToken: string) {
       // Approval response: resolve a pending tool approval
       if (type === "approval_response" && msg.approvalId) {
         try {
-          const { getApprovalManager } = require("./approval-manager.js");
           const resolved = getApprovalManager().resolveApproval(
             String(msg.approvalId),
             Boolean(msg.approved),

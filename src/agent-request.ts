@@ -98,9 +98,22 @@ export async function resolveProvider(
     if (existsSync(sp)) saved = JSON.parse(readFileSync(sp, "utf-8"));
   } catch {}
 
-  // Resolve provider
+  // Resolve provider. If a saved provider exists but has no usable credentials,
+  // fall through to auto-detection so a stale "codex" default from a previous
+  // run doesn't block a freshly-signed-in Anthropic user.
+  const VALID = ["codex", "xai", "openai", "anthropic", "local", "gemini", "custom"];
+  const hasCredsFor = (p: string): boolean => {
+    if (p === "anthropic") return !!loadAnthropicTokens();
+    if (p === "codex") return !!loadTokens();
+    if (p === "openai") return !!(config.openaiApiKey || secretsStore.get("OPENAI_API_KEY"));
+    if (p === "xai") return !!secretsStore.get("XAI_API_KEY");
+    if (p === "gemini") return !!secretsStore.get("GEMINI_API_KEY");
+    if (p === "custom") return !!secretsStore.get("CUSTOM_API_KEY");
+    if (p === "local") return true;
+    return false;
+  };
   let provider = String(saved.provider || "");
-  if (!["codex", "xai", "openai", "anthropic", "local", "gemini", "custom"].includes(provider)) {
+  if (!VALID.includes(provider) || !hasCredsFor(provider)) {
     provider = loadAnthropicTokens() ? "anthropic" : (loadTokens() && !config.openaiApiKey) ? "codex" : "xai";
   }
 

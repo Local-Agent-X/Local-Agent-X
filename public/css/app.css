@@ -349,16 +349,6 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .org-dropzone{border:2px dashed var(--border);border-radius:10px;padding:16px 24px;text-align:center;min-width:140px;transition:border-color .15s}
 .org-dropzone.org-drop-target{border-color:var(--accent)}
 
-/* ── Mission Control ── */
-.mc-stat-card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:center}
-.mc-stat-value{font-size:1.8rem;font-weight:700;color:var(--accent);font-family:var(--mono)}
-.mc-stat-label{font-size:.65rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
-.mc-agent-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:180px;cursor:pointer;transition:border-color .15s}
-.mc-agent-card:hover{border-color:var(--accent)}
-.mc-agent-name{font-family:var(--mono);font-size:.78rem;color:var(--text);margin-bottom:2px}
-.mc-agent-role{font-size:.65rem;color:var(--muted)}
-.mc-agent-status{font-size:.6rem;font-family:var(--mono);margin-top:4px}
-
 /* ── Secret modal (used from chat) ── */
 #secret-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:10000;align-items:center;justify-content:center}
 #secret-modal-overlay.visible{display:flex}
@@ -432,7 +422,8 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .cmd-empty{padding:20px;text-align:center;color:var(--muted);font-size:.82rem}
 
 /* ── Status bar (feature 97) ── */
-#status-bar{display:flex;justify-content:center;gap:16px;padding:6px 14px;font-family:var(--mono);font-size:.62rem;color:var(--muted);max-width:800px;margin:0 auto;width:100%;align-items:center}
+#status-bar{display:flex;gap:8px;padding:6px 14px;font-family:var(--mono);font-size:.62rem;color:var(--muted);max-width:800px;margin:0 auto;width:100%;align-items:center}
+#status-bar-dynamic{display:flex;align-items:center;gap:8px}
 .status-item{display:flex;align-items:center;gap:4px}
 .status-icon{font-size:.7rem}
 .status-selector{position:relative}

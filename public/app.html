@@ -124,19 +124,9 @@
       </div>
       <div id="messages" role="log" aria-label="Chat messages" aria-live="polite">
         <div id="empty">
-          <div id="mission-control" style="max-width:800px;margin:0 auto;padding:20px;width:100%">
-            <div style="text-align:center;margin-bottom:24px"><img src="/hero.jpg" alt="Open Agent X" class="hero-img" style="max-height:120px" /><h2 style="font-family:var(--mono);color:var(--accent);letter-spacing:2px;font-size:1rem;margin-top:8px">MISSION CONTROL</h2></div>
-            <div id="mc-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
-              <div class="mc-stat-card"><div class="mc-stat-value" id="mc-agents">0</div><div class="mc-stat-label">Agents</div></div>
-              <div class="mc-stat-card"><div class="mc-stat-value" id="mc-tasks">0</div><div class="mc-stat-label">Tasks Active</div></div>
-              <div class="mc-stat-card"><div class="mc-stat-value" id="mc-inbox">0</div><div class="mc-stat-label">Pending Approval</div></div>
-              <div class="mc-stat-card"><div class="mc-stat-value" id="mc-projects">0</div><div class="mc-stat-label">Projects</div></div>
-            </div>
-            <div id="mc-agents-row" style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;margin-bottom:16px"></div>
-            <div style="text-align:center;color:var(--muted);font-size:.8rem">
-              <p>Start a chat, or go to <a href="#agents" onclick="navigate('agents')" style="color:var(--accent);cursor:pointer">Agents</a> to hire your team.</p>
-            </div>
-          </div>
+          <img src="/hero.jpg" alt="Open Agent X" class="hero-img" />
+          <h2>OPEN AGENT X</h2>
+          <p>Select a chat or start a new one.</p>
         </div>
       </div>
       <div id="input-area">
@@ -155,8 +145,9 @@
         </div>
         <!-- Status bar with controls -->
         <div id="status-bar" role="status" aria-label="Status information" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span id="status-bar-dynamic"></span>
+          <div style="flex:1"></div>
           <button id="tts-toggle" onclick="toggleTTS()" aria-label="Toggle text-to-speech" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;font-family:var(--mono);font-size:.62rem;cursor:pointer">VOICE OFF</button>
-
           <button id="md-toggle-btn" onclick="toggleMdPreview()" title="Show raw markdown" aria-label="Toggle markdown preview" style="background:transparent;border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:4px;font-family:var(--mono);font-size:.62rem;cursor:pointer">Raw</button>
         </div>
       </div>
@@ -212,21 +203,35 @@
         </div>
         <div class="section-card">
           <div class="section-title">Anthropic Authentication</div>
-          <div class="section-desc">Use a Claude setup-token if you want the most reliable Claude subscription path. Legacy OAuth is still available below.</div>
+          <div class="section-desc">Connect to Claude (Sonnet, Opus, Haiku). Anthropic blocked third-party direct OAuth in April 2026 — all subscription auth now routes through the official Claude CLI subprocess.</div>
           <div id="anthropic-auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div id="claude-cli-status" class="status-badge warn" style="margin-top:6px"><span class="status-dot"></span> Checking Claude CLI...</div>
-          <div class="field" style="margin-top:10px">
-            <label class="field-label">Claude Setup-Token (Preferred)</label>
-            <div style="display:flex;gap:8px">
-              <input class="field-input" id="anthropic-setup-token" type="password" placeholder="Paste token from claude setup-token" autocomplete="off" style="flex:1"/>
-              <button id="btn-anthropic-save-token" class="action-btn primary" onclick="saveAnthropicSetupToken()">Save Token</button>
-            </div>
-            <div class="field-hint">Run <code>claude setup-token</code> in Claude CLI, then paste the token here. This is more reliable than legacy OAuth for Sonnet/Opus.</div>
+          <div id="anthropic-already-connected" style="margin-top:8px;display:none">
+            <div class="field-hint" style="color:var(--accent)">✓ You're connected via the Claude CLI's own login session — no further action needed. Chat &amp; builds will work via subprocess.</div>
+            <button class="action-btn" style="margin-top:6px;font-size:.7rem;padding:4px 10px" onclick="toggleAnthropicOptions()">Show connection options ▾</button>
           </div>
-          <div class="btn-row">
-            <button id="btn-anthropic-login" class="action-btn" onclick="doAnthropicLogin()">Use Legacy OAuth</button>
-            <button id="btn-anthropic-disconnect" class="action-btn danger" onclick="doAnthropicDisconnect()" style="display:none">Disconnect</button>
-            <button id="btn-install-claude-cli" class="action-btn" onclick="installClaudeCli()" style="display:none">Install Claude CLI</button>
+          <div id="anthropic-options" style="margin-top:10px">
+            <div class="field-hint" style="margin-bottom:6px"><strong>Three ways to connect</strong> (only one needed):</div>
+            <div class="field" style="margin-top:10px">
+              <label class="field-label">Option 1 — Claude CLI login (easiest)</label>
+              <div class="field-hint">Run <code>claude login</code> in your terminal. Once logged in, this app will detect it automatically. No tokens stored here.</div>
+            </div>
+            <div class="field" style="margin-top:14px">
+              <label class="field-label">Option 2 — Setup-token</label>
+              <div style="display:flex;gap:8px">
+                <input class="field-input" id="anthropic-setup-token" type="password" placeholder="Paste token from claude setup-token" autocomplete="off" style="flex:1"/>
+                <button id="btn-anthropic-save-token" class="action-btn primary" onclick="saveAnthropicSetupToken()">Save Token</button>
+              </div>
+              <div class="field-hint">Run <code>claude setup-token</code> in terminal, paste here. Stored encrypted; routes through CLI subprocess.</div>
+            </div>
+            <div class="field" style="margin-top:14px">
+              <label class="field-label">Option 3 — Legacy OAuth (browser flow)</label>
+              <div class="btn-row">
+                <button id="btn-anthropic-login" class="action-btn" onclick="doAnthropicLogin()">Sign in with Anthropic OAuth</button>
+                <button id="btn-anthropic-disconnect" class="action-btn danger" onclick="doAnthropicDisconnect()" style="display:none">Disconnect</button>
+                <button id="btn-install-claude-cli" class="action-btn" onclick="installClaudeCli()" style="display:none">Install Claude CLI</button>
+              </div>
+            </div>
           </div>
         </div>
         <div class="section-card">

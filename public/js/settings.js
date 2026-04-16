@@ -126,30 +126,42 @@ async function checkAnthropicAuth() {
     // CLI session is always "valid" — its auth is managed by the CLI, not us
     const usingCliSession = d.method === 'cli-session';
     const hasValidAuth = d.authenticated && (usingCliSession || !d.expired);
+    const alreadyHint = document.getElementById('anthropic-already-connected');
+    const optionsBlock = document.getElementById('anthropic-options');
     if (hasValidAuth) {
       el.className = 'status-badge ok';
       const label =
-        d.method === 'token' ? 'Connected — Claude setup-token' :
-        usingCliSession ? 'Connected — Claude CLI session (chat & builds work via CLI subprocess)' :
-        'Connected — Anthropic OAuth (legacy)';
+        d.method === 'token' ? 'Connected — Setup-token (routes through CLI subprocess)' :
+        usingCliSession ? 'Connected — Claude CLI login (Sonnet/Opus/Haiku via subprocess)' :
+        'Connected — Anthropic OAuth (legacy, routes through CLI subprocess)';
       el.innerHTML = '<span class="status-dot"></span> ' + label;
-      if (loginBtn) { loginBtn.textContent = 'Use Legacy OAuth'; loginBtn.disabled = false; }
+      if (loginBtn) { loginBtn.textContent = 'Sign in with Anthropic OAuth'; loginBtn.disabled = false; }
       if (discBtn) discBtn.style.display = usingCliSession ? 'none' : '';
+      // CLI-session users don't need to do anything — show the success hint and collapse the options
+      if (usingCliSession) {
+        if (alreadyHint) alreadyHint.style.display = '';
+        if (optionsBlock) optionsBlock.style.display = 'none';
+      } else {
+        if (alreadyHint) alreadyHint.style.display = 'none';
+        if (optionsBlock) optionsBlock.style.display = '';
+      }
     } else {
       el.className = 'status-badge err';
       el.innerHTML = '<span class="status-dot"></span> Not connected';
-      if (loginBtn) { loginBtn.textContent = 'Use Legacy OAuth'; loginBtn.disabled = false; }
+      if (loginBtn) { loginBtn.textContent = 'Sign in with Anthropic OAuth'; loginBtn.disabled = false; }
       if (discBtn) discBtn.style.display = 'none';
+      if (alreadyHint) alreadyHint.style.display = 'none';
+      if (optionsBlock) optionsBlock.style.display = '';
     }
     // Claude CLI status
     if (cliEl) {
       if (d.cliInstalled) {
         cliEl.className = 'status-badge ok';
-        cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI installed — run claude setup-token for the preferred Anthropic path';
+        cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI installed — required for all Anthropic auth paths';
         if (cliBtn) cliBtn.style.display = 'none';
       } else {
         cliEl.className = 'status-badge err';
-        cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI not found — install it to generate a setup-token';
+        cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI not found — install it (required for all Anthropic auth)';
         if (cliBtn) cliBtn.style.display = '';
       }
     }
@@ -179,6 +191,12 @@ async function saveAnthropicSetupToken() {
     btn.disabled = false;
     btn.textContent = prev || 'Save Token';
   }
+}
+
+function toggleAnthropicOptions() {
+  const opts = document.getElementById('anthropic-options');
+  if (!opts) return;
+  opts.style.display = opts.style.display === 'none' ? '' : 'none';
 }
 
 async function installClaudeCli() {

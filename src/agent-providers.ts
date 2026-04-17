@@ -460,9 +460,32 @@ export async function runAnthropicAgent(
   const { apiKey, model, systemPrompt, tools, security, maxIterations = 25, temperature = 0.7, onEvent, signal } = options;
   const toolMap = new Map(tools.map(t => [t.name, t]));
 
+  // Build user message — attach images as vision parts when present.
+  // Anthropic accepts OpenAI-style content arrays; anthropic-client.convertUserContent
+  // translates image_url data URLs to Anthropic's base64 image format.
+  let userContent: ChatCompletionMessageParam["content"] = userMessage;
+  if (options.images && options.images.length > 0) {
+    const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: string } }> = [
+      { type: "text", text: userMessage },
+    ];
+    for (const img of options.images) {
+      try {
+        const { readFileSync } = await import("node:fs");
+        const data = readFileSync(img.filePath || "");
+        const ext = (img.name.split(".").pop() || "png").toLowerCase();
+        const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+        const b64 = `data:${mime};base64,${data.toString("base64")}`;
+        parts.push({ type: "image_url", image_url: { url: b64, detail: "auto" } });
+      } catch (e) {
+        console.warn(`[agent] Could not read image ${img.name}:`, e);
+      }
+    }
+    userContent = parts as ChatCompletionMessageParam["content"];
+  }
+
   let messages: ChatCompletionMessageParam[] = [
     ...history,
-    { role: "user", content: userMessage },
+    { role: "user", content: userContent } as ChatCompletionMessageParam,
   ];
 
   let totalInput = 0, totalOutput = 0;

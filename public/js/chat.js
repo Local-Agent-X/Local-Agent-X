@@ -372,7 +372,31 @@ async function sendMessage() {
               streamChat.messages.push({ role: 'assistant', content, timestamp: Date.now() });
               streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
             }
-            if (isViewingThis()) renderMessages();
+            // Final DOM sync — flush any pending rAF render so the last chunk
+            // of content is visible, but DO NOT call renderMessages() which
+            // blows away the entire message list and causes a visible blink.
+            // The streaming bodyEl already has the full content from
+            // renderStreamContent; we only need to ensure the final frame landed.
+            if (isViewingThis()) {
+              const pending = _streamRenderers.get(bodyEl);
+              if (pending && pending.raf) {
+                // rAF is pending — force it to flush now synchronously
+                cancelAnimationFrame(pending.raf);
+                pending.raf = 0;
+                const existingCards = bodyEl.querySelectorAll('.tool-card,.approval-card');
+                bodyEl.innerHTML = pending.latest ? md(pending.latest) : '';
+                existingCards.forEach(c => bodyEl.appendChild(c));
+              } else if (content && bodyEl) {
+                // No pending rAF — ensure DOM has latest content (in case last
+                // delta arrived on the same tick as 'done')
+                const existingCards = bodyEl.querySelectorAll('.tool-card,.approval-card');
+                const currentMd = md(content);
+                if (bodyEl.innerHTML !== currentMd || existingCards.length > 0) {
+                  bodyEl.innerHTML = currentMd;
+                  existingCards.forEach(c => bodyEl.appendChild(c));
+                }
+              }
+            }
             updateContextBar();
             flushTTS();
             if (typeof window.notifyTaskComplete === 'function') window.notifyTaskComplete(streamChat.title);

@@ -105,7 +105,15 @@ export async function runSleeptimeConsolidation(
 
     try {
       const extractedText = await extractFactsFromSession(sessionPath, chunks, opts);
-      if (!extractedText) continue;
+      if (!extractedText) {
+        // Every null response is a silent failure — log the first few so
+        // the user knows something's wrong (e.g., Ollama unreachable,
+        // API key rejected). Without this, 0-fact runs look successful.
+        if (result.errors.length < 5) {
+          result.errors.push(`${sessionPath}: LLM returned null (provider unreachable or returned empty)`);
+        }
+        continue;
+      }
 
       if (opts.dryRun) {
         // In dry run, just count parse-able fact lines
@@ -200,6 +208,19 @@ Facts (output only the list, nothing else):`;
 // ── LLM provider plumbing (duplicated minimally from memory-resolver) ──
 
 function detectProvider(): "ollama" | "anthropic" | "openai" | null {
+  // For batch consolidation we prefer Ollama — it's local, free, and works
+  // reliably for 500+ sequential calls. The user's chat-provider preference
+  // (often Anthropic-CLI-subscription, which can't accept direct API calls
+  // in bulk) is WRONG for this workload.
+  //
+  // Precedence: Ollama if reachable → API-key Anthropic → API-key OpenAI
+  // → fallback to whatever's saved. Never return a "cli" or "oauth:" path
+  // — those can't serve sleeptime traffic.
+  if (process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.startsWith("sk-ant-api")) return "anthropic";
+  if (process.env.OPENAI_API_KEY) return "openai";
+  // Ollama is the preferred default for batch consolidation
+  return "ollama";
+  // (legacy settings-based detection kept below for reference but unreachable)
   try {
     const settingsPath = join(homedir(), ".sax", "settings.json");
     if (existsSync(settingsPath)) {

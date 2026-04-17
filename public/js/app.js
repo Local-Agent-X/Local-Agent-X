@@ -97,7 +97,11 @@ async function syncChatsFromServer() {
       // Skip tombstoned sessions — they were deliberately deleted
       if (deletedIds[srv.id]) continue;
       const local = localMap.get(srv.id);
-      if (local && local.updatedAt >= srv.updatedAt) {
+      // Detect "truncated local" — any message flagged or near the 10K cap is a localStorage
+      // slice, not the real content. Always fetch server when we detect truncation, even if
+      // local.updatedAt is newer (which it often is mid-stream due to savePartial).
+      const hasTruncated = local && local.messages && local.messages.some(m => m._truncated || (typeof m.content === 'string' && m.content.length >= 9_900));
+      if (local && !hasTruncated && local.updatedAt >= srv.updatedAt) {
         merged.push(local);
       } else if (local) {
         try {
@@ -134,13 +138,22 @@ async function syncChatsFromServer() {
 
 // Save: write to localStorage immediately, push to server in background
 function saveChats() {
-  // Only save chat metadata + last 10 messages per chat to localStorage (prevents quota overflow)
-  // Full history lives on the server in ~/.sax/sessions/
+  // Save chat metadata + last 10 messages per chat to localStorage. Cap per-message
+  // content at 10_000 chars (from the original 500) — long-form LLM replies were being
+  // silently truncated mid-sentence, and on refresh the truncated local version was
+  // preferred over the full server version. Mark truncated messages with _truncated
+  // so the sync merge knows to prefer the server copy.
+  const PER_MSG_CAP = 10_000;
   const toSave = chats.map(c => ({
     id: c.id, title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt,
     messages: c.messages.slice(-10).map(m => {
-      if (!m.attachments) return { role: m.role, content: (m.content || '').slice(0, 500) };
-      return { role: m.role, content: (m.content || '').slice(0, 500), attachments: m.attachments.map(a => ({ name: a.name, size: a.size, type: a.type, isImage: a.isImage })) };
+      const raw = m.content || "";
+      const truncated = raw.length > PER_MSG_CAP;
+      const content = truncated ? raw.slice(0, PER_MSG_CAP) : raw;
+      const base = { role: m.role, content };
+      if (truncated) base._truncated = true;
+      if (m.attachments) base.attachments = m.attachments.map(a => ({ name: a.name, size: a.size, type: a.type, isImage: a.isImage }));
+      return base;
     })
   }));
   try {

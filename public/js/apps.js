@@ -13,7 +13,7 @@ const APPS_PROVIDERS = [
 
 const APPS_MODELS = {
   codex: ['gpt-5.3-codex','gpt-4.1','gpt-4.1-mini','gpt-4.1-nano','o3','o4-mini'],
-  anthropic: ['claude-sonnet-4-6','claude-opus-4-6','claude-haiku-4-5','claude-sonnet-4-5','claude-opus-4-5'],
+  anthropic: ['claude-opus-4-7','claude-sonnet-4-6','claude-opus-4-6','claude-haiku-4-5','claude-sonnet-4-5','claude-opus-4-5'],
   xai: ['grok-3-mini','grok-3','grok-2'],
   openai: ['gpt-4o','gpt-4o-mini','gpt-4.1','gpt-4.1-mini','o3','o4-mini'],
   gemini: ['gemini-2.0-flash','gemini-2.5-pro-preview-05-06','gemini-2.5-flash-preview-05-20','gemini-1.5-pro'],

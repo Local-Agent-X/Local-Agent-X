@@ -659,7 +659,9 @@ export function createMemoryTools(memory: MemoryIndex) {
       parameters: {
         type: "object",
         properties: {
-          lookbackHours: { type: "number", description: "How far back to look (default 24)" },
+          lookbackHours: { type: "number", description: "How far back to look in hours (default 24, use 8760 for 1 year)" },
+          maxSessions: { type: "number", description: "Max sessions to process (default 20, use 500+ for historical backfills)" },
+          maxChunksPerSession: { type: "number", description: "Chunks per session cap (default 50)" },
           dryRun: { type: "boolean", description: "Extract facts but don't write them (default false)" },
           provider: { type: "string", enum: ["ollama", "anthropic", "openai", "auto"], description: "Which LLM to use (default auto)" },
           model: { type: "string", description: "Override default model for the chosen provider" },
@@ -669,6 +671,8 @@ export function createMemoryTools(memory: MemoryIndex) {
         const { runSleeptimeConsolidation } = await import("../memory-sleeptime.js");
         const result = await runSleeptimeConsolidation(memory, {
           lookbackHours: typeof args.lookbackHours === "number" ? args.lookbackHours : undefined,
+          maxSessions: typeof args.maxSessions === "number" ? args.maxSessions : undefined,
+          maxChunksPerSession: typeof args.maxChunksPerSession === "number" ? args.maxChunksPerSession : undefined,
           dryRun: Boolean(args.dryRun),
           provider: args.provider as "ollama" | "anthropic" | "openai" | "auto" | undefined,
           model: typeof args.model === "string" ? args.model : undefined,

@@ -147,7 +147,7 @@ export function createMemoryTools(memory: MemoryIndex) {
         });
 
         if (results.length === 0) {
-          return { content: "No relevant memories found." };
+          return { content: "<search_results count=\"0\">No relevant memories found.</search_results>" };
         }
 
         const formatted = results
@@ -157,7 +157,19 @@ export function createMemoryTools(memory: MemoryIndex) {
           )
           .join("\n\n");
 
-        return { content: formatted };
+        // Wrap in XML with a leading instruction so the model treats this as
+        // reference material, not draft output. Anthropic/OpenAI models are
+        // trained to respect <tag>...</tag> boundaries as non-quoted context.
+        const wrapped =
+          `<search_results count="${results.length}" query="${query.replace(/"/g, "&quot;").slice(0, 100)}">\n` +
+          `INSTRUCTION: The text below contains snippets from your own memory retrieved for reference.\n` +
+          `Use the information to answer the user's question. DO NOT paste these snippets verbatim\n` +
+          `into your reply — they include old user/assistant turns that aren't your current response.\n` +
+          `Summarize the relevant facts in your own words.\n\n` +
+          formatted + "\n" +
+          `</search_results>`;
+
+        return { content: wrapped };
       },
     },
 

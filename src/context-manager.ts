@@ -27,11 +27,14 @@ const MODEL_CONTEXTS: Record<string, number> = {
   // Anthropic Claude 4.x family — 200k base window
   "claude-sonnet-4-5": 200_000,
   "claude-sonnet-4-6": 200_000,
+  "claude-sonnet-4-7": 200_000,
   "claude-opus-4-5": 200_000,
   "claude-opus-4-6": 200_000,
+  "claude-opus-4-7": 1_000_000, // 4.7 ships with 1M context natively
   "claude-haiku-4-5": 200_000,
   // Anthropic Opus 4.6 with 1M context beta
   "claude-opus-4-6[1m]": 1_000_000,
+  "claude-opus-4-7[1m]": 1_000_000,
   // Gemini 2.x family
   "gemini-2.0-flash": 1_000_000,
   "gemini-2.5-pro-preview-05-06": 1_000_000,

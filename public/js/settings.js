@@ -352,9 +352,10 @@ const PROVIDER_MODELS = {
     { value: 'o4-mini', label: 'o4-mini' },
   ],
   anthropic: [
-    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (default)' },
+    { value: 'claude-opus-4-7', label: 'Claude Opus 4.7 (frontier, 1M context)' },
+    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 (default, faster)' },
     { value: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-    { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+    { value: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (fastest)' },
     { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
     { value: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
   ],

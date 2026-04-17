@@ -112,6 +112,30 @@ export async function ingestConversations(
     }
   }
 
+  // After ingest: run sleeptime consolidation in the background to auto-promote
+  // durable facts (surgeries, launches, moves, preferences) from the imported
+  // chunks into MIND.md + the facts table. Fire-and-forget so the ingest call
+  // returns immediately — consolidation runs async and logs progress.
+  if (result.chunksCreated > 0) {
+    console.log(`[ingest] Kicking off background consolidation for ${result.chunksCreated} new chunks (365-day lookback)...`);
+    (async () => {
+      try {
+        const { runSleeptimeConsolidation } = await import("./memory-sleeptime.js");
+        const t0 = Date.now();
+        const summary = await runSleeptimeConsolidation(memory, {
+          lookbackHours: 365 * 24, // full year — covers typical ChatGPT history exports
+          maxSessions: 500,        // cap per-run cost
+          maxChunksPerSession: 50,
+        });
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+        const ops = summary.operations;
+        console.log(`[ingest] Consolidation done in ${elapsed}s — sessions=${summary.sessionsAnalyzed} facts=${summary.factsExtracted} add=${ops.add} update=${ops.update} delete=${ops.delete} noop=${ops.noop}`);
+      } catch (e) {
+        console.warn(`[ingest] Background consolidation failed: ${(e as Error).message}`);
+      }
+    })();
+  }
+
   return result;
 }
 

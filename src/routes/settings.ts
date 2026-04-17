@@ -260,7 +260,7 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
     if (hasXaiKey) providers.push({ id: "xai", name: "xAI Grok", models: ["grok-3-mini", "grok-3", "grok-2"], active: currentProvider === "xai" });
     if (hasGeminiKey) providers.push({ id: "gemini", name: "Google Gemini", models: ["gemini-2.0-flash", "gemini-2.5-pro-preview-05-06", "gemini-2.5-flash-preview-05-20"], active: currentProvider === "gemini" });
     if (hasOpenAIOAuth) providers.push({ id: "codex", name: "OpenAI Codex", models: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-4o", "gpt-4o-mini", "o3", "o4-mini"], active: currentProvider === "codex" });
-    if (hasAnthropicOAuth) providers.push({ id: "anthropic", name: "Anthropic", models: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-5"], active: currentProvider === "anthropic" });
+    if (hasAnthropicOAuth) providers.push({ id: "anthropic", name: "Anthropic", models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-5"], active: currentProvider === "anthropic" });
     if (hasOpenAIKey) providers.push({ id: "openai", name: "OpenAI API", models: ["gpt-4o", "gpt-4o-mini", "o3-pro"], active: currentProvider === "openai" });
     if (hasOllama) {
       let ollamaModels: string[] = [];

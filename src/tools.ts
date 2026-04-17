@@ -820,6 +820,7 @@ async function buildWithClaude(prompt: string, appDir: string, appUrl: string): 
         "--output-format", "text",
         "--no-session-persistence",
         "--max-turns", "25",
+        "--model", "claude-opus-4-7",  // Opus 4.7: frontier reasoning + 1M context for large builds
         "--tools", "Write,Edit,Read,Bash",
         "--disallowedTools", "WebFetch,WebSearch",
       ], {

@@ -63,8 +63,32 @@ interface AnthropicMessage {
 
 type AnthropicContent =
   | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
   | { type: "tool_result"; tool_use_id: string; content: string };
+
+/** Convert OpenAI-style user content (text OR array of text+image_url parts) to Anthropic format. */
+function convertUserContent(content: unknown): string | AnthropicContent[] {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return String(content ?? "");
+  const out: AnthropicContent[] = [];
+  for (const part of content as Array<Record<string, unknown>>) {
+    if (part.type === "text") {
+      out.push({ type: "text", text: String(part.text || "") });
+    } else if (part.type === "image_url") {
+      const iu = part.image_url as { url: string } | undefined;
+      const url = iu?.url || "";
+      // data:image/png;base64,XXXX → extract media_type + data
+      const m = url.match(/^data:([^;]+);base64,(.+)$/);
+      if (m) {
+        out.push({ type: "image", source: { type: "base64", media_type: m[1], data: m[2] } });
+      } else if (url) {
+        out.push({ type: "image", source: { type: "url", url } });
+      }
+    }
+  }
+  return out.length > 0 ? out : "";
+}
 
 function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessage[] {
   const result: AnthropicMessage[] = [];
@@ -74,10 +98,7 @@ function convertMessages(messages: ChatCompletionMessageParam[]): AnthropicMessa
     if (msg.role === "system") continue;
 
     if (msg.role === "user") {
-      result.push({
-        role: "user",
-        content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content),
-      });
+      result.push({ role: "user", content: convertUserContent(msg.content) });
     } else if (msg.role === "assistant") {
       const m = msg as unknown as Record<string, unknown>;
       const content: AnthropicContent[] = [];

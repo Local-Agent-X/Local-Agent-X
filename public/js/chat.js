@@ -138,12 +138,12 @@ function isChatActive(sessionId) {
   if (!el) { document.addEventListener('DOMContentLoaded', initScrollPause); return; }
   el.addEventListener('wheel', () => {
     if (!streamingSessionId) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
     userScrolledUp = !atBottom;
   });
   el.addEventListener('scroll', () => {
     if (!streamingSessionId) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
     if (atBottom) userScrolledUp = false;
   });
 })();
@@ -152,6 +152,30 @@ function autoScroll() {
   if (userScrolledUp) return;
   const el = document.getElementById('messages');
   if (el) el.scrollTop = el.scrollHeight;
+}
+
+// Throttled stream renderer — batches many deltas into one DOM write per ~50ms.
+// Previously every stream token triggered `bodyEl.innerHTML = md(content)` which
+// rebuilt the whole message DOM dozens of times per second, causing flicker,
+// layout thrash, and scroll jumpiness. With rAF batching, the final DOM state
+// is applied at most ~16ms after the latest delta, which feels instant but
+// doesn't thrash.
+const _streamRenderers = new WeakMap();
+function renderStreamContent(bodyEl, content) {
+  if (!bodyEl) return;
+  let pending = _streamRenderers.get(bodyEl);
+  if (!pending) {
+    pending = { raf: 0, latest: content };
+    _streamRenderers.set(bodyEl, pending);
+  }
+  pending.latest = content;
+  if (pending.raf) return;
+  pending.raf = requestAnimationFrame(() => {
+    pending.raf = 0;
+    const existingCards = bodyEl.querySelectorAll('.tool-card,.approval-card');
+    bodyEl.innerHTML = pending.latest ? md(pending.latest) : '';
+    existingCards.forEach(c => bodyEl.appendChild(c));
+  });
 }
 
 // Voice state
@@ -276,9 +300,7 @@ async function sendMessage() {
           case 'stream':
             content += event.delta;
             if (viewing) {
-              const existingCards = bodyEl.querySelectorAll('.tool-card');
-              bodyEl.innerHTML = md(content);
-              existingCards.forEach(c => bodyEl.appendChild(c));
+              renderStreamContent(bodyEl, content);
               feedTTS(event.delta);
             }
             break;
@@ -415,10 +437,7 @@ async function sendMessage() {
             case 'stream':
               content += event.delta;
               if (viewing) {
-                // Preserve tool cards while updating text content
-                const existingCards = bodyEl.querySelectorAll('.tool-card');
-                bodyEl.innerHTML = md(content);
-                existingCards.forEach(c => bodyEl.appendChild(c));
+                renderStreamContent(bodyEl, content);
                 feedTTS(event.delta);
               }
               if (Date.now() - lastSaveTime > 2000) { savePartial(); lastSaveTime = Date.now(); }

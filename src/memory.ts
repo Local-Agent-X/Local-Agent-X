@@ -60,6 +60,9 @@ import {
   applyTemporalDecay, applyTemporalQueryBoost, mmrRerank,
 } from "./memory/search-helpers.js";
 
+// Date-aware query parsing (hard filter for "yesterday"/"last week", soft boost for "recently")
+import { parseDateRange, dateInRange } from "./memory/date-parser.js";
+
 // Personality files
 import {
   PERSONALITY_FILES, ensurePersonalityFiles, readPersonalityFile,
@@ -1286,8 +1289,38 @@ export class MemoryIndex {
     // Session grouping: boost chunks from sessions that already have a high-scoring hit
     results = this.applySessionGrouping(results);
 
-    // Temporal query boost: extract dates from query and boost matching chunks
+    // Date-aware query parsing: "yesterday", "last week", "March 2026", etc.
+    //   HARD confidence → hard filter (drop results outside range)
+    //   SOFT confidence → boost (leave out-of-range results but rank in-range higher)
+    // Runs BEFORE the legacy applyTemporalQueryBoost so that month-year matches
+    // via the new parser get the stronger filter treatment.
     if (options?.query) {
+      const range = parseDateRange(options.query);
+      if (range) {
+        if (range.confidence === "hard") {
+          // Filter: keep only chunks with dates in range, OR chunks with no date
+          // (we don't want to drop all undated chunks — some might still be relevant)
+          const filtered = results.filter(r => {
+            const d = r.metadata?.date;
+            if (!d) return true; // no date info — can't filter out
+            return dateInRange(d, range);
+          });
+          // If the filter would wipe all dated results, fall back to boost to avoid empty returns
+          if (filtered.some(r => r.metadata?.date && dateInRange(r.metadata.date, range))) {
+            results = filtered;
+          }
+        } else {
+          // Soft boost: +0.20 for in-range (stronger than the old +0.15 month-match)
+          for (const r of results) {
+            if (r.metadata?.date && dateInRange(r.metadata.date, range)) {
+              r.score = Math.min(1, r.score + 0.20);
+            }
+          }
+          results.sort((a, b) => b.score - a.score);
+        }
+      }
+      // Legacy temporal boost for patterns the new parser didn't catch
+      // (standalone month names without year, multiple date refs in one query)
       results = applyTemporalQueryBoost(results, options.query);
     }
 

@@ -1128,6 +1128,31 @@ async function setFileAccessMode(mode) {
   } catch {}
 }
 
+async function setApprovalMode(mode) {
+  // Save via the generic /api/settings endpoint (merged into settings.json).
+  // approval-manager.ts reads settings.json.toolApproval on every tool call.
+  try {
+    await apiFetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ toolApproval: mode })
+    });
+  } catch (e) { console.warn('[approval-mode] save failed', e); }
+}
+
+// Load saved approval mode on settings page open
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const res = await apiFetch('/api/settings');
+    if (!res.ok) return;
+    const s = await res.json();
+    if (s?.toolApproval) {
+      const el = document.getElementById('cfg-approval-mode');
+      if (el) el.value = s.toolApproval;
+    }
+  } catch {}
+});
+
 // Self-modify mode removed — platform files always protected
 
 // ── Settings Search ──

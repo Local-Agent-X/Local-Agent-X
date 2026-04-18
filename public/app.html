@@ -367,7 +367,19 @@
             <div class="field-hint" id="file-access-hint">Default: agent can read your Downloads, Documents, Desktop, and Pictures folders.</div>
           </div>
         </div>
-        <!-- Self-modify and sandbox sections removed -->
+        <div class="section-card">
+          <div class="section-title">Tool Approval</div>
+          <div class="section-desc">Inline cards appear in chat before dangerous tools run. Choose how strict.</div>
+          <div class="field">
+            <label class="field-label">Approval Mode</label>
+            <select class="field-select" id="cfg-approval-mode" onchange="setApprovalMode(this.value)">
+              <option value="auto">Off — auto-approve everything (fastest)</option>
+              <option value="confirm-risky" selected>Sensitive — confirm bash / write / edit / email / forget (recommended)</option>
+              <option value="confirm-all">Strict — confirm everything above + browser, http, cron</option>
+            </select>
+            <div class="field-hint">"Always for this session" checkbox on a card remembers your choice until the server restarts.</div>
+          </div>
+        </div>
       </div>
       <!-- WhatsApp -->
       <div id="stab-whatsapp" class="tab-pane">

@@ -387,10 +387,11 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
         <div class="field">
           <label class="field-label">Tool Approval Mode</label>
           <select class="field-select" id="cfg-tool-approval">
-            <option value="auto">Auto-approve all</option>
-            <option value="confirm-risky">Confirm risky tools</option>
-            <option value="confirm-all">Confirm all tools</option>
+            <option value="auto">Off &mdash; auto-approve everything (fastest)</option>
+            <option value="confirm-risky">Sensitive &mdash; confirm bash / write / edit / email / forget (recommended)</option>
+            <option value="confirm-all">Strict &mdash; confirm everything above + browser, http, cron</option>
           </select>
+          <div class="field-hint">Approval cards appear in chat before dangerous tools run. Session-scoped "Always" remembers until next restart.</div>
         </div>
       </div>
       <div class="toggle-row">

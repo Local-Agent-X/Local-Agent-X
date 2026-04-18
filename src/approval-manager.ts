@@ -17,20 +17,73 @@ import type { ServerEvent } from "./types.js";
 const APPROVAL_TIMEOUT_MS = 5 * 60_000; // 5 min — long enough to read + decide
 
 /**
- * Tools that MUST have user approval before executing.
- * Keep this list tight — every approval interrupts the user.
+ * Approval mode — read from settings.json.approvalMode.
+ *   "off"       — no approvals, fastest workflow
+ *   "sensitive" — default. Gate on truly destructive / externally-visible tools
+ *   "strict"    — gate on everything "sensitive" catches PLUS browser control,
+ *                 http_request, mission schedule changes. Slower but paranoid.
  */
-export const DANGEROUS_TOOLS: ReadonlySet<string> = new Set([
+export type ApprovalMode = "off" | "sensitive" | "strict";
+
+const SENSITIVE_TOOLS: ReadonlySet<string> = new Set([
   "bash",           // shell exec, can do anything
   "write",          // creates/overwrites files
   "edit",           // modifies files
   "email_send",     // externally visible, irreversible
-  "mission_schedule_create", // adds cron jobs that run later
+  "memory_forget",  // deletes facts
+]);
+
+const STRICT_EXTRA: ReadonlySet<string> = new Set([
+  "browser",                   // real visible browser control
+  "http_request",              // outbound network calls
+  "mission_schedule_create",
   "mission_schedule_delete",
   "mission_schedule_update",
-  "memory_forget",  // deletes facts
-  "browser",        // real visible browser control
 ]);
+
+/** Back-compat export — the combined strict list. */
+export const DANGEROUS_TOOLS: ReadonlySet<string> = new Set([...SENSITIVE_TOOLS, ...STRICT_EXTRA]);
+
+/** Read approval mode from settings.json. Cached 1s to avoid disk I/O per call.
+ *  Supports both new `approvalMode` key and the existing settings UI dropdown
+ *  `toolApproval` (values: auto / confirm-risky / confirm-all).
+ */
+let _cachedMode: ApprovalMode | null = null;
+let _modeCachedAt = 0;
+function loadApprovalMode(): ApprovalMode {
+  if (_cachedMode && Date.now() - _modeCachedAt < 1000) return _cachedMode;
+  let mode: ApprovalMode = "sensitive";
+  try {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const os = require("node:os") as typeof import("node:os");
+    const settingsPath = path.join(os.homedir(), ".sax", "settings.json");
+    if (fs.existsSync(settingsPath)) {
+      const s = JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as { approvalMode?: string; toolApproval?: string };
+      if (s.approvalMode === "off" || s.approvalMode === "sensitive" || s.approvalMode === "strict") {
+        mode = s.approvalMode;
+      } else if (s.toolApproval === "auto") {
+        mode = "off";
+      } else if (s.toolApproval === "confirm-all") {
+        mode = "strict";
+      } else if (s.toolApproval === "confirm-risky") {
+        mode = "sensitive";
+      }
+    }
+  } catch {}
+  _cachedMode = mode;
+  _modeCachedAt = Date.now();
+  return mode;
+}
+
+/** Should this tool require approval under the current settings? */
+export function toolNeedsApproval(toolName: string): boolean {
+  const mode = loadApprovalMode();
+  if (mode === "off") return false;
+  if (mode === "strict") return SENSITIVE_TOOLS.has(toolName) || STRICT_EXTRA.has(toolName);
+  // default: sensitive
+  return SENSITIVE_TOOLS.has(toolName);
+}
 
 interface PendingApproval {
   resolve: (approved: boolean) => void;

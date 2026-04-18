@@ -144,18 +144,26 @@ function saveChats() {
   // preferred over the full server version. Mark truncated messages with _truncated
   // so the sync merge knows to prefer the server copy.
   const PER_MSG_CAP = 10_000;
-  const toSave = chats.map(c => ({
-    id: c.id, title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt,
-    messages: c.messages.slice(-10).map(m => {
-      const raw = m.content || "";
-      const truncated = raw.length > PER_MSG_CAP;
-      const content = truncated ? raw.slice(0, PER_MSG_CAP) : raw;
-      const base = { role: m.role, content };
-      if (truncated) base._truncated = true;
-      if (m.attachments) base.attachments = m.attachments.map(a => ({ name: a.name, size: a.size, type: a.type, isImage: a.isImage }));
-      return base;
-    })
-  }));
+  const toSave = chats.map(c => {
+    const rec = {
+      id: c.id, title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt,
+      messages: c.messages.slice(-10).map(m => {
+        const raw = m.content || "";
+        const truncated = raw.length > PER_MSG_CAP;
+        const content = truncated ? raw.slice(0, PER_MSG_CAP) : raw;
+        const base = { role: m.role, content };
+        if (truncated) base._truncated = true;
+        if (m.attachments) base.attachments = m.attachments.map(a => ({ name: a.name, size: a.size, type: a.type, isImage: a.isImage }));
+        return base;
+      }),
+    };
+    // Persist client-only flags that don't live on the server session JSON.
+    // Without these, archive/unarchive and project assignment vanished on reload.
+    if (c.archived) rec.archived = true;
+    if (c.projectId) rec.projectId = c.projectId;
+    if (c.compactedAt) rec.compactedAt = c.compactedAt;
+    return rec;
+  });
   try {
     localStorage.setItem('sax_chats_v2', JSON.stringify(toSave));
   } catch (e) {
@@ -248,9 +256,25 @@ function showMoveMenu(chatId, e) {
   const menu = document.createElement('div');
   menu.className = 'move-menu';
   const chat = chats.find(c => c.id === chatId);
-  menu.innerHTML = projects.map(p =>
-    `<div class="move-menu-item" onclick="moveChat('${esc(chatId)}','${esc(p.id)}',event)">${esc(p.name)}</div>`
-  ).join('') + (chat?.projectId ? `<div class="move-menu-item remove" onclick="moveChat('${esc(chatId)}','',event)">Remove from project</div>` : '');
+  const currentTags = chatTags[chatId] || [];
+
+  // Show TAG targets first (work/personal/research/debug — these are what users
+  // actually mean when they say "move this chat to research"). Current tags
+  // show as highlighted with a remove option. Then show projects if any.
+  const tagRows = allTags.map(t => {
+    const isActive = currentTags.includes(t);
+    return `<div class="move-menu-item${isActive ? ' active' : ''}" onclick="${isActive ? `removeTagFromChat('${esc(chatId)}','${esc(t)}',event)` : `addTagToChat('${esc(chatId)}','${esc(t)}',event)`}">${isActive ? '\u2713 ' : ''}${esc(t)}</div>`;
+  }).join('');
+
+  const projectRows = projects.map(p =>
+    `<div class="move-menu-item" onclick="moveChat('${esc(chatId)}','${esc(p.id)}',event)">&#128193; ${esc(p.name)}</div>`
+  ).join('');
+
+  const divider = (tagRows && projectRows) ? '<div class="move-menu-divider"></div>' : '';
+  const removeRow = chat?.projectId ? `<div class="move-menu-item remove" onclick="moveChat('${esc(chatId)}','',event)">Remove from project</div>` : '';
+
+  menu.innerHTML = tagRows + divider + projectRows + removeRow;
+  if (!menu.innerHTML) menu.innerHTML = '<div class="move-menu-item" style="color:var(--muted)">No categories yet</div>';
   e.target.closest('.chat-item').appendChild(menu);
   setTimeout(() => document.addEventListener('click', function h() { menu.remove(); document.removeEventListener('click', h); }), 10);
 }

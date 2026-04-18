@@ -948,9 +948,12 @@ ${content}
 const screenCaptureTool: ToolDefinition = {
   name: "screen_capture",
   description:
-    "Capture a screenshot of the desktop. Returns the image for visual analysis. " +
-    "Use this when the user asks you to look at their screen, take a screenshot, or describe what's on screen. " +
-    "Optionally capture a specific monitor or region.",
+    "Screenshot the user's PHYSICAL MONITOR (Windows desktop, their apps, their taskbar). " +
+    "ONLY for looking at the user's own screen / desktop apps / windows outside our browser. " +
+    "DO NOT use for web pages, URLs, or sites you want to read or interact with — for ANY " +
+    "website/web-app task (DNS setup, form filling, login, reading a page) use `browser` with " +
+    "action:'snapshot' instead. browser's snapshot gives structured refs you can click/fill; " +
+    "screen_capture just gives a flat image with no interaction handles.",
   parameters: {
     type: "object",
     properties: {

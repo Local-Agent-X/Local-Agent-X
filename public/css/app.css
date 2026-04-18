@@ -91,6 +91,8 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .move-menu-item{padding:5px 10px;font-size:.72rem;color:var(--muted);cursor:pointer;border-radius:4px;font-family:var(--mono)}
 .move-menu-item:hover{background:var(--hover);color:var(--text)}
 .move-menu-item.remove{color:var(--danger)}
+.move-menu-item.active{color:var(--accent)}
+.move-menu-divider{height:1px;background:var(--border);margin:4px 0}
 #utility-bar{display:flex;border-top:1px solid var(--border);padding:6px 8px;gap:4px}
 .util-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 4px;border-radius:8px;background:none;border:none;color:var(--muted);cursor:pointer;font-family:var(--mono);font-size:.68rem;text-decoration:none;transition:all .15s}
 .util-btn:hover{background:var(--hover);color:var(--text)}

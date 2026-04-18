@@ -332,8 +332,9 @@ function archiveChat(id, e) {
   e.stopPropagation();
   const chat = chats.find(c => c.id === id);
   if (!chat) return;
-  chat.archived = true;
-  if (activeChat && activeChat.id === id) activeChat = null;
+  // Toggle: archive if unarchived, unarchive if archived.
+  chat.archived = !chat.archived;
+  if (chat.archived && activeChat && activeChat.id === id) activeChat = null;
   saveChats(); renderSidebar();
   if (window.renderMessages) renderMessages();
 }
@@ -431,9 +432,10 @@ function renderChatList() {
       ${tags.length ? `<span class="chat-tags-inline">${tags.map(t => `<span class="tag-pill-sm">${esc(t)}</span>`).join('')}</span>` : ''}
       <span class="chat-actions">
         <button class="chat-action-btn" onclick="renameChat('${c.id}',event)" title="Rename" aria-label="Rename chat">&#9998;</button>
+        <button class="chat-action-btn" onclick="showMoveMenu('${c.id}',event)" title="Move to project" aria-label="Move chat to project">&#128193;</button>
         <button class="chat-action-btn" onclick="togglePinChat('${c.id}',event)" title="${isPinned ? 'Unpin' : 'Pin'}" aria-label="${isPinned ? 'Unpin chat' : 'Pin chat'}">${isPinned ? '&#128204;' : '&#128392;'}</button>
         <button class="chat-action-btn" onclick="exportChat('${c.id}',event)" title="Export" aria-label="Export chat">&#128190;</button>
-        <button class="chat-action-btn" onclick="archiveChat('${c.id}',event)" title="Archive" aria-label="Archive chat">&#128230;</button>
+        <button class="chat-action-btn" onclick="archiveChat('${c.id}',event)" title="${c.archived ? 'Unarchive' : 'Archive'}" aria-label="${c.archived ? 'Unarchive chat' : 'Archive chat'}">${c.archived ? '&#128228;' : '&#128230;'}</button>
         <button class="chat-action-btn delete" onclick="deleteChat('${c.id}',event)" title="Delete" aria-label="Delete chat">&times;</button>
       </span>
     </div>
@@ -491,7 +493,23 @@ function renderChatList() {
   html += renderGroup('This Week', groups.week);
   html += renderGroup('Older', groups.older);
 
+  // Archived section — collapsed by default, click label to toggle visibility
+  const archivedChats = chats.filter(c => c.archived && !c.id?.startsWith('wa-') && !c.id?.startsWith('tg-'));
+  if (archivedChats.length > 0) {
+    const isOpen = localStorage.getItem('sax_archived_open') === '1';
+    html += `<div class="chat-group-label" style="cursor:pointer;user-select:none" onclick="toggleArchivedSection()">${isOpen ? '&#9662;' : '&#9656;'} Archived (${archivedChats.length})</div>`;
+    if (isOpen) {
+      html += archivedChats.map(renderItem).join('');
+    }
+  }
+
   el.innerHTML = html || '<div style="padding:8px 12px;font-size:.72rem;color:var(--muted)">No chats yet. Click + New Chat.</div>';
+}
+
+function toggleArchivedSection() {
+  const open = localStorage.getItem('sax_archived_open') === '1';
+  localStorage.setItem('sax_archived_open', open ? '0' : '1');
+  renderChatList();
 }
 
 function renderSidebar() {

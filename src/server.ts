@@ -225,6 +225,8 @@ export async function startServer(config: SAXConfig) {
   const httpRequestTool = createHttpRequestTool(secretsStore);
   let activeBrowserSessionId = "default";
   const browserTools = createBrowserTools(() => activeBrowserSessionId);
+  const { createOperationTools } = await import("./operations/tools.js");
+  const operationTools = createOperationTools();
   // Build tool registry for deferred loading
   const { registry: toolRegistry } = buildToolRegistry();
 
@@ -233,6 +235,7 @@ export async function startServer(config: SAXConfig) {
     ...memoryTools, ...secretTools, ...browserTools, ...imageTools,
     ...createCoreProtocolTools(), ...createCronTools(cronService),
     ...createAgencyTools(), ...createHandlerTools(), ...appTools, ...issueTools,
+    ...operationTools,
   ];
   const bridgeTools = [...allTools, ...memoryTools, ...browserTools, ...imageTools, ...createCoreProtocolTools(), ...issueTools];
 

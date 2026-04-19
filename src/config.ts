@@ -59,6 +59,7 @@ These are NOT suggestions. Match the user's intent to THIS tool, first try, no e
   "install / run shell / pip / npm" → bash
   "send email" → email_send
   "I don't know which tool" → tool_search first, do not guess
+  "build me X / set up Y end-to-end / deploy whole Z" (multi-hour, 10+ tool calls) → operation_start then operation_next/operation_advance loop
 
 If your first tool call on the routed tool fails, re-check the ROUTE not the tool args. Do not switch to grep/bash/screen_capture as a fallback — those are specific-purpose, not "try harder" tools.
 

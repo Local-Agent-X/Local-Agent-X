@@ -167,24 +167,41 @@ async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string;
   const { EventBus } = await import("../event-bus.js");
   const handler = Handler.getInstance();
 
-  const prompt = buildPhasePrompt(op, op.phases.find((p) => p.id === phase.id)!);
-  const scopedPrompt =
-    prompt +
-    `\n\n## REPORT FORMAT — REQUIRED\n` +
-    `When you finish the work (or hit a blocker), your FINAL message must be exactly one line in this form:\n` +
-    `  PHASE_RESULT: <completed|failed|paused> | <json of any durable outputs like {"url":"...","id":"..."}> | <short reason if failed/paused>\n` +
-    `Example completed: PHASE_RESULT: completed | {"fastmail_domain_id":"6041735"} |\n` +
-    `Example failed:    PHASE_RESULT: failed | {} | GoDaddy rejected DNS: record conflict\n` +
-    `Example paused:    PHASE_RESULT: paused | {} | need GoDaddy 2FA from user\n` +
-    `Use this exact prefix. Nothing else on that last line.`;
+  const phaseObj = op.phases.find((p) => p.id === phase.id)!;
+  const prompt = buildPhasePrompt(op, phaseObj);
+
+  // Scoped system prompt for sub-agent. Inherits core routing rules from the
+  // main prompt so it doesn't go exploring (grep, screen_capture) when the
+  // phase clearly needs web/browser work.
+  const scopedSystemPrompt =
+    `You are executing ONE phase of a larger autonomous operation. Focus ONLY on this phase's goal. Do not do more than asked.\n\n` +
+    `## MANDATORY tool routing (match intent → tool, no exploration)\n` +
+    `- Web page / website / DNS / forms / login / click → "browser" tool (action: navigate/snapshot/click/fill)\n` +
+    `- HTTP API call with known URL → "http_request" tool\n` +
+    `- Search the web for info → "web_search" tool\n` +
+    `- Run a shell command → "bash" tool\n` +
+    `- Read/write local files → "read", "write", "edit"\n` +
+    `- Check agent memory → "memory_search" (NOT grep)\n` +
+    `- DO NOT use "grep" to hunt for things that aren't local code\n` +
+    `- DO NOT use "screen_capture" for web content — screen_capture is for the user's physical desktop only\n\n` +
+    `If the phase involves a website, your FIRST call should be "browser" with action "navigate" to that site. Do not grep or search files looking for the site — open it directly.\n\n` +
+    `## Report format — REQUIRED last line\n` +
+    `When you finish (or hit a blocker), your FINAL message's last line must be exactly:\n` +
+    `  PHASE_RESULT: <completed|failed|paused> | <json of durable outputs> | <short reason if failed/paused>\n` +
+    `Examples:\n` +
+    `  PHASE_RESULT: completed | {"fastmail_domain_id":"6041735"} |\n` +
+    `  PHASE_RESULT: failed | {} | GoDaddy rejected DNS: record conflict\n` +
+    `  PHASE_RESULT: paused | {} | need GoDaddy 2FA from user\n`;
 
   return new Promise<string>((resolve, reject) => {
     // spawnAgent is wired to EventBus — when the run completes, it emits
     // "handler:agent-result" with { agentId, result, error }.
     const agentId = handler.spawnAgent({
-      name: `op-phase-${phase.name.slice(0, 30)}`,
+      name: `op-phase-${phaseObj.name.slice(0, 30)}`,
       role: "operator",
-      task: scopedPrompt,
+      task: prompt,
+      systemPrompt: scopedSystemPrompt,
+      tools: phaseObj.suggestedTools,
       parentSessionId: opts.parentSessionId,
     });
 

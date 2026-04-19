@@ -169,6 +169,9 @@ export function createDeadEndState(): DeadEndState {
 }
 
 const EMPTY_RESULT_RE = /^\s*(\(no output\)|\[\]|\{\}|null|none|No results?|0 results?|Nothing found|No matches|No relevant memor|Command failed)/i;
+// Progress-style empty: "Searched 800 files, 0 results" — catches long-running
+// grep/find that scans forever without finding anything.
+const PROGRESS_EMPTY_RE = /Searched\s+\d+\s+files?,\s*0\s+results?/i;
 
 /** Scan a tool result for "empty" signals and update dead-end state. */
 export function checkDeadEnd(
@@ -178,7 +181,11 @@ export function checkDeadEnd(
 ): { nudge: string | null } {
   // Trim to first 400 chars — that's where "no output" / "0 results" land
   const head = (toolResult || "").slice(0, 400);
-  const isEmpty = head.trim().length === 0 || EMPTY_RESULT_RE.test(head) || head.includes("Searched") && /\b0 results?\b/.test(head);
+  const tail = (toolResult || "").slice(-800);
+  const isEmpty =
+    head.trim().length === 0 ||
+    EMPTY_RESULT_RE.test(head) ||
+    PROGRESS_EMPTY_RE.test(head) || PROGRESS_EMPTY_RE.test(tail);
   if (isEmpty) {
     state.consecutive++;
     state.lastWasEmpty = true;

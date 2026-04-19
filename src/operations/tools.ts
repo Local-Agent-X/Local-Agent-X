@@ -63,7 +63,8 @@ export function createOperationTools(): ToolDefinition[] {
           ...op.phases.map((p, i) => `  ${i + 1}. ${p.name} — ${p.goal.slice(0, 100)}`),
           ``,
           `Plan saved to: workspace/operations/${op.id}/plan.md`,
-          `Next: call operation_next with operation_id="${op.id}" to get the first phase's scoped prompt.`,
+          ``,
+          `AUTONOMOUS EXECUTION: DO NOT STOP HERE. Immediately call operation_next with operation_id="${op.id}" to get the first phase's prompt. Execute that phase's tools. Then call operation_advance with the outcome. Then operation_next again. Loop until operation status becomes completed / failed / paused. Do not ask the user between phases unless a phase returns outcome="paused" (requires user input).`,
         ];
         return { content: lines.join("\n") };
       },
@@ -168,17 +169,17 @@ export function createOperationTools(): ToolDefinition[] {
           markPhaseCompleted(workspaceDir(), op, phase, output);
           const reloaded = loadOperation(workspaceDir(), op.id)!;
           if (reloaded.status === "completed") {
-            return { content: `Operation ${op.id} COMPLETE.\n\n${statusSummary(reloaded)}` };
+            return { content: `Operation ${op.id} COMPLETE.\n\n${statusSummary(reloaded)}\n\nSummarize what was accomplished for the user in one short paragraph.` };
           }
-          return { content: `Phase ${phase.name} complete. Call operation_next to get the next phase.` };
+          return { content: `Phase ${phase.name} complete. DO NOT STOP. Immediately call operation_next with operation_id="${op.id}" to continue with the next phase.` };
         }
         if (outcome === "failed") {
           const err = String(args.error || "Phase failed");
           const r = markPhaseFailed(workspaceDir(), op, phase, err);
           if (r.willRetry) {
-            return { content: `Phase ${phase.name} failed (${err}). Will retry — call operation_next to try again.` };
+            return { content: `Phase ${phase.name} failed (${err}). DO NOT STOP. Call operation_next to retry with a different approach — do NOT repeat the same tools that just failed.` };
           }
-          return { content: `Phase ${phase.name} FAILED permanently after ${phase.attempts} attempts. Operation marked failed.` };
+          return { content: `Phase ${phase.name} FAILED permanently after ${phase.attempts} attempts. Operation marked failed. Tell the user what failed and ask how to proceed.` };
         }
         if (outcome === "paused") {
           pauseOperation(workspaceDir(), op, String(args.reason || `Phase ${phase.name} paused`));

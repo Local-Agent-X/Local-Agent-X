@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { wrapExternalContent } from "./sanitize.js";
 import { getRuntimeConfig } from "./config.js";
+import { ObservationRegistry, type BrowserObservation } from "./browser/observation.js";
+import { clickRef, fillRef, clickByText as clickByTextAction } from "./browser/actions.js";
+import { waitForStability } from "./browser/stability.js";
 
 /**
  * Browser Manager for Open Agent X
@@ -382,189 +385,110 @@ export class BrowserManager {
     return `Selected "${selected.join(", ")}" in ${selector}`;
   }
 
-  // ── Accessibility tree snapshot with numbered refs ──
+  // ── Durable-ref observation (ObservationRegistry-backed) ──
 
-  private refMap = new Map<number, { role: string; name: string }>();
-  private nextRef = 1;
+  private registry = new ObservationRegistry();
+
+  /** Run a structured observation — returns the raw diff object. */
+  async observe(): Promise<BrowserObservation> {
+    const page = await this.getPage();
+    return this.registry.observe(page);
+  }
 
   /**
-   * Build an accessibility snapshot of the page — the key to reliable interaction.
-   * Returns a tree like:
-   *   [1] button "Log in"
-   *   [2] textbox "Username"
-   *   [3] link "Forgot password?"
-   *
-   * The agent says "click ref 1" and we resolve it reliably.
+   * Formatted observation for LLM consumption. On the first call after a
+   * navigation the full list is emitted; subsequent calls emit a diff
+   * (+ added / - removed / ~ changed) and a viewport-only default listing.
    */
   async snapshot(): Promise<string> {
     const page = await this.getPage();
-    this.refMap.clear();
-    this.nextRef = 1;
-
-    // Build accessibility snapshot by querying interactive elements via JavaScript
-    // This runs in the browser context (page.evaluate), not Node
-    const elements = await page.evaluate(`(() => {
-      const results = [];
-      const interactiveTags = {
-        BUTTON: "button", A: "link", SELECT: "combobox", TEXTAREA: "textbox",
-      };
-
-      const all = document.querySelectorAll(
-        'a, button, input, select, textarea, [role="button"], [role="link"], ' +
-        '[role="menuitem"], [role="tab"], [role="checkbox"], [role="radio"], ' +
-        '[role="switch"], [role="option"], [role="treeitem"], [role="combobox"], ' +
-        '[role="searchbox"], h1, h2, h3, h4, h5, h6'
-      );
-
-      for (const el of all) {
-        if (el.offsetParent === null && el.style.position !== 'fixed') continue;
-        if (el.getAttribute('aria-hidden') === 'true') continue;
-
-        const tag = el.tagName;
-        let role = el.getAttribute('role') || interactiveTags[tag] || "";
-        const type = el.type || "";
-
-        if (tag === 'INPUT') {
-          if (type === 'submit' || type === 'button') role = 'button';
-          else if (type === 'checkbox') role = 'checkbox';
-          else if (type === 'radio') role = 'radio';
-          else role = 'textbox';
-        }
-        if (/^H[1-6]$/.test(tag)) role = 'heading';
-
-        let name = el.getAttribute('aria-label')
-          || el.placeholder
-          || (el.textContent || '').trim().slice(0, 80)
-          || (el.value || '').slice(0, 40)
-          || el.getAttribute('title')
-          || "";
-
-        if (!name && !role) continue;
-        name = name.replace(/\\s+/g, ' ').trim();
-
-        results.push({ role, name, tag, type });
-      }
-      return results;
-    })()`) as Array<{ role: string; name: string; tag: string; type: string }>;
-
-    if (elements.length === 0) return "No interactive elements found.";
-
-    const lines: string[] = [];
-    for (const el of elements) {
-      const ref = this.nextRef++;
-      this.refMap.set(ref, { role: el.role, name: el.name });
-      // Sanitize element names to prevent prompt injection via malicious websites.
-      // Strip newlines, control chars, and escape quotes so attacker-controlled
-      // aria-label/textContent can't inject fake refs or LLM instructions.
-      const safeName = el.name
-        .replace(/[\r\n\t]/g, " ")          // no newlines (blocks instruction injection)
-        .replace(/[\x00-\x1f\x7f]/g, "")    // strip control characters
-        .replace(/"/g, "'")                  // escape quotes (prevents breaking out of ref format)
-        .replace(/\[(\d+)\]/g, "($1)")       // prevent fake ref numbers like [2]
-        .slice(0, 80);                       // cap length
-      const safeRole = el.role.replace(/[\r\n]/g, "").slice(0, 20);
-      const typeStr = el.type ? ` (${el.type.replace(/[\r\n]/g, "").slice(0, 20)})` : "";
-      lines.push(`[${ref}] ${safeRole} "${safeName}"${typeStr}`);
-    }
-
-    const url = page.url();
-    const title = await page.title();
-    return `Page: ${title} (${url})\n${lines.length} elements:\n\n${lines.join("\n")}`;
+    const obs = await this.registry.observe(page);
+    return ObservationRegistry.format(obs);
   }
 
-  /** Click an element by ref number (from snapshot). Auto-snapshots after click. Auto-recovers stale refs. */
+  /** Export the current registry state (for cross-phase handoff). */
+  exportRegistry(): unknown {
+    return this.registry.serialize();
+  }
+
+  /** Restore registry state (for cross-phase handoff). */
+  importRegistry(state: unknown): void {
+    this.registry.restore(state);
+  }
+
+  /**
+   * Scroll the page or a specific element into view. direction = up/down/top/bottom
+   * (scrolls the main page) OR set refId to scroll a specific ref into view.
+   */
+  async scroll(opts: { direction?: "up" | "down" | "top" | "bottom"; refId?: number; amount?: number }): Promise<string> {
+    const page = await this.getPage();
+    if (opts.refId !== undefined) {
+      const ref = this.registry.get(opts.refId);
+      if (!ref) return `Ref [${opts.refId}] not found — re-observe first`;
+      try {
+        const loc = page.locator(`xpath=${ref.xpath}`);
+        await loc.first().scrollIntoViewIfNeeded({ timeout: 3000 });
+        await waitForStability(page, { maxWait: 1500 });
+        return `Scrolled ref [${opts.refId}] into view`;
+      } catch (e) {
+        return `Could not scroll ref [${opts.refId}]: ${(e as Error).message}`;
+      }
+    }
+    const amount = opts.amount ?? 600;
+    const dir = opts.direction ?? "down";
+    if (dir === "top") {
+      await page.evaluate("window.scrollTo(0, 0)");
+    } else if (dir === "bottom") {
+      await page.evaluate("window.scrollTo(0, document.body.scrollHeight)");
+    } else {
+      const delta = dir === "up" ? -amount : amount;
+      await page.evaluate(`window.scrollBy(0, ${delta})`);
+    }
+    await waitForStability(page, { maxWait: 1500 });
+    return `Scrolled ${dir}${opts.refId ? "" : ` (${amount}px)`}`;
+  }
+
+  /** Click by durable ref — uses role → text → XPath → coords fallback chain. */
   async clickByRef(ref: number): Promise<string> {
     const page = await this.getPage();
-    let info = this.refMap.get(ref);
-    if (!info) {
-      // Auto-recovery: take fresh snapshot and search by ref
-      await this.snapshot();
-      info = this.refMap.get(ref);
-      if (!info) {
-        return `Ref [${ref}] not found even after re-snapshot. Page may have changed — here are the current refs:\n\n${await this.snapshot()}`;
-      }
+    let result = await clickRef(page, this.registry, ref);
+    if (!result.ok) {
+      // Stale ref — re-observe then retry once.
+      await this.registry.observe(page);
+      result = await clickRef(page, this.registry, ref);
     }
-
-    // Resolve via getByRole (most reliable cross-DOM method)
-    let locator = page.getByRole(info.role as any, { name: info.name, exact: false });
-    let count = await locator.count();
-
-    if (count === 0) {
-      // Auto-recovery: page may have re-rendered — take fresh snapshot and retry by role/name
-      await page.waitForTimeout(2000);
-      await this.snapshot();
-      locator = page.getByRole(info.role as any, { name: info.name, exact: false });
-      count = await locator.count();
+    if (!result.ok) {
+      const refreshed = ObservationRegistry.format(await this.registry.observe(page));
+      return `${result.message}\n\nCurrent page:\n\n${refreshed}`;
     }
-
-    if (count === 0) {
-      // Fallback: find by text content
-      const textLocator = page.getByText(info.name, { exact: false });
-      if ((await textLocator.count()) > 0) {
-        await textLocator.first().click({ timeout: ACTION_TIMEOUT });
-        await page.waitForTimeout(1000);
-        const snap = await this.snapshot();
-        return `Clicked "${info.name}" (found by text after retry).\nPage: ${page.url()}\n\n${snap}`;
-      }
-      return `Could not find element [${ref}] ${info.role} "${info.name}" after retry. Current page:\n\n${await this.snapshot()}`;
-    }
-
-    await locator.first().click({ timeout: ACTION_TIMEOUT });
-    await page.waitForTimeout(1000);
-    const snap = await this.snapshot();
-    return `Clicked [${ref}] ${info.role} "${info.name}"\nPage: ${page.url()}\n\n${snap}`;
+    await waitForStability(page, { maxWait: 2500 });
+    const after = ObservationRegistry.format(await this.registry.observe(page));
+    return `${result.message}\nPage: ${page.url()}\n\n${after}`;
   }
 
-  /** Fill an element by ref number. Auto-recovers stale refs. */
+  /** Fill by durable ref — uses role → XPath fallback. */
   async fillByRef(ref: number, value: string): Promise<string> {
     const page = await this.getPage();
-    let info = this.refMap.get(ref);
-    if (!info) {
-      // Auto-recovery: take fresh snapshot and search by ref
-      await this.snapshot();
-      info = this.refMap.get(ref);
-      if (!info) {
-        return `Ref [${ref}] not found even after re-snapshot. Current page:\n\n${await this.snapshot()}`;
-      }
+    let result = await fillRef(page, this.registry, ref, value);
+    if (!result.ok) {
+      await this.registry.observe(page);
+      result = await fillRef(page, this.registry, ref, value);
     }
-
-    let locator = page.getByRole(info.role as any, { name: info.name, exact: false });
-    if ((await locator.count()) === 0) {
-      // Auto-recovery: wait for SPA re-render, re-snapshot, retry
-      await page.waitForTimeout(2000);
-      await this.snapshot();
-      locator = page.getByRole(info.role as any, { name: info.name, exact: false });
-      if ((await locator.count()) === 0) {
-        return `Could not find element [${ref}] ${info.role} "${info.name}" after retry. Current page:\n\n${await this.snapshot()}`;
-      }
+    if (!result.ok) {
+      const refreshed = ObservationRegistry.format(await this.registry.observe(page));
+      return `${result.message}\n\nCurrent page:\n\n${refreshed}`;
     }
-
-    await locator.first().fill(value, { timeout: ACTION_TIMEOUT });
-    return `Filled [${ref}] ${info.role} "${info.name}" with value (${value.length} chars)`;
+    return `${result.message} — ${value.length} chars`;
   }
 
-  /** Click by visible text content (fallback when refs aren't available). Auto-snapshots after. */
+  /** Click by visible text — fallback when refs aren't available. */
   async clickByText(text: string): Promise<string> {
     const page = await this.getPage();
-    const locator = page.getByText(text, { exact: false });
-    const count = await locator.count();
-    if (count === 0) {
-      // Try getByRole with the text as name
-      for (const role of ["button", "link", "menuitem", "tab"]) {
-        const roleLocator = page.getByRole(role as any, { name: text, exact: false });
-        if ((await roleLocator.count()) > 0) {
-          await roleLocator.first().click({ timeout: ACTION_TIMEOUT });
-          await page.waitForTimeout(1000);
-          const snap = await this.snapshot();
-          return `Clicked ${role} "${text}"\nPage: ${page.url()}\n\n${snap}`;
-        }
-      }
-      return `No element with text "${text}" found on the page.`;
-    }
-    await locator.first().click({ timeout: ACTION_TIMEOUT });
-    await page.waitForTimeout(1000);
-    const snap = await this.snapshot();
-    return `Clicked text "${text}"\nPage: ${page.url()}\n\n${snap}`;
+    const result = await clickByTextAction(page, text);
+    if (!result.ok) return result.message;
+    await waitForStability(page, { maxWait: 2500 });
+    const after = ObservationRegistry.format(await this.registry.observe(page));
+    return `${result.message}\nPage: ${page.url()}\n\n${after}`;
   }
 
   /** Extract visible text from the page or a specific selector. */
@@ -670,6 +594,7 @@ export class BrowserManager {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
+    this.registry.reset();
     if (this.browser) {
       try {
         await this.browser.close();

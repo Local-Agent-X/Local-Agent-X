@@ -148,17 +148,21 @@ export function truncateHistory(messages: ChatCompletionMessageParam[], maxKeep:
   const old = messages.slice(0, cutIdx);
   const recent = messages.slice(cutIdx);
 
-  // Build a one-line summary so the model knows the conversation has prior context
+  // Summarize older messages so the model knows there was prior context.
+  // CRITICAL: do NOT use "User: X / Agent: Y" format here — the model will
+  // mimic that format in its OWN output and leak fake "User: ..." lines into
+  // its replies. Wrap in XML tags instead (the system prompt already tells
+  // the model XML-tagged blocks are reference context, not output to echo).
   const summaryLines: string[] = [];
   for (const m of old) {
     if (m.role === "user" && typeof m.content === "string") {
-      summaryLines.push(`User: ${m.content.slice(0, 150).replace(/\n/g, " ")}`);
+      summaryLines.push(`<prior_user>${m.content.slice(0, 150).replace(/\n/g, " ")}</prior_user>`);
     } else if (m.role === "assistant" && typeof m.content === "string") {
       const firstLine = m.content.split("\n").filter((l) => l.trim())[0] || "";
-      summaryLines.push(`Agent: ${firstLine.slice(0, 150)}`);
+      summaryLines.push(`<prior_assistant>${firstLine.slice(0, 150)}</prior_assistant>`);
     }
   }
-  const summary = `[Earlier in this conversation (${old.length} messages summarized):\n${summaryLines.join("\n")}\n...end of summary]`;
+  const summary = `<prior_conversation count="${old.length}">\n${summaryLines.join("\n")}\n</prior_conversation>`;
 
   return [{ role: "system", content: summary } as ChatCompletionMessageParam, ...recent];
 }

@@ -170,28 +170,39 @@ async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string;
   const phaseObj = op.phases.find((p) => p.id === phase.id)!;
   const prompt = buildPhasePrompt(op, phaseObj);
 
-  // Scoped system prompt for sub-agent. Inherits core routing rules from the
-  // main prompt so it doesn't go exploring (grep, screen_capture) when the
-  // phase clearly needs web/browser work.
+  // Scoped system prompt for sub-agent. Forces decisive action — the biggest
+  // failure mode observed is sub-agents hitting snapshot → "I see an Edit
+  // button" → ask user to click it. That's 5 turns wasted asking for a
+  // click the agent can just make itself.
   const scopedSystemPrompt =
-    `You are executing ONE phase of a larger autonomous operation. Focus ONLY on this phase's goal. Do not do more than asked.\n\n` +
-    `## MANDATORY tool routing (match intent → tool, no exploration)\n` +
-    `- Web page / website / DNS / forms / login / click → "browser" tool (action: navigate/snapshot/click/fill)\n` +
-    `- HTTP API call with known URL → "http_request" tool\n` +
-    `- Search the web for info → "web_search" tool\n` +
-    `- Run a shell command → "bash" tool\n` +
-    `- Read/write local files → "read", "write", "edit"\n` +
-    `- Check agent memory → "memory_search" (NOT grep)\n` +
-    `- DO NOT use "grep" to hunt for things that aren't local code\n` +
-    `- DO NOT use "screen_capture" for web content — screen_capture is for the user's physical desktop only\n\n` +
-    `If the phase involves a website, your FIRST call should be "browser" with action "navigate" to that site. Do not grep or search files looking for the site — open it directly.\n\n` +
+    `You are executing ONE phase of an autonomous operation. You have browser and API tools. The user is NOT watching — they gave you a goal and left. Your job is to finish the phase.\n\n` +
+    `## BE DECISIVE — click your own buttons\n` +
+    `If a snapshot shows an Edit / Manage / Add / Save / Continue / Next / Confirm button, CLICK IT. Do not ask the user. Do not say "please open the X page" — open it yourself with browser navigate/click. The user already told you what to do by stating the goal; carrying it out is YOUR job.\n\n` +
+    `Only pause (PHASE_RESULT: paused) for genuine blockers the user MUST resolve:\n` +
+    `  - 2FA code / SMS OTP / authenticator app\n` +
+    `  - CAPTCHA\n` +
+    `  - Payment method entry / credit card\n` +
+    `  - A credential you don't have and can't find via Chrome autofill\n` +
+    `NEVER pause for:\n` +
+    `  - "I see the Edit button but didn't click it"  (CLICK IT)\n` +
+    `  - "the DNS values aren't visible on this screen"  (click Edit / Manage to reveal them)\n` +
+    `  - "I'd need another page open"  (navigate there yourself)\n` +
+    `  - "I'm not sure which option to pick"  (pick the safest and try; you can undo)\n\n` +
+    `## MANDATORY tool routing\n` +
+    `- Web / DNS / form / login / click → "browser" (navigate → snapshot → click/fill by ref)\n` +
+    `- HTTP API with known URL → "http_request"\n` +
+    `- Shell command → "bash"\n` +
+    `- Files → "read" / "write" / "edit"\n` +
+    `- Agent memory → "memory_search" (NOT grep)\n` +
+    `- NO grep for web content, NO screen_capture for web pages\n\n` +
+    `If the phase involves a website, your FIRST tool call is "browser" navigate to that URL.\n\n` +
     `## Report format — REQUIRED last line\n` +
-    `When you finish (or hit a blocker), your FINAL message's last line must be exactly:\n` +
-    `  PHASE_RESULT: <completed|failed|paused> | <json of durable outputs> | <short reason if failed/paused>\n` +
+    `Your FINAL message's last line must be exactly:\n` +
+    `  PHASE_RESULT: <completed|failed|paused> | <json outputs> | <reason if failed/paused>\n` +
     `Examples:\n` +
-    `  PHASE_RESULT: completed | {"fastmail_domain_id":"6041735"} |\n` +
-    `  PHASE_RESULT: failed | {} | GoDaddy rejected DNS: record conflict\n` +
-    `  PHASE_RESULT: paused | {} | need GoDaddy 2FA from user\n`;
+    `  PHASE_RESULT: completed | {"fastmail_domain_id":"6041735","dns_records_added":7} |\n` +
+    `  PHASE_RESULT: failed | {} | GoDaddy API rejected record: duplicate MX\n` +
+    `  PHASE_RESULT: paused | {} | need user to enter 2FA code from authenticator\n`;
 
   return new Promise<string>((resolve, reject) => {
     // spawnAgent is wired to EventBus — when the run completes, it emits

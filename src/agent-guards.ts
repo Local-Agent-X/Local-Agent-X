@@ -134,20 +134,20 @@ export function checkToolLoops(
     state.lastToolKey = key;
   }
 
-  // Discovery loop detection (same tool called 8+ times). Previously only
-  // caught glob/web_search/read/bash — but sub-agents also spiral on
-  // identity/team tools (agent_whoami + issue_list ping-pong) and on
-  // memory_search when they panic. Broadened to ANY read-only tool that
-  // shouldn't reasonably be called 8+ times in one turn.
+  // Discovery-style loop detection: same READ-ONLY discovery tool called 8+
+  // times suggests the agent is spinning trying to find something. Action
+  // tools (browser, http_request) are intentionally NOT in this list — they
+  // do progressive work and 8+ sequential calls is normal multi-step
+  // automation, not a spiral. Exact-repeat detection above (3x same call
+  // with identical args) catches true browser loops.
   for (const tc of toolCalls) {
     state.toolNameCounts.set(tc.name, (state.toolNameCounts.get(tc.name) || 0) + 1);
   }
   const SPIRALABLE_TOOLS = new Set([
-    "glob", "web_search", "read", "bash", "grep",
+    "glob", "web_search", "read", "grep",
     "agent_whoami", "agent_team_list", "issue_list", "issue_search",
     "memory_search", "memory_recall", "memory_get",
     "task_list", "operation_status", "operation_list",
-    "browser", // excessive browser calls = stuck
   ]);
   const stuck = [...state.toolNameCounts.entries()].find(([name, count]) =>
     count >= DISCOVERY_LOOP_THRESHOLD && SPIRALABLE_TOOLS.has(name)
@@ -157,7 +157,7 @@ export function checkToolLoops(
     state.toolNameCounts.set(toolName, 0);
     return {
       abort: false,
-      nudge: `SYSTEM: You have called ${toolName} ${count} times. STOP. Produce your final PHASE_RESULT line with the information you already have, or report the blocker. Do NOT make more ${toolName} calls.`,
+      nudge: `SYSTEM: You have called ${toolName} ${count} times. STOP. Produce your final result with the information you already have, or report the blocker. Do NOT make more ${toolName} calls.`,
     };
   }
 

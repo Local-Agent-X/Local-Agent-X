@@ -162,7 +162,12 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .msg-attachments img{max-width:280px;max-height:200px;border-radius:12px;border:1px solid var(--border);cursor:pointer;transition:transform .15s;object-fit:cover}
 .msg-attachments img:hover{transform:scale(1.03);border-color:var(--accent)}
 .att-badge{padding:6px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--border);font-size:.75rem;font-family:var(--mono);color:var(--muted);display:flex;align-items:center;gap:6px}
-.tool-card{margin:8px 0;border-radius:8px;border:1px solid var(--border);overflow:hidden;font-size:.82rem}
+.tool-card{margin:4px 0;border-radius:6px;border:1px solid var(--border);overflow:hidden;font-size:.78rem;transition:opacity .2s}
+/* Completed tool cards (have an allowed/blocked indicator) fade to a compact
+   1-line form. Latest in-progress card stays prominent. Click to expand. */
+.tool-card:has(.indicator.allowed),.tool-card:has(.indicator.blocked){opacity:.55}
+.tool-card:has(.indicator.allowed) .tool-header,.tool-card:has(.indicator.blocked) .tool-header{padding:4px 10px;font-size:.72rem}
+.tool-card:has(.indicator.allowed):hover,.tool-card:has(.indicator.blocked):hover{opacity:1}
 .approval-card{margin:10px 0;padding:12px 14px;border-radius:10px;border:1px solid #f2b01e;background:#2a1f05;font-size:.85rem}
 .approval-card.approved{border-color:var(--accent);background:#0e2318}
 .approval-card.denied,.approval-card.timeout{border-color:var(--danger);background:#2a0e0e;opacity:.75}

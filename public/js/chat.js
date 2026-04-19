@@ -173,9 +173,28 @@ function renderStreamContent(bodyEl, content) {
   pending.raf = requestAnimationFrame(() => {
     pending.raf = 0;
     const existingCards = bodyEl.querySelectorAll('.tool-card,.approval-card');
-    bodyEl.innerHTML = pending.latest ? md(pending.latest) : '';
+    // Strip inline plans — the agent's "Plan: 1) X, 2) Y" bullet is for
+    // its own reasoning, not for the user's eyes. We remove it before render
+    // so the visible bubble just shows the final answer, not the scratchwork.
+    const stripped = stripAgentScratchwork(pending.latest);
+    bodyEl.innerHTML = stripped ? md(stripped) : '';
     existingCards.forEach(c => bodyEl.appendChild(c));
   });
+}
+
+function stripAgentScratchwork(text) {
+  if (!text) return text;
+  // Kill lines that look like the model's internal plan or step log.
+  // Matches: "Plan: 1) X, 2) Y..." / "I'll: 1) X..." / "Let me: 1) X..."
+  // Plus preambles like "Let me first check the local..." when followed by a tool card.
+  return text
+    .replace(/^Plan\s*:\s*.+?(?=\n\n|$)/gmis, '')
+    .replace(/^(I['’]ll|Let me|I will|I'll|I am going to|I'm going to)\s+.+?(?=\n\n|$)/gmi, (match) => {
+      // only strip if it reads like a step list (contains "1)" or "first" or "then")
+      return /\b(1\)|first|then|next,|step)/i.test(match) ? '' : match;
+    })
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 // Voice state

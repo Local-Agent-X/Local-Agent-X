@@ -329,7 +329,7 @@ async function sendMessage() {
               const existingCards = bodyEl.querySelectorAll('.tool-card');
               bodyEl.innerHTML = content ? md(content) : '';
               existingCards.forEach(c => bodyEl.appendChild(c));
-              bodyEl.appendChild(makeToolCard(event.toolName, event.args, event.riskLevel, event.context));
+              appendToolCardGrouped(bodyEl, event.toolName, event.args, event.riskLevel, event.context);
             }
             break;
           case 'tool_end': {
@@ -491,7 +491,7 @@ async function sendMessage() {
                 const existingCards = bodyEl.querySelectorAll('.tool-card');
                 bodyEl.innerHTML = content ? md(content) : '';
                 existingCards.forEach(c => bodyEl.appendChild(c));
-                bodyEl.appendChild(makeToolCard(event.toolName, event.args, event.riskLevel, event.context));
+                appendToolCardGrouped(bodyEl, event.toolName, event.args, event.riskLevel, event.context);
               }
               break;
             case 'tool_end': {
@@ -582,7 +582,7 @@ async function sendMessage() {
               try {
                 const event = JSON.parse(line.slice(6));
                 if (event.type === 'stream') { content += event.delta; if (isViewingThis()) bodyEl.innerHTML = md(content); }
-                if (event.type === 'tool_start' && isViewingThis()) { bodyEl.innerHTML = content ? md(content) : ''; bodyEl.appendChild(makeToolCard(event.toolName, event.args, event.riskLevel, event.context)); }
+                if (event.type === 'tool_start' && isViewingThis()) { bodyEl.innerHTML = content ? md(content) : ''; appendToolCardGrouped(bodyEl, event.toolName, event.args, event.riskLevel, event.context); }
                 if (event.type === 'tool_end' && isViewingThis()) { const cards = bodyEl.querySelectorAll('.tool-card'); const last = cards[cards.length-1]; if(last){last.querySelector('.indicator').className='indicator '+(event.allowed?'allowed':'blocked');} }
                 if (event.type === 'tool_progress' && isViewingThis()) { updateToolProgress(bodyEl, event.toolName, event.message); }
                 if (event.type === 'done') { savePartial(); }
@@ -831,8 +831,48 @@ function makeApprovalCard(approvalId, toolName, context, argsPreview) {
 
 function makeToolCard(name, args, riskLevel, context) {
   const card = document.createElement('div'); card.className = 'tool-card'; card.setAttribute('data-tool-name', name);
-  card.innerHTML = `<div class="tool-header" onclick="this.parentElement.classList.toggle('open')"><span class="indicator"></span><span class="tool-name">${esc(name)}</span><span class="tool-summary" style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(toolSummary(name, args))}</span><span style="color:var(--muted);font-size:.65rem">&#9654;</span></div>`
+  card.setAttribute('data-call-count', '1');
+  card.innerHTML = `<div class="tool-header" onclick="this.parentElement.classList.toggle('open')"><span class="indicator"></span><span class="tool-name">${esc(name)}</span><span class="tool-count" style="color:var(--muted);font-size:.7rem;margin-right:.3rem"></span><span class="tool-summary" style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(toolSummary(name, args))}</span><span style="color:var(--muted);font-size:.65rem">&#9654;</span></div>`
     + `<div class="tool-detail">executing...</div>`;
+  return card;
+}
+
+/**
+ * Append a tool card — but if the most-recent tool-card in the container has
+ * the same tool name AND was added very recently (last 8s), roll this call
+ * into that card as another sub-entry instead of creating a new top-level
+ * block. Keeps the UI from showing "browser × browser × browser × ..." as 8
+ * separate cards when the agent is mid-loop.
+ */
+function appendToolCardGrouped(container, name, args, riskLevel, context) {
+  const cards = container.querySelectorAll('.tool-card');
+  const last = cards[cards.length - 1];
+  const GROUP_WINDOW_MS = 8000;
+  if (last && last.getAttribute('data-tool-name') === name) {
+    const ts = parseInt(last.getAttribute('data-last-ts') || '0', 10);
+    if (ts && Date.now() - ts < GROUP_WINDOW_MS) {
+      const count = parseInt(last.getAttribute('data-call-count') || '1', 10) + 1;
+      last.setAttribute('data-call-count', String(count));
+      last.setAttribute('data-last-ts', String(Date.now()));
+      const countEl = last.querySelector('.tool-count');
+      if (countEl) countEl.textContent = '×' + count;
+      // Update summary to show latest action
+      const summary = last.querySelector('.tool-summary');
+      if (summary) summary.textContent = toolSummary(name, args);
+      // Append to detail area as a sub-entry
+      const detail = last.querySelector('.tool-detail');
+      if (detail) {
+        const sub = document.createElement('div');
+        sub.style.cssText = 'font-size:.72rem;color:var(--muted);padding:.2rem 0;border-top:1px solid var(--border,#333);margin-top:.2rem';
+        sub.textContent = '#' + count + ' ' + toolSummary(name, args);
+        detail.appendChild(sub);
+      }
+      return last;
+    }
+  }
+  const card = makeToolCard(name, args, riskLevel, context);
+  card.setAttribute('data-last-ts', String(Date.now()));
+  container.appendChild(card);
   return card;
 }
 

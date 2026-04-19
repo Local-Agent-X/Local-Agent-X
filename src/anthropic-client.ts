@@ -507,6 +507,7 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
     let suppressing = false;
     let usage: Record<string, number> = {};
     let firstResponse = false;
+    let emittedNativeTools = false;
 
     for await (const chunk of proc.stdout as AsyncIterable<Buffer>) {
       buffer += chunk.toString();
@@ -527,10 +528,6 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
         if (event.type === "assistant") {
           const content = event.message?.content;
           if (Array.isArray(content)) {
-            // Compute the FULL concatenated text from all text blocks in this message.
-            // Claude can return multiple text blocks (e.g. text + reasoning + text)
-            // and tracking prevText against any single block.text breaks the delta
-            // computation when block lengths shrink between blocks.
             const fullBlockText = content
               .filter((b: any) => b.type === "text" && typeof b.text === "string")
               .map((b: any) => b.text)
@@ -550,6 +547,18 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
               if (cleanDelta.suppress) { suppressing = true; }
               else if (cleanDelta.text) { suppressing = false; yield { type: "text", delta: cleanUrls(cleanDelta.text) }; }
             }
+            // Also capture NATIVE tool_use blocks. Opus 4.7 sometimes emits these
+            // alongside or instead of the text-JSON protocol the CLI prompt primes
+            // it with. Without this pass, native tool calls were silently dropped
+            // and the loop ended the turn with no tool call.
+            for (const b of content) {
+              if (b?.type === "tool_use" && b.name) {
+                const args = typeof b.input === "object" && b.input ? b.input : {};
+                console.log(`[claude] Native tool_use: ${b.name}(${JSON.stringify(args).slice(0, 80)})`);
+                emittedNativeTools = true;
+                yield { type: "tool_call", id: b.id || newToolCallId(b.name), name: b.name, arguments: JSON.stringify(args) };
+              }
+            }
           }
         } else if (event.type === "result") {
           const result = typeof event.result === "string" ? event.result : "";
@@ -564,12 +573,22 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
           usage = event.usage || {};
           console.log(`[claude] Done: ${result.slice(0, 100).replace(/\n/g, "\\n")}...`);
 
-          // Parse and emit tool calls from full response
-          const toolCalls = parseToolCalls(fullText);
-          for (const tc of toolCalls) {
-            const redactedArgs = JSON.stringify(tc.arguments).slice(0, 100).replace(/(?:password|secret|token|key|api_key|apiKey|authorization|bearer)["']?\s*[:=]\s*["']?[^"',}\s]{3}[^"',}]*/gi, (m) => m.slice(0, m.indexOf(":") + 4) + "***REDACTED***");
-            console.log(`[claude] Tool call: ${tc.name}(${redactedArgs})`);
-            yield { type: "tool_call", id: newToolCallId(tc.name), name: tc.name, arguments: JSON.stringify(tc.arguments) };
+          // Parse tool calls from full response ONLY if we didn't already emit
+          // native tool_use blocks from the assistant event — prevents duplicate
+          // emission when Opus uses native tool_use (which my text parser would
+          // also match against the textual representation).
+          if (!emittedNativeTools) {
+            const toolCalls = parseToolCalls(fullText);
+            for (const tc of toolCalls) {
+              const redactedArgs = JSON.stringify(tc.arguments).slice(0, 100).replace(/(?:password|secret|token|key|api_key|apiKey|authorization|bearer)["']?\s*[:=]\s*["']?[^"',}\s]{3}[^"',}]*/gi, (m) => m.slice(0, m.indexOf(":") + 4) + "***REDACTED***");
+              console.log(`[claude] Tool call: ${tc.name}(${redactedArgs})`);
+              yield { type: "tool_call", id: newToolCallId(tc.name), name: tc.name, arguments: JSON.stringify(tc.arguments) };
+            }
+            // Diagnostic: if response CONTAINS "tool_calls" text but parser found
+            // nothing, log it — helps catch future CLI output-format changes.
+            if (toolCalls.length === 0 && /"tool_calls"/.test(fullText)) {
+              console.warn(`[claude] WARNING: response contains "tool_calls" but parser extracted 0 calls. Response head: ${fullText.slice(0, 300).replace(/\n/g, "\\n")}`);
+            }
           }
           yield { type: "done", usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0 } };
           return;

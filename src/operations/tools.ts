@@ -53,18 +53,30 @@ export function createOperationTools(): ToolDefinition[] {
           provider: args.provider as "ollama" | "anthropic" | "openai" | "auto" | undefined,
           model: typeof args.model === "string" ? args.model : undefined,
         });
+
+        // Auto-start the background executor — no more "agent forgot to loop"
+        // bookkeeping bugs. The executor spawns sub-agents per phase and
+        // advances the state machine automatically. Agent just tells the user
+        // the op is running and recommends operation_status for updates.
+        try {
+          const { startExecutor } = await import("./executor.js");
+          const sessionId = (args._sessionId as string) || "";
+          startExecutor(op.id, { workspaceDir: workspaceDir(), parentSessionId: sessionId });
+        } catch (e) {
+          console.warn(`[operation_start] Failed to start executor: ${(e as Error).message}`);
+        }
+
         const lines = [
-          `Operation ${op.id} created — ${op.phases.length} phases`,
+          `Operation ${op.id} is running autonomously.`,
           ``,
           `Goal: ${op.goal}`,
-          `Summary: ${op.summary}`,
+          `Plan (${op.phases.length} phases):`,
+          ...op.phases.map((p, i) => `  ${i + 1}. ${p.name}`),
           ``,
-          `Phases:`,
-          ...op.phases.map((p, i) => `  ${i + 1}. ${p.name} — ${p.goal.slice(0, 100)}`),
-          ``,
-          `Plan saved to: workspace/operations/${op.id}/plan.md`,
-          ``,
-          `AUTONOMOUS EXECUTION: DO NOT STOP HERE. Immediately call operation_next with operation_id="${op.id}" to get the first phase's prompt. Execute that phase's tools. Then call operation_advance with the outcome. Then operation_next again. Loop until operation status becomes completed / failed / paused. Do not ask the user between phases unless a phase returns outcome="paused" (requires user input).`,
+          `The executor is running in the background — sub-agents are working on each phase. ` +
+          `You don't need to call operation_next/operation_advance manually. ` +
+          `Tell the user what's running and suggest operation_status if they want a progress check. ` +
+          `Stop here. Do not call more operation tools this turn.`,
         ];
         return { content: lines.join("\n") };
       },

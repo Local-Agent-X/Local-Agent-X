@@ -137,19 +137,30 @@ export function checkToolLoops(
     state.lastToolKey = key;
   }
 
-  // Discovery loop detection (same tool called 8+ times)
+  // Discovery loop detection (same tool called 8+ times). Previously only
+  // caught glob/web_search/read/bash — but sub-agents also spiral on
+  // identity/team tools (agent_whoami + issue_list ping-pong) and on
+  // memory_search when they panic. Broadened to ANY read-only tool that
+  // shouldn't reasonably be called 8+ times in one turn.
   for (const tc of toolCalls) {
     state.toolNameCounts.set(tc.name, (state.toolNameCounts.get(tc.name) || 0) + 1);
   }
+  const SPIRALABLE_TOOLS = new Set([
+    "glob", "web_search", "read", "bash", "grep",
+    "agent_whoami", "agent_team_list", "issue_list", "issue_search",
+    "memory_search", "memory_recall", "memory_get",
+    "task_list", "operation_status", "operation_list",
+    "browser", // excessive browser calls = stuck
+  ]);
   const stuck = [...state.toolNameCounts.entries()].find(([name, count]) =>
-    count >= DISCOVERY_LOOP_THRESHOLD && ["glob", "web_search", "read", "bash"].includes(name)
+    count >= DISCOVERY_LOOP_THRESHOLD && SPIRALABLE_TOOLS.has(name)
   );
   if (stuck) {
     const [toolName, count] = stuck;
     state.toolNameCounts.set(toolName, 0);
     return {
       abort: false,
-      nudge: `SYSTEM: You have called ${toolName} ${count} times. Stop searching and produce your final output with the information you already have. Do not make any more ${toolName} calls.`,
+      nudge: `SYSTEM: You have called ${toolName} ${count} times. STOP. Produce your final PHASE_RESULT line with the information you already have, or report the blocker. Do NOT make more ${toolName} calls.`,
     };
   }
 

@@ -559,7 +559,22 @@ export async function startServer(config: SAXConfig) {
         // Operations — a sub-agent may kick off a nested operation if a phase
         // needs further decomposition
         "operation_start", "operation_status"]);
-      let spawnedTools = allAgentTools.filter(t => CORE_AGENT_TOOLS.has(t.name));
+
+      // Role-specific narrow tool sets. Operations phase workers ("operator"
+      // role) don't need team coordination / identity / issue tools — those
+      // cause attention-drift loops (agent_whoami + issue_list spam). Keep
+      // them focused on web + file + shell + memory.
+      const OPERATOR_TOOLS = new Set([
+        "browser", "bash", "read", "write", "edit", "http_request",
+        "web_search", "web_fetch", "view_image", "ocr",
+        "memory_search", "memory_save", "memory_recall",
+        "document_create", "document_edit", "spreadsheet_read", "spreadsheet_write", "pdf_create",
+        "email_send", "ask_user",
+      ]);
+
+      let spawnedTools = role === "operator"
+        ? allAgentTools.filter(t => OPERATOR_TOOLS.has(t.name))
+        : allAgentTools.filter(t => CORE_AGENT_TOOLS.has(t.name));
       if (template?.allowedTools && template.allowedTools.length > 0) {
         // Template restricts tools — enforce it. Always include issue_* and agent_* for coordination.
         const allowed = new Set([...template.allowedTools, "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval", "agent_whoami", "agent_team_list", "agent_wakeup"]);

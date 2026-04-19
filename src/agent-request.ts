@@ -393,6 +393,8 @@ const CORE_TOOL_NAMES = new Set([
   "memory_search", "memory_save", "memory_recall", "memory_get",
   "memory_forget", "memory_reflect", "memory_update_profile", "memory_stats",
   "memory_consolidate", "memory_ingest",
+  // Operations — long-horizon goal orchestration
+  "operation_start", "operation_list", "operation_status", "operation_next", "operation_advance",
   // Planning & tasks
   "enter_plan_mode", "exit_plan_mode",
   "task_create", "task_update", "task_list", "task_get",

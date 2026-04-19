@@ -200,7 +200,7 @@ async function executeSingleTool(
     return msgs;
   }
   // Inject session ID for tools that need session-scoped state
-  if (tc.name === "enter_plan_mode" || tc.name === "exit_plan_mode" || tc.name === "skill_run" || tc.name === "usage_report" || tc.name === "browser") {
+  if (tc.name === "enter_plan_mode" || tc.name === "exit_plan_mode" || tc.name === "skill_run" || tc.name === "usage_report" || tc.name === "browser" || tc.name === "operation_start") {
     args._sessionId = sessionId || "default";
   }
   // Inject onEvent for tools that need to stream events (e.g. request_secret)

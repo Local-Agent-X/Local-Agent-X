@@ -70,11 +70,11 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
       "The browser session persists across calls — navigate once, then click/fill/extract as needed. " +
       "IMPORTANT: When a fill or click fails, retry with a different selector or use evaluate to find the right one. " +
       "Don't just tell the user you'll retry — actually call this tool again.\n\n" +
-      "WORKFLOW: navigate → snapshot → click/fill by ref. The snapshot shows numbered refs for every interactive element.\n\n" +
+      "WORKFLOW: navigate → snapshot → click/fill by ref. Refs are DURABLE — [5] stays [5] across snapshots as long as the element is still on the page. Subsequent snapshots emit a DIFF (+ added / - removed / ~ changed) instead of re-listing everything, so you only need to focus on what changed.\n\n" +
       "Actions:\n" +
       "- navigate: Go to a URL (replaces current tab). ALWAYS follow with 'snapshot'.\n" +
       "- new_tab: Open a URL in a NEW tab (keeps current tab open).\n" +
-      "- snapshot: Get accessibility tree with numbered refs (e.g. [1] button \"Log in\"). ALWAYS use this before clicking.\n" +
+      "- snapshot: Observation with durable refs. First call after navigate → full list (viewport-first). Later calls → diff since last observation. Use 'observe' for structured buckets.\n" +
       "- click: Click by ref number (set 'ref') or CSS selector (set 'selector'). Ref is more reliable.\n" +
       "- click_text: Click element by visible text (set 'text'). Good for popups/modals.\n" +
       "- fill: Fill input by ref (set 'ref' + 'value') or CSS selector (set 'selector' + 'value').\n" +
@@ -84,6 +84,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
       "- evaluate: Run JavaScript in the page.\n" +
       "- act: Natural language action — 'click the login button', 'fill email with test@test.com'. Figures out the right element from a snapshot automatically.\n" +
       "- observe: Summarize what's actionable on the page — buttons, links, inputs, dropdowns with their ref numbers.\n" +
+      "- scroll: Scroll the page. value='up'|'down'|'top'|'bottom' OR ref=N to scroll that element into view.\n" +
       "- tabs: List all open tabs with URLs and titles.\n" +
       "- switch_tab: Switch to a tab by index (set 'value' to tab number).\n" +
       "- info: Get current page URL, title, and engine.\n" +
@@ -97,7 +98,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
       properties: {
         action: {
           type: "string",
-          enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "tabs", "switch_tab", "info", "close"],
+          enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "scroll", "tabs", "switch_tab", "info", "close"],
           description: "The browser action to perform. Use 'snapshot' to see interactive elements with ref numbers, then 'click' with a ref. Use 'new_tab' to open a URL in a new tab without closing the current one.",
         },
         url: {
@@ -245,6 +246,11 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
               .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
 
             const blocked = [
+              // Password/credential extraction — NEVER allow scripts that touch password fields.
+              // This caused a real leak where an agent read `input[type=password]`.value via evaluate.
+              /\[\s*type\s*=\s*['"]?password['"]?\s*\]/i,
+              /input\[\s*type\s*=\s*['"]?password['"]?/i,
+              /\btype\s*===?\s*['"]password['"]/i,
               // Network exfiltration
               /\bfetch\s*\(/i,
               /\bXMLHttpRequest\b/i,
@@ -302,6 +308,14 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
               }
             }
             return ok(await manager.evaluate(script));
+          }
+
+          case "scroll": {
+            // value = "up" | "down" | "top" | "bottom" | "<number>" (for refId)
+            // OR ref = number to scroll that element into view
+            const refVal = args.ref !== undefined && args.ref !== null ? Number(args.ref) : undefined;
+            const direction = args.value ? String(args.value) as "up" | "down" | "top" | "bottom" : "down";
+            return ok(await manager.scroll({ direction, refId: refVal }));
           }
 
           case "tabs": {
@@ -402,33 +416,34 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           }
 
           case "observe": {
-            // Returns a structured summary of what's actionable on the page
-            const snap = await manager.snapshot();
-            const lines = snap.split("\n").filter(l => l.trim());
-            const buttons = lines.filter(l => /button|submit|btn/i.test(l));
-            const links = lines.filter(l => /link|href/i.test(l));
-            const inputs = lines.filter(l => /input|textbox|combobox|searchbox|textarea/i.test(l));
-            const selects = lines.filter(l => /select|listbox|dropdown|combobox/i.test(l));
+            // Structured view grouped by role, viewport-first, diff-aware
+            const obs = await manager.observe();
+            const source = obs.isInitial && obs.full ? obs.full : [...obs.added];
+            const visible = source.filter((r) => r.inViewport);
 
-            const summary = [
-              `Page: ${await manager.getInfo()}`,
-              "",
-              `Buttons (${buttons.length}):`,
-              ...buttons.slice(0, 15).map(b => `  ${b.trim()}`),
-              buttons.length > 15 ? `  ... and ${buttons.length - 15} more` : "",
-              "",
-              `Links (${links.length}):`,
-              ...links.slice(0, 10).map(l => `  ${l.trim()}`),
-              links.length > 10 ? `  ... and ${links.length - 10} more` : "",
-              "",
-              `Inputs (${inputs.length}):`,
-              ...inputs.slice(0, 10).map(i => `  ${i.trim()}`),
-              "",
-              `Dropdowns (${selects.length}):`,
-              ...selects.slice(0, 5).map(s => `  ${s.trim()}`),
-            ].filter(Boolean).join("\n");
+            const bucket = (names: string[]) => visible.filter((r) => names.includes(r.role));
+            const buttons = bucket(["button"]);
+            const links = bucket(["link"]);
+            const inputs = bucket(["textbox", "searchbox", "combobox"]);
+            const selects = bucket(["combobox", "listbox"]);
+            const checks = bucket(["checkbox", "radio", "switch"]);
 
-            return ok(summary);
+            const fmt = (r: { id: number; role: string; name: string }) =>
+              `  [${r.id}] ${r.role} "${r.name.slice(0, 80)}"`;
+
+            const parts: string[] = [];
+            parts.push(`Page: ${obs.title} (${obs.url})`);
+            parts.push(`${obs.totalCount} elements (${obs.totalCount - obs.offscreenCount} in viewport, ${obs.offscreenCount} below fold)`);
+            if (!obs.isInitial) {
+              parts.push(`Since last observation: +${obs.added.length} added, -${obs.removed.length} removed, ~${obs.changed.length} changed`);
+            }
+            parts.push("");
+            parts.push(`Buttons (${buttons.length}):`, ...buttons.slice(0, 20).map(fmt));
+            parts.push("", `Links (${links.length}):`, ...links.slice(0, 15).map(fmt));
+            parts.push("", `Inputs (${inputs.length}):`, ...inputs.slice(0, 15).map(fmt));
+            parts.push("", `Dropdowns (${selects.length}):`, ...selects.slice(0, 10).map(fmt));
+            parts.push("", `Checkboxes/Radios (${checks.length}):`, ...checks.slice(0, 10).map(fmt));
+            return ok(parts.join("\n"));
           }
 
           default:

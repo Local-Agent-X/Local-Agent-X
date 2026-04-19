@@ -68,12 +68,10 @@ const CREATION_HALLUCINATION_RE_2 = new RegExp(
   "(^|\\n)\\s*[-*]?\\s*(Added|Created|Scheduled|Saved|Updated|Edited|Modified|Inserted|Appended|Removed|Deleted)\\b",
   "i"
 );
-// Pattern 3: Completion announcements ("Done." "Done — X scheduled" "✓ Created")
-// followed by an action word — model declares success without proof.
-const CREATION_HALLUCINATION_RE_3 = new RegExp(
-  "^\\s*(Done|All set|Complete|Finished|Confirmed|✓|✅)\\b[\\s\\S]{0,120}(scheduled|created|saved|added|updated|built|deployed)\\b",
-  "i"
-);
+// (Removed CREATION_HALLUCINATION_RE_3 — it matched legitimate completion
+// summaries like "Done — created the file" that DID come from real tool calls.
+// TOOL_ID_HALLUCINATION_RE below catches the actually dangerous case of the
+// model inventing an ID without calling a tool.)
 // Match fake tool IDs: prefix-style (sched_/job_/cron_) AND short hex strings
 // presented as "Job ID: 5a0fb8ae" / "ID: abc12345" / "Schedule ID: ..."
 const TOOL_ID_HALLUCINATION_RE = new RegExp(
@@ -95,7 +93,6 @@ export function checkCreationHallucination(text: string): string | null {
   if (
     CREATION_HALLUCINATION_RE.test(text) ||
     CREATION_HALLUCINATION_RE_2.test(text) ||
-    CREATION_HALLUCINATION_RE_3.test(text) ||
     TOOL_ID_HALLUCINATION_RE.test(text)
   ) {
     return "You claimed to have added/updated/created/scheduled something but you did NOT actually call a tool. The change did NOT happen. Do NOT invent IDs. Call the actual tool now (mission_schedule_create with name/schedule/prompt for new missions, mission_schedule_update for edits, write for files, etc).";

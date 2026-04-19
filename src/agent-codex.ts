@@ -282,7 +282,11 @@ export async function runCodexAgentHttp(
       }
     }
 
-    if (assistantContent && /\b(login required|password needed|authentication required|access denied|need.+log.?in|blocked|cannot access)\b/i.test(assistantContent)) {
+    // Tightened pause detection: only trigger when the agent explicitly asks
+    // the user for help, not when it's merely narrating that a site shows a
+    // login screen. Previously this fired on phrases like "the page says login
+    // required" and interrupted the agent's own flow.
+    if (assistantContent && /\b(please (log in|sign in|enter|provide|confirm)|need(s)? you to|waiting for you|i need your|can you (log in|sign in|paste|approve)|blocked\s+on\s+(2fa|captcha|payment))\b/i.test(assistantContent)) {
       if (options.pauseCallback) {
         onEvent?.({ type: "stream", delta: "\n\n[Waiting for user input...]" });
         const userResponse = await options.pauseCallback(assistantContent);

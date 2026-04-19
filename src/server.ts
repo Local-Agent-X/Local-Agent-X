@@ -572,41 +572,54 @@ export async function startServer(config: SAXConfig) {
         "email_send", "ask_user",
       ]);
 
-      let spawnedTools = role === "operator"
-        ? allAgentTools.filter(t => OPERATOR_TOOLS.has(t.name))
-        : allAgentTools.filter(t => CORE_AGENT_TOOLS.has(t.name));
+      // Single code path for all spawned agents. A worktree is created only
+      // when the role explicitly indicates code-editing work. Everything else
+      // (operator, researcher, browser, analyst, writer, or default) runs in
+      // the main workspace and uses the web-friendly execution rules.
+      const isCodeRole = /\b(developer|engineer|coder|programmer|refactorer|code-?editor)\b/i.test(role);
+
+      // All spawned agents get the operator toolset (browser, bash, web tools,
+      // memory, office docs, email, ask_user) — it's the superset that handles
+      // web + file + shell work. Templates may restrict further.
+      let spawnedTools = allAgentTools.filter(t => OPERATOR_TOOLS.has(t.name));
       if (template?.allowedTools && template.allowedTools.length > 0) {
-        // Template restricts tools — enforce it. Always include issue_* and agent_* for coordination.
         const allowed = new Set([...template.allowedTools, "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval", "agent_whoami", "agent_team_list", "agent_wakeup"]);
         spawnedTools = spawnedTools.filter(t => allowed.has(t.name));
       }
 
-      // Create isolated worktree for all delegated agents (all providers including Codex)
       let worktreeBlock = "";
-      try {
-        const { createWorktree } = await import("./agency/worktree.js");
-        worktreeInfo = createWorktree(agentId);
-        if (worktreeInfo) {
-          security.addAllowedPath(worktreeInfo.path, `agent-${agentId}`);
-          worktreeBlock = `\n\n--- WORKTREE ---\nYou are working in an isolated git worktree at: ${worktreeInfo.path}\nFor code changes: cd to this directory before running bash commands.\nFor OUTPUT FILES (reports, summaries, exports): ALWAYS write to ${resolve(config.workspace)}/ — the worktree gets cleaned up so files written there will be DELETED.\n--- END WORKTREE ---\n`;
-        }
-      } catch { /* not a git repo or git not available */ }
-
-      // If no worktree, strip mutation tools — agent can only read/search, not write code
-      if (!worktreeInfo) {
-        const MUTATION_TOOLS = new Set(["write", "edit", "bash"]);
-        const before = spawnedTools.length;
-        spawnedTools = spawnedTools.filter(t => !MUTATION_TOOLS.has(t.name));
-        if (spawnedTools.length < before) {
-          console.warn(`[handler] Agent ${agentId}: no worktree — removed write/edit/bash (read-only mode)`);
-          worktreeBlock = `\n\n--- READ-ONLY MODE ---\nNo worktree available. You can read/search files and use web tools, but cannot write files or run bash commands. Write output to workspace/ using document_create or other workspace tools.\n--- END ---\n`;
-        }
+      if (isCodeRole) {
+        try {
+          const { createWorktree } = await import("./agency/worktree.js");
+          worktreeInfo = createWorktree(agentId);
+          if (worktreeInfo) {
+            security.addAllowedPath(worktreeInfo.path, `agent-${agentId}`);
+            worktreeBlock = `\n\n--- WORKTREE ---\nYou are in an isolated git worktree at: ${worktreeInfo.path}\nCode changes: cd here first. Output files (reports, exports) go to ${resolve(config.workspace)}/ (worktree gets cleaned up).\n--- END WORKTREE ---\n`;
+          }
+        } catch { /* not a git repo */ }
+      } else {
+        worktreeBlock = `\n\n--- WORKSPACE ---\nWrite files (screenshots, exports, notes) to ${resolve(config.workspace)}/. You have bash/write/edit for non-code tasks. Do NOT edit the repo's source code.\n--- END WORKSPACE ---\n`;
       }
 
-      console.log(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : " (read-only)"}`);
+      console.log(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : " (no worktree)"}`);
+      const platformLine = process.platform === "win32"
+        ? "Windows. bash runs PowerShell — use PowerShell syntax (Get-ChildItem, Select-Object) and Windows paths."
+        : "Linux/macOS. bash runs /bin/bash.";
+      // One set of execution rules for all agents. Covers the web/login safety
+      // rules we learned the hard way. No role-specific prompt divergence.
+      const executionRules =
+        `\n\nEXECUTION RULES:\n` +
+        `- Platform: ${platformLine}\n` +
+        `- You have ~${Math.max(40, config.maxIterations)} tool calls max. Each should do real work.\n` +
+        `- After every tool call, briefly check the result matched expectations. If not, change approach — don't repeat the same call.\n` +
+        `- If a tool fails twice with the same args, switch tools or arguments.\n` +
+        `- Browser work: navigate → snapshot → click/fill by ref. Use new_tab + switch_tab for multi-site goals. Never start at sso./auth./login. subdomains — go to the main domain.\n` +
+        `- Login safety: if Sign In doesn't advance on FIRST try, pause — don't retry (lockouts). Never read or output password field values.\n` +
+        `- Forms: emit multiple fill calls in one turn, then snapshot once. Don't re-observe between independent field fills.\n` +
+        (isCodeRole ? `- Save results to workspace/ as you go. For large files use python -c one-liners, not read.\n` : `- Save exports/screenshots/notes to workspace/. Don't edit repo source.\n`);
       const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); console.warn(`[handler] Agent ${agentId} timed out`); }, config.agentTimeoutMs);
       const agentResult = await enqueue("agent", () => runAgent(task, agentSession.messages, {
-        apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + `\n\nEXECUTION RULES:\n- Platform: ${process.platform === "win32" ? "Windows. The bash tool runs PowerShell. Use PowerShell commands (Get-ChildItem, Select-Object, etc.) not Unix commands. Use Windows paths (C:\\Users\\...) not Unix paths (/mnt/c/...)." : "Linux/macOS. The bash tool runs /bin/bash."}\n- STRATEGY: List first, then peek, then act. Never start by reading a huge file — check its size, look at the first few lines, understand the structure, THEN process.\n- For large files (>1MB): use python -c to extract what you need in ONE command. Never use the read tool on large files.\n- For JSON: use python -c "import json; d=json.load(open('file.json')); print(len(d), type(d))" to understand structure first.\n- Bash commands time out at 120s. If something might take longer, break it into steps.\n- If a command fails, try a DIFFERENT approach. Don't repeat.\n- Save results to workspace/ as you go.\n- You have ~25 tool calls max. Each one should do real work.\n` + identityBlock + parentContext + briefing + worktreeBlock,
+        apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + worktreeBlock,
         tools: spawnedTools, security, toolPolicy, sessionId: `agent-${agentId}`, maxIterations: config.maxIterations, temperature: config.temperature, signal: ac.signal,
         pauseCallback: async (reason: string) => { eventBus.emit("handler:agent-output", { agentId, output: `[BLOCKER] ${reason}` }); eventBus.emit("handler:agent-blocked", { agentId, reason, role }); return new Promise<string>(r => { const h = (d: unknown) => { const evt = d as AgentUserInputEvent; if (evt.agentId === agentId) { eventBus.off("handler:agent-user-input", h); r(evt.message); } }; eventBus.on("handler:agent-user-input", h); setTimeout(() => { eventBus.off("handler:agent-user-input", h); r("User did not respond."); }, config.agentTimeoutMs); }); },
         onEvent: (event) => { if (event.type === "stream" && event.delta) eventBus.emit("handler:agent-output", { agentId, output: event.delta }); if (event.type === "tool_start") { console.log(`[handler] Agent ${agentId} tool: ${event.toolName}`); eventBus.emit("handler:agent-output", { agentId, output: `[tool] ${event.toolName}...` }); } if (event.type === "tool_progress") { eventBus.emit("handler:agent-output", { agentId, output: `[progress] ${event.message}` }); } if (event.type === "tool_start" && event.requiresApproval) event.requiresApproval = false; },

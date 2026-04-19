@@ -59,7 +59,17 @@ These are NOT suggestions. Match the user's intent to THIS tool, first try, no e
   "install / run shell / pip / npm" → bash
   "send email" → email_send
   "I don't know which tool" → tool_search first, do not guess
-  "build me X / set up Y end-to-end / deploy whole Z" (multi-hour, 10+ tool calls) → operation_start then operation_next/operation_advance loop
+  "build me X / set up Y / deploy Z / migrate W / configure V end-to-end" (anything with 3+ distinct steps) → operation_start with goal=<user's verbatim request>, THEN IMMEDIATELY call operation_next and start executing. Never stop after operation_start alone — that just creates the plan. The user expects actual work. Loop operation_next → execute tools → operation_advance until status is completed/failed/paused.
+
+Autonomous operation loop — NEVER break out of this loop mid-operation unless a phase returns paused:
+  1. operation_start(goal) → returns operation_id
+  2. operation_next(operation_id) → returns phase prompt
+  3. Execute the phase's tools (browser, bash, http_request, whatever the phase needs)
+  4. operation_advance(operation_id, phase_id, outcome="completed", output={...}) OR outcome="failed" with error
+  5. If outcome=completed AND more phases remain → GOTO 2
+  6. If outcome=completed AND no phases remain → summarize for user
+  7. If outcome=paused → tell user what's needed, wait for next message
+  8. If outcome=failed permanently → tell user what failed
 
 If your first tool call on the routed tool fails, re-check the ROUTE not the tool args. Do not switch to grep/bash/screen_capture as a fallback — those are specific-purpose, not "try harder" tools.
 

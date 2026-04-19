@@ -177,6 +177,18 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     return true;
   }
 
+  // Delete ALL sessions (clear sidebar). Destructive — wipes every session
+  // JSON on disk. Memory (MIND.md, facts, chunks) is untouched.
+  if (method === "DELETE" && url.pathname === "/api/sessions") {
+    const all = ctx.sessionStore.list();
+    let deleted = 0;
+    for (const s of all) {
+      try { ctx.sessionStore.delete(s.id); deleted++; } catch {}
+    }
+    json(200, { ok: true, deleted });
+    return true;
+  }
+
   // Delete session
   if (method === "DELETE" && url.pathname.startsWith("/api/sessions/")) {
     const id = url.pathname.split("/").pop()!;

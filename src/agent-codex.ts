@@ -61,7 +61,7 @@ export async function runCodexAgentHttp(
   history: ChatCompletionMessageParam[],
   options: AgentOptions
 ): Promise<AgentTurn> {
-  const { apiKey, model, systemPrompt, tools, security, maxIterations = 25, onEvent, signal } = options;
+  const { apiKey, model, systemPrompt, tools, security, maxIterations = 40, onEvent, signal } = options;
   const toolMap = new Map(tools.map((t) => [t.name, t]));
 
   type VisionContentPart =

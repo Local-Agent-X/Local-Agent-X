@@ -206,7 +206,7 @@ export async function runStandardAgent(
     systemPrompt,
     tools,
     security,
-    maxIterations = 25,
+    maxIterations = 40,
     temperature = 0.7,
     onEvent,
     signal,
@@ -469,7 +469,7 @@ export async function runAnthropicAgent(
   history: ChatCompletionMessageParam[],
   options: AgentOptions
 ): Promise<AgentTurn> {
-  const { apiKey, model, systemPrompt, tools, security, maxIterations = 25, temperature = 0.7, onEvent, signal } = options;
+  const { apiKey, model, systemPrompt, tools, security, maxIterations = 40, temperature = 0.7, onEvent, signal } = options;
   const toolMap = new Map(tools.map(t => [t.name, t]));
 
   // Build user message — attach images as vision parts when present.

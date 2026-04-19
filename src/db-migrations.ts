@@ -32,7 +32,7 @@ registerBuiltinMigration({
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
       let changed = false;
       const defaults: Record<string, unknown> = {
-        maxIterations: 25, temperature: 0.7, profile: "home",
+        maxIterations: 40, temperature: 0.7, profile: "home",
         toolApproval: "confirm-risky", retentionDays: 90,
         logLevel: "basic", browserCdpPort: 9800,
         browserIdleTimeoutMs: 600000, agentTimeoutMs: 300000,

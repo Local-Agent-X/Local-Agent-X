@@ -1,47 +1,8 @@
-import { promises as dns } from "node:dns";
 import type { ToolDefinition, ToolResult } from "./types.js";
 import { getBrowserManager, closeBrowser } from "./browser.js";
 import type { BrowserEngine } from "./browser.js";
 import { wrapExternalContent } from "./sanitize.js";
-
-/**
- * DNS pinning for browser navigate — prevents rebinding to private IPs.
- * EXCEPTION: localhost/127.0.0.1 is allowed (user's own dev servers).
- */
-async function dnsPinCheck(url: string): Promise<string | null> {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname;
-
-    // Allow localhost and 127.0.0.1 — user's own dev servers
-    if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
-      return null;
-    }
-
-    // Check if an IP is in a private/reserved range (excluding 127.x which is allowed above)
-    function isPrivateIp(ip: string): boolean {
-      const [a, b] = ip.split(".").map(Number);
-      if (a === 10 || a === 0 || a >= 224) return true;
-      if (a === 192 && b === 168) return true;
-      if (a === 172 && b >= 16 && b <= 31) return true;
-      if (a === 169 && b === 254) return true;
-      return false;
-    }
-
-    // For raw IP addresses, validate they're not private/internal
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
-      if (isPrivateIp(host)) return `Blocked: ${host} is a private/reserved IP`;
-      return null;
-    }
-    if (host.includes(":")) return null; // IPv6 literal — pass through
-
-    const addrs = await dns.resolve4(host).catch(() => [] as string[]);
-    for (const ip of addrs) {
-      if (isPrivateIp(ip)) return `DNS rebinding blocked: ${host} → ${ip}`;
-    }
-  } catch { /* DNS failure ok */ }
-  return null;
-}
+import { dnsPinCheck, scanEvaluateScript } from "./browser/guards.js";
 
 function ok(content: string): ToolResult {
   return { content };
@@ -239,73 +200,12 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           case "evaluate": {
             const script = String(args.script || "");
             if (!script) return err("'script' parameter is required for evaluate action.");
-            // Block dangerous patterns: network exfiltration, cookie/storage theft, DOM escape
-            // First: normalize Unicode escapes + string concatenation tricks
-            const normalizedScript = script
-              .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-              .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
-
-            const blocked = [
-              // Password/credential extraction — NEVER allow scripts that touch password fields.
-              // This caused a real leak where an agent read `input[type=password]`.value via evaluate.
-              /\[\s*type\s*=\s*['"]?password['"]?\s*\]/i,
-              /input\[\s*type\s*=\s*['"]?password['"]?/i,
-              /\btype\s*===?\s*['"]password['"]/i,
-              // Network exfiltration
-              /\bfetch\s*\(/i,
-              /\bXMLHttpRequest\b/i,
-              /\bnew\s+WebSocket\b/i,
-              /\bnavigator\.sendBeacon\b/i,
-              /\bwindow\.open\b/i,
-              /\bimportScripts\b/i,
-              // Image/form-based exfiltration
-              /\bnew\s+Image\b/i,
-              /\.src\s*=/i,
-              /\.submit\s*\(/i,
-              /\.action\s*=/i,
-              /createElement\s*\(/i,      // Block all createElement (not just specific tags)
-              // Storage/credential theft
-              /\bdocument\.cookie\b/i,
-              /\blocalStorage\b/i,
-              /\bsessionStorage\b/i,
-              /\bindexedDB\b/i,
-              /\bcredentials\b/i,
-              // Dynamic code execution — direct and indirect forms
-              /\beval\s*\(/i,
-              /\bFunction\s*\(/i,
-              /\bsetTimeout\s*\(\s*['"]/i,
-              /\bsetInterval\s*\(\s*['"]/i,
-              // Indirect eval patterns: (0,eval)(), window["eval"], window.eval
-              /\(\s*\d\s*,\s*eval\s*\)/i,
-              /\[\s*['"]eval['"]\s*\]/i,
-              /\bwindow\s*\[\s*['"]/i,      // window["anything"] — bracket access to globals
-              /\bglobalThis\s*\[\s*['"]/i,   // globalThis["anything"]
-              /\bself\s*\[\s*['"]/i,          // self["anything"]
-              // Reflect/Proxy-based execution
-              /\bReflect\s*\.\s*apply\b/i,
-              /\bnew\s+Proxy\b/i,
-              // Import-based exfiltration
-              /\bimport\s*\(/i,              // Dynamic import()
-              // Service worker / shared worker
-              /\bnew\s+Worker\b/i,
-              /\bServiceWorker\b/i,
-              /\bSharedWorker\b/i,
-              // Event source (another exfiltration vector)
-              /\bnew\s+EventSource\b/i,
-              // RTCPeerConnection (WebRTC exfiltration)
-              /\bRTCPeerConnection\b/i,
-              // document.domain manipulation
-              /\bdocument\.domain\b/i,
-              // String concatenation to bypass other checks
-              /\+\s*['"][a-z]{1,5}['"]\s*\+/i,  // "fe" + "tch" style concatenation
-            ];
-            for (const pattern of blocked) {
-              if (pattern.test(script) || pattern.test(normalizedScript)) {
-                return err(
-                  `Blocked: script contains restricted pattern (${pattern.source}). ` +
-                  `evaluate() is for DOM inspection only — use http_request for API calls.`
-                );
-              }
+            const blockedPattern = scanEvaluateScript(script);
+            if (blockedPattern) {
+              return err(
+                `Blocked: script contains restricted pattern (${blockedPattern}). ` +
+                `evaluate() is for DOM inspection only — use http_request for API calls.`
+              );
             }
             return ok(await manager.evaluate(script));
           }

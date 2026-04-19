@@ -839,39 +839,31 @@ function makeToolCard(name, args, riskLevel, context) {
 
 /**
  * Append a tool card — but if the most-recent tool-card in the container has
- * the same tool name AND was added very recently (last 8s), roll this call
- * into that card as another sub-entry instead of creating a new top-level
- * block. Keeps the UI from showing "browser × browser × browser × ..." as 8
- * separate cards when the agent is mid-loop.
+ * the same tool name, roll this call into that card as another sub-entry
+ * instead of creating a new top-level block. Consecutive same-tool calls
+ * within one assistant response always group; the UI for each container
+ * starts fresh when a new assistant response begins.
  */
 function appendToolCardGrouped(container, name, args, riskLevel, context) {
   const cards = container.querySelectorAll('.tool-card');
   const last = cards[cards.length - 1];
-  const GROUP_WINDOW_MS = 8000;
   if (last && last.getAttribute('data-tool-name') === name) {
-    const ts = parseInt(last.getAttribute('data-last-ts') || '0', 10);
-    if (ts && Date.now() - ts < GROUP_WINDOW_MS) {
-      const count = parseInt(last.getAttribute('data-call-count') || '1', 10) + 1;
-      last.setAttribute('data-call-count', String(count));
-      last.setAttribute('data-last-ts', String(Date.now()));
-      const countEl = last.querySelector('.tool-count');
-      if (countEl) countEl.textContent = '×' + count;
-      // Update summary to show latest action
-      const summary = last.querySelector('.tool-summary');
-      if (summary) summary.textContent = toolSummary(name, args);
-      // Append to detail area as a sub-entry
-      const detail = last.querySelector('.tool-detail');
-      if (detail) {
-        const sub = document.createElement('div');
-        sub.style.cssText = 'font-size:.72rem;color:var(--muted);padding:.2rem 0;border-top:1px solid var(--border,#333);margin-top:.2rem';
-        sub.textContent = '#' + count + ' ' + toolSummary(name, args);
-        detail.appendChild(sub);
-      }
-      return last;
+    const count = parseInt(last.getAttribute('data-call-count') || '1', 10) + 1;
+    last.setAttribute('data-call-count', String(count));
+    const countEl = last.querySelector('.tool-count');
+    if (countEl) countEl.textContent = '×' + count;
+    const summary = last.querySelector('.tool-summary');
+    if (summary) summary.textContent = toolSummary(name, args);
+    const detail = last.querySelector('.tool-detail');
+    if (detail) {
+      const sub = document.createElement('div');
+      sub.style.cssText = 'font-size:.72rem;color:var(--muted);padding:.2rem 0;border-top:1px solid var(--border,#333);margin-top:.2rem';
+      sub.textContent = '#' + count + ' ' + toolSummary(name, args);
+      detail.appendChild(sub);
     }
+    return last;
   }
   const card = makeToolCard(name, args, riskLevel, context);
-  card.setAttribute('data-last-ts', String(Date.now()));
   container.appendChild(card);
   return card;
 }

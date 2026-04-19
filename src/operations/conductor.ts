@@ -119,10 +119,13 @@ export function nextPhase(op: Operation): OperationPhase | null {
  */
 export function buildPhasePrompt(op: Operation, phase: OperationPhase): string {
   const sharedCtx = Object.keys(op.sharedState).length > 0
-    ? `\n\nShared context from earlier phases:\n${JSON.stringify(op.sharedState, null, 2)}\n`
+    ? `\n\nShared context from earlier phases (DO NOT re-verify things already confirmed here — go straight to what is NOT yet done):\n${JSON.stringify(op.sharedState, null, 2)}\n`
     : "";
   const proto = phase.protocolName
     ? `\n\nThis phase matches protocol: ${phase.protocolName}. Use it if possible.\n`
+    : "";
+  const priorFailure = phase.attempts > 1 && phase.lastError
+    ? `\n\n⚠️ This is retry attempt ${phase.attempts} of ${phase.attempts === 2 ? "2" : "3"}. The PREVIOUS attempt failed with: "${phase.lastError}". Do NOT repeat the same approach. Try a different path (deep link, direct URL, different tool) and finish the phase this time.\n`
     : "";
   return (
     `OPERATION: ${op.goal}\n` +
@@ -133,6 +136,7 @@ export function buildPhasePrompt(op: Operation, phase: OperationPhase): string {
     `\n\nSuggested tools for this phase: ${phase.suggestedTools.join(", ")}\n` +
     proto +
     sharedCtx +
+    priorFailure +
     `\n\nWork quietly. Do NOT output a plan. Execute, then give a one-paragraph result with any key data (URLs, IDs, credentials placeholders) you discovered.`
   );
 }

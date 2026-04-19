@@ -168,7 +168,12 @@ async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string;
   const handler = Handler.getInstance();
 
   const phaseObj = op.phases.find((p) => p.id === phase.id)!;
-  const prompt = buildPhasePrompt(op, phaseObj);
+  let prompt = buildPhasePrompt(op, phaseObj);
+
+  // Inject live browser state if a prior phase left a tab open, so the sub-agent
+  // picks up where we left off instead of navigating from scratch.
+  const browserState = await captureBrowserState();
+  if (browserState) prompt += `\n\n${browserState}`;
 
   // Scoped system prompt for sub-agent. Forces decisive action — the biggest
   // failure mode observed is sub-agents hitting snapshot → "I see an Edit
@@ -188,6 +193,8 @@ async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string;
     `  - "the DNS values aren't visible on this screen"  (click Edit / Manage to reveal them)\n` +
     `  - "I'd need another page open"  (navigate there yourself)\n` +
     `  - "I'm not sure which option to pick"  (pick the safest and try; you can undo)\n\n` +
+    `## Browser is STATEFUL across phases\n` +
+    `The browser session — including its element refs — persists from the previous phase. The first "browser snapshot" you run will either return a full element listing (new page) or a DIFF (same page as before: + added / - removed / ~ changed). Refs are durable: ref [5] from a prior phase still points to the same button if the element is still on the page. Before acting, always run snapshot to confirm what's there.\n\n` +
     `## MANDATORY tool routing\n` +
     `- Web / DNS / form / login / click → "browser" (navigate → snapshot → click/fill by ref)\n` +
     `- HTTP API with known URL → "http_request"\n` +
@@ -234,6 +241,27 @@ async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string;
   });
 }
 
+// ── Browser state capture ────────────────────────────────────────────────
+
+/**
+ * If a prior phase left a browser page open, return a short summary so the
+ * next sub-agent knows where it is. Returns null if no active page — the
+ * next phase will navigate fresh.
+ */
+async function captureBrowserState(): Promise<string | null> {
+  try {
+    const { getBrowserManager } = await import("../browser.js");
+    const mgr = getBrowserManager("default");
+    if (!mgr.isActive()) return null;
+    const info = await mgr.getInfo().catch(() => "");
+    const tabs = await mgr.listTabs().catch(() => "");
+    if (!info || info.includes("No browser session active")) return null;
+    return `--- BROWSER STATE (carried over from previous phase) ---\n${info}\n\nOpen tabs:\n${tabs}\n\nIf this page is relevant to the current phase, call "browser snapshot" to see current refs (you'll get a diff since last observation). If not, navigate where you need to go.\n--- END BROWSER STATE ---`;
+  } catch {
+    return null;
+  }
+}
+
 // ── Result parsing ──────────────────────────────────────────────────────
 
 interface ParsedPhaseResult {
@@ -252,11 +280,12 @@ function parsePhaseResult(agentResult: string): ParsedPhaseResult {
     if (/\bblock(ed|er)\b|\bneed(s)? user\b|\b2fa\b|\bcaptcha\b|\blogin required\b/.test(lower)) {
       return { outcome: "paused", reason: "Agent reported a blocker (auto-detected)" };
     }
-    if (/\bfail(ed|ure)?\b|\berror\b|\bcannot\b/.test(lower.slice(-500))) {
-      return { outcome: "failed", error: "Agent finished without success marker" };
-    }
-    // Default to completed — the run ended cleanly
-    return { outcome: "completed" };
+    // Default to FAILED when no PHASE_RESULT marker — previously this defaulted
+    // to "completed" which let the executor silently advance through phases
+    // where the sub-agent actually did nothing (end_turn after a few browser
+    // calls). Failing triggers a retry with an explicit format reminder, which
+    // is far better than chugging forward on imaginary progress.
+    return { outcome: "failed", error: "Agent ended without PHASE_RESULT marker — phase incomplete" };
   }
 
   const match = line.match(/PHASE_RESULT\s*:\s*(completed|failed|paused)\s*\|\s*([^|]*)\|\s*(.*)$/i);

@@ -9,7 +9,7 @@ import type { RBACManager, Role } from "./rbac.js";
 import { streamCodexResponse, type ReasoningItem } from "./codex-client.js";
 import { executeToolCalls, checkAndCompact } from "./tool-executor.js";
 import { stripEphemeralMessages } from "./agent-providers.js";
-import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkToolLoops, createLoopState } from "./agent-guards.js";
+import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState } from "./agent-guards.js";
 
 interface ImageAttachment {
   url: string;
@@ -90,6 +90,7 @@ export async function runCodexAgentHttp(
   let lastContextLength = 0;
   const codexTools = tools.map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters }));
   const loopState = createLoopState();
+  const deadEndState = createDeadEndState();
   let selfCheckFired = false;
 
   // Detect build/action intent — force tool use on iteration 0 to prevent
@@ -268,6 +269,18 @@ export async function runCodexAgentHttp(
       toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];
     }
     messages.push(...toolResults);
+
+    // Dead-end detection — after 3 empty/null results in a row, inject a
+    // system nudge telling the agent to stop and re-plan with a different tool.
+    for (const tr of toolResults) {
+      const content = typeof tr.content === "string" ? tr.content : "";
+      const toolName = toolCalls.find(tc => tc.id === (tr as { tool_call_id?: string }).tool_call_id)?.name || "unknown";
+      const d = checkDeadEnd(toolName, content, deadEndState);
+      if (d.nudge) {
+        messages.push({ role: "user", content: d.nudge } as ChatCompletionMessageParam);
+        break;
+      }
+    }
 
     if (assistantContent && /\b(login required|password needed|authentication required|access denied|need.+log.?in|blocked|cannot access)\b/i.test(assistantContent)) {
       if (options.pauseCallback) {

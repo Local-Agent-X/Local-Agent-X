@@ -12,7 +12,7 @@ import type { RBACManager, Role } from "./rbac.js";
 import { streamAnthropicResponse } from "./anthropic-client.js";
 import { executeToolCalls, toolsToOpenAI, checkAndCompact } from "./tool-executor.js";
 import { getRuntimeConfig } from "./config.js";
-import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkToolLoops, createLoopState } from "./agent-guards.js";
+import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState } from "./agent-guards.js";
 
 /** Strip ephemeral self-check / quality-gate user messages before persisting a session. */
 export function stripEphemeralMessages(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
@@ -257,6 +257,7 @@ export async function runStandardAgent(
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   const loopState = createLoopState();
+  const deadEndState = createDeadEndState();
   let selfCheckFired = false;
 
   // Force tool use on first iteration for build/action intents
@@ -433,6 +434,17 @@ export async function runStandardAgent(
     }
     messages.push(...toolResults);
 
+    // Dead-end detection — 3 empty results in a row → nudge a re-plan
+    for (const tr of toolResults) {
+      const content = typeof tr.content === "string" ? tr.content : "";
+      const toolName = toolCalls.find(tc => tc.id === (tr as { tool_call_id?: string }).tool_call_id)?.name || "unknown";
+      const d = checkDeadEnd(toolName, content, deadEndState);
+      if (d.nudge) {
+        messages.push({ role: "user", content: d.nudge } as ChatCompletionMessageParam);
+        break;
+      }
+    }
+
     if (assistantContent && /\b(login required|password needed|authentication required|access denied|need.+log.?in|blocked|cannot access)\b/i.test(assistantContent)) {
       if (options.pauseCallback) {
         onEvent?.({ type: "stream", delta: "\n\n[Waiting for user input...]" });
@@ -491,6 +503,7 @@ export async function runAnthropicAgent(
   let totalInput = 0, totalOutput = 0;
   let selfCheckFiredAnthropic = false;
   const loopStateAnthropic = createLoopState();
+  const deadEndStateAnthropic = createDeadEndState();
   const anthropicTools = tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
 
   // Force tool use on first iteration for build/action intents
@@ -606,6 +619,17 @@ export async function runAnthropicAgent(
       toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];
     }
     messages.push(...toolResults);
+
+    // Dead-end detection — 3 empty results in a row → nudge a re-plan
+    for (const tr of toolResults) {
+      const content = typeof tr.content === "string" ? tr.content : "";
+      const toolName = toolCalls.find(tc => tc.id === (tr as { tool_call_id?: string }).tool_call_id)?.name || "unknown";
+      const d = checkDeadEnd(toolName, content, deadEndStateAnthropic);
+      if (d.nudge) {
+        messages.push({ role: "user", content: d.nudge } as ChatCompletionMessageParam);
+        break;
+      }
+    }
 
     if (assistantContent && /\b(login required|password needed|authentication required|access denied|need.+log.?in|blocked|cannot access)\b/i.test(assistantContent)) {
       if (options.pauseCallback) {

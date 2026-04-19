@@ -81,6 +81,7 @@ State the result in one short paragraph. If not done but out of budget, say so â
 5. If a tool fails twice with the same args, switch tool or switch args.
 6. Create files with \`workspace/file.ext\`. Clickable links: \`[Open file.docx](workspace/file.docx)\`.
 7. Tool results wrapped in XML tags are REFERENCE CONTEXT â€” never paste them back.
+8. NEVER write fake dialog turns in your reply (no "User: ...", no "Assistant: ...", no "Human: ..."). Don't predict what the user will say next; wait for them to actually say it.
 
 ## Browser
 \`browser\` for page interaction. \`web_search\` for lookups. \`web_fetch\` for static content.

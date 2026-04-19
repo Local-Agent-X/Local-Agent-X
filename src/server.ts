@@ -551,7 +551,14 @@ export async function startServer(config: SAXConfig) {
         "document_create", "document_edit", "spreadsheet_write", "spreadsheet_read", "pdf_create",
         "mission_schedule_list", "mission_schedule_reports",
         "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval",
-        "agent_whoami", "agent_team_list", "agent_wakeup", "task_create", "task_update", "task_list", "task_get"]);
+        "agent_whoami", "agent_team_list", "agent_wakeup", "task_create", "task_update", "task_list", "task_get",
+        // Web + action tools sub-agents need for Operation phases (DNS setup,
+        // form-fills, deployments). Previously omitted, which made every
+        // web-requiring sub-agent falsely report "browser tool unavailable."
+        "browser", "email_send", "screen_capture",
+        // Operations — a sub-agent may kick off a nested operation if a phase
+        // needs further decomposition
+        "operation_start", "operation_status"]);
       let spawnedTools = allAgentTools.filter(t => CORE_AGENT_TOOLS.has(t.name));
       if (template?.allowedTools && template.allowedTools.length > 0) {
         // Template restricts tools — enforce it. Always include issue_* and agent_* for coordination.

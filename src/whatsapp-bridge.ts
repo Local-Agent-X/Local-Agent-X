@@ -161,6 +161,22 @@ export class WhatsAppBridge {
     return true;
   }
 
+  /** Send an image (buffer) with optional caption. */
+  async sendImage(to: string, image: Buffer, caption?: string): Promise<boolean> {
+    if (!this.sock || this.state !== "connected") {
+      console.error("[whatsapp] Cannot send image — not connected");
+      return false;
+    }
+    const jid = this.toJid(to);
+    try {
+      await this.sock.sendMessage(jid, { image, caption: caption || "" });
+      return true;
+    } catch (e) {
+      console.error("[whatsapp] sendImage error:", (e as Error).message);
+      return false;
+    }
+  }
+
   /** Get current status (with rendered QR image as data URL) */
   async getStatus(): Promise<{
     state: ConnectionState;

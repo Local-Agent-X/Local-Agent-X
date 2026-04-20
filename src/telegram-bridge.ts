@@ -140,6 +140,34 @@ export class TelegramBridge {
     return true;
   }
 
+  /** Send a photo (buffer) with optional caption. */
+  async sendPhoto(chatId: string, image: Buffer, caption?: string): Promise<boolean> {
+    const token = this.getToken();
+    if (!token || this.state !== "connected") return false;
+
+    try {
+      const form = new FormData();
+      form.append("chat_id", chatId);
+      if (caption) form.append("caption", caption.slice(0, 1024));
+      const blob = new Blob([image], { type: "image/jpeg" });
+      form.append("photo", blob, "screenshot.jpg");
+
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+        method: "POST",
+        body: form,
+      });
+      const result = await res.json() as { ok: boolean; description?: string };
+      if (!result.ok) {
+        console.error(`[telegram] sendPhoto failed: ${result.description}`);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error("[telegram] sendPhoto error:", (e as Error).message);
+      return false;
+    }
+  }
+
   /** Get current status */
   getStatus(): {
     state: ConnectionState;

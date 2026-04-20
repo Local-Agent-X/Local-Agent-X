@@ -195,14 +195,45 @@ export async function startServer(config: SAXConfig) {
       bridgeContext: bridgeCtx,
     });
 
+    console.log(`[bridge:${platform}] provider=${prepared.provider} model=${prepared.model} tools=${prepared.tools.length} (${prepared.tools.slice(0, 5).map(t => t.name).join(",")}${prepared.tools.length > 5 ? ",..." : ""})`);
     const result = await enqueue("main", () => runAgent(text, prepared.cleanHistory, {
       apiKey: prepared.apiKey, model: prepared.model,
       provider: prepared.provider as AgentOptions["provider"],
       systemPrompt: prepared.systemPrompt, tools: prepared.tools,
-      security, toolPolicy, rbac, callerRole: "user" as const,
+      security, toolPolicy, rbac, callerRole: "operator" as const,
       sessionId: route.sessionKey, maxIterations: prepared.maxIterations,
       temperature: prepared.temperature,
     }), { label: `bridge:${platform}:${from}` });
+    const toolCallsMade = result.messages.filter(m => {
+      const tc = (m as unknown as { tool_calls?: unknown[] }).tool_calls;
+      return m.role === "assistant" && Array.isArray(tc) && tc.length > 0;
+    }).length;
+    console.log(`[bridge:${platform}] done — ${result.messages.length} msgs, ${toolCallsMade} tool-call turns, stopReason=${result.stopReason}`);
+
+    // Extract any images from the tool-injected vision messages and push them
+    // back to the user over the bridge. Tool-executor emits a user message
+    // with [{ type: "image_url", image_url: { url: "data:image/jpeg;base64,..." }}]
+    // for every screen_capture / camera_capture / generate_image call.
+    const images: Buffer[] = [];
+    for (const m of result.messages) {
+      if (m.role !== "user" || !Array.isArray(m.content)) continue;
+      for (const part of m.content as Array<{ type: string; image_url?: { url: string } }>) {
+        if (part.type !== "image_url" || !part.image_url?.url) continue;
+        const match = /^data:[^;]+;base64,(.+)$/.exec(part.image_url.url);
+        if (!match) continue;
+        try { images.push(Buffer.from(match[1], "base64")); } catch {}
+      }
+    }
+    if (images.length > 0) {
+      console.log(`[bridge:${platform}] sending ${images.length} image(s) to ${from}`);
+      for (const img of images) {
+        if (channelType === "whatsapp") {
+          await whatsappBridge.sendImage(from, img).catch((e: Error) => console.error(`[whatsapp] image send failed: ${e.message}`));
+        } else if (channelType === "telegram") {
+          await telegramBridge.sendPhoto(from, img).catch((e: Error) => console.error(`[telegram] photo send failed: ${e.message}`));
+        }
+      }
+    }
 
     session.messages = stripEphemeralMessages(result.messages).filter(m => {
       if (m.role === "system") return false;

@@ -13,6 +13,15 @@ import { streamAnthropicResponse } from "./anthropic-client.js";
 import { executeToolCalls, toolsToOpenAI, checkAndCompact } from "./tool-executor.js";
 import { getRuntimeConfig } from "./config.js";
 import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState } from "./agent-guards.js";
+import { stripSystemInjectionTags } from "./sanitize.js";
+
+/** Sanitize tool result content to remove pseudo-system injection tags. */
+function sanitizeToolResults(results: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
+  return results.map(r => {
+    if (r.role !== "tool" || typeof r.content !== "string") return r;
+    return { ...r, content: stripSystemInjectionTags(r.content) };
+  });
+}
 
 /** Strip ephemeral self-check / quality-gate user messages before persisting a session. */
 export function stripEphemeralMessages(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
@@ -436,6 +445,7 @@ export async function runStandardAgent(
       console.error("[agent] Tool execution error (Standard):", (e as Error).message);
       toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];
     }
+    toolResults = sanitizeToolResults(toolResults);
     messages.push(...toolResults);
 
     // Dead-end detection — 3 empty results in a row → nudge a re-plan
@@ -622,6 +632,7 @@ export async function runAnthropicAgent(
       console.error("[agent] Tool execution error (Anthropic):", (e as Error).message);
       toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];
     }
+    toolResults = sanitizeToolResults(toolResults);
     messages.push(...toolResults);
 
     // Dead-end detection — 3 empty results in a row → nudge a re-plan

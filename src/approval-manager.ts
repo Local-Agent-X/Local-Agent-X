@@ -12,6 +12,9 @@
  * Session-scoped "always allow" cache prevents re-prompting for the same tool
  * within one session. Still re-prompts across sessions (or after server restart).
  */
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import type { ServerEvent } from "./types.js";
 
 const APPROVAL_TIMEOUT_MS = 5 * 60_000; // 5 min — long enough to read + decide
@@ -54,12 +57,9 @@ function loadApprovalMode(): ApprovalMode {
   if (_cachedMode && Date.now() - _modeCachedAt < 1000) return _cachedMode;
   let mode: ApprovalMode = "sensitive";
   try {
-    const fs = require("node:fs") as typeof import("node:fs");
-    const path = require("node:path") as typeof import("node:path");
-    const os = require("node:os") as typeof import("node:os");
-    const settingsPath = path.join(os.homedir(), ".sax", "settings.json");
-    if (fs.existsSync(settingsPath)) {
-      const s = JSON.parse(fs.readFileSync(settingsPath, "utf-8")) as { approvalMode?: string; toolApproval?: string };
+    const settingsPath = join(homedir(), ".sax", "settings.json");
+    if (existsSync(settingsPath)) {
+      const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as { approvalMode?: string; toolApproval?: string };
       if (s.approvalMode === "off" || s.approvalMode === "sensitive" || s.approvalMode === "strict") {
         mode = s.approvalMode;
       } else if (s.toolApproval === "auto") {

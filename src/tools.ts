@@ -953,11 +953,14 @@ const screenCaptureTool: ToolDefinition = {
     "DO NOT use for web pages, URLs, or sites you want to read or interact with — for ANY " +
     "website/web-app task (DNS setup, form filling, login, reading a page) use `browser` with " +
     "action:'snapshot' instead. browser's snapshot gives structured refs you can click/fill; " +
-    "screen_capture just gives a flat image with no interaction handles.",
+    "screen_capture just gives a flat image with no interaction handles. " +
+    "If the user mentions a non-primary display (\"second screen\", \"other monitor\", \"my laptop screen\"), " +
+    "OR if the app they want isn't on monitor 0, call `list_monitors` FIRST to see what's connected, " +
+    "then pass the right `monitor` index. Do NOT guess monitor:0 when the user hints at a different screen.",
   parameters: {
     type: "object",
     properties: {
-      monitor: { type: "number", description: "Monitor index (0-based). Omit for primary." },
+      monitor: { type: "number", description: "Monitor index, 0-based. 0 = primary, 1 = second screen, 2 = third, etc. Omit to capture primary. Use list_monitors to see what's connected." },
       region: {
         type: "object",
         description: "Capture a specific region instead of full screen",
@@ -991,6 +994,29 @@ const screenCaptureTool: ToolDefinition = {
       } as any;
     } catch (e) {
       return { content: `Screen capture failed: ${(e as Error).message}`, isError: true };
+    }
+  },
+};
+
+const listMonitorsTool: ToolDefinition = {
+  name: "list_monitors",
+  description:
+    "List physical monitors connected to the user's machine. Returns each monitor's 0-based " +
+    "index, device name, resolution, and whether it's the primary. Call this BEFORE screen_capture " +
+    "when the user references a non-primary display (e.g. 'second screen', 'my laptop', 'other monitor') " +
+    "so you know which `monitor` index to target.",
+  parameters: { type: "object", properties: {}, required: [] },
+  async execute() {
+    try {
+      const { listMonitors } = await import("./screen-capture.js");
+      const monitors = listMonitors();
+      if (monitors.length === 0) return { content: "No monitors detected." };
+      const lines = monitors.map(m =>
+        `${m.index}: ${m.name} — ${m.width}x${m.height}${m.primary ? " (PRIMARY)" : ""}`
+      );
+      return { content: `Monitors (${monitors.length}):\n${lines.join("\n")}` };
+    } catch (e) {
+      return { content: `list_monitors failed: ${(e as Error).message}`, isError: true };
     }
   },
 };
@@ -1128,7 +1154,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   readTool, writeTool, editTool, bashTool, webFetchTool,
   globTool, grepTool, webSearchTool, askUserTool, _toolSearchTool,
   // Vision & Media
-  viewImageTool, screenCaptureTool, cameraCaptureTool, ocrTool,
+  viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool,
   buildAppTool, youtubeAnalyzeTool, createPageTool,
   // Office Suite
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools,

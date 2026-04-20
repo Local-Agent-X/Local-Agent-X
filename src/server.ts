@@ -214,8 +214,12 @@ export async function startServer(config: SAXConfig) {
     // back to the user over the bridge. Tool-executor emits a user message
     // with [{ type: "image_url", image_url: { url: "data:image/jpeg;base64,..." }}]
     // for every screen_capture / camera_capture / generate_image call.
+    // Only scan messages ADDED this turn (past cleanHistory length), otherwise
+    // every reply re-sends images from previous turns stored in session history.
+    const turnStartIdx = prepared.cleanHistory.length;
     const images: Buffer[] = [];
-    for (const m of result.messages) {
+    for (let i = turnStartIdx; i < result.messages.length; i++) {
+      const m = result.messages[i];
       if (m.role !== "user" || !Array.isArray(m.content)) continue;
       for (const part of m.content as Array<{ type: string; image_url?: { url: string } }>) {
         if (part.type !== "image_url" || !part.image_url?.url) continue;

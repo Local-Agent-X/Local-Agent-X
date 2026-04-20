@@ -1,7 +1,6 @@
 /**
- * AriKernel Integration for Open Agent X
+ * AriKernel Integration for Open Agent X (in-process)
  *
- * Runs AriKernel as a sidecar process on port 8787.
  * Every tool call routes through the kernel for:
  * - Capability-based access control
  * - Taint tracking (web content → file read → http post detection)
@@ -10,14 +9,10 @@
  * - Tamper-evident audit log
  */
 
-import { createKernel, createFirewall } from "@arikernel/runtime";
+import { createKernel } from "@arikernel/runtime";
 import type { Firewall } from "@arikernel/runtime";
 
-const ARI_PORT = parseInt(process.env.ARI_KERNEL_PORT || "8787", 10);
-const ARI_BASE_URL = `http://127.0.0.1:${ARI_PORT}`;
-
 let firewall: Firewall | null = null;
-let sidecarProcess: ReturnType<typeof import("node:child_process").spawn> | null = null;
 let currentPreset: string = "workspace-assistant";
 let ariIsRequired: boolean = false;
 
@@ -34,87 +29,13 @@ export function getAriPresetForSession(sessionPreset: string): string {
 }
 
 /**
- * Start the AriKernel sidecar process.
+ * Initialize AriKernel in-process.
  * Returns true if started successfully, false if unavailable.
  */
 export async function startAriKernel(auditDbPath: string, preset?: string, required?: boolean): Promise<boolean> {
   currentPreset = preset || "workspace-assistant";
   ariIsRequired = required ?? false;
 
-  // Priority 1: Sidecar mode (secure — separate process, can't be bypassed by compromised agent)
-  try {
-    const health = await fetch(`${ARI_BASE_URL}/health`, { signal: AbortSignal.timeout(2000) });
-    if (health.ok) {
-      const kernel = createKernel({
-        preset: currentPreset as any,
-        mode: "sidecar",
-        sidecar: { baseUrl: ARI_BASE_URL, principalId: "open-agent-x" },
-      });
-      firewall = kernel.createFirewall({
-        principal: "open-agent-x",
-        auditLog: auditDbPath,
-      });
-      console.log(`  [ari] Kernel initialized (SIDECAR mode, preset: ${currentPreset})`);
-      console.log(`  [ari] Sidecar: ${ARI_BASE_URL}`);
-      return true;
-    }
-  } catch {
-    // Sidecar not running — fall through to embedded
-  }
-
-  // Priority 2: Start sidecar process from ARI Kernel project
-  try {
-    const { spawn: spawnProcess } = await import("node:child_process");
-    const { existsSync: ex } = await import("node:fs");
-    const { join: j, resolve: res } = await import("node:path");
-    const { homedir: hd } = await import("node:os");
-
-    // Look for ARI Kernel CLI: npm package first, then local project
-    const ariCliPaths = [
-      // From npm (installed via: npm install @arikernel/cli)
-      j(res("."), "node_modules", "@arikernel", "cli", "dist", "main.js"),
-      // Local project (development)
-      j(hd(), "Ari Kernel", "apps", "cli", "dist", "main.js"),
-      j(res("."), "..", "Ari Kernel", "apps", "cli", "dist", "main.js"),
-      j(hd(), "ari-kernel", "apps", "cli", "dist", "main.js"),
-    ];
-    const ariCli = ariCliPaths.find(p => ex(p));
-
-    if (ariCli) {
-      console.log(`  [ari] Starting sidecar from ${ariCli}...`);
-      sidecarProcess = spawnProcess("node", [
-        ariCli, "sidecar",
-        "--port", String(ARI_PORT),
-        "--host", "127.0.0.1",
-        "--audit-log", auditDbPath,
-      ], { stdio: "ignore", detached: false, windowsHide: true });
-
-      sidecarProcess.on("error", () => { sidecarProcess = null; });
-
-      // Wait for sidecar to be ready
-      await new Promise(resolve => setTimeout(resolve, 2500));
-      const health = await fetch(`${ARI_BASE_URL}/health`, { signal: AbortSignal.timeout(3000) });
-      if (health.ok) {
-        const kernel = createKernel({
-          preset: currentPreset as any,
-          mode: "sidecar",
-          sidecar: { baseUrl: ARI_BASE_URL, principalId: "open-agent-x" },
-        });
-        firewall = kernel.createFirewall({
-          principal: "open-agent-x",
-          auditLog: auditDbPath,
-        });
-        console.log(`  [ari] Kernel initialized (SIDECAR mode, preset: ${currentPreset})`);
-        console.log(`  [ari] Sidecar: ${ARI_BASE_URL}`);
-        return true;
-      }
-    }
-  } catch {
-    // Sidecar start failed — fall through to embedded
-    if (sidecarProcess) { try { sidecarProcess.kill(); } catch {} sidecarProcess = null; }
-  }
-
-  // Priority 3: Embedded mode (explicitly set to suppress "defaulting to embedded" warning)
   try {
     const kernel = createKernel({
       preset: currentPreset as any,
@@ -125,15 +46,15 @@ export async function startAriKernel(auditDbPath: string, preset?: string, requi
       principal: "open-agent-x",
       auditLog: auditDbPath,
     });
-    console.log(`[AriKernel] Running in EMBEDDED mode. For production security, install and run arikernel-sidecar.`);
-    console.log(`  [ari] Kernel initialized (embedded mode, preset: ${currentPreset})`);
+    console.log(`  [ari] Kernel initialized (in-process, preset: ${currentPreset})`);
     return true;
   } catch (e) {
-    console.warn(`  [ari] Embedded mode failed: ${(e as Error).message}`);
+    console.warn(`  [ari] Init failed: ${(e as Error).message}`);
+    if (ariIsRequired) {
+      console.error(`  [ari] CRITICAL: AriKernel required but failed to start`);
+    }
+    return false;
   }
-
-  console.log(`  [ari] Kernel not available — running without AriKernel (built-in security still active)`);
-  return false;
 }
 
 /**
@@ -213,14 +134,12 @@ export async function ariEvaluate(
       action,
       parameters: params,
     };
-    // Only include taintLabels when actually present — the sidecar's Zod schema
-    // is strict about TaintLabel format and will 500 on validation failures
     if (taintLabels && taintLabels.length > 0) {
       execRequest.taintLabels = taintLabels.map(label => ({
         source: String(label),
         origin: "agent" as const,
         confidence: 1.0,
-        addedAt: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"), // Strip milliseconds for strict datetime()
+        addedAt: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
       }));
     }
     const result = await firewall.execute(execRequest as any);
@@ -238,7 +157,6 @@ export async function ariEvaluate(
       console.warn(`[ari] Tool call blocked due to ARI error (ariRequired=true): ${(e as Error).message}`);
       return { allowed: false, reason: "ARI error — tool call blocked (ariRequired mode)" };
     }
-    // AriKernel error — fail open (built-in SecurityLayer still applies)
     return { allowed: true, reason: "ARI error (fail-open, built-in security active)" };
   }
 }
@@ -250,9 +168,9 @@ export async function ariStatus(): Promise<Record<string, unknown> | null> {
   if (!firewall) return null;
 
   try {
-    return (firewall as any).status?.() || { active: true, mode: "embedded" };
+    return (firewall as any).status?.() || { active: true, mode: "in-process" };
   } catch {
-    return { active: true, mode: "unknown" };
+    return { active: true, mode: "in-process" };
   }
 }
 
@@ -264,12 +182,8 @@ export function isAriActive(): boolean {
 }
 
 /**
- * Stop the sidecar process.
+ * Shut down the kernel.
  */
 export function stopAriKernel(): void {
-  if (sidecarProcess) {
-    sidecarProcess.kill();
-    sidecarProcess = null;
-  }
   firewall = null;
 }

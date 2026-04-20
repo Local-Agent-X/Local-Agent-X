@@ -16,10 +16,7 @@ const packages = [
   "audit-log",
   "policy-engine",
   "tool-executors",
-  "control-plane",
   "runtime",
-  "sidecar",
-  "adapters",
 ];
 
 const ariDir = resolve("packages", "arikernel");

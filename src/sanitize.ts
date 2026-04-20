@@ -69,6 +69,32 @@ const INVISIBLE_CHARS = /[\u200B\u200C\u200D\u200E\u200F\uFEFF\u2060\u2061\u2062
 // Unicode control characters
 const CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
 
+// ── System-tag injection stripping ──
+// Tags like <system-reminder>, <system>, <human>, <assistant> embedded in
+// tool results (e.g. from a malicious web page or evaluate() call) are
+// interpreted as real protocol frames by some models (Anthropic in particular).
+// Strip the whole block — tag + content — before it reaches the model.
+
+const SYSTEM_INJECTION_TAG_NAMES = [
+  "system-reminder", "system", "human", "assistant", "user", "admin", "operator",
+];
+const SYSTEM_INJECTION_TAG_RE = new RegExp(
+  `<(${SYSTEM_INJECTION_TAG_NAMES.join("|")})(\\s[^>]*)?>([\\s\\S]*?)<\\/(${SYSTEM_INJECTION_TAG_NAMES.join("|")})>`,
+  "gi"
+);
+// Also strip lone opening/closing tags (no content) — e.g. </system> alone
+const SYSTEM_INJECTION_LONE_TAG_RE = new RegExp(
+  `<\\/?( ${SYSTEM_INJECTION_TAG_NAMES.join("|")})(\\s[^>]*)?>`,
+  "gi"
+);
+
+/** Strip pseudo-system XML tags that could hijack model behavior when embedded in tool results. */
+export function stripSystemInjectionTags(text: string): string {
+  let result = text.replace(SYSTEM_INJECTION_TAG_RE, "[CONTENT-STRIPPED]");
+  result = result.replace(SYSTEM_INJECTION_LONE_TAG_RE, "");
+  return result;
+}
+
 // ── Core functions ──
 
 /** Generate a unique boundary ID (16 hex chars) */
@@ -140,6 +166,9 @@ export function wrapExternalContent(
 
   // Step 1: Strip control characters and invisible chars
   let sanitized = stripControlChars(content);
+
+  // Step 1.5: Strip pseudo-system tags before they reach the model
+  sanitized = stripSystemInjectionTags(sanitized);
 
   // Step 2: Neutralize any existing boundary-like markers (prevents spoofing)
   sanitized = sanitized.replace(/<<<\s*EXTERNAL/gi, "[[MARKER_SANITIZED]]");

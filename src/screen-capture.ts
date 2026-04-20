@@ -4,7 +4,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -116,11 +116,16 @@ $bmp.Dispose()
 Write-Output "$w,$h"
 `;
 
+  const scriptPath = join(TMP_DIR, `capture_${randomBytes(6).toString("hex")}.ps1`);
+  writeFileSync(scriptPath, psScript, "utf-8");
+
   try {
     const output = execSync(
-      `powershell -NoProfile -ExecutionPolicy Bypass -Command "${psScript.replace(/\n/g, " ").replace(/"/g, '\\"')}"`,
+      `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`,
       { encoding: "utf-8", timeout: 10_000, windowsHide: true },
     ).trim();
+
+    try { unlinkSync(scriptPath); } catch {}
 
     if (!existsSync(outPath)) throw new Error("Screenshot capture failed");
 
@@ -136,6 +141,7 @@ Write-Output "$w,$h"
     };
   } finally {
     try { unlinkSync(outPath); } catch {}
+    try { unlinkSync(scriptPath); } catch {}
   }
 }
 
@@ -168,10 +174,17 @@ foreach ($s in $screens) {
   $i++
 }
 `;
-    const output = execSync(
-      `powershell -NoProfile -ExecutionPolicy Bypass -Command "${ps.replace(/\n/g, " ").replace(/"/g, '\\"')}"`,
-      { encoding: "utf-8", timeout: 5000, windowsHide: true },
-    ).trim();
+    const scriptPath = join(TMP_DIR, `monitors_${randomBytes(6).toString("hex")}.ps1`);
+    writeFileSync(scriptPath, ps, "utf-8");
+    let output = "";
+    try {
+      output = execSync(
+        `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`,
+        { encoding: "utf-8", timeout: 5000, windowsHide: true },
+      ).trim();
+    } finally {
+      try { unlinkSync(scriptPath); } catch {}
+    }
 
     return output.split("\n").filter(Boolean).map((line) => {
       const [idx, name, w, h, primary] = line.trim().split("|");

@@ -1,0 +1,641 @@
+{
+  "generatedAt": "2026-04-21T19:34:36.832Z",
+  "pages": [
+    {
+      "name": "Chat",
+      "path": "/",
+      "description": "Main chat interface — send messages, use voice, attach files"
+    },
+    {
+      "name": "Settings",
+      "path": "/settings.html",
+      "description": "Configuration dashboard — AI providers, memory, security, bridges, integrations"
+    },
+    {
+      "name": "green-hello",
+      "path": "/green-hello.html",
+      "description": "Static page: green-hello.html"
+    },
+    {
+      "name": "hello-green",
+      "path": "/hello-green.html",
+      "description": "Static page: hello-green.html"
+    },
+    {
+      "name": "hello",
+      "path": "/hello.html",
+      "description": "Static page: hello.html"
+    },
+    {
+      "name": "landing",
+      "path": "/landing.html",
+      "description": "Static page: landing.html"
+    },
+    {
+      "name": "secrets",
+      "path": "/secrets.html",
+      "description": "Static page: secrets.html"
+    },
+    {
+      "name": "tasks",
+      "path": "/tasks.html",
+      "description": "Static page: tasks.html"
+    }
+  ],
+  "settingsTabs": [
+    {
+      "name": "Account",
+      "id": "stab-general",
+      "description": "OpenAI/Anthropic auth, Claude CLI setup, server config"
+    },
+    {
+      "name": "AI & Models",
+      "id": "stab-ai",
+      "description": "Provider selection (xAI, Gemini, OpenAI, Anthropic, local), temperature, max iterations"
+    },
+    {
+      "name": "Memory",
+      "id": "stab-memory",
+      "description": "Embedding provider, reranking, conversation import, consolidation"
+    },
+    {
+      "name": "Media",
+      "id": "stab-image",
+      "description": "Image/video generation, speech-to-text (Whisper), text-to-speech (Kokoro/Piper)"
+    },
+    {
+      "name": "Security",
+      "id": "stab-security",
+      "description": "Tool policy toggles (bash, HTTP, browser), file access modes, approval settings"
+    },
+    {
+      "name": "Communication",
+      "id": "stab-whatsapp",
+      "description": "WhatsApp Bridge QR connect, Telegram bot setup"
+    },
+    {
+      "name": "Integrations",
+      "id": "stab-integrations",
+      "description": "Connected APIs & custom integration manager"
+    },
+    {
+      "name": "Sync",
+      "id": "stab-sync",
+      "description": "GitHub memory sync, frequency settings, workspace sync"
+    }
+  ],
+  "agentTabs": [
+    {
+      "name": "Team",
+      "id": "agents-tab-team",
+      "description": "Agent roster — spawn, hire, view status of all agents"
+    },
+    {
+      "name": "Org Chart",
+      "id": "agents-tab-orgchart",
+      "description": "Visual hierarchy of agent teams and reporting structure"
+    },
+    {
+      "name": "Inbox",
+      "id": "agents-tab-inbox",
+      "description": "Agent proposals and messages awaiting review"
+    },
+    {
+      "name": "Issues",
+      "id": "agents-tab-issues",
+      "description": "Issue tracking with status workflow"
+    },
+    {
+      "name": "Templates",
+      "id": "agents-tab-templates",
+      "description": "Agent template library for reusable roles"
+    },
+    {
+      "name": "History",
+      "id": "agents-tab-history",
+      "description": "Agent run history with filtering by status"
+    }
+  ],
+  "apiRoutes": [
+    {
+      "method": "GET",
+      "path": "limit",
+      "description": "GET limit"
+    },
+    {
+      "method": "GET",
+      "path": "offset",
+      "description": "GET offset"
+    },
+    {
+      "method": "GET",
+      "path": "sessionId",
+      "description": "GET sessionId"
+    },
+    {
+      "method": "GET",
+      "path": "status",
+      "description": "GET status"
+    },
+    {
+      "method": "DELETE",
+      "path": "heartbeat:${id}",
+      "description": "DELETE heartbeat:${id}"
+    },
+    {
+      "method": "GET",
+      "path": "assignee",
+      "description": "GET assignee"
+    },
+    {
+      "method": "GET",
+      "path": "status",
+      "description": "GET status"
+    },
+    {
+      "method": "GET",
+      "path": "project",
+      "description": "GET project"
+    },
+    {
+      "method": "GET",
+      "path": "since",
+      "description": "GET since"
+    },
+    {
+      "method": "GET",
+      "path": "since",
+      "description": "GET since"
+    },
+    {
+      "method": "GET",
+      "path": "limit",
+      "description": "GET limit"
+    },
+    {
+      "method": "GET",
+      "path": "q",
+      "description": "GET q"
+    },
+    {
+      "method": "GET",
+      "path": "entity",
+      "description": "GET entity"
+    },
+    {
+      "method": "GET",
+      "path": "kind",
+      "description": "GET kind"
+    },
+    {
+      "method": "GET",
+      "path": "since",
+      "description": "GET since"
+    },
+    {
+      "method": "GET",
+      "path": "sessionId",
+      "description": "GET sessionId"
+    },
+    {
+      "method": "GET",
+      "path": "count",
+      "description": "Audit"
+    },
+    {
+      "method": "GET",
+      "path": "date",
+      "description": "GET date"
+    },
+    {
+      "method": "GET",
+      "path": "q",
+      "description": "GET q"
+    },
+    {
+      "method": "GET",
+      "path": "sessionId",
+      "description": "GET sessionId"
+    },
+    {
+      "method": "GET",
+      "path": "format",
+      "description": "GET format"
+    },
+    {
+      "method": "GET",
+      "path": "page",
+      "description": "GET page"
+    },
+    {
+      "method": "GET",
+      "path": "pageSize",
+      "description": "GET pageSize"
+    },
+    {
+      "method": "GET",
+      "path": "limit",
+      "description": "GET limit"
+    },
+    {
+      "method": "GET",
+      "path": "limit",
+      "description": "GET limit"
+    },
+    {
+      "method": "GET",
+      "path": "sessionId",
+      "description": "GET sessionId"
+    },
+    {
+      "method": "GET",
+      "path": "sessionId",
+      "description": "GET sessionId"
+    },
+    {
+      "method": "GET",
+      "path": "count",
+      "description": "GET count"
+    },
+    {
+      "method": "GET",
+      "path": "period",
+      "description": "GET period"
+    },
+    {
+      "method": "GET",
+      "path": "GITHUB_SYNC_TOKEN",
+      "description": "GET GITHUB_SYNC_TOKEN"
+    },
+    {
+      "method": "GET",
+      "path": "OPENAI_API_KEY",
+      "description": "GET OPENAI_API_KEY"
+    },
+    {
+      "method": "GET",
+      "path": "GEMINI_API_KEY",
+      "description": "GET GEMINI_API_KEY"
+    },
+    {
+      "method": "GET",
+      "path": "TELEGRAM_BOT_TOKEN",
+      "description": "GET TELEGRAM_BOT_TOKEN"
+    },
+    {
+      "method": "GET",
+      "path": "token",
+      "description": "GET token"
+    }
+  ],
+  "tools": [
+    {
+      "name": "read",
+      "description": "Read a file from the filesystem. Returns the full file contents with line numbers. Files under 1000 ",
+      "readOnly": true
+    },
+    {
+      "name": "write",
+      "description": "File path to read",
+      "readOnly": false
+    },
+    {
+      "name": "edit",
+      "description": "Line number to start from (1-based)",
+      "readOnly": false
+    },
+    {
+      "name": "bash",
+      "description": "Max number of lines to return",
+      "readOnly": false
+    },
+    {
+      "name": "web_fetch",
+      "description": "Write content to a file. Creates the file and parent directories if they don",
+      "readOnly": false
+    },
+    {
+      "name": "http_request",
+      "description": "File path to write",
+      "readOnly": false
+    },
+    {
+      "name": "view_image",
+      "description": "Content to write",
+      "readOnly": false
+    },
+    {
+      "name": "build_app",
+      "description": "Edit a file by replacing an exact string match. The old_string must match exactly (including whitesp",
+      "readOnly": false
+    },
+    {
+      "name": "create_page",
+      "description": "File path to edit",
+      "readOnly": false
+    },
+    {
+      "name": "screen_capture",
+      "description": "Exact string to find and replace",
+      "readOnly": false
+    },
+    {
+      "name": "list_monitors",
+      "description": "Replacement string",
+      "readOnly": false
+    },
+    {
+      "name": "camera_capture",
+      "description": "The shell command to execute",
+      "readOnly": false
+    },
+    {
+      "name": "ocr",
+      "description": "Timeout in milliseconds (default 120000 = 2 min)",
+      "readOnly": false
+    },
+    {
+      "name": "memory_dream",
+      "description": "Fetch a URL and return its text content. Useful for reading web pages and APIs.",
+      "readOnly": false
+    },
+    {
+      "name": "doctor",
+      "description": "URL to fetch",
+      "readOnly": false
+    },
+    {
+      "name": "usage_report",
+      "description": "Make a full HTTP request to any API. Supports all methods, custom headers, authentication, and reque",
+      "readOnly": false
+    },
+    {
+      "name": "memory_search",
+      "description": "Search long-term memory for relevant information from past conversations, notes, knowledge files, an",
+      "readOnly": false
+    },
+    {
+      "name": "memory_get",
+      "description": "Search query",
+      "readOnly": false
+    },
+    {
+      "name": "memory_save",
+      "description": "Max results (default 6)",
+      "readOnly": false
+    },
+    {
+      "name": "memory_recall",
+      "description": "Filter by source: ",
+      "readOnly": false
+    },
+    {
+      "name": "memory_reflect",
+      "description": "Filter results to a specific entity (e.g. ",
+      "readOnly": false
+    },
+    {
+      "name": "memory_stats",
+      "description": "Only return results after this date (ISO format, e.g. 2026-03-01)",
+      "readOnly": false
+    },
+    {
+      "name": "memory_forget",
+      "description": "Filter by project name",
+      "readOnly": false
+    },
+    {
+      "name": "memory_update_profile",
+      "description": "Filter by source type: agent-x-session, chatgpt-import, claude-import, memory-file, entity-page, imp",
+      "readOnly": false
+    },
+    {
+      "name": "memory_ingest",
+      "description": "Start date filter (ISO format)",
+      "readOnly": false
+    },
+    {
+      "name": "memory_consolidate",
+      "description": "End date filter (ISO format)",
+      "readOnly": false
+    },
+    {
+      "name": "browser",
+      "description": "Control a REAL Chrome browser (visible window on user",
+      "readOnly": false
+    },
+    {
+      "name": "operation_start",
+      "description": "Start a new long-horizon Operation. Use when the user asks for a multi-step goal that can",
+      "readOnly": false
+    },
+    {
+      "name": "operation_list",
+      "description": "The user",
+      "readOnly": false
+    },
+    {
+      "name": "operation_status",
+      "description": "LLM for decomposition (default auto)",
+      "readOnly": false
+    },
+    {
+      "name": "operation_next",
+      "description": "Override model for the decomposer",
+      "readOnly": false
+    },
+    {
+      "name": "operation_advance",
+      "description": "List all Operations (active, completed, failed, cancelled). Returns id, goal, status, and phase prog",
+      "readOnly": false
+    }
+  ],
+  "apps": [
+    {
+      "name": "ai-animation-studio",
+      "path": "workspace/apps/ai-animation-studio",
+      "files": [
+        "index.html"
+      ]
+    },
+    {
+      "name": "calculator",
+      "path": "workspace/apps/calculator",
+      "files": [
+        "index.html"
+      ]
+    },
+    {
+      "name": "eagle-todo",
+      "path": "workspace/apps/eagle-todo",
+      "files": [
+        "index.html",
+        "PROJECT.md"
+      ]
+    },
+    {
+      "name": "lakers-todo",
+      "path": "workspace/apps/lakers-todo",
+      "files": [
+        "app.js",
+        "index.html",
+        "styles.css"
+      ]
+    },
+    {
+      "name": "macro-tracker",
+      "path": "workspace/apps/macro-tracker",
+      "files": [
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "script.js",
+        "styles.css",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "meal-planner-saas",
+      "path": "workspace/apps/meal-planner-saas",
+      "files": [
+        "eslint.config.js",
+        "index.html",
+        "package-lock.json",
+        "package.json",
+        "public",
+        "README.md",
+        "src",
+        "tsconfig.app.json",
+        "tsconfig.json",
+        "tsconfig.node.json",
+        "vite.config.ts"
+      ]
+    },
+    {
+      "name": "my-groom-time",
+      "path": "workspace/apps/my-groom-time",
+      "files": [
+        "app.js",
+        "index.html",
+        "styles.css"
+      ]
+    },
+    {
+      "name": "new-england-patriots-todo",
+      "path": "workspace/apps/new-england-patriots-todo",
+      "files": [
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "script.js",
+        "style.css",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "pistons-todo",
+      "path": "workspace/apps/pistons-todo",
+      "files": [
+        "app.js",
+        "index.html",
+        "styles.css"
+      ]
+    },
+    {
+      "name": "security-crm",
+      "path": "workspace/apps/security-crm",
+      "files": [
+        "app.css",
+        "app.js",
+        "index.html"
+      ]
+    },
+    {
+      "name": "simple-add-subtract",
+      "path": "workspace/apps/simple-add-subtract",
+      "files": [
+        "index.html",
+        "PROJECT.md"
+      ]
+    },
+    {
+      "name": "simple-calculator",
+      "path": "workspace/apps/simple-calculator",
+      "files": [
+        "index.html"
+      ]
+    },
+    {
+      "name": "space-todo",
+      "path": "workspace/apps/space-todo",
+      "files": [
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "script.js",
+        "styles.css",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "test-ws",
+      "path": "workspace/apps/test-ws",
+      "files": [
+        "hello.html"
+      ]
+    },
+    {
+      "name": "warriors-todo",
+      "path": "workspace/apps/warriors-todo",
+      "files": [
+        "index.html",
+        "script.js",
+        "styles.css"
+      ]
+    }
+  ],
+  "configFiles": [
+    {
+      "path": "config/system-prompt.md",
+      "description": "Agent's system prompt — edit to change behavior, personality, rules",
+      "agentEditable": true
+    },
+    {
+      "path": "config/tools.json",
+      "description": "Tool registry — which tools are eager/disabled, tool-specific settings",
+      "agentEditable": true
+    },
+    {
+      "path": "config/protected-files.json",
+      "description": "List of core files the agent cannot modify",
+      "agentEditable": false
+    },
+    {
+      "path": "config/app-manifest.json",
+      "description": "This file — auto-generated map of the entire app (read-only)",
+      "agentEditable": false
+    },
+    {
+      "path": "config/tools",
+      "description": "Config file: tools",
+      "agentEditable": true
+    }
+  ],
+  "bridges": [
+    "WhatsApp",
+    "Telegram"
+  ],
+  "integrations": [
+    "Google (Gmail, Calendar, Drive, YouTube)",
+    "GitHub",
+    "Slack",
+    "Discord",
+    "Twitter/X",
+    "Facebook",
+    "Instagram",
+    "Spotify",
+    "eBay",
+    "Notion",
+    "Email (SMTP)"
+  ]
+}

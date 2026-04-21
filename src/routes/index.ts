@@ -6,3 +6,4 @@ export { handleAppRoutes } from "./apps.js";
 export { handleSettingsRoutes } from "./settings.js";
 export { handleBridgeRoutes } from "./bridges.js";
 export { handleChatRoutes } from "./chat.js";
+export { handleMcpRoutes } from "./mcp.js";

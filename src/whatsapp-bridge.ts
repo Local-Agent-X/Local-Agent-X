@@ -422,6 +422,12 @@ export class WhatsAppBridge {
         // Reply to the same JID the message came from (important for @lid self-chat)
         const replyJid = remoteJid;
 
+        // "composing" presence expires in ~20s — re-send every 15s so the
+        // user sees a continuous typing indicator while the agent works.
+        const sendTyping = () => this.sock?.sendPresenceUpdate("composing", replyJid).catch(() => {});
+        sendTyping();
+        const typingInterval = setInterval(sendTyping, 15000);
+
         this.processingLock.add(phone);
         replyingTo.add(replyJid);
         try {
@@ -433,6 +439,8 @@ export class WhatsAppBridge {
           console.error(`[whatsapp] Agent error for ${phone}:`, (e as Error).message);
           await this.sendToJid(replyJid, "Something went wrong. Try again?");
         } finally {
+          clearInterval(typingInterval);
+          try { await this.sock?.sendPresenceUpdate("paused", replyJid); } catch {}
           // Small delay before clearing — gives time for the sent message event to be processed
           setTimeout(() => replyingTo.delete(replyJid), 3000);
           this.processingLock.delete(phone);

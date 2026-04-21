@@ -269,6 +269,9 @@ const WORKTREE_REQUIRED_TOOLS = new Set(["write", "edit", "bash"]);
 export type FileAccessMode = "workspace" | "common" | "unrestricted";
 
 export class SecurityLayer {
+  /** Port the server is running on — set at startup so SSRF can whitelist self-calls */
+  static _selfPort: string = "7007";
+
   private workspace: string;
   private auditLog: Array<{ timestamp: number; tool: string; decision: SecurityDecision }> = [];
   private egressAllowlist: Set<string> = new Set();
@@ -629,6 +632,15 @@ export class SecurityLayer {
     }
 
     const host = parsed.hostname.toLowerCase();
+
+    // Allow requests to the agent's own server BEFORE any other checks.
+    // The agent needs to call its own API for settings, theme, orgs, etc.
+    if (host === "127.0.0.1" || host === "localhost" || host === "::1") {
+      const selfPort = String(SecurityLayer._selfPort || "7007");
+      if (parsed.port === selfPort || (!parsed.port && selfPort === "80")) {
+        return { allowed: true, reason: "Self-call to own server" };
+      }
+    }
 
     // Check blocked hostnames
     if (BLOCKED_HOSTNAMES.has(host)) {

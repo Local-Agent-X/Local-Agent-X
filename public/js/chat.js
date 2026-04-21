@@ -41,6 +41,14 @@ function connectChatWs() {
       }
     }
 
+    // ── Agent-triggered settings changes (theme, provider, etc.) ──
+    if (msg.type === 'settings_changed' && msg.settings) {
+      if (msg.settings.theme && typeof applyTheme === 'function') {
+        localStorage.setItem('sax_theme', msg.settings.theme);
+        applyTheme(msg.settings.theme);
+      }
+    }
+
     // ── Desktop notifications for important events ──
     if (msg.type === 'issue:created' && msg.issue?.needsApproval) {
       if (window.desktop) window.desktop.showNotification('Approval Needed', msg.issue.title);

@@ -222,6 +222,14 @@ export function getManifestSummary(): string {
     return "";
   }
 
+  // Resolve APP_URL so the agent gets a real URL, not a placeholder
+  let appUrl = "http://127.0.0.1:7007";
+  try {
+    const { getRuntimeConfig } = require("./config.js");
+    const rc = getRuntimeConfig();
+    appUrl = `http://127.0.0.1:${rc.port}`;
+  } catch {}
+
   const lines: string[] = [
     "## App Map (what you have — use this before building anything new)",
     "",
@@ -254,22 +262,38 @@ export function getManifestSummary(): string {
     "### Config Files (your safe zone — edit freely)",
     ...manifest.configFiles.filter(c => c.agentEditable).map(c => `- \`${c.path}\` — ${c.description}`),
     "",
-    "### Common Operations (how to do things users ask for)",
-    "- **Change theme to light/dark**: edit `public/js/shared.js`, change default on line with `|| 'dark'` to `|| 'light'` (or vice versa). Also change `data-theme` default in `public/js/shared.js`.",
-    "- **Change settings**: use `POST /api/settings` with JSON body, or edit `~/.sax/config.json`",
-    "- **Change AI provider/model**: `POST /api/providers/switch` with `{provider, model}`",
-    "- **Create an organization**: use the existing Agents page → Org Chart tab. Don't build a new org system.",
-    "- **Add a new tool**: create a tool definition in `config/tools/` and register it (safe zone)",
-    "- **Change system prompt**: edit `config/system-prompt.md` directly (hot-reloads)",
-    "- **Build an app**: use `build_app` tool — it creates in `workspace/apps/{name}/`",
-    "- **Connect WhatsApp/Telegram**: use the Communication settings tab or API routes",
-    "- **Spawn agents**: use `agent_spawn` tool or the Agents page Team tab",
-    "- **Schedule recurring tasks**: use cron/missions via `POST /api/cron`",
+    "### Three Lanes — ALWAYS pick the right one",
     "",
-    "**IMPORTANT**: Before creating anything new, check this map. If it already exists, use it. If you need to change settings, use the Settings API routes. If you need to modify your own behavior, edit config/ files.",
+    "**Lane 1: CONTROL THE APP AT RUNTIME → use API routes via `http_request`**",
+    "For anything the user can do in the UI — settings, theme, creating orgs, spawning agents, connecting bridges.",
+    "The API changes server-side state. The user's browser updates immediately (via WebSocket push or next load).",
+    "NEVER use the `browser` tool to interact with your own app — that opens a separate browser the user can't see.",
+    "",
+    "**Lane 2: CHANGE YOURSELF → edit config/ files**",
+    "For changing how you think, behave, or what tools you have.",
+    "Edit files in `config/` directly with `read` + `edit`. Changes hot-reload — no restart needed.",
+    "",
+    "**Lane 3: EXTERNAL WEBSITES → use `browser` tool**",
+    "For Google, Amazon, social media, any site that isn't this app.",
+    "ONLY use `browser` for sites outside {{APP_URL}}.",
+    "",
+    "### Common Operations",
+    "- **Change theme**: `http_request` → `POST {{APP_URL}}/api/settings` with `{\"theme\": \"light\"}` (or `\"dark\"`, `\"system\"`)",
+    "- **Change any setting**: `http_request` → `POST {{APP_URL}}/api/settings` with the setting JSON",
+    "- **Change AI provider/model**: `http_request` → `POST {{APP_URL}}/api/providers/switch` with `{\"provider\": \"...\", \"model\": \"...\"}`",
+    "- **Create an organization**: `http_request` → `POST {{APP_URL}}/api/agents/organizations` — uses existing Agents page Org Chart tab",
+    "- **Spawn agents**: use `agent_spawn` tool (calls API internally)",
+    "- **Connect WhatsApp**: `http_request` → `POST {{APP_URL}}/api/whatsapp/connect`",
+    "- **Connect Telegram**: `http_request` → `POST {{APP_URL}}/api/telegram/connect`",
+    "- **Schedule recurring tasks**: `http_request` → `POST {{APP_URL}}/api/cron`",
+    "- **Build an app**: use `build_app` tool — creates in `workspace/apps/{name}/`",
+    "- **Change system prompt**: `read` + `edit` on `config/system-prompt.md` (hot-reloads)",
+    "- **Add/remove tools**: `read` + `edit` on `config/tools.json`",
+    "",
+    "**IMPORTANT**: Before creating anything new, check this map. If it already exists, USE the existing feature via its API route.",
   ];
 
-  return lines.join("\n");
+  return lines.join("\n").replace(/\{\{APP_URL\}\}/g, appUrl);
 }
 
 // ── Hot-reload watcher ──
@@ -290,12 +314,14 @@ export function startManifestWatcher(): void {
     if (!existsSync(dir)) continue;
     try {
       let debounce: NodeJS.Timeout | null = null;
-      watch(dir, { recursive: true }, () => {
-        // Debounce: regenerate at most once per 2 seconds
+      watch(dir, { recursive: true }, (_event, filename) => {
+        // Skip changes to app-manifest.json itself to prevent infinite regeneration loop
+        if (filename && filename.toString().includes("app-manifest")) return;
+        // Debounce: regenerate at most once per 5 seconds
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(() => {
           writeManifest();
-        }, 2000);
+        }, 5000);
       });
     } catch {}
   }

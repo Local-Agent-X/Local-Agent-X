@@ -94,6 +94,17 @@ export function createSystemPromptBuilder(opts: {
     build: () => opts.basePrompt,
   });
 
+  // App manifest — the agent's map of its own body
+  builder.addSection({
+    id: "app-manifest", label: "App Map", type: "static",
+    build: () => {
+      try {
+        const { getManifestSummary } = require("./manifest-generator.js");
+        return getManifestSummary() || "";
+      } catch { return ""; }
+    },
+  });
+
   builder.addSection({
     id: "provider-hint", label: "Provider", type: "static",
     build: () => opts.providerHint,

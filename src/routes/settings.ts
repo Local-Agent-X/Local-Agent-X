@@ -223,6 +223,13 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
     try { if (existsSync(settingsPath)) existing = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
     const merged = { ...existing, ...body };
     writeFileSync(settingsPath, JSON.stringify(merged, null, 2), { encoding: "utf-8", mode: 0o600 });
+    // Broadcast setting changes to all connected browsers via WebSocket
+    if (body.theme || body.provider || body.model) {
+      try {
+        const { broadcastAll } = await import("../chat-ws.js");
+        broadcastAll({ type: "settings_changed", settings: body });
+      } catch {}
+    }
     if (body.port) {
       const configPath = join(ctx.dataDir, "config.json");
       let cfg: Record<string, unknown> = {};

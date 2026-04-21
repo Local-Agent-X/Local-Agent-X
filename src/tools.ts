@@ -482,10 +482,27 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         return err(`Invalid HTTP method: ${method}. Must be one of: ${validMethods.join(", ")}`);
       }
 
+      // Auto-inject auth for requests to own server (agent shouldn't need its own token)
+      let autoAuth = false;
+      try {
+        const { getRuntimeConfig } = await import("./config.js");
+        const rc = getRuntimeConfig();
+        const selfUrl = `http://127.0.0.1:${rc.port}`;
+        if (url.startsWith(selfUrl) || url.startsWith(`http://localhost:${rc.port}`)) {
+          autoAuth = true;
+        }
+      } catch {}
+
       // Build headers, resolving secret placeholders
       const headers: Record<string, string> = {
         "User-Agent": "SecretAgentX/0.1",
       };
+      if (autoAuth) {
+        try {
+          const { getRuntimeConfig } = await import("./config.js");
+          headers["Authorization"] = `Bearer ${getRuntimeConfig().authToken}`;
+        } catch {}
+      }
       if (args.headers && typeof args.headers === "object") {
         for (const [key, value] of Object.entries(args.headers as Record<string, unknown>)) {
           let resolved = String(value);

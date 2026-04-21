@@ -280,10 +280,17 @@ function ideUpdateAssistantMsg(content) {
     el = document.getElementById('ide-assistant-active');
   }
   if (!el) return;
-  // Preserve tool cards when updating text
-  const cards = el.querySelectorAll('.tool-card');
-  el.innerHTML = typeof md === 'function' ? md(content) : content;
-  cards.forEach(c => el.appendChild(c));
+  // First stream event: drop the thinking indicator so text can replace it
+  const thinking = el.querySelector('.ide-thinking');
+  if (thinking) thinking.remove();
+  // Maintain a dedicated text node separate from tool cards so neither clobbers the other
+  let textEl = el.querySelector('.ide-text');
+  if (!textEl) {
+    textEl = document.createElement('div');
+    textEl.className = 'ide-text';
+    el.insertBefore(textEl, el.firstChild);
+  }
+  textEl.innerHTML = typeof md === 'function' ? md(content) : content;
   const msgs = document.getElementById('ide-chat-messages');
   if (msgs) msgs.scrollTop = msgs.scrollHeight;
 }

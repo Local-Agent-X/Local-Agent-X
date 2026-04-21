@@ -199,6 +199,20 @@ async function executeSingleTool(
     msgs.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
     return msgs;
   }
+  // Protected files: block writes to core engine files that would brick the agent
+  if (["write", "edit"].includes(tc.name) && args.path) {
+    try {
+      const { isProtectedFile } = await import("./config-loader.js");
+      const check = isProtectedFile(String(args.path));
+      if (check.protected) {
+        const result = `BLOCKED: ${check.reason}. This file is part of the protected core — modifying it could break the agent engine. Edit config/ files instead to customize behavior.`;
+        onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result, allowed: false });
+        msgs.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
+        return msgs;
+      }
+    } catch {}
+  }
+
   // Inject session ID for tools that need session-scoped state
   if (tc.name === "enter_plan_mode" || tc.name === "exit_plan_mode" || tc.name === "skill_run" || tc.name === "usage_report" || tc.name === "browser" || tc.name === "operation_start") {
     args._sessionId = sessionId || "default";

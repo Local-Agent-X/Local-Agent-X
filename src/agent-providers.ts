@@ -296,12 +296,17 @@ export async function runStandardAgent(
     try {
       const useTools = !_localNoToolModels.has(model);
       // tool_choice: "required" disabled — causes empty responses on some models (Grok, Codex)
+      // Enable reasoning on models that support it. Chat-only models (grok-3-mini,
+      // gpt-4o, gemini-2.0-flash) would 400 if we sent reasoning_effort, so match
+      // by name pattern and only opt in for known reasoning-capable models.
+      const reasoningCapable = /grok-4|grok-3-mini-reasoning|^o[134]|gpt-5|gemini-(2\.5|3)|deepseek-r1|qwen.*reasoning/i.test(model);
       let stream = await client.chat.completions.create({
         model,
         messages,
         ...(useTools ? { tools: toolsToOpenAI(tools) } : {}),
         temperature,
         stream: true,
+        ...(reasoningCapable ? { reasoning_effort: "medium" as const } : {}),
       }, { signal: signal || undefined }).catch(async (err: Error) => {
         if (options.provider === "local" && err.message?.includes("does not support tools")) {
           _localNoToolModels.add(model);

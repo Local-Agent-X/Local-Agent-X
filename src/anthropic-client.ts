@@ -147,7 +147,12 @@ async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent
     system: systemPrompt,
     messages: convertMessages(messages),
     stream: true,
-    temperature,
+    // Extended thinking: lets the model reason about blockers before acting.
+    // Turns "browser failed, retry?" into "the account picker popup is blocking
+    // me — ask the user to click it manually, then I'll resume." Anthropic
+    // requires temperature: 1 when thinking is enabled.
+    thinking: { type: "enabled", budget_tokens: 3000 },
+    temperature: 1,
   };
 
   const anthropicTools = tools?.map(t => ({
@@ -474,6 +479,51 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
     "--permission-mode", textOnlyMode ? "plan" : "bypassPermissions",
   ];
 
+  // MCP bridge: let Claude Code call SAX's tools natively via an MCP server
+  // we spawn. Disables Claude Code's built-in tools (Bash, Read, etc.) so
+  // the model ONLY sees SAX tools — no more "echo JSON pretending to be a
+  // tool call" behavior.
+  let mcpConfigPath: string | null = null;
+  let saxToken = "";
+  let saxPort = "7007";
+  try {
+    const { getRuntimeConfig } = await import("./config.js");
+    const rc = getRuntimeConfig();
+    saxToken = rc.authToken;
+    saxPort = String(rc.port);
+  } catch { /* fall through to no-MCP mode */ }
+  if (!textOnlyMode && saxToken) {
+    try {
+      const os = await import("node:os");
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const tmpDir = path.join(os.homedir(), ".sax", "tmp");
+      if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
+      mcpConfigPath = path.join(tmpDir, `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
+      // Resolve the bridge script path — dist/mcp-bridge.js next to the file importing us
+      const bridgePath = new URL("./mcp-bridge.js", import.meta.url).pathname.replace(/^\//, "");
+      const mcpConfig = {
+        mcpServers: {
+          sax: {
+            command: "node",
+            args: [bridgePath],
+            env: {
+              SAX_MCP_URL: `http://127.0.0.1:${saxPort}`,
+              SAX_MCP_TOKEN: saxToken,
+            },
+          },
+        },
+      };
+      fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), { mode: 0o600 });
+      args.push("--mcp-config", mcpConfigPath);
+      // Block Claude Code's native tools so the model ONLY uses SAX's via MCP.
+      args.push("--disallowed-tools", "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,TodoWrite,ToolSearch,NotebookEdit,Task,AskUserQuestion");
+    } catch (e) {
+      console.warn(`[anthropic-cli] MCP config setup failed, falling back to text-mode: ${(e as Error).message}`);
+      mcpConfigPath = null;
+    }
+  }
+
   try {
     const proc = spawn("claude", args, {
       stdio: ["pipe", "pipe", "pipe"],
@@ -615,9 +665,11 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
     if (progressTimer) clearTimeout(progressTimer);
     if (progressInterval) clearInterval(progressInterval);
     const exitCode = await new Promise<number>((resolve) => { proc.on("close", (code) => resolve(code ?? 0)); });
+    if (mcpConfigPath) { try { const fs = await import("node:fs"); fs.unlinkSync(mcpConfigPath); } catch {} }
     if (exitCode !== 0 && stderr) { yield { type: "error", error: `Claude CLI error (${exitCode}): ${stderr.slice(0, 300)}` }; return; }
     yield { type: "done", usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0 } };
   } catch (e) {
+    if (mcpConfigPath) { try { const fs = await import("node:fs"); fs.unlinkSync(mcpConfigPath); } catch {} }
     yield { type: "error", error: `Claude CLI error: ${(e as Error).message}` };
   }
 }

@@ -308,8 +308,13 @@ export class TelegramBridge {
       return;
     }
 
-    // Typing indicator
-    this.apiCall(token, "sendChatAction", { chat_id: chatId, action: "typing" }, false).catch(() => {});
+    // Typing indicator — Telegram's typing state expires in ~5s, so we
+    // re-send every 4s until the turn ends. Without this, long-running
+    // agent turns (30s+) leave the user staring at a blank chat with no
+    // signal that anything is happening.
+    const sendTyping = () => this.apiCall(token, "sendChatAction", { chat_id: chatId, action: "typing" }, false).catch(() => {});
+    sendTyping();
+    const typingInterval = setInterval(sendTyping, 4000);
 
     this.processingLock.add(chatId);
     try {
@@ -319,6 +324,7 @@ export class TelegramBridge {
       console.error(`[telegram] Agent error for ${chatId}:`, (e as Error).message);
       await this.sendMessage(chatId, "Something went wrong. Try again?");
     } finally {
+      clearInterval(typingInterval);
       this.processingLock.delete(chatId);
     }
   }

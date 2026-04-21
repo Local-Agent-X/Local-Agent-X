@@ -1,0 +1,23 @@
+{
+  "description": "Tool registry configuration. Controls which tools are eager-loaded vs deferred, and feature flags.",
+  "eager": [
+    "read", "write", "edit", "bash", "web_fetch", "glob", "grep",
+    "web_search", "ask_user", "view_image", "build_app", "create_page",
+    "task_create", "task_update", "task_list", "task_get",
+    "enter_plan_mode", "exit_plan_mode", "tool_search"
+  ],
+  "disabled": [],
+  "settings": {
+    "bash": {
+      "defaultTimeout": 30000,
+      "maxTimeout": 300000
+    },
+    "build_app": {
+      "maxConcurrent": 1
+    },
+    "web_fetch": {
+      "maxResponseSize": 500000,
+      "timeoutMs": 15000
+    }
+  }
+}

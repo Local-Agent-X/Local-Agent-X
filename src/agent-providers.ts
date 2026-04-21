@@ -551,12 +551,17 @@ export async function runAnthropicAgent(
     });
 
     let streamError: string | null = null;
+    let sawMcpActivity = false;
     for await (const event of stream) {
       if (event.type === "text") {
         assistantContent += event.delta;
         onEvent?.({ type: "stream", delta: event.delta || "" });
       } else if (event.type === "tool_call") {
         toolCalls.push({ id: event.id!, name: event.name!, arguments: event.arguments! });
+      } else if ((event as { type?: string }).type === "mcp_activity") {
+        // Tools executed end-to-end via the MCP bridge — no local re-execution
+        // needed. Flag so the auto-route fallback below doesn't trigger.
+        sawMcpActivity = true;
       } else if (event.type === "done") {
         totalInput += event.usage?.inputTokens || 0;
         totalOutput += event.usage?.outputTokens || 0;
@@ -577,9 +582,11 @@ export async function runAnthropicAgent(
     }
     messages.push(assistantMsg);
 
-    // Auto-route to build_app if Claude tried to write files directly (skip for IDE sessions)
+    // Auto-route to build_app if Claude tried to write files directly (skip for IDE sessions).
+    // Skip the auto-route when MCP tool calls already ran — Claude did the
+    // work through the bridge; the toolCalls array is intentionally empty.
     const hasBuildApp = tools.some(t => t.name === "build_app");
-    if (toolCalls.length === 0 && hasBuildApp && detectBuildIntent(assistantContent, userMessage)) {
+    if (toolCalls.length === 0 && !sawMcpActivity && hasBuildApp && detectBuildIntent(assistantContent, userMessage)) {
       const appName = extractAppName(assistantContent, userMessage);
       const buildPrompt = extractBuildPrompt(assistantContent, userMessage);
       console.log(`[agent] Auto-routing to build_app: ${appName}`);

@@ -10,6 +10,7 @@ import { streamCodexResponse, type ReasoningItem } from "./codex-client.js";
 import { executeToolCalls, checkAndCompact } from "./tool-executor.js";
 import { stripEphemeralMessages } from "./agent-providers.js";
 import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState } from "./agent-guards.js";
+import { stripSystemInjectionTags } from "./sanitize.js";
 
 interface ImageAttachment {
   url: string;
@@ -268,6 +269,13 @@ export async function runCodexAgentHttp(
       console.error("[agent] Tool execution error (Codex):", (e as Error).message);
       toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];
     }
+    // Strip injected <system-reminder> / <system> / <human> tags out of every
+    // tool result before handing them to the model. Web pages can smuggle fake
+    // protocol frames through browser/web_fetch tool output.
+    toolResults = toolResults.map(r => {
+      if (r.role !== "tool" || typeof r.content !== "string") return r;
+      return { ...r, content: stripSystemInjectionTags(r.content) };
+    });
     messages.push(...toolResults);
 
     // Dead-end detection — after 3 empty/null results in a row, inject a

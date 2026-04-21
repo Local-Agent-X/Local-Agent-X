@@ -9,7 +9,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { buildAnthropicRateLimitHint, normalizeAnthropicModel, unwrapAnthropicSubscriptionToken, usesAnthropicSubscriptionAuth } from "./anthropic-models.js";
 
 interface StreamEvent {
-  type: "text" | "tool_call" | "done" | "error";
+  type: "text" | "tool_call" | "mcp_activity" | "done" | "error";
   delta?: string;
   id?: string;
   name?: string;
@@ -473,6 +473,11 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
 
   const args = [
     "-p", "--model", model, "--output-format", "stream-json", "--verbose",
+    // Emit stream_event frames (content_block_delta, text_delta, etc.) so we
+    // can yield text token-by-token instead of waiting for each complete
+    // content block. Without this, the UI sees nothing until the model is
+    // fully done or hits a tool call.
+    "--include-partial-messages",
     "--no-session-persistence",
     // Text-only (orchestration): plan mode — Claude thinks but can't execute tools
     // Tool mode: bypass all permissions so tools execute immediately
@@ -575,6 +580,30 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
         let event: any;
         try { event = JSON.parse(line); } catch { continue; }
 
+        // With --include-partial-messages, Claude Code wraps API stream frames
+        // in { type: "stream_event", event: { ... } }. Extract text_deltas so
+        // they flow to the UI token-by-token instead of waiting for the full
+        // content block to land.
+        if (event.type === "stream_event" && event.event) {
+          const inner = event.event;
+          if (inner.type === "content_block_delta" && inner.delta?.type === "text_delta" && typeof inner.delta.text === "string") {
+            if (!firstResponse) {
+              firstResponse = true;
+              if (progressTimer) clearTimeout(progressTimer);
+              if (progressInterval) clearInterval(progressInterval);
+              progressYields.length = 0;
+            }
+            // Track prevText so the later full-block assistant event doesn't
+            // re-yield the same text we already emitted as deltas.
+            prevText += inner.delta.text;
+            fullText += inner.delta.text;
+            const cleanDelta = filterStreamDelta(inner.delta.text, suppressing);
+            if (cleanDelta.suppress) { suppressing = true; }
+            else if (cleanDelta.text) { suppressing = false; yield { type: "text", delta: cleanUrls(cleanDelta.text) }; }
+          }
+          continue;
+        }
+
         if (event.type === "assistant") {
           const content = event.message?.content;
           if (Array.isArray(content)) {
@@ -601,8 +630,22 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
             // alongside or instead of the text-JSON protocol the CLI prompt primes
             // it with. Without this pass, native tool calls were silently dropped
             // and the loop ended the turn with no tool call.
+            //
+            // Skip `mcp__*` blocks — those are routed end-to-end through the MCP
+            // bridge (which executes them via /api/mcp/call). If we ALSO yielded
+            // them here, the agent loop would try to re-run them with the prefixed
+            // name, fail the tool-map lookup, hit default-deny in the policy, and
+            // feed a spurious BLOCKED result back into the model's context.
             for (const b of content) {
               if (b?.type === "tool_use" && b.name) {
+                if (String(b.name).startsWith("mcp__")) {
+                  console.log(`[claude] MCP tool_use (handled via bridge): ${b.name}`);
+                  // Signal to the agent loop that tool activity happened, so
+                  // its "toolCalls.length === 0 → auto-route to build_app"
+                  // fallback doesn't misfire. The tool already ran via MCP.
+                  yield { type: "mcp_activity", name: b.name };
+                  continue;
+                }
                 const args = typeof b.input === "object" && b.input ? b.input : {};
                 console.log(`[claude] Native tool_use: ${b.name}(${JSON.stringify(args).slice(0, 80)})`);
                 emittedNativeTools = true;

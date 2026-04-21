@@ -50,7 +50,7 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
         ctx.rbac,
         "operator",
         sessionId,
-        undefined, // onEvent
+        ctx.activeOnEvent, // pipe tool_start / tool_end / tool_progress to the active chat session's SSE stream
         undefined, // signal
       );
 

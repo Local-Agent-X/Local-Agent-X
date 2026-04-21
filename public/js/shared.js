@@ -42,16 +42,28 @@ function toggleTheme() {
   applyTheme(next);
 }
 
-// Apply saved theme on load
+// Apply saved theme on load — check server-side setting first, then localStorage
 (function() {
-  const saved = localStorage.getItem('sax_theme') || 'dark';
-  applyTheme(saved);
+  // Try server-side theme setting
+  fetch('/api/settings', { headers: { Authorization: 'Bearer ' + (new URLSearchParams(location.search).get('token') || localStorage.getItem('sax_token') || '') } })
+    .then(r => r.ok ? r.json() : null)
+    .then(settings => {
+      if (settings && settings.theme) {
+        localStorage.setItem('sax_theme', settings.theme);
+        applyTheme(settings.theme);
+      }
+    }).catch(() => {});
+  // Apply local default immediately (server override arrives async)
+  applyTheme(localStorage.getItem('sax_theme') || 'dark');
   // Listen for OS theme changes when in system mode
   window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
     if (localStorage.getItem('sax_theme') === 'system') applyTheme('system');
   });
-  document.addEventListener('DOMContentLoaded', () => applyTheme(saved));
+  // Re-read localStorage on DOMContentLoaded so a server-side theme fetched async still wins
+  document.addEventListener('DOMContentLoaded', () => applyTheme(localStorage.getItem('sax_theme') || 'dark'));
 })();
+
+// Settings change listener is in chat.js onmessage handler (more reliable — survives WS reconnects)
 
 function uid() { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7); }
 

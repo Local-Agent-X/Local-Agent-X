@@ -52,6 +52,7 @@ import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAg
 
 export async function startServer(config: SAXConfig) {
   setServerPort(String(config.port || 7007));
+  SecurityLayer._selfPort = String(config.port || 7007);
   const security = new SecurityLayer(config.workspace);
   // Initialize hook engine with security layer so hook commands go through the same checks
   import("./hooks/hook-engine.js").then(({ initHookEngine }) => initHookEngine(security)).catch(() => {});
@@ -400,6 +401,11 @@ export async function startServer(config: SAXConfig) {
     // Auth
     let requestRole: Role = "operator";
     const authExempt = new Set(["/api/auth/login", "/api/auth/logout", "/api/auth/status", "/api/auth/anthropic/login", "/api/auth/anthropic/logout", "/api/auth/anthropic/status"]);
+    // Auto-auth for agent's own tool calls: if request comes from localhost with the internal user-agent, skip auth check
+    const clientIpRaw = req.socket.remoteAddress || "";
+    const isLoopback = clientIpRaw === "127.0.0.1" || clientIpRaw === "::1" || clientIpRaw === "::ffff:127.0.0.1";
+    const isAgentSelf = isLoopback && (req.headers["user-agent"] || "").includes("SecretAgentX");
+    if (isAgentSelf) authExempt.add(url.pathname);
     if (url.pathname.startsWith("/api/") && !authExempt.has(url.pathname)) {
       const clientIp = req.socket.remoteAddress || "unknown";
       const token = (req.headers.authorization || "").startsWith("Bearer ") ? (req.headers.authorization || "").slice(7) : "";

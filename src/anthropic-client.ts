@@ -484,10 +484,8 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
     "--permission-mode", textOnlyMode ? "plan" : "bypassPermissions",
   ];
 
-  // MCP bridge: let Claude Code call SAX's tools natively via an MCP server
-  // we spawn. Disables Claude Code's built-in tools (Bash, Read, etc.) so
-  // the model ONLY sees SAX tools — no more "echo JSON pretending to be a
-  // tool call" behavior.
+  // MCP bridge: lets Claude CLI call SAX tools natively via MCP.
+  // The bridge subprocess is TypeScript, so we spawn it with tsx (not plain node).
   let mcpConfigPath: string | null = null;
   let saxToken = "";
   let saxPort = "7007";
@@ -496,7 +494,7 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
     const rc = getRuntimeConfig();
     saxToken = rc.authToken;
     saxPort = String(rc.port);
-  } catch { /* fall through to no-MCP mode */ }
+  } catch {}
   if (!textOnlyMode && saxToken) {
     try {
       const os = await import("node:os");
@@ -505,13 +503,13 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
       const tmpDir = path.join(os.homedir(), ".sax", "tmp");
       if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
       mcpConfigPath = path.join(tmpDir, `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
-      // Resolve the bridge script path — dist/mcp-bridge.js next to the file importing us
-      const bridgePath = new URL("./mcp-bridge.js", import.meta.url).pathname.replace(/^\//, "");
+      // Bridge is TypeScript — must use tsx to run it
+      const bridgePath = path.resolve(path.join(import.meta.dirname || ".", "mcp-bridge.ts"));
       const mcpConfig = {
         mcpServers: {
           sax: {
             command: "node",
-            args: [bridgePath],
+            args: ["--import=tsx", bridgePath],
             env: {
               SAX_MCP_URL: `http://127.0.0.1:${saxPort}`,
               SAX_MCP_TOKEN: saxToken,
@@ -521,7 +519,7 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
       };
       fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), { mode: 0o600 });
       args.push("--mcp-config", mcpConfigPath);
-      // Block Claude Code's native tools so the model ONLY uses SAX's via MCP.
+      // Block Claude Code's native tools so the model ONLY uses SAX's via MCP
       args.push("--disallowed-tools", "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,TodoWrite,ToolSearch,NotebookEdit,Task,AskUserQuestion");
     } catch (e) {
       console.warn(`[anthropic-cli] MCP config setup failed, falling back to text-mode: ${(e as Error).message}`);

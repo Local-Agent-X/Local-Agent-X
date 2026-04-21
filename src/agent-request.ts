@@ -17,6 +17,7 @@ import type { SecretsStore } from "./secrets.js";
 import { buildContextBlock, autoSearchContext } from "./memory.js";
 import { sanitizeHistory, truncateHistory } from "./agent-providers.js";
 import { getApiKey } from "./auth.js";
+import { loadSystemPrompt } from "./config-loader.js";
 
 // ── Types ──
 
@@ -292,7 +293,8 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     // Use full prompt for all providers. The empty-response issue was caused
     // by reasoning: { effort: "low" } in codex-client.ts, not prompt size.
     // The full prompt contains behavioral instructions the agent needs.
-    const basePrompt = config.systemPrompt;
+    // Prefer hot-reloadable config file over static config object
+    const basePrompt = loadSystemPrompt() || config.systemPrompt;
 
     const { createSystemPromptBuilder } = await import("./context-builder.js");
     const contextBuilder = createSystemPromptBuilder({

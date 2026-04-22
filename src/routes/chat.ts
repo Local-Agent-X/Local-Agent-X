@@ -104,7 +104,16 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         onEvent(event);
       };
 
-      const result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
+      // Wrap onEvent so `done` events from the PRIMARY provider are swallowed
+      // until we know whether we need a fallback. Otherwise the UI closes
+      // the SSE stream after the first provider's 'done' and misses any
+      // fallback reply that follows.
+      const primaryEventProxy = (event: ServerEvent) => {
+        if (event.type === "done") return; // defer — we'll emit after fallback decision
+        wrappedOnEvent(event);
+      };
+      const turnStart = Date.now();
+      let result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
         apiKey: prepared.apiKey, model: prepared.model,
         provider: prepared.provider as Parameters<typeof runAgent>[2]["provider"],
         baseURL: prepared.customBaseURL, systemPrompt,
@@ -112,8 +121,58 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
         images: prepared.images, maxIterations: prepared.maxIterations,
         temperature: prepared.temperature, signal: wsChat.abort.signal,
-        onEvent: wrappedOnEvent,
+        onEvent: primaryEventProxy,
       }), { label: `chat:${sessionId}`, timeout: 600_000 });
+      const primaryElapsed = Date.now() - turnStart;
+      console.log(`[timing] ${prepared.provider}/${prepared.model} primary ${primaryElapsed}ms`);
+
+      // Auto-fallback on empty response. If the primary provider produced
+      // zero tokens, zero text, and zero tool calls, try the next provider
+      // in the chain — with an explicit user-visible notice so the user
+      // knows who actually answered.
+      const lastAssistant = [...result.messages].reverse().find(m => m.role === "assistant");
+      const emptyText = !lastAssistant || !lastAssistant.content || (typeof lastAssistant.content === "string" && !lastAssistant.content.trim());
+      const noToolCalls = !((lastAssistant as unknown as { tool_calls?: unknown[] })?.tool_calls?.length);
+      const zeroTokens = (result.usage?.completionTokens || 0) === 0;
+
+      if (emptyText && noToolCalls && zeroTokens && !wsChat.abort.signal.aborted) {
+        const getKey = async (p: string): Promise<string | null> => {
+          if (p === "codex") { const { loadTokens } = await import("../auth.js"); const t = loadTokens(); return t ? "cli" : null; }
+          if (p === "anthropic") { const { loadAnthropicTokens } = await import("../auth-anthropic.js"); const t = loadAnthropicTokens(); return t ? "cli" : null; }
+          if (p === "xai") return ctx.secretsStore.get("XAI_API_KEY") || null;
+          if (p === "openai") return ctx.secretsStore.get("OPENAI_API_KEY") || ctx.config.openaiApiKey || null;
+          if (p === "gemini") return ctx.secretsStore.get("GEMINI_API_KEY") || null;
+          return null;
+        };
+        const fallbackOrder: Array<{ provider: string; model: string }> = [
+          { provider: "codex", model: "gpt-5.4" },
+          { provider: "anthropic", model: "claude-sonnet-4-6" },
+          { provider: "xai", model: "grok-4" },
+        ].filter(f => f.provider !== prepared.provider);
+        for (const next of fallbackOrder) {
+          const key = await getKey(next.provider);
+          if (!key) continue;
+          try {
+            wrappedOnEvent({ type: "stream", delta: `\n\n_${prepared.provider} returned nothing. Retrying with ${next.provider} (${next.model})..._\n\n` });
+            const fbStart = Date.now();
+            result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
+              apiKey: key, model: next.model,
+              provider: next.provider as Parameters<typeof runAgent>[2]["provider"],
+              systemPrompt, tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
+              threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
+              images: prepared.images, maxIterations: prepared.maxIterations,
+              temperature: prepared.temperature, signal: wsChat.abort.signal,
+              // Swallow this fallback's 'done' too — we emit our own consolidated
+              // done after the whole chain finishes (or we've decided no more retries).
+              onEvent: (event: ServerEvent) => { if (event.type !== "done") wrappedOnEvent(event); },
+            }), { label: `chat-fallback:${next.provider}:${sessionId}`, timeout: 600_000 });
+            console.log(`[timing] ${next.provider}/${next.model} fallback ${Date.now() - fbStart}ms`);
+            const newLast = [...result.messages].reverse().find(m => m.role === "assistant");
+            const stillEmpty = !newLast || !newLast.content || (typeof newLast.content === "string" && !newLast.content.trim());
+            if (!stillEmpty) break;
+          } catch (e) { console.warn(`[fallback] ${next.provider} failed: ${(e as Error).message}`); }
+        }
+      }
 
       ctx.setActiveOnEvent(undefined);
       // Clear any skill tool restrictions so they don't leak into the next message
@@ -161,7 +220,12 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         const record = trackUsage(sessionId, usedModel, prepared.provider, realUsage.promptTokens, realUsage.completionTokens);
         costUsd = record.costUsd;
       } catch {}
-      sseWrite(res, { type: "done", usage: realUsage, ...(costUsd !== undefined ? { costUsd } : {}) } as ServerEvent);
+      // Emit final done through BOTH channels (SSE + WebSocket). We swallowed
+      // the primary and fallback 'done' events earlier so the UI didn't close
+      // mid-chain; this is the consolidated turn-end signal.
+      const doneEvent: ServerEvent = { type: "done", usage: realUsage, ...(costUsd !== undefined ? { costUsd } : {}) } as ServerEvent;
+      wrappedOnEvent(doneEvent);
+      console.log(`[timing] turn total ${Date.now() - turnStart}ms (${prepared.provider}/${prepared.model}, ${realUsage.totalTokens} tokens)`);
       clearInterval(heartbeat);
       res.end();
 

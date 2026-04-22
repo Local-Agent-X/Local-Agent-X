@@ -113,20 +113,28 @@ export function createLoopState(): LoopState {
 }
 
 const DISCOVERY_LOOP_THRESHOLD = 8;
+const DISCOVERY_LOOP_THRESHOLD_WEAK = 4;
 
 /**
- * Check for exact-repeat loops (same call 3x) and discovery loops (same tool 8+ times).
+ * Check for exact-repeat loops and discovery loops. Weak/medium models
+ * loop harder and faster than strong ones, so we halve the thresholds:
+ * exact-repeat fires at 2x instead of 3x, discovery at 4 instead of 8.
  * Returns a nudge message if a loop is detected, or null.
  */
 export function checkToolLoops(
   toolCalls: Array<{ name: string; arguments: string }>,
   state: LoopState,
+  opts?: { modelTier?: "weak" | "medium" | "strong" },
 ): { abort: boolean; nudge: string | null } {
-  // Exact-repeat detection (3x same call)
+  const isWeakOrMedium = opts?.modelTier === "weak" || opts?.modelTier === "medium";
+  const repeatLimit = isWeakOrMedium ? 2 : 3;
+  const discoveryLimit = isWeakOrMedium ? DISCOVERY_LOOP_THRESHOLD_WEAK : DISCOVERY_LOOP_THRESHOLD;
+
+  // Exact-repeat detection
   const key = toolCalls.map(tc => `${tc.name}:${tc.arguments}`).join("|");
   if (key === state.lastToolKey) {
     state.sameToolCount++;
-    if (state.sameToolCount >= 3) {
+    if (state.sameToolCount >= repeatLimit) {
       return { abort: true, nudge: "\n\n(Detected repeated tool calls — stopping loop)" };
     }
   } else {
@@ -150,7 +158,7 @@ export function checkToolLoops(
     "task_list", "operation_status", "operation_list",
   ]);
   const stuck = [...state.toolNameCounts.entries()].find(([name, count]) =>
-    count >= DISCOVERY_LOOP_THRESHOLD && SPIRALABLE_TOOLS.has(name)
+    count >= discoveryLimit && SPIRALABLE_TOOLS.has(name)
   );
   if (stuck) {
     const [toolName, count] = stuck;

@@ -524,16 +524,17 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
       const tmpDir = path.join(os.homedir(), ".sax", "tmp");
       if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
       mcpConfigPath = path.join(tmpDir, `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
-      // Point at the compiled dist/ output — tsc emits mcp-bridge.js
-      // alongside anthropic-client.js. Running .ts via tsx was unreliable
-      // because tsx isn't always resolvable from Claude CLI's subprocess
-      // environment, and the raw TS file doesn't ship with prod installs.
-      const bridgePath = path.resolve(path.join(import.meta.dirname || ".", "mcp-bridge.js"));
+      // Bridge is TypeScript — use tsx to run it. Fall back to compiled .js if available.
+      const tsPath = path.resolve(path.join(import.meta.dirname || ".", "mcp-bridge.ts"));
+      const jsPath = path.resolve(path.join(import.meta.dirname || ".", "mcp-bridge.js"));
+      const bridgePath = fs.existsSync(jsPath) ? jsPath : tsPath;
+      // Use tsx for .ts files, plain node for compiled .js
+      const needsTsx = bridgePath.endsWith(".ts");
       const mcpConfig = {
         mcpServers: {
           sax: {
             command: "node",
-            args: [bridgePath],
+            args: needsTsx ? ["--import=tsx", bridgePath] : [bridgePath],
             env: {
               SAX_MCP_URL: `http://127.0.0.1:${saxPort}`,
               SAX_MCP_TOKEN: saxToken,

@@ -230,8 +230,12 @@ function navigate(route) {
     pinPage.classList.remove('active');
   }
 
-  // Highlight active util button (including pins)
+  // Highlight active util button
   document.querySelectorAll('.util-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.route === route);
+  });
+  // Highlight active pinned item
+  document.querySelectorAll('.pinned-item').forEach(b => {
     b.classList.toggle('active', b.dataset.route === route);
   });
   // Init page if it has an init function
@@ -258,12 +262,19 @@ function loadSidebarPins() {
 }
 
 function renderSidebarPins() {
-  const container = document.getElementById('sidebar-pins');
-  if (!container) return;
-  container.innerHTML = _sidebarPins.map(p =>
-    '<button class="util-btn" data-route="pin:' + esc(p.name) + '" onclick="navigate(\'pin:' + esc(p.name) + '\')" title="' + esc(p.name) + '">' +
-      '<span class="util-icon">' + (p.icon || '📌') + '</span>' +
-    '</button>'
+  const section = document.getElementById('pinned-section');
+  const list = document.getElementById('pinned-list');
+  if (!section || !list) return;
+  if (_sidebarPins.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = '';
+  list.innerHTML = _sidebarPins.map(p =>
+    '<div class="pinned-item" data-route="pin:' + esc(p.name) + '" onclick="navigate(\'pin:' + esc(p.name) + '\')" title="' + esc(p.name) + '">' +
+      '<span class="pinned-icon">' + (p.icon || '📌') + '</span>' +
+      '<span class="pinned-name">' + esc(p.name) + '</span>' +
+    '</div>'
   ).join('');
 }
 

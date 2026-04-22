@@ -56,6 +56,12 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 #logo{font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase;text-shadow:0 0 10px var(--accent-dim);flex:1;cursor:pointer}
 #new-chat-btn{background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:7px 12px;font-size:.75rem;cursor:pointer;font-family:var(--mono);transition:all .2s;white-space:nowrap}
 #new-chat-btn:hover{background:var(--accent);color:var(--bg);box-shadow:0 0 12px var(--accent-dim)}
+#pinned-section{padding:8px 0;border-bottom:1px solid var(--border)}
+.pinned-item{display:flex;align-items:center;gap:8px;padding:5px 12px;cursor:pointer;color:var(--fg);border-radius:4px;margin:1px 6px;transition:background .15s}
+.pinned-item:hover{background:var(--hover)}
+.pinned-item.active{background:var(--hover);color:var(--accent)}
+.pinned-icon{font-size:.85rem;flex-shrink:0;width:18px;text-align:center}
+.pinned-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:.72rem}
 #projects-section{padding:8px 0;border-bottom:1px solid var(--border)}
 .section-header{display:flex;align-items:center;justify-content:space-between;padding:0 12px;margin-bottom:4px}
 .section-header span{font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px}

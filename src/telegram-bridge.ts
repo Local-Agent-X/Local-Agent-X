@@ -270,9 +270,56 @@ export class TelegramBridge {
     }
   }
 
+  /**
+   * Detect voice/audio/photo/video/document messages, download the file, and
+   * return a text description the agent can reason about. Returns empty string
+   * if the message has nothing we know how to forward.
+   */
+  private async describeNonTextMessage(msg: any, token: string): Promise<string> {
+    let fileId = ""; let kind = ""; let extra = "";
+    if (msg.voice) { fileId = msg.voice.file_id; kind = "voice"; extra = `${msg.voice.duration || "?"}s, ${msg.voice.mime_type || "audio/ogg"}`; }
+    else if (msg.audio) { fileId = msg.audio.file_id; kind = "audio"; extra = `${msg.audio.duration || "?"}s, ${msg.audio.mime_type || "audio/mpeg"}, title=${msg.audio.title || "?"}`; }
+    else if (msg.video) { fileId = msg.video.file_id; kind = "video"; extra = `${msg.video.duration || "?"}s, ${msg.video.mime_type || "video/mp4"}, ${msg.video.width}x${msg.video.height}`; }
+    else if (msg.video_note) { fileId = msg.video_note.file_id; kind = "video_note"; extra = `${msg.video_note.duration || "?"}s`; }
+    else if (msg.photo && Array.isArray(msg.photo) && msg.photo.length > 0) { const largest = msg.photo[msg.photo.length - 1]; fileId = largest.file_id; kind = "photo"; extra = `${largest.width}x${largest.height}`; }
+    else if (msg.document) { fileId = msg.document.file_id; kind = "document"; extra = `${msg.document.mime_type || "unknown"}, ${msg.document.file_name || "unnamed"}`; }
+    else if (msg.sticker) { fileId = msg.sticker.file_id; kind = "sticker"; extra = msg.sticker.emoji || ""; }
+
+    if (!fileId) return "";
+    try {
+      const localPath = await this.downloadTelegramFile(token, fileId, kind);
+      const caption = typeof msg.caption === "string" ? ` Caption: "${msg.caption}".` : "";
+      return `[User sent a ${kind} message via Telegram. Saved locally at ${localPath}. Metadata: ${extra}.${caption} If handling this requires a capability you don't have yet (transcription, OCR, video analysis), use self_edit to add it — then re-read this file.]`;
+    } catch (e) {
+      console.error(`[telegram] Failed to download ${kind}:`, (e as Error).message);
+      return `[User sent a ${kind} message via Telegram but download failed: ${(e as Error).message}. Tell the user you couldn't process it.]`;
+    }
+  }
+
+  /** Download a Telegram-hosted file to ~/.sax/uploads, return the absolute path. */
+  private async downloadTelegramFile(token: string, fileId: string, kind: string): Promise<string> {
+    const info = await this.apiCall(token, "getFile", { file_id: fileId }, false);
+    if (!info.ok || !info.result?.file_path) throw new Error(info.description || "getFile failed");
+    const remotePath: string = info.result.file_path;
+    const fileUrl = `https://api.telegram.org/file/bot${token}/${remotePath}`;
+    const res = await fetch(fileUrl);
+    if (!res.ok) throw new Error(`download HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const uploadsDir = join(homedir(), ".sax", "uploads");
+    mkdirSync(uploadsDir, { recursive: true });
+    const ext = (remotePath.split(".").pop() || "bin").toLowerCase();
+    const fname = `tg-${kind}-${Date.now()}.${ext}`;
+    const fullPath = join(uploadsDir, fname);
+    writeFileSync(fullPath, buf);
+    return fullPath;
+  }
+
   private async handleUpdate(update: any, token: string): Promise<void> {
     const msg = update.message;
-    if (!msg || !msg.text) return;
+    if (!msg) return;
 
     const chatId = String(msg.chat.id);
     const from = msg.from;
@@ -291,8 +338,16 @@ export class TelegramBridge {
       return;
     }
 
-    const text = msg.text;
-    if (!text || typeof text !== "string") return;
+    // Non-text messages: forward as a text signal the agent can act on.
+    // Instead of silently dropping voice/audio/video/photo/document, we
+    // download the media, save locally, and pass a text description
+    // including the file path. The agent can then recognize "I don't have
+    // a transcription/OCR tool" and call self_edit to add one.
+    let text = typeof msg.text === "string" ? msg.text : "";
+    if (!text) {
+      text = await this.describeNonTextMessage(msg, token) || "";
+    }
+    if (!text) return;
     if (text.length > 10000) {
       await this.sendMessage(chatId, "Message too long (max 10,000 characters).");
       return;

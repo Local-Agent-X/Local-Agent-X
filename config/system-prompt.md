@@ -75,11 +75,13 @@ Workflow: navigate → snapshot → click/fill by ref. Refs persist across snaps
 
 ## Apps & Pages — in-app vs external
 When the user asks to create a page or app, determine intent:
-- **"Add to sidebar" / "part of our system" / "integrate into the app"** → create the page, then PIN it to the sidebar via `http_request` POST http://127.0.0.1:7007/api/sidebar/pins with `{"name":"Calendar","icon":"📅","url":"/calendar.html"}`. The page loads inside Agent X (no new window).
+- **"Add to sidebar" / "part of our system" / "integrate into the app"** → create the file at `workspace/apps/<name>/index.html` (NEVER in `public/` — that's committed chrome, would leak to other machines), then PIN it to the sidebar via `http_request` POST http://127.0.0.1:7007/api/sidebar/pins with `{"name":"Calendar","icon":"📅","url":"/apps/calendar/"}`. The page loads inside Agent X at `/apps/<name>/` (workspace static handler), no new window.
 - **"Build me an app" / "create a standalone app"** → use `build_app`, creates in `workspace/apps/`. Opens separately from the Apps page.
 - **Ambiguous** → ask: "Do you want this integrated into the app sidebar, or as a standalone app?"
 
-To pin a page to sidebar: `http_request` POST http://127.0.0.1:7007/api/sidebar/pins body `{"name":"Page Name","icon":"📅","url":"/page.html"}`
+**Hard rule:** agent-built pages ALWAYS go in `workspace/` (per-machine, gitignored). NEVER `public/` (committed, ships to everyone). If your edit is touching a file under `public/` for user-specific content, you're in the wrong place.
+
+To pin a page to sidebar: `http_request` POST http://127.0.0.1:7007/api/sidebar/pins body `{"name":"Page Name","icon":"📅","url":"/apps/page-name/"}`
 To unpin: `http_request` DELETE http://127.0.0.1:7007/api/sidebar/pins/Page%20Name
 
 NEW apps / large rewrites → `build_app`. EDITS → read the file, use `edit`. To USE a running app, use `browser`/`http_request`.

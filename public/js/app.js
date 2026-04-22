@@ -219,8 +219,10 @@ function navigate(route) {
     const pin = _sidebarPins.find(p => p.name === pinName);
     if (pin) {
       // Only reload iframe if URL changed
-      if (pinIframe.src !== pin.url && pinIframe.getAttribute('src') !== pin.url) {
-        pinIframe.src = pin.url;
+      // Pass auth token to iframe so pinned pages can call APIs
+      const pinUrl = pin.url + (pin.url.includes('?') ? '&' : '?') + 'token=' + AUTH_TOKEN;
+      if (!pinIframe.src.includes(pin.url)) {
+        pinIframe.src = pinUrl;
       }
       pinPage.classList.add('active');
     }

@@ -30,6 +30,13 @@
     <button id="sidebar-collapse-btn" onclick="toggleSidebarCollapse()" title="Collapse sidebar" aria-label="Collapse sidebar" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:2px 6px;margin-left:auto">&#x276E;</button>
   </div>
 
+  <div id="pinned-section" style="display:none">
+    <div class="section-header">
+      <span>📌 Pinned</span>
+    </div>
+    <div id="pinned-list"></div>
+  </div>
+
   <div id="projects-section">
     <div class="section-header">
       <span>Projects</span>
@@ -67,7 +74,6 @@
     <button class="util-btn" data-route="secrets" onclick="navigate('secrets')" aria-label="Secrets vault" title="Secrets"><span class="util-icon">&#128273;</span></button>
     <button class="util-btn" data-route="settings" onclick="navigate('settings')" aria-label="Settings" title="Settings"><span class="util-icon">&#9881;</span></button>
     <button class="util-btn" onclick="toggleNotifPanel()" aria-label="Notifications" title="Notifications" style="position:relative"><span class="util-icon">&#128276;</span><span id="notif-badge" class="notif-badge" style="display:none"></span></button>
-    <div id="sidebar-pins"></div>
   </div>
 
   <div id="sidebar-footer">

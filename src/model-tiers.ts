@@ -73,6 +73,7 @@ export function maxToolsForTier(tier: ModelTier): number {
 export const ESSENTIAL_TOOLS_ORDER: readonly string[] = [
   "read", "write", "edit", "bash",
   "http_request", "browser",
+  "self_edit",                      // agent self-repair via Claude Code
   "memory_save", "memory_search",
   "web_fetch", "web_search",
   "ask_user",

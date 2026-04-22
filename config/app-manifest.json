@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-22T13:54:53.609Z",
+  "generatedAt": "2026-04-22T20:09:16.541Z",
   "pages": [
     {
       "name": "Chat",
@@ -766,6 +766,11 @@
       "path": "config/app-manifest.json",
       "description": "This file — auto-generated map of the entire app (read-only)",
       "agentEditable": false
+    },
+    {
+      "path": "config/AGENTS.md",
+      "description": "Config file: AGENTS.md",
+      "agentEditable": true
     }
   ],
   "bridges": [

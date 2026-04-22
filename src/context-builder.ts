@@ -94,13 +94,37 @@ export function createSystemPromptBuilder(opts: {
     build: () => opts.basePrompt,
   });
 
-  // App manifest — the agent's map of its own body
+  // App manifest — the agent's map of its own body (auto-generated catalog)
   builder.addSection({
     id: "app-manifest", label: "App Map", type: "static",
     build: () => {
       try {
         const { getManifestSummary } = require("./manifest-generator.js");
         return getManifestSummary() || "";
+      } catch { return ""; }
+    },
+  });
+
+  // AGENTS.md — hand-written invariants and architectural rules. Pairs with
+  // the JSON manifest: manifest says WHAT exists, AGENTS.md says what's
+  // ALLOWED (three-lane routing, directory boundaries, code limits, protocol
+  // invariants). Injected verbatim so the agent reads the canonical rules
+  // rather than a drifty paraphrase.
+  builder.addSection({
+    id: "agents-md", label: "Rules", type: "static",
+    build: async () => {
+      try {
+        const { readFileSync, existsSync } = await import("node:fs");
+        const { resolve, join, dirname } = await import("node:path");
+        const { fileURLToPath } = await import("node:url");
+        // Resolve from this file's location to the repo root.
+        // dist/context-builder.js → dist/ → repo root.
+        const thisFile = fileURLToPath(import.meta.url);
+        const root = resolve(dirname(thisFile), "..");
+        const p = join(root, "AGENTS.md");
+        if (!existsSync(p)) return "";
+        const md = readFileSync(p, "utf-8");
+        return `## Invariants (AGENTS.md)\n${md}`;
       } catch { return ""; }
     },
   });

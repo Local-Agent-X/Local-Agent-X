@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-21T23:55:29.054Z",
+  "generatedAt": "2026-04-22T13:54:53.609Z",
   "pages": [
     {
       "name": "Chat",
@@ -10,26 +10,6 @@
       "name": "Settings",
       "path": "/settings.html",
       "description": "Configuration dashboard — AI providers, memory, security, bridges, integrations"
-    },
-    {
-      "name": "green-hello",
-      "path": "/green-hello.html",
-      "description": "Static page: green-hello.html"
-    },
-    {
-      "name": "hello-green",
-      "path": "/hello-green.html",
-      "description": "Static page: hello-green.html"
-    },
-    {
-      "name": "hello",
-      "path": "/hello.html",
-      "description": "Static page: hello.html"
-    },
-    {
-      "name": "landing",
-      "path": "/landing.html",
-      "description": "Static page: landing.html"
     },
     {
       "name": "secrets",
@@ -174,6 +154,21 @@
     },
     {
       "method": "GET",
+      "path": "XAI_API_KEY",
+      "description": "GET XAI_API_KEY"
+    },
+    {
+      "method": "GET",
+      "path": "OPENAI_API_KEY",
+      "description": "GET OPENAI_API_KEY"
+    },
+    {
+      "method": "GET",
+      "path": "GEMINI_API_KEY",
+      "description": "GET GEMINI_API_KEY"
+    },
+    {
+      "method": "GET",
       "path": "q",
       "description": "GET q"
     },
@@ -266,16 +261,6 @@
       "method": "GET",
       "path": "GITHUB_SYNC_TOKEN",
       "description": "GET GITHUB_SYNC_TOKEN"
-    },
-    {
-      "method": "GET",
-      "path": "OPENAI_API_KEY",
-      "description": "GET OPENAI_API_KEY"
-    },
-    {
-      "method": "GET",
-      "path": "GEMINI_API_KEY",
-      "description": "GET GEMINI_API_KEY"
     },
     {
       "method": "GET",
@@ -452,6 +437,29 @@
   ],
   "apps": [
     {
+      "name": "agent-manager",
+      "path": "workspace/apps/agent-manager",
+      "files": [
+        "app.js",
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "styles.css",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "agentx-brand-kit",
+      "path": "workspace/apps/agentx-brand-kit",
+      "files": [
+        "CHANGELOG.md",
+        "index.html",
+        "logo-x-primary.svg",
+        "PROJECT.md",
+        "TODO.md"
+      ]
+    },
+    {
       "name": "ai-animation-studio",
       "path": "workspace/apps/ai-animation-studio",
       "files": [
@@ -459,19 +467,108 @@
       ]
     },
     {
-      "name": "calculator",
-      "path": "workspace/apps/calculator",
+      "name": "apps-dashboard",
+      "path": "workspace/apps/apps-dashboard",
+      "files": [
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "script.js",
+        "styles.css",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "ari-kernel-blocks-dashboard",
+      "path": "workspace/apps/ari-kernel-blocks-dashboard",
+      "files": [
+        "app.js",
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "styles.css",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "baseball-todo",
+      "path": "workspace/apps/baseball-todo",
+      "files": [
+        "app.js",
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "styles.css",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "black-yellow-todo",
+      "path": "workspace/apps/black-yellow-todo",
+      "files": []
+    },
+    {
+      "name": "blue-red-todo",
+      "path": "workspace/apps/blue-red-todo",
+      "files": [
+        "App.jsx",
+        "CHANGELOG.md",
+        "dist",
+        "index.html",
+        "main.jsx",
+        "node_modules",
+        "package-lock.json",
+        "package.json",
+        "PROJECT.md",
+        "styles.css",
+        "TODO.md",
+        "tsconfig.json",
+        "vite.config.js"
+      ]
+    },
+    {
+      "name": "bodybuilding-todo",
+      "path": "workspace/apps/bodybuilding-todo",
       "files": [
         "index.html"
       ]
     },
     {
-      "name": "eagle-todo",
-      "path": "workspace/apps/eagle-todo",
+      "name": "build-me-a-black-and-tellow-todo",
+      "path": "workspace/apps/build-me-a-black-and-tellow-todo",
+      "files": []
+    },
+    {
+      "name": "calculator",
+      "path": "workspace/apps/calculator",
       "files": [
+        "CHANGELOG.md",
         "index.html",
-        "PROJECT.md"
+        "PROJECT.md",
+        "TODO.md"
       ]
+    },
+    {
+      "name": "calculator-app",
+      "path": "workspace/apps/calculator-app",
+      "files": []
+    },
+    {
+      "name": "do-it-now-arnold",
+      "path": "workspace/apps/do-it-now-arnold",
+      "files": [
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "script.js",
+        "style.css",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "kraken-trading-bot-ui",
+      "path": "workspace/apps/kraken-trading-bot-ui",
+      "files": []
     },
     {
       "name": "lakers-todo",
@@ -483,14 +580,26 @@
       ]
     },
     {
-      "name": "macro-tracker",
-      "path": "workspace/apps/macro-tracker",
+      "name": "mario-todo",
+      "path": "workspace/apps/mario-todo",
       "files": [
         "CHANGELOG.md",
         "index.html",
         "PROJECT.md",
-        "script.js",
-        "styles.css",
+        "QUICKSTART.md",
+        "README.md",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "mario-todo-app",
+      "path": "workspace/apps/mario-todo-app",
+      "files": [
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "QUICKSTART.md",
+        "README.md",
         "TODO.md"
       ]
     },
@@ -500,6 +609,7 @@
       "files": [
         "eslint.config.js",
         "index.html",
+        "node_modules",
         "package-lock.json",
         "package.json",
         "public",
@@ -512,24 +622,17 @@
       ]
     },
     {
+      "name": "multiply-divide-calculator",
+      "path": "workspace/apps/multiply-divide-calculator",
+      "files": []
+    },
+    {
       "name": "my-groom-time",
       "path": "workspace/apps/my-groom-time",
       "files": [
         "app.js",
         "index.html",
         "styles.css"
-      ]
-    },
-    {
-      "name": "new-england-patriots-todo",
-      "path": "workspace/apps/new-england-patriots-todo",
-      "files": [
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "script.js",
-        "style.css",
-        "TODO.md"
       ]
     },
     {
@@ -542,20 +645,71 @@
       ]
     },
     {
-      "name": "security-crm",
-      "path": "workspace/apps/security-crm",
+      "name": "pmajlabs-landing",
+      "path": "workspace/apps/pmajlabs-landing",
       "files": [
-        "app.css",
-        "app.js",
         "index.html"
       ]
     },
     {
-      "name": "simple-add-subtract",
-      "path": "workspace/apps/simple-add-subtract",
+      "name": "pmajlabs-site",
+      "path": "workspace/apps/pmajlabs-site",
       "files": [
         "index.html",
-        "PROJECT.md"
+        "styles.css"
+      ]
+    },
+    {
+      "name": "project-theme-dashboard",
+      "path": "workspace/apps/project-theme-dashboard",
+      "files": [
+        "app.js",
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "styles.css",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "project-tracker",
+      "path": "workspace/apps/project-tracker",
+      "files": [
+        "app.js",
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "styles.css",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "scanprogress-onboarding-mock",
+      "path": "workspace/apps/scanprogress-onboarding-mock",
+      "files": [
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "scientific-calculator",
+      "path": "workspace/apps/scientific-calculator",
+      "files": [
+        "CHANGELOG.md",
+        "index.html",
+        "PROJECT.md",
+        "script.js",
+        "style.css",
+        "TODO.md"
+      ]
+    },
+    {
+      "name": "seahawks-todo",
+      "path": "workspace/apps/seahawks-todo",
+      "files": [
+        "index.html"
       ]
     },
     {
@@ -566,18 +720,6 @@
       ]
     },
     {
-      "name": "space-todo",
-      "path": "workspace/apps/space-todo",
-      "files": [
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "script.js",
-        "styles.css",
-        "TODO.md"
-      ]
-    },
-    {
       "name": "test-ws",
       "path": "workspace/apps/test-ws",
       "files": [
@@ -585,12 +727,22 @@
       ]
     },
     {
-      "name": "warriors-todo",
-      "path": "workspace/apps/warriors-todo",
+      "name": "todo",
+      "path": "workspace/apps/todo",
+      "files": []
+    },
+    {
+      "name": "todo-app",
+      "path": "workspace/apps/todo-app",
       "files": [
+        "app.js",
+        "CHANGELOG.md",
         "index.html",
+        "patch.py",
+        "PROJECT.md",
         "script.js",
-        "styles.css"
+        "styles.css",
+        "TODO.md"
       ]
     }
   ],
@@ -614,11 +766,6 @@
       "path": "config/app-manifest.json",
       "description": "This file — auto-generated map of the entire app (read-only)",
       "agentEditable": false
-    },
-    {
-      "path": "config/tools",
-      "description": "Config file: tools",
-      "agentEditable": true
     }
   ],
   "bridges": [

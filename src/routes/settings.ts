@@ -282,9 +282,23 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
   if (method === "POST" && url.pathname === "/api/providers/switch") {
     let body: Record<string, unknown>;
     try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return true; }
-    const provider = String(body.provider || "");
+    let provider = String(body.provider || "");
     let model = String(body.model || "");
     if (!provider) { json(400, { error: "provider required" }); return true; }
+
+    // Alias: if the user (or agent) asks for "openai" but only OAuth-based
+    // Codex is configured, route to codex. Avoids saving a broken
+    // provider=openai/model=gpt-5.4 config that dies on every turn.
+    if (provider === "openai") {
+      const hasOpenAIKey = !!(ctx.config.openaiApiKey || ctx.secretsStore.has("OPENAI_API_KEY"));
+      if (!hasOpenAIKey) {
+        try {
+          const { loadTokens } = await import("../auth.js");
+          if (loadTokens()) { provider = "codex"; model = model || "gpt-5.4"; }
+        } catch {}
+      }
+    }
+
     const settingsPath = join(ctx.dataDir, "settings.json");
     let settings: Record<string, unknown> = {};
     try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}

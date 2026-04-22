@@ -1125,6 +1125,7 @@ import { taskTools } from "./task-tools.js";
 import { planTools } from "./plan-tools.js";
 import { buildDreamPrompt } from "./memory-dream.js";
 import { configTools } from "./config-tool.js";
+import { selfEditTool } from "./self-edit-tool.js";
 import { ToolRegistry, createToolSearchTool } from "./tool-search.js";
 import { skillTools } from "./skills/index.js";
 import { withPrompt, buildToolPromptSection } from "./tool-prompt-builder.js";
@@ -1170,6 +1171,8 @@ export const allTools: ToolDefinition[] = applyPrompts([
   // Core (always loaded — sent to LLM immediately)
   readTool, writeTool, editTool, bashTool, webFetchTool,
   globTool, grepTool, webSearchTool, askUserTool, _toolSearchTool,
+  // Self-repair: agent can delegate source edits to Claude Code
+  selfEditTool,
   // Vision & Media
   viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool,
   buildAppTool, youtubeAnalyzeTool, createPageTool,

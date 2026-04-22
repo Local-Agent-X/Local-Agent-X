@@ -59,6 +59,14 @@ function connectChatWs() {
       }
     }
 
+    // ── Sidebar pins changed (agent pinned/unpinned a page) ──
+    if (msg.type === 'sidebar_pins_changed' && msg.pins) {
+      try {
+        _sidebarPins = msg.pins;
+        renderSidebarPins();
+      } catch(e) { /* app.js not loaded yet — will pick up on next page load */ }
+    }
+
     // ── Desktop notifications for important events ──
     if (msg.type === 'issue:created' && msg.issue?.needsApproval) {
       if (window.desktop) window.desktop.showNotification('Approval Needed', msg.issue.title);

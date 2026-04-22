@@ -182,18 +182,20 @@ setTimeout(() => syncChatsFromServer(), 500);
 
 // ── Routing ──
 const ROUTES = ['chat', 'settings', 'secrets', 'protocols', 'missions', 'apps', 'agents'];
+var _sidebarPins = []; // Dynamic pinned pages (var for cross-script WebSocket access)
 
 function navigate(route) {
-  if (!ROUTES.includes(route)) route = 'chat';
+  const isPin = route.startsWith('pin:');
+  if (!isPin && !ROUTES.includes(route)) route = 'chat';
   const prevRoute = currentRoute();
   location.hash = '#' + route;
 
+  // Hide all built-in pages
   ROUTES.forEach(r => {
     const page = document.getElementById('page-' + r);
     if (!page) return;
-    if (r === route) {
+    if (!isPin && r === route) {
       page.classList.add('active');
-      // Spring fade-in for the incoming page (don't set inline display — CSS class handles it)
       if (r !== prevRoute && typeof Spring !== 'undefined') {
         page.style.opacity = '0';
         page.style.transform = 'translateY(12px)';
@@ -201,20 +203,37 @@ function navigate(route) {
         Spring.animate(page, 'y', 0, { from: 12, preset: 'stiff', unit: 'px', onDone: () => { page.style.transform = ''; } });
       }
     } else {
-      // Clear any leftover inline styles from Spring before hiding
-      Spring.stop(page);
+      if (typeof Spring !== 'undefined') Spring.stop(page);
       page.style.opacity = '';
       page.style.transform = '';
       page.style.display = '';
       page.classList.remove('active');
     }
   });
-  // Highlight active util button
+
+  // Handle pinned page via iframe
+  const pinPage = document.getElementById('page-pin');
+  const pinIframe = document.getElementById('pin-iframe');
+  if (isPin && pinPage && pinIframe) {
+    const pinName = route.slice(4); // strip "pin:"
+    const pin = _sidebarPins.find(p => p.name === pinName);
+    if (pin) {
+      // Only reload iframe if URL changed
+      if (pinIframe.src !== pin.url && pinIframe.getAttribute('src') !== pin.url) {
+        pinIframe.src = pin.url;
+      }
+      pinPage.classList.add('active');
+    }
+  } else if (pinPage) {
+    pinPage.classList.remove('active');
+  }
+
+  // Highlight active util button (including pins)
   document.querySelectorAll('.util-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.route === route);
   });
   // Init page if it has an init function
-  if (window['init_' + route]) window['init_' + route]();
+  if (!isPin && window['init_' + route]) window['init_' + route]();
   // Only show agents toggle on chat page
   var agentsBtn = document.getElementById('agents-toggle');
   if (agentsBtn) agentsBtn.style.display = (route === 'chat') ? '' : 'none';
@@ -222,8 +241,32 @@ function navigate(route) {
 
 function currentRoute() {
   const hash = location.hash.slice(1) || 'chat';
+  if (hash.startsWith('pin:')) return hash;
   return ROUTES.includes(hash) ? hash : 'chat';
 }
+
+// ── Sidebar Pins (dynamic, agent-controllable) ──
+function loadSidebarPins() {
+  fetch('/api/sidebar/pins', { headers: { Authorization: 'Bearer ' + AUTH_TOKEN } })
+    .then(r => r.ok ? r.json() : { pins: [] })
+    .then(data => {
+      _sidebarPins = data.pins || [];
+      renderSidebarPins();
+    }).catch(() => {});
+}
+
+function renderSidebarPins() {
+  const container = document.getElementById('sidebar-pins');
+  if (!container) return;
+  container.innerHTML = _sidebarPins.map(p =>
+    '<button class="util-btn" data-route="pin:' + esc(p.name) + '" onclick="navigate(\'pin:' + esc(p.name) + '\')" title="' + esc(p.name) + '">' +
+      '<span class="util-icon">' + (p.icon || '📌') + '</span>' +
+    '</button>'
+  ).join('');
+}
+
+// Load pins on startup and listen for WebSocket updates
+document.addEventListener('DOMContentLoaded', loadSidebarPins);
 
 // ── Projects ──
 function newProject() {

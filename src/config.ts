@@ -54,7 +54,7 @@ const configSchema = z.object({
   authToken: z.string().default(""),
   workspace: z.string().min(1).default("./workspace"),
   openaiApiKey: z.string().optional(),
-  model: z.string().default("grok-3-mini"),
+  model: z.string().default("grok-4"),
   maxIterations: z.number().int().min(1).max(100).default(40),
   temperature: z.number().min(0).max(2).default(0.7),
   systemPrompt: z.string().default(DEFAULT_SYSTEM_PROMPT),

@@ -47,6 +47,16 @@ function connectChatWs() {
         localStorage.setItem('sax_theme', msg.settings.theme);
         applyTheme(msg.settings.theme);
       }
+      // Provider / model change from agent → force-refresh the status bar's
+      // dropdowns so it stops showing the stale previous provider.
+      if (msg.settings.provider || msg.settings.model) {
+        try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+          if (msg.settings.provider) s.provider = msg.settings.provider;
+          if (msg.settings.model) s.model = msg.settings.model;
+          localStorage.setItem('sax_settings', JSON.stringify(s)); } catch {}
+        _providersCacheTime = 0;
+        if (typeof loadProviders === 'function') loadProviders().then(() => updateStatusBar()).catch(() => {});
+      }
     }
 
     // ── Desktop notifications for important events ──
@@ -1481,6 +1491,23 @@ async function loadProviders() {
   } catch { return null; }
 }
 
+// Mirrors server-side classifyModel() in src/model-tiers.ts. Keep in sync.
+function classifyModelTier(model) {
+  const m = String(model || '').toLowerCase();
+  if (/:([1-9]b|1[0-3]b)(\b|-|$)/.test(m)) return 'weak';
+  if (/\bqwen2?:7b\b/.test(m)) return 'weak';
+  if (/^grok-3-mini$/.test(m)) return 'weak';
+  if (/gpt-4o-mini|gpt-3\.5/.test(m)) return 'weak';
+  if (/gemini-(1|2\.0)-flash/.test(m)) return 'weak';
+  if (/haiku(?!-4-5)/.test(m)) return 'weak';
+  if (/gpt-5(\.\d+)?($|-(?!mini))/.test(m)) return 'strong';
+  if (/claude-opus-4|claude-sonnet-4-[6-9]|claude-haiku-4-5/.test(m)) return 'strong';
+  if (/^o[34]($|-|\.)/.test(m)) return 'strong';
+  if (/gemini-(2\.5|3)/.test(m)) return 'strong';
+  // grok-4 intentionally medium — thinner tool-use RLHF than OpenAI/Anthropic
+  return 'medium';
+}
+
 function updateStatusBar() {
   const bar = document.getElementById('status-bar-dynamic');
   if (!bar) return;
@@ -1496,15 +1523,27 @@ function updateStatusBar() {
     `<option value="${esc(p.id)}" ${p.active ? 'selected' : ''}>${esc(p.name)}</option>`
   ).join('');
 
-  // Build model dropdown for active provider
-  const modelOpts = activeP ? activeP.models.map(m =>
-    `<option value="${esc(m)}" ${m === currentModel ? 'selected' : ''}>${esc(m)}</option>`
-  ).join('') : `<option value="${esc(currentModel)}">${esc(currentModel)}</option>`;
+  // Build model dropdown for active provider. Flag each option's tier so
+  // weak models are obvious at selection time ("qwen2:7b · weak").
+  const modelOpts = activeP ? activeP.models.map(m => {
+    const tier = classifyModelTier(m);
+    const tag = tier === 'weak' ? ' · weak' : tier === 'medium' ? ' · medium' : '';
+    return `<option value="${esc(m)}" ${m === currentModel ? 'selected' : ''}>${esc(m)}${tag}</option>`;
+  }).join('') : `<option value="${esc(currentModel)}">${esc(currentModel)}</option>`;
+
+  // Active-model badge: warn when selection is weak.
+  const tier = classifyModelTier(currentModel);
+  const tierBadge = tier === 'weak'
+    ? `<span class="status-item" style="background:#fef3c7;color:#92400e;border:1px solid #fbbf24;padding:2px 8px;border-radius:10px" title="This model may fail on agent tasks (tool calling, multi-step workflows). Switch to a stronger model for complex work.">&#9888; weak model — chat-only recommended</span>`
+    : tier === 'medium'
+    ? `<span class="status-item" style="opacity:.7" title="Medium-tier model. Agent tasks work but may be less reliable than flagship models.">&#9888; medium</span>`
+    : '';
 
   bar.innerHTML = `
     <select id="provider-quick-select" class="status-select" onchange="quickSwitchProvider(this.value)" title="Switch provider">${providerOpts}</select>
     <span style="color:var(--border)">&#9654;</span>
     <select id="model-quick-select" class="status-select" onchange="quickSwitchModel(this.value)" title="Switch model">${modelOpts}</select>
+    ${tierBadge}
     ${tokenInfo ? `<span class="status-item"><span class="status-icon">&#9998;</span> ${tokenInfo}</span>` : ''}
     <span class="status-item" title="All data stays on your machine. API calls go to your selected provider." style="cursor:help"><span class="status-icon">&#128274;</span> Local</span>
   `;

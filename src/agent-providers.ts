@@ -606,10 +606,14 @@ export async function runAnthropicAgent(
       }));
     }
 
+    // MCP path: tools already ran inside Claude CLI — we're done.
+    if (toolCalls.length === 0 && sawMcpActivity) {
+      onEvent?.({ type: "done", usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput } });
+      return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
+    }
+
     if (toolCalls.length === 0 && !sawMcpActivity) {
       // Only check for hallucinations when no tools were called at all.
-      // When MCP is active, tools run inside Claude CLI — SAX doesn't see
-      // them as toolCalls, but sawMcpActivity confirms they happened.
       const approvalNudge = checkApprovalHallucination(assistantContent);
       if (approvalNudge && iteration < maxIterations - 1) {
         console.warn(`[agent] Approval hallucination detected (Anthropic) — nudging`);

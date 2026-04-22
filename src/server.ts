@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
 import { timingSafeEqual, randomBytes } from "node:crypto";
@@ -48,7 +48,7 @@ import { createClipboardTools } from "./clipboard-tools.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 import type { ServerContext } from "./server-context.js";
 import { parseMultipart, extractAgentOutput, safeErrorMessage, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard, setServerPort } from "./server-utils.js";
-import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleCalendarRoutes } from "./routes/index.js";
+import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes } from "./routes/index.js";
 
 export async function startServer(config: SAXConfig) {
   setServerPort(String(config.port || 7007));
@@ -426,7 +426,7 @@ export async function startServer(config: SAXConfig) {
       activeOnEvent, setActiveOnEvent: (fn) => { activeOnEvent = fn; }, activeBrowserSessionId, setActiveBrowserSessionId: (id) => { activeBrowserSessionId = id; },
     };
     // Route delegation
-    for (const h of [handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes, handleCalendarRoutes]) {
+    for (const h of [handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes]) {
       if (await h(method, url, req, res, ctx, requestRole)) return;
     }
     // Upload endpoint
@@ -493,7 +493,18 @@ export async function startServer(config: SAXConfig) {
     }
     // Serve workspace apps
     if (method === "GET" && url.pathname.startsWith("/apps/")) {
-      const appsDir = resolve(config.workspace), appFile = resolve(appsDir, "." + url.pathname), rel = relative(appsDir, appFile);
+      const appsDir = resolve(config.workspace);
+      let appFile = resolve(appsDir, "." + url.pathname);
+      // Directory-trailing-slash or bare directory → serve index.html if present.
+      // Without this, pinning /apps/calendar/ in the sidebar 404s because only
+      // specific file paths resolve.
+      try {
+        if (existsSync(appFile) && statSync(appFile).isDirectory()) {
+          const idx = resolve(appFile, "index.html");
+          if (existsSync(idx)) appFile = idx;
+        }
+      } catch {}
+      const rel = relative(appsDir, appFile);
       if (rel.startsWith("..")) { json(403, { error: "Path traversal blocked" }); return; }
       if (existsSync(appFile)) {
         const ext = appFile.split(".").pop() || "", ct: Record<string, string> = { html: "text/html", css: "text/css", js: "application/javascript", json: "application/json", png: "image/png", svg: "image/svg+xml" };

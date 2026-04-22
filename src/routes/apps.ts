@@ -42,11 +42,16 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     return true;
   }
 
-  // Serve rendered app HTML
+  // Serve rendered app HTML (from AppRegistry — SAX-native app definitions)
   const appMatch = url.pathname.match(/^\/(apps|dashboards)\/([a-zA-Z0-9_-]+)\/?$/);
   if (method === "GET" && appMatch) {
     const def = appReg.get(appMatch[2]);
-    if (!def) { json(404, { error: "App not found" }); return true; }
+    if (!def) {
+      // Not a registered app — fall through so the static-file handler in
+      // server.ts can serve workspace/apps/<name>/index.html (the common
+      // case for agent-built HTML apps that pinned to the sidebar).
+      return false;
+    }
     if (def.status === "suspended") { json(403, { error: "App is suspended" }); return true; }
     const html = renderApp(def, ctx.config.port || 7007);
     const cspHeaders: Record<string, string> = {

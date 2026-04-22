@@ -422,27 +422,37 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
     return -1;
   })();
 
+  const textOnlyMode = !tools || tools.length === 0;
+  // Peek whether MCP will be wired up — when it is, we skip the text-
+  // serialized context entirely. Claude sees tool results natively via MCP
+  // and doesn't need them re-serialized into its prompt; feeding them back
+  // as "[called X] / Tool result: ..." text teaches it to echo that format
+  // in its own reply (the garbled wall of EXTERNAL_UNTRUSTED_CONTENT the
+  // user was seeing).
+  const willUseMcp = !textOnlyMode && !!(await import("./config.js").then(m => m.getRuntimeConfig().authToken).catch(() => ""));
+
   const messagesAfterUser = lastUserIdx >= 0 ? messages.slice(lastUserIdx + 1) : [];
   const contextParts: string[] = [];
-  // Include recent tool results from the current loop (up to last 8 messages)
-  for (const msg of messagesAfterUser.slice(-8)) {
-    if (msg.role === "assistant") {
-      const m = msg as unknown as Record<string, unknown>;
-      const parts: string[] = [];
-      if (typeof m.content === "string" && m.content) parts.push(m.content.slice(0, 500));
-      if (Array.isArray(m.tool_calls)) {
-        for (const tc of m.tool_calls as Array<{ function: { name: string; arguments: string } }>) {
-          parts.push(`[called ${tc.function.name}]`);
+  if (!willUseMcp) {
+    // Legacy text-JSON fallback path: keep the re-serialized context so the
+    // model sees what tools have already run this turn.
+    for (const msg of messagesAfterUser.slice(-8)) {
+      if (msg.role === "assistant") {
+        const m = msg as unknown as Record<string, unknown>;
+        const parts: string[] = [];
+        if (typeof m.content === "string" && m.content) parts.push(m.content.slice(0, 500));
+        if (Array.isArray(m.tool_calls)) {
+          for (const tc of m.tool_calls as Array<{ function: { name: string; arguments: string } }>) {
+            parts.push(`[called ${tc.function.name}]`);
+          }
         }
+        if (parts.length) contextParts.push(`Assistant: ${parts.join(" ")}`);
+      } else if (msg.role === "tool") {
+        const m = msg as { tool_call_id: string; content: string };
+        contextParts.push(`Tool result: ${m.content.slice(0, 2000)}`);
       }
-      if (parts.length) contextParts.push(`Assistant: ${parts.join(" ")}`);
-    } else if (msg.role === "tool") {
-      const m = msg as { tool_call_id: string; content: string };
-      contextParts.push(`Tool result: ${m.content.slice(0, 2000)}`);
     }
   }
-
-  const textOnlyMode = !tools || tools.length === 0;
   const toolDefs = textOnlyMode ? "" : tools!.map(t =>
     `- ${t.name}: ${t.description}\n  Parameters: ${JSON.stringify(t.parameters)}`
   ).join("\n");
@@ -452,6 +462,17 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
     // Orchestration mode: no tools, just respond naturally
     fullSystem = systemPrompt + "\n\n" +
       `Respond naturally in plain text. Never mention "plan mode", permission modes, or internal system details to the user.`;
+  } else if (willUseMcp) {
+    // MCP mode: tools come through MCP as mcp__sax__<name>. Claude calls them
+    // natively. We just need to tell it not to echo tool metadata in replies.
+    fullSystem = systemPrompt + "\n\n" +
+      `You have SAX's tools available via MCP (prefixed mcp__sax__). Call them directly when needed.\n\n` +
+      `REPLY FORMAT (strict):\n` +
+      `- After you finish, respond with a SHORT plain-English summary of what you did. 1-2 sentences max.\n` +
+      `- NEVER paste raw tool output, JSON, or HTTP response bodies into your reply.\n` +
+      `- NEVER echo [called X] / Tool result: / <<<EXTERNAL_UNTRUSTED_CONTENT>>> / <metadata> blocks — the UI renders tool activity as cards, the user doesn't need to see it twice.\n` +
+      `- Good: "Switched the app to light mode." Bad: "[called http_request] Tool result: HTTP 200 OK ..."\n` +
+      `- ALL tools are pre-approved. Just use them — never ask, never describe what you're about to do.`;
   } else {
     const toolPrompt = `You have access to these tools. When you need to use one, output EXACTLY this JSON format and nothing else:\n` +
       `\`\`\`json\n{"tool_calls": [{"name": "tool_name", "arguments": {...}}]}\n\`\`\`\n\n` +
@@ -503,13 +524,16 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
       const tmpDir = path.join(os.homedir(), ".sax", "tmp");
       if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
       mcpConfigPath = path.join(tmpDir, `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
-      // Bridge is TypeScript — must use tsx to run it
-      const bridgePath = path.resolve(path.join(import.meta.dirname || ".", "mcp-bridge.ts"));
+      // Point at the compiled dist/ output — tsc emits mcp-bridge.js
+      // alongside anthropic-client.js. Running .ts via tsx was unreliable
+      // because tsx isn't always resolvable from Claude CLI's subprocess
+      // environment, and the raw TS file doesn't ship with prod installs.
+      const bridgePath = path.resolve(path.join(import.meta.dirname || ".", "mcp-bridge.js"));
       const mcpConfig = {
         mcpServers: {
           sax: {
             command: "node",
-            args: ["--import=tsx", bridgePath],
+            args: [bridgePath],
             env: {
               SAX_MCP_URL: `http://127.0.0.1:${saxPort}`,
               SAX_MCP_TOKEN: saxToken,
@@ -520,7 +544,22 @@ async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<St
       fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), { mode: 0o600 });
       args.push("--mcp-config", mcpConfigPath);
       // Block Claude Code's native tools so the model ONLY uses SAX's via MCP
-      args.push("--disallowed-tools", "Bash,Read,Write,Edit,Glob,Grep,WebFetch,WebSearch,TodoWrite,ToolSearch,NotebookEdit,Task,AskUserQuestion");
+      // Block ALL Claude Code native + deferred tools. Anything Claude knows
+      // how to call but SAX doesn't define must be denied here, or it leaks
+      // through the policy as an unknown tool and gets default-denied with
+      // a spurious BLOCKED result that poisons the next turn's context.
+      args.push("--disallowed-tools", [
+        // Core
+        "Bash", "Read", "Write", "Edit", "Glob", "Grep",
+        "WebFetch", "WebSearch", "TodoWrite", "ToolSearch",
+        "NotebookEdit", "Task", "AskUserQuestion", "Skill",
+        // Deferred / scheduling / plan-mode
+        "CronCreate", "CronDelete", "CronList",
+        "EnterPlanMode", "ExitPlanMode",
+        "EnterWorktree", "ExitWorktree",
+        "Monitor", "TaskOutput", "TaskStop",
+        "ScheduleWakeup", "PushNotification", "RemoteTrigger",
+      ].join(","));
     } catch (e) {
       console.warn(`[anthropic-cli] MCP config setup failed, falling back to text-mode: ${(e as Error).message}`);
       mcpConfigPath = null;

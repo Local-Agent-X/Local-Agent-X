@@ -321,6 +321,22 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   //    the keyword regex misses). Falls back to keyword-only result on failure.
   const isBridge = channel === "telegram" || channel === "whatsapp";
   let tools = isBridge ? bridgeTools : filterToolsForMessage(allAgentTools, message);
+
+  // Shrink for weaker models. 100+ tool catalogs paralyze Grok / small local
+  // models (0-token responses). Cap aggressively while keeping essentials
+  // ordered first. Strong models (GPT-5, Opus 4.7, o3, Gemini 2.5) pass through.
+  // Pass allAgentTools as a source for essentials so we can guarantee
+  // read/write/bash/http_request/etc. are present even if the prefilter
+  // dropped them.
+  const { classifyModel, shrinkToolsForTier } = await import("./model-tiers.js");
+  const tier = classifyModel(resolved.model);
+  if (tier !== "strong") {
+    const before = tools.length;
+    tools = shrinkToolsForTier(tools, tier, allAgentTools);
+    if (tools.length !== before) {
+      console.log(`[tools] Shrunk ${before}→${tools.length} for ${tier} model ${resolved.model} (${tools.map(t=>t.name).join(",")})`);
+    }
+  }
   if (!isBridge) {
     try {
       const { getToolRAG } = await import("./tool-rag.js");

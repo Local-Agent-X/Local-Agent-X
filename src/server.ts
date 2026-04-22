@@ -48,7 +48,7 @@ import { createClipboardTools } from "./clipboard-tools.js";
 import type { SAXConfig, ServerEvent, Session } from "./types.js";
 import type { ServerContext } from "./server-context.js";
 import { parseMultipart, extractAgentOutput, safeErrorMessage, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard, setServerPort } from "./server-utils.js";
-import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes } from "./routes/index.js";
+import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleCalendarRoutes } from "./routes/index.js";
 
 export async function startServer(config: SAXConfig) {
   setServerPort(String(config.port || 7007));
@@ -426,7 +426,7 @@ export async function startServer(config: SAXConfig) {
       activeOnEvent, setActiveOnEvent: (fn) => { activeOnEvent = fn; }, activeBrowserSessionId, setActiveBrowserSessionId: (id) => { activeBrowserSessionId = id; },
     };
     // Route delegation
-    for (const h of [handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes]) {
+    for (const h of [handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes, handleCalendarRoutes]) {
       if (await h(method, url, req, res, ctx, requestRole)) return;
     }
     // Upload endpoint

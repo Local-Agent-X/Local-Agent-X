@@ -67,6 +67,7 @@
     <button class="util-btn" data-route="secrets" onclick="navigate('secrets')" aria-label="Secrets vault" title="Secrets"><span class="util-icon">&#128273;</span></button>
     <button class="util-btn" data-route="settings" onclick="navigate('settings')" aria-label="Settings" title="Settings"><span class="util-icon">&#9881;</span></button>
     <button class="util-btn" onclick="toggleNotifPanel()" aria-label="Notifications" title="Notifications" style="position:relative"><span class="util-icon">&#128276;</span><span id="notif-badge" class="notif-badge" style="display:none"></span></button>
+    <div id="sidebar-pins"></div>
   </div>
 
   <div id="sidebar-footer">
@@ -709,6 +710,11 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Dynamic pinned pages load here via iframe -->
+  <div id="page-pin" class="page" style="flex:1;overflow:hidden">
+    <iframe id="pin-iframe" style="width:100%;height:100%;border:none;background:var(--bg)"></iframe>
   </div>
 
   <div id="page-agents" class="page">

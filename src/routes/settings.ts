@@ -248,6 +248,46 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
     return true;
   }
 
+  // ── Sidebar Pins ──
+  // Dynamic sidebar items stored in settings.json — survive updates, agent-controllable
+  if (method === "GET" && url.pathname === "/api/sidebar/pins") {
+    const settingsPath = join(ctx.dataDir, "settings.json");
+    try {
+      const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, "utf-8")) : {};
+      json(200, { pins: settings.sidebarPins || [] });
+    } catch { json(200, { pins: [] }); }
+    return true;
+  }
+  if (method === "POST" && url.pathname === "/api/sidebar/pins") {
+    const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
+    const { name, icon, url: pageUrl } = body as { name?: string; icon?: string; url?: string };
+    if (!name || !pageUrl) { json(400, { error: "name and url required" }); return true; }
+    const settingsPath = join(ctx.dataDir, "settings.json");
+    let settings: Record<string, unknown> = {};
+    try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
+    const pins = (settings.sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
+    // Don't duplicate
+    if (!pins.some(p => p.name === name)) {
+      pins.push({ name: String(name), icon: String(icon || "📌"), url: String(pageUrl) });
+      settings.sidebarPins = pins;
+      writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
+    }
+    try { const { broadcastAll } = await import("../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
+    json(200, { ok: true, pins }); return true;
+  }
+  if (method === "DELETE" && url.pathname.startsWith("/api/sidebar/pins/")) {
+    const pinName = decodeURIComponent(url.pathname.split("/").pop() || "");
+    if (!pinName) { json(400, { error: "pin name required" }); return true; }
+    const settingsPath = join(ctx.dataDir, "settings.json");
+    let settings: Record<string, unknown> = {};
+    try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
+    const pins = ((settings.sidebarPins || []) as Array<{ name: string }>).filter(p => p.name !== pinName);
+    settings.sidebarPins = pins;
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
+    try { const { broadcastAll } = await import("../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
+    json(200, { ok: true, pins }); return true;
+  }
+
   // Providers
   if (method === "GET" && url.pathname === "/api/providers") {
     const { loadTokens } = await import("../auth.js");

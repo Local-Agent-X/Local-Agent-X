@@ -326,6 +326,35 @@ async function executeSingleTool(
     if (!tool) {
       result = { content: `Unknown tool: ${tc.name}`, isError: true };
     } else {
+      // Lightweight argument validation against the tool's JSON schema.
+      // Weak models emit malformed args (missing required fields, wrong
+      // types, invented enum values) that then blow up deep inside tool
+      // execution with cryptic errors. Fail fast with a message the model
+      // can correct on retry. Full JSON Schema validation is overkill —
+      // just enforce required[] and type on top-level fields.
+      const schema = tool.parameters as { type?: string; properties?: Record<string, { type?: string; enum?: unknown[] }>; required?: string[] } | undefined;
+      const argValidationErrors: string[] = [];
+      if (schema && schema.properties && typeof args === "object" && args) {
+        for (const req of schema.required || []) {
+          if (!(req in args)) argValidationErrors.push(`missing required field "${req}"`);
+        }
+        for (const [key, propSchema] of Object.entries(schema.properties)) {
+          if (!(key in args)) continue;
+          const val = (args as Record<string, unknown>)[key];
+          if (propSchema.type === "string" && typeof val !== "string") argValidationErrors.push(`"${key}" must be a string (got ${typeof val})`);
+          else if (propSchema.type === "number" && typeof val !== "number") argValidationErrors.push(`"${key}" must be a number (got ${typeof val})`);
+          else if (propSchema.type === "boolean" && typeof val !== "boolean") argValidationErrors.push(`"${key}" must be a boolean (got ${typeof val})`);
+          else if (propSchema.type === "array" && !Array.isArray(val)) argValidationErrors.push(`"${key}" must be an array (got ${typeof val})`);
+          if (propSchema.enum && !propSchema.enum.includes(val)) argValidationErrors.push(`"${key}" must be one of [${propSchema.enum.map(v => JSON.stringify(v)).join(", ")}] (got ${JSON.stringify(val)})`);
+        }
+      }
+      if (argValidationErrors.length > 0) {
+        result = { content: `Invalid arguments for ${tc.name}: ${argValidationErrors.join("; ")}. Fix and retry.`, isError: true };
+        onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
+        msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
+        return msgs;
+      }
+
       // PreToolUse hook — can block execution
       const hookEngine = getHookEngine();
       if (hookEngine.hasHooks) {

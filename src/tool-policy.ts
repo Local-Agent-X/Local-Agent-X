@@ -447,6 +447,7 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     { id: "allow-glob", tool: "glob", decision: "allow", reason: "File pattern search (read-only)", priority: 50 },
     { id: "allow-grep", tool: "grep", decision: "allow", reason: "Content search (read-only)", priority: 50 },
     { id: "allow-tool-search", tool: "tool_search", decision: "allow", reason: "Discover available tools", priority: 50 },
+    { id: "allow-self-edit", tool: "self_edit", decision: "allow", reason: "Agent self-repair via Claude Code subprocess", priority: 50 },
 
     // User interaction
     { id: "allow-ask-user", tool: "ask_user", decision: "allow", reason: "Agent asks user for clarification", priority: 50 },

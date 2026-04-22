@@ -199,7 +199,11 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         try {
           const userSnippet = message.slice(0, 300).replace(/\n/g, " ");
           const agentSnippet = assistantReply.slice(0, 300).replace(/\n/g, " ");
-          if (userSnippet.length > 10) { ctx.memoryIndex.appendDailyLog(`[${sessionId}] User: ${userSnippet}`); if (agentSnippet.length > 10) ctx.memoryIndex.appendDailyLog(`[${sessionId}] Agent: ${agentSnippet}`); }
+          // Only log user messages as daily context — agent responses are action
+          // confirmations, not facts. Logging them pollutes MIND.md when the
+          // consolidator promotes frequently-seen strings ("Pinned Calendar" x3).
+          // Also strip session IDs — they're internal metadata, not knowledge.
+          if (userSnippet.length > 10) { ctx.memoryIndex.appendDailyLog(`User: ${userSnippet}`); }
         } catch {}
       }
       try {

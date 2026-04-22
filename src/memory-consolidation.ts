@@ -283,10 +283,26 @@ export class MemoryConsolidator {
       occurrences.set(i, count);
     }
 
+    // Filter out operational noise — these are action confirmations, tool outputs,
+    // or internal metadata, NOT facts worth remembering long-term.
+    const NOISE_PATTERNS = [
+      /^\[chat-[a-z0-9-]+\]/i,           // Session ID prefix
+      /^Agent:/i,                         // Agent response logs
+      /\b(pinned|unpinned|removed|added|switched|flipped|done)\b.*\b(sidebar|theme|light|dark|mode)\b/i,  // UI action confirmations
+      /\b(BLOCKED|Tool result|INJECTION WARNING|EXTERNAL_UNTRUSTED)/i,  // Tool/security noise
+      /^User introduced themselves/i,     // Redundant — already in USER.md
+      /\b(renamed to|gayatron|shiiit)\b/i, // Test/garbage names
+      /\brestarting\b/i,                  // Server restarts
+    ];
+
     const candidates: FactEntry[] = [];
     for (const [idx, count] of occurrences) {
       if (count >= 3 && !mindContent.includes(allFacts[idx].content.trim())) {
-        candidates.push(allFacts[idx]);
+        const text = allFacts[idx].content;
+        const isNoise = NOISE_PATTERNS.some(p => p.test(text));
+        if (!isNoise) {
+          candidates.push(allFacts[idx]);
+        }
       }
     }
 

@@ -23,8 +23,18 @@ interface SecretEntry {
   name: string;
   value: string;       // encrypted at rest, decrypted in memory
   service?: string;    // e.g. "github", "slack", "linear"
+  account?: string;    // username/email paired with this password
+  url?: string;        // login page URL
+  notes?: string;      // free-form user-visible notes
   addedAt: number;
   updatedAt: number;
+}
+
+export interface SecretMetadata {
+  service?: string;
+  account?: string;
+  url?: string;
+  notes?: string;
 }
 
 interface SecretsFile {
@@ -32,6 +42,9 @@ interface SecretsFile {
   secrets: Array<{
     name: string;
     service?: string;
+    account?: string;
+    url?: string;
+    notes?: string;
     addedAt: number;
     updatedAt: number;
     encrypted: string; // hex: iv(12) + authTag(16) + ciphertext
@@ -85,6 +98,9 @@ export class SecretsStore {
           name: entry.name,
           value: decrypt(entry.encrypted, this.key),
           service: entry.service,
+          account: entry.account,
+          url: entry.url,
+          notes: entry.notes,
           addedAt: entry.addedAt,
           updatedAt: entry.updatedAt,
         });
@@ -100,6 +116,9 @@ export class SecretsStore {
       secrets: Array.from(this.secrets.values()).map((s) => ({
         name: s.name,
         service: s.service,
+        account: s.account,
+        url: s.url,
+        notes: s.notes,
         addedAt: s.addedAt,
         updatedAt: s.updatedAt,
         encrypted: encrypt(s.value, this.key),
@@ -113,13 +132,18 @@ export class SecretsStore {
     return this.secrets.get(name)?.value;
   }
 
-  /** Set or update a secret. */
-  set(name: string, value: string, service?: string): void {
+  /** Set or update a secret. Pass a SecretMetadata object (preferred) or a
+   *  raw `service` string for backward compatibility with older callers. */
+  set(name: string, value: string, meta?: SecretMetadata | string): void {
     const existing = this.secrets.get(name);
+    const metaObj: SecretMetadata = typeof meta === "string" ? { service: meta } : (meta || {});
     this.secrets.set(name, {
       name,
       value,
-      service: service || existing?.service,
+      service: metaObj.service ?? existing?.service,
+      account: metaObj.account ?? existing?.account,
+      url: metaObj.url ?? existing?.url,
+      notes: metaObj.notes ?? existing?.notes,
       addedAt: existing?.addedAt || Date.now(),
       updatedAt: Date.now(),
     });
@@ -139,10 +163,13 @@ export class SecretsStore {
   }
 
   /** List all secret names and metadata (never exposes values). */
-  list(): Array<{ name: string; service?: string; addedAt: number; updatedAt: number }> {
-    return Array.from(this.secrets.values()).map(({ name, service, addedAt, updatedAt }) => ({
+  list(): Array<{ name: string; service?: string; account?: string; url?: string; notes?: string; addedAt: number; updatedAt: number }> {
+    return Array.from(this.secrets.values()).map(({ name, service, account, url, notes, addedAt, updatedAt }) => ({
       name,
       service,
+      account,
+      url,
+      notes,
       addedAt,
       updatedAt,
     }));
@@ -173,4 +200,15 @@ export class SecretsStore {
     this.key.fill(0);
     this.secrets.clear();
   }
+}
+
+// Module-level singleton so modules that aren't built as factories (e.g.
+// email-tools.ts) can read from the encrypted vault without needing to be
+// re-wired. Same pattern as getRuntimeConfig() in config.ts.
+let _secretsStoreSingleton: SecretsStore | null = null;
+export function setSecretsStoreSingleton(store: SecretsStore): void {
+  _secretsStoreSingleton = store;
+}
+export function getSecretsStoreSingleton(): SecretsStore | null {
+  return _secretsStoreSingleton;
 }

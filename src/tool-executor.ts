@@ -170,6 +170,38 @@ export function buildApprovalContext(toolName: string, args: Record<string, unkn
   }
 }
 
+// ── Session-level duplicate detection ──
+// When the model emits a tool call identical to one made earlier in the
+// SAME session, skip re-execution and return the cached result with a hint.
+// Catches the "I'm stuck mid-task, let me re-do the last thing I succeeded
+// at" hallucination without hard-blocking legitimate repeats (the hint lets
+// the model realize what it did and pivot).
+function findPriorIdenticalResult(
+  tc: { name: string; arguments: string },
+  priorMessages: ChatCompletionMessageParam[],
+): { result: string; turnIndex: number } | null {
+  if (!priorMessages || priorMessages.length === 0) return null;
+  // Scan back through prior assistant tool_calls for an exact match (name + args)
+  for (let i = priorMessages.length - 1; i >= 0; i--) {
+    const m = priorMessages[i];
+    if (m.role !== "assistant") continue;
+    const tcs = (m as unknown as { tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> }).tool_calls;
+    if (!tcs || !Array.isArray(tcs)) continue;
+    const match = tcs.find(t => t.function.name === tc.name && t.function.arguments === tc.arguments);
+    if (!match) continue;
+    // Find the paired tool result
+    for (let j = i + 1; j < priorMessages.length; j++) {
+      const r = priorMessages[j];
+      if (r.role !== "tool") continue;
+      const rid = (r as unknown as { tool_call_id?: string }).tool_call_id;
+      if (rid === match.id && typeof r.content === "string") {
+        return { result: r.content, turnIndex: i };
+      }
+    }
+  }
+  return null;
+}
+
 // ── Single tool execution (used by both serial and parallel paths) ──
 
 async function executeSingleTool(
@@ -182,12 +214,36 @@ async function executeSingleTool(
   callerRole?: Role,
   sessionId?: string,
   onEvent?: (event: ServerEvent) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  priorMessages?: ChatCompletionMessageParam[],
 ): Promise<ChatCompletionMessageParam[]> {
+  // Session-wide duplicate check — short-circuit before any execution
+  const dup = findPriorIdenticalResult(tc, priorMessages || []);
+  if (dup) {
+    const hint = `[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing. If you need fresh data, change the arguments. Otherwise, focus on the user's current question.]\n\n${dup.result}`;
+    onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: hint, allowed: true });
+    try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId, tool: tc.name, detail: { reason: "session-repeat", priorTurn: dup.turnIndex } })).catch(() => {}); } catch {}
+    return [{ role: "tool", tool_call_id: tc.id, content: hint } as ChatCompletionMessageParam];
+  }
   const msgs: ChatCompletionMessageParam[] = [];
   let args: Record<string, unknown>;
-  try { args = JSON.parse(tc.arguments); }
-  catch { args = { _raw: tc.arguments }; }
+  try {
+    const parsed = JSON.parse(tc.arguments);
+    args = (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+      ? parsed as Record<string, unknown>
+      : { _raw: tc.arguments };
+  } catch {
+    // Weak models often emit malformed JSON (trailing commas, single quotes,
+    // code fences). Attempt progressive relaxation before giving up.
+    const { repairJson } = await import("./tool-arg-repair.js");
+    const repair = repairJson(tc.arguments);
+    if (repair.ok) {
+      args = repair.value;
+      try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "tool-arg-invalid", sessionId, tool: tc.name, detail: { phase: "json-repair", fixes: repair.fixes } })).catch(() => {}); } catch {}
+    } else {
+      args = { _raw: tc.arguments };
+    }
+  }
 
   // Derive call context from session ID pattern (agent-* = delegated, cron-* = cron)
   const callContext = sessionId?.startsWith("agent-") ? "delegated" : sessionId?.startsWith("cron-") ? "cron" : "local";
@@ -333,6 +389,19 @@ async function executeSingleTool(
       // can correct on retry. Full JSON Schema validation is overkill —
       // just enforce required[] and type on top-level fields.
       const schema = tool.parameters as { type?: string; properties?: Record<string, { type?: string; enum?: unknown[] }>; required?: string[] } | undefined;
+      // Attempt safe type coercion for scalar mismatches (e.g. "5" → 5, "true" → true)
+      // before reporting validation errors. Silent in the happy path; logged when
+      // repairs were applied.
+      if (schema && typeof args === "object" && args && !("_raw" in args)) {
+        try {
+          const { coerceArgs } = await import("./tool-arg-repair.js");
+          const result = coerceArgs(args as Record<string, unknown>, schema);
+          if (result.fixes.length > 0) {
+            args = result.coerced;
+            try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "tool-arg-invalid", sessionId, tool: tc.name, detail: { phase: "coerce", fixes: result.fixes } })).catch(() => {}); } catch {}
+          }
+        } catch {}
+      }
       const argValidationErrors: string[] = [];
       if (schema && schema.properties && typeof args === "object" && args) {
         for (const req of schema.required || []) {
@@ -512,7 +581,8 @@ export async function executeToolCalls(
   callerRole?: Role,
   sessionId?: string,
   onEvent?: (event: ServerEvent) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  priorMessages?: ChatCompletionMessageParam[],
 ): Promise<ChatCompletionMessageParam[]> {
   const results: ChatCompletionMessageParam[] = [];
 
@@ -543,15 +613,15 @@ export async function executeToolCalls(
       }
       if (batch.length > 1) {
         const parallelResults = await Promise.all(
-          batch.map((b) => executeSingleTool(b, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal))
+          batch.map((b) => executeSingleTool(b, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages))
         );
         results.push(...parallelResults.flat());
       } else {
-        const msgs = await executeSingleTool(batch[0], toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal);
+        const msgs = await executeSingleTool(batch[0], toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages);
         results.push(...msgs);
       }
     } else {
-      const msgs = await executeSingleTool(tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal);
+      const msgs = await executeSingleTool(tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages);
       results.push(...msgs);
     }
     i++;

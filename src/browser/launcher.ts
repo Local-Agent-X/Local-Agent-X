@@ -40,6 +40,50 @@ export const STEALTH_ARGS = [
   "--disable-infobars",
 ];
 
+/**
+ * Path to the user's real Chrome user-data dir. Attach mode launches against
+ * this so the agent inherits cookies/logins from the user's personal browsing.
+ * Chrome refuses to start a second instance on a profile that's already open,
+ * so attach mode requires the user's regular Chrome to be closed.
+ */
+export function findUserChromeProfile(): string | null {
+  const candidates = [
+    join(process.env.LOCALAPPDATA || "", "Google", "Chrome", "User Data"),
+    join(process.env.LOCALAPPDATA || "", "Microsoft", "Edge", "User Data"),
+  ];
+  for (const path of candidates) {
+    if (path && existsSync(path)) return path;
+  }
+  return null;
+}
+
+/**
+ * Detect whether a Chrome/Edge process is already running against the given
+ * user-data directory. If so, attach mode must refuse to launch — Chrome
+ * would either merge into the existing window or fail to start.
+ */
+export async function isChromeRunningOnProfile(userDataDir: string): Promise<boolean> {
+  // Windows: query running processes with tasklist and look for chrome.exe/msedge.exe.
+  // We can't easily match the exact profile, so any running chrome.exe is a
+  // blocker — Chrome's single-instance-per-profile rule bites us either way.
+  try {
+    const { execSync } = await import("node:child_process");
+    const isWin = process.platform === "win32";
+    if (isWin) {
+      const out = execSync(`tasklist /FI "IMAGENAME eq chrome.exe" /NH`, { encoding: "utf8", timeout: 3000 }).toString();
+      if (/chrome\.exe/i.test(out)) return true;
+      const edgeOut = execSync(`tasklist /FI "IMAGENAME eq msedge.exe" /NH`, { encoding: "utf8", timeout: 3000 }).toString();
+      if (userDataDir.toLowerCase().includes("edge") && /msedge\.exe/i.test(edgeOut)) return true;
+      return false;
+    } else {
+      const out = execSync(`pgrep -a -f chrome 2>/dev/null || true`, { encoding: "utf8", timeout: 3000 }).toString();
+      return /chrome|chromium/i.test(out);
+    }
+  } catch {
+    return false; // If we can't tell, let the launch attempt surface the real error.
+  }
+}
+
 export function findChromeExecutable(): string | null {
   const candidates = [
     join(process.env.PROGRAMFILES || "", "Google", "Chrome", "Application", "chrome.exe"),
@@ -71,9 +115,38 @@ export async function launchViaCDP(
   let chromeProcess: ChildProcess | null = null;
 
   if (chromePath) {
-    const cdpPort = getRuntimeConfig().browserCdpPort;
-    const userDataDir = join(homedir(), ".sax", "chrome-profile");
-    if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true });
+    const cfg = getRuntimeConfig();
+    const cdpPort = cfg.browserCdpPort;
+    const mode = cfg.browserMode || "isolated";
+
+    // Resolve the user-data-dir based on mode.
+    // - isolated: dedicated agent profile (~/.sax/chrome-profile), zero blast
+    //   radius on the user's personal browsing
+    // - attach: the user's real Chrome profile — agent inherits all logins,
+    //   but Chrome must not already be running against that profile
+    let userDataDir: string;
+    if (mode === "attach") {
+      const real = findUserChromeProfile();
+      if (!real) {
+        throw new Error(
+          "Browser attach mode is enabled but no Chrome/Edge user-data directory was found. " +
+          "Switch back to isolated mode in Settings → Security."
+        );
+      }
+      const running = await isChromeRunningOnProfile(real);
+      if (running) {
+        throw new Error(
+          "Browser attach mode requires your regular Chrome to be closed. " +
+          "Chrome refuses two instances on the same profile — quit Chrome and retry, " +
+          "or switch to isolated mode in Settings → Security."
+        );
+      }
+      userDataDir = real;
+      console.log(`[browser] Attach mode — using your real Chrome profile: ${userDataDir}`);
+    } else {
+      userDataDir = join(homedir(), ".sax", "chrome-profile");
+      if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true });
+    }
     const cdpUrl = `http://127.0.0.1:${cdpPort}`;
 
     // Reconnect to an existing agent Chrome if one is running.

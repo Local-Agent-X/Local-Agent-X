@@ -45,11 +45,20 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
   // Serve rendered app HTML (from AppRegistry — SAX-native app definitions)
   const appMatch = url.pathname.match(/^\/(apps|dashboards)\/([a-zA-Z0-9_-]+)\/?$/);
   if (method === "GET" && appMatch) {
-    const def = appReg.get(appMatch[2]);
+    const appId = appMatch[2];
+    // Prefer a custom HTML file in workspace/apps/<id>/index.html when
+    // present. Agents often register a generic AppRegistry entry AND write
+    // a custom themed index.html — the custom file is what the user built
+    // and expects to see. Without this check, the editor shows the themed
+    // HTML (iframe of the raw file) but the /apps/<id> URL renders the
+    // generic component template, and the user sees two different apps.
+    const customHtml = resolve(ctx.config.workspace, "apps", appId, "index.html");
+    if (existsSync(customHtml)) return false;  // let the static handler serve it
+
+    const def = appReg.get(appId);
     if (!def) {
-      // Not a registered app — fall through so the static-file handler in
-      // server.ts can serve workspace/apps/<name>/index.html (the common
-      // case for agent-built HTML apps that pinned to the sidebar).
+      // Not a registered app either — fall through so the static-file handler
+      // in server.ts can try other paths under /apps/<id>/.
       return false;
     }
     if (def.status === "suspended") { json(403, { error: "App is suspended" }); return true; }
@@ -73,8 +82,87 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
 
   if (method === "DELETE" && appPath.startsWith("/api/apps/") && appPath.split("/").length === 4) {
     const id = appPath.split("/")[3];
-    const result = appReg.delete(id);
-    json(result.deleted ? 200 : 404, result.deleted ? { ok: true } : { error: result.error || "Not found" }); return true;
+    // Validate id shape to prevent path traversal — only alphanumeric + - _
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) { json(400, { error: "Invalid app id" }); return true; }
+    const registryResult = appReg.delete(id);
+    // ALSO remove the workspace folder so the app disappears from both
+    // sources. Registry-only delete left /apps/<id> still scannable via
+    // the workspace walk in GET /api/apps — the app would reappear on
+    // next loadApps(). For workspace-only HTML apps (no registry entry),
+    // this was the only thing keeping them alive.
+    const wsDir = resolve(ctx.config.workspace, "apps", id);
+    const relCheck = wsDir.startsWith(resolve(ctx.config.workspace, "apps"));
+    let workspaceDeleted = false;
+    if (relCheck && existsSync(wsDir)) {
+      try {
+        const { rmSync } = await import("node:fs");
+        rmSync(wsDir, { recursive: true, force: true });
+        workspaceDeleted = true;
+      } catch (e) { console.warn(`[apps] workspace delete failed for ${id}:`, (e as Error).message); }
+    }
+    if (!registryResult.deleted && !workspaceDeleted) {
+      json(404, { error: "Not found" });
+      return true;
+    }
+    json(200, { ok: true, registry: registryResult.deleted, workspace: workspaceDeleted });
+    return true;
+  }
+
+  // Rename a workspace-only app (and update any sidebar pins pointing at it).
+  // Registry-based apps (with a def.json in ~/.sax/apps/) aren't supported
+  // yet — renaming their id requires rewriting the def file + audit refs
+  // and AppRegistry.update() intentionally blocks id changes.
+  if (method === "POST" && appPath.match(/^\/api\/apps\/[a-zA-Z0-9_-]+\/rename$/)) {
+    const oldId = appPath.split("/")[3];
+    const body = await safeParseBody(req);
+    if (!body || typeof body.name !== "string" || !body.name.trim()) {
+      json(400, { error: "name required" }); return true;
+    }
+    if (appReg.get(oldId)) {
+      json(400, { error: "Rename isn't supported for registered apps yet. Edit the display name in the IDE or delete + re-create." });
+      return true;
+    }
+    const displayName = body.name.trim().slice(0, 80);
+    const newId = displayName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
+    if (!newId) { json(400, { error: "name produces empty slug — use letters/numbers" }); return true; }
+    if (newId === oldId) { json(200, { ok: true, id: oldId, name: displayName, renamed: false }); return true; }
+
+    const wsApps = resolve(ctx.config.workspace, "apps");
+    const oldDir = resolve(wsApps, oldId);
+    const newDir = resolve(wsApps, newId);
+    if (!newDir.startsWith(wsApps)) { json(400, { error: "invalid new id" }); return true; }
+    if (!existsSync(oldDir)) { json(404, { error: `No folder at workspace/apps/${oldId}` }); return true; }
+    if (existsSync(newDir)) { json(409, { error: `An app named "${newId}" already exists` }); return true; }
+    if (appReg.get(newId)) { json(409, { error: `Registry already has "${newId}"` }); return true; }
+
+    try {
+      const { renameSync } = await import("node:fs");
+      renameSync(oldDir, newDir);
+    } catch (e) { json(500, { error: `folder rename failed: ${(e as Error).message}` }); return true; }
+
+    // Update any sidebar pin that pointed at /apps/<oldId>/
+    try {
+      const { readFileSync: rf, writeFileSync: wf } = await import("node:fs");
+      const settingsPath = join(ctx.dataDir, "settings.json");
+      if (existsSync(settingsPath)) {
+        const s = JSON.parse(rf(settingsPath, "utf-8"));
+        const pins = (s.sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
+        let changed = false;
+        for (const p of pins) {
+          if (p.url === `/apps/${oldId}/` || p.url === `/apps/${oldId}`) {
+            p.url = `/apps/${newId}/`;
+            changed = true;
+          }
+        }
+        if (changed) {
+          s.sidebarPins = pins;
+          wf(settingsPath, JSON.stringify(s, null, 2), { encoding: "utf-8", mode: 0o600 });
+          try { const { broadcastAll } = await import("../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
+        }
+      }
+    } catch (e) { console.warn(`[apps] pin update after rename failed: ${(e as Error).message}`); }
+
+    json(200, { ok: true, id: newId, name: displayName, renamed: true }); return true;
   }
 
   // App lifecycle

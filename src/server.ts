@@ -72,6 +72,10 @@ export async function startServer(config: SAXConfig) {
   const memoryIndex = new MemoryIndex(dataDir);
   ensurePersonalityFiles(join(dataDir, "memory"));
   const secretsStore = new SecretsStore(dataDir);
+  // Register as module-level singleton so modules that aren't built as
+  // factories (email-tools, etc.) can read from the encrypted vault.
+  const { setSecretsStoreSingleton } = await import("./secrets.js");
+  setSecretsStoreSingleton(secretsStore);
 
   // Wire up embedding provider for semantic memory search (must complete before creating memory tools)
   try {
@@ -261,6 +265,10 @@ export async function startServer(config: SAXConfig) {
   const httpRequestTool = createHttpRequestTool(secretsStore);
   let activeBrowserSessionId = "default";
   const browserTools = createBrowserTools(() => activeBrowserSessionId);
+  // Privacy-preserving browser→vault capture. DOM read stays server-side;
+  // the value never enters any tool result the LLM sees.
+  const { createBrowserSecretCaptureTool } = await import("./browser-secret-capture.js");
+  const browserSecretCaptureTool = createBrowserSecretCaptureTool(secretsStore, () => activeBrowserSessionId);
   const { createOperationTools } = await import("./operations/tools.js");
   const operationTools = createOperationTools();
   // Build tool registry for deferred loading
@@ -268,12 +276,12 @@ export async function startServer(config: SAXConfig) {
 
   const allAgentTools = [
     ...allTools, httpRequestTool,
-    ...memoryTools, ...secretTools, ...browserTools, ...imageTools,
+    ...memoryTools, ...secretTools, browserSecretCaptureTool, ...browserTools, ...imageTools,
     ...createCoreProtocolTools(), ...createCronTools(cronService),
     ...createAgencyTools(), ...createHandlerTools(), ...appTools, ...issueTools,
     ...operationTools,
   ];
-  const bridgeTools = [...allTools, ...memoryTools, ...browserTools, ...imageTools, ...createCoreProtocolTools(), ...issueTools];
+  const bridgeTools = [...allTools, ...memoryTools, browserSecretCaptureTool, ...browserTools, ...imageTools, ...createCoreProtocolTools(), ...issueTools];
 
   // Connect MCP servers and add their tools
   try {
@@ -512,6 +520,10 @@ export async function startServer(config: SAXConfig) {
         if (ext === "html") {
           h["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'self'; form-action 'self'";
           h["X-Content-Type-Options"] = "nosniff"; h["X-Frame-Options"] = "SAMEORIGIN"; h["Referrer-Policy"] = "no-referrer"; h["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
+          // Agent-built apps change frequently — always revalidate so
+          // iframe reloads pick up the latest HTML instead of a stale
+          // cached version.
+          h["Cache-Control"] = "no-cache, must-revalidate"; h["Pragma"] = "no-cache";
           let html = readFileSync(appFile, "utf-8");
           const iso = `<script>sessionStorage.removeItem('sax_token');localStorage.removeItem('sax_token');delete window.__AUTH_TOKEN__;history.replaceState(null,'',location.pathname);</script>`;
           html = html.includes("<head>") ? html.replace("<head>", "<head>" + iso) : html.includes("<body>") ? html.replace("<body>", "<body>" + iso) : iso + html;
@@ -749,6 +761,10 @@ export async function startServer(config: SAXConfig) {
     console.log(`\n  ► Open: \x1b]8;;${realUrl}\x1b\\http://127.0.0.1:${config.port}/?token=${masked}\x1b]8;;\x1b\\\n  Memory: ${dataDir}/memory/\n  Sessions: ${dataDir}/sessions/`);
     printAuditReport(runSecurityAudit({ authToken: config.authToken, workspace: config.workspace }));
     startAriKernel(join(dataDir, "ari-audit.db"), undefined, config.ariRequired).then(a => { if (a) console.log(`  [ari] Audit active`); else if (config.ariRequired) console.error(`  [ari] CRITICAL: ARI failed`); });
+    // Proactive OAuth refresh — keeps Codex + Anthropic tokens warm so first-
+    // request-after-idle doesn't pay refresh latency and transient refresh
+    // failures don't surface as user-visible errors.
+    try { import("./auth-refresh.js").then(({ startAuthRefreshTimer }) => startAuthRefreshTimer()).catch(() => {}); } catch {}
     // Cron
     const cronReportsDir = join(dataDir, "cron", "reports");
     if (!existsSync(cronReportsDir)) mkdirSync(cronReportsDir, { recursive: true });

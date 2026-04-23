@@ -126,16 +126,30 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       const primaryElapsed = Date.now() - turnStart;
       console.log(`[timing] ${prepared.provider}/${prepared.model} primary ${primaryElapsed}ms`);
 
-      // Auto-fallback on empty response. If the primary provider produced
-      // zero tokens, zero text, and zero tool calls, try the next provider
-      // in the chain — with an explicit user-visible notice so the user
-      // knows who actually answered.
+      // Auto-fallback triggers. Two classes:
+      //   1. Empty-response: primary returned zero tokens/text/tool_calls.
+      //   2. Transient error: primary threw a rate-limit / auth / overload /
+      //      network error. These don't improve by retrying the same provider
+      //      and almost always succeed on a different one.
       const lastAssistant = [...result.messages].reverse().find(m => m.role === "assistant");
       const emptyText = !lastAssistant || !lastAssistant.content || (typeof lastAssistant.content === "string" && !lastAssistant.content.trim());
       const noToolCalls = !((lastAssistant as unknown as { tool_calls?: unknown[] })?.tool_calls?.length);
       const zeroTokens = (result.usage?.completionTokens || 0) === 0;
+      const isEmptyResponse = emptyText && noToolCalls && zeroTokens;
 
-      if (emptyText && noToolCalls && zeroTokens && !wsChat.abort.signal.aborted) {
+      const { classifyProviderError } = await import("../provider-fallback.js");
+      const errKind = result.stopReason === "error" ? classifyProviderError(result.errorMessage || "") : null;
+      const isTransientError = errKind !== null;
+
+      if ((isEmptyResponse || isTransientError) && !wsChat.abort.signal.aborted) {
+        const triggerKind = isTransientError ? errKind : "empty-response";
+        try {
+          const { logRetry } = await import("../retry-telemetry.js");
+          const kind = isTransientError
+            ? (errKind === "auth" ? "provider-auth-rotate" : "model-fallback")
+            : "empty-response-fallback";
+          logRetry({ kind, sessionId, provider: prepared.provider, model: prepared.model, detail: { trigger: triggerKind, errorMessage: result.errorMessage } });
+        } catch {}
         const getKey = async (p: string): Promise<string | null> => {
           if (p === "codex") { const { loadTokens } = await import("../auth.js"); const t = loadTokens(); return t ? "cli" : null; }
           if (p === "anthropic") { const { loadAnthropicTokens } = await import("../auth-anthropic.js"); const t = loadAnthropicTokens(); return t ? "cli" : null; }
@@ -149,11 +163,17 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
           { provider: "anthropic", model: "claude-sonnet-4-6" },
           { provider: "xai", model: "grok-4" },
         ].filter(f => f.provider !== prepared.provider);
+        const reason = isTransientError
+          ? (errKind === "rate-limit" ? "is rate-limited"
+            : errKind === "auth" ? "auth expired"
+            : errKind === "overload" ? "is overloaded"
+            : "had a network error")
+          : "returned nothing";
         for (const next of fallbackOrder) {
           const key = await getKey(next.provider);
           if (!key) continue;
           try {
-            wrappedOnEvent({ type: "stream", delta: `\n\n_${prepared.provider} returned nothing. Retrying with ${next.provider} (${next.model})..._\n\n` });
+            wrappedOnEvent({ type: "stream", delta: `\n\n_${prepared.provider} ${reason}. Retrying with ${next.provider} (${next.model})..._\n\n` });
             const fbStart = Date.now();
             result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
               apiKey: key, model: next.model,
@@ -167,9 +187,18 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
               onEvent: (event: ServerEvent) => { if (event.type !== "done") wrappedOnEvent(event); },
             }), { label: `chat-fallback:${next.provider}:${sessionId}`, timeout: 600_000 });
             console.log(`[timing] ${next.provider}/${next.model} fallback ${Date.now() - fbStart}ms`);
+            // Success condition depends on trigger: for empty-response we need
+            // non-empty text; for transient errors we need anything that's not
+            // another error.
+            if (result.stopReason === "error") {
+              const nextErr = classifyProviderError(result.errorMessage || "");
+              if (nextErr !== null) continue; // still transient — try next provider
+              break; // non-transient error: stop cascading
+            }
             const newLast = [...result.messages].reverse().find(m => m.role === "assistant");
             const stillEmpty = !newLast || !newLast.content || (typeof newLast.content === "string" && !newLast.content.trim());
-            if (!stillEmpty) break;
+            const hasToolCalls = !!((newLast as unknown as { tool_calls?: unknown[] })?.tool_calls?.length);
+            if (!stillEmpty || hasToolCalls) break;
           } catch (e) { console.warn(`[fallback] ${next.provider} failed: ${(e as Error).message}`); }
         }
       }

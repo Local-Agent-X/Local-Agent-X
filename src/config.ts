@@ -55,7 +55,7 @@ const configSchema = z.object({
   workspace: z.string().min(1).default("./workspace"),
   openaiApiKey: z.string().optional(),
   model: z.string().default("grok-4"),
-  maxIterations: z.number().int().min(1).max(100).default(40),
+  maxIterations: z.number().int().min(1).max(300).default(160),
   temperature: z.number().min(0).max(2).default(0.7),
   systemPrompt: z.string().default(DEFAULT_SYSTEM_PROMPT),
   profile: z.enum(["home", "dev", "enterprise"]).default("home"),
@@ -69,6 +69,12 @@ const configSchema = z.object({
   sdServerUrl: z.string().default("http://127.0.0.1:7860"),
   videoServerUrl: z.string().default("http://127.0.0.1:7861"),
   xttsServerUrl: z.string().default("http://127.0.0.1:7862"),
+
+  // Browser mode. "isolated" = dedicated agent profile at ~/.sax/chrome-profile
+  // (safer — zero blast radius on personal browsing). "attach" = launches against
+  // your real Chrome profile so the agent inherits all your logins; requires
+  // your regular Chrome to be closed (Chrome forbids two instances on one profile).
+  browserMode: z.enum(["isolated", "attach"]).default("isolated"),
 
   // Limits & timeouts
   browserCdpPort: z.number().int().min(1).max(65535).default(9800),

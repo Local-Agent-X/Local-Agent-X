@@ -626,6 +626,29 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
       </div>
     </div>
 
+    <div class="section">
+      <div class="section-title">Browser Session</div>
+      <div class="section-desc">Where the agent's browser runs. Isolated = safest. Attach = convenient but larger blast radius.</div>
+      <div class="toggle-row" style="align-items:flex-start">
+        <div style="flex:1">
+          <div class="toggle-label">Mode</div>
+          <div class="toggle-desc" id="browser-mode-desc" style="margin-top:4px">
+            <strong>Isolated</strong> — dedicated agent profile at <code>~/.sax/chrome-profile</code>. Agent logs in separately. Page injection can only see what the agent itself logged into.
+          </div>
+        </div>
+        <select id="cfg-browser-mode" onchange="saveBrowserMode(this.value)"
+          style="padding:6px 10px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:.78rem;min-width:130px">
+          <option value="isolated">Isolated (safer)</option>
+          <option value="attach">Attach to my Chrome</option>
+        </select>
+      </div>
+      <div id="browser-mode-warn" style="display:none;margin-top:10px;padding:10px 12px;border:1px solid var(--warning,#c08b00);border-radius:6px;background:rgba(192,139,0,.08);font-size:.72rem;line-height:1.5;color:var(--text)">
+        <strong>Attach mode is active.</strong> The agent runs against your real Chrome profile, so it inherits every login you have (Gmail, banks, internal dashboards). A compromised page or prompt injection can now act with your full identity.
+        <br><br>
+        <strong>Requires your regular Chrome to be closed</strong> — Chrome refuses two instances on one profile. Quit Chrome before any task that opens the browser, or switch back to Isolated.
+      </div>
+    </div>
+
   </div>
 
   <!-- ═══ WHATSAPP ═══ -->
@@ -1235,6 +1258,12 @@ async function loadSystemStatus() {
     if (taEl) taEl.value = d.toolApproval || 'confirm-risky';
     const auEl = document.getElementById('tog-autoupdate');
     if (auEl) auEl.classList.toggle('on', d.autoUpdate !== false);
+    const bmEl = document.getElementById('cfg-browser-mode');
+    if (bmEl) {
+      bmEl.value = d.browserMode || 'isolated';
+      const warn = document.getElementById('browser-mode-warn');
+      if (warn) warn.style.display = bmEl.value === 'attach' ? 'block' : 'none';
+    }
 
   } catch (e) {
     console.error('System status load failed:', e);
@@ -1247,6 +1276,22 @@ function setTile(id, value, cls) {
   if (!el) return;
   const v = el.querySelector('.st-value');
   if (v) { v.textContent = value; v.className = 'st-value' + (cls ? ' ' + cls : ''); }
+}
+
+async function saveBrowserMode(mode) {
+  const warn = document.getElementById('browser-mode-warn');
+  if (warn) warn.style.display = mode === 'attach' ? 'block' : 'none';
+  try {
+    await apiPost('/api/settings', { browserMode: mode });
+    const desc = document.getElementById('browser-mode-desc');
+    if (desc) {
+      desc.innerHTML = mode === 'attach'
+        ? '<strong>Attach</strong> — uses your real Chrome profile. Agent inherits all your logins; a compromised page can now act with your identity. Regular Chrome must be closed.'
+        : '<strong>Isolated</strong> — dedicated agent profile at <code>~/.sax/chrome-profile</code>. Agent logs in separately. Page injection can only see what the agent itself logged into.';
+    }
+  } catch (e) {
+    alert('Failed to save browser mode: ' + e.message);
+  }
 }
 
 async function selectProfile(profile) {

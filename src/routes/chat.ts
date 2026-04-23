@@ -167,6 +167,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
           ? (errKind === "rate-limit" ? "is rate-limited"
             : errKind === "auth" ? "auth expired"
             : errKind === "overload" ? "is overloaded"
+            : errKind === "content-filter" ? "hit content moderation on this context"
             : "had a network error")
           : "returned nothing";
         for (const next of fallbackOrder) {

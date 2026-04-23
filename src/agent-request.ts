@@ -203,7 +203,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
 
   if (shouldRunMemory) {
     [contextBlock, relevantMemories] = await Promise.all([
-      buildContextBlock(memoryIndex),
+      buildContextBlock(memoryIndex, { skipDailyLog: false }),
       autoSearchContext(memoryIndex, message),
     ]);
 
@@ -249,9 +249,16 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       console.warn("[memory] Orchestrator error:", (e as Error).message);
     }
   } else if (!skipMemory) {
-    // Trivial tool request — still get basic context but skip orchestrator
-    try { [contextBlock] = await Promise.all([buildContextBlock(memoryIndex)]); } catch {}
+    // Trivial tool request OR Codex provider — basic context only, and for
+    // Codex we skip the daily log (it echoes verbatim user messages that can
+    // trip OpenAI's content filter and poison the whole session).
+    try {
+      [contextBlock] = await Promise.all([
+        buildContextBlock(memoryIndex, { skipDailyLog: isCodexProvider }),
+      ]);
+    } catch {}
     if (isTrivialToolRequest) console.log(`[chat] Trivial tool request — skipping memory injection`);
+    else if (isCodexProvider) console.log(`[chat] Codex provider — skipping daily log from context (moderation-safe)`);
   } else {
     // Bridge/cron/Codex — lightweight context only (skip autoSearch to save tokens)
     try {

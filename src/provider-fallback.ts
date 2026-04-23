@@ -8,11 +8,23 @@
 // NOT included: 400s that are the caller's fault (bad request shape,
 // unsupported model parameter) — those won't improve by switching providers.
 
-export type TransientErrorKind = "rate-limit" | "auth" | "overload" | "network" | null;
+export type TransientErrorKind = "rate-limit" | "auth" | "overload" | "network" | "content-filter" | null;
 
 export function classifyProviderError(err: unknown): TransientErrorKind {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   if (!msg) return null;
+
+  // Content moderation / safety filter. The request CAN succeed on another
+  // provider with different moderation (e.g. Claude), so we treat it as
+  // transient for failover purposes even though the current provider won't
+  // un-block on retry.
+  if (
+    msg.includes("content_filter") ||
+    msg.includes("content moderation") ||
+    msg.includes("content policy") ||
+    msg.includes("safety filter") ||
+    msg.includes("moderation loop")
+  ) return "content-filter";
 
   // Rate limit / quota
   if (

@@ -2277,7 +2277,10 @@ export class MemoryIndex {
  * Inspired by MemGPT/Letta "core memory blocks" — a small, curated set of
  * facts that are always in context so the agent never starts from zero.
  */
-export async function buildContextBlock(memory: MemoryIndex): Promise<string> {
+export async function buildContextBlock(
+  memory: MemoryIndex,
+  opts: { skipDailyLog?: boolean } = {},
+): Promise<string> {
   const sections: string[] = [];
   const memDir = memory["memoryDir"];
 
@@ -2308,13 +2311,19 @@ export async function buildContextBlock(memory: MemoryIndex): Promise<string> {
     sections.push(`<core_memory>\n${coreMemory.trim()}\n</core_memory>`);
   }
 
-  // 5. Today's daily log (recent context)
-  const todayLog = memory.getDailyLogPath();
-  if (existsSync(todayLog)) {
-    const content = safeReadTextFile(todayLog);
-    if (content && content.trim()) {
-      const recent = content.trim().slice(-1500);
-      sections.push(`<today_context>\n${recent}\n</today_context>`);
+  // 5. Today's daily log (recent context).
+  // Skipped for providers with aggressive moderation (Codex) — verbatim user
+  // messages replayed here can trip OpenAI's content filter and poison every
+  // subsequent turn of the session. Other context (identity/heart/user/core/
+  // opinions/entities) is enough for 128k-window models anyway.
+  if (!opts.skipDailyLog) {
+    const todayLog = memory.getDailyLogPath();
+    if (existsSync(todayLog)) {
+      const content = safeReadTextFile(todayLog);
+      if (content && content.trim()) {
+        const recent = content.trim().slice(-1500);
+        sections.push(`<today_context>\n${recent}\n</today_context>`);
+      }
     }
   }
 

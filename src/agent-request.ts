@@ -459,7 +459,7 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
   { keywords: /sql|database|query.*table|postgres|sqlite/i, toolPrefixes: ["sql_"] },
   { keywords: /image|photo|generate.*image|draw|picture/i, toolPrefixes: ["generate_image", "generate_video", "ocr"] },
   { keywords: /camera|webcam/i, toolPrefixes: ["camera_"] },
-  { keywords: /app|dashboard|tracker/i, toolPrefixes: ["app_"] },
+  { keywords: /app|dashboard|tracker|sidebar|pin|unpin/i, toolPrefixes: ["app_", "sidebar_"] },
   { keywords: /issue|ticket|project|kanban/i, toolPrefixes: ["issue_"] },
   { keywords: /instagram|twitter|tiktok|social|post on/i, toolPrefixes: ["mission_"] },
   { keywords: /config|setting/i, toolPrefixes: ["config_"] },

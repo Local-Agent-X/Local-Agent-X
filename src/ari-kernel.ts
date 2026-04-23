@@ -124,6 +124,8 @@ export async function ariEvaluate(
     mission_schedule_update: "internal",
     mission_schedule_toggle: "internal",
     mission_schedule_reports: "internal",
+    browser_capture_to_secret: "internal",
+    browser_fill_from_secret: "internal",
   };
 
   const toolClass = toolClassMap[toolName] || "shell";

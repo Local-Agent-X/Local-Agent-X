@@ -269,6 +269,8 @@ export async function startServer(config: SAXConfig) {
   // the value never enters any tool result the LLM sees.
   const { createBrowserSecretCaptureTool } = await import("./browser-secret-capture.js");
   const browserSecretCaptureTool = createBrowserSecretCaptureTool(secretsStore, () => activeBrowserSessionId);
+  const { createBrowserSecretFillTool } = await import("./browser-secret-fill.js");
+  const browserSecretFillTool = createBrowserSecretFillTool(secretsStore, () => activeBrowserSessionId);
   const { createOperationTools } = await import("./operations/tools.js");
   const operationTools = createOperationTools();
   // Build tool registry for deferred loading
@@ -276,7 +278,7 @@ export async function startServer(config: SAXConfig) {
 
   const allAgentTools = [
     ...allTools, httpRequestTool,
-    ...memoryTools, ...secretTools, browserSecretCaptureTool, ...browserTools, ...imageTools,
+    ...memoryTools, ...secretTools, browserSecretCaptureTool, browserSecretFillTool, ...browserTools, ...imageTools,
     ...createCoreProtocolTools(), ...createCronTools(cronService),
     ...createAgencyTools(), ...createHandlerTools(), ...appTools, ...issueTools,
     ...operationTools,

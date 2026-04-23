@@ -65,6 +65,9 @@ export interface Operation {
   sharedState: Record<string, unknown>;
   /** Log of user-facing progress events */
   events: OperationEvent[];
+  /** Secret names the user has pre-blessed at operation_start: for these, browser_fill_from_secret
+   *  skips the first-use approval gate on the secret's recorded origin. Scope is this operation only. */
+  preBlessedSecrets?: string[];
 }
 
 export interface OperationEvent {

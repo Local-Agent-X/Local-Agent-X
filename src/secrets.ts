@@ -26,6 +26,9 @@ interface SecretEntry {
   account?: string;    // username/email paired with this password
   url?: string;        // login page URL
   notes?: string;      // free-form user-visible notes
+  origin?: string;     // origin derived from url (scheme://host[:port]); authoritative for fill gating
+  createdBySession?: string; // agent session that captured this secret; enables auto-approval of same-session reuse
+  approvedFills?: Array<{ origin: string; approvedAt: number }>; // user-approved (secret, origin) pairs for automated fill
   addedAt: number;
   updatedAt: number;
 }
@@ -35,6 +38,22 @@ export interface SecretMetadata {
   account?: string;
   url?: string;
   notes?: string;
+  origin?: string;
+  createdBySession?: string;
+}
+
+/** Metadata view returned to callers — never includes the plaintext value. */
+export interface SecretMetaView {
+  name: string;
+  service?: string;
+  account?: string;
+  url?: string;
+  notes?: string;
+  origin?: string;
+  createdBySession?: string;
+  approvedFills?: Array<{ origin: string; approvedAt: number }>;
+  addedAt: number;
+  updatedAt: number;
 }
 
 interface SecretsFile {
@@ -45,10 +64,23 @@ interface SecretsFile {
     account?: string;
     url?: string;
     notes?: string;
+    origin?: string;
+    createdBySession?: string;
+    approvedFills?: Array<{ origin: string; approvedAt: number }>;
     addedAt: number;
     updatedAt: number;
     encrypted: string; // hex: iv(12) + authTag(16) + ciphertext
   }>;
+}
+
+/** Derive a canonical origin (scheme://host[:port]) from an arbitrary URL. Returns undefined on failure. */
+export function deriveOrigin(url: string | undefined | null): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
 }
 
 function encrypt(plaintext: string, key: Buffer): string {
@@ -101,6 +133,9 @@ export class SecretsStore {
           account: entry.account,
           url: entry.url,
           notes: entry.notes,
+          origin: entry.origin ?? deriveOrigin(entry.url),
+          createdBySession: entry.createdBySession,
+          approvedFills: entry.approvedFills,
           addedAt: entry.addedAt,
           updatedAt: entry.updatedAt,
         });
@@ -119,6 +154,9 @@ export class SecretsStore {
         account: s.account,
         url: s.url,
         notes: s.notes,
+        origin: s.origin,
+        createdBySession: s.createdBySession,
+        approvedFills: s.approvedFills,
         addedAt: s.addedAt,
         updatedAt: s.updatedAt,
         encrypted: encrypt(s.value, this.key),
@@ -137,13 +175,17 @@ export class SecretsStore {
   set(name: string, value: string, meta?: SecretMetadata | string): void {
     const existing = this.secrets.get(name);
     const metaObj: SecretMetadata = typeof meta === "string" ? { service: meta } : (meta || {});
+    const url = metaObj.url ?? existing?.url;
     this.secrets.set(name, {
       name,
       value,
       service: metaObj.service ?? existing?.service,
       account: metaObj.account ?? existing?.account,
-      url: metaObj.url ?? existing?.url,
+      url,
       notes: metaObj.notes ?? existing?.notes,
+      origin: metaObj.origin ?? existing?.origin ?? deriveOrigin(url),
+      createdBySession: metaObj.createdBySession ?? existing?.createdBySession,
+      approvedFills: existing?.approvedFills,
       addedAt: existing?.addedAt || Date.now(),
       updatedAt: Date.now(),
     });
@@ -163,16 +205,72 @@ export class SecretsStore {
   }
 
   /** List all secret names and metadata (never exposes values). */
-  list(): Array<{ name: string; service?: string; account?: string; url?: string; notes?: string; addedAt: number; updatedAt: number }> {
-    return Array.from(this.secrets.values()).map(({ name, service, account, url, notes, addedAt, updatedAt }) => ({
+  list(): SecretMetaView[] {
+    return Array.from(this.secrets.values()).map(({ name, service, account, url, notes, origin, createdBySession, approvedFills, addedAt, updatedAt }) => ({
       name,
       service,
       account,
       url,
       notes,
+      origin,
+      createdBySession,
+      approvedFills,
       addedAt,
       updatedAt,
     }));
+  }
+
+  /** Read metadata for a single secret (never exposes the value). */
+  getMeta(name: string): SecretMetaView | undefined {
+    const e = this.secrets.get(name);
+    if (!e) return undefined;
+    return {
+      name: e.name,
+      service: e.service,
+      account: e.account,
+      url: e.url,
+      notes: e.notes,
+      origin: e.origin,
+      createdBySession: e.createdBySession,
+      approvedFills: e.approvedFills,
+      addedAt: e.addedAt,
+      updatedAt: e.updatedAt,
+    };
+  }
+
+  /** Record that the user has approved filling a given secret on a given origin.
+   *  No-op if already approved; persists on first approval. */
+  approveFill(name: string, origin: string): boolean {
+    const entry = this.secrets.get(name);
+    if (!entry) return false;
+    const normalized = deriveOrigin(origin) ?? origin;
+    if (!entry.approvedFills) entry.approvedFills = [];
+    if (entry.approvedFills.some((a) => a.origin === normalized)) return true;
+    entry.approvedFills.push({ origin: normalized, approvedAt: Date.now() });
+    entry.updatedAt = Date.now();
+    this.save();
+    return true;
+  }
+
+  /** Remove an origin from a secret's approved-fills list. */
+  revokeFillApproval(name: string, origin: string): boolean {
+    const entry = this.secrets.get(name);
+    if (!entry || !entry.approvedFills) return false;
+    const normalized = deriveOrigin(origin) ?? origin;
+    const before = entry.approvedFills.length;
+    entry.approvedFills = entry.approvedFills.filter((a) => a.origin !== normalized);
+    if (entry.approvedFills.length === before) return false;
+    entry.updatedAt = Date.now();
+    this.save();
+    return true;
+  }
+
+  /** Check whether a secret has been user-approved for fill at a given origin. */
+  isFillApproved(name: string, origin: string): boolean {
+    const entry = this.secrets.get(name);
+    if (!entry || !entry.approvedFills) return false;
+    const normalized = deriveOrigin(origin) ?? origin;
+    return entry.approvedFills.some((a) => a.origin === normalized);
   }
 
   /** Resolve {{SECRET_NAME}} placeholders in a string. Returns the resolved string. */

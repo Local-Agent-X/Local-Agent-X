@@ -42,16 +42,28 @@ export function createOperationTools(): ToolDefinition[] {
           goal: { type: "string", description: "The user's goal verbatim. Be specific — 'build a WooCommerce store for pmajlabs.com with Stripe checkout' beats 'build an ecommerce site'." },
           provider: { type: "string", enum: ["ollama", "anthropic", "openai", "auto"], description: "LLM for decomposition (default auto)" },
           model: { type: "string", description: "Override model for the decomposer" },
+          pre_blessed_secrets: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "OPTIONAL list of secret names the user has explicitly authorized for automated fill during this operation. " +
+              "For each listed secret, browser_fill_from_secret will skip the first-use approval gate when filling on the secret's recorded origin — enabling unattended overnight execution. " +
+              "Only pass names the user explicitly approved in this turn; do NOT infer or auto-list. Origin-binding is still enforced: a pre-blessed secret still cannot be filled on a different site than where it was captured/saved.",
+          },
         },
         required: ["goal"],
       },
       async execute(args) {
         const goal = String(args.goal || "");
         if (!goal.trim()) return { content: "goal is required", isError: true };
+        const preBlessed = Array.isArray(args.pre_blessed_secrets)
+          ? (args.pre_blessed_secrets as unknown[]).map(s => String(s)).filter(Boolean)
+          : undefined;
         const op = await createOperation(goal, {
           workspaceDir: workspaceDir(),
           provider: args.provider as "ollama" | "anthropic" | "openai" | "auto" | undefined,
           model: typeof args.model === "string" ? args.model : undefined,
+          preBlessedSecrets: preBlessed,
         });
 
         // Auto-start the background executor — no more "agent forgot to loop"

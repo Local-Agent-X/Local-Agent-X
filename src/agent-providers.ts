@@ -219,7 +219,7 @@ export async function runStandardAgent(
     systemPrompt,
     tools,
     security,
-    maxIterations = 40,
+    maxIterations = 160,
     temperature = 0.7,
     onEvent,
     signal,
@@ -281,6 +281,18 @@ export async function runStandardAgent(
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (iteration > 0) messages = stripEphemeralMessages(messages);
     messages = checkAndCompact(messages, model, onEvent);
+
+    // Drain subagent completion queue — inject any pending subagent results as
+    // a synthetic user message so the parent doesn't need to poll agent_status.
+    if (options.sessionId) {
+      try {
+        const { drainCompletions, formatCompletionMessage } = await import("./agency/completion-queue.js");
+        const notices = drainCompletions(options.sessionId);
+        if (notices.length > 0) {
+          messages.push({ role: "user", content: formatCompletionMessage(notices) } as ChatCompletionMessageParam);
+        }
+      } catch {}
+    }
 
     if (signal?.aborted) {
       return {
@@ -371,6 +383,18 @@ export async function runStandardAgent(
       logClassification(options.provider, model, classification);
     } catch (e) {
       const errMsg = (e as Error).message || "Stream error";
+      // Context overflow: force-compact aggressively and continue the loop
+      // instead of bailing. The model hit its window — keep the last couple
+      // of turns and an auto-generated summary, then retry this iteration.
+      const { isContextOverflowError, forceCompact } = await import("./context-manager.js");
+      if (isContextOverflowError(e) && iteration < maxIterations - 1) {
+        const before = messages.length;
+        messages = forceCompact(messages, 2);
+        console.warn(`[agent] Context overflow — force-compacted ${before} → ${messages.length} msgs and retrying`);
+        try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "context-overflow", sessionId: options.sessionId, detail: { provider: options.provider, model, before, after: messages.length } })).catch(() => {}); } catch {}
+        onEvent?.({ type: "context_status", percentage: 100, level: "emergency", usedTokens: 0, maxTokens: 0, compacted: true });
+        continue;
+      }
       console.error("[agent] Standard stream error:", errMsg);
       const { classifyOpenAIResponse, logClassification } = await import("./response-classifier.js");
       const classification = classifyOpenAIResponse({
@@ -384,6 +408,7 @@ export async function runStandardAgent(
         messages,
         usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },
         stopReason: "error",
+        errorMessage: errMsg,
       };
     }
 
@@ -450,7 +475,7 @@ export async function runStandardAgent(
 
     let toolResults;
     try {
-      toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
+      toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal, messages);
     } catch (e) {
       console.error("[agent] Tool execution error (Standard):", (e as Error).message);
       toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];
@@ -493,7 +518,7 @@ export async function runAnthropicAgent(
   history: ChatCompletionMessageParam[],
   options: AgentOptions
 ): Promise<AgentTurn> {
-  const { apiKey, model, systemPrompt, tools, security, maxIterations = 40, temperature = 0.7, onEvent, signal } = options;
+  const { apiKey, model, systemPrompt, tools, security, maxIterations = 160, temperature = 0.7, onEvent, signal } = options;
   const toolMap = new Map(tools.map(t => [t.name, t]));
 
   // Build user message — attach images as vision parts when present.
@@ -538,6 +563,18 @@ export async function runAnthropicAgent(
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (iteration > 0) messages = stripEphemeralMessages(messages);
     messages = checkAndCompact(messages, model, onEvent);
+
+    // Drain subagent completion queue (see standard loop for rationale)
+    if (options.sessionId) {
+      try {
+        const { drainCompletions, formatCompletionMessage } = await import("./agency/completion-queue.js");
+        const notices = drainCompletions(options.sessionId);
+        if (notices.length > 0) {
+          messages.push({ role: "user", content: formatCompletionMessage(notices) } as ChatCompletionMessageParam);
+        }
+      } catch {}
+    }
+
     if (signal?.aborted) {
       return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "abort" };
     }
@@ -576,7 +613,16 @@ export async function runAnthropicAgent(
       }
     }
     if (streamError) {
-      return { messages, usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "error" };
+      const { isContextOverflowError, forceCompact } = await import("./context-manager.js");
+      if (isContextOverflowError(streamError) && iteration < maxIterations - 1) {
+        const before = messages.length;
+        messages = forceCompact(messages, 2);
+        console.warn(`[agent] Anthropic context overflow — force-compacted ${before} → ${messages.length} msgs and retrying`);
+        try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "context-overflow", sessionId: options.sessionId, detail: { provider: "anthropic", model, before, after: messages.length } })).catch(() => {}); } catch {}
+        onEvent?.({ type: "context_status", percentage: 100, level: "emergency", usedTokens: 0, maxTokens: 0, compacted: true });
+        continue;
+      }
+      return { messages, usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "error", errorMessage: streamError || undefined };
     }
 
     const assistantMsg: ChatCompletionMessageParam = { role: "assistant", content: assistantContent || null };
@@ -651,7 +697,7 @@ export async function runAnthropicAgent(
 
     let toolResults;
     try {
-      toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
+      toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal, messages);
     } catch (e) {
       console.error("[agent] Tool execution error (Anthropic):", (e as Error).message);
       toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];

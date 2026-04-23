@@ -288,11 +288,43 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
     json(200, ctx.secretsStore.list()); return true;
   }
   if (method === "POST" && url.pathname === "/api/secrets") {
-    const body = await safeParseBody(req) as { name?: string; value?: string; service?: string };
+    const body = await safeParseBody(req) as { name?: string; value?: string; service?: string; account?: string; url?: string; notes?: string };
     const name = body.name?.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
     if (!name || !body.value) { json(400, { error: "name and value are required" }); return true; }
-    ctx.secretsStore.set(name, body.value, body.service);
+    ctx.secretsStore.set(name, body.value, {
+      service: body.service,
+      account: body.account,
+      url: body.url,
+      notes: body.notes,
+    });
     json(200, { ok: true, name }); return true;
+  }
+  // PATCH metadata only (not the value). Used by the secrets UI so users can
+  // annotate entries without re-entering the password.
+  if (method === "PATCH" && url.pathname.startsWith("/api/secrets/")) {
+    const name = decodeURIComponent(url.pathname.split("/").pop()!);
+    if (!/^[A-Z0-9_]{1,64}$/i.test(name)) { json(400, { error: "Invalid secret name" }); return true; }
+    const existing = ctx.secretsStore.get(name);
+    if (existing === undefined) { json(404, { error: "Not found" }); return true; }
+    const body = await safeParseBody(req) as { service?: string; account?: string; url?: string; notes?: string };
+    ctx.secretsStore.set(name, existing, {
+      service: body.service,
+      account: body.account,
+      url: body.url,
+      notes: body.notes,
+    });
+    json(200, { ok: true, name }); return true;
+  }
+  // Reveal the decrypted value for ONE secret. Same auth-token gate as every
+  // other loopback route. Never exports. Never logged. Caller is the user's
+  // browser session that already has the token — this is only a convenience
+  // read so Peter can copy/paste creds he asked the agent to generate.
+  if (method === "GET" && url.pathname.match(/^\/api\/secrets\/[^/]+\/reveal$/)) {
+    const name = decodeURIComponent(url.pathname.split("/")[3]);
+    if (!/^[A-Z0-9_]{1,64}$/i.test(name)) { json(400, { error: "Invalid secret name" }); return true; }
+    const value = ctx.secretsStore.get(name);
+    if (value === undefined) { json(404, { error: "Not found" }); return true; }
+    json(200, { name, value }); return true;
   }
   if (method === "DELETE" && url.pathname.startsWith("/api/secrets/")) {
     const name = decodeURIComponent(url.pathname.split("/").pop()!);

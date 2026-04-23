@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-22T22:50:24.201Z",
+  "generatedAt": "2026-04-23T08:01:04.205Z",
   "pages": [
     {
       "name": "Chat",
@@ -479,18 +479,6 @@
       ]
     },
     {
-      "name": "ari-kernel-blocks-dashboard",
-      "path": "workspace/apps/ari-kernel-blocks-dashboard",
-      "files": [
-        "app.js",
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "styles.css",
-        "TODO.md"
-      ]
-    },
-    {
       "name": "baseball-todo",
       "path": "workspace/apps/baseball-todo",
       "files": [
@@ -587,18 +575,6 @@
       ]
     },
     {
-      "name": "mario-todo",
-      "path": "workspace/apps/mario-todo",
-      "files": [
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "QUICKSTART.md",
-        "README.md",
-        "TODO.md"
-      ]
-    },
-    {
       "name": "mario-todo-app",
       "path": "workspace/apps/mario-todo-app",
       "files": [
@@ -691,16 +667,6 @@
       ]
     },
     {
-      "name": "scanprogress-onboarding-mock",
-      "path": "workspace/apps/scanprogress-onboarding-mock",
-      "files": [
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "TODO.md"
-      ]
-    },
-    {
       "name": "scientific-calculator",
       "path": "workspace/apps/scientific-calculator",
       "files": [
@@ -710,13 +676,6 @@
         "script.js",
         "style.css",
         "TODO.md"
-      ]
-    },
-    {
-      "name": "seahawks-todo",
-      "path": "workspace/apps/seahawks-todo",
-      "files": [
-        "index.html"
       ]
     },
     {

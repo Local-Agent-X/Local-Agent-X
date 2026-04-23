@@ -7,6 +7,23 @@ import { getToolStats, getToolSuccessRate, getRecentFailures } from "../tool-tra
 import { getProviderHealthStatus } from "../model-fallback.js";
 import { getThreatDashboard } from "../threat-dashboard.js";
 
+/** Tiny edit-distance for 'did you mean' hints on sidebar pin 404s. */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  const m = a.length, n = b.length;
+  if (m === 0) return n; if (n === 0) return m;
+  const dp: number[] = Array(n + 1).fill(0).map((_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0]; dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : Math.min(prev, dp[j], dp[j - 1]) + 1;
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
 /** Typed cache for update check results stored on the module scope */
 interface UpdateCheckResult { localVersion: string; localCommit: string; remoteVersion: string; remoteCommit: string; updateAvailable: boolean; releaseNotes: string }
 let _updateCache: { data: UpdateCheckResult; time: number } | null = null;
@@ -49,6 +66,7 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
     json(200, {
       profile: ctx.config.profile, toolApproval: ctx.config.toolApproval,
       retentionDays: ctx.config.retentionDays, autoUpdate: ctx.config.autoUpdate, logLevel: ctx.config.logLevel,
+      browserMode: ctx.config.browserMode,
       sandbox: { mode: getSandboxMode(), dockerAvailable: isDockerAvailable() },
       security: { threatsBlocked: threatData.stats?.totalBlocked || 0, threatLevel: threatData.currentThreatLevel || "normal", recentEvents: (threatData.recentEvents || []).slice(0, 5) },
       providers: providerHealth,
@@ -237,6 +255,14 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
       cfg.port = parseInt(String(body.port), 10);
       writeFileSync(configPath, JSON.stringify(cfg, null, 2), { encoding: "utf-8", mode: 0o600 });
     }
+    // Browser mode persists to main config (read by the browser launcher via
+    // getRuntimeConfig), not just settings.json. Update in-memory too so the
+    // next browser launch picks it up without a server restart.
+    if (body.browserMode === "isolated" || body.browserMode === "attach") {
+      ctx.config.browserMode = body.browserMode;
+      const { saveConfig } = await import("../config.js");
+      saveConfig(ctx.config);
+    }
     json(200, { ok: true }); return true;
   }
   if (method === "GET" && url.pathname === "/api/settings") {
@@ -262,6 +288,32 @@ export const handleSettingsRoutes: RouteHandler = async (method, url, req, res, 
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     const { name, icon, url: pageUrl } = body as { name?: string; icon?: string; url?: string };
     if (!name || !pageUrl) { json(400, { error: "name and url required" }); return true; }
+
+    // Validate /apps/<id>/ URLs match a real workspace folder. Agents have
+    // slugified display names ('Mario To Do' -> 'mario-to-do') and ended
+    // up with a pin that 404s because the actual folder is 'mario-todo-app'.
+    // Fail fast with a helpful hint so the agent can retry with the right URL.
+    const appUrlMatch = String(pageUrl).match(/^\/apps\/([a-zA-Z0-9_-]+)\/?$/);
+    if (appUrlMatch) {
+      const slug = appUrlMatch[1];
+      const candidate = resolve(ctx.config.workspace, "apps", slug, "index.html");
+      if (!existsSync(candidate)) {
+        // Probe for near-matches so the agent can self-correct
+        let hint = "";
+        try {
+          const appsDir = resolve(ctx.config.workspace, "apps");
+          if (existsSync(appsDir)) {
+            const dirs = readdirSync(appsDir).filter(d => existsSync(resolve(appsDir, d, "index.html")));
+            const similar = dirs.filter(d => d.includes(slug) || slug.includes(d) || levenshtein(d, slug) <= 3);
+            if (similar.length > 0) hint = ` Did you mean: ${similar.map(d => `/apps/${d}/`).join(", ")}?`;
+            else if (dirs.length > 0) hint = ` Available apps: ${dirs.map(d => `/apps/${d}/`).join(", ")}`;
+          }
+        } catch {}
+        json(400, { error: `No workspace app found for url ${pageUrl}.${hint}` });
+        return true;
+      }
+    }
+
     const settingsPath = join(ctx.dataDir, "settings.json");
     let settings: Record<string, unknown> = {};
     try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}

@@ -346,6 +346,28 @@ export class Handler {
     }
   }
 
+  /** Push a completion notice onto the parent session's queue so the parent's
+   * agent loop sees it on the next iteration without needing to poll. */
+  private pushCompletionToParent(
+    agent: FieldAgent,
+    status: "done" | "error",
+    result: string,
+  ): void {
+    const parent = agent.parentSessionId;
+    if (!parent) return;
+    try {
+      import("./completion-queue.js").then(({ enqueueCompletion }) => {
+        enqueueCompletion(parent, {
+          agentId: agent.id,
+          agentName: agent.name,
+          status,
+          result: typeof result === "string" ? result : String(result),
+          timestamp: Date.now(),
+        });
+      }).catch(() => {});
+    } catch {}
+  }
+
   private runAgentAsync(agentId: string): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
@@ -461,11 +483,13 @@ export class Handler {
           agent.output.push(`[blocked] ${result}`);
           this.notifyUpdate(agentId, { type: "error", data: result });
           EventBus.emit("handler:agent-error", { agentId, error: result });
+          this.pushCompletionToParent(agent, "error", result);
         } else {
           agent.status = "done";
           agent.output.push(result);
           this.notifyUpdate(agentId, { type: "complete", data: result });
           EventBus.emit("handler:agent-done", { agentId, result });
+          this.pushCompletionToParent(agent, "done", result);
         }
       } catch (e) {
         const msg = String(e);
@@ -475,6 +499,7 @@ export class Handler {
           agent.output.push(`[error] ${msg}`);
           this.notifyUpdate(agentId, { type: "error", data: msg });
           EventBus.emit("handler:agent-error", { agentId, error: msg });
+          this.pushCompletionToParent(agent, "error", msg);
         }
       }
       // Clean up completed/errored agents after 5 minutes to prevent unbounded growth

@@ -76,6 +76,12 @@ function onAppsModelChange(model) {
   if (cfgModel) cfgModel.value = model;
 }
 
+// Cache-key for the last-rendered apps list. Only re-render when data
+// actually changed — otherwise the 5-second poll wipes and rebuilds the
+// entire grid (including re-triggering the stagger-in animation), causing
+// visible flicker every poll interval.
+let _appsRenderKey = "";
+
 async function loadApps() {
   const grid = document.getElementById('apps-grid');
   const empty = document.getElementById('apps-empty');
@@ -86,10 +92,18 @@ async function loadApps() {
     const apps = await r.json();
 
     if (!Array.isArray(apps) || apps.length === 0) {
-      grid.innerHTML = '';
+      if (_appsRenderKey !== '__empty__') {
+        grid.innerHTML = '';
+        _appsRenderKey = '__empty__';
+      }
       if (empty) empty.style.display = '';
       return;
     }
+
+    // Skip rebuild if nothing changed (id/version/status/updatedAt are enough)
+    const nextKey = apps.map(a => `${a.id}:${a.version || 0}:${a.status || 'active'}:${a.updatedAt || 0}`).join('|');
+    if (nextKey === _appsRenderKey) { if (empty) empty.style.display = 'none'; return; }
+    _appsRenderKey = nextKey;
 
     if (empty) empty.style.display = 'none';
     grid.style.display = 'grid';
@@ -103,7 +117,7 @@ async function loadApps() {
       return `
       <div class="app-card${statusClass}" onclick="openApp('${esc(a.url || '/apps/' + a.id)}')">
         <div class="app-card-header">
-          <span class="app-card-name">${esc(a.name)}</span>
+          <span class="app-card-name" data-id="${esc(a.id)}" onclick="event.stopPropagation(); renameApp(this)" title="Click to rename">${esc(a.name)}</span>
           <div style="display:flex;gap:6px;align-items:center">
             ${statusBadge}
             <span class="app-card-layout">${esc(a.layout)}</span>
@@ -180,6 +194,54 @@ async function deleteApp(id, name) {
     });
     loadApps();
   } catch {}
+}
+
+// Click-to-edit on app name. Swaps the span for an input; Enter commits,
+// Escape cancels. On commit, POSTs /api/apps/<id>/rename which moves the
+// workspace folder AND updates any sidebar pin URLs that referenced it.
+function renameApp(el) {
+  if (el._editing) return;
+  el._editing = true;
+  const id = el.getAttribute('data-id');
+  const originalName = el.textContent;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = originalName;
+  input.className = 'app-card-name-input';
+  input.style.cssText = 'font:inherit;color:inherit;background:var(--bg);border:1px solid var(--accent);border-radius:4px;padding:2px 6px;width:90%;outline:none';
+  el.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const commit = async () => {
+    const newName = input.value.trim();
+    if (!newName || newName === originalName) { cancel(); return; }
+    try {
+      const r = await fetch(`${API}/api/apps/${id}/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+        body: JSON.stringify({ name: newName }),
+      });
+      const data = await r.json();
+      if (!r.ok) { alert('Rename failed: ' + (data.error || r.status)); cancel(); return; }
+      _appsRenderKey = ''; // force re-render
+      loadApps();
+    } catch (e) { alert('Rename error: ' + e.message); cancel(); }
+  };
+  const cancel = () => {
+    const span = document.createElement('span');
+    span.className = 'app-card-name';
+    span.setAttribute('data-id', id);
+    span.setAttribute('title', 'Click to rename');
+    span.textContent = originalName;
+    span.onclick = (e) => { e.stopPropagation(); renameApp(span); };
+    input.replaceWith(span);
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener('blur', cancel);
 }
 
 async function suspendApp(id, name) {
@@ -302,4 +364,5 @@ setInterval(pollAppChanges, 5000);
 window.init_apps = init_apps;
 window.sendAppsChatMessage = sendAppsChatMessage;
 window.onAppsProviderChange = onAppsProviderChange;
+window.renameApp = renameApp;
 window.onAppsModelChange = onAppsModelChange;

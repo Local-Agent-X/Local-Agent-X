@@ -20,8 +20,41 @@ function loadEmailJson(): Record<string, string> {
   } catch { return {}; }
 }
 
+function vault(key: string): string | undefined {
+  // Read from the encrypted secrets vault (AES-256-GCM, DPAPI-protected key).
+  // Used for SMTP_PASS / IMAP_PASS so passwords never sit plaintext in
+  // email.json. Non-secret config (host/user/from) stays in email.json.
+  try {
+    const { getSecretsStoreSingleton } = require("./secrets.js") as typeof import("./secrets.js");
+    return getSecretsStoreSingleton()?.get(key);
+  } catch { return undefined; }
+}
+
 function env(key: string): string | undefined {
+  // Password fields resolve vault FIRST so the agent's captured credential
+  // (stored via browser_capture_to_secret) wins over any stale env/json value.
+  const isPasswordField = key === "SMTP_PASS" || key === "IMAP_PASS";
+  if (isPasswordField) {
+    const v = vault(key);
+    if (v) return v;
+  }
   return process.env[key] || loadEmailJson()[key] || undefined;
+}
+
+/** Write non-secret SMTP config to ~/.sax/email.json. Password is NOT written
+ *  here — it must be stored in the secrets vault as SMTP_PASS. */
+function writeEmailJson(patch: Record<string, string>): void {
+  const { writeFileSync, readFileSync, existsSync, mkdirSync } = require("node:fs") as typeof import("node:fs");
+  const dir = resolve(homedir(), ".sax");
+  mkdirSync(dir, { recursive: true });
+  const p = resolve(dir, "email.json");
+  let existing: Record<string, string> = {};
+  try { if (existsSync(p)) existing = JSON.parse(readFileSync(p, "utf-8")); } catch {}
+  const merged = { ...existing, ...patch };
+  // Strip any previously-stored plaintext passwords — they now belong in the vault.
+  delete merged.SMTP_PASS;
+  delete merged.IMAP_PASS;
+  writeFileSync(p, JSON.stringify(merged, null, 2), { encoding: "utf-8", mode: 0o600 });
 }
 
 function getSmtpConfig(): { host: string; port: number; user: string; pass: string; from: string } | string {
@@ -250,5 +283,85 @@ const emailDraft: ToolDefinition = {
   },
 };
 
-export const emailTools: ToolDefinition[] = [emailSend, emailRead, emailSearch, emailDraft];
+const emailSetup: ToolDefinition = {
+  name: "email_setup",
+  description:
+    "Configure SMTP (send) and optionally IMAP (read) for this machine. " +
+    "Writes non-secret config (host/port/user/from) to ~/.sax/email.json. " +
+    "PASSWORDS are NEVER written here — they must already be in the encrypted secrets vault as SMTP_PASS (and IMAP_PASS if reading). " +
+    "Use browser_capture_to_secret to generate a Fastmail (or equivalent) app password on the provider's site and store it in the vault as SMTP_PASS BEFORE calling this. " +
+    "Calling email_setup with a missing SMTP_PASS will return an error pointing you at the capture flow. " +
+    "For Fastmail: host=smtp.fastmail.com, port=465 (SSL) or 587 (STARTTLS), user=your Fastmail email, from=same.",
+  parameters: {
+    type: "object",
+    properties: {
+      smtp_host: { type: "string", description: "SMTP server host (e.g. smtp.fastmail.com, smtp.gmail.com)." },
+      smtp_port: { type: "number", description: "SMTP port. 465 = SSL, 587 = STARTTLS. Default 587." },
+      smtp_user: { type: "string", description: "SMTP username — usually your email address." },
+      smtp_from: { type: "string", description: "From address on outgoing mail. Usually same as smtp_user." },
+      imap_host: { type: "string", description: "Optional. IMAP server host for reading mail (e.g. imap.fastmail.com)." },
+      imap_port: { type: "number", description: "Optional. IMAP port. Default 993." },
+      imap_user: { type: "string", description: "Optional. IMAP username. Defaults to smtp_user if omitted." },
+      verify: { type: "boolean", description: "If true (default), attempt a test connection to SMTP before finalizing config. Prevents bad creds from being silently accepted." },
+    },
+    required: ["smtp_host", "smtp_user", "smtp_from"],
+  },
+  async execute(args: Record<string, unknown>): Promise<ToolResult> {
+    const smtpHost = String(args.smtp_host);
+    const smtpPort = Number(args.smtp_port) || 587;
+    const smtpUser = String(args.smtp_user);
+    const smtpFrom = String(args.smtp_from);
+    const imapHost = args.imap_host ? String(args.imap_host) : undefined;
+    const imapPort = Number(args.imap_port) || 993;
+    const imapUser = args.imap_user ? String(args.imap_user) : smtpUser;
+    const verify = args.verify === false ? false : true;
+
+    const smtpPass = vault("SMTP_PASS");
+    if (!smtpPass) {
+      return {
+        content:
+          "SMTP_PASS is not in the secrets vault. Run the capture flow first:\n" +
+          "1. browser navigate to your provider's app-password page (Fastmail: https://app.fastmail.com/settings/security/integrations).\n" +
+          "2. Click Generate / New app password with scope SMTP (or SMTP+IMAP).\n" +
+          "3. When the value appears on screen, call browser_capture_to_secret({name: 'SMTP_PASS', service: 'Fastmail', account: smtpUser, ...}) to write it to the vault without the value ever reaching chat.\n" +
+          "4. Then call email_setup again.",
+        isError: true,
+      };
+    }
+
+    if (verify) {
+      try {
+        const transport = createTransport({ host: smtpHost, port: smtpPort, secure: smtpPort === 465, auth: { user: smtpUser, pass: smtpPass } });
+        await transport.verify();
+      } catch (e) {
+        return { content: `SMTP verify failed: ${(e as Error).message}. Check host/port/user and that the vault SMTP_PASS matches this account.`, isError: true };
+      }
+    }
+
+    const patch: Record<string, string> = {
+      SMTP_HOST: smtpHost, SMTP_PORT: String(smtpPort), SMTP_USER: smtpUser, SMTP_FROM: smtpFrom,
+    };
+    if (imapHost) {
+      patch.IMAP_HOST = imapHost;
+      patch.IMAP_PORT = String(imapPort);
+      patch.IMAP_USER = imapUser;
+    }
+    try {
+      writeEmailJson(patch);
+    } catch (e) {
+      return { content: `Config write failed: ${(e as Error).message}`, isError: true };
+    }
+
+    return {
+      content:
+        `SMTP configured: ${smtpUser}@${smtpHost}:${smtpPort} (from: ${smtpFrom}). ` +
+        (imapHost ? `IMAP: ${imapUser}@${imapHost}:${imapPort}. ` : "") +
+        (verify ? "Verified OK. " : "") +
+        "Non-secret config in ~/.sax/email.json; password in encrypted vault. email_send is now ready.",
+      metadata: { smtpHost, smtpUser, verified: verify },
+    };
+  },
+};
+
+export const emailTools: ToolDefinition[] = [emailSend, emailRead, emailSearch, emailDraft, emailSetup];
 export function createEmailTools(): ToolDefinition[] { return emailTools; }

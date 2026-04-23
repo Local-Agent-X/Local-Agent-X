@@ -135,6 +135,7 @@ export function checkToolLoops(
   if (key === state.lastToolKey) {
     state.sameToolCount++;
     if (state.sameToolCount >= repeatLimit) {
+      try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "loop-abort", tool: toolCalls[0]?.name, detail: { repeatLimit, modelTier: opts?.modelTier } })).catch(() => {}); } catch {}
       return { abort: true, nudge: "\n\n(Detected repeated tool calls — stopping loop)" };
     }
   } else {

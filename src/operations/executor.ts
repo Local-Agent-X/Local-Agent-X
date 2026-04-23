@@ -79,6 +79,20 @@ export function isExecutorActive(operationId: string): boolean {
   return activeExecutors.has(operationId);
 }
 
+/** Union of preBlessedSecrets across all currently-running operations. Used by
+ *  browser_fill_from_secret to decide whether to skip the first-use approval
+ *  gate. Origin-binding is enforced separately and is not overridden by this. */
+export function getActivePreBlessedSecrets(
+  loadOperationFn: (operationId: string) => { preBlessedSecrets?: string[] } | null
+): Set<string> {
+  const result = new Set<string>();
+  for (const opId of activeExecutors.keys()) {
+    const op = loadOperationFn(opId);
+    if (op?.preBlessedSecrets) for (const name of op.preBlessedSecrets) result.add(name);
+  }
+  return result;
+}
+
 // ── Internal loop ───────────────────────────────────────────────────────
 
 async function runExecutorLoop(

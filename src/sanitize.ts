@@ -157,6 +157,42 @@ export function detectInjection(text: string): Array<{ label: string; score: num
  * @param metadata - Optional metadata (url, status code, etc.)
  * @returns Wrapped content safe for LLM context injection
  */
+/**
+ * In-memory registry of secret plaintext values to scrub from any content
+ * heading to the LLM. Populated by browser_fill_from_secret after a successful
+ * fill so the value — now sitting in a DOM input — can't leak back via snapshot,
+ * extract, screenshot OCR, or any other tool result that flows through
+ * wrapExternalContent.
+ *
+ * This is belt-and-suspenders on top of the existing password-input scrub in
+ * extract.ts: that one handles the specific input element, this one handles
+ * incidental leaks (form-serialized dumps, errors that echo field values,
+ * evaluate() outputs, etc.).
+ */
+const REDACTED_SECRET_VALUES = new Set<string>();
+
+/** Register a plaintext value to redact from any outgoing external content. */
+export function registerRedactedSecretValue(value: string): void {
+  if (value && value.length >= 4) REDACTED_SECRET_VALUES.add(value);
+}
+
+/** Clear a previously-registered value (e.g. on secret rotation or deletion). */
+export function unregisterRedactedSecretValue(value: string): void {
+  REDACTED_SECRET_VALUES.delete(value);
+}
+
+/** Redact all known secret values from a string. Safe to call on any content. */
+export function redactKnownSecrets(content: string): string {
+  if (REDACTED_SECRET_VALUES.size === 0) return content;
+  let out = content;
+  for (const v of REDACTED_SECRET_VALUES) {
+    if (!v) continue;
+    // Global literal replace — no regex special-char problems.
+    out = out.split(v).join("[REDACTED_SECRET]");
+  }
+  return out;
+}
+
 export function wrapExternalContent(
   content: string,
   source: string,
@@ -164,8 +200,12 @@ export function wrapExternalContent(
 ): string {
   const id = boundaryId();
 
+  // Step 0: Scrub known secret plaintext values BEFORE any other processing so
+  // they never appear in detection warnings, metadata, or the wrapped payload.
+  let sanitized = redactKnownSecrets(content);
+
   // Step 1: Strip control characters and invisible chars
-  let sanitized = stripControlChars(content);
+  sanitized = stripControlChars(sanitized);
 
   // Step 1.5: Strip pseudo-system tags before they reach the model
   sanitized = stripSystemInjectionTags(sanitized);

@@ -1,7 +1,6 @@
 import type { Browser, Page, BrowserContext } from "playwright";
 import type { ChildProcess } from "node:child_process";
 import { wrapExternalContent } from "./sanitize.js";
-import { getRuntimeConfig } from "./config.js";
 import { ObservationRegistry, type BrowserObservation } from "./browser/observation.js";
 import { clickRef, fillRef, clickByText as clickByTextAction } from "./browser/actions.js";
 import { waitForStability } from "./browser/stability.js";
@@ -33,8 +32,6 @@ export function setBrowserAuthContext(token: string, port: string): void {
   _saxPort = port;
 }
 
-function getIdleTimeout(): number { return getRuntimeConfig().browserIdleTimeoutMs; }
-
 export class BrowserManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -44,8 +41,11 @@ export class BrowserManager {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   private resetIdle(): void {
-    if (this.idleTimer) clearTimeout(this.idleTimer);
-    this.idleTimer = setTimeout(() => this.close(), getIdleTimeout());
+    // Idle auto-close disabled — browser stays open until explicitly closed.
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
   }
 
   // Auto-inject auth token for localhost app URLs so pages load authenticated.

@@ -154,9 +154,25 @@ export function createBrowserSecretCaptureTool(
         return err(`Element was empty after ${trim ? "trim" : "read"}. The password may not have rendered yet — wait/snapshot and retry.`);
       }
 
+      // Derive provenance: the origin of the page we captured from, and the
+      // session that initiated the capture. Fill-from-secret uses these to
+      // auto-approve same-session same-origin reuse without user prompts.
+      let captureOrigin: string | undefined;
+      try {
+        const page = await manager.getPage();
+        captureOrigin = new URL(page.url()).origin;
+      } catch { /* best-effort */ }
+
       // Direct write to vault. AES-256-GCM at rest, master key in OS keychain.
       try {
-        secretsStore.set(name, value, { service, account, url: urlField, notes });
+        secretsStore.set(name, value, {
+          service,
+          account,
+          url: urlField,
+          notes,
+          origin: captureOrigin,
+          createdBySession: sessionId,
+        });
       } catch (e) {
         return err(`Vault write failed: ${(e as Error).message}`);
       }

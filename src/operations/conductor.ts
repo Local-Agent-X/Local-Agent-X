@@ -27,6 +27,8 @@ export interface ConductorOptions {
   model?: string;
   /** Known protocol names to match phases against */
   knownProtocols?: string[];
+  /** Secret names pre-blessed for automated fill during this operation */
+  preBlessedSecrets?: string[];
 }
 
 const MAX_PHASE_ATTEMPTS = 3;
@@ -60,6 +62,7 @@ export async function createOperation(goal: string, opts: ConductorOptions = {})
     currentPhase: 0,
     sharedState: {},
     events: [{ ts: Date.now(), level: "info", message: `Operation created with ${decomp.phases.length} phases` }],
+    preBlessedSecrets: opts.preBlessedSecrets && opts.preBlessedSecrets.length > 0 ? opts.preBlessedSecrets : undefined,
   };
 
   const dir = operationDir(workspaceDir, op.id);

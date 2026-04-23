@@ -118,7 +118,7 @@ function scanApiRoutes(): RouteEntry[] {
 
 function scanTools(): ToolSummary[] {
   const tools: ToolSummary[] = [];
-  const toolFiles = ["src/tools.ts", "src/memory/tools.ts", "src/browser-tools.ts", "src/operations/tools.ts"];
+  const toolFiles = ["src/tools.ts", "src/memory/tools.ts", "src/browser-tools.ts", "src/operations/tools.ts", "src/app-tools.ts"];
 
   for (const relPath of toolFiles) {
     const filePath = join(ROOT, relPath);
@@ -287,8 +287,7 @@ export function getManifestSummary(): string {
     "- **Connect Telegram**: `http_request` → `POST {{APP_URL}}/api/telegram/connect`",
     "- **Schedule recurring tasks**: `http_request` → `POST {{APP_URL}}/api/cron`",
     "- **Build a standalone app**: use `build_app` tool — creates in `workspace/apps/{name}/`",
-    "- **Pin a page to sidebar**: `http_request` POST {{APP_URL}}/api/sidebar/pins body `{\"name\":\"...\",\"icon\":\"📌\",\"url\":\"/page.html\"}`",
-    "- **Unpin from sidebar**: `http_request` DELETE {{APP_URL}}/api/sidebar/pins/PageName",
+    "- **Pin/unpin sidebar**: use `sidebar_pin` / `sidebar_unpin` tools",
     "- **Change system prompt**: `read` + `edit` on `config/system-prompt.md` (hot-reloads)",
     "- **Add/remove tools**: `read` + `edit` on `config/tools.json`",
     "",

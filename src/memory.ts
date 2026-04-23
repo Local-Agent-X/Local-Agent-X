@@ -2382,12 +2382,21 @@ export async function autoSearchContext(
   }
 
   try {
-    const results = await memory.search(userMessage, {
-      maxResults: 3,
+    // Fetch a wider candidate set, then MMR-diversify down to 3.
+    // Without this, a session with N near-duplicate snippets about the
+    // same topic (e.g. all the recent Mario-pin work) would fill all
+    // three slots with the same content and bias the model on any
+    // vaguely-related query. MMR (λ=0.7) keeps the top-scored item and
+    // rejects candidates too similar to already-picked ones.
+    const candidates = await memory.search(userMessage, {
+      maxResults: 10,
       minScore: 0.25,
     });
 
-    if (results.length === 0) return "";
+    if (candidates.length === 0) return "";
+
+    const { mmrRerank } = await import("./memory-mmr.js");
+    const results = mmrRerank(candidates, 3, 0.7);
 
     const relevant = results
       .map(

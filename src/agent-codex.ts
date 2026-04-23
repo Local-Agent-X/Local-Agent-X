@@ -62,7 +62,7 @@ export async function runCodexAgentHttp(
   history: ChatCompletionMessageParam[],
   options: AgentOptions
 ): Promise<AgentTurn> {
-  const { apiKey, model, systemPrompt, tools, security, maxIterations = 40, onEvent, signal } = options;
+  const { apiKey, model, systemPrompt, tools, security, maxIterations = 160, onEvent, signal } = options;
   const toolMap = new Map(tools.map((t) => [t.name, t]));
 
   type VisionContentPart =
@@ -93,6 +93,7 @@ export async function runCodexAgentHttp(
   const loopState = createLoopState();
   const deadEndState = createDeadEndState();
   let selfCheckFired = false;
+  let contentFilterEmpties = 0;
 
   // Detect build/action intent — force tool use on iteration 0 to prevent
   // the model from responding with text instead of calling a tool.
@@ -106,6 +107,21 @@ export async function runCodexAgentHttp(
 
     if (iteration > 0) messages = stripEphemeralMessages(messages);
     messages = checkAndCompact(messages, model, onEvent);
+
+    // Drain subagent completion queue — push-based signaling so the parent
+    // doesn't burn iterations polling agent_status.
+    if (options.sessionId) {
+      try {
+        const { drainCompletions, formatCompletionMessage } = await import("./agency/completion-queue.js");
+        const notices = drainCompletions(options.sessionId);
+        if (notices.length > 0) {
+          messages.push({ role: "user", content: formatCompletionMessage(notices) } as ChatCompletionMessageParam);
+          // Invalidate previousResponseId so Codex sees the newly-pushed message
+          previousResponseId = undefined;
+          lastContextLength = 0;
+        }
+      } catch {}
+    }
 
     let assistantContent = "";
     const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
@@ -170,6 +186,17 @@ export async function runCodexAgentHttp(
       }
     } catch (e) {
       const errMsg = (e as Error).message || "Stream error";
+      const { isContextOverflowError, forceCompact } = await import("./context-manager.js");
+      if (isContextOverflowError(e) && iteration < maxIterations - 1) {
+        const before = messages.length;
+        messages = forceCompact(messages, 2);
+        previousResponseId = undefined; // Force full-context restart next turn
+        lastContextLength = 0;
+        console.warn(`[agent] Codex context overflow — force-compacted ${before} → ${messages.length} msgs and retrying`);
+        try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "context-overflow", sessionId: options.sessionId, detail: { provider: "codex", model, before, after: messages.length } })).catch(() => {}); } catch {}
+        onEvent?.({ type: "context_status", percentage: 100, level: "emergency", usedTokens: 0, maxTokens: 0, compacted: true });
+        continue;
+      }
       console.error("[agent] Codex HTTP stream error:", errMsg);
       onEvent?.({ type: "error", message: errMsg });
       // On error, invalidate previousResponseId so the next attempt
@@ -179,6 +206,7 @@ export async function runCodexAgentHttp(
         messages: [{ role: "system", content: systemPrompt }, ...messages],
         usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
         stopReason: "error",
+        errorMessage: errMsg,
       };
     }
 
@@ -205,6 +233,41 @@ export async function runCodexAgentHttp(
         if (retryText.trim()) assistantContent = retryText;
       } catch (e) {
         console.error(`[agent] Codex retry failed:`, (e as Error).message);
+      }
+
+      // Content-filter escape valve. When Codex moderation trips on context
+      // (e.g. personal/emotional email content post-send), every future
+      // response comes back empty.
+      //
+      // Two-stage recovery:
+      //   1. First trip: inject a nudge telling the model to reply with a
+      //      short neutral summary — often enough to snap Codex out of the
+      //      moderation loop WITHOUT failing over to another provider.
+      //   2. Second trip: bail with a typed error so the chat route's
+      //      provider failover (→ Claude, xAI, etc.) takes over.
+      // Prevents the 18-retry / $0.80 spinout observed in the jennycortez
+      // smtp-setup incident where Codex burned ~2 minutes on the confirmation
+      // message after a successful send.
+      if (toolCalls.length === 0 && !assistantContent.trim()) {
+        contentFilterEmpties++;
+        if (contentFilterEmpties === 1) {
+          const nudge =
+            "[SYSTEM] Your previous reply came back empty — content moderation likely blocked it. Reply with ONE short neutral sentence confirming what was done. Do NOT quote email bodies, personal/emotional content, passwords, or any sensitive details. Just: `[action] completed.`";
+          console.warn("[agent] Codex content-filter nudge (1st attempt — asking for neutral summary)");
+          messages.push({ role: "user", content: nudge } as ChatCompletionMessageParam);
+          previousResponseId = undefined;
+          lastContextLength = 0;
+          continue;
+        }
+        const msg = `content_filter: Codex returned ${contentFilterEmpties} empty responses this turn — moderation loop. Aborting so another provider can take the turn.`;
+        console.warn(`[agent] ${msg}`);
+        previousResponseId = undefined;
+        return {
+          messages: [{ role: "system", content: systemPrompt }, ...messages],
+          usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
+          stopReason: "error",
+          errorMessage: msg,
+        };
       }
     }
 
@@ -264,7 +327,7 @@ export async function runCodexAgentHttp(
 
     let toolResults;
     try {
-      toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal);
+      toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal, messages);
     } catch (e) {
       console.error("[agent] Tool execution error (Codex):", (e as Error).message);
       toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];

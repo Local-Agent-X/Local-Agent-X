@@ -23,6 +23,10 @@ export interface AgentTurn {
   messages: ChatCompletionMessageParam[];
   usage: { promptTokens: number; completionTokens: number; totalTokens: number };
   stopReason: "end_turn" | "max_iterations" | "abort" | "error";
+  /** When stopReason is "error", the provider's error message — used by the
+   * chat route to decide whether the error is transient (rate limit, auth,
+   * overload) and eligible for failover to another provider. */
+  errorMessage?: string;
 }
 
 // ── Security Types ──
@@ -109,6 +113,10 @@ export interface SAXConfig {
   sdServerUrl: string;
   videoServerUrl: string;
   xttsServerUrl: string;
+
+  /** Browser session mode. "isolated" = dedicated agent profile (safer).
+   *  "attach" = your real Chrome profile, requires Chrome closed. */
+  browserMode: "isolated" | "attach";
 
   // ── Externalized limits & timeouts ──
   browserCdpPort: number;

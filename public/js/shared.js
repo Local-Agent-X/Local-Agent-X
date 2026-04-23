@@ -214,6 +214,21 @@ function md(s) {
     } else if (olMatch) {
       if (!inOl) { if (inUl) { result.push('</ul>'); inUl = false; } result.push('<ol style="margin:4px 0;padding-left:20px">'); inOl = true; }
       result.push(`<li>${olMatch[2]}</li>`);
+    } else if (line.trim() === '' && (inUl || inOl)) {
+      // Blank line inside a list: peek ahead. If the next non-blank line is
+      // another item of the SAME list type, keep the list open so the renderer
+      // doesn't close+reopen (which restarts <ol> numbering at 1).
+      let j = i + 1;
+      while (j < lines.length && lines[j].trim() === '') j++;
+      const nextLine = j < lines.length ? lines[j] : '';
+      const nextIsOl = /^(\s*)\d+\. (.+)$/.test(nextLine);
+      const nextIsUl = /^(\s*)[-*] (.+)$/.test(nextLine);
+      if ((inOl && nextIsOl) || (inUl && nextIsUl)) {
+        continue; // swallow the blank, keep list open
+      }
+      if (inUl) { result.push('</ul>'); inUl = false; }
+      if (inOl) { result.push('</ol>'); inOl = false; }
+      result.push(line);
     } else {
       if (inUl) { result.push('</ul>'); inUl = false; }
       if (inOl) { result.push('</ol>'); inOl = false; }

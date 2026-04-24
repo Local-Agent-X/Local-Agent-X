@@ -2,11 +2,11 @@
 // buffer. Frames arrive from the main thread via postMessage; the process()
 // callback pulls samples out at the AudioContext's sample rate.
 //
-// Assumes incoming audio is 16kHz. If the AudioContext runs faster (48kHz
-// is common), we linearly upsample on read. It's a simple nearest-neighbor
-// stretch — fine for speech, not hi-fi.
+// The incoming rate is set via the "setRate" command (16kHz for mic loopback,
+// 22050Hz for TTS). If the AudioContext runs faster (48kHz is common), we
+// linearly stretch on read — nearest-neighbor, fine for speech, not hi-fi.
 
-const RING_CAPACITY = 16000 * 10; // 10 seconds @ 16kHz worst case
+const RING_CAPACITY = 48000 * 10; // 10 seconds headroom at any plausible rate
 
 class PlaybackProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -15,21 +15,28 @@ class PlaybackProcessor extends AudioWorkletProcessor {
     this.writeIdx = 0;
     this.readIdx = 0;
     this.available = 0;
-    // Ratio between context sample rate and the 16kHz stream we receive.
-    // If context is 48kHz, upsample factor is 3.
-    this.upsampleFactor = Math.max(1, sampleRate / 16000);
+    this.inputRate = 16000; // default; updated via setRate
+    this.upsampleFactor = Math.max(1, sampleRate / this.inputRate);
     this.fractional = 0;
 
     this.port.onmessage = (e) => {
-      if (e.data && e.data.cmd === "pcm") {
+      if (!e.data) return;
+      if (e.data.cmd === "pcm") {
         const arr = new Int16Array(e.data.pcm);
         this.writePCM(arr);
-      } else if (e.data && e.data.cmd === "flush") {
+      } else if (e.data.cmd === "flush") {
         // Interrupt: drop everything in the ring so pending TTS doesn't play
         this.writeIdx = 0;
         this.readIdx = 0;
         this.available = 0;
         this.fractional = 0;
+      } else if (e.data.cmd === "setRate") {
+        const rate = Number(e.data.rate);
+        if (rate > 0 && rate <= 48000) {
+          this.inputRate = rate;
+          this.upsampleFactor = Math.max(0.5, sampleRate / rate);
+          this.fractional = 0;
+        }
       }
     };
   }

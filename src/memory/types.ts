@@ -82,13 +82,40 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
 
 // ── Search / chunk types ──
 
+/**
+ * Canonical source values written to chunks.source. Replaces the old
+ * "memory"/"sessions"/"entities" trio with a finer split so search filters
+ * can target one store at a time.
+ *
+ *   entity          — bank/entities/<slug>.md
+ *   daily-log       — YYYY-MM-DD.md
+ *   mind            — MIND.md
+ *   session-summary — session-summaries/<id>.md
+ *   session         — raw session JSON (~/.sax/sessions/<id>.json)
+ *   personality     — USER.md / HEART.md / other memory-root files
+ *   import          — ChatGPT / Claude / Slack imports
+ */
+export type CanonicalSource =
+  | "entity"
+  | "daily-log"
+  | "mind"
+  | "session-summary"
+  | "session"
+  | "personality"
+  | "import";
+
+export const CANONICAL_SOURCES: readonly CanonicalSource[] = [
+  "entity", "daily-log", "mind", "session-summary",
+  "session", "personality", "import",
+] as const;
+
 export interface MemorySearchResult {
   path: string;
   startLine: number;
   endLine: number;
   score: number;
   snippet: string;
-  source: "memory" | "sessions" | "entities";
+  source: CanonicalSource;
   entities?: string[];
   kind?: FactKind;
   metadata?: ChunkMetadata;

@@ -113,9 +113,9 @@ async function main() {
         date: item.haystack_dates?.[si] || undefined,
       };
       const virtualPath = `bench/${item.question_id}/${realSessionId}`;
-      const chunks = chunkConversationPairs(messages, virtualPath, "sessions", metadata);
+      const chunks = chunkConversationPairs(messages, virtualPath, "import", metadata);
       if (chunks.length > 0) {
-        await memory.indexChunks(chunks, virtualPath, "sessions");
+        await memory.indexChunks(chunks, virtualPath, "import");
         sessionPaths.push(virtualPath);
       }
     }

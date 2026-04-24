@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*; media-src 'self' blob: mediastream:; worker-src 'self' blob: data:;">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
+<meta http-equiv="Pragma" content="no-cache"/>
+<meta http-equiv="Expires" content="0"/>
+<title>Voice Transport Loopback Test</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; color: #222; }
+  h1 { font-size: 1.2rem; }
+  button { padding: 10px 18px; font-size: .95rem; border-radius: 6px; border: 1px solid #333; background: #fff; cursor: pointer; }
+  button.active { background: #e74c3c; color: #fff; border-color: #e74c3c; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #log { background: #111; color: #0f0; font-family: monospace; font-size: .8rem; padding: 12px; height: 260px; overflow-y: auto; border-radius: 6px; margin-top: 18px; white-space: pre-wrap; }
+  #meter { height: 12px; background: #eee; border-radius: 6px; overflow: hidden; margin-top: 14px; }
+  #meter > div { height: 100%; background: #2ecc71; width: 0%; transition: width 30ms linear; }
+  .row { display: flex; gap: 12px; align-items: center; margin-top: 14px; }
+  .hint { color: #666; font-size: .85rem; }
+</style>
+</head>
+<body>
+<h1>Voice Transport Loopback — Phase 1</h1>
+<p class="hint">Click <strong>Start</strong>, allow the mic, then talk. Your voice should come back through your speakers after a tiny delay. If you can hear yourself (with some latency), the WebSocket + AudioWorklet pipeline is working end-to-end.</p>
+
+<div class="row">
+  <button id="toggle">Start</button>
+  <span id="status" class="hint">idle</span>
+</div>
+
+<div id="meter"><div id="meter-bar"></div></div>
+
+<pre id="log"></pre>
+
+<script>
+// URL param wins over storage — a server restart invalidates the storage
+// token but the URL reflects the CURRENT valid token. Prefer URL when both
+// are present so a fresh restart doesn't lock us out with a stale token.
+const _urlToken = new URLSearchParams(location.search).get('token') || '';
+if (_urlToken) {
+  sessionStorage.setItem('sax_token', _urlToken);
+  localStorage.setItem('sax_token', _urlToken);
+}
+const AUTH_TOKEN = _urlToken || sessionStorage.getItem('sax_token') || localStorage.getItem('sax_token') || '';
+
+const logEl = document.getElementById('log');
+const toggleBtn = document.getElementById('toggle');
+const statusEl = document.getElementById('status');
+const meterBar = document.getElementById('meter-bar');
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString();
+  logEl.textContent += `[${t}] ${msg}\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+let audioContext = null;
+let micNode = null;
+let playbackNode = null;
+let stream = null;
+let ws = null;
+let running = false;
+let framesIn = 0;
+let framesOut = 0;
+let statsTimer = null;
+
+async function start() {
+  if (running) return;
+  log('starting…');
+  statusEl.textContent = 'connecting';
+
+  // 1) WebSocket
+  const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/voice?token=${encodeURIComponent(AUTH_TOKEN)}`;
+  ws = new WebSocket(wsUrl);
+  ws.binaryType = 'arraybuffer';
+
+  log(`ws url: ${wsUrl.replace(/token=[^&]+/, 'token=***' + AUTH_TOKEN.slice(-4))}`);
+  await new Promise((resolve, reject) => {
+    ws.onopen = () => { log('ws open'); resolve(); };
+    ws.onerror = (e) => { log('ws error event — (check devtools Network tab for the actual close code)'); };
+    ws.onclose = (e) => {
+      if (ws.readyState !== WebSocket.OPEN) {
+        const codeStr = e.code === 4001 ? '4001 Unauthorized (token rejected)'
+          : e.code === 1006 ? '1006 abnormal close (server never accepted upgrade — likely path/CSP/network)'
+          : String(e.code);
+        log(`ws closed before open: code=${codeStr} reason="${e.reason || ''}" wasClean=${e.wasClean}`);
+        reject(new Error(`WebSocket closed before open (code ${e.code})`));
+      }
+    };
+  });
+
+  ws.send(JSON.stringify({ type: 'hello', sessionId: 'voice-test-' + Date.now() }));
+
+  // 2) AudioContext. Ask for 16kHz; browsers may ignore and give us 48k.
+  audioContext = new AudioContext({ sampleRate: 16000 });
+  await audioContext.audioWorklet.addModule('/js/voice/mic-capture-worklet.js');
+  await audioContext.audioWorklet.addModule('/js/voice/playback-worklet.js');
+  log(`audio context running at ${audioContext.sampleRate} Hz`);
+
+  // 3) Mic
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 16000 },
+  });
+  const source = audioContext.createMediaStreamSource(stream);
+  micNode = new AudioWorkletNode(audioContext, 'mic-capture');
+  micNode.port.onmessage = (e) => {
+    if (e.data && e.data.type === 'pcm') {
+      framesIn++;
+      // Send to server as binary
+      if (ws.readyState === WebSocket.OPEN) ws.send(e.data.pcm);
+      // Update mic meter
+      const view = new Int16Array(e.data.pcm);
+      let peak = 0;
+      for (let i = 0; i < view.length; i++) {
+        const a = Math.abs(view[i]);
+        if (a > peak) peak = a;
+      }
+      const pct = Math.min(100, (peak / 0x7fff) * 100);
+      meterBar.style.width = pct.toFixed(1) + '%';
+    }
+  };
+  source.connect(micNode);
+
+  // 4) Playback
+  playbackNode = new AudioWorkletNode(audioContext, 'pcm-playback');
+  playbackNode.connect(audioContext.destination);
+
+  // 5) Route incoming binary frames to playback
+  ws.onmessage = (e) => {
+    if (typeof e.data === 'string') {
+      try {
+        const msg = JSON.parse(e.data);
+        log('ws event: ' + msg.type + (msg.sessionId ? ' sessionId=' + msg.sessionId : ''));
+      } catch { log('ws text: ' + e.data); }
+      return;
+    }
+    // Binary — Int16 PCM frame
+    framesOut++;
+    playbackNode.port.postMessage({ cmd: 'pcm', pcm: e.data });
+  };
+  ws.onclose = () => { log('ws closed'); cleanup(); };
+
+  // 6) Start capturing
+  micNode.port.postMessage({ cmd: 'start' });
+  running = true;
+  toggleBtn.textContent = 'Stop';
+  toggleBtn.classList.add('active');
+  statusEl.textContent = 'streaming';
+  log('capturing mic — talk and you should hear yourself');
+
+  statsTimer = setInterval(() => {
+    statusEl.textContent = `streaming · in ${framesIn} · out ${framesOut} · lag ${framesIn - framesOut}`;
+  }, 500);
+}
+
+function stop() {
+  if (!running) return;
+  log('stopping…');
+  try { micNode && micNode.port.postMessage({ cmd: 'stop' }); } catch {}
+  try { stream && stream.getTracks().forEach(t => t.stop()); } catch {}
+  try { ws && ws.send(JSON.stringify({ type: 'bye' })); } catch {}
+  try { ws && ws.close(); } catch {}
+  cleanup();
+}
+
+function cleanup() {
+  running = false;
+  toggleBtn.textContent = 'Start';
+  toggleBtn.classList.remove('active');
+  statusEl.textContent = 'idle';
+  meterBar.style.width = '0%';
+  if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
+  try { audioContext && audioContext.close(); } catch {}
+  audioContext = null; micNode = null; playbackNode = null; stream = null; ws = null;
+}
+
+toggleBtn.addEventListener('click', () => { running ? stop() : start().catch(e => { log('start failed: ' + e.message); cleanup(); }); });
+
+if (!AUTH_TOKEN) {
+  log('⚠ no auth token — open this page via http://127.0.0.1:7007/voice-test.html?token=YOUR_TOKEN');
+}
+</script>
+</body>
+</html>

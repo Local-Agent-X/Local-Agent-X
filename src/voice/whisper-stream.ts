@@ -51,7 +51,11 @@ export function createWhisperTranscriber(paths: WhisperModelPaths): WhisperTrans
         enableSegmentTimestamps: 0,
       },
       tokens: paths.tokens,
-      numThreads: 2, // Whisper decode is the bottleneck; 2 threads ~= 1.6x speedup
+      // Must be 1 on sherpa-onnx's WASM build (no SharedArrayBuffer/pthread
+      // support). Setting > 1 throws an Emscripten exception pointer at
+      // OfflineRecognizer init. For parallelism we'd need the native addon
+      // build of sherpa-onnx.
+      numThreads: 1,
       provider: "cpu",
       debug: 0,
       modelType: "whisper",

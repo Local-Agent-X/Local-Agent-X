@@ -102,8 +102,28 @@ export async function runCodexAgentHttp(
   const ACTION_INTENT_RE = /\b(schedule|save|remember|send|post|delete|update|run|execute|launch|open|close|deploy|install)\b/i;
   const shouldForceTools = BUILD_INTENT_RE.test(userMessage) || ACTION_INTENT_RE.test(userMessage);
 
+  // Per-turn token ceiling. The raised iteration cap (160) plus the chance
+  // of content-filter spins means a single turn can now burn hundreds of
+  // thousands of tokens before hitting maxIterations. Hard-cap total
+  // input+output at 500k per turn so a stuck agent can't silently spend $3+
+  // on useless retries. The iteration ceiling protects against finite loops;
+  // this protects against expensive ones.
+  const TURN_TOKEN_CEILING = 500_000;
+
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal?.aborted) return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "abort" };
+
+    if (totalInput + totalOutput > TURN_TOKEN_CEILING) {
+      const abortMsg = `Turn token ceiling hit: ${totalInput + totalOutput} tokens used (cap ${TURN_TOKEN_CEILING}). Aborting to prevent runaway cost.`;
+      console.warn(`[agent] ${abortMsg}`);
+      try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "codex", model, detail: { reason: "turn-token-ceiling", totalInput, totalOutput } })).catch(() => {}); } catch {}
+      return {
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
+        stopReason: "error",
+        errorMessage: abortMsg,
+      };
+    }
 
     if (iteration > 0) messages = stripEphemeralMessages(messages);
     messages = checkAndCompact(messages, model, onEvent);

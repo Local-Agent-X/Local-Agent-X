@@ -249,6 +249,12 @@ export class MemoryConsolidator {
 
     const section = `\n\n## Consolidated (${todayDateStr()})\n${newLines.join("\n")}\n`;
     writeFileSync(MIND_PATH, mindContent + section, "utf-8");
+
+    // Write-through: MIND.md just changed, push the new chunks into search.
+    // Fire-and-forget so a missing universal-index never blocks consolidation.
+    import("./memory/universal-index.js")
+      .then(({ getUniversalIndex }) => getUniversalIndex()?.indexMindFile())
+      .catch(() => {});
   }
 
   // ── Merge related facts ───────────────────────────────────
@@ -524,6 +530,7 @@ export class MemoryConsolidator {
 
   private updateAllEntityPages(grouped: Map<string, FactEntry[]>): number {
     let updated = 0;
+    const touchedSlugs: string[] = [];
     for (const [slug, facts] of grouped) {
       if (facts.length === 0) continue;
       const entityPath = join(ENTITIES_DIR, `${slug}.md`);
@@ -553,6 +560,19 @@ export class MemoryConsolidator {
       }
 
       updated++;
+      touchedSlugs.push(slug);
+    }
+
+    // Write-through reindex for every entity page that changed. Fire-and-
+    // forget so consolidation never blocks on the embedding pipeline.
+    if (touchedSlugs.length > 0) {
+      import("./memory/universal-index.js")
+        .then(({ getUniversalIndex }) => {
+          const ui = getUniversalIndex();
+          if (!ui) return;
+          for (const s of touchedSlugs) ui.indexEntityPage(s).catch(() => {});
+        })
+        .catch(() => {});
     }
     return updated;
   }

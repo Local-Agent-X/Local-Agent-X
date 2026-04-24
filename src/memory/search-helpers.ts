@@ -78,7 +78,7 @@ export function toSearchResult(
     endLine: chunk.endLine,
     score: chunk.score,
     snippet: chunk.text.slice(0, snippetMaxChars),
-    source: chunk.source as "memory" | "sessions" | "entities",
+    source: chunk.source as MemorySearchResult["source"],
     entities: entities.length > 0 ? entities : undefined,
     metadata,
   };

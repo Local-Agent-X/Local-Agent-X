@@ -116,9 +116,9 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
         { role: "user" as const, content: "This is a test message for debugging indexChunks" },
         { role: "assistant" as const, content: "I received your test message. This confirms the ingest pipeline works." },
       ];
-      const chunks = chunkConversationPairs(testMessages, "import/test/debug-" + Date.now(), "sessions", { source_type: "import", session_id: "test-debug" });
+      const chunks = chunkConversationPairs(testMessages, "import/test/debug-" + Date.now(), "import", { source_type: "import", session_id: "test-debug" });
       console.log(`[test-index] Created ${chunks.length} chunks, calling indexChunks...`);
-      await ctx.memoryIndex.indexChunks(chunks, "import/test/debug-" + Date.now(), "sessions");
+      await ctx.memoryIndex.indexChunks(chunks, "import/test/debug-" + Date.now(), "import");
       console.log(`[test-index] indexChunks returned`);
       // Verify
       const stats = ctx.memoryIndex.getStats();

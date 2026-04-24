@@ -108,3 +108,9 @@ export function turnPerformedCommittingCall(
 ): boolean {
   return detectCommittingCalls(messages).length > 0;
 }
+
+/** True if a single tool name is in the committing set. Lets detectors
+ *  ask "did this turn commit anything yet?" without re-scanning messages. */
+export function isCommittingTool(name: string): boolean {
+  return COMMITTING_TOOLS.has(name);
+}

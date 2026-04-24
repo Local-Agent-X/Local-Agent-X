@@ -12,7 +12,7 @@ import type { RBACManager, Role } from "./rbac.js";
 import { streamAnthropicResponse } from "./anthropic-client.js";
 import { executeToolCalls, toolsToOpenAI, checkAndCompact } from "./tool-executor.js";
 import { getRuntimeConfig } from "./config.js";
-import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState } from "./agent-guards.js";
+import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkUnmatchedActionClaim, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState } from "./agent-guards.js";
 import { stripSystemInjectionTags } from "./sanitize.js";
 
 /** Sanitize tool result content to remove pseudo-system injection tags. */
@@ -244,6 +244,7 @@ export async function runStandardAgent(
     const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: string } }> = [
       { type: "text", text: userMessage },
     ];
+    const filePathHints: string[] = [];
     for (const img of options.images) {
       try {
         const { readFileSync } = await import("node:fs");
@@ -252,9 +253,19 @@ export async function runStandardAgent(
         const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
         const b64 = `data:${mime};base64,${data.toString("base64")}`;
         parts.push({ type: "image_url", image_url: { url: b64, detail: "auto" } });
+        if (img.filePath) filePathHints.push(`  - ${img.name} → ${img.filePath}`);
       } catch (e) {
         console.warn(`[agent] Could not read image ${img.name}:`, e);
       }
+    }
+    if (filePathHints.length > 0) {
+      parts.push({
+        type: "text",
+        text:
+          `\n\n[Attached file paths on disk — use these if you need to copy the real bytes into the workspace]\n` +
+          filePathHints.join("\n") +
+          `\n\nTo use an attachment as an app asset: read the file with bash/read, then write it to the target path under workspace/apps/<app>/, or use bash cp. Do NOT generate a new image or download from the web when a user attachment exists — use the file at the path above.`,
+      });
     }
     userContent = parts as ChatCompletionMessageParam["content"];
   } else {
@@ -272,14 +283,37 @@ export async function runStandardAgent(
   const loopState = createLoopState();
   const deadEndState = createDeadEndState();
   let selfCheckFired = false;
+  // Tool-verified action-claim check state (see agent-guards.checkUnmatchedActionClaim)
+  const toolsCalledThisTurn = new Set<string>();
+  let unmatchedClaimNudged = false;
+  // Post-turn validation state
+  const { createRetryCounters, runPostTurnDetectors, computeEvidenceCount } =
+    await import("./agent-loop-detectors.js");
+  const { createPromptLayers, composeSystemPrompt, isAckMessage, ACK_FAST_PATH_INSTRUCTION } =
+    await import("./agent-loop-prompt-layers.js");
+  const retryCounters = createRetryCounters();
+  const promptLayers = createPromptLayers();
+  const evidenceHistory: number[] = [];
+  if (isAckMessage(userMessage)) {
+    promptLayers.ackFastPath = ACK_FAST_PATH_INSTRUCTION;
+  }
 
   // Force tool use on first iteration for build/action intents
   const BUILD_INTENT_RE = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script|file|document|spreadsheet)/i;
   const ACTION_INTENT_RE = /\b(schedule|save|remember|send|post|delete|update|run|execute|launch|open|close|deploy|install)\b/i;
   const shouldForceTools = BUILD_INTENT_RE.test(userMessage) || ACTION_INTENT_RE.test(userMessage);
 
-  // Per-turn token ceiling — hard cap on runaway cost (see agent-codex.ts)
+  // Per-turn safety ceilings (see agent-codex.ts for rationale)
   const TURN_TOKEN_CEILING = 500_000;
+  const TURN_WALL_CLOCK_MS = 180_000;
+  const MID_TURN_MIN_ITERATION = 5;
+  const MID_TURN_EVIDENCE_STALE_WINDOW = 3;
+  const turnStartMs = Date.now();
+  const committingToolsThisTurn = new Set<string>();
+  const { startHeartbeat: startHeartbeatStd } = await import("./session-heartbeat.js");
+  const heartbeatStd = startHeartbeatStd({ sessionId: options.sessionId, onEvent, turnStartMs });
+  const { onTurnRelease: onTurnReleaseStd } = await import("./session-turn-lock.js");
+  onTurnReleaseStd(options.sessionId, () => heartbeatStd.stop());
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (totalPromptTokens + totalCompletionTokens > TURN_TOKEN_CEILING) {
@@ -294,8 +328,43 @@ export async function runStandardAgent(
       };
     }
 
+    // Wall-clock + mid-turn staleness guards
+    const turnElapsed = Date.now() - turnStartMs;
+    if (turnElapsed > TURN_WALL_CLOCK_MS && committingToolsThisTurn.size === 0) {
+      const abortMsg = `Wall-clock turn ceiling hit: ${Math.round(turnElapsed / 1000)}s, iteration ${iteration}, no committing tool. Aborting.`;
+      console.warn(`[agent] ${abortMsg}`);
+      try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: options.provider, model, detail: { reason: "turn-wall-clock", elapsedMs: turnElapsed, iteration } })).catch(() => {}); } catch {}
+      return {
+        messages,
+        usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },
+        stopReason: "error",
+        errorMessage: abortMsg,
+      };
+    }
+    if (iteration >= MID_TURN_MIN_ITERATION && evidenceHistory.length >= MID_TURN_EVIDENCE_STALE_WINDOW && committingToolsThisTurn.size === 0) {
+      const w = evidenceHistory.slice(-MID_TURN_EVIDENCE_STALE_WINDOW);
+      if (w.every(v => v === w[0])) {
+        const abortMsg = `Mid-turn evidence stale: ${w[0]} evidence for ${MID_TURN_EVIDENCE_STALE_WINDOW} iterations with no committing tool. Aborting.`;
+        console.warn(`[agent] ${abortMsg}`);
+        try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: options.provider, model, detail: { reason: "mid-turn-stale", iteration, evidence: w } })).catch(() => {}); } catch {}
+        return {
+          messages,
+          usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },
+          stopReason: "error",
+          errorMessage: abortMsg,
+        };
+      }
+    }
+
     if (iteration > 0) messages = stripEphemeralMessages(messages);
     messages = checkAndCompact(messages, model, onEvent);
+
+    // Re-compose system prompt with any active retry/ack layers. This layer
+    // gets refreshed every iteration — fresh nudges appear, resolved ones
+    // disappear — so the model only sees the instruction relevant to NOW.
+    if (messages.length > 0 && messages[0].role === "system") {
+      messages[0] = { role: "system", content: composeSystemPrompt(systemPrompt, promptLayers) };
+    }
 
     // Drain subagent completion queue — inject any pending subagent results as
     // a synthetic user message so the parent doesn't need to poll agent_status.
@@ -440,6 +509,32 @@ export async function runStandardAgent(
     }
     messages.push(assistantMsg);
 
+    // Post-turn validation phase — run the layered detectors for incomplete
+    // turns (planning-only, single-action-stop, reasoning-only, empty
+    // response, uncommitted turn, evidence staleness). First hit with budget
+    // remaining injects a nudge and continues.
+    {
+      evidenceHistory.push(computeEvidenceCount(messages));
+      const detectorState = {
+        assistantText: assistantContent,
+        toolCallsThisIteration: toolCalls.map(tc => ({ name: tc.name, arguments: tc.arguments })),
+        toolsCalledThisTurn,
+        hasReasoning: false,
+        completionTokens: totalCompletionTokens,
+        iteration,
+        evidenceCount: evidenceHistory[evidenceHistory.length - 1],
+        evidenceHistory: [...evidenceHistory],
+      };
+      const hit = runPostTurnDetectors(detectorState, retryCounters);
+      if (hit && iteration < maxIterations - 1) {
+        console.warn(`[agent] Post-turn detector fired: ${hit.kind}`);
+        try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: options.provider, model, detail: { reason: `post-turn-${hit.kind}` } })).catch(() => {}); } catch {}
+        promptLayers.retry = hit;
+        continue;
+      }
+      promptLayers.retry = undefined;
+    }
+
     if (toolCalls.length === 0) {
       // Approval hallucination
       const approvalNudge = checkApprovalHallucination(assistantContent);
@@ -455,6 +550,17 @@ export async function runStandardAgent(
         console.warn(`[agent] Creation hallucination detected — nudging`);
         messages.push({ role: "user", content: creationNudge } as ChatCompletionMessageParam);
         continue;
+      }
+
+      // Tool-verified action-claim check
+      if (!unmatchedClaimNudged && iteration < maxIterations - 1) {
+        const claimNudge = checkUnmatchedActionClaim(assistantContent, toolsCalledThisTurn);
+        if (claimNudge) {
+          console.warn(`[agent] Unmatched action claim detected — nudging`);
+          unmatchedClaimNudged = true;
+          messages.push({ role: "user", content: claimNudge } as ChatCompletionMessageParam);
+          continue;
+        }
       }
 
       // Self-check: unresolved tool errors (cap at one per run)
@@ -487,6 +593,18 @@ export async function runStandardAgent(
     if (loopResult.nudge) {
       messages.push({ role: "user", content: loopResult.nudge } as ChatCompletionMessageParam);
     }
+
+    // Record attempted tool names for the action-claim check + update the
+    // session turn-lock registry with live progress.
+    const { isCommittingTool: isCommittingStd } = await import("./committing-tool-check.js");
+    const { markIteration: markTurnLockStd } = await import("./session-turn-lock.js");
+    const iterationToolNamesStd: string[] = [];
+    for (const tc of toolCalls) {
+      toolsCalledThisTurn.add(tc.name);
+      iterationToolNamesStd.push(tc.name);
+      if (isCommittingStd(tc.name)) committingToolsThisTurn.add(tc.name);
+    }
+    markTurnLockStd(options.sessionId, iterationToolNamesStd);
 
     let toolResults;
     try {
@@ -544,6 +662,7 @@ export async function runAnthropicAgent(
     const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: string } }> = [
       { type: "text", text: userMessage },
     ];
+    const filePathHintsA: string[] = [];
     for (const img of options.images) {
       try {
         const { readFileSync } = await import("node:fs");
@@ -552,9 +671,19 @@ export async function runAnthropicAgent(
         const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
         const b64 = `data:${mime};base64,${data.toString("base64")}`;
         parts.push({ type: "image_url", image_url: { url: b64, detail: "auto" } });
+        if (img.filePath) filePathHintsA.push(`  - ${img.name} → ${img.filePath}`);
       } catch (e) {
         console.warn(`[agent] Could not read image ${img.name}:`, e);
       }
+    }
+    if (filePathHintsA.length > 0) {
+      parts.push({
+        type: "text",
+        text:
+          `\n\n[Attached file paths on disk — use these if you need to copy the real bytes into the workspace]\n` +
+          filePathHintsA.join("\n") +
+          `\n\nTo use an attachment as an app asset: read the file with bash/read, then write it to the target path under workspace/apps/<app>/, or use bash cp. Do NOT generate a new image or download from the web when a user attachment exists — use the file at the path above.`,
+      });
     }
     userContent = parts as ChatCompletionMessageParam["content"];
   }
@@ -568,6 +697,17 @@ export async function runAnthropicAgent(
   let selfCheckFiredAnthropic = false;
   const loopStateAnthropic = createLoopState();
   const deadEndStateAnthropic = createDeadEndState();
+  // Tool-verified action-claim check state
+  const toolsCalledThisTurnAnthropic = new Set<string>();
+  let unmatchedClaimNudgedAnthropic = false;
+  // Post-turn validation state
+  const retryCountersAnthropic = (await import("./agent-loop-detectors.js")).createRetryCounters();
+  const promptLayersAnthropic = (await import("./agent-loop-prompt-layers.js")).createPromptLayers();
+  const evidenceHistoryAnthropic: number[] = [];
+  {
+    const { isAckMessage, ACK_FAST_PATH_INSTRUCTION } = await import("./agent-loop-prompt-layers.js");
+    if (isAckMessage(userMessage)) promptLayersAnthropic.ackFastPath = ACK_FAST_PATH_INSTRUCTION;
+  }
   const anthropicTools = tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
 
   // Force tool use on first iteration for build/action intents
@@ -575,8 +715,17 @@ export async function runAnthropicAgent(
   const ACTION_INTENT_RE_A = /\b(schedule|save|remember|send|post|delete|update|run|execute|launch|open|close|deploy|install)\b/i;
   const shouldForceToolsA = BUILD_INTENT_RE_A.test(userMessage) || ACTION_INTENT_RE_A.test(userMessage);
 
-  // Per-turn token ceiling — hard cap on runaway cost (see agent-codex.ts)
+  // Per-turn safety ceilings (Anthropic path) — mirror of standard/codex
   const TURN_TOKEN_CEILING_A = 500_000;
+  const TURN_WALL_CLOCK_MS_A = 180_000;
+  const MID_TURN_MIN_ITERATION_A = 5;
+  const MID_TURN_EVIDENCE_STALE_WINDOW_A = 3;
+  const turnStartMsA = Date.now();
+  const committingToolsThisTurnA = new Set<string>();
+  const { startHeartbeat: startHeartbeatA } = await import("./session-heartbeat.js");
+  const heartbeatA = startHeartbeatA({ sessionId: options.sessionId, onEvent, turnStartMs: turnStartMsA });
+  const { onTurnRelease: onTurnReleaseA } = await import("./session-turn-lock.js");
+  onTurnReleaseA(options.sessionId, () => heartbeatA.stop());
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (totalInput + totalOutput > TURN_TOKEN_CEILING_A) {
@@ -589,6 +738,34 @@ export async function runAnthropicAgent(
         stopReason: "error",
         errorMessage: abortMsg,
       };
+    }
+
+    // Wall-clock + mid-turn staleness guards
+    const turnElapsedA = Date.now() - turnStartMsA;
+    if (turnElapsedA > TURN_WALL_CLOCK_MS_A && committingToolsThisTurnA.size === 0) {
+      const abortMsg = `Wall-clock turn ceiling hit (Anthropic): ${Math.round(turnElapsedA / 1000)}s, iteration ${iteration}, no committing tool. Aborting.`;
+      console.warn(`[agent] ${abortMsg}`);
+      try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "anthropic", model, detail: { reason: "turn-wall-clock", elapsedMs: turnElapsedA, iteration } })).catch(() => {}); } catch {}
+      return {
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
+        stopReason: "error",
+        errorMessage: abortMsg,
+      };
+    }
+    if (iteration >= MID_TURN_MIN_ITERATION_A && evidenceHistoryAnthropic.length >= MID_TURN_EVIDENCE_STALE_WINDOW_A && committingToolsThisTurnA.size === 0) {
+      const wA = evidenceHistoryAnthropic.slice(-MID_TURN_EVIDENCE_STALE_WINDOW_A);
+      if (wA.every(v => v === wA[0])) {
+        const abortMsg = `Mid-turn evidence stale (Anthropic): ${wA[0]} evidence for ${MID_TURN_EVIDENCE_STALE_WINDOW_A} iterations with no committing tool. Aborting.`;
+        console.warn(`[agent] ${abortMsg}`);
+        try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "anthropic", model, detail: { reason: "mid-turn-stale", iteration, evidence: wA } })).catch(() => {}); } catch {}
+        return {
+          messages: [{ role: "system", content: systemPrompt }, ...messages],
+          usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
+          stopReason: "error",
+          errorMessage: abortMsg,
+        };
+      }
     }
 
     if (iteration > 0) messages = stripEphemeralMessages(messages);
@@ -612,11 +789,14 @@ export async function runAnthropicAgent(
     let assistantContent = "";
     const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
 
+    const { composeSystemPrompt: composeA } = await import("./agent-loop-prompt-layers.js");
+    const layeredSystemPromptA = composeA(systemPrompt, promptLayersAnthropic);
+
     const stream = streamAnthropicResponse({
       token: apiKey,
       model,
       messages,
-      systemPrompt,
+      systemPrompt: layeredSystemPromptA,
       tools: anthropicTools,
       temperature,
       toolChoice: (iteration === 0 && shouldForceToolsA) ? "required" : "auto",
@@ -630,10 +810,25 @@ export async function runAnthropicAgent(
         onEvent?.({ type: "stream", delta: event.delta || "" });
       } else if (event.type === "tool_call") {
         toolCalls.push({ id: event.id!, name: event.name!, arguments: event.arguments! });
+        toolsCalledThisTurnAnthropic.add(event.name!);
       } else if ((event as { type?: string }).type === "mcp_activity") {
         // Tools executed end-to-end via the MCP bridge — no local re-execution
         // needed. Flag so the auto-route fallback below doesn't trigger.
         sawMcpActivity = true;
+        // Capture MCP tool names for the action-claim check AND the turn-lock
+        // registry. They come through as "mcp__sax__bash" etc; strip the
+        // prefix so the check can match against our verb→tool mapping.
+        const mcpName = (event as { name?: string }).name || "";
+        const plain = mcpName.replace(/^mcp__[^_]+__/, "");
+        if (plain) {
+          toolsCalledThisTurnAnthropic.add(plain);
+          try {
+            const { isCommittingTool } = await import("./committing-tool-check.js");
+            if (isCommittingTool(plain)) committingToolsThisTurnA.add(plain);
+            const { markIteration } = await import("./session-turn-lock.js");
+            markIteration(options.sessionId, [plain]);
+          } catch {}
+        }
       } else if (event.type === "done") {
         totalInput += event.usage?.inputTokens || 0;
         totalOutput += event.usage?.outputTokens || 0;
@@ -682,6 +877,44 @@ export async function runAnthropicAgent(
       }));
     }
 
+    // Post-turn validation phase (same detector stack as the standard loop)
+    {
+      const { runPostTurnDetectors: runA, computeEvidenceCount: evidenceA } =
+        await import("./agent-loop-detectors.js");
+      evidenceHistoryAnthropic.push(evidenceA(messages));
+      const detectorStateA = {
+        assistantText: assistantContent,
+        toolCallsThisIteration: toolCalls.map(tc => ({ name: tc.name, arguments: tc.arguments })),
+        toolsCalledThisTurn: toolsCalledThisTurnAnthropic,
+        hasReasoning: false,
+        completionTokens: totalOutput,
+        iteration,
+        evidenceCount: evidenceHistoryAnthropic[evidenceHistoryAnthropic.length - 1],
+        evidenceHistory: [...evidenceHistoryAnthropic],
+      };
+      const hitA = runA(detectorStateA, retryCountersAnthropic);
+      if (hitA && iteration < maxIterations - 1) {
+        console.warn(`[agent] Post-turn detector fired (Anthropic): ${hitA.kind}`);
+        try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "anthropic", model, detail: { reason: `post-turn-${hitA.kind}` } })).catch(() => {}); } catch {}
+        promptLayersAnthropic.retry = hitA;
+        continue;
+      }
+      promptLayersAnthropic.retry = undefined;
+    }
+
+    // Tool-verified action-claim check runs BEFORE the MCP-exit shortcut so
+    // hallucinations over the MCP bridge ("I saved the image to the app
+    // folder" without actually calling write/bash/mv) still get caught.
+    if (toolCalls.length === 0 && !unmatchedClaimNudgedAnthropic && iteration < maxIterations - 1) {
+      const claimNudge = checkUnmatchedActionClaim(assistantContent, toolsCalledThisTurnAnthropic);
+      if (claimNudge) {
+        console.warn(`[agent] Unmatched action claim detected (Anthropic) — nudging`);
+        unmatchedClaimNudgedAnthropic = true;
+        messages.push({ role: "user", content: claimNudge } as ChatCompletionMessageParam);
+        continue;
+      }
+    }
+
     // MCP path: tools already ran inside Claude CLI — we're done.
     if (toolCalls.length === 0 && sawMcpActivity) {
       onEvent?.({ type: "done", usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput } });
@@ -724,6 +957,18 @@ export async function runAnthropicAgent(
     if (loopResult.nudge) {
       messages.push({ role: "user", content: loopResult.nudge } as ChatCompletionMessageParam);
     }
+
+    // Record attempted tool names for the action-claim check + update the
+    // session turn-lock registry with live progress (Anthropic path).
+    const { isCommittingTool: isCommittingA } = await import("./committing-tool-check.js");
+    const { markIteration: markTurnLockA } = await import("./session-turn-lock.js");
+    const iterationToolNamesA: string[] = [];
+    for (const tc of toolCalls) {
+      toolsCalledThisTurnAnthropic.add(tc.name);
+      iterationToolNamesA.push(tc.name);
+      if (isCommittingA(tc.name)) committingToolsThisTurnA.add(tc.name);
+    }
+    markTurnLockA(options.sessionId, iterationToolNamesA);
 
     let toolResults;
     try {

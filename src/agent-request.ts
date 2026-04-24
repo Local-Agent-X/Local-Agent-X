@@ -194,16 +194,24 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   const isTrivialToolRequest = /^(run\s+(bash|command)|execute|bash)\s*(with|:)/i.test(message.trim()) ||
     /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
 
-  // Skip heavy memory orchestrator for Codex (128k context). The orchestrator's
-  // 7+ modules (emotional memory, growth tracker, anticipatory care, etc.) add
-  // rich context that's great for 200k+ models but pushes Codex past the point
-  // where it returns empty responses. Basic context (identity, profile) still runs.
+  // Memory pipeline runs for every provider now. The earlier Codex-exclusion
+  // was a conservative guess when we thought extra context was causing bias —
+  // turned out the real bias was in the tool-keyword map (agent-request.ts
+  // was coupling "app" to sidebar tool surfacing). With that fixed, the
+  // orchestrator's grounding signals (anticipatory care, growth tracker,
+  // semantic search over memory facts, session summaries) help Codex stay
+  // on task the same way they help Claude. Extra ~2-6k tokens per iteration
+  // is a fair trade for better grounding; per-turn token ceiling still
+  // protects against runaway.
+  //
+  // Daily log stays skipped for Codex to protect against OpenAI's content
+  // moderation tripping on replayed verbatim user messages.
   const isCodexProvider = resolved.provider === "codex";
-  const shouldRunMemory = !skipMemory && !isTrivialToolRequest && !isCodexProvider;
+  const shouldRunMemory = !skipMemory && !isTrivialToolRequest;
 
   if (shouldRunMemory) {
     [contextBlock, relevantMemories] = await Promise.all([
-      buildContextBlock(memoryIndex),
+      buildContextBlock(memoryIndex, { userMessage: message, skipDailyLog: isCodexProvider }),
       autoSearchContext(memoryIndex, message),
     ]);
 
@@ -249,17 +257,16 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       console.warn("[memory] Orchestrator error:", (e as Error).message);
     }
   } else if (!skipMemory) {
-    // Trivial tool request OR Codex provider — basic context only. For Codex
-    // we SANITIZE (not skip) the daily log: keep timestamps + short entries,
-    // redact long message bodies that would trip OpenAI's content filter.
-    // Codex keeps today's continuity without seeing the prose that broke it.
+    // Trivial tool request OR Codex — basic context block only. Daily log
+    // stays skipped for Codex to keep OpenAI content-moderation from
+    // tripping on replayed verbatim user messages.
     try {
       [contextBlock] = await Promise.all([
-        buildContextBlock(memoryIndex, { sanitizeDailyLog: isCodexProvider }),
+        buildContextBlock(memoryIndex, { skipDailyLog: isCodexProvider, userMessage: message }),
       ]);
     } catch {}
     if (isTrivialToolRequest) console.log(`[chat] Trivial tool request — skipping memory injection`);
-    else if (isCodexProvider) console.log(`[chat] Codex provider — sanitizing daily log (long bodies redacted)`);
+    else if (isCodexProvider) console.log(`[chat] Codex provider — lean context (no orchestrator, no semantic search, no daily log)`);
   } else {
     // Bridge/cron/Codex — lightweight context only (skip autoSearch to save tokens)
     try {
@@ -460,7 +467,15 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
   { keywords: /sql|database|query.*table|postgres|sqlite/i, toolPrefixes: ["sql_"] },
   { keywords: /image|photo|generate.*image|draw|picture/i, toolPrefixes: ["generate_image", "generate_video", "ocr"] },
   { keywords: /camera|webcam/i, toolPrefixes: ["camera_"] },
-  { keywords: /app|dashboard|tracker|sidebar|pin|unpin/i, toolPrefixes: ["app_", "sidebar_"] },
+  // App tools surface on "app/dashboard/tracker" mentions. Sidebar tools are a
+  // SEPARATE rule that requires an explicit sidebar/pin/unpin keyword — the
+  // old combined rule was the root cause of Codex reflexively pinning apps
+  // to the sidebar whenever the user said anything with "app" in it (e.g.
+  // "use this image as the background for my to-do app" → model sees
+  // sidebar_pin available + description says "use when user says add" →
+  // misroutes to pin).
+  { keywords: /\bapp\b|dashboard|tracker/i, toolPrefixes: ["app_"] },
+  { keywords: /\bsidebar\b|\bpin\b|\bunpin\b/i, toolPrefixes: ["sidebar_"] },
   { keywords: /issue|ticket|project|kanban/i, toolPrefixes: ["issue_"] },
   { keywords: /instagram|twitter|tiktok|social|post on/i, toolPrefixes: ["mission_"] },
   { keywords: /config|setting/i, toolPrefixes: ["config_"] },

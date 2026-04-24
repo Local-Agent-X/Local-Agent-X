@@ -71,9 +71,9 @@ import {
 // Re-export for external callers (backwards compatibility — don't break downstream imports)
 export type {
   MemoryConfig, MemorySearchResult, ChunkMetadata, EmbeddingProvider,
-  FactKind, RetainedFact, EntityPage,
+  FactKind, RetainedFact, EntityPage, CanonicalSource,
 } from "./memory/types.js";
-export { DEFAULT_MEMORY_CONFIG } from "./memory/types.js";
+export { DEFAULT_MEMORY_CONFIG, CANONICAL_SOURCES } from "./memory/types.js";
 export { SessionStore } from "./memory/session-store.js";
 export { ensurePersonalityFiles } from "./memory/personality.js";
 
@@ -127,6 +127,14 @@ export class MemoryIndex {
 
     this.initSchema();
     this.startWatcher();
+
+    // Bind the universal-index singleton so write-through reindexing
+    // can run from inside this MemoryIndex's mutation paths. Done lazily
+    // (dynamic import) to avoid a circular load — universal-index.ts
+    // imports MemoryIndex's type.
+    import("./memory/universal-index.js")
+      .then(({ attachUniversalIndex }) => attachUniversalIndex(this))
+      .catch(() => { /* universal-index not available — write-through becomes a no-op */ });
   }
 
   // ── Database safety ──
@@ -221,7 +229,7 @@ export class MemoryIndex {
 
   // ── Schema with migration support ──
 
-  private static readonly CURRENT_SCHEMA_VERSION = 7;
+  private static readonly CURRENT_SCHEMA_VERSION = 8;
 
   private initSchema(): void {
     // Create meta table first (needed for version check)
@@ -408,6 +416,51 @@ export class MemoryIndex {
         `);
       }
 
+      // v7 → v8: Universal indexing.
+      //   - content_hash on chunks: enables idempotent re-indexing — a write-
+      //     through indexer can skip rows whose payload didn't change, so
+      //     backfill costs (mostly the embedding step) collapse to zero on a
+      //     no-op pass.
+      //   - Source value normalization: split the catch-all "memory" source
+      //     into mind / daily-log / session-summary / personality so search
+      //     filters can target one store at a time. Rename "entities" →
+      //     "entity" and "sessions" → "session" for consistency.
+      //   - We relabel rather than drop+rebuild — embeddings stay valid.
+      //
+      // TODO: when we eventually let the user swap embedding providers
+      // (ollama → openai etc), add an embedding_model_version column here
+      // so a provider switch invalidates the right rows on its own. For now
+      // a single provider is hardcoded, so a single content_hash suffices.
+      if (fromVersion < 8) {
+        try { this.db.exec(`ALTER TABLE chunks ADD COLUMN content_hash TEXT`); } catch {}
+        this.db.exec(`UPDATE chunks SET content_hash = hash WHERE content_hash IS NULL`);
+        this.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_path_hash ON chunks(path, content_hash)`);
+
+        // Relabel chunks to canonical sources
+        this.db.exec(`UPDATE chunks SET source = 'entity'  WHERE source = 'entities'`);
+        this.db.exec(`UPDATE chunks SET source = 'session' WHERE source = 'sessions'`);
+        this.db.exec(`UPDATE chunks SET source = 'mind'
+                        WHERE source = 'memory' AND path LIKE '%MIND.md'`);
+        this.db.exec(`UPDATE chunks SET source = 'session-summary'
+                        WHERE source = 'memory' AND path LIKE '%session-summaries%'`);
+        this.db.exec(`UPDATE chunks SET source = 'daily-log'
+                        WHERE source = 'memory'
+                          AND path GLOB '*[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md'`);
+        this.db.exec(`UPDATE chunks SET source = 'personality' WHERE source = 'memory'`);
+
+        // Same relabel against the files table so source filters in sync() match
+        this.db.exec(`UPDATE files SET source = 'entity'  WHERE source = 'entities'`);
+        this.db.exec(`UPDATE files SET source = 'session' WHERE source = 'sessions'`);
+        this.db.exec(`UPDATE files SET source = 'mind'
+                        WHERE source = 'memory' AND path LIKE '%MIND.md'`);
+        this.db.exec(`UPDATE files SET source = 'session-summary'
+                        WHERE source = 'memory' AND path LIKE '%session-summaries%'`);
+        this.db.exec(`UPDATE files SET source = 'daily-log'
+                        WHERE source = 'memory'
+                          AND path GLOB '*[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md'`);
+        this.db.exec(`UPDATE files SET source = 'personality' WHERE source = 'memory'`);
+      }
+
       // Update version
       this.db
         .prepare(
@@ -458,6 +511,7 @@ export class MemoryIndex {
     // appendFileSync is atomic for small writes — no read-modify-write race
     appendFileSync(logPath, `\n[${timestamp}] ${text}\n`, "utf-8");
     this.dirty = true;
+    this.reindexThroughUniversal("daily-log").catch(() => {});
   }
 
   readMemoryFile(): string {
@@ -468,6 +522,27 @@ export class MemoryIndex {
   writeMemoryFile(content: string): void {
     atomicWriteFileSync(this.getMemoryFilePath(), content);
     this.dirty = true;
+    this.reindexThroughUniversal("mind").catch(() => {});
+  }
+
+  /**
+   * Fire-and-forget write-through hook. Called from each MemoryIndex
+   * mutation that lands new content on disk. Failures are swallowed —
+   * the lazy sync() pass remains the safety net. The `slug` arg is only
+   * used for "entity" and is ignored otherwise.
+   */
+  private async reindexThroughUniversal(
+    target: "mind" | "daily-log" | "entity",
+    slug?: string,
+  ): Promise<void> {
+    try {
+      const { getUniversalIndex } = await import("./memory/universal-index.js");
+      const ui = getUniversalIndex();
+      if (!ui) return;
+      if (target === "mind") await ui.indexMindFile();
+      else if (target === "daily-log") await ui.indexDailyLog();
+      else if (target === "entity" && slug) await ui.indexEntityPage(slug);
+    } catch { /* no-op */ }
   }
 
   // ── Embedding Provider ──
@@ -516,7 +591,7 @@ export class MemoryIndex {
         if (existing && existing.hash === file.hash) continue;
 
         // Session delta check: skip full re-index if change is small and only grew
-        if (file.source === "sessions" && existing) {
+        if (file.source === "session" && existing) {
           const delta = this.sessionDeltas.get(file.path);
           if (delta) {
             const sizeDiff = file.size - delta.lastSize;
@@ -542,7 +617,7 @@ export class MemoryIndex {
 
         await this.indexFile(file);
 
-        if (file.source === "sessions") {
+        if (file.source === "session") {
           this.sessionDeltas.set(file.path, {
             lastSize: file.size,
             lastMessageCount: this.countSessionMessages(file.path),
@@ -591,19 +666,27 @@ export class MemoryIndex {
       for (const entry of entries) {
         const fullPath = join(dir, entry.name);
         if (entry.isDirectory()) {
-          // Recurse into bank/, entities/ etc — but skip .git, node_modules
+          // Recurse into bank/, entities/, session-summaries/ — skip dotdirs.
+          // Each subdir gets its canonical source; nested files inherit it.
           if (!entry.name.startsWith(".") && entry.name !== "node_modules") {
-            const childSource =
-              entry.name === "entities" ? "entities" : source;
+            let childSource = source;
+            if (entry.name === "entities") childSource = "entity";
+            else if (entry.name === "session-summaries") childSource = "session-summary";
             scanDir(fullPath, childSource);
           }
         } else if (entry.name.endsWith(".md")) {
+          // Resolve canonical source by file when scanning the memory root.
+          let fileSource = source;
+          if (source === "personality") {
+            if (entry.name === "MIND.md") fileSource = "mind";
+            else if (/^\d{4}-\d{2}-\d{2}\.md$/.test(entry.name)) fileSource = "daily-log";
+          }
           try {
             const stat = statSync(fullPath);
             // Use mtime+size as cheap change detector (avoids reading full file)
             records.push({
               path: fullPath,
-              source,
+              source: fileSource,
               hash: `${stat.mtimeMs}:${stat.size}`,
               mtime: stat.mtimeMs,
               size: stat.size,
@@ -615,7 +698,9 @@ export class MemoryIndex {
       }
     };
 
-    scanDir(this.memoryDir, "memory");
+    // Memory root scans default to "personality" (USER.md, HEART.md, etc).
+    // Per-file overrides above promote MIND.md → mind and YYYY-MM-DD.md → daily-log.
+    scanDir(this.memoryDir, "personality");
     return records;
   }
 
@@ -631,7 +716,7 @@ export class MemoryIndex {
         const stat = statSync(fullPath);
         records.push({
           path: fullPath,
-          source: "sessions",
+          source: "session",
           hash: `${stat.mtimeMs}:${stat.size}`,
           mtime: stat.mtimeMs,
           size: stat.size,
@@ -649,7 +734,7 @@ export class MemoryIndex {
 
     let chunks: Chunk[];
 
-    if (file.source === "sessions") {
+    if (file.source === "session") {
       // Conversation-pair chunking: preserves Q+A semantic units
       const messages = extractSessionPairs(file.path);
       if (messages.length < 2) return;
@@ -668,7 +753,7 @@ export class MemoryIndex {
       const maxChunkChars = this.config.chunkTokens * this.config.charsPerToken;
       const overlapChars = this.config.chunkOverlap * this.config.charsPerToken;
       const metadata: ChunkMetadata = {
-        source_type: file.source === "entities" ? "entity-page" : "memory-file",
+        source_type: file.source === "entity" ? "entity-page" : "memory-file",
         date: this.extractDateFromPath(file.path),
       };
       chunks = chunkText(raw, file.path, file.source, maxChunkChars, overlapChars) as Chunk[];
@@ -684,8 +769,8 @@ export class MemoryIndex {
 
     // Insert chunks in a transaction
     const insertChunk = this.db.prepare(`
-      INSERT INTO chunks (path, source, start_line, end_line, text, hash, embedding, updated_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO chunks (path, source, start_line, end_line, text, hash, content_hash, embedding, updated_at, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertFts = this.hasFts
@@ -704,6 +789,7 @@ export class MemoryIndex {
           chunk.startLine,
           chunk.endLine,
           chunk.text,
+          chunk.hash,
           chunk.hash,
           chunk.embedding ? JSON.stringify(chunk.embedding) : null,
           now,
@@ -751,15 +837,15 @@ export class MemoryIndex {
     const now = Date.now();
     try {
       const insertChunk = this.db.prepare(`
-        INSERT INTO chunks (path, source, start_line, end_line, text, hash, embedding, updated_at, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO chunks (path, source, start_line, end_line, text, hash, content_hash, embedding, updated_at, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const insertFts = this.hasFts ? this.db.prepare(`INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)`) : null;
 
       for (const chunk of chunks) {
         try {
           const result = insertChunk.run(
-            virtualPath, source, chunk.startLine, chunk.endLine, chunk.text, chunk.hash,
+            virtualPath, source, chunk.startLine, chunk.endLine, chunk.text, chunk.hash, chunk.hash,
             chunk.embedding ? JSON.stringify(chunk.embedding) : null, now,
             chunk.metadata ? JSON.stringify(chunk.metadata) : null
           );
@@ -778,6 +864,103 @@ export class MemoryIndex {
     }
   }
 
+  /**
+   * Idempotent variant of indexChunks. Compares incoming chunk hashes against
+   * the existing rows for `virtualPath`; deletes rows whose hash dropped out
+   * of the new set, inserts only rows whose hash is genuinely new, and skips
+   * embedding for unchanged content. Safe to run repeatedly during backfill.
+   */
+  async indexChunksIdempotent(
+    chunks: Chunk[],
+    virtualPath: string,
+    source: string
+  ): Promise<{ added: number; removed: number; unchanged: number }> {
+    const existing = this.db
+      .prepare("SELECT id, content_hash FROM chunks WHERE path = ?")
+      .all(virtualPath) as Array<{ id: number; content_hash: string | null }>;
+
+    const existingByHash = new Map<string, number>();
+    for (const row of existing) {
+      if (row.content_hash) existingByHash.set(row.content_hash, row.id);
+    }
+    const incomingHashes = new Set(chunks.map((c) => c.hash));
+
+    const toDelete = existing.filter(
+      (r) => !r.content_hash || !incomingHashes.has(r.content_hash)
+    );
+    const toInsert = chunks.filter((c) => !existingByHash.has(c.hash));
+
+    if (toDelete.length === 0 && toInsert.length === 0) {
+      return { added: 0, removed: 0, unchanged: existing.length };
+    }
+
+    if (toInsert.length > 0 && this.embeddingProvider) {
+      try { await this.embedChunksWithRetry(toInsert); }
+      catch { /* keyword search still works without embeddings */ }
+    }
+
+    const now = Date.now();
+    try {
+      const txn = this.db.transaction(() => {
+        // Delete stale rows (and their FTS / vec sidecars)
+        const delChunk = this.db.prepare("DELETE FROM chunks WHERE id = ?");
+        const delFts = this.hasFts ? this.db.prepare("DELETE FROM chunks_fts WHERE rowid = ?") : null;
+        const delVec = this.hasVec ? this.db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?") : null;
+        for (const row of toDelete) {
+          if (delFts) try { delFts.run(row.id); } catch {}
+          if (delVec) try { delVec.run(row.id); } catch {}
+          delChunk.run(row.id);
+        }
+
+        // Insert new rows
+        const insertChunk = this.db.prepare(`
+          INSERT INTO chunks (path, source, start_line, end_line, text, hash, content_hash, embedding, updated_at, metadata)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        const insertFts = this.hasFts ? this.db.prepare("INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)") : null;
+        const insertVec = this.hasVec ? this.db.prepare("INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)") : null;
+        for (const chunk of toInsert) {
+          const res = insertChunk.run(
+            virtualPath, source, chunk.startLine, chunk.endLine, chunk.text, chunk.hash, chunk.hash,
+            chunk.embedding ? JSON.stringify(chunk.embedding) : null, now,
+            chunk.metadata ? JSON.stringify(chunk.metadata) : null
+          );
+          const id = res.lastInsertRowid;
+          if (insertFts) try { insertFts.run(id, chunk.text); } catch {}
+          if (insertVec && chunk.embedding) {
+            try { insertVec.run(id, new Float32Array(chunk.embedding)); } catch {}
+          }
+        }
+
+        // Refresh files row so the next sync skips this path
+        this.db.prepare(
+          "INSERT OR REPLACE INTO files (path, source, hash, mtime, size) VALUES (?, ?, ?, ?, ?)"
+        ).run(virtualPath, source, `idempotent:${now}`, now, 0);
+      });
+      txn();
+    } catch (e) {
+      console.error(`[memory] indexChunksIdempotent failed for ${virtualPath}:`, (e as Error).message);
+      return { added: 0, removed: 0, unchanged: existing.length };
+    }
+
+    return {
+      added: toInsert.length,
+      removed: toDelete.length,
+      unchanged: existing.length - toDelete.length,
+    };
+  }
+
+  /** Public read-only access to memoryDir for the universal-index module. */
+  getMemoryDir(): string { return this.memoryDir; }
+  /** Public read-only access to dataDir for the universal-index module. */
+  getDataDir(): string { return this.dataDir; }
+  /** Public access to chunking config (used by universal-index for sizing). */
+  getChunkConfig(): { maxChunkChars: number; overlapChars: number } {
+    return {
+      maxChunkChars: this.config.chunkTokens * this.config.charsPerToken,
+      overlapChars: this.config.chunkOverlap * this.config.charsPerToken,
+    };
+  }
   isConversationIngested(conversationId: string): boolean {
     const row = this.db.prepare("SELECT 1 FROM conversation_ingest_log WHERE conversation_id = ?").get(conversationId);
     return !!row;
@@ -2160,6 +2343,7 @@ export class MemoryIndex {
     const entityPath = join(this.entitiesDir, `${slug}.md`);
     atomicWriteFileSync(entityPath, lines.join("\n"));
     this.dirty = true;
+    this.reindexThroughUniversal("entity", slug).catch(() => {});
   }
 
   private updateOpinionConfidence(

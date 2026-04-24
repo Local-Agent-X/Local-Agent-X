@@ -104,7 +104,7 @@ export function createMemoryTools(memory: MemoryIndex) {
             type: "array",
             items: { type: "string" },
             description:
-              "Filter by source: 'memory', 'sessions', 'entities' (default: all)",
+              "Filter by canonical source. One or more of: entity, daily-log, mind, session-summary, session, personality, import (default: all)",
           },
           entity: {
             type: "string",
@@ -150,11 +150,20 @@ export function createMemoryTools(memory: MemoryIndex) {
           return { content: "<search_results count=\"0\">No relevant memories found.</search_results>" };
         }
 
+        // Surface the canonical source + a path that's readable across stores.
+        // Strip the long absolute prefix when possible so the model sees
+        // `bank/entities/peter.md` instead of `/home/.../bank/entities/peter.md`.
+        const memDir = resolve(memory["memoryDir"]);
         const formatted = results
-          .map(
-            (r, i) =>
-              `[${i + 1}] (score: ${r.score.toFixed(2)}, ${r.source}${r.entities?.length ? `, entities: ${r.entities.join(",")}` : ""}) ${r.path}:${r.startLine}-${r.endLine}\n${r.snippet}`
-          )
+          .map((r, i) => {
+            let virtualPath = r.path;
+            try {
+              const rel = relative(memDir, r.path);
+              if (rel && !rel.startsWith("..")) virtualPath = rel;
+            } catch { /* fall back to absolute */ }
+            const ent = r.entities?.length ? ` entities=${r.entities.join(",")}` : "";
+            return `[${i + 1}] source=${r.source} path=${virtualPath}:${r.startLine}-${r.endLine} score=${r.score.toFixed(2)}${ent}\n${r.snippet}`;
+          })
           .join("\n\n");
 
         // Wrap in XML with a leading instruction so the model treats this as
@@ -170,6 +179,53 @@ export function createMemoryTools(memory: MemoryIndex) {
           `</search_results>`;
 
         return { content: wrapped };
+      },
+    },
+
+    {
+      name: "memory_reindex",
+      description:
+        "Force-reindex memory stores. Run if memory_search seems to be missing recently-written facts, or after a manual edit to a memory file. Returns chunk counts per store. Idempotent — already-indexed content costs nothing to re-check.",
+      parameters: {
+        type: "object",
+        properties: {
+          source: {
+            type: "string",
+            description:
+              "One of: all, entity, daily-log, mind, session-summary, session, personality (default: all)",
+          },
+          force: {
+            type: "boolean",
+            description:
+              "If true, drop existing chunks for the targeted source(s) before reindexing. Re-embeds everything. Default false (cheap content-hash dedup).",
+          },
+        },
+      },
+      async execute(args: Record<string, unknown>) {
+        const source = args.source ? String(args.source) : "all";
+        const force = !!args.force;
+        try {
+          const { getUniversalIndex } = await import("./universal-index.js");
+          const ui = getUniversalIndex();
+          if (!ui) {
+            return { content: "BLOCKED: universal-index not initialized.", isError: true };
+          }
+          if (source === "all") {
+            const report = await ui.backfillAll({ force });
+            return {
+              content: JSON.stringify({ ok: true, ...report }, null, 2),
+            };
+          } else {
+            const valid = ["entity", "daily-log", "mind", "session-summary", "session", "personality"];
+            if (!valid.includes(source)) {
+              return { content: `BLOCKED: unknown source "${source}". Valid: ${valid.join(", ")}, all`, isError: true };
+            }
+            const added = await ui.reindexStore(source as "entity" | "daily-log" | "mind" | "session-summary" | "session" | "personality");
+            return { content: JSON.stringify({ ok: true, source, chunksAdded: added }, null, 2) };
+          }
+        } catch (e) {
+          return { content: `Reindex failed: ${(e as Error).message}`, isError: true };
+        }
       },
     },
 

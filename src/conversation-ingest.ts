@@ -197,7 +197,7 @@ async function ingestSingleFile(
 
       // Chunk as conversation pairs
       const virtualPath = `import/${convo.source}/${convo.id}`;
-      const chunks = chunkConversationPairs(convo.messages, virtualPath, "sessions", metadata);
+      const chunks = chunkConversationPairs(convo.messages, virtualPath, "import", metadata);
 
       if (chunks.length === 0) {
         result.skipped++;
@@ -206,7 +206,7 @@ async function ingestSingleFile(
 
       // Index chunks through the memory system
       console.log(`[ingest] Indexing ${chunks.length} chunks for ${convo.id.slice(0, 8)}...`);
-      await memory.indexChunks(chunks, virtualPath, "sessions");
+      await memory.indexChunks(chunks, virtualPath, "import");
       console.log(`[ingest] Indexed ${chunks.length} chunks for ${convo.id.slice(0, 8)}.`);
 
       // Mark as ingested

@@ -380,10 +380,10 @@ export async function startServer(config: SAXConfig) {
     const sessionDate = session.createdAt ? new Date(session.createdAt).toISOString().split("T")[0] : undefined;
     const metadata = { source_type: "agent-x-session" as const, session_id: session.id, date: sessionDate };
     const virtualPath = `session-live/${session.id}/${pairs.length}`;
-    const chunks = chunkConversationPairs(newMessages, virtualPath, "sessions", metadata);
+    const chunks = chunkConversationPairs(newMessages, virtualPath, "session", metadata);
 
     if (chunks.length > 0) {
-      await memoryIndex.indexChunks(chunks, virtualPath, "sessions");
+      await memoryIndex.indexChunks(chunks, virtualPath, "session");
       sessionIndexedPairs.set(session.id, pairs.length);
       console.log(`[memory-live] Indexed ${chunks.length} new chunks from ${newPairs.length} pairs (session ${session.id}, total pairs: ${pairs.length})`);
     } else {
@@ -554,10 +554,43 @@ export async function startServer(config: SAXConfig) {
   const server = createServer(requestHandler);
   runMigrations(dataDir).catch(e => console.warn("[migrations]", e.message));
   const chatWs = setupChatWebSocket(server, config.authToken);
-  // Voice WebSocket transport (Phase 1: loopback; Phase 3 wires in STT/LLM/TTS)
+  // Voice WebSocket: mic → STT → agent (streaming deltas) → TTS → speaker.
+  // The agent runner here reuses the full chat pipeline (prepareAgentRequest
+  // + runAgent) so voice turns get the same tools, memory, and provider
+  // resolution as the web UI — they just deliver output via TTS instead of
+  // text. A voice-style directive is appended to keep responses short and
+  // speakable (no headings, bullets, or code blocks).
   try {
-    const { setupVoiceWebSocket } = await import("./voice/audio-ws.js");
+    const { setupVoiceWebSocket, setVoiceSessionFactory } = await import("./voice/audio-ws.js");
+    const { createVoiceSessionFactory } = await import("./voice/voice-session.js");
+    const { prepareAgentRequest } = await import("./agent-request.js");
     setupVoiceWebSocket(server, config.authToken);
+
+    const voiceTurnRunner: import("./voice/voice-session.js").VoiceTurnRunner = async ({ text, history, sessionId, signal, onDelta }) => {
+      const prepared = await prepareAgentRequest({
+        channel: "web", message: text, sessionMessages: history, sessionId,
+        config, dataDir, memoryIndex, integrations, secretsStore,
+        allAgentTools, bridgeTools, maxHistory: 40,
+      });
+      const voiceDirective = "\n\n[voice mode] Your response will be spoken aloud. Write one short, conversational reply — two or three sentences max. No markdown, headings, bullets, code blocks, or emoji. Avoid lists. Use normal sentences a human would speak.";
+      const result = await runAgent(text, prepared.cleanHistory, {
+        apiKey: prepared.apiKey, model: prepared.model,
+        provider: prepared.provider as AgentOptions["provider"],
+        systemPrompt: prepared.systemPrompt + voiceDirective,
+        tools: prepared.tools,
+        security, toolPolicy, rbac, callerRole: "operator" as const,
+        sessionId, maxIterations: prepared.maxIterations,
+        temperature: prepared.temperature,
+        signal,
+        onEvent: (ev) => {
+          if (ev.type === "stream" && typeof ev.delta === "string") onDelta(ev.delta);
+        },
+      });
+      const assistantText = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "";
+      return { assistantText, updatedHistory: result.messages };
+    };
+
+    setVoiceSessionFactory(createVoiceSessionFactory(voiceTurnRunner));
   } catch (e) { console.warn("[voice-ws] setup failed:", (e as Error).message); }
 
   // Register WS chat handler — triggers the same chat pipeline as HTTP
@@ -910,6 +943,7 @@ Rules:
       try {
         const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000, recent = sessionStore.list().filter(s => s.updatedAt > cutoff && s.messageCount > 2);
         const dir = join(dataDir, "memory", "session-summaries"); mkdirSync(dir, { recursive: true }); let n = 0;
+        const newlySummarized: string[] = [];
         for (const meta of recent.slice(0, 30)) {
           const sf = join(dir, `${meta.id}.md`);
           if (existsSync(sf)) continue;
@@ -921,8 +955,18 @@ Rules:
           const summary = `# ${sess.title}\n\nDate: ${new Date(sess.createdAt).toISOString().split("T")[0]}\nMessages: ${sess.messages.length}\n\n## Key Exchanges\n${userMsgs.slice(0, 10).map((u, i) => `- User: ${u}\n  Agent: ${agentMsgs[i] || "..."}`).join("\n")}\n`;
           writeFileSync(sf, summary, "utf-8");
           n++;
+          newlySummarized.push(meta.id);
         }
         if (n > 0) console.log(`[memory-bg] Summarized ${n} sessions`);
+        // Index each newly-written summary so search can find it. Idempotent
+        // via content_hash, so a re-run that finds nothing new costs ~zero.
+        if (newlySummarized.length > 0) {
+          try {
+            const { getUniversalIndex } = await import("./memory/universal-index.js");
+            const ui = getUniversalIndex();
+            if (ui) for (const id of newlySummarized) await ui.indexSessionSummary(id);
+          } catch (e) { console.warn("[memory-bg] Summary reindex:", (e as Error).message); }
+        }
       } catch (e) { console.warn("[memory-bg] Summarization:", (e as Error).message); }
     };
     memBgTimer = setInterval(runMemBg, 6 * 60 * 60 * 1000);
@@ -946,10 +990,16 @@ Rules:
       } catch (e) { console.warn("[memory] MIND.md scrub failed:", (e as Error).message); }
     }).catch(e => console.warn("[memory] Failed to schedule nightly:", (e as Error).message));
 
-    // Memory dream agent — periodic deep reflection (checks every 2 hours, runs if 24h+ since last)
+    // Memory dream agent — periodic deep reflection (checks every 2 hours, runs if 24h+ since last).
+    // Reads RAW session transcripts in token-budgeted batches so detail-rich content
+    // (e.g. specific design decisions, hardware choices) survives extraction.
     const runDreamCheck = async () => {
       try {
-        const { shouldDream, buildDreamPrompt, startDream, completeDream, failDream } = await import("./memory-dream.js");
+        const {
+          shouldDream, buildDreamPrompt, buildDreamPromptForBatch,
+          listRecentSessionTranscripts, buildDreamBatches,
+          startDream, completeDream,
+        } = await import("./memory-dream.js");
         if (!shouldDream()) return;
         console.log("[dream] Starting memory consolidation...");
         startDream();
@@ -957,22 +1007,54 @@ Rules:
         const { provider, apiKey, model } = await rp(config, secretsStore, dataDir);
         // Use a fast/cheap model for dreaming — Haiku for Anthropic, default for others
         const dreamModel = provider === "anthropic" ? "claude-haiku-4-5" : model;
-        const dreamPrompt = buildDreamPrompt();
         const dreamSession: Session = { id: `dream-${Date.now()}`, title: "Memory Dream", messages: [], createdAt: Date.now(), updatedAt: Date.now() };
         // Dream agent only gets read/write/edit tools — no bash, no network
         const dreamTools = allAgentTools.filter(t => ["read", "write", "edit", "glob", "grep", "memory_search", "memory_save"].includes(t.name));
-        const result = await runAgent(dreamPrompt, [], {
-          apiKey, model: dreamModel, provider: provider as AgentOptions["provider"],
-          systemPrompt: "You are a memory consolidation agent. Your job is to organize and improve the user's memory files based on recent sessions. Be concise and focused.",
-          tools: dreamTools, security, toolPolicy, sessionId: `dream-${Date.now()}`,
-          maxIterations: 15, temperature: 0.3,
-        });
-        dreamSession.messages = result.messages.filter(m => m.role !== "system");
+        const sysPrompt = "You are a memory consolidation agent. Your job is to organize and improve the user's memory files based on recent sessions. Be concise and focused.";
+
+        const transcripts = listRecentSessionTranscripts(10);
+        const batches = transcripts.length > 0 ? buildDreamBatches(transcripts) : [];
+
+        if (batches.length === 0) {
+          // Fallback: no raw transcripts (fresh install) — clean existing files
+          const result = await runAgent(buildDreamPrompt(), [], {
+            apiKey, model: dreamModel, provider: provider as AgentOptions["provider"],
+            systemPrompt: sysPrompt, tools: dreamTools, security, toolPolicy,
+            sessionId: dreamSession.id, maxIterations: 10, temperature: 0.3,
+          });
+          dreamSession.messages.push(...result.messages.filter(m => m.role !== "system"));
+        } else {
+          for (let i = 0; i < batches.length; i++) {
+            const prompt = buildDreamPromptForBatch(batches[i], i, batches.length);
+            const result = await runAgent(prompt, [], {
+              apiKey, model: dreamModel, provider: provider as AgentOptions["provider"],
+              systemPrompt: sysPrompt, tools: dreamTools, security, toolPolicy,
+              sessionId: `${dreamSession.id}-b${i}`, maxIterations: 15, temperature: 0.3,
+            });
+            dreamSession.messages.push(...result.messages.filter(m => m.role !== "system"));
+          }
+        }
+
         dreamSession.updatedAt = Date.now();
         saveSession(dreamSession);
+
+        // Dream wrote files via the generic write/edit tools, which don't go
+        // through MemoryIndex. Run a backfill pass so anything dream touched
+        // becomes searchable. Idempotent — already-indexed files cost nothing.
+        try {
+          const { getUniversalIndex } = await import("./memory/universal-index.js");
+          const ui = getUniversalIndex();
+          if (ui) {
+            const report = await ui.backfillAll();
+            if (report.totalChunksAdded > 0) {
+              console.log(`[dream] Post-dream reindex: +${report.totalChunksAdded} chunks across ${report.totalFilesScanned} files`);
+            }
+          }
+        } catch (e) { console.warn("[dream] Post-dream reindex failed:", (e as Error).message); }
+
         const recentCount = sessionStore.list().filter(s => s.updatedAt > Date.now() - 24 * 60 * 60 * 1000).length;
         completeDream(recentCount);
-        console.log("[dream] Memory consolidation finished");
+        console.log(`[dream] Memory consolidation finished (${batches.length} batch(es))`);
       } catch (e) {
         console.warn("[dream] Failed:", (e as Error).message);
         try { const { failDream } = await import("./memory-dream.js"); failDream(); } catch {}
@@ -980,6 +1062,20 @@ Rules:
     };
     setInterval(runDreamCheck, 2 * 60 * 60 * 1000); // Check every 2 hours
     setTimeout(runDreamCheck, 5 * 60 * 1000); // First check 5 minutes after startup
+
+    // Universal-index backfill — async after boot, never blocks listen().
+    // Catches anything sync() missed (consolidator/dream writes from previous
+    // boots) and retroactively indexes pre-pipeline session JSONs so search
+    // can finally find conversations from before live indexing went live.
+    setTimeout(async () => {
+      try {
+        const { getUniversalIndex } = await import("./memory/universal-index.js");
+        const ui = getUniversalIndex();
+        if (!ui) return;
+        const report = await ui.backfillAll();
+        console.log(`[memory-backfill] +${report.totalChunksAdded} chunks across ${report.totalFilesScanned} files (${report.durationMs}ms)`);
+      } catch (e) { console.warn("[memory-backfill] failed:", (e as Error).message); }
+    }, 15_000);
     // Sync
     const syncCfg = agentSync.getConfig();
     if (syncCfg.enabled && syncCfg.autoDownload) agentSync.pull().then(r => { if (r.success) console.log(`[sync] Startup pull: ${r.message}`); }).catch(() => {});

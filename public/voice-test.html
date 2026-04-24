@@ -7,23 +7,31 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
 <meta http-equiv="Pragma" content="no-cache"/>
 <meta http-equiv="Expires" content="0"/>
-<title>Voice Transport Loopback Test</title>
+<title>Voice Test — Phase 3 (Full Duplex)</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; color: #222; }
+  body { font-family: system-ui, sans-serif; max-width: 820px; margin: 40px auto; padding: 0 20px; color: #222; }
   h1 { font-size: 1.2rem; }
   button { padding: 10px 18px; font-size: .95rem; border-radius: 6px; border: 1px solid #333; background: #fff; cursor: pointer; }
   button.active { background: #e74c3c; color: #fff; border-color: #e74c3c; }
   button:disabled { opacity: .5; cursor: not-allowed; }
-  #log { background: #111; color: #0f0; font-family: monospace; font-size: .8rem; padding: 12px; height: 260px; overflow-y: auto; border-radius: 6px; margin-top: 18px; white-space: pre-wrap; }
+  #log { background: #111; color: #0f0; font-family: monospace; font-size: .8rem; padding: 12px; height: 200px; overflow-y: auto; border-radius: 6px; margin-top: 18px; white-space: pre-wrap; }
   #meter { height: 12px; background: #eee; border-radius: 6px; overflow: hidden; margin-top: 14px; }
   #meter > div { height: 100%; background: #2ecc71; width: 0%; transition: width 30ms linear; }
   .row { display: flex; gap: 12px; align-items: center; margin-top: 14px; }
   .hint { color: #666; font-size: .85rem; }
+  #transcripts { margin-top: 18px; }
+  #partial { padding: 12px 14px; background: #fffbea; border: 1px dashed #e0c050; border-radius: 6px; min-height: 1.4em; font-size: 1.1rem; color: #8a6d00; }
+  #finals { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .final-line { padding: 10px 14px; background: #eaffea; border: 1px solid #6fc06f; border-radius: 6px; font-size: 1rem; }
+  .assistant-line { padding: 10px 14px; background: #eaf2ff; border: 1px solid #6fa0d0; border-radius: 6px; font-size: 1rem; color: #16457a; white-space: pre-wrap; }
+  #model-progress { margin-top: 10px; font-size: .85rem; color: #555; }
+  #model-bar { height: 6px; background: #eee; border-radius: 3px; overflow: hidden; margin-top: 4px; }
+  #model-bar > div { height: 100%; background: #3498db; width: 0%; transition: width 120ms linear; }
 </style>
 </head>
 <body>
-<h1>Voice Transport Loopback — Phase 1</h1>
-<p class="hint">Click <strong>Start</strong>, allow the mic, then talk. Your voice should come back through your speakers after a tiny delay. If you can hear yourself (with some latency), the WebSocket + AudioWorklet pipeline is working end-to-end.</p>
+<h1>Voice — Phase 3 (Full Duplex)</h1>
+<p class="hint">Click <strong>Start</strong>, allow the mic, then talk. First run downloads ~200MB of speech models (STT + TTS, progress below). After that: partial transcripts appear in yellow, final in green. The assistant's reply is both shown (blue) and spoken aloud.</p>
 
 <div class="row">
   <button id="toggle">Start</button>
@@ -31,6 +39,16 @@
 </div>
 
 <div id="meter"><div id="meter-bar"></div></div>
+
+<div id="model-progress" style="display:none">
+  <span id="model-progress-label">Downloading speech model…</span>
+  <div id="model-bar"><div></div></div>
+</div>
+
+<div id="transcripts">
+  <div id="partial">(partial transcript will appear here as you speak)</div>
+  <div id="finals"></div>
+</div>
 
 <pre id="log"></pre>
 
@@ -127,12 +145,12 @@ async function start() {
   playbackNode = new AudioWorkletNode(audioContext, 'pcm-playback');
   playbackNode.connect(audioContext.destination);
 
-  // 5) Route incoming binary frames to playback
+  // 5) Route incoming binary frames to playback, JSON events to UI
   ws.onmessage = (e) => {
     if (typeof e.data === 'string') {
       try {
         const msg = JSON.parse(e.data);
-        log('ws event: ' + msg.type + (msg.sessionId ? ' sessionId=' + msg.sessionId : ''));
+        handleVoiceEvent(msg);
       } catch { log('ws text: ' + e.data); }
       return;
     }
@@ -140,6 +158,90 @@ async function start() {
     framesOut++;
     playbackNode.port.postMessage({ cmd: 'pcm', pcm: e.data });
   };
+
+  let currentAssistantLine = null;
+  function handleVoiceEvent(msg) {
+    if (msg.type === 'ready') {
+      log('ws event: ready sessionId=' + msg.sessionId);
+    } else if (msg.type === 'stt_model_progress' || msg.type === 'tts_model_progress') {
+      const el = document.getElementById('model-progress');
+      const label = document.getElementById('model-progress-label');
+      const bar = document.querySelector('#model-bar > div');
+      el.style.display = 'block';
+      const tag = msg.type === 'stt_model_progress' ? 'STT' : 'TTS';
+      label.textContent = `Downloading ${tag} · ${msg.file} — ${msg.overallPct}%`;
+      bar.style.width = msg.overallPct + '%';
+    } else if (msg.type === 'whisper_model_progress') {
+      const el = document.getElementById('model-progress');
+      const label = document.getElementById('model-progress-label');
+      const bar = document.querySelector('#model-bar > div');
+      el.style.display = 'block';
+      label.textContent = `Downloading Whisper · ${msg.file} — ${msg.overallPct}%`;
+      bar.style.width = msg.overallPct + '%';
+    } else if (msg.type === 'whisper_transcribing') {
+      document.getElementById('partial').textContent = '(transcribing…)';
+    } else if (msg.type === 'whisper_empty') {
+      document.getElementById('partial').textContent = '(listening…)';
+    } else if (msg.type === 'whisper_error') {
+      log('whisper error: ' + msg.message);
+    } else if (msg.type === 'stt_model_ready' || msg.type === 'tts_model_ready' || msg.type === 'whisper_model_ready') {
+      log(msg.type.replace('_model_ready', '') + ' model ready');
+    } else if (msg.type === 'voice_ready') {
+      const el = document.getElementById('model-progress');
+      const label = document.getElementById('model-progress-label');
+      label.textContent = 'Ready — talk to the assistant';
+      setTimeout(() => { el.style.display = 'none'; }, 1200);
+      if (playbackNode && msg.ttsSampleRate) {
+        playbackNode.port.postMessage({ cmd: 'setRate', rate: msg.ttsSampleRate });
+        log('tts sample rate set to ' + msg.ttsSampleRate + ' Hz');
+      }
+    } else if (msg.type === 'partial') {
+      document.getElementById('partial').textContent = msg.text;
+    } else if (msg.type === 'final') {
+      const p = document.getElementById('partial');
+      p.textContent = '(listening…)';
+      const line = document.createElement('div');
+      line.className = 'final-line';
+      line.textContent = msg.text;
+      document.getElementById('finals').appendChild(line);
+      log('final: ' + msg.text);
+    } else if (msg.type === 'agent_start') {
+      currentAssistantLine = document.createElement('div');
+      currentAssistantLine.className = 'assistant-line';
+      currentAssistantLine.textContent = '';
+      document.getElementById('finals').appendChild(currentAssistantLine);
+    } else if (msg.type === 'assistant_delta') {
+      if (!currentAssistantLine) {
+        currentAssistantLine = document.createElement('div');
+        currentAssistantLine.className = 'assistant-line';
+        document.getElementById('finals').appendChild(currentAssistantLine);
+      }
+      currentAssistantLine.textContent += msg.text;
+    } else if (msg.type === 'assistant_done') {
+      log('assistant done');
+      currentAssistantLine = null;
+    } else if (msg.type === 'tts_interrupt') {
+      // Barge-in: agent was speaking, user started talking — drop pending audio
+      if (playbackNode) playbackNode.port.postMessage({ cmd: 'flush' });
+      log('barge-in: flushed playback');
+    } else if (msg.type === 'assistant_interrupted') {
+      if (currentAssistantLine) currentAssistantLine.textContent += ' [interrupted]';
+      currentAssistantLine = null;
+      log('assistant interrupted');
+    } else if (msg.type === 'vad_speech_start') {
+      // visible cue so we can see VAD working; purely diagnostic
+      statusEl.style.color = '#e74c3c';
+    } else if (msg.type === 'vad_speech_end') {
+      statusEl.style.color = '';
+    } else if (msg.type === 'agent_error') {
+      log('agent error: ' + msg.message);
+      currentAssistantLine = null;
+    } else if (msg.type === 'stt_error' || msg.type === 'tts_error' || msg.type === 'voice_error') {
+      log(msg.type + ': ' + msg.message);
+    } else {
+      log('ws event: ' + (msg.type || JSON.stringify(msg)));
+    }
+  }
   ws.onclose = () => { log('ws closed'); cleanup(); };
 
   // 6) Start capturing
@@ -148,7 +250,7 @@ async function start() {
   toggleBtn.textContent = 'Stop';
   toggleBtn.classList.add('active');
   statusEl.textContent = 'streaming';
-  log('capturing mic — talk and you should hear yourself');
+  log('capturing mic — talk and your speech should appear as transcripts (partial in yellow, final in green)');
 
   statsTimer = setInterval(() => {
     statusEl.textContent = `streaming · in ${framesIn} · out ${framesOut} · lag ${framesIn - framesOut}`;
@@ -176,7 +278,12 @@ function cleanup() {
   audioContext = null; micNode = null; playbackNode = null; stream = null; ws = null;
 }
 
-toggleBtn.addEventListener('click', () => { running ? stop() : start().catch(e => { log('start failed: ' + e.message); cleanup(); }); });
+toggleBtn.addEventListener('click', () => {
+  // Disable synchronously so rapid clicks can't stack multiple WS sessions
+  toggleBtn.disabled = true;
+  if (running) { stop(); toggleBtn.disabled = false; return; }
+  start().catch(e => { log('start failed: ' + e.message); cleanup(); }).finally(() => { toggleBtn.disabled = false; });
+});
 
 if (!AUTH_TOKEN) {
   log('⚠ no auth token — open this page via http://127.0.0.1:7007/voice-test.html?token=YOUR_TOKEN');

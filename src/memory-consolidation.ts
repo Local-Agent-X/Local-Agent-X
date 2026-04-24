@@ -193,6 +193,34 @@ export class MemoryConsolidator {
     return report;
   }
 
+  /**
+   * One-shot scrub of MIND.md to remove chat-transcript lines that shouldn't
+   * be there. Strategic Memory should hold curated facts, not raw User:/Agent:
+   * turns. Idempotent — a clean file passes through untouched.
+   *
+   * Called on startup. The consolidator now also rejects transcript lines at
+   * parse time so pollution doesn't re-accumulate.
+   */
+  scrubMindFile(): { linesRemoved: number; linesKept: number } {
+    if (!existsSync(MIND_PATH)) return { linesRemoved: 0, linesKept: 0 };
+    const original = readFileSync(MIND_PATH, "utf-8");
+    const lines = original.split(/\r?\n/);
+    const kept: string[] = [];
+    let removed = 0;
+    for (const line of lines) {
+      // Strip chat-transcript shaped bullet entries
+      if (/^\s*-\s*\[(?:chat|ide|session|tg|cron|wa)-[A-Za-z0-9_-]+\]\s+(User|Agent):/i.test(line)) { removed++; continue; }
+      if (/^\s*-\s*(User|Agent):\s/i.test(line)) { removed++; continue; }
+      if (/^\s*-\s*User (?:said|asked|wrote|shared|sent|told|replied)/i.test(line)) { removed++; continue; }
+      kept.push(line);
+    }
+    if (removed === 0) return { linesRemoved: 0, linesKept: kept.length };
+    // Collapse any run of 3+ blank lines down to 2
+    const collapsed = kept.join("\n").replace(/\n{3,}/g, "\n\n");
+    writeFileSync(MIND_PATH, collapsed, "utf-8");
+    return { linesRemoved: removed, linesKept: kept.length };
+  }
+
   // ── Promote important facts to MIND.md ────────────────────
 
   promoteToLongTerm(facts: string[]): void {
@@ -206,9 +234,15 @@ export class MemoryConsolidator {
 
     const newLines: string[] = [];
     for (const fact of facts) {
+      const trimmed = fact.trim();
+      // Last-line-of-defense: refuse to write chat-transcript snippets into
+      // strategic memory even if they slipped past every earlier filter.
+      if (/^\[(?:chat|ide|session|tg|cron|wa)-[A-Za-z0-9_-]+\]/i.test(trimmed)) continue;
+      if (/^(User|Agent):\s/i.test(trimmed)) continue;
+      if (/^User (?:said|asked|wrote|shared|sent|told|replied)/i.test(trimmed)) continue;
       // Skip if already present
-      if (mindContent.includes(fact.trim())) continue;
-      newLines.push(`- ${fact.trim()}`);
+      if (mindContent.includes(trimmed)) continue;
+      newLines.push(`- ${trimmed}`);
     }
 
     if (newLines.length === 0) return;
@@ -283,11 +317,15 @@ export class MemoryConsolidator {
       occurrences.set(i, count);
     }
 
-    // Filter out operational noise — these are action confirmations, tool outputs,
-    // or internal metadata, NOT facts worth remembering long-term.
+    // Filter out operational noise — action confirmations, tool outputs,
+    // internal metadata, and any chat transcript that leaked through the
+    // parser. NOT facts worth remembering long-term.
     const NOISE_PATTERNS = [
       /^\[chat-[a-z0-9-]+\]/i,           // Session ID prefix
+      /^\[(?:ide|session|tg|cron|wa)-[a-z0-9-]+\]/i, // Other session-id prefixes
       /^Agent:/i,                         // Agent response logs
+      /^User:/i,                          // Raw user message captured as fact
+      /^User (?:said|asked|wrote|shared|sent|told|replied)/i, // "User shared: ..." style capture
       /\b(pinned|unpinned|removed|added|switched|flipped|done)\b.*\b(sidebar|theme|light|dark|mode)\b/i,  // UI action confirmations
       /\b(BLOCKED|Tool result|INJECTION WARNING|EXTERNAL_UNTRUSTED)/i,  // Tool/security noise
       /^User introduced themselves/i,     // Redundant — already in USER.md
@@ -404,19 +442,35 @@ export class MemoryConsolidator {
       // Skip headers and empty lines
       if (trimmed.startsWith("#") || trimmed.length < 10) continue;
 
+      // A fact is a structured entry written by the memory-save path. It has
+      // EITHER a kind marker (W/B/O/S) optionally with a confidence tag,
+      // OR an explicit `(c=X)` confidence marker somewhere in the line.
+      // Lines without either are chat transcript or log noise — skip them,
+      // otherwise a raw user message like "add X to sidebar" becomes a
+      // "fact" with default 0.5 confidence and gets promoted to MIND.md.
+      const withoutTimestamp = trimmed.replace(/^\[[\d:]+\s*(?:AM|PM)?\]\s*/, "");
+      const afterChatTag = withoutTimestamp.replace(/^\[(?:chat|ide|session|tg|cron|wa)-[A-Za-z0-9_-]+\]\s*/, "");
+      const hasKindPrefix = /^[WBOS](?:\(c=[\d.]+\))?\s/.test(afterChatTag);
+      const hasConfidenceMarker = /\(c=(\d+\.?\d*)\)/.test(trimmed);
+      if (!hasKindPrefix && !hasConfidenceMarker) continue;
+
+      // Reject transcript tags that slipped in anyway
+      if (/^(User|Agent):\s/i.test(afterChatTag)) continue;
+
       // Extract entity from @mentions
       const entityMatch = trimmed.match(/@([\w-]+)/);
       const entity = entityMatch ? entityMatch[1] : undefined;
 
-      // Extract confidence if present: (c=0.9)
+      // Extract confidence if present
       const confMatch = trimmed.match(/\(c=(\d+\.?\d*)\)/);
       const confidence = confMatch ? parseFloat(confMatch[1]) : 0.5;
 
-      // Clean content
+      // Clean content — strip timestamps, chat-id tags, kind prefix, @mentions
       const content = trimmed
-        .replace(/^\[[\d:]+\s*(?:AM|PM)?\]\s*/, "") // strip timestamps
-        .replace(/^[WBOS](?:\(c=[\d.]+\))?\s*/, "") // strip kind prefix
-        .replace(/@[\w-]+:?\s*/g, "") // strip @mentions
+        .replace(/^\[[\d:]+\s*(?:AM|PM)?\]\s*/, "")
+        .replace(/^\[(?:chat|ide|session|tg|cron|wa)-[A-Za-z0-9_-]+\]\s*/, "")
+        .replace(/^[WBOS](?:\(c=[\d.]+\))?\s*/, "")
+        .replace(/@[\w-]+:?\s*/g, "")
         .trim();
 
       if (content.length < 5) continue;

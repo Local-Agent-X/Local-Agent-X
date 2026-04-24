@@ -112,17 +112,48 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         if (event.type === "done") return; // defer — we'll emit after fallback decision
         wrappedOnEvent(event);
       };
+      // Per-session turn lock. If a previous turn is still running for this
+      // session, we either (a) abort it when it hasn't committed anything yet
+      // and replace it with this new turn, or (b) refuse this new message
+      // with a 409-shaped error when the previous turn is mid-commit (email
+      // send, browser click on Send/Submit, etc). The lock is released in
+      // the finally block below, regardless of how the turn ends.
+      const { tryAcquireOrReplace, markIteration: markTurnIteration, releaseTurn: releaseTurnLock } = await import("../session-turn-lock.js");
+      const decision = tryAcquireOrReplace(sessionId, wsChat.abort, `chat:${prepared.provider}`);
+      if (!decision.allowed) {
+        const prev = decision.previous!;
+        wrappedOnEvent({
+          type: "error",
+          message:
+            `Your previous request is still running (started ${Math.round(prev.elapsedMs / 1000)}s ago, ` +
+            `iteration ${prev.iteration}, last action ${prev.lastToolName || "in progress"}). ` +
+            `Cancel it first or wait for it to finish.`,
+        });
+        wrappedOnEvent({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+        return true;
+      }
+      if (decision.reason === "aborted-non-committing") {
+        console.log(`[turn-lock] aborted prior non-committing turn for sess=${sessionId} (was ${decision.previous?.elapsedMs}ms in, iter=${decision.previous?.iteration})`);
+      }
       const turnStart = Date.now();
-      let result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
-        apiKey: prepared.apiKey, model: prepared.model,
-        provider: prepared.provider as Parameters<typeof runAgent>[2]["provider"],
-        baseURL: prepared.customBaseURL, systemPrompt,
-        tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
-        threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
-        images: prepared.images, maxIterations: prepared.maxIterations,
-        temperature: prepared.temperature, signal: wsChat.abort.signal,
-        onEvent: primaryEventProxy,
-      }), { label: `chat:${sessionId}`, timeout: 600_000 });
+      let result;
+      try {
+        result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
+          apiKey: prepared.apiKey, model: prepared.model,
+          provider: prepared.provider as Parameters<typeof runAgent>[2]["provider"],
+          baseURL: prepared.customBaseURL, systemPrompt,
+          tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
+          threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
+          images: prepared.images, maxIterations: prepared.maxIterations,
+          temperature: prepared.temperature, signal: wsChat.abort.signal,
+          onEvent: primaryEventProxy,
+        }), { label: `chat:${sessionId}`, timeout: 600_000 });
+      } catch (e) {
+        releaseTurnLock(sessionId);
+        throw e;
+      }
+      // Expose mark helper to the agent loops via module import (done inside the loops)
+      void markTurnIteration;
       const primaryElapsed = Date.now() - turnStart;
       console.log(`[timing] ${prepared.provider}/${prepared.model} primary ${primaryElapsed}ms`);
 
@@ -230,6 +261,9 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       }
 
       ctx.setActiveOnEvent(undefined);
+      // Release the per-session turn lock now that the turn has finished
+      // (or aborted, or errored — any terminal state). Idempotent.
+      releaseTurnLock(sessionId);
       // Clear any skill tool restrictions so they don't leak into the next message
       try { const { clearSessionAllowedTools } = await import("../session-policy.js"); clearSessionAllowedTools(sessionId); } catch {}
       const { stripEphemeralMessages } = await import("../agent-providers.js");

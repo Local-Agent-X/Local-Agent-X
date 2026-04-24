@@ -2278,13 +2278,39 @@ export class MemoryIndex {
  * facts that are always in context so the agent never starts from zero.
  */
 /**
+ * Strip raw conversation-transcript lines from strategic memory. The memory
+ * consolidation pipeline can dump literal "- [chat-abc] User: ..." /
+ * "- Agent: ..." / "- User: ..." snippets into MIND.md. Those aren't facts,
+ * they're replayed chat turns — and when the model sees them as "core
+ * memory" it pattern-matches new requests against them and misroutes work
+ * (e.g., every prompt turns into a sidebar-pin operation because recent
+ * transcripts are full of sidebar-pin operations).
+ *
+ * Strategic Memory is supposed to be curated facts/preferences/decisions.
+ * We filter the transcript lines out at the injection boundary so the
+ * model only sees the legit strategic content even when the upstream file
+ * has been polluted.
+ */
+function sanitizeCoreMemoryForContext(coreMemory: string): string {
+  const lines = coreMemory.split(/\r?\n/);
+  const kept: string[] = [];
+  for (const line of lines) {
+    // Transcript lines: "- [chat-...] Agent: ...", "- [chat-...] User: ..."
+    if (/^\s*-\s*\[chat-[A-Za-z0-9_-]+\]\s+(User|Agent):/i.test(line)) continue;
+    // Standalone promoted turns: "- User: ...", "- Agent: ..."
+    if (/^\s*-\s*(User|Agent):\s/i.test(line)) continue;
+    // "- [ide-...] Agent: ..." pattern (IDE session snippets)
+    if (/^\s*-\s*\[(ide|session|tg|cron|wa)-[A-Za-z0-9_-]+\]\s+(User|Agent):/i.test(line)) continue;
+    kept.push(line);
+  }
+  return kept.join("\n");
+}
+
+/**
  * Redact verbose message bodies from a daily-log slice so aggressive content
  * moderation (OpenAI) doesn't trip on replayed user messages. Preserves the
  * "what happened" shape (timestamps, action verbs, short entries) while
  * collapsing anything that looks like a long message body or email content.
- *
- * This is the sanitize-not-skip path — Codex still gets continuity from today's
- * activity log, it just doesn't see the full prose that tripped moderation.
  */
 function sanitizeDailyLogForModeration(log: string): string {
   const lines = log.split(/\r?\n/);
@@ -2306,7 +2332,7 @@ function sanitizeDailyLogForModeration(log: string): string {
 
 export async function buildContextBlock(
   memory: MemoryIndex,
-  opts: { skipDailyLog?: boolean; sanitizeDailyLog?: boolean } = {},
+  opts: { skipDailyLog?: boolean; sanitizeDailyLog?: boolean; userMessage?: string } = {},
 ): Promise<string> {
   const sections: string[] = [];
   const memDir = memory["memoryDir"];
@@ -2332,8 +2358,13 @@ export async function buildContextBlock(
     sections.push(`<user_profile>\n${user}\n</user_profile>`);
   }
 
-  // 4. Core memory (curated facts)
-  const coreMemory = memory.readMemoryFile();
+  // 4. Core memory (curated facts).
+  // Sanitize unconditionally — MIND.md should contain strategic facts, not
+  // raw chat transcripts. The consolidation pipeline has been dropping
+  // "- [chat-...] User: ..." / "- Agent: ..." snippets into strategic memory;
+  // we filter those out here so the model only sees legit curated content.
+  const coreMemoryRaw = memory.readMemoryFile();
+  const coreMemory = sanitizeCoreMemoryForContext(coreMemoryRaw);
   if (coreMemory.trim()) {
     sections.push(`<core_memory>\n${coreMemory.trim()}\n</core_memory>`);
   }
@@ -2370,18 +2401,34 @@ export async function buildContextBlock(
     sections.push(`<user_preferences>\n${opLines}\n</user_preferences>`);
   }
 
-  // 7. Known entities
-  const stats = memory.getStats();
-  if (stats.totalEntities > 0) {
-    const entitySlugs = memory["db"]
-      .prepare(
-        "SELECT DISTINCT entity_slug FROM entity_mentions ORDER BY entity_slug LIMIT 30"
-      )
-      .all() as Array<{ entity_slug: string }>;
-    if (entitySlugs.length > 0) {
-      sections.push(
-        `<known_entities>\n${entitySlugs.map((e) => e.entity_slug).join(", ")}\n</known_entities>`
-      );
+  // 7. Known entities — ONLY those actually referenced in the current user
+  // message. Dumping all known entities was biasing the model: it would see
+  // "mario, groomtime, sidebar, calculator..." every turn and pattern-match
+  // new prompts against whichever name was closest, even when the user was
+  // talking about something entirely different. Now we include only entities
+  // whose slug appears (case-insensitive substring) in the current message.
+  // If no user message is provided (cron/background), skip the section —
+  // the agent can query via memory_search when it actually needs entities.
+  if (opts.userMessage && opts.userMessage.trim().length > 0) {
+    const stats = memory.getStats();
+    if (stats.totalEntities > 0) {
+      const entitySlugs = memory["db"]
+        .prepare(
+          "SELECT DISTINCT entity_slug FROM entity_mentions ORDER BY entity_slug LIMIT 200"
+        )
+        .all() as Array<{ entity_slug: string }>;
+      const msgLower = opts.userMessage.toLowerCase();
+      const mentioned = entitySlugs
+        .map(e => e.entity_slug)
+        .filter(slug => {
+          if (!slug || slug.length < 3) return false;
+          return msgLower.includes(slug.toLowerCase());
+        });
+      if (mentioned.length > 0) {
+        sections.push(
+          `<known_entities>\n${mentioned.join(", ")}\n</known_entities>`
+        );
+      }
     }
   }
 

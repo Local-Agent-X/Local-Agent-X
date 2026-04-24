@@ -351,7 +351,25 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     const sid = String(body.sessionId || "");
     if (!sid) { json(400, { error: "sessionId required" }); return true; }
     const stopped = ctx.chatWs.stopChat(sid);
-    json(200, { ok: true, stopped: sid, wasActive: stopped }); return true;
+    // Also abort any active turn lock for this session so a stuck agent loop
+    // doesn't keep running after the stop signal.
+    let lockAborted = false;
+    try {
+      const { abortTurn } = await import("../session-turn-lock.js");
+      lockAborted = abortTurn(sid);
+    } catch {}
+    json(200, { ok: true, stopped: sid, wasActive: stopped, turnLockAborted: lockAborted }); return true;
+  }
+  // Active-turn status probe. Frontend hits this to show "agent is working —
+  // iteration 5, last tool: bash, 42s elapsed" instead of a bare spinner.
+  if (method === "GET" && url.pathname.match(/^\/api\/chats\/[^/]+\/status$/)) {
+    const sid = decodeURIComponent(url.pathname.split("/")[3]);
+    try {
+      const { getActiveTurn } = await import("../session-turn-lock.js");
+      const turn = getActiveTurn(sid);
+      json(200, { active: turn !== null, turn });
+    } catch { json(200, { active: false, turn: null }); }
+    return true;
   }
 
   return false;

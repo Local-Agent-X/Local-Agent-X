@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-24T00:14:40.256Z",
+  "generatedAt": "2026-04-24T04:19:42.424Z",
   "pages": [
     {
       "name": "Chat",
@@ -637,24 +637,6 @@
       ]
     },
     {
-      "name": "meal-planner-saas",
-      "path": "workspace/apps/meal-planner-saas",
-      "files": [
-        "eslint.config.js",
-        "index.html",
-        "node_modules",
-        "package-lock.json",
-        "package.json",
-        "public",
-        "README.md",
-        "src",
-        "tsconfig.app.json",
-        "tsconfig.json",
-        "tsconfig.node.json",
-        "vite.config.ts"
-      ]
-    },
-    {
       "name": "multiply-divide-calculator",
       "path": "workspace/apps/multiply-divide-calculator",
       "files": []
@@ -666,6 +648,21 @@
         "app.js",
         "index.html",
         "styles.css"
+      ]
+    },
+    {
+      "name": "numberblocks-to-do-app",
+      "path": "workspace/apps/numberblocks-to-do-app",
+      "files": [
+        "app.js",
+        "background.png",
+        "CHANGELOG.md",
+        "index.html",
+        "patch.py",
+        "PROJECT.md",
+        "script.js",
+        "styles.css",
+        "TODO.md"
       ]
     },
     {
@@ -746,20 +743,6 @@
       "name": "todo",
       "path": "workspace/apps/todo",
       "files": []
-    },
-    {
-      "name": "todo-app",
-      "path": "workspace/apps/todo-app",
-      "files": [
-        "app.js",
-        "CHANGELOG.md",
-        "index.html",
-        "patch.py",
-        "PROJECT.md",
-        "script.js",
-        "styles.css",
-        "TODO.md"
-      ]
     }
   ],
   "configFiles": [

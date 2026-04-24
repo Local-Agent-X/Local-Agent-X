@@ -271,6 +271,8 @@ export async function startServer(config: SAXConfig) {
   const browserSecretCaptureTool = createBrowserSecretCaptureTool(secretsStore, () => activeBrowserSessionId);
   const { createBrowserSecretFillTool } = await import("./browser-secret-fill.js");
   const browserSecretFillTool = createBrowserSecretFillTool(secretsStore, () => activeBrowserSessionId);
+  const { createSessionStatusTool } = await import("./session-status-tool.js");
+  const sessionStatusTool = createSessionStatusTool(() => activeBrowserSessionId);
   const { createOperationTools } = await import("./operations/tools.js");
   const operationTools = createOperationTools();
   // Build tool registry for deferred loading
@@ -278,12 +280,12 @@ export async function startServer(config: SAXConfig) {
 
   const allAgentTools = [
     ...allTools, httpRequestTool,
-    ...memoryTools, ...secretTools, browserSecretCaptureTool, browserSecretFillTool, ...browserTools, ...imageTools,
+    ...memoryTools, ...secretTools, browserSecretCaptureTool, browserSecretFillTool, sessionStatusTool, ...browserTools, ...imageTools,
     ...createCoreProtocolTools(), ...createCronTools(cronService),
     ...createAgencyTools(), ...createHandlerTools(), ...appTools, ...issueTools,
     ...operationTools,
   ];
-  const bridgeTools = [...allTools, ...memoryTools, browserSecretCaptureTool, ...browserTools, ...imageTools, ...createCoreProtocolTools(), ...issueTools];
+  const bridgeTools = [...allTools, ...memoryTools, browserSecretCaptureTool, sessionStatusTool, ...browserTools, ...imageTools, ...createCoreProtocolTools(), ...issueTools];
 
   // Connect MCP servers and add their tools
   try {
@@ -924,8 +926,20 @@ Rules:
     setInterval(async () => {
       try { const { cleanupIdleWorkers } = await import("./worker-session.js"); const n = cleanupIdleWorkers(); if (n > 0) console.log(`[workers] Cleaned up ${n} idle worker sessions`); } catch {}
     }, 10 * 60 * 1000);
-    // Schedule nightly consolidation at 3 AM
-    import("./memory-consolidation.js").then(({ MemoryConsolidator: MC }) => { MC.getInstance().scheduleNightly(); console.log("[memory] Nightly consolidation scheduled for 3 AM"); }).catch(e => console.warn("[memory] Failed to schedule nightly:", (e as Error).message));
+    // Schedule nightly consolidation at 3 AM + one-shot scrub of MIND.md to
+    // remove any chat-transcript pollution promoted before the consolidation
+    // guards were in place. Idempotent — a clean file passes through.
+    import("./memory-consolidation.js").then(({ MemoryConsolidator: MC }) => {
+      const inst = MC.getInstance();
+      inst.scheduleNightly();
+      console.log("[memory] Nightly consolidation scheduled for 3 AM");
+      try {
+        const scrub = inst.scrubMindFile();
+        if (scrub.linesRemoved > 0) {
+          console.log(`[memory] Scrubbed ${scrub.linesRemoved} transcript lines from MIND.md (${scrub.linesKept} strategic lines kept)`);
+        }
+      } catch (e) { console.warn("[memory] MIND.md scrub failed:", (e as Error).message); }
+    }).catch(e => console.warn("[memory] Failed to schedule nightly:", (e as Error).message));
 
     // Memory dream agent — periodic deep reflection (checks every 2 hours, runs if 24h+ since last)
     const runDreamCheck = async () => {

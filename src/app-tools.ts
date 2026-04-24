@@ -472,7 +472,7 @@ const appPermissions: ToolDefinition = {
 const sidebarPin: ToolDefinition = {
   name: "sidebar_pin",
   description:
-    "Pin an app or page to the sidebar. Use when the user says pin, add, put, or show something in the sidebar.",
+    "Pin an app or page to the sidebar navigation. ONLY use when the user explicitly says 'pin to sidebar', 'add to sidebar', or 'show in sidebar'. Do NOT use for generic 'add X'/'put X'/'show X'/'use X as background' requests — those are about app content/features, not sidebar navigation.",
   parameters: {
     type: "object",
     properties: {
@@ -540,7 +540,7 @@ const sidebarPin: ToolDefinition = {
 const sidebarUnpin: ToolDefinition = {
   name: "sidebar_unpin",
   description:
-    "Remove an app or page from the sidebar. Use when the user says unpin, remove, hide, or take something off the sidebar.",
+    "Remove an app or page from the sidebar navigation. ONLY use when the user explicitly says 'unpin from sidebar', 'remove from sidebar', 'hide from sidebar', or 'take off sidebar'. Do NOT use for generic 'remove X'/'hide X'/'delete X' requests — those are about app content/features, not sidebar navigation.",
   parameters: {
     type: "object",
     properties: {

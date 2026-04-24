@@ -9,7 +9,7 @@ import type { RBACManager, Role } from "./rbac.js";
 import { streamCodexResponse, type ReasoningItem } from "./codex-client.js";
 import { executeToolCalls, checkAndCompact } from "./tool-executor.js";
 import { stripEphemeralMessages } from "./agent-providers.js";
-import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState } from "./agent-guards.js";
+import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkUnmatchedActionClaim, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState } from "./agent-guards.js";
 import { stripSystemInjectionTags } from "./sanitize.js";
 
 interface ImageAttachment {
@@ -71,6 +71,7 @@ export async function runCodexAgentHttp(
   let userContent: string | VisionContentPart[] = userMessage;
   if (options.images && options.images.length > 0) {
     const parts: VisionContentPart[] = [{ type: "text", text: userMessage }];
+    const filePathHints: string[] = [];
     for (const img of options.images) {
       try {
         const { readFileSync } = await import("node:fs");
@@ -78,7 +79,21 @@ export async function runCodexAgentHttp(
         const ext = (img.name.split(".").pop() || "png").toLowerCase();
         const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
         parts.push({ type: "image_url", image_url: { url: `data:${mime};base64,${data.toString("base64")}`, detail: "auto" } });
+        if (img.filePath) filePathHints.push(`  - ${img.name} → ${img.filePath}`);
       } catch (e) { console.warn(`[agent] Could not read image ${img.name}:`, e); }
+    }
+    // Tell the model WHERE the actual file lives on disk. Without this, the
+    // model only gets the image via vision (it can see the content) but has
+    // no way to reference the bytes — so asked to "use this image as
+    // background," it invents a new one instead of copying the real file.
+    if (filePathHints.length > 0) {
+      parts.push({
+        type: "text",
+        text:
+          `\n\n[Attached file paths on disk — use these if you need to copy the real bytes into the workspace]\n` +
+          filePathHints.join("\n") +
+          `\n\nTo use an attachment as an app asset: read the file with bash/read, then write it to the target path under workspace/apps/<app>/, or use bash cp. Do NOT generate a new image or download from the web when a user attachment exists — use the file at the path above.`,
+      });
     }
     userContent = parts;
   }
@@ -94,21 +109,49 @@ export async function runCodexAgentHttp(
   const deadEndState = createDeadEndState();
   let selfCheckFired = false;
   let contentFilterEmpties = 0;
+  // Names of every tool called in this turn (across all iterations). Used by
+  // checkUnmatchedActionClaim to detect hallucinated action claims — if the
+  // agent says "Removed X" but never called sidebar_unpin/delete/etc., nudge.
+  const toolsCalledThisTurn = new Set<string>();
+  let unmatchedClaimNudged = false;
+  // Post-turn validation state: retry counters, layered prompt instructions,
+  // and evidence history for staleness detection.
+  const { createRetryCounters, runPostTurnDetectors, computeEvidenceCount } =
+    await import("./agent-loop-detectors.js");
+  const { createPromptLayers, composeSystemPrompt, isAckMessage, ACK_FAST_PATH_INSTRUCTION } =
+    await import("./agent-loop-prompt-layers.js");
+  const retryCounters = createRetryCounters();
+  const promptLayers = createPromptLayers();
+  const evidenceHistory: number[] = [];
+  // One-shot ack fast-path when the user's latest message was a short approval
+  if (isAckMessage(userMessage)) {
+    promptLayers.ackFastPath = ACK_FAST_PATH_INSTRUCTION;
+  }
 
   // Detect build/action intent — force tool use on iteration 0 to prevent
   // the model from responding with text instead of calling a tool.
-  // This mirrors upstream's pattern of using tool_choice:"required" for build requests.
   const BUILD_INTENT_RE = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script|file|document|spreadsheet)/i;
   const ACTION_INTENT_RE = /\b(schedule|save|remember|send|post|delete|update|run|execute|launch|open|close|deploy|install)\b/i;
   const shouldForceTools = BUILD_INTENT_RE.test(userMessage) || ACTION_INTENT_RE.test(userMessage);
 
-  // Per-turn token ceiling. The raised iteration cap (160) plus the chance
-  // of content-filter spins means a single turn can now burn hundreds of
-  // thousands of tokens before hitting maxIterations. Hard-cap total
-  // input+output at 500k per turn so a stuck agent can't silently spend $3+
-  // on useless retries. The iteration ceiling protects against finite loops;
-  // this protects against expensive ones.
+  // Per-turn safety ceilings:
+  //  - Token ceiling (expensive-runaway protection)
+  //  - Wall-clock ceiling (time-runaway protection for long stuck turns)
+  //  - Mid-turn staleness (fire the evidence-stale detector DURING the turn,
+  //    not only at exit, so a 330-second bash loop with no commit can't
+  //    silently burn forever)
   const TURN_TOKEN_CEILING = 500_000;
+  const TURN_WALL_CLOCK_MS = 180_000; // 3 min
+  const MID_TURN_MIN_ITERATION = 5;
+  const MID_TURN_EVIDENCE_STALE_WINDOW = 3;
+  const turnStartMs = Date.now();
+  const committingToolsThisTurn = new Set<string>();
+  // Heartbeat ticker so the UI sees live progress instead of "Still waiting..."
+  // Auto-stops when the turn-lock releases (tied to the chat route's finally).
+  const { startHeartbeat } = await import("./session-heartbeat.js");
+  const heartbeat = startHeartbeat({ sessionId: options.sessionId, onEvent, turnStartMs });
+  const { onTurnRelease } = await import("./session-turn-lock.js");
+  onTurnRelease(options.sessionId, () => heartbeat.stop());
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (signal?.aborted) return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "abort" };
@@ -123,6 +166,43 @@ export async function runCodexAgentHttp(
         stopReason: "error",
         errorMessage: abortMsg,
       };
+    }
+
+    // Wall-clock ceiling — safety net for turns that don't burn tokens fast
+    // but grind on tool calls without ever committing. Only fires when no
+    // committing tool has been called this turn.
+    const turnElapsed = Date.now() - turnStartMs;
+    if (turnElapsed > TURN_WALL_CLOCK_MS && committingToolsThisTurn.size === 0) {
+      const abortMsg = `Wall-clock turn ceiling hit: ${Math.round(turnElapsed / 1000)}s elapsed on iteration ${iteration} with no committing tool call. Aborting stuck exploration.`;
+      console.warn(`[agent] ${abortMsg}`);
+      try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "codex", model, detail: { reason: "turn-wall-clock", elapsedMs: turnElapsed, iteration, tools: Array.from(toolsCalledThisTurn) } })).catch(() => {}); } catch {}
+      return {
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
+        stopReason: "error",
+        errorMessage: abortMsg,
+      };
+    }
+
+    // Mid-turn evidence-staleness: after MID_TURN_MIN_ITERATION, check the
+    // last MID_TURN_EVIDENCE_STALE_WINDOW evidence counts. If flat and no
+    // committing tool has been called, abort — the agent is spinning without
+    // progress. Differs from the post-turn staleness check which only runs
+    // at exit; this one catches stuck-in-middle cases too.
+    if (iteration >= MID_TURN_MIN_ITERATION && evidenceHistory.length >= MID_TURN_EVIDENCE_STALE_WINDOW && committingToolsThisTurn.size === 0) {
+      const window = evidenceHistory.slice(-MID_TURN_EVIDENCE_STALE_WINDOW);
+      const allEqual = window.every(v => v === window[0]);
+      if (allEqual) {
+        const abortMsg = `Mid-turn evidence stale: evidence count ${window[0]} for ${MID_TURN_EVIDENCE_STALE_WINDOW} iterations with no committing tool. Aborting stuck exploration.`;
+        console.warn(`[agent] ${abortMsg}`);
+        try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "codex", model, detail: { reason: "mid-turn-stale", iteration, evidence: window } })).catch(() => {}); } catch {}
+        return {
+          messages: [{ role: "system", content: systemPrompt }, ...messages],
+          usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
+          stopReason: "error",
+          errorMessage: abortMsg,
+        };
+      }
     }
 
     if (iteration > 0) messages = stripEphemeralMessages(messages);
@@ -178,12 +258,14 @@ export async function runCodexAgentHttp(
     // Build intent is enforced via the system prompt instead.
     const toolChoice = "auto" as const;
 
+    const layeredSystemPrompt = composeSystemPrompt(systemPrompt, promptLayers);
+
     try {
       const stream = streamCodexResponse({
         token: apiKey,
         model,
         messages: streamMessages,
-        systemPrompt,
+        systemPrompt: layeredSystemPrompt,
         tools: codexTools,
         previousResponseId: turnPreviousResponseId,
         sessionId: options.sessionId,
@@ -306,6 +388,39 @@ export async function runCodexAgentHttp(
     }
     messages.push(assistantMsg);
 
+    // ── Post-turn validation ────────────────────────────────────────────
+    // Before letting the turn end, run a layered set of detectors to catch
+    // incomplete-turn patterns: planning-only, one-tool-then-stop, reasoning
+    // without visible text, empty response, uncommitted turn, evidence
+    // staleness. Each detector has its own retry budget; the first one that
+    // fires and has budget left injects a nudge into the next attempt's
+    // system prompt and continues the loop.
+    {
+      evidenceHistory.push(computeEvidenceCount(messages));
+      const detectorState = {
+        assistantText: assistantContent,
+        toolCallsThisIteration: toolCalls.map(tc => ({ name: tc.name, arguments: tc.arguments })),
+        toolsCalledThisTurn,
+        hasReasoning: turnReasoning.length > 0,
+        completionTokens: totalOutput,
+        iteration,
+        evidenceCount: evidenceHistory[evidenceHistory.length - 1],
+        evidenceHistory: [...evidenceHistory],
+      };
+      const hit = runPostTurnDetectors(detectorState, retryCounters);
+      if (hit && iteration < maxIterations - 1) {
+        console.warn(`[agent] Post-turn detector fired (Codex): ${hit.kind}`);
+        try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "codex", model, detail: { reason: `post-turn-${hit.kind}` } })).catch(() => {}); } catch {}
+        promptLayers.retry = hit;
+        // Kick the Codex incremental-response path back to full context
+        previousResponseId = undefined;
+        lastContextLength = 0;
+        continue;
+      }
+      // Clear any stale retry layer now that the turn is finishing cleanly
+      promptLayers.retry = undefined;
+    }
+
     if (toolCalls.length === 0) {
       // Approval hallucination: model says "needs approval" instead of calling tool
       const approvalNudge = checkApprovalHallucination(assistantContent);
@@ -321,6 +436,18 @@ export async function runCodexAgentHttp(
         console.warn(`[agent] Creation hallucination detected (Codex) — nudging`);
         messages.push({ role: "user", content: creationNudge } as ChatCompletionMessageParam);
         continue;
+      }
+
+      // Tool-verified action-claim check: if the reply claims an action
+      // verb whose matching tools were never called THIS TURN, nudge once.
+      if (!unmatchedClaimNudged && iteration < maxIterations - 1) {
+        const claimNudge = checkUnmatchedActionClaim(assistantContent, toolsCalledThisTurn);
+        if (claimNudge) {
+          console.warn(`[agent] Unmatched action claim detected (Codex) — nudging`);
+          unmatchedClaimNudged = true;
+          messages.push({ role: "user", content: claimNudge } as ChatCompletionMessageParam);
+          continue;
+        }
       }
 
       // Self-check: unresolved tool errors
@@ -344,6 +471,20 @@ export async function runCodexAgentHttp(
     if (loopResult.nudge) {
       messages.push({ role: "user", content: loopResult.nudge } as ChatCompletionMessageParam);
     }
+
+    // Record tool names BEFORE execution — even if a call errors, it was
+    // attempted, and the check cares about intent vs claim. Also update the
+    // session turn-lock registry so other readers (session_status, 409
+    // responses) see live progress.
+    const { isCommittingTool: isCommitting } = await import("./committing-tool-check.js");
+    const { markIteration: markTurnLockIteration } = await import("./session-turn-lock.js");
+    const iterationToolNames: string[] = [];
+    for (const tc of toolCalls) {
+      toolsCalledThisTurn.add(tc.name);
+      iterationToolNames.push(tc.name);
+      if (isCommitting(tc.name)) committingToolsThisTurn.add(tc.name);
+    }
+    markTurnLockIteration(options.sessionId, iterationToolNames);
 
     let toolResults;
     try {

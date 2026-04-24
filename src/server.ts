@@ -554,6 +554,11 @@ export async function startServer(config: SAXConfig) {
   const server = createServer(requestHandler);
   runMigrations(dataDir).catch(e => console.warn("[migrations]", e.message));
   const chatWs = setupChatWebSocket(server, config.authToken);
+  // Voice WebSocket transport (Phase 1: loopback; Phase 3 wires in STT/LLM/TTS)
+  try {
+    const { setupVoiceWebSocket } = await import("./voice/audio-ws.js");
+    setupVoiceWebSocket(server, config.authToken);
+  } catch (e) { console.warn("[voice-ws] setup failed:", (e as Error).message); }
 
   // Register WS chat handler — triggers the same chat pipeline as HTTP
   chatWs.onChat(async (sessionId, message, attachments) => {

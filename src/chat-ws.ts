@@ -42,7 +42,23 @@ type ChatHandler = (sessionId: string, message: string, attachments: any[]) => v
 let chatHandler: ChatHandler | null = null;
 
 export function setupChatWebSocket(server: Server, authToken: string) {
-  const wss = new WebSocketServer({ server, path: "/ws/chat" });
+  // noServer + manual upgrade routing so we can coexist with other
+  // WebSocketServers on the same http server. The {server, path} mode
+  // unconditionally aborts upgrades whose path doesn't match, which
+  // prevents voice-ws and future WS endpoints from attaching cleanly.
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (req, socket, head) => {
+    try {
+      const u = new URL(req.url || "/", "http://localhost");
+      if (u.pathname !== "/ws/chat") return;
+      wss.handleUpgrade(req, socket as import("node:net").Socket, head, (ws) => {
+        wss.emit("connection", ws, req);
+      });
+    } catch (e) {
+      console.warn(`[chat-ws] upgrade error: ${(e as Error).message}`);
+      try { socket.destroy(); } catch {}
+    }
+  });
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     // Auth check: accept token via query param OR WebSocket subprotocol

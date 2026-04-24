@@ -299,6 +299,20 @@ export async function runCodexAgentHttp(
         onEvent?.({ type: "context_status", percentage: 100, level: "emergency", usedTokens: 0, maxTokens: 0, compacted: true });
         continue;
       }
+      // Recovery for the 400 "No tool output found" error. This fires when
+      // our incremental-response path (previousResponseId + send-only-new-
+      // tool-results) drops or misorders a tool result, so the next request
+      // references a tool_call_id whose output isn't in the context Codex
+      // has. Fix: drop the response-id continuity, force a full-context
+      // resubmission on the next iteration. Costs the input tokens of one
+      // extra turn but recovers cleanly instead of failing the session.
+      if (/No tool output found for function call/i.test(errMsg) && iteration < maxIterations - 1) {
+        console.warn(`[agent] Codex 400 "No tool output found" — invalidating previousResponseId and resending full context`);
+        try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "codex", model, detail: { reason: "no-tool-output-recovery", iteration } })).catch(() => {}); } catch {}
+        previousResponseId = undefined;
+        lastContextLength = 0;
+        continue;
+      }
       console.error("[agent] Codex HTTP stream error:", errMsg);
       onEvent?.({ type: "error", message: errMsg });
       // On error, invalidate previousResponseId so the next attempt

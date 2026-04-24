@@ -36,6 +36,7 @@ const LIMIT = process.argv.includes("--limit")
   ? parseInt(process.argv[process.argv.indexOf("--limit") + 1])
   : 0;
 
+const VERBOSE = process.argv.includes("--verbose") || process.argv.includes("-v");
 const USE_HYDE = process.argv.includes("--hyde");
 const HYDE_MODEL = process.argv.includes("--hyde-model")
   ? process.argv[process.argv.indexOf("--hyde-model") + 1]
@@ -151,7 +152,12 @@ async function main() {
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     const rate = Math.max(0.01, (qi + 1) / elapsed);
     const eta = Math.round((testItems.length - qi - 1) / rate);
-    process.stdout.write(`\r[${pct}%] ${qi + 1}/${testItems.length} | R@${K}: ${recall}% | ${qType} ${hit ? "✓" : "✗"} | ETA: ${Math.floor(eta/60)}m${eta%60}s  `);
+    if (VERBOSE) {
+      const qSnippet = item.question.replace(/\s+/g, " ").slice(0, 80);
+      console.log(`[${pct}%] ${qi + 1}/${testItems.length} | R@${K}=${recall}% | ${qType} ${hit ? "✓" : "✗"} | "${qSnippet}" | ETA ${Math.floor(eta/60)}m${eta%60}s`);
+    } else {
+      process.stdout.write(`\r[${pct}%] ${qi + 1}/${testItems.length} | R@${K}: ${recall}% | ${qType} ${hit ? "✓" : "✗"} | ETA: ${Math.floor(eta/60)}m${eta%60}s  `);
+    }
 
     // Cleanup
     for (const p of sessionPaths) {

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-24T05:25:17.440Z",
+  "generatedAt": "2026-04-24T13:57:44.896Z",
   "pages": [
     {
       "name": "Chat",
@@ -365,48 +365,53 @@
       "readOnly": false
     },
     {
-      "name": "memory_get",
+      "name": "memory_reindex",
       "description": "Search query",
       "readOnly": false
     },
     {
-      "name": "memory_save",
+      "name": "memory_get",
       "description": "Max results (default 6)",
       "readOnly": false
     },
     {
-      "name": "memory_recall",
-      "description": "Filter by source: ",
+      "name": "memory_save",
+      "description": "Filter by canonical source. One or more of: entity, daily-log, mind, session-summary, session, perso",
       "readOnly": false
     },
     {
-      "name": "memory_reflect",
+      "name": "memory_recall",
       "description": "Filter results to a specific entity (e.g. ",
       "readOnly": false
     },
     {
-      "name": "memory_stats",
+      "name": "memory_reflect",
       "description": "Only return results after this date (ISO format, e.g. 2026-03-01)",
       "readOnly": false
     },
     {
-      "name": "memory_forget",
+      "name": "memory_stats",
       "description": "Filter by project name",
       "readOnly": false
     },
     {
-      "name": "memory_update_profile",
+      "name": "memory_forget",
       "description": "Filter by source type: agent-x-session, chatgpt-import, claude-import, memory-file, entity-page, imp",
       "readOnly": false
     },
     {
-      "name": "memory_ingest",
+      "name": "memory_update_profile",
       "description": "Start date filter (ISO format)",
       "readOnly": false
     },
     {
-      "name": "memory_consolidate",
+      "name": "memory_ingest",
       "description": "End date filter (ISO format)",
+      "readOnly": false
+    },
+    {
+      "name": "memory_consolidate",
+      "description": "Force-reindex memory stores. Run if memory_search seems to be missing recently-written facts, or aft",
       "readOnly": false
     },
     {

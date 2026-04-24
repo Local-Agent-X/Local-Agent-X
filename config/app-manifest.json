@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-23T14:01:55.071Z",
+  "generatedAt": "2026-04-24T00:14:40.256Z",
   "pages": [
     {
       "name": "Chat",
@@ -431,7 +431,57 @@
     },
     {
       "name": "operation_advance",
-      "description": "List all Operations (active, completed, failed, cancelled). Returns id, goal, status, and phase prog",
+      "description": "OPTIONAL list of secret names the user has explicitly authorized for automated fill during this oper",
+      "readOnly": false
+    },
+    {
+      "name": "app_create",
+      "description": "Create a new app — an interactive mini-application inside the platform. ",
+      "readOnly": false
+    },
+    {
+      "name": "app_update",
+      "description": "Unique app ID (slug, e.g. ",
+      "readOnly": false
+    },
+    {
+      "name": "app_read",
+      "description": "Human-readable name",
+      "readOnly": false
+    },
+    {
+      "name": "app_action",
+      "description": "What this app does",
+      "readOnly": false
+    },
+    {
+      "name": "app_query",
+      "description": "Array of component definitions: { id, type, props, children? }. ",
+      "readOnly": false
+    },
+    {
+      "name": "app_list",
+      "description": "Layout config: { type, columns?, gap? }. Types: grid, flex, stack, tabs, sidebar",
+      "readOnly": false
+    },
+    {
+      "name": "app_delete",
+      "description": "Optional data bindings: [{ componentId, property, source, expression }]",
+      "readOnly": false
+    },
+    {
+      "name": "app_permissions",
+      "description": "Optional named actions: [{ name, targetComponent?, handler }]",
+      "readOnly": false
+    },
+    {
+      "name": "sidebar_pin",
+      "description": "Optional event definitions: [{ name, sourceComponent?, description }]",
+      "readOnly": false
+    },
+    {
+      "name": "sidebar_unpin",
+      "description": "Access level: ",
       "readOnly": false
     }
   ],

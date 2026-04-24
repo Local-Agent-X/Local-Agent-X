@@ -2277,9 +2277,36 @@ export class MemoryIndex {
  * Inspired by MemGPT/Letta "core memory blocks" — a small, curated set of
  * facts that are always in context so the agent never starts from zero.
  */
+/**
+ * Redact verbose message bodies from a daily-log slice so aggressive content
+ * moderation (OpenAI) doesn't trip on replayed user messages. Preserves the
+ * "what happened" shape (timestamps, action verbs, short entries) while
+ * collapsing anything that looks like a long message body or email content.
+ *
+ * This is the sanitize-not-skip path — Codex still gets continuity from today's
+ * activity log, it just doesn't see the full prose that tripped moderation.
+ */
+function sanitizeDailyLogForModeration(log: string): string {
+  const lines = log.split(/\r?\n/);
+  const out: string[] = [];
+  for (const line of lines) {
+    // Format we emit: "[HH:MM:SS AM] User: <snippet>" or "[HH:MM:SS AM] [session-id] Agent: <snippet>"
+    const match = line.match(/^(\[[^\]]+\](?:\s*\[[^\]]+\])?\s*(?:User|Agent):\s*)(.*)$/);
+    if (!match) { out.push(line); continue; }
+    const prefix = match[1];
+    const body = match[2];
+    // Short bodies pass through — headlines, short prompts, command-like entries
+    if (body.length <= 60) { out.push(line); continue; }
+    // Everything longer gets collapsed to a length indicator. Agent can see
+    // that something happened without the moderation-tripping prose.
+    out.push(`${prefix}[${body.length}-char entry, redacted from context for moderation safety]`);
+  }
+  return out.join("\n");
+}
+
 export async function buildContextBlock(
   memory: MemoryIndex,
-  opts: { skipDailyLog?: boolean } = {},
+  opts: { skipDailyLog?: boolean; sanitizeDailyLog?: boolean } = {},
 ): Promise<string> {
   const sections: string[] = [];
   const memDir = memory["memoryDir"];
@@ -2312,17 +2339,19 @@ export async function buildContextBlock(
   }
 
   // 5. Today's daily log (recent context).
-  // Skipped for providers with aggressive moderation (Codex) — verbatim user
-  // messages replayed here can trip OpenAI's content filter and poison every
-  // subsequent turn of the session. Other context (identity/heart/user/core/
-  // opinions/entities) is enough for 128k-window models anyway.
+  // - skipDailyLog: drop entirely (legacy hard-off mode)
+  // - sanitizeDailyLog: keep the log but redact message bodies longer than
+  //   60 chars. Gives Codex continuity (timestamps, action verbs, headlines)
+  //   without replaying the verbose user-message bodies that trip OpenAI's
+  //   content filter and poison every subsequent turn.
   if (!opts.skipDailyLog) {
     const todayLog = memory.getDailyLogPath();
     if (existsSync(todayLog)) {
       const content = safeReadTextFile(todayLog);
       if (content && content.trim()) {
         const recent = content.trim().slice(-1500);
-        sections.push(`<today_context>\n${recent}\n</today_context>`);
+        const displayed = opts.sanitizeDailyLog ? sanitizeDailyLogForModeration(recent) : recent;
+        sections.push(`<today_context>\n${displayed}\n</today_context>`);
       }
     }
   }

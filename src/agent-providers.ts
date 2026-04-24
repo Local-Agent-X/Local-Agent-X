@@ -278,7 +278,22 @@ export async function runStandardAgent(
   const ACTION_INTENT_RE = /\b(schedule|save|remember|send|post|delete|update|run|execute|launch|open|close|deploy|install)\b/i;
   const shouldForceTools = BUILD_INTENT_RE.test(userMessage) || ACTION_INTENT_RE.test(userMessage);
 
+  // Per-turn token ceiling — hard cap on runaway cost (see agent-codex.ts)
+  const TURN_TOKEN_CEILING = 500_000;
+
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    if (totalPromptTokens + totalCompletionTokens > TURN_TOKEN_CEILING) {
+      const abortMsg = `Turn token ceiling hit: ${totalPromptTokens + totalCompletionTokens} tokens used (cap ${TURN_TOKEN_CEILING}). Aborting.`;
+      console.warn(`[agent] ${abortMsg}`);
+      try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: options.provider, model, detail: { reason: "turn-token-ceiling", totalInput: totalPromptTokens, totalOutput: totalCompletionTokens } })).catch(() => {}); } catch {}
+      return {
+        messages,
+        usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },
+        stopReason: "error",
+        errorMessage: abortMsg,
+      };
+    }
+
     if (iteration > 0) messages = stripEphemeralMessages(messages);
     messages = checkAndCompact(messages, model, onEvent);
 
@@ -560,7 +575,22 @@ export async function runAnthropicAgent(
   const ACTION_INTENT_RE_A = /\b(schedule|save|remember|send|post|delete|update|run|execute|launch|open|close|deploy|install)\b/i;
   const shouldForceToolsA = BUILD_INTENT_RE_A.test(userMessage) || ACTION_INTENT_RE_A.test(userMessage);
 
+  // Per-turn token ceiling — hard cap on runaway cost (see agent-codex.ts)
+  const TURN_TOKEN_CEILING_A = 500_000;
+
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    if (totalInput + totalOutput > TURN_TOKEN_CEILING_A) {
+      const abortMsg = `Turn token ceiling hit: ${totalInput + totalOutput} tokens used (cap ${TURN_TOKEN_CEILING_A}). Aborting.`;
+      console.warn(`[agent] ${abortMsg}`);
+      try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "anthropic", model, detail: { reason: "turn-token-ceiling", totalInput, totalOutput } })).catch(() => {}); } catch {}
+      return {
+        messages: [{ role: "system", content: systemPrompt }, ...messages],
+        usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
+        stopReason: "error",
+        errorMessage: abortMsg,
+      };
+    }
+
     if (iteration > 0) messages = stripEphemeralMessages(messages);
     messages = checkAndCompact(messages, model, onEvent);
 

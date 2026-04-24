@@ -203,7 +203,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
 
   if (shouldRunMemory) {
     [contextBlock, relevantMemories] = await Promise.all([
-      buildContextBlock(memoryIndex, { skipDailyLog: false }),
+      buildContextBlock(memoryIndex),
       autoSearchContext(memoryIndex, message),
     ]);
 
@@ -249,16 +249,17 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       console.warn("[memory] Orchestrator error:", (e as Error).message);
     }
   } else if (!skipMemory) {
-    // Trivial tool request OR Codex provider — basic context only, and for
-    // Codex we skip the daily log (it echoes verbatim user messages that can
-    // trip OpenAI's content filter and poison the whole session).
+    // Trivial tool request OR Codex provider — basic context only. For Codex
+    // we SANITIZE (not skip) the daily log: keep timestamps + short entries,
+    // redact long message bodies that would trip OpenAI's content filter.
+    // Codex keeps today's continuity without seeing the prose that broke it.
     try {
       [contextBlock] = await Promise.all([
-        buildContextBlock(memoryIndex, { skipDailyLog: isCodexProvider }),
+        buildContextBlock(memoryIndex, { sanitizeDailyLog: isCodexProvider }),
       ]);
     } catch {}
     if (isTrivialToolRequest) console.log(`[chat] Trivial tool request — skipping memory injection`);
-    else if (isCodexProvider) console.log(`[chat] Codex provider — skipping daily log from context (moderation-safe)`);
+    else if (isCodexProvider) console.log(`[chat] Codex provider — sanitizing daily log (long bodies redacted)`);
   } else {
     // Bridge/cron/Codex — lightweight context only (skip autoSearch to save tokens)
     try {

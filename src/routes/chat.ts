@@ -141,7 +141,32 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       const errKind = result.stopReason === "error" ? classifyProviderError(result.errorMessage || "") : null;
       const isTransientError = errKind !== null;
 
-      if ((isEmptyResponse || isTransientError) && !wsChat.abort.signal.aborted) {
+      // Double-send guard: if the turn already performed a committing tool
+      // call (email send, HTTP POST/PUT/DELETE, browser click on Send/Submit/
+      // Pay/Delete, secret/memory/cron mutations, etc.), DO NOT auto-failover.
+      // Replaying the turn on a different provider would re-execute the call.
+      // Surface the error to the user instead.
+      const { detectCommittingCalls } = await import("../committing-tool-check.js");
+      const committingCalls = detectCommittingCalls(result.messages);
+      const suppressFailover = committingCalls.length > 0;
+
+      if (suppressFailover && (isEmptyResponse || isTransientError)) {
+        const callList = committingCalls.slice(0, 3).map(c => `${c.toolName} (${c.reason})`).join(", ");
+        const reasonText = isTransientError
+          ? (errKind === "content-filter" ? "hit content moderation" : `had a ${errKind} issue`)
+          : "returned an empty reply";
+        const notice =
+          `\n\n_${prepared.provider} ${reasonText} AFTER already executing: ${callList}. ` +
+          `Not auto-retrying on another provider — that could double-execute the action. ` +
+          `If the action completed successfully, you're done. If it didn't, ask me to retry manually._\n\n`;
+        wrappedOnEvent({ type: "stream", delta: notice });
+        try {
+          const { logRetry } = await import("../retry-telemetry.js");
+          logRetry({ kind: "custom", sessionId, provider: prepared.provider, model: prepared.model, detail: { reason: "failover-suppressed-committing-call", committingCalls: committingCalls.map(c => c.toolName) } });
+        } catch {}
+      }
+
+      if ((isEmptyResponse || isTransientError) && !suppressFailover && !wsChat.abort.signal.aborted) {
         const triggerKind = isTransientError ? errKind : "empty-response";
         try {
           const { logRetry } = await import("../retry-telemetry.js");

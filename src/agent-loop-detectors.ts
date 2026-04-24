@@ -80,7 +80,7 @@ const CONTINUATION_CUE =
 // It deliberately does NOT match first-person promises like "I'll send the
 // email" — those should still trigger planning-only retries when appropriate.
 const WAITING_ON_USER =
-  /(?:^|[.!?—–:;]\s*|\n)\s*(?:send|share|paste|drop|upload|attach|provide|post|give|show)\s+(?:me|the|it|us|your|a)\b|(?:can|could|would)\s+you\s+(?:send|share|paste|drop|upload|attach|provide|post|give|show|tell|let)\b|when\s+you(?:'re| are)?\s+(?:ready|done|have|get|finish)|let\s+me\s+know\s+(?:when|once|if)|tell\s+me\s+(?:when|once|if|what|who|where|how|the|your)|\bi\s+need\s+(?:the|your|more|you\s+to)\b|\bbefore\s+i\s+(?:can|proceed|continue|start)\b|\bonce\s+you\s+(?:send|share|provide|tell|have|do|'ve|are)\b|\bdrop\s+(?:it|them|that|the)\b/i;
+  /(?:^|[.!?—–:;]\s*|\n)\s*(?:please\s+|kindly\s+)?(?:send|share|paste|drop|upload|attach|provide|post|give|show)\s+(?:me|the|it|us|your|a)\b|(?:can|could|would)\s+you\s+(?:send|share|paste|drop|upload|attach|provide|post|give|show|tell|let)\b|when\s+you(?:'re| are)?\s+(?:ready|done|have|get|finish)|let\s+me\s+know\s+(?:when|once|if)|tell\s+me\s+(?:when|once|if|what|who|where|how|the|your)|\bi\s+need\s+(?:the|your|more|you\s+to)\b|\bbefore\s+i\s+(?:can|proceed|continue|start)\b|\bonce\s+you\s+(?:send|share|provide|tell|have|do|'ve|are)\b|\bdrop\s+(?:it|them|that|the)\b/i;
 
 /**
  * True if the agent's reply clearly signals it is blocked waiting on the user.

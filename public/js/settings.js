@@ -344,10 +344,13 @@ function toggleApiKeyVisibility() {
 
 const PROVIDER_MODELS = {
   codex: [
-    { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex (default)' },
-    { value: 'gpt-4.1', label: 'GPT-4.1' },
-    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-    { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano' },
+    { value: 'gpt-5.5', label: 'GPT-5.5 (1M ctx, $5/$30)' },
+    { value: 'gpt-5.4', label: 'GPT-5.4' },
+    { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini (default, faster)' },
+    { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
+    { value: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
+    { value: 'gpt-4o', label: 'GPT-4o' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
     { value: 'o3', label: 'o3' },
     { value: 'o4-mini', label: 'o4-mini' },
   ],

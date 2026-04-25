@@ -27,6 +27,8 @@ const PRICING: Record<string, ModelPricing> = {
   "claude-haiku-4-5-20251001": { input: 1, output: 5 },
   "claude-haiku-3-5-20241022": { input: 0.80, output: 4 },
   // OpenAI
+  "gpt-5.5": { input: 5, output: 30 },
+  "gpt-5.5-pro": { input: 30, output: 180 },
   "gpt-5.3-codex": { input: 2, output: 8 },
   "gpt-4o": { input: 2.50, output: 10 },
   "gpt-4o-mini": { input: 0.15, output: 0.60 },
@@ -89,7 +91,7 @@ export interface UsageSummary {
 
 // ── File-based storage (lightweight, no extra deps) ──
 
-const USAGE_FILE = join(homedir(), ".sax", "usage-log.json");
+const USAGE_FILE = join(homedir(), ".lax", "usage-log.json");
 const MAX_RECORDS = 10000;
 
 function loadRecords(): UsageRecord[] {

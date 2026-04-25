@@ -144,7 +144,7 @@ export async function launchViaCDP(
       userDataDir = real;
       console.log(`[browser] Attach mode — using your real Chrome profile: ${userDataDir}`);
     } else {
-      userDataDir = join(homedir(), ".sax", "chrome-profile");
+      userDataDir = join(homedir(), ".lax", "chrome-profile");
       if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true });
     }
     const cdpUrl = `http://127.0.0.1:${cdpPort}`;
@@ -210,7 +210,7 @@ export async function launchViaCDP(
 
   // Fallback: Playwright persistent context.
   console.log("[browser] Launching Playwright persistent context");
-  const persistDir = join(homedir(), ".sax", "chrome-profile-pw");
+  const persistDir = join(homedir(), ".lax", "chrome-profile-pw");
   if (!existsSync(persistDir)) mkdirSync(persistDir, { recursive: true });
   try {
     const ctx = await pw.chromium.launchPersistentContext(persistDir, {

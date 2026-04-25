@@ -14,7 +14,7 @@ import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync } from "
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const MODEL_DIR = join(homedir(), ".sax", "models", "whisper-base-en");
+const MODEL_DIR = join(homedir(), ".lax", "models", "whisper-base-en");
 const MODEL_BASE = "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base.en/resolve/main";
 
 interface ModelFile { name: string; url: string; minBytes: number; }

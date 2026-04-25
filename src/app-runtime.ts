@@ -212,7 +212,7 @@ export function validateAppDefinition(def: Partial<AppDefinition>): ValidationRe
 
 // ── Audit System ─────────────────────────────────────────────
 
-const AUDIT_HMAC_KEY = process.env.SAX_AUDIT_KEY || randomBytes(32).toString("hex");
+const AUDIT_HMAC_KEY = (process.env.LAX_AUDIT_KEY ?? process.env.SAX_AUDIT_KEY) || randomBytes(32).toString("hex");
 
 function signAuditEntry(entry: Omit<AuditEntry, "signature">): string {
   const payload = `${entry.id}|${entry.timestamp}|${entry.actor}|${entry.action}|${entry.appId}`;
@@ -260,8 +260,8 @@ class RateLimiter {
 
 // ── Registry ─────────────────────────────────────────────────
 
-const APPS_DIR = join(homedir(), ".sax", "apps");
-const AUDIT_DIR = join(homedir(), ".sax", "apps", "_audit");
+const APPS_DIR = join(homedir(), ".lax", "apps");
+const AUDIT_DIR = join(homedir(), ".lax", "apps", "_audit");
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -296,7 +296,7 @@ export class AppRegistry {
   private migrateFromDashboards(): void {
     if (this.migrated) return;
     this.migrated = true;
-    const oldDir = join(homedir(), ".sax", "dashboards");
+    const oldDir = join(homedir(), ".lax", "dashboards");
     if (!existsSync(oldDir)) return;
 
     try {

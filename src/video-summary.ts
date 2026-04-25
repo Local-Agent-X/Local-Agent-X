@@ -20,7 +20,7 @@ function parseFraction(s: string): number {
   return Number(s) || 0;
 }
 
-const TMP_DIR = join(homedir(), ".sax", "voice-tmp");
+const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
 export interface VideoInfo {

@@ -22,7 +22,7 @@ export class OfflineQueue {
   private processing = false;
 
   constructor(healthUrl: string) {
-    const dir = join(homedir(), ".sax");
+    const dir = join(homedir(), ".lax");
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     this.queuePath = join(dir, "offline-queue.json");
     this.healthUrl = healthUrl;

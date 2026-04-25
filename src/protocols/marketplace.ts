@@ -11,7 +11,7 @@ import type { ToolDefinition } from "../types.js";
 import { loadCustomProtocols, saveCustomProtocols } from "./builder.js";
 
 const MARKETPLACE_REGISTRY_URL = "https://raw.githubusercontent.com/open-agent-x/protocol-marketplace/main/registry.json";
-const CACHE_PATH = join(homedir(), ".sax", "marketplace-cache.json");
+const CACHE_PATH = join(homedir(), ".lax", "marketplace-cache.json");
 
 interface MarketplaceEntry {
   name: string;
@@ -40,7 +40,7 @@ function loadCache(): MarketplaceCache | null {
 }
 
 function saveCache(cache: MarketplaceCache): void {
-  const dir = join(homedir(), ".sax");
+  const dir = join(homedir(), ".lax");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2), "utf-8");
 }

@@ -22,10 +22,10 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { extractSessionPairs, type ConversationMessage } from "./memory-chunking.js";
 
-const SAX_DIR = join(homedir(), ".sax");
-const MEMORY_DIR = join(SAX_DIR, "memory");
-const SESSIONS_DIR = join(SAX_DIR, "sessions");
-const DREAM_STATE_PATH = join(SAX_DIR, "dream-state.json");
+const LAX_DIR = join(homedir(), ".lax");
+const MEMORY_DIR = join(LAX_DIR, "memory");
+const SESSIONS_DIR = join(LAX_DIR, "sessions");
+const DREAM_STATE_PATH = join(LAX_DIR, "dream-state.json");
 
 // Default batch token budget. Conservative at 20k so the dream prompt +
 // existing-memory context + assistant scratch space all fit comfortably

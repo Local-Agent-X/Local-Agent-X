@@ -202,7 +202,7 @@ export class MCPManager {
 
   static getInstance(dataDir?: string): MCPManager {
     if (!MCPManager.instance) {
-      MCPManager.instance = new MCPManager(dataDir || join(homedir(), ".sax"));
+      MCPManager.instance = new MCPManager(dataDir || join(homedir(), ".lax"));
     }
     return MCPManager.instance;
   }
@@ -298,7 +298,7 @@ export class MCPManager {
       },
     };
     try {
-      mkdirSync(join(homedir(), ".sax"), { recursive: true });
+      mkdirSync(join(homedir(), ".lax"), { recursive: true });
       writeFileSync(this.configPath, JSON.stringify(defaultConfig, null, 2), "utf-8");
     } catch {}
     return defaultConfig;

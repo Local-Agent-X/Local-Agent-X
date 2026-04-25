@@ -58,7 +58,7 @@ export interface AuditPage {
 }
 
 function getAuditDir(): string {
-  return join(homedir(), ".sax", "audit");
+  return join(homedir(), ".lax", "audit");
 }
 
 /** List available audit log dates */

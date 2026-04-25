@@ -14,7 +14,7 @@ interface Task {
   updated_at: string;
 }
 
-const TASKS_PATH = join(homedir(), ".sax", "tasks.json");
+const TASKS_PATH = join(homedir(), ".lax", "tasks.json");
 const STATUS_ICON: Record<Task["status"], string> =
   { pending: "\u23F3", in_progress: "\uD83D\uDD04", completed: "\u2705", failed: "\u274C" };
 const VALID_STATUSES = new Set(["pending", "in_progress", "completed", "failed"]);
@@ -27,7 +27,7 @@ function loadTasks(): Map<string, Task> {
 }
 
 function saveTasks(tasks: Map<string, Task>): void {
-  mkdirSync(join(homedir(), ".sax"), { recursive: true });
+  mkdirSync(join(homedir(), ".lax"), { recursive: true });
   writeFileSync(TASKS_PATH, JSON.stringify([...tasks.values()], null, 2), "utf-8");
 }
 

@@ -11,11 +11,11 @@ import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 
-const TMP_DIR = join(homedir(), ".sax", "voice-tmp");
+const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
-const KOKORO_MODEL = join(homedir(), ".sax", "workspace", "voice-chat", "kokoro", "kokoro-v1.0.onnx");
-const KOKORO_VOICES = join(homedir(), ".sax", "workspace", "voice-chat", "kokoro", "voices-v1.0.bin");
+const KOKORO_MODEL = join(homedir(), ".lax", "workspace", "voice-chat", "kokoro", "kokoro-v1.0.onnx");
+const KOKORO_VOICES = join(homedir(), ".lax", "workspace", "voice-chat", "kokoro", "voices-v1.0.bin");
 
 function tmpPath(ext: string): string {
   return join(TMP_DIR, `stream_${randomBytes(6).toString("hex")}.${ext}`);

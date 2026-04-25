@@ -15,7 +15,7 @@ export const DEFAULT_TIMEOUTS: Record<string, number> = {
 const DEFAULT_FALLBACK = 30_000;
 
 function configPath(): string {
-  return join(homedir(), ".sax", "tool-timeouts.json");
+  return join(homedir(), ".lax", "tool-timeouts.json");
 }
 
 function loadCustomTimeouts(): Record<string, number> {
@@ -29,7 +29,7 @@ function loadCustomTimeouts(): Record<string, number> {
 }
 
 function saveCustomTimeouts(timeouts: Record<string, number>): void {
-  const dir = join(homedir(), ".sax");
+  const dir = join(homedir(), ".lax");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(configPath(), JSON.stringify(timeouts, null, 2), "utf-8");
 }

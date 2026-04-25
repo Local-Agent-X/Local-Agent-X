@@ -17,8 +17,8 @@ function validateLang(lang: string): string {
   return lang;
 }
 
-const TMP_DIR = join(homedir(), ".sax", "voice-tmp");
-const TESS_DIR = join(homedir(), ".sax", "tesseract");
+const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
+const TESS_DIR = join(homedir(), ".lax", "tesseract");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 if (!existsSync(TESS_DIR)) mkdirSync(TESS_DIR, { recursive: true });
 

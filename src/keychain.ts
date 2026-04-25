@@ -25,7 +25,7 @@ import { hostname, userInfo } from "node:os";
  * 3. Log which method is being used so the user knows
  */
 
-const SERVICE_NAME = "SecretAgentX";
+const SERVICE_NAME = "lax";
 const ACCOUNT_NAME = "master-key";
 
 // All child processes on Windows use CREATE_NO_WINDOW via execFileSync + windowsHide

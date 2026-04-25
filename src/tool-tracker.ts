@@ -23,14 +23,14 @@ interface ToolStatsEntry {
 type ToolStats = Record<string, ToolStatsEntry>;
 
 const MAX_ENTRIES = 10000;
-const SAX_DIR = join(homedir(), ".sax");
-const STATS_FILE = join(SAX_DIR, "tool-stats.json");
+const LAX_DIR = join(homedir(), ".lax");
+const STATS_FILE = join(LAX_DIR, "tool-stats.json");
 
 const records: ToolCallRecord[] = [];
 
 function ensureDir(): void {
-  if (!existsSync(SAX_DIR)) {
-    mkdirSync(SAX_DIR, { recursive: true });
+  if (!existsSync(LAX_DIR)) {
+    mkdirSync(LAX_DIR, { recursive: true });
   }
 }
 

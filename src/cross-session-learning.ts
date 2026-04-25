@@ -59,8 +59,8 @@ interface SessionData {
 //  Constants
 // ══════════════════════════════════════════════════════════
 
-const SAX_DIR = join(homedir(), ".sax");
-const DATA_FILE = join(SAX_DIR, "cross-session-data.json");
+const LAX_DIR = join(homedir(), ".lax");
+const DATA_FILE = join(LAX_DIR, "cross-session-data.json");
 const MAX_ACTIONS = 5000;
 const DEFAULT_MIN_OCCURRENCES = 3;
 const PRUNE_AGE_DAYS = 30;
@@ -603,8 +603,8 @@ export class CrossSessionLearner {
   }
 
   private ensureDir(): void {
-    if (!existsSync(SAX_DIR)) {
-      mkdirSync(SAX_DIR, { recursive: true });
+    if (!existsSync(LAX_DIR)) {
+      mkdirSync(LAX_DIR, { recursive: true });
     }
   }
 }

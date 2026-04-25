@@ -2,7 +2,7 @@ import { z } from "zod";
 import { readFileSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import type { SAXConfig, DeploymentProfile, ProfileDefaults } from "./types.js";
+import type { LAXConfig, DeploymentProfile, ProfileDefaults } from "./types.js";
 
 // ── Deployment Profile Defaults ──
 // Each profile bundles sane defaults for its target audience.
@@ -95,7 +95,7 @@ function getConfigDir(): string {
   if (!home) {
     throw new Error("Cannot determine home directory: neither HOME nor USERPROFILE is set");
   }
-  const dir = join(home, ".sax");
+  const dir = join(home, ".lax");
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
@@ -110,7 +110,7 @@ function generateAuthToken(): string {
   return randomBytes(32).toString("hex"); // 256-bit token
 }
 
-export function loadConfig(): SAXConfig {
+export function loadConfig(): LAXConfig {
   const configPath = getConfigPath();
   let raw: Record<string, unknown> = {};
 
@@ -125,24 +125,36 @@ export function loadConfig(): SAXConfig {
   // Environment variable overrides
   if (process.env.XAI_API_KEY) raw.openaiApiKey = process.env.XAI_API_KEY;
   if (process.env.OPENAI_API_KEY) raw.openaiApiKey = process.env.OPENAI_API_KEY;
-  if (process.env.SAX_PORT) raw.port = parseInt(process.env.SAX_PORT, 10);
-  if (process.env.SAX_AUTH_TOKEN) raw.authToken = process.env.SAX_AUTH_TOKEN;
-  if (process.env.SAX_WORKSPACE) raw.workspace = process.env.SAX_WORKSPACE;
-  if (process.env.SAX_MODEL) raw.model = process.env.SAX_MODEL;
+  const portEnv = process.env.LAX_PORT ?? process.env.SAX_PORT;
+  if (portEnv) raw.port = parseInt(portEnv, 10);
+  const authTokenEnv = process.env.LAX_AUTH_TOKEN ?? process.env.SAX_AUTH_TOKEN;
+  if (authTokenEnv) raw.authToken = authTokenEnv;
+  const workspaceEnv = process.env.LAX_WORKSPACE ?? process.env.SAX_WORKSPACE;
+  if (workspaceEnv) raw.workspace = workspaceEnv;
+  const modelEnv = process.env.LAX_MODEL ?? process.env.SAX_MODEL;
+  if (modelEnv) raw.model = modelEnv;
 
   // Service URL overrides
-  if (process.env.SAX_OLLAMA_URL) raw.ollamaUrl = process.env.SAX_OLLAMA_URL;
-  if (process.env.SAX_SD_SERVER_URL) raw.sdServerUrl = process.env.SAX_SD_SERVER_URL;
-  if (process.env.SAX_VIDEO_SERVER_URL) raw.videoServerUrl = process.env.SAX_VIDEO_SERVER_URL;
-  if (process.env.SAX_XTTS_SERVER_URL) raw.xttsServerUrl = process.env.SAX_XTTS_SERVER_URL;
+  const ollamaEnv = process.env.LAX_OLLAMA_URL ?? process.env.SAX_OLLAMA_URL;
+  if (ollamaEnv) raw.ollamaUrl = ollamaEnv;
+  const sdEnv = process.env.LAX_SD_SERVER_URL ?? process.env.SAX_SD_SERVER_URL;
+  if (sdEnv) raw.sdServerUrl = sdEnv;
+  const videoEnv = process.env.LAX_VIDEO_SERVER_URL ?? process.env.SAX_VIDEO_SERVER_URL;
+  if (videoEnv) raw.videoServerUrl = videoEnv;
+  const xttsEnv = process.env.LAX_XTTS_SERVER_URL ?? process.env.SAX_XTTS_SERVER_URL;
+  if (xttsEnv) raw.xttsServerUrl = xttsEnv;
 
   // Limit/timeout overrides
-  if (process.env.SAX_AGENT_TIMEOUT_MS) raw.agentTimeoutMs = parseInt(process.env.SAX_AGENT_TIMEOUT_MS, 10);
-  if (process.env.SAX_MAX_UPLOAD_BYTES) raw.maxUploadBytes = parseInt(process.env.SAX_MAX_UPLOAD_BYTES, 10);
-  if (process.env.SAX_RATE_LIMIT_MAX) raw.rateLimitMax = parseInt(process.env.SAX_RATE_LIMIT_MAX, 10);
+  const agentTimeoutEnv = process.env.LAX_AGENT_TIMEOUT_MS ?? process.env.SAX_AGENT_TIMEOUT_MS;
+  if (agentTimeoutEnv) raw.agentTimeoutMs = parseInt(agentTimeoutEnv, 10);
+  const maxUploadEnv = process.env.LAX_MAX_UPLOAD_BYTES ?? process.env.SAX_MAX_UPLOAD_BYTES;
+  if (maxUploadEnv) raw.maxUploadBytes = parseInt(maxUploadEnv, 10);
+  const rateLimitEnv = process.env.LAX_RATE_LIMIT_MAX ?? process.env.SAX_RATE_LIMIT_MAX;
+  if (rateLimitEnv) raw.rateLimitMax = parseInt(rateLimitEnv, 10);
 
   // Environment variable for profile override
-  if (process.env.SAX_PROFILE) raw.profile = process.env.SAX_PROFILE;
+  const profileEnv = process.env.LAX_PROFILE ?? process.env.SAX_PROFILE;
+  if (profileEnv) raw.profile = profileEnv;
 
   const config = configSchema.parse(raw);
 
@@ -167,7 +179,7 @@ export function loadConfig(): SAXConfig {
   return config;
 }
 
-export function saveConfig(config: SAXConfig): void {
+export function saveConfig(config: LAXConfig): void {
   const configPath = getConfigPath();
   writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: "utf-8", mode: 0o600 });
 }
@@ -179,13 +191,13 @@ export function getAuthPath(): string {
 // ── Runtime config store ──
 // Set once at startup, readable from any module without threading config through every call.
 
-let _runtimeConfig: SAXConfig | null = null;
+let _runtimeConfig: LAXConfig | null = null;
 
-export function setRuntimeConfig(config: SAXConfig): void {
+export function setRuntimeConfig(config: LAXConfig): void {
   _runtimeConfig = config;
 }
 
-export function getRuntimeConfig(): SAXConfig {
+export function getRuntimeConfig(): LAXConfig {
   if (!_runtimeConfig) {
     // Fallback: load from disk (should only happen in tests or edge cases)
     _runtimeConfig = loadConfig();

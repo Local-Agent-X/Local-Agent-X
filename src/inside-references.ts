@@ -53,14 +53,14 @@ interface ReferenceStore {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const SAX_DIR = join(homedir(), ".sax");
-const STORE_FILE = join(SAX_DIR, "inside-references.json");
+const LAX_DIR = join(homedir(), ".lax");
+const STORE_FILE = join(LAX_DIR, "inside-references.json");
 const MAX_REFERENCES = 500;
 const MAX_PENDING = 2000;
 const AUTO_THRESHOLD = 3; // phrases need 3+ uses to auto-register
 
 function ensureDir(): void {
-  if (!existsSync(SAX_DIR)) mkdirSync(SAX_DIR, { recursive: true });
+  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
 }
 
 function atomicWrite(path: string, data: string): void {

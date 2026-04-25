@@ -65,7 +65,7 @@ export interface ProviderComparison {
 
 type SendPromptFn = (prompt: string, provider?: string) => Promise<string>;
 
-const BENCHMARKS_DIR = join(homedir(), ".sax", "benchmarks");
+const BENCHMARKS_DIR = join(homedir(), ".lax", "benchmarks");
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) {

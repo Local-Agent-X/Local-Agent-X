@@ -37,7 +37,7 @@ export interface AnthropicTokens {
 }
 
 function getAuthPath(): string {
-  return join(homedir(), ".sax", "anthropic-auth.json");
+  return join(homedir(), ".lax", "anthropic-auth.json");
 }
 
 // ── PKCE ──

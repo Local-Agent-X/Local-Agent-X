@@ -13,8 +13,8 @@ const verifyAttempts = new Map<string, number[]>();
 const VERIFY_MAX_ATTEMPTS = 5;
 const VERIFY_WINDOW_MS = 60_000;
 
-const AUTH_DIR = join(homedir(), ".sax", "voice-auth");
-const TMP_DIR = join(homedir(), ".sax", "voice-tmp");
+const AUTH_DIR = join(homedir(), ".lax", "voice-auth");
+const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
 if (!existsSync(AUTH_DIR)) mkdirSync(AUTH_DIR, { recursive: true });
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 

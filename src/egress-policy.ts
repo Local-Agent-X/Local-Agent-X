@@ -20,10 +20,10 @@ interface EgressPolicyStore {
   rules: EgressRule[];
 }
 
-const POLICY_FILE = join(homedir(), ".sax", "egress-policy.json");
+const POLICY_FILE = join(homedir(), ".lax", "egress-policy.json");
 
 function ensureDir(): void {
-  const dir = join(homedir(), ".sax");
+  const dir = join(homedir(), ".lax");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 

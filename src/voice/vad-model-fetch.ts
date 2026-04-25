@@ -9,7 +9,7 @@ import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync } from "
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const MODEL_DIR = join(homedir(), ".sax", "models", "vad");
+const MODEL_DIR = join(homedir(), ".lax", "models", "vad");
 const MODEL_NAME = "silero_vad.onnx";
 const MODEL_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
 // k2-fsa ships the int8-quantized Silero (~630KB, vs the stock 1.85MB

@@ -15,7 +15,7 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const DIR = join(homedir(), ".sax", "telemetry");
+const DIR = join(homedir(), ".lax", "telemetry");
 const FILE = join(DIR, "retries.jsonl");
 
 export type RetryKind =

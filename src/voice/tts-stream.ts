@@ -1,169 +1,134 @@
-// Streaming Text-to-Speech.
+// Streaming Text-to-Speech — worker-thread edition.
 //
-// Wraps sherpa-onnx's Matcha-icefall TTS. Sentences go in, Int16 PCM chunks
-// come out progressively via a callback. The underlying synthesis is still
-// per-sentence (Matcha's flow-matching is one-shot per utterance), but:
-//   - sherpa-onnx emits intermediate chunks during generation
-//   - we queue sentences and synthesize one at a time so time-to-first-audio
-//     is "first-sentence-TTFT" not "full-response-TTFT"
+// Runs sherpa-onnx Matcha TTS in a worker_thread so synthesis doesn't block
+// Node's event loop. Without this, generateWithConfig() blocks for 300-800ms
+// per sentence on CPU, during which incoming LLM token deltas queue at the
+// network layer and arrive in bursts — making the assistant's text race
+// ahead of its audio. With the worker, tokens stream smoothly and sentence
+// N+1 starts synthesizing while sentence N is still streaming.
 //
-// The WASM generate() call blocks the Node event loop while synthesizing
-// (~0.3-0.6x real-time on CPU). For Phase 3 this is acceptable because a
-// voice session has at most one active TTS stream. Phase 4 will move this
-// to a worker_thread for interrupt-during-speech.
+// Cancel semantics match the in-process API: .cancel() drops the queue and
+// stops the currently-synthesizing sentence at its next callback tick. Fast
+// enough to feel instantaneous for barge-in.
+//
+// Set VOICE_DIAG=1 to log per-chunk arrival timestamps + inter-arrival jitter,
+// useful when debugging perceived audio quality regressions.
 
-import { createRequire } from "node:module";
+import { Worker } from "node:worker_threads";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import type { TTSModelPaths } from "./tts-model-fetch.js";
 
-const requireCJS = createRequire(import.meta.url);
+const DIAG = process.env.VOICE_DIAG === "1";
 
 export type TTSCallback = {
-  /** Fires as audio is generated. pcm is Int16 at the model's native rate. */
   onAudio?: (pcm: Int16Array, sampleRate: number) => void;
-  /** Fires when a sentence finishes synthesizing. */
   onSentenceEnd?: (text: string) => void;
-  /** Fires when the queue drains to empty. */
   onIdle?: () => void;
   onError?: (err: Error) => void;
 };
 
 export interface StreamingTTS {
-  /** Queue a sentence (or fragment) for synthesis. Non-blocking. */
   speak(text: string): void;
-  /** Current output sample rate (22050 for Matcha-icefall-ljspeech). */
   readonly sampleRate: number;
-  /** Drop all queued sentences + the currently-synthesizing one. */
   cancel(): void;
-  /** Dispose. */
   close(): void;
 }
 
-interface SherpaOfflineTts {
-  sampleRate: number;
-  numSpeakers: number;
-  generateWithConfig(text: string, config: {
-    sid?: number;
-    speed?: number;
-    callback?: (samples: Float32Array, n: number, progress: number) => number;
-  }): { samples: Float32Array; sampleRate: number };
-  free(): void;
+function resolveWorkerPath(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  return join(here, "tts-worker.js");
 }
 
+type WorkerMsg =
+  | { type: "ready"; sampleRate: number }
+  | { type: "audio"; pcm: Int16Array; sampleRate: number; t: number }
+  | { type: "done"; id: number }
+  | { type: "idle" }
+  | { type: "error"; message: string };
+
 export function createStreamingTTS(paths: TTSModelPaths, cb: TTSCallback = {}): StreamingTTS {
-  const sherpa = requireCJS("sherpa-onnx") as {
-    createOfflineTts: (config: unknown) => SherpaOfflineTts;
-  };
+  const worker = new Worker(resolveWorkerPath());
+  worker.on("error", (err) => cb.onError?.(err));
 
-  // sherpa-onnx reads fields on every model-family sub-config without
-  // null-checks, so we must provide empty placeholders for the ones we
-  // aren't using. Only the matcha block carries real paths.
-  const emptyVits = { model: "", lexicon: "", tokens: "", dataDir: "", noiseScale: 0.667, noiseScaleW: 0.8, lengthScale: 1.0 };
-  const emptyKokoro = { model: "", voices: "", tokens: "", dataDir: "", dictDir: "", lengthScale: 1.0, lexicon: "" };
-
-  const config = {
-    offlineTtsModelConfig: {
-      offlineTtsVitsModelConfig: emptyVits,
-      offlineTtsMatchaModelConfig: {
-        acousticModel: paths.acousticModel,
-        vocoder: paths.vocoder,
-        tokens: paths.tokens,
-        lexicon: "",
-        dataDir: paths.dataDir, // espeak-ng-data — required for G2P on LJSpeech
-        noiseScale: 0.667,
-        lengthScale: 1.0,
-      },
-      offlineTtsKokoroModelConfig: emptyKokoro,
-      numThreads: 1,
-      provider: "cpu",
-      debug: 0,
-    },
-    maxNumSentences: 1,
-    silenceScale: 0.2,
-  };
-
-  let tts: SherpaOfflineTts;
-  try {
-    tts = sherpa.createOfflineTts(config);
-  } catch (e) {
-    throw new Error(`sherpa-onnx TTS init failed: ${(e as Error).message}`);
-  }
-
-  const sampleRate = tts.sampleRate || paths.sampleRate;
-  const queue: string[] = [];
-  let draining = false;
-  let cancelled = false;
+  const pending = new Map<number, string>();
+  let nextId = 1;
+  let sampleRate = paths.sampleRate;
   let closed = false;
 
-  function floatToInt16(f32: Float32Array): Int16Array {
-    const out = new Int16Array(f32.length);
-    for (let i = 0; i < f32.length; i++) {
-      let s = f32[i];
-      if (s > 1) s = 1;
-      else if (s < -1) s = -1;
-      out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-    }
-    return out;
-  }
+  // Diagnostic state
+  let chunkCount = 0;
+  let lastArrivalMs = 0;
+  let maxGapMs = 0;
 
-  async function drain(): Promise<void> {
-    if (draining || closed) return;
-    draining = true;
-    try {
-      while (queue.length > 0 && !closed) {
-        if (cancelled) {
-          cancelled = false;
-          queue.length = 0;
-          break;
+  worker.on("message", (msg: WorkerMsg) => {
+    if (closed) return;
+    switch (msg.type) {
+      case "ready":
+        sampleRate = msg.sampleRate;
+        break;
+      case "audio": {
+        if (DIAG) {
+          chunkCount++;
+          const now = Date.now();
+          const workerToMain = now - msg.t;
+          const interArrival = lastArrivalMs > 0 ? now - lastArrivalMs : 0;
+          if (interArrival > maxGapMs) maxGapMs = interArrival;
+          lastArrivalMs = now;
+          if (chunkCount <= 5 || chunkCount % 25 === 0) {
+            console.log(`[tts-stream] chunk ${chunkCount} samples=${msg.pcm.length} ipc=${workerToMain}ms gap=${interArrival}ms maxGap=${maxGapMs}ms`);
+          }
         }
-        const text = queue.shift()!;
-        const localCancel = { stop: false };
-        try {
-          tts.generateWithConfig(text, {
-            sid: 0,
-            speed: 1.0,
-            callback: (samples /*, n, progress */) => {
-              if (closed || localCancel.stop || cancelled) return 0; // 0 = abort
-              if (samples.length > 0) {
-                cb.onAudio?.(floatToInt16(samples), sampleRate);
-              }
-              return 1; // 1 = continue
-            },
-          });
-          if (!closed) cb.onSentenceEnd?.(text);
-        } catch (e) {
-          cb.onError?.(e as Error);
-        }
-        // Yield so queued WS writes can flush between sentences
-        await new Promise<void>((r) => setImmediate(r));
+        cb.onAudio?.(msg.pcm, msg.sampleRate);
+        break;
       }
-    } finally {
-      draining = false;
-      if (!closed && queue.length === 0) cb.onIdle?.();
+      case "done": {
+        const text = pending.get(msg.id);
+        pending.delete(msg.id);
+        if (text) cb.onSentenceEnd?.(text);
+        break;
+      }
+      case "idle":
+        if (DIAG && chunkCount > 0) {
+          console.log(`[tts-stream] queue idle. total chunks=${chunkCount} maxGap=${maxGapMs}ms`);
+          chunkCount = 0;
+          lastArrivalMs = 0;
+          maxGapMs = 0;
+        }
+        cb.onIdle?.();
+        break;
+      case "error":
+        cb.onError?.(new Error(msg.message));
+        break;
     }
-  }
+  });
+
+  worker.postMessage({ cmd: "init", paths });
 
   return {
-    sampleRate,
+    get sampleRate() { return sampleRate; },
 
     speak(text: string) {
       if (closed) return;
       const t = text.trim();
       if (!t) return;
-      queue.push(t);
-      if (!draining) drain();
+      const id = nextId++;
+      pending.set(id, t);
+      worker.postMessage({ cmd: "speak", text: t, id });
     },
 
     cancel() {
-      cancelled = true;
-      queue.length = 0;
+      if (closed) return;
+      pending.clear();
+      worker.postMessage({ cmd: "cancel" });
     },
 
     close() {
       if (closed) return;
       closed = true;
-      cancelled = true;
-      queue.length = 0;
-      try { tts.free(); } catch {}
+      pending.clear();
+      try { worker.postMessage({ cmd: "close" }); } catch {}
+      setTimeout(() => { try { worker.terminate(); } catch {} }, 500).unref();
     },
   };
 }

@@ -56,28 +56,25 @@ export async function setupVoiceWs(deps: {
     const { prepareAgentRequest } = await import("../agent-request.js");
     setupVoiceWebSocket(server, config.authToken);
 
-    const voiceTurnRunner: import("../voice/voice-session.js").VoiceTurnRunner = async ({ text, history, sessionId, signal, onDelta }) => {
-      const prepared = await prepareAgentRequest({
-        channel: "web", message: text, sessionMessages: history, sessionId,
-        config, dataDir, memoryIndex, integrations, secretsStore,
-        allAgentTools, bridgeTools, maxHistory: 40,
-      });
-      const voiceDirective = "\n\n[voice mode] Your response will be spoken aloud. Write one short, conversational reply — two or three sentences max. No markdown, headings, bullets, code blocks, or emoji. Avoid lists. Use normal sentences a human would speak.";
-      const result = await runAgent(text, prepared.cleanHistory, {
-        apiKey: prepared.apiKey, model: prepared.model,
-        provider: prepared.provider as AgentOptions["provider"],
-        systemPrompt: prepared.systemPrompt + voiceDirective,
-        tools: prepared.tools,
-        security, toolPolicy, rbac, callerRole: "operator" as const,
-        sessionId, maxIterations: prepared.maxIterations,
-        temperature: prepared.temperature,
+    const { streamVoiceTurn } = await import("../voice/voice-llm.js");
+    const { resolveProvider } = await import("../agent-request.js");
+
+    const voiceTurnRunner: import("../voice/voice-session.js").VoiceTurnRunner = async ({ text, history, signal, onDelta }) => {
+      // Resolve only the provider/apiKey/model — skip the heavy
+      // prepareAgentRequest path (memory orchestrator, tool routing,
+      // persona system prompt, etc.). Voice gets a 100-token system
+      // prompt + last 5 turns of history fed straight to the streaming
+      // client. Drops per-turn input from 6-13k tokens to ~500-1000.
+      const resolved = await resolveProvider(config, secretsStore, dataDir);
+      return streamVoiceTurn({
+        provider: resolved.provider as "codex" | "anthropic" | "openai",
+        apiKey: resolved.apiKey,
+        model: resolved.model,
+        history,
+        userMessage: text,
         signal,
-        onEvent: (ev: ServerEvent) => {
-          if (ev.type === "stream" && typeof ev.delta === "string") onDelta(ev.delta);
-        },
+        onDelta,
       });
-      const assistantText = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "";
-      return { assistantText, updatedHistory: result.messages };
     };
 
     setVoiceSessionFactory(createVoiceSessionFactory(voiceTurnRunner));

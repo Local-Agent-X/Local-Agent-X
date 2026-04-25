@@ -24,6 +24,11 @@
   #finals { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
   .final-line { padding: 10px 14px; background: #eaffea; border: 1px solid #6fc06f; border-radius: 6px; font-size: 1rem; }
   .assistant-line { padding: 10px 14px; background: #eaf2ff; border: 1px solid #6fa0d0; border-radius: 6px; font-size: 1rem; color: #16457a; white-space: pre-wrap; }
+  #voice-settings { margin-top: 18px; padding: 12px 14px; background: #f8f8f8; border: 1px solid #ddd; border-radius: 6px; }
+  #voice-settings .row { margin-top: 0; }
+  #voice-settings label { display: inline-block; min-width: 80px; font-size: .9rem; color: #555; }
+  #voice-settings select, #voice-settings input[type=range] { font-size: .9rem; }
+  #voice-settings .speed-val { display: inline-block; min-width: 36px; text-align: right; font-family: monospace; color: #333; }
   #model-progress { margin-top: 10px; font-size: .85rem; color: #555; }
   #model-bar { height: 6px; background: #eee; border-radius: 3px; overflow: hidden; margin-top: 4px; }
   #model-bar > div { height: 100%; background: #3498db; width: 0%; transition: width 120ms linear; }
@@ -43,6 +48,49 @@
 <div id="model-progress" style="display:none">
   <span id="model-progress-label">Downloading speech model…</span>
   <div id="model-bar"><div></div></div>
+</div>
+
+<div id="voice-settings">
+  <div class="row">
+    <label for="voice-pick">Voice</label>
+    <select id="voice-pick">
+      <optgroup label="American Male">
+        <option value="am_michael">Michael</option>
+        <option value="am_adam">Adam</option>
+        <option value="am_echo">Echo</option>
+        <option value="am_eric">Eric</option>
+        <option value="am_fenrir">Fenrir</option>
+        <option value="am_liam">Liam</option>
+        <option value="am_onyx">Onyx</option>
+        <option value="am_puck">Puck</option>
+      </optgroup>
+      <optgroup label="American Female">
+        <option value="af_nicole">Nicole</option>
+        <option value="af_bella">Bella</option>
+        <option value="af_sarah">Sarah</option>
+        <option value="af_sky">Sky</option>
+        <option value="af_heart">Heart</option>
+        <option value="af_nova">Nova</option>
+        <option value="af_river">River</option>
+        <option value="af_alloy">Alloy</option>
+      </optgroup>
+      <optgroup label="British Male">
+        <option value="bm_george">George</option>
+        <option value="bm_daniel">Daniel</option>
+        <option value="bm_fable">Fable</option>
+        <option value="bm_lewis">Lewis</option>
+      </optgroup>
+      <optgroup label="British Female">
+        <option value="bf_emma">Emma</option>
+        <option value="bf_alice">Alice</option>
+        <option value="bf_isabella">Isabella</option>
+        <option value="bf_lily">Lily</option>
+      </optgroup>
+    </select>
+    <label for="speed-pick" style="margin-left:18px">Speed</label>
+    <input type="range" id="speed-pick" min="0.7" max="1.5" step="0.05" value="1.15"/>
+    <span id="speed-val" class="speed-val">1.15x</span>
+  </div>
 </div>
 
 <div id="transcripts">
@@ -67,6 +115,38 @@ const logEl = document.getElementById('log');
 const toggleBtn = document.getElementById('toggle');
 const statusEl = document.getElementById('status');
 const meterBar = document.getElementById('meter-bar');
+const voicePick = document.getElementById('voice-pick');
+const speedPick = document.getElementById('speed-pick');
+const speedVal = document.getElementById('speed-val');
+
+// Persist voice settings across reloads. Server's defaults match these
+// initial values, so a fresh user gets am_michael at 1.15x without
+// needing to send anything until they change a control.
+const _savedVoice = localStorage.getItem('lax_voice') || 'am_michael';
+const _savedSpeed = parseFloat(localStorage.getItem('lax_speed') || '1.15');
+voicePick.value = _savedVoice;
+speedPick.value = String(_savedSpeed);
+speedVal.textContent = _savedSpeed.toFixed(2) + 'x';
+
+function sendVoiceSettings() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const voice = voicePick.value;
+  const speed = parseFloat(speedPick.value);
+  ws.send(JSON.stringify({ type: 'voice_settings', voice, speed }));
+}
+
+voicePick.addEventListener('change', () => {
+  localStorage.setItem('lax_voice', voicePick.value);
+  sendVoiceSettings();
+});
+speedPick.addEventListener('input', () => {
+  const v = parseFloat(speedPick.value);
+  speedVal.textContent = v.toFixed(2) + 'x';
+});
+speedPick.addEventListener('change', () => {
+  localStorage.setItem('lax_speed', speedPick.value);
+  sendVoiceSettings();
+});
 
 function log(msg) {
   const t = new Date().toLocaleTimeString();
@@ -110,16 +190,20 @@ async function start() {
   });
 
   ws.send(JSON.stringify({ type: 'hello', sessionId: 'voice-test-' + Date.now() }));
+  sendVoiceSettings(); // immediately push the user's saved voice + speed
 
-  // 2) AudioContext. Ask for 16kHz; browsers may ignore and give us 48k.
-  audioContext = new AudioContext({ sampleRate: 16000 });
+  // 2) AudioContext at native rate (typically 48kHz). Forcing 16kHz made
+  // the playback worklet decimate TTS audio (22050→16000) with crude
+  // nearest-neighbor, which audibly aliased speech. The mic worklet
+  // handles 48k→16k decimation cleanly on its end for STT.
+  audioContext = new AudioContext();
   await audioContext.audioWorklet.addModule('/js/voice/mic-capture-worklet.js');
   await audioContext.audioWorklet.addModule('/js/voice/playback-worklet.js');
   log(`audio context running at ${audioContext.sampleRate} Hz`);
 
   // 3) Mic
   stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1, sampleRate: 16000 },
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
   });
   const source = audioContext.createMediaStreamSource(stream);
   micNode = new AudioWorkletNode(audioContext, 'mic-capture');
@@ -144,6 +228,17 @@ async function start() {
   // 4) Playback
   playbackNode = new AudioWorkletNode(audioContext, 'pcm-playback');
   playbackNode.connect(audioContext.destination);
+  // Diagnostic: log buffer health periodically so we can correlate audible
+  // glitches with underruns / inter-arrival gaps. Only emits when the
+  // worklet has been actively producing audio.
+  let playbackStatChunks = 0;
+  playbackNode.port.onmessage = (e) => {
+    if (!e.data || e.data.type !== 'stats') return;
+    playbackStatChunks++;
+    if (e.data.underrun > 0 || e.data.minBuf < 1024 || playbackStatChunks <= 3) {
+      log(`pb stats: underrun=${e.data.underrun} minBuf=${e.data.minBuf} peakBuf=${e.data.peakBuf} cur=${e.data.currentBuf} wrote=${e.data.wrote}`);
+    }
+  };
 
   // 5) Route incoming binary frames to playback, JSON events to UI
   ws.onmessage = (e) => {

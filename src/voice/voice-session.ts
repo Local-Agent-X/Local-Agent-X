@@ -25,6 +25,7 @@ import { createStreamingVAD, type StreamingVAD } from "./vad-stream.js";
 import { ensureVadModelDownloaded, getVadModelPaths } from "./vad-model-fetch.js";
 import { createWhisperTranscriber, type WhisperTranscriber } from "./whisper-stream.js";
 import { ensureWhisperModelDownloaded, getWhisperModelPaths } from "./whisper-model-fetch.js";
+import { createGpuSession } from "./gpu-session.js";
 
 export interface VoiceTurnInput {
   text: string;
@@ -41,12 +42,31 @@ export interface VoiceTurnResult {
 
 export type VoiceTurnRunner = (input: VoiceTurnInput) => Promise<VoiceTurnResult>;
 
+/**
+ * GPU mode dispatch. When LAX_VOICE_GPU=1 the voice pipeline runs in a
+ * Python sidecar (faster-whisper + Silero VAD + Kokoro on CUDA) instead
+ * of the in-process Sherpa WASM stack. The sidecar listens on
+ * ws://127.0.0.1:7008/voice (overridable via LAX_VOICE_PORT).
+ *
+ * Setup: see python/voice/install.ps1.
+ * Start:  ~/.lax/python-voice/venv/Scripts/python.exe python/voice/server.py
+ */
+const GPU_MODE = process.env.LAX_VOICE_GPU === "1";
+
 const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
-const MIN_UTTERANCE_SAMPLES = 8000; // 0.5s @ 16kHz — skip Whisper on sub-500ms blips
+// 0.25s @ 16kHz — single short words like "hey" or "yes" need to make it
+// to Whisper. 0.5s was rejecting them as too short. Whisper handles brief
+// audio fine; if it returns blank/bracketed annotations we filter those.
+const MIN_UTTERANCE_SAMPLES = 4000;
 const MAX_UTTERANCE_SAMPLES = 16000 * 22; // 22s hard cap (VAD itself cuts at 20s)
 
 export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
   return (ctx: VoiceSessionContext): VoiceSession => {
+    if (GPU_MODE) {
+      console.log(`[voice-session] ${ctx.sessionId}: GPU mode (LAX_VOICE_GPU=1) → routing to Python sidecar`);
+      return createGpuSession(ctx, runTurn);
+    }
+
     let stt: StreamingSTT | null = null;
     let tts: StreamingTTS | null = null;
     let vad: StreamingVAD | null = null;
@@ -54,13 +74,33 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
     let stackReady = false;
     let closed = false;
     let activeTurn: AbortController | null = null;
+    let llmDone = false; // LLM finished; waiting on TTS queue to drain
+    let ttsQueuedThisTurn = false; // track if any sentence was queued
+    // Playback-completion estimator. The browser's playback ring buffer
+    // holds 1-3 seconds beyond what the worker has emitted, so onIdle from
+    // the worker is too early to clear activeTurn — barge-in stops working
+    // as soon as the WASM queue drains, even though the user is still
+    // hearing audio. Tracking samples-shipped + a constant playback rate
+    // lets us schedule the real end-of-playback.
+    let expectedPlaybackEndMs = 0;
+    let pendingClearTimer: NodeJS.Timeout | null = null;
+    let ttsSampleRate = 22050;
+    const PLAYBACK_TAIL_MS = 250; // grace for browser scheduler / network jitter
     let history: ChatCompletionMessageParam[] = [];
     const pendingFrames: Int16Array[] = [];
 
-    // Utterance buffer — filled between VAD speech-start and speech-end
+    // Utterance buffer — filled between VAD speech-start and speech-end.
     const utteranceFrames: Int16Array[] = [];
     let utteranceSamples = 0;
     let bufferingUtterance = false;
+
+    // Rolling pre-roll buffer (last ~250ms of mic audio). When VAD fires
+    // speech-start, we prepend this so the actual onset of the word makes
+    // it to Whisper. Without it, short words like "hey" get chopped off
+    // because Silero needs 200ms of speech to confirm onset.
+    const PREROLL_SAMPLES = 4000; // 250ms @ 16kHz
+    const prerollFrames: Int16Array[] = [];
+    let prerollSampleCount = 0;
 
     (async () => {
       try {
@@ -87,13 +127,39 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         ctx.sendEvent({ type: "whisper_model_ready" });
 
         tts = createStreamingTTS(getTTSModelPaths(), {
-          onAudio: (pcm) => { if (!closed) ctx.sendAudio(pcm); },
-          onIdle: () => { if (!closed) ctx.sendEvent({ type: "tts_idle" }); },
+          onAudio: (pcm) => {
+            if (closed) return;
+            ctx.sendAudio(pcm);
+            // Push expected end-of-playback forward by this chunk's duration
+            const now = Date.now();
+            const chunkMs = (pcm.length / ttsSampleRate) * 1000;
+            expectedPlaybackEndMs = Math.max(now, expectedPlaybackEndMs) + chunkMs;
+          },
+          onIdle: () => {
+            if (closed) return;
+            ctx.sendEvent({ type: "tts_idle" });
+            // Worker is done synthesizing, but the browser's playback ring
+            // still has buffered audio. Schedule activeTurn release at the
+            // estimated true end-of-playback rather than now.
+            if (llmDone && activeTurn) {
+              if (pendingClearTimer) clearTimeout(pendingClearTimer);
+              const delay = Math.max(0, expectedPlaybackEndMs - Date.now() + PLAYBACK_TAIL_MS);
+              pendingClearTimer = setTimeout(() => {
+                pendingClearTimer = null;
+                if (activeTurn && !closed) {
+                  activeTurn = null;
+                  llmDone = false;
+                  ctx.sendEvent({ type: "playback_complete" });
+                }
+              }, delay);
+            }
+          },
           onError: (err) => {
             console.warn(`[voice-session] ${ctx.sessionId}: tts error: ${err.message}`);
             if (!closed) ctx.sendEvent({ type: "tts_error", message: err.message });
           },
         });
+        ttsSampleRate = tts.sampleRate;
 
         whisper = createWhisperTranscriber(getWhisperModelPaths());
 
@@ -133,6 +199,12 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
     function beginUtteranceBuffer(): void {
       utteranceFrames.length = 0;
       utteranceSamples = 0;
+      // Seed with whatever pre-roll we have — recovers the missing 200ms
+      // onset that VAD silero needed before declaring speech.
+      for (const f of prerollFrames) {
+        utteranceFrames.push(f);
+        utteranceSamples += f.length;
+      }
       bufferingUtterance = true;
     }
 
@@ -141,6 +213,19 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
       if (utteranceSamples >= MAX_UTTERANCE_SAMPLES) return; // VAD will cut soon
       utteranceFrames.push(new Int16Array(frame));
       utteranceSamples += frame.length;
+    }
+
+    function pushPreroll(frame: Int16Array): void {
+      // Keep the last ~250ms of mic audio in a sliding window. We only need
+      // to copy when buffering is OFF (during speech, frames go straight
+      // into utteranceFrames). Sharing the same Int16Array across both
+      // buffers is safe because we never mutate them after capture.
+      prerollFrames.push(new Int16Array(frame));
+      prerollSampleCount += frame.length;
+      while (prerollSampleCount > PREROLL_SAMPLES && prerollFrames.length > 0) {
+        prerollSampleCount -= prerollFrames[0].length;
+        prerollFrames.shift();
+      }
     }
 
     function drainUtteranceBuffer(): Int16Array {
@@ -161,9 +246,13 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
       // Barge-in: user started talking while the agent was mid-reply.
       if (activeTurn) {
         console.log(`[voice-session] ${ctx.sessionId}: barge-in detected → interrupting agent`);
+        if (pendingClearTimer) { clearTimeout(pendingClearTimer); pendingClearTimer = null; }
         try { activeTurn.abort(); } catch {}
         try { tts?.cancel(); } catch {}
         ctx.sendEvent({ type: "tts_interrupt" });
+        activeTurn = null;
+        llmDone = false;
+        expectedPlaybackEndMs = 0;
       }
       ctx.sendEvent({ type: "vad_speech_start" });
       beginUtteranceBuffer();
@@ -209,6 +298,8 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
       ctx.sendEvent({ type: "final", text: utterance });
       ctx.sendEvent({ type: "agent_start" });
       activeTurn = new AbortController();
+      llmDone = false;
+      ttsQueuedThisTurn = false;
 
       let sentenceBuf = "";
       const flushCompletedSentences = (): void => {
@@ -219,7 +310,10 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
           const cutEnd = m.index + m[0].length;
           const sentence = sentenceBuf.slice(0, cutEnd).trim();
           sentenceBuf = sentenceBuf.slice(cutEnd);
-          if (sentence) tts.speak(sentence);
+          if (sentence) {
+            tts.speak(sentence);
+            ttsQueuedThisTurn = true;
+          }
         }
       };
 
@@ -240,11 +334,25 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
 
         if (activeTurn?.signal.aborted) {
           ctx.sendEvent({ type: "assistant_interrupted" });
+          activeTurn = null; // free immediately on abort
         } else {
           const tail = sentenceBuf.trim();
-          if (tail && tts) tts.speak(tail);
+          if (tail && tts) {
+            tts.speak(tail);
+            ttsQueuedThisTurn = true;
+          }
           history = result.updatedHistory;
           ctx.sendEvent({ type: "assistant_done", text: result.assistantText });
+          // Don't clear activeTurn here. The TTS queue may still be draining
+          // (Anthropic often bursts the full reply faster than synthesis can
+          // keep up). Hold the turn open until onIdle fires so barge-in keeps
+          // working through TTS playback. Edge case: if nothing was queued
+          // (empty/short reply), onIdle won't fire — clear immediately.
+          if (!ttsQueuedThisTurn) {
+            activeTurn = null;
+          } else {
+            llmDone = true;
+          }
         }
       } catch (e) {
         const msg = (e as Error).message || String(e);
@@ -255,7 +363,6 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
           console.warn(`[voice-session] ${ctx.sessionId}: turn failed: ${msg}`);
           ctx.sendEvent({ type: "agent_error", message: msg });
         }
-      } finally {
         activeTurn = null;
       }
     }
@@ -269,7 +376,11 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         }
         stt?.feedAudio(frame);
         vad?.feedAudio(frame);
-        appendToUtterance(frame);
+        if (bufferingUtterance) {
+          appendToUtterance(frame);
+        } else {
+          pushPreroll(frame);
+        }
       },
 
       onEndOfSpeech() {
@@ -279,6 +390,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
       close() {
         if (closed) return;
         closed = true;
+        if (pendingClearTimer) { clearTimeout(pendingClearTimer); pendingClearTimer = null; }
         try { activeTurn?.abort(); } catch {}
         try { stt?.close(); } catch {}
         try { tts?.close(); } catch {}
@@ -286,6 +398,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         try { whisper?.close(); } catch {}
         pendingFrames.length = 0;
         utteranceFrames.length = 0;
+        prerollFrames.length = 0;
       },
     };
   };

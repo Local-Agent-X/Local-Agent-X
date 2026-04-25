@@ -1,19 +1,18 @@
 // Streaming TTS model fetcher.
 //
-// Downloads + extracts the Matcha-icefall LJSpeech English voice bundle and
-// the matching Vocos vocoder from the k2-fsa sherpa-onnx GitHub releases.
-// Cached to ~/.sax/models/tts/ and reused.
+// Reverted to Matcha-icefall LJSpeech + Vocos vocoder after benchmarking
+// Kokoro 82M against it on consumer CPU/WASM. Despite Kokoro's published
+// 220ms first-byte claim (which assumes GPU), the sherpa-onnx WASM build
+// (single-threaded, no SharedArrayBuffer) ran Kokoro at ~2-3x realtime —
+// noticeably worse than Matcha's ~0.3-0.6x. Until a native ONNX-Runtime
+// path is available or we move to a different runtime, Matcha wins.
 //
-// Artifacts after fetch (~128MB total):
-//   ~/.sax/models/tts/matcha-icefall-en_US-ljspeech/
+// Artifacts after fetch (~127MB total):
+//   ~/.lax/models/tts/matcha-icefall-en_US-ljspeech/
 //     model-steps-3.onnx          (~71MB, acoustic model)
+//     vocos-22khz-univ.onnx       (~51MB, neural vocoder, separate release)
 //     tokens.txt                   (phoneme vocabulary)
-//     espeak-ng-data/              (directory, ~25MB, phoneme rules per lang)
-//     vocos-22khz-univ.onnx        (~51MB, separate vocoder release)
-//
-// The matcha bundle ships as tar.bz2; we extract with system `tar -xjf`
-// which is available on Windows 10+ (bundled bsdtar), macOS, and Linux.
-// The vocoder is a loose .onnx — no extraction needed.
+//     espeak-ng-data/              (G2P rule data)
 
 import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -53,7 +52,6 @@ export function ttsModelExists(): boolean {
     if (!existsSync(p.acousticModel) || !existsSync(p.vocoder) || !existsSync(p.tokens) || !existsSync(p.dataDir)) return false;
     if (statSync(p.acousticModel).size < 10_000_000) return false;
     if (statSync(p.vocoder).size < 10_000_000) return false;
-    // espeak-ng-data should have several files
     if (readdirSync(p.dataDir).length < 5) return false;
     return true;
   } catch { return false; }
@@ -68,7 +66,29 @@ export interface TTSFetchProgress {
   overallPct: number;
 }
 
-export async function ensureTTSModelDownloaded(
+// Singleton in-flight promise. Concurrent voice sessions (or restarts that
+// fire two near-simultaneous starts) used to race here — both would try to
+// download to the same file, one's truncation handler would unlink the
+// other's in-progress download, and extraction would fail with "no such
+// file or directory". Sharing the promise serializes them.
+let inFlight: Promise<TTSModelPaths> | null = null;
+
+export function ensureTTSModelDownloaded(
+  onProgress?: (p: TTSFetchProgress) => void,
+  signal?: AbortSignal,
+): Promise<TTSModelPaths> {
+  if (inFlight) return inFlight;
+  inFlight = (async () => {
+    try {
+      return await doDownload(onProgress, signal);
+    } finally {
+      inFlight = null;
+    }
+  })();
+  return inFlight;
+}
+
+async function doDownload(
   onProgress?: (p: TTSFetchProgress) => void,
   signal?: AbortSignal,
 ): Promise<TTSModelPaths> {
@@ -81,7 +101,10 @@ export async function ensureTTSModelDownloaded(
   const bundlePath = join(MODEL_DIR, `${BUNDLE_NAME}.tar.bz2`);
   const vocoderPath = paths.vocoder;
 
-  // Probe sizes for a combined progress bar
+  // Clear any partial leftover from a previous failed run before starting
+  try { unlinkSync(bundlePath); } catch {}
+
+  // Probe sizes for combined progress + integrity check
   let bundleTotal = 75_000_000;
   let vocoderTotal = 55_000_000;
   try {
@@ -96,18 +119,27 @@ export async function ensureTTSModelDownloaded(
   } catch {}
   const overallTotal = bundleTotal + vocoderTotal;
 
-  let overallSoFar = 0;
-
-  // 1. Download the tar.bz2 bundle
-  try {
-    await downloadOne(BUNDLE_URL, bundlePath, `${BUNDLE_NAME}.tar.bz2`, 0, 2, overallSoFar, overallTotal, onProgress, signal);
-    overallSoFar += statSync(bundlePath).size;
-  } catch (e) {
-    try { unlinkSync(bundlePath); } catch {}
-    throw new Error(`TTS bundle download failed: ${(e as Error).message}`);
+  // 1. Bundle (tar.bz2) — retry up to 3x on silent truncation
+  let lastErr: Error | null = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await downloadOne(BUNDLE_URL, bundlePath, `${BUNDLE_NAME}.tar.bz2`, 0, 2, 0, overallTotal, onProgress, signal);
+      const actualSize = statSync(bundlePath).size;
+      if (bundleTotal > 0 && actualSize < bundleTotal) {
+        throw new Error(`got ${actualSize} of ${bundleTotal} bytes (truncated)`);
+      }
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e as Error;
+      try { unlinkSync(bundlePath); } catch {}
+      console.warn(`[tts-fetch] bundle attempt ${attempt}/3 failed: ${lastErr.message}`);
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 1000 * attempt));
+    }
   }
+  if (lastErr) throw new Error(`TTS bundle download failed: ${lastErr.message}`);
 
-  // 2. Extract with system tar (GNU on *nix/git-bash, bsdtar on native Windows 10+)
+  // 2. Extract bundle
   try {
     await extractTarBz2(bundlePath, MODEL_DIR);
   } catch (e) {
@@ -116,13 +148,25 @@ export async function ensureTTSModelDownloaded(
   }
   try { unlinkSync(bundlePath); } catch {}
 
-  // 3. Download vocoder (loose onnx, parallel-ish)
-  try {
-    await downloadOne(VOCODER_URL, vocoderPath, VOCODER_NAME, 1, 2, overallSoFar, overallTotal, onProgress, signal);
-  } catch (e) {
-    try { unlinkSync(vocoderPath); } catch {}
-    throw new Error(`TTS vocoder download failed: ${(e as Error).message}`);
+  // 3. Vocoder (loose .onnx, separate release)
+  let vocoderErr: Error | null = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await downloadOne(VOCODER_URL, vocoderPath, VOCODER_NAME, 1, 2, bundleTotal, overallTotal, onProgress, signal);
+      const actualSize = statSync(vocoderPath).size;
+      if (vocoderTotal > 0 && actualSize < vocoderTotal) {
+        throw new Error(`got ${actualSize} of ${vocoderTotal} bytes (truncated)`);
+      }
+      vocoderErr = null;
+      break;
+    } catch (e) {
+      vocoderErr = e as Error;
+      try { unlinkSync(vocoderPath); } catch {}
+      console.warn(`[tts-fetch] vocoder attempt ${attempt}/3 failed: ${vocoderErr.message}`);
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 1000 * attempt));
+    }
   }
+  if (vocoderErr) throw new Error(`TTS vocoder download failed: ${vocoderErr.message}`);
 
   if (!ttsModelExists()) {
     throw new Error("TTS model setup completed but expected files are missing — archive layout may have changed");
@@ -168,9 +212,6 @@ async function downloadOne(
   }
   await new Promise<void>((resolve, reject) => sink.end((err?: Error | null) => err ? reject(err) : resolve()));
 
-  // Catch silent truncation. The Windows TCP stack has historically
-  // surfaced partial streams without error events on the ReadableStream;
-  // cross-checking bytes against content-length is our safety net.
   if (fileLen > 0 && written < fileLen) {
     throw new Error(`truncated download — got ${written} of ${fileLen} bytes`);
   }
@@ -178,12 +219,11 @@ async function downloadOne(
 
 function extractTarBz2(archivePath: string, destDir: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    // Two Windows quirks to work around:
-    //   1. GNU tar parses `C:\foo` as `host:path` (rcmd style) and tries to
-    //      ssh to host "C". `--force-local` disables that heuristic.
-    //   2. Even with --force-local, passing absolute Windows paths can
-    //      confuse path normalization. We cwd into destDir and pass just
-    //      the archive basename, so tar never sees a drive letter.
+    // Two Windows quirks:
+    //   1. GNU tar parses `C:\foo` as `host:path` and tries to ssh.
+    //      `--force-local` disables that heuristic.
+    //   2. Pass just the archive basename and cwd into destDir so tar
+    //      never sees a drive letter.
     const path = archivePath.replace(/\\/g, "/");
     const basename = path.substring(path.lastIndexOf("/") + 1);
     const child = spawn("tar", ["--force-local", "-xjf", basename], {
@@ -201,7 +241,6 @@ function extractTarBz2(archivePath: string, destDir: string): Promise<void> {
   });
 }
 
-// Exposed for explicit "wipe and re-download" flows (not used by default)
 export function purgeTTSModel(): void {
   const p = getTTSModelPaths();
   try { rmSync(p.modelDir, { recursive: true, force: true }); } catch {}

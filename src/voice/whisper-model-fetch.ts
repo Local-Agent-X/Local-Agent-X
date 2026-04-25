@@ -1,28 +1,36 @@
 // Whisper model fetcher (offline post-correction pass).
 //
-// Downloads the OpenAI Whisper base.en int8 model (~140MB total) on first
-// use to ~/.sax/models/whisper-base-en/. Runs after VAD speech-end on the
-// full buffered utterance and emits a high-accuracy transcript that
-// supersedes the live streaming Zipformer partials.
+// Downloads OpenAI Whisper tiny.en int8 (~104MB total) on first use to
+// ~/.lax/models/whisper-tiny-en/. Runs after VAD speech-end on the full
+// buffered utterance.
 //
-// Model: csukuangfj/sherpa-onnx-whisper-base.en. Base.en gets ~5% WER on
-// English — roughly half the error rate of the streaming Zipformer we use
-// for live partials. Tiny.en is faster but only marginally better than
-// Zipformer; small.en is more accurate but 3x larger and slower.
+// Model: csukuangfj/sherpa-onnx-whisper-tiny.en. Tiny.en is the smallest
+// Whisper variant — ~7-10% WER on English (worse than small.en's ~3%) but
+// transcribes a typical utterance in ~150-300ms instead of small.en's
+// 700-1500ms on consumer CPU. For voice chat where conversation pace
+// beats word-perfect transcripts, tiny.en is the right tradeoff.
+// To switch tiers, change WHISPER_VARIANT + minBytes in MODEL_FILES.
 
 import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const MODEL_DIR = join(homedir(), ".lax", "models", "whisper-base-en");
-const MODEL_BASE = "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base.en/resolve/main";
+const WHISPER_VARIANT = "tiny.en";
+const MODEL_DIR = join(homedir(), ".lax", "models", `whisper-${WHISPER_VARIANT.replace(".", "-")}`);
+const MODEL_BASE = `https://huggingface.co/csukuangfj/sherpa-onnx-whisper-${WHISPER_VARIANT}/resolve/main`;
 
 interface ModelFile { name: string; url: string; minBytes: number; }
 
+// Actual sizes for int8-quantized Whisper small.en:
+//   encoder ~85MB
+//   decoder ~262MB
+//   tokens ~835KB
+// Thresholds catch clearly-truncated downloads; sherpa-onnx re-verifies
+// ONNX integrity on load.
 const MODEL_FILES: ModelFile[] = [
-  { name: "base.en-encoder.int8.onnx", url: `${MODEL_BASE}/base.en-encoder.int8.onnx`, minBytes: 40_000_000 },
-  { name: "base.en-decoder.int8.onnx", url: `${MODEL_BASE}/base.en-decoder.int8.onnx`, minBytes: 25_000_000 },
-  { name: "base.en-tokens.txt",        url: `${MODEL_BASE}/base.en-tokens.txt`,        minBytes: 100_000 },
+  { name: `${WHISPER_VARIANT}-encoder.int8.onnx`, url: `${MODEL_BASE}/${WHISPER_VARIANT}-encoder.int8.onnx`, minBytes: 40_000_000 },
+  { name: `${WHISPER_VARIANT}-decoder.int8.onnx`, url: `${MODEL_BASE}/${WHISPER_VARIANT}-decoder.int8.onnx`, minBytes: 150_000_000 },
+  { name: `${WHISPER_VARIANT}-tokens.txt`,        url: `${MODEL_BASE}/${WHISPER_VARIANT}-tokens.txt`,        minBytes: 100_000 },
 ];
 
 export interface WhisperModelPaths {
@@ -35,9 +43,9 @@ export interface WhisperModelPaths {
 export function getWhisperModelPaths(): WhisperModelPaths {
   return {
     modelDir: MODEL_DIR,
-    encoder: join(MODEL_DIR, "base.en-encoder.int8.onnx"),
-    decoder: join(MODEL_DIR, "base.en-decoder.int8.onnx"),
-    tokens:  join(MODEL_DIR, "base.en-tokens.txt"),
+    encoder: join(MODEL_DIR, `${WHISPER_VARIANT}-encoder.int8.onnx`),
+    decoder: join(MODEL_DIR, `${WHISPER_VARIANT}-decoder.int8.onnx`),
+    tokens:  join(MODEL_DIR, `${WHISPER_VARIANT}-tokens.txt`),
   };
 }
 

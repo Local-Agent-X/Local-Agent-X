@@ -81,7 +81,7 @@ function scanSkillDir(baseDir: string): Skill[] {
 
 /** Seed bundled skills from repo into ~/.sax/skills/ if not already present */
 function seedBundledSkills(): void {
-  const userSkillsDir = join(homedir(), ".sax", "skills");
+  const userSkillsDir = join(homedir(), ".lax", "skills");
   // Look for bundled skills in the repo root
   const bundledDir = join(process.cwd(), "skills");
   if (!existsSync(bundledDir)) return;
@@ -118,9 +118,9 @@ export class SkillRegistry {
   reload(): void {
     this.skills.clear();
     const dirs = [
-      join(homedir(), ".sax", "skills"),
-      ...(this.workspaceDir ? [join(this.workspaceDir, ".sax", "skills")] : []),
-      join(process.cwd(), ".sax", "skills"),
+      join(homedir(), ".lax", "skills"),
+      ...(this.workspaceDir ? [join(this.workspaceDir, ".lax", "skills")] : []),
+      join(process.cwd(), ".lax", "skills"),
     ];
 
     for (const dir of dirs) {

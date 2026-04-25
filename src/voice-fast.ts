@@ -10,8 +10,8 @@ import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 
-const TMP_DIR = join(homedir(), ".sax", "voice-tmp");
-const VOICE_DIR = join(homedir(), ".sax", "workspace", "voice-chat");
+const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
+const VOICE_DIR = join(homedir(), ".lax", "workspace", "voice-chat");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
 function tmpPath(ext: string): string {

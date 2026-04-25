@@ -63,11 +63,11 @@ const RELATION_PATTERNS: Array<{
 
 // ── Persistence ─────────────────────────────────────────────
 
-const SAX_DIR = join(homedir(), ".sax");
-const GRAPH_FILE = join(SAX_DIR, "memory-graph.json");
+const LAX_DIR = join(homedir(), ".lax");
+const GRAPH_FILE = join(LAX_DIR, "memory-graph.json");
 
 function ensureDir(): void {
-  if (!existsSync(SAX_DIR)) mkdirSync(SAX_DIR, { recursive: true });
+  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
 }
 
 function atomicWrite(path: string, data: string): void {

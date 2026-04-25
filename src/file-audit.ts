@@ -36,7 +36,7 @@ class FileAuditTrail {
   private readonly MAX_ENTRIES = 5000;
 
   constructor() {
-    this.logDir = join(homedir(), ".sax", "audit", "file-access");
+    this.logDir = join(homedir(), ".lax", "audit", "file-access");
     if (!existsSync(this.logDir)) mkdirSync(this.logDir, { recursive: true, mode: 0o700 });
   }
 

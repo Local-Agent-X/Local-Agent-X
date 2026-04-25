@@ -44,13 +44,13 @@ interface PatternsFile {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const SAX_DIR = join(homedir(), ".sax");
-const PATTERNS_FILE = join(SAX_DIR, "proactive-patterns.json");
+const LAX_DIR = join(homedir(), ".lax");
+const PATTERNS_FILE = join(LAX_DIR, "proactive-patterns.json");
 const MAX_INTERACTIONS = 2000;
 const MAX_PATTERNS = 500;
 
 function ensureDir(): void {
-  if (!existsSync(SAX_DIR)) mkdirSync(SAX_DIR, { recursive: true });
+  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
 }
 
 function atomicWrite(path: string, data: string): void {

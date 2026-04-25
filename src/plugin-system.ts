@@ -39,9 +39,9 @@ interface LoadedPlugin {
   trustLevel: TrustLevel;
 }
 
-const PLUGINS_DIR = join(homedir(), ".sax", "plugins");
+const PLUGINS_DIR = join(homedir(), ".lax", "plugins");
 const REGISTRY_PATH = join(PLUGINS_DIR, "registry.json");
-const TRUSTED_PUBLISHERS_PATH = join(homedir(), ".sax", "trusted-publishers.json");
+const TRUSTED_PUBLISHERS_PATH = join(homedir(), ".lax", "trusted-publishers.json");
 
 // Fixed SPKI DER prefix for Ed25519 public keys (12 bytes)
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");

@@ -9,8 +9,8 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 
-const TMP_DIR = join(homedir(), ".sax", "voice-tmp");
-const CACHE_DIR = join(homedir(), ".sax", "audio-cues");
+const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
+const CACHE_DIR = join(homedir(), ".lax", "audio-cues");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
 

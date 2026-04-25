@@ -92,7 +92,7 @@ export interface ProfileDefaults {
 
 // ── Config Types ──
 
-export interface SAXConfig {
+export interface LAXConfig {
   port: number;
   authToken: string;
   workspace: string;

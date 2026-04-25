@@ -44,7 +44,7 @@ export interface DemoRunResult {
   recording: Recording | null;
 }
 
-const SCRIPTS_DIR = join(homedir(), ".sax", "demo-scripts");
+const SCRIPTS_DIR = join(homedir(), ".lax", "demo-scripts");
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) {

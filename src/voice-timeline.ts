@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, rea
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const TIMELINE_DIR = join(homedir(), ".sax", "voice-timeline");
+const TIMELINE_DIR = join(homedir(), ".lax", "voice-timeline");
 if (!existsSync(TIMELINE_DIR)) mkdirSync(TIMELINE_DIR, { recursive: true });
 
 export type VoiceEventType =

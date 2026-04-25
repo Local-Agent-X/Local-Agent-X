@@ -21,7 +21,7 @@ interface SecurityEvaluator {
   evaluate(ctx: { toolName: string; args: Record<string, unknown>; sessionId: string; callContext?: string }): { allowed: boolean; reason: string };
 }
 
-const HOOKS_PATH = join(homedir(), ".sax", "hooks.json");
+const HOOKS_PATH = join(homedir(), ".lax", "hooks.json");
 const IS_WINDOWS = process.platform === "win32";
 
 // Env vars that must NOT leak to hook commands

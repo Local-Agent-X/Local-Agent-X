@@ -308,7 +308,7 @@ export class TelegramBridge {
     const { mkdirSync, writeFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const { homedir } = await import("node:os");
-    const uploadsDir = join(homedir(), ".sax", "uploads");
+    const uploadsDir = join(homedir(), ".lax", "uploads");
     mkdirSync(uploadsDir, { recursive: true });
     const ext = (remotePath.split(".").pop() || "bin").toLowerCase();
     const fname = `tg-${kind}-${Date.now()}.${ext}`;

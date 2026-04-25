@@ -46,8 +46,8 @@ export interface ContradictionRecord {
 //  Constants
 // ══════════════════════════════════════════════════════════
 
-const SAX_DIR = join(homedir(), ".sax");
-const HISTORY_FILE = join(SAX_DIR, "contradiction-history.json");
+const LAX_DIR = join(homedir(), ".lax");
+const HISTORY_FILE = join(LAX_DIR, "contradiction-history.json");
 
 // ── Keyword patterns for contradiction categories ────────
 
@@ -194,7 +194,7 @@ export class ContradictionDetector {
   private history: ContradictionRecord[];
 
   private constructor() {
-    if (!existsSync(SAX_DIR)) mkdirSync(SAX_DIR, { recursive: true });
+    if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
     this.history = this.loadHistory();
   }
 

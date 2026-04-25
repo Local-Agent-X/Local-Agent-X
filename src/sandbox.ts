@@ -124,19 +124,19 @@ export function getSandboxMode(): SandboxMode {
     }
     return runtimeMode;
   }
-  const envMode = process.env.SAX_SANDBOX;
+  const envMode = process.env.LAX_SANDBOX ?? process.env.SAX_SANDBOX;
   // Explicit override
   if (envMode === "host") return "host";
   if (envMode === "docker") {
     if (!isDockerAvailable()) {
-      console.warn("[sandbox] SAX_SANDBOX=docker but Docker not available. Falling back to host.");
+      console.warn("[sandbox] LAX_SANDBOX=docker but Docker not available. Falling back to host.");
       return "host";
     }
     return "docker";
   }
   // Auto-detect: prefer Docker if available (secure by default)
   if (isDockerAvailable()) {
-    console.log("[sandbox] Docker detected — using container sandbox by default. Set SAX_SANDBOX=host to disable.");
+    console.log("[sandbox] Docker detected — using container sandbox by default. Set LAX_SANDBOX=host to disable.");
     return "docker";
   }
   return "host";

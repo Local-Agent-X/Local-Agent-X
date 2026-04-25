@@ -110,7 +110,7 @@ async function callLLM(prompt: string, opts: HyDEOptions): Promise<string | null
 
 function detectProvider(): "ollama" | "anthropic" | "openai" | null {
   try {
-    const settingsPath = join(homedir(), ".sax", "settings.json");
+    const settingsPath = join(homedir(), ".lax", "settings.json");
     if (existsSync(settingsPath)) {
       const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as { provider?: string };
       if (s.provider === "ollama") return "ollama";

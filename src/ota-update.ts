@@ -31,7 +31,7 @@ function shell(cmd: string, args: string[], cwd?: string): Promise<string> {
 }
 
 export class OTAManager {
-  private saxDir: string;
+  private laxDir: string;
   private historyPath: string;
   private backupDir: string;
   private updatesDir: string;
@@ -41,18 +41,18 @@ export class OTAManager {
   constructor(
     repoOwner = "manri",
     repoName = "secret-agent-x",
-    saxDir?: string
+    laxDir?: string
   ) {
     this.repoOwner = repoOwner;
     this.repoName = repoName;
-    this.saxDir = saxDir ?? join(homedir(), ".sax");
-    this.historyPath = join(this.saxDir, "update-history.json");
-    this.backupDir = join(this.saxDir, "backups");
-    this.updatesDir = join(this.saxDir, "updates");
+    this.laxDir = laxDir ?? join(homedir(), ".lax");
+    this.historyPath = join(this.laxDir, "update-history.json");
+    this.backupDir = join(this.laxDir, "backups");
+    this.updatesDir = join(this.laxDir, "updates");
   }
 
   async init(): Promise<void> {
-    for (const dir of [this.saxDir, this.backupDir, this.updatesDir]) {
+    for (const dir of [this.laxDir, this.backupDir, this.updatesDir]) {
       if (!existsSync(dir)) {
         await mkdir(dir, { recursive: true });
       }

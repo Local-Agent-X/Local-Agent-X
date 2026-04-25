@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdir
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const CHECKPOINT_DIR = join(homedir(), ".sax", "checkpoints");
+const CHECKPOINT_DIR = join(homedir(), ".lax", "checkpoints");
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function ensureDir(): void {

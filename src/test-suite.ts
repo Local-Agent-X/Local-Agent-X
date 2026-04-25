@@ -16,7 +16,7 @@ interface TestResult {
 const results: TestResult[] = [];
 
 function loadToken(): string {
-  const cfgPath = join(homedir(), ".sax", "config.json");
+  const cfgPath = join(homedir(), ".lax", "config.json");
   const raw = readFileSync(cfgPath, "utf-8");
   const cfg = JSON.parse(raw);
   return cfg.token ?? cfg.authToken ?? "";

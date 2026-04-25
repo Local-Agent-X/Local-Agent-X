@@ -20,8 +20,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const SAX_DIR = join(homedir(), ".sax");
-const LINKS_FILE = join(SAX_DIR, "identity-links.json");
+const LAX_DIR = join(homedir(), ".lax");
+const LINKS_FILE = join(LAX_DIR, "identity-links.json");
 
 // ── Types ──
 

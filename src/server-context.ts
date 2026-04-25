@@ -11,11 +11,11 @@ import type { TelegramBridge } from "./telegram-bridge.js";
 import type { AgentSync } from "./sync.js";
 import type { AppRegistry } from "./app-runtime.js";
 import type { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore } from "./agent-store.js";
-import type { ToolDefinition, SAXConfig, ServerEvent, Session } from "./types.js";
+import type { ToolDefinition, LAXConfig, ServerEvent, Session } from "./types.js";
 import type { ToolRegistry } from "./tool-search.js";
 
 export interface ServerContext {
-  config: SAXConfig;
+  config: LAXConfig;
   security: SecurityLayer;
   toolPolicy: ToolPolicy;
   rbac: RBACManager;

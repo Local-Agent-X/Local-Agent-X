@@ -52,8 +52,8 @@ interface StoredCompression {
 //  Constants
 // ══════════════════════════════════════════════════════════
 
-const SAX_DIR = join(homedir(), ".sax");
-const COMPRESSED_DIR = join(SAX_DIR, "memory-compressed");
+const LAX_DIR = join(homedir(), ".lax");
+const COMPRESSED_DIR = join(LAX_DIR, "memory-compressed");
 const MS_PER_DAY = 86_400_000;
 
 // Stop words filtered out during compression
@@ -78,7 +78,7 @@ const STOP_WORDS = new Set([
 // ══════════════════════════════════════════════════════════
 
 function ensureDirs(): void {
-  for (const dir of [SAX_DIR, COMPRESSED_DIR]) {
+  for (const dir of [LAX_DIR, COMPRESSED_DIR]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 }

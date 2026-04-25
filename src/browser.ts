@@ -52,7 +52,7 @@ export class BrowserManager {
   private injectTokenIfLocal(url: string): string {
     try {
       const u = new URL(url);
-      const appPort = _saxPort || process.env.SAX_PORT || "7007";
+      const appPort = _saxPort || process.env.LAX_PORT || process.env.SAX_PORT || "7007";
       if ((u.hostname === "127.0.0.1" || u.hostname === "localhost") && u.port === appPort) {
         if (_saxAuthToken && !u.searchParams.has("token")) {
           u.searchParams.set("token", _saxAuthToken);
@@ -66,7 +66,7 @@ export class BrowserManager {
   getEngine(): BrowserEngine { return this.currentEngine; }
   getCurrentUrl(): string { try { return this.page?.url() || ""; } catch { return ""; } }
   isOnOwnApp(): boolean {
-    const port = process.env.SAX_PORT || "7007";
+    const port = process.env.LAX_PORT ?? process.env.SAX_PORT ?? "7007";
     return new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${port}`, "i").test(this.getCurrentUrl());
   }
 

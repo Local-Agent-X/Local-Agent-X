@@ -57,7 +57,7 @@ function loadApprovalMode(): ApprovalMode {
   if (_cachedMode && Date.now() - _modeCachedAt < 1000) return _cachedMode;
   let mode: ApprovalMode = "sensitive";
   try {
-    const settingsPath = join(homedir(), ".sax", "settings.json");
+    const settingsPath = join(homedir(), ".lax", "settings.json");
     if (existsSync(settingsPath)) {
       const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as { approvalMode?: string; toolApproval?: string };
       if (s.approvalMode === "off" || s.approvalMode === "sensitive" || s.approvalMode === "strict") {

@@ -28,7 +28,7 @@ let _secretsStore: SecretsStore | undefined;
 
 /** Get current provider + API key from settings + secrets */
 function getActiveProvider(): { provider: string; apiKey?: string } {
-  const settingsPath = join(homedir(), ".sax", "settings.json");
+  const settingsPath = join(homedir(), ".lax", "settings.json");
   let provider = "local";
   try {
     if (existsSync(settingsPath)) {

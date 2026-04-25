@@ -37,13 +37,13 @@ interface EventStore {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const SAX_DIR = join(homedir(), ".sax");
-const STORE_FILE = join(SAX_DIR, "upcoming-events.json");
+const LAX_DIR = join(homedir(), ".lax");
+const STORE_FILE = join(LAX_DIR, "upcoming-events.json");
 const MAX_EVENTS = 500;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function ensureDir(): void {
-  if (!existsSync(SAX_DIR)) mkdirSync(SAX_DIR, { recursive: true });
+  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
 }
 
 function atomicWrite(path: string, data: string): void {

@@ -36,7 +36,7 @@ export interface Recording {
   events: RecordingEvent[];
 }
 
-const RECORDINGS_DIR = join(homedir(), ".sax", "recordings");
+const RECORDINGS_DIR = join(homedir(), ".lax", "recordings");
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) {

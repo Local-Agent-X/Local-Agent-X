@@ -81,14 +81,14 @@ interface AssociativeStore {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const SAX_DIR = join(homedir(), ".sax");
-const STORE_FILE = join(SAX_DIR, "associative-memory.json");
+const LAX_DIR = join(homedir(), ".lax");
+const STORE_FILE = join(LAX_DIR, "associative-memory.json");
 const HALF_LIFE_MS = 60 * 24 * 60 * 60 * 1000; // 60 days
 const MAX_NODES = 5000;
 const MAX_ASSOCIATIONS = 20000;
 
 function ensureDir(): void {
-  if (!existsSync(SAX_DIR)) mkdirSync(SAX_DIR, { recursive: true });
+  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
 }
 
 function atomicWrite(path: string, data: string): void {

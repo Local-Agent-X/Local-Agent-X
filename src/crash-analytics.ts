@@ -26,7 +26,7 @@ interface CrashPattern {
 const MAX_ENTRIES = 500;
 
 function logPath(): string {
-  return join(homedir(), ".sax", "crash-log.json");
+  return join(homedir(), ".lax", "crash-log.json");
 }
 
 function loadLog(): CrashLog {
@@ -40,7 +40,7 @@ function loadLog(): CrashLog {
 }
 
 function saveLog(log: CrashLog): void {
-  const dir = join(homedir(), ".sax");
+  const dir = join(homedir(), ".lax");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(logPath(), JSON.stringify(log, null, 2), "utf-8");
 }

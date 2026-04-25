@@ -14,7 +14,7 @@ export interface StartupTestResult {
 
 async function testDiskAccess(): Promise<StartupTestResult> {
   const start = Date.now();
-  const testDir = join(homedir(), ".sax");
+  const testDir = join(homedir(), ".lax");
   const testFile = join(testDir, ".startup-test-probe");
 
   try {
@@ -41,7 +41,7 @@ async function testDiskAccess(): Promise<StartupTestResult> {
 
 async function testConfigReadable(): Promise<StartupTestResult> {
   const start = Date.now();
-  const configPath = join(homedir(), ".sax", "config.json");
+  const configPath = join(homedir(), ".lax", "config.json");
 
   try {
     if (!existsSync(configPath)) {
@@ -75,8 +75,8 @@ async function testConfigReadable(): Promise<StartupTestResult> {
 async function testAuthToken(): Promise<StartupTestResult> {
   const start = Date.now();
   const authPaths = [
-    join(homedir(), ".sax", "config.json"),
-    join(homedir(), ".sax", "anthropic-auth.json"),
+    join(homedir(), ".lax", "config.json"),
+    join(homedir(), ".lax", "anthropic-auth.json"),
   ];
 
   for (const p of authPaths) {
@@ -143,8 +143,8 @@ async function testVoiceEngine(): Promise<StartupTestResult> {
 
   // Check for common TTS/voice dependencies
   const voiceIndicators = [
-    join(homedir(), ".sax", "voice-tmp"),
-    join(homedir(), ".sax", "audio-cues"),
+    join(homedir(), ".lax", "voice-tmp"),
+    join(homedir(), ".lax", "audio-cues"),
   ];
 
   const available = voiceIndicators.some((p) => existsSync(p));
@@ -164,8 +164,8 @@ async function testAriKernel(): Promise<StartupTestResult> {
   const start = Date.now();
 
   // Check if ARI kernel policy files exist
-  const policyFile = join(homedir(), ".sax", "custom-policies.json");
-  const auditDir = join(homedir(), ".sax", "audit");
+  const policyFile = join(homedir(), ".lax", "custom-policies.json");
+  const auditDir = join(homedir(), ".lax", "audit");
 
   const hasPolicy = existsSync(policyFile);
   const hasAudit = existsSync(auditDir);

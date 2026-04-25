@@ -56,14 +56,14 @@ interface ConsolidationLogEntry {
 //  Helpers
 // ══════════════════════════════════════════════════════════
 
-const SAX_DIR = join(homedir(), ".sax");
-const MEMORY_DIR = join(SAX_DIR, "memory");
+const LAX_DIR = join(homedir(), ".lax");
+const MEMORY_DIR = join(LAX_DIR, "memory");
 const ENTITIES_DIR = join(MEMORY_DIR, "bank", "entities");
 const MIND_PATH = join(MEMORY_DIR, "MIND.md");
-const LOG_PATH = join(SAX_DIR, "consolidation-log.json");
+const LOG_PATH = join(LAX_DIR, "consolidation-log.json");
 
 function ensureDirs(): void {
-  for (const dir of [SAX_DIR, MEMORY_DIR, join(MEMORY_DIR, "bank"), ENTITIES_DIR]) {
+  for (const dir of [LAX_DIR, MEMORY_DIR, join(MEMORY_DIR, "bank"), ENTITIES_DIR]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 }
@@ -392,7 +392,7 @@ export class MemoryConsolidator {
   private loadSqliteFacts(days: number): FactEntry[] {
     try {
       const Database = require("better-sqlite3");
-      const dbPath = join(SAX_DIR, "memory.db");
+      const dbPath = join(LAX_DIR, "memory.db");
       if (!existsSync(dbPath)) return [];
       const db = new Database(dbPath, { readonly: true });
       const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;

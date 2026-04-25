@@ -9,10 +9,10 @@ import { homedir } from "node:os";
 import type { Protocol, ProtocolStep } from "../protocols.js";
 import type { ToolDefinition } from "../types.js";
 
-const CUSTOM_PROTOCOLS_PATH = join(homedir(), ".sax", "custom-protocols.json");
+const CUSTOM_PROTOCOLS_PATH = join(homedir(), ".lax", "custom-protocols.json");
 
 function ensureDir(): void {
-  const dir = join(homedir(), ".sax");
+  const dir = join(homedir(), ".lax");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 

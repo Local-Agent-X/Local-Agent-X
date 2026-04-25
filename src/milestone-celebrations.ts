@@ -45,8 +45,8 @@ interface MilestoneStore {
 
 // ── Constants ───────────────────────────────────────────────
 
-const SAX_DIR = join(homedir(), ".sax");
-const STORE_FILE = join(SAX_DIR, "milestones.json");
+const LAX_DIR = join(homedir(), ".lax");
+const STORE_FILE = join(LAX_DIR, "milestones.json");
 
 // ── Built-in milestone definitions ──────────────────────────
 
@@ -188,7 +188,7 @@ function buildMilestoneDefs(): MilestoneDef[] {
 // ── Persistence ─────────────────────────────────────────────
 
 function ensureDir(): void {
-  if (!existsSync(SAX_DIR)) mkdirSync(SAX_DIR, { recursive: true });
+  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
 }
 
 function atomicWrite(path: string, data: string): void {

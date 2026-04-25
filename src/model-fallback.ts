@@ -16,8 +16,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const SAX_DIR = join(homedir(), ".sax");
-const HEALTH_FILE = join(SAX_DIR, "provider-health.json");
+const LAX_DIR = join(homedir(), ".lax");
+const HEALTH_FILE = join(LAX_DIR, "provider-health.json");
 
 // ── Types ──
 

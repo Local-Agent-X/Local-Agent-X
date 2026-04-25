@@ -137,12 +137,12 @@ const ADAPTATION_HINTS: Record<Emotion, string> = {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const SAX_DIR = join(homedir(), ".sax");
-const HISTORY_FILE = join(SAX_DIR, "emotional-history.json");
+const LAX_DIR = join(homedir(), ".lax");
+const HISTORY_FILE = join(LAX_DIR, "emotional-history.json");
 const MAX_ENTRIES = 1000;
 
 function ensureDir(): void {
-  if (!existsSync(SAX_DIR)) mkdirSync(SAX_DIR, { recursive: true });
+  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
 }
 
 function atomicWrite(path: string, data: string): void {

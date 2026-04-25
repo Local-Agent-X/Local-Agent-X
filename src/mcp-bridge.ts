@@ -9,12 +9,12 @@
  *   SAX_MCP_TOKEN — SAX auth token for the endpoints
  */
 
-const BASE = process.env.SAX_MCP_URL;
-const TOKEN = process.env.SAX_MCP_TOKEN;
+const BASE = process.env.LAX_MCP_URL ?? process.env.SAX_MCP_URL;
+const TOKEN = process.env.LAX_MCP_TOKEN ?? process.env.SAX_MCP_TOKEN;
 const PROTOCOL_VERSION = "2025-11-25";
 
 if (!BASE || !TOKEN) {
-  process.stderr.write("[mcp-bridge] SAX_MCP_URL / SAX_MCP_TOKEN not set\n");
+  process.stderr.write("[mcp-bridge] LAX_MCP_URL / LAX_MCP_TOKEN not set\n");
   process.exit(1);
 }
 

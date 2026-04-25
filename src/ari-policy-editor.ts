@@ -33,10 +33,10 @@ interface PolicyStore {
   rules: PolicyRule[];
 }
 
-const POLICIES_FILE = join(homedir(), ".sax", "custom-policies.json");
+const POLICIES_FILE = join(homedir(), ".lax", "custom-policies.json");
 
 function ensureDir(): void {
-  const dir = join(homedir(), ".sax");
+  const dir = join(homedir(), ".lax");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 

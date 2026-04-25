@@ -65,7 +65,7 @@ function checkAuthTokenStrength(token: string): AuditFinding | null {
       severity: "critical",
       title: "No auth token configured",
       detail: "Server is running without authentication. Anyone on localhost can access all APIs.",
-      remediation: "Set SAX_AUTH_TOKEN environment variable or add authToken to ~/.sax/config.json",
+      remediation: "Set LAX_AUTH_TOKEN environment variable or add authToken to ~/.lax/config.json",
     };
   }
   if (token.length < 16) {
@@ -208,14 +208,17 @@ interface DangerousFlag {
 
 const DANGEROUS_FLAGS: DangerousFlag[] = [
   {
-    flag: "SAX_SANDBOX=disabled",
+    flag: "LAX_SANDBOX=disabled",
     description: "Sandbox mode is off — bash commands run directly on host",
-    check: () => process.env.SAX_SANDBOX === "disabled" || !process.env.SAX_SANDBOX,
+    check: () => {
+      const v = process.env.LAX_SANDBOX ?? process.env.SAX_SANDBOX;
+      return v === "disabled" || !v;
+    },
   },
   {
-    flag: "SAX_ALLOW_NETWORK_TOOLS=true",
+    flag: "LAX_ALLOW_NETWORK_TOOLS=true",
     description: "Direct network tools (curl, wget) allowed in bash",
-    check: () => process.env.SAX_ALLOW_NETWORK_TOOLS === "true",
+    check: () => (process.env.LAX_ALLOW_NETWORK_TOOLS ?? process.env.SAX_ALLOW_NETWORK_TOOLS) === "true",
   },
   {
     flag: "NODE_TLS_REJECT_UNAUTHORIZED=0",
@@ -223,9 +226,9 @@ const DANGEROUS_FLAGS: DangerousFlag[] = [
     check: () => process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0",
   },
   {
-    flag: "SAX_DISABLE_SECURITY",
+    flag: "LAX_DISABLE_SECURITY",
     description: "Security layer entirely disabled",
-    check: () => !!process.env.SAX_DISABLE_SECURITY,
+    check: () => !!(process.env.LAX_DISABLE_SECURITY ?? process.env.SAX_DISABLE_SECURITY),
   },
   {
     flag: "No tool policy file",
@@ -253,7 +256,7 @@ function checkDangerousFlags(dataDir: string): AuditFinding[] {
 // ── Main audit runner ──
 
 export function runSecurityAudit(config: { authToken: string; workspace: string }): AuditReport {
-  const dataDir = join(homedir(), ".sax");
+  const dataDir = join(homedir(), ".lax");
   const findings: AuditFinding[] = [];
 
   // Shallow checks

@@ -49,8 +49,8 @@ interface ScheduleStore {
 
 // ── Constants ───────────────────────────────────────────────
 
-const SAX_DIR = join(homedir(), ".sax");
-const PROFILE_FILE = join(SAX_DIR, "schedule-profile.json");
+const LAX_DIR = join(homedir(), ".lax");
+const PROFILE_FILE = join(LAX_DIR, "schedule-profile.json");
 const MAX_ENTRIES = 2000;
 
 const DAY_NAMES: string[] = [
@@ -78,7 +78,7 @@ const CREATIVE_KEYWORDS = [
 // ── Persistence ─────────────────────────────────────────────
 
 function ensureDir(): void {
-  if (!existsSync(SAX_DIR)) mkdirSync(SAX_DIR, { recursive: true });
+  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
 }
 
 function atomicWrite(path: string, data: string): void {

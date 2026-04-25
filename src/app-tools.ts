@@ -109,9 +109,9 @@ const appCreate: ToolDefinition = {
     if (result.error) return err(result.error);
 
     // Generate and save HTML
-    const port = parseInt(process.env.SAX_PORT || "7007", 10);
+    const port = parseInt(process.env.LAX_PORT ?? process.env.SAX_PORT ?? "7007", 10);
     const html = renderApp(def, port);
-    const dir = join(homedir(), ".sax", "apps", rawId);
+    const dir = join(homedir(), ".lax", "apps", rawId);
     writeFileSync(join(dir, "index.html"), html, "utf-8");
 
     EventBus.emit("app:create", { id: rawId, name: def.name });
@@ -162,9 +162,9 @@ const appUpdate: ToolDefinition = {
     if (result.error) return err(result.error);
 
     // Re-render HTML
-    const port = parseInt(process.env.SAX_PORT || "7007", 10);
+    const port = parseInt(process.env.LAX_PORT ?? process.env.SAX_PORT ?? "7007", 10);
     const html = renderApp(result.app!, port);
-    const dir = join(homedir(), ".sax", "apps", id);
+    const dir = join(homedir(), ".lax", "apps", id);
     writeFileSync(join(dir, "index.html"), html, "utf-8");
 
     EventBus.emit("app:update", { id });
@@ -373,7 +373,7 @@ const appList: ToolDefinition = {
     const apps = registry.list(actor);
     if (apps.length === 0) return ok("No apps created yet.");
 
-    const port = process.env.SAX_PORT || "7007";
+    const port = process.env.LAX_PORT ?? process.env.SAX_PORT ?? "7007";
     const lines = apps.map(a => {
       const status = a.status !== "active" ? ` [${a.status.toUpperCase()}]` : "";
       return `- ${a.name} (${a.id})${status} — ${a.components.length} components, ${a.layout.type} layout, v${a.version}\n  URL: http://127.0.0.1:${port}/apps/${a.id}`;
@@ -487,7 +487,7 @@ const sidebarPin: ToolDefinition = {
     const icon = String(args.icon || "📌");
 
     // Resolve the app URL — check workspace/apps/ for a matching folder
-    const dataDir = join(homedir(), ".sax");
+    const dataDir = join(homedir(), ".lax");
     const workspaceApps = resolve("workspace", "apps");
     const slug = name.toLowerCase().replace(/\s+/g, "-");
 
@@ -552,7 +552,7 @@ const sidebarUnpin: ToolDefinition = {
     const name = String(args.name || "").trim();
     if (!name) return err("name is required");
 
-    const dataDir = join(homedir(), ".sax");
+    const dataDir = join(homedir(), ".lax");
     const settingsPath = join(dataDir, "settings.json");
     let settings: Record<string, unknown> = {};
     try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}

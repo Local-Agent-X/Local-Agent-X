@@ -16,7 +16,7 @@ import { randomBytes } from "node:crypto";
 
 // ── Paths ──
 
-const VOICE_DIR = join(homedir(), ".sax", "workspace", "voice-chat");
+const VOICE_DIR = join(homedir(), ".lax", "workspace", "voice-chat");
 const WHISPER_EXE = join(VOICE_DIR, "whisper-bin", "Release", "whisper-cli.exe");
 const WHISPER_MODEL = join(VOICE_DIR, "whisper-bin", "models", "ggml-base.en.bin");
 const PIPER_EXE = join(VOICE_DIR, "piper", "piper", "piper.exe");
@@ -26,7 +26,7 @@ const KOKORO_VOICES = join(VOICE_DIR, "kokoro", "voices-v1.0.bin");
 
 // ── Temp dir for audio files ──
 
-const TMP_DIR = join(homedir(), ".sax", "voice-tmp");
+const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
 function tmpPath(ext: string): string {

@@ -69,10 +69,10 @@ interface ScoresData {
 //  Constants
 // ══════════════════════════════════════════════════════════
 
-const SAX_DIR = join(homedir(), ".sax");
-const MEMORY_DIR = join(SAX_DIR, "memory");
-const ARCHIVE_DIR = join(SAX_DIR, "memory-archive");
-const SCORES_FILE = join(SAX_DIR, "memory-scores.json");
+const LAX_DIR = join(homedir(), ".lax");
+const MEMORY_DIR = join(LAX_DIR, "memory");
+const ARCHIVE_DIR = join(LAX_DIR, "memory-archive");
+const SCORES_FILE = join(LAX_DIR, "memory-scores.json");
 
 const PROTECTED_FILES = new Set([
   "IDENTITY.md",
@@ -424,7 +424,7 @@ export class MemoryImportance {
   }
 
   private ensureDirs(): void {
-    for (const dir of [SAX_DIR, MEMORY_DIR, ARCHIVE_DIR]) {
+    for (const dir of [LAX_DIR, MEMORY_DIR, ARCHIVE_DIR]) {
       if (!existsSync(dir)) {
         mkdirSync(dir, { recursive: true });
       }

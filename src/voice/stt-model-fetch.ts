@@ -14,7 +14,7 @@ import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync } from "
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const MODEL_DIR = join(homedir(), ".sax", "models", "stt");
+const MODEL_DIR = join(homedir(), ".lax", "models", "stt");
 
 // Zipformer2 streaming English, int8 quantized (~70MB total). Released by
 // k2-fsa; Apache-2.0 code + CC0 tokens. The 2023-02-17 "20M" model we

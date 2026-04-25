@@ -59,8 +59,8 @@ interface TierData {
 //  Constants
 // ══════════════════════════════════════════════════════════
 
-const SAX_DIR = join(homedir(), ".sax");
-const TIERS_FILE = join(SAX_DIR, "memory-tiers.json");
+const LAX_DIR = join(homedir(), ".lax");
+const TIERS_FILE = join(LAX_DIR, "memory-tiers.json");
 const MS_PER_DAY = 86_400_000;
 
 const TIER_THRESHOLDS = {
@@ -103,7 +103,7 @@ export class MemoryTierManager {
   private data: TierData;
 
   private constructor() {
-    if (!existsSync(SAX_DIR)) mkdirSync(SAX_DIR, { recursive: true });
+    if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
     this.data = this.loadData();
   }
 

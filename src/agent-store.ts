@@ -10,10 +10,10 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 
-const SAX_DIR = join(homedir(), ".sax");
-const RUNS_DIR = join(SAX_DIR, "agent-runs");
-const TEMPLATES_FILE = join(SAX_DIR, "agent-templates.json");
-const PROJECTS_FILE = join(SAX_DIR, "agent-projects.json");
+const LAX_DIR = join(homedir(), ".lax");
+const RUNS_DIR = join(LAX_DIR, "agent-runs");
+const TEMPLATES_FILE = join(LAX_DIR, "agent-templates.json");
+const PROJECTS_FILE = join(LAX_DIR, "agent-projects.json");
 
 function ensureDirs(): void {
   if (!existsSync(RUNS_DIR)) mkdirSync(RUNS_DIR, { recursive: true });
@@ -491,7 +491,7 @@ Decision framework:
 
 // ── Issue Store ──────────────────────────────────────────
 
-const ISSUES_FILE = join(SAX_DIR, "agent-issues.json");
+const ISSUES_FILE = join(LAX_DIR, "agent-issues.json");
 
 export class IssueStore {
   private static instance: IssueStore;

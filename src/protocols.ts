@@ -60,7 +60,7 @@ export interface ProtocolPreferences {
 
 // ── User Preferences (per-user, persisted) ──
 
-const prefsDir = join(homedir(), ".sax", "protocol-prefs");
+const prefsDir = join(homedir(), ".lax", "protocol-prefs");
 
 function loadPrefs(): ProtocolPreferences {
   const path = join(prefsDir, "prefs.json");

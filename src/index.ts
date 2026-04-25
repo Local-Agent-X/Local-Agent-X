@@ -1,10 +1,37 @@
 // ── Persistent file logger ──
-// Mirrors all console output to ~/.sax/logs/server.log so logs survive restarts.
+// Mirrors all console output to ~/.lax/logs/server.log so logs survive restarts.
 import { createWriteStream, mkdirSync, existsSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const logDir = join(homedir(), ".sax", "logs");
+function migrateLegacyDataDir(): void {
+  const newDir = join(homedir(), ".lax");
+  const oldDir = join(homedir(), ".sax");
+  if (existsSync(newDir) && existsSync(oldDir)) {
+    process.stderr.write(
+      `[migrate] FATAL: both ~/.sax and ~/.lax exist — refusing to start.\n` +
+      `[migrate] A previous migration attempt likely failed mid-rename.\n` +
+      `[migrate] Inspect both dirs and remove the empty/stale one before restarting.\n`
+    );
+    process.exit(1);
+  }
+  if (!existsSync(newDir) && existsSync(oldDir)) {
+    try {
+      renameSync(oldDir, newDir);
+      process.stdout.write("[migrate] Renamed ~/.sax → ~/.lax\n");
+    } catch (e) {
+      process.stderr.write(
+        `[migrate] FATAL: could not rename ~/.sax → ~/.lax: ${(e as Error).message}\n` +
+        `[migrate] Likely cause: another process holds files in ~/.sax open.\n` +
+        `[migrate] Stop any running agent process, then restart.\n`
+      );
+      process.exit(1);
+    }
+  }
+}
+migrateLegacyDataDir();
+
+const logDir = join(homedir(), ".lax", "logs");
 if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true, mode: 0o700 });
 
 // Rotate if log exceeds 5MB

@@ -10,7 +10,7 @@ import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 
-const TMP_DIR = join(homedir(), ".sax", "voice-tmp");
+const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
 function tmpPath(ext: string): string {

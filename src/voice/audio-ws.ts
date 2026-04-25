@@ -26,6 +26,8 @@ export interface VoiceSession {
   onMicFrame(frame: Int16Array): void;
   /** Called when the client explicitly signals end-of-speech */
   onEndOfSpeech?(): void;
+  /** Called when the client updates voice settings (live, no restart) */
+  onVoiceSettings?(settings: { voice?: string; speed?: number }): void;
   /** Called when the client disconnects or sends bye */
   close(): void;
 }
@@ -141,6 +143,11 @@ export function setupVoiceWebSocket(server: Server, authToken: string): void {
           console.log(`[voice-ws] session opened: ${sessionId}`);
         } else if (msg.type === "eos") {
           session?.onEndOfSpeech?.();
+        } else if (msg.type === "voice_settings") {
+          session?.onVoiceSettings?.({
+            voice: typeof msg.voice === "string" ? msg.voice : undefined,
+            speed: typeof msg.speed === "number" ? msg.speed : undefined,
+          });
         } else if (msg.type === "bye") {
           ws.close(1000, "bye");
         }

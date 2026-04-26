@@ -27,9 +27,13 @@ interface ModelFile { name: string; url: string; minBytes: number; }
 //   tokens ~835KB
 // Thresholds catch clearly-truncated downloads; sherpa-onnx re-verifies
 // ONNX integrity on load.
+// Sanity thresholds sized for tiny.en int8: encoder ~13MB, decoder ~90MB,
+// tokens ~836KB. If you change WHISPER_VARIANT, update these too —
+// previous values were calibrated for small.en (~85MB/~262MB) and would
+// reject a healthy tiny.en download as "truncated".
 const MODEL_FILES: ModelFile[] = [
-  { name: `${WHISPER_VARIANT}-encoder.int8.onnx`, url: `${MODEL_BASE}/${WHISPER_VARIANT}-encoder.int8.onnx`, minBytes: 40_000_000 },
-  { name: `${WHISPER_VARIANT}-decoder.int8.onnx`, url: `${MODEL_BASE}/${WHISPER_VARIANT}-decoder.int8.onnx`, minBytes: 150_000_000 },
+  { name: `${WHISPER_VARIANT}-encoder.int8.onnx`, url: `${MODEL_BASE}/${WHISPER_VARIANT}-encoder.int8.onnx`, minBytes: 8_000_000 },
+  { name: `${WHISPER_VARIANT}-decoder.int8.onnx`, url: `${MODEL_BASE}/${WHISPER_VARIANT}-decoder.int8.onnx`, minBytes: 50_000_000 },
   { name: `${WHISPER_VARIANT}-tokens.txt`,        url: `${MODEL_BASE}/${WHISPER_VARIANT}-tokens.txt`,        minBytes: 100_000 },
 ];
 

@@ -43,15 +43,19 @@ export interface VoiceTurnResult {
 export type VoiceTurnRunner = (input: VoiceTurnInput) => Promise<VoiceTurnResult>;
 
 /**
- * GPU mode dispatch. When LAX_VOICE_GPU=1 the voice pipeline runs in a
- * Python sidecar (faster-whisper + Silero VAD + Kokoro on CUDA) instead
- * of the in-process Sherpa WASM stack. The sidecar listens on
- * ws://127.0.0.1:7008/voice (overridable via LAX_VOICE_PORT).
+ * GPU mode dispatch. The voice pipeline runs in a Python sidecar
+ * (faster-whisper + Silero VAD + Kokoro on CUDA) by default. The
+ * sidecar listens on ws://127.0.0.1:7008/voice (overridable via
+ * LAX_VOICE_PORT). Set LAX_VOICE_GPU=0 to force the legacy in-process
+ * Sherpa WASM + Matcha CPU path (only useful for machines without a
+ * working sidecar — quality is markedly worse and voice picker is a no-op).
+ * Custom voice cloning lives in the optional Pro tier (RVC sidecar at
+ * :7009, separate venv); not handled by this dispatcher.
  *
  * Setup: see python/voice/install.ps1.
  * Start:  ~/.lax/python-voice/venv/Scripts/python.exe python/voice/server.py
  */
-const GPU_MODE = process.env.LAX_VOICE_GPU === "1";
+const GPU_MODE = process.env.LAX_VOICE_GPU !== "0";
 
 const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
 // 0.25s @ 16kHz — single short words like "hey" or "yes" need to make it

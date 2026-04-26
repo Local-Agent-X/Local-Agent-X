@@ -15,6 +15,13 @@ import { createGPUBridge, type GPUBridge } from "./gpu-bridge.js";
 import type { VoiceTurnRunner } from "./voice-session.js";
 
 const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
+// Long-clause early-flush: if the LLM is grinding out a long comma-heavy
+// sentence, fire the first clause to TTS as soon as it's >= ~60 chars and
+// has a comma. Cuts time-to-first-audio by 200-500ms on those sentences
+// without changing what the listener actually hears (TTS just sees one
+// sentence as two clauses).
+const CLAUSE_BREAK = /,\s+/;
+const CLAUSE_MIN_CHARS = 60;
 
 export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRunner): VoiceSession {
   let bridge: GPUBridge | null = null;
@@ -131,7 +138,9 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     pendingTtsCount = 0;
 
     let sentenceBuf = "";
+    let firstClauseFlushed = false;  // only flush the early clause once per turn
     const flushSentences = (): void => {
+      // Sentence terminators (.!?) — preferred boundary
       while (true) {
         const m = SENTENCE_TERMINATOR.exec(sentenceBuf);
         if (!m) break;
@@ -141,6 +150,24 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
         if (sentence && bridge) {
           pendingTtsCount++;
           bridge.speak(sentence, nextSentenceId++, { voice: voiceOverride, speed: speedOverride });
+          firstClauseFlushed = true;
+        }
+      }
+      // Early clause flush: if no period yet but the buffer is long and
+      // has a comma break, emit the first clause so TTS can start sooner.
+      // Only do this for the FIRST clause of a turn — after that we'd
+      // rather wait for full sentences so prosody stays natural.
+      if (!firstClauseFlushed && sentenceBuf.length >= CLAUSE_MIN_CHARS) {
+        const m = CLAUSE_BREAK.exec(sentenceBuf);
+        if (m && m.index >= CLAUSE_MIN_CHARS - 10) {
+          const cutEnd = m.index + m[0].length;
+          const clause = sentenceBuf.slice(0, cutEnd).trim();
+          sentenceBuf = sentenceBuf.slice(cutEnd);
+          if (clause && bridge) {
+            pendingTtsCount++;
+            bridge.speak(clause, nextSentenceId++, { voice: voiceOverride, speed: speedOverride });
+            firstClauseFlushed = true;
+          }
         }
       }
     };

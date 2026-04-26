@@ -12,7 +12,7 @@ kokoro-onnx==0.4.9
 onnxruntime-gpu==1.20.1
 silero-vad==5.1.2
 soundfile==0.12.1
-numpy>=2.0,<3.0
+numpy>=1.26,<2.0  # Coqui TTS pins numpy<2; Kokoro's >=2 listing is soft
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
 websockets==14.1
@@ -23,3 +23,6 @@ torchaudio==2.5.1
 # at runtime; server.py prepends the wheel's bin dir to PATH on startup.
 nvidia-cublas-cu12==12.4.5.8
 nvidia-cudnn-cu12==9.1.0.70
+# Voice cloning is the optional Pro tier (RVC sidecar at :7009) — its
+# dependencies (ultimate-rvc, torch+cu128) live in a separate venv at
+# ~/.lax/python-rvc/venv/, not here. Lite tier ships built-in voices only.

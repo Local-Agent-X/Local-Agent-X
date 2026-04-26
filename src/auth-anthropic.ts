@@ -4,6 +4,9 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("auth-anthropic");
+
 /**
  * Anthropic OAuth — Claude subscription access via PKCE flow.
  *
@@ -231,7 +234,7 @@ export function initiateAnthropicLogin(): { authUrl: string; promise: Promise<vo
         };
 
         saveAnthropicTokens(tokens);
-        console.log("[anthropic-auth] OAuth tokens saved");
+        logger.info("[anthropic-auth] OAuth tokens saved");
 
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(`<html><body style="font-family:system-ui;background:#0a0a0f;color:#00ff41;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2>Connected to Claude!</h2><p>You can close this window and return to Agent X.</p></div></body></html>`);
@@ -246,7 +249,7 @@ export function initiateAnthropicLogin(): { authUrl: string; promise: Promise<vo
     });
 
     server.listen(CALLBACK_PORT, "127.0.0.1", () => {
-      console.log(`[anthropic-auth] Waiting for callback on port ${CALLBACK_PORT}...`);
+      logger.info(`[anthropic-auth] Waiting for callback on port ${CALLBACK_PORT}...`);
     });
 
     // Timeout after 5 minutes

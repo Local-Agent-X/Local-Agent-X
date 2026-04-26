@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import WebSocket from "ws";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("test-suite");
+
 const BASE = "http://127.0.0.1:7007";
 
 interface TestResult {
@@ -110,7 +113,6 @@ async function testModuleImports(): Promise<void> {
     "./parallel-tools.js",
     "./tool-timeout.js",
     "./stream-reliability.js",
-    "./memory-dedup.js",
     "./session-export.js",
     "./crash-analytics.js",
     "./response-cache.js",
@@ -293,11 +295,11 @@ function printReport(elapsed: number): void {
   const bar = "\u2550".repeat(38);
   const thin = "\u2500".repeat(38);
 
-  console.log();
-  console.log(bar);
-  console.log("  OPEN AGENT X \u2014 TEST REPORT");
-  console.log(bar);
-  console.log();
+  logger.info("");
+  logger.info(bar);
+  logger.info("  OPEN AGENT X \u2014 TEST REPORT");
+  logger.info(bar);
+  logger.info("");
 
   const order = [
     "API Endpoints",
@@ -312,29 +314,29 @@ function printReport(elapsed: number): void {
     if (!c) continue;
     const label = cat.padEnd(22);
     const count = `${c.passed}/${c.total} passed`;
-    console.log(`${label} ${count}`);
+    logger.info(`${label} ${count}`);
   }
 
-  console.log(thin);
+  logger.info(thin);
   const allOk = totalPassed === totalTests;
   const tag = allOk ? " \u2713" : " \u2717";
-  console.log(`TOTAL${" ".repeat(17)} ${totalPassed}/${totalTests} passed${tag}`);
-  console.log();
+  logger.info(`TOTAL${" ".repeat(17)} ${totalPassed}/${totalTests} passed${tag}`);
+  logger.info("");
 
   if (failed.length > 0) {
-    console.log("Failed tests:");
+    logger.info("Failed tests:");
     for (const f of failed) {
-      console.log(`  [${f.category}] ${f.name}`);
-      if (f.error) console.log(`    ${f.error}`);
+      logger.info(`  [${f.category}] ${f.name}`);
+      if (f.error) logger.info(`    ${f.error}`);
     }
   } else {
-    console.log("Failed tests:");
-    console.log("  (none)");
+    logger.info("Failed tests:");
+    logger.info("  (none)");
   }
 
-  console.log();
-  console.log(`Time: ${(elapsed / 1000).toFixed(1)}s`);
-  console.log();
+  logger.info("");
+  logger.info(`Time: ${(elapsed / 1000).toFixed(1)}s`);
+  logger.info("");
 }
 
 // ── Main ──
@@ -342,7 +344,7 @@ function printReport(elapsed: number): void {
 async function main(): Promise<void> {
   const token = loadToken();
   if (!token) {
-    console.error("Could not read auth token from ~/.sax/config.json");
+    logger.error("Could not read auth token from ~/.sax/config.json");
     process.exit(1);
   }
 

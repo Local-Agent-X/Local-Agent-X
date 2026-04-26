@@ -14,6 +14,9 @@ import type { ServerEvent, ToolDefinition } from "../types.js";
 import type { ToolRegistry } from "../tool-search.js";
 import type { MemoryIndex } from "../memory.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("server.bootstrap-tools");
+
 export interface ToolBundle {
   allAgentTools: ToolDefinition[];
   bridgeTools: ToolDefinition[];
@@ -63,17 +66,17 @@ export async function bootstrapTools(deps: {
     const mcpTools = mcpManager.getAllTools();
     if (mcpTools.length > 0) {
       allAgentTools.push(...mcpTools);
-      console.log(`[mcp] Added ${mcpTools.length} tools from MCP servers`);
+      logger.info(`[mcp] Added ${mcpTools.length} tools from MCP servers`);
     }
     process.on("SIGINT", () => { mcpManager.disconnectAll(); });
   } catch (e) {
-    console.warn(`[mcp] MCP client init failed: ${(e as Error).message}`);
+    logger.warn(`[mcp] MCP client init failed: ${(e as Error).message}`);
   }
 
   const seenTools = new Set<string>();
   for (const tool of allAgentTools) {
     if (seenTools.has(tool.name)) {
-      console.warn(`[tools] Duplicate tool name: "${tool.name}" — later definition wins`);
+      logger.warn(`[tools] Duplicate tool name: "${tool.name}" — later definition wins`);
     }
     seenTools.add(tool.name);
     if (!toolRegistry.get(tool.name)) {

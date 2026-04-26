@@ -12,6 +12,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { getRuntimeConfig } from "../config.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("browser.launcher");
+
 export const NAV_TIMEOUT = 30_000;
 export const ACTION_TIMEOUT = 10_000;
 export const MAX_TEXT_LENGTH = 8_000;
@@ -142,7 +145,7 @@ export async function launchViaCDP(
         );
       }
       userDataDir = real;
-      console.log(`[browser] Attach mode — using your real Chrome profile: ${userDataDir}`);
+      logger.info(`[browser] Attach mode — using your real Chrome profile: ${userDataDir}`);
     } else {
       userDataDir = join(homedir(), ".lax", "chrome-profile");
       if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true });
@@ -155,7 +158,7 @@ export async function launchViaCDP(
       if (res.ok) {
         await res.json();
         const browser = await pw.chromium.connectOverCDP(cdpUrl);
-        console.log(`[browser] Reconnected to existing agent Chrome on port ${cdpPort}`);
+        logger.info(`[browser] Reconnected to existing agent Chrome on port ${cdpPort}`);
         return { browser, chromeProcess: null };
       }
     } catch {
@@ -173,7 +176,7 @@ export async function launchViaCDP(
       "--window-size=1280,800",
     ];
 
-    console.log(`[browser] Spawning agent Chrome: ${chromePath} (profile: ${userDataDir})`);
+    logger.info(`[browser] Spawning agent Chrome: ${chromePath} (profile: ${userDataDir})`);
     chromeProcess = spawn(chromePath, args, {
       stdio: "ignore",
       detached: true,
@@ -194,22 +197,22 @@ export async function launchViaCDP(
     if (ready) {
       try {
         const browser = await pw.chromium.connectOverCDP(cdpUrl);
-        console.log(`[browser] Connected via CDP on port ${cdpPort} — dedicated agent Chrome session`);
+        logger.info(`[browser] Connected via CDP on port ${cdpPort} — dedicated agent Chrome session`);
         return { browser, chromeProcess };
       } catch (e) {
-        console.log(`[browser] CDP connect failed: ${(e as Error).message}`);
+        logger.info(`[browser] CDP connect failed: ${(e as Error).message}`);
         try { chromeProcess.kill(); } catch { /* ignore */ }
         chromeProcess = null;
       }
     } else {
-      console.log("[browser] Agent Chrome CDP didn't become ready in time — falling back to Playwright");
+      logger.info("[browser] Agent Chrome CDP didn't become ready in time — falling back to Playwright");
       try { chromeProcess?.kill(); } catch { /* ignore */ }
       chromeProcess = null;
     }
   }
 
   // Fallback: Playwright persistent context.
-  console.log("[browser] Launching Playwright persistent context");
+  logger.info("[browser] Launching Playwright persistent context");
   const persistDir = join(homedir(), ".lax", "chrome-profile-pw");
   if (!existsSync(persistDir)) mkdirSync(persistDir, { recursive: true });
   try {
@@ -219,7 +222,7 @@ export async function launchViaCDP(
       args: STEALTH_ARGS,
       viewport: { width: 1280, height: 800 },
     });
-    console.log("[browser] Playwright persistent context (Chrome channel)");
+    logger.info("[browser] Playwright persistent context (Chrome channel)");
     return { browser: ctx.browser()!, chromeProcess: null };
   } catch {
     try {
@@ -228,11 +231,11 @@ export async function launchViaCDP(
         args: STEALTH_ARGS,
         viewport: { width: 1280, height: 800 },
       });
-      console.log("[browser] Playwright persistent context (bundled Chromium)");
+      logger.info("[browser] Playwright persistent context (bundled Chromium)");
       return { browser: ctx.browser()!, chromeProcess: null };
     } catch {
       const b = await pw.chromium.launch({ headless: false, args: STEALTH_ARGS });
-      console.log(`[browser] Playwright Chromium (no persistence) v${b.version()}`);
+      logger.info(`[browser] Playwright Chromium (no persistence) v${b.version()}`);
       return { browser: b, chromeProcess: null };
     }
   }

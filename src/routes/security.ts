@@ -14,6 +14,9 @@ import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } fr
 import { isAriActive } from "../ari-kernel.js";
 import { ThreatEngine } from "../threat-engine.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("routes.security");
+
 export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
@@ -133,7 +136,7 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
       json(400, { error: `Invalid preset. Available: ${listPresets().join(", ")}` }); return true;
     }
     const policy = setSessionPolicy(sessionId, preset);
-    console.log(`[security] Session ${sessionId} policy set to: ${preset}`);
+    logger.info(`[security] Session ${sessionId} policy set to: ${preset}`);
     json(200, { ok: true, policy }); return true;
   }
 

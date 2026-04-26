@@ -1,6 +1,9 @@
 import { promises as dns } from "node:dns";
 import type { SecurityDecision } from "../types.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("security.network-policy");
+
 // ── SSRF: IP address validation helpers ──
 
 /** Strictly parse a decimal IPv4 address — rejects octal (0177) and hex (0x7f) formats */
@@ -237,7 +240,7 @@ export async function validateUrlWithDns(
     }
   } catch (dnsErr) {
     // DNS resolution failed — fail closed for security (block unknown hosts)
-    console.warn(`[security] DNS resolution failed for ${host}: ${(dnsErr as Error).message}`);
+    logger.warn(`[security] DNS resolution failed for ${host}: ${(dnsErr as Error).message}`);
     return {
       allowed: false,
       reason: `Blocked: DNS resolution failed for ${host} (fail-closed SSRF protection)`,

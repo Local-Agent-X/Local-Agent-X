@@ -6,6 +6,9 @@ import { resolveSession, linkIdentities, unlinkIdentity, getIdentityGroups, type
 import type { IssueStatus, AgentTemplate, Issue, Project } from "../agent-store.js";
 import { AgentTemplateSchema, CreateIssueSchema, IssueCommentSchema, CreateProjectSchema, LinkIdentitiesSchema, validateBody } from "../route-schemas.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("routes.agents");
+
 export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
@@ -117,8 +120,8 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
       const heartbeatPrompt = `You are ${result.name} (${result.role}), agent ID: ${result.id}. You are waking up for your scheduled check-in.\n\nFIRST: Call agent_whoami with agentId="${result.id}".\n\n` + (isManager ? managerProcedure : workerProcedure) + `\nYour instructions: ${result.systemPrompt}`;
       try {
         ctx.cronService.create(`heartbeat:${result.id}`, result.heartbeatSchedule, heartbeatPrompt, true);
-        console.log(`[heartbeat] Created heartbeat for ${result.name}: ${result.heartbeatSchedule}`);
-      } catch (e) { console.warn(`[heartbeat] Failed to create: ${(e as Error).message}`); }
+        logger.info(`[heartbeat] Created heartbeat for ${result.name}: ${result.heartbeatSchedule}`);
+      } catch (e) { logger.warn(`[heartbeat] Failed to create: ${(e as Error).message}`); }
     }
     json(200, result); return true;
   }

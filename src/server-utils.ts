@@ -3,6 +3,9 @@ import type { ServerEvent } from "./types.js";
 import { redactCredentials } from "./security.js";
 import { getRuntimeConfig } from "./config.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("server-utils");
+
 // ── Multipart parser ──
 export interface MultipartPart { filename?: string; name?: string; data: Buffer; contentType?: string }
 export function parseMultipart(body: Buffer, boundary: string): MultipartPart[] {
@@ -229,7 +232,7 @@ export function recordAuthFailure(ip: string): void {
   if (entry.failures >= AUTH_MAX_FAILURES) {
     entry.lockedUntil = Date.now() + AUTH_LOCKOUT_MS;
     entry.failures = 0;
-    console.warn(`[auth] IP ${ip} locked out for ${AUTH_LOCKOUT_MS / 1000}s after ${AUTH_MAX_FAILURES} failed attempts`);
+    logger.warn(`[auth] IP ${ip} locked out for ${AUTH_LOCKOUT_MS / 1000}s after ${AUTH_MAX_FAILURES} failed attempts`);
   }
   authFloodGuard.set(ip, entry);
 }

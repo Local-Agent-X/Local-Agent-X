@@ -7,12 +7,15 @@ import { formatForChannel, getChannelConfig } from "../channel-formatter.js";
 import { resolveSession, buildChannelContext, type ChannelType } from "../session-router.js";
 import { detectInjection } from "../sanitize.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
-import type { SessionStore, MemoryIndex } from "../memory.js";
+import type { SessionStore, MemoryIndex, MemoryManager } from "../memory.js";
 import type { SecretsStore } from "../secrets.js";
 import type { IntegrationRegistry } from "../integrations.js";
 import type { SecurityLayer } from "../security.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { RBACManager } from "../rbac.js";
+
+import { createLogger } from "../logger.js";
+const logger = createLogger("server.bootstrap-bridges");
 
 export type BridgeHandler = (
   platform: string,
@@ -27,6 +30,7 @@ export function createBridgeHandler(deps: {
   config: LAXConfig;
   dataDir: string;
   memoryIndex: MemoryIndex;
+  memoryManager: MemoryManager;
   integrations: IntegrationRegistry;
   secretsStore: SecretsStore;
   allAgentToolsRef: { value: ToolDefinition[] };
@@ -39,7 +43,7 @@ export function createBridgeHandler(deps: {
 }): BridgeHandler {
   const {
     sessions, sessionStore, getOrCreateSession, saveSession,
-    config, dataDir, memoryIndex, integrations, secretsStore,
+    config, dataDir, memoryIndex, memoryManager, integrations, secretsStore,
     allAgentToolsRef, bridgeToolsRef, security, toolPolicy, rbac,
     getWhatsappBridge, getTelegramBridge,
   } = deps;
@@ -72,12 +76,12 @@ export function createBridgeHandler(deps: {
     const prepared = await prepareAgentRequest({
       channel: channelType as "telegram" | "whatsapp",
       message: text, sessionMessages: session.messages, sessionId: route.sessionKey,
-      config, dataDir, memoryIndex, integrations, secretsStore,
+      config, dataDir, memoryIndex, memoryManager, integrations, secretsStore,
       allAgentTools: allAgentToolsRef.value, bridgeTools: bridgeToolsRef.value, skipMemory: true, maxHistory: 30,
       bridgeContext: bridgeCtx,
     });
 
-    console.log(`[bridge:${platform}] provider=${prepared.provider} model=${prepared.model} tools=${prepared.tools.length} (${prepared.tools.slice(0, 5).map(t => t.name).join(",")}${prepared.tools.length > 5 ? ",..." : ""})`);
+    logger.info(`[bridge:${platform}] provider=${prepared.provider} model=${prepared.model} tools=${prepared.tools.length} (${prepared.tools.slice(0, 5).map(t => t.name).join(",")}${prepared.tools.length > 5 ? ",..." : ""})`);
     const result = await enqueue("main", () => runAgent(text, prepared.cleanHistory, {
       apiKey: prepared.apiKey, model: prepared.model,
       provider: prepared.provider as AgentOptions["provider"],
@@ -90,7 +94,7 @@ export function createBridgeHandler(deps: {
       const tc = (m as unknown as { tool_calls?: unknown[] }).tool_calls;
       return m.role === "assistant" && Array.isArray(tc) && tc.length > 0;
     }).length;
-    console.log(`[bridge:${platform}] done — ${result.messages.length} msgs, ${toolCallsMade} tool-call turns, stopReason=${result.stopReason}`);
+    logger.info(`[bridge:${platform}] done — ${result.messages.length} msgs, ${toolCallsMade} tool-call turns, stopReason=${result.stopReason}`);
 
     const turnStartIdx = prepared.cleanHistory.length;
     const images: Buffer[] = [];
@@ -105,12 +109,12 @@ export function createBridgeHandler(deps: {
       }
     }
     if (images.length > 0) {
-      console.log(`[bridge:${platform}] sending ${images.length} image(s) to ${from}`);
+      logger.info(`[bridge:${platform}] sending ${images.length} image(s) to ${from}`);
       for (const img of images) {
         if (channelType === "whatsapp") {
-          await getWhatsappBridge().sendImage(from, img).catch((e: Error) => console.error(`[whatsapp] image send failed: ${e.message}`));
+          await getWhatsappBridge().sendImage(from, img).catch((e: Error) => logger.error(`[whatsapp] image send failed: ${e.message}`));
         } else if (channelType === "telegram") {
-          await getTelegramBridge().sendPhoto(from, img).catch((e: Error) => console.error(`[telegram] photo send failed: ${e.message}`));
+          await getTelegramBridge().sendPhoto(from, img).catch((e: Error) => logger.error(`[telegram] photo send failed: ${e.message}`));
         }
       }
     }
@@ -139,6 +143,6 @@ export function bootstrapBridges(deps: {
   const { dataDir, secretsStore, bridgeHandler } = deps;
   const whatsappBridge = new WhatsAppBridge({ dataDir, onMessage: (p) => bridgeHandler("WhatsApp", p) });
   const telegramBridge = new TelegramBridge({ dataDir, getToken: () => secretsStore.get("TELEGRAM_BOT_TOKEN") ?? null, onMessage: (p) => bridgeHandler("Telegram", p) });
-  if (secretsStore.has("TELEGRAM_BOT_TOKEN")) telegramBridge.connect().then(r => { if (r.state === "connected") console.log(`[telegram] Auto-reconnected as @${r.botUsername}`); }).catch(() => {});
+  if (secretsStore.has("TELEGRAM_BOT_TOKEN")) telegramBridge.connect().then(r => { if (r.state === "connected") logger.info(`[telegram] Auto-reconnected as @${r.botUsername}`); }).catch(() => {});
   return { whatsappBridge, telegramBridge, bridgeMessageHandler: bridgeHandler };
 }

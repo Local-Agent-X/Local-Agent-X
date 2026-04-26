@@ -1,5 +1,8 @@
 import { execSync, execFileSync } from "node:child_process";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("sandbox");
+
 /**
  * Container Sandbox for Shell Execution
  *
@@ -119,7 +122,7 @@ export function getSandboxMode(): SandboxMode {
   // Runtime override (set from settings UI)
   if (runtimeMode) {
     if (runtimeMode === "docker" && !isDockerAvailable()) {
-      console.warn("[sandbox] Runtime mode is docker but Docker not available. Falling back to host.");
+      logger.warn("[sandbox] Runtime mode is docker but Docker not available. Falling back to host.");
       return "host";
     }
     return runtimeMode;
@@ -129,14 +132,14 @@ export function getSandboxMode(): SandboxMode {
   if (envMode === "host") return "host";
   if (envMode === "docker") {
     if (!isDockerAvailable()) {
-      console.warn("[sandbox] LAX_SANDBOX=docker but Docker not available. Falling back to host.");
+      logger.warn("[sandbox] LAX_SANDBOX=docker but Docker not available. Falling back to host.");
       return "host";
     }
     return "docker";
   }
   // Auto-detect: prefer Docker if available (secure by default)
   if (isDockerAvailable()) {
-    console.log("[sandbox] Docker detected — using container sandbox by default. Set LAX_SANDBOX=host to disable.");
+    logger.info("[sandbox] Docker detected — using container sandbox by default. Set LAX_SANDBOX=host to disable.");
     return "docker";
   }
   return "host";
@@ -148,6 +151,6 @@ export function setSandboxMode(mode: SandboxMode): { ok: boolean; actual: Sandbo
     return { ok: false, actual: "host", error: "Docker is not installed or not running. Install Docker Desktop first." };
   }
   runtimeMode = mode;
-  console.log(`[sandbox] Mode set to: ${mode}`);
+  logger.info(`[sandbox] Mode set to: ${mode}`);
   return { ok: true, actual: mode };
 }

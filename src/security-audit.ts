@@ -13,6 +13,9 @@ import { existsSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("security-audit");
+
 export type AuditSeverity = "info" | "warn" | "critical";
 
 export interface AuditFinding {
@@ -74,7 +77,7 @@ function checkAuthTokenStrength(token: string): AuditFinding | null {
       severity: "warn",
       title: "Auth token is short",
       detail: `Token is only ${token.length} characters. Recommend 32+ for brute-force resistance.`,
-      remediation: "Generate a longer token: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+      remediation: "Generate a longer token: node -e \"logger.info(require('crypto').randomBytes(32).toString('hex'))\"",
     };
   }
   return null;
@@ -366,22 +369,22 @@ function escapeHtml(str: string): string {
 export function printAuditReport(report: AuditReport): void {
   const icons = { info: "\x1b[36mℹ\x1b[0m", warn: "\x1b[33m⚠\x1b[0m", critical: "\x1b[31m✖\x1b[0m" };
 
-  console.log(`\n  ── Security Audit ──`);
+  logger.info(`\n  ── Security Audit ──`);
 
   if (report.findings.length === 0) {
-    console.log(`  ${icons.info} All checks passed\n`);
+    logger.info(`  ${icons.info} All checks passed\n`);
     return;
   }
 
   for (const f of report.findings) {
-    console.log(`  ${icons[f.severity]} [${f.severity.toUpperCase()}] ${f.title}`);
+    logger.info(`  ${icons[f.severity]} [${f.severity.toUpperCase()}] ${f.title}`);
     if (f.severity !== "info") {
-      console.log(`    ${f.detail}`);
-      if (f.remediation) console.log(`    Fix: ${f.remediation}`);
+      logger.info(`    ${f.detail}`);
+      if (f.remediation) logger.info(`    Fix: ${f.remediation}`);
     }
   }
 
   const { info, warn, critical } = report.summary;
   const status = critical > 0 ? "\x1b[31mFAILED\x1b[0m" : warn > 0 ? "\x1b[33mWARNINGS\x1b[0m" : "\x1b[32mPASSED\x1b[0m";
-  console.log(`\n  Result: ${status} (${critical} critical, ${warn} warnings, ${info} info)\n`);
+  logger.info(`\n  Result: ${status} (${critical} critical, ${warn} warnings, ${info} info)\n`);
 }

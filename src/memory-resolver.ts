@@ -15,9 +15,7 @@
  *   - Returns a structured decision, no side effects — caller applies the operation
  *   - Temperature 0, short max_tokens, cheap models only
  */
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
+import { dispatch } from "./llm-dispatch.js";
 
 export type ResolverOp = "ADD" | "UPDATE" | "DELETE" | "NOOP";
 
@@ -54,7 +52,16 @@ export async function resolveFact(
   }
 
   const prompt = buildPrompt(newFact, candidates);
-  const raw = await callLLM(prompt, opts);
+  const raw = await dispatch({
+    prompt,
+    provider: opts.provider,
+    ollamaModel: opts.model || "qwen2.5:3b",
+    anthropicModel: opts.model,
+    openaiModel: opts.model,
+    temperature: 0,
+    maxTokens: 80,
+    timeoutMs: opts.timeoutMs ?? 15_000,
+  });
   if (!raw) return { op: "NOOP", reason: "no LLM available — defaulted to NOOP (skip)" };
 
   return parseDecision(raw, candidates);
@@ -114,85 +121,3 @@ function parseDecision(raw: string, candidates: ResolverCandidate[]): ResolverDe
   return { op, targetId, reason };
 }
 
-async function callLLM(prompt: string, opts: ResolverOptions): Promise<string | null> {
-  const timeout = opts.timeoutMs ?? 15_000;
-  const provider = opts.provider === "auto" || !opts.provider ? detectProvider() : opts.provider;
-
-  if (provider === "ollama") return callOllama(prompt, opts.model || "qwen2.5:3b", timeout);
-  if (provider === "anthropic") return callAnthropic(prompt, opts.model || "claude-haiku-4-5-20251001", timeout);
-  if (provider === "openai") return callOpenAI(prompt, opts.model || "gpt-4o-mini", timeout);
-  return null;
-}
-
-/** Detect which LLM is available. Prefers local (Ollama) for cost + latency. */
-function detectProvider(): "ollama" | "anthropic" | "openai" | null {
-  try {
-    const settingsPath = join(homedir(), ".lax", "settings.json");
-    if (existsSync(settingsPath)) {
-      const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as { provider?: string };
-      if (s.provider === "ollama") return "ollama";
-      if (s.provider === "anthropic") return "anthropic";
-      if (s.provider === "openai" || s.provider === "codex") return "openai";
-    }
-  } catch {}
-  if (process.env.ANTHROPIC_API_KEY) return "anthropic";
-  if (process.env.OPENAI_API_KEY) return "openai";
-  return "ollama"; // last-ditch attempt — will fail gracefully if not running
-}
-
-async function callOllama(prompt: string, model: string, timeoutMs: number): Promise<string | null> {
-  try {
-    const res = await fetch("http://localhost:11434/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt, stream: false, options: { temperature: 0, num_predict: 80 } }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { response?: string };
-    return data.response || null;
-  } catch { return null; }
-}
-
-async function callAnthropic(prompt: string, model: string, timeoutMs: number): Promise<string | null> {
-  try {
-    let apiKey = process.env.ANTHROPIC_API_KEY || "";
-    if (!apiKey) {
-      try { apiKey = await (await import("./auth-anthropic.js")).getAnthropicApiKey(); } catch {}
-    }
-    if (!apiKey) return null;
-    const token = apiKey.startsWith("oauth:") ? apiKey.slice(6) : apiKey;
-    const isOAuth = apiKey.startsWith("oauth:");
-    const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": "2023-06-01" };
-    if (isOAuth) headers["Authorization"] = `Bearer ${token}`;
-    else headers["x-api-key"] = token;
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ model, max_tokens: 80, temperature: 0, messages: [{ role: "user", content: prompt }] }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { content?: Array<{ text?: string }> };
-    return data.content?.[0]?.text || null;
-  } catch { return null; }
-}
-
-async function callOpenAI(prompt: string, model: string, timeoutMs: number): Promise<string | null> {
-  try {
-    const apiKey = process.env.OPENAI_API_KEY || "";
-    if (!apiKey) return null;
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model, temperature: 0, max_tokens: 80,
-        messages: [{ role: "user", content: prompt }],
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-    return data.choices?.[0]?.message?.content || null;
-  } catch { return null; }
-}

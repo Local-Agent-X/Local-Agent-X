@@ -2,6 +2,9 @@ import type Database from "better-sqlite3";
 import type { Chunk, EmbeddingProvider, MemoryConfig } from "./types.js";
 import { sleep } from "./utils.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("memory.index-embedding");
+
 export function initVectorTable(
   db: InstanceType<typeof Database>,
   dims: number
@@ -15,7 +18,7 @@ export function initVectorTable(
     `);
     return { hasVec: true };
   } catch {
-    console.log(
+    logger.info(
       "[memory] sqlite-vec not available — vector search will use in-memory cosine"
     );
     return { hasVec: false };
@@ -77,7 +80,7 @@ async function embedWithRetry(
 
   for (let attempt = 1; attempt <= retryMaxAttempts; attempt++) {
     if (Date.now() - startTime > TOTAL_TIMEOUT_MS) {
-      console.warn(`[memory] Embedding total timeout exceeded (${TOTAL_TIMEOUT_MS / 1000}s)`);
+      logger.warn(`[memory] Embedding total timeout exceeded (${TOTAL_TIMEOUT_MS / 1000}s)`);
       break;
     }
 
@@ -91,7 +94,7 @@ async function embedWithRetry(
       return result;
     } catch (e) {
       const msg = (e as Error).message;
-      console.warn(
+      logger.warn(
         `[memory] Embedding attempt ${attempt}/${retryMaxAttempts} failed: ${msg}`
       );
 
@@ -105,7 +108,7 @@ async function embedWithRetry(
     }
   }
 
-  console.warn(
+  logger.warn(
     `[memory] All embedding attempts exhausted — ${texts.length} chunks will lack vectors`
   );
   return [];
@@ -170,5 +173,5 @@ export function pruneEmbeddingCache(
     )
     .run(toDelete);
 
-  console.log(`[memory] Pruned ${toDelete} stale embedding cache entries`);
+  logger.info(`[memory] Pruned ${toDelete} stale embedding cache entries`);
 }

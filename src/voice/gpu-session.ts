@@ -14,6 +14,9 @@ import type { VoiceSession, VoiceSessionContext } from "./audio-ws.js";
 import { createGPUBridge, type GPUBridge } from "./gpu-bridge.js";
 import type { VoiceTurnRunner } from "./voice-session.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("voice.gpu-session");
+
 const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
 // Long-clause early-flush: if the LLM is grinding out a long comma-heavy
 // sentence, fire the first clause to TTS as soon as it's >= ~60 chars and
@@ -56,7 +59,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       ctx.sendEvent({ type: "stt_model_ready" });
       ctx.sendEvent({ type: "tts_model_ready" });
       ctx.sendEvent({ type: "vad_model_ready" });
-      console.log(`[gpu-session] ${ctx.sessionId}: bridge ready (gpu=${gpu}). draining ${pendingFrames.length} pending frames`);
+      logger.info(`[gpu-session] ${ctx.sessionId}: bridge ready (gpu=${gpu}). draining ${pendingFrames.length} pending frames`);
       while (pendingFrames.length > 0 && !closed && bridge) {
         bridge.feedAudio(pendingFrames.shift()!);
       }
@@ -65,7 +68,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       ctx.sendEvent({ type: "vad_speech_start" });
       // Barge-in: user started talking while agent was replying
       if (activeTurn) {
-        console.log(`[gpu-session] ${ctx.sessionId}: barge-in → interrupting agent`);
+        logger.info(`[gpu-session] ${ctx.sessionId}: barge-in → interrupting agent`);
         if (pendingClearTimer) { clearTimeout(pendingClearTimer); pendingClearTimer = null; }
         try { activeTurn.abort(); } catch {}
         try { bridge?.cancelTTS(); } catch {}
@@ -119,7 +122,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
   });
 
   bridge.ready().catch((e: Error) => {
-    console.error(`[gpu-session] ${ctx.sessionId}: bridge init failed: ${e.message}`);
+    logger.error(`[gpu-session] ${ctx.sessionId}: bridge init failed: ${e.message}`);
     if (!closed) ctx.sendEvent({ type: "voice_error", message: `GPU sidecar unavailable: ${e.message}. Make sure the Python sidecar is running on ${process.env.LAX_VOICE_PORT || 7008}.` });
   });
 
@@ -128,7 +131,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     const utterance = rawText.trim();
     if (!utterance) return;
     if (activeTurn) {
-      console.log(`[gpu-session] ${ctx.sessionId}: ignoring final while turn in progress`);
+      logger.info(`[gpu-session] ${ctx.sessionId}: ignoring final while turn in progress`);
       return;
     }
 
@@ -211,10 +214,10 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     } catch (e) {
       const msg = (e as Error).message || String(e);
       if (activeTurn?.signal.aborted) {
-        console.log(`[gpu-session] ${ctx.sessionId}: turn aborted (barge-in)`);
+        logger.info(`[gpu-session] ${ctx.sessionId}: turn aborted (barge-in)`);
         ctx.sendEvent({ type: "assistant_interrupted" });
       } else {
-        console.warn(`[gpu-session] ${ctx.sessionId}: turn failed: ${msg}`);
+        logger.warn(`[gpu-session] ${ctx.sessionId}: turn failed: ${msg}`);
         ctx.sendEvent({ type: "agent_error", message: msg });
       }
       activeTurn = null;
@@ -240,7 +243,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       if (typeof settings.speed === "number" && settings.speed > 0.5 && settings.speed < 2.0) {
         speedOverride = settings.speed;
       }
-      console.log(`[gpu-session] ${ctx.sessionId}: voice settings → voice=${voiceOverride || "(default)"} speed=${speedOverride ?? "(default)"}`);
+      logger.info(`[gpu-session] ${ctx.sessionId}: voice settings → voice=${voiceOverride || "(default)"} speed=${speedOverride ?? "(default)"}`);
     },
 
     close() {

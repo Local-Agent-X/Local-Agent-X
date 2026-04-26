@@ -16,6 +16,9 @@ import {
   type ReasoningItem,
 } from "./codex-message-convert.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("codex-client");
+
 export type { ReasoningItem } from "./codex-message-convert.js";
 
 const CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
@@ -156,12 +159,12 @@ export async function* streamCodexResponse(params: {
       // Retry on transient errors
       if ((res.status === 503 || res.status === 429 || res.status >= 500) && attempt < maxRetries) {
         const waitMs = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
-        console.warn(`[codex] API ${res.status}, retrying in ${waitMs}ms (attempt ${attempt}/${maxRetries})`);
+        logger.warn(`[codex] API ${res.status}, retrying in ${waitMs}ms (attempt ${attempt}/${maxRetries})`);
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
       }
 
-      console.error(`[codex] API error ${res.status}:`, errText.slice(0, 500));
+      logger.error(`[codex] API error ${res.status}:`, errText.slice(0, 500));
       throw new Error(`Codex API error ${res.status}: ${errText.slice(0, 500)}`);
     } catch (e) {
       if (attempt >= maxRetries) throw e;
@@ -169,7 +172,7 @@ export async function* streamCodexResponse(params: {
       // Retry on network/timeout errors
       if (msg.includes("timeout") || msg.includes("fetch") || msg.includes("ECONNRESET")) {
         const waitMs = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
-        console.warn(`[codex] Network error, retrying in ${waitMs}ms: ${msg.slice(0, 100)}`);
+        logger.warn(`[codex] Network error, retrying in ${waitMs}ms: ${msg.slice(0, 100)}`);
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
       }
@@ -202,7 +205,7 @@ export async function* streamCodexResponse(params: {
   function resetSilenceTimer() {
     if (silenceTimer) clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
-      console.warn("[codex] No data for 90s — aborting (silence timeout)");
+      logger.warn("[codex] No data for 90s — aborting (silence timeout)");
       abortController.abort();
     }, SILENCE_TIMEOUT_MS);
   }
@@ -406,7 +409,7 @@ export async function* streamCodexResponse(params: {
   // function_call_arguments.done — we'd lose the tool call otherwise.
   const usageWithMeta = usage as Record<string, unknown>;
   if (!usageWithMeta.classification) {
-    console.warn(`[codex] Stream ended without response.completed event. hasText=${!!fullText.trim()} toolCalls=${toolCalls.size} usage=${usage.inputTokens}in/${usage.outputTokens}out`);
+    logger.warn(`[codex] Stream ended without response.completed event. hasText=${!!fullText.trim()} toolCalls=${toolCalls.size} usage=${usage.inputTokens}in/${usage.outputTokens}out`);
 
     // Flush collected tool calls that were never yielded (happens on abnormal stream close)
     // Only yield if the arguments are valid JSON — partial args from truncated streams
@@ -416,10 +419,10 @@ export async function* streamCodexResponse(params: {
       let argsOk = false;
       try { JSON.parse(tc.arguments); argsOk = true; } catch {}
       if (argsOk) {
-        console.warn(`[codex] Flushing unyielded tool call: ${tc.name}(${tc.arguments.slice(0, 100)})`);
+        logger.warn(`[codex] Flushing unyielded tool call: ${tc.name}(${tc.arguments.slice(0, 100)})`);
         yield { type: "tool_call", id: tc.id, name: tc.name, arguments: tc.arguments };
       } else {
-        console.error(`[codex] Dropping truncated tool call: ${tc.name}(${tc.arguments.length} bytes of partial JSON). Codex stream closed mid-response — likely hit reasoning budget. Consider reducing prompt complexity or increasing max_tokens.`);
+        logger.error(`[codex] Dropping truncated tool call: ${tc.name}(${tc.arguments.length} bytes of partial JSON). Codex stream closed mid-response — likely hit reasoning budget. Consider reducing prompt complexity or increasing max_tokens.`);
       }
     }
 

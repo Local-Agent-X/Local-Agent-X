@@ -6,6 +6,9 @@ import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { createHash, verify as cryptoVerify, createPublicKey } from "node:crypto";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("plugin-system");
+
 export interface PluginManifest {
   id: string;
   name: string;
@@ -220,11 +223,11 @@ export class PluginManager {
     const trust = assessTrustLevel(manifest, entryPath, registeredHash);
 
     if (trust.warning) {
-      console.warn(`  [plugin] ${trust.warning}`);
+      logger.warn(`  [plugin] ${trust.warning}`);
     }
 
     if (trust.trustLevel === "unsigned") {
-      console.warn(
+      logger.warn(
         `  [plugin] WARNING: Loading unsigned plugin "${manifest.id}". ` +
         `In production, this will require explicit user confirmation.`,
       );

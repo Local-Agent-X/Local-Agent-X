@@ -74,15 +74,12 @@ export interface OrchestrationExample {
 }
 
 export interface BackgroundReport {
-  consolidation: { merged: number; promoted: number };
   compression: { compressed: number; savedBytes: number };
   tierChanges: { hot: number; warm: number; cold: number; archive: number };
   prefetch: { topics: string[] };
   unspoken: { absences: number; changes: number };
   growth: string;
   narratives: number;
-  retained: number;
-  reflected: { entitiesUpdated: number; opinionsUpdated: number };
   graphEdges: number;
   importanceScored: number;
   totalTimeMs: number;

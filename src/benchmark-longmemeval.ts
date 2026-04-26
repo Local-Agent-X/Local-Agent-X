@@ -16,6 +16,9 @@ import { MemoryIndex } from "./memory.js";
 import { chunkConversationPairs } from "./memory-chunking.js";
 import type { ChunkMetadata } from "./memory.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("benchmark-longmemeval");
+
 const DATA_PATH = process.argv.includes("--data")
   ? process.argv[process.argv.indexOf("--data") + 1]
   : "workspace/benchmarks/longmemeval/longmemeval_s_cleaned.json";
@@ -57,15 +60,15 @@ interface BenchmarkItem {
 }
 
 async function main() {
-  console.log("=== LongMemEval Benchmark v3 (session-ID matching) ===");
-  console.log(`Data: ${DATA_PATH} | K: ${K}`);
+  logger.info("=== LongMemEval Benchmark v3 (session-ID matching) ===");
+  logger.info(`Data: ${DATA_PATH} | K: ${K}`);
 
-  if (!existsSync(DATA_PATH)) { console.error(`Not found: ${DATA_PATH}`); process.exit(1); }
+  if (!existsSync(DATA_PATH)) { logger.error(`Not found: ${DATA_PATH}`); process.exit(1); }
 
-  console.log("Loading...");
+  logger.info("Loading...");
   const items: BenchmarkItem[] = JSON.parse(readFileSync(DATA_PATH, "utf-8"));
   const testItems = LIMIT > 0 ? items.slice(0, LIMIT) : items;
-  console.log(`${items.length} items, testing ${testItems.length}`);
+  logger.info(`${items.length} items, testing ${testItems.length}`);
 
   const benchDir = join("workspace", "benchmarks", "longmemeval", "_bench_db");
   if (existsSync(benchDir)) rmSync(benchDir, { recursive: true });
@@ -77,8 +80,8 @@ async function main() {
     const embProvider = createEmbeddingProvider({ provider: "ollama", model: EMB_MODEL, baseUrl: EMB_URL });
     memory.setEmbeddingProvider(embProvider);
     const source = EMB_URL ? `(${EMB_URL})` : "ollama";
-    console.log(`Embedding: ${source}/${EMB_MODEL} (${embProvider.dimensions}d)`);
-  } catch { console.log("Keyword search only"); }
+    logger.info(`Embedding: ${source}/${EMB_MODEL} (${embProvider.dimensions}d)`);
+  } catch { logger.info("Keyword search only"); }
 
   const scores: Record<string, { hits: number; total: number }> = {};
   let totalHits = 0;
@@ -154,7 +157,7 @@ async function main() {
     const eta = Math.round((testItems.length - qi - 1) / rate);
     if (VERBOSE) {
       const qSnippet = item.question.replace(/\s+/g, " ").slice(0, 80);
-      console.log(`[${pct}%] ${qi + 1}/${testItems.length} | R@${K}=${recall}% | ${qType} ${hit ? "✓" : "✗"} | "${qSnippet}" | ETA ${Math.floor(eta/60)}m${eta%60}s`);
+      logger.info(`[${pct}%] ${qi + 1}/${testItems.length} | R@${K}=${recall}% | ${qType} ${hit ? "✓" : "✗"} | "${qSnippet}" | ETA ${Math.floor(eta/60)}m${eta%60}s`);
     } else {
       process.stdout.write(`\r[${pct}%] ${qi + 1}/${testItems.length} | R@${K}: ${recall}% | ${qType} ${hit ? "✓" : "✗"} | ETA: ${Math.floor(eta/60)}m${eta%60}s  `);
     }
@@ -164,23 +167,23 @@ async function main() {
       try { (memory as any).removeFile(p); } catch {}
     }
     } catch (e) {
-      console.warn(`\n[bench] Question ${qi + 1} failed: ${(e as Error).message}`);
+      logger.warn(`\n[bench] Question ${qi + 1} failed: ${(e as Error).message}`);
       scores[qType].total++;
       totalQueries++;
     }
   }
 
   const totalTime = Math.round((Date.now() - startTime) / 1000);
-  console.log(`\n\n=== RESULTS (${Math.floor(totalTime/60)}m${totalTime%60}s) ===`);
-  console.log(`Overall Recall@${K}: ${(totalHits / totalQueries * 100).toFixed(1)}% (${totalHits}/${totalQueries})`);
-  console.log("\nBy question type:");
+  logger.info(`\n\n=== RESULTS (${Math.floor(totalTime/60)}m${totalTime%60}s) ===`);
+  logger.info(`Overall Recall@${K}: ${(totalHits / totalQueries * 100).toFixed(1)}% (${totalHits}/${totalQueries})`);
+  logger.info("\nBy question type:");
   for (const [type, s] of Object.entries(scores).sort((a, b) => a[0].localeCompare(b[0]))) {
-    console.log(`  ${type}: ${(s.hits / s.total * 100).toFixed(1)}% (${s.hits}/${s.total})`);
+    logger.info(`  ${type}: ${(s.hits / s.total * 100).toFixed(1)}% (${s.hits}/${s.total})`);
   }
-  console.log(`\nMemPalace reference: 96.6% R@5 / ~98% R@10 (zero API)`);
+  logger.info(`\nMemPalace reference: 96.6% R@5 / ~98% R@10 (zero API)`);
 
   try { memory.close(); } catch {}
   rmSync(benchDir, { recursive: true, force: true });
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+main().catch(e => { logger.error(e); process.exit(1); });

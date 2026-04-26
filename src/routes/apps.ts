@@ -5,6 +5,9 @@ import { jsonResponse, safeParseBody, corsHeaders } from "../server-utils.js";
 import { renderApp } from "../app-renderer.js";
 import type { AppDefinition } from "../app-runtime.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("routes.apps");
+
 export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
   const appReg = ctx.appRegistry;
@@ -36,7 +39,7 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
             updatedAt: st.mtimeMs, status: "active", version: 1, visibility: "team",
           });
         }
-      } catch (e) { console.warn("[apps] workspace scan error:", (e as Error).message); }
+      } catch (e) { logger.warn("[apps] workspace scan error:", (e as Error).message); }
     }
     json(200, registered);
     return true;
@@ -98,7 +101,7 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
         const { rmSync } = await import("node:fs");
         rmSync(wsDir, { recursive: true, force: true });
         workspaceDeleted = true;
-      } catch (e) { console.warn(`[apps] workspace delete failed for ${id}:`, (e as Error).message); }
+      } catch (e) { logger.warn(`[apps] workspace delete failed for ${id}:`, (e as Error).message); }
     }
     if (!registryResult.deleted && !workspaceDeleted) {
       json(404, { error: "Not found" });
@@ -160,7 +163,7 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
           try { const { broadcastAll } = await import("../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
         }
       }
-    } catch (e) { console.warn(`[apps] pin update after rename failed: ${(e as Error).message}`); }
+    } catch (e) { logger.warn(`[apps] pin update after rename failed: ${(e as Error).message}`); }
 
     json(200, { ok: true, id: newId, name: displayName, renamed: true }); return true;
   }

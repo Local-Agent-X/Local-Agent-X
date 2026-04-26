@@ -14,7 +14,7 @@ import { startBackgroundJobs } from "./background-jobs.js";
 
 export async function startServer(config: LAXConfig) {
   const services = await bootstrapServices(config);
-  const { security, publicDir, dataDir, toolPolicy, rbac, agentSync, sessionStore, memoryIndex, secretsStore, cronService, integrations } = services;
+  const { security, publicDir, dataDir, toolPolicy, rbac, agentSync, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations } = services;
 
   const tools = await bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir });
   const { allAgentTools, bridgeTools, toolRegistry, activeOnEventRef, activeBrowserSessionIdRef } = tools;
@@ -28,7 +28,7 @@ export async function startServer(config: LAXConfig) {
   const bridgeHolder: { whatsappBridge: import("../whatsapp-bridge.js").WhatsAppBridge | null; telegramBridge: import("../telegram-bridge.js").TelegramBridge | null } = { whatsappBridge: null, telegramBridge: null };
   const bridgeHandler = createBridgeHandler({
     sessions, sessionStore, getOrCreateSession, saveSession,
-    config, dataDir, memoryIndex, integrations, secretsStore,
+    config, dataDir, memoryIndex, memoryManager, integrations, secretsStore,
     allAgentToolsRef, bridgeToolsRef, security, toolPolicy, rbac,
     getWhatsappBridge: () => bridgeHolder.whatsappBridge!,
     getTelegramBridge: () => bridgeHolder.telegramBridge!,
@@ -44,7 +44,7 @@ export async function startServer(config: LAXConfig) {
 
   const chatWsHolder: { value: ServerContext["chatWs"] | null } = { value: null };
   const requestHandler = createRequestHandler({
-    config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, secretsStore, cronService, integrations,
+    config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations,
     whatsappBridge, telegramBridge, agentSync, appRegistry: AppRegistry.getInstance(), agentRunStore, agentTemplateStore, issueStore, projectStore,
     allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession,
     getChatWs: () => chatWsHolder.value!, broadcastAll,
@@ -65,19 +65,19 @@ export async function startServer(config: LAXConfig) {
 
   startConfigWatcher(dataDir);
 
-  let memBgTimer: ReturnType<typeof setInterval> | undefined;
+  let jobScheduler: import("./scheduler.js").JobScheduler | undefined;
   server.listen(config.port, "127.0.0.1", () => {
     logStartup({ config, dataDir });
     const handle = startBackgroundJobs({
-      config, dataDir, sessionStore, memoryIndex, secretsStore, security, toolPolicy,
+      config, dataDir, sessionStore, memoryIndex, memoryManager, secretsStore, security, toolPolicy,
       cronService, integrations, agentSync, allAgentTools, bridgeTools,
       getOrCreateSession, saveSession,
     });
-    memBgTimer = handle.memBgTimer;
+    jobScheduler = handle.scheduler;
   });
 
   registerShutdown({
-    getMemBgTimer: () => memBgTimer,
+    getScheduler: () => jobScheduler,
     cronService, agentSync, memoryIndex, secretsStore,
   });
 

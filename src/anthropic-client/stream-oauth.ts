@@ -2,6 +2,9 @@ import { buildAnthropicRateLimitHint, normalizeAnthropicModel } from "../anthrop
 import { API_BASE, convertMessages } from "./request.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("anthropic-client.stream-oauth");
+
 /** Direct Anthropic request with subscription auth — keep OAuth beta, avoid Claude Code identity spoofing. */
 export async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { token, model, messages, systemPrompt, tools, temperature = 1, maxTokens = 8192 } = options;
@@ -31,9 +34,9 @@ export async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator
   };
 
   if (resolvedModel !== model) {
-    console.log(`[anthropic] Normalized subscription model ${model} -> ${resolvedModel}`);
+    logger.info(`[anthropic] Normalized subscription model ${model} -> ${resolvedModel}`);
   }
-  console.log("[anthropic] Using direct subscription-auth messages API");
+  logger.info("[anthropic] Using direct subscription-auth messages API");
 
   try {
     const response = await fetch(`${API_BASE}/v1/messages`, {
@@ -43,7 +46,7 @@ export async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`[anthropic] OAuth SDK error ${response.status}:`, errorText.slice(0, 200));
+      logger.error(`[anthropic] OAuth SDK error ${response.status}:`, errorText.slice(0, 200));
       const hint = buildAnthropicRateLimitHint(response.status, token);
       yield { type: "error", error: `Anthropic ${response.status}: ${errorText.slice(0, 500)}${hint}` };
       yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
@@ -124,7 +127,7 @@ export async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator
     }
   } catch (e) {
     const msg = (e as Error).message || "unknown";
-    console.error(`[anthropic] streamViaOAuthSDK exception: ${msg.slice(0, 300)}`);
+    logger.error(`[anthropic] streamViaOAuthSDK exception: ${msg.slice(0, 300)}`);
     yield { type: "error", error: msg };
     yield { type: "done", usage: { inputTokens: 0, outputTokens: 0 } };
   }

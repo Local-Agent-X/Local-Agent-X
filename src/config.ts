@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { LAXConfig, DeploymentProfile, ProfileDefaults } from "./types.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("config");
+
 // ── Deployment Profile Defaults ──
 // Each profile bundles sane defaults for its target audience.
 // "home"       — single user, max ease, secure but hands-off
@@ -118,7 +121,7 @@ export function loadConfig(): LAXConfig {
     try {
       raw = JSON.parse(readFileSync(configPath, "utf-8"));
     } catch {
-      console.warn(`[config] Failed to parse ${configPath}, using defaults`);
+      logger.warn(`[config] Failed to parse ${configPath}, using defaults`);
     }
   }
 
@@ -173,7 +176,7 @@ export function loadConfig(): LAXConfig {
   if (!config.authToken) {
     config.authToken = generateAuthToken();
     saveConfig(config);
-    console.log("[config] Generated new auth token (see ~/.sax/config.json)");
+    logger.info("[config] Generated new auth token (see ~/.sax/config.json)");
   }
 
   return config;

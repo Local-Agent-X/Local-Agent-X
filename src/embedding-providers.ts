@@ -8,6 +8,9 @@
 import type { EmbeddingProvider } from "./memory.js";
 import { getRuntimeConfig } from "./config.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("embedding-providers");
+
 // ── Provider type union ──
 
 export type EmbeddingProviderType =
@@ -50,7 +53,7 @@ async function fetchWithRetry(
     const res = await fetch(url, mergedInit);
     if (res.status === 429 && attempt < retries) {
       const delay = baseDelay * 2 ** attempt + Math.random() * 500;
-      console.warn(
+      logger.warn(
         `[embeddings] Rate-limited (429), retrying in ${Math.round(delay)}ms (attempt ${attempt + 1}/${retries})`
       );
       await sleep(delay);
@@ -105,13 +108,13 @@ export class OpenAIEmbeddings implements ExtendedEmbeddingProvider {
         err?.modelUnavailable &&
         this.model !== this.fallbackModel
       ) {
-        console.warn(
+        logger.warn(
           `[openai-embed] Model ${this.model} unavailable, falling back to ${this.fallbackModel}`
         );
         this.model = this.fallbackModel;
         return this.requestEmbeddings(texts, this.fallbackModel);
       }
-      console.warn(`[openai-embed] Embedding failed: ${err?.message ?? err}`);
+      logger.warn(`[openai-embed] Embedding failed: ${err?.message ?? err}`);
       return texts.map(() => emptyVector(this.dimensions));
     }
   }
@@ -203,7 +206,7 @@ export class GeminiEmbeddings implements ExtendedEmbeddingProvider {
       };
       return json.embeddings.map((e) => e.values);
     } catch (err: any) {
-      console.warn(`[gemini-embed] Batch failed: ${err?.message ?? err}`);
+      logger.warn(`[gemini-embed] Batch failed: ${err?.message ?? err}`);
       return texts.map(() => emptyVector(this.dimensions));
     }
   }
@@ -234,7 +237,7 @@ export class GeminiEmbeddings implements ExtendedEmbeddingProvider {
       };
       return json.embedding.values;
     } catch (err: any) {
-      console.warn(`[gemini-embed] Failed: ${err?.message ?? err}`);
+      logger.warn(`[gemini-embed] Failed: ${err?.message ?? err}`);
       return emptyVector(this.dimensions);
     }
   }
@@ -304,7 +307,7 @@ export class VoyageEmbeddings implements ExtendedEmbeddingProvider {
       };
       return json.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
     } catch (err: any) {
-      console.warn(`[voyage-embed] Failed: ${err?.message ?? err}`);
+      logger.warn(`[voyage-embed] Failed: ${err?.message ?? err}`);
       return texts.map(() => emptyVector(this.dimensions));
     }
   }
@@ -365,7 +368,7 @@ export class MistralEmbeddings implements ExtendedEmbeddingProvider {
       };
       return json.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
     } catch (err: any) {
-      console.warn(`[mistral-embed] Failed: ${err?.message ?? err}`);
+      logger.warn(`[mistral-embed] Failed: ${err?.message ?? err}`);
       return texts.map(() => emptyVector(this.dimensions));
     }
   }
@@ -482,7 +485,7 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
         signal: AbortSignal.timeout(3000),
       });
       if (!res.ok) {
-        console.warn(`[ollama-embed] Server responded with ${res.status}`);
+        logger.warn(`[ollama-embed] Server responded with ${res.status}`);
         this.healthy = false;
         return false;
       }
@@ -498,7 +501,7 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
         if (!testRes.ok) {
           // Model not available — try fallback to nomic-embed-text
           if (this.model !== "nomic-embed-text") {
-            console.warn(`[ollama-embed] Model "${this.model}" not available (HTTP ${testRes.status}) — falling back to nomic-embed-text`);
+            logger.warn(`[ollama-embed] Model "${this.model}" not available (HTTP ${testRes.status}) — falling back to nomic-embed-text`);
             this.model = "nomic-embed-text";
             this.dimensions = 768;
             const fallbackRes = await fetch(`${this.baseUrl}/api/embed`, {
@@ -519,7 +522,7 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
       }
     } catch {
       this.healthy = false;
-      console.warn(
+      logger.warn(
         `[ollama-embed] Server at ${this.baseUrl} not reachable`
       );
     }
@@ -662,7 +665,7 @@ export function createEmbeddingProvider(
 
   const needsKey = ["openai", "gemini", "voyage", "mistral"].includes(requested);
   if (needsKey && !config.apiKey) {
-    console.warn(
+    logger.warn(
       `[embeddings] Provider "${requested}" requires an API key — falling back to local`
     );
     return new LocalEmbeddings();

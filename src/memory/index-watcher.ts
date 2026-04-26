@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { MemoryConfig } from "./types.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("memory.index-watcher");
+
 export interface WatcherHandle {
   watcher: ReturnType<typeof watch> | null;
   debounceTimer: ReturnType<typeof setTimeout> | null;
@@ -78,6 +81,6 @@ export function archiveOldFacts(
   })();
 
   if (deleted > 0) {
-    console.log(`[memory] Archived ${deleted} old/low-confidence facts`);
+    logger.info(`[memory] Archived ${deleted} old/low-confidence facts`);
   }
 }

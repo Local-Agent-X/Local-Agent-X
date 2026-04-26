@@ -27,6 +27,9 @@ import { createWhisperTranscriber, type WhisperTranscriber } from "./whisper-str
 import { ensureWhisperModelDownloaded, getWhisperModelPaths } from "./whisper-model-fetch.js";
 import { createGpuSession } from "./gpu-session.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("voice.voice-session");
+
 export interface VoiceTurnInput {
   text: string;
   history: ChatCompletionMessageParam[];
@@ -67,7 +70,7 @@ const MAX_UTTERANCE_SAMPLES = 16000 * 22; // 22s hard cap (VAD itself cuts at 20
 export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
   return (ctx: VoiceSessionContext): VoiceSession => {
     if (GPU_MODE) {
-      console.log(`[voice-session] ${ctx.sessionId}: GPU mode (LAX_VOICE_GPU=1) → routing to Python sidecar`);
+      logger.info(`[voice-session] ${ctx.sessionId}: GPU mode (LAX_VOICE_GPU=1) → routing to Python sidecar`);
       return createGpuSession(ctx, runTurn);
     }
 
@@ -108,7 +111,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
 
     (async () => {
       try {
-        console.log(`[voice-session] ${ctx.sessionId}: fetching STT + TTS + VAD + Whisper models (parallel)…`);
+        logger.info(`[voice-session] ${ctx.sessionId}: fetching STT + TTS + VAD + Whisper models (parallel)…`);
         await Promise.all([
           ensureModelDownloaded((p) => {
             if (!closed) ctx.sendEvent({ type: "stt_model_progress", overallPct: Math.round(p.overallPct), file: p.file });
@@ -159,7 +162,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
             }
           },
           onError: (err) => {
-            console.warn(`[voice-session] ${ctx.sessionId}: tts error: ${err.message}`);
+            logger.warn(`[voice-session] ${ctx.sessionId}: tts error: ${err.message}`);
             if (!closed) ctx.sendEvent({ type: "tts_error", message: err.message });
           },
         });
@@ -174,7 +177,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
           // Zipformer decoder between utterances.
           onFinal: () => { /* suppressed */ },
           onError: (err) => {
-            console.warn(`[voice-session] ${ctx.sessionId}: stt runtime error: ${err.message}`);
+            logger.warn(`[voice-session] ${ctx.sessionId}: stt runtime error: ${err.message}`);
             if (!closed) ctx.sendEvent({ type: "stt_error", message: err.message });
           },
         });
@@ -182,12 +185,12 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         vad = createStreamingVAD(getVadModelPaths(), {
           onSpeechStart: () => handleSpeechStart(),
           onSpeechEnd: () => handleSpeechEnd(),
-          onError: (err) => console.warn(`[voice-session] ${ctx.sessionId}: vad error: ${err.message}`),
+          onError: (err) => logger.warn(`[voice-session] ${ctx.sessionId}: vad error: ${err.message}`),
         });
 
         stackReady = true;
         ctx.sendEvent({ type: "voice_ready", ttsSampleRate: tts.sampleRate });
-        console.log(`[voice-session] ${ctx.sessionId}: ready — draining ${pendingFrames.length} pending frames`);
+        logger.info(`[voice-session] ${ctx.sessionId}: ready — draining ${pendingFrames.length} pending frames`);
         while (pendingFrames.length > 0 && !closed && stt) {
           const f = pendingFrames.shift()!;
           stt.feedAudio(f);
@@ -195,7 +198,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         }
       } catch (e) {
         const msg = (e as Error).message || String(e);
-        console.error(`[voice-session] ${ctx.sessionId}: init FAILED: ${msg}\n${(e as Error).stack || ""}`);
+        logger.error(`[voice-session] ${ctx.sessionId}: init FAILED: ${msg}\n${(e as Error).stack || ""}`);
         if (!closed) ctx.sendEvent({ type: "voice_error", message: msg });
       }
     })();
@@ -249,7 +252,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
       if (closed) return;
       // Barge-in: user started talking while the agent was mid-reply.
       if (activeTurn) {
-        console.log(`[voice-session] ${ctx.sessionId}: barge-in detected → interrupting agent`);
+        logger.info(`[voice-session] ${ctx.sessionId}: barge-in detected → interrupting agent`);
         if (pendingClearTimer) { clearTimeout(pendingClearTimer); pendingClearTimer = null; }
         try { activeTurn.abort(); } catch {}
         try { tts?.cancel(); } catch {}
@@ -270,7 +273,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
 
       const audio = drainUtteranceBuffer();
       if (audio.length < MIN_UTTERANCE_SAMPLES) {
-        console.log(`[voice-session] ${ctx.sessionId}: utterance too short (${audio.length} samples), skipping Whisper`);
+        logger.info(`[voice-session] ${ctx.sessionId}: utterance too short (${audio.length} samples), skipping Whisper`);
         return;
       }
       if (!whisper) return;
@@ -287,7 +290,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
           handleFinalTranscript(t);
         })
         .catch((e: Error) => {
-          console.warn(`[voice-session] ${ctx.sessionId}: whisper failed: ${e.message}`);
+          logger.warn(`[voice-session] ${ctx.sessionId}: whisper failed: ${e.message}`);
           if (!closed) ctx.sendEvent({ type: "whisper_error", message: e.message });
         });
     }
@@ -295,7 +298,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
     async function handleFinalTranscript(utterance: string): Promise<void> {
       if (closed) return;
       if (activeTurn) {
-        console.log(`[voice-session] ${ctx.sessionId}: ignoring final while turn in progress: "${utterance.slice(0, 40)}"`);
+        logger.info(`[voice-session] ${ctx.sessionId}: ignoring final while turn in progress: "${utterance.slice(0, 40)}"`);
         return;
       }
 
@@ -361,10 +364,10 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
       } catch (e) {
         const msg = (e as Error).message || String(e);
         if (activeTurn?.signal.aborted) {
-          console.log(`[voice-session] ${ctx.sessionId}: turn aborted (barge-in)`);
+          logger.info(`[voice-session] ${ctx.sessionId}: turn aborted (barge-in)`);
           ctx.sendEvent({ type: "assistant_interrupted" });
         } else {
-          console.warn(`[voice-session] ${ctx.sessionId}: turn failed: ${msg}`);
+          logger.warn(`[voice-session] ${ctx.sessionId}: turn failed: ${msg}`);
           ctx.sendEvent({ type: "agent_error", message: msg });
         }
         activeTurn = null;

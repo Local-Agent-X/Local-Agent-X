@@ -12,6 +12,9 @@
 import { createKernel } from "@arikernel/runtime";
 import type { Firewall } from "@arikernel/runtime";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("ari-kernel");
+
 let firewall: Firewall | null = null;
 let currentPreset: string = "workspace-assistant";
 let ariIsRequired: boolean = false;
@@ -46,12 +49,12 @@ export async function startAriKernel(auditDbPath: string, preset?: string, requi
       principal: "open-agent-x",
       auditLog: auditDbPath,
     });
-    console.log(`  [ari] Kernel initialized (in-process, preset: ${currentPreset})`);
+    logger.info(`  [ari] Kernel initialized (in-process, preset: ${currentPreset})`);
     return true;
   } catch (e) {
-    console.warn(`  [ari] Init failed: ${(e as Error).message}`);
+    logger.warn(`  [ari] Init failed: ${(e as Error).message}`);
     if (ariIsRequired) {
-      console.error(`  [ari] CRITICAL: AriKernel required but failed to start`);
+      logger.error(`  [ari] CRITICAL: AriKernel required but failed to start`);
     }
     return false;
   }
@@ -156,7 +159,7 @@ export async function ariEvaluate(
     return { allowed: true, reason: "ARI allowed" };
   } catch (e) {
     if (ariIsRequired) {
-      console.warn(`[ari] Tool call blocked due to ARI error (ariRequired=true): ${(e as Error).message}`);
+      logger.warn(`[ari] Tool call blocked due to ARI error (ariRequired=true): ${(e as Error).message}`);
       return { allowed: false, reason: "ARI error — tool call blocked (ariRequired mode)" };
     }
     return { allowed: true, reason: "ARI error (fail-open, built-in security active)" };

@@ -1,3 +1,3 @@
 @echo off
-cd /d "C:\Users\manri\secret-agent-x\desktop"
+cd /d "C:\Users\peter\Open Agent X\desktop"
 "node_modules\.bin\electron.cmd" "dist\main.js"

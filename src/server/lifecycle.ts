@@ -20,6 +20,9 @@ import type { CronService } from "../cron-service.js";
 import type { AgentSync } from "../sync.js";
 import type { RequestHandler } from "./request-handler.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("server.lifecycle");
+
 export interface LifecycleResult {
   server: Server;
   chatWs: ReturnType<typeof setupChatWebSocket>;
@@ -31,7 +34,7 @@ export function createHttpServer(requestHandler: RequestHandler, deps: {
 }): LifecycleResult {
   const { config, dataDir } = deps;
   const server = createServer(requestHandler);
-  runMigrations(dataDir).catch(e => console.warn("[migrations]", e.message));
+  runMigrations(dataDir).catch(e => logger.warn("[migrations]", e.message));
   const chatWs = setupChatWebSocket(server, config.authToken);
   return { server, chatWs };
 }
@@ -78,7 +81,7 @@ export async function setupVoiceWs(deps: {
     };
 
     setVoiceSessionFactory(createVoiceSessionFactory(voiceTurnRunner));
-  } catch (e) { console.warn("[voice-ws] setup failed:", (e as Error).message); }
+  } catch (e) { logger.warn("[voice-ws] setup failed:", (e as Error).message); }
 }
 
 export function wireWsChat(deps: {
@@ -97,37 +100,37 @@ export function wireWsChat(deps: {
       });
       if (res.body) { for await (const _ of res.body) { /* drain */ } }
     } catch (e) {
-      console.warn(`[ws-chat] Error:`, (e as Error).message);
+      logger.warn(`[ws-chat] Error:`, (e as Error).message);
     }
   });
 }
 
 export function startConfigWatcher(dataDir: string): void {
-  new ConfigWatcher().start(join(dataDir, "config.json"), () => console.log("[config] Hot-reloaded"));
+  new ConfigWatcher().start(join(dataDir, "config.json"), () => logger.info("[config] Hot-reloaded"));
 }
 
 export function logStartup(deps: { config: LAXConfig; dataDir: string }): void {
   const { config, dataDir } = deps;
   const masked = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
-  console.log(`\n  Open Agent X running at http://127.0.0.1:${config.port}\n  Auth token: ${masked}`);
+  logger.info(`\n  Open Agent X running at http://127.0.0.1:${config.port}\n  Auth token: ${masked}`);
   const realUrl = `http://127.0.0.1:${config.port}/?token=${config.authToken}`;
   writeFileSync(join(dataDir, ".startup-url"), realUrl, { mode: 0o600 });
-  console.log(`\n  ► Open: \x1b]8;;${realUrl}\x1b\\http://127.0.0.1:${config.port}/?token=${masked}\x1b]8;;\x1b\\\n  Memory: ${dataDir}/memory/\n  Sessions: ${dataDir}/sessions/`);
+  logger.info(`\n  ► Open: \x1b]8;;${realUrl}\x1b\\http://127.0.0.1:${config.port}/?token=${masked}\x1b]8;;\x1b\\\n  Memory: ${dataDir}/memory/\n  Sessions: ${dataDir}/sessions/`);
   printAuditReport(runSecurityAudit({ authToken: config.authToken, workspace: config.workspace }));
-  startAriKernel(join(dataDir, "ari-audit.db"), undefined, config.ariRequired).then(a => { if (a) console.log(`  [ari] Audit active`); else if (config.ariRequired) console.error(`  [ari] CRITICAL: ARI failed`); });
+  startAriKernel(join(dataDir, "ari-audit.db"), undefined, config.ariRequired).then(a => { if (a) logger.info(`  [ari] Audit active`); else if (config.ariRequired) logger.error(`  [ari] CRITICAL: ARI failed`); });
   try { import("../auth-refresh.js").then(({ startAuthRefreshTimer }) => startAuthRefreshTimer()).catch(() => {}); } catch {}
 }
 
 export function registerShutdown(deps: {
-  getMemBgTimer: () => ReturnType<typeof setInterval> | undefined;
+  getScheduler: () => import("./scheduler.js").JobScheduler | undefined;
   cronService: CronService;
   agentSync: AgentSync;
   memoryIndex: MemoryIndex;
   secretsStore: SecretsStore;
 }): void {
-  const { getMemBgTimer, cronService, agentSync, memoryIndex, secretsStore } = deps;
+  const { getScheduler, cronService, agentSync, memoryIndex, secretsStore } = deps;
   process.on("SIGINT", async () => {
-    clearInterval(getMemBgTimer());
+    getScheduler()?.stopAll();
     cronService.stop();
     agentSync.stopHeartbeat();
     EventBus.removeAllListeners();

@@ -9,6 +9,9 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeReadTextFile } from "./utils.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("memory.personality");
+
 export const PERSONALITY_FILES: Record<string, string> = {
   user: "USER.md",         // Who the user is, how they want to be addressed
   heart: "HEART.md",       // Agent personality, behavior config, vibe
@@ -111,7 +114,7 @@ export async function readPersonalityFile(
     const { checkMemoryTaint } = await import("../sanitize.js");
     const taint = checkMemoryTaint(cleaned);
     if (!taint.safe) {
-      console.warn(`[memory] Profile file ${key} failed taint check: ${taint.reason} — skipping`);
+      logger.warn(`[memory] Profile file ${key} failed taint check: ${taint.reason} — skipping`);
       return null;
     }
   } catch {}

@@ -42,6 +42,29 @@ export interface ProtocolStep {
   nextStep?: string;
 }
 
+/** Where a protocol came from. Drives UI affordances (read-only built-ins,
+ *  attribution links for imports) and dedupe logic when multiple sources
+ *  define the same name. */
+export interface ProtocolSource {
+  /**
+   * "builtin": ships in src/protocols/packs/*.ts (typed, code-defined)
+   * "bundled": shipped via protocols/bundled/ (vendored SKILL.md from upstream)
+   * "imported": user-imported SKILL.md in ~/.lax/protocols/imported/<name>/
+   * "custom": user-authored typed protocol in ~/.lax/custom-protocols.json
+   */
+  type: "builtin" | "bundled" | "imported" | "custom";
+  /** Upstream repo URL/slug for bundled or imported protocols */
+  repo?: string;
+  /** Source commit SHA at import time */
+  commit?: string;
+  /** Source license (must be MIT / Apache-2.0 / CC-BY-4.0 to be imported) */
+  license?: string;
+  /** Attribution string preserved per source license */
+  attribution?: string;
+  /** Path on disk to the source file (for hot-reload + edit-in-place) */
+  sourcePath?: string;
+}
+
 export interface Protocol {
   name: string;
   description: string;
@@ -52,6 +75,21 @@ export interface Protocol {
   rules: string[];
   /** What user preferences this protocol can learn */
   learnablePreferences: string[];
+  /** Markdown body for prompt-style protocols (imported SKILL.md). When
+   *  present, protocol_get returns this as the executable instruction text;
+   *  steps[] is empty. Built-in typed packs use steps[] and leave body unset. */
+  body?: string;
+  /** Tools the agent is allowed to call while executing this protocol.
+   *  Enforced via session policy on protocol_get, mirroring the prior
+   *  skill_run gating. Empty/undefined = no restriction. */
+  allowedTools?: string[];
+  /** Provenance + identity of where this protocol came from. Required for
+   *  bundled/imported/custom; optional only for legacy in-memory builtins. */
+  source?: ProtocolSource;
+  /** UI grouping. Falls back to keyword-derived category if absent. */
+  category?: string;
+  /** Free-form tags for search + filter. */
+  tags?: string[];
 }
 
 export interface ProtocolPreferences {
@@ -252,16 +290,30 @@ import { developerProtocols } from "./protocols/packs/developer.js";
 import { researchProtocols } from "./protocols/packs/research.js";
 import { communicationProtocols } from "./protocols/packs/communication.js";
 import { createAllProtocolTools } from "./protocols/index.js";
+import {
+  loadBundledProtocols, loadImportedProtocols,
+  stampBuiltinSource, stampCustomSource, mergeByName,
+} from "./protocols/loader.js";
 
+/**
+ * Three-tier merge: built-in typed packs → bundled SKILL.md (vendored) →
+ * user-imported SKILL.md and user custom typed records. Later sources
+ * override earlier ones on name collision so users can shadow anything
+ * shipped with the app by writing into ~/.lax/protocols/imported/<name>/
+ * or ~/.lax/custom-protocols.json.
+ */
 export function getAllProtocols(): Protocol[] {
-  return [
+  const builtins = stampBuiltinSource([
     instagramPost,
     ...socialProtocols,
     ...developerProtocols,
     ...researchProtocols,
     ...communicationProtocols,
-    ...loadCustomProtocols(),
-  ];
+  ]);
+  const bundled = loadBundledProtocols();
+  const imported = loadImportedProtocols();
+  const custom = stampCustomSource(loadCustomProtocols());
+  return mergeByName(builtins, bundled, imported, custom);
 }
 
 function findProtocol(query: string): Protocol | undefined {

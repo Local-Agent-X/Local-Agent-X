@@ -18,6 +18,9 @@
 import type { ToolDefinition } from "./types.js";
 import { createHash } from "node:crypto";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("tool-rag");
+
 export interface EmbedFn {
   embed(text: string): Promise<number[]>;
 }
@@ -67,7 +70,7 @@ export class ToolRAG {
       this.toolsHash = hash;
       this.ready = true;
     } catch (e) {
-      console.warn(`[tool-rag] Index build failed: ${(e as Error).message}. Falling back to keyword filter.`);
+      logger.warn(`[tool-rag] Index build failed: ${(e as Error).message}. Falling back to keyword filter.`);
       this.ready = false;
     }
   }

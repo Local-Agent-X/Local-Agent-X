@@ -12,6 +12,9 @@ import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
 import { evaluateWebFetch, validateUrlWithDns } from "./network-policy.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("security.layer-core");
+
 /**
  * Security layer that evaluates tool calls before execution.
  * Principles:
@@ -59,13 +62,13 @@ export class SecurityLayer {
       if (existsSync(allowlistPath)) {
         const domains: string[] = JSON.parse(readFileSync(allowlistPath, "utf-8"));
         this.egressAllowlist = new Set(domains.map((d: string) => d.toLowerCase()));
-        console.log(`[security] Egress allowlist loaded: ${this.egressAllowlist.size} domains`);
+        logger.info(`[security] Egress allowlist loaded: ${this.egressAllowlist.size} domains`);
       }
       // If no file exists, allowlist is empty = all public domains allowed (backwards compatible)
     } catch (e) {
-      console.warn(`[security] Failed to load egress allowlist: ${(e as Error).message}`);
+      logger.warn(`[security] Failed to load egress allowlist: ${(e as Error).message}`);
     }
-    console.log(`[security] File access mode: ${this.fileAccessMode}`);
+    logger.info(`[security] File access mode: ${this.fileAccessMode}`);
   }
 
   private loadFileAccessMode(): FileAccessMode {
@@ -90,7 +93,7 @@ export class SecurityLayer {
       cfg.fileAccessMode = mode;
       writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
     } catch {}
-    console.log(`[security] File access mode changed to: ${mode}`);
+    logger.info(`[security] File access mode changed to: ${mode}`);
   }
 
   evaluate(ctx: ToolCallContext): SecurityDecision {

@@ -13,6 +13,9 @@ import type { Page } from "playwright";
 import { extractInteractiveElements, type RawElement } from "./extract.js";
 import { waitForStability } from "./stability.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("browser.observation");
+
 /** Durable ref — persistent across observations while the element exists. */
 export interface DurableRef {
   id: number;
@@ -86,7 +89,7 @@ export class ObservationRegistry {
     this.lastUrl = url;
 
     const raw = await extractInteractiveElements(page).catch((e) => {
-      console.warn(`[observation] extractor failed: ${(e as Error).message}`);
+      logger.warn(`[observation] extractor failed: ${(e as Error).message}`);
       return [] as RawElement[];
     });
     this.observationCount++;

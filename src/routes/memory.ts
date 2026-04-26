@@ -2,6 +2,9 @@ import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody, safeParseBody } from "../server-utils.js";
 import type { FactKind } from "../memory.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("routes.memory");
+
 export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
@@ -117,9 +120,9 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
         { role: "assistant" as const, content: "I received your test message. This confirms the ingest pipeline works." },
       ];
       const chunks = chunkConversationPairs(testMessages, "import/test/debug-" + Date.now(), "import", { source_type: "import", session_id: "test-debug" });
-      console.log(`[test-index] Created ${chunks.length} chunks, calling indexChunks...`);
+      logger.info(`[test-index] Created ${chunks.length} chunks, calling indexChunks...`);
       await ctx.memoryIndex.indexChunks(chunks, "import/test/debug-" + Date.now(), "import");
-      console.log(`[test-index] indexChunks returned`);
+      logger.info(`[test-index] indexChunks returned`);
       // Verify
       const stats = ctx.memoryIndex.getStats();
       json(200, { ok: true, chunksCreated: chunks.length, totalChunks: stats.totalChunks });

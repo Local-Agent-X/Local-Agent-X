@@ -12,6 +12,9 @@ import type { SecurityLayer } from "../security.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { AgentRunStore, AgentTemplateStore } from "../agent-store.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("server.handler-events");
+
 interface AgentRunEvent { agentId: string; task: string; systemPrompt: string; role: string; parentSessionId?: string; templateId?: string }
 interface AgentSpawnEvent { agentId: string; name: string; role: string; task: string; systemPrompt?: string; parentAgentId?: string; parentSessionId?: string }
 interface AgentOutputEvent { agentId: string; output: string }
@@ -44,7 +47,7 @@ export function registerHandlerEvents(deps: {
   eventBus.on("handler:agent-run", async (data: unknown) => {
     const { agentId, task, systemPrompt, role, parentSessionId } = data as AgentRunEvent;
     const templateId = (data as AgentRunEvent).templateId;
-    console.log(`[handler] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
+    logger.info(`[handler] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
 
     const template = templateId ? agentTemplateStore.get(templateId) : null;
     const projectStore = ProjectStore.getInstance();
@@ -122,7 +125,7 @@ export function registerHandlerEvents(deps: {
         worktreeBlock = `\n\n--- WORKSPACE ---\nWrite files (screenshots, exports, notes) to ${resolve(config.workspace)}/. You have bash/write/edit for non-code tasks. Do NOT edit the repo's source code.\n--- END WORKSPACE ---\n`;
       }
 
-      console.log(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : " (no worktree)"}`);
+      logger.info(`[handler] Agent ${agentId} using ${provider}/${model} with ${spawnedTools.length} tools${worktreeInfo ? ` (worktree: ${worktreeInfo.path})` : " (no worktree)"}`);
       const platformLine = process.platform === "win32"
         ? "Windows. bash runs PowerShell — use PowerShell syntax (Get-ChildItem, Select-Object) and Windows paths."
         : "Linux/macOS. bash runs /bin/bash.";
@@ -136,12 +139,12 @@ export function registerHandlerEvents(deps: {
         `- Login safety: if Sign In doesn't advance on FIRST try, pause — don't retry (lockouts). Never read or output password field values.\n` +
         `- Forms: emit multiple fill calls in one turn, then snapshot once. Don't re-observe between independent field fills.\n` +
         (isCodeRole ? `- Save results to workspace/ as you go. For large files use python -c one-liners, not read.\n` : `- Save exports/screenshots/notes to workspace/. Don't edit repo source.\n`);
-      const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); console.warn(`[handler] Agent ${agentId} timed out`); }, config.agentTimeoutMs);
+      const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); logger.warn(`[handler] Agent ${agentId} timed out`); }, config.agentTimeoutMs);
       const agentResult = await enqueue("agent", () => runAgent(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + worktreeBlock,
         tools: spawnedTools, security, toolPolicy, sessionId: `agent-${agentId}`, maxIterations: config.maxIterations, temperature: config.temperature, signal: ac.signal,
         pauseCallback: async (reason: string) => { eventBus.emit("handler:agent-output", { agentId, output: `[BLOCKER] ${reason}` }); eventBus.emit("handler:agent-blocked", { agentId, reason, role }); return new Promise<string>(r => { const h = (d: unknown) => { const evt = d as AgentUserInputEvent; if (evt.agentId === agentId) { eventBus.off("handler:agent-user-input", h); r(evt.message); } }; eventBus.on("handler:agent-user-input", h); setTimeout(() => { eventBus.off("handler:agent-user-input", h); r("User did not respond."); }, config.agentTimeoutMs); }); },
-        onEvent: (event) => { if (event.type === "stream" && event.delta) eventBus.emit("handler:agent-output", { agentId, output: event.delta }); if (event.type === "tool_start") { console.log(`[handler] Agent ${agentId} tool: ${event.toolName}`); eventBus.emit("handler:agent-output", { agentId, output: `[tool] ${event.toolName}...` }); } if (event.type === "tool_progress") { eventBus.emit("handler:agent-output", { agentId, output: `[progress] ${event.message}` }); } if (event.type === "tool_start" && event.requiresApproval) event.requiresApproval = false; },
+        onEvent: (event) => { if (event.type === "stream" && event.delta) eventBus.emit("handler:agent-output", { agentId, output: event.delta }); if (event.type === "tool_start") { logger.info(`[handler] Agent ${agentId} tool: ${event.toolName}`); eventBus.emit("handler:agent-output", { agentId, output: `[tool] ${event.toolName}...` }); } if (event.type === "tool_progress") { eventBus.emit("handler:agent-output", { agentId, output: `[progress] ${event.message}` }); } if (event.type === "tool_start" && event.requiresApproval) event.requiresApproval = false; },
       }), { label: `agent:${agentId}`, timeout: config.agentTimeoutMs });
       clearTimeout(to); if (agentResult?.messages) agentSession.messages.push(...agentResult.messages);
 
@@ -156,7 +159,7 @@ export function registerHandlerEvents(deps: {
             : `[Merge failed: ${mergeResult.error}]`;
           eventBus.emit("handler:agent-output", { agentId, output: mergeMsg });
           if (!mergeResult.merged && mergeResult.files > 0) mergeSuccess = false;
-        } catch (e) { console.warn(`[worktree] Merge error: ${(e as Error).message}`); mergeSuccess = false; }
+        } catch (e) { logger.warn(`[worktree] Merge error: ${(e as Error).message}`); mergeSuccess = false; }
       }
 
       const agentOutput = extractAgentOutput(agentSession.messages);

@@ -1,3 +1,7 @@
+
+import { createLogger } from "./logger.js";
+const logger = createLogger("auto-retry");
+
 export interface RetryOptions {
   maxRetries: number;
   baseDelayMs: number;
@@ -39,7 +43,7 @@ export async function withRetry<T>(
       if (opts.shouldRetry && !opts.shouldRetry(err, attempt + 1)) break;
 
       const delay = computeDelay(attempt, opts.baseDelayMs, opts.maxDelayMs);
-      console.log(
+      logger.info(
         `[retry] attempt ${attempt + 1}/${opts.maxRetries} failed, retrying in ${Math.round(delay)}ms`,
       );
       await sleep(delay);

@@ -8,7 +8,10 @@ import { detectInjection } from "../sanitize.js";
 import { ChatRequestSchema, CompactSchema, validateBody } from "../route-schemas.js";
 import { ThreatEngine } from "../threat-engine.js";
 import { enqueue } from "../execution-lanes.js";
-import { autoExtractAndSave } from "../memory.js";
+import { logRetry } from "../retry-telemetry.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("routes.chat");
 
 export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx, requestRole) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -63,7 +66,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         channel: sessionId.startsWith("ide-") ? "web" : "web",
         message, sessionMessages: session.messages, sessionId,
         config: ctx.config, dataDir: ctx.dataDir,
-        memoryIndex: ctx.memoryIndex, integrations: ctx.integrations,
+        memoryIndex: ctx.memoryIndex, memoryManager: ctx.memoryManager, integrations: ctx.integrations,
         secretsStore: ctx.secretsStore,
         allAgentTools: ctx.allAgentTools, bridgeTools: ctx.bridgeTools,
         attachments, uploadsDir: join(ctx.dataDir, "uploads"),
@@ -133,7 +136,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         return true;
       }
       if (decision.reason === "aborted-non-committing") {
-        console.log(`[turn-lock] aborted prior non-committing turn for sess=${sessionId} (was ${decision.previous?.elapsedMs}ms in, iter=${decision.previous?.iteration})`);
+        logger.info(`[turn-lock] aborted prior non-committing turn for sess=${sessionId} (was ${decision.previous?.elapsedMs}ms in, iter=${decision.previous?.iteration})`);
       }
       const turnStart = Date.now();
       let result;
@@ -155,7 +158,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // Expose mark helper to the agent loops via module import (done inside the loops)
       void markTurnIteration;
       const primaryElapsed = Date.now() - turnStart;
-      console.log(`[timing] ${prepared.provider}/${prepared.model} primary ${primaryElapsed}ms`);
+      logger.info(`[timing] ${prepared.provider}/${prepared.model} primary ${primaryElapsed}ms`);
 
       // Auto-fallback triggers. Two classes:
       //   1. Empty-response: primary returned zero tokens/text/tool_calls.
@@ -191,21 +194,15 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
           `Not auto-retrying on another provider — that could double-execute the action. ` +
           `If the action completed successfully, you're done. If it didn't, ask me to retry manually._\n\n`;
         wrappedOnEvent({ type: "stream", delta: notice });
-        try {
-          const { logRetry } = await import("../retry-telemetry.js");
-          logRetry({ kind: "custom", sessionId, provider: prepared.provider, model: prepared.model, detail: { reason: "failover-suppressed-committing-call", committingCalls: committingCalls.map(c => c.toolName) } });
-        } catch {}
+        logRetry({ kind: "custom", sessionId, provider: prepared.provider, model: prepared.model, detail: { reason: "failover-suppressed-committing-call", committingCalls: committingCalls.map(c => c.toolName) } });
       }
 
       if ((isEmptyResponse || isTransientError) && !suppressFailover && !wsChat.abort.signal.aborted) {
         const triggerKind = isTransientError ? errKind : "empty-response";
-        try {
-          const { logRetry } = await import("../retry-telemetry.js");
-          const kind = isTransientError
-            ? (errKind === "auth" ? "provider-auth-rotate" : "model-fallback")
-            : "empty-response-fallback";
-          logRetry({ kind, sessionId, provider: prepared.provider, model: prepared.model, detail: { trigger: triggerKind, errorMessage: result.errorMessage } });
-        } catch {}
+        const kind = isTransientError
+          ? (errKind === "auth" ? "provider-auth-rotate" : "model-fallback")
+          : "empty-response-fallback";
+        logRetry({ kind, sessionId, provider: prepared.provider, model: prepared.model, detail: { trigger: triggerKind, errorMessage: result.errorMessage } });
         const getKey = async (p: string): Promise<string | null> => {
           if (p === "codex") { const { loadTokens } = await import("../auth.js"); const t = loadTokens(); return t ? "cli" : null; }
           if (p === "anthropic") { const { loadAnthropicTokens } = await import("../auth-anthropic.js"); const t = loadAnthropicTokens(); return t ? "cli" : null; }
@@ -243,7 +240,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
               // done after the whole chain finishes (or we've decided no more retries).
               onEvent: (event: ServerEvent) => { if (event.type !== "done") wrappedOnEvent(event); },
             }), { label: `chat-fallback:${next.provider}:${sessionId}`, timeout: 600_000 });
-            console.log(`[timing] ${next.provider}/${next.model} fallback ${Date.now() - fbStart}ms`);
+            logger.info(`[timing] ${next.provider}/${next.model} fallback ${Date.now() - fbStart}ms`);
             // Success condition depends on trigger: for empty-response we need
             // non-empty text; for transient errors we need anything that's not
             // another error.
@@ -256,7 +253,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
             const stillEmpty = !newLast || !newLast.content || (typeof newLast.content === "string" && !newLast.content.trim());
             const hasToolCalls = !!((newLast as unknown as { tool_calls?: unknown[] })?.tool_calls?.length);
             if (!stillEmpty || hasToolCalls) break;
-          } catch (e) { console.warn(`[fallback] ${next.provider} failed: ${(e as Error).message}`); }
+          } catch (e) { logger.warn(`[fallback] ${next.provider} failed: ${(e as Error).message}`); }
         }
       }
 
@@ -281,20 +278,12 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       session.updatedAt = Date.now();
 
       const assistantReply = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).join("\n");
-      // Save memory for non-trivial messages
       const isTrivial = /^(run\s+(bash|command)|execute|bash)\s*(with|:)/i.test(message.trim()) || /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
-      if (!isTrivial) {
-        try { autoExtractAndSave(ctx.memoryIndex, message, assistantReply); } catch {}
-        try {
-          const userSnippet = message.slice(0, 300).replace(/\n/g, " ");
-          const agentSnippet = assistantReply.slice(0, 300).replace(/\n/g, " ");
-          // Only log user messages as daily context — agent responses are action
-          // confirmations, not facts. Logging them pollutes MIND.md when the
-          // consolidator promotes frequently-seen strings ("Pinned Calendar" x3).
-          // Also strip session IDs — they're internal metadata, not knowledge.
-          if (userSnippet.length > 10) { ctx.memoryIndex.appendDailyLog(`User: ${userSnippet}`); }
-        } catch {}
-      }
+      await ctx.memoryManager.persistTurn({
+        userMessage: message,
+        agentResponse: assistantReply,
+        skip: isTrivial,
+      });
       try {
         const { CrossSessionLearner } = await import("../cross-session-learning.js");
         const csl = CrossSessionLearner.getInstance();
@@ -318,7 +307,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // mid-chain; this is the consolidated turn-end signal.
       const doneEvent: ServerEvent = { type: "done", usage: realUsage, ...(costUsd !== undefined ? { costUsd } : {}) } as ServerEvent;
       wrappedOnEvent(doneEvent);
-      console.log(`[timing] turn total ${Date.now() - turnStart}ms (${prepared.provider}/${prepared.model}, ${realUsage.totalTokens} tokens)`);
+      logger.info(`[timing] turn total ${Date.now() - turnStart}ms (${prepared.provider}/${prepared.model}, ${realUsage.totalTokens} tokens)`);
       clearInterval(heartbeat);
       res.end();
 

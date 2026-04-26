@@ -10,6 +10,9 @@ import { classifyData } from "./threat-engine.js";
 import { detectInjection } from "./sanitize.js";
 import { scanForSecrets } from "./secret-scanner.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("ari-benchmarks");
+
 export interface BenchmarkCase {
   id: string;
   category: string;
@@ -179,20 +182,20 @@ export function runBenchmarks(): BenchmarkReport {
 
 /** Print benchmark report to console */
 export function printBenchmarkReport(report: BenchmarkReport): void {
-  console.log(`\n  -- ARI Security Benchmarks --`);
-  console.log(`  Total: ${report.totalTests} | Passed: ${report.passed} | Failed: ${report.failed} | Rate: ${(report.passRate * 100).toFixed(1)}%`);
-  console.log(`  Avg latency: ${report.avgLatencyMs.toFixed(2)}ms`);
+  logger.info(`\n  -- ARI Security Benchmarks --`);
+  logger.info(`  Total: ${report.totalTests} | Passed: ${report.passed} | Failed: ${report.failed} | Rate: ${(report.passRate * 100).toFixed(1)}%`);
+  logger.info(`  Avg latency: ${report.avgLatencyMs.toFixed(2)}ms`);
 
   for (const [cat, data] of Object.entries(report.byCategory)) {
-    console.log(`  ${cat}: ${data.passed}/${data.total} (${(data.passRate * 100).toFixed(0)}%)`);
+    logger.info(`  ${cat}: ${data.passed}/${data.total} (${(data.passRate * 100).toFixed(0)}%)`);
   }
 
   const failures = report.results.filter(r => !r.passed);
   if (failures.length > 0) {
-    console.log(`\n  Failures:`);
+    logger.info(`\n  Failures:`);
     for (const f of failures) {
-      console.log(`    ${f.id}: expected=${f.expected} actual=${f.actual}`);
+      logger.info(`    ${f.id}: expected=${f.expected} actual=${f.actual}`);
     }
   }
-  console.log();
+  logger.info("");
 }

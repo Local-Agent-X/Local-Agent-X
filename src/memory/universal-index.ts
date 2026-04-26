@@ -17,6 +17,9 @@ import type { MemoryIndex } from "../memory.js";
 import type { CanonicalSource, ChunkMetadata, Chunk } from "./types.js";
 import { chunkText, chunkConversationPairs, extractSessionPairs } from "../memory-chunking.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("memory.universal-index");
+
 const SECTION_CHUNK_CHARS = 3200;
 const SECTION_OVERLAP_CHARS = 0;
 
@@ -225,7 +228,7 @@ export class UniversalIndex {
       // (Cheap on the embedding side because embedding_cache hits by content_hash.)
       try {
         this.memory["db"].exec(`DELETE FROM chunks WHERE source IN ('entity','daily-log','mind','session-summary','session','personality')`);
-      } catch (e) { console.warn("[universal-index] force-clear failed:", (e as Error).message); }
+      } catch (e) { logger.warn("[universal-index] force-clear failed:", (e as Error).message); }
     }
 
     // Entity pages
@@ -234,7 +237,7 @@ export class UniversalIndex {
       for (const f of files) {
         const slug = basename(f, ".md");
         try { accum("entity", await this.indexEntityPage(slug)); }
-        catch (e) { console.warn(`[universal-index] entity ${slug}:`, (e as Error).message); }
+        catch (e) { logger.warn(`[universal-index] entity ${slug}:`, (e as Error).message); }
       }
     }
 
@@ -255,7 +258,7 @@ export class UniversalIndex {
             accum("personality", await this.indexPersonalityFile(name));
           }
         } catch (e) {
-          console.warn(`[universal-index] ${name}:`, (e as Error).message);
+          logger.warn(`[universal-index] ${name}:`, (e as Error).message);
         }
       }
     }
@@ -266,7 +269,7 @@ export class UniversalIndex {
       for (const f of files) {
         const sessionId = basename(f, ".md");
         try { accum("session-summary", await this.indexSessionSummary(sessionId)); }
-        catch (e) { console.warn(`[universal-index] summary ${sessionId}:`, (e as Error).message); }
+        catch (e) { logger.warn(`[universal-index] summary ${sessionId}:`, (e as Error).message); }
       }
     }
 
@@ -278,7 +281,7 @@ export class UniversalIndex {
       for (const f of files) {
         const sessionId = basename(f, ".json");
         try { accum("session", await this.indexSessionTranscript(sessionId)); }
-        catch (e) { console.warn(`[universal-index] session ${sessionId}:`, (e as Error).message); }
+        catch (e) { logger.warn(`[universal-index] session ${sessionId}:`, (e as Error).message); }
       }
     }
 

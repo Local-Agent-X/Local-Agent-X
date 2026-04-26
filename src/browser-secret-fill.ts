@@ -34,6 +34,9 @@ import { getActivePreBlessedSecrets } from "./operations/executor.js";
 import { loadOperation } from "./operations/conductor.js";
 import { join } from "node:path";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("browser-secret-fill");
+
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
 
@@ -58,7 +61,7 @@ function loadOpForPreBless(operationId: string): { preBlessedSecrets?: string[] 
 
 function auditLog(row: Record<string, unknown>): void {
   try {
-    console.warn(`[secret-fill] ${JSON.stringify(row)}`);
+    logger.warn(`[secret-fill] ${JSON.stringify(row)}`);
   } catch { /* never throw from audit */ }
 }
 

@@ -14,6 +14,9 @@ import { watch, type FSWatcher } from "node:fs";
 import { join, relative } from "node:path";
 import { EventBus } from "./event-bus.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("hot-reload");
+
 // Core files that are NEVER hot-reloaded (matches security.ts protected list)
 const CORE_PROTECTED = new Set([
   "security.ts", "auth.ts", "codex-client.ts",
@@ -63,11 +66,11 @@ export function startHotReload(projectRoot: string): void {
       // Never reload core protected files
       const basename = filename.replace(/^.*[/\\]/, "");
       if (CORE_PROTECTED.has(basename)) {
-        console.log(`[hot-reload] Ignoring core file change: ${filename}`);
+        logger.info(`[hot-reload] Ignoring core file change: ${filename}`);
         return;
       }
 
-      console.log(`[hot-reload] Source changed: ${filename}`);
+      logger.info(`[hot-reload] Source changed: ${filename}`);
       const event: HotReloadEvent = {
         path: filename,
         type: "src",
@@ -75,9 +78,9 @@ export function startHotReload(projectRoot: string): void {
       };
       EventBus.emit("hot-reload:src", event);
     });
-    console.log("[hot-reload] Watching src/ for changes");
+    logger.info("[hot-reload] Watching src/ for changes");
   } catch (e) {
-    console.warn(`[hot-reload] Failed to watch src/: ${(e as Error).message}`);
+    logger.warn(`[hot-reload] Failed to watch src/: ${(e as Error).message}`);
   }
 
   // Watch public/ for HTML/JS/CSS changes
@@ -86,7 +89,7 @@ export function startHotReload(projectRoot: string): void {
       if (!filename) return;
       if (isDebounced(filename)) return;
 
-      console.log(`[hot-reload] Public asset changed: ${filename}`);
+      logger.info(`[hot-reload] Public asset changed: ${filename}`);
       const event: HotReloadEvent = {
         path: filename,
         type: "public",
@@ -94,9 +97,9 @@ export function startHotReload(projectRoot: string): void {
       };
       EventBus.emit("hot-reload:public", event);
     });
-    console.log("[hot-reload] Watching public/ for changes");
+    logger.info("[hot-reload] Watching public/ for changes");
   } catch (e) {
-    console.warn(`[hot-reload] Failed to watch public/: ${(e as Error).message}`);
+    logger.warn(`[hot-reload] Failed to watch public/: ${(e as Error).message}`);
   }
 
   // Emit a general hot-reload event for both types
@@ -116,7 +119,7 @@ export function stopHotReload(): void {
   if (srcWatcher) { srcWatcher.close(); srcWatcher = null; }
   if (publicWatcher) { publicWatcher.close(); publicWatcher = null; }
   active = false;
-  console.log("[hot-reload] Stopped watching");
+  logger.info("[hot-reload] Stopped watching");
 }
 
 /**

@@ -27,9 +27,9 @@ export function createProcessTools(memory: MemoryIndex) {
     {
       name: "memory_consolidate",
       description:
-        "Run sleeptime memory consolidation. Pulls recent conversation chunks, " +
-        "asks an LLM to extract durable facts (preferences, decisions, plans, world facts), " +
-        "and writes them through the resolver so duplicates are skipped and contradictions update " +
+        "Extract durable facts from recent conversation chunks. " +
+        "Asks an LLM to pull preferences, decisions, plans, and world facts, " +
+        "then writes them through the resolver so duplicates are skipped and contradictions update " +
         "existing facts via bi-temporal invalidation. Safe to run repeatedly. " +
         "Intended for nightly cron — expensive to run ad-hoc unless you just ingested a lot of data.",
       parameters: {
@@ -44,8 +44,8 @@ export function createProcessTools(memory: MemoryIndex) {
         },
       },
       async execute(args: Record<string, unknown>) {
-        const { runSleeptimeConsolidation } = await import("../../memory-sleeptime.js");
-        const result = await runSleeptimeConsolidation(memory, {
+        const { runExtraction } = await import("../../memory-extract.js");
+        const result = await runExtraction(memory, {
           lookbackHours: typeof args.lookbackHours === "number" ? args.lookbackHours : undefined,
           maxSessions: typeof args.maxSessions === "number" ? args.maxSessions : undefined,
           maxChunksPerSession: typeof args.maxChunksPerSession === "number" ? args.maxChunksPerSession : undefined,

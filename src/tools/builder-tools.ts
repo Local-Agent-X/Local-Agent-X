@@ -2,6 +2,9 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("tools.builder-tools");
+
 export const buildAppTool: ToolDefinition = {
   name: "build_app",
   description: "Build a complete web app in workspace/apps/ using a dedicated CLI subprocess. Use this for NEW apps and LARGE rewrites. For small edits to existing apps, use read + edit directly instead. Returns the app URL when done.",
@@ -76,7 +79,7 @@ RULES:
       if (backend === "codex") {
         const result = await buildWithCodex(builderPrompt, appDir, appUrl);
         if (result.isError && !existsSync(resolve(appDir, "index.html"))) {
-          console.warn(`[build_app] Codex failed, falling back to Claude CLI`);
+          logger.warn(`[build_app] Codex failed, falling back to Claude CLI`);
           return await buildWithClaude(builderPrompt, appDir, appUrl);
         }
         return result;

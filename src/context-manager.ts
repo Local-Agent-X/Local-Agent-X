@@ -1,5 +1,8 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("context-manager");
+
 /**
  * Context Manager — Token tracking + auto-compaction
  *
@@ -311,7 +314,7 @@ export function compactIfNeeded(
   const { keptMessages } = buildCompactionPrompt(messages, keepLast);
   const newStatus = getContextStatus(keptMessages, model);
 
-  console.log(
+  logger.info(
     `[context] Compacted: ${messages.length} msgs (${status.percentage}%) → ${keptMessages.length} msgs (${newStatus.percentage}%)`
   );
 

@@ -1,3 +1,7 @@
+
+import { createLogger } from "./logger.js";
+const logger = createLogger("context-usage");
+
 export interface ContextUsage {
   used: number;
   max: number;
@@ -40,7 +44,7 @@ export function getContextUsage(messages: Message[], maxTokens: number): Context
   const remaining = Math.max(0, maxTokens - totalTokens);
 
   if (percentage > 80) {
-    console.log(
+    logger.info(
       `[context] warning: ${percentage.toFixed(1)}% of context window used (${totalTokens}/${maxTokens} tokens)`,
     );
   }

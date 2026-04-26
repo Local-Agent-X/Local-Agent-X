@@ -25,7 +25,8 @@ import { planTools } from "../plan-tools.js";
 import { buildDreamPrompt } from "../memory-dream.js";
 import { configTools } from "../config-tool.js";
 import { selfEditTool } from "../self-edit-tool.js";
-import { skillTools } from "../skills/index.js";
+// Legacy skill_list/skill_run tools removed — protocol_list / protocol_get cover the same surface.
+// SKILL.md files are still recognized as an import format via src/protocols/skill-md-parser.ts.
 
 const _registry = new ToolRegistry();
 const _toolSearchTool = createToolSearchTool(_registry);
@@ -39,7 +40,6 @@ export const allTools: ToolDefinition[] = applyPrompts([
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools,
   ...emailTools, ...calendarTools, ...clipboardTools, ...sqlTools,
   ...taskTools, ...planTools, ...configTools,
-  ...skillTools,
   {
     name: "memory_dream",
     description: "Trigger a memory consolidation (dream). Reviews recent sessions, extracts facts, runs reflection and consolidation, and reorganizes memory files. Returns a summary of what was processed.",

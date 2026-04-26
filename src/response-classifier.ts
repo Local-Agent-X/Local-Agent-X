@@ -12,6 +12,9 @@
  * a different response (retry vs. fallback vs. user error).
  */
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("response-classifier");
+
 export type ResponseClassification =
   | "completed"        // Normal completion with content
   | "tool_called"      // Model called a tool (not final)
@@ -211,5 +214,5 @@ export function logClassification(provider: string, model: string, result: Class
     // Quiet success — only log if debug
     return;
   }
-  console.warn(`${tag} ${result.type} — ${result.explanation}${result.rawReason ? ` (raw: ${result.rawReason})` : ""}`);
+  logger.warn(`${tag} ${result.type} — ${result.explanation}${result.rawReason ? ` (raw: ${result.rawReason})` : ""}`);
 }

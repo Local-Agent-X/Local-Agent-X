@@ -13,6 +13,9 @@
  * Counter resets on any success. Successes in closed state are free.
  */
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("circuit-breaker");
+
 type BreakerState = "closed" | "open" | "half_open";
 
 interface BreakerEntry {
@@ -96,7 +99,7 @@ export function recordCircuitFailure(sessionId: string | undefined, toolName: st
     entry.state = "open";
     entry.openedAt = Date.now();
     entry.totalTrips += 1;
-    console.warn(`[circuit-breaker] OPEN ${toolName} (session=${sessionId || "default"}) after ${entry.consecutiveFailures} failures`);
+    logger.warn(`[circuit-breaker] OPEN ${toolName} (session=${sessionId || "default"}) after ${entry.consecutiveFailures} failures`);
   }
 }
 

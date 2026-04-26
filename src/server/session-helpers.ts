@@ -2,6 +2,9 @@ import { join } from "node:path";
 import type { SessionStore, MemoryIndex } from "../memory.js";
 import type { Session } from "../types.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("server.session-helpers");
+
 export interface SessionHelpers {
   sessions: Map<string, Session>;
   getOrCreateSession: (id: string) => Session;
@@ -34,15 +37,15 @@ export function createSessionHelpers(deps: {
       sessions.set(session.id, session);
       sessionStore.save(session);
       memoryIndex.markDirty();
-      try { await indexSessionIncrementally(session); } catch (e) { console.warn(`[memory] Incremental index failed:`, (e as Error).message); }
-    }).catch(e => console.error(`[session] Save failed:`, e));
+      try { await indexSessionIncrementally(session); } catch (e) { logger.warn(`[memory] Incremental index failed:`, (e as Error).message); }
+    }).catch(e => logger.error(`[session] Save failed:`, e));
     writeQueues.set(session.id, next);
     next.finally(() => { if (writeQueues.get(session.id) === next) writeQueues.delete(session.id); });
   }
 
   async function indexSessionIncrementally(session: Session): Promise<void> {
     if (session.id.startsWith("dream-") || session.id.startsWith("ide-")) return;
-    console.log(`[memory-live] Indexing session ${session.id} (${session.messages?.length || 0} messages)`);
+    logger.info(`[memory-live] Indexing session ${session.id} (${session.messages?.length || 0} messages)`);
     const { extractSessionPairs, chunkConversationPairs } = await import("../memory-chunking.js");
     const messages = extractSessionPairs(join(dataDir, "sessions", session.id + ".json"));
     if (messages.length < 2) return;
@@ -79,9 +82,9 @@ export function createSessionHelpers(deps: {
     if (chunks.length > 0) {
       await memoryIndex.indexChunks(chunks, virtualPath, "session");
       sessionIndexedPairs.set(session.id, pairs.length);
-      console.log(`[memory-live] Indexed ${chunks.length} new chunks from ${newPairs.length} pairs (session ${session.id}, total pairs: ${pairs.length})`);
+      logger.info(`[memory-live] Indexed ${chunks.length} new chunks from ${newPairs.length} pairs (session ${session.id}, total pairs: ${pairs.length})`);
     } else {
-      console.log(`[memory-live] No new pairs to index for ${session.id}`);
+      logger.info(`[memory-live] No new pairs to index for ${session.id}`);
     }
   }
 

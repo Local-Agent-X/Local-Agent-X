@@ -10,7 +10,7 @@ import type { LAXConfig, ServerEvent, Session, ToolDefinition } from "../types.j
 import type { SecurityLayer } from "../security.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { RBACManager } from "../rbac.js";
-import type { SessionStore, MemoryIndex } from "../memory.js";
+import type { SessionStore, MemoryIndex, MemoryManager } from "../memory.js";
 import type { SecretsStore } from "../secrets.js";
 import type { CronService } from "../cron-service.js";
 import type { IntegrationRegistry } from "../integrations.js";
@@ -32,6 +32,7 @@ export function createRequestHandler(deps: {
   publicDir: string;
   sessionStore: SessionStore;
   memoryIndex: MemoryIndex;
+  memoryManager: MemoryManager;
   secretsStore: SecretsStore;
   cronService: CronService;
   integrations: IntegrationRegistry;
@@ -54,7 +55,7 @@ export function createRequestHandler(deps: {
   activeBrowserSessionIdRef: { value: string };
 }): RequestHandler {
   const {
-    config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex,
+    config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, memoryManager,
     secretsStore, cronService, integrations, whatsappBridge, telegramBridge, agentSync,
     appRegistry, agentRunStore, agentTemplateStore, issueStore, projectStore,
     allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession,
@@ -91,7 +92,7 @@ export function createRequestHandler(deps: {
       if (!ep.allowed) { json(403, { error: ep.reason }); return; }
     }
     const ctx: ServerContext = {
-      config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, secretsStore, cronService, integrations,
+      config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations,
       whatsappBridge, telegramBridge, agentSync, appRegistry, agentRunStore, agentTemplateStore, issueStore, projectStore,
       allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession, chatWs: getChatWs(), broadcastAll,
       activeOnEvent: activeOnEventRef.value, setActiveOnEvent: (fn) => { activeOnEventRef.value = fn; }, activeBrowserSessionId: activeBrowserSessionIdRef.value, setActiveBrowserSessionId: (id) => { activeBrowserSessionIdRef.value = id; },

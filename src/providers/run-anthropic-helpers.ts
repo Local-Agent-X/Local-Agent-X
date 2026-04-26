@@ -1,6 +1,10 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { AgentTurn } from "../types.js";
 import type { AgentOptions, ImageAttachment } from "./types.js";
+import { logRetry } from "../retry-telemetry.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("providers.run-anthropic-helpers");
 
 export async function buildAnthropicUserContent(
   userMessage: string,
@@ -22,7 +26,7 @@ export async function buildAnthropicUserContent(
         parts.push({ type: "image_url", image_url: { url: b64, detail: "auto" } });
         if (img.filePath) filePathHintsA.push(`  - ${img.name} → ${img.filePath}`);
       } catch (e) {
-        console.warn(`[agent] Could not read image ${img.name}:`, e);
+        logger.warn(`[agent] Could not read image ${img.name}:`, e);
       }
     }
     if (filePathHintsA.length > 0) {
@@ -76,8 +80,8 @@ export function checkAnthropicTurnSafetyCeilings(state: AnthropicSafetyState): A
 
   if (totalInput + totalOutput > tokenCeiling) {
     const abortMsg = `Turn token ceiling hit: ${totalInput + totalOutput} tokens used (cap ${tokenCeiling}). Aborting.`;
-    console.warn(`[agent] ${abortMsg}`);
-    try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "anthropic", model, detail: { reason: "turn-token-ceiling", totalInput, totalOutput } })).catch(() => {}); } catch {}
+    logger.warn(`[agent] ${abortMsg}`);
+    logRetry({ kind: "custom", sessionId: options.sessionId, provider: "anthropic", model, detail: { reason: "turn-token-ceiling", totalInput, totalOutput } });
     return {
       messages: [{ role: "system", content: systemPrompt }, ...messages],
       usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
@@ -89,8 +93,8 @@ export function checkAnthropicTurnSafetyCeilings(state: AnthropicSafetyState): A
   const turnElapsedA = Date.now() - turnStartMs;
   if (turnElapsedA > wallClockMs && committingToolsThisTurn.size === 0) {
     const abortMsg = `Wall-clock turn ceiling hit (Anthropic): ${Math.round(turnElapsedA / 1000)}s, iteration ${iteration}, no committing tool. Aborting.`;
-    console.warn(`[agent] ${abortMsg}`);
-    try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "anthropic", model, detail: { reason: "turn-wall-clock", elapsedMs: turnElapsedA, iteration } })).catch(() => {}); } catch {}
+    logger.warn(`[agent] ${abortMsg}`);
+    logRetry({ kind: "custom", sessionId: options.sessionId, provider: "anthropic", model, detail: { reason: "turn-wall-clock", elapsedMs: turnElapsedA, iteration } });
     return {
       messages: [{ role: "system", content: systemPrompt }, ...messages],
       usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
@@ -102,8 +106,8 @@ export function checkAnthropicTurnSafetyCeilings(state: AnthropicSafetyState): A
     const wA = evidenceHistory.slice(-midTurnEvidenceStaleWindow);
     if (wA.every(v => v === wA[0])) {
       const abortMsg = `Mid-turn evidence stale (Anthropic): ${wA[0]} evidence for ${midTurnEvidenceStaleWindow} iterations with no committing tool. Aborting.`;
-      console.warn(`[agent] ${abortMsg}`);
-      try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "anthropic", model, detail: { reason: "mid-turn-stale", iteration, evidence: wA } })).catch(() => {}); } catch {}
+      logger.warn(`[agent] ${abortMsg}`);
+      logRetry({ kind: "custom", sessionId: options.sessionId, provider: "anthropic", model, detail: { reason: "mid-turn-stale", iteration, evidence: wA } });
       return {
         messages: [{ role: "system", content: systemPrompt }, ...messages],
         usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },

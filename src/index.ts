@@ -4,6 +4,9 @@ import { createWriteStream, mkdirSync, existsSync, statSync, renameSync } from "
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("index");
+
 function migrateLegacyDataDir(): void {
   const newDir = join(homedir(), ".lax");
   const oldDir = join(homedir(), ".sax");
@@ -73,23 +76,23 @@ console.warn = (...args: unknown[]) => {
 // EADDRINUSE is fatal: server can't function without a port, so exit
 // instead of letting background services (Telegram, cron) keep the process alive as a zombie
 process.on("uncaughtException", (err) => {
-  console.error("[CRASH GUARD] Uncaught exception:", err.message);
-  console.error(err.stack);
+  logger.error("[CRASH GUARD] Uncaught exception:", err.message);
+  logger.error(err.stack ?? "");
   const fatal = (err as NodeJS.ErrnoException).code;
   if (fatal === "EADDRINUSE" || fatal === "EACCES") {
-    console.error("[CRASH GUARD] Fatal: cannot bind port — exiting");
+    logger.error("[CRASH GUARD] Fatal: cannot bind port — exiting");
     process.exit(1);
   }
 });
 process.on("unhandledRejection", (reason) => {
-  console.error("[CRASH GUARD] Unhandled rejection:", reason);
+  logger.error("[CRASH GUARD] Unhandled rejection:", reason);
 });
 
 import { loadConfig, setRuntimeConfig } from "./config.js";
 import { startServer } from "./server.js";
 import { loadTokens } from "./auth.js";
 
-console.log(`
+logger.info(`
   ╔═══════════════════════════════════╗
   ║       OPEN AGENT X  v0.1       ║
   ╚═══════════════════════════════════╝
@@ -101,9 +104,9 @@ setRuntimeConfig(config);
 // Check auth status
 const tokens = loadTokens();
 if (!config.openaiApiKey && !tokens) {
-  console.log("  No API key or OAuth tokens found.");
-  console.log("  Set OPENAI_API_KEY in your environment, or");
-  console.log("  use the dashboard to sign in with OpenAI OAuth.\n");
+  logger.info("  No API key or OAuth tokens found.");
+  logger.info("  Set OPENAI_API_KEY in your environment, or");
+  logger.info("  use the dashboard to sign in with OpenAI OAuth.\n");
 }
 
 // Handle CLI args
@@ -112,9 +115,9 @@ if (args.includes("--login")) {
   const { startOAuthLogin } = await import("./auth.js");
   try {
     await startOAuthLogin();
-    console.log("[auth] Login successful!");
+    logger.info("[auth] Login successful!");
   } catch (e) {
-    console.error("[auth] Login failed:", (e as Error).message);
+    logger.error("[auth] Login failed:", (e as Error).message);
     process.exit(1);
   }
 }

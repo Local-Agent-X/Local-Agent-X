@@ -4,6 +4,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { getAuthPath } from "./config.js";
 import type { OAuthTokens } from "./types.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("auth");
+
 // OpenAI Codex OAuth endpoints (shared public client ID for CLI tools)
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -92,7 +95,7 @@ export async function getApiKey(configApiKey?: string): Promise<string> {
   // Refresh if expiring within 5 minutes
   const REFRESH_MARGIN_MS = 5 * 60 * 1000;
   if (Date.now() > tokens.expiresAt - REFRESH_MARGIN_MS) {
-    console.log("[auth] Refreshing OAuth tokens...");
+    logger.info("[auth] Refreshing OAuth tokens...");
     tokens = await refreshTokens(tokens);
   }
 
@@ -159,7 +162,7 @@ export function initiateOAuthLogin(): { authUrl: string; promise: Promise<OAuthT
       if (!stateValid) {
         res.writeHead(400);
         res.end("Invalid state parameter — possible CSRF attack");
-        console.warn("[auth] OAuth state mismatch! Expected:", state.slice(0, 8) + "...", "Got:", returnedState?.slice(0, 8) + "...");
+        logger.warn("[auth] OAuth state mismatch! Expected:", state.slice(0, 8) + "...", "Got:", returnedState?.slice(0, 8) + "...");
         return;
       }
 
@@ -229,7 +232,7 @@ export function initiateOAuthLogin(): { authUrl: string; promise: Promise<OAuthT
     });
 
     callbackServer.listen(CALLBACK_PORT, "127.0.0.1", () => {
-      console.log(`[auth] Waiting for OAuth callback on port ${CALLBACK_PORT}...`);
+      logger.info(`[auth] Waiting for OAuth callback on port ${CALLBACK_PORT}...`);
     });
   });
 
@@ -242,7 +245,7 @@ export function initiateOAuthLogin(): { authUrl: string; promise: Promise<OAuthT
 export async function startOAuthLogin(): Promise<OAuthTokens> {
   const { authUrl, promise } = initiateOAuthLogin();
 
-  console.log(`\n[auth] Open this URL in your browser:\n\n  ${authUrl}\n`);
+  logger.info(`\n[auth] Open this URL in your browser:\n\n  ${authUrl}\n`);
 
   const { execFile } = await import("node:child_process");
   const openCmd =

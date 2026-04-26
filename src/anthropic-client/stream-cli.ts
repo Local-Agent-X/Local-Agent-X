@@ -3,6 +3,9 @@ import { extractUserPrompt, newToolCallId } from "./request.js";
 import { cleanUrls, filterStreamDelta, parseToolCalls, stripToolCallBlocks } from "./parse.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("anthropic-client.stream-cli");
+
 /**
  * CLI proxy with tool support: embeds tool definitions in the prompt,
  * instructs Claude to output JSON tool calls that we parse and route
@@ -164,7 +167,7 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
         "ScheduleWakeup", "PushNotification", "RemoteTrigger",
       ].join(","));
     } catch (e) {
-      console.warn(`[anthropic-cli] MCP config setup failed, falling back to text-mode: ${(e as Error).message}`);
+      logger.warn(`[anthropic-cli] MCP config setup failed, falling back to text-mode: ${(e as Error).message}`);
       mcpConfigPath = null;
     }
   }
@@ -190,7 +193,7 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
       progressTimer = setTimeout(() => {
         progressInterval = setInterval(() => {
           dotCount++;
-          console.log(`[claude] Still waiting... (${10 + dotCount * 5}s)`);
+          logger.info(`[claude] Still waiting... (${10 + dotCount * 5}s)`);
         }, 5000);
       }, 10000); // Only start after 10s of no response
     };
@@ -279,7 +282,7 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
             for (const b of content) {
               if (b?.type === "tool_use" && b.name) {
                 if (String(b.name).startsWith("mcp__")) {
-                  console.log(`[claude] MCP tool_use (handled via bridge): ${b.name}`);
+                  logger.info(`[claude] MCP tool_use (handled via bridge): ${b.name}`);
                   // Signal to the agent loop that tool activity happened, so
                   // its "toolCalls.length === 0 → auto-route to build_app"
                   // fallback doesn't misfire. The tool already ran via MCP.
@@ -287,7 +290,7 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
                   continue;
                 }
                 const args = typeof b.input === "object" && b.input ? b.input : {};
-                console.log(`[claude] Native tool_use: ${b.name}(${JSON.stringify(args).slice(0, 80)})`);
+                logger.info(`[claude] Native tool_use: ${b.name}(${JSON.stringify(args).slice(0, 80)})`);
                 emittedNativeTools = true;
                 yield { type: "tool_call", id: b.id || newToolCallId(b.name), name: b.name, arguments: JSON.stringify(args) };
               }
@@ -304,7 +307,7 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
             prevText = result;
           }
           usage = event.usage || {};
-          console.log(`[claude] Done: ${result.slice(0, 100).replace(/\n/g, "\\n")}...`);
+          logger.info(`[claude] Done: ${result.slice(0, 100).replace(/\n/g, "\\n")}...`);
 
           // Parse tool calls from full response ONLY if we didn't already emit
           // native tool_use blocks from the assistant event — prevents duplicate
@@ -314,13 +317,13 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
             const toolCalls = parseToolCalls(fullText);
             for (const tc of toolCalls) {
               const redactedArgs = JSON.stringify(tc.arguments).slice(0, 100).replace(/(?:password|secret|token|key|api_key|apiKey|authorization|bearer)["']?\s*[:=]\s*["']?[^"',}\s]{3}[^"',}]*/gi, (m) => m.slice(0, m.indexOf(":") + 4) + "***REDACTED***");
-              console.log(`[claude] Tool call: ${tc.name}(${redactedArgs})`);
+              logger.info(`[claude] Tool call: ${tc.name}(${redactedArgs})`);
               yield { type: "tool_call", id: newToolCallId(tc.name), name: tc.name, arguments: JSON.stringify(tc.arguments) };
             }
             // Diagnostic: if response CONTAINS "tool_calls" text but parser found
             // nothing, log it — helps catch future CLI output-format changes.
             if (toolCalls.length === 0 && /"tool_calls"/.test(fullText)) {
-              console.warn(`[claude] WARNING: response contains "tool_calls" but parser extracted 0 calls. Response head: ${fullText.slice(0, 300).replace(/\n/g, "\\n")}`);
+              logger.warn(`[claude] WARNING: response contains "tool_calls" but parser extracted 0 calls. Response head: ${fullText.slice(0, 300).replace(/\n/g, "\\n")}`);
             }
           }
           yield { type: "done", usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0 } };

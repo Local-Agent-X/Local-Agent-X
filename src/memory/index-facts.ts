@@ -5,6 +5,9 @@ import { parseFactLine, rowToFact, slugify } from "./utils.js";
 import { getDailyLogPath } from "./index-files.js";
 import { extractRelations } from "./index-relations.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("memory.index-facts");
+
 export function retain(
   db: InstanceType<typeof Database>,
   hasFts: boolean,
@@ -91,7 +94,7 @@ export function retain(
     } catch (e) {
       const msg = (e as Error).message;
       if (!msg.includes("UNIQUE")) {
-        console.warn(`[memory] Failed to retain fact: ${msg}`);
+        logger.warn(`[memory] Failed to retain fact: ${msg}`);
       }
     }
   }
@@ -164,7 +167,7 @@ export async function retainSmart(
       });
     } catch (e) {
       const msg = (e as Error).message;
-      console.warn(`[memory] retainSmart failed on "${parsed.content.slice(0, 60)}": ${msg}`);
+      logger.warn(`[memory] retainSmart failed on "${parsed.content.slice(0, 60)}": ${msg}`);
     }
   }
 

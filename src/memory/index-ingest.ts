@@ -2,6 +2,9 @@ import type Database from "better-sqlite3";
 import type { Chunk, EmbeddingProvider, MemoryConfig } from "./types.js";
 import { embedChunksWithRetry } from "./index-embedding.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("memory.index-ingest");
+
 export async function indexChunks(
   db: InstanceType<typeof Database>,
   embeddingProvider: EmbeddingProvider | null,
@@ -41,12 +44,12 @@ export async function indexChunks(
           try { db.prepare("INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)").run(chunkId, new Float32Array(chunk.embedding)); } catch {}
         }
       } catch (e) {
-        console.warn(`[memory] Chunk insert failed:`, (e as Error).message);
+        logger.warn(`[memory] Chunk insert failed:`, (e as Error).message);
       }
     }
     db.prepare("INSERT OR REPLACE INTO files (path, source, hash, mtime, size) VALUES (?, ?, ?, ?, ?)").run(virtualPath, source, `ingest:${now}`, now, 0);
   } catch (e) {
-    console.error(`[memory] indexChunks transaction failed for ${virtualPath}:`, (e as Error).message);
+    logger.error(`[memory] indexChunks transaction failed for ${virtualPath}:`, (e as Error).message);
   }
 }
 
@@ -121,7 +124,7 @@ export async function indexChunksIdempotent(
     });
     txn();
   } catch (e) {
-    console.error(`[memory] indexChunksIdempotent failed for ${virtualPath}:`, (e as Error).message);
+    logger.error(`[memory] indexChunksIdempotent failed for ${virtualPath}:`, (e as Error).message);
     return { added: 0, removed: 0, unchanged: existing.length };
   }
 

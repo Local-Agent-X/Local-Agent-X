@@ -9,6 +9,9 @@ import { detectInjection } from "./sanitize.js";
 import { classifyData } from "./threat-engine.js";
 import { SecurityLayer } from "./security.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("security-tests");
+
 interface TestCase {
   id: string;
   category: string;
@@ -159,12 +162,12 @@ export function runInjectionTests(): TestReport {
   // Print summary
   const failedTests = allResults.filter(r => !r.passed);
   if (failedTests.length > 0) {
-    console.warn(`  [security-tests] ${failed}/${allResults.length} tests FAILED:`);
+    logger.warn(`  [security-tests] ${failed}/${allResults.length} tests FAILED:`);
     for (const f of failedTests) {
-      console.warn(`    ${f.id}: ${f.description} — ${f.detail}`);
+      logger.warn(`    ${f.id}: ${f.description} — ${f.detail}`);
     }
   } else {
-    console.log(`  [security-tests] All ${allResults.length} injection tests passed`);
+    logger.info(`  [security-tests] All ${allResults.length} injection tests passed`);
   }
 
   return report;

@@ -1,0 +1,36 @@
+{
+  "$schema-comment": "Declarative source manifest for scripts/import-protocols.mjs. Add new sources by appending an entry. priority decides who wins on name collision (lower = higher priority). license is the source-level fallback if a SKILL.md has no per-file license. paths is the list of subdirs (relative to repo root) to walk for SKILL.md files; empty array means walk the whole repo. excludePaths skips subtrees (e.g. proprietary skills inside an otherwise-MIT repo).",
+  "allowedLicenses": ["MIT", "Apache-2.0", "CC-BY-4.0"],
+  "sources": [
+    {
+      "id": "anthropics-skills",
+      "repo": "anthropics/skills",
+      "ref": "main",
+      "license": "Apache-2.0",
+      "priority": 0,
+      "paths": [],
+      "excludePaths": ["docx", "pdf", "pptx", "xlsx", ".github", "spec", "template"],
+      "attribution": "Anthropic Skills (Apache-2.0). Source: https://github.com/anthropics/skills"
+    },
+    {
+      "id": "alirezarezvani-claude-skills",
+      "repo": "alirezarezvani/claude-skills",
+      "ref": "main",
+      "license": "MIT",
+      "priority": 1,
+      "paths": [],
+      "excludePaths": [".github", "examples"],
+      "attribution": "alirezarezvani/claude-skills (MIT). Source: https://github.com/alirezarezvani/claude-skills"
+    },
+    {
+      "id": "antigravity-awesome-skills",
+      "repo": "sickn33/antigravity-awesome-skills",
+      "ref": "main",
+      "license": "MIT",
+      "priority": 2,
+      "paths": [],
+      "excludePaths": [".github", "scripts", "spec"],
+      "attribution": "Antigravity Awesome Skills (MIT, code; CC-BY-4.0, docs). Source: https://github.com/sickn33/antigravity-awesome-skills"
+    }
+  ]
+}

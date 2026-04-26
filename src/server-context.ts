@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SecurityLayer } from "./security.js";
 import type { ToolPolicy } from "./tool-policy.js";
 import type { RBACManager, Role } from "./rbac.js";
-import type { SessionStore, MemoryIndex } from "./memory.js";
+import type { SessionStore, MemoryIndex, MemoryManager } from "./memory.js";
 import type { SecretsStore } from "./secrets.js";
 import type { CronService } from "./cron-service.js";
 import type { IntegrationRegistry } from "./integrations.js";
@@ -23,6 +23,7 @@ export interface ServerContext {
   publicDir: string;
   sessionStore: SessionStore;
   memoryIndex: MemoryIndex;
+  memoryManager: MemoryManager;
   secretsStore: SecretsStore;
   cronService: CronService;
   integrations: IntegrationRegistry;

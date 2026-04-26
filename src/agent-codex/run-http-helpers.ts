@@ -5,6 +5,10 @@ import type { AgentTurn, ServerEvent } from "../types.js";
 import { streamCodexResponse, type ReasoningItem } from "../codex-client.js";
 import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkUnmatchedActionClaim } from "../agent-guards.js";
 import type { ImageAttachment } from "./shared.js";
+import { logRetry } from "../retry-telemetry.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("agent-codex.run-http-helpers");
 
 export type VisionContentPart =
   | { type: "text"; text: string }
@@ -25,7 +29,7 @@ export async function buildUserContent(
       const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
       parts.push({ type: "image_url", image_url: { url: `data:${mime};base64,${data.toString("base64")}`, detail: "auto" } });
       if (img.filePath) filePathHints.push(`  - ${img.name} → ${img.filePath}`);
-    } catch (e) { console.warn(`[agent] Could not read image ${img.name}:`, e); }
+    } catch (e) { logger.warn(`[agent] Could not read image ${img.name}:`, e); }
   }
   // Tell the model WHERE the actual file lives on disk. Without this, the
   // model only gets the image via vision (it can see the content) but has
@@ -61,8 +65,8 @@ export function checkTokenCeiling(state: CeilingState): AgentTurn | null {
   const { totalInput, totalOutput, systemPrompt, messages, sessionId, model } = state;
   if (totalInput + totalOutput > TURN_TOKEN_CEILING) {
     const abortMsg = `Turn token ceiling hit: ${totalInput + totalOutput} tokens used (cap ${TURN_TOKEN_CEILING}). Aborting to prevent runaway cost.`;
-    console.warn(`[agent] ${abortMsg}`);
-    try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId, provider: "codex", model, detail: { reason: "turn-token-ceiling", totalInput, totalOutput } })).catch(() => {}); } catch {}
+    logger.warn(`[agent] ${abortMsg}`);
+    logRetry({ kind: "custom", sessionId, provider: "codex", model, detail: { reason: "turn-token-ceiling", totalInput, totalOutput } });
     return {
       messages: [{ role: "system", content: systemPrompt }, ...messages],
       usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
@@ -84,8 +88,8 @@ export function checkWallClockCeiling(
   const turnElapsed = Date.now() - turnStartMs;
   if (turnElapsed > TURN_WALL_CLOCK_MS && committingToolsThisTurn.size === 0) {
     const abortMsg = `Wall-clock turn ceiling hit: ${Math.round(turnElapsed / 1000)}s elapsed on iteration ${iteration} with no committing tool call. Aborting stuck exploration.`;
-    console.warn(`[agent] ${abortMsg}`);
-    try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId, provider: "codex", model, detail: { reason: "turn-wall-clock", elapsedMs: turnElapsed, iteration, tools: Array.from(toolsCalledThisTurn) } })).catch(() => {}); } catch {}
+    logger.warn(`[agent] ${abortMsg}`);
+    logRetry({ kind: "custom", sessionId, provider: "codex", model, detail: { reason: "turn-wall-clock", elapsedMs: turnElapsed, iteration, tools: Array.from(toolsCalledThisTurn) } });
     return {
       messages: [{ role: "system", content: systemPrompt }, ...messages],
       usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
@@ -108,8 +112,8 @@ export function checkMidTurnStale(
     const allEqual = window.every(v => v === window[0]);
     if (allEqual) {
       const abortMsg = `Mid-turn evidence stale: evidence count ${window[0]} for ${MID_TURN_EVIDENCE_STALE_WINDOW} iterations with no committing tool. Aborting stuck exploration.`;
-      console.warn(`[agent] ${abortMsg}`);
-      try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId, provider: "codex", model, detail: { reason: "mid-turn-stale", iteration, evidence: window } })).catch(() => {}); } catch {}
+      logger.warn(`[agent] ${abortMsg}`);
+      logRetry({ kind: "custom", sessionId, provider: "codex", model, detail: { reason: "mid-turn-stale", iteration, evidence: window } });
       return {
         messages: [{ role: "system", content: systemPrompt }, ...messages],
         usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput },
@@ -168,7 +172,7 @@ export async function handleEmptyResponse(input: EmptyResponseInput): Promise<Em
   const { apiKey, model, systemPrompt, messages, codexTools, toolCalls, onEvent } = input;
   let { assistantContent, turnReasoning, totalInput, totalOutput, contentFilterEmpties } = input;
 
-  console.warn(`[agent] Codex returned empty response (iteration ${input.iteration}, ${totalInput}in/${totalOutput}out tokens) — retrying`);
+  logger.warn(`[agent] Codex returned empty response (iteration ${input.iteration}, ${totalInput}in/${totalOutput}out tokens) — retrying`);
   // Retry without previousResponseId to force full context
   let previousResponseId: string | undefined = undefined;
   try {
@@ -187,7 +191,7 @@ export async function handleEmptyResponse(input: EmptyResponseInput): Promise<Em
     }
     if (retryText.trim()) assistantContent = retryText;
   } catch (e) {
-    console.error(`[agent] Codex retry failed:`, (e as Error).message);
+    logger.error(`[agent] Codex retry failed:`, (e as Error).message);
   }
 
   // Content-filter escape valve. When Codex moderation trips on context
@@ -208,7 +212,7 @@ export async function handleEmptyResponse(input: EmptyResponseInput): Promise<Em
     if (contentFilterEmpties === 1) {
       const nudge =
         "[SYSTEM] Your previous reply came back empty — content moderation likely blocked it. Reply with ONE short neutral sentence confirming what was done. Do NOT quote email bodies, personal/emotional content, passwords, or any sensitive details. Just: `[action] completed.`";
-      console.warn("[agent] Codex content-filter nudge (1st attempt — asking for neutral summary)");
+      logger.warn("[agent] Codex content-filter nudge (1st attempt — asking for neutral summary)");
       messages.push({ role: "user", content: nudge } as ChatCompletionMessageParam);
       return {
         assistantContent,
@@ -221,7 +225,7 @@ export async function handleEmptyResponse(input: EmptyResponseInput): Promise<Em
       };
     }
     const msg = `content_filter: Codex returned ${contentFilterEmpties} empty responses this turn — moderation loop. Aborting so another provider can take the turn.`;
-    console.warn(`[agent] ${msg}`);
+    logger.warn(`[agent] ${msg}`);
     return {
       assistantContent,
       turnReasoning,
@@ -273,7 +277,7 @@ export function handleNoToolCallBranch(input: NoToolCallInput): NoToolCallResult
   // Approval hallucination: model says "needs approval" instead of calling tool
   const approvalNudge = checkApprovalHallucination(assistantContent);
   if (approvalNudge && iteration < maxIterations - 1) {
-    console.warn(`[agent] Approval hallucination detected (Codex) — nudging`);
+    logger.warn(`[agent] Approval hallucination detected (Codex) — nudging`);
     messages.push({ role: "user", content: approvalNudge } as ChatCompletionMessageParam);
     return { shouldContinue: true, unmatchedClaimNudged, selfCheckFired };
   }
@@ -281,7 +285,7 @@ export function handleNoToolCallBranch(input: NoToolCallInput): NoToolCallResult
   // Creation hallucination: model claims it created/scheduled something without a tool call
   const creationNudge = checkCreationHallucination(assistantContent);
   if (creationNudge && iteration === 0) {
-    console.warn(`[agent] Creation hallucination detected (Codex) — nudging`);
+    logger.warn(`[agent] Creation hallucination detected (Codex) — nudging`);
     messages.push({ role: "user", content: creationNudge } as ChatCompletionMessageParam);
     return { shouldContinue: true, unmatchedClaimNudged, selfCheckFired };
   }
@@ -291,7 +295,7 @@ export function handleNoToolCallBranch(input: NoToolCallInput): NoToolCallResult
   if (!unmatchedClaimNudged && iteration < maxIterations - 1) {
     const claimNudge = checkUnmatchedActionClaim(assistantContent, toolsCalledThisTurn);
     if (claimNudge) {
-      console.warn(`[agent] Unmatched action claim detected (Codex) — nudging`);
+      logger.warn(`[agent] Unmatched action claim detected (Codex) — nudging`);
       unmatchedClaimNudged = true;
       messages.push({ role: "user", content: claimNudge } as ChatCompletionMessageParam);
       return { shouldContinue: true, unmatchedClaimNudged, selfCheckFired };

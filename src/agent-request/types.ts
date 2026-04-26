@@ -1,6 +1,6 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ToolDefinition, LAXConfig } from "../types.js";
-import type { MemoryIndex } from "../memory.js";
+import type { MemoryIndex, MemoryManager } from "../memory.js";
 import type { IntegrationRegistry } from "../integrations.js";
 import type { SecretsStore } from "../secrets.js";
 
@@ -21,6 +21,8 @@ export interface AgentRequestInput {
   dataDir: string;
   /** Memory index for context building */
   memoryIndex: MemoryIndex;
+  /** High-level memory facade (per-turn context, persistence, search). */
+  memoryManager: MemoryManager;
   /** Integration registry for API context */
   integrations: IntegrationRegistry;
   /** Secrets store for API key lookups */

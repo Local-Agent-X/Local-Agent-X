@@ -643,10 +643,24 @@
   </div>
 
   <div id="page-protocols" class="page">
-    <div class="page-header"><h2>PROTOCOLS</h2><div style="flex:1"></div><span class="page-subtitle" id="protocol-count"></span></div>
-    <div class="page-body">
-      <p style="font-size:.78rem;color:var(--muted);margin-bottom:16px">Say the trigger phrase in chat and the agent follows the protocol automatically.</p>
-      <div id="protocols-list"></div>
+    <div class="page-header">
+      <h2>PROTOCOLS</h2>
+      <div style="flex:1"></div>
+      <span class="page-subtitle" id="protocol-count"></span>
+    </div>
+    <div class="page-body" id="protocol-shell">
+      <aside class="protocol-sidebar" id="protocol-sidebar">
+        <button id="protocol-new-btn" type="button" onclick="protocolStartNew()">+ New Protocol</button>
+        <input id="protocol-search" type="search" placeholder="Search protocols…" autocomplete="off" oninput="protocolFilter()"/>
+        <div id="protocol-tree"></div>
+      </aside>
+      <section class="protocol-detail" id="protocol-detail">
+        <div id="protocol-empty" class="protocol-empty">
+          <p>Pick a protocol from the sidebar, or hit <strong>+ New Protocol</strong> to write your own.</p>
+          <p style="font-size:.72rem;color:var(--muted);margin-top:8px">Imported SKILL.md files appear here too — edit them and the change persists as your override.</p>
+        </div>
+        <div id="protocol-view" class="protocol-view" style="display:none"></div>
+      </section>
     </div>
   </div>
 

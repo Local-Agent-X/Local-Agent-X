@@ -20,6 +20,10 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+import { createLogger } from "./logger.js";
+import { tokenizeBasic, jaccardSimilarity as jaccardSim } from "./memory/text-utils.js";
+const logger = createLogger("memory-consolidation");
+
 // ══════════════════════════════════════════════════════════
 //  Types
 // ══════════════════════════════════════════════════════════
@@ -75,25 +79,8 @@ function slugify(name: string): string {
     .replace(/^-|-$/g, "");
 }
 
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 2);
-}
-
 function jaccardSimilarity(a: string, b: string): number {
-  const setA = new Set(tokenize(a));
-  const setB = new Set(tokenize(b));
-  if (setA.size === 0 && setB.size === 0) return 1;
-  if (setA.size === 0 || setB.size === 0) return 0;
-  let intersection = 0;
-  for (const w of setA) {
-    if (setB.has(w)) intersection++;
-  }
-  const union = setA.size + setB.size - intersection;
-  return union === 0 ? 0 : intersection / union;
+  return jaccardSim(tokenizeBasic(a), tokenizeBasic(b));
 }
 
 function todayDateStr(): string {
@@ -107,7 +94,6 @@ function todayDateStr(): string {
 export class MemoryConsolidator {
   private static instance: MemoryConsolidator;
   private history: ConsolidationLogEntry[];
-  private nightlyTimer: ReturnType<typeof setTimeout> | null = null;
 
   private constructor() {
     ensureDirs();
@@ -351,40 +337,6 @@ export class MemoryConsolidator {
     }
 
     return candidates;
-  }
-
-  // ── Schedule nightly consolidation ────────────────────────
-
-  scheduleNightly(): void {
-    if (this.nightlyTimer) {
-      clearTimeout(this.nightlyTimer);
-    }
-
-    const now = new Date();
-    const next3am = new Date(now);
-    next3am.setHours(3, 0, 0, 0);
-    if (next3am.getTime() <= now.getTime()) {
-      next3am.setDate(next3am.getDate() + 1);
-    }
-
-    const delay = next3am.getTime() - now.getTime();
-    this.nightlyTimer = setTimeout(() => {
-      try {
-        const report = this.consolidate();
-        console.log(
-          `[consolidation] Nightly run: merged=${report.mergedCount} promoted=${report.promotedCount} entities=${report.entityPagesUpdated}`
-        );
-      } catch (err) {
-        console.error("[consolidation] Nightly run failed:", err);
-      }
-      // Reschedule for next night
-      this.scheduleNightly();
-    }, delay);
-
-    // Prevent timer from keeping process alive
-    if (this.nightlyTimer && typeof this.nightlyTimer === "object" && "unref" in this.nightlyTimer) {
-      this.nightlyTimer.unref();
-    }
   }
 
   // ── Private helpers ───────────────────────────────────────

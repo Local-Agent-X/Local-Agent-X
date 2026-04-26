@@ -1,5 +1,8 @@
 import type Database from "better-sqlite3";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("memory.index-schema");
+
 export const CURRENT_SCHEMA_VERSION = 8;
 
 export function getSchemaVersion(db: InstanceType<typeof Database>): number {
@@ -17,7 +20,7 @@ export function migrateSchema(
   db: InstanceType<typeof Database>,
   fromVersion: number
 ): void {
-  console.log(
+  logger.info(
     `[memory] Migrating schema from v${fromVersion} to v${CURRENT_SCHEMA_VERSION}`
   );
 
@@ -223,10 +226,10 @@ export function initSchema(
     `);
     hasFts = true;
   } catch {
-    console.log("[memory] FTS5 not available — keyword search disabled");
+    logger.info("[memory] FTS5 not available — keyword search disabled");
   }
 
-  console.log(`[memory] Schema migration complete (v${CURRENT_SCHEMA_VERSION})`);
+  logger.info(`[memory] Schema migration complete (v${CURRENT_SCHEMA_VERSION})`);
   return { hasFts };
 }
 
@@ -235,7 +238,7 @@ export function rebuildFtsIndex(
   hasFts: boolean
 ): void {
   if (!hasFts) return;
-  console.log("[memory] Rebuilding FTS index...");
+  logger.info("[memory] Rebuilding FTS index...");
 
   db.transaction(() => {
     try {
@@ -269,5 +272,5 @@ export function rebuildFtsIndex(
     }
   })();
 
-  console.log("[memory] FTS rebuild complete");
+  logger.info("[memory] FTS rebuild complete");
 }

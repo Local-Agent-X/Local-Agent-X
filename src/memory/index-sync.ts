@@ -10,6 +10,9 @@ import { embedChunksWithRetry, pruneEmbeddingCache } from "./index-embedding.js"
 import { archiveOldFacts } from "./index-watcher.js";
 import { listMemoryFiles, listSessionFiles, extractDateFromPath } from "./index-files.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("memory.index-sync");
+
 export function countSessionMessages(path: string): number {
   try {
     const session = JSON.parse(readFileSync(path, "utf-8")) as Session;
@@ -261,7 +264,7 @@ export async function syncIndex(deps: SyncDeps): Promise<void> {
 
     archiveOldFacts(deps.db, deps.config, deps.hasFts);
   } catch (e) {
-    console.error("[memory] Sync failed:", (e as Error).message);
+    logger.error("[memory] Sync failed:", (e as Error).message);
     deps.dirtyRef.value = true;
   } finally {
     deps.syncInProgressRef.value = false;

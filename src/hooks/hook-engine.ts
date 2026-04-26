@@ -17,6 +17,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import type { HookDefinition, HookEvent, HookEventContext, HookResult, HooksConfig } from "./hook-types.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("hooks.hook-engine");
+
 interface SecurityEvaluator {
   evaluate(ctx: { toolName: string; args: Record<string, unknown>; sessionId: string; callContext?: string }): { allowed: boolean; reason: string };
 }
@@ -52,9 +55,9 @@ export class HookEngine {
       if (!existsSync(HOOKS_PATH)) { this.hooks = []; return; }
       const config = JSON.parse(readFileSync(HOOKS_PATH, "utf-8")) as HooksConfig;
       this.hooks = Array.isArray(config.hooks) ? config.hooks : [];
-      console.log(`[hooks] Loaded ${this.hooks.length} hooks from ${HOOKS_PATH}`);
+      logger.info(`[hooks] Loaded ${this.hooks.length} hooks from ${HOOKS_PATH}`);
     } catch (e) {
-      console.warn(`[hooks] Failed to load hooks: ${(e as Error).message}`);
+      logger.warn(`[hooks] Failed to load hooks: ${(e as Error).message}`);
       this.hooks = [];
     }
   }
@@ -83,7 +86,7 @@ export class HookEngine {
       }
       result.durationMs = Date.now() - start;
       const label = hook.name || `${hook.type}:${hook.event}`;
-      console.log(`[hooks] ${label} → ${result.continue ? "continue" : "BLOCKED"} (${result.durationMs}ms)`);
+      logger.info(`[hooks] ${label} → ${result.continue ? "continue" : "BLOCKED"} (${result.durationMs}ms)`);
       if (!result.continue) return result;
     }
     return { continue: true };
@@ -99,9 +102,9 @@ export class HookEngine {
     this.runHook(hook, ctx)
       .then((r) => {
         const label = hook.name || `${hook.type}:${hook.event}`;
-        console.log(`[hooks] ${label} (async) → ${r.continue ? "ok" : "blocked"}`);
+        logger.info(`[hooks] ${label} (async) → ${r.continue ? "ok" : "blocked"}`);
       })
-      .catch((e) => console.warn(`[hooks] async hook error: ${(e as Error).message}`));
+      .catch((e) => logger.warn(`[hooks] async hook error: ${(e as Error).message}`));
   }
 
   private runHook(hook: HookDefinition, ctx: HookEventContext): Promise<HookResult> {
@@ -124,7 +127,7 @@ export class HookEngine {
         callContext: ctx.callContext as "local" | "api" | "delegated" | "cron" | undefined,
       });
       if (!decision.allowed) {
-        console.warn(`[hooks] Command blocked by security: ${decision.reason}`);
+        logger.warn(`[hooks] Command blocked by security: ${decision.reason}`);
         return Promise.resolve({ continue: true, output: `Hook command blocked by security: ${decision.reason}` });
       }
     }

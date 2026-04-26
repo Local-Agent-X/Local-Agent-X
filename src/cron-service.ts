@@ -9,6 +9,9 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 
 import { join } from "node:path";
 import type { ToolDefinition } from "./types.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("cron-service");
+
 export interface CronJob {
   id: string;
   name: string;
@@ -139,7 +142,7 @@ export class CronService {
       const { statSync } = require("node:fs");
       const mtime = statSync(this.jobsFile).mtimeMs;
       if (mtime > this.lastFileMtime) {
-        console.log(`[cron] jobs.json changed externally — reloading`);
+        logger.info(`[cron] jobs.json changed externally — reloading`);
         this.loadJobs();
         // Reschedule any new/changed jobs
         if (this.settings.enabled) {
@@ -176,7 +179,7 @@ export class CronService {
     for (const job of this.jobs.values()) {
       if (job.enabled) this.scheduleJob(job);
     }
-    console.log(`[cron] Started with ${this.jobs.size} jobs`);
+    logger.info(`[cron] Started with ${this.jobs.size} jobs`);
   }
 
   stop(): void {
@@ -213,7 +216,7 @@ export class CronService {
     }, ms);
     this.timers.set(job.id, timer as unknown as ReturnType<typeof setInterval>);
     const nextRun = new Date(Date.now() + ms);
-    console.log(`[cron] ${job.name}: next run at ${nextRun.toLocaleString()} (${Math.round(ms / 60000)}m from now)`);
+    logger.info(`[cron] ${job.name}: next run at ${nextRun.toLocaleString()} (${Math.round(ms / 60000)}m from now)`);
   }
 
   private async executeJob(job: CronJob): Promise<void> {
@@ -223,7 +226,7 @@ export class CronService {
 
     this.running.add(job.id);
     try {
-      console.log(`[cron] Running job: ${job.name} (${job.id})`);
+      logger.info(`[cron] Running job: ${job.name} (${job.id})`);
       const raw = await this.executeHandler(job.id, job.prompt);
       const result = typeof raw === "string" ? { output: raw } : raw;
       job.lastRun = new Date().toISOString();
@@ -231,7 +234,7 @@ export class CronService {
       if (result.reportPath) job.lastReportPath = result.reportPath;
       this.saveJobs();
     } catch (e) {
-      console.error(`[cron] Job failed: ${job.name}:`, (e as Error).message);
+      logger.error(`[cron] Job failed: ${job.name}:`, (e as Error).message);
       job.lastRun = new Date().toISOString();
       job.lastResult = `ERROR: ${(e as Error).message}`;
       this.saveJobs();

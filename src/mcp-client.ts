@@ -21,6 +21,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import type { ToolDefinition, ToolResult } from "./types.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("mcp-client");
+
 const PROTOCOL_VERSION = "2025-11-25";
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -99,13 +102,13 @@ class MCPConnection {
       // MCP servers log to stderr — only show errors, not info
       const trimmed = chunk.trim();
       if (trimmed && /error|fail|crash/i.test(trimmed)) {
-        console.warn(`[mcp:${this.serverName}] ${trimmed.slice(0, 200)}`);
+        logger.warn(`[mcp:${this.serverName}] ${trimmed.slice(0, 200)}`);
       }
     });
 
     this.proc.on("exit", (code) => {
       if (code !== 0 && code !== null) {
-        console.warn(`[mcp:${this.serverName}] Process exited with code ${code}`);
+        logger.warn(`[mcp:${this.serverName}] Process exited with code ${code}`);
       }
       // Reject all pending requests
       for (const [id, handler] of this.pending) {
@@ -127,7 +130,7 @@ class MCPConnection {
     // Discover tools
     const result = await this.request("tools/list", {}) as { tools: MCPTool[] };
     this.tools = result.tools || [];
-    console.log(`[mcp:${this.serverName}] Connected — ${this.tools.length} tools: ${this.tools.map(t => t.name).join(", ")}`);
+    logger.info(`[mcp:${this.serverName}] Connected — ${this.tools.length} tools: ${this.tools.map(t => t.name).join(", ")}`);
   }
 
   private request(method: string, params: unknown): Promise<unknown> {
@@ -218,7 +221,7 @@ export class MCPManager {
         await conn.connect();
         this.connections.set(name, conn);
       } catch (e) {
-        console.warn(`[mcp] Failed to connect to ${name}: ${(e as Error).message}`);
+        logger.warn(`[mcp] Failed to connect to ${name}: ${(e as Error).message}`);
       }
     }
   }

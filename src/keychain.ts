@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { randomBytes, scryptSync } from "node:crypto";
 import { hostname, userInfo } from "node:os";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("keychain");
+
 /**
  * OS Keychain Integration
  *
@@ -202,10 +205,10 @@ export function getOrCreateMasterKey(dataDir: string): KeychainResult {
       // Generate new key and protect with DPAPI
       const key = randomBytes(32);
       dpapiStore(key, dpapiPath);
-      console.log("[keychain] Master key stored in Windows DPAPI");
+      logger.info("[keychain] Master key stored in Windows DPAPI");
       return { key, provider: "dpapi" };
     } catch (e) {
-      console.warn(`[keychain] DPAPI failed: ${(e as Error).message}. Trying next provider.`);
+      logger.warn(`[keychain] DPAPI failed: ${(e as Error).message}. Trying next provider.`);
     }
   }
 
@@ -220,10 +223,10 @@ export function getOrCreateMasterKey(dataDir: string): KeychainResult {
       try {
         const key = randomBytes(32);
         macKeychainStore(key);
-        console.log("[keychain] Master key stored in macOS Keychain");
+        logger.info("[keychain] Master key stored in macOS Keychain");
         return { key, provider: "macos-keychain" };
       } catch (e) {
-        console.warn(`[keychain] macOS Keychain failed: ${(e as Error).message}. Trying next provider.`);
+        logger.warn(`[keychain] macOS Keychain failed: ${(e as Error).message}. Trying next provider.`);
       }
     }
   }
@@ -239,16 +242,16 @@ export function getOrCreateMasterKey(dataDir: string): KeychainResult {
       try {
         const key = randomBytes(32);
         libsecretStore(key);
-        console.log("[keychain] Master key stored in libsecret");
+        logger.info("[keychain] Master key stored in libsecret");
         return { key, provider: "libsecret" };
       } catch (e) {
-        console.warn(`[keychain] libsecret failed: ${(e as Error).message}. Using file fallback.`);
+        logger.warn(`[keychain] libsecret failed: ${(e as Error).message}. Using file fallback.`);
       }
     }
   }
 
   // ── File-based fallback ──
-  console.log("[keychain] Using file-based key derivation (OS keychain not available)");
+  logger.info("[keychain] Using file-based key derivation (OS keychain not available)");
   return { key: fileFallbackGetOrCreate(dataDir), provider: "file-fallback" };
 }
 

@@ -21,6 +21,9 @@ import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { IncomingMessage, Server } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("voice.audio-ws");
+
 export interface VoiceSession {
   /** Feed a 16kHz Int16 PCM frame from the client's mic */
   onMicFrame(frame: Int16Array): void;
@@ -69,12 +72,12 @@ export function setupVoiceWebSocket(server: Server, authToken: string): void {
       const u = new URL(req.url || "/", "http://localhost");
       if (u.pathname !== "/ws/voice") return; // not our path — leave socket alone
       const hasToken = u.searchParams.get("token") ? "yes" : "no";
-      console.log(`[voice-ws] upgrade hit: url=${req.url} hasToken=${hasToken}`);
+      logger.info(`[voice-ws] upgrade hit: url=${req.url} hasToken=${hasToken}`);
       wss.handleUpgrade(req, socket as import("node:net").Socket, head, (ws) => {
         wss.emit("connection", ws, req);
       });
     } catch (e) {
-      console.warn(`[voice-ws] upgrade error: ${(e as Error).message}`);
+      logger.warn(`[voice-ws] upgrade error: ${(e as Error).message}`);
       try { socket.destroy(); } catch {}
     }
   });
@@ -92,11 +95,11 @@ export function setupVoiceWebSocket(server: Server, authToken: string): void {
     const tokenBuf = Buffer.from(token);
     if (tokenBuf.length !== authBuf.length || !timingSafeEqual(tokenBuf, authBuf)) {
       const remote = req.socket.remoteAddress || "unknown";
-      console.warn(`[voice-ws] auth rejected from ${remote} — tokenLen=${tokenBuf.length} expected=${authBuf.length} match=${tokenBuf.length === authBuf.length ? "false" : "length-mismatch"}`);
+      logger.warn(`[voice-ws] auth rejected from ${remote} — tokenLen=${tokenBuf.length} expected=${authBuf.length} match=${tokenBuf.length === authBuf.length ? "false" : "length-mismatch"}`);
       ws.close(4001, "Unauthorized");
       return;
     }
-    console.log(`[voice-ws] connection accepted from ${req.socket.remoteAddress}`);
+    logger.info(`[voice-ws] connection accepted from ${req.socket.remoteAddress}`);
 
     let sessionId = "";
     let session: VoiceSession | null = null;
@@ -140,7 +143,7 @@ export function setupVoiceWebSocket(server: Server, authToken: string): void {
             sendEvent: ctx.sendEvent,
           });
           ctx.sendEvent({ type: "ready", sessionId });
-          console.log(`[voice-ws] session opened: ${sessionId}`);
+          logger.info(`[voice-ws] session opened: ${sessionId}`);
         } else if (msg.type === "eos") {
           session?.onEndOfSpeech?.();
         } else if (msg.type === "voice_settings") {
@@ -152,20 +155,20 @@ export function setupVoiceWebSocket(server: Server, authToken: string): void {
           ws.close(1000, "bye");
         }
       } catch (e) {
-        console.warn(`[voice-ws] bad control message: ${(e as Error).message}`);
+        logger.warn(`[voice-ws] bad control message: ${(e as Error).message}`);
       }
     });
 
     ws.on("close", () => {
       closed = true;
       try { session?.close(); } catch {}
-      console.log(`[voice-ws] session closed: ${sessionId || "(no-hello)"}`);
+      logger.info(`[voice-ws] session closed: ${sessionId || "(no-hello)"}`);
     });
 
     ws.on("error", (err) => {
-      console.warn(`[voice-ws] socket error: ${err.message}`);
+      logger.warn(`[voice-ws] socket error: ${err.message}`);
     });
   });
 
-  console.log(`[voice-ws] Listening on /ws/voice (auth-gated)`);
+  logger.info(`[voice-ws] Listening on /ws/voice (auth-gated)`);
 }

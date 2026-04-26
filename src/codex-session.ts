@@ -12,6 +12,9 @@
 
 // ── Types ──
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("codex-session");
+
 export interface CodexSession {
   sessionId: string;
   /** Response ID from the last Codex turn (for incremental mode) */
@@ -86,7 +89,7 @@ export function cleanupStaleSessions(maxAgeMs: number = DEFAULT_MAX_AGE_MS): num
   }
 
   if (removed > 0) {
-    console.log(`[codex-session] Cleaned up ${removed} stale session(s)`);
+    logger.info(`[codex-session] Cleaned up ${removed} stale session(s)`);
   }
   return removed;
 }

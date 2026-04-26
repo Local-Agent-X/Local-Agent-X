@@ -23,6 +23,9 @@ import {
   statusSummary,
 } from "./conductor.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("operations.tools");
+
 function workspaceDir(): string {
   return join(process.cwd(), "workspace", "operations");
 }
@@ -75,7 +78,7 @@ export function createOperationTools(): ToolDefinition[] {
           const sessionId = (args._sessionId as string) || "";
           startExecutor(op.id, { workspaceDir: workspaceDir(), parentSessionId: sessionId });
         } catch (e) {
-          console.warn(`[operation_start] Failed to start executor: ${(e as Error).message}`);
+          logger.warn(`[operation_start] Failed to start executor: ${(e as Error).message}`);
         }
 
         const lines = [

@@ -26,6 +26,7 @@ export interface SearchOptions {
   dateTo?: string;
   rerank?: boolean;
   rerankModel?: string;
+  sessionId?: string;
   hyde?: boolean;
   hydeProvider?: "ollama" | "anthropic" | "openai" | "auto";
   hydeModel?: string;

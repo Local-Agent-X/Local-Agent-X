@@ -70,17 +70,36 @@ def _load_model():
     global _model
     if _model is not None:
         return _model
-    log.info("loading chatterbox-tts (first request — ~10-15s for model download/load)...")
+    log.info("loading chatterbox-tts (first request - ~10-15s for model download/load)...")
     t0 = time.time()
-    # chatterbox-streaming exposes the same TTS class as the upstream
-    # chatterbox package. We import lazily so a cold sidecar starts fast.
+    # PyTorch 2.6 changed torch.load default weights_only=True; chatterbox's
+    # checkpoints are legacy .tar format requiring weights_only=False. Patch
+    # the global default before chatterbox imports run their loads. Safe
+    # here because we trust the ResembleAI/chatterbox HF repo.
+    import torch
+    _orig_torch_load = torch.load
+    def _patched_load(*args, **kwargs):
+        kwargs.setdefault("weights_only", False)
+        return _orig_torch_load(*args, **kwargs)
+    torch.load = _patched_load  # type: ignore[assignment]
     try:
-        from chatterbox.tts import ChatterboxTTS
-    except ImportError:
-        # Fallback for upstream package layout differences across releases
-        from chatterbox import ChatterboxTTS  # type: ignore[no-redef]
-    device = "cuda" if _detect_gpu() else "cpu"
-    _model = ChatterboxTTS.from_pretrained(device=device)
+        # Prefer Chatterbox Turbo (1-step distilled decoder, ~3-5x faster
+        # than standard ChatterboxTTS at similar quality). Falls back to
+        # standard if the installed package only ships ChatterboxTTS.
+        ChatterboxClass = None
+        try:
+            from chatterbox.tts_turbo import ChatterboxTurboTTS as ChatterboxClass  # type: ignore[no-redef]
+            log.info("  using ChatterboxTurboTTS (1-step distilled, fast path)")
+        except ImportError:
+            try:
+                from chatterbox.tts import ChatterboxTTS as ChatterboxClass  # type: ignore[no-redef]
+                log.info("  using standard ChatterboxTTS (Turbo not installed)")
+            except ImportError:
+                from chatterbox import ChatterboxTTS as ChatterboxClass  # type: ignore[no-redef]
+        device = "cuda" if _detect_gpu() else "cpu"
+        _model = ChatterboxClass.from_pretrained(device=device)
+    finally:
+        torch.load = _orig_torch_load  # type: ignore[assignment]
     log.info(f"  chatterbox-tts ready in {time.time() - t0:.1f}s on {device}, sr={_model.sr}")
     return _model
 
@@ -98,6 +117,23 @@ async def lifespan(app):
             _load_model()
         except Exception as e:
             log.exception(f"pre-warm failed (will retry on first request): {e}")
+        # Pre-warm synth: the very first generate() call after model load
+        # pays a ~20s cold-start tax (CUDA kernel JIT + model graph init).
+        # Burn that cost at boot using any registered clone, so the user's
+        # first real request hits the ~1s warm path instead of the wall.
+        if _model is not None and os.environ.get("LAX_CHATTERBOX_PREWARM_SYNTH", "1") == "1":
+            try:
+                clones = _list_clones()
+                if clones:
+                    ref = _ref_path(clones[0]["id"])
+                    log.info(f"  pre-warm synth using {clones[0]['id']!r} (one-time ~20s cold-start)...")
+                    t0 = time.time()
+                    _model.generate("Warming up the model.", audio_prompt_path=str(ref))
+                    log.info(f"  pre-warm synth done in {time.time() - t0:.1f}s — first user request will hit warm path")
+                else:
+                    log.info("  no registered clones yet, skipping pre-warm synth (first user request will pay ~20s cold-start)")
+            except Exception as e:
+                log.warning(f"pre-warm synth failed (non-fatal): {e}")
     yield
     log.info("lax-chatterbox sidecar shutdown")
 

@@ -120,6 +120,26 @@ _stt = None
 _vad_model = None
 _tts = None
 
+# RVC carrier voice selection: same-gender Kokoro carrier dramatically
+# improves likeness because RVC then only has to map timbre, not pitch
+# range. Lowercase clone IDs that should use a female carrier — extend
+# as new common voices are uploaded. Default is am_michael (male).
+_FEMALE_CLONE_KEYWORDS = (
+    "taylor", "swift", "adele", "billie", "ariana", "rihanna", "beyonce",
+    "katy perry", "lady gaga", "miley", "selena", "dua lipa",
+    "emma stone", "scarlett", "zendaya", "anya", "margot",
+    # generic markers
+    "_female", "-female", " female", "(female)",
+)
+
+
+def _carrier_for_clone(clone_id: str) -> str:
+    """Pick a Kokoro voice that's gender-matched to the cloned target."""
+    name = clone_id.lower()
+    if any(k in name for k in _FEMALE_CLONE_KEYWORDS):
+        return "af_sky"
+    return "am_michael"
+
 
 def _load_stt():
     global _stt
@@ -186,55 +206,98 @@ class Session:
         self.consecutive_silence = 0
         self.utterance_start_idx = 0
         self.last_partial_t = 0.0
-        # TTS queue + cancel
-        self.tts_queue: asyncio.Queue = asyncio.Queue()
+        # Pipelined TTS: each sentence has a Future that resolves when its
+        # Kokoro+RVC processing finishes. The streamer consumes them in
+        # arrival order so audio chunks reach the browser in order even
+        # though processing happens concurrently. This hides the RVC
+        # convert latency for sentences 2+ in multi-sentence replies.
+        self.tts_order: asyncio.Queue = asyncio.Queue()
+        self.tts_results: dict = {}      # sentence_id -> asyncio.Future[(samples, sr, prep_ms) | Exception]
+        self.tts_in_flight: dict = {}    # sentence_id -> asyncio.Task (prep)
+        self.tts_streamer_task: Optional[asyncio.Task] = None
+        # Cap concurrent prep tasks so we don't OOM the GPU on long
+        # multi-sentence replies. 3 is comfortable on a 12GB 3060.
+        self.tts_prep_sem = asyncio.Semaphore(3)
         self.tts_cancel = False
-        self.tts_task: Optional[asyncio.Task] = None
 
     async def start_tts_worker(self):
-        if self.tts_task is None or self.tts_task.done():
-            self.tts_task = asyncio.create_task(self._tts_worker())
+        if self.tts_streamer_task is None or self.tts_streamer_task.done():
+            self.tts_streamer_task = asyncio.create_task(self._tts_streamer())
 
     async def stop_tts_worker(self):
-        if self.tts_task and not self.tts_task.done():
-            self.tts_task.cancel()
+        # Cancel the streamer and any in-flight prep tasks
+        for task in list(self.tts_in_flight.values()):
+            task.cancel()
+        self.tts_in_flight.clear()
+        if self.tts_streamer_task and not self.tts_streamer_task.done():
+            self.tts_streamer_task.cancel()
             try:
-                await self.tts_task
+                await self.tts_streamer_task
             except asyncio.CancelledError:
                 pass
 
-    async def _tts_worker(self):
+    async def _tts_streamer(self):
+        """Pulls sentence IDs in arrival order, awaits their prepared audio,
+        and streams audio_chunks. Sentences are processed in parallel by
+        _prep_one() but emitted in order here."""
         while True:
-            job = await self.tts_queue.get()
-            if job is None:
+            sentence_id = await self.tts_order.get()
+            if sentence_id is None:
                 continue
-            text, sentence_id, voice, speed = job
+            fut = self.tts_results.pop(sentence_id, None)
+            if fut is None:
+                continue
             if self.tts_cancel:
-                # Drain remaining queue items and emit audio_done cancelled
                 await self._send({"type": "audio_done", "id": sentence_id, "ms": 0, "cancelled": True})
                 continue
-            await self._synthesize_one(text, sentence_id, voice, speed)
+            try:
+                samples, sample_rate, prep_ms = await fut
+            except Exception as e:
+                await self._send({"type": "error", "message": f"tts: {e}"})
+                await self._send({"type": "audio_done", "id": sentence_id, "ms": prep_ms if isinstance(prep_ms, int) else 0, "cancelled": False})
+                continue
+            await self._stream_audio(samples, sample_rate, sentence_id, prep_ms)
 
-    async def _synthesize_one(self, text: str, sentence_id: int, voice: str, speed: float):
-        """Synthesize one sentence with Kokoro and stream WS audio_chunks.
-        Voice cloning lives in the optional Pro tier (RVC sidecar at :7009);
-        Lite-tier sidecar only knows built-in Kokoro voices."""
-        loop = asyncio.get_running_loop()
+    async def _prep_one(self, text: str, sentence_id: int, voice: str, speed: float, fut):
+        """Generate Kokoro audio (+ optional RVC convert). Resolves the
+        sentence's Future with (samples, sample_rate, prep_ms_int)."""
+        async with self.tts_prep_sem:
+            is_clone = voice.startswith("clone:")
+            loop = asyncio.get_running_loop()
+            t0 = time.time()
+            try:
+                tts = _load_tts()
+                # For cloned voices, Kokoro generates a "carrier" — pick one
+                # that matches the target speaker's gender/range so RVC has
+                # less work. Same-gender carriers cut the "robotic" artifact.
+                kokoro_voice = _carrier_for_clone(voice.split(":", 1)[1]) if is_clone else voice
+                samples, sample_rate = await loop.run_in_executor(
+                    None,
+                    lambda: tts.create(text, voice=kokoro_voice, speed=speed, lang="en-us"),
+                )
+            except Exception as e:
+                log.exception(f"tts synth failed for id={sentence_id}")
+                if not fut.done():
+                    fut.set_exception(e)
+                return
+
+            if is_clone:
+                try:
+                    samples, sample_rate = await self._convert_via_rvc(
+                        voice.split(":", 1)[1], samples, sample_rate, sentence_id,
+                    )
+                except Exception as e:
+                    log.warning(f"rvc convert failed for id={sentence_id} voice={voice}: {e} - falling back to kokoro")
+
+            prep_ms = int((time.time() - t0) * 1000)
+            if not fut.done():
+                fut.set_result((samples, sample_rate, prep_ms))
+
+    async def _stream_audio(self, samples, sample_rate: int, sentence_id: int, prep_ms: int):
+        """Emit audio_chunks for already-prepared samples + the audio_done."""
         t0 = time.time()
-        try:
-            tts = _load_tts()
-            samples, sample_rate = await loop.run_in_executor(
-                None,
-                lambda: tts.create(text, voice=voice, speed=speed, lang="en-us"),
-            )
-        except Exception as e:
-            log.exception(f"tts synth failed for id={sentence_id}")
-            await self._send({"type": "error", "message": f"tts: {e}"})
-            await self._send({"type": "audio_done", "id": sentence_id, "ms": int((time.time() - t0) * 1000), "cancelled": False})
-            return
-
         if self.tts_cancel:
-            await self._send({"type": "audio_done", "id": sentence_id, "ms": int((time.time() - t0) * 1000), "cancelled": True})
+            await self._send({"type": "audio_done", "id": sentence_id, "ms": prep_ms, "cancelled": True})
             return
 
         # Chunk to ~80ms so playback can start mid-sentence on the browser
@@ -258,20 +321,79 @@ class Session:
             "cancelled": self.tts_cancel,
         })
 
+    async def _convert_via_rvc(self, clone_id: str, samples: np.ndarray, sample_rate: int, sentence_id: int):
+        """Send Kokoro samples to the RVC sidecar (:7009) for voice
+        conversion. Returns (converted_samples_float32, sample_rate).
+        Raises on any failure so the caller can fall back to Kokoro audio."""
+        import base64, io
+        import httpx
+        import soundfile as sf
+
+        rvc_port = os.environ.get("LAX_RVC_PORT", "7009")
+        url = f"http://127.0.0.1:{rvc_port}/clones/{clone_id}/infer"
+        pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+        # Quality-vs-latency trade for live conversation:
+        #   index_rate 0.85 — pulls output closer to target speaker
+        #     distribution (vs RVC default 0.5). Likeness > naturalness here.
+        #   f0_method fcpe — ~30-40% faster than RMVPE for pitch extraction
+        #     with marginal quality cost. RMVPE was making first-sentence
+        #     latency ~1.5s on a 3060; FCPE brings it closer to 0.8-1.0s.
+        body = {
+            "pcm_b64": base64.b64encode(pcm).decode("ascii"),
+            "sr": int(sample_rate),
+            "index_rate": 0.85,
+            "f0_method": "fcpe",
+        }
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(url, json=body)
+        if r.status_code == 404:
+            raise RuntimeError(f"clone {clone_id!r} not installed in RVC sidecar")
+        if r.status_code != 200:
+            raise RuntimeError(f"rvc returned {r.status_code}: {r.text[:200]}")
+        out_samples, out_sr = sf.read(io.BytesIO(r.content))
+        if out_samples.ndim > 1:
+            out_samples = out_samples.mean(axis=1)
+        out_samples = out_samples.astype(np.float32)
+        # Resample to 24kHz so the browser's playback worklet (defaulted
+        # to 24kHz for Kokoro) doesn't need a per-sentence rate change.
+        if out_sr != TTS_SR:
+            from scipy.signal import resample_poly
+            out_samples = resample_poly(out_samples, TTS_SR, int(out_sr)).astype(np.float32)
+            out_sr = TTS_SR
+        log.info(f"  rvc convert id={sentence_id} clone={clone_id} {len(samples)}sa@{sample_rate}Hz -> {len(out_samples)}sa@{out_sr}Hz ({r.headers.get('X-Convert-Ms')}ms)")
+        return out_samples, int(out_sr)
+
     async def cancel_tts(self):
         self.tts_cancel = True
-        # Drain queue
-        while not self.tts_queue.empty():
+        # Cancel all in-flight prep tasks
+        for task in list(self.tts_in_flight.values()):
+            task.cancel()
+        self.tts_in_flight.clear()
+        # Drain the order queue + result futures
+        while not self.tts_order.empty():
             try:
-                self.tts_queue.get_nowait()
+                self.tts_order.get_nowait()
             except asyncio.QueueEmpty:
                 break
+        for fut in self.tts_results.values():
+            if not fut.done():
+                fut.cancel()
+        self.tts_results.clear()
         # Reset cancel flag for the next batch
         await asyncio.sleep(0)
         self.tts_cancel = False
 
     async def queue_tts(self, text: str, sentence_id: int, voice: str, speed: float):
-        await self.tts_queue.put((text, sentence_id, voice, speed))
+        # Pipelined: kick off prep immediately so it runs concurrently with
+        # any prior sentence's RVC convert / playback. Streamer emits the
+        # results in order via tts_order.
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self.tts_results[sentence_id] = fut
+        await self.tts_order.put(sentence_id)
+        prep_task = asyncio.create_task(self._prep_one(text, sentence_id, voice, speed, fut))
+        self.tts_in_flight[sentence_id] = prep_task
+        prep_task.add_done_callback(lambda _t, sid=sentence_id: self.tts_in_flight.pop(sid, None))
         await self.start_tts_worker()
 
     async def feed_audio(self, pcm_int16: np.ndarray):

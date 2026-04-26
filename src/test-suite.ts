@@ -62,7 +62,6 @@ async function testEndpoints(token: string): Promise<void> {
     ["/api/security/policies", "GET /api/security/policies"],
     ["/api/security/audit/summary", "GET /api/security/audit/summary"],
     ["/api/security/file-access", "GET /api/security/file-access"],
-    ["/api/voice/capabilities", "GET /api/voice/capabilities"],
     ["/api/sessions", "GET /api/sessions"],
     ["/api/startup-tests", "GET /api/startup-tests"],
   ];

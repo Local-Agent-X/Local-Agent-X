@@ -254,15 +254,17 @@ async function startServer(type) {
 }
 
 async function checkVoiceCaps() {
+  // The old /api/voice/capabilities endpoint and the standalone XTTS/Whisper
+  // local servers (ports 7860/7861/7862) are gone — voice now flows through
+  // /ws/voice with the GPU sidecar. Show static status badges based on the
+  // user's saved voice preference (the live picker on the chat page is the
+  // source of truth for what's actually selected).
   try {
-    const d = await apiJson('/api/voice/capabilities');
-    // Override with user's saved preference (capabilities shows auto-detected, but user may have chosen differently)
     const saved = JSON.parse(localStorage.getItem('sax_settings') || '{}');
-    const userEngine = saved.ttsEngine || d.tts;
-    const userVoice = userEngine === 'xtts' ? (saved.xttsVoice || 'clone') : (saved.ttsVoice || d.ttsVoice);
+    const voice = localStorage.getItem('lax_voice') || saved.ttsVoice || 'am_michael';
     const stt = document.getElementById('stt-status'), tts = document.getElementById('tts-status');
-    if (stt) { stt.className = d.stt !== 'none' ? 'status-badge ok' : 'status-badge err'; stt.innerHTML = `<span class="status-dot"></span> ${d.stt !== 'none' ? 'Whisper (' + esc(d.whisperModel) + ')' : 'Not available'}`; }
-    if (tts) { tts.className = userEngine !== 'none' ? 'status-badge ok' : 'status-badge err'; tts.innerHTML = `<span class="status-dot"></span> ${userEngine !== 'none' ? esc(userEngine) + ' (' + esc(userVoice) + ')' : 'Not available'}`; }
+    if (stt) { stt.className = 'status-badge ok'; stt.innerHTML = '<span class="status-dot"></span> faster-whisper (sidecar)'; }
+    if (tts) { tts.className = 'status-badge ok'; tts.innerHTML = `<span class="status-dot"></span> ${voice.startsWith('clone:') ? 'XTTS (cloned)' : 'Kokoro'} (${esc(voice)})`; }
   } catch {}
 }
 
@@ -763,6 +765,12 @@ function onTtsEngineChange(engine) {
 }
 
 async function loadXttsVoices() {
+  // The standalone XTTS server on :7862 is gone — voice cloning now runs
+  // inside the GPU sidecar and is managed from the chat-page voice picker
+  // ("+ Upload your voice…"). Settings page no longer needs to populate
+  // anything here. Short-circuit to avoid spurious 404s on page load.
+  return;
+  // eslint-disable-next-line no-unreachable
   const sel = document.getElementById('cfg-xtts-voice');
   const list = document.getElementById('saved-voices-list');
   if (!sel) return;

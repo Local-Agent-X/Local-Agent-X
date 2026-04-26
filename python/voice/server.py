@@ -51,24 +51,47 @@ from typing import Optional
 import numpy as np
 
 # Prepend bundled CUDA DLL dirs to PATH BEFORE any CUDA-using import.
-# nvidia-cublas-cu12 / nvidia-cudnn-cu12 pip wheels drop cublas64_12.dll +
-# cudnn DLLs at <venv>/Lib/site-packages/nvidia/.../bin. CTranslate2
-# (faster-whisper's backend) loads them via the OS DLL search path on
-# Windows, so we make them findable before importing faster_whisper.
+#
+# Three sources of CUDA libs in this venv:
+#   1. nvidia-cublas-cu12  → cublas64_12.dll (faster-whisper / CTranslate2)
+#   2. nvidia-cudnn-cu12 9.1 → cudnn 9.x DLLs (onnxruntime-gpu 1.20 needs
+#                              cudnnGetLibConfig which only exists in 9.x)
+#   3. torch/lib/          → torch's bundled cuDNN (8.x). MUST NOT win the
+#                            DLL search or onnxruntime crashes when it
+#                            calls a 9.x-only symbol it doesn't find.
+#
+# The cuDNN order is the trap: simply prepending nvidia-cudnn's bin to
+# PATH isn't enough — once torch is imported, its DLL dirs are added to
+# the search path AHEAD of PATH-based dirs (Windows uses the order
+# add_dll_directory was called). So we explicitly LoadLibrary the cuDNN
+# 9.x DLLs into the process here, before importing anything that touches
+# torch. Once a DLL is loaded, subsequent loads of the same SONAME
+# return the already-loaded handle, so torch's own cuDNN can't displace
+# it. Defensive but correct.
 def _prepend_cuda_dlls() -> list:
     site_packages = os.path.dirname(np.__file__).rsplit(os.sep + "numpy", 1)[0]
-    candidates = [
-        os.path.join(site_packages, "nvidia", "cublas", "bin"),
-        os.path.join(site_packages, "nvidia", "cudnn", "bin"),
-    ]
+    cublas_bin = os.path.join(site_packages, "nvidia", "cublas", "bin")
+    cudnn_bin = os.path.join(site_packages, "nvidia", "cudnn", "bin")
     added = []
-    for d in candidates:
+    # 1. Add to PATH + add_dll_directory so dynamic loads resolve here
+    for d in [cudnn_bin, cublas_bin]:  # cudnn first so it wins over torch's
         if os.path.isdir(d):
             os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
             if hasattr(os, "add_dll_directory"):
                 try: os.add_dll_directory(d)
                 except Exception: pass
             added.append(d)
+    # 2. Force-load the cuDNN 9.x DLLs into the process before torch runs.
+    #    Once loaded, the handle is reused — torch's bundled cuDNN can't
+    #    take over the same symbol space afterwards.
+    if os.path.isdir(cudnn_bin):
+        import ctypes
+        for fname in os.listdir(cudnn_bin):
+            if fname.lower().endswith(".dll") and "cudnn" in fname.lower():
+                try:
+                    ctypes.WinDLL(os.path.join(cudnn_bin, fname))
+                except OSError:
+                    pass  # some are dependent libs that load implicitly
     return added
 
 _cuda_added = _prepend_cuda_dlls()
@@ -84,7 +107,9 @@ MIC_SR = 16000             # Browser mic comes in at 16kHz
 TTS_SR = 24000             # Kokoro outputs at 24kHz
 VAD_FRAME = 512            # Silero VAD wants 512 samples at 16kHz (32ms)
 VAD_THRESH = 0.5           # Silero speech-prob threshold
-SILENCE_FRAMES_END = 12    # ~384ms silence → end of speech
+SILENCE_FRAMES_END = 8     # ~256ms silence -> end of speech (was 384ms;
+                           # tightened because faster-whisper-turbo on GPU
+                           # absorbs the tighter cut without choking)
 SPEECH_FRAMES_START = 3    # ~96ms speech → start of speech
 PARTIAL_INTERVAL_S = 0.5   # Run partial STT every 500ms during active speech
 MIN_UTTERANCE_S = 0.25     # Skip Whisper on shorter
@@ -191,14 +216,11 @@ class Session:
             await self._synthesize_one(text, sentence_id, voice, speed)
 
     async def _synthesize_one(self, text: str, sentence_id: int, voice: str, speed: float):
+        """Synthesize one sentence with Kokoro and stream WS audio_chunks.
+        Voice cloning lives in the optional Pro tier (RVC sidecar at :7009);
+        Lite-tier sidecar only knows built-in Kokoro voices."""
         loop = asyncio.get_running_loop()
         t0 = time.time()
-        # Voice catalog (Kokoro v1.0): af_* American female (alloy, aoede,
-        # bella, jessica, kore, nicole, nova, river, sarah, sky, heart),
-        # am_* American male (adam, echo, eric, fenrir, liam, michael, onyx,
-        # puck, santa), bf_* / bm_* British female / male.
-        # Per-call overrides come from the tts msg (set by the browser's
-        # voice settings panel); fallback is LAX_TTS_VOICE / LAX_TTS_SPEED.
         try:
             tts = _load_tts()
             samples, sample_rate = await loop.run_in_executor(
@@ -228,7 +250,6 @@ class Session:
                 "id": sentence_id,
                 "final": (i + chunk_n) >= len(samples),
             })
-            # Yield back to event loop between chunks so cancel can land
             await asyncio.sleep(0)
         await self._send({
             "type": "audio_done",
@@ -507,6 +528,7 @@ async def voice_ws(ws: WebSocket):
                     speed = float(speed_raw) if speed_raw is not None else float(os.environ.get("LAX_TTS_SPEED", "1.15"))
                 except (TypeError, ValueError):
                     speed = float(os.environ.get("LAX_TTS_SPEED", "1.15"))
+                log.info(f"tts cmd id={sentence_id} voice={voice} speed={speed:.2f} text={text[:40]!r}")
                 if text:
                     await sess.queue_tts(text, sentence_id, voice, speed)
 

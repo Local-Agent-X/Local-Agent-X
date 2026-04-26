@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import type { RouteHandler } from "../server-context.js";
-import { jsonResponse, readBody, safeParseBody, safeErrorMessage, corsHeaders } from "../server-utils.js";
+import { jsonResponse, safeParseBody, safeErrorMessage, corsHeaders } from "../server-utils.js";
 import { getRuntimeConfig } from "../config.js";
 
 export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
@@ -223,65 +223,47 @@ export const handleBridgeRoutes: RouteHandler = async (method, url, req, res, ct
     json(200, { ok: true, deleted }); return true;
   }
 
-  // ── Voice ──
-  if (method === "GET" && url.pathname === "/api/voice/capabilities") {
-    const { detectCapabilities } = await import("../voice.js");
-    json(200, await detectCapabilities()); return true;
-  }
-  if (method === "GET" && url.pathname.startsWith("/api/voice/preview/")) {
-    const voiceId = url.pathname.split("/").pop() || "";
-    if (!/^[a-zA-Z0-9_-]+$/.test(voiceId)) { json(400, { error: "Invalid voice ID" }); return true; }
+  // ── Voice clones (Pro tier, RVC sidecar at :7009) ──
+  // The Pro tier runs ultimate-rvc in a separate venv (~/.lax/python-rvc/venv/).
+  // If the sidecar isn't running, /api/voices/* returns 503 with an
+  // installer hint — the chat UI uses that to gate the cloning UI.
+  if (url.pathname === "/api/voices/tier" || url.pathname === "/api/voices/clones" || url.pathname.startsWith("/api/voices/clones/")) {
+    const rvcBase = `http://127.0.0.1:${process.env.LAX_RVC_PORT || "7009"}`;
     try {
-      const r = await fetch(`${getRuntimeConfig().xttsServerUrl}/voices/${voiceId}/preview`);
-      if (r.ok && r.body) {
-        const buf = Buffer.from(await r.arrayBuffer());
-        res.writeHead(200, { "Content-Type": "audio/wav", "Content-Length": String(buf.length) });
-        res.end(buf);
-      } else { json(404, { error: "Voice not found" }); }
-    } catch { json(502, { error: "XTTS server not reachable" }); }
-    return true;
-  }
-  if (method === "POST" && url.pathname === "/api/voice/start-xtts") {
-    try {
-      try { const h = await fetch(`${getRuntimeConfig().xttsServerUrl}/health`, { signal: AbortSignal.timeout(1000) }); if (h.ok) { json(200, { ok: true, status: "already running" }); return true; } } catch {}
-      const { spawn } = await import("node:child_process");
-      const scriptPath = join(process.cwd(), "scripts", "xtts-server.py");
-      const child = spawn("python", [scriptPath], { detached: true, stdio: "ignore", env: { ...process.env, XTTS_PORT: "7862" } });
-      child.unref();
-      await new Promise(r => setTimeout(r, 2000));
-      json(200, { ok: true, status: "started", pid: child.pid });
-    } catch { json(500, { error: "Failed to start XTTS" }); }
-    return true;
-  }
-  if (method === "POST" && url.pathname === "/api/voice/transcribe") {
-    try {
-      const MAX_AUDIO_BYTES = getRuntimeConfig().maxAudioBytes;
-      const chunks: Buffer[] = [];
-      let audioSize = 0;
-      for await (const chunk of req) {
-        audioSize += (chunk as Buffer).length;
-        if (audioSize > MAX_AUDIO_BYTES) { json(413, { error: "Audio too large" }); req.destroy(); return true; }
-        chunks.push(chunk as Buffer);
+      // Capability probe: fast healthz check the UI can poll on page load.
+      if (method === "GET" && url.pathname === "/api/voices/tier") {
+        try {
+          const r = await fetch(`${rvcBase}/healthz`, { signal: AbortSignal.timeout(1500) });
+          const body = await r.json() as Record<string, unknown>;
+          json(200, { tier: "pro", ...body });
+        } catch {
+          json(200, { tier: "lite", ready: false, reason: "RVC sidecar not running" });
+        }
+        return true;
       }
-      const audioBuffer = Buffer.concat(chunks);
-      if (audioBuffer.length < 1000) { json(400, { error: "Audio too short" }); return true; }
-      const { transcribe } = await import("../voice.js");
-      json(200, { text: transcribe(audioBuffer) });
-    } catch { json(500, { error: "Transcription failed" }); }
-    return true;
+      const sidecarPath = url.pathname.replace("/api/voices/clones", "/clones");
+      const proxyOpts: RequestInit = { method, signal: AbortSignal.timeout(60_000) };
+      if (method === "POST" || method === "PATCH") {
+        const MAX = 25 * 1024 * 1024;
+        const chunks: Buffer[] = [];
+        let total = 0;
+        for await (const chunk of req) {
+          total += (chunk as Buffer).length;
+          if (total > MAX) { json(413, { error: "Payload too large (max 25MB)" }); req.destroy(); return true; }
+          chunks.push(chunk as Buffer);
+        }
+        proxyOpts.headers = { "Content-Type": "application/json" };
+        proxyOpts.body = Buffer.concat(chunks);
+      }
+      const r = await fetch(`${rvcBase}${sidecarPath}`, proxyOpts);
+      json(r.status, await r.json().catch(() => ({})));
+      return true;
+    } catch (e) {
+      json(503, { error: "RVC sidecar unreachable", detail: (e as Error).message, hint: "Run python/rvc/install.ps1 to install Pro tier" });
+      return true;
+    }
   }
-  if (method === "POST" && url.pathname === "/api/voice/synthesize") {
-    try {
-      const body = await safeParseBody(req) as { text?: string; voice?: string; speed?: number };
-      if (!body.text?.trim()) { json(400, { error: "text is required" }); return true; }
-      const { synthesize } = await import("../voice.js");
-      const wavBuffer = await synthesize(body.text, body.voice, body.speed);
-      if (wavBuffer.length === 0) { json(500, { error: "TTS engine not available" }); return true; }
-      res.writeHead(200, { "Content-Type": "audio/wav", "Content-Length": String(wavBuffer.length), ...corsHeaders(req) });
-      res.end(wavBuffer);
-    } catch { json(500, { error: "Synthesis failed" }); }
-    return true;
-  }
+
 
   // ── Secrets ──
   if (method === "GET" && url.pathname === "/api/secrets") {

@@ -1006,287 +1006,207 @@ function renderUploadPreviews() {
   }).join('');
 }
 
-// ── Voice v2: Always-On with simple VAD (no external libs) ──
-// Uses Web Audio API volume detection — no ONNX, no worklets, just works.
+// ── Voice v3: streaming WS to local /ws/voice ──
+// Mic frames stream in to the server-side voice session (Python GPU sidecar
+// when LAX_VOICE_GPU=1, else in-process Sherpa fallback). Server-side VAD,
+// STT, LLM (via voice-llm.ts), and TTS — browser is just transport + UI.
+// Replaces the old MediaRecorder + /api/voice/transcribe + /api/voice/synthesize
+// REST flow which was slow, blocky, and left the user waiting through full
+// utterance buffering before any result.
+
 let voiceMode = false;
-let vadStream = null;
-let vadAnalyser = null;
-let vadContext = null;
-let vadRecorder = null;
-let vadChunks = [];
-let silenceStart = 0;
-let speechDetected = false;
-const SPEECH_THRESHOLD = 15;   // Volume level to detect speech (0-255)
-const SILENCE_DURATION = 1200; // ms of silence before ending recording
-const MIN_SPEECH_MS = 500;     // Minimum speech duration to process
+let voiceWS = null;
+let voiceCtx = null;          // AudioContext (default native rate)
+let voiceMicNode = null;
+let voicePlaybackNode = null;
+let voiceMicStream = null;
+let voiceCurrentMsgEl = null;  // assistant chat bubble being built
+let voiceCurrentMsgBody = null;
+let voiceCurrentMsgText = '';
 
 async function toggleMic() {
-  if (voiceMode) { stopVoiceMode(); } else { await startVoiceMode(); }
+  if (voiceMode) { stopVoiceMode(); }
+  else { await startVoiceMode(); }
 }
 
 async function startVoiceMode() {
-  stopSpeaking();
+  if (voiceMode) return;
   try {
-    // Try to use a saved mic device, or find a real hardware mic (skip virtual devices like Steam)
-    let audioConstraints = { echoCancellation: true, noiseSuppression: true, sampleRate: 16000 };
-    const savedMic = localStorage.getItem('sax_mic_device');
-    if (savedMic) {
-      audioConstraints.deviceId = { exact: savedMic };
-    } else {
-      // Auto-detect: skip virtual audio devices
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const mics = devices.filter(d => d.kind === 'audioinput');
-        const realMic = mics.find(d => !d.label.toLowerCase().includes('steam') && !d.label.toLowerCase().includes('virtual') && !d.label.toLowerCase().includes('cable'));
-        if (realMic) audioConstraints.deviceId = { exact: realMic.deviceId };
-        console.log('[voice] Available mics:', mics.map(d => d.label));
-        console.log('[voice] Selected:', realMic?.label || 'default');
-      } catch {}
-    }
-    vadStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+    // 1) Connect to /ws/voice with auth token
+    const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/voice?token=${encodeURIComponent(AUTH_TOKEN)}`;
+    voiceWS = new WebSocket(wsUrl);
+    voiceWS.binaryType = 'arraybuffer';
 
-    // Debug: check track state
-    const tracks = vadStream.getAudioTracks();
-    console.log('[voice] Audio tracks:', tracks.length, tracks.map(t => ({ label: t.label, enabled: t.enabled, muted: t.muted, readyState: t.readyState })));
-    if (tracks.length > 0 && tracks[0].muted) {
-      console.warn('[voice] Track is muted — Electron may be blocking audio capture');
-    }
+    await new Promise((resolve, reject) => {
+      voiceWS.onopen = () => resolve();
+      voiceWS.onerror = () => reject(new Error('voice ws error'));
+      voiceWS.onclose = (e) => {
+        if (voiceWS.readyState !== WebSocket.OPEN) reject(new Error(`voice ws closed before open (code ${e.code})`));
+      };
+    });
 
-    vadContext = new AudioContext({ sampleRate: 16000 });
-    const source = vadContext.createMediaStreamSource(vadStream);
-    vadAnalyser = vadContext.createAnalyser();
-    vadAnalyser.fftSize = 512;
-    vadAnalyser.smoothingTimeConstant = 0.3;
-    source.connect(vadAnalyser);
+    // Attach handlers BEFORE hello so server-side ready/init events aren't lost
+    voiceWS.onmessage = handleVoiceWsMessage;
+    voiceWS.onclose = () => { console.log('[voice] ws closed'); cleanupVoiceResources(); };
+
+    // 2) Send hello + saved voice/speed settings
+    const sid = (typeof activeChat !== 'undefined' && activeChat?.id) ? activeChat.id : 'default';
+    voiceWS.send(JSON.stringify({ type: 'hello', sessionId: 'chat-' + sid + '-' + Date.now() }));
+    const savedVoice = localStorage.getItem('lax_voice') || 'am_michael';
+    const savedSpeed = parseFloat(localStorage.getItem('lax_speed') || '1.15');
+    voiceWS.send(JSON.stringify({ type: 'voice_settings', voice: savedVoice, speed: savedSpeed }));
+
+    // 3) AudioContext + worklets
+    voiceCtx = new AudioContext();
+    await voiceCtx.audioWorklet.addModule('/js/voice/mic-capture-worklet.js');
+    await voiceCtx.audioWorklet.addModule('/js/voice/playback-worklet.js');
+
+    // 4) Mic capture
+    voiceMicStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+    });
+    const source = voiceCtx.createMediaStreamSource(voiceMicStream);
+    voiceMicNode = new AudioWorkletNode(voiceCtx, 'mic-capture');
+    voiceMicNode.port.onmessage = (e) => {
+      if (!e.data || e.data.type !== 'pcm') return;
+      if (voiceWS && voiceWS.readyState === WebSocket.OPEN) voiceWS.send(e.data.pcm);
+    };
+    source.connect(voiceMicNode);
+    voiceMicNode.port.postMessage({ cmd: 'start' });
+
+    // 5) Playback
+    voicePlaybackNode = new AudioWorkletNode(voiceCtx, 'pcm-playback');
+    voicePlaybackNode.connect(voiceCtx.destination);
 
     voiceMode = true;
     voiceEnabled = true;
     const ttsBtn = document.getElementById('tts-toggle');
     if (ttsBtn) { ttsBtn.textContent = 'VOICE ON'; ttsBtn.className = 'active'; }
     updateVoiceUI();
-    console.log('[voice] Always-on voice mode started');
-
-    // Start monitoring loop
-    monitorVoice();
+    console.log('[voice] session started');
   } catch (e) {
-    console.error('[voice] Mic failed:', e);
-    alert('Voice mode failed. Check microphone permissions.\nError: ' + e.message);
+    console.error('[voice] start failed:', e);
+    cleanupVoiceResources();
+    alert('Voice mode failed. Check microphone permissions.\n' + e.message);
   }
 }
 
 function stopVoiceMode() {
-  voiceMode = false; isListening = false; speechDetected = false;
-  if (vadRecorder && vadRecorder.state !== 'inactive') vadRecorder.stop();
-  if (vadStream) { vadStream.getTracks().forEach(t => t.stop()); vadStream = null; }
-  if (vadContext) { vadContext.close(); vadContext = null; }
-  vadAnalyser = null; vadRecorder = null; vadChunks = [];
-  stopSpeaking(); updateVoiceUI();
-  console.log('[voice] Voice mode stopped');
+  if (!voiceMode) return;
+  try { voiceWS && voiceWS.send(JSON.stringify({ type: 'bye' })); } catch {}
+  try { voiceWS && voiceWS.close(); } catch {}
+  cleanupVoiceResources();
+  console.log('[voice] session stopped');
 }
 
-function monitorVoice() {
-  if (!voiceMode || !vadAnalyser) return;
+function cleanupVoiceResources() {
+  voiceMode = false; voiceEnabled = false; isListening = false; isSpeaking = false;
+  try { voiceMicStream && voiceMicStream.getTracks().forEach(t => t.stop()); } catch {}
+  try { voiceCtx && voiceCtx.close(); } catch {}
+  voiceWS = null; voiceCtx = null; voiceMicNode = null; voicePlaybackNode = null; voiceMicStream = null;
+  voiceCurrentMsgEl = null; voiceCurrentMsgBody = null; voiceCurrentMsgText = '';
+  const ttsBtn = document.getElementById('tts-toggle');
+  if (ttsBtn) { ttsBtn.textContent = 'VOICE OFF'; ttsBtn.className = ''; }
+  updateVoiceUI();
+}
 
-  const data = new Uint8Array(vadAnalyser.frequencyBinCount);
-  vadAnalyser.getByteFrequencyData(data);
-  const volume = data.reduce((a, b) => a + b, 0) / data.length;
-
-  if (volume > SPEECH_THRESHOLD) {
-    // Speech detected
-    if (!speechDetected && !isSpeaking) {
-      speechDetected = true;
-      isListening = true;
-      stopSpeaking(); // Interrupt TTS
-      startRecording();
-      updateVoiceUI();
-    }
-    silenceStart = 0;
-  } else if (speechDetected) {
-    // Silence after speech
-    if (!silenceStart) silenceStart = Date.now();
-    if (Date.now() - silenceStart > SILENCE_DURATION) {
-      // Enough silence — stop recording and transcribe
-      speechDetected = false;
-      isListening = false;
-      stopRecording();
-      updateVoiceUI();
-    }
+function handleVoiceWsMessage(e) {
+  // Binary frames are TTS PCM — pipe to playback worklet
+  if (typeof e.data !== 'string') {
+    if (voicePlaybackNode) voicePlaybackNode.port.postMessage({ cmd: 'pcm', pcm: e.data });
+    return;
   }
+  let msg;
+  try { msg = JSON.parse(e.data); } catch { return; }
 
-  requestAnimationFrame(monitorVoice);
-}
-
-function startRecording() {
-  if (!vadStream || vadRecorder) return;
-  vadChunks = [];
-  vadRecorder = new MediaRecorder(vadStream, {
-    mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
-  });
-  vadRecorder.ondataavailable = e => { if (e.data.size > 0) vadChunks.push(e.data); };
-  vadRecorder.onstop = async () => {
-    vadRecorder = null;
-    if (vadChunks.length === 0) return;
-    const blob = new Blob(vadChunks, { type: 'audio/webm' });
-    vadChunks = [];
-
-    // Skip very short recordings (noise, not speech)
-    if (blob.size < 5000) return;
-
-    updateVoiceUI('transcribing');
-    try {
-      const wavBlob = await webmToWav16k(blob);
-      const r = await fetch(`${API}/api/voice/transcribe`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
-        body: new Uint8Array(await wavBlob.arrayBuffer()),
-      });
-      const d = await r.json();
-      if (d.text?.trim() && d.text.trim().length > 1) {
-        document.getElementById('msg-input').value = d.text.trim();
-        sendMessage();
+  switch (msg.type) {
+    case 'voice_ready':
+      if (voicePlaybackNode && msg.ttsSampleRate) {
+        voicePlaybackNode.port.postMessage({ cmd: 'setRate', rate: msg.ttsSampleRate });
       }
-    } catch (e) { console.error('[voice] STT failed:', e); }
-    updateVoiceUI();
-  };
-  vadRecorder.start(100);
-  console.log('[voice] Recording started');
-}
-
-function stopRecording() {
-  if (vadRecorder && vadRecorder.state !== 'inactive') {
-    vadRecorder.stop();
-    console.log('[voice] Recording stopped');
-  }
-}
-
-// Convert WebM → WAV 16kHz mono for Whisper
-async function webmToWav16k(blob) {
-  const ctx = new OfflineAudioContext(1, 1, 16000);
-  const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
-  // Resample to 16kHz mono
-  const offline = new OfflineAudioContext(1, Math.ceil(buf.duration * 16000), 16000);
-  const src = offline.createBufferSource();
-  src.buffer = buf;
-  src.connect(offline.destination);
-  src.start();
-  const rendered = await offline.startRendering();
-  const samples = rendered.getChannelData(0);
-
-  const pcm = new Int16Array(samples.length);
-  for (let i = 0; i < samples.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
-  const ds = pcm.length * 2, hdr = new ArrayBuffer(44), v = new DataView(hdr);
-  const w = (o, s) => [...s].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
-  w(0,'RIFF'); v.setUint32(4, 36+ds, true); w(8,'WAVE'); w(12,'fmt ');
-  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
-  v.setUint32(24,16000,true); v.setUint32(28,32000,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
-  w(36,'data'); v.setUint32(40,ds,true);
-  return new Blob([hdr, pcm.buffer], { type: 'audio/wav' });
-}
-function toggleTTS() {
-  voiceEnabled = !voiceEnabled;
-  const btn = document.getElementById('tts-toggle');
-  if (btn) { btn.textContent = voiceEnabled ? 'VOICE ON' : 'VOICE OFF'; btn.className = voiceEnabled ? 'active' : ''; }
-  if (!voiceEnabled) stopSpeaking();
-}
-// Pre-fetch: start fetching next audio while current plays
-let prefetchedAudio = null;
-
-async function fetchTTSAudio(text) {
-  // Check if XTTS is selected
-  let ttsEngine = 'kokoro';
-  try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); ttsEngine = s.ttsEngine || 'kokoro'; } catch {}
-
-  let r;
-  if (ttsEngine === 'xtts') {
-    let voiceId = '';
-    try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); voiceId = s.xttsVoice || ''; } catch {}
-    r = await fetch('http://127.0.0.1:7862/tts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: text.trim(), voice_id: voiceId, language: 'en' })
-    });
-  } else {
-    r = await fetch(`${API}/api/voice/synthesize`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ text: text.trim(), speed: 1.15 })
-    });
-  }
-  if (!r.ok) return null;
-  if (!audioContext) audioContext = new AudioContext();
-  return await audioContext.decodeAudioData(await r.arrayBuffer());
-}
-
-async function speakSentence(text) {
-  if (!voiceEnabled || !text.trim()) return;
-  // Client-side cleanup — strip URLs, code, paths before sending
-  let clean = text.replace(/https?:\/\/\S+/g, '').replace(/`[^`]+`/g, '')
-    .replace(/[\w/\\.-]+\.(?:html|js|ts|css|json|md)\b/g, '').replace(/\([^)]{15,}\)/g, '').trim();
-  if (clean.length < 4) { if (ttsQueue.length > 0) await speakSentence(ttsQueue.shift()); return; }
-
-  isSpeaking = true; updateVoiceUI();
-  try {
-    // Use pre-fetched audio if available, otherwise fetch now
-    let buf = prefetchedAudio; prefetchedAudio = null;
-    if (!buf) buf = await fetchTTSAudio(clean);
-    if (!buf) throw new Error('TTS empty');
-
-    // Pre-fetch NEXT audio while this one plays (eliminates gap)
-    if (ttsQueue.length > 0) {
-      const nextText = ttsQueue[0].replace(/https?:\/\/\S+/g, '').replace(/`[^`]+`/g, '').trim();
-      if (nextText.length > 3) fetchTTSAudio(nextText).then(a => { prefetchedAudio = a; });
+      break;
+    case 'vad_speech_start': isListening = true; updateVoiceUI(); break;
+    case 'vad_speech_end':   isListening = false; updateVoiceUI(); break;
+    case 'final': {
+      if (!msg.text) break;
+      const empty = document.getElementById('empty');
+      if (empty) empty.remove();
+      if (typeof addMessageEl === 'function') addMessageEl('user', msg.text);
+      if (typeof activeChat !== 'undefined' && activeChat) {
+        activeChat.messages.push({ role: 'user', content: msg.text });
+        activeChat.updatedAt = Date.now();
+      }
+      break;
     }
-
-    const src = audioContext.createBufferSource(); src.buffer = buf; src.connect(audioContext.destination);
-    currentAudioSource = src;
-    await new Promise(res => { src.onended = res; src.start(); });
-    currentAudioSource = null;
-  } catch (e) { console.warn('[voice] TTS error:', e); }
-  if (ttsQueue.length > 0) await speakSentence(ttsQueue.shift());
-  else { isSpeaking = false; updateVoiceUI(); }
-}
-let ttsBatchBuffer = '';
-function feedTTS(delta) {
-  if (!voiceEnabled) return;
-  ttsSentenceBuffer += delta;
-
-  // Look for sentence boundaries
-  const re = /[.!?]\s+|[.!?]$/;
-  while (re.test(ttsSentenceBuffer)) {
-    const m = ttsSentenceBuffer.match(re), idx = m.index + m[0].length;
-    const s = ttsSentenceBuffer.slice(0, idx).trim();
-    ttsSentenceBuffer = ttsSentenceBuffer.slice(idx);
-    if (s.length > 3) ttsBatchBuffer += (ttsBatchBuffer ? ' ' : '') + s;
+    case 'agent_start': {
+      if (typeof addMessageEl === 'function') {
+        voiceCurrentMsgEl = addMessageEl('assistant', '');
+        voiceCurrentMsgBody = voiceCurrentMsgEl?.querySelector('.msg-body');
+        if (voiceCurrentMsgBody) voiceCurrentMsgBody.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
+      }
+      voiceCurrentMsgText = '';
+      isSpeaking = true; updateVoiceUI();
+      break;
+    }
+    case 'assistant_delta':
+      if (!voiceCurrentMsgBody) break;
+      voiceCurrentMsgText += msg.text || '';
+      voiceCurrentMsgBody.innerHTML = (typeof md === 'function' ? md(voiceCurrentMsgText) : voiceCurrentMsgText);
+      const msgs = document.getElementById('messages');
+      if (msgs) msgs.scrollTop = msgs.scrollHeight;
+      break;
+    case 'assistant_done':
+    case 'assistant_interrupted':
+      if (voiceCurrentMsgText.trim() && typeof activeChat !== 'undefined' && activeChat) {
+        activeChat.messages.push({ role: 'assistant', content: voiceCurrentMsgText });
+        activeChat.updatedAt = Date.now();
+        if (typeof saveChats === 'function') saveChats();
+        if (typeof renderSidebar === 'function') renderSidebar();
+      }
+      voiceCurrentMsgEl = null; voiceCurrentMsgBody = null; voiceCurrentMsgText = '';
+      break;
+    case 'tts_interrupt':
+      if (voicePlaybackNode) voicePlaybackNode.port.postMessage({ cmd: 'flush' });
+      break;
+    case 'playback_complete':
+    case 'tts_idle':
+      isSpeaking = false; updateVoiceUI();
+      break;
+    case 'voice_error':
+    case 'agent_error':
+    case 'stt_error':
+    case 'tts_error':
+      console.warn('[voice]', msg.type, msg.message);
+      break;
   }
+}
 
-  // Send batch when we have enough text (80+ chars = ~2 sentences)
-  // This reduces pauses between sentences dramatically
-  if (ttsBatchBuffer.length > 80) {
-    const batch = ttsBatchBuffer; ttsBatchBuffer = '';
-    isSpeaking ? ttsQueue.push(batch) : speakSentence(batch);
-  }
-}
-function flushTTS() {
-  // Flush any remaining batched text + sentence buffer
-  const remaining = (ttsBatchBuffer + ' ' + ttsSentenceBuffer).trim();
-  ttsBatchBuffer = '';
-  if (voiceEnabled && remaining.length > 3) { isSpeaking ? ttsQueue.push(remaining) : speakSentence(remaining); }
-  ttsSentenceBuffer = '';
-}
+// Vestigial helpers preserved so the text-chat send path still compiles —
+// the OLD voice system spoke chat replies sentence-by-sentence; that path
+// is replaced by /ws/voice. These shims keep typed-chat sends harmless.
+function feedTTS(_delta) { /* no-op */ }
+function flushTTS() { /* no-op */ }
 function stopSpeaking() {
-  try { currentAudioSource?.stop(); } catch {} currentAudioSource = null;
-  ttsQueue = []; ttsSentenceBuffer = ''; isSpeaking = false; updateVoiceUI();
+  if (voicePlaybackNode) voicePlaybackNode.port.postMessage({ cmd: 'flush' });
+  isSpeaking = false; updateVoiceUI();
 }
+function toggleTTS() { toggleMic(); }
+function fetchTTSAudio() { return null; } // shim
+
 function updateVoiceUI(state) {
   const mic = document.getElementById('mic-btn'), ind = document.getElementById('voice-indicator');
   if (!mic) return;
-  if (state === 'transcribing') { mic.className = 'input-btn listening'; if (ind) { ind.className = 'listening'; ind.textContent = '⚡ TRANSCRIBING...'; } return; }
+  if (state === 'transcribing') {
+    mic.className = 'input-btn listening';
+    if (ind) { ind.className = 'listening'; ind.textContent = '⚡ TRANSCRIBING...'; }
+    return;
+  }
   if (voiceMode) {
-    mic.className = 'input-btn' + (isListening ? ' listening' : isSpeaking ? ' speaking' : ' listening');
+    mic.className = 'input-btn' + (isListening ? ' listening' : (isSpeaking ? ' speaking' : ' listening'));
     mic.title = 'Voice mode ON — click to stop';
     if (ind) {
-      if (isListening) { ind.className = 'listening'; ind.textContent = '🎙 LISTENING...'; }
-      else if (isSpeaking) { ind.className = 'speaking'; ind.textContent = '🔊 SPEAKING...'; }
+      if (isListening) { ind.className = 'listening'; ind.textContent = '🎙 LISTENING'; }
+      else if (isSpeaking) { ind.className = 'speaking'; ind.textContent = '🔊 SPEAKING'; }
       else { ind.className = 'listening'; ind.textContent = '🎙 VOICE MODE'; }
     }
   } else {
@@ -1547,14 +1467,78 @@ function updateStatusBar() {
     ? `<span class="status-item" style="opacity:.7" title="Medium-tier model. Agent tasks work but may be less reliable than flagship models.">&#9888; medium</span>`
     : '';
 
+  // Voice picker + speed slider. Selection persists to localStorage and
+  // is pushed to the server-side voice session over /ws/voice the moment
+  // it changes (or on next session start). Lite tier: built-in Kokoro
+  // voices only. Custom voice cloning is the Pro tier (RVC) — not in
+  // this build.
+  const savedVoice = localStorage.getItem('lax_voice') || 'am_michael';
+  const savedSpeed = parseFloat(localStorage.getItem('lax_speed') || '1.15');
+  const voiceGroups = [
+    ['American Male', ['am_michael','am_adam','am_echo','am_eric','am_fenrir','am_liam','am_onyx','am_puck']],
+    ['American Female', ['af_nicole','af_bella','af_sarah','af_sky','af_heart','af_nova','af_river','af_alloy']],
+    ['British Male', ['bm_george','bm_daniel','bm_fable','bm_lewis']],
+    ['British Female', ['bf_emma','bf_alice','bf_isabella','bf_lily']],
+  ];
+  const voiceLabel = (id) => id.split('_')[1].replace(/\b\w/g, c => c.toUpperCase());
+  // If the user previously selected a clone:* voice (now removed), fall back to default.
+  const effectiveVoice = savedVoice.startsWith('clone:') ? 'am_michael' : savedVoice;
+  if (effectiveVoice !== savedVoice) localStorage.setItem('lax_voice', effectiveVoice);
+  const voiceOpts = voiceGroups.map(([group, ids]) =>
+    `<optgroup label="${esc(group)}">` +
+    ids.map(id => `<option value="${esc(id)}" ${id === effectiveVoice ? 'selected' : ''}>${esc(voiceLabel(id))}</option>`).join('') +
+    `</optgroup>`
+  ).join('');
+
   bar.innerHTML = `
     <select id="provider-quick-select" class="status-select" onchange="quickSwitchProvider(this.value)" title="Switch provider">${providerOpts}</select>
     <span style="color:var(--border)">&#9654;</span>
     <select id="model-quick-select" class="status-select" onchange="quickSwitchModel(this.value)" title="Switch model">${modelOpts}</select>
+    <span style="color:var(--border)">|</span>
+    <select id="voice-quick-select" class="status-select" onchange="quickSwitchVoice(this.value)" title="Voice for spoken replies">${voiceOpts}</select>
+    <input id="voice-speed-slider" type="range" min="0.7" max="1.5" step="0.05" value="${savedSpeed}" onchange="quickSwitchSpeed(this.value)" oninput="document.getElementById('voice-speed-label').textContent = parseFloat(this.value).toFixed(2)+'x'" title="Speech speed" style="width:80px;vertical-align:middle"/>
+    <span id="voice-speed-label" class="status-item" style="font-family:var(--mono);min-width:42px">${savedSpeed.toFixed(2)}x</span>
     ${tierBadge}
     ${tokenInfo ? `<span class="status-item"><span class="status-icon">&#9998;</span> ${tokenInfo}</span>` : ''}
     <span class="status-item" title="All data stays on your machine. API calls go to your selected provider." style="cursor:help"><span class="status-icon">&#128274;</span> Local</span>
   `;
+}
+
+function quickSwitchVoice(voice) {
+  localStorage.setItem('lax_voice', voice);
+  const wsState = (typeof voiceWS !== 'undefined' && voiceWS) ? voiceWS.readyState : 'no-ws';
+  console.log('[voice] picker → ' + voice + ' (ws=' + wsState + ')');
+  if (typeof voiceWS !== 'undefined' && voiceWS && voiceWS.readyState === WebSocket.OPEN) {
+    const speed = parseFloat(localStorage.getItem('lax_speed') || '1.15');
+    voiceWS.send(JSON.stringify({ type: 'voice_settings', voice, speed }));
+    showVoiceToast('Voice → ' + voice + ' (next reply)');
+  } else {
+    showVoiceToast('Voice → ' + voice + ' (saved; takes effect when mic is on)');
+  }
+}
+
+function showVoiceToast(msg) {
+  let el = document.getElementById('voice-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'voice-toast';
+    el.style.cssText = 'position:fixed;bottom:80px;right:20px;padding:8px 14px;background:#2c3e50;color:#fff;font-size:.82rem;border-radius:6px;z-index:9998;box-shadow:0 4px 12px rgba(0,0,0,.2);transition:opacity .25s';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.opacity = '1';
+  clearTimeout(window._voiceToastT);
+  window._voiceToastT = setTimeout(() => { el.style.opacity = '0'; }, 2200);
+}
+
+
+function quickSwitchSpeed(speed) {
+  const s = parseFloat(speed);
+  localStorage.setItem('lax_speed', String(s));
+  if (typeof voiceWS !== 'undefined' && voiceWS && voiceWS.readyState === WebSocket.OPEN) {
+    const voice = localStorage.getItem('lax_voice') || 'am_michael';
+    voiceWS.send(JSON.stringify({ type: 'voice_settings', voice, speed: s }));
+  }
 }
 
 async function quickSwitchProvider(providerId) {

@@ -1406,6 +1406,28 @@ function initStatusBar() {
   apiFetch('/api/auth/status').then(r => r.json()).then(d => {
     if (d.uptime) serverStartTime = Date.now() - (d.uptime * 1000);
   }).catch(() => {});
+  // Pro tier detection: only fetch the cloned-voice library if the RVC
+  // sidecar is up. Re-renders the picker once we know.
+  refreshClonedVoices();
+}
+
+async function refreshClonedVoices() {
+  try {
+    const tierRes = await apiFetch('/api/voices/tier');
+    const tier = await tierRes.json();
+    window._proTierReady = tier.tier === 'pro' && !!tier.ready;
+    if (!window._proTierReady) {
+      window._cloneVoices = [];
+      return;
+    }
+    const r = await apiFetch('/api/voices/clones');
+    if (!r.ok) return;
+    const data = await r.json();
+    window._cloneVoices = Array.isArray(data?.clones) ? data.clones : [];
+    if (typeof updateStatusBar === 'function') updateStatusBar();
+  } catch (e) {
+    console.warn('[voice] tier/clones probe failed:', e.message);
+  }
 }
 
 async function loadProviders() {
@@ -1481,14 +1503,34 @@ function updateStatusBar() {
     ['British Female', ['bf_emma','bf_alice','bf_isabella','bf_lily']],
   ];
   const voiceLabel = (id) => id.split('_')[1].replace(/\b\w/g, c => c.toUpperCase());
-  // If the user previously selected a clone:* voice (now removed), fall back to default.
-  const effectiveVoice = savedVoice.startsWith('clone:') ? 'am_michael' : savedVoice;
+  // Cloned voices are only available if the Pro tier RVC sidecar is up.
+  // refreshClonedVoices() populates window._cloneVoices async on init; we
+  // re-render the bar once they land.
+  const clones = Array.isArray(window._cloneVoices) ? window._cloneVoices : [];
+  const cloneIds = clones.map(c => 'clone:' + c.id);
+  // If the saved voice references a clone that no longer exists, fall back.
+  const effectiveVoice = (savedVoice.startsWith('clone:') && !cloneIds.includes(savedVoice))
+    ? 'am_michael'
+    : savedVoice;
   if (effectiveVoice !== savedVoice) localStorage.setItem('lax_voice', effectiveVoice);
-  const voiceOpts = voiceGroups.map(([group, ids]) =>
+  let voiceOpts = voiceGroups.map(([group, ids]) =>
     `<optgroup label="${esc(group)}">` +
     ids.map(id => `<option value="${esc(id)}" ${id === effectiveVoice ? 'selected' : ''}>${esc(voiceLabel(id))}</option>`).join('') +
     `</optgroup>`
   ).join('');
+  if (clones.length > 0) {
+    voiceOpts += `<optgroup label="My Cloned Voices (RVC)">` +
+      clones.map(c => `<option value="clone:${esc(c.id)}" ${('clone:' + c.id) === effectiveVoice ? 'selected' : ''}>${esc(c.name)}</option>`).join('') +
+      `</optgroup>`;
+  }
+  // Pro tier management: only show if /api/voices/tier returned ready.
+  if (window._proTierReady) {
+    voiceOpts += `<optgroup label=" "><option value="__add_clone__">+ Add a cloned voice…</option>`;
+    if (clones.length > 0) {
+      voiceOpts += `<option value="__manage_clones__">&#9881; Manage cloned voices…</option>`;
+    }
+    voiceOpts += `</optgroup>`;
+  }
 
   bar.innerHTML = `
     <select id="provider-quick-select" class="status-select" onchange="quickSwitchProvider(this.value)" title="Switch provider">${providerOpts}</select>
@@ -1505,6 +1547,14 @@ function updateStatusBar() {
 }
 
 function quickSwitchVoice(voice) {
+  if (voice === '__add_clone__' || voice === '__manage_clones__') {
+    if (voice === '__add_clone__') openAddCloneModal();
+    else openManageClonesModal();
+    // Reset picker visual to whatever was actually selected before
+    const sel = document.getElementById('voice-quick-select');
+    if (sel) sel.value = localStorage.getItem('lax_voice') || 'am_michael';
+    return;
+  }
   localStorage.setItem('lax_voice', voice);
   const wsState = (typeof voiceWS !== 'undefined' && voiceWS) ? voiceWS.readyState : 'no-ws';
   console.log('[voice] picker → ' + voice + ' (ws=' + wsState + ')');
@@ -1515,6 +1565,237 @@ function quickSwitchVoice(voice) {
   } else {
     showVoiceToast('Voice → ' + voice + ' (saved; takes effect when mic is on)');
   }
+}
+
+function openAddCloneModal() {
+  const existing = document.getElementById('add-clone-modal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'add-clone-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = `
+    <div style="background:var(--bg, #fff);color:var(--text, #000);border:1px solid var(--border, #ccc);border-radius:10px;padding:24px;max-width:520px;width:92%">
+      <h3 style="margin:0 0 6px;font-size:1.1rem">Add a cloned voice (RVC)</h3>
+      <p style="margin:0 0 16px;color:var(--muted, #666);font-size:.83rem">Two ways to add a voice. Both go to the local RVC sidecar — nothing leaves this machine.</p>
+
+      <div style="border:1px solid var(--border, #ddd);border-radius:8px;padding:14px;margin-bottom:14px">
+        <h4 style="margin:0 0 6px;font-size:.92rem">From a HuggingFace URL</h4>
+        <p style="margin:0 0 10px;color:var(--muted, #666);font-size:.78rem">Paste a direct .zip download URL (e.g. <code>https://huggingface.co/&lt;user&gt;/&lt;repo&gt;/resolve/main/Voice.zip</code>).</p>
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <input id="ac-url-name" type="text" placeholder="Voice name" style="width:140px;padding:7px 9px;border:1px solid var(--border, #ccc);border-radius:6px;font-size:.85rem"/>
+          <input id="ac-url" type="text" placeholder="HF .zip URL" style="flex:1;padding:7px 9px;border:1px solid var(--border, #ccc);border-radius:6px;font-size:.85rem"/>
+        </div>
+        <button id="ac-url-go" type="button" style="padding:7px 14px;border:none;background:#3498db;color:#fff;border-radius:6px;cursor:pointer;font-size:.83rem">Download &amp; install</button>
+      </div>
+
+      <div style="border:1px solid var(--border, #ddd);border-radius:8px;padding:14px;margin-bottom:14px">
+        <h4 style="margin:0 0 6px;font-size:.92rem">Upload a .zip / .pth file</h4>
+        <p style="margin:0 0 10px;color:var(--muted, #666);font-size:.78rem">Zip should contain a <code>.pth</code> (model) and optional <code>.index</code> (better quality). Or upload a single <code>.pth</code> directly.</p>
+        <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+          <input id="ac-file-name" type="text" placeholder="Voice name" style="width:140px;padding:7px 9px;border:1px solid var(--border, #ccc);border-radius:6px;font-size:.85rem"/>
+          <input id="ac-file" type="file" accept=".zip,.pth" style="flex:1;font-size:.8rem"/>
+        </div>
+        <button id="ac-file-go" type="button" style="padding:7px 14px;border:none;background:#3498db;color:#fff;border-radius:6px;cursor:pointer;font-size:.83rem">Upload &amp; install</button>
+      </div>
+
+      <div id="ac-status" style="font-size:.8rem;color:var(--muted, #666);margin-bottom:12px;min-height:1em"></div>
+      <div style="display:flex;justify-content:flex-end">
+        <button id="ac-close" type="button" style="padding:8px 14px;border:1px solid var(--border, #ccc);background:transparent;color:var(--text, #000);border-radius:6px;cursor:pointer">Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+  document.getElementById('ac-close').onclick = () => modal.remove();
+
+  const status = document.getElementById('ac-status');
+  const setStatus = (msg, isError) => {
+    status.textContent = msg;
+    status.style.color = isError ? '#c0392b' : 'var(--muted, #666)';
+  };
+
+  document.getElementById('ac-url-go').onclick = async () => {
+    const name = (document.getElementById('ac-url-name').value || '').trim();
+    const url = (document.getElementById('ac-url').value || '').trim();
+    if (!name || !url) { setStatus('Name and URL required.', true); return; }
+    setStatus('Downloading + installing… (~10-60s)', false);
+    try {
+      const r = await apiFetch('/api/voices/clones/from-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, url }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { setStatus('Failed: ' + (data.error || data.detail || ('HTTP ' + r.status)), true); return; }
+      setStatus(`Installed "${data.name}".`, false);
+      await refreshClonedVoices();
+      setTimeout(() => modal.remove(), 800);
+    } catch (e) { setStatus('Failed: ' + e.message, true); }
+  };
+
+  document.getElementById('ac-file-go').onclick = async () => {
+    const name = (document.getElementById('ac-file-name').value || '').trim();
+    const file = document.getElementById('ac-file').files[0];
+    if (!name || !file) { setStatus('Name and file required.', true); return; }
+    if (file.size > 200 * 1024 * 1024) { setStatus('File too big (>200MB).', true); return; }
+    setStatus('Reading file…', false);
+    try {
+      const buf = await file.arrayBuffer();
+      // If the user picked a single .pth, wrap it into a zip on the fly so
+      // the sidecar's upload handler (which expects a zip) is the only
+      // server-side code path.
+      let zipBuf;
+      if (file.name.toLowerCase().endsWith('.pth')) {
+        zipBuf = await pthToZip(file.name, buf);
+      } else {
+        zipBuf = buf;
+      }
+      const bytes = new Uint8Array(zipBuf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 8192) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+      }
+      const b64 = btoa(binary);
+      setStatus('Installing…', false);
+      const r = await apiFetch('/api/voices/clones', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, files_b64: b64 }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { setStatus('Failed: ' + (data.error || data.detail || ('HTTP ' + r.status)), true); return; }
+      setStatus(`Installed "${data.name}".`, false);
+      await refreshClonedVoices();
+      setTimeout(() => modal.remove(), 800);
+    } catch (e) { setStatus('Failed: ' + e.message, true); }
+  };
+}
+
+// Minimal in-browser zip writer for the single-.pth upload case. Only
+// handles one stored (uncompressed) entry — fine for an RVC .pth which
+// is already compressed binary; deflating it again wins almost nothing.
+async function pthToZip(filename, fileBuf) {
+  const data = new Uint8Array(fileBuf);
+  // CRC-32 (slow per-byte, but only runs once on a ~50MB file)
+  const crcTable = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[n] = c >>> 0;
+    }
+    return t;
+  })();
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < data.length; i++) crc = (crc >>> 8) ^ crcTable[(crc ^ data[i]) & 0xFF];
+  crc = (crc ^ 0xFFFFFFFF) >>> 0;
+
+  const nameBytes = new TextEncoder().encode(filename);
+  const localHeader = new ArrayBuffer(30 + nameBytes.length);
+  const lh = new DataView(localHeader);
+  lh.setUint32(0, 0x04034b50, true);  // local file header sig
+  lh.setUint16(4, 20, true);          // version needed
+  lh.setUint16(6, 0, true);           // flags
+  lh.setUint16(8, 0, true);           // method: stored
+  lh.setUint16(10, 0, true); lh.setUint16(12, 0, true);  // mod time/date (0)
+  lh.setUint32(14, crc, true);
+  lh.setUint32(18, data.length, true);
+  lh.setUint32(22, data.length, true);
+  lh.setUint16(26, nameBytes.length, true);
+  lh.setUint16(28, 0, true);          // extra
+  new Uint8Array(localHeader, 30).set(nameBytes);
+
+  const centralDir = new ArrayBuffer(46 + nameBytes.length);
+  const cd = new DataView(centralDir);
+  cd.setUint32(0, 0x02014b50, true);
+  cd.setUint16(4, 20, true); cd.setUint16(6, 20, true);
+  cd.setUint16(8, 0, true); cd.setUint16(10, 0, true);
+  cd.setUint16(12, 0, true); cd.setUint16(14, 0, true);
+  cd.setUint32(16, crc, true);
+  cd.setUint32(20, data.length, true);
+  cd.setUint32(24, data.length, true);
+  cd.setUint16(28, nameBytes.length, true);
+  cd.setUint16(30, 0, true); cd.setUint16(32, 0, true);
+  cd.setUint16(34, 0, true); cd.setUint16(36, 0, true);
+  cd.setUint32(38, 0, true); cd.setUint32(42, 0, true);  // local header offset = 0
+  new Uint8Array(centralDir, 46).set(nameBytes);
+
+  const eocd = new ArrayBuffer(22);
+  const ed = new DataView(eocd);
+  ed.setUint32(0, 0x06054b50, true);
+  ed.setUint16(4, 0, true); ed.setUint16(6, 0, true);
+  ed.setUint16(8, 1, true); ed.setUint16(10, 1, true);
+  ed.setUint32(12, centralDir.byteLength, true);
+  ed.setUint32(16, localHeader.byteLength + data.length, true);
+  ed.setUint16(20, 0, true);
+
+  const total = localHeader.byteLength + data.length + centralDir.byteLength + eocd.byteLength;
+  const out = new Uint8Array(total);
+  let off = 0;
+  out.set(new Uint8Array(localHeader), off); off += localHeader.byteLength;
+  out.set(data, off); off += data.length;
+  out.set(new Uint8Array(centralDir), off); off += centralDir.byteLength;
+  out.set(new Uint8Array(eocd), off);
+  return out.buffer;
+}
+
+function openManageClonesModal() {
+  const existing = document.getElementById('manage-clones-modal');
+  if (existing) existing.remove();
+
+  const clones = Array.isArray(window._cloneVoices) ? window._cloneVoices : [];
+  const rows = clones.length === 0
+    ? `<div style="padding:16px;color:var(--muted, #666);font-size:.85rem;text-align:center">No cloned voices installed.</div>`
+    : clones.map(c => `
+        <div class="mc-row" data-id="${esc(c.id)}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border, #eee)">
+          <span style="flex:1;font-family:var(--mono);font-size:.85rem">${esc(c.name)}</span>
+          <button class="mc-delete" type="button" style="padding:6px 12px;border:none;background:#e74c3c;color:#fff;border-radius:6px;cursor:pointer;font-size:.8rem">Delete</button>
+        </div>`).join('');
+
+  const modal = document.createElement('div');
+  modal.id = 'manage-clones-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = `
+    <div style="background:var(--bg, #fff);color:var(--text, #000);border:1px solid var(--border, #ccc);border-radius:10px;padding:0;max-width:480px;width:92%;max-height:80vh;display:flex;flex-direction:column">
+      <div style="padding:14px 18px;border-bottom:1px solid var(--border, #eee)">
+        <h3 style="margin:0;font-size:1.05rem">Manage cloned voices</h3>
+        <p style="margin:4px 0 0;color:var(--muted, #666);font-size:.78rem">Removes the voice's model files from disk.</p>
+      </div>
+      <div id="mc-rows" style="overflow:auto;flex:1">${rows}</div>
+      <div id="mc-status" style="padding:0 18px;font-size:.78rem;color:var(--muted, #666);min-height:1em"></div>
+      <div style="padding:12px 18px;border-top:1px solid var(--border, #eee);display:flex;justify-content:flex-end">
+        <button id="mc-close" type="button" style="padding:8px 14px;border:1px solid var(--border, #ccc);background:transparent;color:var(--text, #000);border-radius:6px;cursor:pointer">Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+  document.getElementById('mc-close').onclick = () => modal.remove();
+  const statusEl = document.getElementById('mc-status');
+
+  modal.querySelectorAll('.mc-delete').forEach(btn => {
+    btn.onclick = async () => {
+      const row = btn.closest('.mc-row');
+      const id = row.dataset.id;
+      if (!confirm(`Delete "${id}"? Removes the .pth + .index from disk.`)) return;
+      btn.disabled = true; statusEl.textContent = 'Deleting…'; statusEl.style.color = 'var(--muted, #666)';
+      try {
+        const r = await apiFetch('/api/voices/clones/' + encodeURIComponent(id), { method: 'DELETE' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { statusEl.textContent = 'Failed: ' + (data.error || ('HTTP ' + r.status)); statusEl.style.color = '#c0392b'; btn.disabled = false; return; }
+        row.remove();
+        if (localStorage.getItem('lax_voice') === ('clone:' + id)) {
+          localStorage.setItem('lax_voice', 'am_michael');
+        }
+        await refreshClonedVoices();
+        statusEl.textContent = `Deleted "${id}".`;
+      } catch (e) {
+        statusEl.textContent = 'Failed: ' + e.message; statusEl.style.color = '#c0392b';
+        btn.disabled = false;
+      }
+    };
+  });
 }
 
 function showVoiceToast(msg) {

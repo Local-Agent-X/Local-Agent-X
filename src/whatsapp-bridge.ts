@@ -18,6 +18,9 @@ import { mkdirSync, existsSync, rmSync } from "node:fs";
 // @ts-ignore — no types for qrcode
 import QRCode from "qrcode";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("whatsapp-bridge");
+
 // ── Types ──
 
 export interface WhatsAppBridgeConfig {
@@ -127,7 +130,7 @@ export class WhatsAppBridge {
     this.qrCode = null;
     this.qrDataUrl = null;
     this.phoneNumber = null;
-    console.log("[whatsapp] Disconnected");
+    logger.info("[whatsapp] Disconnected");
   }
 
   /** Reset auth — removes saved session, forces new QR scan */
@@ -135,14 +138,14 @@ export class WhatsAppBridge {
     await this.disconnect();
     if (existsSync(this.authDir)) {
       rmSync(this.authDir, { recursive: true, force: true });
-      console.log("[whatsapp] Auth state cleared — will need new QR scan");
+      logger.info("[whatsapp] Auth state cleared — will need new QR scan");
     }
   }
 
   /** Send a message to a WhatsApp number */
   async sendMessage(to: string, text: string): Promise<boolean> {
     if (!this.sock || this.state !== "connected") {
-      console.error("[whatsapp] Cannot send — not connected");
+      logger.error("[whatsapp] Cannot send — not connected");
       return false;
     }
 
@@ -153,7 +156,7 @@ export class WhatsAppBridge {
       try {
         await this.sock.sendMessage(jid, { text: chunk });
       } catch (e) {
-        console.error("[whatsapp] Send error:", (e as Error).message);
+        logger.error("[whatsapp] Send error:", (e as Error).message);
         return false;
       }
       if (chunks.length > 1) await new Promise(r => setTimeout(r, 300));
@@ -164,7 +167,7 @@ export class WhatsAppBridge {
   /** Send an image (buffer) with optional caption. */
   async sendImage(to: string, image: Buffer, caption?: string): Promise<boolean> {
     if (!this.sock || this.state !== "connected") {
-      console.error("[whatsapp] Cannot send image — not connected");
+      logger.error("[whatsapp] Cannot send image — not connected");
       return false;
     }
     const jid = this.toJid(to);
@@ -172,7 +175,7 @@ export class WhatsAppBridge {
       await this.sock.sendMessage(jid, { image, caption: caption || "" });
       return true;
     } catch (e) {
-      console.error("[whatsapp] sendImage error:", (e as Error).message);
+      logger.error("[whatsapp] sendImage error:", (e as Error).message);
       return false;
     }
   }
@@ -265,7 +268,7 @@ export class WhatsAppBridge {
           const qrt = require("qrcode-terminal");
           qrt.generate(qr, { small: true });
         } catch {}
-        console.log("[whatsapp] QR code ready — scan with WhatsApp → Linked Devices → Link a Device");
+        logger.info("[whatsapp] QR code ready — scan with WhatsApp → Linked Devices → Link a Device");
       }
 
       if (connection === "close") {
@@ -275,23 +278,23 @@ export class WhatsAppBridge {
         const reason = statusCode || "unknown";
 
         if (statusCode === DisconnectReason.loggedOut) {
-          console.log("[whatsapp] Logged out — clearing session");
+          logger.info("[whatsapp] Logged out — clearing session");
           this.state = "disconnected";
           this.sock = null;
           if (existsSync(this.authDir)) {
             rmSync(this.authDir, { recursive: true, force: true });
           }
         } else if (statusCode === DisconnectReason.connectionReplaced) {
-          console.log("[whatsapp] Connection replaced by another session — stopped.");
+          logger.info("[whatsapp] Connection replaced by another session — stopped.");
           this.state = "disconnected";
           this.lastError = "Connection replaced by another WhatsApp Web session. Close other sessions first, then reconnect.";
           this.sock = null;
         } else {
-          console.log(`[whatsapp] Disconnected (reason: ${reason}) — reconnecting in 5s...`);
+          logger.info(`[whatsapp] Disconnected (reason: ${reason}) — reconnecting in 5s...`);
           this.state = "connecting";
           this.reconnectTimer = setTimeout(() => {
             this.startSocket().catch(e => {
-              console.error("[whatsapp] Reconnect failed:", (e as Error).message);
+              logger.error("[whatsapp] Reconnect failed:", (e as Error).message);
               this.state = "disconnected";
               this.lastError = (e as Error).message;
             });
@@ -307,7 +310,7 @@ export class WhatsAppBridge {
         this.phoneNumber = me?.id?.split(":")[0] || me?.id || null;
         // Strip both @lid suffix AND :device suffix from lid (e.g. "ABC123:5@lid" → "ABC123")
         this.selfLid = me?.lid?.replace(/@.*$/, "").split(":")[0] || null;
-        console.log(`[whatsapp] Connected as ${this.phoneNumber} (lid=${this.selfLid})`);
+        logger.info(`[whatsapp] Connected as ${this.phoneNumber} (lid=${this.selfLid})`);
         // Send available presence
         try { this.sock.sendPresenceUpdate("available"); } catch {}
       }
@@ -364,7 +367,7 @@ export class WhatsAppBridge {
           } catch {}
         }
 
-        console.log(`[whatsapp] MSG: fromMe=${fromMe} jid=${remoteJid} phone=${senderPhone} selfChat=${isSelfChat} text="${String(text || "").slice(0, 50).replace(/[\x00-\x1f\x7f]/g, "")}"`);
+        logger.info(`[whatsapp] MSG: fromMe=${fromMe} jid=${remoteJid} phone=${senderPhone} selfChat=${isSelfChat} text="${String(text || "").slice(0, 50).replace(/[\x00-\x1f\x7f]/g, "")}"`);
 
         // - fromMe=true + self-chat = user messaging themselves → allow (talk to the agent)
         // - fromMe=true + NOT self-chat = outbound to someone else → skip
@@ -376,7 +379,7 @@ export class WhatsAppBridge {
 
         if (!sanitizedText) {
           const msgType = Object.keys(msg.message || {})[0] || "unknown";
-          console.log(`[whatsapp] Ignoring ${msgType} from ${remoteJid}`);
+          logger.info(`[whatsapp] Ignoring ${msgType} from ${remoteJid}`);
           continue;
         }
 
@@ -397,7 +400,7 @@ export class WhatsAppBridge {
         // Check allowed numbers — DEFAULT-DENY: only owner + explicitly allowed numbers
         const isOwner = this.phoneNumber && phone === this.phoneNumber;
         if (!isOwner && !this.allowedNumbers.has(phone)) {
-          console.log(`[whatsapp] BLOCKED message from ${phone} (not owner or in allowed list)`);
+          logger.info(`[whatsapp] BLOCKED message from ${phone} (not owner or in allowed list)`);
           continue;
         }
 
@@ -406,7 +409,7 @@ export class WhatsAppBridge {
 
         const safeName = (name || "unknown").replace(/[\x00-\x1f\x7f]/g, "");
         const safeText = text.slice(0, 80).replace(/[\x00-\x1f\x7f]/g, "");
-        console.log(`[whatsapp] → ${safeName} (${phone}): ${safeText}${text.length > 80 ? "..." : ""}`);
+        logger.info(`[whatsapp] → ${safeName} (${phone}): ${safeText}${text.length > 80 ? "..." : ""}`);
 
         // Mark as read (skip for self-chat)
         if (!isSelfChat) {
@@ -436,7 +439,7 @@ export class WhatsAppBridge {
             await this.sendToJid(replyJid, reply);
           }
         } catch (e) {
-          console.error(`[whatsapp] Agent error for ${phone}:`, (e as Error).message);
+          logger.error(`[whatsapp] Agent error for ${phone}:`, (e as Error).message);
           await this.sendToJid(replyJid, "Something went wrong. Try again?");
         } finally {
           clearInterval(typingInterval);
@@ -466,7 +469,7 @@ export class WhatsAppBridge {
       try {
         await this.sock.sendMessage(jid, { text: chunk });
       } catch (e) {
-        console.error("[whatsapp] Send error:", (e as Error).message);
+        logger.error("[whatsapp] Send error:", (e as Error).message);
         return false;
       }
       if (chunks.length > 1) await new Promise(r => setTimeout(r, 300));
@@ -512,7 +515,7 @@ export class WhatsAppBridge {
       const cfg = { allowedNumbers: [...this.allowedNumbers] };
       require("node:fs").writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
     } catch (e) {
-      console.error("[whatsapp] Failed to save config:", (e as Error).message);
+      logger.error("[whatsapp] Failed to save config:", (e as Error).message);
     }
   }
 }

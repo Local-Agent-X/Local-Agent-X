@@ -139,11 +139,10 @@ export class MemoryOrchestrator {
   runBackground(memoryIndex?: MemoryIndex): BackgroundReport {
     const startTime = Date.now();
 
-    const consolidation = safeRun("memory-consolidation:bg", () => {
-      const mc = MemoryConsolidator.getInstance();
-      const report = mc.consolidate();
-      return { merged: report.mergedCount, promoted: report.promotedCount };
-    }, { merged: 0, promoted: 0 });
+    // Note: consolidation, retain-from-logs, and reflect are scheduled directly
+    // via the JobScheduler in src/server/background-jobs.ts. The orchestrator
+    // owns the orchestrator-internal jobs only (compression, tiers, prefetch,
+    // unspoken, growth, narratives, graph, importance).
 
     const compression = safeRun("memory-compression:bg", () => {
       const mc = MemoryCompressor.getInstance();
@@ -179,26 +178,6 @@ export class MemoryOrchestrator {
       const nm = NarrativeMemory.getInstance();
       return nm.getOngoingStories().length;
     }, 0);
-
-    const retained = safeRun("retain-from-logs:bg", () => {
-      if (!memoryIndex) return 0;
-      let totalRetained = 0;
-      for (let i = 0; i < 7; i++) {
-        const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
-        const facts = memoryIndex.retainFromDailyLog(date);
-        totalRetained += facts.length;
-      }
-      return totalRetained;
-    }, 0);
-
-    const reflected = safeRun("reflect:bg", () => {
-      if (!memoryIndex) return { entitiesUpdated: 0, opinionsUpdated: 0 };
-      let result = { entitiesUpdated: 0, opinionsUpdated: 0 };
-      memoryIndex.reflect(7).then(r => {
-        result = { entitiesUpdated: r.entitiesUpdated.length, opinionsUpdated: r.opinionsUpdated };
-      }).catch(() => {});
-      return result;
-    }, { entitiesUpdated: 0, opinionsUpdated: 0 });
 
     const graphEdges = safeRun("memory-graph:bg", () => {
       if (!memoryIndex) return 0;
@@ -246,15 +225,12 @@ export class MemoryOrchestrator {
     saveState(orchestratorState);
 
     return {
-      consolidation,
       compression,
       tierChanges,
       prefetch,
       unspoken,
       growth,
       narratives,
-      retained,
-      reflected,
       graphEdges,
       importanceScored,
       totalTimeMs: Date.now() - startTime,

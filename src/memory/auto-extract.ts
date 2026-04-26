@@ -3,6 +3,9 @@ import { join } from "node:path";
 import type { MemoryIndex } from "./index-core.js";
 import { atomicWriteFileSync, STOP_WORDS } from "./utils.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("memory.auto-extract");
+
 export async function autoExtractAndSave(
   memory: MemoryIndex,
   userMessage: string,
@@ -12,12 +15,12 @@ export async function autoExtractAndSave(
     const sanitize = await import("../sanitize.js");
     const taint = sanitize.checkMemoryTaint(userMessage);
     if (!taint.safe) {
-      console.log(`[memory] Auto-extract skipped: ${taint.reason}`);
+      logger.info(`[memory] Auto-extract skipped: ${taint.reason}`);
       return;
     }
     const taintReply = sanitize.checkMemoryTaint(assistantResponse);
     if (!taintReply.safe) {
-      console.log(`[memory] Auto-extract skipped (assistant): ${taintReply.reason}`);
+      logger.info(`[memory] Auto-extract skipped (assistant): ${taintReply.reason}`);
       return;
     }
   } catch {
@@ -44,7 +47,7 @@ export async function autoExtractAndSave(
           );
           atomicWriteFileSync(identityPath, content);
           memory.markDirty();
-          console.log(`[memory] Auto-updated agent name to: ${newName}`);
+          logger.info(`[memory] Auto-updated agent name to: ${newName}`);
         }
         memory.appendDailyLog(`Agent renamed to "${newName}" by user`);
         break;
@@ -74,7 +77,7 @@ export async function autoExtractAndSave(
           }
           atomicWriteFileSync(userPath, content);
           memory.markDirty();
-          console.log(`[memory] Auto-saved user name: ${userName}`);
+          logger.info(`[memory] Auto-saved user name: ${userName}`);
         }
         memory.appendDailyLog(`User introduced themselves as "${userName}"`);
         break;

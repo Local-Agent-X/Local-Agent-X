@@ -22,6 +22,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { extractSessionPairs, type ConversationMessage } from "./memory-chunking.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("memory-dream");
+
 const LAX_DIR = join(homedir(), ".lax");
 const MEMORY_DIR = join(LAX_DIR, "memory");
 const SESSIONS_DIR = join(LAX_DIR, "sessions");
@@ -72,7 +75,7 @@ export function shouldDream(minHours = 24, minSessions = 5): boolean {
   if (state.dreaming) {
     const stuckMinutes = (Date.now() - (state.dreamStartedAt || 0)) / 60_000;
     if (stuckMinutes > 30) {
-      console.warn(`[dream] Stuck lock detected (${Math.round(stuckMinutes)}m) — force-releasing`);
+      logger.warn(`[dream] Stuck lock detected (${Math.round(stuckMinutes)}m) — force-releasing`);
       state.dreaming = false;
       saveDreamState(state);
     } else {
@@ -281,7 +284,7 @@ export function completeDream(sessionCount: number): void {
     lastDreamSessionCount: sessionCount,
     dreaming: false,
   });
-  console.log(`[dream] Consolidation complete. Reviewed ${sessionCount} sessions.`);
+  logger.info(`[dream] Consolidation complete. Reviewed ${sessionCount} sessions.`);
 }
 
 /** Mark dream as failed (reset lock) */
@@ -289,5 +292,5 @@ export function failDream(): void {
   const state = loadDreamState();
   state.dreaming = false;
   saveDreamState(state);
-  console.warn("[dream] Consolidation failed — lock released.");
+  logger.warn("[dream] Consolidation failed — lock released.");
 }

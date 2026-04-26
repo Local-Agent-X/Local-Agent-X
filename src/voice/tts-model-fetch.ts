@@ -19,6 +19,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { spawn } from "node:child_process";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("voice.tts-model-fetch");
+
 const MODEL_DIR = join(homedir(), ".lax", "models", "tts");
 const BUNDLE_NAME = "matcha-icefall-en_US-ljspeech";
 const BUNDLE_URL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${BUNDLE_NAME}.tar.bz2`;
@@ -133,7 +136,7 @@ async function doDownload(
     } catch (e) {
       lastErr = e as Error;
       try { unlinkSync(bundlePath); } catch {}
-      console.warn(`[tts-fetch] bundle attempt ${attempt}/3 failed: ${lastErr.message}`);
+      logger.warn(`[tts-fetch] bundle attempt ${attempt}/3 failed: ${lastErr.message}`);
       if (attempt < 3) await new Promise((r) => setTimeout(r, 1000 * attempt));
     }
   }
@@ -162,7 +165,7 @@ async function doDownload(
     } catch (e) {
       vocoderErr = e as Error;
       try { unlinkSync(vocoderPath); } catch {}
-      console.warn(`[tts-fetch] vocoder attempt ${attempt}/3 failed: ${vocoderErr.message}`);
+      logger.warn(`[tts-fetch] vocoder attempt ${attempt}/3 failed: ${vocoderErr.message}`);
       if (attempt < 3) await new Promise((r) => setTimeout(r, 1000 * attempt));
     }
   }

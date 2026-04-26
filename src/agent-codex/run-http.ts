@@ -17,6 +17,10 @@ import {
   handleEmptyResponse,
   handleNoToolCallBranch,
 } from "./run-http-helpers.js";
+import { logRetry } from "../retry-telemetry.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("agent-codex.run-http");
 
 // ── HTTP path (canonical) ──
 
@@ -185,8 +189,8 @@ export async function runCodexAgentHttp(
         messages = forceCompact(messages, 2);
         previousResponseId = undefined; // Force full-context restart next turn
         lastContextLength = 0;
-        console.warn(`[agent] Codex context overflow — force-compacted ${before} → ${messages.length} msgs and retrying`);
-        try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "context-overflow", sessionId: options.sessionId, detail: { provider: "codex", model, before, after: messages.length } })).catch(() => {}); } catch {}
+        logger.warn(`[agent] Codex context overflow — force-compacted ${before} → ${messages.length} msgs and retrying`);
+        logRetry({ kind: "context-overflow", sessionId: options.sessionId, detail: { provider: "codex", model, before, after: messages.length } });
         onEvent?.({ type: "context_status", percentage: 100, level: "emergency", usedTokens: 0, maxTokens: 0, compacted: true });
         continue;
       }
@@ -198,13 +202,13 @@ export async function runCodexAgentHttp(
       // resubmission on the next iteration. Costs the input tokens of one
       // extra turn but recovers cleanly instead of failing the session.
       if (/No tool output found for function call/i.test(errMsg) && iteration < maxIterations - 1) {
-        console.warn(`[agent] Codex 400 "No tool output found" — invalidating previousResponseId and resending full context`);
-        try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "codex", model, detail: { reason: "no-tool-output-recovery", iteration } })).catch(() => {}); } catch {}
+        logger.warn(`[agent] Codex 400 "No tool output found" — invalidating previousResponseId and resending full context`);
+        logRetry({ kind: "custom", sessionId: options.sessionId, provider: "codex", model, detail: { reason: "no-tool-output-recovery", iteration } });
         previousResponseId = undefined;
         lastContextLength = 0;
         continue;
       }
-      console.error("[agent] Codex HTTP stream error:", errMsg);
+      logger.error("[agent] Codex HTTP stream error:", errMsg);
       onEvent?.({ type: "error", message: errMsg });
       // On error, invalidate previousResponseId so the next attempt
       // sends the full context instead of trying incremental mode
@@ -284,8 +288,8 @@ export async function runCodexAgentHttp(
       };
       const hit = runPostTurnDetectors(detectorState, retryCounters);
       if (hit && iteration < maxIterations - 1) {
-        console.warn(`[agent] Post-turn detector fired (Codex): ${hit.kind}`);
-        try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "codex", model, detail: { reason: `post-turn-${hit.kind}` } })).catch(() => {}); } catch {}
+        logger.warn(`[agent] Post-turn detector fired (Codex): ${hit.kind}`);
+        logRetry({ kind: "custom", sessionId: options.sessionId, provider: "codex", model, detail: { reason: `post-turn-${hit.kind}` } });
         promptLayers.retry = hit;
         // Kick the Codex incremental-response path back to full context
         previousResponseId = undefined;
@@ -342,7 +346,7 @@ export async function runCodexAgentHttp(
     try {
       toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal, messages);
     } catch (e) {
-      console.error("[agent] Tool execution error (Codex):", (e as Error).message);
+      logger.error("[agent] Tool execution error (Codex):", (e as Error).message);
       toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];
     }
     // Strip injected <system-reminder> / <system> / <human> tags out of every

@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("voice");
+
 /**
  * Voice Engine — Local Whisper STT + Kokoro TTS
  *
@@ -153,7 +156,7 @@ export function transcribe(audioBuffer: Buffer): string {
       if (injections.length > 0) {
         const maxScore = Math.max(...injections.map((i: { score: number }) => i.score));
         if (maxScore >= 0.7) {
-          console.warn(`[voice] Injection detected in transcription (score=${maxScore.toFixed(2)}): "${text.slice(0, 80)}"`);
+          logger.warn(`[voice] Injection detected in transcription (score=${maxScore.toFixed(2)}): "${text.slice(0, 80)}"`);
           return ""; // Silently drop injected transcription
         }
       }

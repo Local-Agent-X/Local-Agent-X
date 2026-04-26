@@ -22,6 +22,7 @@ import { checkCircuit, recordCircuitFailure, recordCircuitSuccess } from "./circ
 import { recordToolCall as recordToolStat } from "./tool-tracker.js";
 import { checkToolRateLimit, recordToolCall as recordRateLimit } from "./tool-rate-limiter.js";
 import { getApprovalManager, toolNeedsApproval } from "./approval-manager.js";
+import { logRetry } from "./retry-telemetry.js";
 
 // Tools whose failures are usually transient (network, rate limit) and worth retrying.
 const RETRYABLE_TOOLS = new Set([
@@ -222,7 +223,7 @@ async function executeSingleTool(
   if (dup) {
     const hint = `[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing. If you need fresh data, change the arguments. Otherwise, focus on the user's current question.]\n\n${dup.result}`;
     onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: hint, allowed: true });
-    try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId, tool: tc.name, detail: { reason: "session-repeat", priorTurn: dup.turnIndex } })).catch(() => {}); } catch {}
+    logRetry({ kind: "custom", sessionId, tool: tc.name, detail: { reason: "session-repeat", priorTurn: dup.turnIndex } });
     return [{ role: "tool", tool_call_id: tc.id, content: hint } as ChatCompletionMessageParam];
   }
   const msgs: ChatCompletionMessageParam[] = [];
@@ -239,7 +240,7 @@ async function executeSingleTool(
     const repair = repairJson(tc.arguments);
     if (repair.ok) {
       args = repair.value;
-      try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "tool-arg-invalid", sessionId, tool: tc.name, detail: { phase: "json-repair", fixes: repair.fixes } })).catch(() => {}); } catch {}
+      logRetry({ kind: "tool-arg-invalid", sessionId, tool: tc.name, detail: { phase: "json-repair", fixes: repair.fixes } });
     } else {
       args = { _raw: tc.arguments };
     }
@@ -398,7 +399,7 @@ async function executeSingleTool(
           const result = coerceArgs(args as Record<string, unknown>, schema);
           if (result.fixes.length > 0) {
             args = result.coerced;
-            try { import("./retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "tool-arg-invalid", sessionId, tool: tc.name, detail: { phase: "coerce", fixes: result.fixes } })).catch(() => {}); } catch {}
+            logRetry({ kind: "tool-arg-invalid", sessionId, tool: tc.name, detail: { phase: "coerce", fixes: result.fixes } });
           }
         } catch {}
       }

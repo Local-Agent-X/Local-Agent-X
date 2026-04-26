@@ -12,10 +12,8 @@
  * Falls back to a single ad-hoc phase if no LLM is available — Operations is
  * still useful even without decomposition (just linear execution).
  */
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
+import { dispatch } from "../llm-dispatch.js";
 import type { OperationPhase } from "./types.js";
 
 export interface DecomposerOptions {
@@ -138,74 +136,20 @@ function fallbackPhase(goal: string): OperationPhase {
   };
 }
 
-// ── LLM plumbing (same shape as memory-resolver / memory-sleeptime / hyde) ──
-
+// Decomposer needs a real Anthropic API key (not CLI subscription) — bulk
+// JSON planning calls can't go through OAuth. preferEnvKeys also skips the
+// user's chat-time provider preference.
 async function callDecomposer(goal: string, opts: DecomposerOptions): Promise<string | null> {
-  const timeout = opts.timeoutMs ?? 30_000;
-  const provider = opts.provider === "auto" || !opts.provider ? detectProvider() : opts.provider;
-  const prompt = buildPrompt(goal, opts.knownProtocols || []);
-
-  if (provider === "ollama") return callOllama(prompt, opts.model || "llama3:8b", timeout);
-  if (provider === "anthropic") return callAnthropic(prompt, opts.model || "claude-haiku-4-5-20251001", timeout);
-  if (provider === "openai") return callOpenAI(prompt, opts.model || "gpt-4o-mini", timeout);
-  return null;
-}
-
-function detectProvider(): "ollama" | "anthropic" | "openai" | null {
-  if (process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.startsWith("sk-ant-api")) return "anthropic";
-  if (process.env.OPENAI_API_KEY) return "openai";
-  return "ollama";
-}
-
-async function callOllama(prompt: string, model: string, timeoutMs: number): Promise<string | null> {
-  try {
-    const res = await fetch("http://localhost:11434/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt, stream: false, options: { temperature: 0.3, num_predict: 1200 } }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { response?: string };
-    return data.response || null;
-  } catch { return null; }
-}
-
-async function callAnthropic(prompt: string, model: string, timeoutMs: number): Promise<string | null> {
-  try {
-    let apiKey = process.env.ANTHROPIC_API_KEY || "";
-    if (!apiKey) {
-      try { apiKey = await (await import("../auth-anthropic.js")).getAnthropicApiKey(); } catch {}
-    }
-    if (!apiKey || !apiKey.startsWith("sk-ant-api")) return null; // decomposer needs real API, not CLI subscription
-    const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": apiKey };
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ model, max_tokens: 1500, temperature: 0.3, messages: [{ role: "user", content: prompt }] }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { content?: Array<{ text?: string }> };
-    return data.content?.[0]?.text || null;
-  } catch { return null; }
-}
-
-async function callOpenAI(prompt: string, model: string, timeoutMs: number): Promise<string | null> {
-  try {
-    const apiKey = process.env.OPENAI_API_KEY || "";
-    if (!apiKey) return null;
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model, temperature: 0.3, max_tokens: 1500,
-        messages: [{ role: "user", content: prompt }],
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-    return data.choices?.[0]?.message?.content || null;
-  } catch { return null; }
+  return dispatch({
+    prompt: buildPrompt(goal, opts.knownProtocols || []),
+    provider: opts.provider,
+    ollamaModel: opts.model || "llama3:8b",
+    anthropicModel: opts.model,
+    openaiModel: opts.model,
+    temperature: 0.3,
+    maxTokens: 1500,
+    timeoutMs: opts.timeoutMs ?? 30_000,
+    rejectOAuth: true,
+    preferEnvKeys: true,
+  });
 }

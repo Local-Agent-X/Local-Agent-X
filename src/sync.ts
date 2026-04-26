@@ -3,6 +3,9 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSy
 import { join, resolve, relative, extname } from "node:path";
 import { promisify } from "node:util";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("sync");
+
 const execFileAsync = promisify(execFile);
 
 export interface SyncConfig {
@@ -211,7 +214,7 @@ export class AgentSync {
         const syncContent = readFileSync(join(syncMemDir, f), "utf-8");
         if (checkTaint) {
           const t = checkTaint(syncContent);
-          if (!t.safe) { console.warn(`[sync] Rejected ${f}: ${t.reason}`); continue; }
+          if (!t.safe) { logger.warn(`[sync] Rejected ${f}: ${t.reason}`); continue; }
         }
         const localPath = join(memDir, f);
         if (existsSync(localPath)) {
@@ -224,7 +227,7 @@ export class AgentSync {
     // Delete local memory files removed from sync repo
     for (const f of readdirSync(memDir)) {
       if (f.endsWith(".md") && !remoteMemFiles.has(f)) {
-        console.log(`[sync] Deleting ${f} (removed from remote)`);
+        logger.info(`[sync] Deleting ${f} (removed from remote)`);
         unlinkSync(join(memDir, f));
       }
     }
@@ -296,7 +299,7 @@ export class AgentSync {
     for (const entry of readdirSync(dest)) {
       if (!remoteEntries.has(entry)) {
         const p = join(dest, entry);
-        console.log(`[sync] Deleting ${relative(resolve("workspace"), p)} (removed from remote)`);
+        logger.info(`[sync] Deleting ${relative(resolve("workspace"), p)} (removed from remote)`);
         if (statSync(p).isDirectory()) rmSync(p, { recursive: true, force: true }); else unlinkSync(p);
       }
     }

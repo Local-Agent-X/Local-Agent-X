@@ -11,6 +11,9 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { AgentTurn, ServerEvent } from "./types.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("query-pipeline");
+
 // ── Types ──
 
 export interface QueryContext {
@@ -156,7 +159,7 @@ export function queryLogger(): PostMiddleware {
   return (result: QueryResult) => {
     const cost = result.costUsd ? ` ($${result.costUsd.toFixed(4)})` : "";
     const quality = result.qualityScore !== undefined ? ` [quality: ${result.qualityScore}]` : "";
-    console.log(`[pipeline] ${result.context.model} | ${result.turn.usage.totalTokens} tokens${cost}${quality} | ${result.turn.stopReason}`);
+    logger.info(`[pipeline] ${result.context.model} | ${result.turn.usage.totalTokens} tokens${cost}${quality} | ${result.turn.stopReason}`);
     return result;
   };
 }

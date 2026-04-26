@@ -9,6 +9,9 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("telegram-bridge");
+
 // ── Types ──
 
 export interface TelegramBridgeConfig {
@@ -86,13 +89,13 @@ export class TelegramBridge {
       this.loadAllowedChats();
 
       this.state = "connected";
-      console.log(`[telegram] Connected as @${this.botUser!.username} (${this.botUser!.first_name})`);
+      logger.info(`[telegram] Connected as @${this.botUser!.username} (${this.botUser!.first_name})`);
       this.startPolling(token);
       return { state: "connected", botUsername: this.botUser!.username, botName: this.botUser!.first_name };
     } catch (e) {
       this.state = "error";
       this.lastError = (e as Error).message;
-      console.error("[telegram] Connect failed:", this.lastError);
+      logger.error("[telegram] Connect failed:", this.lastError);
       return { state: "error" };
     }
   }
@@ -103,7 +106,7 @@ export class TelegramBridge {
     this.state = "disconnected";
     this.botUser = null;
     this.lastError = null;
-    console.log("[telegram] Disconnected");
+    logger.info("[telegram] Disconnected");
   }
 
   /** Send a text message to a Telegram chat */
@@ -128,11 +131,11 @@ export class TelegramBridge {
           result = await this.apiCall(token, "sendMessage", { chat_id: chatId, text: plain }, false);
         }
         if (!result.ok) {
-          console.error(`[telegram] Send failed: ${result.description}`);
+          logger.error(`[telegram] Send failed: ${result.description}`);
           return false;
         }
       } catch (e) {
-        console.error("[telegram] Send error:", (e as Error).message);
+        logger.error("[telegram] Send error:", (e as Error).message);
         return false;
       }
       if (chunks.length > 1) await new Promise(r => setTimeout(r, 300));
@@ -158,12 +161,12 @@ export class TelegramBridge {
       });
       const result = await res.json() as { ok: boolean; description?: string };
       if (!result.ok) {
-        console.error(`[telegram] sendPhoto failed: ${result.description}`);
+        logger.error(`[telegram] sendPhoto failed: ${result.description}`);
         return false;
       }
       return true;
     } catch (e) {
-      console.error("[telegram] sendPhoto error:", (e as Error).message);
+      logger.error("[telegram] sendPhoto error:", (e as Error).message);
       return false;
     }
   }
@@ -236,14 +239,14 @@ export class TelegramBridge {
             return;
           }
           if (consecutiveErrors >= MAX_ERRORS) {
-            console.error(`[telegram] ${consecutiveErrors} consecutive errors — stopping. Reconnect from Settings.`);
+            logger.error(`[telegram] ${consecutiveErrors} consecutive errors — stopping. Reconnect from Settings.`);
             this.state = "error";
             this.lastError = result.description || "Too many poll errors";
             this.polling = false;
             return;
           }
           const delay = Math.min(5000 * Math.pow(2, consecutiveErrors - 1), 60000);
-          console.error(`[telegram] Poll error (${consecutiveErrors}/${MAX_ERRORS}): ${result.description}`);
+          logger.error(`[telegram] Poll error (${consecutiveErrors}/${MAX_ERRORS}): ${result.description}`);
           await new Promise(r => setTimeout(r, delay));
           continue;
         }
@@ -257,14 +260,14 @@ export class TelegramBridge {
         if ((e as Error).name === "AbortError") return;
         consecutiveErrors++;
         if (consecutiveErrors >= MAX_ERRORS) {
-          console.error(`[telegram] ${consecutiveErrors} consecutive errors — stopping. Reconnect from Settings.`);
+          logger.error(`[telegram] ${consecutiveErrors} consecutive errors — stopping. Reconnect from Settings.`);
           this.state = "error";
           this.lastError = (e as Error).message;
           this.polling = false;
           return;
         }
         const delay = Math.min(5000 * Math.pow(2, consecutiveErrors - 1), 60000);
-        console.error(`[telegram] Poll error (${consecutiveErrors}/${MAX_ERRORS}): ${(e as Error).message}`);
+        logger.error(`[telegram] Poll error (${consecutiveErrors}/${MAX_ERRORS}): ${(e as Error).message}`);
         await new Promise(r => setTimeout(r, delay));
       }
     }
@@ -291,7 +294,7 @@ export class TelegramBridge {
       const caption = typeof msg.caption === "string" ? ` Caption: "${msg.caption}".` : "";
       return `[User sent a ${kind} message via Telegram. Saved locally at ${localPath}. Metadata: ${extra}.${caption} If handling this requires a capability you don't have yet (transcription, OCR, video analysis), use self_edit to add it — then re-read this file.]`;
     } catch (e) {
-      console.error(`[telegram] Failed to download ${kind}:`, (e as Error).message);
+      logger.error(`[telegram] Failed to download ${kind}:`, (e as Error).message);
       return `[User sent a ${kind} message via Telegram but download failed: ${(e as Error).message}. Tell the user you couldn't process it.]`;
     }
   }
@@ -327,13 +330,13 @@ export class TelegramBridge {
 
     // Security: require explicit owner configuration — no auto-lock to first message
     if (this.allowedChatIds.size === 0 && !this.ownerVerified) {
-      console.warn(`[telegram] Rejected message from ${chatId} (${senderName}) — no owner configured yet`);
+      logger.warn(`[telegram] Rejected message from ${chatId} (${senderName}) — no owner configured yet`);
       await this.sendMessage(chatId, `This bot has no owner configured yet. Please set your chat ID in the web UI settings before using Telegram.`);
       return;
     }
 
     if (!this.allowedChatIds.has(chatId)) {
-      console.log(`[telegram] Blocked message from unauthorized chat ${chatId} (${senderName})`);
+      logger.info(`[telegram] Blocked message from unauthorized chat ${chatId} (${senderName})`);
       await this.sendMessage(chatId, `Access denied. This bot is locked to its owner.`);
       return;
     }
@@ -356,7 +359,7 @@ export class TelegramBridge {
 
     const safeName = (senderName || "unknown").replace(/[\x00-\x1f\x7f]/g, "");
     const safeText = text.slice(0, 80).replace(/[\x00-\x1f\x7f]/g, "");
-    console.log(`[telegram] ${safeName} (${chatId}): ${safeText}${text.length > 80 ? "..." : ""}`);
+    logger.info(`[telegram] ${safeName} (${chatId}): ${safeText}${text.length > 80 ? "..." : ""}`);
 
     if (this.processingLock.has(chatId)) {
       await this.sendMessage(chatId, "Still working on your last message...");
@@ -376,7 +379,7 @@ export class TelegramBridge {
       const reply = await this.onMessage({ from: chatId, name: senderName, text, sessionId });
       if (reply) await this.sendMessage(chatId, reply);
     } catch (e) {
-      console.error(`[telegram] Agent error for ${chatId}:`, (e as Error).message);
+      logger.error(`[telegram] Agent error for ${chatId}:`, (e as Error).message);
       await this.sendMessage(chatId, "Something went wrong. Try again?");
     } finally {
       clearInterval(typingInterval);
@@ -407,11 +410,11 @@ export class TelegramBridge {
         if (Array.isArray(cfg.allowedChatIds) && cfg.allowedChatIds.length > 0) {
           this.allowedChatIds = new Set(cfg.allowedChatIds.map(String));
           this.ownerVerified = true;
-          console.log(`[telegram] Loaded ${this.allowedChatIds.size} allowed chat(s) from config`);
+          logger.info(`[telegram] Loaded ${this.allowedChatIds.size} allowed chat(s) from config`);
         }
       }
     } catch (e) {
-      console.error("[telegram] Failed to load telegram-config.json:", (e as Error).message);
+      logger.error("[telegram] Failed to load telegram-config.json:", (e as Error).message);
       // Don't set ownerVerified — allow auto-lock to work on next message
       // so the real owner can reclaim the bot after a config corruption
     }
@@ -424,7 +427,7 @@ export class TelegramBridge {
         JSON.stringify({ allowedChatIds: [...this.allowedChatIds] }, null, 2),
       );
     } catch (e) {
-      console.error("[telegram] Failed to save config:", (e as Error).message);
+      logger.error("[telegram] Failed to save config:", (e as Error).message);
     }
   }
 }

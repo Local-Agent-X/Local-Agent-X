@@ -7,6 +7,10 @@ import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucinati
 import { stripEphemeralMessages, sanitizeToolResults } from "./sanitize.js";
 import { _localNoToolModels, type AgentOptions } from "./types.js";
 import { buildUserContentWithImages, checkStandardTurnSafetyCeilings } from "./run-standard-helpers.js";
+import { logRetry } from "../retry-telemetry.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("providers.run-standard");
 
 // ── Standard (xAI/OpenAI API) Agent Loop ──
 
@@ -157,7 +161,7 @@ export async function runStandardAgent(
       }, { signal: signal || undefined }).catch(async (err: Error) => {
         if (options.provider === "local" && err.message?.includes("does not support tools")) {
           _localNoToolModels.add(model);
-          console.log(`[agent] Model ${model} doesn't support tools — switching to chat-only mode`);
+          logger.info(`[agent] Model ${model} doesn't support tools — switching to chat-only mode`);
           return client.chat.completions.create({
             model,
             messages,
@@ -222,12 +226,12 @@ export async function runStandardAgent(
       if (isContextOverflowError(e) && iteration < maxIterations - 1) {
         const before = messages.length;
         messages = forceCompact(messages, 2);
-        console.warn(`[agent] Context overflow — force-compacted ${before} → ${messages.length} msgs and retrying`);
-        try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "context-overflow", sessionId: options.sessionId, detail: { provider: options.provider, model, before, after: messages.length } })).catch(() => {}); } catch {}
+        logger.warn(`[agent] Context overflow — force-compacted ${before} → ${messages.length} msgs and retrying`);
+        logRetry({ kind: "context-overflow", sessionId: options.sessionId, detail: { provider: options.provider, model, before, after: messages.length } });
         onEvent?.({ type: "context_status", percentage: 100, level: "emergency", usedTokens: 0, maxTokens: 0, compacted: true });
         continue;
       }
-      console.error("[agent] Standard stream error:", errMsg);
+      logger.error("[agent] Standard stream error:", errMsg);
       const { classifyOpenAIResponse, logClassification } = await import("../response-classifier.js");
       const classification = classifyOpenAIResponse({
         hasText: !!assistantContent.trim(),
@@ -275,8 +279,8 @@ export async function runStandardAgent(
       };
       const hit = runPostTurnDetectors(detectorState, retryCounters);
       if (hit && iteration < maxIterations - 1) {
-        console.warn(`[agent] Post-turn detector fired: ${hit.kind}`);
-        try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: options.provider, model, detail: { reason: `post-turn-${hit.kind}` } })).catch(() => {}); } catch {}
+        logger.warn(`[agent] Post-turn detector fired: ${hit.kind}`);
+        logRetry({ kind: "custom", sessionId: options.sessionId, provider: options.provider, model, detail: { reason: `post-turn-${hit.kind}` } });
         promptLayers.retry = hit;
         continue;
       }
@@ -287,7 +291,7 @@ export async function runStandardAgent(
       // Approval hallucination
       const approvalNudge = checkApprovalHallucination(assistantContent);
       if (approvalNudge && iteration < maxIterations - 1) {
-        console.warn(`[agent] Approval hallucination detected — nudging`);
+        logger.warn(`[agent] Approval hallucination detected — nudging`);
         messages.push({ role: "user", content: approvalNudge } as ChatCompletionMessageParam);
         continue;
       }
@@ -295,7 +299,7 @@ export async function runStandardAgent(
       // Creation hallucination
       const creationNudge = checkCreationHallucination(assistantContent);
       if (creationNudge && iteration === 0) {
-        console.warn(`[agent] Creation hallucination detected — nudging`);
+        logger.warn(`[agent] Creation hallucination detected — nudging`);
         messages.push({ role: "user", content: creationNudge } as ChatCompletionMessageParam);
         continue;
       }
@@ -304,7 +308,7 @@ export async function runStandardAgent(
       if (!unmatchedClaimNudged && iteration < maxIterations - 1) {
         const claimNudge = checkUnmatchedActionClaim(assistantContent, toolsCalledThisTurn);
         if (claimNudge) {
-          console.warn(`[agent] Unmatched action claim detected — nudging`);
+          logger.warn(`[agent] Unmatched action claim detected — nudging`);
           unmatchedClaimNudged = true;
           messages.push({ role: "user", content: claimNudge } as ChatCompletionMessageParam);
           continue;
@@ -358,7 +362,7 @@ export async function runStandardAgent(
     try {
       toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal, messages);
     } catch (e) {
-      console.error("[agent] Tool execution error (Standard):", (e as Error).message);
+      logger.error("[agent] Tool execution error (Standard):", (e as Error).message);
       toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];
     }
     toolResults = sanitizeToolResults(toolResults);

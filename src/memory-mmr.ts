@@ -23,28 +23,7 @@
 
 interface Scored { score: number; snippet: string }
 
-/** Lowercase token bag, drop stopwords + short tokens. */
-const STOP = new Set([
-  "the","a","an","and","or","but","if","of","at","by","to","in","on","for","is","are","was","were",
-  "be","been","being","have","has","had","do","does","did","this","that","these","those","i","you",
-  "he","she","it","we","they","my","your","his","her","its","our","their","me","him","us","them",
-  "not","no","so","up","out","as","with","from","about","into","over","under","also","then","than",
-]);
-function tokenize(s: string): Set<string> {
-  const out = new Set<string>();
-  for (const w of s.toLowerCase().split(/[^a-z0-9]+/)) {
-    if (w.length >= 3 && !STOP.has(w)) out.add(w);
-  }
-  return out;
-}
-
-function jaccard(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0;
-  let inter = 0;
-  for (const t of a) if (b.has(t)) inter++;
-  const union = a.size + b.size - inter;
-  return union === 0 ? 0 : inter / union;
-}
+import { tokenizeStrict, jaccardSimilarity as jaccard } from "./memory/text-utils.js";
 
 /**
  * Re-rank candidates using MMR. Returns at most `k` items.
@@ -60,7 +39,7 @@ export function mmrRerank<T extends Scored>(
   if (candidates.length <= k || k <= 0) return candidates.slice(0, k);
 
   // Precompute token bags once per candidate — reused across the greedy loop
-  const tokens = candidates.map(c => tokenize(c.snippet));
+  const tokens = candidates.map(c => tokenizeStrict(c.snippet));
 
   // Normalize relevance to [0, 1] so λ*relevance vs (1-λ)*sim is comparable
   const maxScore = Math.max(...candidates.map(c => c.score), 1e-6);

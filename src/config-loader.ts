@@ -13,6 +13,9 @@
 import { readFileSync, existsSync, watch } from "node:fs";
 import { join, resolve, normalize } from "node:path";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("config-loader");
+
 const CONFIG_DIR = resolve(join(import.meta.dirname || ".", "..", "config"));
 
 // ── Cached values ──
@@ -36,7 +39,7 @@ export function loadSystemPrompt(): string {
   try {
     _systemPrompt = readFileSync(path, "utf-8").trim();
   } catch {
-    console.warn("[config-loader] Could not read config/system-prompt.md — using empty prompt");
+    logger.warn("[config-loader] Could not read config/system-prompt.md — using empty prompt");
     _systemPrompt = "";
   }
   return _systemPrompt;
@@ -50,7 +53,7 @@ export function loadProtectedFiles(): string[] {
     const data = JSON.parse(readFileSync(path, "utf-8"));
     _protectedFiles = (data.protected || []) as string[];
   } catch {
-    console.warn("[config-loader] Could not read config/protected-files.json — no files protected");
+    logger.warn("[config-loader] Could not read config/protected-files.json — no files protected");
     _protectedFiles = [];
   }
   return _protectedFiles;
@@ -115,18 +118,18 @@ export function startConfigWatcher(): void {
 
       if (name === "system-prompt.md") {
         _systemPrompt = null;
-        console.log("[config-loader] Hot-reloaded system-prompt.md");
+        logger.info("[config-loader] Hot-reloaded system-prompt.md");
       } else if (name === "protected-files.json") {
         _protectedFiles = null;
-        console.log("[config-loader] Hot-reloaded protected-files.json");
+        logger.info("[config-loader] Hot-reloaded protected-files.json");
       } else if (name === "tools.json") {
         _toolsConfig = null;
-        console.log("[config-loader] Hot-reloaded tools.json");
+        logger.info("[config-loader] Hot-reloaded tools.json");
       }
     });
     _watching = true;
-    console.log("[config-loader] Watching config/ for changes");
+    logger.info("[config-loader] Watching config/ for changes");
   } catch (e) {
-    console.warn("[config-loader] Could not start file watcher:", (e as Error).message);
+    logger.warn("[config-loader] Could not start file watcher:", (e as Error).message);
   }
 }

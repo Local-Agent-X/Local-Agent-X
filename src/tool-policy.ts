@@ -2,6 +2,9 @@ import { readFileSync, writeFileSync, existsSync, watch } from "node:fs";
 import { join } from "node:path";
 import { checkRegexSafety } from "./safe-regex.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("tool-policy");
+
 /**
  * Tool Policy System
  *
@@ -105,7 +108,7 @@ export class ToolPolicy {
         const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
         const safety = checkRegexSafety(escaped);
         if (safety !== null) {
-          console.warn(`[policy] Rule "${rule.id}" has unsafe argMatch pattern for "${argName}": ${safety} — rule rejected`);
+          logger.warn(`[policy] Rule "${rule.id}" has unsafe argMatch pattern for "${argName}": ${safety} — rule rejected`);
           return false;
         }
       }
@@ -524,9 +527,9 @@ export class LiveToolPolicy extends ToolPolicy {
       const raw = JSON.parse(readFileSync(this.policyPath, "utf-8")) as ToolPolicyConfig;
       const merged = mergeWithDefaults(raw, this.policyPath);
       this.currentInner = new ToolPolicy(merged);
-      console.log(`[policy] Hot-reloaded ${merged.rules.length} rules`);
+      logger.info(`[policy] Hot-reloaded ${merged.rules.length} rules`);
     } catch (e) {
-      console.warn(`[policy] Hot-reload failed: ${(e as Error).message}`);
+      logger.warn(`[policy] Hot-reload failed: ${(e as Error).message}`);
     }
   }
 }
@@ -536,7 +539,7 @@ function mergeWithDefaults(user: ToolPolicyConfig, policyPath?: string): ToolPol
   const userIds = new Set(user.rules.map(r => r.id));
   const missing = DEFAULT_POLICY.rules.filter(r => !userIds.has(r.id));
   if (missing.length > 0) {
-    console.log(`[policy] Merging ${missing.length} default rules not in user policy`);
+    logger.info(`[policy] Merging ${missing.length} default rules not in user policy`);
   }
   const merged = {
     defaultDecision: user.defaultDecision,
@@ -546,7 +549,7 @@ function mergeWithDefaults(user: ToolPolicyConfig, policyPath?: string): ToolPol
   if (missing.length > 0 && policyPath) {
     try {
       writeFileSync(policyPath, JSON.stringify(merged, null, 2), { encoding: "utf-8", mode: 0o600 });
-      console.log(`[policy] Saved merged policy (${merged.rules.length} rules) to ${policyPath}`);
+      logger.info(`[policy] Saved merged policy (${merged.rules.length} rules) to ${policyPath}`);
     } catch {}
   }
   return merged;
@@ -562,21 +565,21 @@ export function loadToolPolicy(dataDir: string): LiveToolPolicy {
       for (const rule of raw.rules) {
         const patternCheck = checkRegexSafety(rule.tool);
         if (patternCheck) {
-          console.warn(`[policy] Unsafe tool pattern in rule "${rule.id}": ${patternCheck}. Skipping.`);
+          logger.warn(`[policy] Unsafe tool pattern in rule "${rule.id}": ${patternCheck}. Skipping.`);
           continue;
         }
       }
       const merged = mergeWithDefaults(raw, policyPath);
-      console.log(`[policy] Loaded ${merged.rules.length} rules from ${policyPath}`);
+      logger.info(`[policy] Loaded ${merged.rules.length} rules from ${policyPath}`);
       return new LiveToolPolicy(new ToolPolicy(merged), policyPath);
     } catch (e) {
-      console.warn(`[policy] Failed to parse ${policyPath}: ${(e as Error).message}, using defaults`);
+      logger.warn(`[policy] Failed to parse ${policyPath}: ${(e as Error).message}, using defaults`);
     }
   }
   // Write default policy to disk on first run (so audit doesn't warn about missing file)
   try {
     writeFileSync(policyPath, JSON.stringify(DEFAULT_POLICY, null, 2), { encoding: "utf-8", mode: 0o600 });
-    console.log(`[policy] Created default policy at ${policyPath}`);
+    logger.info(`[policy] Created default policy at ${policyPath}`);
   } catch {}
   return new LiveToolPolicy(new ToolPolicy(DEFAULT_POLICY), policyPath);
 }

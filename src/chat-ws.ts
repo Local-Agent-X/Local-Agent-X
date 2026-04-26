@@ -23,6 +23,9 @@ import type { ServerEvent } from "./types.js";
 import { timingSafeEqual } from "node:crypto";
 import { getApprovalManager } from "./approval-manager.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("chat-ws");
+
 interface ActiveChat {
   sessionId: string;
   events: ServerEvent[];       // Buffered events for replay
@@ -55,7 +58,7 @@ export function setupChatWebSocket(server: Server, authToken: string) {
         wss.emit("connection", ws, req);
       });
     } catch (e) {
-      console.warn(`[chat-ws] upgrade error: ${(e as Error).message}`);
+      logger.warn(`[chat-ws] upgrade error: ${(e as Error).message}`);
       try { socket.destroy(); } catch {}
     }
   });

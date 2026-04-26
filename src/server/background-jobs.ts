@@ -6,15 +6,19 @@ import { stripEphemeralMessages } from "../agent-providers.js";
 import { extractAgentOutput } from "../server-utils.js";
 import { SecurityLayer } from "../security.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
-import type { SessionStore, MemoryIndex } from "../memory.js";
+import type { SessionStore, MemoryIndex, MemoryManager } from "../memory.js";
 import type { SecretsStore } from "../secrets.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { CronService } from "../cron-service.js";
 import type { IntegrationRegistry } from "../integrations.js";
 import type { AgentSync } from "../sync.js";
+import { JobScheduler } from "./scheduler.js";
+
+import { createLogger } from "../logger.js";
+const logger = createLogger("server.background-jobs");
 
 export interface BackgroundJobsHandle {
-  memBgTimer: ReturnType<typeof setInterval> | undefined;
+  scheduler: JobScheduler;
 }
 
 export function startBackgroundJobs(deps: {
@@ -22,6 +26,7 @@ export function startBackgroundJobs(deps: {
   dataDir: string;
   sessionStore: SessionStore;
   memoryIndex: MemoryIndex;
+  memoryManager: MemoryManager;
   secretsStore: SecretsStore;
   security: SecurityLayer;
   toolPolicy: ToolPolicy;
@@ -34,7 +39,7 @@ export function startBackgroundJobs(deps: {
   saveSession: (s: Session) => void;
 }): BackgroundJobsHandle {
   const {
-    config, dataDir, sessionStore, memoryIndex, secretsStore, security, toolPolicy,
+    config, dataDir, sessionStore, memoryIndex, memoryManager, secretsStore, security, toolPolicy,
     cronService, integrations, agentSync, allAgentTools, bridgeTools,
     getOrCreateSession, saveSession,
   } = deps;
@@ -51,7 +56,7 @@ export function startBackgroundJobs(deps: {
     const { prepareAgentRequest } = await import("../agent-request.js");
     const prepared = await prepareAgentRequest({
       channel: "cron", message: prompt, sessionMessages: [], sessionId,
-      config, dataDir, memoryIndex, integrations, secretsStore,
+      config, dataDir, memoryIndex, memoryManager, integrations, secretsStore,
       allAgentTools, bridgeTools, skipMemory: true,
     });
     const cronModel = prepared.provider === "anthropic" ? "claude-haiku-4-5" : prepared.model;
@@ -67,11 +72,11 @@ export function startBackgroundJobs(deps: {
       if (subResults.length > 0) {
         const subOutput = subResults.join("\n\n---\n\n");
         output = subOutput.length > output.length ? subOutput : output + "\n\n---\n\n" + subOutput;
-        console.log(`[cron] Job ${jobId}: collected ${subResults.length} sub-agent result(s)`);
+        logger.info(`[cron] Job ${jobId}: collected ${subResults.length} sub-agent result(s)`);
       }
-    } catch (e) { console.warn(`[cron] Sub-agent wait error:`, (e as Error).message); }
+    } catch (e) { logger.warn(`[cron] Sub-agent wait error:`, (e as Error).message); }
     if (!output) {
-      console.error(`[cron] Job ${jobId} produced no output (stopReason: ${result.stopReason})`);
+      logger.error(`[cron] Job ${jobId} produced no output (stopReason: ${result.stopReason})`);
       return { output: "ERROR: Agent produced no output — check provider/model config" };
     }
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
@@ -87,7 +92,7 @@ export function startBackgroundJobs(deps: {
     const wsCopy = join(missionDir, `${ts}.md`);
     writeFileSync(wsCopy, reportContent, "utf-8");
     writeFileSync(join(missionDir, "latest.md"), reportContent, "utf-8");
-    console.log(`[cron] Report saved: ${reportPath} + ${wsCopy}`);
+    logger.info(`[cron] Report saved: ${reportPath} + ${wsCopy}`);
     return { output: output.slice(0, 500), reportPath };
   });
   cronService.start();
@@ -128,11 +133,11 @@ Rules:
       session.updatedAt = Date.now(); saveSession(session);
       return extractAgentOutput(result.messages);
     });
-    console.log("[workers] Runner registered");
+    logger.info("[workers] Runner registered");
   }).catch(() => {});
 
   const runMemBg = async () => {
-    try { const { MemoryOrchestrator: MO } = await import("../memory-orchestrator.js"); const r = MO.getInstance().runBackground(memoryIndex); console.log(`[memory-bg] ${r.totalTimeMs}ms`); } catch (e) { console.warn("[memory-bg]", (e as Error).message); }
+    try { const { MemoryOrchestrator: MO } = await import("../memory-orchestrator.js"); const r = MO.getInstance().runBackground(memoryIndex); logger.info(`[memory-bg] ${r.totalTimeMs}ms`); } catch (e) { logger.warn("[memory-bg]", (e as Error).message); }
     try {
       let totalRetained = 0;
       for (let i = 0; i < 3; i++) {
@@ -140,21 +145,21 @@ Rules:
         const facts = memoryIndex.retainFromDailyLog(date);
         totalRetained += facts.length;
       }
-      if (totalRetained > 0) console.log(`[memory-bg] Retained ${totalRetained} facts from daily logs`);
-    } catch (e) { console.warn("[memory-bg] Retain:", (e as Error).message); }
+      if (totalRetained > 0) logger.info(`[memory-bg] Retained ${totalRetained} facts from daily logs`);
+    } catch (e) { logger.warn("[memory-bg] Retain:", (e as Error).message); }
     try {
       const reflectResult = await memoryIndex.reflect(7);
       if (reflectResult.entitiesUpdated.length > 0 || reflectResult.opinionsUpdated > 0) {
-        console.log(`[memory-bg] Reflect: ${reflectResult.entitiesUpdated.length} entities, ${reflectResult.opinionsUpdated} opinions`);
+        logger.info(`[memory-bg] Reflect: ${reflectResult.entitiesUpdated.length} entities, ${reflectResult.opinionsUpdated} opinions`);
       }
-    } catch (e) { console.warn("[memory-bg] Reflect:", (e as Error).message); }
+    } catch (e) { logger.warn("[memory-bg] Reflect:", (e as Error).message); }
     try {
       const { MemoryConsolidator: MC } = await import("../memory-consolidation.js");
       const report = MC.getInstance().consolidate();
       if (report.mergedCount > 0 || report.promotedCount > 0) {
-        console.log(`[memory-bg] Consolidation: merged=${report.mergedCount} promoted=${report.promotedCount} entities=${report.entityPagesUpdated}`);
+        logger.info(`[memory-bg] Consolidation: merged=${report.mergedCount} promoted=${report.promotedCount} entities=${report.entityPagesUpdated}`);
       }
-    } catch (e) { console.warn("[memory-bg] Consolidation:", (e as Error).message); }
+    } catch (e) { logger.warn("[memory-bg] Consolidation:", (e as Error).message); }
     try {
       const cutoff = Date.now() - 3 * 24 * 60 * 60 * 1000, recent = sessionStore.list().filter(s => s.updatedAt > cutoff && s.messageCount > 2);
       const dir = join(dataDir, "memory", "session-summaries"); mkdirSync(dir, { recursive: true }); let n = 0;
@@ -171,32 +176,46 @@ Rules:
         n++;
         newlySummarized.push(meta.id);
       }
-      if (n > 0) console.log(`[memory-bg] Summarized ${n} sessions`);
+      if (n > 0) logger.info(`[memory-bg] Summarized ${n} sessions`);
       if (newlySummarized.length > 0) {
         try {
           const { getUniversalIndex } = await import("../memory/universal-index.js");
           const ui = getUniversalIndex();
           if (ui) for (const id of newlySummarized) await ui.indexSessionSummary(id);
-        } catch (e) { console.warn("[memory-bg] Summary reindex:", (e as Error).message); }
+        } catch (e) { logger.warn("[memory-bg] Summary reindex:", (e as Error).message); }
       }
-    } catch (e) { console.warn("[memory-bg] Summarization:", (e as Error).message); }
+    } catch (e) { logger.warn("[memory-bg] Summarization:", (e as Error).message); }
   };
-  const memBgTimer = setInterval(runMemBg, 6 * 60 * 60 * 1000);
-  setTimeout(runMemBg, 30_000);
-  setInterval(async () => {
-    try { const { cleanupIdleWorkers } = await import("../worker-session.js"); const n = cleanupIdleWorkers(); if (n > 0) console.log(`[workers] Cleaned up ${n} idle worker sessions`); } catch {}
-  }, 10 * 60 * 1000);
+  const scheduler = new JobScheduler();
+  scheduler.register({
+    name: "memory-bg",
+    intervalMs: 6 * 60 * 60 * 1000,
+    startupDelayMs: 30_000,
+    run: runMemBg,
+  });
+  scheduler.register({
+    name: "idle-workers-cleanup",
+    intervalMs: 10 * 60 * 1000,
+    run: async () => {
+      try {
+        const { cleanupIdleWorkers } = await import("../worker-session.js");
+        const n = cleanupIdleWorkers();
+        if (n > 0) logger.info(`[workers] Cleaned up ${n} idle worker sessions`);
+      } catch { /* ignore */ }
+    },
+  });
+
+  // One-shot startup: scrub stale transcript lines from MIND.md. The 6h
+  // memory-bg cycle handles ongoing consolidation, so no separate nightly
+  // schedule is needed.
   import("../memory-consolidation.js").then(({ MemoryConsolidator: MC }) => {
-    const inst = MC.getInstance();
-    inst.scheduleNightly();
-    console.log("[memory] Nightly consolidation scheduled for 3 AM");
     try {
-      const scrub = inst.scrubMindFile();
+      const scrub = MC.getInstance().scrubMindFile();
       if (scrub.linesRemoved > 0) {
-        console.log(`[memory] Scrubbed ${scrub.linesRemoved} transcript lines from MIND.md (${scrub.linesKept} strategic lines kept)`);
+        logger.info(`[memory] Scrubbed ${scrub.linesRemoved} transcript lines from MIND.md (${scrub.linesKept} strategic lines kept)`);
       }
-    } catch (e) { console.warn("[memory] MIND.md scrub failed:", (e as Error).message); }
-  }).catch(e => console.warn("[memory] Failed to schedule nightly:", (e as Error).message));
+    } catch (e) { logger.warn("[memory] MIND.md scrub failed:", (e as Error).message); }
+  }).catch(e => logger.warn("[memory] MIND.md scrub init failed:", (e as Error).message));
 
   const runDreamCheck = async () => {
     try {
@@ -206,7 +225,7 @@ Rules:
         startDream, completeDream,
       } = await import("../memory-dream.js");
       if (!shouldDream()) return;
-      console.log("[dream] Starting memory consolidation...");
+      logger.info("[dream] Starting memory consolidation...");
       startDream();
       const { resolveProvider: rp } = await import("../agent-request.js");
       const { provider, apiKey, model } = await rp(config, secretsStore, dataDir);
@@ -246,21 +265,25 @@ Rules:
         if (ui) {
           const report = await ui.backfillAll();
           if (report.totalChunksAdded > 0) {
-            console.log(`[dream] Post-dream reindex: +${report.totalChunksAdded} chunks across ${report.totalFilesScanned} files`);
+            logger.info(`[dream] Post-dream reindex: +${report.totalChunksAdded} chunks across ${report.totalFilesScanned} files`);
           }
         }
-      } catch (e) { console.warn("[dream] Post-dream reindex failed:", (e as Error).message); }
+      } catch (e) { logger.warn("[dream] Post-dream reindex failed:", (e as Error).message); }
 
       const recentCount = sessionStore.list().filter(s => s.updatedAt > Date.now() - 24 * 60 * 60 * 1000).length;
       completeDream(recentCount);
-      console.log(`[dream] Memory consolidation finished (${batches.length} batch(es))`);
+      logger.info(`[dream] Memory consolidation finished (${batches.length} batch(es))`);
     } catch (e) {
-      console.warn("[dream] Failed:", (e as Error).message);
+      logger.warn("[dream] Failed:", (e as Error).message);
       try { const { failDream } = await import("../memory-dream.js"); failDream(); } catch {}
     }
   };
-  setInterval(runDreamCheck, 2 * 60 * 60 * 1000);
-  setTimeout(runDreamCheck, 5 * 60 * 1000);
+  scheduler.register({
+    name: "dream-check",
+    intervalMs: 2 * 60 * 60 * 1000,
+    startupDelayMs: 5 * 60 * 1000,
+    run: runDreamCheck,
+  });
 
   setTimeout(async () => {
     try {
@@ -268,12 +291,12 @@ Rules:
       const ui = getUniversalIndex();
       if (!ui) return;
       const report = await ui.backfillAll();
-      console.log(`[memory-backfill] +${report.totalChunksAdded} chunks across ${report.totalFilesScanned} files (${report.durationMs}ms)`);
-    } catch (e) { console.warn("[memory-backfill] failed:", (e as Error).message); }
+      logger.info(`[memory-backfill] +${report.totalChunksAdded} chunks across ${report.totalFilesScanned} files (${report.durationMs}ms)`);
+    } catch (e) { logger.warn("[memory-backfill] failed:", (e as Error).message); }
   }, 15_000);
   const syncCfg = agentSync.getConfig();
-  if (syncCfg.enabled && syncCfg.autoDownload) agentSync.pull().then(r => { if (r.success) console.log(`[sync] Startup pull: ${r.message}`); }).catch(() => {});
+  if (syncCfg.enabled && syncCfg.autoDownload) agentSync.pull().then(r => { if (r.success) logger.info(`[sync] Startup pull: ${r.message}`); }).catch(() => {});
   agentSync.startHeartbeat();
 
-  return { memBgTimer };
+  return { scheduler };
 }

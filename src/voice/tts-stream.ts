@@ -19,6 +19,9 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import type { TTSModelPaths } from "./tts-model-fetch.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("voice.tts-stream");
+
 const DIAG = process.env.VOICE_DIAG === "1";
 
 export type TTSCallback = {
@@ -76,7 +79,7 @@ export function createStreamingTTS(paths: TTSModelPaths, cb: TTSCallback = {}): 
           if (interArrival > maxGapMs) maxGapMs = interArrival;
           lastArrivalMs = now;
           if (chunkCount <= 5 || chunkCount % 25 === 0) {
-            console.log(`[tts-stream] chunk ${chunkCount} samples=${msg.pcm.length} ipc=${workerToMain}ms gap=${interArrival}ms maxGap=${maxGapMs}ms`);
+            logger.info(`[tts-stream] chunk ${chunkCount} samples=${msg.pcm.length} ipc=${workerToMain}ms gap=${interArrival}ms maxGap=${maxGapMs}ms`);
           }
         }
         cb.onAudio?.(msg.pcm, msg.sampleRate);
@@ -90,7 +93,7 @@ export function createStreamingTTS(paths: TTSModelPaths, cb: TTSCallback = {}): 
       }
       case "idle":
         if (DIAG && chunkCount > 0) {
-          console.log(`[tts-stream] queue idle. total chunks=${chunkCount} maxGap=${maxGapMs}ms`);
+          logger.info(`[tts-stream] queue idle. total chunks=${chunkCount} maxGap=${maxGapMs}ms`);
           chunkCount = 0;
           lastArrivalMs = 0;
           maxGapMs = 0;

@@ -13,6 +13,9 @@
 
 import WebSocket from "ws";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("voice.gpu-bridge");
+
 export type GPUBridgeCallbacks = {
   onReady?: (gpu: string) => void;
   onSpeechStart?: () => void;
@@ -76,12 +79,12 @@ export function createGPUBridge(cb: GPUBridgeCallbacks = {}, port: number = DEFA
 
   function connect(): void {
     const url = `ws://127.0.0.1:${port}/voice`;
-    console.log(`[gpu-bridge] connecting to ${url}`);
+    logger.info(`[gpu-bridge] connecting to ${url}`);
     ws = new WebSocket(url);
 
     ws.on("open", () => {
       connected = true;
-      console.log(`[gpu-bridge] open — sending init`);
+      logger.info(`[gpu-bridge] open — sending init`);
       send({ cmd: "init" });
     });
 
@@ -90,7 +93,7 @@ export function createGPUBridge(cb: GPUBridgeCallbacks = {}, port: number = DEFA
       try {
         msg = JSON.parse(data.toString());
       } catch (e) {
-        console.warn(`[gpu-bridge] bad json from server: ${(e as Error).message}`);
+        logger.warn(`[gpu-bridge] bad json from server: ${(e as Error).message}`);
         return;
       }
       handle(msg);
@@ -98,13 +101,13 @@ export function createGPUBridge(cb: GPUBridgeCallbacks = {}, port: number = DEFA
 
     ws.on("close", (code) => {
       connected = false;
-      console.warn(`[gpu-bridge] ws closed code=${code}`);
+      logger.warn(`[gpu-bridge] ws closed code=${code}`);
       cb.onDisconnect?.();
       if (!closed && readyReject) readyReject(new Error(`sidecar disconnected (code ${code})`));
     });
 
     ws.on("error", (err) => {
-      console.warn(`[gpu-bridge] ws error: ${err.message}`);
+      logger.warn(`[gpu-bridge] ws error: ${err.message}`);
       if (!closed && readyReject) readyReject(err);
     });
   }
@@ -112,7 +115,7 @@ export function createGPUBridge(cb: GPUBridgeCallbacks = {}, port: number = DEFA
   function handle(msg: ServerMsg): void {
     switch (msg.type) {
       case "ready":
-        console.log(`[gpu-bridge] sidecar ready stt=${msg.stt} tts=${msg.tts} gpu=${msg.gpu || "?"}`);
+        logger.info(`[gpu-bridge] sidecar ready stt=${msg.stt} tts=${msg.tts} gpu=${msg.gpu || "?"}`);
         cb.onReady?.(msg.gpu || "");
         if (readyResolve) { readyResolve(); readyResolve = null; readyReject = null; }
         break;
@@ -139,19 +142,19 @@ export function createGPUBridge(cb: GPUBridgeCallbacks = {}, port: number = DEFA
         cb.onAudioDone?.(msg.id || 0, msg.ms || 0, !!msg.cancelled);
         break;
       case "error":
-        console.warn(`[gpu-bridge] server error: ${msg.message}`);
+        logger.warn(`[gpu-bridge] server error: ${msg.message}`);
         cb.onError?.(msg.message || "unknown");
         break;
       case "pong":
         break;
       default:
-        console.warn(`[gpu-bridge] unknown server msg type: ${msg.type}`);
+        logger.warn(`[gpu-bridge] unknown server msg type: ${msg.type}`);
     }
   }
 
   function send(obj: Record<string, unknown>): void {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    try { ws.send(JSON.stringify(obj)); } catch (e) { console.warn(`[gpu-bridge] send failed: ${(e as Error).message}`); }
+    try { ws.send(JSON.stringify(obj)); } catch (e) { logger.warn(`[gpu-bridge] send failed: ${(e as Error).message}`); }
   }
 
   connect();

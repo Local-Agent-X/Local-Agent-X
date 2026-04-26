@@ -8,6 +8,9 @@
 // NOT included: 400s that are the caller's fault (bad request shape,
 // unsupported model parameter) — those won't improve by switching providers.
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("provider-fallback");
+
 export type TransientErrorKind = "rate-limit" | "auth" | "overload" | "network" | "content-filter" | null;
 
 export function classifyProviderError(err: unknown): TransientErrorKind {
@@ -140,7 +143,7 @@ export class ProviderChain {
       } catch (err) {
         lastError = err;
         this.markFailure(provider);
-        console.log(
+        logger.info(
           `[fallback] provider "${provider}" failed (${this.getHealth(provider).consecutiveFailures} consecutive), trying next`,
         );
       }

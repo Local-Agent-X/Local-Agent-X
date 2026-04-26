@@ -20,6 +20,8 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+import { tokenizeBasic } from "./memory/text-utils.js";
+
 // ══════════════════════════════════════════════════════════
 //  Types
 // ══════════════════════════════════════════════════════════
@@ -74,17 +76,9 @@ const TIER_THRESHOLDS = {
 //  Helpers
 // ══════════════════════════════════════════════════════════
 
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s]/g, " ")
-    .split(/\s+/)
-    .filter((w) => w.length > 2);
-}
-
 function scoreMatch(query: string, content: string): number {
-  const qTokens = new Set(tokenize(query));
-  const cTokens = new Set(tokenize(content));
+  const qTokens = new Set(tokenizeBasic(query));
+  const cTokens = new Set(tokenizeBasic(content));
   if (qTokens.size === 0 || cTokens.size === 0) return 0;
 
   let hits = 0;

@@ -11,6 +11,9 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync, watch } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("manifest-generator");
+
 const ROOT = resolve(join(import.meta.dirname || ".", ".."));
 const CONFIG_DIR = join(ROOT, "config");
 const MANIFEST_PATH = join(CONFIG_DIR, "app-manifest.json");
@@ -207,9 +210,9 @@ export function writeManifest(): void {
   const manifest = generateManifest();
   try {
     writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2));
-    console.log(`[manifest] Generated app-manifest.json (${manifest.pages.length} pages, ${manifest.apiRoutes.length} routes, ${manifest.tools.length} tools, ${manifest.apps.length} apps)`);
+    logger.info(`[manifest] Generated app-manifest.json (${manifest.pages.length} pages, ${manifest.apiRoutes.length} routes, ${manifest.tools.length} tools, ${manifest.apps.length} apps)`);
   } catch (e) {
-    console.warn("[manifest] Failed to write app-manifest.json:", (e as Error).message);
+    logger.warn("[manifest] Failed to write app-manifest.json:", (e as Error).message);
   }
 }
 
@@ -327,5 +330,5 @@ export function startManifestWatcher(): void {
     } catch {}
   }
   _manifestWatching = true;
-  console.log("[manifest] Watching for changes (public/, src/routes/, workspace/apps/, config/)");
+  logger.info("[manifest] Watching for changes (public/, src/routes/, workspace/apps/, config/)");
 }

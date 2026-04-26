@@ -16,6 +16,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("model-fallback");
+
 const LAX_DIR = join(homedir(), ".lax");
 const HEALTH_FILE = join(LAX_DIR, "provider-health.json");
 
@@ -134,7 +137,7 @@ export function recordFailure(provider: ProviderId, error: string, statusCode?: 
     // Rate limit errors get longer cooldown
     const cooldown = statusCode === 429 ? CIRCUIT_OPEN_DURATION_MS * 3 : CIRCUIT_OPEN_DURATION_MS;
     h.circuitRetriesAt = Date.now() + cooldown;
-    console.warn(`[fallback] Circuit opened for ${provider}: ${h.consecutiveFailures} consecutive failures (retry in ${cooldown / 1000}s)`);
+    logger.warn(`[fallback] Circuit opened for ${provider}: ${h.consecutiveFailures} consecutive failures (retry in ${cooldown / 1000}s)`);
   }
 
   saveHealth();
@@ -259,5 +262,5 @@ export function resetProviderHealth(provider: ProviderId): void {
   h.circuitOpen = false;
   h.lastError = "";
   saveHealth();
-  console.log(`[fallback] Health reset for ${provider}`);
+  logger.info(`[fallback] Health reset for ${provider}`);
 }

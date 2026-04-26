@@ -7,6 +7,10 @@ import { stripEphemeralMessages, sanitizeToolResults } from "./sanitize.js";
 import type { AgentOptions } from "./types.js";
 import { detectBuildIntent, extractAppName, extractBuildPrompt } from "./build-intent.js";
 import { buildAnthropicUserContent, checkAnthropicTurnSafetyCeilings } from "./run-anthropic-helpers.js";
+import { logRetry } from "../retry-telemetry.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("providers.run-anthropic");
 
 // ── Anthropic (Claude) Agent Loop ──
 
@@ -155,8 +159,8 @@ export async function runAnthropicAgent(
       if (isContextOverflowError(streamError) && iteration < maxIterations - 1) {
         const before = messages.length;
         messages = forceCompact(messages, 2);
-        console.warn(`[agent] Anthropic context overflow — force-compacted ${before} → ${messages.length} msgs and retrying`);
-        try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "context-overflow", sessionId: options.sessionId, detail: { provider: "anthropic", model, before, after: messages.length } })).catch(() => {}); } catch {}
+        logger.warn(`[agent] Anthropic context overflow — force-compacted ${before} → ${messages.length} msgs and retrying`);
+        logRetry({ kind: "context-overflow", sessionId: options.sessionId, detail: { provider: "anthropic", model, before, after: messages.length } });
         onEvent?.({ type: "context_status", percentage: 100, level: "emergency", usedTokens: 0, maxTokens: 0, compacted: true });
         continue;
       }
@@ -178,7 +182,7 @@ export async function runAnthropicAgent(
     if (toolCalls.length === 0 && !sawMcpActivity && hasBuildApp && detectBuildIntent(assistantContent, userMessage)) {
       const appName = extractAppName(assistantContent, userMessage);
       const buildPrompt = extractBuildPrompt(assistantContent, userMessage);
-      console.log(`[agent] Auto-routing to build_app: ${appName}`);
+      logger.info(`[agent] Auto-routing to build_app: ${appName}`);
       onEvent?.({ type: "stream", delta: "\n\n*Building app...*\n" });
       toolCalls.push({
         id: `call_${Date.now()}_build_app`,
@@ -207,8 +211,8 @@ export async function runAnthropicAgent(
       };
       const hitA = runA(detectorStateA, retryCountersAnthropic);
       if (hitA && iteration < maxIterations - 1) {
-        console.warn(`[agent] Post-turn detector fired (Anthropic): ${hitA.kind}`);
-        try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: "anthropic", model, detail: { reason: `post-turn-${hitA.kind}` } })).catch(() => {}); } catch {}
+        logger.warn(`[agent] Post-turn detector fired (Anthropic): ${hitA.kind}`);
+        logRetry({ kind: "custom", sessionId: options.sessionId, provider: "anthropic", model, detail: { reason: `post-turn-${hitA.kind}` } });
         promptLayersAnthropic.retry = hitA;
         continue;
       }
@@ -221,7 +225,7 @@ export async function runAnthropicAgent(
     if (toolCalls.length === 0 && !unmatchedClaimNudgedAnthropic && iteration < maxIterations - 1) {
       const claimNudge = checkUnmatchedActionClaim(assistantContent, toolsCalledThisTurnAnthropic);
       if (claimNudge) {
-        console.warn(`[agent] Unmatched action claim detected (Anthropic) — nudging`);
+        logger.warn(`[agent] Unmatched action claim detected (Anthropic) — nudging`);
         unmatchedClaimNudgedAnthropic = true;
         messages.push({ role: "user", content: claimNudge } as ChatCompletionMessageParam);
         continue;
@@ -238,14 +242,14 @@ export async function runAnthropicAgent(
       // Only check for hallucinations when no tools were called at all.
       const approvalNudge = checkApprovalHallucination(assistantContent);
       if (approvalNudge && iteration < maxIterations - 1) {
-        console.warn(`[agent] Approval hallucination detected (Anthropic) — nudging`);
+        logger.warn(`[agent] Approval hallucination detected (Anthropic) — nudging`);
         messages.push({ role: "user", content: approvalNudge } as ChatCompletionMessageParam);
         continue;
       }
 
       const creationNudge = checkCreationHallucination(assistantContent);
       if (creationNudge && iteration === 0) {
-        console.warn(`[agent] Creation hallucination detected (Anthropic) — nudging`);
+        logger.warn(`[agent] Creation hallucination detected (Anthropic) — nudging`);
         messages.push({ role: "user", content: creationNudge } as ChatCompletionMessageParam);
         continue;
       }
@@ -287,7 +291,7 @@ export async function runAnthropicAgent(
     try {
       toolResults = await executeToolCalls(toolCalls, toolMap, security, options.toolPolicy, options.threatEngine, options.rbac, options.callerRole, options.sessionId, onEvent, signal, messages);
     } catch (e) {
-      console.error("[agent] Tool execution error (Anthropic):", (e as Error).message);
+      logger.error("[agent] Tool execution error (Anthropic):", (e as Error).message);
       toolResults = [{ role: "tool" as const, content: `Tool execution failed: ${(e as Error).message}`, tool_call_id: toolCalls[0]?.id || "unknown" }];
     }
     toolResults = sanitizeToolResults(toolResults);

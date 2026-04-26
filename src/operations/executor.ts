@@ -23,6 +23,9 @@ import {
   pauseOperation, addEvent, appendPhaseLog,
 } from "./conductor.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("operations.executor");
+
 /** Running executor handles — one per active operation. Used for cancel. */
 const activeExecutors = new Map<string, AbortController>();
 
@@ -52,7 +55,7 @@ export function startExecutor(operationId: string, opts: ExecutorOptions = {}): 
     try {
       await runExecutorLoop(operationId, workspaceDir, controller.signal, opts);
     } catch (e) {
-      console.warn(`[op-executor] ${operationId} crashed:`, (e as Error).message);
+      logger.warn(`[op-executor] ${operationId} crashed:`, (e as Error).message);
       const op = loadOperation(workspaceDir, operationId);
       if (op && op.status !== "cancelled") {
         addEvent(op, "error", `Executor crashed: ${(e as Error).message}`);

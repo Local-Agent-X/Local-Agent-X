@@ -10,6 +10,9 @@ import {
   bm25RankToScore, buildFtsQuery, cosineSimilarity, extractKeywords, slugify,
 } from "./utils.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("memory.index-search");
+
 export interface SearchOptions {
   maxResults?: number;
   minScore?: number;
@@ -84,7 +87,7 @@ export async function searchInIndex(
       const queryVec = await deps.embeddingProvider.embed(embedText);
       vectorResults = searchVector(deps.db, queryVec, candidateLimit, options?.sources);
     } catch (e) {
-      console.warn("[memory] Vector search failed:", (e as Error).message);
+      logger.warn("[memory] Vector search failed:", (e as Error).message);
     }
   }
 
@@ -108,7 +111,7 @@ export async function searchInIndex(
       if (options?.rerank && processed.length > 0) {
         try { const { rerankWithLLM } = await import("../memory-reranker.js"); const rProvider = options.rerankModel?.startsWith("provider:") ? options.rerankModel.split(":")[1] : "ollama";
       const rModel = options.rerankModel?.startsWith("provider:") ? undefined : options.rerankModel;
-      processed = await rerankWithLLM(query, processed, { provider: rProvider, model: rModel }); } catch (e) { console.warn("[memory] Rerank error:", (e as Error).message); }
+      processed = await rerankWithLLM(query, processed, { provider: rProvider, model: rModel }); } catch (e) { logger.warn("[memory] Rerank error:", (e as Error).message); }
       }
       return processed.slice(0, maxResults);
     }
@@ -122,7 +125,7 @@ export async function searchInIndex(
       const rProvider = options.rerankModel?.startsWith("provider:") ? options.rerankModel.split(":")[1] : "ollama";
       const rModel = options.rerankModel?.startsWith("provider:") ? undefined : options.rerankModel;
       processed = await rerankWithLLM(query, processed, { provider: rProvider, model: rModel });
-    } catch (e) { console.warn("[memory] Rerank failed:", (e as Error).message); }
+    } catch (e) { logger.warn("[memory] Rerank failed:", (e as Error).message); }
   }
 
   return processed.slice(0, maxResults);

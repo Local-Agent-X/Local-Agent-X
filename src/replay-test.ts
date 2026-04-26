@@ -18,6 +18,9 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { allTools } from "./tools.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("replay-test");
+
 interface RecordedEvent {
   type: string;
   data?: Record<string, unknown>;
@@ -47,7 +50,7 @@ const LOOP_THRESHOLD = 12;
 
 function loadFixtures(): { path: string; recording: Recording }[] {
   if (!existsSync(FIXTURES_DIR)) {
-    console.log(`[replay] No fixtures dir at ${FIXTURES_DIR} — nothing to replay.`);
+    logger.info(`[replay] No fixtures dir at ${FIXTURES_DIR} — nothing to replay.`);
     return [];
   }
   const files = readdirSync(FIXTURES_DIR).filter((f) => f.endsWith(".json"));
@@ -58,12 +61,12 @@ function loadFixtures(): { path: string; recording: Recording }[] {
       const raw = readFileSync(full, "utf-8");
       const parsed = JSON.parse(raw) as Recording;
       if (!Array.isArray(parsed.events)) {
-        console.warn(`[replay] ${file}: skipping — no events array`);
+        logger.warn(`[replay] ${file}: skipping — no events array`);
         continue;
       }
       out.push({ path: full, recording: parsed });
     } catch (e) {
-      console.warn(`[replay] ${file}: failed to parse — ${(e as Error).message}`);
+      logger.warn(`[replay] ${file}: failed to parse — ${(e as Error).message}`);
     }
   }
   return out;
@@ -120,11 +123,11 @@ function checkRecording(fixture: string, rec: Recording, knownTools: Set<string>
 
 async function main(): Promise<number> {
   const knownTools = new Set(allTools.map((t) => t.name));
-  console.log(`[replay] Known tools: ${knownTools.size}`);
+  logger.info(`[replay] Known tools: ${knownTools.size}`);
 
   const fixtures = loadFixtures();
   if (fixtures.length === 0) {
-    console.log("[replay] No fixtures to check. Pass.");
+    logger.info("[replay] No fixtures to check. Pass.");
     return 0;
   }
 
@@ -135,20 +138,20 @@ async function main(): Promise<number> {
     const result = checkRecording(path, recording, knownTools);
     results.push(result);
     const status = result.passed ? "PASS" : "FAIL";
-    console.log(`[replay] ${status} ${path.split(/[\\/]/).pop()} (${result.toolsSeen} tool calls, ${result.events} events)`);
+    logger.info(`[replay] ${status} ${path.split(/[\\/]/).pop()} (${result.toolsSeen} tool calls, ${result.events} events)`);
     if (!result.passed) {
       failed += 1;
       for (const f of result.failures) {
-        console.log(`         - ${f}`);
+        logger.info(`         - ${f}`);
       }
     }
   }
 
-  console.log(`[replay] ${results.length - failed}/${results.length} fixtures passed`);
+  logger.info(`[replay] ${results.length - failed}/${results.length} fixtures passed`);
   return failed > 0 ? 1 : 0;
 }
 
 main().then((code) => process.exit(code)).catch((e) => {
-  console.error("[replay] fatal:", e);
+  logger.error("[replay] fatal:", e);
   process.exit(2);
 });

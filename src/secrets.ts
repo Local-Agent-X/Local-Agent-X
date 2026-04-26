@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { getOrCreateMasterKey, type KeychainProvider } from "./keychain.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("secrets");
+
 /**
  * Encrypted secrets store for API keys and tokens.
  * Secrets are AES-256-GCM encrypted at rest in ~/.sax/secrets.enc
@@ -116,7 +119,7 @@ export class SecretsStore {
     const { key, provider } = getOrCreateMasterKey(dataDir);
     this.key = key;
     this.keychainProvider = provider;
-    console.log(`[secrets] Encryption key from: ${provider}`);
+    logger.info(`[secrets] Encryption key from: ${provider}`);
     this.load();
   }
 
@@ -141,7 +144,7 @@ export class SecretsStore {
         });
       }
     } catch (e) {
-      console.warn(`[secrets] Failed to load secrets: ${(e as Error).message}`);
+      logger.warn(`[secrets] Failed to load secrets: ${(e as Error).message}`);
     }
   }
 

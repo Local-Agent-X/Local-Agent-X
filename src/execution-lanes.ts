@@ -18,6 +18,9 @@
 import { randomBytes } from "node:crypto";
 import { EventBus } from "./event-bus.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("execution-lanes");
+
 // ── Types ──
 
 export type LaneName = "main" | "cron" | "agent" | "background";
@@ -153,7 +156,7 @@ function pump(laneName: LaneName): void {
 
     // Warn on long waits
     if (waitMs > 5000) {
-      console.warn(`[lanes] Task waited ${(waitMs / 1000).toFixed(1)}s in ${laneName} queue: ${task.label || task.id}`);
+      logger.warn(`[lanes] Task waited ${(waitMs / 1000).toFixed(1)}s in ${laneName} queue: ${task.label || task.id}`);
     }
 
     // Update avg wait time
@@ -171,7 +174,7 @@ function pump(laneName: LaneName): void {
       abortController.abort();
       state.active.delete(task.id);
       state.metrics.totalTimedOut++;
-      console.warn(`[lanes] Task timed out in ${laneName}: ${task.label || task.id} (${(task.timeout! / 1000).toFixed(0)}s)`);
+      logger.warn(`[lanes] Task timed out in ${laneName}: ${task.label || task.id} (${(task.timeout! / 1000).toFixed(0)}s)`);
       pump(laneName);
     }, task.timeout || DEFAULT_TIMEOUT);
 
@@ -204,7 +207,7 @@ function pump(laneName: LaneName): void {
 export function setLaneConcurrency(lane: LaneName, maxConcurrent: number): void {
   const state = getLane(lane);
   state.maxConcurrent = Math.max(1, maxConcurrent);
-  console.log(`[lanes] ${lane} concurrency set to ${state.maxConcurrent}`);
+  logger.info(`[lanes] ${lane} concurrency set to ${state.maxConcurrent}`);
   pump(lane);
 }
 
@@ -265,7 +268,7 @@ export function drainAll(): void {
   for (const state of lanes.values()) {
     state.draining = true;
   }
-  console.log("[lanes] All lanes draining — no new tasks accepted");
+  logger.info("[lanes] All lanes draining — no new tasks accepted");
 }
 
 /**

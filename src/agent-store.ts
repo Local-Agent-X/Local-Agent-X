@@ -10,6 +10,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("agent-store");
+
 const LAX_DIR = join(homedir(), ".lax");
 const RUNS_DIR = join(LAX_DIR, "agent-runs");
 const TEMPLATES_FILE = join(LAX_DIR, "agent-templates.json");
@@ -455,7 +458,7 @@ Decision framework:
     }
     if (added > 0) {
       this.persist();
-      console.log(`[agents] Seeded ${added} default agent templates`);
+      logger.info(`[agents] Seeded ${added} default agent templates`);
     }
   }
 

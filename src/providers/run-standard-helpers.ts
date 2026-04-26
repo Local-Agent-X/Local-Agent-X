@@ -1,6 +1,10 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { AgentTurn } from "../types.js";
 import type { AgentOptions, ImageAttachment } from "./types.js";
+import { logRetry } from "../retry-telemetry.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("providers.run-standard-helpers");
 
 export async function buildUserContentWithImages(
   userMessage: string,
@@ -21,7 +25,7 @@ export async function buildUserContentWithImages(
       parts.push({ type: "image_url", image_url: { url: b64, detail: "auto" } });
       if (img.filePath) filePathHints.push(`  - ${img.name} → ${img.filePath}`);
     } catch (e) {
-      console.warn(`[agent] Could not read image ${img.name}:`, e);
+      logger.warn(`[agent] Could not read image ${img.name}:`, e);
     }
   }
   if (filePathHints.length > 0) {
@@ -71,8 +75,8 @@ export function checkStandardTurnSafetyCeilings(state: StandardSafetyState): Age
 
   if (totalPromptTokens + totalCompletionTokens > tokenCeiling) {
     const abortMsg = `Turn token ceiling hit: ${totalPromptTokens + totalCompletionTokens} tokens used (cap ${tokenCeiling}). Aborting.`;
-    console.warn(`[agent] ${abortMsg}`);
-    try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: options.provider, model, detail: { reason: "turn-token-ceiling", totalInput: totalPromptTokens, totalOutput: totalCompletionTokens } })).catch(() => {}); } catch {}
+    logger.warn(`[agent] ${abortMsg}`);
+    logRetry({ kind: "custom", sessionId: options.sessionId, provider: options.provider, model, detail: { reason: "turn-token-ceiling", totalInput: totalPromptTokens, totalOutput: totalCompletionTokens } });
     return {
       messages,
       usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },
@@ -84,8 +88,8 @@ export function checkStandardTurnSafetyCeilings(state: StandardSafetyState): Age
   const turnElapsed = Date.now() - turnStartMs;
   if (turnElapsed > wallClockMs && committingToolsThisTurn.size === 0) {
     const abortMsg = `Wall-clock turn ceiling hit: ${Math.round(turnElapsed / 1000)}s, iteration ${iteration}, no committing tool. Aborting.`;
-    console.warn(`[agent] ${abortMsg}`);
-    try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: options.provider, model, detail: { reason: "turn-wall-clock", elapsedMs: turnElapsed, iteration } })).catch(() => {}); } catch {}
+    logger.warn(`[agent] ${abortMsg}`);
+    logRetry({ kind: "custom", sessionId: options.sessionId, provider: options.provider, model, detail: { reason: "turn-wall-clock", elapsedMs: turnElapsed, iteration } });
     return {
       messages,
       usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },
@@ -97,8 +101,8 @@ export function checkStandardTurnSafetyCeilings(state: StandardSafetyState): Age
     const w = evidenceHistory.slice(-midTurnEvidenceStaleWindow);
     if (w.every(v => v === w[0])) {
       const abortMsg = `Mid-turn evidence stale: ${w[0]} evidence for ${midTurnEvidenceStaleWindow} iterations with no committing tool. Aborting.`;
-      console.warn(`[agent] ${abortMsg}`);
-      try { import("../retry-telemetry.js").then(({ logRetry }) => logRetry({ kind: "custom", sessionId: options.sessionId, provider: options.provider, model, detail: { reason: "mid-turn-stale", iteration, evidence: w } })).catch(() => {}); } catch {}
+      logger.warn(`[agent] ${abortMsg}`);
+      logRetry({ kind: "custom", sessionId: options.sessionId, provider: options.provider, model, detail: { reason: "mid-turn-stale", iteration, evidence: w } });
       return {
         messages,
         usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },

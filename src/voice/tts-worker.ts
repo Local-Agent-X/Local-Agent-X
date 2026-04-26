@@ -30,6 +30,9 @@ import { parentPort } from "node:worker_threads";
 import { createRequire } from "node:module";
 import type { TTSModelPaths } from "./tts-model-fetch.js";
 
+import { createLogger } from "../logger.js";
+const logger = createLogger("voice.tts-worker");
+
 if (!parentPort) throw new Error("tts-worker must run as a worker_thread");
 
 const requireCJS = createRequire(import.meta.url);
@@ -97,7 +100,7 @@ function init(paths: TTSModelPaths): void {
   });
   sampleRate = tts.sampleRate || paths.sampleRate;
   parentPort!.postMessage({ type: "ready", sampleRate });
-  if (DIAG) console.log(`[tts-worker] ready sampleRate=${sampleRate}`);
+  if (DIAG) logger.info(`[tts-worker] ready sampleRate=${sampleRate}`);
 }
 
 async function drain(): Promise<void> {
@@ -142,7 +145,7 @@ async function drain(): Promise<void> {
         if (DIAG) {
           const dt = Date.now() - t0;
           const audioDurMs = Math.round(totalSamples / sampleRate * 1000);
-          console.log(`[tts-worker] sentence done id=${job.id} synth=${dt}ms audio=${audioDurMs}ms chunks=${buffered.length} dropped=${dropped} text="${job.text.slice(0, 40)}"`);
+          logger.info(`[tts-worker] sentence done id=${job.id} synth=${dt}ms audio=${audioDurMs}ms chunks=${buffered.length} dropped=${dropped} text="${job.text.slice(0, 40)}"`);
         }
         if (!dropped) {
           for (const pcm of buffered) {

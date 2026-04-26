@@ -12,6 +12,9 @@ import { parseExportFile, detectFormat } from "./conversation-parsers.js";
 import { chunkConversationPairs } from "./memory-chunking.js";
 import type { ChunkMetadata } from "./memory.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("conversation-ingest");
+
 // ── Types ──
 
 export interface IngestProgress {
@@ -54,7 +57,7 @@ function scanExportFiles(dirPath: string): string[] {
     const fullPath = join(dirPath, entry.name);
     try {
       const size = statSync(fullPath).size;
-      if (size > MAX_FILE_SIZE) { console.warn(`[ingest] Skipping ${entry.name}: too large (${Math.round(size / 1e6)}MB)`); continue; }
+      if (size > MAX_FILE_SIZE) { logger.warn(`[ingest] Skipping ${entry.name}: too large (${Math.round(size / 1e6)}MB)`); continue; }
       if (size < 10) continue; // empty/trivial file
     } catch { continue; }
     files.push(fullPath);
@@ -107,31 +110,30 @@ export async function ingestConversations(
         result.formats[fmt] = (result.formats[fmt] || 0) + count;
       }
     } catch (e) {
-      console.error(`[ingest] Failed to process ${basename(filePath)}:`, (e as Error).message);
+      logger.error(`[ingest] Failed to process ${basename(filePath)}:`, (e as Error).message);
       result.errors++;
     }
   }
 
-  // After ingest: run sleeptime consolidation in the background to auto-promote
-  // durable facts (surgeries, launches, moves, preferences) from the imported
-  // chunks into MIND.md + the facts table. Fire-and-forget so the ingest call
-  // returns immediately — consolidation runs async and logs progress.
+  // After ingest: extract durable facts (surgeries, launches, moves, preferences)
+  // from the imported chunks into MIND.md + the facts table. Fire-and-forget so
+  // the ingest call returns immediately — extraction runs async and logs progress.
   if (result.chunksCreated > 0) {
-    console.log(`[ingest] Kicking off background consolidation for ${result.chunksCreated} new chunks (365-day lookback)...`);
+    logger.info(`[ingest] Kicking off background extraction for ${result.chunksCreated} new chunks (365-day lookback)...`);
     (async () => {
       try {
-        const { runSleeptimeConsolidation } = await import("./memory-sleeptime.js");
+        const { runExtraction } = await import("./memory-extract.js");
         const t0 = Date.now();
-        const summary = await runSleeptimeConsolidation(memory, {
+        const summary = await runExtraction(memory, {
           lookbackHours: 365 * 24, // full year — covers typical ChatGPT history exports
           maxSessions: 500,        // cap per-run cost
           maxChunksPerSession: 50,
         });
         const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
         const ops = summary.operations;
-        console.log(`[ingest] Consolidation done in ${elapsed}s — sessions=${summary.sessionsAnalyzed} facts=${summary.factsExtracted} add=${ops.add} update=${ops.update} delete=${ops.delete} noop=${ops.noop}`);
+        logger.info(`[ingest] Extraction done in ${elapsed}s — sessions=${summary.sessionsAnalyzed} facts=${summary.factsExtracted} add=${ops.add} update=${ops.update} delete=${ops.delete} noop=${ops.noop}`);
       } catch (e) {
-        console.warn(`[ingest] Background consolidation failed: ${(e as Error).message}`);
+        logger.warn(`[ingest] Background extraction failed: ${(e as Error).message}`);
       }
     })();
   }
@@ -154,7 +156,7 @@ async function ingestSingleFile(
   const format = detectFormat(content, ext);
 
   if (format === "unknown") {
-    console.warn(`[ingest] Unknown format: ${basename(filePath)}`);
+    logger.warn(`[ingest] Unknown format: ${basename(filePath)}`);
     return result;
   }
 
@@ -164,7 +166,7 @@ async function ingestSingleFile(
   try {
     conversations = parseExportFile(content, ext);
   } catch (e) {
-    console.error(`[ingest] Parse error in ${basename(filePath)}:`, (e as Error).message);
+    logger.error(`[ingest] Parse error in ${basename(filePath)}:`, (e as Error).message);
     result.errors++;
     return result;
   }
@@ -205,9 +207,9 @@ async function ingestSingleFile(
       }
 
       // Index chunks through the memory system
-      console.log(`[ingest] Indexing ${chunks.length} chunks for ${convo.id.slice(0, 8)}...`);
+      logger.info(`[ingest] Indexing ${chunks.length} chunks for ${convo.id.slice(0, 8)}...`);
       await memory.indexChunks(chunks, virtualPath, "import");
-      console.log(`[ingest] Indexed ${chunks.length} chunks for ${convo.id.slice(0, 8)}.`);
+      logger.info(`[ingest] Indexed ${chunks.length} chunks for ${convo.id.slice(0, 8)}.`);
 
       // Mark as ingested
       memory.markConversationIngested(convo.id, convo.title, convo.createTime || 0, convo.messages.length, convo.source);
@@ -220,7 +222,7 @@ async function ingestSingleFile(
       onProgress?.(progress);
 
     } catch (e) {
-      console.error(`[ingest] Error ingesting conversation ${convo.id}:`, (e as Error).message);
+      logger.error(`[ingest] Error ingesting conversation ${convo.id}:`, (e as Error).message);
       result.errors++;
       progress.errors++;
     }

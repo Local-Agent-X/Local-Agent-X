@@ -8,6 +8,9 @@
 
 import type { MemorySearchResult } from "./memory.js";
 
+import { createLogger } from "./logger.js";
+const logger = createLogger("memory-reranker");
+
 export interface RerankOptions {
   model?: string;
   topN?: number;       // how many candidates to rerank (default 30)
@@ -54,7 +57,7 @@ JSON array of ${candidates.length} scores:`;
       return [...candidates, ...results.slice(topN)];
     }
   } catch (e) {
-    console.warn("[reranker] LLM reranking failed, using original scores:", (e as Error).message);
+    logger.warn("[reranker] LLM reranking failed, using original scores:", (e as Error).message);
   }
   return results;
 }
@@ -72,7 +75,7 @@ async function callLLM(prompt: string, count: number, options: RerankOptions): P
         signal: AbortSignal.timeout(60000),
       });
       if (!res.ok) {
-        console.warn(`[reranker] Ollama returned ${res.status}`);
+        logger.warn(`[reranker] Ollama returned ${res.status}`);
         return [];
       }
       const data = await res.json() as Record<string, unknown>;
@@ -80,7 +83,7 @@ async function callLLM(prompt: string, count: number, options: RerankOptions): P
       if (!response) return [];
       return parseScores(response, count);
     } catch (e) {
-      console.warn("[reranker] Ollama call failed:", (e as Error).message);
+      logger.warn("[reranker] Ollama call failed:", (e as Error).message);
       return [];
     }
   }
@@ -95,7 +98,7 @@ async function callLLM(prompt: string, count: number, options: RerankOptions): P
           apiKey = await getAnthropicApiKey();
         } catch {}
       }
-      if (!apiKey) { console.warn("[reranker] No Anthropic API key"); return []; }
+      if (!apiKey) { logger.warn("[reranker] No Anthropic API key"); return []; }
       const model = options.model || "claude-haiku-4-5-20251001";
 
       // Direct API call
@@ -115,17 +118,17 @@ async function callLLM(prompt: string, count: number, options: RerankOptions): P
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
-        console.warn(`[reranker] Anthropic ${res.status}: ${body.slice(0, 100)}`);
+        logger.warn(`[reranker] Anthropic ${res.status}: ${body.slice(0, 100)}`);
         return [];
       }
       const data = await res.json() as { content?: Array<{ text?: string }> };
       const text = data.content?.[0]?.text || "";
       const scores = parseScores(text, count);
-      if (scores.length > 0) console.log(`[reranker] Haiku scored ${scores.length} candidates`);
-      else console.warn(`[reranker] Haiku returned unparseable: ${text.slice(0, 80)}`);
+      if (scores.length > 0) logger.info(`[reranker] Haiku scored ${scores.length} candidates`);
+      else logger.warn(`[reranker] Haiku returned unparseable: ${text.slice(0, 80)}`);
       return scores;
     } catch (e) {
-      console.warn("[reranker] Anthropic call failed:", (e as Error).message);
+      logger.warn("[reranker] Anthropic call failed:", (e as Error).message);
       return [];
     }
   }

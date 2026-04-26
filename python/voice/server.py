@@ -259,39 +259,76 @@ class Session:
             await self._stream_audio(samples, sample_rate, sentence_id, prep_ms)
 
     async def _prep_one(self, text: str, sentence_id: int, voice: str, speed: float, fut):
-        """Generate Kokoro audio (+ optional RVC convert). Resolves the
-        sentence's Future with (samples, sample_rate, prep_ms_int)."""
+        """Generate audio for one sentence. Three voice routing modes:
+          * voice == "cb:<id>"   → single-stage Chatterbox (Studio tier)
+                                   Bypasses Kokoro entirely; Chatterbox does
+                                   text→speech directly using its own ref clip.
+          * voice == "clone:<id>" → Kokoro carrier → RVC convert (Pro tier)
+          * else                  → straight Kokoro (Lite built-in voice)
+        Resolves the Future with (samples, sample_rate, prep_ms_int)."""
         async with self.tts_prep_sem:
-            is_clone = voice.startswith("clone:")
-            loop = asyncio.get_running_loop()
             t0 = time.time()
             try:
-                tts = _load_tts()
-                # For cloned voices, Kokoro generates a "carrier" — pick one
-                # that matches the target speaker's gender/range so RVC has
-                # less work. Same-gender carriers cut the "robotic" artifact.
-                kokoro_voice = _carrier_for_clone(voice.split(":", 1)[1]) if is_clone else voice
-                samples, sample_rate = await loop.run_in_executor(
-                    None,
-                    lambda: tts.create(text, voice=kokoro_voice, speed=speed, lang="en-us"),
-                )
+                if voice.startswith("cb:"):
+                    samples, sample_rate = await self._synth_via_chatterbox(
+                        voice.split(":", 1)[1], text, sentence_id,
+                    )
+                else:
+                    samples, sample_rate = await self._synth_via_kokoro_or_rvc(
+                        text, voice, speed, sentence_id,
+                    )
             except Exception as e:
                 log.exception(f"tts synth failed for id={sentence_id}")
                 if not fut.done():
                     fut.set_exception(e)
                 return
 
-            if is_clone:
-                try:
-                    samples, sample_rate = await self._convert_via_rvc(
-                        voice.split(":", 1)[1], samples, sample_rate, sentence_id,
-                    )
-                except Exception as e:
-                    log.warning(f"rvc convert failed for id={sentence_id} voice={voice}: {e} - falling back to kokoro")
-
             prep_ms = int((time.time() - t0) * 1000)
             if not fut.done():
                 fut.set_result((samples, sample_rate, prep_ms))
+
+    async def _synth_via_kokoro_or_rvc(self, text: str, voice: str, speed: float, sentence_id: int):
+        """Lite (Kokoro built-in) and Pro (Kokoro→RVC) paths."""
+        is_clone = voice.startswith("clone:")
+        loop = asyncio.get_running_loop()
+        tts = _load_tts()
+        kokoro_voice = _carrier_for_clone(voice.split(":", 1)[1]) if is_clone else voice
+        samples, sample_rate = await loop.run_in_executor(
+            None,
+            lambda: tts.create(text, voice=kokoro_voice, speed=speed, lang="en-us"),
+        )
+        if is_clone:
+            try:
+                samples, sample_rate = await self._convert_via_rvc(
+                    voice.split(":", 1)[1], samples, sample_rate, sentence_id,
+                )
+            except Exception as e:
+                log.warning(f"rvc convert failed for id={sentence_id} voice={voice}: {e} - falling back to kokoro")
+        return samples, sample_rate
+
+    async def _synth_via_chatterbox(self, clone_id: str, text: str, sentence_id: int):
+        """Studio tier: single-stage Chatterbox TTS via reference clip.
+        Returns (samples_float32, sample_rate). Raises on failure so caller
+        can mark the Future as errored."""
+        import base64, io
+        import httpx
+        import soundfile as sf
+
+        cb_port = os.environ.get("LAX_CHATTERBOX_PORT", "7010")
+        url = f"http://127.0.0.1:{cb_port}/clones/{clone_id}/synth"
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            r = await client.post(url, json={"text": text})
+        if r.status_code == 404:
+            raise RuntimeError(f"chatterbox clone {clone_id!r} not installed")
+        if r.status_code != 200:
+            raise RuntimeError(f"chatterbox returned {r.status_code}: {r.text[:200]}")
+        out_samples, out_sr = sf.read(io.BytesIO(r.content))
+        if out_samples.ndim > 1:
+            out_samples = out_samples.mean(axis=1)
+        out_samples = out_samples.astype(np.float32)
+        # Chatterbox is 24kHz native — same as Kokoro/playback worklet, no resample.
+        log.info(f"  chatterbox synth id={sentence_id} clone={clone_id} -> {len(out_samples)}sa@{out_sr}Hz ({r.headers.get('X-Synth-Ms')}ms)")
+        return out_samples, int(out_sr)
 
     async def _stream_audio(self, samples, sample_rate: int, sentence_id: int, prep_ms: int):
         """Emit audio_chunks for already-prepared samples + the audio_done."""

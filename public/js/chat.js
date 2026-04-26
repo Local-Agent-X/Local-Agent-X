@@ -1415,15 +1415,28 @@ async function refreshClonedVoices() {
   try {
     const tierRes = await apiFetch('/api/voices/tier');
     const tier = await tierRes.json();
-    window._proTierReady = tier.tier === 'pro' && !!tier.ready;
-    if (!window._proTierReady) {
+    window._proTierReady = !!(tier.rvc && tier.rvc.ready);
+    window._studioTierReady = !!(tier.chatterbox && tier.chatterbox.ready);
+    // Pro tier: RVC clones (existing celebrity-catalog voices)
+    if (window._proTierReady) {
+      const r = await apiFetch('/api/voices/clones');
+      if (r.ok) {
+        const data = await r.json();
+        window._cloneVoices = Array.isArray(data?.clones) ? data.clones : [];
+      }
+    } else {
       window._cloneVoices = [];
-      return;
     }
-    const r = await apiFetch('/api/voices/clones');
-    if (!r.ok) return;
-    const data = await r.json();
-    window._cloneVoices = Array.isArray(data?.clones) ? data.clones : [];
+    // Studio tier: Chatterbox clones (single-stage TTS, near-real-time)
+    if (window._studioTierReady) {
+      const r = await apiFetch('/api/voices/chatterbox');
+      if (r.ok) {
+        const data = await r.json();
+        window._chatterboxVoices = Array.isArray(data?.clones) ? data.clones : [];
+      }
+    } else {
+      window._chatterboxVoices = [];
+    }
     if (typeof updateStatusBar === 'function') updateStatusBar();
   } catch (e) {
     console.warn('[voice] tier/clones probe failed:', e.message);
@@ -1503,30 +1516,46 @@ function updateStatusBar() {
     ['British Female', ['bf_emma','bf_alice','bf_isabella','bf_lily']],
   ];
   const voiceLabel = (id) => id.split('_')[1].replace(/\b\w/g, c => c.toUpperCase());
-  // Cloned voices are only available if the Pro tier RVC sidecar is up.
-  // refreshClonedVoices() populates window._cloneVoices async on init; we
-  // re-render the bar once they land.
-  const clones = Array.isArray(window._cloneVoices) ? window._cloneVoices : [];
-  const cloneIds = clones.map(c => 'clone:' + c.id);
+  // Cloned voices come from two optional sidecars (refreshClonedVoices()
+  // populates these async on page init; we re-render the bar once they land):
+  //   * Pro tier (RVC, :7009)        → window._cloneVoices  → "clone:<id>"
+  //   * Studio tier (Chatterbox, :7010) → window._chatterboxVoices → "cb:<id>"
+  const rvcClones = Array.isArray(window._cloneVoices) ? window._cloneVoices : [];
+  const cbClones = Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [];
+  const allCloneIds = [
+    ...rvcClones.map(c => 'clone:' + c.id),
+    ...cbClones.map(c => 'cb:' + c.id),
+  ];
   // If the saved voice references a clone that no longer exists, fall back.
-  const effectiveVoice = (savedVoice.startsWith('clone:') && !cloneIds.includes(savedVoice))
-    ? 'am_michael'
-    : savedVoice;
+  const isStaleClone = (savedVoice.startsWith('clone:') || savedVoice.startsWith('cb:'))
+    && !allCloneIds.includes(savedVoice);
+  const effectiveVoice = isStaleClone ? 'am_michael' : savedVoice;
   if (effectiveVoice !== savedVoice) localStorage.setItem('lax_voice', effectiveVoice);
   let voiceOpts = voiceGroups.map(([group, ids]) =>
     `<optgroup label="${esc(group)}">` +
     ids.map(id => `<option value="${esc(id)}" ${id === effectiveVoice ? 'selected' : ''}>${esc(voiceLabel(id))}</option>`).join('') +
     `</optgroup>`
   ).join('');
-  if (clones.length > 0) {
-    voiceOpts += `<optgroup label="My Cloned Voices (RVC)">` +
-      clones.map(c => `<option value="clone:${esc(c.id)}" ${('clone:' + c.id) === effectiveVoice ? 'selected' : ''}>${esc(c.name)}</option>`).join('') +
+  if (cbClones.length > 0) {
+    voiceOpts += `<optgroup label="Studio: Chatterbox (best quality)">` +
+      cbClones.map(c => `<option value="cb:${esc(c.id)}" ${('cb:' + c.id) === effectiveVoice ? 'selected' : ''}>${esc(c.name)}</option>`).join('') +
       `</optgroup>`;
   }
-  // Pro tier management: only show if /api/voices/tier returned ready.
-  if (window._proTierReady) {
-    voiceOpts += `<optgroup label=" "><option value="__add_clone__">+ Add a cloned voice…</option>`;
-    if (clones.length > 0) {
+  if (rvcClones.length > 0) {
+    voiceOpts += `<optgroup label="Pro: RVC (catalog)">` +
+      rvcClones.map(c => `<option value="clone:${esc(c.id)}" ${('clone:' + c.id) === effectiveVoice ? 'selected' : ''}>${esc(c.name)}</option>`).join('') +
+      `</optgroup>`;
+  }
+  // Pro / Studio management: only show if at least one sidecar is reachable.
+  if (window._proTierReady || window._studioTierReady) {
+    voiceOpts += `<optgroup label=" ">`;
+    if (window._studioTierReady) {
+      voiceOpts += `<option value="__add_chatterbox__">+ Add a Chatterbox voice…</option>`;
+    }
+    if (window._proTierReady) {
+      voiceOpts += `<option value="__add_clone__">+ Add an RVC voice…</option>`;
+    }
+    if (rvcClones.length > 0 || cbClones.length > 0) {
       voiceOpts += `<option value="__manage_clones__">&#9881; Manage cloned voices…</option>`;
     }
     voiceOpts += `</optgroup>`;
@@ -1547,8 +1576,9 @@ function updateStatusBar() {
 }
 
 function quickSwitchVoice(voice) {
-  if (voice === '__add_clone__' || voice === '__manage_clones__') {
+  if (voice === '__add_clone__' || voice === '__manage_clones__' || voice === '__add_chatterbox__') {
     if (voice === '__add_clone__') openAddCloneModal();
+    else if (voice === '__add_chatterbox__') openAddChatterboxModal();
     else openManageClonesModal();
     // Reset picker visual to whatever was actually selected before
     const sel = document.getElementById('voice-quick-select');
@@ -1740,15 +1770,99 @@ async function pthToZip(filename, fileBuf) {
   return out.buffer;
 }
 
+function openAddChatterboxModal() {
+  const existing = document.getElementById('add-chatterbox-modal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'add-chatterbox-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = `
+    <div style="background:var(--bg, #fff);color:var(--text, #000);border:1px solid var(--border, #ccc);border-radius:10px;padding:24px;max-width:480px;width:92%">
+      <h3 style="margin:0 0 6px;font-size:1.1rem">Add a Chatterbox voice</h3>
+      <p style="margin:0 0 14px;color:var(--muted, #666);font-size:.83rem">Upload a clean 10-30s WAV/MP3 of one person speaking. Chatterbox clones the voice in real time — no training step needed. Local-only, nothing leaves this machine.</p>
+      <div style="margin-bottom:12px">
+        <label style="display:block;font-size:.78rem;color:var(--muted, #666);margin-bottom:4px">Voice name</label>
+        <input id="acb-name" type="text" placeholder="My Voice" style="width:100%;padding:8px;border:1px solid var(--border, #ccc);border-radius:6px;font-size:.9rem"/>
+      </div>
+      <div style="margin-bottom:14px">
+        <label style="display:block;font-size:.78rem;color:var(--muted, #666);margin-bottom:4px">Reference audio (10-30s recommended)</label>
+        <input id="acb-file" type="file" accept="audio/*" style="width:100%;font-size:.85rem"/>
+      </div>
+      <div id="acb-status" style="font-size:.8rem;color:var(--muted, #666);margin-bottom:12px;min-height:1em"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button id="acb-cancel" type="button" style="padding:8px 14px;border:1px solid var(--border, #ccc);background:transparent;color:var(--text, #000);border-radius:6px;cursor:pointer">Cancel</button>
+        <button id="acb-upload" type="button" style="padding:8px 14px;border:none;background:#3498db;color:#fff;border-radius:6px;cursor:pointer">Upload &amp; install</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+  document.getElementById('acb-cancel').onclick = () => modal.remove();
+
+  const status = document.getElementById('acb-status');
+  const setStatus = (msg, isError) => { status.textContent = msg; status.style.color = isError ? '#c0392b' : 'var(--muted, #666)'; };
+
+  document.getElementById('acb-upload').onclick = async () => {
+    const name = (document.getElementById('acb-name').value || '').trim() || 'My Voice';
+    const file = document.getElementById('acb-file').files[0];
+    if (!file) { setStatus('Pick an audio file first.', true); return; }
+    if (file.size > 18 * 1024 * 1024) { setStatus('File too big (max ~18MB).', true); return; }
+    setStatus('Uploading…', false);
+    try {
+      const arrayBuf = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuf);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 8192) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+      }
+      const b64 = btoa(binary);
+      const r = await apiFetch('/api/voices/chatterbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, audio_b64: b64 }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { setStatus('Failed: ' + (data.error || data.detail || ('HTTP ' + r.status)), true); return; }
+      setStatus(`✓ Installed "${data.name || name}". Selected as your voice.`, false);
+      await refreshClonedVoices();
+      // Auto-select the new voice
+      const newId = 'cb:' + data.id;
+      localStorage.setItem('lax_voice', newId);
+      const sel = document.getElementById('voice-quick-select');
+      if (sel) sel.value = newId;
+      quickSwitchVoice(newId);
+      // Replace the upload button with a clear "next step" prompt so the
+      // user knows exactly what to do, instead of the modal vanishing.
+      const cancelBtn = document.getElementById('acb-cancel');
+      const uploadBtn = document.getElementById('acb-upload');
+      if (uploadBtn) uploadBtn.style.display = 'none';
+      if (cancelBtn) {
+        cancelBtn.textContent = 'Got it — close this';
+        cancelBtn.style.background = '#27ae60';
+        cancelBtn.style.color = '#fff';
+        cancelBtn.style.border = 'none';
+      }
+      setStatus(`✓ Installed "${data.name || name}". Close this, click the mic button, and speak.`, false);
+    } catch (e) { setStatus('Failed: ' + e.message, true); }
+  };
+}
+
 function openManageClonesModal() {
   const existing = document.getElementById('manage-clones-modal');
   if (existing) existing.remove();
 
-  const clones = Array.isArray(window._cloneVoices) ? window._cloneVoices : [];
-  const rows = clones.length === 0
+  const rvc = Array.isArray(window._cloneVoices) ? window._cloneVoices : [];
+  const cb = Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [];
+  const allRows = [
+    ...cb.map(c => ({ id: c.id, name: c.name, kind: 'cb', endpoint: '/api/voices/chatterbox', label: 'Studio' })),
+    ...rvc.map(c => ({ id: c.id, name: c.name, kind: 'clone', endpoint: '/api/voices/clones', label: 'Pro' })),
+  ];
+  const rows = allRows.length === 0
     ? `<div style="padding:16px;color:var(--muted, #666);font-size:.85rem;text-align:center">No cloned voices installed.</div>`
-    : clones.map(c => `
-        <div class="mc-row" data-id="${esc(c.id)}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border, #eee)">
+    : allRows.map(c => `
+        <div class="mc-row" data-id="${esc(c.id)}" data-kind="${esc(c.kind)}" data-endpoint="${esc(c.endpoint)}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border, #eee)">
+          <span style="font-size:.65rem;padding:2px 6px;border-radius:8px;background:${c.kind === 'cb' ? '#3498db' : '#95a5a6'};color:#fff">${c.label}</span>
           <span style="flex:1;font-family:var(--mono);font-size:.85rem">${esc(c.name)}</span>
           <button class="mc-delete" type="button" style="padding:6px 12px;border:none;background:#e74c3c;color:#fff;border-radius:6px;cursor:pointer;font-size:.8rem">Delete</button>
         </div>`).join('');
@@ -1778,14 +1892,17 @@ function openManageClonesModal() {
     btn.onclick = async () => {
       const row = btn.closest('.mc-row');
       const id = row.dataset.id;
-      if (!confirm(`Delete "${id}"? Removes the .pth + .index from disk.`)) return;
+      const kind = row.dataset.kind;        // 'cb' or 'clone'
+      const endpoint = row.dataset.endpoint; // '/api/voices/chatterbox' or '/api/voices/clones'
+      if (!confirm(`Delete "${id}"? Removes its files from disk.`)) return;
       btn.disabled = true; statusEl.textContent = 'Deleting…'; statusEl.style.color = 'var(--muted, #666)';
       try {
-        const r = await apiFetch('/api/voices/clones/' + encodeURIComponent(id), { method: 'DELETE' });
+        const r = await apiFetch(endpoint + '/' + encodeURIComponent(id), { method: 'DELETE' });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { statusEl.textContent = 'Failed: ' + (data.error || ('HTTP ' + r.status)); statusEl.style.color = '#c0392b'; btn.disabled = false; return; }
         row.remove();
-        if (localStorage.getItem('lax_voice') === ('clone:' + id)) {
+        const fullId = kind + ':' + id;
+        if (localStorage.getItem('lax_voice') === fullId) {
           localStorage.setItem('lax_voice', 'am_michael');
         }
         await refreshClonedVoices();

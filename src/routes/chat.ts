@@ -122,7 +122,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // send, browser click on Send/Submit, etc). The lock is released in
       // the finally block below, regardless of how the turn ends.
       const { tryAcquireOrReplace, markIteration: markTurnIteration, releaseTurn: releaseTurnLock } = await import("../session-turn-lock.js");
-      const decision = tryAcquireOrReplace(sessionId, wsChat.abort, `chat:${prepared.provider}`);
+      const decision = await tryAcquireOrReplace(sessionId, wsChat.abort, `chat:${prepared.provider}`);
       if (!decision.allowed) {
         const prev = decision.previous!;
         wrappedOnEvent({

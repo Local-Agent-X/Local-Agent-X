@@ -1,12 +1,16 @@
 import type { ModuleSignal } from "./types.js";
 import { MAX_CONTEXT_SIGNALS } from "./types.js";
 import { resolveConflicts } from "./fusion.js";
+import { logSignalTrace, toSignalRef } from "./signal-telemetry.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("orchestrator.signals");
 
 export function hashSignal(s: ModuleSignal): string {
   return s.category + ":" + s.signal.slice(0, 40);
 }
 
-export function mergeSignals(signals: ModuleSignal[], previousHashes: string[]): { paragraph: string; usedSignals: ModuleSignal[]; hashes: string[] } {
+export function mergeSignals(signals: ModuleSignal[], previousHashes: string[], opts: { sessionId?: string } = {}): { paragraph: string; usedSignals: ModuleSignal[]; hashes: string[] } {
   const sorted = [...signals].sort((a, b) => b.priority - a.priority);
 
   const seen = new Set<string>();
@@ -30,6 +34,18 @@ export function mergeSignals(signals: ModuleSignal[], previousHashes: string[]):
   const top = resolved.slice(0, MAX_CONTEXT_SIGNALS);
 
   const paragraph = buildParagraph(top);
+
+  // Telemetry: persist produced/injected/dropped so we can later see which
+  // conversational modules ever land in the agent context vs always being
+  // sliced off by MAX_CONTEXT_SIGNALS or replaced during fusion.
+  const injectedHashes = new Set(top.map(hashSignal));
+  const produced = signals.map(toSignalRef);
+  const injected = top.map(toSignalRef);
+  const dropped = signals.filter(s => !injectedHashes.has(hashSignal(s))).map(toSignalRef);
+  logSignalTrace({ sessionId: opts.sessionId, produced, injected, dropped });
+  if (produced.length > 0) {
+    logger.info(`[signals] produced=${produced.length} injected=${injected.length} dropped=${dropped.length}`);
+  }
 
   return {
     paragraph,

@@ -116,6 +116,8 @@ export function createBrowserSecretFillTool(
       }
       const pressEnter = args.press_enter === true;
       const sessionId = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
+      const { withBrowserLock } = await import("./browser.js");
+      return withBrowserLock(sessionId, async () => {
 
       // Look up secret metadata. We do NOT pull the value yet — only confirm it
       // exists and inspect origin/provenance. Value fetch is deferred to the
@@ -284,6 +286,7 @@ export function createBrowserSecretFillTool(
         (pressEnter ? "Pressed Enter after fill. " : "") +
         `Take a new snapshot to see the next page state.`
       );
+      });
     },
   };
 }

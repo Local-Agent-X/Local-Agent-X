@@ -271,11 +271,18 @@ async function executeSingleTool(
   }
 
   // Inject session ID for tools that need session-scoped state
-  if (tc.name === "enter_plan_mode" || tc.name === "exit_plan_mode" || tc.name === "skill_run" || tc.name === "usage_report" || tc.name === "browser" || tc.name === "operation_start") {
+  const SESSION_SCOPED_TOOLS = new Set([
+    "enter_plan_mode", "exit_plan_mode", "skill_run", "usage_report",
+    "browser", "operation_start",
+    "agent_spawn", "browser_capture_to_secret", "browser_fill_from_secret",
+    "session_status", "request_secret",
+  ]);
+  if (SESSION_SCOPED_TOOLS.has(tc.name)) {
     args._sessionId = sessionId || "default";
   }
-  // Inject onEvent for tools that need to stream events (e.g. request_secret)
-  if (tc.name === "request_secret") {
+  // Inject onEvent for tools that need to stream events (e.g. request_secret,
+  // browser emits browser_queued when waiting on the per-process mutex).
+  if (tc.name === "request_secret" || tc.name === "browser") {
     args._onEvent = onEvent;
   }
 

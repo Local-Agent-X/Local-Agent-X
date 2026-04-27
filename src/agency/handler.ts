@@ -108,8 +108,10 @@ export class Handler {
 
   spawnAgent(config: SpawnConfig): string {
     const agentId = uid("field-agent");
-    // Capture the session ID at spawn time so concurrent chats don't cross-pollinate
-    const parentSessionId = config.parentSessionId || this.currentSessionId || "";
+    // parentSessionId is plumbed via SpawnConfig.parentSessionId by callers
+    // (agent_spawn execute now reads args._sessionId). The previous singleton
+    // fallback caused concurrent chats to inherit each other's session id.
+    const parentSessionId = config.parentSessionId || "";
 
     const agent: FieldAgent = {
       id: agentId,
@@ -577,13 +579,14 @@ export function createHandlerTools(): ToolDefinition[] {
       async execute(args) {
         try {
           const handler = Handler.getInstance();
+          const sessionFromArgs = args._sessionId ? String(args._sessionId) : undefined;
           const agentId = handler.spawnAgent({
             name: String(args.name),
             role: String(args.role),
             task: String(args.task),
             systemPrompt: args.system_prompt ? String(args.system_prompt) : undefined,
             tools: Array.isArray(args.tools) ? args.tools.map(String) : undefined,
-            parentSessionId: handler.currentSessionId || undefined,
+            parentSessionId: sessionFromArgs,
           });
           const status = handler.getAgentStatus(agentId) as FieldAgentStatus;
           return ok(

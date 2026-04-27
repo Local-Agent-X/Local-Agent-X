@@ -49,10 +49,7 @@ export function startBackgroundJobs(deps: {
   cronService.onExecute(async (jobId, prompt) => {
     const cronSecurity = new SecurityLayer(resolve(process.env.LAX_WORKSPACE ?? process.env.SAX_WORKSPACE ?? join(homedir(), ".lax", "workspace")), "workspace");
     const sessionId = `cron-${jobId}-${Date.now()}`;
-    try {
-      const { Handler } = await import("../agency/handler.js");
-      Handler.getInstance().currentSessionId = sessionId;
-    } catch {}
+    // Session is plumbed via args._sessionId; no global needed.
     const { prepareAgentRequest } = await import("../agent-request.js");
     const prepared = await prepareAgentRequest({
       channel: "cron", message: prompt, sessionMessages: [], sessionId,

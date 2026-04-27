@@ -17,7 +17,7 @@ export async function startServer(config: LAXConfig) {
   const { security, publicDir, dataDir, toolPolicy, rbac, agentSync, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations } = services;
 
   const tools = await bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir });
-  const { allAgentTools, bridgeTools, toolRegistry, activeOnEventRef, activeBrowserSessionIdRef } = tools;
+  const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef } = tools;
 
   const sessionHelpers = createSessionHelpers({ sessionStore, memoryIndex, dataDir, maxCached: config.maxCachedSessions });
   const { sessions, getOrCreateSession, saveSession } = sessionHelpers;
@@ -48,7 +48,7 @@ export async function startServer(config: LAXConfig) {
     whatsappBridge, telegramBridge, agentSync, appRegistry: AppRegistry.getInstance(), agentRunStore, agentTemplateStore, issueStore, projectStore,
     allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession,
     getChatWs: () => chatWsHolder.value!, broadcastAll,
-    activeOnEventRef: activeOnEventRef as { value: ((event: ServerEvent) => void) | undefined },
+    activeOnEventBySession,
     activeBrowserSessionIdRef,
   });
 

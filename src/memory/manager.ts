@@ -100,7 +100,7 @@ export class MemoryManager {
         logger.warn("buildContextBlock failed:", (e as Error).message);
         return "";
       }),
-      autoSearchContext(this.index, input.userMessage).catch((e) => {
+      autoSearchContext(this.index, input.userMessage, { sessionId: input.sessionId }).catch((e) => {
         logger.warn("autoSearchContext failed:", (e as Error).message);
         return "";
       }),

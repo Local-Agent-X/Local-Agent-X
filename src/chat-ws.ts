@@ -272,6 +272,21 @@ export function setupChatWebSocket(server: Server, authToken: string) {
       return [...activeChats.keys()].filter(id => !activeChats.get(id)!.done);
     },
 
+    /**
+     * Force-terminate a chat with an error reason. Used by transport-level
+     * error handlers (e.g. wireWsChat self-loop fetch failure) so the WS
+     * client gets a terminal signal instead of waiting for the 5-minute
+     * cleanup timer.
+     */
+    failChat(sessionId: string, errorMessage: string): void {
+      const chat = activeChats.get(sessionId);
+      if (!chat || chat.done) return;
+      broadcastToSession(sessionId, { type: "error", message: errorMessage });
+      broadcastToSession(sessionId, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+      chat.done = true;
+      broadcastActiveChats();
+    },
+
     /** Register the handler for WS-initiated chat messages */
     onChat(handler: ChatHandler) {
       chatHandler = handler;

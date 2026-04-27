@@ -94,11 +94,43 @@ export function createSecretTools(
       }
       const lines = list.map(s => {
         const svc = s.service ? ` (${s.service})` : "";
-        return `- ${s.name}${svc} — use as {{${s.name}}} in http_request headers`;
+        const acct = s.account ? ` [${s.account}]` : "";
+        return `- ${s.name}${svc}${acct} — use as {{${s.name}}} in http_request headers`;
       });
       return ok(`Stored secrets (${list.length}):\n${lines.join("\n")}`);
     },
   };
 
-  return [requestSecretTool, listSecretsTool];
+  const getSecretMetaTool: ToolDefinition = {
+    name: "get_secret_meta",
+    description:
+      "Read the metadata for a single stored secret — service, account, url, notes, when added — WITHOUT revealing its value. " +
+      "Use this to identify what an existing saved secret is for before deciding whether to reuse it (e.g. 'is FASTMAIL the user's SMTP password?'). " +
+      "Pair with list_secrets to discover names, then call this to inspect each.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Exact secret name (case-sensitive)." },
+      },
+      required: ["name"],
+    },
+    async execute(args) {
+      const name = String(args.name || "").trim();
+      if (!name) return err("name is required.");
+      const meta = secrets.getMeta(name);
+      if (!meta) return err(`No secret named '${name}'. Use list_secrets to see what's stored.`);
+      const parts = [
+        `name: ${meta.name}`,
+        meta.service ? `service: ${meta.service}` : null,
+        meta.account ? `account: ${meta.account}` : null,
+        meta.url ? `url: ${meta.url}` : null,
+        meta.notes ? `notes: ${meta.notes}` : null,
+        `added: ${new Date(meta.addedAt).toISOString()}`,
+        meta.updatedAt && meta.updatedAt !== meta.addedAt ? `updated: ${new Date(meta.updatedAt).toISOString()}` : null,
+      ].filter(Boolean);
+      return ok(parts.join("\n"));
+    },
+  };
+
+  return [requestSecretTool, listSecretsTool, getSecretMetaTool];
 }

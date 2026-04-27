@@ -124,7 +124,8 @@ export async function getAnthropicApiKey(): Promise<string> {
   // Check if Claude CLI is available (it has its own credentials)
   try {
     const { execSync } = await import("child_process");
-    execSync("claude --version", { timeout: 3000, stdio: "pipe" });
+    const { npmAugmentedEnv } = await import("./anthropic-client/cli-path.js");
+    execSync("claude --version", { timeout: 3000, stdio: "pipe", env: npmAugmentedEnv() });
     return "cli";
   } catch {}
 

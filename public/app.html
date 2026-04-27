@@ -324,6 +324,15 @@
       <!-- Image & Video -->
       <div id="stab-image" class="tab-pane">
         <div class="section-card">
+          <div class="section-title">Voice Engines</div>
+          <div class="section-desc">Detect, install, and start voice sidecars. Each tier is independent — install only what you need.</div>
+          <div id="voice-setup-status" style="font-size:.78rem;color:var(--muted);margin-bottom:8px">Loading…</div>
+          <div id="voice-setup-tiers"></div>
+          <div class="btn-row" style="margin-top:8px">
+            <button class="action-btn" onclick="refreshVoiceSetup()">Refresh</button>
+          </div>
+        </div>
+        <div class="section-card">
           <div class="section-title">Image Generation</div>
           <div id="img-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div class="field"><label class="field-label">Default Engine</label><select class="field-select" id="cfg-image-engine"><option value="sd-local">Stable Diffusion (Local GPU)</option><option value="comfyui">ComfyUI (Local)</option><option value="dalle">DALL-E (OpenAI API)</option><option value="none">None</option></select></div>

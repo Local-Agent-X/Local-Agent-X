@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-27T05:36:21.729Z",
+  "generatedAt": "2026-04-27T17:25:55.038Z",
   "pages": [
     {
       "name": "Chat",
@@ -317,267 +317,39 @@
   ],
   "apps": [
     {
-      "name": "agent-manager",
-      "path": "workspace/apps/agent-manager",
-      "files": [
-        "app.js",
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "styles.css",
-        "TODO.md"
-      ]
-    },
-    {
-      "name": "agentx-brand-kit",
-      "path": "workspace/apps/agentx-brand-kit",
-      "files": [
-        "CHANGELOG.md",
-        "index.html",
-        "logo-x-primary.svg",
-        "PROJECT.md",
-        "TODO.md"
-      ]
-    },
-    {
-      "name": "ai-animation-studio",
-      "path": "workspace/apps/ai-animation-studio",
+      "name": "everythingstupid",
+      "path": "workspace/apps/everythingstupid",
       "files": [
         "index.html"
       ]
-    },
-    {
-      "name": "apps-dashboard",
-      "path": "workspace/apps/apps-dashboard",
-      "files": [
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "script.js",
-        "styles.css",
-        "TODO.md"
-      ]
-    },
-    {
-      "name": "baseball-todo",
-      "path": "workspace/apps/baseball-todo",
-      "files": [
-        "app.js",
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "styles.css",
-        "TODO.md"
-      ]
-    },
-    {
-      "name": "black-yellow-todo",
-      "path": "workspace/apps/black-yellow-todo",
-      "files": []
-    },
-    {
-      "name": "blue-red-todo",
-      "path": "workspace/apps/blue-red-todo",
-      "files": [
-        "App.jsx",
-        "CHANGELOG.md",
-        "dist",
-        "index.html",
-        "main.jsx",
-        "node_modules",
-        "package-lock.json",
-        "package.json",
-        "PROJECT.md",
-        "styles.css",
-        "TODO.md",
-        "tsconfig.json",
-        "vite.config.js"
-      ]
-    },
-    {
-      "name": "bodybuilding-todo",
-      "path": "workspace/apps/bodybuilding-todo",
-      "files": [
-        "index.html"
-      ]
-    },
-    {
-      "name": "build-me-a-black-and-tellow-todo",
-      "path": "workspace/apps/build-me-a-black-and-tellow-todo",
-      "files": []
-    },
-    {
-      "name": "calculator",
-      "path": "workspace/apps/calculator",
-      "files": [
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "TODO.md"
-      ]
-    },
-    {
-      "name": "calculator-app",
-      "path": "workspace/apps/calculator-app",
-      "files": []
-    },
-    {
-      "name": "calendar",
-      "path": "workspace/apps/calendar",
-      "files": [
-        "index.html"
-      ]
-    },
-    {
-      "name": "do-it-now-arnold",
-      "path": "workspace/apps/do-it-now-arnold",
-      "files": [
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "script.js",
-        "style.css",
-        "TODO.md"
-      ]
-    },
-    {
-      "name": "kraken-spot-bot",
-      "path": "workspace/apps/kraken-spot-bot",
-      "files": []
-    },
-    {
-      "name": "kraken-trading-bot-ui",
-      "path": "workspace/apps/kraken-trading-bot-ui",
-      "files": []
     },
     {
       "name": "lakers-todo",
       "path": "workspace/apps/lakers-todo",
       "files": [
-        "app.js",
-        "index.html",
-        "styles.css"
-      ]
-    },
-    {
-      "name": "mario-todo-app",
-      "path": "workspace/apps/mario-todo-app",
-      "files": [
         "CHANGELOG.md",
         "index.html",
         "PROJECT.md",
-        "QUICKSTART.md",
-        "README.md",
         "TODO.md"
       ]
     },
     {
-      "name": "multiply-divide-calculator",
-      "path": "workspace/apps/multiply-divide-calculator",
-      "files": []
-    },
-    {
-      "name": "my-groom-time",
-      "path": "workspace/apps/my-groom-time",
-      "files": [
-        "app.js",
-        "index.html",
-        "styles.css"
-      ]
-    },
-    {
-      "name": "numberblocks-to-do-app",
-      "path": "workspace/apps/numberblocks-to-do-app",
-      "files": [
-        "app.js",
-        "background.png",
-        "CHANGELOG.md",
-        "index.html",
-        "patch.py",
-        "PROJECT.md",
-        "script.js",
-        "styles.css",
-        "TODO.md"
-      ]
-    },
-    {
-      "name": "pistons-todo",
-      "path": "workspace/apps/pistons-todo",
-      "files": [
-        "app.js",
-        "index.html",
-        "styles.css"
-      ]
-    },
-    {
-      "name": "pmajlabs-landing",
-      "path": "workspace/apps/pmajlabs-landing",
-      "files": [
-        "index.html"
-      ]
-    },
-    {
-      "name": "pmajlabs-site",
-      "path": "workspace/apps/pmajlabs-site",
+      "name": "my-app",
+      "path": "workspace/apps/my-app",
       "files": [
         "index.html",
-        "styles.css"
+        "PROJECT.md"
       ]
     },
     {
-      "name": "project-theme-dashboard",
-      "path": "workspace/apps/project-theme-dashboard",
-      "files": [
-        "app.js",
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "styles.css",
-        "TODO.md"
-      ]
-    },
-    {
-      "name": "project-tracker",
-      "path": "workspace/apps/project-tracker",
-      "files": [
-        "app.js",
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "styles.css",
-        "TODO.md"
-      ]
-    },
-    {
-      "name": "scientific-calculator",
-      "path": "workspace/apps/scientific-calculator",
+      "name": "todo-app",
+      "path": "workspace/apps/todo-app",
       "files": [
         "CHANGELOG.md",
         "index.html",
         "PROJECT.md",
-        "script.js",
-        "style.css",
         "TODO.md"
       ]
-    },
-    {
-      "name": "simple-calculator",
-      "path": "workspace/apps/simple-calculator",
-      "files": [
-        "index.html"
-      ]
-    },
-    {
-      "name": "test-ws",
-      "path": "workspace/apps/test-ws",
-      "files": [
-        "hello.html"
-      ]
-    },
-    {
-      "name": "todo",
-      "path": "workspace/apps/todo",
-      "files": []
     }
   ],
   "configFiles": [

@@ -126,16 +126,40 @@ export async function runCodexAgentHttp(
     // messages since our last turn are tool results, send just those results
     // instead of the full conversation. This saves input tokens and avoids
     // re-sending the entire history on every tool-call loop.
+    //
+    // Codex subscription endpoint rejects previous_response_id chaining, so
+    // server-side state doesn't carry across turns. To preserve grounding,
+    // we prepend a small context envelope (most recent system message, the
+    // active user intent, a one-line tool-loop header) before the tool-result
+    // payload. Constant overhead per loop iteration; keeps the cost win.
+    //
+    // LAX_CODEX_INCREMENTAL=0 disables incremental mode entirely (diagnostic).
+    const incrementalEnabled = process.env.LAX_CODEX_INCREMENTAL !== "0";
     let streamMessages: ChatCompletionMessageParam[];
     let turnPreviousResponseId: string | undefined;
-    if (previousResponseId && lastContextLength > 0) {
+    if (incrementalEnabled && previousResponseId && lastContextLength > 0) {
       const newMessages = messages.slice(lastContextLength);
       const allToolResults = newMessages.length > 0 && newMessages.every(
         (m) => m.role === "tool" || (m.role === "assistant" && (m as unknown as Record<string, unknown>).tool_calls)
       );
       if (allToolResults) {
-        // Incremental: only send the new tool result messages
-        streamMessages = newMessages;
+        // Build the envelope. Most recent system msg + most recent user msg +
+        // one-line loop header. Skip system if absent (sub-agent paths).
+        const lastSystem = [...messages].reverse().find((m) => m.role === "system");
+        const lastUser = [...messages].reverse().find((m) => m.role === "user");
+        const userText = typeof lastUser?.content === "string"
+          ? lastUser.content
+          : Array.isArray(lastUser?.content)
+            ? (lastUser.content as Array<{ type?: string; text?: string }>).map(p => p?.text || "").join(" ").trim()
+            : "";
+        const goalHeader = userText
+          ? `[Tool loop in progress for: ${userText.slice(0, 160)}]`
+          : `[Continuing tool loop in response to user request]`;
+        const envelope: ChatCompletionMessageParam[] = [];
+        if (lastSystem) envelope.push(lastSystem);
+        if (lastUser) envelope.push(lastUser);
+        envelope.push({ role: "system", content: goalHeader } as ChatCompletionMessageParam);
+        streamMessages = [...envelope, ...newMessages];
         turnPreviousResponseId = previousResponseId;
       } else {
         // Full context restart — something other than tool results was added

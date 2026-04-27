@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { ChatCompletionMessageParam as ChatCompletionMessageParamLike } from "openai/resources/chat/completions.js";
 import { sanitizeHistory, truncateHistory } from "../agent-providers.js";
 import { loadSystemPrompt } from "../config-loader.js";
 import type { AgentRequestInput, PreparedAgentRequest } from "./types.js";
@@ -18,9 +19,26 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // 1. Resolve provider + keys
   const resolved = await resolveProvider(config, secretsStore, dataDir);
 
-  // 2. Sanitize + truncate history
+  // 2. Sanitize + truncate history. If the session has a stored compaction
+  // summary from /api/compact, slice the message list to the post-compaction
+  // tail and prepend the summary as a system message — preserves long-session
+  // grounding without re-summarizing every turn.
   const maxKeep = input.maxHistory || (channel === "web" ? 40 : 30);
-  const cleanHistory = truncateHistory(sanitizeHistory(sessionMessages), maxKeep);
+  let historyForPrep: ChatCompletionMessageParamLike[] = sessionMessages;
+  if (
+    input.compactedSummary &&
+    typeof input.compactedAt === "number" &&
+    input.compactedAt > 0 &&
+    input.compactedAt < sessionMessages.length
+  ) {
+    const tail = sessionMessages.slice(input.compactedAt);
+    historyForPrep = [
+      { role: "system", content: input.compactedSummary } as ChatCompletionMessageParamLike,
+      ...tail,
+    ];
+    logger.info(`[compaction] reusing stored summary (compactedAt=${input.compactedAt}, summaryLen=${input.compactedSummary.length}, tail=${tail.length})`);
+  }
+  const cleanHistory = truncateHistory(sanitizeHistory(historyForPrep), maxKeep);
 
   // 3. Build context (skip heavy parts for bridges/cron). The memory pipeline
   // runs for every provider — the orchestrator's grounding signals help Codex

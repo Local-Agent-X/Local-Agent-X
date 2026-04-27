@@ -355,6 +355,43 @@ export class BrowserManager {
 // so all sessions/agents share a single browser with separate tabs.
 let sharedInstance: BrowserManager | null = null;
 
+// Per-process browser mutex. The shared instance plus the observation-ref
+// registry can race when two sessions enqueue browser actions concurrently
+// (e.g. session A clicks ref 3 mid-navigate while session B's snapshot
+// reassigns refs). We serialize every tool entry through a promise chain.
+let browserChain: Promise<unknown> = Promise.resolve();
+let currentOwnerSessionId: string | null = null;
+
+import { createLogger as createBrowserLogger } from "./logger.js";
+const browserMutexLog = createBrowserLogger("browser.mutex");
+
+export function withBrowserLock<T>(sessionId: string, fn: () => Promise<T>, onQueued?: () => void): Promise<T> {
+  const queued = currentOwnerSessionId !== null && currentOwnerSessionId !== sessionId;
+  if (queued && onQueued) {
+    try { onQueued(); } catch {}
+  }
+  const next = browserChain.then(async () => {
+    const prevOwner = currentOwnerSessionId;
+    if (prevOwner !== null && prevOwner !== sessionId) {
+      browserMutexLog.info(`[browser-mutex] handover ${prevOwner} -> ${sessionId}`);
+    }
+    currentOwnerSessionId = sessionId;
+    try {
+      return await fn();
+    } finally {
+      if (currentOwnerSessionId === sessionId) currentOwnerSessionId = null;
+    }
+  });
+  // Catch chain errors so a single tool failure doesn't poison every later
+  // browser action with the same rejection.
+  browserChain = next.catch(() => {});
+  return next;
+}
+
+export function getCurrentBrowserOwnerSessionId(): string | null {
+  return currentOwnerSessionId;
+}
+
 /**
  * Get browser manager. All sessions share a single Chrome instance to avoid
  * conflicts from multiple processes trying to lock the same user-data-dir.

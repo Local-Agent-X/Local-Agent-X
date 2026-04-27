@@ -1,5 +1,5 @@
 import type { ToolDefinition, ToolResult } from "./types.js";
-import { getBrowserManager, closeBrowser } from "./browser.js";
+import { getBrowserManager, closeBrowser, withBrowserLock } from "./browser.js";
 import type { BrowserEngine } from "./browser.js";
 import { wrapExternalContent } from "./sanitize.js";
 import { dnsPinCheck, scanEvaluateScript } from "./browser/guards.js";
@@ -101,6 +101,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
       const action = String(args.action || "");
       // Use session ID from tool executor (per-request, no global state) or fall back to getter
       const sessionId = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
+      const onEvent = (args._onEvent && typeof args._onEvent === "function") ? args._onEvent as (e: { type: string; [k: string]: unknown }) => void : undefined;
+      return withBrowserLock(sessionId, async () => {
       const manager = getBrowserManager(sessionId);
 
       // Validate engine if provided
@@ -371,6 +373,9 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
         }
         return err(`Browser error: ${message}`);
       }
+      }, () => {
+        if (onEvent) onEvent({ type: "browser_queued", sessionId });
+      });
     },
   };
 

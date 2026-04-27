@@ -86,7 +86,7 @@ export class MemoryOrchestrator {
       }
     }
 
-    const merged = mergeSignals(signals, orchestratorState.lastSignalHashes);
+    const merged = mergeSignals(signals, orchestratorState.lastSignalHashes, { sessionId: input.sessionId });
 
     const fusionConfidence = calculateFusionConfidence(merged.usedSignals);
 

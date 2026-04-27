@@ -199,6 +199,57 @@ function toggleAnthropicOptions() {
   opts.style.display = opts.style.display === 'none' ? '' : 'none';
 }
 
+let _claudeCliLoginPoll = null;
+async function doClaudeCliLogin() {
+  const btn = document.getElementById('btn-anthropic-cli-login');
+  const cancelBtn = document.getElementById('btn-anthropic-cli-login-cancel');
+  const status = document.getElementById('anthropic-cli-login-status');
+  if (!btn || !status) return;
+  btn.disabled = true; btn.textContent = 'Starting...';
+  status.innerHTML = 'Launching <code>claude login</code>...';
+  try {
+    const d = await apiPost('/api/auth/anthropic/cli-login', {});
+    if (!d.authUrl) throw new Error(d.error || 'No URL returned');
+    status.innerHTML = '<strong>Click to sign in:</strong> <a href="' + esc(d.authUrl) + '" target="_blank" rel="noopener">' + esc(d.authUrl) + '</a><br><span style="color:var(--muted)">Complete the flow in your browser. We\'ll detect when login finishes.</span>';
+    btn.style.display = 'none';
+    if (cancelBtn) cancelBtn.style.display = '';
+    // Poll status until cliAuthenticated flips true
+    if (_claudeCliLoginPoll) clearInterval(_claudeCliLoginPoll);
+    const started = Date.now();
+    _claudeCliLoginPoll = setInterval(async () => {
+      try {
+        const s = await apiJson('/api/auth/anthropic/status');
+        if (s.cliAuthenticated) {
+          clearInterval(_claudeCliLoginPoll); _claudeCliLoginPoll = null;
+          status.innerHTML = '<span style="color:var(--accent)">✓ Signed in via Claude CLI. Chat &amp; builds will route through the CLI subprocess.</span>';
+          if (cancelBtn) cancelBtn.style.display = 'none';
+          btn.style.display = ''; btn.disabled = false; btn.textContent = 'Re-sign in';
+          checkAnthropicAuth();
+        } else if (Date.now() - started > 5 * 60 * 1000) {
+          clearInterval(_claudeCliLoginPoll); _claudeCliLoginPoll = null;
+          status.innerHTML = '<span style="color:var(--err,#c33)">Login timed out (5 min). Try again.</span>';
+          if (cancelBtn) cancelBtn.style.display = 'none';
+          btn.style.display = ''; btn.disabled = false; btn.textContent = 'Sign in via Claude CLI';
+        }
+      } catch {}
+    }, 2000);
+  } catch (e) {
+    status.innerHTML = '<span style="color:var(--err,#c33)">' + esc(e.message || 'Login failed') + '</span>';
+    btn.disabled = false; btn.textContent = 'Sign in via Claude CLI';
+  }
+}
+
+async function cancelClaudeCliLogin() {
+  const btn = document.getElementById('btn-anthropic-cli-login');
+  const cancelBtn = document.getElementById('btn-anthropic-cli-login-cancel');
+  const status = document.getElementById('anthropic-cli-login-status');
+  if (_claudeCliLoginPoll) { clearInterval(_claudeCliLoginPoll); _claudeCliLoginPoll = null; }
+  try { await apiPost('/api/auth/anthropic/cli-login-cancel', {}); } catch {}
+  if (cancelBtn) cancelBtn.style.display = 'none';
+  if (btn) { btn.style.display = ''; btn.disabled = false; btn.textContent = 'Sign in via Claude CLI'; }
+  if (status) status.innerHTML = 'Cancelled. Click to try again.';
+}
+
 async function installClaudeCli() {
   const btn = document.getElementById('btn-install-claude-cli');
   const cliEl = document.getElementById('claude-cli-status');

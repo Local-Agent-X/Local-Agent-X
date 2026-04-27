@@ -1,6 +1,8 @@
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../../server-utils.js";
 import { createLogger } from "../../logger.js";
+import { execSync as _execSync } from "node:child_process";
+import { npmAugmentedEnv, resetNpmAugmentedEnvCache } from "../../anthropic-client/cli-path.js";
 
 const logger = createLogger("routes.bridges.auth");
 
@@ -34,7 +36,7 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     const expiresAt = operatorEntry?.expiresAt || null;
     const daysRemaining = expiresAt ? Math.max(0, Math.ceil((expiresAt - Date.now()) / (24 * 60 * 60 * 1000))) : null;
     let cliInstalled = false;
-    try { const { execSync } = await import("node:child_process"); execSync("codex --version", { timeout: 5000, stdio: "pipe" }); cliInstalled = true; } catch {}
+    try { _execSync("codex --version", { timeout: 5000, stdio: "pipe", env: npmAugmentedEnv() }); cliInstalled = true; } catch {}
     json(200, {
       authenticated: !!tokens || !!ctx.config.openaiApiKey,
       method: ctx.config.openaiApiKey ? "api_key" : tokens ? "oauth" : "none",
@@ -48,8 +50,9 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
       const { exec } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const { stdout, stderr } = await promisify(exec)("npm install -g @openai/codex", { timeout: 180_000 });
+      resetNpmAugmentedEnvCache(); // re-detect in case the prefix changed
       let version = "unknown";
-      try { const { execSync } = await import("node:child_process"); version = execSync("codex --version", { timeout: 5000, stdio: "pipe" }).toString().trim(); } catch {}
+      try { version = _execSync("codex --version", { timeout: 5000, stdio: "pipe", env: npmAugmentedEnv() }).toString().trim(); } catch {}
       json(200, { ok: true, version, output: (stdout + stderr).slice(-500) });
     } catch (e) { json(500, { error: `Install failed: ${safeErrorMessage(e)}` }); }
     return true;
@@ -84,8 +87,7 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     let cliInstalled = false;
     let cliAuthenticated = false;
     try {
-      const { execSync } = await import("node:child_process");
-      execSync("claude --version", { timeout: 5000, stdio: "pipe" });
+      _execSync("claude --version", { timeout: 5000, stdio: "pipe", env: npmAugmentedEnv() });
       cliInstalled = true;
       // Check if claude CLI has its own auth session by reading its config file.
       // If the CLI is logged in (oauthAccount present or API key set), builds/chat work
@@ -94,10 +96,23 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
         const { existsSync: exists, readFileSync: readF } = await import("node:fs");
         const { homedir } = await import("node:os");
         const { join: j } = await import("node:path");
-        const configPath = j(homedir(), ".claude", "config.json");
-        if (exists(configPath)) {
-          const cfg = JSON.parse(readF(configPath, "utf-8"));
-          cliAuthenticated = !!(cfg.oauthAccount || cfg.primaryApiKey || cfg.customApiKeyResponses);
+        // OAuth tokens live in .credentials.json; legacy API key / oauthAccount may
+        // also appear in config.json. Either signal means the CLI is logged in.
+        const credPath = j(homedir(), ".claude", ".credentials.json");
+        if (exists(credPath)) {
+          try {
+            const cred = JSON.parse(readF(credPath, "utf-8"));
+            if (cred?.claudeAiOauth?.accessToken || cred?.primaryApiKey) cliAuthenticated = true;
+          } catch {}
+        }
+        if (!cliAuthenticated) {
+          const configPath = j(homedir(), ".claude", "config.json");
+          if (exists(configPath)) {
+            try {
+              const cfg = JSON.parse(readF(configPath, "utf-8"));
+              if (cfg.oauthAccount || cfg.primaryApiKey || cfg.customApiKeyResponses) cliAuthenticated = true;
+            } catch {}
+          }
         }
       } catch {}
     } catch {}
@@ -115,12 +130,65 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
       const { exec } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const { stdout, stderr } = await promisify(exec)("npm install -g @anthropic-ai/claude-code", { timeout: 120_000 });
+      resetNpmAugmentedEnvCache(); // re-detect in case the prefix changed
       let version = "unknown";
-      try { const { execSync } = await import("node:child_process"); version = execSync("claude --version", { timeout: 5000, stdio: "pipe" }).toString().trim(); } catch {}
+      try { version = _execSync("claude --version", { timeout: 5000, stdio: "pipe", env: npmAugmentedEnv() }).toString().trim(); } catch {}
       json(200, { ok: true, version, output: (stdout + stderr).slice(-500) });
     } catch (e) { json(500, { error: `Install failed: ${safeErrorMessage(e)}` }); }
     return true;
   }
+  if (method === "POST" && url.pathname === "/api/auth/anthropic/cli-login") {
+    try {
+      const { spawn } = await import("node:child_process");
+      const env = npmAugmentedEnv();
+      try { _execSync("claude --version", { timeout: 5000, stdio: "pipe", env }); }
+      catch { json(400, { error: "Claude CLI not installed. Install it first." }); return true; }
+
+      if (cliLoginProc && cliLoginProc.exitCode === null) {
+        try { cliLoginProc.kill(); } catch {}
+      }
+      const proc = spawn("claude", ["auth", "login", "--claudeai"], { shell: true, stdio: ["pipe", "pipe", "pipe"], detached: false, windowsHide: true, env });
+      cliLoginProc = proc;
+      proc.on("exit", code => { logger.info(`[cli-login] claude auth login exited (${code})`); if (cliLoginProc === proc) cliLoginProc = null; });
+
+      const urlRegex = /https?:\/\/(?:claude\.com|claude\.ai|console\.anthropic\.com|platform\.claude\.com|anthropic\.com)\/[^\s'"<>]+/i;
+      let captured = "";
+      let buffered = "";
+      const stripAnsi = (s: string) => s.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
+      const onChunk = (chunk: Buffer) => {
+        const clean = stripAnsi(chunk.toString());
+        buffered += clean;
+        if (!captured) {
+          const m = buffered.match(urlRegex);
+          if (m) captured = m[0].replace(/[)\].,;]+$/, "");
+        }
+        logger.info(`[cli-login] output: ${clean.slice(0, 400).replace(/\n/g, "\\n")}`);
+      };
+      proc.stdout?.on("data", onChunk);
+      proc.stderr?.on("data", onChunk);
+
+      const deadline = Date.now() + 8000;
+      while (!captured && Date.now() < deadline && proc.exitCode === null) await new Promise(r => setTimeout(r, 100));
+
+      if (captured) {
+        logger.info(`[cli-login] captured OAuth URL`);
+        json(200, { ok: true, authUrl: captured });
+      } else {
+        try { proc.kill(); } catch {}
+        json(500, { error: "Could not capture login URL from `claude login` within 8s. Run `claude login` in a terminal instead." });
+      }
+    } catch (e) { json(500, { error: safeErrorMessage(e) }); }
+    return true;
+  }
+  if (method === "POST" && url.pathname === "/api/auth/anthropic/cli-login-cancel") {
+    if (cliLoginProc && cliLoginProc.exitCode === null) {
+      try { cliLoginProc.kill(); } catch {}
+      cliLoginProc = null;
+    }
+    json(200, { ok: true }); return true;
+  }
 
   return false;
 };
+
+let cliLoginProc: import("node:child_process").ChildProcess | null = null;

@@ -226,7 +226,11 @@
             <div class="field-hint" style="margin-bottom:6px"><strong>Three ways to connect</strong> (only one needed):</div>
             <div class="field" style="margin-top:10px">
               <label class="field-label">Option 1 — Claude CLI login (easiest)</label>
-              <div class="field-hint">Run <code>claude login</code> in your terminal. Once logged in, this app will detect it automatically. No tokens stored here.</div>
+              <div class="btn-row">
+                <button id="btn-anthropic-cli-login" class="action-btn primary" onclick="doClaudeCliLogin()">Sign in via Claude CLI</button>
+                <button id="btn-anthropic-cli-login-cancel" class="action-btn" onclick="cancelClaudeCliLogin()" style="display:none">Cancel</button>
+              </div>
+              <div id="anthropic-cli-login-status" class="field-hint" style="margin-top:8px">Click to start. We'll launch <code>claude login</code> and surface the OAuth link here — no terminal needed. No tokens stored in this app; the CLI manages them.</div>
             </div>
             <div class="field" style="margin-top:14px">
               <label class="field-label">Option 2 — Setup-token</label>
@@ -236,11 +240,16 @@
               </div>
               <div class="field-hint">Run <code>claude setup-token</code> in terminal, paste here. Stored encrypted; routes through CLI subprocess.</div>
             </div>
-            <div class="field" style="margin-top:14px">
+            <div class="field" style="margin-top:14px;display:none" data-anthropic-legacy-oauth>
               <label class="field-label">Option 3 — Legacy OAuth (browser flow)</label>
+              <div class="field-hint" style="color:var(--muted);margin-bottom:6px">Anthropic blocked third-party direct OAuth in April 2026 — this path no longer authorizes inference. Hidden by default; remove the <code>display:none</code> on this block to re-expose if Anthropic restores third-party OAuth.</div>
               <div class="btn-row">
                 <button id="btn-anthropic-login" class="action-btn" onclick="doAnthropicLogin()">Sign in with Anthropic OAuth</button>
                 <button id="btn-anthropic-disconnect" class="action-btn danger" onclick="doAnthropicDisconnect()" style="display:none">Disconnect</button>
+              </div>
+            </div>
+            <div class="field" style="margin-top:14px">
+              <div class="btn-row">
                 <button id="btn-install-claude-cli" class="action-btn" onclick="installClaudeCli()" style="display:none">Install Claude CLI</button>
               </div>
             </div>

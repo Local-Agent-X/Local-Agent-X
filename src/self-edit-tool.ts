@@ -20,6 +20,7 @@
 
 import { spawn } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
+import { npmAugmentedEnv } from "./anthropic-client/cli-path.js";
 import type { ToolDefinition } from "./types.js";
 
 const LAX_REPO_ROOT = resolvePath(new URL("..", import.meta.url).pathname.replace(/^\//, "").replace(/\/$/, ""));
@@ -139,6 +140,7 @@ export const selfEditTool: ToolDefinition = {
         cwd: LAX_REPO_ROOT,
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
+        env: npmAugmentedEnv(),
       });
 
       const abortListener = () => { try { proc.kill("SIGTERM"); } catch {} };

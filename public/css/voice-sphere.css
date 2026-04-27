@@ -1,0 +1,144 @@
+/* Voice-mode 3D sphere overlay. Three view modes (fullscreen / split /
+   floating) toggle via class swap on #voice-sphere-root. */
+
+#voice-sphere-root {
+  position: fixed;
+  pointer-events: none;
+  z-index: 90;
+  transition: opacity 0.32s ease, transform 0.32s ease;
+}
+
+#voice-sphere-root.vs-hidden {
+  opacity: 0;
+  pointer-events: none !important;
+  transform: scale(0.8);
+}
+
+#voice-sphere-root .vs-canvas-wrap {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#voice-sphere-root canvas {
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+  /* No filter / drop-shadow on the canvas itself — the rectangular alpha
+     boundary becomes a visible rectangle of glow. The radial-gradient
+     backgrounds on the root element handle the ambient glow. */
+}
+
+/* ── Fullscreen: takes the entire viewport, chat hidden underneath ── */
+#voice-sphere-root.vs-mode-fullscreen {
+  inset: 0;
+  background: radial-gradient(circle at center,
+    rgba(8, 18, 38, 0.96) 0%,
+    rgba(2, 6, 18, 0.99) 70%,
+    rgba(0, 0, 0, 1) 100%);
+  pointer-events: auto;
+}
+
+/* ── Split: large sphere centered, transcript area visible below ── */
+#voice-sphere-root.vs-mode-split {
+  inset: 0;
+  background: radial-gradient(ellipse at center top,
+    rgba(8, 18, 38, 0.92) 0%,
+    rgba(2, 6, 18, 0.85) 50%,
+    rgba(0, 0, 0, 0.55) 100%);
+  pointer-events: auto;
+}
+#voice-sphere-root.vs-mode-split .vs-canvas-wrap {
+  height: 60vh;
+  margin-top: 4vh;
+}
+
+/* ── Floating: small sphere upper-right, chat layout intact ── */
+#voice-sphere-root.vs-mode-floating {
+  top: 64px;
+  right: 24px;
+  width: 220px;
+  height: 220px;
+  background: radial-gradient(circle at center,
+    rgba(8, 18, 38, 0.55) 0%,
+    rgba(2, 6, 18, 0.0) 70%);
+  border-radius: 50%;
+  pointer-events: auto;
+}
+
+/* ── Toggle buttons (cycle view + back-to-chat) ── */
+#voice-sphere-root .vs-mode-toggle,
+#voice-sphere-root .vs-back-btn {
+  position: absolute;
+  border: 1px solid rgba(120, 180, 255, 0.35);
+  background: rgba(8, 18, 38, 0.65);
+  color: #9ed3ff;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(8px);
+  transition: background 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+  pointer-events: auto;
+  z-index: 95;
+}
+
+#voice-sphere-root .vs-mode-toggle:hover,
+#voice-sphere-root .vs-back-btn:hover {
+  background: rgba(20, 40, 80, 0.85);
+  border-color: rgba(160, 210, 255, 0.65);
+  transform: scale(1.06);
+}
+
+/* Both controls cluster bottom-right so they don't fight the chat header */
+#voice-sphere-root .vs-back-btn {
+  bottom: 24px;
+  right: 24px;
+  width: 56px;
+  height: 56px;
+  font-size: 22px;
+}
+
+#voice-sphere-root .vs-mode-toggle {
+  bottom: 24px;
+  right: 92px;
+  width: 40px;
+  height: 40px;
+  font-size: 16px;
+}
+
+/* In floating mode, both controls cluster under the sphere as a small pair */
+#voice-sphere-root.vs-mode-floating .vs-back-btn,
+#voice-sphere-root.vs-mode-floating .vs-mode-toggle {
+  bottom: -10px;
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+#voice-sphere-root.vs-mode-floating .vs-back-btn {
+  right: calc(50% - 32px);
+  transform: translateX(50%);
+}
+#voice-sphere-root.vs-mode-floating .vs-mode-toggle {
+  right: calc(50% + 4px);
+  transform: translateX(50%);
+}
+
+/* Mobile / small screens */
+@media (max-width: 640px) {
+  #voice-sphere-root.vs-mode-floating {
+    width: 140px;
+    height: 140px;
+    top: 56px;
+    right: 12px;
+  }
+  #voice-sphere-root.vs-mode-split .vs-canvas-wrap {
+    height: 50vh;
+  }
+}

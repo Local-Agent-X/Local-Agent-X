@@ -244,6 +244,16 @@ async def upload_clone(payload: dict = Body(...)):
     return {"id": voice_id, **meta}
 
 
+# NOTE: a streaming /synth_stream endpoint was prototyped here on 2026-04-26
+# but reverted. Chunked decode through s3gen.inference adds ~10s of fixed
+# overhead per call (CFM solver + HiFiGAN init), making total wall time
+# 8x worse than monolithic. Real streaming would require rewriting the
+# flow matching ODE solver to be incremental — multi-day surgery, not
+# worth the risk. Path forward for sub-second first-audio is hardware
+# (used 3090/4090). Monolithic + clause-splitter (in gpu-session.ts) is
+# the practical floor on a 3060.
+
+
 @app.post("/clones/{voice_id}/synth")
 async def synth_with_clone(voice_id: str, payload: dict = Body(...)):
     """Synthesize text using the saved reference clip. Body: {text, exaggeration?, cfg_weight?}.

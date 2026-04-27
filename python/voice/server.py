@@ -120,26 +120,6 @@ _stt = None
 _vad_model = None
 _tts = None
 
-# RVC carrier voice selection: same-gender Kokoro carrier dramatically
-# improves likeness because RVC then only has to map timbre, not pitch
-# range. Lowercase clone IDs that should use a female carrier — extend
-# as new common voices are uploaded. Default is am_michael (male).
-_FEMALE_CLONE_KEYWORDS = (
-    "taylor", "swift", "adele", "billie", "ariana", "rihanna", "beyonce",
-    "katy perry", "lady gaga", "miley", "selena", "dua lipa",
-    "emma stone", "scarlett", "zendaya", "anya", "margot",
-    # generic markers
-    "_female", "-female", " female", "(female)",
-)
-
-
-def _carrier_for_clone(clone_id: str) -> str:
-    """Pick a Kokoro voice that's gender-matched to the cloned target."""
-    name = clone_id.lower()
-    if any(k in name for k in _FEMALE_CLONE_KEYWORDS):
-        return "af_sky"
-    return "am_michael"
-
 
 def _load_stt():
     global _stt
@@ -207,10 +187,10 @@ class Session:
         self.utterance_start_idx = 0
         self.last_partial_t = 0.0
         # Pipelined TTS: each sentence has a Future that resolves when its
-        # Kokoro+RVC processing finishes. The streamer consumes them in
-        # arrival order so audio chunks reach the browser in order even
-        # though processing happens concurrently. This hides the RVC
-        # convert latency for sentences 2+ in multi-sentence replies.
+        # Kokoro / Chatterbox processing finishes. The streamer consumes
+        # them in arrival order so audio chunks reach the browser in order
+        # even though processing happens concurrently. This hides per-call
+        # synth latency for sentences 2+ in multi-sentence replies.
         self.tts_order: asyncio.Queue = asyncio.Queue()
         self.tts_results: dict = {}      # sentence_id -> asyncio.Future[(samples, sr, prep_ms) | Exception]
         self.tts_in_flight: dict = {}    # sentence_id -> asyncio.Task (prep)
@@ -260,22 +240,30 @@ class Session:
 
     async def _prep_one(self, text: str, sentence_id: int, voice: str, speed: float, fut):
         """Generate audio for one sentence. Three voice routing modes:
-          * voice == "cb:<id>"   → single-stage Chatterbox (Studio tier)
-                                   Bypasses Kokoro entirely; Chatterbox does
-                                   text→speech directly using its own ref clip.
-          * voice == "clone:<id>" → Kokoro carrier → RVC convert (Pro tier)
-          * else                  → straight Kokoro (Lite built-in voice)
+          * voice == "sv:<id>"  → GPT-SoVITS clone (trained or zero-shot)
+                                  via the SoVITS sidecar (:7012). Best quality
+                                  when fine-tuned weights exist.
+          * voice == "cb:<id>"  → single-stage Chatterbox (Studio tier);
+                                  zero-shot fallback when no SoVITS clone exists.
+          * else                → straight Kokoro built-in voice (Lite tier).
         Resolves the Future with (samples, sample_rate, prep_ms_int)."""
         async with self.tts_prep_sem:
             t0 = time.time()
             try:
-                if voice.startswith("cb:"):
+                if voice.startswith("sv:"):
+                    samples, sample_rate = await self._synth_via_sovits(
+                        voice.split(":", 1)[1], text, sentence_id,
+                    )
+                elif voice.startswith("cb:"):
                     samples, sample_rate = await self._synth_via_chatterbox(
                         voice.split(":", 1)[1], text, sentence_id,
                     )
                 else:
-                    samples, sample_rate = await self._synth_via_kokoro_or_rvc(
-                        text, voice, speed, sentence_id,
+                    loop = asyncio.get_running_loop()
+                    tts = _load_tts()
+                    samples, sample_rate = await loop.run_in_executor(
+                        None,
+                        lambda: tts.create(text, voice=voice, speed=speed, lang="en-us"),
                     )
             except Exception as e:
                 log.exception(f"tts synth failed for id={sentence_id}")
@@ -287,30 +275,11 @@ class Session:
             if not fut.done():
                 fut.set_result((samples, sample_rate, prep_ms))
 
-    async def _synth_via_kokoro_or_rvc(self, text: str, voice: str, speed: float, sentence_id: int):
-        """Lite (Kokoro built-in) and Pro (Kokoro→RVC) paths."""
-        is_clone = voice.startswith("clone:")
-        loop = asyncio.get_running_loop()
-        tts = _load_tts()
-        kokoro_voice = _carrier_for_clone(voice.split(":", 1)[1]) if is_clone else voice
-        samples, sample_rate = await loop.run_in_executor(
-            None,
-            lambda: tts.create(text, voice=kokoro_voice, speed=speed, lang="en-us"),
-        )
-        if is_clone:
-            try:
-                samples, sample_rate = await self._convert_via_rvc(
-                    voice.split(":", 1)[1], samples, sample_rate, sentence_id,
-                )
-            except Exception as e:
-                log.warning(f"rvc convert failed for id={sentence_id} voice={voice}: {e} - falling back to kokoro")
-        return samples, sample_rate
-
     async def _synth_via_chatterbox(self, clone_id: str, text: str, sentence_id: int):
         """Studio tier: single-stage Chatterbox TTS via reference clip.
         Returns (samples_float32, sample_rate). Raises on failure so caller
         can mark the Future as errored."""
-        import base64, io
+        import io
         import httpx
         import soundfile as sf
 
@@ -329,6 +298,44 @@ class Session:
         # Chatterbox is 24kHz native — same as Kokoro/playback worklet, no resample.
         log.info(f"  chatterbox synth id={sentence_id} clone={clone_id} -> {len(out_samples)}sa@{out_sr}Hz ({r.headers.get('X-Synth-Ms')}ms)")
         return out_samples, int(out_sr)
+
+    async def _synth_via_sovits(self, clone_id: str, text: str, sentence_id: int):
+        """GPT-SoVITS sidecar at :7012. Native output is 32 kHz mono WAV.
+        Resampled to 24 kHz to match the browser playback worklet's fixed
+        rate (set on voice_ready). Without this resample the audio plays
+        ~33% too fast and the pitch is shifted up — Optimus sounds chipmunky.
+        Returns (samples_float32, 24000). Raises on failure."""
+        import io
+        import httpx
+        import soundfile as sf
+
+        sv_port = os.environ.get("LAX_SOVITS_PORT", "7012")
+        url = f"http://127.0.0.1:{sv_port}/clones/{clone_id}/synth"
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            r = await client.post(url, json={"text": text})
+        if r.status_code == 404:
+            raise RuntimeError(f"sovits clone {clone_id!r} not installed")
+        if r.status_code != 200:
+            raise RuntimeError(f"sovits returned {r.status_code}: {r.text[:200]}")
+        out_samples, out_sr = sf.read(io.BytesIO(r.content))
+        if out_samples.ndim > 1:
+            out_samples = out_samples.mean(axis=1)
+        out_samples = out_samples.astype(np.float32)
+        if int(out_sr) != 24000:
+            try:
+                from scipy.signal import resample_poly
+                # gcd-based ratio: 32000 -> 24000 is up=3, down=4
+                from math import gcd
+                g = gcd(int(out_sr), 24000)
+                up = 24000 // g
+                down = int(out_sr) // g
+                out_samples = resample_poly(out_samples, up, down).astype(np.float32)
+            except Exception as e:
+                log.warning(f"sovits resample {out_sr}->24000 failed: {e}; sending native")
+                log.info(f"  sovits synth id={sentence_id} clone={clone_id} -> {len(out_samples)}sa@{out_sr}Hz (native)")
+                return out_samples, int(out_sr)
+        log.info(f"  sovits synth id={sentence_id} clone={clone_id} -> {len(out_samples)}sa@24000Hz (resampled from {out_sr})")
+        return out_samples, 24000
 
     async def _stream_audio(self, samples, sample_rate: int, sentence_id: int, prep_ms: int):
         """Emit audio_chunks for already-prepared samples + the audio_done."""
@@ -357,48 +364,6 @@ class Session:
             "ms": int((time.time() - t0) * 1000),
             "cancelled": self.tts_cancel,
         })
-
-    async def _convert_via_rvc(self, clone_id: str, samples: np.ndarray, sample_rate: int, sentence_id: int):
-        """Send Kokoro samples to the RVC sidecar (:7009) for voice
-        conversion. Returns (converted_samples_float32, sample_rate).
-        Raises on any failure so the caller can fall back to Kokoro audio."""
-        import base64, io
-        import httpx
-        import soundfile as sf
-
-        rvc_port = os.environ.get("LAX_RVC_PORT", "7009")
-        url = f"http://127.0.0.1:{rvc_port}/clones/{clone_id}/infer"
-        pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
-        # Quality-vs-latency trade for live conversation:
-        #   index_rate 0.85 — pulls output closer to target speaker
-        #     distribution (vs RVC default 0.5). Likeness > naturalness here.
-        #   f0_method fcpe — ~30-40% faster than RMVPE for pitch extraction
-        #     with marginal quality cost. RMVPE was making first-sentence
-        #     latency ~1.5s on a 3060; FCPE brings it closer to 0.8-1.0s.
-        body = {
-            "pcm_b64": base64.b64encode(pcm).decode("ascii"),
-            "sr": int(sample_rate),
-            "index_rate": 0.85,
-            "f0_method": "fcpe",
-        }
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(url, json=body)
-        if r.status_code == 404:
-            raise RuntimeError(f"clone {clone_id!r} not installed in RVC sidecar")
-        if r.status_code != 200:
-            raise RuntimeError(f"rvc returned {r.status_code}: {r.text[:200]}")
-        out_samples, out_sr = sf.read(io.BytesIO(r.content))
-        if out_samples.ndim > 1:
-            out_samples = out_samples.mean(axis=1)
-        out_samples = out_samples.astype(np.float32)
-        # Resample to 24kHz so the browser's playback worklet (defaulted
-        # to 24kHz for Kokoro) doesn't need a per-sentence rate change.
-        if out_sr != TTS_SR:
-            from scipy.signal import resample_poly
-            out_samples = resample_poly(out_samples, TTS_SR, int(out_sr)).astype(np.float32)
-            out_sr = TTS_SR
-        log.info(f"  rvc convert id={sentence_id} clone={clone_id} {len(samples)}sa@{sample_rate}Hz -> {len(out_samples)}sa@{out_sr}Hz ({r.headers.get('X-Convert-Ms')}ms)")
-        return out_samples, int(out_sr)
 
     async def cancel_tts(self):
         self.tts_cancel = True

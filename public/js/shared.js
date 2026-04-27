@@ -40,6 +40,15 @@ function toggleTheme() {
   const next = THEME_CYCLE[(idx + 1) % THEME_CYCLE.length];
   localStorage.setItem('sax_theme', next);
   applyTheme(next);
+  // Push to server so the choice survives a refresh — without this, the
+  // async /api/settings fetch on next load would overwrite localStorage
+  // with the stale server-side default.
+  const tok = (new URLSearchParams(location.search).get('token') || localStorage.getItem('sax_token') || '');
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+    body: JSON.stringify({ theme: next }),
+  }).catch(() => {});
 }
 
 // Apply saved theme on load — check server-side setting first, then localStorage

@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { runAgent, type AgentOptions } from "../agent.js";
 import { setupChatWebSocket } from "../chat-ws.js";
 import { runSecurityAudit, printAuditReport } from "../security-audit.js";
@@ -63,7 +64,13 @@ export async function setupVoiceWs(deps: {
     const { prepareAgentRequest } = await import("../agent-request.js");
     setupVoiceWebSocket(server, config.authToken);
 
-    const voiceTurnRunner: import("../voice/voice-session.js").VoiceTurnRunner = async ({ text, history, signal, onDelta }) => {
+    const voiceTurnRunner: import("../voice/voice-session.js").VoiceTurnRunner = async ({ text, history, signal, onDelta, sessionId: voiceSessionId }) => {
+      // Per-connection voice session id. The previous hardcoded "voice" caused
+      // every concurrent voice connection to share global session-scoped state
+      // (active onEvent callback, browser session, sub-agent inheritance).
+      // Each voice WebSocket sends its own sessionId in the hello frame; here
+      // we trust it so memory writes, retrieval, and tool plumbing isolate.
+      const sessionId = voiceSessionId && voiceSessionId.trim() ? voiceSessionId : `voice-${randomUUID()}`;
       // Voice goes through the full agent pipeline so it knows the persona
       // (Primal), has memory access, and can call tools. Earlier we routed
       // voice through a stripped-down LLM call to chase latency, but the
@@ -84,7 +91,7 @@ export async function setupVoiceWs(deps: {
         channel: "web",
         message: text,
         sessionMessages,
-        sessionId: "voice",
+        sessionId,
         config, dataDir,
         memoryIndex, memoryManager, integrations, secretsStore,
         allAgentTools, bridgeTools,
@@ -128,7 +135,7 @@ export async function setupVoiceWs(deps: {
         systemPrompt: voiceSystemPrompt,
         tools: voiceTools,
         security, toolPolicy, rbac,
-        sessionId: "voice",
+        sessionId,
         maxIterations: 1,  // single turn — no tool loops
         temperature: prepared.temperature,
         signal,
@@ -164,7 +171,16 @@ export function wireWsChat(deps: {
       });
       if (res.body) { for await (const _ of res.body) { /* drain */ } }
     } catch (e) {
-      logger.warn(`[ws-chat] Error:`, (e as Error).message);
+      const msg = (e as Error).message;
+      logger.warn(`[ws-chat] Error:`, msg);
+      // Tell the WS client the turn failed. Without this, the client's
+      // activeChats entry stays {done:false} until the 5-minute cleanup
+      // sweep — UI shows a spinner and accepts no new input until then.
+      const isTimeout = msg.includes("timeout") || msg.includes("aborted");
+      const reason = isTimeout
+        ? "Chat timed out (no response after 10 minutes)."
+        : `Chat transport error: ${msg}`;
+      chatWs.failChat(sessionId, reason);
     }
   });
 }

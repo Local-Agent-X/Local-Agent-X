@@ -17,11 +17,13 @@ import type { MemoryIndex } from "../memory.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.bootstrap-tools");
 
+export type EventCallback = (event: ServerEvent) => void;
+
 export interface ToolBundle {
   allAgentTools: ToolDefinition[];
   bridgeTools: ToolDefinition[];
   toolRegistry: ToolRegistry;
-  activeOnEventRef: { value: ((event: ServerEvent) => void) | undefined };
+  activeOnEventBySession: Map<string, EventCallback>;
   activeBrowserSessionIdRef: { value: string };
 }
 
@@ -34,9 +36,17 @@ export async function bootstrapTools(deps: {
   const { secretsStore, cronService, memoryIndex, dataDir } = deps;
   const memoryTools = createMemoryTools(memoryIndex);
 
-  const activeOnEventRef: { value: ((event: ServerEvent) => void) | undefined } = { value: undefined };
+  const activeOnEventBySession = new Map<string, EventCallback>();
+  // request_secret needs to emit events back to the calling session. We look up
+  // the session callback at execute time using args._sessionId (injected by the
+  // tool executor for SESSION_SCOPED_TOOLS).
   const secretTools = createSecretTools(secretsStore, undefined);
-  secretTools[0].execute = async (args, signal) => { const { createSecretTools: f } = await import("../secret-tools.js"); return f(secretsStore, activeOnEventRef.value)[0].execute(args, signal); };
+  secretTools[0].execute = async (args, signal) => {
+    const sessionId = args._sessionId ? String(args._sessionId) : "";
+    const onEvent = sessionId ? activeOnEventBySession.get(sessionId) : undefined;
+    const { createSecretTools: f } = await import("../secret-tools.js");
+    return f(secretsStore, onEvent)[0].execute(args, signal);
+  };
   const httpRequestTool = createHttpRequestTool(secretsStore);
   const activeBrowserSessionIdRef: { value: string } = { value: "default" };
   const browserTools = createBrowserTools(() => activeBrowserSessionIdRef.value);
@@ -84,5 +94,5 @@ export async function bootstrapTools(deps: {
     }
   }
 
-  return { allAgentTools, bridgeTools, toolRegistry, activeOnEventRef, activeBrowserSessionIdRef };
+  return { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef };
 }

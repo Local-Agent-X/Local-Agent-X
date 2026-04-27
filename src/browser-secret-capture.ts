@@ -89,6 +89,9 @@ export function createBrowserSecretCaptureTool(
       const rawName = String(args.name || "");
       const name = rawName.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
       if (!name) return err("Secret name is required.");
+      const sessionIdForLock = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
+      const { withBrowserLock } = await import("./browser.js");
+      return withBrowserLock(sessionIdForLock, async () => {
 
       const service = args.service ? String(args.service) : undefined;
       const account = args.account ? String(args.account) : undefined;
@@ -188,6 +191,7 @@ export function createBrowserSecretCaptureTool(
         `. Length: ${len} chars. ` +
         `Value was NOT shown to you or logged. Reference it via {{${name}}} in http_request headers/body.`,
       );
+      });
     },
   };
 }

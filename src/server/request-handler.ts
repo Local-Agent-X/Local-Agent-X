@@ -51,7 +51,7 @@ export function createRequestHandler(deps: {
   saveSession: (s: Session) => void;
   getChatWs: () => ServerContext["chatWs"];
   broadcastAll: (event: Record<string, unknown>) => void;
-  activeOnEventRef: { value: ((event: ServerEvent) => void) | undefined };
+  activeOnEventBySession: Map<string, (event: ServerEvent) => void>;
   activeBrowserSessionIdRef: { value: string };
 }): RequestHandler {
   const {
@@ -59,7 +59,7 @@ export function createRequestHandler(deps: {
     secretsStore, cronService, integrations, whatsappBridge, telegramBridge, agentSync,
     appRegistry, agentRunStore, agentTemplateStore, issueStore, projectStore,
     allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession,
-    getChatWs, broadcastAll, activeOnEventRef, activeBrowserSessionIdRef,
+    getChatWs, broadcastAll, activeOnEventBySession, activeBrowserSessionIdRef,
   } = deps;
 
   return async (req, res) => {
@@ -95,7 +95,13 @@ export function createRequestHandler(deps: {
       config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations,
       whatsappBridge, telegramBridge, agentSync, appRegistry, agentRunStore, agentTemplateStore, issueStore, projectStore,
       allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession, chatWs: getChatWs(), broadcastAll,
-      activeOnEvent: activeOnEventRef.value, setActiveOnEvent: (fn) => { activeOnEventRef.value = fn; }, activeBrowserSessionId: activeBrowserSessionIdRef.value, setActiveBrowserSessionId: (id) => { activeBrowserSessionIdRef.value = id; },
+      getActiveOnEvent: (sid) => activeOnEventBySession.get(sid),
+      setActiveOnEvent: (sid, fn) => {
+        if (fn) activeOnEventBySession.set(sid, fn);
+        else activeOnEventBySession.delete(sid);
+      },
+      activeBrowserSessionId: activeBrowserSessionIdRef.value,
+      setActiveBrowserSessionId: (id) => { activeBrowserSessionIdRef.value = id; },
     };
     for (const h of [handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes]) {
       if (await h(method, url, req, res, ctx, requestRole)) return;

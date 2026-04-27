@@ -58,6 +58,10 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
     if (session.messages.length === 0) session.title = message.slice(0, 60) + (message.length > 60 ? "..." : "");
 
     let heartbeat: ReturnType<typeof setInterval> | undefined;
+    let doneEmitted = false;
+    let lockHeld = false;
+    let onEventInstalled = false;
+    const { tryAcquireOrReplace, markIteration: markTurnIteration, releaseTurn: releaseTurnLock } = await import("../session-turn-lock.js");
     try {
       const { prepareAgentRequest } = await import("../agent-request.js");
 
@@ -70,12 +74,14 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         secretsStore: ctx.secretsStore,
         allAgentTools: ctx.allAgentTools, bridgeTools: ctx.bridgeTools,
         attachments, uploadsDir: join(ctx.dataDir, "uploads"),
+        compactedSummary: session.compactedSummary,
+        compactedAt: session.compactedAt,
       });
 
-      // Abort early if no API key
+      // Abort early if no API key — let finally emit done and end the response
       if (!prepared.apiKey) {
         sseWrite(res, { type: "error", message: `No API key configured for ${prepared.provider}.` });
-        res.end(); return true;
+        return true;
       }
 
       // IDE sessions: strip delegation tools
@@ -85,11 +91,12 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
 
       const wsChat = ctx.chatWs.startChat(sessionId);
       const onEvent = (event: ServerEvent) => { sseWrite(res, event); wsChat.onEvent(event); };
-      ctx.setActiveOnEvent(onEvent);
+      ctx.setActiveOnEvent(sessionId, onEvent);
+      onEventInstalled = true;
       heartbeat = setInterval(() => { if (!res.destroyed) res.write(": heartbeat\n\n"); else clearInterval(heartbeat); }, 15_000);
       ctx.setActiveBrowserSessionId(sessionId);
 
-      try { const { Handler: AO } = await import("../agency/handler.js"); AO.getInstance().currentSessionId = sessionId; } catch {}
+      // Session is plumbed via args._sessionId in tool-executor; no global needed.
 
       // Threat engine canary (append to system prompt for injection detection)
       const threatEngine = new ThreatEngine(ctx.dataDir, sessionId);
@@ -121,7 +128,6 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // with a 409-shaped error when the previous turn is mid-commit (email
       // send, browser click on Send/Submit, etc). The lock is released in
       // the finally block below, regardless of how the turn ends.
-      const { tryAcquireOrReplace, markIteration: markTurnIteration, releaseTurn: releaseTurnLock } = await import("../session-turn-lock.js");
       const decision = await tryAcquireOrReplace(sessionId, wsChat.abort, `chat:${prepared.provider}`);
       if (!decision.allowed) {
         const prev = decision.previous!;
@@ -133,28 +139,24 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
             `Cancel it first or wait for it to finish.`,
         });
         wrappedOnEvent({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+        doneEmitted = true;
         return true;
       }
+      lockHeld = true;
       if (decision.reason === "aborted-non-committing") {
         logger.info(`[turn-lock] aborted prior non-committing turn for sess=${sessionId} (was ${decision.previous?.elapsedMs}ms in, iter=${decision.previous?.iteration})`);
       }
       const turnStart = Date.now();
-      let result;
-      try {
-        result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
-          apiKey: prepared.apiKey, model: prepared.model,
-          provider: prepared.provider as Parameters<typeof runAgent>[2]["provider"],
-          baseURL: prepared.customBaseURL, systemPrompt,
-          tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
-          threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
-          images: prepared.images, maxIterations: prepared.maxIterations,
-          temperature: prepared.temperature, signal: wsChat.abort.signal,
-          onEvent: primaryEventProxy,
-        }), { label: `chat:${sessionId}`, timeout: 600_000 });
-      } catch (e) {
-        releaseTurnLock(sessionId);
-        throw e;
-      }
+      let result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
+        apiKey: prepared.apiKey, model: prepared.model,
+        provider: prepared.provider as Parameters<typeof runAgent>[2]["provider"],
+        baseURL: prepared.customBaseURL, systemPrompt,
+        tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
+        threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
+        images: prepared.images, maxIterations: prepared.maxIterations,
+        temperature: prepared.temperature, signal: wsChat.abort.signal,
+        onEvent: primaryEventProxy,
+      }), { label: `chat:${sessionId}`, timeout: 600_000 });
       // Expose mark helper to the agent loops via module import (done inside the loops)
       void markTurnIteration;
       const primaryElapsed = Date.now() - turnStart;
@@ -257,12 +259,6 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         }
       }
 
-      ctx.setActiveOnEvent(undefined);
-      // Release the per-session turn lock now that the turn has finished
-      // (or aborted, or errored — any terminal state). Idempotent.
-      releaseTurnLock(sessionId);
-      // Clear any skill tool restrictions so they don't leak into the next message
-      try { const { clearSessionAllowedTools } = await import("../session-policy.js"); clearSessionAllowedTools(sessionId); } catch {}
       const { stripEphemeralMessages } = await import("../agent-providers.js");
       type MsgRecord = Record<string, unknown>;
       // Keep system-stripped messages. Filter rules:
@@ -307,9 +303,8 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // mid-chain; this is the consolidated turn-end signal.
       const doneEvent: ServerEvent = { type: "done", usage: realUsage, ...(costUsd !== undefined ? { costUsd } : {}) } as ServerEvent;
       wrappedOnEvent(doneEvent);
+      doneEmitted = true;
       logger.info(`[timing] turn total ${Date.now() - turnStart}ms (${prepared.provider}/${prepared.model}, ${realUsage.totalTokens} tokens)`);
-      clearInterval(heartbeat);
-      res.end();
 
       // Format output for bridge channels (plain text for WhatsApp/Telegram)
       let bridgeReply = assistantReply;
@@ -322,12 +317,27 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       if (sessionId.startsWith("tg-") && bridgeReply) ctx.telegramBridge.sendMessage(sessionId.slice(3), bridgeReply).catch(() => {});
       ctx.agentSync.onChatEnd().catch(() => {});
     } catch (e) {
-      // Clear skill restrictions on error too — don't leave session stuck in whitelist mode
-      try { const { clearSessionAllowedTools } = await import("../session-policy.js"); clearSessionAllowedTools(sessionId); } catch {}
-      sseWrite(res, { type: "error", message: safeErrorMessage(e) });
-      sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } } as ServerEvent);
-      clearInterval(heartbeat);
-      res.end();
+      if (!res.writableEnded) {
+        sseWrite(res, { type: "error", message: safeErrorMessage(e) });
+      }
+    } finally {
+      // Single cleanup path for every exit (success, error, early return).
+      // Each guard tracks whether the corresponding setup ran so we don't
+      // release/clear something that was never acquired.
+      if (lockHeld) releaseTurnLock(sessionId);
+      if (onEventInstalled) ctx.setActiveOnEvent(sessionId, undefined);
+      if (heartbeat) clearInterval(heartbeat);
+      // Reset the legacy activeBrowserSessionId getter to "default" so it
+      // can't bleed into a future session that lacks _sessionId injection.
+      ctx.setActiveBrowserSessionId("default");
+      try {
+        const { clearSessionAllowedTools } = await import("../session-policy.js");
+        clearSessionAllowedTools(sessionId);
+      } catch {}
+      if (!doneEmitted && !res.writableEnded) {
+        sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } } as ServerEvent);
+      }
+      if (!res.writableEnded) res.end();
     }
     return true;
   }

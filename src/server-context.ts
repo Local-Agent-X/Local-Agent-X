@@ -42,8 +42,14 @@ export interface ServerContext {
   saveSession: (session: Session) => void;
   chatWs: { startChat: (sessionId: string) => { onEvent: (event: ServerEvent) => void; abort: AbortController }; getActiveChats: () => string[]; stopChat: (sessionId: string) => boolean; getAbortSignal: (sessionId: string) => AbortSignal | undefined };
   broadcastAll: (event: Record<string, unknown>) => void;
-  activeOnEvent: ((event: ServerEvent) => void) | undefined;
-  setActiveOnEvent: (fn: ((event: ServerEvent) => void) | undefined) => void;
+  /**
+   * Per-session active event callback registry. Tools that emit progress events
+   * look up the callback for the session they were invoked from, instead of
+   * reading a single global. Prevents cross-session event leakage when multiple
+   * chats run concurrently.
+   */
+  getActiveOnEvent: (sessionId: string) => ((event: ServerEvent) => void) | undefined;
+  setActiveOnEvent: (sessionId: string, fn: ((event: ServerEvent) => void) | undefined) => void;
   activeBrowserSessionId: string;
   setActiveBrowserSessionId: (id: string) => void;
 }

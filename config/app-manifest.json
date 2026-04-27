@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-27T17:25:55.038Z",
+  "generatedAt": "2026-04-27T23:36:51.839Z",
   "pages": [
     {
       "name": "Chat",
@@ -315,43 +315,7 @@
       "readOnly": false
     }
   ],
-  "apps": [
-    {
-      "name": "everythingstupid",
-      "path": "workspace/apps/everythingstupid",
-      "files": [
-        "index.html"
-      ]
-    },
-    {
-      "name": "lakers-todo",
-      "path": "workspace/apps/lakers-todo",
-      "files": [
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "TODO.md"
-      ]
-    },
-    {
-      "name": "my-app",
-      "path": "workspace/apps/my-app",
-      "files": [
-        "index.html",
-        "PROJECT.md"
-      ]
-    },
-    {
-      "name": "todo-app",
-      "path": "workspace/apps/todo-app",
-      "files": [
-        "CHANGELOG.md",
-        "index.html",
-        "PROJECT.md",
-        "TODO.md"
-      ]
-    }
-  ],
+  "apps": [],
   "configFiles": [
     {
       "path": "config/system-prompt.md",

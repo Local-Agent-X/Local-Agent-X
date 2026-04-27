@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import { extractUserPrompt, newToolCallId } from "./request.js";
 import { cleanUrls, filterStreamDelta, parseToolCalls, stripToolCallBlocks } from "./parse.js";
+import { npmAugmentedEnv } from "./cli-path.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
 import { createLogger } from "../logger.js";
@@ -176,6 +177,7 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
     const proc = spawn("claude", args, {
       stdio: ["pipe", "pipe", "pipe"],
       shell: process.platform === "win32",
+      env: npmAugmentedEnv(),
     });
 
     proc.stdin?.write(fullPrompt);

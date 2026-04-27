@@ -118,7 +118,8 @@ export async function buildContextBlock(
 
 export async function autoSearchContext(
   memory: MemoryIndex,
-  userMessage: string
+  userMessage: string,
+  opts: { sessionId?: string } = {},
 ): Promise<string> {
   const keywords = extractKeywords(userMessage);
   if (keywords.length < 2) return "";
@@ -127,6 +128,9 @@ export async function autoSearchContext(
   const wordCount = trimmed.split(/\s+/).length;
   const REFERENTIAL_RE = /^(do|yes|yeah|yep|ok|okay|sure|go|run|try|proceed|continue|next|back|stop|kill|that|this|it|them|all|both|either|neither|pick|choose|select|option|number|first|second|third|fourth|fifth|1st|2nd|3rd|the)\b/i;
   const ANSWER_SHORT_RE = /^(y|n|yes|no|sure|ok|okay|nah|nope|meh|fine|good|bad|cool)$/i;
+  // Bare digits ("1", "2") are option-picks too — skip retrieval.
+  const BARE_NUMBER_RE = /^[0-9]{1,2}$/;
+  if (BARE_NUMBER_RE.test(trimmed)) return "";
   if (wordCount <= 6 && (REFERENTIAL_RE.test(trimmed) || ANSWER_SHORT_RE.test(trimmed))) {
     return "";
   }
@@ -134,7 +138,12 @@ export async function autoSearchContext(
   try {
     const candidates = await memory.search(userMessage, {
       maxResults: 10,
-      minScore: 0.25,
+      // 0.25 was too permissive: weakly-related chunks from imported ChatGPT
+      // history scored above it and bled into unrelated tasks. Combined with
+      // sessionId-aware cross-session gating below, 0.35 keeps strong matches
+      // without dragging in marginal hits.
+      minScore: 0.35,
+      sessionId: opts.sessionId,
     });
 
     if (candidates.length === 0) return "";

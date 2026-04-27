@@ -23,8 +23,8 @@ const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
 // has a comma. Cuts time-to-first-audio by 200-500ms on those sentences
 // without changing what the listener actually hears (TTS just sees one
 // sentence as two clauses).
-const CLAUSE_BREAK = /,\s+/;
-const CLAUSE_MIN_CHARS = 60;
+const CLAUSE_BREAK = /[,;:]\s+/;  // also split on semicolons/colons, not just commas
+const CLAUSE_MIN_CHARS = 30;       // was 60; smaller chunks reduce per-sentence synth time so RTF~1 hardware leaves shorter audible gaps
 
 export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRunner): VoiceSession {
   let bridge: GPUBridge | null = null;
@@ -142,35 +142,62 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
 
     let sentenceBuf = "";
     let firstClauseFlushed = false;  // only flush the early clause once per turn
+    // Long-sentence threshold for clause splitting. Sentences longer than
+    // this AND containing a comma get split on the comma before TTS, so
+    // each chunk's synth time stays under the previous chunk's playback
+    // time. Without this, a long sentence like "X is a myth, and Y is Z"
+    // synthesizes in ~4s while sentence 1 only plays for ~1.5s — leaving
+    // an audible gap. With this, both halves synth in ~2s and pipeline
+    // closes the gap.
+    const LONG_SENTENCE_CHARS = 50;  // was 80; lower triggers clause split on more sentences
+    const speakChunk = (text: string) => {
+      if (!text || !bridge) return;
+      pendingTtsCount++;
+      bridge.speak(text, nextSentenceId++, { voice: voiceOverride, speed: speedOverride });
+      firstClauseFlushed = true;
+    };
+    /** Send a complete sentence to TTS, splitting on commas if it's long. */
+    const speakSentence = (sentence: string) => {
+      sentence = sentence.trim();
+      if (!sentence) return;
+      if (sentence.length < LONG_SENTENCE_CHARS) {
+        speakChunk(sentence);
+        return;
+      }
+      // Split on commas. Last clause keeps the period.
+      const parts: string[] = [];
+      let remaining = sentence;
+      while (remaining.length > 0) {
+        const m = CLAUSE_BREAK.exec(remaining);
+        if (!m || m.index < CLAUSE_MIN_CHARS - 10) break;
+        const cut = m.index + m[0].length;
+        parts.push(remaining.slice(0, cut).trim());
+        remaining = remaining.slice(cut);
+      }
+      if (remaining.trim()) parts.push(remaining.trim());
+      for (const p of parts) speakChunk(p);
+    };
     const flushSentences = (): void => {
       // Sentence terminators (.!?) — preferred boundary
       while (true) {
         const m = SENTENCE_TERMINATOR.exec(sentenceBuf);
         if (!m) break;
         const cutEnd = m.index + m[0].length;
-        const sentence = sentenceBuf.slice(0, cutEnd).trim();
+        const sentence = sentenceBuf.slice(0, cutEnd);
         sentenceBuf = sentenceBuf.slice(cutEnd);
-        if (sentence && bridge) {
-          pendingTtsCount++;
-          bridge.speak(sentence, nextSentenceId++, { voice: voiceOverride, speed: speedOverride });
-          firstClauseFlushed = true;
-        }
+        speakSentence(sentence);
       }
-      // Early clause flush: if no period yet but the buffer is long and
+      // Early-clause flush: if no period yet but the buffer is long and
       // has a comma break, emit the first clause so TTS can start sooner.
-      // Only do this for the FIRST clause of a turn — after that we'd
-      // rather wait for full sentences so prosody stays natural.
+      // Only fires for the FIRST clause of a turn — after that we'd rather
+      // wait for full sentences so the speakSentence() splitter handles it.
       if (!firstClauseFlushed && sentenceBuf.length >= CLAUSE_MIN_CHARS) {
         const m = CLAUSE_BREAK.exec(sentenceBuf);
         if (m && m.index >= CLAUSE_MIN_CHARS - 10) {
           const cutEnd = m.index + m[0].length;
           const clause = sentenceBuf.slice(0, cutEnd).trim();
           sentenceBuf = sentenceBuf.slice(cutEnd);
-          if (clause && bridge) {
-            pendingTtsCount++;
-            bridge.speak(clause, nextSentenceId++, { voice: voiceOverride, speed: speedOverride });
-            firstClauseFlushed = true;
-          }
+          speakChunk(clause);
         }
       }
     };
@@ -196,10 +223,8 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       }
 
       const tail = sentenceBuf.trim();
-      if (tail && bridge) {
-        pendingTtsCount++;
-        bridge.speak(tail, nextSentenceId++, { voice: voiceOverride, speed: speedOverride });
-      }
+      if (tail) speakSentence(tail);
+      sentenceBuf = "";
       history = result.updatedHistory;
       ctx.sendEvent({ type: "assistant_done", text: result.assistantText });
       llmDone = true;

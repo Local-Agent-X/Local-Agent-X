@@ -35,6 +35,13 @@ export interface ActiveTurn {
    *  heartbeat ticker (and anything else with turn-scoped resources) so
    *  callers don't need to remember to stop them in every return path. */
   cleanupCallbacks: Array<() => void>;
+  /** Resolves when this turn has fully finished — runAgent returned,
+   *  session.messages has been persisted, and releaseTurn has been called.
+   *  Lets the next turn await the prior turn's commit before reading
+   *  session state, fixing the read-stale-history race. */
+  completion: Promise<void>;
+  /** Internal: invoked by releaseTurn to settle `completion`. */
+  resolveCompletion: () => void;
 }
 
 export interface ActiveTurnSnapshot {
@@ -53,6 +60,8 @@ class TurnRegistry {
   /** Try to claim the session's turn slot. Returns true if acquired. */
   acquireTurn(sessionId: string, abortController: AbortController, origin?: string): boolean {
     if (this.turns.has(sessionId)) return false;
+    let resolveCompletion: () => void = () => {};
+    const completion = new Promise<void>(resolve => { resolveCompletion = resolve; });
     this.turns.set(sessionId, {
       sessionId,
       abortController,
@@ -62,6 +71,8 @@ class TurnRegistry {
       hasCommitted: false,
       origin,
       cleanupCallbacks: [],
+      completion,
+      resolveCompletion,
     });
     return true;
   }
@@ -116,17 +127,23 @@ class TurnRegistry {
     if (!t) return;
     this.runCleanups(t);
     this.turns.delete(sessionId);
+    t.resolveCompletion();
   }
 
-  /** External cancel — aborts the turn's controller and releases the slot.
-   *  Returns true if there was an active turn to abort. */
+  /** External cancel — aborts the turn's controller. Does NOT delete the
+   *  registry entry: the aborted turn's handler still runs through its
+   *  finally block, persists session.messages, and calls releaseTurn itself.
+   *  That's how the next turn awaits the commit before proceeding. */
   abortTurn(sessionId: string): boolean {
     const t = this.turns.get(sessionId);
     if (!t) return false;
     try { t.abortController.abort(); } catch { /* already aborted */ }
-    this.runCleanups(t);
-    this.turns.delete(sessionId);
     return true;
+  }
+
+  /** Get the completion promise for the active turn, or null. */
+  getCompletion(sessionId: string): Promise<void> | null {
+    return this.turns.get(sessionId)?.completion ?? null;
   }
 
   /** Convenience: list all active turns (for debug/admin UI). */
@@ -184,12 +201,17 @@ export interface AcquireDecision {
  * High-level: decide whether a new message for this session can proceed.
  * Aborts the previous turn if it's safe to replace; refuses with details if
  * the previous turn has already made a committing tool call.
+ *
+ * When a prior turn is aborted, this awaits its `completion` promise before
+ * acquiring — that promise resolves only after the prior turn's handler has
+ * persisted session.messages. Without this wait, the new turn would read
+ * stale session state and the agent would forget its own previous reply.
  */
-export function tryAcquireOrReplace(
+export async function tryAcquireOrReplace(
   sessionId: string,
   newAbortController: AbortController,
   origin?: string,
-): AcquireDecision {
+): Promise<AcquireDecision> {
   const existing = registry.getActiveTurn(sessionId);
   if (!existing) {
     registry.acquireTurn(sessionId, newAbortController, origin);
@@ -198,8 +220,23 @@ export function tryAcquireOrReplace(
   if (existing.hasCommitted) {
     return { allowed: false, reason: "refused-committing", previous: existing };
   }
-  // Non-committing: abort the prior turn in favor of the new one
+  // Non-committing: abort the prior turn, then wait for its handler to finish
+  // its commit (session.messages write + saveSession + releaseTurn). Only
+  // after that completion is it safe to acquire and read fresh session state.
+  const priorCompletion = registry.getCompletion(sessionId);
   registry.abortTurn(sessionId);
+  if (priorCompletion) {
+    // Bound the wait so a stuck prior turn can't deadlock us.
+    await Promise.race([
+      priorCompletion,
+      new Promise<void>(resolve => setTimeout(resolve, 5000)),
+    ]);
+  }
+  // If the prior turn never released within the timeout, force-release so
+  // the slot can be acquired. This is a safety net for stuck handlers.
+  if (registry.getActiveTurn(sessionId)) {
+    registry.releaseTurn(sessionId);
+  }
   registry.acquireTurn(sessionId, newAbortController, origin);
   return { allowed: true, reason: "aborted-non-committing", previous: existing };
 }

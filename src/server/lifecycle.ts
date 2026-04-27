@@ -11,6 +11,7 @@ import { ConfigWatcher } from "../config-hot-reload.js";
 import { closeAllBrowsers } from "../browser.js";
 import type { LAXConfig, ServerEvent, ToolDefinition } from "../types.js";
 import type { MemoryIndex } from "../memory.js";
+import type { MemoryManager } from "../memory-manager.js";
 import type { SecretsStore } from "../secrets.js";
 import type { IntegrationRegistry } from "../integrations.js";
 import type { SecurityLayer } from "../security.js";
@@ -44,6 +45,7 @@ export async function setupVoiceWs(deps: {
   config: LAXConfig;
   dataDir: string;
   memoryIndex: MemoryIndex;
+  memoryManager: MemoryManager;
   integrations: IntegrationRegistry;
   secretsStore: SecretsStore;
   allAgentTools: ToolDefinition[];
@@ -52,32 +54,95 @@ export async function setupVoiceWs(deps: {
   toolPolicy: ToolPolicy;
   rbac: RBACManager;
 }): Promise<void> {
-  const { server, config, dataDir, memoryIndex, integrations, secretsStore, allAgentTools, bridgeTools, security, toolPolicy, rbac } = deps;
+  const {
+    server, config, dataDir, memoryIndex, memoryManager, integrations,
+    secretsStore, allAgentTools, bridgeTools, security, toolPolicy, rbac,
+  } = deps;
   try {
     const { setupVoiceWebSocket, setVoiceSessionFactory } = await import("../voice/audio-ws.js");
     const { createVoiceSessionFactory } = await import("../voice/voice-session.js");
     const { prepareAgentRequest } = await import("../agent-request.js");
     setupVoiceWebSocket(server, config.authToken);
 
-    const { streamVoiceTurn } = await import("../voice/voice-llm.js");
-    const { resolveProvider } = await import("../agent-request.js");
-
     const voiceTurnRunner: import("../voice/voice-session.js").VoiceTurnRunner = async ({ text, history, signal, onDelta }) => {
-      // Resolve only the provider/apiKey/model — skip the heavy
-      // prepareAgentRequest path (memory orchestrator, tool routing,
-      // persona system prompt, etc.). Voice gets a 100-token system
-      // prompt + last 5 turns of history fed straight to the streaming
-      // client. Drops per-turn input from 6-13k tokens to ~500-1000.
-      const resolved = await resolveProvider(config, secretsStore, dataDir);
-      return streamVoiceTurn({
-        provider: resolved.provider as "codex" | "anthropic" | "openai",
-        apiKey: resolved.apiKey,
-        model: resolved.model,
-        history,
-        userMessage: text,
-        signal,
-        onDelta,
+      // Voice goes through the full agent pipeline so it knows the persona
+      // (Primal), has memory access, and can call tools. Earlier we routed
+      // voice through a stripped-down LLM call to chase latency, but the
+      // savings turned out to be marginal vs prompt caching, and the agent
+      // appearing to forget who it was made the experience feel broken.
+      //
+      // The voice path differs from text chat in three ways:
+      //   1. No threat engine / canary scanning (voice stream is short)
+      //   2. No turn-lock / queue (voice has its own session-level concurrency)
+      //   3. No fallback chain (voice picks the configured provider; an error
+      //      surfaces as agent_error to the client which will retry)
+      const sessionMessages = history.map(m => ({
+        role: (m.role === "user" || m.role === "assistant" || m.role === "system" ? m.role : "user") as "user" | "assistant" | "system",
+        content: typeof m.content === "string" ? m.content : "",
+      }));
+
+      const prepared = await prepareAgentRequest({
+        channel: "web",
+        message: text,
+        sessionMessages,
+        sessionId: "voice",
+        config, dataDir,
+        memoryIndex, memoryManager, integrations, secretsStore,
+        allAgentTools, bridgeTools,
       });
+
+      if (!prepared.apiKey) {
+        throw new Error(`No API key configured for ${prepared.provider}.`);
+      }
+
+      // Voice-mode policy: persona + memory yes, tools NO. The agent in text
+      // chat has dozens of tools (http_request, browser_*, settings, etc.)
+      // and eagerly uses them — but in voice that produced a turn that
+      // changed the user's voice setting mid-conversation, then went into
+      // a 40k-token tool-exploration loop before aborting. Voice is a
+      // conversation, not an action surface. We strip tools and append a
+      // short voice-mode instruction so the agent knows to reply in 1-3
+      // short spoken sentences with no markdown.
+      const voiceTools: ToolDefinition[] = [];
+      const voiceSystemPrompt = prepared.systemPrompt +
+        "\n\n## Voice mode\n" +
+        "You are speaking to the user. Your reply will be read aloud by TTS. " +
+        "Reply in 1-3 short conversational sentences. No markdown, no lists, " +
+        "no code, no headings, no emoji. Use natural spoken English. " +
+        "You have no tools right now — don't try to call any. If the user " +
+        "needs something tool-driven (open an app, change a setting, search " +
+        "the web), tell them to switch to the text chat for that.";
+
+      let assistantText = "";
+      const onEvent = (event: ServerEvent) => {
+        if (event.type === "stream" && event.delta) {
+          assistantText += event.delta;
+          onDelta(event.delta);
+        }
+      };
+
+      await runAgent(text, prepared.cleanHistory, {
+        apiKey: prepared.apiKey,
+        model: prepared.model,
+        provider: prepared.provider as AgentOptions["provider"],
+        baseURL: prepared.customBaseURL,
+        systemPrompt: voiceSystemPrompt,
+        tools: voiceTools,
+        security, toolPolicy, rbac,
+        sessionId: "voice",
+        maxIterations: 1,  // single turn — no tool loops
+        temperature: prepared.temperature,
+        signal,
+        onEvent,
+      });
+
+      const updatedHistory = [
+        ...history,
+        { role: "user" as const, content: text },
+        { role: "assistant" as const, content: assistantText },
+      ];
+
+      return { assistantText, updatedHistory };
     };
 
     setVoiceSessionFactory(createVoiceSessionFactory(voiceTurnRunner));

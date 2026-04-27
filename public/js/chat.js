@@ -1023,6 +1023,7 @@ let voiceMicStream = null;
 let voiceCurrentMsgEl = null;  // assistant chat bubble being built
 let voiceCurrentMsgBody = null;
 let voiceCurrentMsgText = '';
+let _voiceSilenceTimer = null; // sphere → idle if no audio frame for 800ms
 
 async function toggleMic() {
   if (voiceMode) { stopVoiceMode(); }
@@ -1078,6 +1079,21 @@ async function startVoiceMode() {
     voicePlaybackNode = new AudioWorkletNode(voiceCtx, 'pcm-playback');
     voicePlaybackNode.connect(voiceCtx.destination);
 
+    // 6) Sphere visualization — tap mic + TTS playback through analysers
+    if (window.VoiceSphere) {
+      try {
+        const micAna = voiceCtx.createAnalyser(); micAna.fftSize = 2048;
+        source.connect(micAna);
+        const ttsAna = voiceCtx.createAnalyser(); ttsAna.fftSize = 2048;
+        voicePlaybackNode.connect(ttsAna);
+        const savedMode = localStorage.getItem('lax_voice_view_mode') || 'split';
+        VoiceSphere.show(savedMode);
+        VoiceSphere.attachMicAnalyser(micAna);
+        VoiceSphere.attachTtsAnalyser(ttsAna);
+        VoiceSphere.setState('idle');
+      } catch (sphereErr) { console.warn('[voice-sphere] init failed:', sphereErr); }
+    }
+
     voiceMode = true;
     voiceEnabled = true;
     const ttsBtn = document.getElementById('tts-toggle');
@@ -1107,6 +1123,7 @@ function cleanupVoiceResources() {
   voiceCurrentMsgEl = null; voiceCurrentMsgBody = null; voiceCurrentMsgText = '';
   const ttsBtn = document.getElementById('tts-toggle');
   if (ttsBtn) { ttsBtn.textContent = 'VOICE OFF'; ttsBtn.className = ''; }
+  if (window.VoiceSphere) { try { VoiceSphere.hide(); } catch {} }
   updateVoiceUI();
 }
 
@@ -1114,6 +1131,20 @@ function handleVoiceWsMessage(e) {
   // Binary frames are TTS PCM — pipe to playback worklet
   if (typeof e.data !== 'string') {
     if (voicePlaybackNode) voicePlaybackNode.port.postMessage({ cmd: 'pcm', pcm: e.data });
+    // First audio frame of a turn = the moment Optimus actually starts
+    // talking. Switch the sphere to 'speaking' here, NOT on agent_start
+    // (which fires when text streaming begins, before any audio reaches
+    // the speaker). Reset the silence watchdog every frame; when it expires
+    // we know audio playback has actually finished.
+    if (window.VoiceSphere && VoiceSphere.currentState !== 'speaking') {
+      VoiceSphere.setState('speaking');
+    }
+    if (_voiceSilenceTimer) clearTimeout(_voiceSilenceTimer);
+    _voiceSilenceTimer = setTimeout(() => {
+      if (window.VoiceSphere && VoiceSphere.currentState === 'speaking') {
+        VoiceSphere.setState('idle');
+      }
+    }, 800);
     return;
   }
   let msg;
@@ -1125,8 +1156,10 @@ function handleVoiceWsMessage(e) {
         voicePlaybackNode.port.postMessage({ cmd: 'setRate', rate: msg.ttsSampleRate });
       }
       break;
-    case 'vad_speech_start': isListening = true; updateVoiceUI(); break;
-    case 'vad_speech_end':   isListening = false; updateVoiceUI(); break;
+    case 'vad_speech_start': isListening = true; updateVoiceUI();
+      window.VoiceSphere && VoiceSphere.setState('listening'); break;
+    case 'vad_speech_end':   isListening = false; updateVoiceUI();
+      window.VoiceSphere && VoiceSphere.setState('thinking'); break;
     case 'final': {
       if (!msg.text) break;
       const empty = document.getElementById('empty');
@@ -1146,6 +1179,10 @@ function handleVoiceWsMessage(e) {
       }
       voiceCurrentMsgText = '';
       isSpeaking = true; updateVoiceUI();
+      // Sphere stays in 'thinking' here — it transitions to 'speaking' when
+      // the first audio frame actually arrives at the playback worklet,
+      // which is when the user hears anything (the SoVITS synth + sentence
+      // buffering adds 1-3s of lag after text starts streaming).
       break;
     }
     case 'assistant_delta':
@@ -1171,6 +1208,10 @@ function handleVoiceWsMessage(e) {
     case 'playback_complete':
     case 'tts_idle':
       isSpeaking = false; updateVoiceUI();
+      // Sphere transitions to idle via the audio-frame watchdog (800ms of
+      // no PCM frames) — these events fire when the SIDECAR queue is empty
+      // but the worklet's ring buffer can still have audio. Trusting them
+      // here cut the visible pulse short before the user's speakers stopped.
       break;
     case 'voice_error':
     case 'agent_error':
@@ -1406,8 +1447,8 @@ function initStatusBar() {
   apiFetch('/api/auth/status').then(r => r.json()).then(d => {
     if (d.uptime) serverStartTime = Date.now() - (d.uptime * 1000);
   }).catch(() => {});
-  // Pro tier detection: only fetch the cloned-voice library if the RVC
-  // sidecar is up. Re-renders the picker once we know.
+  // Studio tier detection: only fetch the cloned-voice library if the
+  // Chatterbox sidecar is up. Re-renders the picker once we know.
   refreshClonedVoices();
 }
 
@@ -1415,19 +1456,19 @@ async function refreshClonedVoices() {
   try {
     const tierRes = await apiFetch('/api/voices/tier');
     const tier = await tierRes.json();
-    window._proTierReady = !!(tier.rvc && tier.rvc.ready);
     window._studioTierReady = !!(tier.chatterbox && tier.chatterbox.ready);
-    // Pro tier: RVC clones (existing celebrity-catalog voices)
-    if (window._proTierReady) {
-      const r = await apiFetch('/api/voices/clones');
+    window._sovitsTierReady = !!(tier.sovits && tier.sovits.ready);
+    // SoVITS clones (trained or zero-shot) — best quality when fine-tuned
+    if (window._sovitsTierReady) {
+      const r = await apiFetch('/api/voices/sovits');
       if (r.ok) {
         const data = await r.json();
-        window._cloneVoices = Array.isArray(data?.clones) ? data.clones : [];
+        window._sovitsVoices = Array.isArray(data?.clones) ? data.clones : [];
       }
     } else {
-      window._cloneVoices = [];
+      window._sovitsVoices = [];
     }
-    // Studio tier: Chatterbox clones (single-stage TTS, near-real-time)
+    // Chatterbox clones (single-stage zero-shot TTS, fallback / parallel)
     if (window._studioTierReady) {
       const r = await apiFetch('/api/voices/chatterbox');
       if (r.ok) {
@@ -1504,9 +1545,9 @@ function updateStatusBar() {
 
   // Voice picker + speed slider. Selection persists to localStorage and
   // is pushed to the server-side voice session over /ws/voice the moment
-  // it changes (or on next session start). Lite tier: built-in Kokoro
-  // voices only. Custom voice cloning is the Pro tier (RVC) — not in
-  // this build.
+  // it changes (or on next session start). Built-in Kokoro voices are
+  // always available; custom voice cloning is the optional Studio tier
+  // (Chatterbox sidecar at :7010, populated when reachable).
   const savedVoice = localStorage.getItem('lax_voice') || 'am_michael';
   const savedSpeed = parseFloat(localStorage.getItem('lax_speed') || '1.15');
   const voiceGroups = [
@@ -1516,18 +1557,21 @@ function updateStatusBar() {
     ['British Female', ['bf_emma','bf_alice','bf_isabella','bf_lily']],
   ];
   const voiceLabel = (id) => id.split('_')[1].replace(/\b\w/g, c => c.toUpperCase());
-  // Cloned voices come from two optional sidecars (refreshClonedVoices()
-  // populates these async on page init; we re-render the bar once they land):
-  //   * Pro tier (RVC, :7009)        → window._cloneVoices  → "clone:<id>"
-  //   * Studio tier (Chatterbox, :7010) → window._chatterboxVoices → "cb:<id>"
-  const rvcClones = Array.isArray(window._cloneVoices) ? window._cloneVoices : [];
+  // Cloned voices come from two optional sidecars:
+  //   * SoVITS (:7012)     — "sv:<id>"  trained or zero-shot, best quality
+  //   * Chatterbox (:7010) — "cb:<id>"  zero-shot, kept as fallback
+  // refreshClonedVoices() populates these arrays async on page init; we
+  // re-render the bar once they land.
+  const svClones = Array.isArray(window._sovitsVoices) ? window._sovitsVoices : [];
   const cbClones = Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [];
   const allCloneIds = [
-    ...rvcClones.map(c => 'clone:' + c.id),
+    ...svClones.map(c => 'sv:' + c.id),
     ...cbClones.map(c => 'cb:' + c.id),
   ];
-  // If the saved voice references a clone that no longer exists, fall back.
-  const isStaleClone = (savedVoice.startsWith('clone:') || savedVoice.startsWith('cb:'))
+  // If the saved voice references a clone that no longer exists, or uses
+  // the legacy "clone:<id>" prefix from the dropped RVC tier, fall back
+  // to the default Kokoro voice.
+  const isStaleClone = (savedVoice.startsWith('clone:') || savedVoice.startsWith('cb:') || savedVoice.startsWith('sv:'))
     && !allCloneIds.includes(savedVoice);
   const effectiveVoice = isStaleClone ? 'am_michael' : savedVoice;
   if (effectiveVoice !== savedVoice) localStorage.setItem('lax_voice', effectiveVoice);
@@ -1536,26 +1580,29 @@ function updateStatusBar() {
     ids.map(id => `<option value="${esc(id)}" ${id === effectiveVoice ? 'selected' : ''}>${esc(voiceLabel(id))}</option>`).join('') +
     `</optgroup>`
   ).join('');
+  if (svClones.length > 0) {
+    voiceOpts += `<optgroup label="My Trained Voices">` +
+      svClones.map(c => {
+        const tag = c.fine_tuned ? ' ★' : '';
+        return `<option value="sv:${esc(c.id)}" ${('sv:' + c.id) === effectiveVoice ? 'selected' : ''}>${esc(c.name)}${tag}</option>`;
+      }).join('') +
+      `</optgroup>`;
+  }
   if (cbClones.length > 0) {
-    voiceOpts += `<optgroup label="Studio: Chatterbox (best quality)">` +
+    voiceOpts += `<optgroup label="Zero-shot Cloned Voices">` +
       cbClones.map(c => `<option value="cb:${esc(c.id)}" ${('cb:' + c.id) === effectiveVoice ? 'selected' : ''}>${esc(c.name)}</option>`).join('') +
       `</optgroup>`;
   }
-  if (rvcClones.length > 0) {
-    voiceOpts += `<optgroup label="Pro: RVC (catalog)">` +
-      rvcClones.map(c => `<option value="clone:${esc(c.id)}" ${('clone:' + c.id) === effectiveVoice ? 'selected' : ''}>${esc(c.name)}</option>`).join('') +
-      `</optgroup>`;
-  }
-  // Pro / Studio management: only show if at least one sidecar is reachable.
-  if (window._proTierReady || window._studioTierReady) {
+  // Voice management actions: only show if at least one cloning sidecar is reachable.
+  if (window._sovitsTierReady || window._studioTierReady) {
     voiceOpts += `<optgroup label=" ">`;
+    if (window._sovitsTierReady) {
+      voiceOpts += `<option value="__train_voice__">+ Train a new voice (30 min)…</option>`;
+    }
     if (window._studioTierReady) {
-      voiceOpts += `<option value="__add_chatterbox__">+ Add a Chatterbox voice…</option>`;
+      voiceOpts += `<option value="__add_chatterbox__">+ Add a quick zero-shot voice…</option>`;
     }
-    if (window._proTierReady) {
-      voiceOpts += `<option value="__add_clone__">+ Add an RVC voice…</option>`;
-    }
-    if (rvcClones.length > 0 || cbClones.length > 0) {
+    if (cbClones.length > 0 || svClones.length > 0) {
       voiceOpts += `<option value="__manage_clones__">&#9881; Manage cloned voices…</option>`;
     }
     voiceOpts += `</optgroup>`;
@@ -1576,9 +1623,13 @@ function updateStatusBar() {
 }
 
 function quickSwitchVoice(voice) {
-  if (voice === '__add_clone__' || voice === '__manage_clones__' || voice === '__add_chatterbox__') {
-    if (voice === '__add_clone__') openAddCloneModal();
-    else if (voice === '__add_chatterbox__') openAddChatterboxModal();
+  if (voice === '__manage_clones__' || voice === '__add_chatterbox__' || voice === '__train_voice__') {
+    if (voice === '__add_chatterbox__') openAddChatterboxModal();
+    else if (voice === '__train_voice__') {
+      // Training pipeline UI lands in a follow-up; stub with a friendly hint
+      // pointing at the manual flow until then.
+      showVoiceToast('Training UI coming soon. For now: drop a 30+ min clean voice WAV at ~/.lax/sovits-training/ and run python/sovits/train.py');
+    }
     else openManageClonesModal();
     // Reset picker visual to whatever was actually selected before
     const sel = document.getElementById('voice-quick-select');
@@ -1597,178 +1648,6 @@ function quickSwitchVoice(voice) {
   }
 }
 
-function openAddCloneModal() {
-  const existing = document.getElementById('add-clone-modal');
-  if (existing) existing.remove();
-
-  const modal = document.createElement('div');
-  modal.id = 'add-clone-modal';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center';
-  modal.innerHTML = `
-    <div style="background:var(--bg, #fff);color:var(--text, #000);border:1px solid var(--border, #ccc);border-radius:10px;padding:24px;max-width:520px;width:92%">
-      <h3 style="margin:0 0 6px;font-size:1.1rem">Add a cloned voice (RVC)</h3>
-      <p style="margin:0 0 16px;color:var(--muted, #666);font-size:.83rem">Two ways to add a voice. Both go to the local RVC sidecar — nothing leaves this machine.</p>
-
-      <div style="border:1px solid var(--border, #ddd);border-radius:8px;padding:14px;margin-bottom:14px">
-        <h4 style="margin:0 0 6px;font-size:.92rem">From a HuggingFace URL</h4>
-        <p style="margin:0 0 10px;color:var(--muted, #666);font-size:.78rem">Paste a direct .zip download URL (e.g. <code>https://huggingface.co/&lt;user&gt;/&lt;repo&gt;/resolve/main/Voice.zip</code>).</p>
-        <div style="display:flex;gap:8px;margin-bottom:8px">
-          <input id="ac-url-name" type="text" placeholder="Voice name" style="width:140px;padding:7px 9px;border:1px solid var(--border, #ccc);border-radius:6px;font-size:.85rem"/>
-          <input id="ac-url" type="text" placeholder="HF .zip URL" style="flex:1;padding:7px 9px;border:1px solid var(--border, #ccc);border-radius:6px;font-size:.85rem"/>
-        </div>
-        <button id="ac-url-go" type="button" style="padding:7px 14px;border:none;background:#3498db;color:#fff;border-radius:6px;cursor:pointer;font-size:.83rem">Download &amp; install</button>
-      </div>
-
-      <div style="border:1px solid var(--border, #ddd);border-radius:8px;padding:14px;margin-bottom:14px">
-        <h4 style="margin:0 0 6px;font-size:.92rem">Upload a .zip / .pth file</h4>
-        <p style="margin:0 0 10px;color:var(--muted, #666);font-size:.78rem">Zip should contain a <code>.pth</code> (model) and optional <code>.index</code> (better quality). Or upload a single <code>.pth</code> directly.</p>
-        <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
-          <input id="ac-file-name" type="text" placeholder="Voice name" style="width:140px;padding:7px 9px;border:1px solid var(--border, #ccc);border-radius:6px;font-size:.85rem"/>
-          <input id="ac-file" type="file" accept=".zip,.pth" style="flex:1;font-size:.8rem"/>
-        </div>
-        <button id="ac-file-go" type="button" style="padding:7px 14px;border:none;background:#3498db;color:#fff;border-radius:6px;cursor:pointer;font-size:.83rem">Upload &amp; install</button>
-      </div>
-
-      <div id="ac-status" style="font-size:.8rem;color:var(--muted, #666);margin-bottom:12px;min-height:1em"></div>
-      <div style="display:flex;justify-content:flex-end">
-        <button id="ac-close" type="button" style="padding:8px 14px;border:1px solid var(--border, #ccc);background:transparent;color:var(--text, #000);border-radius:6px;cursor:pointer">Close</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(modal);
-  modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
-  document.getElementById('ac-close').onclick = () => modal.remove();
-
-  const status = document.getElementById('ac-status');
-  const setStatus = (msg, isError) => {
-    status.textContent = msg;
-    status.style.color = isError ? '#c0392b' : 'var(--muted, #666)';
-  };
-
-  document.getElementById('ac-url-go').onclick = async () => {
-    const name = (document.getElementById('ac-url-name').value || '').trim();
-    const url = (document.getElementById('ac-url').value || '').trim();
-    if (!name || !url) { setStatus('Name and URL required.', true); return; }
-    setStatus('Downloading + installing… (~10-60s)', false);
-    try {
-      const r = await apiFetch('/api/voices/clones/from-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, url }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) { setStatus('Failed: ' + (data.error || data.detail || ('HTTP ' + r.status)), true); return; }
-      setStatus(`Installed "${data.name}".`, false);
-      await refreshClonedVoices();
-      setTimeout(() => modal.remove(), 800);
-    } catch (e) { setStatus('Failed: ' + e.message, true); }
-  };
-
-  document.getElementById('ac-file-go').onclick = async () => {
-    const name = (document.getElementById('ac-file-name').value || '').trim();
-    const file = document.getElementById('ac-file').files[0];
-    if (!name || !file) { setStatus('Name and file required.', true); return; }
-    if (file.size > 200 * 1024 * 1024) { setStatus('File too big (>200MB).', true); return; }
-    setStatus('Reading file…', false);
-    try {
-      const buf = await file.arrayBuffer();
-      // If the user picked a single .pth, wrap it into a zip on the fly so
-      // the sidecar's upload handler (which expects a zip) is the only
-      // server-side code path.
-      let zipBuf;
-      if (file.name.toLowerCase().endsWith('.pth')) {
-        zipBuf = await pthToZip(file.name, buf);
-      } else {
-        zipBuf = buf;
-      }
-      const bytes = new Uint8Array(zipBuf);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i += 8192) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-      }
-      const b64 = btoa(binary);
-      setStatus('Installing…', false);
-      const r = await apiFetch('/api/voices/clones', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, files_b64: b64 }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) { setStatus('Failed: ' + (data.error || data.detail || ('HTTP ' + r.status)), true); return; }
-      setStatus(`Installed "${data.name}".`, false);
-      await refreshClonedVoices();
-      setTimeout(() => modal.remove(), 800);
-    } catch (e) { setStatus('Failed: ' + e.message, true); }
-  };
-}
-
-// Minimal in-browser zip writer for the single-.pth upload case. Only
-// handles one stored (uncompressed) entry — fine for an RVC .pth which
-// is already compressed binary; deflating it again wins almost nothing.
-async function pthToZip(filename, fileBuf) {
-  const data = new Uint8Array(fileBuf);
-  // CRC-32 (slow per-byte, but only runs once on a ~50MB file)
-  const crcTable = (() => {
-    const t = new Uint32Array(256);
-    for (let n = 0; n < 256; n++) {
-      let c = n;
-      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-      t[n] = c >>> 0;
-    }
-    return t;
-  })();
-  let crc = 0xFFFFFFFF;
-  for (let i = 0; i < data.length; i++) crc = (crc >>> 8) ^ crcTable[(crc ^ data[i]) & 0xFF];
-  crc = (crc ^ 0xFFFFFFFF) >>> 0;
-
-  const nameBytes = new TextEncoder().encode(filename);
-  const localHeader = new ArrayBuffer(30 + nameBytes.length);
-  const lh = new DataView(localHeader);
-  lh.setUint32(0, 0x04034b50, true);  // local file header sig
-  lh.setUint16(4, 20, true);          // version needed
-  lh.setUint16(6, 0, true);           // flags
-  lh.setUint16(8, 0, true);           // method: stored
-  lh.setUint16(10, 0, true); lh.setUint16(12, 0, true);  // mod time/date (0)
-  lh.setUint32(14, crc, true);
-  lh.setUint32(18, data.length, true);
-  lh.setUint32(22, data.length, true);
-  lh.setUint16(26, nameBytes.length, true);
-  lh.setUint16(28, 0, true);          // extra
-  new Uint8Array(localHeader, 30).set(nameBytes);
-
-  const centralDir = new ArrayBuffer(46 + nameBytes.length);
-  const cd = new DataView(centralDir);
-  cd.setUint32(0, 0x02014b50, true);
-  cd.setUint16(4, 20, true); cd.setUint16(6, 20, true);
-  cd.setUint16(8, 0, true); cd.setUint16(10, 0, true);
-  cd.setUint16(12, 0, true); cd.setUint16(14, 0, true);
-  cd.setUint32(16, crc, true);
-  cd.setUint32(20, data.length, true);
-  cd.setUint32(24, data.length, true);
-  cd.setUint16(28, nameBytes.length, true);
-  cd.setUint16(30, 0, true); cd.setUint16(32, 0, true);
-  cd.setUint16(34, 0, true); cd.setUint16(36, 0, true);
-  cd.setUint32(38, 0, true); cd.setUint32(42, 0, true);  // local header offset = 0
-  new Uint8Array(centralDir, 46).set(nameBytes);
-
-  const eocd = new ArrayBuffer(22);
-  const ed = new DataView(eocd);
-  ed.setUint32(0, 0x06054b50, true);
-  ed.setUint16(4, 0, true); ed.setUint16(6, 0, true);
-  ed.setUint16(8, 1, true); ed.setUint16(10, 1, true);
-  ed.setUint32(12, centralDir.byteLength, true);
-  ed.setUint32(16, localHeader.byteLength + data.length, true);
-  ed.setUint16(20, 0, true);
-
-  const total = localHeader.byteLength + data.length + centralDir.byteLength + eocd.byteLength;
-  const out = new Uint8Array(total);
-  let off = 0;
-  out.set(new Uint8Array(localHeader), off); off += localHeader.byteLength;
-  out.set(data, off); off += data.length;
-  out.set(new Uint8Array(centralDir), off); off += centralDir.byteLength;
-  out.set(new Uint8Array(eocd), off);
-  return out.buffer;
-}
 
 function openAddChatterboxModal() {
   const existing = document.getElementById('add-chatterbox-modal');
@@ -1852,17 +1731,11 @@ function openManageClonesModal() {
   const existing = document.getElementById('manage-clones-modal');
   if (existing) existing.remove();
 
-  const rvc = Array.isArray(window._cloneVoices) ? window._cloneVoices : [];
   const cb = Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [];
-  const allRows = [
-    ...cb.map(c => ({ id: c.id, name: c.name, kind: 'cb', endpoint: '/api/voices/chatterbox', label: 'Studio' })),
-    ...rvc.map(c => ({ id: c.id, name: c.name, kind: 'clone', endpoint: '/api/voices/clones', label: 'Pro' })),
-  ];
-  const rows = allRows.length === 0
+  const rows = cb.length === 0
     ? `<div style="padding:16px;color:var(--muted, #666);font-size:.85rem;text-align:center">No cloned voices installed.</div>`
-    : allRows.map(c => `
-        <div class="mc-row" data-id="${esc(c.id)}" data-kind="${esc(c.kind)}" data-endpoint="${esc(c.endpoint)}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border, #eee)">
-          <span style="font-size:.65rem;padding:2px 6px;border-radius:8px;background:${c.kind === 'cb' ? '#3498db' : '#95a5a6'};color:#fff">${c.label}</span>
+    : cb.map(c => `
+        <div class="mc-row" data-id="${esc(c.id)}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border, #eee)">
           <span style="flex:1;font-family:var(--mono);font-size:.85rem">${esc(c.name)}</span>
           <button class="mc-delete" type="button" style="padding:6px 12px;border:none;background:#e74c3c;color:#fff;border-radius:6px;cursor:pointer;font-size:.8rem">Delete</button>
         </div>`).join('');
@@ -1892,16 +1765,14 @@ function openManageClonesModal() {
     btn.onclick = async () => {
       const row = btn.closest('.mc-row');
       const id = row.dataset.id;
-      const kind = row.dataset.kind;        // 'cb' or 'clone'
-      const endpoint = row.dataset.endpoint; // '/api/voices/chatterbox' or '/api/voices/clones'
-      if (!confirm(`Delete "${id}"? Removes its files from disk.`)) return;
+      if (!confirm(`Delete "${id}"? Removes its reference clip from disk.`)) return;
       btn.disabled = true; statusEl.textContent = 'Deleting…'; statusEl.style.color = 'var(--muted, #666)';
       try {
-        const r = await apiFetch(endpoint + '/' + encodeURIComponent(id), { method: 'DELETE' });
+        const r = await apiFetch('/api/voices/chatterbox/' + encodeURIComponent(id), { method: 'DELETE' });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { statusEl.textContent = 'Failed: ' + (data.error || ('HTTP ' + r.status)); statusEl.style.color = '#c0392b'; btn.disabled = false; return; }
         row.remove();
-        const fullId = kind + ':' + id;
+        const fullId = 'cb:' + id;
         if (localStorage.getItem('lax_voice') === fullId) {
           localStorage.setItem('lax_voice', 'am_michael');
         }

@@ -1,21 +1,26 @@
 /**
  * self_edit — delegates source-code repair to Claude Code.
  *
- * Purpose: when the in-SAX agent hits a bug (tool call "succeeded" but
- * outcome is wrong, UI didn't update, endpoint returns wrong shape, etc.),
- * it can call self_edit("description of the bug or change") to have
- * Claude Code read the SAX codebase, diagnose, patch, and rebuild.
+ * Purpose: when the in-Local-Agent-X agent hits a bug (tool call "succeeded"
+ * but outcome is wrong, UI didn't update, endpoint returns wrong shape,
+ * etc.), it can call self_edit("description of the bug or change") to have
+ * Claude Code read the codebase, diagnose, patch, and rebuild.
  *
- * The in-SAX model stays in charge of high-level reasoning ("the theme
+ * The main agent stays in charge of high-level reasoning ("the theme
  * didn't flip visually — something's wrong") and offloads the actual
  * code surgery to a model that's specifically trained for it.
  *
- * Runs `claude -p` as a subprocess with:
- *   - SAX repo as cwd, so relative paths work
- *   - --permission-mode bypassPermissions so it can edit/bash without prompts
- *   - --no-session-persistence (fresh context each invocation)
+ * Default flow: sandboxed.
+ *   - claude -p runs inside an isolated git worktree
+ *   - after it returns, three gates run: build / server-bind / agent-smoke
+ *   - only if all three pass do the changes merge to main
+ *   - if any fail, the worktree branch is preserved and main is untouched
+ *   - this means a self_edit that breaks the agent CANNOT brick the agent
  *
- * Returns a terse summary of what Claude changed + whether the rebuild succeeded.
+ * Bypass flow: when args._cwd is set (autopilot route) OR args._unsafe is
+ * true (emergency rescues), claude -p runs directly in the supplied cwd
+ * without sandbox gates. _unsafe is server-injected only — not in the
+ * public schema — so the model can't ask for it.
  */
 
 import { spawn } from "node:child_process";
@@ -101,13 +106,12 @@ export const selfEditTool: ToolDefinition = {
     if (!task) return { content: "self_edit requires a 'task' description.", isError: true };
     const scopeHintArg = String(args.scope_hint || "").trim();
     const scopeHint = scopeHintArg ? `\n\nScope hint: ${scopeHintArg}` : "";
-    // Internal (server-injected) override: when present, the spawned `claude -p`
-    // subprocess runs in this cwd instead of the SAX repo root. Used by
-    // autopilot to confine self_edit to the worktree. Underscore-prefixed
-    // because it's NOT in the public tool schema — only the tool router can
-    // set it server-side; the model itself cannot.
+    // Internal (server-injected) overrides — NOT in the public tool schema:
+    //   _cwd:    autopilot routes self_edit into its worktree path
+    //   _unsafe: emergency rescue mode (skip the sandbox + gates)
+    // The model itself can't set either — only the tool router can.
     const internalCwd = typeof args._cwd === "string" && args._cwd.trim() ? args._cwd : null;
-    const subprocessCwd = internalCwd || LAX_REPO_ROOT;
+    const unsafe = args._unsafe === true;
 
     // Walk up from the scope_hint path looking for AGENTS.md — include all
     // the subtree-scoped rules (src/AGENTS.md, packages/arikernel/AGENTS.md,
@@ -119,7 +123,7 @@ export const selfEditTool: ToolDefinition = {
       : "";
 
     const fullPrompt =
-      `You are editing the Open Agent X TypeScript codebase to fix a reported bug or implement a change.\n\n` +
+      `You are editing the Local Agent X TypeScript codebase to fix a reported bug or implement a change.\n\n` +
       `Task: ${task}${scopeHint}${rulesBlock}\n\n` +
       `Constraints:\n` +
       `- Source is under src/. Public assets under public/. Config under config/.\n` +
@@ -133,6 +137,23 @@ export const selfEditTool: ToolDefinition = {
       `CHANGED: <comma-separated file paths>\n` +
       `BUILD: ok | broken\n` +
       `NOTE: <anything the user needs to know, e.g. 'restart server to apply'>`;
+
+    // Default flow: sandboxed via worktree + 3-gate validation. Skipped when
+    // _cwd is set (autopilot already provides isolation) or _unsafe is set.
+    if (!internalCwd && !unsafe) {
+      const { runSelfEditInSandbox, formatSandboxResult } = await import("./self-edit-sandbox.js");
+      const { getRuntimeConfig } = await import("./config.js");
+      const authToken = getRuntimeConfig().authToken;
+      const result = await runSelfEditInSandbox({
+        task, scopeHint: scopeHintArg, signal,
+        fullPrompt, authToken,
+      });
+      return { content: formatSandboxResult(result), isError: !result.ok };
+    }
+
+    // Bypass flow: write directly to the supplied cwd (autopilot worktree
+    // OR LAX_REPO_ROOT for unsafe rescues). No gates.
+    const subprocessCwd = internalCwd || LAX_REPO_ROOT;
 
     return await new Promise((resolveP) => {
       let stdout = "";

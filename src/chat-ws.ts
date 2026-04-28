@@ -138,14 +138,22 @@ export function setupChatWebSocket(server: Server, authToken: string) {
         }
       }
 
-      if (type === "chat" && sessionId && msg.message) {
-        // Handle chat via WebSocket — trigger the chat handler directly
+      if (type === "chat" && sessionId) {
+        // Handle chat via WebSocket — trigger the chat handler directly.
+        // Accept the message if there's text OR at least one attachment.
+        // Image-only sends (paste-and-send with no typed caption) have
+        // msg.message === "" and would silently drop without this guard.
         const _atts = (msg.attachments || []) as any[];
-        const _imgCount = _atts.filter(a => a?.isImage).length;
-        logger.info(`[ws-chat] recv sess=${sessionId} msg_len=${String(msg.message).length} atts=${_atts.length} imgs=${_imgCount} handler=${chatHandler ? "set" : "null"}`);
-        subscriptions.add(sessionId);
-        if (chatHandler) {
-          chatHandler(sessionId, String(msg.message), _atts);
+        const _msgText = typeof msg.message === "string" ? msg.message : "";
+        if (!_msgText && _atts.length === 0) {
+          logger.warn(`[ws-chat] dropping empty chat from sess=${sessionId} (no text and no attachments)`);
+        } else {
+          const _imgCount = _atts.filter(a => a?.isImage).length;
+          logger.info(`[ws-chat] recv sess=${sessionId} msg_len=${_msgText.length} atts=${_atts.length} imgs=${_imgCount} handler=${chatHandler ? "set" : "null"}`);
+          subscriptions.add(sessionId);
+          if (chatHandler) {
+            chatHandler(sessionId, _msgText, _atts);
+          }
         }
       }
 

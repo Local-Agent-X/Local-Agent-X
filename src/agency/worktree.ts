@@ -8,7 +8,7 @@
  *   4. cleanupWorktree(agentId) → removes worktree + temp branch (preserves branch on conflict)
  */
 
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { existsSync, symlinkSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -27,17 +27,29 @@ interface WorktreeEntry {
 const WORKTREE_BASE = join(tmpdir(), "sax-worktrees");
 const activeWorktrees = new Map<string, WorktreeEntry>();
 
-function git(cmd: string, cwd?: string): string {
+/**
+ * Run git with an explicit args array via execFileSync (no shell).
+ *
+ * The previous implementation used `execSync(\`git ${cmd}\`)` which spawns
+ * through cmd.exe on Windows and intermittently failed with
+ * `spawnSync C:\\WINDOWS\\system32\\cmd.exe ENOENT` when the inherited
+ * environment was missing ComSpec / SystemRoot. execFileSync calls git
+ * directly with explicit env passthrough — no shell, no env-dependent
+ * lookup, no quoting concerns.
+ */
+function git(args: string[] | string, cwd?: string): string {
+  const argv = Array.isArray(args) ? args : args.split(/\s+/).filter(Boolean);
   try {
-    return execSync(`git ${cmd}`, {
+    return execFileSync("git", argv, {
       cwd: cwd || process.cwd(),
       encoding: "utf-8",
       timeout: 30_000,
       windowsHide: true,
+      env: process.env,
     }).trim();
   } catch (e) {
     const err = e as { stderr?: string; message: string };
-    throw new Error(`git ${cmd} failed: ${err.stderr || err.message}`);
+    throw new Error(`git ${argv.join(" ")} failed: ${err.stderr || err.message}`);
   }
 }
 
@@ -49,8 +61,8 @@ export function createWorktree(agentId: string): { path: string; branch: string 
     const branch = `agent/${agentId}`;
     const wtPath = join(WORKTREE_BASE, agentId);
 
-    git(`branch ${branch} HEAD`, repoRoot);
-    git(`worktree add "${wtPath}" ${branch}`, repoRoot);
+    git(["branch", branch, "HEAD"], repoRoot);
+    git(["worktree", "add", wtPath, branch], repoRoot);
 
     activeWorktrees.set(agentId, { path: wtPath, branch, baseBranch, repoRoot, mergedSuccessfully: false });
     logger.info(`[worktree] Created ${wtPath} on branch ${branch} (base: ${baseBranch})`);
@@ -76,12 +88,12 @@ export function mergeWorktree(agentId: string): { merged: boolean; files: number
 
     git("add -A", wt.path);
     const fileCount = git("diff --cached --numstat", wt.path).split("\n").filter(Boolean).length;
-    git(`commit -m "Agent ${agentId}: automated changes"`, wt.path);
+    git(["commit", "-m", `Agent ${agentId}: automated changes`], wt.path);
 
     // Merge into the base branch that was current when the worktree was created
     try {
-      git(`checkout ${wt.baseBranch}`, wt.repoRoot);
-      git(`merge ${wt.branch} --no-edit`, wt.repoRoot);
+      git(["checkout", wt.baseBranch], wt.repoRoot);
+      git(["merge", wt.branch, "--no-edit"], wt.repoRoot);
       logger.info(`[worktree] Merged ${fileCount} files from ${agentId} into ${wt.baseBranch}`);
       wt.mergedSuccessfully = true;
       cleanupWorktree(agentId);
@@ -105,11 +117,11 @@ export function cleanupWorktree(agentId: string): void {
   const wt = activeWorktrees.get(agentId);
   if (!wt) return;
 
-  try { git(`worktree remove "${wt.path}" --force`, wt.repoRoot); } catch { /* already gone */ }
+  try { git(["worktree", "remove", wt.path, "--force"], wt.repoRoot); } catch { /* already gone */ }
 
   // Only delete branch if merge was successful — preserve it on conflict so user can resolve
   if (wt.mergedSuccessfully) {
-    try { git(`branch -D ${wt.branch}`, wt.repoRoot); } catch { /* already merged/deleted */ }
+    try { git(["branch", "-D", wt.branch], wt.repoRoot); } catch { /* already merged/deleted */ }
   } else {
     logger.info(`[worktree] Preserving branch ${wt.branch} (unmerged changes)`);
   }
@@ -185,8 +197,8 @@ export function createNamedWorktree(
     const baseBranch = git("rev-parse --abbrev-ref HEAD", repoRoot);
     const wtPath = join(WORKTREE_BASE, name);
 
-    git(`branch ${branchName} HEAD`, repoRoot);
-    git(`worktree add "${wtPath}" ${branchName}`, repoRoot);
+    git(["branch", branchName, "HEAD"], repoRoot);
+    git(["worktree", "add", wtPath, branchName], repoRoot);
 
     // Share node_modules + ari kernel package node_modules with the parent.
     // Autopilot edits source; the build needs deps that aren't tracked.
@@ -247,13 +259,14 @@ export function resetWorktree(name: string): void {
 export function commitInWorktree(name: string, message: string): string | null {
   const wt = activeWorktrees.get(name);
   if (!wt) throw new Error(`No worktree found for ${name}`);
-  const status = git("status --porcelain", wt.path);
+  const status = git(["status", "--porcelain"], wt.path);
   if (!status) return null;
-  git("add -A", wt.path);
-  // Escape double-quotes for shell, keep newlines minimal.
-  const safe = message.replace(/"/g, '\\"').replace(/\n/g, " ");
-  git(`commit -m "${safe}"`, wt.path);
-  return git("rev-parse HEAD", wt.path);
+  git(["add", "-A"], wt.path);
+  // No shell escaping needed — execFileSync passes the arg as a single argv
+  // entry. Newlines kept compact for tidy commit subjects.
+  const compactMessage = message.replace(/\r\n/g, "\n");
+  git(["commit", "-m", compactMessage], wt.path);
+  return git(["rev-parse", "HEAD"], wt.path);
 }
 
 interface BuildOptions {

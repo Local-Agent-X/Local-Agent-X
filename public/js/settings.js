@@ -793,283 +793,137 @@ async function handleIngestFiles(fileList) {
 }
 window.handleIngestFiles = handleIngestFiles;
 
-// ── XTTS Voice Cloning ──
+// ── TTS engine selection + cloned-voice picker ──
+//
+// Replaces the legacy XTTS Record/Upload UI (dead — :7862 standalone server
+// was removed). Voice cloning now lives in the chat-page voice picker
+// (+ Add zero-shot, + Train new voice). Settings just lets the user pick
+// which engine + which clone they want for chat replies.
 
-const XTTS_URL = 'http://127.0.0.1:7862';
-let _voiceRecorder = null;
-let _voiceChunks = [];
-
+// Toggle the right sub-picker based on the selected engine. Built-in engines
+// (kokoro/piper) show the Kokoro voice list; cloning engines show the clone
+// picker populated from window._chatterboxVoices / _sovitsVoices (refreshed
+// by refreshTtsClonePicker below). Browser/none hide both — nothing to pick.
 function onTtsEngineChange(engine) {
-  const stdVoice = document.getElementById('tts-voice-field');
-  const xttsVoice = document.getElementById('xtts-voice-field');
-  const cloneSection = document.getElementById('voice-clone-section');
-  if (!stdVoice) return;
-  if (engine === 'xtts') {
-    stdVoice.style.display = 'none';
-    if (xttsVoice) xttsVoice.style.display = '';
-    if (cloneSection) cloneSection.style.display = '';
-    loadXttsVoices();
-  } else {
-    stdVoice.style.display = '';
-    if (xttsVoice) xttsVoice.style.display = 'none';
-    if (cloneSection) cloneSection.style.display = 'none';
-  }
+  const builtin = document.getElementById('tts-voice-field');
+  const clone = document.getElementById('tts-clone-field');
+  const isClone = engine === 'chatterbox' || engine === 'sovits';
+  const isBuiltin = engine === 'kokoro' || engine === 'piper';
+  if (builtin) builtin.style.display = isBuiltin ? '' : 'none';
+  if (clone) clone.style.display = isClone ? '' : 'none';
+  if (isClone) refreshTtsClonePicker(engine);
 }
 
-async function loadXttsVoices() {
-  // The standalone XTTS server on :7862 is gone — voice cloning now runs
-  // inside the GPU sidecar and is managed from the chat-page voice picker
-  // ("+ Upload your voice…"). Settings page no longer needs to populate
-  // anything here. Short-circuit to avoid spurious 404s on page load.
-  return;
-  // eslint-disable-next-line no-unreachable
-  const sel = document.getElementById('cfg-xtts-voice');
-  const list = document.getElementById('saved-voices-list');
+// Populate the clone <select> from the live arrays already maintained by
+// chat.js:refreshClonedVoices (which polls /api/voices/tier on chat init).
+// Settings page also calls that function on load — see initVoiceSettings.
+function refreshTtsClonePicker(engine) {
+  const sel = document.getElementById('cfg-tts-clone');
   if (!sel) return;
+  const list = engine === 'chatterbox'
+    ? (window._chatterboxVoices || [])
+    : (window._sovitsVoices || []);
+  const prefix = engine === 'chatterbox' ? 'cb:' : 'sv:';
+  sel.innerHTML = '<option value="">-- pick a clone --</option>' +
+    list.map(c => {
+      const star = c.fine_tuned ? ' ★' : '';
+      const v = prefix + c.id;
+      return `<option value="${v}">${(c.name || c.id).replace(/[<>"']/g, '')}${star}</option>`;
+    }).join('');
+  // Restore previous selection if it matches the current engine
   try {
-    const r = await fetch(`${XTTS_URL}/voices`);
-    const voices = await r.json();
-    // Update dropdown
-    sel.innerHTML = '<option value="">-- select voice --</option>';
-    voices.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v.id;
-      opt.textContent = v.name;
-      sel.appendChild(opt);
-    });
-    // Restore selection
-    try {
-      const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
-      if (s.xttsVoice) sel.value = s.xttsVoice;
-    } catch {}
-    // Update saved voices list
-    if (list) {
-      if (voices.length === 0) {
-        list.innerHTML = '<p style="color:var(--muted);font-size:.75rem">No voices yet. Record or upload a sample above.</p>';
-      } else {
-        list.innerHTML = voices.map(v => `
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px">
-            <div style="display:flex;align-items:center;gap:8px">
-              <button class="btn" onclick="previewVoice('${esc(v.id)}')" title="Preview" style="padding:4px 8px;font-size:.75rem">&#9654;</button>
-              <span style="font-family:var(--mono);font-size:.8rem">${esc(v.name)}</span>
-              <span style="color:var(--muted);font-size:.7rem">${Math.round(v.size/1024)}KB</span>
-            </div>
-            <button class="btn" onclick="deleteVoice('${esc(v.id)}')" title="Delete" style="padding:4px 8px;font-size:.75rem;color:var(--danger)">&#10005;</button>
-          </div>
-        `).join('');
-      }
-    }
-  } catch {
-    sel.innerHTML = '<option value="">XTTS server not running</option>';
-    if (list) list.innerHTML = '<div style="display:flex;align-items:center;gap:10px"><span style="color:var(--danger);font-size:.75rem">XTTS server not running</span><button class="btn" onclick="startXttsServer()" id="start-xtts-btn" style="padding:4px 12px;font-size:.72rem;color:var(--accent)">Start XTTS Server</button></div>';
-  }
-}
-
-/** Convert WebM/Opus blob to WAV blob using Web Audio API */
-async function webmToWav(webmBlob) {
-  const arrayBuf = await webmBlob.arrayBuffer();
-  const actx = new OfflineAudioContext(1, 1, 44100);
-  let audioBuf;
-  try {
-    audioBuf = await actx.decodeAudioData(arrayBuf);
-  } catch {
-    // If decode fails, return original blob
-    return webmBlob;
-  }
-  const numCh = audioBuf.numberOfChannels;
-  const length = audioBuf.length;
-  const sampleRate = audioBuf.sampleRate;
-  const bytesPerSample = 2; // 16-bit PCM
-  const dataSize = length * numCh * bytesPerSample;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
-  // WAV header
-  const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
-  writeStr(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); writeStr(8, 'WAVE');
-  writeStr(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
-  view.setUint16(22, numCh, true); view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * numCh * bytesPerSample, true);
-  view.setUint16(32, numCh * bytesPerSample, true); view.setUint16(34, 16, true);
-  writeStr(36, 'data'); view.setUint32(40, dataSize, true);
-  // PCM samples
-  let offset = 44;
-  const channels = [];
-  for (let ch = 0; ch < numCh; ch++) channels.push(audioBuf.getChannelData(ch));
-  for (let i = 0; i < length; i++) {
-    for (let ch = 0; ch < numCh; ch++) {
-      const s = Math.max(-1, Math.min(1, channels[ch][i]));
-      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-      offset += 2;
-    }
-  }
-  return new Blob([buffer], { type: 'audio/wav' });
-}
-
-let _vizAnimFrame = null;
-let _vizCtx = null;
-let _vizAnalyser = null;
-
-function startVisualizer(stream) {
-  const canvas = document.getElementById('voice-visualizer');
-  if (!canvas) return;
-  canvas.style.display = 'block';
-  _vizCtx = canvas.getContext('2d');
-  const actx = new AudioContext();
-  const src = actx.createMediaStreamSource(stream);
-  _vizAnalyser = actx.createAnalyser();
-  _vizAnalyser.fftSize = 64;
-  src.connect(_vizAnalyser);
-  const data = new Uint8Array(_vizAnalyser.frequencyBinCount);
-  function draw() {
-    _vizAnimFrame = requestAnimationFrame(draw);
-    _vizAnalyser.getByteFrequencyData(data);
-    const w = canvas.width, h = canvas.height;
-    _vizCtx.clearRect(0, 0, w, h);
-    const bars = 16;
-    const barW = (w / bars) - 2;
-    for (let i = 0; i < bars; i++) {
-      const v = data[i] / 255;
-      const barH = Math.max(2, v * h);
-      const x = i * (barW + 2);
-      const hue = 120 + i * 8;
-      _vizCtx.fillStyle = `hsl(${hue}, 80%, ${50 + v * 20}%)`;
-      _vizCtx.fillRect(x, h - barH, barW, barH);
-    }
-  }
-  draw();
-}
-
-function stopVisualizer() {
-  if (_vizAnimFrame) cancelAnimationFrame(_vizAnimFrame);
-  _vizAnimFrame = null;
-  const canvas = document.getElementById('voice-visualizer');
-  if (canvas) { canvas.style.display = 'none'; }
-}
-
-async function toggleVoiceRecording() {
-  const btn = document.getElementById('record-voice-btn');
-  const status = document.getElementById('record-status');
-  if (_voiceRecorder && _voiceRecorder.state === 'recording') {
-    _voiceRecorder.stop();
-    stopVisualizer();
-    btn.textContent = '\u{1F3A4} Record';
-    btn.style.borderColor = '';
-    if (status) status.textContent = 'Processing...';
-    return;
-  }
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    _voiceChunks = [];
-    _voiceRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-    _voiceRecorder.ondataavailable = e => { if (e.data.size > 0) _voiceChunks.push(e.data); };
-    _voiceRecorder.onstop = async () => {
-      stream.getTracks().forEach(t => t.stop());
-      const webmBlob = new Blob(_voiceChunks, { type: 'audio/webm' });
-      // Convert WebM to WAV for XTTS compatibility and playback
-      const wavBlob = await webmToWav(webmBlob);
-      await sendVoiceSample(wavBlob);
-    };
-    _voiceRecorder.start();
-    startVisualizer(stream);
-    btn.textContent = '\u{23F9} Stop Recording';
-    btn.style.borderColor = 'var(--danger)';
-    if (status) status.textContent = 'Recording... (6-10 seconds recommended)';
-  } catch (e) {
-    if (status) status.textContent = 'Mic access denied: ' + e.message;
-  }
-}
-
-async function uploadVoiceSample(input) {
-  if (!input.files || !input.files[0]) return;
-  const file = input.files[0];
-  const status = document.getElementById('record-status');
-  if (status) status.textContent = 'Uploading ' + file.name + '...';
-  await sendVoiceSample(file);
-  input.value = '';
-}
-
-async function sendVoiceSample(blob) {
-  const status = document.getElementById('record-status');
-  const nameInput = document.getElementById('voice-clone-name');
-  const name = nameInput?.value?.trim() || 'voice_' + Date.now();
-  try {
-    const formData = new FormData();
-    // Keep original format extension (webm from browser recording, wav/mp3 from uploads)
-    const ext = blob.type?.includes('webm') ? '.webm' : blob.type?.includes('mp3') ? '.mp3' : '.wav';
-    formData.append('audio', blob, name + ext);
-    formData.append('name', name);
-    const r = await fetch(`${XTTS_URL}/clone`, { method: 'POST', body: formData });
-    const d = await r.json();
-    if (d.ok) {
-      if (status) status.textContent = 'Voice "' + d.name + '" saved!';
-      if (nameInput) nameInput.value = '';
-      loadXttsVoices();
-      // Auto-select new voice
-      setTimeout(() => {
-        const sel = document.getElementById('cfg-xtts-voice');
-        if (sel) sel.value = d.id;
-      }, 300);
-    } else {
-      if (status) status.textContent = 'Error: ' + (d.error || 'unknown');
-    }
-  } catch (e) {
-    if (status) status.textContent = 'Upload failed: XTTS server not running?';
-  }
-}
-
-async function startXttsServer() {
-  const btn = document.getElementById('start-xtts-btn');
-  if (btn) { btn.textContent = 'Starting...'; btn.disabled = true; }
-  try {
-    await apiPost('/api/voice/start-xtts', {});
-    // Wait for model to be reachable (can take 30-60s first time)
-    if (btn) btn.textContent = 'Loading model...';
-    let attempts = 0;
-    const check = setInterval(async () => {
-      attempts++;
-      try {
-        const r = await fetch(XTTS_URL + '/health');
-        if (r.ok) {
-          clearInterval(check);
-          loadXttsVoices();
-          if (btn) { btn.textContent = 'Running'; btn.style.color = 'var(--accent)'; }
-        }
-      } catch {}
-      if (attempts > 60) { // 2 min timeout
-        clearInterval(check);
-        if (btn) { btn.textContent = 'Start XTTS Server'; btn.disabled = false; }
-      }
-    }, 2000);
-  } catch (e) {
-    if (btn) { btn.textContent = 'Failed — retry'; btn.disabled = false; }
-  }
-}
-
-async function previewVoice(voiceId) {
-  try {
-    // Route through our server to avoid CORS issues with XTTS port
-    const r = await fetch(`/api/voice/preview/${voiceId}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-    if (!r.ok) {
-      // Fallback: try XTTS directly
-      const r2 = await fetch(`${XTTS_URL}/voices/${voiceId}/preview`);
-      const blob = await r2.blob();
-      const audio = new Audio(URL.createObjectURL(new Blob([blob], { type: 'audio/wav' })));
-      await audio.play();
-      return;
-    }
-    const blob = await r.blob();
-    const audio = new Audio(URL.createObjectURL(blob));
-    await audio.play();
-  } catch (e) { console.error('Preview failed:', e); }
-}
-
-async function deleteVoice(voiceId) {
-  if (!confirm('Delete voice "' + voiceId + '"?')) return;
-  try {
-    await fetch(`${XTTS_URL}/voices/${voiceId}`, { method: 'DELETE' });
-    loadXttsVoices();
+    const saved = localStorage.getItem('lax_voice') || '';
+    if (saved.startsWith(prefix)) sel.value = saved;
   } catch {}
 }
+
+// Fetch /api/voices/tier on settings load so we know which sidecars are
+// reachable, then enable the matching options in the engine dropdown.
+async function initVoiceSettings() {
+  try {
+    const r = await (typeof apiFetch === 'function' ? apiFetch('/api/voices/tier') : fetch('/api/voices/tier'));
+    if (!r.ok) return;
+    const tier = await r.json();
+    const cbReady = !!(tier.chatterbox && tier.chatterbox.ready);
+    const svReady = !!(tier.sovits && tier.sovits.ready);
+    window._studioTierReady = cbReady;
+    window._sovitsTierReady = svReady;
+    // Pull the actual clone lists if their sidecars are up
+    if (cbReady) {
+      try {
+        const cr = await apiFetch('/api/voices/chatterbox');
+        if (cr.ok) {
+          const d = await cr.json();
+          window._chatterboxVoices = Array.isArray(d?.clones) ? d.clones : [];
+        }
+      } catch {}
+    }
+    if (svReady) {
+      try {
+        const sr = await apiFetch('/api/voices/sovits');
+        if (sr.ok) {
+          const d = await sr.json();
+          window._sovitsVoices = Array.isArray(d?.clones) ? d.clones : [];
+        }
+      } catch {}
+    }
+    // Enable the clone-engine options if either sidecar is up
+    const group = document.getElementById('cfg-tts-clone-group');
+    const cbOpt = document.getElementById('cfg-tts-engine-cb');
+    const svOpt = document.getElementById('cfg-tts-engine-sv');
+    if (group && (cbReady || svReady)) group.style.display = '';
+    if (cbOpt) cbOpt.disabled = !cbReady;
+    if (svOpt) svOpt.disabled = !svReady;
+    // Re-trigger engine-change to refresh the sub-picker if a cloning engine
+    // was already saved from a prior session.
+    const engSel = document.getElementById('cfg-tts-engine');
+    if (engSel) onTtsEngineChange(engSel.value);
+  } catch { /* silent — Settings page works fine without sidecars */ }
+}
+
+// Auto-init on page load. Settings.html may load this script before chat.js,
+// so we guard against the DOM not being ready yet.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => { initVoiceSettings(); initVoiceVisualsToggle(); });
+} else {
+  initVoiceSettings();
+  initVoiceVisualsToggle();
+}
+
+// Persist the visualizer toggle to /api/settings. Server stores it on the
+// live LAXConfig (voice_visuals_enabled) and the next voice turn picks it
+// up via the existing config hot-reload path. Default ON.
+async function initVoiceVisualsToggle() {
+  const el = document.getElementById('cfg-voice-visuals');
+  if (!el) return;
+  try {
+    const r = await (typeof apiFetch === 'function' ? apiFetch('/api/settings') : fetch('/api/settings'));
+    if (r.ok) {
+      const s = await r.json();
+      // Treat undefined as ON (default)
+      el.checked = s.voice_visuals_enabled !== false;
+    }
+  } catch { /* leave default checked state */ }
+}
+function onVoiceVisualsToggle(checked) {
+  const tok = (new URLSearchParams(location.search).get('token') || localStorage.getItem('sax_token') || '');
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+    body: JSON.stringify({ voice_visuals_enabled: !!checked }),
+  }).catch(() => {});
+}
+
+// ── Removed: ~275 lines of dead XTTS Record/Upload UI ──
+// The standalone XTTS server at :7862 is long gone. Voice cloning is owned
+// by the chat-page voice picker now (+ Add a quick zero-shot voice…,
+// + Train a new voice…). Functions purged: loadXttsVoices, webmToWav,
+// startVisualizer, stopVisualizer, toggleVoiceRecording, uploadVoiceSample,
+// sendVoiceSample, startXttsServer, previewVoice, deleteVoice.
+
+// (No backwards-compat shim needed — the inline onclicks were in the same
+// HTML block we just deleted. If this throws on someone's stale tab, a
+// hard refresh fixes it.)
 
 // ── Agent Sync ──
 

@@ -38,9 +38,21 @@ SOVITS_API = os.environ.get("LAX_SOVITS_API_V2", "http://127.0.0.1:7011")
 SOVITS_SIDECAR = os.environ.get("LAX_SOVITS_SIDECAR", "http://127.0.0.1:7012")
 
 
+# A second sink for emit() lines so a user who closes the modal can still
+# tail the live log later. Set once we know work_dir (in main()).
+_LOG_FILE: "Path | None" = None
+
 def emit(kind: str, payload: str) -> None:
-    """Print a protocol line and flush so the parent process sees it live."""
-    print(f"{kind}: {payload}", flush=True)
+    """Print a protocol line, flush stdout for the SSE relay, AND mirror to
+    <workdir>/_pipeline.log so the bridge can tail it on demand."""
+    line = f"{kind}: {payload}"
+    print(line, flush=True)
+    if _LOG_FILE is not None:
+        try:
+            with _LOG_FILE.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass
 
 
 def stage(stage_id: str, label: str, pct: int, eta: int = 0) -> None:
@@ -441,6 +453,21 @@ def main() -> None:
         work_dir = TRAINING_ROOT / "datasets" / exp_name
         if not work_dir.exists():
             fail(f"resume target workdir not found: {work_dir}")
+        # Recover the run's saved name + source URL from _meta.json so the
+        # user doesn't have to retype them. Falls back to whatever was
+        # passed via --name only when the meta file is missing or unreadable.
+        meta_path = work_dir / "_meta.json"
+        try:
+            saved_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if saved_meta.get("name") and not args.name:
+                args.name = saved_meta["name"]
+            if saved_meta.get("source_url") and not args.source_url:
+                args.source_url = saved_meta["source_url"]
+            if saved_meta.get("source_file") and not args.source_file:
+                args.source_file = saved_meta["source_file"]
+            log(f"recovered meta: name={args.name!r}")
+        except Exception:
+            pass
         # Guard against accidental concurrent resumes on the same exp_name —
         # two trainers writing the same logs/<exp>/ + weights file would
         # corrupt each other. A tiny .lock file with our PID + start time
@@ -472,6 +499,31 @@ def main() -> None:
         exp_name = "voice_" + uuid.uuid4().hex[:8]
         work_dir = TRAINING_ROOT / "datasets" / exp_name
         work_dir.mkdir(parents=True, exist_ok=True)
+        # Persist the run's identity right away so a later --resume can
+        # recover the name + source without the user having to retype them.
+        try:
+            meta = {
+                "name": args.name,
+                "source_url": args.source_url,
+                "source_file": args.source_file,
+                "epochs_sovits": args.epochs_sovits,
+                "epochs_gpt": args.epochs_gpt,
+                "denoise": bool(args.denoise),
+                "created_at": int(time.time()),
+            }
+            (work_dir / "_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        except Exception as e:
+            log(f"warning: failed to persist _meta.json: {e}")
+    # Mirror future emit() lines into <workdir>/_pipeline.log. Created here
+    # rather than at module load because work_dir isn't known until now.
+    global _LOG_FILE
+    _LOG_FILE = work_dir / "_pipeline.log"
+    try:
+        # Append-only — preserves any earlier resume's log entries.
+        _LOG_FILE.touch(exist_ok=True)
+    except Exception:
+        _LOG_FILE = None
+
     log(f"workdir: {work_dir}")
     log(f"exp_name: {exp_name}")
 

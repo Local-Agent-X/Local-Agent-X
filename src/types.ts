@@ -67,7 +67,8 @@ export type ServerEvent =
   | { type: "secret_request"; name: string; service?: string; reason: string }
   | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string }
   | { type: "approval_timeout"; approvalId: string; toolName: string; toolCallId?: string }
-  | { type: "context_status"; percentage: number; level: string; usedTokens: number; maxTokens: number; compacted: boolean };
+  | { type: "context_status"; percentage: number; level: string; usedTokens: number; maxTokens: number; compacted: boolean }
+  | { type: "visual"; kind: "emoji" | "text" | "shape" | "mood"; value: string; durationMs: number };
 
 // ── Auth Types ──
 
@@ -130,4 +131,10 @@ export interface LAXConfig {
   authLockoutMs: number;
   agentTimeoutMs: number;
   maxCachedSessions: number;
+
+  /** When true (default), voice mode exposes the `voice_visual` tool to
+   *  the LLM so it can morph the particle sphere into emojis/text/shapes/
+   *  moods during emotionally significant moments. Off = strict no-tools
+   *  voice mode (existing behavior). Hot-reloads via the config watcher. */
+  voice_visuals_enabled?: boolean;
 }

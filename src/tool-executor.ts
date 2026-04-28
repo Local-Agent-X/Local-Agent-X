@@ -276,13 +276,15 @@ async function executeSingleTool(
     "browser", "operation_start",
     "agent_spawn", "browser_capture_to_secret", "browser_fill_from_secret",
     "session_status", "request_secret",
+    "voice_visual",
   ]);
   if (SESSION_SCOPED_TOOLS.has(tc.name)) {
     args._sessionId = sessionId || "default";
   }
   // Inject onEvent for tools that need to stream events (e.g. request_secret,
-  // browser emits browser_queued when waiting on the per-process mutex).
-  if (tc.name === "request_secret" || tc.name === "browser") {
+  // browser emits browser_queued when waiting on the per-process mutex,
+  // voice_visual emits a `visual` ServerEvent the browser morphs particles to).
+  if (tc.name === "request_secret" || tc.name === "browser" || tc.name === "voice_visual") {
     args._onEvent = onEvent;
   }
 

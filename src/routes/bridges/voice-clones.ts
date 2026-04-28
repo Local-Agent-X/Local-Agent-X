@@ -88,7 +88,7 @@ export const handleVoiceCloneRoutes: RouteHandler = async (method, url, req, res
     const sovitsRepo = join(homedir(), ".lax", "sovits", "repo");
     if (!existsSync(trainingRoot)) { json(200, { runs: [] }); return true; }
     try {
-      const { readdirSync, statSync } = await import("node:fs");
+      const { readdirSync, statSync, readFileSync } = await import("node:fs");
       const runs = readdirSync(trainingRoot).filter(n => n.startsWith("voice_")).map(name => {
         const wd = join(trainingRoot, name);
         const has = (rel: string) => existsSync(join(wd, rel));
@@ -110,14 +110,107 @@ export const handleVoiceCloneRoutes: RouteHandler = async (method, url, req, res
           has("sliced") ? "asr" :
           has("source_clean.wav") || has("source.wav") ? "slice" :
           "download";
+        // mtime: take the MAX across the workdir + the active log files,
+        // because directory mtime only ticks when entries are created/deleted
+        // (not when files inside are written). During GPT training the only
+        // writes happen to logs/<exp>/train.log and the weights file, both
+        // outside workdir, so the workdir-only stat would falsely age out.
         let mtime = 0;
-        try { mtime = Math.floor(statSync(wd).mtimeMs); } catch { /* */ }
-        return { name, stage, mtimeMs: mtime, hasFormat, hasSovits, hasGpt };
+        const tryStat = (p: string) => {
+          try {
+            if (!existsSync(p)) return;
+            const m = Math.floor(statSync(p).mtimeMs);
+            if (m > mtime) mtime = m;
+          } catch { /* */ }
+        };
+        tryStat(wd);
+        tryStat(join(wd, "_pipeline.log"));
+        tryStat(join(logsDir, "train.log"));
+        // Latest SoVITS / GPT weight files for this run (most recently
+        // saved checkpoint timestamp) — covers both training stages.
+        for (const dir of [join(sovitsRepo, "SoVITS_weights_v2Pro"),
+                           join(sovitsRepo, "GPT_weights_v2Pro")]) {
+          try {
+            if (!existsSync(dir)) continue;
+            for (const f of readdirSync(dir)) {
+              if (f.startsWith(name + "_e") || f.startsWith(name + "-e")) {
+                tryStat(join(dir, f));
+              }
+            }
+          } catch { /* */ }
+        }
+        // Read the run's saved display name from _meta.json (written by the
+        // pipeline on fresh start). Lets the modal show "Jarvis" instead of
+        // "voice_d3534964" and lets Resume preserve the original name without
+        // the user retyping it. Falls back to the exp_name when no meta.
+        let displayName: string | null = null;
+        const metaPath = join(wd, "_meta.json");
+        if (existsSync(metaPath)) {
+          try {
+            const m = JSON.parse(readFileSync(metaPath, "utf-8"));
+            if (typeof m.name === "string" && m.name.trim()) displayName = m.name.trim();
+          } catch { /* */ }
+        }
+        return { name, displayName, stage, mtimeMs: mtime, hasFormat, hasSovits, hasGpt };
       });
       // Filter to incomplete runs only (no fully-trained clone yet).
       const incomplete = runs.filter(r => !(r.hasSovits && r.hasGpt && r.stage === "register" /*= done*/))
         .sort((a, b) => b.mtimeMs - a.mtimeMs);
       json(200, { runs: incomplete });
+      return true;
+    } catch (e) {
+      json(500, { error: (e as Error).message });
+      return true;
+    }
+  }
+
+  // ── GET /api/voices/sovits/training/<exp_name>/log[?since=N] — tail
+  // the orchestrator's log file. Lets the modal open a "live progress"
+  // pane on a run the user already kicked off, even if the original SSE
+  // stream is gone (closed modal, refreshed page, etc.).
+  if (method === "GET" && url.pathname.match(/^\/api\/voices\/sovits\/training\/[^/]+\/log$/)) {
+    const expName = decodeURIComponent(url.pathname.split("/")[5]);
+    if (!expName.match(/^voice_[a-f0-9]{8,}$/i)) {
+      json(400, { error: "invalid exp_name" });
+      return true;
+    }
+    const logPath = join(homedir(), ".lax", "sovits-training", "datasets", expName, "_pipeline.log");
+    if (!existsSync(logPath)) {
+      json(200, { content: "", size: 0, missing: true });
+      return true;
+    }
+    try {
+      const { statSync, openSync, readSync, closeSync } = await import("node:fs");
+      const stats = statSync(logPath);
+      const since = Math.max(0, Number(url.searchParams.get("since") || "0"));
+      let content = "";
+      if (since < stats.size) {
+        if (since === 0) {
+          // Tail the last 64KB to avoid shipping an enormous initial payload.
+          const TAIL = 65536;
+          const start = Math.max(0, stats.size - TAIL);
+          const fd = openSync(logPath, "r");
+          try {
+            const buf = Buffer.alloc(stats.size - start);
+            readSync(fd, buf, 0, buf.length, start);
+            content = buf.toString("utf-8");
+            // If we tail-cut, drop the partial first line so we don't render
+            // a half-line at the top of the viewer.
+            if (start > 0) {
+              const nl = content.indexOf("\n");
+              if (nl > 0) content = content.slice(nl + 1);
+            }
+          } finally { closeSync(fd); }
+        } else {
+          const fd = openSync(logPath, "r");
+          try {
+            const buf = Buffer.alloc(stats.size - since);
+            readSync(fd, buf, 0, buf.length, since);
+            content = buf.toString("utf-8");
+          } finally { closeSync(fd); }
+        }
+      }
+      json(200, { content, size: stats.size });
       return true;
     } catch (e) {
       json(500, { error: (e as Error).message });
@@ -224,9 +317,18 @@ export const handleVoiceCloneRoutes: RouteHandler = async (method, url, req, res
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
     sse("started", { args });
+    // Detach the child so a Node restart (deploy, crash, manual kill) does
+    // NOT take it down via the Windows job-object inheritance. Without this
+    // any restart of the LAX server kills any in-flight training, which is
+    // brutal when training takes 30-45 min. The orchestrator writes its
+    // progress to <workdir>/_pipeline.log so the modal can re-attach via
+    // GET /training/<exp>/log on the next page load.
     const child = spawn(venvPython, args, {
       env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1" },
+      detached: true,
+      windowsHide: true,
     });
+    child.unref();
     let stdoutBuf = "";
     child.stdout.on("data", (chunk) => {
       stdoutBuf += chunk.toString("utf-8");

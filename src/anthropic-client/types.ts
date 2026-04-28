@@ -26,6 +26,11 @@ export interface StreamOptions {
   skipCliFallback?: boolean;
   /** Force tool use: "required" makes the model call a tool. "auto" (default) lets it decide. */
   toolChoice?: "auto" | "required";
+  /** Session id passed to the MCP bridge subprocess as LAX_MCP_SESSION_ID
+   *  so it can stamp every /api/mcp/call POST with the right session. The
+   *  server uses that to look up the session's onEvent (so tool side-effects
+   *  like voice_visual reach the right WebSocket). */
+  sessionId?: string;
 }
 
 export interface AnthropicMessage {

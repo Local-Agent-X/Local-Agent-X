@@ -6,7 +6,7 @@
  * disappears from conversation, something may have changed. The agent
  * gets a gentle sensitivity hint without specifics.
  *
- * Persists to ~/.sax/topic-frequencies.json.
+ * Persists to ~/.lax/topic-frequencies.json.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

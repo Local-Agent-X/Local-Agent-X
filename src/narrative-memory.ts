@@ -5,7 +5,7 @@
  * timeline context, and ongoing chapters. Stories grow over time as new
  * details emerge, creating a rich tapestry of shared history.
  *
- * Persists to ~/.sax/narratives.json.
+ * Persists to ~/.lax/narratives.json.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

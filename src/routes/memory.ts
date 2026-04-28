@@ -82,7 +82,7 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
       const boundary = contentType.match(/boundary=(?:"([^"]+)"|([^\s;]+))/)?.[1] || contentType.match(/boundary=(?:"([^"]+)"|([^\s;]+))/)?.[2];
       if (!boundary) { json(400, { error: "No boundary in content-type" }); return true; }
       // Parse multipart to extract files
-      const tmpDir = join(tmpdir(), "sax-ingest-" + Date.now());
+      const tmpDir = join(tmpdir(), "lax-ingest-" + Date.now());
       mkdirSync(tmpDir, { recursive: true });
       const files: string[] = [];
       const parts = body.toString("binary").split("--" + boundary).filter(p => p.includes("filename="));

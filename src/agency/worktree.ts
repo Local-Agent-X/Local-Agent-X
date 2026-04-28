@@ -24,7 +24,7 @@ interface WorktreeEntry {
   mergedSuccessfully: boolean;
 }
 
-const WORKTREE_BASE = join(tmpdir(), "sax-worktrees");
+const WORKTREE_BASE = join(tmpdir(), "lax-worktrees");
 const activeWorktrees = new Map<string, WorktreeEntry>();
 
 /**

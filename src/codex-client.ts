@@ -105,7 +105,7 @@ export async function* streamCodexResponse(params: {
     Accept: "text/event-stream",
     "OpenAI-Beta": "responses=experimental",
     originator: "pi",
-    "User-Agent": `sax (${process.platform} ${process.arch})`,
+    "User-Agent": `lax (${process.platform} ${process.arch})`,
   };
   if (accountId) {
     headers["chatgpt-account-id"] = accountId;

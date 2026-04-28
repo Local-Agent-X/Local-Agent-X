@@ -17,7 +17,7 @@ export interface AgentRequestInput {
   sessionId: string;
   /** App config */
   config: LAXConfig;
-  /** Data directory (~/.sax) */
+  /** Data directory (~/.lax) */
   dataDir: string;
   /** Memory index for context building */
   memoryIndex: MemoryIndex;

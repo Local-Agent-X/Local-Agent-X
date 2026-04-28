@@ -10,7 +10,7 @@ let activeChatsSet = new Set();
 function connectChatWs() {
   if (chatWs && chatWs.readyState === WebSocket.OPEN) return;
   const wsUrl = `ws://${location.host}/ws/chat`;
-  chatWs = new WebSocket(wsUrl, ['sax-auth', AUTH_TOKEN]);
+  chatWs = new WebSocket(wsUrl, ['lax-auth', AUTH_TOKEN]);
 
   chatWs.onopen = () => {
     console.log('[ws] Chat WebSocket connected');

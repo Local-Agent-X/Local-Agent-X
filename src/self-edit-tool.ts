@@ -126,7 +126,7 @@ export const selfEditTool: ToolDefinition = {
       `- Build with: npm run build\n` +
       `- Do NOT commit or push — just make the edit and run the build to verify compilation.\n` +
       `- Make the MINIMUM change needed. No refactoring or unrelated cleanup.\n` +
-      `- If the bug is ambiguous, diagnose first (read relevant files, grep logs at /tmp/sax-server.log), then patch.\n` +
+      `- If the bug is ambiguous, diagnose first (read relevant files, grep logs at /tmp/lax-server.log), then patch.\n` +
       `- If your change breaks the build, revert it — don't leave the tree in a broken state.\n\n` +
       `When done, reply in this format (nothing else):\n` +
       `DIAGNOSIS: <one-line root cause>\n` +

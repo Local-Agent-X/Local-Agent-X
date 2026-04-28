@@ -1,12 +1,13 @@
 /**
  * MCP Bridge — spawned as a subprocess by Claude CLI.
  * Translates MCP JSON-RPC over stdio into HTTP calls back to the main
- * SAX server. That keeps tool execution inside the main process with full
+ * Local Agent X server. That keeps tool execution inside the main process with full
  * Ari / policy / approval coverage.
  *
  * Expected env (set by anthropic-client.ts when writing the MCP config):
- *   SAX_MCP_URL   — base URL of the SAX server (e.g. http://127.0.0.1:7007)
- *   SAX_MCP_TOKEN — SAX auth token for the endpoints
+ *   LAX_MCP_URL   — base URL of the Local Agent X server (e.g. http://127.0.0.1:7007)
+ *   LAX_MCP_TOKEN — Local Agent X auth token for the endpoints
+ *   (legacy SAX_MCP_URL / SAX_MCP_TOKEN still read as fallback)
  */
 
 const BASE = process.env.LAX_MCP_URL ?? process.env.SAX_MCP_URL;
@@ -35,7 +36,7 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse | nul
           result: {
             protocolVersion: PROTOCOL_VERSION,
             capabilities: { tools: {} },
-            serverInfo: { name: "sax-mcp-bridge", version: "0.1.0" },
+            serverInfo: { name: "lax-mcp-bridge", version: "0.1.0" },
           },
         };
 
@@ -47,7 +48,7 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse | nul
         const res = await fetch(`${BASE}/api/mcp/tools`, {
           headers: { "Authorization": `Bearer ${TOKEN}` },
         });
-        if (!res.ok) throw new Error(`SAX tools/list: ${res.status}`);
+        if (!res.ok) throw new Error(`Local Agent X tools/list: ${res.status}`);
         const data = await res.json() as { tools: unknown[] };
         return { jsonrpc: "2.0", id, result: { tools: data.tools } };
       }
@@ -63,7 +64,7 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse | nul
           body: JSON.stringify(body),
         });
         const data = await res.json() as { content?: unknown; isError?: boolean; error?: string };
-        if (!res.ok) throw new Error(data.error || `SAX tools/call: ${res.status}`);
+        if (!res.ok) throw new Error(data.error || `Local Agent X tools/call: ${res.status}`);
         return {
           jsonrpc: "2.0", id,
           result: { content: data.content || [{ type: "text", text: "(no output)" }], isError: !!data.isError },

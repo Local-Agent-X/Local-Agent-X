@@ -6,7 +6,7 @@
  * HOT first, then WARM and COLD as needed.  ARCHIVE is only searched
  * via explicit deepRecall.
  *
- * Persists tier assignments to ~/.sax/memory-tiers.json.
+ * Persists tier assignments to ~/.lax/memory-tiers.json.
  * Reclassification runs daily (hookable into consolidation).
  */
 

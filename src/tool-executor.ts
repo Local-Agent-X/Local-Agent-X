@@ -84,7 +84,7 @@ interface VisionUserMessage {
 // Large tool results get saved to disk with a preview returned to context.
 // This prevents blowing up the conversation window with huge file reads or web fetches.
 
-const RESULT_BUDGET_DIR = join(tmpdir(), "sax-results");
+const RESULT_BUDGET_DIR = join(tmpdir(), "lax-results");
 const DEFAULT_MAX_RESULT_SIZE = 50_000; // chars
 
 function budgetResult(content: string, maxSize: number = DEFAULT_MAX_RESULT_SIZE): string {

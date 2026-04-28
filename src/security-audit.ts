@@ -160,7 +160,7 @@ function checkOAuthTokens(dataDir: string): AuditFinding | null {
       severity: "warn",
       title: "OAuth token file corrupt",
       detail: `Cannot parse ${authFile}`,
-      remediation: "Delete the file and re-authenticate: rm ~/.sax/auth.json",
+      remediation: "Delete the file and re-authenticate: rm ~/.lax/auth.json",
     };
   }
   return null;
@@ -194,7 +194,7 @@ function checkUploadsDir(dataDir: string): AuditFinding | null {
         severity: "warn",
         title: "Uploads directory has many files",
         detail: `${files.length} files in uploads. Consider cleanup.`,
-        remediation: "Remove old uploads: delete files in ~/.sax/uploads/",
+        remediation: "Remove old uploads: delete files in ~/.lax/uploads/",
       };
     }
   } catch {}

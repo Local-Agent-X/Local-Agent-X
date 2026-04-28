@@ -56,7 +56,7 @@ export class SecurityLayer {
   constructor(workspace: string, fileAccessMode?: FileAccessMode) {
     this.workspace = resolve(workspace);
     this.fileAccessMode = fileAccessMode || this.loadFileAccessMode();
-    // Load egress allowlist from ~/.sax/egress-allowlist.json
+    // Load egress allowlist from ~/.lax/egress-allowlist.json
     try {
       const allowlistPath = join(homedir(), ".lax", "egress-allowlist.json");
       if (existsSync(allowlistPath)) {

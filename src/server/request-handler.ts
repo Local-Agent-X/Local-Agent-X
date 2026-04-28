@@ -74,12 +74,13 @@ export function createRequestHandler(deps: {
     if (url.pathname.startsWith("/api/") && !checkRateLimit(getRateLimitKey(req))) { json(429, { error: "Rate limit exceeded." }); return; }
     let requestRole: Role = "operator";
     const authExempt = new Set(["/api/auth/login", "/api/auth/logout", "/api/auth/status", "/api/auth/anthropic/login", "/api/auth/anthropic/logout", "/api/auth/anthropic/status"]);
+    const authExemptPrefixes = ["/api/kraken/public/", "/api/kraken/private/"];
     const clientIpRaw = req.socket.remoteAddress || "";
     const isLoopback = clientIpRaw === "127.0.0.1" || clientIpRaw === "::1" || clientIpRaw === "::ffff:127.0.0.1";
     const ua = req.headers["user-agent"] || "";
     const isAgentSelf = isLoopback && (ua.includes("LocalAgentX") || ua.includes("SecretAgentX"));
     if (isAgentSelf) authExempt.add(url.pathname);
-    if (url.pathname.startsWith("/api/") && !authExempt.has(url.pathname)) {
+    if (url.pathname.startsWith("/api/") && !authExempt.has(url.pathname) && !authExemptPrefixes.some(p => url.pathname.startsWith(p))) {
       const clientIp = req.socket.remoteAddress || "unknown";
       const token = (req.headers.authorization || "").startsWith("Bearer ") ? (req.headers.authorization || "").slice(7) : "";
       const lockout = getAuthFloodGuard().get(clientIp);

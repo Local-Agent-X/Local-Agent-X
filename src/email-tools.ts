@@ -11,7 +11,7 @@ function resolvePath(p: string): string {
   return resolve(p);
 }
 
-// Load email config from ~/.sax/email.json (set via Connected APIs UI) or env vars
+// Load email config from ~/.lax/email.json (set via Connected APIs UI) or env vars
 function loadEmailJson(): Record<string, string> {
   try {
     const p = resolve(homedir(), ".lax", "email.json");
@@ -61,7 +61,7 @@ function env(key: string): string | undefined {
   return process.env[key] || loadEmailJson()[key] || undefined;
 }
 
-/** Write non-secret SMTP config to ~/.sax/email.json. Password is NOT written
+/** Write non-secret SMTP config to ~/.lax/email.json. Password is NOT written
  *  here — it must be stored in the secrets vault as SMTP_PASS. */
 function writeEmailJson(patch: Record<string, string>): void {
   const { writeFileSync, readFileSync, existsSync, mkdirSync } = require("node:fs") as typeof import("node:fs");

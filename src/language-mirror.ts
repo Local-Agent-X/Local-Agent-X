@@ -5,7 +5,7 @@
  * and punctuation habits across many messages to build an evolving style
  * profile used for response adaptation.
  *
- * Persists to ~/.sax/language-style.json.
+ * Persists to ~/.lax/language-style.json.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

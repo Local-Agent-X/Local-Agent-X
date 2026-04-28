@@ -5,7 +5,7 @@
  * trust score and trust level that governs how casual, proactive, and
  * personal the agent can be.
  *
- * Persists to ~/.sax/trust-engine.json.
+ * Persists to ~/.lax/trust-engine.json.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

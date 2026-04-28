@@ -174,14 +174,14 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     json(200, issue); return true;
   }
 
-  if (method === "GET" && url.pathname.match(/^\/api\/issues\/SAX-\d+$/)) {
+  if (method === "GET" && url.pathname.match(/^\/api\/issues\/(SAX|LAX)-\d+$/)) {
     const id = url.pathname.split("/").pop()!;
     const issue = ctx.issueStore.get(id);
     if (!issue) { json(404, { error: "Issue not found" }); return true; }
     json(200, issue); return true;
   }
 
-  if (method === "PUT" && url.pathname.match(/^\/api\/issues\/SAX-\d+$/)) {
+  if (method === "PUT" && url.pathname.match(/^\/api\/issues\/(SAX|LAX)-\d+$/)) {
     const id = url.pathname.split("/").pop()!;
     const body = await safeParseBody(req);
     if (!body) { json(400, { error: "Invalid JSON" }); return true; }
@@ -191,13 +191,13 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     json(200, updated); return true;
   }
 
-  if (method === "DELETE" && url.pathname.match(/^\/api\/issues\/SAX-\d+$/)) {
+  if (method === "DELETE" && url.pathname.match(/^\/api\/issues\/(SAX|LAX)-\d+$/)) {
     const id = url.pathname.split("/").pop()!;
     json(ctx.issueStore.delete(id) ? 200 : 404, { ok: true }); return true;
   }
 
   // Issue comments
-  if (method === "POST" && url.pathname.match(/^\/api\/issues\/SAX-\d+\/comments$/)) {
+  if (method === "POST" && url.pathname.match(/^\/api\/issues\/(SAX|LAX)-\d+\/comments$/)) {
     const id = url.pathname.split("/")[3];
     const raw = await safeParseBody(req);
     const parsed = validateBody(raw, IssueCommentSchema);
@@ -211,14 +211,14 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
   if (method === "GET" && url.pathname === "/api/inbox") {
     json(200, ctx.issueStore.inbox()); return true;
   }
-  if (method === "POST" && url.pathname.match(/^\/api\/issues\/SAX-\d+\/approve$/)) {
+  if (method === "POST" && url.pathname.match(/^\/api\/issues\/(SAX|LAX)-\d+\/approve$/)) {
     const id = url.pathname.split("/")[3];
     const issue = ctx.issueStore.approve(id);
     if (!issue) { json(404, { error: "Issue not found" }); return true; }
     ctx.broadcastAll({ type: "inbox:approved", issue });
     json(200, issue); return true;
   }
-  if (method === "POST" && url.pathname.match(/^\/api\/issues\/SAX-\d+\/reject$/)) {
+  if (method === "POST" && url.pathname.match(/^\/api\/issues\/(SAX|LAX)-\d+\/reject$/)) {
     const id = url.pathname.split("/")[3];
     const body = await safeParseBody(req);
     const issue = ctx.issueStore.reject(id, body?.reason as string | undefined);

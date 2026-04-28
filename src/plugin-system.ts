@@ -136,7 +136,7 @@ function assessTrustLevel(
       trustLevel: "unsigned",
       currentHash,
       warning: `Plugin "${manifest.id}" is signed by unknown publisher "${manifest.publisher}". ` +
-        `Add them to ~/.sax/trusted-publishers.json to verify.`,
+        `Add them to ~/.lax/trusted-publishers.json to verify.`,
     };
   }
 

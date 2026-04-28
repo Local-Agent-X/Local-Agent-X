@@ -5,7 +5,7 @@
  * usage, time milestones, and personal events to trigger natural
  * celebration messages scaled to the current trust level.
  *
- * Persists to ~/.sax/milestones.json.
+ * Persists to ~/.lax/milestones.json.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

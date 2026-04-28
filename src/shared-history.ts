@@ -5,7 +5,7 @@
  * fun conversations) and generates natural-language recaps and relationship
  * summaries.
  *
- * Persists to ~/.sax/shared-history.json (max 2000 moments).
+ * Persists to ~/.lax/shared-history.json (max 2000 moments).
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

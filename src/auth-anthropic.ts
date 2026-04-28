@@ -17,7 +17,7 @@ const logger = createLogger("auth-anthropic");
  * 4. Exchange code for access + refresh tokens
  * 5. Use access token as Bearer for api.anthropic.com
  *
- * Tokens stored in ~/.sax/anthropic-auth.json
+ * Tokens stored in ~/.lax/anthropic-auth.json
  */
 
 function escapeHtml(s: string): string {

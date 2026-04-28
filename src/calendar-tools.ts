@@ -10,7 +10,7 @@ interface CalendarEvent {
 }
 interface CalendarData { events: CalendarEvent[]; }
 
-const CALENDAR_PATH = join(homedir(), '.sax', 'calendar.json');
+const CALENDAR_PATH = join(homedir(), '.lax', 'calendar.json');
 
 async function loadCalendar(): Promise<CalendarData> {
   try {
@@ -22,7 +22,7 @@ async function loadCalendar(): Promise<CalendarData> {
 }
 
 async function saveCalendar(data: CalendarData): Promise<void> {
-  await mkdir(join(homedir(), '.sax'), { recursive: true });
+  await mkdir(join(homedir(), '.lax'), { recursive: true });
   await writeFile(CALENDAR_PATH, JSON.stringify(data, null, 2), 'utf-8');
 }
 

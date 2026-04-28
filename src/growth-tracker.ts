@@ -5,7 +5,7 @@
  * a timeline of growth. Can summarize how the user has evolved and
  * compare different time periods.
  *
- * Persists to ~/.sax/growth-tracker.json.
+ * Persists to ~/.lax/growth-tracker.json.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

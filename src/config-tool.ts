@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import type { ToolDefinition, ToolResult } from './types.js';
 
-const SETTINGS_PATH = join(homedir(), '.sax', 'settings.json');
+const SETTINGS_PATH = join(homedir(), '.lax', 'settings.json');
 
 async function loadSettings(): Promise<Record<string, unknown>> {
   try {

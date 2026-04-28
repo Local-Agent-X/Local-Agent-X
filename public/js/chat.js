@@ -285,6 +285,11 @@ async function sendMessage() {
   const input = document.getElementById('msg-input');
   const text = input.value.trim();
   if (!text && pendingUploads.length === 0) return;
+  // Wait for any in-flight uploads to finish before capturing attachments —
+  // images need their server URL resolved, otherwise the backend filters them out
+  // (see prepare-request.ts: `if (a.isImage && a.url)`).
+  const inflight = pendingUploads.filter(f => f._uploadPromise).map(f => f._uploadPromise);
+  if (inflight.length > 0) await Promise.all(inflight);
   // Capture attachments before clearing
   const msgAttachments = pendingUploads.length ? pendingUploads.map(f => ({
     name: f.name, size: f.size, type: f.type, isImage: f.isImage,
@@ -1379,7 +1384,7 @@ initDragDrop();
 async function addFilesToUpload(files) {
   for (const f of files) {
     const isImage = f.type.startsWith('image/');
-    const entry = { name: f.name, size: f.size, type: f.type, isImage, url: null, dataUrl: null };
+    const entry = { name: f.name, size: f.size, type: f.type, isImage, url: null, dataUrl: null, _uploadPromise: null };
 
     // Local preview for images
     if (isImage) {
@@ -1391,14 +1396,16 @@ async function addFilesToUpload(files) {
     pendingUploads.push(entry);
     renderUploadPreviews();
 
-    // Upload to server in background
+    // Upload to server in background — track the promise so sendMessage can await it
     const form = new FormData();
     form.append('file', f);
-    try {
-      const res = await apiFetch('/api/upload', { method: 'POST', body: form, headers: {} });
-      const data = await res.json();
-      if (data.files && data.files[0]) entry.url = data.files[0].url;
-    } catch (e) { console.warn('Upload failed:', e); }
+    entry._uploadPromise = (async () => {
+      try {
+        const res = await apiFetch('/api/upload', { method: 'POST', body: form, headers: {} });
+        const data = await res.json();
+        if (data.files && data.files[0]) entry.url = data.files[0].url;
+      } catch (e) { console.warn('Upload failed:', e); }
+    })();
   }
 }
 

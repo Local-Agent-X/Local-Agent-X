@@ -131,6 +131,33 @@ export interface TurnState {
   evidenceCount: number;
   /** Evidence count at the start of each iteration — used for staleness. */
   evidenceHistory: number[];
+  /**
+   * True if the latest user message included an image attachment. When set,
+   * the orchestrator skips planning-only / uncommitted-turn / evidence-stale
+   * detectors — those misfire on vision replies. The agent's "this is what
+   * I see in the picture" is a complete answer, not a stalled plan, but it
+   * looks like one to the regex-based detectors and triggers a retry storm
+   * (3+ near-identical reply restatements per turn).
+   */
+  userMessageHasImages?: boolean;
+}
+
+/**
+ * True if any user message in the array carries an image_url part. Callers
+ * pass this through to TurnState.userMessageHasImages.
+ */
+export function userMessageHasImages(messages: Array<{ role: string; content: unknown }>): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "user") continue;
+    if (Array.isArray(m.content)) {
+      for (const part of m.content as Array<{ type?: string }>) {
+        if (part?.type === "image_url" || part?.type === "image") return true;
+      }
+    }
+    return false; // most recent user message decides — older ones don't matter
+  }
+  return false;
 }
 
 // ── Detectors ─────────────────────────────────────────────────────────────
@@ -281,6 +308,15 @@ export function runPostTurnDetectors(
   // the browser/tools with nothing new to act on.
   if (isWaitingOnUser(state.assistantText)) return null;
 
+  // Image-context exemption: when the user attached an image, the agent's
+  // expected reply is a description / answer, not an action plan. The three
+  // detectors below regex-match on phrases that read as "I'll do X" — but
+  // a sentence like "I see X in the image; you could try Y" matches that
+  // shape too, even though it's a complete answer. Empty-response / reasoning-
+  // only / single-action-stop are still safe to run because they catch
+  // genuinely broken paths (no text + no tools, etc.).
+  const skipImageMisfiringDetectors = state.userMessageHasImages === true;
+
   const checks: Array<{ run: (s: TurnState) => RetryInstruction | null; key: keyof RetryCounters }> = [
     { run: detectPlanningOnly,       key: "planningOnly" },
     { run: detectSingleActionStop,   key: "singleActionStop" },
@@ -289,7 +325,9 @@ export function runPostTurnDetectors(
     { run: detectUncommittedTurn,    key: "uncommittedTurn" },
     { run: detectEvidenceStale,      key: "evidenceStale" },
   ];
+  const IMAGE_MISFIRE_KEYS = new Set<keyof RetryCounters>(["planningOnly", "uncommittedTurn", "evidenceStale"]);
   for (const { run, key } of checks) {
+    if (skipImageMisfiringDetectors && IMAGE_MISFIRE_KEYS.has(key)) continue;
     const hit = run(state);
     if (!hit) continue;
     if (counters[key] >= budget[key]) continue;

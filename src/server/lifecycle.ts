@@ -222,15 +222,20 @@ export function wireWsChat(deps: {
 }): void {
   const { chatWs, config } = deps;
   chatWs.onChat(async (sessionId, message, attachments) => {
+    const _imgCount = (attachments || []).filter((a: any) => a?.isImage).length;
+    logger.info(`[ws-chat] onChat sess=${sessionId} msg_len=${message.length} atts=${(attachments || []).length} imgs=${_imgCount}`);
     try {
       const body = JSON.stringify({ message, sessionId, attachments: attachments || [] });
+      logger.info(`[ws-chat] body_bytes=${body.length} → fetch /api/chat`);
       const res = await fetch(`http://127.0.0.1:${config.port}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.authToken}` },
         body,
         signal: AbortSignal.timeout(600_000),
       });
+      logger.info(`[ws-chat] /api/chat status=${res.status} hasBody=${!!res.body}`);
       if (res.body) { for await (const _ of res.body) { /* drain */ } }
+      logger.info(`[ws-chat] /api/chat drain complete sess=${sessionId}`);
     } catch (e) {
       const msg = (e as Error).message;
       logger.warn(`[ws-chat] Error:`, msg);

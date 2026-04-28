@@ -9,6 +9,7 @@
  */
 
 import { execSync } from "node:child_process";
+import { existsSync, symlinkSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -122,7 +123,172 @@ export function getWorktreePath(agentId: string): string | undefined {
   return activeWorktrees.get(agentId)?.path;
 }
 
+/** Get the base branch a worktree was created from. Used by autopilot summary. */
+export function getWorktreeBaseBranch(name: string): string | undefined {
+  return activeWorktrees.get(name)?.baseBranch;
+}
+
+/** Get the branch name of a worktree. */
+export function getWorktreeBranch(name: string): string | undefined {
+  return activeWorktrees.get(name)?.branch;
+}
+
 /** Cleanup all worktrees on shutdown */
 export function cleanupAllWorktrees(): void {
   for (const [id] of activeWorktrees) cleanupWorktree(id);
+}
+
+// ── Named worktrees (autopilot) ─────────────────────────────────────────
+//
+// createWorktree() above derives branch name as `agent/<id>` and is called
+// only from the agency delegated-agent path. Autopilot needs a different
+// branch prefix (and doesn't want to be subject to the agent- session-id
+// path-rewrite logic in tool-executor.ts). createNamedWorktree() lets the
+// caller supply both the map key (name) and the full branch name.
+
+/**
+ * Junction (Windows) or symlink (Unix) a directory from src into dst.
+ * Used to share node_modules + dist between the parent repo and the worktree
+ * so autopilot doesn't need to npm-install per shift.
+ */
+function linkDirectoryInto(srcAbs: string, dstAbs: string): void {
+  if (!existsSync(srcAbs)) return;       // nothing to link
+  if (existsSync(dstAbs)) return;        // already there (e.g. tracked dist)
+  try {
+    if (process.platform === "win32") {
+      // Junction works without admin and is transparent to most tooling.
+      execSync(`cmd /c mklink /J "${dstAbs}" "${srcAbs}"`, { encoding: "utf-8", timeout: 10_000, windowsHide: true });
+    } else {
+      symlinkSync(srcAbs, dstAbs, "dir");
+    }
+  } catch (e) {
+    logger.warn(`[worktree] Failed to link ${srcAbs} -> ${dstAbs}: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * Create an isolated worktree with caller-supplied branch name.
+ * Used by autopilot — agency uses createWorktree() above.
+ *
+ * After `git worktree add` the new dir has only git-tracked files. Autopilot
+ * needs `npm run build` to work, which requires node_modules and (for ari
+ * sub-package builds) the prebuilt dist/. We junction both from the parent
+ * repo so the build inside the worktree has everything it needs without a
+ * full `npm install` per shift.
+ */
+export function createNamedWorktree(
+  name: string,
+  branchName: string,
+): { path: string; branch: string; baseBranch: string } | null {
+  try {
+    const repoRoot = git("rev-parse --show-toplevel");
+    const baseBranch = git("rev-parse --abbrev-ref HEAD", repoRoot);
+    const wtPath = join(WORKTREE_BASE, name);
+
+    git(`branch ${branchName} HEAD`, repoRoot);
+    git(`worktree add "${wtPath}" ${branchName}`, repoRoot);
+
+    // Share node_modules + ari kernel package node_modules with the parent.
+    // Autopilot edits source; the build needs deps that aren't tracked.
+    linkDirectoryInto(join(repoRoot, "node_modules"), join(wtPath, "node_modules"));
+    // ari kernel sub-packages each have their own node_modules from npm
+    // workspaces. Link them too if present, so tsup builds can find typescript.
+    try {
+      const pkgsDir = join(repoRoot, "packages");
+      if (existsSync(pkgsDir)) {
+        for (const pkg of readdirSync(pkgsDir)) {
+          const pkgRoot = join(pkgsDir, pkg);
+          if (!statSync(pkgRoot).isDirectory()) continue;
+          const srcNm = join(pkgRoot, "node_modules");
+          const dstNm = join(wtPath, "packages", pkg, "node_modules");
+          linkDirectoryInto(srcNm, dstNm);
+        }
+      }
+    } catch (e) {
+      logger.warn(`[worktree] Failed to link package node_modules: ${(e as Error).message}`);
+    }
+
+    activeWorktrees.set(name, { path: wtPath, branch: branchName, baseBranch, repoRoot, mergedSuccessfully: false });
+    logger.info(`[worktree] Created named worktree ${wtPath} on branch ${branchName} (base: ${baseBranch})`);
+    return { path: wtPath, branch: branchName, baseBranch };
+  } catch (e) {
+    logger.warn(`[worktree] Failed to create named worktree ${name}: ${(e as Error).message}`);
+    return null;
+  }
+}
+
+/** Worktree-scoped git status --porcelain. Returns empty string for clean. */
+export function getWorktreeStatus(name: string): string {
+  const wt = activeWorktrees.get(name);
+  if (!wt) throw new Error(`No worktree found for ${name}`);
+  return git("status --porcelain", wt.path);
+}
+
+/** List of files changed (added/modified/deleted) in the worktree's uncommitted state. */
+export function getWorktreeChangedFiles(name: string): string[] {
+  const status = getWorktreeStatus(name);
+  if (!status) return [];
+  return status.split("\n")
+    .filter(Boolean)
+    .map(line => line.slice(3).trim()) // strip 2-char status + space
+    .filter(Boolean);
+}
+
+/** Hard reset uncommitted changes in worktree. */
+export function resetWorktree(name: string): void {
+  const wt = activeWorktrees.get(name);
+  if (!wt) throw new Error(`No worktree found for ${name}`);
+  git("reset --hard HEAD", wt.path);
+  git("clean -fd", wt.path);
+  logger.info(`[worktree] Reset ${name} to HEAD`);
+}
+
+/** Stage everything and commit. Returns commit SHA, or null if nothing to commit. */
+export function commitInWorktree(name: string, message: string): string | null {
+  const wt = activeWorktrees.get(name);
+  if (!wt) throw new Error(`No worktree found for ${name}`);
+  const status = git("status --porcelain", wt.path);
+  if (!status) return null;
+  git("add -A", wt.path);
+  // Escape double-quotes for shell, keep newlines minimal.
+  const safe = message.replace(/"/g, '\\"').replace(/\n/g, " ");
+  git(`commit -m "${safe}"`, wt.path);
+  return git("rev-parse HEAD", wt.path);
+}
+
+interface BuildOptions {
+  command: string;
+  timeoutMs: number;
+}
+
+interface BuildResult {
+  ok: boolean;
+  durationMs: number;
+  stdout: string;
+  stderr: string;
+}
+
+/** Run a build/test command inside the worktree. */
+export function runCommandInWorktree(name: string, opts: BuildOptions): BuildResult {
+  const wt = activeWorktrees.get(name);
+  if (!wt) throw new Error(`No worktree found for ${name}`);
+  const start = Date.now();
+  try {
+    const stdout = execSync(opts.command, {
+      cwd: wt.path,
+      encoding: "utf-8",
+      timeout: opts.timeoutMs,
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return { ok: true, durationMs: Date.now() - start, stdout, stderr: "" };
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string; message: string; code?: number };
+    return {
+      ok: false,
+      durationMs: Date.now() - start,
+      stdout: err.stdout || "",
+      stderr: err.stderr || err.message || "",
+    };
+  }
 }

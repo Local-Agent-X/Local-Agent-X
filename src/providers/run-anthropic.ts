@@ -197,7 +197,7 @@ export async function runAnthropicAgent(
 
     // Post-turn validation phase (same detector stack as the standard loop)
     {
-      const { runPostTurnDetectors: runA, computeEvidenceCount: evidenceA } =
+      const { runPostTurnDetectors: runA, computeEvidenceCount: evidenceA, userMessageHasImages: hasImgsA } =
         await import("../agent-loop-detectors.js");
       evidenceHistoryAnthropic.push(evidenceA(messages));
       const detectorStateA = {
@@ -209,6 +209,7 @@ export async function runAnthropicAgent(
         iteration,
         evidenceCount: evidenceHistoryAnthropic[evidenceHistoryAnthropic.length - 1],
         evidenceHistory: [...evidenceHistoryAnthropic],
+        userMessageHasImages: hasImgsA(messages as Array<{ role: string; content: unknown }>),
       };
       const hitA = runA(detectorStateA, retryCountersAnthropic);
       if (hitA && iteration < maxIterations - 1) {

@@ -49,6 +49,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
       "- tabs: List all open tabs with URLs and titles.\n" +
       "- switch_tab: Switch to a tab by index (set 'value' to tab number).\n" +
       "- info: Get current page URL, title, and engine.\n" +
+      "- dialog_accept: Accept a pending native browser dialog (alert/confirm/prompt). Pass 'value' for prompt() responses.\n" +
+      "- dialog_dismiss: Dismiss a pending native browser dialog.\n" +
       "- close: Close the browser session.\n\n" +
       "TIPS:\n" +
       "- After navigate, ALWAYS take a snapshot before interacting.\n" +
@@ -59,7 +61,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
       properties: {
         action: {
           type: "string",
-          enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "scroll", "tabs", "switch_tab", "info", "close"],
+          enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "scroll", "tabs", "switch_tab", "info", "dialog_accept", "dialog_dismiss", "close"],
           description: "The browser action to perform. Use 'snapshot' to see interactive elements with ref numbers, then 'click' with a ref. Use 'new_tab' to open a URL in a new tab without closing the current one.",
         },
         url: {
@@ -232,6 +234,15 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
 
           case "info": {
             return ok(await manager.getInfo());
+          }
+
+          case "dialog_accept": {
+            const promptText = args.value !== undefined ? String(args.value) : undefined;
+            return ok(await manager.dialogAccept(promptText));
+          }
+
+          case "dialog_dismiss": {
+            return ok(await manager.dialogDismiss());
           }
 
           case "close": {

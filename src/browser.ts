@@ -1,9 +1,9 @@
 import type { Browser, Page, BrowserContext } from "playwright";
 import type { ChildProcess } from "node:child_process";
-import { wrapExternalContent } from "./sanitize.js";
 import { ObservationRegistry, type BrowserObservation } from "./browser/observation.js";
 import { clickRef, fillRef, clickByText as clickByTextAction } from "./browser/actions.js";
 import { waitForStability } from "./browser/stability.js";
+import { installDialogHandler, handleNextDialog } from "./browser/dialog-handler.js";
 import {
   launchViaCDP, USER_AGENTS, STEALTH_ARGS,
   NAV_TIMEOUT, ACTION_TIMEOUT,
@@ -14,15 +14,10 @@ import {
   listTabs as listTabsOp, resolveSwitchTab, pageInfo,
 } from "./browser/page-ops.js";
 
-/**
- * Browser Manager for Open Agent X.
- *
- * Uses real Chrome (via CDP) to avoid bot detection. Launcher + constants
- * live in ./browser/launcher.ts; this file focuses on session state, page
- * operations, and observation/action orchestration.
- */
+/** Browser Manager. Real Chrome via CDP; helpers in src/browser/*. */
 
 export type { BrowserEngine };
+export { withBrowserLock, getCurrentBrowserOwnerSessionId } from "./browser/mutex.js";
 
 // Auth token passed via setter instead of process.env to avoid leaking to child processes
 let _saxAuthToken = "";
@@ -41,11 +36,16 @@ export class BrowserManager {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
 
   private resetIdle(): void {
-    // Idle auto-close disabled — browser stays open until explicitly closed.
     if (this.idleTimer) {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
+  }
+
+  private adoptPage(p: Page): Page {
+    p.setDefaultTimeout(ACTION_TIMEOUT);
+    installDialogHandler(p);
+    return p;
   }
 
   // Auto-inject auth token for localhost app URLs so pages load authenticated.
@@ -76,15 +76,12 @@ export class BrowserManager {
     }
     if (engine) this.currentEngine = engine;
 
-    // Reuse existing page if still alive
     if (this.page) {
       try {
-        // Quick check if page is still connected
         await this.page.title();
         this.resetIdle();
         return this.page;
       } catch {
-        // Page disconnected — need to relaunch
         this.page = null;
         this.context = null;
         this.browser = null;
@@ -112,14 +109,12 @@ export class BrowserManager {
       this.context = existingContexts[0];
       const existingPages = this.context.pages();
       if (existingPages.length > 0) {
-        this.page = existingPages[0];
-        this.page.setDefaultTimeout(ACTION_TIMEOUT);
+        this.page = this.adoptPage(existingPages[0]);
         this.resetIdle();
         return this.page;
       }
     }
 
-    // Fallback: create new context (non-CDP path)
     this.context = await this.browser.newContext({
       userAgent: USER_AGENTS[this.currentEngine],
       viewport: { width: 1280, height: 800 },
@@ -127,8 +122,7 @@ export class BrowserManager {
       timezoneId: "America/Chicago",
     });
 
-    this.page = await this.context.newPage();
-    this.page.setDefaultTimeout(ACTION_TIMEOUT);
+    this.page = this.adoptPage(await this.context.newPage());
     this.resetIdle();
     return this.page;
   }
@@ -136,12 +130,9 @@ export class BrowserManager {
   /** Open a URL in a NEW tab (keeps existing tabs). */
   async newTab(url: string): Promise<string> {
     url = this.injectTokenIfLocal(url);
-    if (!this.context) {
-      // No browser yet — just navigate normally
-      return this.navigate(url);
-    }
-    const newPage = await this.context.newPage();
-    newPage.setDefaultTimeout(ACTION_TIMEOUT);
+    if (!this.context) return this.navigate(url);
+    const requestedHost = safeHost(url);
+    const newPage = this.adoptPage(await this.context.newPage());
     const response = await newPage.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
     const status = response?.status() ?? "unknown";
     try { await newPage.waitForLoadState("load", { timeout: 5000 }); } catch { /* load timeout ok */ }
@@ -150,23 +141,23 @@ export class BrowserManager {
     await newPage.bringToFront();
     const title = await newPage.title();
     const tabCount = this.context.pages().length;
-    return `Opened new tab (${tabCount} tabs total)\nURL: ${newPage.url()}\nStatus: ${status}\nTitle: ${title}`;
+    const redirect = redirectMessage(requestedHost, safeHost(newPage.url()));
+    return `Opened new tab (${tabCount} tabs total)\nURL: ${newPage.url()}\nStatus: ${status}\nTitle: ${title}${redirect}`;
   }
 
   async navigate(url: string, engine?: BrowserEngine): Promise<string> {
     url = this.injectTokenIfLocal(url);
+    const requestedHost = safeHost(url);
     const page = await this.getPage(engine);
     const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
     const status = response?.status() ?? "unknown";
     try { await page.waitForLoadState("load", { timeout: 5000 }); } catch { /* load timeout ok */ }
-
-    // Give JS frameworks a moment to hydrate
     await page.waitForTimeout(1000);
 
     const title = await page.title();
-    // Auto-snapshot so agent sees interactive elements immediately
+    const redirect = redirectMessage(requestedHost, safeHost(page.url()));
     const snap = await this.snapshot();
-    return `Navigated to: ${page.url()}\nStatus: ${status}\nTitle: ${title}\n\n${snap}`;
+    return `Navigated to: ${page.url()}\nStatus: ${status}\nTitle: ${title}${redirect}\n\n${snap}`;
   }
 
   /** Click an element by CSS selector. Auto-snapshots after. */
@@ -182,7 +173,6 @@ export class BrowserManager {
   /** Fill a text input by CSS selector. */
   async fill(selector: string, value: string): Promise<string> {
     const page = await this.getPage();
-    // Wait for element but with shorter timeout — auto-recovery in browser-tools handles fallbacks
     await page.waitForSelector(selector, { state: "visible", timeout: 5000 });
     await page.fill(selector, value, { timeout: ACTION_TIMEOUT });
     return `Filled "${selector}" with value (${value.length} chars)`;
@@ -191,9 +181,7 @@ export class BrowserManager {
   /** Select an option from a dropdown. */
   async select(selector: string, value: string): Promise<string> {
     const page = await this.getPage();
-    const selected = await page.selectOption(selector, value, {
-      timeout: ACTION_TIMEOUT,
-    });
+    const selected = await page.selectOption(selector, value, { timeout: ACTION_TIMEOUT });
     return `Selected "${selected.join(", ")}" in ${selector}`;
   }
 
@@ -201,16 +189,15 @@ export class BrowserManager {
 
   private registry = new ObservationRegistry();
 
-  /** Run a structured observation — returns the raw diff object. */
   async observe(): Promise<BrowserObservation> {
     const page = await this.getPage();
     return this.registry.observe(page);
   }
 
   /**
-   * Formatted observation for LLM consumption. On the first call after a
-   * navigation the full list is emitted; subsequent calls emit a diff
-   * (+ added / - removed / ~ changed) and a viewport-only default listing.
+   * Formatted observation for LLM consumption. Obstructions and native dialogs
+   * are surfaced at the TOP. First call after navigation emits the full ref
+   * list; subsequent calls emit a diff (+ added / - removed / ~ changed).
    */
   async snapshot(): Promise<string> {
     const page = await this.getPage();
@@ -253,7 +240,6 @@ export class BrowserManager {
     const page = await this.getPage();
     let result = await clickRef(page, this.registry, ref);
     if (!result.ok) {
-      // Stale ref — re-observe then retry once.
       await this.registry.observe(page);
       result = await clickRef(page, this.registry, ref);
     }
@@ -289,6 +275,16 @@ export class BrowserManager {
     return `${result.message}\nPage: ${page.url()}\n\n${after}`;
   }
 
+  async dialogAccept(promptText?: string): Promise<string> {
+    const page = await this.getPage();
+    return handleNextDialog(page, "accept", promptText);
+  }
+
+  async dialogDismiss(): Promise<string> {
+    const page = await this.getPage();
+    return handleNextDialog(page, "dismiss");
+  }
+
   async extractText(selector?: string): Promise<string> {
     return extractTextFrom(await this.getPage(), selector);
   }
@@ -308,8 +304,7 @@ export class BrowserManager {
   async switchTab(index: number): Promise<string> {
     const result = await resolveSwitchTab(this.context, index);
     if (result.ok && result.page) {
-      this.page = result.page;
-      this.page.setDefaultTimeout(ACTION_TIMEOUT);
+      this.page = this.adoptPage(result.page);
     }
     return result.message;
   }
@@ -326,81 +321,41 @@ export class BrowserManager {
     }
     this.registry.reset();
     if (this.browser) {
-      try {
-        await this.browser.close();
-      } catch {
-        // Already closed
-      }
+      try { await this.browser.close(); } catch { /* already closed */ }
       this.browser = null;
       this.context = null;
       this.page = null;
     }
-    // Kill spawned Chrome process if we launched one directly
     if (this.chromeProcess) {
-      try {
-        this.chromeProcess.kill();
-      } catch {}
+      try { this.chromeProcess.kill(); } catch {}
       this.chromeProcess = null;
     }
   }
 
   isActive(): boolean {
-    return (
-      this.browser !== null && this.page !== null && !this.page.isClosed()
-    );
+    return this.browser !== null && this.page !== null && !this.page.isClosed();
   }
+}
+
+function safeHost(url: string): string {
+  try { return new URL(url).host; } catch { return ""; }
+}
+
+function redirectMessage(requested: string, landed: string): string {
+  if (!requested || !landed) return "";
+  if (requested === landed) return "";
+  // Strip the leading "www." when comparing — most sites www-canonicalize.
+  const norm = (h: string) => h.replace(/^www\./, "");
+  if (norm(requested) === norm(landed)) return "";
+  return `\n⚠ REDIRECTED: requested ${requested}, landed on ${landed}`;
 }
 
 // Shared browser instance — Chrome can only open one user-data-dir at a time,
 // so all sessions/agents share a single browser with separate tabs.
 let sharedInstance: BrowserManager | null = null;
 
-// Per-process browser mutex. The shared instance plus the observation-ref
-// registry can race when two sessions enqueue browser actions concurrently
-// (e.g. session A clicks ref 3 mid-navigate while session B's snapshot
-// reassigns refs). We serialize every tool entry through a promise chain.
-let browserChain: Promise<unknown> = Promise.resolve();
-let currentOwnerSessionId: string | null = null;
-
-import { createLogger as createBrowserLogger } from "./logger.js";
-const browserMutexLog = createBrowserLogger("browser.mutex");
-
-export function withBrowserLock<T>(sessionId: string, fn: () => Promise<T>, onQueued?: () => void): Promise<T> {
-  const queued = currentOwnerSessionId !== null && currentOwnerSessionId !== sessionId;
-  if (queued && onQueued) {
-    try { onQueued(); } catch {}
-  }
-  const next = browserChain.then(async () => {
-    const prevOwner = currentOwnerSessionId;
-    if (prevOwner !== null && prevOwner !== sessionId) {
-      browserMutexLog.info(`[browser-mutex] handover ${prevOwner} -> ${sessionId}`);
-    }
-    currentOwnerSessionId = sessionId;
-    try {
-      return await fn();
-    } finally {
-      if (currentOwnerSessionId === sessionId) currentOwnerSessionId = null;
-    }
-  });
-  // Catch chain errors so a single tool failure doesn't poison every later
-  // browser action with the same rejection.
-  browserChain = next.catch(() => {});
-  return next;
-}
-
-export function getCurrentBrowserOwnerSessionId(): string | null {
-  return currentOwnerSessionId;
-}
-
-/**
- * Get browser manager. All sessions share a single Chrome instance to avoid
- * conflicts from multiple processes trying to lock the same user-data-dir.
- * Each agent/session uses separate tabs within the shared browser.
- */
 export function getBrowserManager(_sessionId: string = "default"): BrowserManager {
-  if (!sharedInstance) {
-    sharedInstance = new BrowserManager();
-  }
+  if (!sharedInstance) sharedInstance = new BrowserManager();
   return sharedInstance;
 }
 
@@ -419,6 +374,4 @@ export async function closeAllBrowsers(): Promise<void> {
 }
 
 // Backwards compat — no-op, session ID now passed directly
-export function setCurrentBrowserSession(_sessionId: string): void {
-  // Deprecated: session ID is now passed directly to getBrowserManager/closeBrowser
-}
+export function setCurrentBrowserSession(_sessionId: string): void {}

@@ -1,22 +1,23 @@
 /**
- * Browser observation layer — durable refs, diffs, viewport filtering.
+ * Browser observation layer — durable refs, diffs, viewport filtering, and
+ * obstruction/dialog/iframe surfacing.
  *
- * Unlike a plain snapshot that reassigns refs every call, this layer tracks
- * elements across observations via a signature (role + accessible name +
- * structural path). A stable element keeps its ref [5] across 20 observations.
- *
- * Output is a diff after the first observation: + added, - removed, ~ changed.
- * Elements outside the viewport are summarized (count) rather than listed
- * line-by-line, so long pages don't blow up token cost.
+ * Refs are stable across observations: an element keeps its [N] across many
+ * snapshots as long as its role + name + ancestor chain doesn't change. Output
+ * is a diff after the first observation. Critically, anything that BLOCKS
+ * normal interaction (modals, native dialogs, OAuth iframes) is surfaced at
+ * the TOP of the formatted output so the agent can't ignore it.
  */
 import type { Page } from "playwright";
 import { extractInteractiveElements, type RawElement } from "./extract.js";
 import { waitForStability } from "./stability.js";
+import { detectObstructions, type Obstruction } from "./modal-detector.js";
+import { listIframes, type IframeInfo } from "./iframe-detector.js";
+import { pendingDialogs, type CapturedDialog } from "./dialog-handler.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser.observation");
 
-/** Durable ref — persistent across observations while the element exists. */
 export interface DurableRef {
   id: number;
   signature: string;
@@ -26,33 +27,27 @@ export interface DurableRef {
   type: string;
   xpath: string;
   inViewport: boolean;
-  /** Last seen observation count — used to expire stale refs. */
   lastSeen: number;
-  /** Bounding rect — for viewport checks and coord-click fallback. */
   rect: { x: number; y: number; width: number; height: number };
 }
 
-/** Result of an observe() call. */
 export interface BrowserObservation {
   url: string;
   title: string;
-  /** Was this the first observation for this URL? If so, `full` is populated. */
   isInitial: boolean;
-  /** Full element list (only on isInitial=true). */
   full?: DurableRef[];
-  /** Added since last observation. */
   added: DurableRef[];
-  /** Removed since last observation. */
   removed: DurableRef[];
-  /** Name/state changed since last observation. */
   changed: Array<{ before: DurableRef; after: DurableRef }>;
-  /** Count of refs outside the current viewport (not listed to save tokens). */
   offscreenCount: number;
-  /** Total element count (in + out of viewport). */
   totalCount: number;
+  /** All current refs — used by format() to resolve obstruction button XPaths to refs. */
+  currentRefs: DurableRef[];
+  obstructions: Obstruction[];
+  dialogs: CapturedDialog[];
+  crossOriginIframes: IframeInfo[];
 }
 
-/** Registry of durable refs — one per BrowserManager instance. */
 export class ObservationRegistry {
   private refs = new Map<number, DurableRef>();
   private signatureToRef = new Map<string, number>();
@@ -60,7 +55,6 @@ export class ObservationRegistry {
   private observationCount = 0;
   private lastUrl = "";
 
-  /** Clear all state (used on navigate to a genuinely different origin). */
   reset(): void {
     this.refs.clear();
     this.signatureToRef.clear();
@@ -69,29 +63,31 @@ export class ObservationRegistry {
     this.lastUrl = "";
   }
 
-  /** Lookup by ref id (resolves a click/fill target). */
   get(id: number): DurableRef | undefined {
     return this.refs.get(id);
   }
 
-  /**
-   * Run a fresh observation against the page and diff against prior state.
-   * Returns the diff. Updates internal registry so refs persist next call.
-   */
   async observe(page: Page): Promise<BrowserObservation> {
     await waitForStability(page);
 
     const url = page.url();
     const title = await page.title().catch(() => "");
-    // If navigating to a brand-new origin, reset so we don't accumulate cross-site refs.
     const originChanged = safeOrigin(url) !== safeOrigin(this.lastUrl);
     if (originChanged && this.lastUrl !== "") this.reset();
     this.lastUrl = url;
 
-    const raw = await extractInteractiveElements(page).catch((e) => {
-      logger.warn(`[observation] extractor failed: ${(e as Error).message}`);
-      return [] as RawElement[];
-    });
+    const [raw, obstructions, iframesAll] = await Promise.all([
+      extractInteractiveElements(page).catch((e) => {
+        logger.warn(`[observation] extractor failed: ${(e as Error).message}`);
+        return [] as RawElement[];
+      }),
+      detectObstructions(page).catch((e) => {
+        logger.warn(`[observation] obstruction detector failed: ${(e as Error).message}`);
+        return [] as Obstruction[];
+      }),
+      listIframes(page).catch(() => [] as IframeInfo[]),
+    ]);
+    const dialogs = pendingDialogs(page);
     this.observationCount++;
 
     const prevRefs = new Map(this.refs);
@@ -145,7 +141,6 @@ export class ObservationRegistry {
 
     this.refs = newRefs;
     const isInitial = this.observationCount === 1 || originChanged;
-
     const offscreenCount = [...newRefs.values()].filter((r) => !r.inViewport).length;
 
     return {
@@ -158,48 +153,46 @@ export class ObservationRegistry {
       changed: isInitial ? [] : changed,
       offscreenCount,
       totalCount: newRefs.size,
+      currentRefs: [...newRefs.values()],
+      obstructions,
+      dialogs,
+      crossOriginIframes: iframesAll.filter((i) => i.crossOrigin),
     };
   }
 
-  /**
-   * Format an observation for the LLM using the browser-use-style compact
-   * element listing: `[N]<tag>text</tag>`. This is the format research shows
-   * performs best — short, stable, LLM-friendly. The model references elements
-   * by their stable [N] id; the runtime resolves selectors at action time.
-   */
   static format(obs: BrowserObservation): string {
+    const sections: string[] = [];
+
+    if (obs.dialogs.length > 0) sections.push(formatDialogs(obs.dialogs));
+    if (obs.obstructions.length > 0) sections.push(formatObstructions(obs.obstructions, obs.currentRefs));
+    if (obs.crossOriginIframes.length > 0) sections.push(formatIframes(obs.crossOriginIframes));
+
     const header = `Page: ${obs.title} — ${obs.url}`;
 
     if (obs.isInitial && obs.full) {
       const lines = obs.full.map(formatRef);
-      return `${header}\n${obs.totalCount} interactive elements:\n\n${lines.join("\n")}`;
+      sections.push(`${header}\n${obs.totalCount} interactive elements:\n\n${lines.join("\n")}`);
+    } else if (obs.added.length === 0 && obs.removed.length === 0 && obs.changed.length === 0) {
+      sections.push(`${header}\nPage unchanged since last observation — same refs still valid.`);
+    } else {
+      const parts: string[] = [
+        header,
+        `Diff: +${obs.added.length} added, -${obs.removed.length} removed, ~${obs.changed.length} changed`,
+        "",
+      ];
+      for (const r of obs.added) parts.push(`+ ${formatRef(r)}`);
+      for (const c of obs.changed) {
+        parts.push(`~ [${c.after.id}]<${c.after.role}> "${c.before.name}" → "${c.after.name}"`);
+      }
+      for (const r of obs.removed) parts.push(`- [${r.id}]<${r.role}> "${r.name}"`);
+      sections.push(parts.join("\n"));
     }
 
-    if (obs.added.length === 0 && obs.removed.length === 0 && obs.changed.length === 0) {
-      return `${header}\nPage unchanged since last observation — same refs still valid.`;
-    }
-
-    const parts: string[] = [
-      header,
-      `Diff: +${obs.added.length} added, -${obs.removed.length} removed, ~${obs.changed.length} changed`,
-      "",
-    ];
-    for (const r of obs.added) parts.push(`+ ${formatRef(r)}`);
-    for (const c of obs.changed) {
-      parts.push(`~ [${c.after.id}]<${c.after.role}> "${c.before.name}" → "${c.after.name}"`);
-    }
-    for (const r of obs.removed) parts.push(`- [${r.id}]<${r.role}> "${r.name}"`);
-    return parts.join("\n");
+    return sections.join("\n\n");
   }
 
-  /** Format a single ref as "[id] role \"name\" (type)". */
   static formatRef = formatRef;
 
-  /**
-   * Serialize registry state so it can be passed to a sub-agent or persisted
-   * in an Operation's sharedState. The receiver can call restore() to pick up
-   * where we left off — same refs, same mappings.
-   */
   serialize(): SerializedRegistry {
     return {
       refs: [...this.refs.values()],
@@ -209,7 +202,6 @@ export class ObservationRegistry {
     };
   }
 
-  /** Hydrate registry state produced by serialize(). Safe to call on empty. */
   restore(state: unknown): void {
     if (!state || typeof state !== "object") return;
     const s = state as Partial<SerializedRegistry>;
@@ -234,21 +226,69 @@ export interface SerializedRegistry {
 }
 
 function formatRef(r: DurableRef): string {
-  // Compact element line: [N]<role>text</role>
-  //   [47]<button>Submit</button>
-  //   [12]<textbox type=email>Email address</textbox>
-  //   [89]<link>Professional dashboard</link> [offscreen]
-  // Stable refs, scannable by the LLM, close to the browser-use format.
-  const safeName = r.name
-    .replace(/[\r\n\t]/g, " ")
-    .replace(/[\x00-\x1f\x7f]/g, "")
-    .replace(/</g, "(")
-    .replace(/>/g, ")")
-    .slice(0, 80);
+  const safeName = sanitizeText(r.name).slice(0, 80);
   const safeRole = (r.role || r.tag.toLowerCase()).replace(/[\r\n<>]/g, "").slice(0, 20);
   const typeAttr = r.type ? ` type=${r.type.replace(/[\r\n<>]/g, "").slice(0, 16)}` : "";
   const offBadge = r.inViewport ? "" : " [offscreen]";
   return `[${r.id}]<${safeRole}${typeAttr}>${safeName}</${safeRole}>${offBadge}`;
+}
+
+function formatDialogs(dialogs: CapturedDialog[]): string {
+  const lines: string[] = ["== NATIVE DIALOG (browser-level, blocks the page) =="];
+  for (const d of dialogs) {
+    lines.push(`  ${d.type}: "${sanitizeText(d.message).slice(0, 200)}"`);
+  }
+  lines.push(
+    `  Call browser({action:"dialog_accept"}) or browser({action:"dialog_dismiss"}) to handle. ` +
+      `For prompt() pass {action:"dialog_accept", value:"<text>"}.`
+  );
+  return lines.join("\n");
+}
+
+function formatObstructions(obstructions: Obstruction[], refs: DurableRef[]): string {
+  const xpathToRef = new Map<string, DurableRef>();
+  for (const r of refs) xpathToRef.set(r.xpath, r);
+
+  const lines: string[] = ["== OBSTRUCTION DETECTED (handle before interacting with the rest of the page) =="];
+  for (const o of obstructions.slice(0, 4)) {
+    const name = sanitizeText(o.name).slice(0, 80) || "(no label)";
+    lines.push(`  [${o.kind}] z=${o.zIndex} "${name}"`);
+    if (o.acceptXPath) {
+      const ref = xpathToRef.get(o.acceptXPath);
+      const label = sanitizeText(o.acceptText || "accept");
+      lines.push(`    Accept: ${ref ? `[${ref.id}] ` : ""}"${label}"${ref ? "" : " — not in ref list, use click_text"}`);
+    }
+    if (o.dismissXPath) {
+      const ref = xpathToRef.get(o.dismissXPath);
+      const label = sanitizeText(o.dismissText || "dismiss");
+      lines.push(`    Dismiss: ${ref ? `[${ref.id}] ` : ""}"${label}"${ref ? "" : " — not in ref list, use click_text"}`);
+    }
+    if (!o.acceptXPath && !o.dismissXPath) {
+      lines.push(`    No accept/dismiss button found — use evaluate or click_text`);
+    }
+  }
+  if (obstructions.length > 4) {
+    lines.push(`  ...and ${obstructions.length - 4} more`);
+  }
+  return lines.join("\n");
+}
+
+function formatIframes(frames: IframeInfo[]): string {
+  const lines: string[] = ["== IFRAMES (cross-origin — refs do NOT reach inside; use evaluate or interact with the container) =="];
+  for (const f of frames.slice(0, 6)) {
+    lines.push(`  ${f.origin} (${f.rect.width}×${f.rect.height} at ${f.rect.x},${f.rect.y})`);
+  }
+  if (frames.length > 6) lines.push(`  ...and ${frames.length - 6} more`);
+  return lines.join("\n");
+}
+
+function sanitizeText(s: string): string {
+  return s
+    .replace(/[\r\n\t]/g, " ")
+    .replace(/[\x00-\x1f\x7f]/g, "")
+    .replace(/</g, "(")
+    .replace(/>/g, ")")
+    .trim();
 }
 
 function safeOrigin(url: string): string {

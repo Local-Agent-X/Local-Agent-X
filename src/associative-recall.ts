@@ -5,7 +5,7 @@
  * emotion, tools) and retrieves them through multi-channel association
  * scoring rather than flat keyword search.
  *
- * Persists to ~/.sax/associative-memory.json.
+ * Persists to ~/.lax/associative-memory.json.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

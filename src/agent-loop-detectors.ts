@@ -1,6 +1,6 @@
 // Post-turn validation detectors.
 //
-// When the model emits a response, SAX used to treat it as terminal: any
+// When the model emits a response, Local Agent X used to treat it as terminal: any
 // emitted text → return end_turn, we're done. That's wrong. A turn can be
 // incomplete in several distinct ways that look like a clean exit:
 //   - Planning-only: "I'll do X next" with zero tool calls

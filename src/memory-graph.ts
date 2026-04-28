@@ -4,7 +4,7 @@
  * Stores named entities and typed relationships between them,
  * supports path finding, pattern queries, and auto-extraction.
  *
- * Persists to ~/.sax/memory-graph.json.
+ * Persists to ~/.lax/memory-graph.json.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

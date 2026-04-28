@@ -6,7 +6,7 @@
  * of multiple servers and presents their tools as standard ToolDefinitions
  * that plug directly into our tool executor.
  *
- * Config lives at ~/.sax/mcp.json:
+ * Config lives at ~/.lax/mcp.json:
  * {
  *   "servers": {
  *     "github": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": { "GITHUB_TOKEN": "..." } },

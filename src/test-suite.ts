@@ -344,7 +344,7 @@ function printReport(elapsed: number): void {
 async function main(): Promise<void> {
   const token = loadToken();
   if (!token) {
-    logger.error("Could not read auth token from ~/.sax/config.json");
+    logger.error("Could not read auth token from ~/.lax/config.json");
     process.exit(1);
   }
 

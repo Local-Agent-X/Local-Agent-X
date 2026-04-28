@@ -134,8 +134,10 @@ export async function runAnthropicAgent(
         // needed. Flag so the auto-route fallback below doesn't trigger.
         sawMcpActivity = true;
         // Capture MCP tool names for the action-claim check AND the turn-lock
-        // registry. They come through as "mcp__sax__bash" etc; strip the
+        // registry. They come through as "mcp__lax__bash" etc; strip the
         // prefix so the check can match against our verb→tool mapping.
+        // (Matcher is prefix-agnostic via /^mcp__[^_]+__/ so legacy sessions
+        // still using mcp__sax__ also work during the rebrand window.)
         const mcpName = (event as { name?: string }).name || "";
         const plain = mcpName.replace(/^mcp__[^_]+__/, "");
         if (plain) {

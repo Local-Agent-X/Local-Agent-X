@@ -3,7 +3,7 @@
  * the user asks. Learns interaction habits, topic associations, and
  * time-based routines to offer timely, natural suggestions.
  *
- * Persists patterns to ~/.sax/proactive-patterns.json.
+ * Persists patterns to ~/.lax/proactive-patterns.json.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

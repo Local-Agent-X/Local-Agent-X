@@ -108,7 +108,7 @@ export class ToolChainAnalyzer {
       /\.ssh\//,  /\.aws\//, /\.gnupg\//, /\.kube\//, /\.env$/,
       /\.env\./, /id_rsa/, /id_ed25519/, /credentials/, /\.netrc/,
       /\.npmrc/, /\.pypirc/, /auth\.json/, /secrets?\./, /password/,
-      /\.git\/config/, /config\.json$/, /token/, /\.sax\//,
+      /\.git\/config/, /config\.json$/, /token/, /\.lax\//,
       /\.pem$/, /\.key$/, /\.p12$/, /\.pfx$/,
       // Any file outside workspace is potentially sensitive
     ];

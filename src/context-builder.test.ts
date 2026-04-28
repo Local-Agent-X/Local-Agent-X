@@ -13,7 +13,7 @@ const MOCK_INPUTS = {
   toolPromptSection: "\n\n## Tool Guidance\nUse read not cat.",
   integrationsContext: "\n\nConnected: GitHub",
   contextBlock: "\n\n--- MEMORY ---\nUser prefers concise.\n--- END ---",
-  relevantMemories: "\n\n--- RELEVANT ---\nUser works on SAX.\n--- END ---",
+  relevantMemories: "\n\n--- RELEVANT ---\nUser works on Local Agent X.\n--- END ---",
   smartContext: "",
   memoryContext: "\n\n[Memory: focused]",
   notificationHint: "",

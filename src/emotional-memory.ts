@@ -2,7 +2,7 @@
  * Emotional Memory — tracks user emotional states across conversations
  * to enable empathetic, adaptive responses.
  *
- * Persists to ~/.sax/emotional-history.json (max 1000 entries, FIFO).
+ * Persists to ~/.lax/emotional-history.json (max 1000 entries, FIFO).
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

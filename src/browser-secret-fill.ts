@@ -147,7 +147,7 @@ export function createBrowserSecretFillTool(
       // We use evaluate() with a generated selector to inspect the target node's
       // tag/type/autocomplete server-side, so the decision doesn't depend on
       // anything the LLM said.
-      const targetSelector = selector ?? `[data-sax-ref="${ref}"]`;
+      const targetSelector = selector ?? `[data-lax-ref="${ref}"]`;
       interface ElementDescriptor { tag: string; type: string; autocomplete: string; found: boolean }
       let elementDescriptor: ElementDescriptor = { tag: "", type: "", autocomplete: "", found: false };
       try {

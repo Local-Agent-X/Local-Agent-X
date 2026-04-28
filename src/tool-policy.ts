@@ -9,7 +9,7 @@ const logger = createLogger("tool-policy");
  * Tool Policy System
  *
  * Configurable allow/deny rules per tool with glob pattern support.
- * Policies are loaded from ~/.sax/tool-policy.json or inline config.
+ * Policies are loaded from ~/.lax/tool-policy.json or inline config.
  *
  * Each rule specifies:
  * - tool pattern (glob): "bash", "browser.*", "http_*", "*"
@@ -255,7 +255,7 @@ export class ToolPolicy {
 
 const DEFAULT_POLICY: ToolPolicyConfig = {
   // DEFAULT-DENY: everything is blocked unless explicitly allowed.
-  // This is the enterprise-safe posture. Users can override via ~/.sax/tool-policy.json.
+  // This is the enterprise-safe posture. Users can override via ~/.lax/tool-policy.json.
   defaultDecision: "deny",
   rules: [
     // ── Explicitly ALLOWED tools (safe by design) ──
@@ -562,7 +562,7 @@ function mergeWithDefaults(user: ToolPolicyConfig, policyPath?: string): ToolPol
   return merged;
 }
 
-/** Load tool policy from ~/.sax/tool-policy.json or use defaults */
+/** Load tool policy from ~/.lax/tool-policy.json or use defaults */
 export function loadToolPolicy(dataDir: string): LiveToolPolicy {
   const policyPath = join(dataDir, "tool-policy.json");
   if (existsSync(policyPath)) {

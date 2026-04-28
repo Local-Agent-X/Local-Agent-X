@@ -123,7 +123,7 @@ export async function launchViaCDP(
     const mode = cfg.browserMode || "isolated";
 
     // Resolve the user-data-dir based on mode.
-    // - isolated: dedicated agent profile (~/.sax/chrome-profile), zero blast
+    // - isolated: dedicated agent profile (~/.lax/chrome-profile), zero blast
     //   radius on the user's personal browsing
     // - attach: the user's real Chrome profile — agent inherits all logins,
     //   but Chrome must not already be running against that profile

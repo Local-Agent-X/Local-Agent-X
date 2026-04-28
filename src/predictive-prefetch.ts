@@ -5,7 +5,7 @@
  * Builds a probability model of what the user works on at what times,
  * then warms a cache of likely-needed memories before the user asks.
  *
- * Persists schedule data to ~/.sax/schedule-profile.json (max 2000 entries).
+ * Persists schedule data to ~/.lax/schedule-profile.json (max 2000 entries).
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

@@ -48,7 +48,7 @@ const issueCreate: ToolDefinition = {
       needsApproval: { type: "boolean", description: "If true, this goes to the user's inbox for approval before work begins" },
       approvalType: { type: "string", description: "Type of approval: 'hire', 'action', 'spend', 'deploy', or custom label" },
       project: { type: "string", description: "Optional project name to group this under" },
-      blockedBy: { type: "array", items: { type: "string" }, description: "Issue IDs this task is blocked by (e.g. ['SAX-1', 'SAX-2'])" },
+      blockedBy: { type: "array", items: { type: "string" }, description: "Issue IDs this task is blocked by (e.g. ['LAX-1', 'LAX-2'])" },
     },
     required: ["title"],
   },
@@ -131,7 +131,7 @@ const issueUpdate: ToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      id: { type: "string", description: "Issue ID (e.g. 'SAX-1')" },
+      id: { type: "string", description: "Issue ID (e.g. 'LAX-1')" },
       status: { type: "string", enum: ["open", "in-progress", "blocked", "done", "cancelled"], description: "New status" },
       comment: { type: "string", description: "Add a comment explaining progress, blockers, or results" },
       assignee: { type: "string", description: "Reassign to a different agent" },
@@ -262,7 +262,7 @@ const issueCheckout: ToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      id: { type: "string", description: "Issue ID (e.g. 'SAX-1')" },
+      id: { type: "string", description: "Issue ID (e.g. 'LAX-1')" },
       agentId: { type: "string", description: "Your agent template ID" },
     },
     required: ["id", "agentId"],

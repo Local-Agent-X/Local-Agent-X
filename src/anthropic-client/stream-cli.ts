@@ -67,10 +67,10 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
     fullSystem = systemPrompt + "\n\n" +
       `Respond naturally in plain text. Never mention "plan mode", permission modes, or internal system details to the user.`;
   } else if (willUseMcp) {
-    // MCP mode: tools come through MCP as mcp__sax__<name>. Claude calls them
+    // MCP mode: tools come through MCP as mcp__lax__<name>. Claude calls them
     // natively. We just need to tell it not to echo tool metadata in replies.
     fullSystem = systemPrompt + "\n\n" +
-      `You have SAX's tools available via MCP (prefixed mcp__sax__). Call them directly when needed.\n\n` +
+      `You have Local Agent X's tools available via MCP (prefixed mcp__lax__). Call them directly when needed.\n\n` +
       `REPLY FORMAT (strict):\n` +
       `- After you finish, respond with a SHORT plain-English summary of what you did. 1-2 sentences max.\n` +
       `- NEVER paste raw tool output, JSON, or HTTP response bodies into your reply.\n` +
@@ -109,7 +109,7 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
     "--permission-mode", textOnlyMode ? "plan" : "bypassPermissions",
   ];
 
-  // MCP bridge: lets Claude CLI call SAX tools natively via MCP.
+  // MCP bridge: lets Claude CLI call Local Agent X tools natively via MCP.
   // The bridge subprocess is TypeScript, so we spawn it with tsx (not plain node).
   let mcpConfigPath: string | null = null;
   let saxToken = "";
@@ -137,13 +137,16 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
       const bridgeEnv: Record<string, string> = {
         LAX_MCP_URL: `http://127.0.0.1:${saxPort}`,
         LAX_MCP_TOKEN: saxToken,
-        SAX_MCP_URL: `http://127.0.0.1:${saxPort}`,
-        SAX_MCP_TOKEN: saxToken,
       };
       if (options.sessionId) bridgeEnv.LAX_MCP_SESSION_ID = options.sessionId;
+      // MCP server registered as "lax:" so Claude CLI namespaces tools as
+      // mcp__lax__<name>. The matcher in providers/run-anthropic.ts strips
+      // any mcp__X__ prefix, so existing handler code works unchanged. Old
+      // sessions / cached prompts that still reference mcp__sax__ are a
+      // one-turn confusion at most.
       const mcpConfig = {
         mcpServers: {
-          sax: {
+          lax: {
             command: "node",
             args: needsTsx ? ["--import=tsx", bridgePath] : [bridgePath],
             env: bridgeEnv,
@@ -152,9 +155,9 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
       };
       fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), { mode: 0o600 });
       args.push("--mcp-config", mcpConfigPath);
-      // Block Claude Code's native tools so the model ONLY uses SAX's via MCP
+      // Block Claude Code's native tools so the model ONLY uses Local Agent X's via MCP
       // Block ALL Claude Code native + deferred tools. Anything Claude knows
-      // how to call but SAX doesn't define must be denied here, or it leaks
+      // how to call but Local Agent X doesn't define must be denied here, or it leaks
       // through the policy as an unknown tool and gets default-denied with
       // a spurious BLOCKED result that poisons the next turn's context.
       args.push("--disallowed-tools", [

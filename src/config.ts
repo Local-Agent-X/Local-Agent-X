@@ -73,7 +73,7 @@ const configSchema = z.object({
   videoServerUrl: z.string().default("http://127.0.0.1:7861"),
   xttsServerUrl: z.string().default("http://127.0.0.1:7862"),
 
-  // Browser mode. "isolated" = dedicated agent profile at ~/.sax/chrome-profile
+  // Browser mode. "isolated" = dedicated agent profile at ~/.lax/chrome-profile
   // (safer — zero blast radius on personal browsing). "attach" = launches against
   // your real Chrome profile so the agent inherits all your logins; requires
   // your regular Chrome to be closed (Chrome forbids two instances on one profile).
@@ -176,7 +176,7 @@ export function loadConfig(): LAXConfig {
   if (!config.authToken) {
     config.authToken = generateAuthToken();
     saveConfig(config);
-    logger.info("[config] Generated new auth token (see ~/.sax/config.json)");
+    logger.info("[config] Generated new auth token (see ~/.lax/config.json)");
   }
 
   return config;

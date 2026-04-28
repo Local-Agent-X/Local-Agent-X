@@ -24,7 +24,7 @@ let memory: MemoryIndex;
 let ui: UniversalIndex;
 
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), "sax-uidx-"));
+  tempDir = mkdtempSync(join(tmpdir(), "lax-uidx-"));
   // Pre-create memory subdirs so writes don't race the constructor's mkdir
   mkdirSync(join(tempDir, "memory", "bank", "entities"), { recursive: true });
   mkdirSync(join(tempDir, "memory", "session-summaries"), { recursive: true });

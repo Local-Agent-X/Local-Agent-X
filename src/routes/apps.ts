@@ -112,7 +112,7 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
   }
 
   // Rename a workspace-only app (and update any sidebar pins pointing at it).
-  // Registry-based apps (with a def.json in ~/.sax/apps/) aren't supported
+  // Registry-based apps (with a def.json in ~/.lax/apps/) aren't supported
   // yet — renaming their id requires rewriting the def file + audit refs
   // and AppRegistry.update() intentionally blocks id changes.
   if (method === "POST" && appPath.match(/^\/api\/apps\/[a-zA-Z0-9_-]+\/rename$/)) {

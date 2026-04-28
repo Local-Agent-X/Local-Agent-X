@@ -32,7 +32,7 @@ function rewritePathForWorktree(
   return join(wtPath, rawPath); // relative → prepend worktree
 }
 
-const WT = join(tmpdir(), "sax-worktrees", "test-agent");
+const WT = join(tmpdir(), "lax-worktrees", "test-agent");
 
 describe("Worktree path rewriting", () => {
   it("rewrites relative read path into worktree", () => {

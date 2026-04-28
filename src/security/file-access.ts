@@ -143,9 +143,12 @@ export function evaluateFileAccess(
       /[/\\]src[/\\]safe-regex\.ts$/i,      // Regex safety
       /[/\\]src[/\\]tool-policy\.ts$/i,     // Tool policy enforcement
       /[/\\]\.env$/i,                        // Environment secrets
-      /[/\\]\.sax[/\\]secrets\./i,           // Encrypted secrets store
-      /[/\\]\.sax[/\\]master\./i,            // Master encryption key
-      /[/\\]\.sax[/\\]auth\.json$/i,         // OAuth tokens
+      /[/\\]\.lax[/\\]secrets\./i,           // Encrypted secrets store
+      /[/\\]\.lax[/\\]master\./i,            // Master encryption key
+      /[/\\]\.lax[/\\]auth\.json$/i,         // OAuth tokens
+      /[/\\]\.sax[/\\]secrets\./i,           // Legacy ~/.sax/ paths (pre-rebrand)
+      /[/\\]\.sax[/\\]master\./i,            //   kept blocked so a stale install
+      /[/\\]\.sax[/\\]auth\.json$/i,         //   can't be exfiltrated either
     ];
     for (const pattern of coreProtectedFiles) {
       if (pattern.test(resolved) || pattern.test(realPath)) {

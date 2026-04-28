@@ -1,6 +1,6 @@
 /**
  * Protocol Variables — user-defined variables that persist across runs.
- * Stored in ~/.sax/protocol-variables.json
+ * Stored in ~/.lax/protocol-variables.json
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";

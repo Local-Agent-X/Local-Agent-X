@@ -8,7 +8,7 @@ const logger = createLogger("secrets");
 
 /**
  * Encrypted secrets store for API keys and tokens.
- * Secrets are AES-256-GCM encrypted at rest in ~/.sax/secrets.enc
+ * Secrets are AES-256-GCM encrypted at rest in ~/.lax/secrets.enc
  *
  * Master key is stored in the OS keychain (DPAPI on Windows, Keychain on macOS,
  * libsecret on Linux) rather than derived from machine identity. This means

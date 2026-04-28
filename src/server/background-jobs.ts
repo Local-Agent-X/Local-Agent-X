@@ -13,7 +13,7 @@ import type { CronService } from "../cron-service.js";
 import type { IntegrationRegistry } from "../integrations.js";
 import type { AgentSync } from "../sync.js";
 import { JobScheduler } from "./scheduler.js";
-import { detectRefusalOrError } from "../cron/output-validation.js";
+import { validateMissionOutput } from "../cron/output-validation.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.background-jobs");
@@ -71,27 +71,6 @@ export function startBackgroundJobs(deps: {
     for (const re of patterns) out = out.replace(re, "");
     return out.trim();
   };
-  const TOPIC_STOPWORDS = new Set(["this","that","with","from","have","will","your","their","there","what","when","where","which","would","could","should","about","into","other","than","then","them","they","them","also","each","more","most","some","such","very","just","like","report","produce","output","write","save","please","scan","trends","trend","daily","every","today"]);
-  function extractTopicKeywords(prompt: string): string[] {
-    return [...new Set(prompt.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length >= 4 && !TOPIC_STOPWORDS.has(w)))].slice(0, 25);
-  }
-  function scoreTopicMatch(prompt: string, output: string): { matched: number; total: number; score: number } {
-    const kw = extractTopicKeywords(prompt);
-    if (kw.length === 0) return { matched: 0, total: 0, score: 1 };
-    const lower = output.toLowerCase();
-    let matched = 0;
-    for (const w of kw) if (lower.includes(w)) matched++;
-    return { matched, total: kw.length, score: matched / kw.length };
-  }
-  function looksTruncated(text: string): boolean {
-    const t = text.trimEnd();
-    if (!t) return true;
-    const lastLine = (t.split("\n").pop() || "").trim();
-    if (/^#{1,6}\s+\S/.test(lastLine)) return false;
-    if (/^[-*+]\s*$/.test(lastLine)) return true;
-    const lastChar = t[t.length - 1];
-    return !`.!?)]}"'\``.includes(lastChar);
-  }
   cronService.onExecute(async (jobId, prompt) => {
     const cronSecurity = new SecurityLayer(resolve(process.env.LAX_WORKSPACE ?? process.env.SAX_WORKSPACE ?? join(homedir(), ".lax", "workspace")), "workspace");
     const sessionId = `cron-${jobId}-${Date.now()}`;
@@ -144,27 +123,15 @@ Use the read-only research tools (web_search, browser, http_request, web_fetch, 
       logger.error(`[cron] Job ${jobId} produced no output (stopReason: ${result.stopReason})`);
       return { output: "ERROR: Agent produced no output — check provider/model config" };
     }
-    const badPatterns = [/^Scheduled[.:]/i, /Job ID:\s*cron_/i, /^Blocker report completed/i, /saved? to .*\.md/i, /report saved/i, /^(Done|OK|Completed)[.\s]*$/i];
     const trimmed = output.trim();
-    const matchedBad = badPatterns.find(re => re.test(trimmed));
-    const tooShort = trimmed.length < 400;
-    const topic = scoreTopicMatch(cleanedPrompt, trimmed);
-    const offTopic = topic.total >= 4 && topic.score < 0.3;
-    const truncated = looksTruncated(trimmed);
-    const refusal = detectRefusalOrError(trimmed);
     const stopReason = result.stopReason || "unknown";
-    const badStop = stopReason !== "end_turn";
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const jobDir = join(cronReportsDir, jobId);
     if (!existsSync(jobDir)) mkdirSync(jobDir, { recursive: true });
     const job = cronService.get(jobId);
-    if (matchedBad || tooShort || offTopic || truncated || badStop || refusal.refused) {
-      const reason = badStop ? `bad stopReason: ${stopReason}`
-        : refusal.refused ? `refusal/error pattern: ${refusal.pattern} (stop=${stopReason})`
-        : matchedBad ? `matched bad pattern: ${matchedBad.source} (stop=${stopReason})`
-        : tooShort ? `output too short (${trimmed.length} chars, expected >= 400) (stop=${stopReason})`
-        : offTopic ? `off-topic (${topic.matched}/${topic.total} prompt keywords matched, score ${(topic.score * 100).toFixed(0)}%) (stop=${stopReason})`
-        : `output looks truncated (stop=${stopReason})`;
+    const validation = validateMissionOutput(cleanedPrompt, trimmed, stopReason);
+    if (!validation.valid) {
+      const reason = validation.reason!;
       const failedDir = join(jobDir, "failed");
       if (!existsSync(failedDir)) mkdirSync(failedDir, { recursive: true });
       const failedPath = join(failedDir, `${ts}.md`);

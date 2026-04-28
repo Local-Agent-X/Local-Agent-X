@@ -1,7 +1,7 @@
 /**
  * Hook Engine — registry, dispatch, and execution of lifecycle hooks.
  *
- * Hooks are loaded from ~/.sax/hooks.json and fire on tool/session events.
+ * Hooks are loaded from ~/.lax/hooks.json and fire on tool/session events.
  * Command hooks run shell commands. HTTP hooks POST to localhost-only URLs.
  *
  * Safety:

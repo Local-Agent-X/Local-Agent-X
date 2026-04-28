@@ -14,6 +14,9 @@ voice-models/
 .DS_Store
 Thumbs.db
 
+# Claude Code local config
+.claude/
+
 # Workspace — personal files, agent-built apps, generated content
 # These sync via the brain/memory repo, not the code repo
 workspace/*
@@ -23,3 +26,6 @@ desktop/release/
 
 # Protocol importer cache (npx scripts/import-protocols.mjs)
 .protocol-import-cache/
+
+# Auto-generated on every server start by src/manifest-generator.ts
+config/app-manifest.json

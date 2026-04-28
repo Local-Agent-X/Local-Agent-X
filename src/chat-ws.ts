@@ -140,9 +140,12 @@ export function setupChatWebSocket(server: Server, authToken: string) {
 
       if (type === "chat" && sessionId && msg.message) {
         // Handle chat via WebSocket — trigger the chat handler directly
+        const _atts = (msg.attachments || []) as any[];
+        const _imgCount = _atts.filter(a => a?.isImage).length;
+        logger.info(`[ws-chat] recv sess=${sessionId} msg_len=${String(msg.message).length} atts=${_atts.length} imgs=${_imgCount} handler=${chatHandler ? "set" : "null"}`);
         subscriptions.add(sessionId);
         if (chatHandler) {
-          chatHandler(sessionId, String(msg.message), (msg.attachments || []) as any[]);
+          chatHandler(sessionId, String(msg.message), _atts);
         }
       }
 

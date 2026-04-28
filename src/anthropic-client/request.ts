@@ -13,7 +13,21 @@ export function extractUserPrompt(messages: ChatCompletionMessageParam[]): strin
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === "user") {
       const content = messages[i].content;
-      return typeof content === "string" ? content : JSON.stringify(content);
+      if (typeof content === "string") return content;
+      if (Array.isArray(content)) {
+        const textParts: string[] = [];
+        let imageCount = 0;
+        for (const part of content as Array<Record<string, unknown>>) {
+          if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
+            textParts.push(part.text);
+          } else if (part.type === "image_url") {
+            imageCount++;
+          }
+        }
+        const prefix = imageCount > 0 ? `[User attached ${imageCount} image${imageCount === 1 ? "" : "s"}]\n\n` : "";
+        return prefix + textParts.join("\n\n");
+      }
+      return String(content ?? "");
     }
   }
   return "";

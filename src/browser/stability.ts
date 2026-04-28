@@ -1,13 +1,14 @@
 /**
- * Wait-for-stability helper.
+ * Wait until the page has settled before snapshotting.
  *
- * A page is "stable" when: the network hasn't made a new request for 500ms,
- * the DOM hasn't mutated for 300ms, and no common loading spinners are visible.
- * Used before every observe() so the agent doesn't act on a half-rendered page.
+ * Settled = networkidle (Playwright) AND no DOM child-list mutations for
+ * `domStableMs` AND no visible loading spinners. We never wait past `maxWait`
+ * — better to act on a partial render than to time out the agent's turn.
  *
- * Conservative: we never wait longer than `maxWait`. If the page is still busy
- * at that point we return anyway — the agent will get whatever's there rather
- * than a useless timeout.
+ * Why only childList+subtree (no attributes/characterData)? Animated counters,
+ * clocks, and CSS transitions emit constant attribute/text mutations and would
+ * never let us settle. Structural changes are what actually change "what is
+ * clickable", which is all the agent cares about.
  */
 import type { Page } from "playwright";
 
@@ -16,29 +17,57 @@ export interface StabilityOptions {
   maxWait?: number;
   /** Network-idle window in ms. Default 500. */
   networkIdleMs?: number;
-  /** DOM-stable window in ms. Default 300. */
+  /** DOM-mutation-quiet window in ms. Default 500. */
   domStableMs?: number;
+  /** Skip the wait entirely (caller knows the page is ready). */
+  skip?: boolean;
 }
 
 export async function waitForStability(page: Page, opts: StabilityOptions = {}): Promise<void> {
+  if (opts.skip) return;
   const maxWait = opts.maxWait ?? 3000;
   const networkIdleMs = opts.networkIdleMs ?? 500;
+  const domStableMs = opts.domStableMs ?? 500;
   const start = Date.now();
 
-  // 1) Quick network settle — Playwright's built-in networkidle waits for 500ms
-  //    of no inflight requests. Cap at half maxWait so we don't spend the whole
-  //    budget on network.
   try {
     await page.waitForLoadState("networkidle", { timeout: Math.min(networkIdleMs * 3, maxWait / 2) });
   } catch {
-    // Networkidle rarely reaches on SPAs with long-polling — that's fine.
+    // SPAs with long-polling never reach networkidle — keep going.
   }
 
-  // 2) DOM stability: poll that document.readyState is complete AND no common
-  //    loaders are still visible. We don't use MutationObserver here because
-  //    spinners often animate via CSS transforms that don't emit mutations.
   const remaining = maxWait - (Date.now() - start);
   if (remaining <= 0) return;
+
+  const domScript = `
+    (() => new Promise((resolve) => {
+      const STABLE = ${domStableMs};
+      const CAP = ${remaining};
+      const begin = Date.now();
+      let timer = null;
+      let observer = null;
+      const finish = () => {
+        try { if (observer) observer.disconnect(); } catch {}
+        if (timer) clearTimeout(timer);
+        resolve(true);
+      };
+      const reset = () => {
+        if (timer) clearTimeout(timer);
+        if (Date.now() - begin >= CAP) return finish();
+        timer = setTimeout(finish, STABLE);
+      };
+      try {
+        observer = new MutationObserver(reset);
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+      } catch { return finish(); }
+      reset();
+      setTimeout(finish, CAP);
+    }))()
+  `;
+  await page.evaluate(domScript).catch(() => {});
+
+  const remaining2 = maxWait - (Date.now() - start);
+  if (remaining2 <= 0) return;
 
   try {
     await page.waitForFunction(
@@ -53,7 +82,7 @@ export async function waitForStability(page: Page, opts: StabilityOptions = {}):
         }
         return true;
       })()`,
-      { timeout: remaining, polling: 150 }
+      { timeout: remaining2, polling: 150 }
     );
   } catch {
     // Timed out — return control and let the caller proceed with what's there.

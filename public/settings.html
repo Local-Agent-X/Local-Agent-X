@@ -571,14 +571,22 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
       <div id="tts-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
       <div class="field">
         <label class="field-label">TTS Engine</label>
-        <select class="field-select" id="cfg-tts-engine">
-          <option value="kokoro">Kokoro (Local — near-human quality)</option>
-          <option value="piper">Piper (Local — good quality, fast)</option>
-          <option value="browser">Browser SpeechSynthesis (Free — robotic)</option>
-          <option value="none">None (Disabled)</option>
+        <select class="field-select" id="cfg-tts-engine" onchange="onTtsEngineChange(this.value)">
+          <optgroup label="Built-in voices (needs Lite sidecar)">
+            <option value="kokoro">Kokoro (near-human quality)</option>
+            <option value="piper">Piper (good quality, fast)</option>
+          </optgroup>
+          <optgroup label="Cloned voices" id="cfg-tts-clone-group" style="display:none">
+            <option value="chatterbox" id="cfg-tts-engine-cb" disabled>Chatterbox (zero-shot clone)</option>
+            <option value="sovits" id="cfg-tts-engine-sv" disabled>GPT-SoVITS (trained clone)</option>
+          </optgroup>
+          <optgroup label="No install required">
+            <option value="browser">Browser SpeechSynthesis (Robotic — works without GPU)</option>
+            <option value="none">None (Disabled)</option>
+          </optgroup>
         </select>
       </div>
-      <div class="field">
+      <div class="field" id="tts-voice-field">
         <label class="field-label">Voice</label>
         <select class="field-select" id="cfg-tts-voice">
           <option value="am_onyx">Onyx (Male, deep)</option>
@@ -588,11 +596,27 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
           <option value="bm_lewis">Lewis (Male, British)</option>
         </select>
       </div>
+      <div class="field" id="tts-clone-field" style="display:none">
+        <label class="field-label">Cloned voice</label>
+        <select class="field-select" id="cfg-tts-clone">
+          <option value="">-- pick a clone --</option>
+        </select>
+        <div class="field-hint">Add zero-shot or train new clones from the chat voice picker (mic icon → ☰).</div>
+      </div>
       <div class="field">
         <label class="field-label">Speed</label>
         <input class="field-input" id="cfg-tts-speed" type="number" step="0.05" min="0.5" max="2.0" value="0.95"/>
         <div class="field-hint">0.5 = slow, 1.0 = normal, 2.0 = fast</div>
       </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Visualizer</div>
+      <div class="section-desc">Let the agent morph the on-screen particle sphere into emojis, short text, shapes, or moods during emotionally significant voice replies. Rate-limited (max 1 per reply, 2.5s cooldown). When off, voice replies stay tool-free.</div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:6px">
+        <input type="checkbox" id="cfg-voice-visuals" checked onchange="onVoiceVisualsToggle(this.checked)"/>
+        <span>Agent-controlled particle visuals</span>
+      </label>
     </div>
 
   </div>
@@ -848,7 +872,88 @@ async function checkVoice() {
     document.getElementById('stt-status').innerHTML = '<span class="status-dot"></span> Error checking';
     document.getElementById('tts-status').innerHTML = '<span class="status-dot"></span> Error checking';
   }
+  // Probe sidecar tier health so we can enable Chatterbox/SoVITS engine
+  // options. Same call chat.js makes — no new server work needed.
+  try {
+    const tr = await fetch(`${API}/api/voices/tier`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` }});
+    if (!tr.ok) return;
+    const tier = await tr.json();
+    const cbReady = !!(tier.chatterbox && tier.chatterbox.ready);
+    const svReady = !!(tier.sovits && tier.sovits.ready);
+    window._chatterboxVoices = [];
+    window._sovitsVoices = [];
+    if (cbReady) {
+      try {
+        const cr = await fetch(`${API}/api/voices/chatterbox`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` }});
+        if (cr.ok) { const d = await cr.json(); window._chatterboxVoices = Array.isArray(d?.clones) ? d.clones : []; }
+      } catch {}
+    }
+    if (svReady) {
+      try {
+        const sr = await fetch(`${API}/api/voices/sovits`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` }});
+        if (sr.ok) { const d = await sr.json(); window._sovitsVoices = Array.isArray(d?.clones) ? d.clones : []; }
+      } catch {}
+    }
+    const group = document.getElementById('cfg-tts-clone-group');
+    const cbOpt = document.getElementById('cfg-tts-engine-cb');
+    const svOpt = document.getElementById('cfg-tts-engine-sv');
+    if (group && (cbReady || svReady)) group.style.display = '';
+    if (cbOpt) cbOpt.disabled = !cbReady;
+    if (svOpt) svOpt.disabled = !svReady;
+    const engSel = document.getElementById('cfg-tts-engine');
+    if (engSel) onTtsEngineChange(engSel.value);
+  } catch { /* offline / no sidecars — fine */ }
 }
+
+// Toggle the right voice sub-picker based on engine selection.
+function onTtsEngineChange(engine) {
+  const builtin = document.getElementById('tts-voice-field');
+  const clone = document.getElementById('tts-clone-field');
+  const isClone = engine === 'chatterbox' || engine === 'sovits';
+  const isBuiltin = engine === 'kokoro' || engine === 'piper';
+  if (builtin) builtin.style.display = isBuiltin ? '' : 'none';
+  if (clone) { clone.style.display = isClone ? '' : 'none'; if (isClone) refreshTtsClonePicker(engine); }
+}
+function refreshTtsClonePicker(engine) {
+  const sel = document.getElementById('cfg-tts-clone');
+  if (!sel) return;
+  const list = engine === 'chatterbox' ? (window._chatterboxVoices || []) : (window._sovitsVoices || []);
+  const prefix = engine === 'chatterbox' ? 'cb:' : 'sv:';
+  sel.innerHTML = '<option value="">-- pick a clone --</option>' +
+    list.map(c => {
+      const star = c.fine_tuned ? ' ★' : '';
+      const name = (c.name || c.id).replace(/[<>"']/g, '');
+      return `<option value="${prefix}${c.id}">${name}${star}</option>`;
+    }).join('');
+  try {
+    const saved = localStorage.getItem('lax_voice') || '';
+    if (saved.startsWith(prefix)) sel.value = saved;
+  } catch {}
+}
+
+// Visualizer toggle (mirrors public/js/settings.js — settings.html is
+// standalone and doesn't include that file). Persists to /api/settings;
+// lifecycle.ts re-reads on each voice turn so flips apply immediately.
+async function initVoiceVisualsToggle() {
+  const el = document.getElementById('cfg-voice-visuals');
+  if (!el) return;
+  try {
+    const r = await fetch(`${API}/api/settings`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` }});
+    if (r.ok) {
+      const s = await r.json();
+      el.checked = s.voice_visuals_enabled !== false;
+    }
+  } catch { /* leave default checked */ }
+}
+function onVoiceVisualsToggle(checked) {
+  fetch(`${API}/api/settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+    body: JSON.stringify({ voice_visuals_enabled: !!checked }),
+  }).catch(() => {});
+}
+// Run init alongside checkVoice on load
+initVoiceVisualsToggle();
 
 // ── Tools list ──
 function loadToolsList() {

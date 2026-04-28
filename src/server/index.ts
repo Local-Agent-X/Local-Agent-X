@@ -55,7 +55,7 @@ export async function startServer(config: LAXConfig) {
   const { server, chatWs } = createHttpServer(requestHandler, { config, dataDir });
   chatWsHolder.value = chatWs;
 
-  await setupVoiceWs({ server, config, dataDir, memoryIndex, memoryManager, integrations, secretsStore, allAgentTools, bridgeTools, security, toolPolicy, rbac });
+  await setupVoiceWs({ server, config, dataDir, memoryIndex, memoryManager, integrations, secretsStore, allAgentTools, bridgeTools, security, toolPolicy, rbac, activeOnEventBySession });
   wireWsChat({ chatWs, config });
 
   registerHandlerEvents({

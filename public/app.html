@@ -14,7 +14,7 @@
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
 <link rel="stylesheet" href="/css/app.css"/>
-<link rel="stylesheet" href="/css/voice-sphere.css?v=va6"/>
+<link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
 <!-- Voice: Three.js (self-hosted; CSP blocks CDN scripts) for the Jarvis sphere -->
 <script src="/js/lib/three.min.js"></script>
 </head>
@@ -324,15 +324,6 @@
       <!-- Image & Video -->
       <div id="stab-image" class="tab-pane">
         <div class="section-card">
-          <div class="section-title">Voice Engines</div>
-          <div class="section-desc">Detect, install, and start voice sidecars. Each tier is independent — install only what you need.</div>
-          <div id="voice-setup-status" style="font-size:.78rem;color:var(--muted);margin-bottom:8px">Loading…</div>
-          <div id="voice-setup-tiers"></div>
-          <div class="btn-row" style="margin-top:8px">
-            <button class="action-btn" onclick="refreshVoiceSetup()">Refresh</button>
-          </div>
-        </div>
-        <div class="section-card">
           <div class="section-title">Image Generation</div>
           <div id="img-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div class="field"><label class="field-label">Default Engine</label><select class="field-select" id="cfg-image-engine"><option value="sd-local">Stable Diffusion (Local GPU)</option><option value="comfyui">ComfyUI (Local)</option><option value="dalle">DALL-E (OpenAI API)</option><option value="none">None</option></select></div>
@@ -343,36 +334,48 @@
           <div id="vid-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div class="btn-row"><button class="action-btn primary" onclick="checkServer('video')">Check Server</button><button class="action-btn secondary" onclick="startServer('video')">Start Video Server</button></div>
         </div>
+        <!-- ─── SPEECH ─── (STT + TTS + sidecar tier status all adjacent) -->
         <div class="section-card">
           <div class="section-title">Speech-to-Text</div>
           <div id="stt-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
-          <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-stt-engine"><option value="whisper">Whisper (Local)</option><option value="browser">Browser Web Speech API</option><option value="none">None</option></select></div>
+          <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-stt-engine"><option value="whisper">Whisper (Local — needs Lite sidecar)</option><option value="browser">Browser Web Speech API (No install — lower quality)</option><option value="none">None</option></select></div>
         </div>
         <div class="section-card">
           <div class="section-title">Text-to-Speech</div>
           <div id="tts-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
-          <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-tts-engine" onchange="onTtsEngineChange(this.value)"><option value="kokoro">Kokoro (Local)</option><option value="piper">Piper (Local)</option><option value="xtts">XTTS v2 (Voice Clone)</option><option value="browser">Browser</option><option value="none">None</option></select></div>
+          <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-tts-engine" onchange="onTtsEngineChange(this.value)">
+            <optgroup label="Built-in (needs Lite sidecar)">
+              <option value="kokoro">Kokoro</option>
+              <option value="piper">Piper</option>
+            </optgroup>
+            <optgroup label="Cloned voices" id="cfg-tts-clone-group" style="display:none">
+              <option value="chatterbox" id="cfg-tts-engine-cb" disabled>Chatterbox (zero-shot clone)</option>
+              <option value="sovits" id="cfg-tts-engine-sv" disabled>GPT-SoVITS (trained clone)</option>
+            </optgroup>
+            <optgroup label="No install">
+              <option value="browser">Browser SpeechSynthesis (Robotic — works without GPU)</option>
+              <option value="none">None</option>
+            </optgroup>
+          </select></div>
           <div class="field" id="tts-voice-field"><label class="field-label">Voice</label><select class="field-select" id="cfg-tts-voice"><option value="am_onyx">Onyx (Male, deep)</option><option value="am_eric">Eric (Male)</option><option value="bm_george">George (British)</option><option value="bm_lewis">Lewis (British)</option></select></div>
-          <div class="field" id="xtts-voice-field" style="display:none"><label class="field-label">Cloned Voice</label><select class="field-select" id="cfg-xtts-voice"><option value="">-- select voice --</option></select></div>
-
-          <!-- Voice Clone Manager (shown when XTTS selected) -->
-          <div id="voice-clone-section" style="display:none">
-            <div style="margin-top:16px;font-family:var(--mono);font-size:.75rem;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Voice Cloning</div>
-            <div class="section-card">
-              <p style="color:var(--muted);font-size:.78rem;margin-bottom:12px">Record or upload a 6-10 second voice sample. XTTS will clone the voice for all responses.</p>
-              <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-                <button class="btn" id="record-voice-btn" onclick="toggleVoiceRecording()">&#127908; Record</button>
-                <canvas id="voice-visualizer" width="120" height="32" style="display:none;border-radius:6px;background:var(--bg)"></canvas>
-                <label class="btn" style="cursor:pointer">&#128194; Upload<input type="file" accept="audio/*" onchange="uploadVoiceSample(this)" style="display:none"></label>
-                <span id="record-status" style="color:var(--muted);font-size:.72rem"></span>
-              </div>
-              <div class="field" style="margin-bottom:12px">
-                <label class="field-label">Voice Name</label>
-                <input type="text" class="field-input" id="voice-clone-name" placeholder="e.g. my_voice, peter, agent_x" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;font-family:var(--mono);font-size:.8rem;width:100%">
-              </div>
-              <div id="saved-voices-list"></div>
-            </div>
+          <div class="field" id="tts-clone-field" style="display:none"><label class="field-label">Cloned voice</label><select class="field-select" id="cfg-tts-clone"><option value="">-- pick a clone --</option></select><div class="field-hint" style="font-size:.74rem;color:var(--muted);margin-top:4px">Add or train clones from the chat voice picker (mic icon → ☰).</div></div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Voice Engines</div>
+          <div class="section-desc">Detect, install, and start voice sidecars. Each tier is independent — install only what you need.</div>
+          <div id="voice-setup-status" style="font-size:.78rem;color:var(--muted);margin-bottom:8px">Loading…</div>
+          <div id="voice-setup-tiers"></div>
+          <div class="btn-row" style="margin-top:8px">
+            <button class="action-btn" onclick="refreshVoiceSetup()">Refresh</button>
           </div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Visualizer</div>
+          <div class="section-desc">Let the agent morph the on-screen particle sphere into emojis, short text, shapes, or moods during emotionally significant voice replies. Rate-limited (max 1 per reply, 2.5s cooldown). When off, voice replies stay tool-free.</div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:6px">
+            <input type="checkbox" id="cfg-voice-visuals" checked onchange="onVoiceVisualsToggle(this.checked)" style="margin:0"/>
+            <span>Agent-controlled particle visuals</span>
+          </label>
         </div>
       </div>
       <!-- Security -->
@@ -835,9 +838,9 @@
 <script src="/js/spring.js"></script>
 <script src="/js/shared.js"></script>
 <script src="/js/app.js"></script>
-<script src="/js/voice-sphere.js?v=va6"></script>
-<script src="/js/chat.js?v=va6"></script>
-<script src="/js/settings.js"></script>
+<script src="/js/voice-sphere.js?v=vb2"></script>
+<script src="/js/chat.js?v=vb2"></script>
+<script src="/js/settings.js?v=vb2"></script>
 <script src="/js/secrets.js"></script>
 <script src="/js/cron.js"></script>
 <script src="/js/protocols.js"></script>

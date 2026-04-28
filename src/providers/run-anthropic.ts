@@ -117,6 +117,7 @@ export async function runAnthropicAgent(
       tools: anthropicTools,
       temperature,
       toolChoice: (iteration === 0 && shouldForceToolsA) ? "required" : "auto",
+      sessionId: options.sessionId,
     });
 
     let streamError: string | null = null;

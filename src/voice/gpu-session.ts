@@ -214,6 +214,10 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
           sentenceBuf += delta;
           flushSentences();
         },
+        onVisual: (kind, value, durationMs) => {
+          if (closed) return;
+          ctx.sendEvent({ type: "visual", kind, value, durationMs });
+        },
       });
 
       if (activeTurn?.signal.aborted) {

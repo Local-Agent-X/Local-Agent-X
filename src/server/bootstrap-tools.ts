@@ -56,13 +56,15 @@ export async function bootstrapTools(deps: {
   const browserSecretFillTool = createBrowserSecretFillTool(secretsStore, () => activeBrowserSessionIdRef.value);
   const { createSessionStatusTool } = await import("../session-status-tool.js");
   const sessionStatusTool = createSessionStatusTool(() => activeBrowserSessionIdRef.value);
+  const { createVoiceVisualTool } = await import("../voice/voice-visual-tool.js");
+  const voiceVisualTool = createVoiceVisualTool();
   const { createOperationTools } = await import("../operations/tools.js");
   const operationTools = createOperationTools();
   const { registry: toolRegistry } = buildToolRegistry();
 
   const allAgentTools: ToolDefinition[] = [
     ...allTools, httpRequestTool,
-    ...memoryTools, ...secretTools, browserSecretCaptureTool, browserSecretFillTool, sessionStatusTool, ...browserTools, ...imageTools,
+    ...memoryTools, ...secretTools, browserSecretCaptureTool, browserSecretFillTool, sessionStatusTool, voiceVisualTool, ...browserTools, ...imageTools,
     ...createCoreProtocolTools(), ...createCronTools(cronService),
     ...createAgencyTools(), ...createHandlerTools(), ...appTools, ...issueTools,
     ...operationTools,

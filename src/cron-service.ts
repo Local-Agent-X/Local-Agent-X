@@ -89,6 +89,36 @@ function msUntilNextCron(schedule: string): number | null {
   return 24 * 3600_000;
 }
 
+/** Counterpart to msUntilNextCron. Returns how long ago the most recent matching cron
+ *  time was. If lastRun is provided and is at or after that occurrence, returns null
+ *  (no missed run). Returns null for non-cron schedules or if no match in the past 48h. */
+function msSinceLastCronOccurrence(schedule: string, lastRun?: string): number | null {
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length !== 5) return null;
+  const [minField, hourField, domField, monField, dowField] = parts;
+
+  const now = new Date();
+  for (let offset = 1; offset <= 2880; offset++) {
+    const candidate = new Date(now.getTime() - offset * 60_000);
+    const min = candidate.getMinutes();
+    const hour = candidate.getHours();
+    const dom = candidate.getDate();
+    const mon = candidate.getMonth() + 1;
+    const dow = candidate.getDay();
+    if (
+      cronFieldMatches(minField, min, 59) &&
+      cronFieldMatches(hourField, hour, 23) &&
+      cronFieldMatches(domField, dom, 31) &&
+      cronFieldMatches(monField, mon, 12) &&
+      cronFieldMatches(dowField, dow, 6)
+    ) {
+      if (lastRun && new Date(lastRun).getTime() >= candidate.getTime()) return null;
+      return offset * 60_000;
+    }
+  }
+  return null;
+}
+
 /** For simple interval schedules, return fixed ms. For cron expressions, return null. */
 function getIntervalMs(schedule: string): number | null {
   const interval = parseInterval(schedule);
@@ -111,6 +141,7 @@ export class CronService {
   private settings: CronSettings = { enabled: true, maxConcurrent: 3 };
   private executeHandler: ExecuteHandler | null = null;
   private running = new Set<string>();
+  private retryCount = new Map<string, number>();
   private lastFileMtime = 0;
 
   constructor(dataDir: string) {
@@ -176,8 +207,19 @@ export class CronService {
 
   start(): void {
     if (!this.settings.enabled) return;
+    let catchUpIndex = 0;
     for (const job of this.jobs.values()) {
-      if (job.enabled) this.scheduleJob(job);
+      if (!job.enabled) continue;
+      this.scheduleJob(job);
+
+      const msSince = msSinceLastCronOccurrence(job.schedule, job.lastRun);
+      if (msSince === null || msSince > 24 * 3600_000) continue;
+
+      const missedTime = new Date(Date.now() - msSince).toISOString();
+      const delay = 60_000 + catchUpIndex * 30_000;
+      catchUpIndex++;
+      logger.info(`[cron] Catching up missed run for ${job.name} (last run: ${job.lastRun || "never"}, missed scheduled time: ${missedTime})`);
+      setTimeout(() => this.executeJob(job), delay);
     }
     logger.info(`[cron] Started with ${this.jobs.size} jobs`);
   }
@@ -221,8 +263,20 @@ export class CronService {
 
   private async executeJob(job: CronJob): Promise<void> {
     if (!this.executeHandler) return;
-    if (this.running.size >= this.settings.maxConcurrent) return;
+    if (this.running.size >= this.settings.maxConcurrent) {
+      const count = (this.retryCount.get(job.id) || 0) + 1;
+      if (count > 3) {
+        logger.error(`[cron] Job ${job.name} (${job.id}) skipped — concurrency limit ${this.settings.maxConcurrent} still full after 3 retries; giving up until next scheduled run`);
+        this.retryCount.delete(job.id);
+        return;
+      }
+      this.retryCount.set(job.id, count);
+      logger.warn(`[cron] Job ${job.name} (${job.id}) deferred — concurrency limit ${this.settings.maxConcurrent} reached, retry ${count}/3 in 60s`);
+      setTimeout(() => this.executeJob(job), 60_000);
+      return;
+    }
     if (this.running.has(job.id)) return;
+    this.retryCount.delete(job.id);
 
     this.running.add(job.id);
     try {
@@ -249,6 +303,11 @@ export class CronService {
     }
     if (!schedule || schedule.trim().length === 0) {
       throw new Error("Schedule is required");
+    }
+    const existing = [...this.jobs.values()].find(j => j.name === name);
+    if (existing) {
+      logger.info(`[cron] Updated existing job ${name} instead of creating duplicate`);
+      return this.update(existing.id, { schedule, prompt }) || existing;
     }
     const id = `cron_${Date.now().toString(36)}`;
     const job: CronJob = {
@@ -339,7 +398,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
     },
     {
       name: "mission_schedule_create",
-      description: "Schedule a recurring mission. Schedule can be an interval ('5m', '1h', '30s') or cron expression ('*/5 * * * *'). Prompt is what the agent will execute each run.",
+      description: "Schedule a recurring mission. Schedule can be an interval ('5m', '1h', '30s') or cron expression ('*/5 * * * *'). Prompt is what the agent will execute each run. If a job with the same name exists, it will be updated rather than duplicated.",
       parameters: {
         type: "object",
         properties: {

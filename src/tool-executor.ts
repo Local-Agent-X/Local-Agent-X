@@ -281,6 +281,29 @@ async function executeSingleTool(
   if (SESSION_SCOPED_TOOLS.has(tc.name)) {
     args._sessionId = sessionId || "default";
   }
+  // Autopilot: re-route subprocess-style tools to the worktree CWD (NOT main repo)
+  // and enforce the per-shift ceiling on self_edit invocations. The agent
+  // thinks it's working inside the worktree — its bash/self_edit calls need
+  // to run there too, otherwise commands like `npm run build` or `ls src/...`
+  // either fail or touch the wrong tree.
+  if (sessionId && (tc.name === "self_edit" || tc.name === "bash")) {
+    try {
+      const { isAutopilotSession, getAutopilotWorktree, trackSelfEditCall } = await import("./autopilot/registry.js");
+      if (isAutopilotSession(sessionId)) {
+        const wt = getAutopilotWorktree(sessionId);
+        if (wt && !args._cwd) args._cwd = wt;
+        if (tc.name === "self_edit") {
+          const gate = trackSelfEditCall(sessionId);
+          if (!gate.allowed) {
+            const result = `BLOCKED: self_edit ceiling reached for this autopilot run (${gate.count}/${gate.max}). Use direct edit/write/bash tools instead.`;
+            onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result, allowed: false });
+            msgs.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
+            return msgs;
+          }
+        }
+      }
+    } catch { /* registry import failed — fail open, autopilot just not active */ }
+  }
   // Inject onEvent for tools that need to stream events (e.g. request_secret,
   // browser emits browser_queued when waiting on the per-process mutex,
   // voice_visual emits a `visual` ServerEvent the browser morphs particles to).

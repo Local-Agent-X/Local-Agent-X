@@ -19,6 +19,24 @@ export async function startServer(config: LAXConfig) {
   const tools = await bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir });
   const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef } = tools;
 
+  // Wire autopilot tool context — resolves provider/model/key on each invocation
+  // so auth refreshes don't leave stale credentials inside the autopilot tools.
+  const { setAutopilotToolsContext } = await import("../autopilot/tools.js");
+  const { resolveProvider } = await import("../agent-request.js");
+  const { join: pathJoin } = await import("node:path");
+  setAutopilotToolsContext(async () => {
+    try {
+      const { provider, apiKey, model } = await resolveProvider(config, secretsStore, dataDir);
+      if (!apiKey) return null;
+      return {
+        config, apiKey, model,
+        provider: provider as "anthropic" | "codex" | "openai" | "xai" | "gemini" | "local" | "custom",
+        allTools: allAgentTools,
+        workspaceDir: pathJoin(dataDir, "operations"),
+      };
+    } catch { return null; }
+  });
+
   const sessionHelpers = createSessionHelpers({ sessionStore, memoryIndex, dataDir, maxCached: config.maxCachedSessions });
   const { sessions, getOrCreateSession, saveSession } = sessionHelpers;
 

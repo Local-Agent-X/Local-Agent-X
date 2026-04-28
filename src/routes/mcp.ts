@@ -1,6 +1,39 @@
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody, safeErrorMessage } from "../server-utils.js";
 
+function serializeMcpContent(results: Array<{ role: string; content: unknown }>): Array<Record<string, unknown>> {
+  const blocks: Array<Record<string, unknown>> = [];
+
+  for (const result of results) {
+    if (result.role === "tool") {
+      const text = typeof result.content === "string" ? result.content : JSON.stringify(result.content || "");
+      blocks.push({ type: "text", text });
+      continue;
+    }
+
+    if (result.role !== "user" || !Array.isArray(result.content)) continue;
+
+    for (const part of result.content as Array<Record<string, unknown>>) {
+      if (part.type === "text" && typeof part.text === "string") {
+        blocks.push({ type: "text", text: part.text });
+        continue;
+      }
+
+      if (part.type !== "image_url") continue;
+      const imageUrl = part.image_url as { url?: string } | undefined;
+      const match = imageUrl?.url?.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) continue;
+      blocks.push({
+        type: "image",
+        mimeType: match[1],
+        data: match[2],
+      });
+    }
+  }
+
+  return blocks;
+}
+
 /**
  * Internal MCP endpoints — consumed by src/mcp-bridge.ts subprocess,
  * which Claude CLI spawns when using the MCP config we generate.
@@ -54,13 +87,12 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
         undefined, // signal
       );
 
-      const toolResult = results.find(r => r.role === "tool");
-      const content = typeof toolResult?.content === "string" ? toolResult.content : JSON.stringify(toolResult?.content || "");
+      const content = serializeMcpContent(results as Array<{ role: string; content: unknown }>);
+      const plainText = content.filter(block => block.type === "text").map(block => String(block.text || "")).join("\n");
 
-      // MCP expects content as an array of {type, text} blocks
       json(200, {
-        content: [{ type: "text", text: content }],
-        isError: content.startsWith("BLOCKED") || content.startsWith("Tool execution failed"),
+        content: content.length > 0 ? content : [{ type: "text", text: "(no output)" }],
+        isError: plainText.startsWith("BLOCKED") || plainText.startsWith("Tool execution failed"),
       });
     } catch (e) {
       json(500, { error: safeErrorMessage(e) });

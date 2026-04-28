@@ -156,7 +156,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         images: prepared.images, maxIterations: prepared.maxIterations,
         temperature: prepared.temperature, signal: wsChat.abort.signal,
         onEvent: primaryEventProxy,
-      }), { label: `chat:${sessionId}`, timeout: 600_000 });
+      }), { label: `chat:${sessionId}`, timeout: 1_800_000 });
       // Expose mark helper to the agent loops via module import (done inside the loops)
       void markTurnIteration;
       const primaryElapsed = Date.now() - turnStart;
@@ -241,7 +241,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
               // Swallow this fallback's 'done' too — we emit our own consolidated
               // done after the whole chain finishes (or we've decided no more retries).
               onEvent: (event: ServerEvent) => { if (event.type !== "done") wrappedOnEvent(event); },
-            }), { label: `chat-fallback:${next.provider}:${sessionId}`, timeout: 600_000 });
+            }), { label: `chat-fallback:${next.provider}:${sessionId}`, timeout: 1_800_000 });
             logger.info(`[timing] ${next.provider}/${next.model} fallback ${Date.now() - fbStart}ms`);
             // Success condition depends on trigger: for empty-response we need
             // non-empty text; for transient errors we need anything that's not

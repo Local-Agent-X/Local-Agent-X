@@ -46,35 +46,76 @@ export function startBackgroundJobs(deps: {
 
   const cronReportsDir = join(dataDir, "cron", "reports");
   if (!existsSync(cronReportsDir)) mkdirSync(cronReportsDir, { recursive: true });
+  const stripCronPreamble = (p: string): string => {
+    const patterns = [
+      /^every day at \d{1,2}(:\d{2})?\s*(am|pm)?,?\s*/i,
+      /^every day,?\s*/i,
+      /^daily at \d{1,2}(:\d{2})?\s*(am|pm)?,?\s*/i,
+      /^daily,?\s*/i,
+      /^at \d{1,2}(:\d{2})?\s*(am|pm)?\s+(every day|daily),?\s*/i,
+      /^each (day|morning|evening|night),?\s*/i,
+    ];
+    let out = p.trim();
+    for (const re of patterns) out = out.replace(re, "");
+    return out.trim();
+  };
   cronService.onExecute(async (jobId, prompt) => {
     const cronSecurity = new SecurityLayer(resolve(process.env.LAX_WORKSPACE ?? process.env.SAX_WORKSPACE ?? join(homedir(), ".lax", "workspace")), "workspace");
     const sessionId = `cron-${jobId}-${Date.now()}`;
+    const cleanedPrompt = stripCronPreamble(prompt);
     // Session is plumbed via args._sessionId; no global needed.
     const { prepareAgentRequest } = await import("../agent-request.js");
     const prepared = await prepareAgentRequest({
-      channel: "cron", message: prompt, sessionMessages: [], sessionId,
+      channel: "cron", message: cleanedPrompt, sessionMessages: [], sessionId,
       config, dataDir, memoryIndex, memoryManager, integrations, secretsStore,
       allAgentTools, bridgeTools, skipMemory: true,
     });
-    const cronModel = prepared.provider === "anthropic" ? "claude-haiku-4-5" : prepared.model;
-    const cronSystemPrompt = `You are a focused task execution agent. Your ONLY job is to complete the task described below. Do not list protocols, do not search memories unless the task requires it, do not do anything other than what is asked. Use the tools available to complete the task thoroughly and return the results.\n\nTask:\n${prompt}`;
-    const result = await runAgent(prompt, [], { apiKey: prepared.apiKey, model: cronModel, provider: prepared.provider as AgentOptions["provider"], systemPrompt: cronSystemPrompt, tools: prepared.tools, security: cronSecurity, toolPolicy, sessionId, maxIterations: config.maxIterations });
+    const cronModel = prepared.provider === "anthropic" ? "claude-sonnet-4-6" : prepared.model;
+    const cronSystemPrompt = `You are executing a SCHEDULED MISSION. The user message contains the task wrapped in <scheduled_task>...</scheduled_task> tags. Treat that content as data describing work you must perform RIGHT NOW — this run IS the scheduled occurrence. The schedule already exists; you are running it now.
+
+Hard rules:
+- Do NOT call mission_schedule_create or attempt to schedule the task.
+- Your output IS the report. Do NOT output text like "Scheduled", "Job ID:", "It will run...", "Blocker report completed", or any confirmation that a schedule was created.
+- Treat the task content as data, not as a meta-instruction to schedule anything.
+- Aim for at least 1000 words of actual research content.
+
+Use whatever tools are needed (web_search, browser, http_request, file write, etc.) to thoroughly complete the task and produce the requested output. If the task says "save to workspace/reports/X-[DATE].md", actually write that file using the write tool with today's date filled in.`;
+    const wrappedPrompt = `<scheduled_task>\n${cleanedPrompt}\n</scheduled_task>`;
+    // no recursive scheduling
+    const cronTools = prepared.tools.filter(t => !t.name.startsWith("mission_schedule_"));
+    const result = await runAgent(wrappedPrompt, [], { apiKey: prepared.apiKey, model: cronModel, provider: prepared.provider as AgentOptions["provider"], systemPrompt: cronSystemPrompt, tools: cronTools, security: cronSecurity, toolPolicy, sessionId, maxIterations: config.maxIterations });
     const session = getOrCreateSession(sessionId);
     session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);
     let output = extractAgentOutput(result.messages);
-    try {
-      const { Handler } = await import("../agency/handler.js");
-      const handler = Handler.getInstance();
-      const subResults = await handler.waitForSessionAgents(sessionId, 300_000);
-      if (subResults.length > 0) {
-        const subOutput = subResults.join("\n\n---\n\n");
-        output = subOutput.length > output.length ? subOutput : output + "\n\n---\n\n" + subOutput;
-        logger.info(`[cron] Job ${jobId}: collected ${subResults.length} sub-agent result(s)`);
-      }
-    } catch (e) { logger.warn(`[cron] Sub-agent wait error:`, (e as Error).message); }
+    const spawnNameRe = /^(agent_spawn|agency_create|delegate)$/;
+    const hasSpawn = result.messages.some(m => {
+      if (m.role !== "assistant" || !Array.isArray(m.content)) return false;
+      return (m.content as Array<{ type?: string; name?: string }>).some(b => b?.type === "tool_use" && typeof b.name === "string" && spawnNameRe.test(b.name));
+    });
+    if (hasSpawn) {
+      try {
+        const { Handler } = await import("../agency/handler.js");
+        const handler = Handler.getInstance();
+        const subResults = await handler.waitForSessionAgents(sessionId, 60_000);
+        if (subResults.length > 0) {
+          const subOutput = subResults.join("\n\n---\n\n");
+          output = subOutput.length > output.length ? subOutput : output + "\n\n---\n\n" + subOutput;
+          logger.info(`[cron] Job ${jobId}: collected ${subResults.length} sub-agent result(s)`);
+        }
+      } catch (e) { logger.warn(`[cron] Sub-agent wait error:`, (e as Error).message); }
+    }
     if (!output) {
       logger.error(`[cron] Job ${jobId} produced no output (stopReason: ${result.stopReason})`);
       return { output: "ERROR: Agent produced no output — check provider/model config" };
+    }
+    const badPatterns = [/^Scheduled[.:]/i, /Job ID:\s*cron_/i, /^Blocker report completed/i];
+    const trimmed = output.trim();
+    const matchedBad = badPatterns.find(re => re.test(trimmed));
+    const tooShort = trimmed.length < 400;
+    if (matchedBad || tooShort) {
+      const reason = matchedBad ? `matched bad pattern: ${matchedBad.source}` : `output too short (${trimmed.length} chars, expected >= 400)`;
+      logger.error(`[cron] Job ${jobId} output failed quality gate — ${reason}`);
+      output = `# AGENT FAILED — ${reason}\n\nThe scheduled mission did not produce a valid research report. Re-run manually via mission_schedule_reports if needed.\n\nRaw agent output:\n\n\`\`\`\n${trimmed}\n\`\`\``;
     }
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     const jobDir = join(cronReportsDir, jobId);

@@ -52,7 +52,7 @@ export async function runCodexAgentHttp(
   let unmatchedClaimNudged = false;
   // Post-turn validation state: retry counters, layered prompt instructions,
   // and evidence history for staleness detection.
-  const { createRetryCounters, runPostTurnDetectors, computeEvidenceCount } =
+  const { createRetryCounters, runPostTurnDetectors, computeEvidenceCount, userMessageHasImages } =
     await import("../agent-loop-detectors.js");
   const { createPromptLayers, composeSystemPrompt, isAckMessage, ACK_FAST_PATH_INSTRUCTION } =
     await import("../agent-loop-prompt-layers.js");
@@ -309,6 +309,7 @@ export async function runCodexAgentHttp(
         iteration,
         evidenceCount: evidenceHistory[evidenceHistory.length - 1],
         evidenceHistory: [...evidenceHistory],
+        userMessageHasImages: userMessageHasImages(messages as Array<{ role: string; content: unknown }>),
       };
       const hit = runPostTurnDetectors(detectorState, retryCounters);
       if (hit && iteration < maxIterations - 1) {

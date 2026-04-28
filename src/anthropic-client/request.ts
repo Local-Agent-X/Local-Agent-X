@@ -17,7 +17,7 @@ export function extractUserPrompt(messages: ChatCompletionMessageParam[]): strin
       if (Array.isArray(content)) {
         const textParts: string[] = [];
         let imageCount = 0;
-        for (const part of content as Array<Record<string, unknown>>) {
+        for (const part of content as unknown as Array<Record<string, unknown>>) {
           if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
             textParts.push(part.text);
           } else if (part.type === "image_url") {

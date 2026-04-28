@@ -5,7 +5,7 @@
  * Handles location, employment, preference, status, and numeric
  * contradictions using keyword overlap and entity matching.
  *
- * Persists contradiction history to ~/.sax/contradiction-history.json.
+ * Persists contradiction history to ~/.lax/contradiction-history.json.
  */
 
 import {

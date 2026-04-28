@@ -2,7 +2,7 @@
 //
 // Sherpa-ONNX needs a set of ONNX files (encoder/decoder/joiner) + tokens to
 // run streaming transducer inference. The ~50MB bundle is downloaded on first
-// use to ~/.sax/models/stt/ and reused. Progress is reported via an
+// use to ~/.lax/models/stt/ and reused. Progress is reported via an
 // optional onProgress callback so the UI can render "downloading STT model"
 // states instead of a cold silence.
 //

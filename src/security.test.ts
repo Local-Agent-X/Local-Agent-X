@@ -358,7 +358,7 @@ describe("ReDoS prevention", () => {
 // ── RBAC: bridge messages must enforce "user" role ──
 
 describe("RBAC role enforcement", () => {
-  const tmpDir = join(tmpdir(), `sax-rbac-test-${Date.now()}`);
+  const tmpDir = join(tmpdir(), `lax-rbac-test-${Date.now()}`);
   const token = randomBytes(32).toString("hex");
 
   // Setup/teardown temp dir for RBAC token storage
@@ -410,7 +410,7 @@ describe("Token expiry enforcement", () => {
   let rbac: RBACManager;
   let token: string;
 
-  tmpDir = join(tmpdir(), `sax-expiry-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  tmpDir = join(tmpdir(), `lax-expiry-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(tmpDir, { recursive: true });
   token = randomBytes(32).toString("hex");
   rbac = new RBACManager(tmpDir, token);
@@ -546,7 +546,7 @@ describe("Environment variable secret filtering", () => {
 // ── RBAC endpoint access control ──
 
 describe("RBAC endpoint access control", () => {
-  const tmpDir = join(tmpdir(), `sax-endpoint-test-${Date.now()}`);
+  const tmpDir = join(tmpdir(), `lax-endpoint-test-${Date.now()}`);
   mkdirSync(tmpDir, { recursive: true });
   const rbac = new RBACManager(tmpDir, randomBytes(32).toString("hex"));
 

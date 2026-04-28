@@ -299,7 +299,7 @@ export class TelegramBridge {
     }
   }
 
-  /** Download a Telegram-hosted file to ~/.sax/uploads, return the absolute path. */
+  /** Download a Telegram-hosted file to ~/.lax/uploads, return the absolute path. */
   private async downloadTelegramFile(token: string, fileId: string, kind: string): Promise<string> {
     const info = await this.apiCall(token, "getFile", { file_id: fileId }, false);
     if (!info.ok || !info.result?.file_path) throw new Error(info.description || "getFile failed");

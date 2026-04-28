@@ -274,7 +274,7 @@ export class UniversalIndex {
     }
 
     // Raw session transcripts — the retroactive fix for pre-pipeline sessions.
-    // Walks ~/.sax/sessions/*.json and reindexes every transcript via the
+    // Walks ~/.lax/sessions/*.json and reindexes every transcript via the
     // idempotent path. Hash-deduped, so already-indexed sessions cost ~nothing.
     if (existsSync(this.sessionsDir)) {
       const files = readdirSync(this.sessionsDir).filter(f => f.endsWith(".json"));

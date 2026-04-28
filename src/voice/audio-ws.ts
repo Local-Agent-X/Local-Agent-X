@@ -83,13 +83,15 @@ export function setupVoiceWebSocket(server: Server, authToken: string): void {
   });
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-    // Auth: query param or subprotocol "sax-auth,<token>"
+    // Auth: query param or subprotocol "lax-auth,<token>" (legacy "sax-auth"
+    // also accepted for cached browser sessions across the rebrand).
     const url = new URL(req.url || "/", "http://localhost");
     let token = url.searchParams.get("token") || "";
     if (!token) {
       const protocols = req.headers["sec-websocket-protocol"] || "";
       const parts = protocols.split(",").map(s => s.trim());
-      const idx = parts.indexOf("sax-auth");
+      let idx = parts.indexOf("lax-auth");
+      if (idx < 0) idx = parts.indexOf("sax-auth");
       if (idx >= 0 && parts[idx + 1]) token = parts[idx + 1];
     }
     const tokenBuf = Buffer.from(token);

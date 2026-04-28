@@ -219,7 +219,7 @@ export class SystemSpeakerDriver implements SpeakerDriver {
     const os = await import("node:os");
     const path = await import("node:path");
     const crypto = await import("node:crypto");
-    const tmpDir = await import("node:fs/promises").then(f => f.mkdtemp(path.join(os.tmpdir(), "sax-play-")));
+    const tmpDir = await import("node:fs/promises").then(f => f.mkdtemp(path.join(os.tmpdir(), "lax-play-")));
     const tmpFile = path.join(tmpDir, `playback.${format}`);
     const fs = await import("node:fs/promises");
     await fs.writeFile(tmpFile, audio, { mode: 0o600 });

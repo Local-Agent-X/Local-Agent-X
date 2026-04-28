@@ -13,7 +13,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
  * - user: Chat + safe tools only (no secrets management, limited shell)
  * - readonly: Read-only access (view sessions, audit logs, health)
  *
- * Tokens are stored in ~/.sax/tokens.json with hashed values.
+ * Tokens are stored in ~/.lax/tokens.json with hashed values.
  * The original shared token from config.json becomes the "operator" token.
  */
 

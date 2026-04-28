@@ -5,7 +5,7 @@
  * between user and agent. Resolves ambiguous phrases to their shared
  * meaning, and suggests natural callbacks to past moments.
  *
- * Persists to ~/.sax/inside-references.json.
+ * Persists to ~/.lax/inside-references.json.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

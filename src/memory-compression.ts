@@ -5,7 +5,7 @@
  * (full / summary / keypoints / skeleton) so older memories use
  * less space while remaining retrievable at any resolution.
  *
- * Persists compressed versions to ~/.sax/memory-compressed/.
+ * Persists compressed versions to ~/.lax/memory-compressed/.
  */
 
 import {

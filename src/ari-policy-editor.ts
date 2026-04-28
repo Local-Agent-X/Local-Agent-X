@@ -1,7 +1,7 @@
 /**
  * ARI Policy Editor — CRUD for custom security rules
  *
- * Policies are stored in ~/.sax/custom-policies.json
+ * Policies are stored in ~/.lax/custom-policies.json
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";

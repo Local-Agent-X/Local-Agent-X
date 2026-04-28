@@ -6,7 +6,7 @@
  * encode hard-won knowledge (e.g., Instagram's caption formatting quirks).
  *
  * Built-in protocols ship with the app. User preferences (account names,
- * default hashtags, posting style) are stored per-user in ~/.sax/protocol-prefs/.
+ * default hashtags, posting style) are stored per-user in ~/.lax/protocol-prefs/.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";

@@ -12,7 +12,7 @@
  * - App lifecycle states (active, suspended, archived)
  * - Component type whitelist
  *
- * Persisted to ~/.sax/apps/
+ * Persisted to ~/.lax/apps/
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from "node:fs";

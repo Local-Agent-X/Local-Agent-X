@@ -92,7 +92,7 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     if (!exists(reportPath)) { json(404, { error: "Report not found" }); return true; }
     json(200, { content: readF(reportPath, "utf-8") }); return true;
   }
-  // Delete a single report (removes from both .sax/cron/reports and workspace/missions mirror)
+  // Delete a single report (removes from both .lax/cron/reports and workspace/missions mirror)
   if (method === "DELETE" && url.pathname.match(/^\/api\/cron\/[^/]+\/reports\/[^/]+\.md$/)) {
     const parts = url.pathname.split("/");
     const id = parts[3], file = parts[5];

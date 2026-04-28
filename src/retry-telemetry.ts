@@ -2,13 +2,13 @@
  * Retry telemetry sidecar — collect retry/failover patterns silently.
  *
  * Zero behavior change. Pure append-only JSONL at
- * ~/.sax/telemetry/retries.jsonl so we can later analyze:
+ * ~/.lax/telemetry/retries.jsonl so we can later analyze:
  *   - which providers return 0-token responses and when
  *   - which tools fail most often with what errors
  *   - which fallback paths fire and how often
  *   - which sessions get stuck in retry spirals
  *
- * Read it with: jq -s 'group_by(.kind) | map({kind: .[0].kind, n: length})' ~/.sax/telemetry/retries.jsonl
+ * Read it with: jq -s 'group_by(.kind) | map({kind: .[0].kind, n: length})' ~/.lax/telemetry/retries.jsonl
  */
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";

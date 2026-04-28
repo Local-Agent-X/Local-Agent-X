@@ -91,7 +91,7 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
  *   daily-log       — YYYY-MM-DD.md
  *   mind            — MIND.md
  *   session-summary — session-summaries/<id>.md
- *   session         — raw session JSON (~/.sax/sessions/<id>.json)
+ *   session         — raw session JSON (~/.lax/sessions/<id>.json)
  *   personality     — USER.md / HEART.md / other memory-root files
  *   import          — ChatGPT / Claude / Slack imports
  */

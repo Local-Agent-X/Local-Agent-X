@@ -1,8 +1,8 @@
 /**
  * Agent Store — persists agent run history and custom templates.
  *
- * Run history: ~/.sax/agent-runs/<id>.json  (one file per run)
- * Templates:   ~/.sax/agent-templates.json  (single file)
+ * Run history: ~/.lax/agent-runs/<id>.json  (one file per run)
+ * Templates:   ~/.lax/agent-templates.json  (single file)
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync, rmSync } from "node:fs";
@@ -512,9 +512,11 @@ export class IssueStore {
     try {
       if (existsSync(ISSUES_FILE)) {
         this.issues = JSON.parse(readFileSync(ISSUES_FILE, "utf-8"));
-        // Derive counter from highest existing ID
+        // Derive counter from highest existing ID. Accept both legacy "SAX-N"
+        // and new "LAX-N" so existing issue files continue to work after the
+        // rebrand. New issues are created with the LAX- prefix below.
         for (const i of this.issues) {
-          const num = parseInt(i.id.replace("SAX-", ""), 10);
+          const num = parseInt(i.id.replace(/^(SAX|LAX)-/, ""), 10);
           if (num > this.counter) this.counter = num;
         }
       }
@@ -529,7 +531,7 @@ export class IssueStore {
     this.counter++;
     const full: Issue = {
       ...issue,
-      id: `SAX-${this.counter}`,
+      id: `LAX-${this.counter}`,
       comments: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),

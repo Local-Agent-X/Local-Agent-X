@@ -67,11 +67,15 @@ export function setupChatWebSocket(server: Server, authToken: string) {
     // Auth check: accept token via query param OR WebSocket subprotocol
     const url = new URL(req.url || "/", "http://localhost");
     let token = url.searchParams.get("token") || "";
-    // Also check Sec-WebSocket-Protocol header: ['sax-auth', TOKEN]
+    // Also check Sec-WebSocket-Protocol header: ['lax-auth', TOKEN].
+    // Accept legacy "sax-auth" too so cached old chat.js sessions still
+    // connect across the rebrand. Drop sax-auth support after a deprecation
+    // window once browsers have refreshed.
     if (!token) {
       const protocols = req.headers["sec-websocket-protocol"] || "";
       const parts = protocols.split(",").map(s => s.trim());
-      const authIdx = parts.indexOf("sax-auth");
+      let authIdx = parts.indexOf("lax-auth");
+      if (authIdx < 0) authIdx = parts.indexOf("sax-auth");
       if (authIdx >= 0 && parts[authIdx + 1]) {
         token = parts[authIdx + 1];
       }

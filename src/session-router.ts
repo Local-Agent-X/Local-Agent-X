@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
  * Maps users across platforms (Telegram, WhatsApp, Web UI, CLI) to a
  * single canonical identity so conversations persist across channels.
  *
- * Identity links: ~/.sax/identity-links.json
+ * Identity links: ~/.lax/identity-links.json
  * Session key format: "channel:identifier" → canonical peer ID
  *
  * More robust than typical approaches:

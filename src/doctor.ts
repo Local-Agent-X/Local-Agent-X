@@ -32,14 +32,14 @@ type CheckFn = () => Promise<DiagnosticResult> | DiagnosticResult;
 function checkConfigExists(): DiagnosticResult {
   const cfgPath = join(homedir(), ".lax", "config.json");
   if (!existsSync(cfgPath)) {
-    return { name: "Config file", status: "fail", message: "~/.sax/config.json not found", fix: "Run the server once to auto-generate config" };
+    return { name: "Config file", status: "fail", message: "~/.lax/config.json not found", fix: "Run the server once to auto-generate config" };
   }
   try {
     const cfg = JSON.parse(require("fs").readFileSync(cfgPath, "utf-8"));
     if (!cfg.authToken) return { name: "Config file", status: "warn", message: "Auth token is empty", fix: "Restart the server to generate an auth token" };
     return { name: "Config file", status: "pass", message: "Config valid" };
   } catch (e) {
-    return { name: "Config file", status: "fail", message: `Config parse error: ${(e as Error).message}`, fix: "Fix JSON syntax in ~/.sax/config.json" };
+    return { name: "Config file", status: "fail", message: `Config parse error: ${(e as Error).message}`, fix: "Fix JSON syntax in ~/.lax/config.json" };
   }
 }
 
@@ -134,7 +134,7 @@ function checkDiskSpace(): DiagnosticResult {
     require("fs").unlinkSync(tmpFile);
     return { name: "Disk space", status: "pass", message: "Writable" };
   } catch {
-    return { name: "Disk space", status: "fail", message: "Cannot write to ~/.sax/", fix: "Free up disk space or check permissions" };
+    return { name: "Disk space", status: "fail", message: "Cannot write to ~/.lax/", fix: "Free up disk space or check permissions" };
   }
 }
 

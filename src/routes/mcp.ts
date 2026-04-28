@@ -39,7 +39,7 @@ function serializeMcpContent(results: Array<{ role: string; content: unknown }>)
  * which Claude CLI spawns when using the MCP config we generate.
  *
  * Flow:
- *   Claude CLI --mcp-config sax.json
+ *   Claude CLI --mcp-config lax.json
  *     └─ spawns: node src/mcp-bridge.js
  *           └─ HTTP POST /api/mcp/tools   (list)
  *           └─ HTTP POST /api/mcp/call    (execute)

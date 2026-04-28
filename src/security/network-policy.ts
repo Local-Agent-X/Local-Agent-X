@@ -187,7 +187,7 @@ export function evaluateWebFetch(
         return host === baseDomain || host.endsWith("." + baseDomain);
       });
     if (!allowed) {
-      return { allowed: false, reason: `Blocked: ${host} is not in the egress allowlist. Add it to ~/.sax/egress-allowlist.json to permit.` };
+      return { allowed: false, reason: `Blocked: ${host} is not in the egress allowlist. Add it to ~/.lax/egress-allowlist.json to permit.` };
     }
   }
 

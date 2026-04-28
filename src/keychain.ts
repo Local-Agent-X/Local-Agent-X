@@ -177,7 +177,13 @@ function fileFallbackGetOrCreate(dataDir: string): Buffer {
     salt = randomBytes(32);
     writeFileSync(saltPath, salt, { mode: 0o600 });
   }
-  const identity = `sax-secrets::${hostname()}::${userInfo().username}`;
+  // Renamed from "sax-secrets" to "lax-secrets" in the SAX→LAX rebrand.
+  // Anyone using the file-fallback path (no DPAPI/Keychain/libsecret available)
+  // and upgrading from a pre-rebrand build will need to re-import secrets —
+  // their existing secrets.enc was encrypted with the old identity and won't
+  // decrypt with the new one. DPAPI / macOS Keychain / libsecret users are
+  // unaffected (their key is in the OS keychain, not derived from this).
+  const identity = `lax-secrets::${hostname()}::${userInfo().username}`;
   return scryptSync(identity, salt, 32, { N: 131072, r: 8, p: 2, maxmem: 256 * 1024 * 1024 });
 }
 

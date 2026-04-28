@@ -47,7 +47,7 @@ export interface HookResult {
   durationMs?: number;
 }
 
-// ── Hook Config (loaded from ~/.sax/hooks.json) ──
+// ── Hook Config (loaded from ~/.lax/hooks.json) ──
 
 export interface HooksConfig {
   hooks: HookDefinition[];

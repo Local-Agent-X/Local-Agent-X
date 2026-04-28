@@ -6,7 +6,7 @@
  * long-term storage (MIND.md), and updates entity pages.
  *
  * Runs nightly at 3 AM or on demand.  Persists consolidation history
- * to ~/.sax/consolidation-log.json.
+ * to ~/.lax/consolidation-log.json.
  */
 
 import {

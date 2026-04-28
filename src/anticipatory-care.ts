@@ -5,7 +5,7 @@
  * generates natural follow-up messages after those events pass. Knows
  * when to ask "how did it go?" without being prompted.
  *
- * Persists to ~/.sax/upcoming-events.json.
+ * Persists to ~/.lax/upcoming-events.json.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

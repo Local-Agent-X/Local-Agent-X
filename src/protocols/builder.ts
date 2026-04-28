@@ -1,6 +1,6 @@
 /**
  * Protocol Builder — create/edit/delete custom protocols programmatically.
- * Custom protocols are stored in ~/.sax/custom-protocols.json
+ * Custom protocols are stored in ~/.lax/custom-protocols.json
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";

@@ -2,7 +2,7 @@
  * Correction Learning — detects user corrections, records lessons,
  * demotes wrong information and promotes correct facts.
  *
- * Persists to ~/.sax/correction-history.json (max 500 entries).
+ * Persists to ~/.lax/correction-history.json (max 500 entries).
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";

@@ -48,7 +48,9 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
     if (!raw) { json(400, { error: "Invalid JSON body" }); return true; }
     const parsed = validateBody(raw, ChatRequestSchema);
     if (!parsed.success) { json(400, { error: parsed.error }); return true; }
-    const { message, attachments: _attachments } = parsed.data;
+    // message is optional in the schema (image-only sends are valid) — coerce to string
+    const message = parsed.data.message ?? "";
+    const _attachments = parsed.data.attachments;
     const sessionId = parsed.data.sessionId!;
     const attachments = _attachments!;
 

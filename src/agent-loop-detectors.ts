@@ -65,6 +65,13 @@ const ACTION_VERB =
 const CONTINUATION_CUE =
   /\b(?:next|then|after(?:wards)?|once|subsequently|following\s+this)\b/i;
 
+// Reply openers that signal "this is a recap of completed work, not a plan".
+// When the first non-whitespace token is one of these, planning-only must not
+// fire — incidental "I'll restart the server" follow-up notes inside a recap
+// are not future promises that need re-engagement.
+const COMPLETION_OPENER =
+  /^\s*(?:[*_`#>-]\s*)?(?:Done|Shipped|Fixed|Patched|All\s+(?:set|three|fixed|done|good)|Patch\s+(?:landed|applied|shipped|in)|Build\s+(?:passed|ok|complete|green)|Recap|Summary)\b/i;
+
 // Signals that the agent is legitimately blocked waiting for user input.
 // When any of these fire, all the "you didn't do enough" retry detectors must
 // stand down — forcing the agent to keep working when it's blocked just
@@ -133,6 +140,16 @@ export function detectPlanningOnly(state: TurnState): RetryInstruction | null {
   if (state.toolCallsThisIteration.length > 0) return null;
   if (!state.assistantText) return null;
   const text = state.assistantText;
+  // Recap-style completion replies (e.g. "Done. Recap: ...", "Patch landed",
+  // "All three fixes are in place") often contain incidental "I'll restart
+  // the server" notes that trip the planning regexes. If a committing tool
+  // ran this turn AND the reply opens with a completion marker, it's a
+  // legitimate recap, not a plan.
+  if (COMPLETION_OPENER.test(text)) {
+    for (const name of state.toolsCalledThisTurn) {
+      if (isCommittingTool(name)) return null;
+    }
+  }
   if (!PLANNING_FUTURE_PROMISE.test(text)) return null;
   if (!ACTION_VERB.test(text)) return null;
   return { kind: "planning-only", instruction: PLANNING_ONLY_INSTRUCTION };

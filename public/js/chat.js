@@ -288,8 +288,18 @@ async function sendMessage() {
   // Wait for any in-flight uploads to finish before capturing attachments —
   // images need their server URL resolved, otherwise the backend filters them out
   // (see prepare-request.ts: `if (a.isImage && a.url)`).
+  // Hard 8s ceiling per upload: a hung server (mid-restart) used to leave the
+  // promise pending forever, blocking every subsequent send. The race below
+  // either settles when uploads complete OR aborts the wait so we still try
+  // to send (image will be url:null and the backend will skip it, but the
+  // user's text reaches the agent rather than nothing).
   const inflight = pendingUploads.filter(f => f._uploadPromise).map(f => f._uploadPromise);
-  if (inflight.length > 0) await Promise.all(inflight);
+  if (inflight.length > 0) {
+    await Promise.race([
+      Promise.all(inflight),
+      new Promise(resolve => setTimeout(resolve, 8000)),
+    ]);
+  }
   // Capture attachments before clearing
   const msgAttachments = pendingUploads.length ? pendingUploads.map(f => ({
     name: f.name, size: f.size, type: f.type, isImage: f.isImage,

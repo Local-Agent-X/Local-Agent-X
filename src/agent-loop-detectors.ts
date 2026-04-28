@@ -72,6 +72,22 @@ const CONTINUATION_CUE =
 const COMPLETION_OPENER =
   /^\s*(?:[*_`#>-]\s*)?(?:Done|Shipped|Fixed|Patched|All\s+(?:set|three|fixed|done|good)|Patch\s+(?:landed|applied|shipped|in)|Build\s+(?:passed|ok|complete|green)|Recap|Summary)\b/i;
 
+// Past-tense completion phrases at sentence-start (string-start, after
+// ./!/?, after newline, or after markdown bullet/list/heading prefix).
+// Catches the case where the reply opens with a status line ("Build CLI
+// timed out. I'll write it directly...") but ends with a completion recap
+// ("Built **Kraken Bot** at workspace/apps/kraken-bot/...") — that "Built"
+// follows a period+space, so it counts as sentence-start.
+//
+// Anchoring to sentence-start (not anywhere in text) avoids false-negatives
+// where the phrase is buried mid-sentence ("...I think I should have built
+// the file properly. I'll fix that next.") which is a real planning case.
+// When a committing tool ran this turn AND a sentence-start completion
+// phrase fires, the "I'll" later in the text is an incidental follow-up
+// note in a recap — skip planning-only.
+const COMPLETION_PHRASE_AT_SENTENCE_START =
+  /(?:^|[.!?]\s+|\n)\s*(?:[*_`#>-]\s*)?(?:Built|Created|Wrote|Made|Implemented|Shipped|Saved|Pinned|Installed|Deployed|Pushed|Committed|Patched|Landed|Finished|Completed)\s+(?:\*\*|`|the\s+|a\s+|an\s+|to\s+)?[A-Za-z]/;
+
 // Signals that the agent is legitimately blocked waiting for user input.
 // When any of these fire, all the "you didn't do enough" retry detectors must
 // stand down — forcing the agent to keep working when it's blocked just
@@ -169,10 +185,17 @@ export function detectPlanningOnly(state: TurnState): RetryInstruction | null {
   const text = state.assistantText;
   // Recap-style completion replies (e.g. "Done. Recap: ...", "Patch landed",
   // "All three fixes are in place") often contain incidental "I'll restart
-  // the server" notes that trip the planning regexes. If a committing tool
-  // ran this turn AND the reply opens with a completion marker, it's a
-  // legitimate recap, not a plan.
-  if (COMPLETION_OPENER.test(text)) {
+  // the server" notes that trip the planning regexes. Two ways to detect
+  // a recap:
+  //   1. Reply OPENS with a completion marker (Done/Shipped/Fixed/...)
+  //   2. Reply contains a past-tense completion phrase ANYWHERE (Built X,
+  //      Wrote X, Created X, Shipped X, ...) — covers the case where the
+  //      reply opens with a status line ("Build CLI timed out. I'll write
+  //      it directly...") but ends with a real recap.
+  // Either way, if a committing tool ran this turn we treat it as a recap,
+  // not a plan, and skip the planning-only retry.
+  const looksLikeRecap = COMPLETION_OPENER.test(text) || COMPLETION_PHRASE_AT_SENTENCE_START.test(text);
+  if (looksLikeRecap) {
     for (const name of state.toolsCalledThisTurn) {
       if (isCommittingTool(name)) return null;
     }

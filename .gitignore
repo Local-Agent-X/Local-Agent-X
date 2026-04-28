@@ -23,3 +23,6 @@ desktop/release/
 
 # Protocol importer cache (npx scripts/import-protocols.mjs)
 .protocol-import-cache/
+
+# Auto-generated on every server start by src/manifest-generator.ts
+config/app-manifest.json

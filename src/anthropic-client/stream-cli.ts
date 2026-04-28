@@ -134,17 +134,19 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
       const bridgePath = fs.existsSync(jsPath) ? jsPath : tsPath;
       // Use tsx for .ts files, plain node for compiled .js
       const needsTsx = bridgePath.endsWith(".ts");
+      const bridgeEnv: Record<string, string> = {
+        LAX_MCP_URL: `http://127.0.0.1:${saxPort}`,
+        LAX_MCP_TOKEN: saxToken,
+        SAX_MCP_URL: `http://127.0.0.1:${saxPort}`,
+        SAX_MCP_TOKEN: saxToken,
+      };
+      if (options.sessionId) bridgeEnv.LAX_MCP_SESSION_ID = options.sessionId;
       const mcpConfig = {
         mcpServers: {
           sax: {
             command: "node",
             args: needsTsx ? ["--import=tsx", bridgePath] : [bridgePath],
-            env: {
-              LAX_MCP_URL: `http://127.0.0.1:${saxPort}`,
-              LAX_MCP_TOKEN: saxToken,
-              SAX_MCP_URL: `http://127.0.0.1:${saxPort}`,
-              SAX_MCP_TOKEN: saxToken,
-            },
+            env: bridgeEnv,
           },
         },
       };

@@ -53,10 +53,17 @@ export async function setupVoiceWs(deps: {
   security: SecurityLayer;
   toolPolicy: ToolPolicy;
   rbac: RBACManager;
+  /** Shared registry mapping sessionId → onEvent sink. Anthropic routes
+   *  tool calls through the MCP bridge (`/api/mcp/call`), which looks up
+   *  the session's onEvent here to fire side-effect events. Without
+   *  registering the voice session's sink, voice_visual's emits get
+   *  dropped on Anthropic (they work on Codex which calls natively). */
+  activeOnEventBySession: Map<string, (event: ServerEvent) => void>;
 }): Promise<void> {
   const {
     server, config, dataDir, memoryIndex, memoryManager, integrations,
     secretsStore, allAgentTools, bridgeTools, security, toolPolicy, rbac,
+    activeOnEventBySession,
   } = deps;
   try {
     const { setupVoiceWebSocket, setVoiceSessionFactory } = await import("../voice/audio-ws.js");
@@ -64,7 +71,7 @@ export async function setupVoiceWs(deps: {
     const { prepareAgentRequest } = await import("../agent-request.js");
     setupVoiceWebSocket(server, config.authToken);
 
-    const voiceTurnRunner: import("../voice/voice-session.js").VoiceTurnRunner = async ({ text, history, signal, onDelta, sessionId: voiceSessionId }) => {
+    const voiceTurnRunner: import("../voice/voice-session.js").VoiceTurnRunner = async ({ text, history, signal, onDelta, onVisual, sessionId: voiceSessionId }) => {
       // Per-connection voice session id. The previous hardcoded "voice" caused
       // every concurrent voice connection to share global session-scoped state
       // (active onEvent callback, browser session, sub-agent inheritance).
@@ -101,46 +108,100 @@ export async function setupVoiceWs(deps: {
         throw new Error(`No API key configured for ${prepared.provider}.`);
       }
 
-      // Voice-mode policy: persona + memory yes, tools NO. The agent in text
-      // chat has dozens of tools (http_request, browser_*, settings, etc.)
-      // and eagerly uses them — but in voice that produced a turn that
-      // changed the user's voice setting mid-conversation, then went into
-      // a 40k-token tool-exploration loop before aborting. Voice is a
-      // conversation, not an action surface. We strip tools and append a
-      // short voice-mode instruction so the agent knows to reply in 1-3
-      // short spoken sentences with no markdown.
-      const voiceTools: ToolDefinition[] = [];
+      // Voice-mode policy: persona + memory yes, tools mostly NO. The agent
+      // in text chat has dozens of tools (http_request, browser_*, settings,
+      // etc.) and eagerly uses them — but in voice that produced a turn that
+      // changed the user's voice setting mid-conversation, then went into a
+      // 40k-token tool-exploration loop before aborting. Voice is a
+      // conversation, not an action surface.
+      //
+      // Exception: when voice_visuals_enabled is on (default), we expose
+      // ONE tightly-scoped tool — voice_visual — that lets the agent morph
+      // the on-screen particle sphere into emojis/text/shapes/moods when
+      // something is emotionally significant. The tool is rate-limited
+      // server-side (1 call/turn + 2.5s cooldown) so it can't be abused.
+      // Read the live toggle from settings.json so a flip in the UI takes
+      // effect on the next voice turn — no restart required.
+      let visualsEnabled = config.voice_visuals_enabled !== false;
+      try {
+        const { readFileSync, existsSync } = await import("node:fs");
+        const settingsPath = join(dataDir, "settings.json");
+        if (existsSync(settingsPath)) {
+          const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
+          if (typeof s.voice_visuals_enabled === "boolean") {
+            visualsEnabled = s.voice_visuals_enabled;
+          }
+        }
+      } catch { /* keep config-default */ }
+      let voiceTools: ToolDefinition[] = [];
+      if (visualsEnabled) {
+        const tool = allAgentTools.find(t => t.name === "voice_visual");
+        if (tool) voiceTools = [tool];
+      }
+      const visualPromptTail = visualsEnabled
+        ? "\nYou have one tool: voice_visual(kind, value). Use it RARELY — " +
+          "only when something is emotionally significant. Most replies have " +
+          "no tool call. The system enforces max 1 call per reply with a 2.5s " +
+          "cooldown, so don't try to chain them. Never narrate the call (\"let " +
+          "me show you\"); just call it. Examples:\n" +
+          "  voice_visual({kind:\"mood\", value:\"excited\"}) — user shares good news\n" +
+          "  voice_visual({kind:\"emoji\", value:\"🙂\"}) — friendly beat\n" +
+          "  voice_visual({kind:\"shape\", value:\"heart\"}) — sweet moment\n" +
+          "  voice_visual({kind:\"text\", value:\"yes!\"}) — emphatic agreement\n" +
+          "  voice_visual({kind:\"mood\", value:\"thinking\"}) — working through something\n" +
+          "Default to NO call. Quality > frequency."
+        : "\nYou have no tools right now — don't try to call any. If the user " +
+          "needs something tool-driven (open an app, change a setting, search " +
+          "the web), tell them to switch to the text chat for that.";
       const voiceSystemPrompt = prepared.systemPrompt +
         "\n\n## Voice mode\n" +
         "You are speaking to the user. Your reply will be read aloud by TTS. " +
         "Reply in 1-3 short conversational sentences. No markdown, no lists, " +
-        "no code, no headings, no emoji. Use natural spoken English. " +
-        "You have no tools right now — don't try to call any. If the user " +
-        "needs something tool-driven (open an app, change a setting, search " +
-        "the web), tell them to switch to the text chat for that.";
+        "no code, no headings, no emoji in the spoken text. Use natural " +
+        "spoken English." + visualPromptTail;
 
       let assistantText = "";
       const onEvent = (event: ServerEvent) => {
         if (event.type === "stream" && event.delta) {
           assistantText += event.delta;
           onDelta(event.delta);
+        } else if (event.type === "visual" && onVisual) {
+          // Forward the visual directive through to the voice WebSocket.
+          onVisual(event.kind, event.value, event.durationMs);
         }
       };
 
-      await runAgent(text, prepared.cleanHistory, {
-        apiKey: prepared.apiKey,
-        model: prepared.model,
-        provider: prepared.provider as AgentOptions["provider"],
-        baseURL: prepared.customBaseURL,
-        systemPrompt: voiceSystemPrompt,
-        tools: voiceTools,
-        security, toolPolicy, rbac,
-        sessionId,
-        maxIterations: 1,  // single turn — no tool loops
-        temperature: prepared.temperature,
-        signal,
-        onEvent,
-      });
+      // Register this session's onEvent in the shared map so the MCP bridge
+      // (Anthropic's tool path) can fire side-effect events that reach the
+      // voice WebSocket. Codex calls voice_visual natively and uses the
+      // _onEvent injection in tool-executor.ts, so this is only required
+      // for Anthropic, but registering unconditionally is harmless.
+      const hadPrev = activeOnEventBySession.has(sessionId);
+      const prev = activeOnEventBySession.get(sessionId);
+      activeOnEventBySession.set(sessionId, onEvent);
+      try {
+        await runAgent(text, prepared.cleanHistory, {
+          apiKey: prepared.apiKey,
+          model: prepared.model,
+          provider: prepared.provider as AgentOptions["provider"],
+          baseURL: prepared.customBaseURL,
+          systemPrompt: voiceSystemPrompt,
+          tools: voiceTools,
+          security, toolPolicy, rbac,
+          sessionId,
+          // 2 iterations when visuals are on: 1 for the optional voice_visual
+          // tool call, 1 for the spoken reply continuation. The cooldown +
+          // per-turn cap inside the tool prevents runaway loops.
+          maxIterations: visualsEnabled ? 2 : 1,
+          temperature: prepared.temperature,
+          signal,
+          onEvent,
+        });
+      } finally {
+        // Restore prior onEvent registration (if any) so we don't leak.
+        if (hadPrev && prev) activeOnEventBySession.set(sessionId, prev);
+        else activeOnEventBySession.delete(sessionId);
+      }
 
       const updatedHistory = [
         ...history,

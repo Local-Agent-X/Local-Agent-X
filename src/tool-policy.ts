@@ -275,6 +275,10 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     { id: "allow-request-secret", tool: "request_secret", decision: "allow", reason: "Secret request (user confirms via UI)", priority: 50 },
     { id: "allow-list-secrets", tool: "list_secrets", decision: "allow", reason: "List secret names (no values exposed)", priority: 50 },
 
+    // voice_visual — read-only side-effect (emits a UI event); rate-limited
+    // inside the tool itself (1 call/turn + 2.5s cooldown). No external I/O.
+    { id: "allow-voice-visual", tool: "voice_visual", decision: "allow", reason: "Particle visualizer (UI-only side effect, rate-limited)", priority: 50 },
+
     // ── ARGUMENT-MATCHED rules (deny dangerous patterns before general allow) ──
 
     // Block destructive bash commands

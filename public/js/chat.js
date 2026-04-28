@@ -1213,6 +1213,15 @@ function handleVoiceWsMessage(e) {
       // but the worklet's ring buffer can still have audio. Trusting them
       // here cut the visible pulse short before the user's speakers stopped.
       break;
+    case 'visual':
+      // LLM-driven particle directive. The agent called voice_visual mid-
+      // reply; sphere morphs to the requested form for ~durationMs.
+      if (window.VoiceSphere && typeof VoiceSphere.handleDirective === 'function') {
+        VoiceSphere.handleDirective({
+          kind: msg.kind, value: msg.value, durationMs: msg.durationMs,
+        });
+      }
+      break;
     case 'voice_error':
     case 'agent_error':
     case 'stt_error':
@@ -1222,13 +1231,52 @@ function handleVoiceWsMessage(e) {
   }
 }
 
-// Vestigial helpers preserved so the text-chat send path still compiles —
-// the OLD voice system spoke chat replies sentence-by-sentence; that path
-// is replaced by /ws/voice. These shims keep typed-chat sends harmless.
-function feedTTS(_delta) { /* no-op */ }
-function flushTTS() { /* no-op */ }
+// Browser-fallback TTS for text chat. When the user's chosen TTS engine in
+// Settings is "browser", we pipe streaming reply deltas into the browser's
+// native window.speechSynthesis so users without a GPU/sidecar can still
+// hear replies (robotic but free). For any other engine we no-op here —
+// voice mode (mic) handles its own TTS via the Lite sidecar WebSocket.
+let _browserTtsBuf = "";
+function _browserTtsActive() {
+  try { return localStorage.getItem('lax_tts_engine') === 'browser'; } catch { return false; }
+}
+function _browserSpeak(text) {
+  if (!('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  // Pull rate from saved settings so the speed slider in Settings matches.
+  try {
+    const r = parseFloat(localStorage.getItem('lax_speed') || '1.0');
+    if (r > 0.4 && r < 2.5) u.rate = r;
+  } catch {}
+  window.speechSynthesis.speak(u);
+}
+function feedTTS(delta) {
+  if (!_browserTtsActive() || !delta) return;
+  _browserTtsBuf += delta;
+  // Speak whole sentences as they arrive. If the buffer crosses a sentence
+  // terminator, slice off and speak that part; keep the tail for next delta.
+  const SENT = /[.!?]["')\]]?(\s|$)/g;
+  let lastCut = 0;
+  let m;
+  while ((m = SENT.exec(_browserTtsBuf)) !== null) {
+    const sentence = _browserTtsBuf.slice(lastCut, m.index + m[0].length).trim();
+    if (sentence) _browserSpeak(sentence);
+    lastCut = m.index + m[0].length;
+  }
+  if (lastCut > 0) _browserTtsBuf = _browserTtsBuf.slice(lastCut);
+}
+function flushTTS() {
+  if (!_browserTtsActive()) { _browserTtsBuf = ""; return; }
+  const tail = _browserTtsBuf.trim();
+  if (tail) _browserSpeak(tail);
+  _browserTtsBuf = "";
+}
 function stopSpeaking() {
   if (voicePlaybackNode) voicePlaybackNode.port.postMessage({ cmd: 'flush' });
+  if ('speechSynthesis' in window) {
+    try { window.speechSynthesis.cancel(); } catch {}
+  }
+  _browserTtsBuf = "";
   isSpeaking = false; updateVoiceUI();
 }
 function toggleTTS() { toggleMic(); }
@@ -1450,6 +1498,57 @@ function initStatusBar() {
   // Studio tier detection: only fetch the cloned-voice library if the
   // Chatterbox sidecar is up. Re-renders the picker once we know.
   refreshClonedVoices();
+  // Persistent training-status pill: polls /api/voices/sovits/training/list
+  // every 30s. Shows a small indicator near the top of the chat when a
+  // pipeline is running so the user knows training is still alive after
+  // they navigate away and come back. Auto-hides + refreshes the voice
+  // picker when training completes.
+  // 10s poll instead of 30s so newly-registered clones (or stalled
+  // orchestrators that the user manually nudged) appear in the picker
+  // within ~10s, no server restart needed.
+  pollTrainingStatus();
+  setInterval(pollTrainingStatus, 10000);
+}
+
+let _lastTrainingRunCount = 0;
+async function pollTrainingStatus() {
+  let runs = [];
+  try {
+    const r = await apiFetch('/api/voices/sovits/training/list');
+    if (r.ok) {
+      const d = await r.json();
+      runs = (d.runs || []).filter(x => x.stage !== 'register');
+    }
+  } catch { return; }
+  // Always refresh the clone list — cheap call (one /tier probe + at most
+  // two list calls), and it covers cases the running→idle transition
+  // misses (orchestrator died before registering, user added a clone via
+  // the manage modal, manual API registration, etc.).
+  refreshClonedVoices().then(() => updateStatusBar?.());
+  _lastTrainingRunCount = runs.length;
+
+  let pill = document.getElementById('training-pill');
+  if (runs.length === 0) {
+    if (pill) pill.remove();
+    return;
+  }
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = 'training-pill';
+    pill.style.cssText = 'position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;padding:6px 14px;border:1px solid #4a9eff;background:rgba(8,18,38,.9);color:#9fdcff;border-radius:18px;font-size:.78rem;font-family:var(--mono,monospace);cursor:pointer;backdrop-filter:blur(6px);box-shadow:0 2px 12px rgba(74,158,255,.3)';
+    pill.title = 'Click to open training panel';
+    pill.addEventListener('click', () => { if (typeof openTrainVoiceModal === 'function') openTrainVoiceModal(); });
+    document.body.appendChild(pill);
+  }
+  const stageLabels = {
+    download: 'downloading', slice: 'slicing', asr: 'transcribing',
+    ref: 'picking ref', format: 'extracting features',
+    train_sovits: 'training SoVITS', train_gpt: 'training GPT',
+  };
+  const r0 = runs[0];
+  const stage = stageLabels[r0.stage] || r0.stage;
+  const more = runs.length > 1 ? ` +${runs.length - 1} more` : '';
+  pill.textContent = `🎤 Training ${r0.name} · ${stage}${more}`;
 }
 
 async function refreshClonedVoices() {
@@ -1701,17 +1800,40 @@ function openTrainVoiceModal() {
   const $ = (id) => modal.querySelector('#' + id);
   let aborter = null;
 
-  const close = () => { if (aborter) aborter.abort(); modal.remove(); };
+  let listPollTimer = null;
+  // Per-row log-tail pollers. Cleared on re-render (otherwise stale rows
+  // leak timers) and on close. _openRowExp tracks which rows are expanded
+  // so a re-render can re-bind their log viewers.
+  const _rowLogTimers = new Map();
+  const _openRowExp = new Set();
+  const stopAllRowLogTimers = () => {
+    for (const t of _rowLogTimers.values()) clearInterval(t);
+    _rowLogTimers.clear();
+  };
+  const close = () => {
+    if (aborter) aborter.abort();
+    if (listPollTimer) { clearInterval(listPollTimer); listPollTimer = null; }
+    stopAllRowLogTimers();
+    modal.remove();
+  };
   $('tv-cancel').addEventListener('click', close);
   modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
 
-  // Fetch and render any in-progress runs the user can resume.
-  (async () => {
+  // Fetch and render any in-progress runs the user can resume. Re-polls
+  // every 5s while the modal is open so the stage advances live (e.g.
+  // user sees "format" → "SoVITS training" → "GPT training" without
+  // having to close/reopen the modal).
+  const fetchAndRender = async () => {
     try {
       const r = await apiFetch('/api/voices/sovits/training/list');
-      if (!r.ok) return;
+      if (!r.ok) return null;
       const data = await r.json();
-      const runs = (data.runs || []).filter(x => x.stage !== 'register');
+      return (data.runs || []).filter(x => x.stage !== 'register');
+    } catch { return null; }
+  };
+  (async () => {
+    try {
+      const runs = (await fetchAndRender()) || [];
       if (runs.length === 0) return;
       const stageLabels = {
         download: 'Downloading', slice: 'Slicing', asr: 'Transcribing',
@@ -1723,17 +1845,49 @@ function openTrainVoiceModal() {
         if (m < 60) return m + 'm ago';
         return Math.floor(m / 60) + 'h ago';
       };
+      // Pipeline overall % per stage — matches the STAGE markers the
+      // orchestrator emits. Used to render a progress bar on each row.
+      const stagePct = {
+        download: 5, trim: 10, denoise: 15, slice: 20, asr: 35, ref: 50,
+        format: 55, train_sovits: 75, train_gpt: 95, register: 100,
+      };
       const renderList = () => {
-        const items = runs.map(r => `
-          <div style="display:flex;align-items:center;gap:6px;padding:8px;border:1px solid var(--border,#ccc);border-radius:6px;margin-bottom:6px;font-size:.82rem">
-            <div style="flex:1;min-width:0">
-              <div style="font-weight:600;font-family:monospace">${esc(r.name)}</div>
-              <div style="color:var(--muted,#666);font-size:.75rem">at <strong>${esc(stageLabels[r.stage] || r.stage)}</strong> · last touched ${fmtAge(r.mtimeMs)}</div>
+        const items = runs.map(r => {
+          // A run whose workdir was touched in the last 90 seconds is almost
+          // certainly still training. For those, show a pulsing green
+          // "Live" badge and hide Resume so the user can't accidentally
+          // spawn a duplicate pipeline.
+          const ageMs = Date.now() - r.mtimeMs;
+          const isLive = ageMs < 90_000;
+          const stageLabel = esc(stageLabels[r.stage] || r.stage);
+          const pct = stagePct[r.stage] ?? 0;
+          const badge = isLive
+            ? `<span style="display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:10px;background:rgba(40,180,80,.18);color:#3fcf6f;font-size:.7rem;font-weight:600;margin-left:6px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#3fcf6f;animation:vsPulse 1.2s ease-in-out infinite"></span>LIVE</span>`
+            : '';
+          const actions = isLive
+            ? `<button data-clear="${esc(r.name)}" title="Force-stop and delete this run" style="padding:5px 8px;border:1px solid var(--border,#ccc);background:transparent;color:var(--muted,#666);border-radius:5px;cursor:pointer;font-size:.95rem;line-height:1" onclick="event.stopPropagation()">×</button>`
+            : `<button data-resume="${esc(r.name)}" style="padding:5px 10px;border:1px solid #4a9eff;background:transparent;color:#4a9eff;border-radius:5px;cursor:pointer;font-size:.78rem" onclick="event.stopPropagation()">Resume</button>
+               <button data-clear="${esc(r.name)}" title="Delete this training run + free its disk" style="padding:5px 8px;border:1px solid var(--border,#ccc);background:transparent;color:var(--muted,#666);border-radius:5px;cursor:pointer;font-size:.95rem;line-height:1" onclick="event.stopPropagation()">×</button>`;
+          const title = r.displayName || r.name;
+          const subline = r.displayName
+            ? `<span style="font-family:monospace;font-size:.7rem;color:var(--muted,#666);opacity:.7">${esc(r.name)}</span> · at <strong>${stageLabel}</strong> · ${pct}% · last touched ${fmtAge(r.mtimeMs)}`
+            : `at <strong>${stageLabel}</strong> · ${pct}% · last touched ${fmtAge(r.mtimeMs)}`;
+          return `
+            <div data-row="${esc(r.name)}" style="border:1px solid var(--border,#ccc);border-radius:6px;margin-bottom:6px;font-size:.82rem;cursor:pointer;transition:background .15s" title="Click to view live log">
+              <div style="display:flex;align-items:center;gap:6px;padding:8px">
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:600">${esc(title)}${badge}</div>
+                  <div style="color:var(--muted,#666);font-size:.75rem">${subline}</div>
+                </div>
+                ${actions}
+              </div>
+              <div style="height:3px;background:var(--border,#eee);border-radius:0 0 5px 5px;overflow:hidden">
+                <div style="height:100%;width:${pct}%;background:${isLive ? 'linear-gradient(90deg,#3fcf6f,#7ad4ff)' : 'linear-gradient(90deg,#4a9eff,#7ad4ff)'};transition:width .4s ease"></div>
+              </div>
+              <div data-log-pane="${esc(r.name)}" style="display:none;border-top:1px solid var(--border,#eee);padding:6px 10px;background:var(--surface,#f8f8f8);font-family:monospace;font-size:.7rem;color:var(--muted,#666);max-height:160px;overflow:auto;white-space:pre-wrap"></div>
             </div>
-            <button data-resume="${esc(r.name)}" style="padding:5px 10px;border:1px solid #4a9eff;background:transparent;color:#4a9eff;border-radius:5px;cursor:pointer;font-size:.78rem">Resume</button>
-            <button data-clear="${esc(r.name)}" title="Delete this training run + free its disk" style="padding:5px 8px;border:1px solid var(--border,#ccc);background:transparent;color:var(--muted,#666);border-radius:5px;cursor:pointer;font-size:.95rem;line-height:1">×</button>
-          </div>
-        `).join('');
+          `;
+        }).join('');
         $('tv-incomplete').innerHTML = runs.length === 0 ? '' : `
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
             <div style="font-size:.78rem;color:var(--muted,#666)">In-progress training (resume to skip work already done):</div>
@@ -1744,8 +1898,61 @@ function openTrainVoiceModal() {
         modal.querySelectorAll('[data-resume]').forEach(btn => {
           btn.addEventListener('click', () => {
             const expName = btn.getAttribute('data-resume');
-            const name = $('tv-name').value.trim() || 'Voice';
+            // Prefer the run's saved display name from _meta.json. If the
+            // user typed something in the Voice name field, use that as an
+            // override (lets people rename mid-resume if they want). Falls
+            // back to a sane default only when both are missing.
+            const run = runs.find(x => x.name === expName);
+            const typed = $('tv-name').value.trim();
+            const name = typed || (run && run.displayName) || expName;
             startTrainingRequest({ name, resumeExpName: expName });
+          });
+        });
+
+        // Click row → toggle inline log viewer that polls the bridge's
+        // /log endpoint every 2s. Lets the user re-attach to live progress
+        // for a run they kicked off and walked away from.
+        const startRowPoll = async (expName, pane) => {
+          let since = 0;
+          const poll = async () => {
+            try {
+              const r = await apiFetch('/api/voices/sovits/training/' + encodeURIComponent(expName) + '/log?since=' + since);
+              if (!r.ok) return;
+              const d = await r.json();
+              if (since === 0) pane.textContent = '';
+              if (d.content) {
+                pane.textContent += d.content;
+                pane.scrollTop = pane.scrollHeight;
+              }
+              since = d.size || since;
+            } catch { /* */ }
+          };
+          pane.textContent = 'loading…';
+          pane.style.display = 'block';
+          await poll();
+          const timer = setInterval(poll, 2000);
+          _rowLogTimers.set(expName, timer);
+        };
+        modal.querySelectorAll('[data-row]').forEach(row => {
+          const expName = row.getAttribute('data-row');
+          // If this row was already expanded before the re-render, keep it
+          // open and re-bind a fresh poller (the previous timer was cleared
+          // by stopAllRowLogTimers on the renderList call).
+          const pane = row.querySelector('[data-log-pane]');
+          if (_openRowExp.has(expName) && pane) {
+            startRowPoll(expName, pane);
+          }
+          row.addEventListener('click', async () => {
+            if (!pane) return;
+            if (pane.style.display === 'none' || pane.style.display === '') {
+              _openRowExp.add(expName);
+              await startRowPoll(expName, pane);
+            } else {
+              pane.style.display = 'none';
+              _openRowExp.delete(expName);
+              const t = _rowLogTimers.get(expName);
+              if (t) { clearInterval(t); _rowLogTimers.delete(expName); }
+            }
           });
         });
         modal.querySelectorAll('[data-clear]').forEach(btn => {
@@ -1779,6 +1986,18 @@ function openTrainVoiceModal() {
         });
       };
       renderList();
+      // Poll every 5s and refresh the list in place so the stage label
+      // advances as training progresses. Stops on modal close. Each
+      // re-render clears any open log-tail pollers; renderList rebinds
+      // them for rows still in _openRowExp.
+      listPollTimer = setInterval(async () => {
+        const next = await fetchAndRender();
+        if (!next) return;
+        runs.length = 0;
+        for (const r of next) runs.push(r);
+        stopAllRowLogTimers();
+        renderList();
+      }, 5000);
     } catch { /* */ }
   })();
 
@@ -1951,23 +2170,41 @@ function openManageClonesModal() {
   const existing = document.getElementById('manage-clones-modal');
   if (existing) existing.remove();
 
-  const cb = Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [];
-  const rows = cb.length === 0
+  // Show clones from both providers — sovits (trained ★) first, then
+  // chatterbox (zero-shot). Each row is tagged with its provider so the
+  // rename/delete buttons hit the right /api/voices/<provider>/ endpoint.
+  const sv = (Array.isArray(window._sovitsVoices) ? window._sovitsVoices : [])
+    .map(c => ({ ...c, provider: 'sovits' }));
+  const cb = (Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [])
+    .map(c => ({ ...c, provider: 'chatterbox' }));
+  const all = [...sv, ...cb];
+
+  const renderRow = (c) => {
+    const tag = c.provider === 'sovits'
+      ? (c.fine_tuned ? '<span style="font-size:.7rem;color:#3fcf6f">★ trained</span>' : '<span style="font-size:.7rem;color:#9ed3ff">zero-shot</span>')
+      : '<span style="font-size:.7rem;color:#9ed3ff">chatterbox</span>';
+    return `
+      <div class="mc-row" data-id="${esc(c.id)}" data-provider="${esc(c.provider)}" data-name="${esc(c.name)}" style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border, #eee)">
+        <div style="flex:1;min-width:0">
+          <div class="mc-name" style="font-size:.88rem">${esc(c.name)}</div>
+          <div style="font-size:.7rem;color:var(--muted,#666);margin-top:2px;font-family:var(--mono)">${esc(c.id)} · ${tag}</div>
+        </div>
+        <button class="mc-rename" type="button" title="Rename" style="padding:6px 10px;border:1px solid #4a9eff;background:transparent;color:#4a9eff;border-radius:6px;cursor:pointer;font-size:.78rem">Rename</button>
+        <button class="mc-delete" type="button" title="Delete" style="padding:6px 10px;border:none;background:#e74c3c;color:#fff;border-radius:6px;cursor:pointer;font-size:.78rem">Delete</button>
+      </div>`;
+  };
+  const rows = all.length === 0
     ? `<div style="padding:16px;color:var(--muted, #666);font-size:.85rem;text-align:center">No cloned voices installed.</div>`
-    : cb.map(c => `
-        <div class="mc-row" data-id="${esc(c.id)}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border, #eee)">
-          <span style="flex:1;font-family:var(--mono);font-size:.85rem">${esc(c.name)}</span>
-          <button class="mc-delete" type="button" style="padding:6px 12px;border:none;background:#e74c3c;color:#fff;border-radius:6px;cursor:pointer;font-size:.8rem">Delete</button>
-        </div>`).join('');
+    : all.map(renderRow).join('');
 
   const modal = document.createElement('div');
   modal.id = 'manage-clones-modal';
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center';
   modal.innerHTML = `
-    <div style="background:var(--bg, #fff);color:var(--text, #000);border:1px solid var(--border, #ccc);border-radius:10px;padding:0;max-width:480px;width:92%;max-height:80vh;display:flex;flex-direction:column">
+    <div style="background:var(--bg, #fff);color:var(--text, #000);border:1px solid var(--border, #ccc);border-radius:10px;padding:0;max-width:520px;width:94%;max-height:80vh;display:flex;flex-direction:column">
       <div style="padding:14px 18px;border-bottom:1px solid var(--border, #eee)">
         <h3 style="margin:0;font-size:1.05rem">Manage cloned voices</h3>
-        <p style="margin:4px 0 0;color:var(--muted, #666);font-size:.78rem">Removes the voice's model files from disk.</p>
+        <p style="margin:4px 0 0;color:var(--muted, #666);font-size:.78rem">Rename or remove cloned voices. Delete frees the voice's model files from disk.</p>
       </div>
       <div id="mc-rows" style="overflow:auto;flex:1">${rows}</div>
       <div id="mc-status" style="padding:0 18px;font-size:.78rem;color:var(--muted, #666);min-height:1em"></div>
@@ -1981,23 +2218,62 @@ function openManageClonesModal() {
   document.getElementById('mc-close').onclick = () => modal.remove();
   const statusEl = document.getElementById('mc-status');
 
+  modal.querySelectorAll('.mc-rename').forEach(btn => {
+    btn.onclick = async () => {
+      const row = btn.closest('.mc-row');
+      const id = row.dataset.id;
+      const provider = row.dataset.provider;
+      // Use the dataset attribute (single source of truth) instead of
+      // reading textContent — the row container has TWO inner divs (name +
+      // id badge) and querying the first child grabbed both, which is how
+      // a previous rename ended up with garbage like "Jarvis* (trained)\n
+      // 69970259a38c · ★ trained" stored as the name.
+      const currentName = row.dataset.name || '';
+      const next = prompt('New name for "' + currentName + '":', currentName);
+      if (next === null) return;
+      const trimmed = next.trim();
+      if (!trimmed || trimmed === currentName) return;
+      btn.disabled = true; statusEl.textContent = 'Renaming…'; statusEl.style.color = 'var(--muted,#666)';
+      try {
+        const r = await apiFetch('/api/voices/' + provider + '/' + encodeURIComponent(id), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: trimmed }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { statusEl.textContent = 'Failed: ' + (data.error || ('HTTP ' + r.status)); statusEl.style.color = '#c0392b'; btn.disabled = false; return; }
+        row.querySelector('.mc-name').textContent = trimmed;
+        row.dataset.name = trimmed;
+        await refreshClonedVoices();
+        if (typeof updateStatusBar === 'function') updateStatusBar();
+        statusEl.textContent = `Renamed to "${trimmed}".`;
+        btn.disabled = false;
+      } catch (e) {
+        statusEl.textContent = 'Failed: ' + e.message; statusEl.style.color = '#c0392b';
+        btn.disabled = false;
+      }
+    };
+  });
+
   modal.querySelectorAll('.mc-delete').forEach(btn => {
     btn.onclick = async () => {
       const row = btn.closest('.mc-row');
       const id = row.dataset.id;
-      if (!confirm(`Delete "${id}"? Removes its reference clip from disk.`)) return;
+      const provider = row.dataset.provider;
+      if (!confirm(`Delete this voice? Removes its model files from disk. (${id})`)) return;
       btn.disabled = true; statusEl.textContent = 'Deleting…'; statusEl.style.color = 'var(--muted, #666)';
       try {
-        const r = await apiFetch('/api/voices/chatterbox/' + encodeURIComponent(id), { method: 'DELETE' });
+        const r = await apiFetch('/api/voices/' + provider + '/' + encodeURIComponent(id), { method: 'DELETE' });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { statusEl.textContent = 'Failed: ' + (data.error || ('HTTP ' + r.status)); statusEl.style.color = '#c0392b'; btn.disabled = false; return; }
         row.remove();
-        const fullId = 'cb:' + id;
+        const fullId = (provider === 'sovits' ? 'sv:' : 'cb:') + id;
         if (localStorage.getItem('lax_voice') === fullId) {
           localStorage.setItem('lax_voice', 'am_michael');
         }
         await refreshClonedVoices();
-        statusEl.textContent = `Deleted "${id}".`;
+        if (typeof updateStatusBar === 'function') updateStatusBar();
+        statusEl.textContent = `Deleted.`;
       } catch (e) {
         statusEl.textContent = 'Failed: ' + e.message; statusEl.style.color = '#c0392b';
         btn.disabled = false;

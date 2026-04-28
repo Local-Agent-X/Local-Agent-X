@@ -114,6 +114,27 @@
   let startTime = 0;
   let materializeT = 0;
 
+  // ── Particle morph engine state ────────────────────────────────────────
+  // The inner shell (particles, 2200 pts) is the active "canvas" the LLM
+  // can morph via the voice_visual tool. Outer scatter (particles2, 600
+  // pts) keeps drifting in its original positions — backdrop, not subject.
+  //
+  // _basePositions: the sphere positions we return to as a fallback.
+  // _morphFrom/_morphTarget: current lerp endpoints (Float32Arrays of len=2200*3).
+  // _morphStart/_morphDuration: animation timing.
+  // _activeDirective: truthy while a voice_visual is being rendered; rotation
+  //                   is suspended so 2D shapes face the camera correctly.
+  // _directiveReturnTimer: setTimeout id for scheduled return-to-home morph.
+  let _basePositions = null;
+  let _morphFrom = null;
+  let _morphTarget = null;
+  let _morphStart = 0;
+  let _morphDuration = 0;
+  let _activeDirective = null;
+  let _directiveReturnTimer = null;
+  // Suspended rotations (so we can restore on directive end)
+  let _suspendedRotation = null;
+
   function ensureDOM() {
     if (root) return;
     root = document.createElement('div');
@@ -197,14 +218,32 @@
       scene.add(r); rings.push(r);
     }
 
-    // ── Dense outer particle shell — the dyson-sphere of dots
+    // ── Inner shell — the active "canvas" the voice_visual tool morphs.
+    // Initialize with cloud positions (idle baseline). The sphere positions
+    // are generated alongside and saved for state-driven morphs.
     const pCount = 2200;
     const pPos = new Float32Array(pCount * 3);
     const pSize = new Float32Array(pCount);
+    // The dyson-sphere "active" home — used by listening/thinking/speaking
+    // states. Saved into _basePositions for morphTo to lerp back to.
+    _basePositions = new Float32Array(pCount * 3);
     for (let i = 0; i < pCount; i++) {
-      // Thin shell — particles hug the orb surface tightly. r=1.45..1.55
-      // gives a clean dyson-sphere look instead of a fuzzy halo.
-      const r = 1.45 + Math.random() * 0.10;
+      // Tight dyson shell at r in [1.45, 1.55].
+      const rs = 1.45 + Math.random() * 0.10;
+      const ts = Math.random() * Math.PI * 2;
+      const ps = Math.acos(2 * Math.random() - 1);
+      _basePositions[i * 3]     = rs * Math.sin(ps) * Math.cos(ts);
+      _basePositions[i * 3 + 1] = rs * Math.sin(ps) * Math.sin(ts);
+      _basePositions[i * 3 + 2] = rs * Math.cos(ps);
+    }
+    // Drifting cloud for idle: looser radial spread, particles sparser
+    // throughout the volume rather than a tight shell. Initial render
+    // uses these positions so the user's first impression is the calmer
+    // cloud, not the energetic sphere.
+    for (let i = 0; i < pCount; i++) {
+      // r=1.45..1.55 unused below — kept for the original loop body so
+      // existing comments still apply.
+      const r = 1.6 + Math.pow(Math.random(), 2.0) * 0.9;  // most near 1.6, a few out to 2.5
       const t = Math.random() * Math.PI * 2;
       const p = Math.acos(2 * Math.random() - 1);
       pPos[i * 3]     = r * Math.sin(p) * Math.cos(t);
@@ -339,6 +378,29 @@
     dotMat.uniforms.uAmplitude.value = smoothedAmp;
     dotMat.uniforms.uTime.value = t;
 
+    // ── Particle morph step ─────────────────────────────────────────────
+    // If a morph is in flight, lerp every inner-shell particle's position
+    // from _morphFrom toward _morphTarget by progress fraction. The shader
+    // drift + amplitude pulse run on top of these lerped positions, so the
+    // shape always feels alive, not statically posed.
+    if (_morphTarget && _morphStart > 0 && particles && particles.geometry) {
+      const elapsed = performance.now() - _morphStart;
+      const tt = Math.min(1, elapsed / _morphDuration);
+      // easeInOutCubic for a softer morph
+      const e = tt < 0.5 ? 4 * tt * tt * tt : 1 - Math.pow(-2 * tt + 2, 3) / 2;
+      const arr = particles.geometry.attributes.position.array;
+      for (let i = 0; i < arr.length; i++) {
+        arr[i] = _morphFrom[i] + (_morphTarget[i] - _morphFrom[i]) * e;
+      }
+      particles.geometry.attributes.position.needsUpdate = true;
+      if (tt >= 1) {
+        // Snap to target, clear in-flight markers; the shader drift takes
+        // over the per-frame "alive" motion at the new home.
+        _morphFrom = null;
+        _morphStart = 0;
+      }
+    }
+
     // Pulsating breath when agent talks. Drives:
     //   - whole composition scale (rings + dot shells expand/contract)
     //   - dot size + brightness (via shader uPulse uniform)
@@ -394,9 +456,14 @@
     wires[1].rotation.z += 0.0018;
     wires[2].rotation.y += 0.0006; // lat/long stays nearly still
 
-    // Particle shells rotate at different speeds for parallax depth
-    particles.rotation.y  += 0.0012;
-    particles.rotation.x  += 0.0003;
+    // Particle shells rotate at different speeds for parallax depth.
+    // Inner shell rotation is SUSPENDED while a directive is active —
+    // 2D shapes (emoji, text) live in a plane at z=0 and would smear if
+    // we let them tumble. Outer scatter keeps drifting as ambient.
+    if (!_activeDirective) {
+      particles.rotation.y  += 0.0012;
+      particles.rotation.x  += 0.0003;
+    }
     particles2.rotation.y -= 0.0008;
     particles2.rotation.z += 0.0004;
 
@@ -460,7 +527,201 @@
   }
 
   function setState(s) {
-    if (['idle', 'listening', 'thinking', 'speaking'].includes(s)) state = s;
+    if (['idle', 'listening', 'thinking', 'speaking'].includes(s)) {
+      const prev = state;
+      state = s;
+      // State transitions move particles between cloud (idle) and sphere
+      // (listening/thinking/speaking) homes — visual cue that the agent is
+      // engaged vs ambient. Skipped while a directive is morphing.
+      if (!_activeDirective && prev !== s) {
+        if (s === 'idle') morphTo(_genCloud(), 800);
+        else if (prev === 'idle') morphTo(_baseSphereCopy(), 600);
+      }
+    }
+  }
+
+  // ── Morph engine + target generators ───────────────────────────────────
+  // morphTo(targets, ms): kick off a lerp from current particle positions
+  // to `targets` (Float32Array of len=2200*3) over ms milliseconds. The
+  // tick() loop applies the lerp each frame. Animation, drift, and
+  // amplitude pulse keep running on top of the morph.
+  function morphTo(targets, durationMs) {
+    if (!particles || !targets || targets.length !== _basePositions.length) return;
+    const cur = particles.geometry.attributes.position.array;
+    _morphFrom = new Float32Array(cur.length);
+    for (let i = 0; i < cur.length; i++) _morphFrom[i] = cur[i];
+    _morphTarget = targets;
+    _morphStart = performance.now();
+    _morphDuration = Math.max(60, durationMs | 0);
+  }
+
+  function _baseSphereCopy() {
+    // Return a fresh copy of the saved sphere positions so morphTo can
+    // safely reference _morphTarget without aliasing the canonical buffer.
+    const out = new Float32Array(_basePositions.length);
+    out.set(_basePositions);
+    return out;
+  }
+
+  // Drifting cloud: looser radial spread, particles sparser through the
+  // volume. Same shape as the initial idle render. Re-randomized each
+  // call so consecutive idle returns don't snap to the same dot pattern.
+  function _genCloud() {
+    const n = _basePositions.length / 3;
+    const out = new Float32Array(_basePositions.length);
+    for (let i = 0; i < n; i++) {
+      const r = 1.6 + Math.pow(Math.random(), 2.0) * 0.9;
+      const t = Math.random() * Math.PI * 2;
+      const p = Math.acos(2 * Math.random() - 1);
+      out[i * 3]     = r * Math.sin(p) * Math.cos(t);
+      out[i * 3 + 1] = r * Math.sin(p) * Math.sin(t);
+      out[i * 3 + 2] = r * Math.cos(p);
+    }
+    return out;
+  }
+
+  // Render any string (emoji or short text) to a small offscreen canvas,
+  // sample dark/colored pixels, and project them to a 2D plane in 3D
+  // space. Particles map onto the silhouette. Camera looks down -Z so
+  // setting z=0 means the shape faces the camera; the suspended rotation
+  // (see tick()) keeps it that way through the directive's lifetime.
+  function _genGlyph(text, fontSize) {
+    const N = _basePositions.length / 3;
+    const out = new Float32Array(_basePositions.length);
+    const SIZE = 96;
+    const cv = document.createElement('canvas');
+    cv.width = SIZE; cv.height = SIZE;
+    const cx = cv.getContext('2d');
+    cx.fillStyle = '#fff';
+    cx.font = `${fontSize}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",system-ui,sans-serif`;
+    cx.textAlign = 'center';
+    cx.textBaseline = 'middle';
+    cx.fillText(text, SIZE / 2, SIZE / 2);
+    const data = cx.getImageData(0, 0, SIZE, SIZE).data;
+    const points = [];
+    for (let y = 0; y < SIZE; y++) {
+      for (let x = 0; x < SIZE; x++) {
+        const a = data[(y * SIZE + x) * 4 + 3];
+        if (a > 80) points.push([x, y]);
+      }
+    }
+    if (points.length === 0) {
+      // Fallback to base sphere if the glyph rendered nothing
+      out.set(_basePositions);
+      return out;
+    }
+    // Map shape to a 2.6×2.6 box in world space, centered at origin.
+    const SCALE = 2.6 / SIZE;
+    for (let i = 0; i < N; i++) {
+      const p = points[i % points.length];
+      // Tiny jitter so multiple particles per pixel don't stack invisibly.
+      const jx = (Math.random() - 0.5) * SCALE * 0.6;
+      const jy = (Math.random() - 0.5) * SCALE * 0.6;
+      const jz = (Math.random() - 0.5) * 0.05;
+      out[i * 3]     = (p[0] - SIZE / 2) * SCALE + jx;
+      out[i * 3 + 1] = -(p[1] - SIZE / 2) * SCALE + jy;  // canvas Y is flipped
+      out[i * 3 + 2] = jz;
+    }
+    return out;
+  }
+
+  function _genEmoji(char) { return _genGlyph(char, 80); }
+  function _genText(text)  { return _genGlyph(text, Math.max(20, Math.min(56, Math.floor(640 / Math.max(2, text.length))))); }
+
+  // Procedural geometric shapes — heart, lightning, ring, spiral, line.
+  // Each returns N target positions sampled along/within the shape.
+  function _genShape(name) {
+    const N = _basePositions.length / 3;
+    const out = new Float32Array(_basePositions.length);
+    const jitter = (s) => (Math.random() - 0.5) * s;
+    if (name === 'heart') {
+      // Parametric heart: x = 16 sin³(t), y = 13 cos t - 5 cos 2t - 2 cos 3t - cos 4t
+      for (let i = 0; i < N; i++) {
+        const t = Math.random() * Math.PI * 2;
+        const x = 16 * Math.pow(Math.sin(t), 3);
+        const y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+        out[i * 3]     = x * 0.07 + jitter(0.04);
+        out[i * 3 + 1] = y * 0.07 + jitter(0.04);
+        out[i * 3 + 2] = jitter(0.06);
+      }
+    } else if (name === 'ring') {
+      for (let i = 0; i < N; i++) {
+        const a = (i / N) * Math.PI * 2 + jitter(0.05);
+        const r = 1.1 + jitter(0.06);
+        out[i * 3]     = r * Math.cos(a);
+        out[i * 3 + 1] = r * Math.sin(a);
+        out[i * 3 + 2] = jitter(0.06);
+      }
+    } else if (name === 'spiral') {
+      for (let i = 0; i < N; i++) {
+        const u = i / N;
+        const a = u * Math.PI * 8;
+        const r = 0.15 + u * 1.0;
+        out[i * 3]     = r * Math.cos(a) + jitter(0.03);
+        out[i * 3 + 1] = r * Math.sin(a) + jitter(0.03);
+        out[i * 3 + 2] = jitter(0.06);
+      }
+    } else if (name === 'line') {
+      for (let i = 0; i < N; i++) {
+        const u = (i / N) * 2 - 1;
+        out[i * 3]     = u * 1.3 + jitter(0.04);
+        out[i * 3 + 1] = jitter(0.08);
+        out[i * 3 + 2] = jitter(0.04);
+      }
+    } else {  // 'lightning' bolt
+      // Zig-zag path with random offsets, particles distributed along it.
+      const segs = [[0, 1.2], [-0.4, 0.4], [0.3, 0.0], [-0.2, -0.5], [0.1, -1.2]];
+      for (let i = 0; i < N; i++) {
+        const u = (i / N) * (segs.length - 1);
+        const k = Math.floor(u);
+        const f = u - k;
+        const a = segs[k];
+        const b = segs[Math.min(segs.length - 1, k + 1)];
+        out[i * 3]     = a[0] + (b[0] - a[0]) * f + jitter(0.10);
+        out[i * 3 + 1] = a[1] + (b[1] - a[1]) * f + jitter(0.05);
+        out[i * 3 + 2] = jitter(0.06);
+      }
+    }
+    return out;
+  }
+
+  // Mood presets — for v1 each maps to an emoji glyph (smiley/etc) so we
+  // get expressive faces without hand-authoring vertex compositions.
+  function _genMood(value) {
+    const map = {
+      happy: '🙂', sad: '🙁', thinking: '🤔',
+      confused: '😕', excited: '🤩', error: '⚠️',
+    };
+    const ch = map[value] || '🙂';
+    return _genGlyph(ch, 76);
+  }
+
+  function handleDirective(msg) {
+    if (!particles || !_basePositions) return;
+    const kind = msg && msg.kind;
+    const value = msg && msg.value;
+    const durationMs = Math.max(500, Math.min(3000, (msg && msg.durationMs) | 0 || 1500));
+    let target = null;
+    if (kind === 'emoji' && value) target = _genEmoji(value);
+    else if (kind === 'text' && value) target = _genText(value);
+    else if (kind === 'shape' && value) target = _genShape(value);
+    else if (kind === 'mood' && value) target = _genMood(value);
+    if (!target) return;
+    // Suspend rotation so 2D shapes face the camera, snapshot current rot.
+    if (_directiveReturnTimer) clearTimeout(_directiveReturnTimer);
+    _activeDirective = { kind, value };
+    if (!_suspendedRotation && particles) {
+      _suspendedRotation = { x: particles.rotation.x, y: particles.rotation.y, z: particles.rotation.z };
+      particles.rotation.set(0, 0, 0);
+    }
+    morphTo(target, 600);
+    // After hold, return to whichever home the current state implies.
+    _directiveReturnTimer = setTimeout(() => {
+      _activeDirective = null;
+      if (_suspendedRotation) _suspendedRotation = null;  // free, world-rotation will resume
+      const home = state === 'idle' ? _genCloud() : _baseSphereCopy();
+      morphTo(home, 600);
+    }, durationMs);
   }
 
   function attachMicAnalyser(node) { micAnalyser = node || null; }
@@ -489,6 +750,7 @@
     show, hide, setMode, setState,
     attachMicAnalyser, attachTtsAnalyser,
     playStartupChime,
+    handleDirective, morphTo,
     get currentMode() { return viewMode; },
     get currentState() { return state; },
   };

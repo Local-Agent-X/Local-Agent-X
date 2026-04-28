@@ -34,6 +34,10 @@ export interface VoiceTurnInput {
   text: string;
   history: ChatCompletionMessageParam[];
   onDelta: (text: string) => void;
+  /** Forwarded by the agent when it calls voice_visual — bridges the
+   *  tool's side-effect event back to the WebSocket so the browser can
+   *  morph particles. Optional; if omitted the visualizer is silent. */
+  onVisual?: (kind: "emoji" | "text" | "shape" | "mood", value: string, durationMs: number) => void;
   signal: AbortSignal;
   sessionId: string;
 }
@@ -336,6 +340,10 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
             ctx.sendEvent({ type: "assistant_delta", text: delta });
             sentenceBuf += delta;
             flushCompletedSentences();
+          },
+          onVisual: (kind, value, durationMs) => {
+            if (closed) return;
+            ctx.sendEvent({ type: "visual", kind, value, durationMs });
           },
         });
 

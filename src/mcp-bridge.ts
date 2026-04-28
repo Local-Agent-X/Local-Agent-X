@@ -54,10 +54,13 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse | nul
 
       case "tools/call": {
         const params = req.params as { name: string; arguments?: Record<string, unknown> };
+        const sessionId = process.env.LAX_MCP_SESSION_ID;
+        const body: Record<string, unknown> = { name: params.name, arguments: params.arguments || {} };
+        if (sessionId) body.sessionId = sessionId;
         const res = await fetch(`${BASE}/api/mcp/call`, {
           method: "POST",
           headers: { "Authorization": `Bearer ${TOKEN}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ name: params.name, arguments: params.arguments || {} }),
+          body: JSON.stringify(body),
         });
         const data = await res.json() as { content?: unknown; isError?: boolean; error?: string };
         if (!res.ok) throw new Error(data.error || `SAX tools/call: ${res.status}`);

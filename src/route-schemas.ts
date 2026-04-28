@@ -7,13 +7,23 @@ import { z } from "zod";
 // ── Chat ──
 
 export const ChatRequestSchema = z.object({
-  message: z.string().min(1, "message is required"),
+  // Empty message is allowed when at least one attachment is supplied
+  // (image-only paste-and-send). Combined non-emptiness enforced below.
+  message: z.string().optional().default(""),
   sessionId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/, "Invalid session ID").optional().default("default"),
   attachments: z.array(z.object({
     name: z.string(),
     url: z.string(),
     isImage: z.boolean(),
   })).optional().default([]),
+}).superRefine((data, ctx) => {
+  if (!data.message.trim() && (!data.attachments || data.attachments.length === 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "message or at least one attachment is required",
+      path: ["message"],
+    });
+  }
 });
 
 // ── Sessions ──

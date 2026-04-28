@@ -68,6 +68,11 @@ export interface Operation {
   /** Secret names the user has pre-blessed at operation_start: for these, browser_fill_from_secret
    *  skips the first-use approval gate on the secret's recorded origin. Scope is this operation only. */
   preBlessedSecrets?: string[];
+  /** Set when this Operation was created by autopilot. Persistence + status fields are reused;
+   *  autopilot has its OWN loop (NOT startExecutor) and does NOT use the phase machinery. */
+  autopilot?: import("../autopilot/types.js").AutopilotConfig;
+  /** Per-round results, appended by autopilot loop. Empty for non-autopilot ops. */
+  autopilotRounds?: import("../autopilot/types.js").RoundResult[];
 }
 
 export interface OperationEvent {

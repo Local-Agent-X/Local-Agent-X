@@ -101,6 +101,13 @@ export const selfEditTool: ToolDefinition = {
     if (!task) return { content: "self_edit requires a 'task' description.", isError: true };
     const scopeHintArg = String(args.scope_hint || "").trim();
     const scopeHint = scopeHintArg ? `\n\nScope hint: ${scopeHintArg}` : "";
+    // Internal (server-injected) override: when present, the spawned `claude -p`
+    // subprocess runs in this cwd instead of the SAX repo root. Used by
+    // autopilot to confine self_edit to the worktree. Underscore-prefixed
+    // because it's NOT in the public tool schema — only the tool router can
+    // set it server-side; the model itself cannot.
+    const internalCwd = typeof args._cwd === "string" && args._cwd.trim() ? args._cwd : null;
+    const subprocessCwd = internalCwd || LAX_REPO_ROOT;
 
     // Walk up from the scope_hint path looking for AGENTS.md — include all
     // the subtree-scoped rules (src/AGENTS.md, packages/arikernel/AGENTS.md,
@@ -137,7 +144,7 @@ export const selfEditTool: ToolDefinition = {
         "--no-session-persistence",
         "--output-format", "text",
       ], {
-        cwd: LAX_REPO_ROOT,
+        cwd: subprocessCwd,
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
         env: npmAugmentedEnv(),

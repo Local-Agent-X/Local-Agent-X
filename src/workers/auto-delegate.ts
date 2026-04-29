@@ -46,13 +46,22 @@ const SHORT_TASK_RE = /^(yes|no|ok|sure|thanks|hi|hello|what|when|where|why|how|
  * running it inline?
  *
  * Conditions (all must be true):
- *   - Provider is Codex (this is the drift-prone provider; Anthropic stays inline)
- *   - Message looks like a long task (would otherwise burn context)
  *   - Channel is web (bridges/cron run their own loops; don't second-guess)
+ *   - Message looks like a long task (would otherwise burn context AND
+ *     hold the chat thread open while it grinds)
+ *
+ * No provider gate: even Anthropic (which doesn't drift like Codex) benefits
+ * from delegation because the chat agent stays free to chat about other
+ * things while the worker grinds. The user explicitly asked for this:
+ * "if we keep main agent free to chat, all providers should delegate, not
+ * just Codex."
+ *
+ * Sub-agents (delegate/agent_spawn) and any provider can be the worker —
+ * the worker pool resolves provider per-op based on user settings.
  */
 export function shouldAutoDelegate(provider: string, message: string, channel: string): boolean {
+  void provider; // intentionally unused — was the codex-only gate, now removed
   if (channel !== "web") return false;
-  if (provider !== "codex") return false;
   if (SHORT_TASK_RE.test(message.trim())) return false;
   const wordCount = message.split(/\s+/).length;
   if (wordCount >= 50) return true;
@@ -101,7 +110,7 @@ export async function delegateMessageToWorker(
     attemptCount: 0,
   };
 
-  trackOpForSession(op.id, sessionId);
+  trackOpForSession(op.id, sessionId, message);
   // Fire and forget — the session bridge handles the completion notification.
   void submitOp(op).catch((e) => {
     logger.warn(`[auto-delegate] op ${op.id} submit threw: ${(e as Error).message}`);

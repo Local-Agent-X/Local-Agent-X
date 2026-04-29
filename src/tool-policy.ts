@@ -274,6 +274,9 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     // Autopilot — bounded autonomous work, runs in isolated git worktree
     { id: "allow-autopilot", tool: "autopilot_*", decision: "allow", reason: "Autopilot operations (bounded, isolated worktree)", priority: 50 },
 
+    // Worker pool — op_submit/status/kill/redirect, heavy work in isolated subprocess
+    { id: "allow-op", tool: "op_*", decision: "allow", reason: "Worker pool ops — heavy work runs in isolated subprocess", priority: 50 },
+
     // Secrets — request triggers UI prompt, list shows names only
     { id: "allow-request-secret", tool: "request_secret", decision: "allow", reason: "Secret request (user confirms via UI)", priority: 50 },
     { id: "allow-list-secrets", tool: "list_secrets", decision: "allow", reason: "List secret names (no values exposed)", priority: 50 },

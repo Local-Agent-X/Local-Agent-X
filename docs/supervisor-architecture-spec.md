@@ -2,7 +2,9 @@
 
 ## The spine
 
-> **The main agent is a supervisor, not a worker.** It routes, summarizes, interrupts, and recovers operations; long-running execution happens in isolated worker sessions with durable state, priority scheduling, heartbeats, and resumable leases.
+> **The main agent owns attention. Workers own labor.**
+
+The main agent is a supervisor, not a worker. It routes, summarizes, interrupts, and recovers operations; long-running execution happens in isolated worker sessions with durable state, priority scheduling, heartbeats, resumable leases, and structured checkpoints. The supervisor never blocks on heavy work, so the user always has a responsive thread.
 
 This is the design that simultaneously delivers:
 - **System doesn't break** — bad work crashes a worker, never the supervisor
@@ -74,21 +76,52 @@ When the supervisor decides to spawn a sub-agent, it picks a provider by:
 
 **Neutral naming**: providers identified by transport+auth shape (`cliOauth`, `httpKey`, `localHttp`), not by vendor name in code/commits. Vendor identity is config data, not source-code identifier.
 
-## 3. Durable event log
+## 3. Durable event log + checkpoints
 
-Worker progress is appended to disk, not only streamed over WS:
+**Event logs are not checkpoints.** The events.jsonl tells us what happened; it does not always give a worker enough state to resume. Two complementary on-disk records:
 
 ```
 ~/.lax/operations/<opId>/
   ├─ operation.json       (metadata, status, lease)
-  ├─ events.jsonl         (append-only event log)
-  ├─ context-pack.json    (the snapshot the worker received)
+  ├─ events.jsonl         (append-only event stream — what happened, for replay/UI)
+  ├─ checkpoint.json      (structured resume state — written at every safe boundary)
+  ├─ context-pack.json    (the snapshot the worker received at start)
   └─ artifacts/           (any files the op produced for review)
 ```
 
-If the UI reloads, the op panel reconstructs from `events.jsonl`. If the worker crashes, the supervisor reads the log to know what was already done. If the user opens a new browser tab, they can subscribe to the live tail of an in-progress op.
+`checkpoint.json` schema:
+```ts
+interface OpCheckpoint {
+  opId: string;
+  updatedAt: string;
+  plan: PlanStep[];                  // the worker's working plan
+  completedSteps: number;            // index into plan
+  worktreeBranch: string | null;     // if the op uses a worktree
+  lastCommitSha: string | null;      // last good commit on the op branch
+  changedFiles: string[];            // running tally
+  pendingInstructions: string[];     // injected via redirect, not yet consumed
+  providerUsed: string;              // which provider ID handled this
+  retryCount: number;                // how many times this op has been respawned
+  lastSafeBoundary: {                // the most recent point we could resume from
+    label: string;                   // "after-write-of-x", "post-build", etc.
+    timestamp: string;
+  };
+}
+```
 
-WS streaming and disk-append run in parallel — disk is the source of truth, WS is the optimistic delivery channel.
+Workers write checkpoints at **safe boundaries** — after a tool call commits, after a build passes, after a phase ends. The supervisor reads `checkpoint.json` (not events.jsonl) when reassigning a recovered op. Events provide audit trail and UI replay; checkpoints provide resume state.
+
+If the UI reloads, the op panel reconstructs visuals from `events.jsonl`. If the worker crashes, the supervisor reads `checkpoint.json` to decide where to resume. If the user opens a new browser tab, they can subscribe to the live tail of an in-progress op.
+
+**WS streaming and disk-append run in parallel** — disk is the source of truth, WS is the optimistic delivery channel.
+
+**Redaction at write time.** The disk log is a long-term artifact; secrets must never reach it. A redactor runs over every event before disk-append, scrubbing:
+- Authorization headers, Bearer tokens, API keys, OAuth tokens
+- Browser autofill values that hit `browser_fill_from_secret`
+- Tool outputs explicitly tagged `sensitive: true`
+- Anything matching the secret-name patterns from `~/.lax/secrets.enc`
+
+Redaction is fail-closed: if the redactor isn't sure, it redacts. The original (un-redacted) event still streams to the live UI session via WS, but only the redacted form is persisted.
 
 ## 4. Heartbeat protocol
 
@@ -147,17 +180,19 @@ Voice agent uses this to say: "I started it; it's queued behind two builds. Shou
 
 Without explicit queue surfacing, the user has no idea if the system is busy or broken. Surfacing the queue makes the system feel alive even when it's busy.
 
-## 7. Interrupt semantics — three distinct controls
+## 7. Interrupt semantics — three distinct controls (preemption is cooperative)
 
-"Stop" alone is ambiguous. Define three:
+"Stop" alone is ambiguous. Define three, with explicit semantics about WHEN they take effect:
 
-| Control | Effect | When to use |
-|---|---|---|
-| **Pause** | Worker finishes current step (e.g. current file write), then waits. Op is resumable. | "Hold on, let me look at what you've done so far." |
-| **Redirect** | Injects new instruction into the worker's context for the next iteration. Op continues. | "Also add a stop-loss strategy." |
-| **Kill** | SIGTERM the worker, mark op as cancelled. Not resumable. | "This is going off the rails, kill it." |
+| Control | Effect | Cooperative or immediate? | When to use |
+|---|---|---|---|
+| **Pause** | Worker finishes its current safe boundary (a tool call commits, a build completes), then waits. Op is resumable from the checkpoint. | **Cooperative** — applies at the next safe step boundary, not mid-tool-call or mid-model-call. May take 30s-5min to land depending on what's in flight. | "Hold on, let me look at what you've done so far." |
+| **Redirect** | Injects new instruction into the worker's context for the next iteration. Op continues without pausing. | **Cooperative** — the worker reads `pendingInstructions` at the next iteration boundary. | "Also add a stop-loss strategy." |
+| **Kill** | SIGKILL the worker, mark op as cancelled. Not resumable. Any in-progress side effects may leave artifacts. | **Immediate** — only Kill stops work right now. | "This is going off the rails, kill it." |
 
 Each maps to a distinct API endpoint and UI affordance. Voice agent has tools for all three.
+
+**Why cooperative for Pause/Redirect:** stopping mid-model-call wastes the in-flight tokens; stopping mid-tool-call may leave half-written files. The worker checks for pending controls at every safe boundary (the same boundaries where it writes checkpoints). User-facing UI tells the truth: "Pause requested — will land after the current step (~30s-2min)."
 
 The autopilot work already shipped Stop (in the "finish current round, then exit" sense) — it maps to Pause here. Kill is the "v2" we deferred. Redirect is the agent_redirect primitive that already exists.
 
@@ -220,6 +255,154 @@ Since the test passed, the simpler unified pool design works.
 
 ---
 
+## 11. Centralized tool safety (no worker-only shortcut)
+
+Workers MUST call tools through the same `tool-executor` / `tool-policy` / approval gate / SecurityLayer path as the main agent. There is no worker-only shortcut. The ari-kernel, the protected-files guard, the egress allowlist, the secret approval flow — all of it applies in worker context too.
+
+**Why:** the worker boundary is for resource isolation (heap, memory, parallelism). It is NOT a security boundary. A worker that gets compromised, gets prompt-injected, or just makes a mistake must hit the same guardrails as the main agent. Anything else creates a "bypass via delegation" pattern.
+
+Implementation: workers call back to the parent over IPC for tool approval decisions and for execution of any tool whose result the parent needs to track. Cheap read-only tools (read, glob, grep) can execute worker-local for latency, but write/edit/bash/http_request always go through the parent's approval+exec path.
+
+## 12. Secrets do not enter context packs
+
+Context packs are written to disk (`context-pack.json`), passed across IPC, and visible in the events log. Therefore:
+
+- **Never** include raw secret values (API keys, OAuth tokens, passwords)
+- **Allowed**: secret NAMES (`openai_api_key`), placeholders (`${SECRET:openai_api_key}`), and access grants (a list of which secrets the worker is permitted to request)
+- Workers fetch actual values via the existing `request_secret` / `secret_get` tools at the moment of use
+- The parent's approval gate (`request_secret`) still mediates, even when called from a worker
+
+Pattern:
+```
+context-pack.json (worker sees this):
+  secrets: { allowed: ["openai_api_key", "kraken_api_key"] }
+
+Worker code:
+  const key = await tools.request_secret({ name: "kraken_api_key" });
+```
+
+Result: even if a context-pack file leaks (disk theft, log scrape, accidental commit), no live credentials are exposed.
+
+## 13. Dynamic provider concurrency
+
+Static `maxConcurrent` is the starting baseline. The supervisor adjusts it dynamically:
+
+- On HTTP 429 (rate-limited) or 529/503 (overloaded): halve the provider's effective concurrency, set a 60s cooldown
+- On three consecutive successes after cooldown: ramp concurrency back up by 1
+- Recover to declared `maxConcurrent` over time, never exceeds it
+- Per-provider cooldown state visible in `/api/health/providers`
+
+This handles bursty usage gracefully — the system slows down rather than failing, and users see "queued" instead of "error: 429."
+
+## 14. Local models need a GPU semaphore
+
+Worker count is NOT local-model concurrency. A 7B model on a single 3060 fits one generation comfortably; two would OOM the GPU. So workers using local models share a **resource lock**:
+
+```ts
+interface Op {
+  ...
+  resourceLocks: string[]; // ["gpu:0"] for ops needing the local GPU
+}
+```
+
+The supervisor's dispatcher won't assign an op to a worker if the op's required `resourceLocks` are held by another running op. Multiple GPUs on the same machine = multiple semaphores (`gpu:0`, `gpu:1`).
+
+For ops that don't need the GPU (HTTP-only providers), `resourceLocks: []` — no contention, full parallelism.
+
+## 15. Interactive lane refinement
+
+**Not every chat message consumes a worker.** The supervisor (main agent) answers lightweight questions directly:
+- "What did you do yesterday?" → memory query, direct response
+- "Show me the last cron report" → file read, direct response
+- "Pause the kraken build" → control plane action, direct response
+
+The interactive lane is for **heavy interactive work** — the user is waiting on a screen AND the work needs a tool-using sub-agent (e.g. "diagnose why this endpoint returns 500 — investigate now"). Then we burn an interactive worker.
+
+Heuristic: if the supervisor can answer in <1 model call with no tools, it does so directly. Otherwise it delegates to the interactive lane.
+
+This keeps the worker pool from being burned on trivial questions while still guaranteeing interactive priority for genuinely-interactive heavy work.
+
+## 16. Cross-session visibility — privacy scoping
+
+Today's deployment is single-user, single-machine. Ops are user-scoped (i.e. all visible to the local user). When this evolves toward team/cloud:
+
+- Ops carry an `ownerId` (user) and optional `projectId`/`orgId`
+- Cross-session subscription requires permission match (you can only watch ops you own OR ops in projects you have access to)
+- Voice + browser tabs of the same user → unrestricted shared visibility (today's behavior)
+- Foreign user → no visibility unless explicitly shared
+
+For now: implement `ownerId` in the op metadata even though there's only one user. Avoids a painful retrofit later.
+
+## 17. IPC protocol versioning
+
+Every message between supervisor and worker carries a `protocolVersion`:
+
+```ts
+interface IpcMessage {
+  protocolVersion: 1;
+  type: "task-assign" | "heartbeat" | "event" | "checkpoint" | "result" | "control";
+  ...
+}
+```
+
+When the parent code is upgraded (new server start) but a worker process from before the upgrade is still alive, the parent sees the old `protocolVersion` and either:
+- Talks the old dialect (if compatible), or
+- Recycles the worker (forcing a fresh worker on the new version)
+
+Saves a class of "they updated the parent but workers are on the old IPC" subtle bugs. Bump the version any time the message shape changes.
+
+## 18. Failure retry policy — bounded recovery
+
+"Recoverable" must not mean "retry forever." Every op carries:
+
+```ts
+interface OpRetryPolicy {
+  maxRecoveryAttempts: number;       // default 3
+  backoffMs: number[];               // [5000, 30000, 120000]
+  lastFailureReason: string | null;
+  lastFailureAt: string | null;
+  attemptCount: number;
+}
+```
+
+After `maxRecoveryAttempts`, the op is marked `failed-permanently`. The user gets the failure reason + the durable event log + the checkpoint. Retry button is on them.
+
+Without this cap, "doesn't give up" silently becomes "burns time/tokens forever" on a genuinely unrecoverable failure.
+
+## 19. Worktree collision — the merge/rebase reality
+
+Per-op worktrees prevent live-file races (two workers can't write the same file at once because they're in different filesystem dirs). But two workers can still touch the same files, and at merge time those changes need to reconcile.
+
+When an op finishes successfully:
+- Its worktree branch holds N commits
+- Before merging to base, the supervisor runs `git merge --no-commit --no-ff <op-branch>` in a probe checkout
+- If it cleanly merges → fast-forward or merge commit, op marked complete
+- If it conflicts → op marked `merge-conflict-pending`, surfaced to user with the conflicting files listed
+- User decides: accept op A's version, accept op B's version, or manually resolve
+
+The summary panel for an op should flag *anticipated* conflicts BEFORE the user reviews — "This op modified `src/cron-service.ts`; another op touched the same file. Likely conflict." Saves the user from being surprised at merge time.
+
+Two ops touching truly orthogonal files (different dirs entirely) merge cleanly always. The conflict story is a fallback for the rarer overlap case.
+
+## 20. Provider fallback — only safe before side effects
+
+> Earlier draft said: "Provider goes down → capability matrix routes to fallback provider"
+> That's a footgun. After a side-effecting tool call (email send, payment, file write, HTTP POST/PUT/DELETE), naive fallback can double-send or double-mutate. Refined rule:
+
+**Provider fallback is allowed only:**
+- Before any side-effecting tool call has executed in the current op, OR
+- After a checkpoint proves the next step is idempotent (e.g. read-only research, math)
+
+Implementation:
+- Each tool declares `sideEffecting: boolean` (already exists in `committing-tool-check.ts`)
+- The supervisor tracks "has this op committed any side-effecting calls yet?"
+- If yes AND the provider fails → mark `failed-needs-human`, don't fallback
+- If no → fallback transparently to the next provider in the capability-matched list
+
+This is the same rule chat.ts already uses for empty-response auto-failover (`suppressFailover` when `committingCalls.length > 0`). Generalize it across all worker→provider routing.
+
+---
+
 ## Build order
 
 Layer-by-layer, each delivers value independently:
@@ -235,8 +418,11 @@ Layer-by-layer, each delivers value independently:
 | 6 | **Three interrupt controls (Pause / Redirect / Kill)** | 3-4h | User can steer in real-time |
 | 7 | **Worker pool size N + dynamic burst + recycle policy** | 3-4h | Scales to multiple concurrent ops |
 | 8 | **Voice-orchestrator path** | 2-3h | The killer demo |
+| 9 | **Checkpoint writer + redactor + IPC versioning** (cuts across 1-7) | wired into 1 | Resume-on-restart, secrets never on disk, upgrade-safe IPC |
+| 10 | **GPU semaphore + dynamic provider concurrency + retry caps** | 4h | Local-model use, graceful degradation, no infinite-burn |
+| 11 | **Worktree merge-conflict surfacing** | 2-3h | User sees collisions before review |
 
-Total: ~30-40 hours of focused work for the full vision. Step 0 is shipping today; step 1 is the load-bearing one — once it's right, everything else is parameter scaling.
+Total: ~35-50 hours of focused work for the full vision. Step 0 is shipping today; step 1 is the load-bearing one — once it's right, everything else is parameter scaling. Steps 9-11 are the supervisor-contract additions that turn "workers exist" into "system doesn't break or give up."
 
 ## What this guarantees
 
@@ -247,7 +433,8 @@ Total: ~30-40 hours of focused work for the full vision. Step 0 is shipping toda
 | User wants to redirect mid-build | No way to inject | Redirect endpoint pushes new instruction to live worker |
 | Long build starves chat | Chat unresponsive | Reserved interactive slot guarantees chat path |
 | Browser reloads mid-op | Op state lost from UI | Event log replayed, op panel reconstructs |
-| Provider goes down | All workers fail | Capability matrix routes to fallback provider, lease reassigned |
+| Provider goes down (no side effects yet) | All workers fail | Capability matrix routes to fallback provider, lease reassigned |
+| Provider goes down (after side-effecting call) | Naive retry double-mutates | `failed-needs-human` — user decides whether the side-effect landed |
 | Two ops both want same files | Race condition / corruption | Per-op worktree (existing pattern), no collision |
 | User says "stop" ambiguously | Pick one interpretation, often wrong | Three explicit controls, user picks Pause / Redirect / Kill |
 

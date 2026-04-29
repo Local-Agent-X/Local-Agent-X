@@ -48,21 +48,26 @@ export async function resolveProvider(
   // Lets a worker honor op.contextPack.routing.preferredProvider without
   // having to mutate settings.json.
   let provider = "";
+  let providerWasOverridden = false;
+  const savedProvider = String(saved.provider || "");
   if (providerOverride && VALID.includes(providerOverride) && hasCredsFor(providerOverride)) {
     provider = providerOverride;
+    // If the caller-supplied override differs from the saved provider, the
+    // saved model belongs to the old provider (e.g. settings.json says
+    // codex/gpt-5.5, override forces anthropic, but saved model is still
+    // gpt-5.5 — Claude has no idea what that is). Blank it so the
+    // downstream default picker chooses a valid model for the new provider.
+    if (providerOverride !== savedProvider) providerWasOverridden = true;
   } else {
-    provider = String(saved.provider || "");
+    provider = savedProvider;
   }
-  let providerWasOverridden = false;
   if (!VALID.includes(provider) || !hasCredsFor(provider)) {
     provider = loadAnthropicTokens() ? "anthropic" : (loadTokens() && !config.openaiApiKey) ? "codex" : "xai";
     providerWasOverridden = true;
   }
-  // If we fell through to a different provider, the saved model almost
-  // certainly belongs to the old one (e.g. settings.json says
-  // openai/o3-pro, but no OpenAI key → fall through to anthropic, and
-  // Anthropic has no idea what o3-pro is). Blank the saved model so the
-  // downstream default picker chooses something valid for the new provider.
+  // If we fell through to a different provider OR the caller-override forced
+  // a switch, the saved model almost certainly belongs to the old provider.
+  // Blank it so the downstream default picker picks something valid.
   if (providerWasOverridden) saved.model = "";
 
   // Resolve API key

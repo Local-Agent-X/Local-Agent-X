@@ -21,10 +21,21 @@ export async function startServer(config: LAXConfig) {
   // the main agent's heap small — heavy work crashes the worker, not us.
   const { startWorkerPool } = await import("../workers/pool.js");
   const { bootstrapProviderMatrix } = await import("../workers/provider-matrix.js");
-  const { initSessionBridge } = await import("../workers/session-bridge.js");
+  const { initSessionBridge, setSessionPersister } = await import("../workers/session-bridge.js");
   bootstrapProviderMatrix();
   startWorkerPool();
   initSessionBridge();
+  // Persist worker-completion notices into the session as assistant messages
+  // so they survive page reload + WS disconnects.
+  setSessionPersister((sessionId, content) => {
+    try {
+      const session = sessionStore.load(sessionId);
+      if (!session) return;
+      session.messages.push({ role: "assistant", content });
+      session.updatedAt = Date.now();
+      sessionStore.save(session);
+    } catch { /* persister must never break worker completion */ }
+  });
 
   const tools = await bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir });
   const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef } = tools;

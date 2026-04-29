@@ -63,25 +63,11 @@ function connectChatWs() {
           // don't accumulate. User has time to read it; pinning UX comes later.
           setTimeout(function() { try { if (typeof removeAgentFeed === 'function') removeAgentFeed(msg.event.opId); } catch {} }, 120000);
 
-          // Also append a SHORT ack into the chat session (matches what the
-          // server-side persister wrote into session.messages on disk). This
-          // way the user sees "✓ Worker finished — opId. Full result in the
-          // Agents panel." inline without having to reload, AND if they do
-          // reload, the persisted version is already there.
-          const sess = (chats || []).find(c => c.id === msg.sessionId);
-          if (sess) {
-            const statusEmoji = msg.event.status === 'completed' ? '✓' : msg.event.status === 'failed' ? '✗' : '⊘';
-            const filesCount = (msg.event.filesChanged && msg.event.filesChanged.length) || 0;
-            const filesNote = filesCount > 0 ? ' (' + filesCount + ' file' + (filesCount === 1 ? '' : 's') + ')' : '';
-            const ackContent = statusEmoji + ' Worker finished — `' + msg.event.opId + '`' + filesNote + '. _Full result in the Agents panel._';
-            sess.messages = sess.messages || [];
-            sess.messages.push({ role: 'assistant', content: ackContent, timestamp: Date.now() });
-            sess.updatedAt = Date.now();
-            try { localStorage.setItem('sax_chats', JSON.stringify(chats)); } catch {}
-            if (activeChat && activeChat.id === msg.sessionId) {
-              try { renderChat(activeChat); } catch {}
-            }
-          }
+          // Note: no synthetic chat message anymore. The agent narrates the
+          // completion naturally on the user's NEXT turn via the pending-
+          // notifications queue (workers/pending-notifications.ts). Sidebar
+          // shows the live state + full result; chat narration happens
+          // organically when the user replies.
         } catch(e) { console.warn('[bg_op_completed] update failed', e); }
         return;
       }

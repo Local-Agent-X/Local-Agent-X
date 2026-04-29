@@ -41,5 +41,25 @@ export const handleHealthRoutes: RouteHandler = async (method, url, req, res) =>
     return true;
   }
 
+  if (url.pathname === "/api/health/providers") {
+    try {
+      const { getProviderHealth } = await import("../workers/provider-matrix.js");
+      jsonResponse(res, 200, { providers: getProviderHealth() }, req);
+    } catch (e) {
+      jsonResponse(res, 500, { error: (e as Error).message }, req);
+    }
+    return true;
+  }
+
+  if (url.pathname === "/api/health/workers") {
+    try {
+      const { getPoolStatus } = await import("../workers/pool.js");
+      jsonResponse(res, 200, getPoolStatus(), req);
+    } catch (e) {
+      jsonResponse(res, 500, { error: (e as Error).message }, req);
+    }
+    return true;
+  }
+
   return false;
 };

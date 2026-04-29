@@ -19,6 +19,12 @@ export const CORE_TOOL_NAMES = new Set([
   "memory_consolidate", "memory_ingest",
   // Operations — long-horizon goal orchestration
   "operation_start", "operation_list", "operation_status", "operation_next", "operation_advance",
+  // Worker pool — delegate heavy work to isolated subprocess (chat stays responsive)
+  "op_submit", "op_status", "op_kill", "op_redirect",
+  // Autopilot — bounded autonomous work in isolated worktree
+  "autopilot_start", "autopilot_stop", "autopilot_status",
+  // Self-edit (sandboxed code repair via subprocess)
+  "self_edit",
   // Planning & tasks
   "enter_plan_mode", "exit_plan_mode",
   "task_create", "task_update", "task_list", "task_get",

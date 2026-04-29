@@ -23,6 +23,7 @@ import { EventEmitter } from "node:events";
 import { sendIpc, receiveIpc } from "./ipc.js";
 import { ipcEnvelope, type IpcMessage, type Op, type OpEvent, type OpResult } from "./types.js";
 import { writeOp, readOp, setOpStatus } from "./op-store.js";
+import { createHeartbeatState, startHeartbeat, stopHeartbeat, recordPong, decideRecovery, recordFailure, isCircuitOpen, type HeartbeatState } from "./heartbeat.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.pool");
@@ -36,6 +37,9 @@ interface WorkerSlot {
   capabilities: string[];
   spawnedAt: number;
   detachIpc: () => void;
+  heartbeat: HeartbeatState;
+  stopHeartbeatFn: () => void;
+  recyclePending: boolean; // marked when heap pressure says recycle after current op
 }
 
 const POOL_SIZE = 1;       // Step 1 — single worker for validation
@@ -71,9 +75,22 @@ export function startWorkerPool(): void {
  * Submit an op for execution. Returns a promise that resolves with the
  * OpResult when the op finishes. The op metadata is persisted to disk
  * before assignment so it survives restart.
+ *
+ * Per spec §21.4 circuit breaker: if the op's type has failed too many
+ * times in a row recently, the submission is rejected with a clear error
+ * before consuming any worker resources.
  */
 export function submitOp(op: Op): Promise<OpResult> {
   if (!started) startWorkerPool();
+  if (isCircuitOpen(op.type)) {
+    return Promise.resolve({
+      opId: op.id,
+      status: "failed",
+      finalSummary: `Op type "${op.type}" circuit breaker is open — too many recent failures. Wait or investigate root cause.`,
+      filesChanged: [],
+      error: { message: "circuit-open", recoverable: false },
+    });
+  }
   writeOp(op);
   return new Promise((resolve, reject) => {
     pendingResults.set(op.id, { resolve, reject });
@@ -149,6 +166,7 @@ function spawnWorker(): void {
   });
 
   let workerId = `pending-${proc.pid}`;
+  const heartbeat = createHeartbeatState(workerId);
   const slot: WorkerSlot = {
     workerId,
     proc,
@@ -156,6 +174,9 @@ function spawnWorker(): void {
     capabilities: [],
     spawnedAt: Date.now(),
     detachIpc: () => {},
+    heartbeat,
+    stopHeartbeatFn: () => {},
+    recyclePending: false,
   };
   slots.push(slot);
 
@@ -165,29 +186,58 @@ function spawnWorker(): void {
     onError: (e) => logger.warn(`[worker:${proc.pid}] ipc error: ${e.message}`),
   });
 
+  // Start heartbeat ping/pong + watchdog
+  slot.stopHeartbeatFn = startHeartbeat(proc, heartbeat, {
+    onSuspect: (id, ms) => logger.warn(`[pool] worker ${id} suspect (silent for ${Math.round(ms / 1000)}s)`),
+    onDead: (id, ms) => {
+      logger.error(`[pool] worker ${id} dead (silent for ${Math.round(ms / 1000)}s) — killing`);
+      try { proc.kill("SIGKILL"); } catch {}
+    },
+    onHeapPressure: (id, heapMb, limitMb) => {
+      logger.warn(`[pool] worker ${id} sustained heap pressure ${heapMb}MB/${limitMb}MB — marking for recycle after current op`);
+      slot.recyclePending = true;
+      // If idle right now, recycle immediately
+      if (slot.busyWith === null) {
+        try { proc.kill("SIGTERM"); } catch {}
+      }
+    },
+  });
+
   proc.on("exit", (code, signal) => {
     logger.warn(`[worker:${proc.pid}] exited (code=${code} signal=${signal}) — was busy with ${slot.busyWith || "nothing"}`);
+    stopHeartbeat(heartbeat);
     if (slot.busyWith) {
-      // The op died with the worker. For Step 1, mark it failed-recoverable;
-      // Step 3 will add proper lease reassignment.
+      // Worker died mid-op. Use proper recovery decision (per spec §18 + §20).
       const opId = slot.busyWith;
       const op = readOp(opId);
-      if (op && (op.attemptCount ?? 0) < op.retryPolicy.maxRecoveryAttempts) {
-        logger.info(`[pool] reassigning op ${opId} (attempt ${(op.attemptCount ?? 0) + 1}/${op.retryPolicy.maxRecoveryAttempts})`);
-        op.attemptCount = (op.attemptCount ?? 0) + 1;
-        op.workerId = undefined;
-        op.status = "pending";
-        writeOp(op);
-        opQueue.unshift(op);
-      } else {
-        logger.warn(`[pool] op ${opId} exhausted retries`);
-        const result: OpResult = {
-          opId, status: "failed", finalSummary: "Worker died and retry budget exhausted",
-          filesChanged: [], error: { message: "worker died, no retries left", recoverable: false },
-        };
-        setOpStatus(opId, "failed", { lastFailureReason: "worker died" });
-        pendingResults.get(opId)?.resolve(result);
-        pendingResults.delete(opId);
+      if (op) {
+        // We don't yet track per-op committingCallsAlreadyMade here — Step 4
+        // will wire that through the event log. For Step 3 we conservatively
+        // assume false (allow retry) but cap via op.retryPolicy.
+        const decision = decideRecovery(op, { committingCallsAlreadyMade: false, reason: `worker exited (code=${code} signal=${signal})` });
+        if (decision.shouldRetry) {
+          logger.info(`[pool] op ${opId} retry: ${decision.reason} (delay=${decision.nextDelayMs}ms)`);
+          op.workerId = undefined;
+          op.status = "pending";
+          writeOp(op);
+          setTimeout(() => {
+            opQueue.unshift(op);
+            drainQueue();
+          }, decision.nextDelayMs);
+        } else {
+          logger.warn(`[pool] op ${opId} not retried: ${decision.reason}`);
+          const isCircuitNowOpen = recordFailure(op.type);
+          if (isCircuitNowOpen) {
+            logger.error(`[pool] circuit breaker OPEN for op type "${op.type}" — too many failures`);
+          }
+          const result: OpResult = {
+            opId, status: "failed", finalSummary: `Worker died: ${decision.reason}`,
+            filesChanged: [], error: { message: decision.reason, recoverable: false },
+          };
+          setOpStatus(opId, "failed", { lastFailureReason: decision.reason });
+          pendingResults.get(opId)?.resolve(result);
+          pendingResults.delete(opId);
+        }
       }
     }
     // Remove dead slot, respawn replacement
@@ -230,8 +280,18 @@ function handleWorkerMessage(slot: WorkerSlot, msg: IpcMessage): void {
       setOpStatus(opId, result.status === "completed" ? "completed" : result.status === "cancelled" ? "cancelled" : "failed", {
         lastFailureReason: result.error?.message,
       });
+      // Track failures for the circuit breaker
+      if (result.status === "failed") {
+        const isOpen = recordFailure(readOp(opId)?.type ?? "unknown");
+        if (isOpen) logger.error(`[pool] circuit breaker OPEN for op type — too many recent failures`);
+      }
       pendingResults.get(opId)?.resolve(result);
       pendingResults.delete(opId);
+      // If this slot was marked recyclePending due to heap pressure, recycle now
+      if (slot.recyclePending) {
+        logger.info(`[pool] recycling worker ${slot.workerId} (heap pressure flag)`);
+        try { slot.proc.kill("SIGTERM"); } catch {}
+      }
       drainQueue();
       break;
     }
@@ -240,7 +300,8 @@ function handleWorkerMessage(slot: WorkerSlot, msg: IpcMessage): void {
       break;
     }
     case "pong":
-      // Heartbeat reply — Step 3
+      // Heartbeat reply — record receipt + heap snapshot
+      recordPong(slot.heartbeat, msg.payload.heapMb);
       break;
     default:
       logger.warn(`[pool] unknown message from worker: ${(msg as { type: string }).type}`);
@@ -272,6 +333,7 @@ function drainQueue(): void {
 
 function shutdownAll(): void {
   for (const s of slots) {
+    try { stopHeartbeat(s.heartbeat); } catch {}
     try { s.detachIpc(); } catch {}
     try { s.proc.kill("SIGTERM"); } catch {}
   }

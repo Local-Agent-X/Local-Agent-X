@@ -8,6 +8,9 @@ export async function resolveProvider(
   config: LAXConfig,
   secretsStore: SecretsStore,
   dataDir: string,
+  /** Optional override — forces this provider id if creds are available;
+   *  falls through to the normal auto-detect chain otherwise. */
+  providerOverride?: string,
 ): Promise<{
   provider: string;
   apiKey: string;
@@ -41,7 +44,15 @@ export async function resolveProvider(
     if (p === "local") return true;
     return false;
   };
-  let provider = String(saved.provider || "");
+  // Caller-supplied override takes precedence if creds are available.
+  // Lets a worker honor op.contextPack.routing.preferredProvider without
+  // having to mutate settings.json.
+  let provider = "";
+  if (providerOverride && VALID.includes(providerOverride) && hasCredsFor(providerOverride)) {
+    provider = providerOverride;
+  } else {
+    provider = String(saved.provider || "");
+  }
   let providerWasOverridden = false;
   if (!VALID.includes(provider) || !hasCredsFor(provider)) {
     provider = loadAnthropicTokens() ? "anthropic" : (loadTokens() && !config.openaiApiKey) ? "codex" : "xai";

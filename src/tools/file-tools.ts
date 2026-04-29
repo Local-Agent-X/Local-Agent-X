@@ -55,7 +55,7 @@ export const readTool: ToolDefinition = {
 
 export const writeTool: ToolDefinition = {
   name: "write",
-  description: "Write content to a file. Creates the file and parent directories if they don't exist.",
+  description: "Write file contents. PREFER THIS over `bash` heredoc (cat <<EOF > file) for any file creation or full rewrite — write has no length limit, bash commands are capped at 2000 chars and will be rejected. Creates the file and parent directories if they don't exist.",
   parameters: {
     type: "object",
     properties: {
@@ -95,7 +95,7 @@ export const writeTool: ToolDefinition = {
 export const editTool: ToolDefinition = {
   name: "edit",
   description:
-    "Edit a file by replacing an exact string match. The old_string must match exactly (including whitespace). Use this for targeted changes.",
+    "Edit a file by replacing an exact string match. The old_string must match exactly (including whitespace). PREFER THIS over `bash sed/awk/heredoc` for targeted edits — edit has no length limit, bash is capped at 2000 chars. Use for changing a function, a config value, a single line.",
   parameters: {
     type: "object",
     properties: {

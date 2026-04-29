@@ -173,7 +173,23 @@ async function executeOp(op: Op, signal: AbortSignal): Promise<OpResult> {
   // the op's preferredProvider hint or whatever resolveProvider returns by default.
   const { SecretsStore } = await import("../secrets.js");
   const secretsStore = new SecretsStore(dataDir);
-  const resolved = await resolveProvider(runtime, secretsStore, dataDir);
+
+  // Map the neutral matrix names → legacy provider names that resolveProvider
+  // understands. Lets ops specify preferred_provider in their context pack
+  // without depending on the legacy naming.
+  const NEUTRAL_TO_LEGACY: Record<string, string> = {
+    httpKeyOpenAi: "codex",
+    cliOauthAnthropic: "anthropic",
+    httpKeyXai: "xai",
+    httpKeyGemini: "gemini",
+    localHttpOllama: "local",
+  };
+  const preferredHint = op.contextPack.routing.preferredProvider;
+  const providerOverride = preferredHint
+    ? (NEUTRAL_TO_LEGACY[preferredHint] || preferredHint)
+    : undefined;
+
+  const resolved = await resolveProvider(runtime, secretsStore, dataDir, providerOverride);
 
   if (!resolved.apiKey) {
     return {

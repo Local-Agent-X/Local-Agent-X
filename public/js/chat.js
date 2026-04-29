@@ -67,9 +67,13 @@ function connectChatWs() {
             updateAgentFeed(msg.event.opId, { status: statusLabel, output });
           }
           if (window.desktop) window.desktop.showNotification('Worker finished', (msg.event.summary || '').slice(0, 100));
-          // Auto-prune from the sidebar after 2 minutes so completed cards
-          // don't accumulate. User has time to read it; pinning UX comes later.
-          setTimeout(function() { try { if (typeof removeAgentFeed === 'function') removeAgentFeed(msg.event.opId); } catch {} }, 120000);
+          // Keep completed cards visible for 30 min so user has plenty of
+          // time to notice them. Previously auto-pruned at 2 min, which
+          // meant if user wasn't watching the sidebar in that window they
+          // had no signal the work landed. (Followup: add a manual dismiss
+          // button + auto-collapse on completion so they don't accumulate
+          // visually while still being there for reference.)
+          setTimeout(function() { try { if (typeof removeAgentFeed === 'function') removeAgentFeed(msg.event.opId); } catch {} }, 30 * 60 * 1000);
 
           // Note: no synthetic chat message anymore. The agent narrates the
           // completion naturally on the user's NEXT turn via the pending-

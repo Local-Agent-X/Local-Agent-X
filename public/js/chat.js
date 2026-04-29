@@ -28,32 +28,61 @@ function connectChatWs() {
     }
 
     if (msg.type === 'event' && msg.sessionId && msg.event) {
-      // bg_op_completed: a worker-pool op finished. Append a fresh assistant
-      // message into the session and re-render if currently viewing. This
-      // event bypasses the per-turn message handler (which detaches on
-      // `done`), so it works regardless of whether a turn is in progress.
+      // Worker-pool ops surface in the AGENTS sidebar (not the chat thread)
+      // so background work doesn't pollute the conversation. The sidebar
+      // already handles live status updates, output streaming, and removal,
+      // and works regardless of which chat is currently active.
+      if (msg.event.type === 'bg_op_started') {
+        try {
+          if (typeof addAgentFeed === 'function') {
+            addAgentFeed({
+              id: msg.event.opId,
+              name: 'Worker: ' + (msg.event.task || '').slice(0, 60),
+              role: 'coder',                  // gets the 💻 icon
+              status: 'working',
+              currentTask: msg.event.task || '',
+              output: '',
+            });
+          }
+        } catch(e) { console.warn('[bg_op_started] sidebar update failed', e); }
+        return;
+      }
       if (msg.event.type === 'bg_op_completed') {
         try {
+          const statusLabel = msg.event.status === 'completed' ? 'completed'
+            : msg.event.status === 'failed' ? 'failed' : 'cancelled';
+          const filesLine = (msg.event.filesChanged && msg.event.filesChanged.length > 0)
+            ? '\n\nfiles: ' + msg.event.filesChanged.slice(0, 5).join(', ')
+            : '';
+          const output = (msg.event.summary || '(no summary)') + filesLine;
+          if (typeof updateAgentFeed === 'function') {
+            updateAgentFeed(msg.event.opId, { status: statusLabel, output });
+          }
+          if (window.desktop) window.desktop.showNotification('Worker finished', (msg.event.summary || '').slice(0, 100));
+          // Auto-prune from the sidebar after 2 minutes so completed cards
+          // don't accumulate. User has time to read it; pinning UX comes later.
+          setTimeout(function() { try { if (typeof removeAgentFeed === 'function') removeAgentFeed(msg.event.opId); } catch {} }, 120000);
+
+          // Also append a SHORT ack into the chat session (matches what the
+          // server-side persister wrote into session.messages on disk). This
+          // way the user sees "✓ Worker finished — opId. Full result in the
+          // Agents panel." inline without having to reload, AND if they do
+          // reload, the persisted version is already there.
           const sess = (chats || []).find(c => c.id === msg.sessionId);
           if (sess) {
-            const statusLabel = msg.event.status === 'completed' ? '✓ completed'
-              : msg.event.status === 'failed' ? '✗ failed' : '⊘ cancelled';
-            const filesLine = (msg.event.filesChanged && msg.event.filesChanged.length > 0)
-              ? '\n\n_files: ' + msg.event.filesChanged.slice(0, 5).join(', ') + '_'
-              : '';
-            const content = '🤖 **Op ' + msg.event.opId + ' ' + statusLabel + '**\n\n' + (msg.event.summary || '(no summary)') + filesLine;
+            const statusEmoji = msg.event.status === 'completed' ? '✓' : msg.event.status === 'failed' ? '✗' : '⊘';
+            const filesCount = (msg.event.filesChanged && msg.event.filesChanged.length) || 0;
+            const filesNote = filesCount > 0 ? ' (' + filesCount + ' file' + (filesCount === 1 ? '' : 's') + ')' : '';
+            const ackContent = statusEmoji + ' Worker finished — `' + msg.event.opId + '`' + filesNote + '. _Full result in the Agents panel._';
             sess.messages = sess.messages || [];
-            sess.messages.push({ role: 'assistant', content, timestamp: Date.now() });
+            sess.messages.push({ role: 'assistant', content: ackContent, timestamp: Date.now() });
             sess.updatedAt = Date.now();
             try { localStorage.setItem('sax_chats', JSON.stringify(chats)); } catch {}
             if (activeChat && activeChat.id === msg.sessionId) {
               try { renderChat(activeChat); } catch {}
-            } else {
-              try { renderSidebar(); } catch {}
             }
-            if (window.desktop) window.desktop.showNotification('Background op finished', (msg.event.summary || '').slice(0, 100));
           }
-        } catch(e) { console.warn('[bg_op_completed] render failed', e); }
+        } catch(e) { console.warn('[bg_op_completed] update failed', e); }
         return;
       }
 

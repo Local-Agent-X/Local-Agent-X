@@ -110,6 +110,18 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         session.messages.push({ role: "assistant", content: replyText });
         session.updatedAt = Date.now();
         ctx.saveSession(session);
+        // Push a card into the global agents sidebar so the user can watch
+        // the op live without it polluting the chat thread. Broadcast via
+        // chat-ws so all connected sessions see it (matches how regular
+        // sub-agents surface in the same panel).
+        try {
+          const { broadcastAll } = await import("../chat-ws.js");
+          broadcastAll({
+            type: "event",
+            sessionId,
+            event: { type: "bg_op_started", opId, task: message.slice(0, 200), provider: prepared.provider },
+          });
+        } catch {}
         onEvent({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
         doneEmitted = true;
         logger.info(`[router] Auto-delegated to worker pool: op=${opId} sess=${sessionId} provider=${prepared.provider}`);

@@ -20,7 +20,9 @@ export const CORE_TOOL_NAMES = new Set([
   // Operations — long-horizon goal orchestration
   "operation_start", "operation_list", "operation_status", "operation_next", "operation_advance",
   // Worker pool — delegate heavy work to isolated subprocess (chat stays responsive)
-  "op_submit", "op_status", "op_kill", "op_redirect",
+  // op_submit_async is the PRIMARY verb (non-blocking); op_wait is the explicit
+  // blocker; op_submit is sugar (= async + immediate wait) for short ops only.
+  "op_submit", "op_submit_async", "op_wait", "op_status", "op_kill", "op_redirect",
   // Autopilot — bounded autonomous work in isolated worktree
   "autopilot_start", "autopilot_stop", "autopilot_status",
   // Self-edit (sandboxed code repair via subprocess)

@@ -51,6 +51,12 @@ eventBus.setMaxListeners(100);
 // Op-specific completion promises (so submitOp() can return a result)
 const pendingResults = new Map<string, { resolve: (r: OpResult) => void; reject: (e: Error) => void }>();
 
+// Recently-completed results, retained briefly so late subscribers (e.g. an
+// op_wait call that fires AFTER the op has already finished) can still get
+// the answer without having to re-read disk. TTL = 30 min.
+const completedResultCache = new Map<string, { result: OpResult; ts: number }>();
+const COMPLETED_RESULT_TTL_MS = 30 * 60 * 1000;
+
 let started = false;
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -117,6 +123,77 @@ export function subscribeOp(opId: string, listener: (event: OpEvent) => void): (
 export function subscribeAllOps(listener: (event: OpEvent) => void): () => void {
   eventBus.on("op-event", listener);
   return () => eventBus.off("op-event", listener);
+}
+
+/**
+ * Subscribe to op terminal results (completed / failed / cancelled).
+ * Used by the session bridge to forward completion notifications to the
+ * chat session that originally submitted the op.
+ */
+export function subscribeAllOpResults(listener: (result: OpResult) => void): () => void {
+  eventBus.on("op-result", listener);
+  return () => eventBus.off("op-result", listener);
+}
+
+/**
+ * Wait for an op's terminal result. Used by op_wait + by the sync op_submit
+ * sugar wrapper.
+ *
+ * Resolution order:
+ *   1. If the op is currently in-flight (pendingResults entry), piggy-back
+ *      on that promise so we don't double-create.
+ *   2. If the op finished recently (cache hit), resolve immediately.
+ *   3. Otherwise read the persisted op_store entry from disk; if it shows
+ *      a terminal status, synthesize an OpResult from it.
+ *   4. If the op exists but is still pending in the store (unlikely race),
+ *      register a one-shot subscriber on op-result.
+ *
+ * Returns null if the op truly cannot be found anywhere.
+ */
+export function awaitOpResult(opId: string, timeoutMs = 30 * 60 * 1000): Promise<OpResult | null> {
+  // 1. Currently in-flight
+  const inFlight = pendingResults.get(opId);
+  if (inFlight) {
+    return new Promise((resolve) => {
+      const origResolve = inFlight.resolve;
+      inFlight.resolve = (r: OpResult) => { origResolve(r); resolve(r); };
+    });
+  }
+  // 2. Recently completed (cache)
+  const cached = completedResultCache.get(opId);
+  if (cached && Date.now() - cached.ts < COMPLETED_RESULT_TTL_MS) {
+    return Promise.resolve(cached.result);
+  }
+  // 3. Persisted as terminal on disk
+  const op = readOp(opId);
+  if (op && (op.status === "completed" || op.status === "failed" || op.status === "cancelled")) {
+    return Promise.resolve({
+      opId,
+      status: op.status as OpResult["status"],
+      finalSummary: op.lastFailureReason || `op ${opId} ${op.status}`,
+      filesChanged: [],
+      error: op.lastFailureReason ? { message: op.lastFailureReason, recoverable: false } : undefined,
+    });
+  }
+  // 4. Still pending — wait for op-result event
+  if (op && (op.status === "pending" || op.status === "running")) {
+    return new Promise((resolve) => {
+      let timer: NodeJS.Timeout | null = null;
+      const handler = (r: OpResult) => {
+        if (r.opId !== opId) return;
+        if (timer) clearTimeout(timer);
+        eventBus.off("op-result", handler);
+        resolve(r);
+      };
+      eventBus.on("op-result", handler);
+      timer = setTimeout(() => {
+        eventBus.off("op-result", handler);
+        resolve(null);
+      }, timeoutMs);
+    });
+  }
+  // 5. Truly not found
+  return Promise.resolve(null);
 }
 
 /** Inspect pool state. */
@@ -285,8 +362,16 @@ function handleWorkerMessage(slot: WorkerSlot, msg: IpcMessage): void {
         const isOpen = recordFailure(readOp(opId)?.type ?? "unknown");
         if (isOpen) logger.error(`[pool] circuit breaker OPEN for op type — too many recent failures`);
       }
+      // Cache the result briefly so late op_wait calls (e.g. an async op
+      // that finished BEFORE the agent decided to wait on it) still succeed.
+      completedResultCache.set(opId, { result, ts: Date.now() });
+      pruneCompletedCache();
       pendingResults.get(opId)?.resolve(result);
       pendingResults.delete(opId);
+      // Fire the global op-result event so the session bridge can forward
+      // the completion notification back to whichever chat session submitted
+      // this op (if any).
+      eventBus.emit("op-result", result);
       // If this slot was marked recyclePending due to heap pressure, recycle now
       if (slot.recyclePending) {
         logger.info(`[pool] recycling worker ${slot.workerId} (heap pressure flag)`);
@@ -336,5 +421,13 @@ function shutdownAll(): void {
     try { stopHeartbeat(s.heartbeat); } catch {}
     try { s.detachIpc(); } catch {}
     try { s.proc.kill("SIGTERM"); } catch {}
+  }
+}
+
+function pruneCompletedCache(): void {
+  if (completedResultCache.size < 200) return;
+  const cutoff = Date.now() - COMPLETED_RESULT_TTL_MS;
+  for (const [id, entry] of completedResultCache) {
+    if (entry.ts < cutoff) completedResultCache.delete(id);
   }
 }

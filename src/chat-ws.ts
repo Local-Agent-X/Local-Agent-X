@@ -22,6 +22,7 @@ import type { Server } from "node:http";
 import type { ServerEvent } from "./types.js";
 import { timingSafeEqual } from "node:crypto";
 import { getApprovalManager } from "./approval-manager.js";
+import { setSessionBroadcaster } from "./workers/session-bridge.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("chat-ws");
@@ -45,6 +46,16 @@ type ChatHandler = (sessionId: string, message: string, attachments: any[]) => v
 let chatHandler: ChatHandler | null = null;
 
 export function setupChatWebSocket(server: Server, authToken: string) {
+  // Register the broadcaster the workers/session-bridge uses to push op
+  // completion notifications back into the chat session. Done here (not
+  // in setup callers) so the bridge wiring is a single line tied to chat
+  // WS lifetime.
+  setSessionBroadcaster((sessionId, event) => {
+    const chat = activeChats.get(sessionId);
+    if (chat) chat.events.push(event);          // buffer for replay
+    broadcastToSession(sessionId, event);       // live push to subscribers
+  });
+
   // noServer + manual upgrade routing so we can coexist with other
   // WebSocketServers on the same http server. The {server, path} mode
   // unconditionally aborts upgrades whose path doesn't match, which

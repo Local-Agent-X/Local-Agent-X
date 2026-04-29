@@ -85,10 +85,13 @@ export function formatNotificationsForSystemPrompt(notifications: PendingNotific
   });
   return (
     `\n\n[BACKGROUND COMPLETIONS — ${notifications.length} op${notifications.length === 1 ? "" : "s"} finished while the user was idle]\n` +
-    `These are worker-pool ops you delegated earlier (or that auto-delegated on the user's behalf). ` +
-    `Mention them naturally in your reply if relevant to the user's current message — e.g. "btw the backtest you asked for finished, added X and Y." ` +
-    `If the user's new message is unrelated, just incorporate them as background knowledge without forcing a mention. ` +
-    `The user can also see live status in the AGENTS sidebar.\n\n` +
+    `These are worker-pool ops you delegated earlier (or that auto-delegated on the user's behalf). The work was performed by a separate worker process and IS ALREADY DONE. The summaries below describe what was actually changed; trust them.\n\n` +
+    `**Critical rules for using these completions:**\n` +
+    `1. **Do NOT re-verify the work.** Do not open the browser, read files, grep, or run any tool to "check" the result. The worker already executed and reported what it changed. Re-verifying wastes time, pollutes context, and often gets blocked by security layers that the worker had clean access to.\n` +
+    `2. **If a status says "failed"**, the failure classification can sometimes be wrong even when real edits landed (the worker may have completed the edits then misreported its terminal state). Read the summary; if it describes concrete completed changes, trust those. Mention the "failed" status to the user only if the summary actually shows nothing was done.\n` +
+    `3. **Describe the result from the summary**, not from re-reading source. If the user asks "how does it look" or "did it work", paraphrase from the summary text below — files modified, what was added, any caveats the worker flagged.\n` +
+    `4. **Do not redo the work yourself.** Even if the user's message implies dissatisfaction or you suspect something's off, don't re-edit the same files. If something's genuinely broken, surface that with a clear "the worker said it did X but I'm not sure — want me to check?" — DON'T silently rewrite.\n` +
+    `5. **Mention naturally**: weave the completion into your reply if it's directly relevant ("Performance dashboard's in — added the tab with PnL/drawdown calcs"). If unrelated, just hold it as background knowledge.\n\n` +
     lines.join("\n\n") +
     `\n\n[end background completions]\n`
   );

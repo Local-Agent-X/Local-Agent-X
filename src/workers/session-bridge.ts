@@ -40,6 +40,11 @@ const sessionOps = new Map<string, Set<string>>();
 // server/index.ts startup ordering).
 let broadcaster: ((sessionId: string, event: ServerEvent) => void) | null = null;
 
+// Persistence callback — appends a completion notice as an assistant
+// message to the session, so the user sees it on reload even if the live
+// WS event was missed. Registered by the server during bootstrap.
+let persister: ((sessionId: string, content: string) => void) | null = null;
+
 let initialized = false;
 
 /** Initialize the bridge. Idempotent — call once at server startup. */
@@ -56,6 +61,11 @@ export function initSessionBridge(): void {
  */
 export function setSessionBroadcaster(fn: (sessionId: string, event: ServerEvent) => void): void {
   broadcaster = fn;
+}
+
+/** Register the persistence callback (server bootstrap). */
+export function setSessionPersister(fn: (sessionId: string, content: string) => void): void {
+  persister = fn;
 }
 
 /**
@@ -90,26 +100,41 @@ function onOpResult(result: OpResult): void {
     return;
   }
 
-  // Render as a tool_progress-shaped event so the existing chat UI renders
-  // it inline without needing a new ServerEvent variant. The agent will
-  // also see the corresponding ActiveChat buffer entry on its next turn,
-  // so it can reference the result naturally.
-  const statusLabel =
-    result.status === "completed" ? "✓ completed" :
-    result.status === "failed"    ? "✗ failed" :
-    result.status === "cancelled" ? "⊘ cancelled" :
-                                    result.status;
+  // Use a dedicated bg_op_completed ServerEvent variant. tool_progress was
+  // the wrong shape — the frontend's tool_progress handler updates an
+  // EXISTING tool card; orphan events (no prior tool_start) drop silently.
+  // Worse, the per-turn message handler that processes chat-body events
+  // gets DETACHED on `done`, so events arriving after the chat-route
+  // emitted its synthetic done would never render even with a card to
+  // attach to. bg_op_completed is handled by the persistent global
+  // chatWs.onmessage handler in chat.js, which works regardless of turn
+  // boundaries and renders as a fresh assistant message.
   const summary = result.finalSummary?.slice(0, 400) || "(no summary)";
-  const message =
-    `🤖 op ${result.opId} ${statusLabel}\n` +
-    summary +
-    (result.filesChanged.length > 0 ? `\nfiles: ${result.filesChanged.slice(0, 5).join(", ")}` : "");
+  const status = (result.status === "completed" || result.status === "failed" || result.status === "cancelled")
+    ? result.status
+    : "failed";
+
+  // Persist as an assistant message in the session so the user sees it
+  // on page reload even if they were disconnected when the WS event fired.
+  if (persister) {
+    const statusLabel = status === "completed" ? "✓ completed" : status === "failed" ? "✗ failed" : "⊘ cancelled";
+    const filesLine = result.filesChanged.length > 0 ? `\n\n_files: ${result.filesChanged.slice(0, 5).join(", ")}_` : "";
+    const fullSummary = result.finalSummary || "(no summary)";
+    const content = `🤖 **Op ${result.opId} ${statusLabel}**\n\n${fullSummary}${filesLine}`;
+    try {
+      persister(sessionId, content);
+    } catch (e) {
+      logger.warn(`[session-bridge] persister threw: ${(e as Error).message}`);
+    }
+  }
 
   try {
     broadcaster(sessionId, {
-      type: "tool_progress",
-      toolName: "op_submit_async",
-      message,
+      type: "bg_op_completed",
+      opId: result.opId,
+      status,
+      summary,
+      filesChanged: result.filesChanged.slice(0, 10),
     });
     logger.info(`[session-bridge] notified session=${sessionId} op=${result.opId} status=${result.status}`);
   } catch (e) {

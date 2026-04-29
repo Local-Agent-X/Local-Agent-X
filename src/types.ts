@@ -68,7 +68,8 @@ export type ServerEvent =
   | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string }
   | { type: "approval_timeout"; approvalId: string; toolName: string; toolCallId?: string }
   | { type: "context_status"; percentage: number; level: string; usedTokens: number; maxTokens: number; compacted: boolean }
-  | { type: "visual"; kind: "emoji" | "text" | "shape" | "mood"; value: string; durationMs: number };
+  | { type: "visual"; kind: "emoji" | "text" | "shape" | "mood"; value: string; durationMs: number }
+  | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[] };
 
 // ── Auth Types ──
 

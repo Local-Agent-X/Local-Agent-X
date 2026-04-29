@@ -86,6 +86,36 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         return true;
       }
 
+      // Fix E: auto-delegate long tasks to the worker pool when running on
+      // Codex (drift-prone) and prepare-request's Fix D didn't escape to
+      // Anthropic. The worker runs in a subprocess with a fresh context,
+      // dramatically reducing the context-bloat drift that causes Codex to
+      // lose the original task on long agentic loops. Same model, smaller
+      // failure surface.
+      const { shouldAutoDelegate, delegateMessageToWorker } = await import("../workers/auto-delegate.js");
+      if (shouldAutoDelegate(prepared.provider, message, "web")) {
+        const { opId, replyText } = await delegateMessageToWorker(message, sessionId);
+        // Set up a minimal onEvent path so the SSE stream gets the reply
+        // and the chat session buffers it (so reconnects + completion
+        // notifications land in the same conversation thread).
+        const wsChat = ctx.chatWs.startChat(sessionId);
+        const onEvent = (event: ServerEvent) => { sseWrite(res, event); wsChat.onEvent(event); };
+        ctx.setActiveOnEvent(sessionId, onEvent);
+        onEventInstalled = true;
+        onEvent({ type: "stream", delta: replyText });
+        // Persist the user message + synthetic assistant reply so the next
+        // chat turn sees the routing decision in history (and so the user
+        // can scroll back to the "started in worker" notice).
+        session.messages.push({ role: "user", content: message });
+        session.messages.push({ role: "assistant", content: replyText });
+        session.updatedAt = Date.now();
+        ctx.saveSession(session);
+        onEvent({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+        doneEmitted = true;
+        logger.info(`[router] Auto-delegated to worker pool: op=${opId} sess=${sessionId} provider=${prepared.provider}`);
+        return true;
+      }
+
       // IDE sessions: strip delegation tools
       const IDE_BLOCKED_TOOLS = new Set(["agent_spawn", "delegate", "build_app", "agent_status", "agent_cancel", "agent_pause", "agent_resume", "agent_message"]);
       const isIdeSession = sessionId.startsWith("ide-");

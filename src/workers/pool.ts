@@ -18,7 +18,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { EventEmitter } from "node:events";
 import { sendIpc, receiveIpc } from "./ipc.js";
 import { ipcEnvelope, type IpcMessage, type Op, type OpEvent, type OpResult } from "./types.js";
@@ -227,7 +227,7 @@ export function redirectOp(opId: string, instruction: string): boolean {
 // ── Internal: spawn + lifecycle ────────────────────────────────────────────
 
 function spawnWorker(): void {
-  const entry = resolvePath(new URL("./worker-entry.ts", import.meta.url).pathname.replace(/^\//, "").replace(/\/$/, ""));
+  const entry = fileURLToPath(new URL("./worker-entry.ts", import.meta.url));
   const proc = spawn("node", ["--max-old-space-size=2048", "--import=tsx", entry], {
     cwd: process.cwd(),
     stdio: ["pipe", "pipe", "pipe"],

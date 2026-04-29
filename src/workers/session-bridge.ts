@@ -23,8 +23,8 @@
  */
 
 import type { ServerEvent } from "../types.js";
-import type { OpResult } from "./types.js";
-import { subscribeAllOpResults } from "./pool.js";
+import type { OpEvent, OpResult } from "./types.js";
+import { subscribeAllOpResults, subscribeAllOps } from "./pool.js";
 import { pushPendingNotification } from "./pending-notifications.js";
 
 import { createLogger } from "../logger.js";
@@ -57,7 +57,62 @@ export function initSessionBridge(): void {
   if (initialized) return;
   initialized = true;
   subscribeAllOpResults((result) => onOpResult(result));
+  subscribeAllOps((event) => onOpEvent(event));
   logger.info("[session-bridge] initialized");
+}
+
+/**
+ * Forward worker events as bg_op_progress lines so the AGENTS sidebar
+ * card shows live progress instead of sitting blank until completion.
+ */
+function onOpEvent(event: OpEvent): void {
+  const sessionId = opSession.get(event.opId);
+  if (!sessionId || !broadcaster) return;
+
+  // Render only the events that map to user-visible activity. Drop noisy
+  // internal types (heartbeat-ish events). Keep tool calls + agent text +
+  // status transitions — those are the bits a human glancing at the
+  // sidebar card actually wants to see.
+  let line: string | null = null;
+  switch (event.type) {
+    case "tool_call": {
+      const tn = (event.payload as { toolName?: string })?.toolName || "tool";
+      line = `→ ${tn}`;
+      break;
+    }
+    case "tool_result": {
+      const tn = (event.payload as { toolName?: string })?.toolName || "tool";
+      const ok = (event.payload as { ok?: boolean })?.ok;
+      line = `  ${ok === false ? "✗" : "✓"} ${tn}`;
+      break;
+    }
+    case "agent_text": {
+      const text = ((event.payload as { text?: string })?.text || "").trim();
+      if (!text) return;
+      line = text.slice(0, 200);
+      break;
+    }
+    case "started":
+      line = "▶ started";
+      break;
+    case "phase": {
+      const name = (event.payload as { name?: string })?.name || "phase";
+      line = `phase: ${name}`;
+      break;
+    }
+    case "needs_input":
+      line = "⏸ needs input";
+      break;
+    default:
+      return;
+  }
+
+  if (!line) return;
+  try {
+    broadcaster(sessionId, { type: "bg_op_progress", opId: event.opId, line });
+  } catch (e) {
+    logger.warn(`[session-bridge] progress broadcast threw: ${(e as Error).message}`);
+  }
 }
 
 /**

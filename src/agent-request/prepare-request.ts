@@ -9,6 +9,30 @@ import { CORE_TOOL_NAMES, filterToolsForMessage } from "./tool-filter.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("agent-request.prepare-request");
 
+// ── Long-task auto-routing (Fix D) ──
+// Codex's RLHF-trained "ask if uncertain" behavior makes it unreliable on
+// long agentic loops. Claude (Anthropic) holds focus across many tool calls
+// far better. When the user's message looks like a long task AND the user's
+// default provider is Codex AND Anthropic creds are available, transparently
+// route to Anthropic. The provider hint in the system prompt still tells the
+// model what it's running on so personality/voice stays consistent.
+//
+// Detection is intentionally conservative — only auto-route when the message
+// CLEARLY looks like a long task. False positives (sending a quick request
+// to Anthropic) are cheap; false negatives (Codex burns 334k tokens on a
+// long task) are not.
+const LONG_TASK_VERB_RE = /\b(refactor|audit|investigate|implement|build|debug|trace|analyze|migrate|rewrite|fix\s+(all|the|every|every\s+\w+|multiple)|set\s+up|wire\s+up|bootstrap|design\s+(and|then)|review\s+the)\b/i;
+const MULTI_FILE_CUE_RE = /(workspace\/|src\/|node_modules|\.ts\b|\.tsx\b|\.js\b|\.py\b|across|throughout|every\s+file|multiple\s+files|all\s+the\s+(files|tests|components))/i;
+const SHORT_TASK_RE = /^(yes|no|ok|sure|thanks|hi|hello|what|when|where|why|how|who)\b|^.{0,30}$/i;
+
+function looksLikeLongTask(message: string): boolean {
+  if (SHORT_TASK_RE.test(message.trim())) return false;
+  const wordCount = message.split(/\s+/).length;
+  if (wordCount >= 50) return true;
+  if (LONG_TASK_VERB_RE.test(message) && (wordCount >= 15 || MULTI_FILE_CUE_RE.test(message))) return true;
+  return false;
+}
+
 export async function prepareAgentRequest(input: AgentRequestInput): Promise<PreparedAgentRequest> {
   const {
     channel, message, sessionMessages, sessionId, config, dataDir,
@@ -17,7 +41,28 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   } = input;
 
   // 1. Resolve provider + keys
-  const resolved = await resolveProvider(config, secretsStore, dataDir);
+  let resolved = await resolveProvider(config, secretsStore, dataDir);
+
+  // 1b. Long-task auto-route (Fix D): if user is on Codex, the message looks
+  // like a long task, AND we have Anthropic creds, override to Anthropic.
+  // Skip auto-route for sub-agents (systemPromptOverride set), bridges, and
+  // when the user explicitly picks a non-Codex provider.
+  if (
+    resolved.provider === "codex" &&
+    !systemPromptOverride &&
+    channel === "web" &&
+    looksLikeLongTask(message)
+  ) {
+    try {
+      const anthropicResolved = await resolveProvider(config, secretsStore, dataDir, "anthropic");
+      if (anthropicResolved.provider === "anthropic" && anthropicResolved.apiKey) {
+        logger.info(`[router] Long task detected — auto-routing Codex→Anthropic (msg=${message.length}ch, model=${anthropicResolved.model})`);
+        resolved = anthropicResolved;
+      }
+    } catch {
+      // No Anthropic creds — stay on Codex
+    }
+  }
 
   // 2. Sanitize + truncate history. If the session has a stored compaction
   // summary from /api/compact, slice the message list to the post-compaction

@@ -21,8 +21,10 @@ export async function startServer(config: LAXConfig) {
   // the main agent's heap small — heavy work crashes the worker, not us.
   const { startWorkerPool } = await import("../workers/pool.js");
   const { bootstrapProviderMatrix } = await import("../workers/provider-matrix.js");
+  const { initSessionBridge } = await import("../workers/session-bridge.js");
   bootstrapProviderMatrix();
   startWorkerPool();
+  initSessionBridge();
 
   const tools = await bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir });
   const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef } = tools;

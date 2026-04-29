@@ -277,6 +277,10 @@ async function executeSingleTool(
     "agent_spawn", "browser_capture_to_secret", "browser_fill_from_secret",
     "session_status", "request_secret",
     "voice_visual",
+    // Op tools — async submission needs to know the chat session so the
+    // session bridge can route the completion notification back to it.
+    // op_status / op_wait inherit the session for "ops you submitted" listing.
+    "op_submit", "op_submit_async", "op_wait", "op_status",
   ]);
   if (SESSION_SCOPED_TOOLS.has(tc.name)) {
     args._sessionId = sessionId || "default";

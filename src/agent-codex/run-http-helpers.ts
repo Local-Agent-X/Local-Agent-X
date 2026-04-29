@@ -3,7 +3,7 @@ import type {
 } from "openai/resources/chat/completions.js";
 import type { AgentTurn, ServerEvent } from "../types.js";
 import { streamCodexResponse, type ReasoningItem } from "../codex-client.js";
-import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkUnmatchedActionClaim } from "../agent-guards.js";
+import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkUnmatchedActionClaim, checkActedAndAsked } from "../agent-guards.js";
 import type { ImageAttachment } from "./shared.js";
 import { logRetry } from "../retry-telemetry.js";
 import { createLogger } from "../logger.js";
@@ -298,6 +298,19 @@ export function handleNoToolCallBranch(input: NoToolCallInput): NoToolCallResult
       logger.warn(`[agent] Unmatched action claim detected (Codex) — nudging`);
       unmatchedClaimNudged = true;
       messages.push({ role: "user", content: claimNudge } as ChatCompletionMessageParam);
+      return { shouldContinue: true, unmatchedClaimNudged, selfCheckFired };
+    }
+  }
+
+  // Acted-and-asked check (Codex bias correction): if the model edited
+  // files this turn but ended with a clarifying question, push it to either
+  // commit (summarize) or undo — but not both. Catches the "I'm missing
+  // context. What file should I modify?" reply that lands AFTER 2 edits.
+  if (iteration < maxIterations - 1) {
+    const actedAskedNudge = checkActedAndAsked(assistantContent, toolsCalledThisTurn);
+    if (actedAskedNudge) {
+      logger.warn(`[agent] Acted-and-asked detected (Codex) — nudging`);
+      messages.push({ role: "user", content: actedAskedNudge } as ChatCompletionMessageParam);
       return { shouldContinue: true, unmatchedClaimNudged, selfCheckFired };
     }
   }

@@ -47,6 +47,14 @@ function connectChatWs() {
         } catch(e) { console.warn('[bg_op_started] sidebar update failed', e); }
         return;
       }
+      if (msg.event.type === 'bg_op_progress') {
+        try {
+          if (typeof updateAgentFeed === 'function') {
+            updateAgentFeed(msg.event.opId, { output: (msg.event.line || '') + '\n' });
+          }
+        } catch(e) { console.warn('[bg_op_progress] sidebar update failed', e); }
+        return;
+      }
       if (msg.event.type === 'bg_op_completed') {
         try {
           const statusLabel = msg.event.status === 'completed' ? 'completed'

@@ -73,10 +73,16 @@ export function shouldAutoDelegate(provider: string, message: string, channel: s
  * Submit the user's message as an op_submit_async-equivalent op to the
  * worker pool. Returns the opId and a user-facing reply explaining what
  * just happened. Caller streams the reply into the chat and ends the turn.
+ *
+ * `provider` is the user's currently-selected provider (codex / anthropic /
+ * etc.). The worker inherits it via the user's settings.json on its own
+ * resolveProvider call — passing it here is purely for the routing-notice
+ * text so the user sees an accurate "running on Claude / GPT-5.5 / etc."
  */
 export async function delegateMessageToWorker(
   message: string,
   sessionId: string,
+  provider: string,
 ): Promise<{ opId: string; replyText: string }> {
   const opType = "freeform";
   const lane = "build" as const;
@@ -118,10 +124,19 @@ export async function delegateMessageToWorker(
 
   logger.info(`[auto-delegate] submitted op ${op.id} for session ${sessionId} (${message.length}ch)`);
 
+  const providerLabel: Record<string, string> = {
+    codex: "Codex (gpt-5.x)",
+    anthropic: "Anthropic Claude",
+    openai: "OpenAI",
+    xai: "xAI Grok",
+    gemini: "Google Gemini",
+    local: "local model",
+  };
+  const providerDisplay = providerLabel[provider] || provider;
   const replyText =
     `🤖 This looks like a longer task — I'm running it in a worker so I stay responsive while you keep chatting.\n\n` +
-    `**Op ${op.id}** started in the background. I'll surface the result here when it's done (usually 30s–3min).\n\n` +
-    `_Routed to a worker because: long task on Codex (your default provider). Workers run with a fresh 5K-token context instead of the full chat history, which dramatically reduces drift on long tasks. Auto-routing engages when (a) message looks like a long task and (b) Anthropic isn't available as the default provider hop._`;
+    `**Op ${op.id}** started in the background on ${providerDisplay}. I'll surface the result here when it's done (usually 30s–3min). You'll see live status in the Agents panel; I'll narrate the result on your next message.\n\n` +
+    `_Worker delegation engages on long tasks regardless of provider — the worker runs the same model in a fresh ~5K-token context instead of the full chat history, which keeps focus tight and leaves the chat free for you to talk about other things._`;
 
   return { opId: op.id, replyText };
 }

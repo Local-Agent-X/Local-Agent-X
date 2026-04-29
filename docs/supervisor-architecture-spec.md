@@ -384,7 +384,102 @@ The summary panel for an op should flag *anticipated* conflicts BEFORE the user 
 
 Two ops touching truly orthogonal files (different dirs entirely) merge cleanly always. The conflict story is a fallback for the rarer overlap case.
 
-## 20. Provider fallback — only safe before side effects
+## 20. Op dependencies — supervisor-level DAG
+
+Multi-step workflows are NOT one big op with internal phases. They're a **DAG of atomic ops** managed by the supervisor. Each op is one task, one worker, one outcome — composable, retryable in isolation, parallelizable where deps allow.
+
+```ts
+interface Op {
+  ...
+  dependsOn: OpId[];                       // upstream ops that must complete first
+  outputContract: string[];                // names of artifacts this op produces
+  inputBindings: Record<string, OpId>;     // map this op's named inputs to upstream op IDs
+}
+```
+
+**Scheduler logic:**
+- Op enters `pending`
+- Eligible when `dependsOn` is empty OR all upstream ops are `completed`
+- Eligible op + matching free worker (lane + capabilities + resource locks) → `running`
+- On op completion, results land in named `outputContract` slots; downstream ops re-evaluated
+
+**Two assembly modes:**
+1. **Supervisor-decomposed** — for ad-hoc requests like "research X then build Y," the supervisor runs a lightweight `decompose` step that plans the DAG and submits all ops with proper `dependsOn`/`inputBindings`.
+2. **Template-based** — common patterns (`research-then-build`, `fix-then-test`, `design-then-implement`, `audit-then-patch-then-verify`) live as named DAG templates. Supervisor picks one by intent OR user names it explicitly.
+
+**Parallel within a DAG:** ops at the same dep level fan out — independent ops run concurrently if workers + resource locks allow. "Build two unrelated apps" = two ops, no dep edge, both in flight.
+
+**Cancel propagation:** kill op A → all ops transitively dependent on A auto-mark `cancelled-upstream-failed`. User sees a clean tree.
+
+**Result chaining via context pack:** downstream ops get their context pack augmented with `upstreamResults: { [outputName]: artifact }` from completed upstreams. Worker spawning for op B sees op A's deliverables already in its pack. Zero re-fetching.
+
+**Failure within a DAG:** op A fails after `maxRecoveryAttempts` → DAG marked `partial-failure`. User decides: retry op A manually, accept partial results (downstream ops without A's output get cancelled), or abandon. Supervisor doesn't auto-decide because semantics depend on the user's intent.
+
+This is the same shape as Airflow / Temporal / Dagster but agent-native. The per-op machinery (worker pool, leases, checkpoints, context packs) already exists — the scheduler is a thin layer on top.
+
+## 21. Polish refinements
+
+### Pause latency tiers
+Cooperative pause is correct for safety, but pause-after-build can mean a 2-min wait. Tier the boundaries:
+- **Reasoning boundary** (after current model response, before next tool call) — ~5-15s typical wait
+- **Tool boundary** (after current tool call commits) — variable, 5s for read, minutes for build
+- **Phase boundary** (after current DAG step) — minutes to hours
+
+The Pause control offers all three; UI surfaces the estimated wait per tier ("Pause now? Will land in ~8s, ~30s, or ~2min depending on safe-stop level"). User picks the one they're willing to wait for.
+
+### Proactive merge-conflict detection
+Don't wait until the user clicks "merge" to discover conflicts. **Every op checkpoint** triggers a cheap dry-run merge in the supervisor (`git merge-tree` against base, no actual merge). If conflicts detected → mark op metadata with `conflictRisk: "high" | "medium" | "low" | "none"` + the list of conflicting files. UI shows the risk badge in the live op panel BEFORE the user is ready to review. No surprises at merge time.
+
+### Resource lock generality
+GPU is the obvious one but not the only contended resource:
+
+```
+resourceLocks: ["gpu:0"]                    // local model VRAM
+resourceLocks: ["build_cache"]              // shared build cache (no two builds concurrently)
+resourceLocks: ["npm_install_slot"]         // npm install lock to avoid corruption
+resourceLocks: ["large_context:claude-opus"] // expensive provider context, limit concurrent
+resourceLocks: ["browser:0"]                // shared browser instance (rare but real)
+```
+
+Each lock is a named semaphore (count ≥ 1). The dispatcher won't assign an op if its required locks are held. Supervisor surfaces lock state at `/api/health/locks`.
+
+### Per-op-type retry policy
+The bounded retry policy from §18 should be tunable per op type. Expressed as a registry:
+
+```ts
+const RETRY_POLICIES: Record<string, OpRetryPolicy> = {
+  "send_email":          { maxRecoveryAttempts: 1, backoffMs: [10000] },         // expensive to double-send
+  "research_query":      { maxRecoveryAttempts: 5, backoffMs: [5000, 30000, 60000, 120000, 300000] }, // safe to repeat
+  "autopilot_round":     { maxRecoveryAttempts: 2, backoffMs: [30000, 120000] }, // bounded but generous
+  "build_app":           { maxRecoveryAttempts: 3, backoffMs: [30000, 60000, 180000] },
+  "memory_consolidation": { maxRecoveryAttempts: 5, backoffMs: [60000, 300000, 600000, 1800000, 3600000] }, // can wait
+  "default":             { maxRecoveryAttempts: 3, backoffMs: [5000, 30000, 120000] },
+};
+```
+
+Plus a circuit-breaker layer on top: if op type X has failed 5+ times in a row across all attempts in the last hour, pause new submissions of type X and surface to user. Prevents a systemic upstream issue (provider down, repo broken) from burning quota indefinitely.
+
+### Visibility enum on ops, not just ownerId
+For privacy scoping, `ownerId` is necessary but not sufficient. Add an explicit visibility enum so future team/cloud mode doesn't need a data migration:
+
+```ts
+visibility: "private" | "project" | "org"
+projectId?: string  // required if visibility !== "private"
+```
+
+Default `private` for all ops today (single-user). When team mode lands, ops can be created `project` or `org` visibility and the subscription model honors it natively.
+
+## 22. Implementation notes (saved for build time)
+
+Captured here so they're not re-derived during implementation:
+
+- **IPC transport**: JSON-lines over stdio for the bulk message stream + a unix domain socket (Windows: named pipe) for control-plane messages (kill, pause, redirect). Stdio for high-volume data; control socket so kill/pause aren't blocked behind a backed-up event queue.
+- **Redactor**: implement as a streaming transformer on events. Pattern list (regex-based for known secret formats: bearer tokens, API key prefixes) + explicit `sensitive: true` tags on individual events from tools. Fail-closed: if uncertain, redact.
+- **Queue UI**: show the full ahead list with progress % and ETA. Voice can read it naturally ("queued behind two builds, the kraken bot is 60% done, the autopilot is at round 4 of 10, estimated start in 8 minutes").
+- **Checkpoint frequency**: after every committing tool call (write, edit, bash with side effects, http POST/PUT/DELETE) + after every N=3 model turns. NEVER checkpoint inside a model call (would capture incomplete state).
+- **Worker warm pool**: 2-3 idle workers pre-loaded with common deps (so the first burst doesn't pay cold-start). Burst spawn on top of warm baseline. Idle TTL 5min for the burst pool.
+
+## 23. Provider fallback — only safe before side effects
 
 > Earlier draft said: "Provider goes down → capability matrix routes to fallback provider"
 > That's a footgun. After a side-effecting tool call (email send, payment, file write, HTTP POST/PUT/DELETE), naive fallback can double-send or double-mutate. Refined rule:
@@ -409,20 +504,20 @@ Layer-by-layer, each delivers value independently:
 
 | # | Build | Effort | Unlocks |
 |---|---|---|---|
-| 0 | **Process supervisor + heap bump** (already in plan) | 1h | Process survives crashes, immediate stability |
-| 1 | **Worker pool of 1 + IPC + event routing + durable event log** | 6-8h | Validates the pattern. Main agent stays responsive even with one heavy op. |
-| 2 | **Heartbeat protocol + lease management + recovery** | 4-6h | Workers can die without losing the op |
-| 3 | **Provider capability matrix + neutral naming refactor** | 4-6h | Routing is explicit, codebase portable |
-| 4 | **Context pack builder** | 4-6h | Sub-agents stop acting like junior devs |
-| 5 | **Priority lanes + queue backpressure + UI surfacing** | 4-6h | System stays responsive under load, user sees what's happening |
-| 6 | **Three interrupt controls (Pause / Redirect / Kill)** | 3-4h | User can steer in real-time |
-| 7 | **Worker pool size N + dynamic burst + recycle policy** | 3-4h | Scales to multiple concurrent ops |
-| 8 | **Voice-orchestrator path** | 2-3h | The killer demo |
-| 9 | **Checkpoint writer + redactor + IPC versioning** (cuts across 1-7) | wired into 1 | Resume-on-restart, secrets never on disk, upgrade-safe IPC |
-| 10 | **GPU semaphore + dynamic provider concurrency + retry caps** | 4h | Local-model use, graceful degradation, no infinite-burn |
-| 11 | **Worktree merge-conflict surfacing** | 2-3h | User sees collisions before review |
+| 0 | **Process supervisor + heap bump** | 1h | Process survives crashes, immediate stability |
+| 1 | **Worker pool of 1 + IPC (versioned) + event routing + durable event log + checkpoint.json + redactor** | 10-12h | Foundation. Validates the entire pattern. Steps 1+9 deliberately bundled — they're tightly coupled and form the real foundation. |
+| 2 | **Context pack builder** | 4-6h | Sub-agents stop acting like junior devs. Bumped earlier per priority tweak — the productivity jump makes testing later steps much pleasanter. |
+| 3 | **Heartbeat protocol + lease management + recovery (with retry caps)** | 5-7h | Workers can die without losing the op; bounded recovery prevents infinite-burn. |
+| 4 | **Provider capability matrix + neutral naming refactor + dynamic concurrency** | 5-7h | Routing is explicit, codebase portable, gracefully degrades on rate limit. |
+| 5 | **Op dependencies (DAG scheduler) + result chaining via context pack** | 5-7h | Multi-step workflows: research-then-build, audit-then-patch-then-verify. |
+| 6 | **Priority lanes + queue backpressure + UI surfacing** | 4-6h | System stays responsive under load, user sees what's happening. |
+| 7 | **Three interrupt controls (Pause / Redirect / Kill) with tier latencies** | 4-5h | User can steer in real-time, knows the wait. |
+| 8 | **Voice-orchestrator path** | 2-3h | The killer demo. Many primitives needed are already in by step 6, so this can come earlier if it's the priority. |
+| 9 | **Worker pool size N + dynamic burst + recycle policy + warm pool** | 3-4h | Scales to multiple concurrent ops, no cold-start tax for first burst. |
+| 10 | **GPU semaphore + general resource locks (`build_cache`, `npm_install_slot`, etc.)** | 3-4h | Local-model concurrency, prevents shared-resource fights. |
+| 11 | **Worktree merge-conflict surfacing (proactive dry-run on every checkpoint)** | 2-3h | User sees collisions before review, no merge-time surprises. |
 
-Total: ~35-50 hours of focused work for the full vision. Step 0 is shipping today; step 1 is the load-bearing one — once it's right, everything else is parameter scaling. Steps 9-11 are the supervisor-contract additions that turn "workers exist" into "system doesn't break or give up."
+Total: ~50-65 hours of focused work for the full vision. Steps 1 (now bundled with 9 from the prior draft) is the load-bearing foundation. Step 2 (context pack) bumped right after for productivity. Step 8 (voice) can shift earlier when primitives are ready.
 
 ## What this guarantees
 

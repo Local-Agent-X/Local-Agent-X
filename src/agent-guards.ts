@@ -234,24 +234,51 @@ export function checkToolLoops(
   // do progressive work and 8+ sequential calls is normal multi-step
   // automation, not a spiral. Exact-repeat detection above (3x same call
   // with identical args) catches true browser loops.
-  for (const tc of toolCalls) {
-    state.toolNameCounts.set(tc.name, (state.toolNameCounts.get(tc.name) || 0) + 1);
-  }
+  //
+  // Progress tools (write/edit/bash/build_app/self_edit) RESET the spiralable
+  // counts because they prove the agent is doing work, not spinning. The
+  // common audit-then-edit-then-verify-then-edit pattern would otherwise
+  // accumulate reads across all phases and falsely trip the gate during
+  // legitimate multi-step work on a large file.
+  const PROGRESS_TOOLS = new Set([
+    "write", "edit", "bash", "build_app", "self_edit",
+    "task_create", "task_update",
+    "op_submit", "op_submit_async",
+    "memory_save", "memory_update_profile",
+  ]);
   const SPIRALABLE_TOOLS = new Set([
     "glob", "web_search", "read", "grep",
     "agent_whoami", "agent_team_list", "issue_list", "issue_search",
     "memory_search", "memory_recall", "memory_get",
     "task_list", "operation_status", "operation_list",
   ]);
+  let madeProgress = false;
+  for (const tc of toolCalls) {
+    if (PROGRESS_TOOLS.has(tc.name)) madeProgress = true;
+    state.toolNameCounts.set(tc.name, (state.toolNameCounts.get(tc.name) || 0) + 1);
+  }
+  if (madeProgress) {
+    // Reset only the spiralable counters — progress was made, the prior
+    // reads were useful scaffolding, not a spiral. Keep non-spiralable
+    // counts intact (they don't gate anything anyway).
+    for (const name of SPIRALABLE_TOOLS) state.toolNameCounts.delete(name);
+  }
   const stuck = [...state.toolNameCounts.entries()].find(([name, count]) =>
     count >= discoveryLimit && SPIRALABLE_TOOLS.has(name)
   );
   if (stuck) {
     const [toolName, count] = stuck;
     state.toolNameCounts.set(toolName, 0);
+    // Pivot-toward-action nudge, not a dead-end "STOP." The model usually
+    // has enough context by call N — what it needs is permission to switch
+    // tactics, not an instruction to give up. Mention the natural next
+    // action so weak models don't flounder picking the next tool.
+    const pivotHint = (toolName === "read" || toolName === "glob" || toolName === "grep")
+      ? " You have enough context — switch tactic: use write/edit/bash to act on what you've already read, or ask the user a focused question if you're truly stuck."
+      : " You have enough context — produce the answer or take the next concrete action.";
     return {
       abort: false,
-      nudge: `SYSTEM: You have called ${toolName} ${count} times. STOP. Produce your final result with the information you already have, or report the blocker. Do NOT make more ${toolName} calls.`,
+      nudge: `SYSTEM: ${toolName} called ${count} times this turn — that's a discovery loop signal.${pivotHint} Do not call ${toolName} again unless you have a specific new file/path/term to look up.`,
     };
   }
 

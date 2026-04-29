@@ -25,6 +25,7 @@
 import type { ServerEvent } from "../types.js";
 import type { OpResult } from "./types.js";
 import { subscribeAllOpResults } from "./pool.js";
+import { pushPendingNotification } from "./pending-notifications.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.session-bridge");
@@ -34,6 +35,10 @@ const opSession = new Map<string, string>();
 
 // sessionId -> set of opIds it has submitted (for cleanup + listing)
 const sessionOps = new Map<string, Set<string>>();
+
+// opId -> original task text (so the pending-notification carries the
+// original user prompt for the agent to reference on next turn)
+const opTask = new Map<string, string>();
 
 // The broadcaster the chat-ws layer registers. Lets us push events back
 // without importing chat-ws here (would create a circular dep with
@@ -69,13 +74,14 @@ export function setSessionPersister(fn: (sessionId: string, content: string) => 
 }
 
 /**
- * Tell the bridge that opId was submitted by sessionId. Called from
- * op_submit_async (and from the sync op_submit sugar so its completion
- * still surfaces if the user reconnects to the session later).
+ * Tell the bridge that opId was submitted by sessionId. Optional task text
+ * is captured so the agent's pending-notification on the next turn includes
+ * the original user prompt for natural narration.
  */
-export function trackOpForSession(opId: string, sessionId: string): void {
+export function trackOpForSession(opId: string, sessionId: string, task?: string): void {
   if (!sessionId) return;
   opSession.set(opId, sessionId);
+  if (task) opTask.set(opId, task);
   let set = sessionOps.get(sessionId);
   if (!set) { set = new Set(); sessionOps.set(sessionId, set); }
   set.add(opId);
@@ -114,20 +120,20 @@ function onOpResult(result: OpResult): void {
     ? result.status
     : "failed";
 
-  // Persist a SHORT chat ack so the user sees "✓ Worker finished" inline in
-  // the conversation thread (the FULL output lives in the AGENTS sidebar
-  // card). Previously we persisted the full summary, which polluted the
-  // chat. Going to no chat note at all hid completion from anyone not
-  // watching the sidebar. This is the middle ground: terse heads-up in
-  // chat, full detail in sidebar.
-  if (persister) {
-    const statusEmoji = status === "completed" ? "✓" : status === "failed" ? "✗" : "⊘";
-    const filesNote = result.filesChanged.length > 0
-      ? ` (${result.filesChanged.length} file${result.filesChanged.length === 1 ? "" : "s"})`
-      : "";
-    const content = `${statusEmoji} Worker finished — \`${result.opId}\`${filesNote}. _Full result in the Agents panel._`;
-    try { persister(sessionId, content); } catch (e) { logger.warn(`[session-bridge] persister threw: ${(e as Error).message}`); }
-  }
+  // Push to pending-notifications queue so the agent narrates this on the
+  // user's next turn (instead of injecting a synthetic "1-line ack" message
+  // that the user knows isn't from the agent). The sidebar shows live
+  // status; the chat narration happens naturally when the user replies.
+  pushPendingNotification(sessionId, {
+    opId: result.opId,
+    status,
+    summary: result.finalSummary || "(no summary)",
+    filesChanged: result.filesChanged,
+    task: opTask.get(result.opId) || "(unknown)",
+    completedAt: Date.now(),
+  });
+  opTask.delete(result.opId);
+  void persister; // kept for future callers that legitimately want disk persistence
 
   try {
     broadcaster(sessionId, {

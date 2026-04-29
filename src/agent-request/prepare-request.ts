@@ -118,10 +118,23 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     } catch {}
   }
 
+  // Drain pending background-op completions for this session so the agent
+  // can narrate them naturally on this turn (per the agent-narrates pattern
+  // — see workers/pending-notifications.ts for rationale).
+  let backgroundCompletionsBlock = "";
+  try {
+    const { drainPendingNotifications, formatNotificationsForSystemPrompt } = await import("../workers/pending-notifications.js");
+    const pending = drainPendingNotifications(sessionId);
+    if (pending.length > 0) {
+      backgroundCompletionsBlock = formatNotificationsForSystemPrompt(pending);
+      logger.info(`[chat] injecting ${pending.length} background completion(s) into system prompt for sess=${sessionId}`);
+    }
+  } catch { /* best-effort */ }
+
   let systemPrompt: string;
   if (systemPromptOverride) {
     // Sub-agents provide their own prompt
-    systemPrompt = systemPromptOverride;
+    systemPrompt = systemPromptOverride + backgroundCompletionsBlock;
   } else {
     // Use full prompt for all providers. The empty-response issue was caused
     // by reasoning: { effort: "low" } in codex-client.ts, not prompt size.
@@ -142,7 +155,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       notificationHint,
       bridgeContext: input.bridgeContext,
     });
-    systemPrompt = await contextBuilder.build();
+    systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock;
   }
 
   // 5. Select tools based on channel (bridges get a smaller set)

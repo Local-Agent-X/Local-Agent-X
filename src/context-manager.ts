@@ -110,6 +110,20 @@ export interface ContextStatus {
   forceCompact: boolean;
 }
 
+/**
+ * Codex models (OpenAI gpt-5.x family) have a NOMINAL context window of up
+ * to 1M tokens, but their PRACTICAL agentic performance degrades well before
+ * that. We saw a 334k-token Codex turn end with "I'm missing the actual task
+ * context" despite making real edits — the original task was buried under
+ * tool results. Compact much earlier for Codex regardless of the nominal
+ * window so the original user message stays anchored near the response
+ * position. Anthropic models hold focus better and don't need this.
+ */
+function isCodexModel(model: string): boolean {
+  const lower = model.toLowerCase();
+  return lower.startsWith("gpt-") || lower.includes("codex") || lower.startsWith("o1") || lower.startsWith("o3");
+}
+
 export function getContextStatus(
   messages: ChatCompletionMessageParam[],
   model: string
@@ -122,17 +136,22 @@ export function getContextStatus(
   let shouldCompact = false;
   let forceCompact = false;
 
-  // Lowered thresholds: compact earlier so a single huge tool result on the
-  // next iteration doesn't push us past the model's hard limit before we
-  // ever get a chance to react.
-  if (percentage >= 90) {
+  // Per-provider thresholds. Codex compacts much earlier because its long-
+  // context agentic reasoning falls apart before the nominal limit hits.
+  // Anthropic keeps the previous (looser) thresholds since it stays focused.
+  const isCodex = isCodexModel(model);
+  const warningAt = isCodex ? 25 : 60;
+  const compactAt = isCodex ? 35 : 75;
+  const criticalAt = isCodex ? 55 : 90;
+
+  if (percentage >= criticalAt) {
     level = "critical";
     forceCompact = true;
     shouldCompact = true;
-  } else if (percentage >= 75) {
+  } else if (percentage >= compactAt) {
     level = "compact";
     shouldCompact = true;
-  } else if (percentage >= 60) {
+  } else if (percentage >= warningAt) {
     level = "warning";
   }
 

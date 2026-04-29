@@ -5,7 +5,7 @@ import type { AgentTurn } from "../types.js";
 import { streamCodexResponse, type ReasoningItem } from "../codex-client.js";
 import { executeToolCalls, checkAndCompact } from "../tool-executor.js";
 import { stripEphemeralMessages } from "../agent-providers.js";
-import { checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState } from "../agent-guards.js";
+import { checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState, checkTaskAnchor, createTaskAnchorState, checkActedAndAsked } from "../agent-guards.js";
 import { stripSystemInjectionTags } from "../sanitize.js";
 import type { AgentOptions } from "./shared.js";
 import {
@@ -43,6 +43,7 @@ export async function runCodexAgentHttp(
   const codexTools = tools.map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters }));
   const loopState = createLoopState();
   const deadEndState = createDeadEndState();
+  const taskAnchorState = createTaskAnchorState();
   let selfCheckFired = false;
   let contentFilterEmpties = 0;
   // Names of every tool called in this turn (across all iterations). Used by
@@ -351,6 +352,15 @@ export async function runCodexAgentHttp(
     }
     if (loopResult.nudge) {
       messages.push({ role: "user", content: loopResult.nudge } as ChatCompletionMessageParam);
+    }
+
+    // Task re-anchor (Codex anti-drift): every 5 tool calls, remind the
+    // model of the original user request so it doesn't lose the thread in
+    // context bloat and default to "I'm missing context — what file?"
+    const anchorNudge = checkTaskAnchor(toolCalls.length, taskAnchorState, userMessage, toolsCalledThisTurn);
+    if (anchorNudge) {
+      logger.info(`[agent] Task anchor reminder fired (${taskAnchorState.totalToolCalls} tool calls)`);
+      messages.push({ role: "user", content: anchorNudge } as ChatCompletionMessageParam);
     }
 
     // Record tool names BEFORE execution — even if a call errors, it was

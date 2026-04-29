@@ -7,9 +7,10 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "node --max-old-space-size=512 --import=tsx --watch-path=src --watch src/index.ts",
-    "dev:nowatch": "node --max-old-space-size=512 --import=tsx src/index.ts",
-    "start": "node --max-old-space-size=512 dist/index.js",
+    "dev": "node --max-old-space-size=4096 --import=tsx --watch-path=src --watch src/index.ts",
+    "dev:nowatch": "node --max-old-space-size=4096 --import=tsx src/index.ts",
+    "dev:supervised": "node scripts/supervisor.mjs",
+    "start": "node --max-old-space-size=4096 dist/index.js",
     "build:ari": "node scripts/build-ari.js",
     "build": "npm run build:ari && tsc",
     "postinstall": "npm run build:ari",

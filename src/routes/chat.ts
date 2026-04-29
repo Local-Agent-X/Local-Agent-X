@@ -94,26 +94,10 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // failure surface.
       const { shouldAutoDelegate, delegateMessageToWorker } = await import("../workers/auto-delegate.js");
       if (shouldAutoDelegate(prepared.provider, message, "web")) {
-        const { opId, replyText } = await delegateMessageToWorker(message, sessionId);
-        // Set up a minimal onEvent path so the SSE stream gets the reply
-        // and the chat session buffers it (so reconnects + completion
-        // notifications land in the same conversation thread).
-        const wsChat = ctx.chatWs.startChat(sessionId);
-        const onEvent = (event: ServerEvent) => { sseWrite(res, event); wsChat.onEvent(event); };
-        ctx.setActiveOnEvent(sessionId, onEvent);
-        onEventInstalled = true;
-        onEvent({ type: "stream", delta: replyText });
-        // Persist the user message + synthetic assistant reply so the next
-        // chat turn sees the routing decision in history (and so the user
-        // can scroll back to the "started in worker" notice).
-        session.messages.push({ role: "user", content: message });
-        session.messages.push({ role: "assistant", content: replyText });
-        session.updatedAt = Date.now();
-        ctx.saveSession(session);
+        const { opId } = await delegateMessageToWorker(message, sessionId, prepared.provider);
         // Push a card into the global agents sidebar so the user can watch
-        // the op live without it polluting the chat thread. Broadcast via
-        // chat-ws so all connected sessions see it (matches how regular
-        // sub-agents surface in the same panel).
+        // the op live (status, intermediate tool calls + agent text via the
+        // bg_op_progress events the session bridge fires).
         try {
           const { broadcastAll } = await import("../chat-ws.js");
           broadcastAll({
@@ -122,9 +106,54 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
             event: { type: "bg_op_started", opId, task: message.slice(0, 200), provider: prepared.provider },
           });
         } catch {}
-        onEvent({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+        // Instead of streaming a hardcoded "🤖 routing notice" string, run a
+        // tiny no-tools chat turn so the AGENT itself acknowledges the
+        // delegation in its own voice. Same chat agent the user normally
+        // talks to — just told via system note that the user's message
+        // was already delegated to a worker, and asked to give a
+        // 1-2 sentence conversational acknowledgement.
+        const delegationContext =
+          `\n\n[BACKGROUND DELEGATION] The user's message above has been auto-delegated to a worker pool op (id: ${opId}, running on ${prepared.provider}). The work is already in progress in a separate process; you do NOT need to do it yourself.\n\n` +
+          `Your job for THIS turn: respond in 1-2 conversational sentences acknowledging what you've kicked off (briefly summarize what the worker is doing), and let the user know they can keep chatting — you'll narrate the result naturally on a future turn when it lands. Keep it tight and natural, like you'd actually say it. Do NOT call any tools. Do NOT try to do the work yourself. Do NOT mention "delegation" or "worker pool" as jargon — just speak normally about kicking off the work in the background.`;
+        const delegationSystemPrompt = prepared.systemPrompt + delegationContext;
+
+        logger.info(`[router] Auto-delegated to worker pool: op=${opId} sess=${sessionId} provider=${prepared.provider} — routing notice now agent-voiced`);
+
+        // Continue with the normal chat flow: set up onEvent + threat engine,
+        // run runAgent with the delegation context + tools=[] (force text-only).
+        const wsChat = ctx.chatWs.startChat(sessionId);
+        const onEvent = (event: ServerEvent) => { sseWrite(res, event); wsChat.onEvent(event); };
+        ctx.setActiveOnEvent(sessionId, onEvent);
+        onEventInstalled = true;
+        const threatEngineDel = new ThreatEngine(ctx.dataDir, sessionId);
+        const turnStart = Date.now();
+        const result = await runAgent(message, prepared.cleanHistory, {
+          apiKey: prepared.apiKey, model: prepared.model,
+          provider: prepared.provider as Parameters<typeof runAgent>[2]["provider"],
+          baseURL: prepared.customBaseURL,
+          systemPrompt: delegationSystemPrompt,
+          tools: [],                                      // force text-only — no tool calls
+          security: ctx.security, toolPolicy: ctx.toolPolicy,
+          threatEngine: threatEngineDel, rbac: ctx.rbac, callerRole: requestRole, sessionId,
+          images: prepared.images,
+          maxIterations: 1,                               // 1-shot — agent says its piece, ends turn
+          temperature: prepared.temperature,
+          signal: wsChat.abort.signal,
+          onEvent,
+        });
+        const { stripEphemeralMessages } = await import("../agent-providers.js");
+        type MsgRecordD = Record<string, unknown>;
+        session.messages = stripEphemeralMessages(result.messages).filter((m) => {
+          if (m.role === "system") return false;
+          if (m.role === "tool") return true;
+          return m.content || (m as unknown as MsgRecordD).tool_calls;
+        });
+        session.updatedAt = Date.now();
+        ctx.saveSession(session);
+        const realUsage = result.usage || { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        onEvent({ type: "done", usage: realUsage });
         doneEmitted = true;
-        logger.info(`[router] Auto-delegated to worker pool: op=${opId} sess=${sessionId} provider=${prepared.provider}`);
+        logger.info(`[timing] delegation-ack turn ${Date.now() - turnStart}ms (${prepared.provider}/${prepared.model}, ${realUsage.totalTokens} tokens)`);
         return true;
       }
 

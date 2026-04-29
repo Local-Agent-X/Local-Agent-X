@@ -1,0 +1,294 @@
+/**
+ * Worker process entry point.
+ *
+ * Spawned by pool.ts as a separate Node process. Receives ops over IPC
+ * (stdin = parent→worker, stdout = worker→parent) and runs them. Stays
+ * alive across multiple ops (warm worker), exits when parent closes stdin
+ * or sends a kill.
+ *
+ * Step 1 scope: handles ONE op at a time, runs it via runAgent (the same
+ * provider abstraction main agent uses), streams events back. Doesn't yet
+ * implement: heartbeats (Step 3), pause/redirect cooperative semantics
+ * (Step 7), DAG dep resolution (Step 5).
+ *
+ * Lifecycle:
+ *   spawn -> emit 'ready' -> idle -> assign-op -> running -> emit 'result'
+ *   -> idle (ready for next op)
+ */
+
+import { sendIpc, receiveIpc } from "./ipc.js";
+import { ipcEnvelope, type IpcMessage, type Op, type OpEvent, type OpResult } from "./types.js";
+import { appendEvent } from "./event-log.js";
+import { writeCheckpoint, newCheckpoint } from "./checkpoint.js";
+import { randomUUID } from "node:crypto";
+
+// Workers shouldn't write to stdout — that's the IPC channel. Route logs to stderr.
+const log = (level: string, msg: string) => process.stderr.write(`[worker ${level}] ${msg}\n`);
+
+const WORKER_ID = `w-${process.pid}-${randomUUID().slice(0, 8)}`;
+let currentOp: Op | null = null;
+let currentAbortController: AbortController | null = null;
+
+// ── Boot: announce ready ──────────────────────────────────────────────────
+
+sendIpc(process.stdout, ipcEnvelope("ready", {
+  workerId: WORKER_ID,
+  pid: process.pid,
+  capabilities: ["http", "tools"], // expanded over time
+}));
+
+// ── Receive loop ──────────────────────────────────────────────────────────
+
+receiveIpc(process.stdin, {
+  onMessage: (msg: IpcMessage) => {
+    handleMessage(msg).catch(e => log("error", `unhandled in handleMessage: ${(e as Error).message}\n${(e as Error).stack || ""}`));
+  },
+  onNonIpcLine: (line) => {
+    // Stray stdin content from parent — log but don't die
+    log("warn", `non-ipc stdin line: ${line.slice(0, 200)}`);
+  },
+  onError: (e) => {
+    log("error", `ipc error: ${e.message}`);
+  },
+});
+
+// If parent closes stdin, exit cleanly
+process.stdin.on("end", () => {
+  log("info", "parent closed stdin — exiting");
+  process.exit(0);
+});
+
+// ── Message dispatch ──────────────────────────────────────────────────────
+
+async function handleMessage(msg: IpcMessage): Promise<void> {
+  switch (msg.type) {
+    case "assign-op":
+      await handleAssignOp(msg.payload.op);
+      break;
+    case "kill":
+      log("info", `kill received (opId=${msg.payload.opId || "worker"})`);
+      if (msg.payload.opId && currentOp && msg.payload.opId === currentOp.id) {
+        currentAbortController?.abort();
+      } else if (!msg.payload.opId) {
+        // worker-level kill
+        process.exit(0);
+      }
+      break;
+    case "redirect":
+      // Cooperative: the running op picks this up at next safe boundary.
+      // For step 1 we just log it — pause/redirect machinery is Step 7.
+      log("info", `redirect for op ${msg.payload.opId}: ${msg.payload.instruction.slice(0, 100)}`);
+      break;
+    case "pause":
+      log("info", `pause requested for op ${msg.payload.opId} (tier=${msg.payload.tier}) — Step 7 not implemented`);
+      break;
+    case "ping":
+      sendIpc(process.stdout, ipcEnvelope("pong", {
+        workerId: WORKER_ID,
+        currentOpId: currentOp?.id || null,
+        currentPhase: null,
+        lastEventTs: null,
+        heapMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+        uptimeS: Math.floor(process.uptime()),
+      }));
+      break;
+    default:
+      log("warn", `unknown ipc type: ${(msg as { type: string }).type}`);
+  }
+}
+
+// ── The actual work: run an op ────────────────────────────────────────────
+
+async function handleAssignOp(op: Op): Promise<void> {
+  if (currentOp) {
+    log("error", `assign-op while busy with ${currentOp.id} — refusing`);
+    sendResult({
+      opId: op.id,
+      status: "failed",
+      finalSummary: "Worker was busy when assigned",
+      filesChanged: [],
+      error: { message: "worker busy", recoverable: true },
+    });
+    return;
+  }
+
+  currentOp = op;
+  currentAbortController = new AbortController();
+
+  const checkpoint = newCheckpoint(op.id, op.contextPack.routing.preferredProvider || "auto");
+  writeCheckpoint(checkpoint);
+
+  emit({ opId: op.id, type: "started", ts: new Date().toISOString(), payload: { task: op.task } });
+
+  try {
+    const result = await executeOp(op, currentAbortController.signal);
+    // OpResult.status uses kebab-case ("needs-input"); OpEventType uses snake_case
+    // ("needs_input") for consistency with other event types. Map between them.
+    const STATUS_TO_EVENT: Record<OpResult["status"], OpEvent["type"]> = {
+      completed: "completed",
+      failed: "failed",
+      cancelled: "cancelled",
+      paused: "paused",
+      "needs-input": "needs_input",
+    };
+    emit({ opId: op.id, type: STATUS_TO_EVENT[result.status], ts: new Date().toISOString(), payload: { summary: result.finalSummary } });
+    sendResult(result);
+  } catch (e) {
+    const errMsg = (e as Error).message;
+    log("error", `op ${op.id} threw: ${errMsg}`);
+    emit({ opId: op.id, type: "failed", ts: new Date().toISOString(), payload: { error: errMsg } });
+    sendResult({
+      opId: op.id,
+      status: "failed",
+      finalSummary: `Worker error: ${errMsg}`,
+      filesChanged: [],
+      error: { message: errMsg, recoverable: false },
+    });
+  } finally {
+    currentOp = null;
+    currentAbortController = null;
+  }
+}
+
+/**
+ * Execute one op end-to-end. Routes through runAgent like a normal chat
+ * turn, but with the context pack pre-baked into the system prompt and
+ * the user message. Streams agent output as events. Returns the final
+ * OpResult.
+ */
+async function executeOp(op: Op, signal: AbortSignal): Promise<OpResult> {
+  const startMs = Date.now();
+  const { runAgent } = await import("../agent.js");
+  const { resolveProvider } = await import("../agent-request.js");
+  const { SecurityLayer } = await import("../security.js");
+  const { getRuntimeConfig } = await import("../config.js");
+  const { extractAgentOutput } = await import("../server-utils.js");
+  const { join } = await import("node:path");
+  const { homedir } = await import("node:os");
+
+  const runtime = getRuntimeConfig();
+  const dataDir = join(homedir(), ".lax");
+
+  // For Step 1: load secrets store + resolve provider, pick the one matching
+  // the op's preferredProvider hint or whatever resolveProvider returns by default.
+  const { SecretsStore } = await import("../secrets.js");
+  const secretsStore = new SecretsStore(dataDir);
+  const resolved = await resolveProvider(runtime, secretsStore, dataDir);
+
+  if (!resolved.apiKey) {
+    return {
+      opId: op.id,
+      status: "failed",
+      finalSummary: `No API key for provider ${resolved.provider}`,
+      filesChanged: [],
+      error: { message: "no api key", recoverable: false },
+    };
+  }
+
+  // Context pack → system prompt + user message
+  const systemPrompt = buildSystemPromptFromPack(op);
+  const userMessage = op.task;
+
+  // Worker uses workspace-mode security so writes are confined to workspace.
+  // Future: per-op worktree (Step 11), like autopilot.
+  const security = new SecurityLayer(runtime.workspace || join(dataDir, "workspace"), "common");
+
+  // Tools: bridges-style limited set for Step 1 (read/write/edit/bash/grep/glob/web).
+  // The full tool set + per-op filtering is Step 5+.
+  const { allTools } = await import("../tools.js");
+
+  emit({ opId: op.id, type: "phase", ts: new Date().toISOString(), payload: { phase: "running-agent", provider: resolved.provider, model: resolved.model } });
+
+  const result = await runAgent(userMessage, op.contextPack.context.recentTurns, {
+    apiKey: resolved.apiKey,
+    model: resolved.model,
+    provider: resolved.provider as "anthropic" | "codex" | "openai" | "xai" | "gemini" | "local" | "custom",
+    systemPrompt,
+    tools: allTools,
+    security,
+    sessionId: `worker-${op.id}`,
+    maxIterations: op.contextPack.budget.maxIterations,
+    signal,
+    onEvent: (event) => {
+      // Forward the agent's stream/tool/done events as worker op events
+      try {
+        if (event.type === "stream") {
+          emit({ opId: op.id, type: "agent_text", ts: new Date().toISOString(), payload: { delta: event.delta } });
+        } else if (event.type === "tool_start") {
+          emit({ opId: op.id, type: "tool_call", ts: new Date().toISOString(), payload: { tool: event.toolName, args: event.args } });
+        } else if (event.type === "tool_end") {
+          emit({
+            opId: op.id, type: "tool_result", ts: new Date().toISOString(),
+            sensitive: event.toolName === "request_secret" || event.toolName === "browser_capture_to_secret",
+            payload: { tool: event.toolName, ok: event.allowed !== false, result: typeof event.result === "string" ? event.result.slice(0, 1000) : event.result },
+          });
+        }
+      } catch (e) { log("warn", `event forward failed: ${(e as Error).message}`); }
+    },
+  });
+
+  // Checkpoint at completion
+  writeCheckpoint({
+    ...newCheckpoint(op.id, resolved.provider),
+    completedSteps: 1,
+    lastSafeBoundary: { label: "op-completed", timestamp: new Date().toISOString() },
+  });
+
+  const finalSummary = extractAgentOutput(result.messages) || "(no output)";
+  log("info", `op ${op.id} done in ${Math.round((Date.now() - startMs) / 1000)}s, stopReason=${result.stopReason}`);
+
+  return {
+    opId: op.id,
+    status: result.stopReason === "error" ? "failed" : "completed",
+    finalSummary: finalSummary.slice(0, 2000),
+    filesChanged: [], // TODO: track from worktree diff in Step 11
+  };
+}
+
+function buildSystemPromptFromPack(op: Op): string {
+  const p = op.contextPack;
+  const blocks: string[] = [
+    `You are a worker sub-agent for Local Agent X. Execute the assigned task and return a result. The supervisor (main agent) is the user-facing voice; you are the muscle.`,
+    ``,
+    `## Task`,
+    p.task.description,
+  ];
+
+  if (p.task.successCriteria.length > 0) {
+    blocks.push(``, `## Success criteria`, ...p.task.successCriteria.map(s => `- ${s}`));
+  }
+  if (p.task.constraints.length > 0) {
+    blocks.push(``, `## Constraints`, ...p.task.constraints.map(s => `- ${s}`));
+  }
+  if (p.task.notWhatToRedo.length > 0) {
+    blocks.push(``, `## Do NOT redo`, ...p.task.notWhatToRedo.map(s => `- ${s}`));
+  }
+  if (p.context.referencedFiles.length > 0) {
+    blocks.push(``, `## Referenced files (pre-loaded)`);
+    for (const f of p.context.referencedFiles) {
+      blocks.push(`### ${f.path}${f.truncated ? " (truncated)" : ""}\n\`\`\`\n${f.content.slice(0, 3000)}\n\`\`\``);
+    }
+  }
+  if (p.context.memoryHits.length > 0) {
+    blocks.push(``, `## Relevant memory`, ...p.context.memoryHits.map(m => `- (${m.source}) ${m.snippet}`));
+  }
+  if (p.context.agentsRules.trim()) {
+    blocks.push(``, `## Architectural rules (follow strictly)`, p.context.agentsRules);
+  }
+  if (p.secrets.allowed.length > 0) {
+    blocks.push(``, `## Secrets you may request`, p.secrets.allowed.join(", "), `(use the request_secret tool to fetch values; never type secrets in plain text)`);
+  }
+  return blocks.join("\n");
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function emit(event: OpEvent): void {
+  // Disk-append (with redaction) AND IPC-send to parent
+  appendEvent(event);
+  sendIpc(process.stdout, ipcEnvelope("event", { event }));
+}
+
+function sendResult(result: OpResult): void {
+  sendIpc(process.stdout, ipcEnvelope("result", { result }));
+}

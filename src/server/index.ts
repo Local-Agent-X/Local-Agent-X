@@ -25,8 +25,8 @@ export async function startServer(config: LAXConfig) {
   bootstrapProviderMatrix();
   startWorkerPool();
   initSessionBridge();
-  // Persist worker-completion notices into the session as assistant messages
-  // so they survive page reload + WS disconnects.
+  // Persist worker completion ack into session.messages so the chat thread
+  // shows a short "✓ Worker finished" note (full result lives in sidebar).
   setSessionPersister((sessionId, content) => {
     try {
       const session = sessionStore.load(sessionId);

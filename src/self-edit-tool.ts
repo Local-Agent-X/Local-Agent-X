@@ -24,11 +24,11 @@
  */
 
 import { spawn } from "node:child_process";
-import { resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { npmAugmentedEnv } from "./anthropic-client/cli-path.js";
 import type { ToolDefinition } from "./types.js";
 
-const LAX_REPO_ROOT = resolvePath(new URL("..", import.meta.url).pathname.replace(/^\//, "").replace(/\/$/, ""));
+const LAX_REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const MAX_OUTPUT_CHARS = 4000;
 const TIMEOUT_MS = 10 * 60_000; // 10 min — source-code repair can be slow
 

@@ -28,6 +28,35 @@ function connectChatWs() {
     }
 
     if (msg.type === 'event' && msg.sessionId && msg.event) {
+      // bg_op_completed: a worker-pool op finished. Append a fresh assistant
+      // message into the session and re-render if currently viewing. This
+      // event bypasses the per-turn message handler (which detaches on
+      // `done`), so it works regardless of whether a turn is in progress.
+      if (msg.event.type === 'bg_op_completed') {
+        try {
+          const sess = (chats || []).find(c => c.id === msg.sessionId);
+          if (sess) {
+            const statusLabel = msg.event.status === 'completed' ? '✓ completed'
+              : msg.event.status === 'failed' ? '✗ failed' : '⊘ cancelled';
+            const filesLine = (msg.event.filesChanged && msg.event.filesChanged.length > 0)
+              ? '\n\n_files: ' + msg.event.filesChanged.slice(0, 5).join(', ') + '_'
+              : '';
+            const content = '🤖 **Op ' + msg.event.opId + ' ' + statusLabel + '**\n\n' + (msg.event.summary || '(no summary)') + filesLine;
+            sess.messages = sess.messages || [];
+            sess.messages.push({ role: 'assistant', content, timestamp: Date.now() });
+            sess.updatedAt = Date.now();
+            try { localStorage.setItem('sax_chats', JSON.stringify(chats)); } catch {}
+            if (activeChat && activeChat.id === msg.sessionId) {
+              try { renderChat(activeChat); } catch {}
+            } else {
+              try { renderSidebar(); } catch {}
+            }
+            if (window.desktop) window.desktop.showNotification('Background op finished', (msg.event.summary || '').slice(0, 100));
+          }
+        } catch(e) { console.warn('[bg_op_completed] render failed', e); }
+        return;
+      }
+
       // If we're viewing this chat AND it's the one streaming via SSE, skip WS events (avoid duplicates)
       if (activeChat && activeChat.id === msg.sessionId && streamingSessionId === msg.sessionId) {
         return;
@@ -232,7 +261,7 @@ function renderMessages() {
   const el = document.getElementById('messages');
   if (!el) return;
   if (!activeChat || activeChat.messages.length === 0) {
-    el.innerHTML = `<div id="empty"><img src="/hero.jpg" alt="Open Agent X" class="hero-img" /><h2>OPEN AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
+    el.innerHTML = `<div id="empty"><img src="/hero.jpg" alt="Local Agent X" class="hero-img" /><h2>LOCAL AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
     return;
   }
   el.innerHTML = '';

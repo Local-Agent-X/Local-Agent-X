@@ -16,6 +16,14 @@ export async function startServer(config: LAXConfig) {
   const services = await bootstrapServices(config);
   const { security, publicDir, dataDir, toolPolicy, rbac, agentSync, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations } = services;
 
+  // Worker pool (Step 1 foundation): boot the pool + register provider matrix
+  // so op_submit can route work into isolated worker processes. This keeps
+  // the main agent's heap small — heavy work crashes the worker, not us.
+  const { startWorkerPool } = await import("../workers/pool.js");
+  const { bootstrapProviderMatrix } = await import("../workers/provider-matrix.js");
+  bootstrapProviderMatrix();
+  startWorkerPool();
+
   const tools = await bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir });
   const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef } = tools;
 

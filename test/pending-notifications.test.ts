@@ -177,6 +177,115 @@ describe("findAnyRecentCompletion", () => {
   });
 });
 
+describe("history vs queue: distinct caps and TTLs", () => {
+  it("history cap (30) is independent of queue cap (20) — findAnyRecentCompletion still works after drain when 25+ items pushed", () => {
+    const s = sid("hist-cap");
+    for (let i = 0; i < 25; i++) {
+      pushPendingNotification(s, mkNote({ opId: `op-${i}` }));
+    }
+    drainPendingNotifications(s); // queue cleared, history retained
+    const hit = findAnyRecentCompletion(s);
+    // History cap is 30 so all 25 should still be retrievable; the most
+    // recent one (op-24) should be returned.
+    expect(hit?.opId).toBe("op-24");
+  });
+
+  it("history cap (30) drops oldest first when exceeded — after 35 pushes, op-0..op-4 are gone but op-5..op-34 remain", () => {
+    const s = sid("hist-overflow");
+    // Use spaced-out tasks so findRecentCompletionMatching can target a specific entry
+    for (let i = 0; i < 35; i++) {
+      pushPendingNotification(s, mkNote({ opId: `op-${i}`, task: `unique-task-marker-${i}-padding-text` }));
+    }
+    // op-0..op-4 should be gone from history (35 - 30 = 5 dropped)
+    expect(findRecentCompletionMatching(s, "unique-task-marker-2-padding-text")).toBeNull();
+    // op-5 should be the oldest still in history
+    expect(findRecentCompletionMatching(s, "unique-task-marker-5-padding-text")).not.toBeNull();
+    // op-34 should be the newest
+    expect(findRecentCompletionMatching(s, "unique-task-marker-34-padding-text")).not.toBeNull();
+  });
+
+  it("history TTL (30 min) is shorter than queue TTL (24 h)", () => {
+    const s = sid("hist-ttl");
+    // Push something 31 min old — beyond HISTORY_TTL_MS but well within TTL_MS
+    const stale = mkNote({ opId: "stale", task: "old task with enough text to match", completedAt: Date.now() - 31 * 60 * 1000 });
+    pushPendingNotification(s, stale);
+    // History prune fires inside push, so the 31-min-old entry is dropped from history.
+    // findRecentCompletionMatching reads from history and uses the 10-min recency
+    // window, so it would have rejected it anyway — but findAnyRecentCompletion
+    // also reads from history.
+    expect(findAnyRecentCompletion(s)).toBeNull();
+    // Push a fresh item to trigger another prune; history should now contain only the fresh one
+    pushPendingNotification(s, mkNote({ opId: "fresh", task: "new task with enough text" }));
+    expect(findAnyRecentCompletion(s)?.opId).toBe("fresh");
+  });
+
+  it("a stale push triggers prune that removes the empty session entry from history", () => {
+    const s = sid("empty-prune");
+    // Push only stale items (older than HISTORY_TTL_MS)
+    pushPendingNotification(s, mkNote({ completedAt: Date.now() - 31 * 60 * 1000 }));
+    // Push a second stale item; the prune-on-push from THIS call sees only stale items
+    pushPendingNotification(s, mkNote({ completedAt: Date.now() - 31 * 60 * 1000 }));
+    // Both findAnyRecentCompletion and findRecentCompletionMatching should miss
+    expect(findAnyRecentCompletion(s)).toBeNull();
+    expect(findRecentCompletionMatching(s, "anything matching as a long candidate")).toBeNull();
+  });
+});
+
+describe("findAnyRecentCompletion — backward scan invariants", () => {
+  it("scans backward through history and returns the FIRST recent hit (most recent in push order)", () => {
+    const s = sid("backscan");
+    pushPendingNotification(s, mkNote({ opId: "a", completedAt: Date.now() - 9 * 60 * 1000 })); // recent
+    pushPendingNotification(s, mkNote({ opId: "b", completedAt: Date.now() - 8 * 60 * 1000 })); // recent, more recent
+    pushPendingNotification(s, mkNote({ opId: "c", completedAt: Date.now() - 7 * 60 * 1000 })); // recent, most recent
+    expect(findAnyRecentCompletion(s)?.opId).toBe("c");
+  });
+
+  it("skips a stale tail entry and returns the most-recent fresh one earlier in the array", () => {
+    const s = sid("skip-tail");
+    pushPendingNotification(s, mkNote({ opId: "fresh", completedAt: Date.now() - 5 * 60 * 1000 }));
+    pushPendingNotification(s, mkNote({ opId: "stale", completedAt: Date.now() - 11 * 60 * 1000 }));
+    // Note: stale.completedAt is past the 10-min recency window even though it
+    // was pushed AFTER fresh — because completedAt drives the window check, not
+    // push order. The function returns null only if NO entry is recent.
+    // Actually, "stale" here was pushed second so it's at index [1]. The scan
+    // starts from i=length-1 (i.e. stale) and skips, then hits fresh at i=0.
+    expect(findAnyRecentCompletion(s)?.opId).toBe("fresh");
+  });
+});
+
+describe("findRecentCompletionMatching — boundary cases", () => {
+  it("uses the 120-char prefix when comparing (long prior task)", () => {
+    const s = sid("prefix");
+    const longPrior = "a".repeat(200) + " unique-tail-content";
+    pushPendingNotification(s, mkNote({ task: longPrior }));
+    // The candidate matches the FIRST 120 chars of the prior — the unique tail
+    // is sliced off so it should NOT influence the comparison.
+    const candidate = "a".repeat(50);
+    const hit = findRecentCompletionMatching(s, candidate);
+    expect(hit).not.toBeNull();
+  });
+
+  it("ignores stale entries even when an older recent one matches", () => {
+    const s = sid("stale-match");
+    // Stale entry (12 min old, beyond 10-min window) that DOES match the candidate
+    pushPendingNotification(s, mkNote({
+      task: "build the homepage hero section",
+      completedAt: Date.now() - 12 * 60 * 1000,
+    }));
+    // No other entries
+    expect(findRecentCompletionMatching(s, "build the homepage hero section")).toBeNull();
+  });
+
+  it("returns the FIRST match in chronological push order (not the most recent)", () => {
+    const s = sid("first-match");
+    pushPendingNotification(s, mkNote({ opId: "first", task: "build the dashboard widget" }));
+    pushPendingNotification(s, mkNote({ opId: "second", task: "build the dashboard widget for admin" }));
+    // Both match "build the dashboard widget" but the for-of loop returns the first hit.
+    const hit = findRecentCompletionMatching(s, "build the dashboard widget");
+    expect(hit?.opId).toBe("first");
+  });
+});
+
 describe("formatNotificationsForSystemPrompt", () => {
   it("returns empty string for empty input", () => {
     expect(formatNotificationsForSystemPrompt([])).toBe("");

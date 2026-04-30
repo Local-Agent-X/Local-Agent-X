@@ -214,7 +214,7 @@ export async function runStandardAgent(
         hasToolCalls: toolCalls.length > 0,
         finishReason,
         inputTokens: totalPromptTokens,
-        outputTokens: totalCompletionTokens,
+        outputTokens: totalCompletionTokens, responseText: assistantContent,
       });
       logClassification(options.provider, model, classification);
     } catch (e) {
@@ -236,7 +236,7 @@ export async function runStandardAgent(
       const classification = classifyOpenAIResponse({
         hasText: !!assistantContent.trim(),
         hasToolCalls: toolCalls.length > 0,
-        errorMessage: errMsg,
+        errorMessage: errMsg, responseText: assistantContent,
       });
       logClassification(options.provider, model, classification);
       onEvent?.({ type: "error", message: errMsg });

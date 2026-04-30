@@ -183,6 +183,79 @@ describe("filterStreamDelta — partial-prefix detection limitations (documents 
   });
 });
 
+describe("filterStreamDelta — self-contained chunk (open + close in one delta)", () => {
+  it("a single delta containing the entire fenced JSON block latches suppress (close marker is also detected at start)", () => {
+    // Real producer rarely emits the whole block as one chunk, but if it
+    // does, the open-marker check fires FIRST (alreadySuppressing is false).
+    // Suppress is set to true; nothing after this delta survives until a
+    // subsequent close marker — but here close-marker is in the SAME chunk
+    // so it never gets a chance to reset (BUG #2 doubles down).
+    const r = filterStreamDelta('```json\n{"tool_calls":[]}\n```', false);
+    expect(r.suppress).toBe(true);
+    // No text emitted; the whole chunk is suppressed
+    expect(r.text).toBeUndefined();
+  });
+
+  it("a single delta with self-contained <tool_use>...</tool_use> stays in suppressed state", () => {
+    const r = filterStreamDelta('<tool_use><parameter name="x">v</parameter></tool_use>', false);
+    expect(r.suppress).toBe(true);
+    expect(r.text).toBeUndefined();
+  });
+
+  it("a chunk arriving while suppressing that ALSO contains an open marker hits close-marker branch first", () => {
+    // alreadySuppressing=true → close-marker check runs first. If the chunk
+    // contains '```' (which any open marker like ```json also contains), it
+    // matches the close branch and emits {text:""}. Documents the
+    // string-match-not-state-machine semantics.
+    const r = filterStreamDelta("```json", true);
+    expect(r.text).toBe("");
+    expect(r.suppress).toBeUndefined();
+  });
+});
+
+describe("stripToolCallBlocks — non-greedy + nested-resilient", () => {
+  it("strips two consecutive ```json blocks without merging the gap into the cleanup", () => {
+    const input =
+      'A ```json\n{"tool_calls":[{"name":"a","arguments":{}}]}\n``` B ' +
+      '```json\n{"tool_calls":[{"name":"b","arguments":{}}]}\n``` C';
+    const out = stripToolCallBlocks(input);
+    expect(out).not.toContain("tool_calls");
+    expect(out).toContain("A");
+    expect(out).toContain("B");
+    expect(out).toContain("C");
+  });
+
+  it("strips two consecutive <tool_use> blocks without swallowing the prose between", () => {
+    const input =
+      'one <tool_use><parameter name="x">v1</parameter></tool_use> two ' +
+      '<tool_use><parameter name="y">v2</parameter></tool_use> three';
+    const out = stripToolCallBlocks(input);
+    expect(out).not.toContain("<tool_use>");
+    expect(out).toContain("one");
+    expect(out).toContain("two");
+    expect(out).toContain("three");
+  });
+
+  it("leaves an unclosed <tool_use> tag alone (regex requires closing tag)", () => {
+    // If the closing tag is missing, the .*? non-greedy match has nothing
+    // to terminate on and the regex doesn't match. The unclosed tag stays.
+    const input = "lead <tool_use><parameter name=\"x\">v</parameter> trailing";
+    const out = stripToolCallBlocks(input);
+    expect(out).toContain("<tool_use>");
+  });
+
+  it("falls back to raw JSON regex when fenced block is missing its closing ```", () => {
+    // The fenced regex requires a closing ```, so an unclosed block fails
+    // that pattern. But the standalone {"tool_calls":...} regex DOES match
+    // the inner JSON, so the call is still stripped — defense in depth.
+    const input = 'lead\n```json\n{"tool_calls":[{"name":"x","arguments":{}}]}\n trailing';
+    const out = stripToolCallBlocks(input);
+    expect(out).not.toContain("tool_calls");
+    expect(out).toContain("lead");
+    expect(out).toContain("trailing");
+  });
+});
+
 describe("stripToolCallBlocks — post-hoc cleanup", () => {
   it("removes inline {\"tool_calls\":...} JSON from a flat string", () => {
     const leak = 'pre {"tool_calls":[{"name":"x","arguments":{}}]} post';

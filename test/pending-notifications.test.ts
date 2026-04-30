@@ -364,4 +364,55 @@ describe("formatNotificationsForSystemPrompt", () => {
     const out = formatNotificationsForSystemPrompt([mkNote()]);
     expect(out).toContain("[end background completions]");
   });
+
+  it("does NOT add truncation note when summary is exactly the 180-char preview length", () => {
+    // SUMMARY_PREVIEW_CHARS is 180. A summary EXACTLY 180 chars long has
+    // n.summary.length === SUMMARY_PREVIEW_CHARS, so the > check is false
+    // and the truncation note is omitted.
+    const exactly180 = "a".repeat(180);
+    const out = formatNotificationsForSystemPrompt([mkNote({ summary: exactly180 })]);
+    expect(out).not.toContain("full summary withheld");
+    expect(out).toContain(exactly180);
+  });
+
+  it("DOES add truncation note when summary is one char over the preview length", () => {
+    const oneOver = "a".repeat(181);
+    const out = formatNotificationsForSystemPrompt([mkNote({ summary: oneOver, opId: "boundary-op" })]);
+    expect(out).toContain("full summary withheld — 181 chars total");
+    expect(out).toContain('op_status(op_id="boundary-op")');
+  });
+
+  it("renders preview at exactly 180 chars (no extra slicing artifact)", () => {
+    const oneOver = "x".repeat(181);
+    const out = formatNotificationsForSystemPrompt([mkNote({ summary: oneOver })]);
+    // Preview is summary.slice(0, 180) — should have exactly 180 'x's followed by the truncation note
+    const previewRegion = out.match(/Preview: (x+)/);
+    expect(previewRegion).not.toBeNull();
+    expect(previewRegion![1].length).toBe(180);
+  });
+
+  it("appends task ellipsis when task length is 161 chars (boundary +1 over 160-char clip)", () => {
+    const longTask = "x".repeat(161);
+    const out = formatNotificationsForSystemPrompt([mkNote({ task: longTask })]);
+    expect(out).toContain("...");
+    // Task is sliced to 160 chars, so the rendered region should have 160 x's.
+    const m = out.match(/Original task: "(x+)\.{3}"/);
+    expect(m).not.toBeNull();
+    expect(m![1].length).toBe(160);
+  });
+
+  it("does NOT append task ellipsis when task length is exactly 160 chars", () => {
+    const exact = "x".repeat(160);
+    const out = formatNotificationsForSystemPrompt([mkNote({ task: exact })]);
+    expect(out).toContain(`Original task: "${exact}"`);
+    // No trailing ellipsis on the original task line
+    expect(out).not.toMatch(/Original task: "x{160}\.{3}/);
+  });
+
+  it("renders exactly 5 files in the preview when filesChanged has more than 5", () => {
+    const files = Array.from({ length: 12 }, (_, i) => `file${i}.ts`);
+    const out = formatNotificationsForSystemPrompt([mkNote({ filesChanged: files })]);
+    expect(out).toContain("changed 12 files: file0.ts, file1.ts, file2.ts, file3.ts, file4.ts");
+    expect(out).not.toContain("file5.ts");
+  });
 });

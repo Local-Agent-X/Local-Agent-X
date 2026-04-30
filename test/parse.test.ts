@@ -243,6 +243,47 @@ describe("parseToolCalls", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].name).toBe("keep");
   });
+
+  it("returns ONLY fenced calls when both fenced and raw forms coexist (fenced takes precedence)", () => {
+    // Documents the existing if-results-then-return-early branch: once any
+    // fenced call parses, the raw fallback never runs. Mixed-form replies
+    // (rare but seen) drop the raw entry on purpose.
+    const text =
+      '```json\n{"tool_calls":[{"name":"fenced","arguments":{}}]}\n```' +
+      ' some prose ' +
+      '{"tool_calls":[{"name":"raw","arguments":{}}]}';
+    const calls = parseToolCalls(text);
+    expect(calls.map(c => c.name)).toEqual(["fenced"]);
+  });
+
+  it("extracts multiple tool entries from a single tool_calls array", () => {
+    const text =
+      '```json\n{"tool_calls":[' +
+      '{"name":"first","arguments":{"a":1}},' +
+      '{"name":"second","arguments":{"b":2}},' +
+      '{"name":"third","arguments":{}}' +
+      ']}\n```';
+    const calls = parseToolCalls(text);
+    expect(calls.map(c => c.name)).toEqual(["first", "second", "third"]);
+    expect(calls[0].arguments).toEqual({ a: 1 });
+    expect(calls[1].arguments).toEqual({ b: 2 });
+  });
+
+  it("preserves nested object/array argument shapes", () => {
+    const text =
+      '```json\n{"tool_calls":[{"name":"complex","arguments":' +
+      '{"nested":{"deep":[1,2,{"k":"v"}]},"flag":true}}]}\n```';
+    const calls = parseToolCalls(text);
+    expect(calls[0].arguments).toEqual({
+      nested: { deep: [1, 2, { k: "v" }] },
+      flag: true,
+    });
+  });
+
+  it("returns [] when fenced block is present but its tool_calls is not an array", () => {
+    const text = '```json\n{"tool_calls":"not-an-array"}\n```';
+    expect(parseToolCalls(text)).toEqual([]);
+  });
 });
 
 // ── cleanUrls ───────────────────────────────────────────────────────────

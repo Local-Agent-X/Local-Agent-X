@@ -131,6 +131,28 @@ export const opSubmitAsyncTool: ToolDefinition = {
 
     const sessionId = String(args._sessionId || "");
     if (sessionId) {
+      // PRIMARY GUARD: any op from this session still RUNNING blocks new
+      // spawns regardless of how much time has passed. Live failure: agent
+      // submitted an op that ran 125+ seconds; the 30s dedup window
+      // expired mid-run, so the agent's retry calls SUCCEEDED in
+      // spawning duplicates. By the time the user noticed they had 4
+      // parallel research ops on the same topic. Block while live.
+      const liveOps = listOpsForSession(sessionId)
+        .map(id => readOp(id))
+        .filter((o): o is NonNullable<typeof o> => !!o)
+        .filter(o => o.status === "running" || o.status === "pending");
+      if (liveOps.length > 0) {
+        const live = liveOps[0];
+        return {
+          content:
+            `BLOCKED — op ${live.id} is still ${live.status} for this chat session ("${live.task.slice(0, 80)}${live.task.length > 80 ? "..." : ""}"). ` +
+            `One op per chat session at a time. Either wait for it to finish (you'll be auto-notified) or call op_kill(op_id="${live.id}") if it's gone wrong, then submit fresh. ` +
+            `Do NOT spawn a parallel worker on the same task — that's how the user ended up with 4 duplicate research ops.`,
+        };
+      }
+      // SECONDARY GUARD: 30s window catches the race where the previous
+      // op JUST completed but the agent hasn't seen the completion event
+      // yet and is mid-retry. Belt-and-suspenders.
       const prior = RECENT_SUBMITS.get(sessionId);
       if (prior && Date.now() - prior.ts < SUBMIT_DEDUP_WINDOW_MS) {
         const ageS = Math.round((Date.now() - prior.ts) / 1000);

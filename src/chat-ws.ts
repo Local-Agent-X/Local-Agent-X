@@ -232,7 +232,30 @@ export function setupChatWebSocket(server: Server, authToken: string) {
       if (type === "agent-control" && msg.agentId && msg.action) {
         try {
           const agentId = String(msg.agentId);
-          if (agentId.startsWith("op_")) {
+          // Route by id prefix. Three id shapes coexist in the AGENTS sidebar:
+          //   - op_ap_*  → autopilot ops (separate lifecycle, has stop endpoint)
+          //   - op_*     → worker-pool ops (killOp via pool)
+          //   - agent-*  → legacy Handler sub-agents
+          // Earlier bug: op_ap_* matched the op_* branch and silently no-opped
+          // because pool.killOp doesn't know about autopilot ops. User hit
+          // pause on autopilot, sidebar flipped to Resume, but autopilot
+          // kept running — there's no pause hook in the autopilot loop yet.
+          if (agentId.startsWith("op_ap_")) {
+            // Autopilot — only "stop" is supported (v1 scope per spec).
+            // Pause/cancel/resume all map to stop because autopilot doesn't
+            // have cooperative pause-mid-round semantics. Stop ends the run
+            // gracefully (current round finishes, then exits).
+            const { requestStop } = await import("./autopilot/loop.js");
+            try {
+              const result = requestStop(agentId);
+              if (!result) ws.send(JSON.stringify({ type: "error", message: `Autopilot ${agentId} not active (already finished or unknown)` }));
+              else if (msg.action === "pause" || msg.action === "resume") {
+                ws.send(JSON.stringify({ type: "error", message: `Autopilot doesn't support pause/resume — sent stop instead. Run will end after current round.` }));
+              }
+            } catch (e) {
+              ws.send(JSON.stringify({ type: "error", message: `Autopilot stop failed: ${(e as Error).message}` }));
+            }
+          } else if (agentId.startsWith("op_")) {
             // Worker-pool op — route to pool
             const { killOp } = await import("./workers/pool.js");
             switch (msg.action) {

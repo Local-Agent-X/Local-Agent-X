@@ -42,7 +42,17 @@ interface WorkerSlot {
   recyclePending: boolean; // marked when heap pressure says recycle after current op
 }
 
-const POOL_SIZE = 1;       // Step 1 — single worker for validation
+// Step 9: pool size N. Default 3 — comfortably runs three concurrent ops on
+// a typical dev machine (3 × 2GB heap = 6GB worst case for the workers
+// themselves, plus the chat agent's own process). Override via env if you
+// want more/fewer based on your hardware. Min 1, max 16 (above which the
+// chat agent process can't usefully orchestrate that many concurrent
+// streams without context-switching dominating).
+const POOL_SIZE = (() => {
+  const env = parseInt(process.env.LAX_WORKER_POOL_SIZE || "", 10);
+  if (Number.isFinite(env) && env >= 1 && env <= 16) return env;
+  return 3;
+})();
 const slots: WorkerSlot[] = [];
 const opQueue: Op[] = [];
 const eventBus = new EventEmitter();

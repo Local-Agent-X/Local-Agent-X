@@ -148,6 +148,19 @@ export async function runAnthropicAgent(
             const { markIteration } = await import("../session-turn-lock.js");
             markIteration(options.sessionId, [plain]);
           } catch {}
+          // Forward as a tool_start + tool_end pair so the worker's onEvent
+          // handler emits a tool_call event the session bridge can route as
+          // bg_op_progress. Without this, the AGENTS sidebar stays dark for
+          // Anthropic workers (MCP tool calls execute inside the CLI subprocess
+          // and never produce visible side-effects in the worker's stream).
+          // We fire both events synchronously because by the time mcp_activity
+          // arrives, the MCP bridge has already executed the tool — there's
+          // no "in flight" state to model.
+          let parsedArgs: unknown = {};
+          try { parsedArgs = JSON.parse((event as { arguments?: string }).arguments || "{}"); } catch {}
+          const tcId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          onEvent?.({ type: "tool_start", toolName: plain, toolCallId: tcId, args: parsedArgs });
+          onEvent?.({ type: "tool_end", toolName: plain, toolCallId: tcId, result: "(handled by MCP bridge)", allowed: true });
         }
       } else if (event.type === "done") {
         totalInput += event.usage?.inputTokens || 0;

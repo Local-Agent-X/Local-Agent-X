@@ -211,19 +211,22 @@ function navigate(route) {
     }
   });
 
-  // Handle pinned page via iframe
+  // Handle pinned page via iframe.
+  // Always cache-bust on click so file changes from agents/workers show up.
+  // Previously: only reloaded if URL changed → clicking the same tab after
+  // an edit kept showing the OLD version until the user manually refreshed
+  // the whole browser. Real workflow blocker since the agent/worker just
+  // edited the app the user wants to verify.
   const pinPage = document.getElementById('page-pin');
   const pinIframe = document.getElementById('pin-iframe');
   if (isPin && pinPage && pinIframe) {
     const pinName = route.slice(4); // strip "pin:"
     const pin = _sidebarPins.find(p => p.name === pinName);
     if (pin) {
-      // Only reload iframe if URL changed
-      // Pass auth token to iframe so pinned pages can call APIs
-      const pinUrl = pin.url + (pin.url.includes('?') ? '&' : '?') + 'token=' + AUTH_TOKEN;
-      if (!pinIframe.src.includes(pin.url)) {
-        pinIframe.src = pinUrl;
-      }
+      // Pass auth token + cache-bust timestamp so iframe always reloads fresh.
+      const sep = pin.url.includes('?') ? '&' : '?';
+      const pinUrl = pin.url + sep + 'token=' + AUTH_TOKEN + '&_t=' + Date.now();
+      pinIframe.src = pinUrl;
       pinPage.classList.add('active');
     }
   } else if (pinPage) {

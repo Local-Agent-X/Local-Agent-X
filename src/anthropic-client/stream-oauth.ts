@@ -63,6 +63,7 @@ export async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator
     let currentToolId = "", currentToolName = "", currentToolArgs = "";
     let stopReason: string | undefined;
     let sawText = false, sawToolCall = false;
+    let responseText = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -95,7 +96,9 @@ export async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator
           if (event.type === "content_block_delta") {
             if (event.delta?.type === "text_delta") {
               sawText = true;
-              yield { type: "text", delta: event.delta.text || "" };
+              const t = event.delta.text || "";
+              responseText += t;
+              yield { type: "text", delta: t };
             }
             if (event.delta?.type === "input_json_delta") {
               currentToolArgs += event.delta.partial_json || "";
@@ -117,7 +120,7 @@ export async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator
             const { classifyAnthropicResponse, logClassification } = await import("../response-classifier.js");
             const classification = classifyAnthropicResponse({
               hasText: sawText, hasToolCalls: sawToolCall, stopReason,
-              inputTokens, outputTokens,
+              inputTokens, outputTokens, responseText,
             });
             logClassification("anthropic", "api", classification);
             yield { type: "done", usage: { inputTokens, outputTokens }, stopReason, classification };

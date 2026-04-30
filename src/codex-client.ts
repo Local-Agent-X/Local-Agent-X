@@ -392,6 +392,7 @@ export async function* streamCodexResponse(params: {
           status: (event.response as unknown as Record<string, unknown>)?.status as string | undefined,
           inputTokens: usage.inputTokens,
           outputTokens: usage.outputTokens,
+          responseText: fullText,
         });
         logClassification("codex", params.model, classification);
         // Attach classification to the done event so the agent loop can use it
@@ -433,6 +434,7 @@ export async function* streamCodexResponse(params: {
       outputTypes: [],
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
+      responseText: fullText,
     });
     logClassification("codex", params.model, classification);
     usageWithMeta.classification = classification;

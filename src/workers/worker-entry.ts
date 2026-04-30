@@ -290,8 +290,33 @@ function classifyOpResult(
       : "";
   const didMeaningfulWork = toolCallsExecuted > 0 || lastText.trim().length > 20;
 
+  // Refusal patterns: agent ended its turn without calling any tools AND the
+  // final text sounds like "I can't do this." Live failure mode: a worker
+  // whose Anthropic CLI MCP bridge race-failed got zero filesystem tools,
+  // refused with "I don't have the file system tools (Read, Edit, ...)
+  // available — please re-run", and was marked `completed` because
+  // stopReason was `end_turn`. The supervisor then narrated it to the user
+  // as success. Catch the refusal and label it `failed` so narration tells
+  // the truth.
+  const REFUSAL_PATTERNS = [
+    /\bI (don't|do not) have (the |access to |any )?\w*\s*(file ?system|filesystem|standard)?\s*(tools?|access)/i,
+    /\bI (can't|cannot|am unable to|am not able to|don't have a way to)\s+(audit|refactor|edit|read|modify|access|complete|do this)/i,
+    /\bno (filesystem|tool|MCP|standard)\s+(access|tools?)\s+(available|exposed|enabled)/i,
+    /\b(could|can|please) you (re-?run|provide|share|paste|enable)/i,
+    /\bplease (re-?run|provide|share|paste|enable)\s+(this|the file|tools|file contents)/i,
+  ];
+  const looksLikeRefusal = toolCallsExecuted === 0 && REFUSAL_PATTERNS.some(rx => rx.test(lastText));
+
   switch (result.stopReason) {
     case "end_turn":
+      if (looksLikeRefusal) {
+        return {
+          opId, status: "failed",
+          finalSummary: `[worker refused — likely tool-access issue] ${trimmedSummary}`.slice(0, 2000),
+          filesChanged: [],
+          error: { message: "Worker refused or couldn't proceed (likely missing tool access)", recoverable: true },
+        };
+      }
       return { opId, status: "completed", finalSummary: trimmedSummary, filesChanged: [] };
 
     case "abort":

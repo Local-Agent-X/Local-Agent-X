@@ -2591,6 +2591,7 @@ function renderAgentCard(agent) {
       '<span class="agent-feed-icon">' + icon + '</span>' +
       '<span class="agent-feed-name">' + esc(agent.name || agent.id) + '</span>' +
       '<span class="agent-feed-status"><span class="agent-status-dot"></span> ' + esc(status) + '</span>' +
+      '<button class="agent-feed-dismiss" title="Dismiss card (does not cancel)" onclick="onAgentDismiss(\'' + safeId + '\')">×</button>' +
     '</div>' +
     '<div class="agent-feed-output">' + esc(output) + '</div>' +
     '<div class="agent-feed-controls">' +
@@ -2678,6 +2679,14 @@ function onAgentCancel(agentId) {
   // worker kept running, progress events kept re-rendering the card).
   updateAgentFeed(agentId, { status: 'cancelled' });
   setTimeout(function() { removeAgentFeed(agentId); }, 1500);
+}
+
+function onAgentDismiss(agentId) {
+  // Pure UI hide — does NOT cancel/kill the underlying op. For removing
+  // completed or stale cards that the auto-prune timer hasn't gotten to
+  // yet, or for de-cluttering the sidebar without touching live work.
+  // Use Cancel (X-shaped circle) if you want the worker actually killed.
+  removeAgentFeed(agentId);
 }
 
 function _renderAgentFeedsList() {

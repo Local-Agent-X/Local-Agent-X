@@ -257,11 +257,15 @@ export function setupChatWebSocket(server: Server, authToken: string) {
             }
           } else if (agentId.startsWith("op_")) {
             // Worker-pool op — route to pool
-            const { killOp } = await import("./workers/pool.js");
+            const { killOp, cancelQueuedOp } = await import("./workers/pool.js");
             switch (msg.action) {
               case "cancel": {
-                const ok = killOp(agentId);
-                if (!ok) ws.send(JSON.stringify({ type: "error", message: `Op ${agentId} not running (already finished or queued)` }));
+                // Try running-op kill first; if the op is still in the queue
+                // (worker hasn't picked it up yet) fall back to cancelQueuedOp
+                // so the user can cancel before any compute is spent.
+                let ok = killOp(agentId);
+                if (!ok) ok = cancelQueuedOp(agentId);
+                if (!ok) ws.send(JSON.stringify({ type: "error", message: `Op ${agentId} not found (already finished)` }));
                 break;
               }
               case "pause":

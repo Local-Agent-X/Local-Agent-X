@@ -54,7 +54,23 @@ export function setupChatWebSocket(server: Server, authToken: string) {
   setSessionBroadcaster((sessionId, event) => {
     const chat = activeChats.get(sessionId);
     if (chat) chat.events.push(event);          // buffer for replay
-    broadcastToSession(sessionId, event);       // live push to subscribers
+    // The AGENTS sidebar is a GLOBAL surface — it shows ALL background
+    // ops regardless of which session triggered them (web chat, Telegram,
+    // WhatsApp, voice, autopilot, cron). Bridge-originated ops use
+    // sessionIds like `tg-XXX` / `wa-XXX` which the local UI never
+    // subscribes to, so per-session routing made them invisible. Route
+    // bg_op_* events globally; everything else stays per-session.
+    const isBgOpEvent =
+      event.type === "bg_op_queued" ||
+      event.type === "bg_op_started" ||
+      event.type === "bg_op_progress" ||
+      event.type === "bg_op_completed" ||
+      event.type === "bg_op_nudge";
+    if (isBgOpEvent) {
+      broadcastAll({ type: "event", sessionId, event });
+    } else {
+      broadcastToSession(sessionId, event);     // per-session: streams, tool cards, done
+    }
   });
   setIdleNudgeBroadcaster((sessionId, event) => {
     const chat = activeChats.get(sessionId);

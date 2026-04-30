@@ -308,4 +308,34 @@ describe("cleanUrls", () => {
     const out = cleanUrls("(see https://x.com/p) here");
     expect(out).toBe("(see https://x.com/p) here");
   });
+
+  it("strips trailing punct from each URL when multiple URLs share a line", () => {
+    const out = cleanUrls("see https://a.com/x. and https://b.com/y, ok");
+    expect(out).toBe("see https://a.com/x and https://b.com/y ok");
+  });
+
+  it("preserves URL with query string (? is part of the URL, not trailing punct)", () => {
+    const out = cleanUrls("docs at https://x.com/path?foo=1&bar=2 here");
+    expect(out).toBe("docs at https://x.com/path?foo=1&bar=2 here");
+  });
+
+  it("preserves URL with fragment", () => {
+    const out = cleanUrls("see https://x.com/path#section now");
+    expect(out).toBe("see https://x.com/path#section now");
+  });
+
+  it("strips trailing punct when URL ends a line (regex tail accepts \\n via \\s)", () => {
+    const out = cleanUrls("link: https://x.com/path.\nnext line");
+    expect(out).toBe("link: https://x.com/path\nnext line");
+  });
+
+  it("ignores http URLs without trailing punct (verifies no false positives)", () => {
+    const out = cleanUrls("legacy http://example.com works fine here");
+    expect(out).toBe("legacy http://example.com works fine here");
+  });
+
+  it("does not touch a string with no URLs at all", () => {
+    const out = cleanUrls("just normal sentence with a period.");
+    expect(out).toBe("just normal sentence with a period.");
+  });
 });

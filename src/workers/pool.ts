@@ -264,6 +264,42 @@ export function killOp(opId: string): boolean {
   return true;
 }
 
+/**
+ * Cancel an op that's still waiting in the queue (not yet running). Removes
+ * it from the queue, marks it cancelled, resolves any pending awaitOpResult
+ * promise, and broadcasts both op-result (so the sidebar card flips to
+ * cancelled) and op-queue-reordered (so trailing cards' "queued #N" labels
+ * shift up). Returns true if a queued op was cancelled.
+ *
+ * Pairs with killOp: chat-ws.ts cancel button tries killOp first (running
+ * op) and falls back to this for queued ops, so the user can cancel before
+ * the worker ever picks it up.
+ */
+export function cancelQueuedOp(opId: string): boolean {
+  const idx = opQueue.findIndex(o => o.id === opId);
+  if (idx < 0) return false;
+  opQueue.splice(idx, 1);
+  setOpStatus(opId, "cancelled", { lastFailureReason: "cancelled while queued" });
+  const result: OpResult = {
+    opId,
+    status: "cancelled",
+    finalSummary: "Cancelled before it started running.",
+    filesChanged: [],
+    error: { message: "cancelled while queued", recoverable: false },
+  };
+  completedResultCache.set(opId, { result, ts: Date.now() });
+  pendingResults.get(opId)?.resolve(result);
+  pendingResults.delete(opId);
+  eventBus.emit("queue-changed", { queueLength: opQueue.length });
+  eventBus.emit("op-result", result);
+  if (opQueue.length > 0) {
+    eventBus.emit("op-queue-reordered", {
+      entries: opQueue.map((q, i) => ({ opId: q.id, queuePosition: i + 1 })),
+    });
+  }
+  return true;
+}
+
 /** Send a redirect to the worker running this op. Cooperative — applied at next safe boundary. */
 export function redirectOp(opId: string, instruction: string): boolean {
   const slot = slots.find(s => s.busyWith === opId);

@@ -34,8 +34,13 @@ export const CORE_TOOL_NAMES = new Set([
   "protocol_list", "protocol_get",
   "mission_schedule_create", "mission_schedule_list", "mission_schedule_update",
   "mission_schedule_delete", "mission_schedule_toggle",
-  // Agents
-  "agent_spawn", "delegate", "agent_status", "agent_cancel", "agent_message", "agent_output",
+  // Agents — agent_spawn / delegate / agent_message are deliberately
+  // EXCLUDED from the supervisor's tool surface. They were the old "spawn
+  // a sub-agent" path; supervisor now uses op_submit_async (worker pool)
+  // for ALL delegation. Keeping the read-only/control tools so the
+  // supervisor can still observe + cancel sub-agents that were spawned
+  // by other code paths (autopilot, mission jobs, etc).
+  "agent_status", "agent_cancel", "agent_output",
   // Browser
   "browser",
   // Apps

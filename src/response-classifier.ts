@@ -88,14 +88,25 @@ export function classifyCodexResponse(opts: {
   status?: string;              // response.status field
   inputTokens?: number;
   outputTokens?: number;
+  responseText?: string;        // raw text, used for soft-refusal detection
 }): ClassificationResult {
-  const { hasText, hasToolCalls, outputTypes = [], status, inputTokens = 0, outputTokens = 0 } = opts;
+  const { hasText, hasToolCalls, outputTypes = [], status, inputTokens = 0, outputTokens = 0, responseText } = opts;
 
   if (hasToolCalls) {
     return { type: "tool_called", explanation: "Model called one or more tools", shouldRetry: false, shouldFallback: false };
   }
 
   if (hasText) {
+    const refusal = detectRefusalText(responseText);
+    if (refusal.isRefusal) {
+      return {
+        type: "content_filter",
+        rawReason: status,
+        explanation: `Model refused via text: "${refusal.snippet}"`,
+        shouldRetry: false, shouldFallback: true,
+        meta: { refusalPattern: refusal.pattern },
+      };
+    }
     return { type: "completed", explanation: `Normal completion (${outputTokens} output tokens)`, shouldRetry: false, shouldFallback: false, rawReason: status };
   }
 
@@ -157,8 +168,9 @@ export function classifyAnthropicResponse(opts: {
   inputTokens?: number;
   outputTokens?: number;
   errorMessage?: string;
+  responseText?: string;        // raw text, used for soft-refusal detection
 }): ClassificationResult {
-  const { hasText, hasToolCalls, stopReason, inputTokens = 0, outputTokens = 0, errorMessage } = opts;
+  const { hasText, hasToolCalls, stopReason, inputTokens = 0, outputTokens = 0, errorMessage, responseText } = opts;
 
   if (errorMessage) {
     if (errorMessage.includes("429") || /rate.?limit/i.test(errorMessage)) {
@@ -172,9 +184,20 @@ export function classifyAnthropicResponse(opts: {
       return { type: "tool_called", rawReason: stopReason, explanation: "Model called a tool", shouldRetry: false, shouldFallback: false };
     case "end_turn":
     case "stop_sequence":
-      return hasText
-        ? { type: "completed", rawReason: stopReason, explanation: `Normal completion (${outputTokens} tokens)`, shouldRetry: false, shouldFallback: false }
-        : { type: "empty", rawReason: stopReason, explanation: "Model finished normally but produced no content", shouldRetry: true, shouldFallback: true };
+      if (hasText) {
+        const refusal = detectRefusalText(responseText);
+        if (refusal.isRefusal) {
+          return {
+            type: "content_filter",
+            rawReason: stopReason,
+            explanation: `Model refused via text: "${refusal.snippet}"`,
+            shouldRetry: false, shouldFallback: true,
+            meta: { refusalPattern: refusal.pattern },
+          };
+        }
+        return { type: "completed", rawReason: stopReason, explanation: `Normal completion (${outputTokens} tokens)`, shouldRetry: false, shouldFallback: false };
+      }
+      return { type: "empty", rawReason: stopReason, explanation: "Model finished normally but produced no content", shouldRetry: true, shouldFallback: true };
     case "max_tokens":
       return { type: "token_limit", rawReason: stopReason, explanation: "Response was cut off at max_tokens", shouldRetry: false, shouldFallback: false };
     case "refusal":
@@ -201,8 +224,9 @@ export function classifyOpenAIResponse(opts: {
   errorMessage?: string;
   inputTokens?: number;
   outputTokens?: number;
+  responseText?: string;        // raw text, used for soft-refusal detection
 }): ClassificationResult {
-  const { hasText, hasToolCalls, finishReason, errorMessage, inputTokens = 0, outputTokens = 0 } = opts;
+  const { hasText, hasToolCalls, finishReason, errorMessage, inputTokens = 0, outputTokens = 0, responseText } = opts;
 
   if (errorMessage) {
     if (errorMessage.includes("429") || /rate.?limit/i.test(errorMessage)) {
@@ -216,9 +240,20 @@ export function classifyOpenAIResponse(opts: {
     case "function_call":
       return { type: "tool_called", rawReason: finishReason, explanation: "Model called a tool", shouldRetry: false, shouldFallback: false };
     case "stop":
-      return hasText
-        ? { type: "completed", rawReason: finishReason, explanation: `Normal completion (${outputTokens} tokens)`, shouldRetry: false, shouldFallback: false }
-        : { type: "empty", rawReason: finishReason, explanation: "Model stopped normally but produced no content", shouldRetry: true, shouldFallback: true };
+      if (hasText) {
+        const refusal = detectRefusalText(responseText);
+        if (refusal.isRefusal) {
+          return {
+            type: "content_filter",
+            rawReason: finishReason,
+            explanation: `Model refused via text: "${refusal.snippet}"`,
+            shouldRetry: false, shouldFallback: true,
+            meta: { refusalPattern: refusal.pattern },
+          };
+        }
+        return { type: "completed", rawReason: finishReason, explanation: `Normal completion (${outputTokens} tokens)`, shouldRetry: false, shouldFallback: false };
+      }
+      return { type: "empty", rawReason: finishReason, explanation: "Model stopped normally but produced no content", shouldRetry: true, shouldFallback: true };
     case "length":
       return { type: "token_limit", rawReason: finishReason, explanation: "Response cut off at max_tokens", shouldRetry: false, shouldFallback: false };
     case "content_filter":

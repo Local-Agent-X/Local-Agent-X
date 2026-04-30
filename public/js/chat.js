@@ -32,13 +32,41 @@ function connectChatWs() {
       // so background work doesn't pollute the conversation. The sidebar
       // already handles live status updates, output streaming, and removal,
       // and works regardless of which chat is currently active.
-      if (msg.event.type === 'bg_op_started') {
+      // Step 6 lifecycle: queued → working → completed.
+      // bg_op_queued: op submitted but no worker free yet (creates card with
+      //   status "queued #N" so user can see queue depth + position).
+      // bg_op_started: a worker picked it up (flips card to "working").
+      // bg_op_progress: live tool calls / agent text (appended to card output).
+      // bg_op_completed: terminal status (status updated; auto-prune at 30 min).
+      if (msg.event.type === 'bg_op_queued') {
         try {
           if (typeof addAgentFeed === 'function') {
             addAgentFeed({
               id: msg.event.opId,
               name: 'Worker: ' + (msg.event.task || '').slice(0, 60),
-              role: 'coder',                  // gets the 💻 icon
+              role: 'coder',
+              status: 'queued #' + (msg.event.queuePosition || '?'),
+              currentTask: msg.event.task || '',
+              output: '⏸ queued (lane: ' + (msg.event.lane || 'build') + ')\n',
+            });
+          }
+        } catch(e) { console.warn('[bg_op_queued] sidebar update failed', e); }
+        return;
+      }
+      if (msg.event.type === 'bg_op_started') {
+        try {
+          // Two cases: op was queued first (card already exists, just flip
+          // status), OR op dispatched immediately (no prior card, create one).
+          // updateAgentFeed is no-op if the card doesn't exist; addAgentFeed
+          // is idempotent on existing IDs. So calling both is safe.
+          if (typeof updateAgentFeed === 'function') {
+            updateAgentFeed(msg.event.opId, { status: 'working', output: '▶ started\n' });
+          }
+          if (typeof addAgentFeed === 'function') {
+            addAgentFeed({
+              id: msg.event.opId,
+              name: 'Worker: ' + (msg.event.task || '').slice(0, 60),
+              role: 'coder',
               status: 'working',
               currentTask: msg.event.task || '',
               output: '',

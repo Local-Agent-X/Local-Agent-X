@@ -165,6 +165,26 @@ function connectChatWs() {
       } catch(e) { /* app.js not loaded yet — will pick up on next page load */ }
     }
 
+    // ── App files changed: auto-reload any pinned iframe pointing at that app ──
+    // Manifest-generator detects edits under workspace/apps/<name>/ and broadcasts.
+    // Without this, the pinned-app iframe only refreshed on user click — agents
+    // editing files in the background were invisible until a manual click/refresh.
+    if (msg.type === 'app-files-changed' && msg.appName) {
+      try {
+        const pinIframe = document.getElementById('pin-iframe');
+        if (pinIframe && pinIframe.src) {
+          // Match `/apps/<appName>/` anywhere in the iframe URL (post-token, post-cache-bust).
+          const needle = '/apps/' + msg.appName + '/';
+          if (pinIframe.src.indexOf(needle) !== -1) {
+            // Bump the cache-bust timestamp so the iframe refetches
+            const url = new URL(pinIframe.src, window.location.origin);
+            url.searchParams.set('_t', Date.now().toString());
+            pinIframe.src = url.toString();
+          }
+        }
+      } catch(e) { console.warn('[app-files-changed] iframe reload failed', e); }
+    }
+
     // ── Desktop notifications for important events ──
     if (msg.type === 'issue:created' && msg.issue?.needsApproval) {
       if (window.desktop) window.desktop.showNotification('Approval Needed', msg.issue.title);

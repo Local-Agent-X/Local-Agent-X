@@ -139,6 +139,47 @@ export function detectObfuscation(command: string): string | null {
   return null;
 }
 
+// Hard-block heredoc + inline-script writes targeting the repo. Workers were
+// using `cat <<EOF > foo` and `python -c "open(...).write(...)"` to "edit"
+// files; bash exits 0 even when the script silently no-ops, so the worker
+// reported success after writing nothing. Force them to use write/edit tools
+// (which return verifiable confirmations).
+function detectScriptWrite(command: string): string | null {
+  // 1. Heredoc redirected to a file: `<<EOF >`, `<<-EOF >>`, `<<'EOF' > path`, etc.
+  if (/<<-?\s*['"]?\w+['"]?[\s\S]*?>{1,2}\s*\S/.test(command)) {
+    return "Use the write/edit tools instead — bash exit 0 ≠ work done.";
+  }
+  // 2. python/node/perl/ruby -c "..." that calls open()/write_text/writeFile/etc.
+  //    We only flag when both an inline-script flag AND a write call appear.
+  const hasInlineScript = /\b(python[23]?|node|perl|ruby)\b\s+-[ce]\s/i.test(command);
+  if (hasInlineScript) {
+    const writeCallPatterns = [
+      /\bopen\s*\([^)]*['"][wax]/i,                      // open(path, 'w'/'a'/'x')
+      /\.write_text\s*\(/i,                              // pathlib write_text
+      /\.write_bytes\s*\(/i,                             // pathlib write_bytes
+      /\bwriteFileSync\s*\(/i,                           // node fs.writeFileSync
+      /\bfs\.writeFile\s*\(/i,                           // node fs.writeFile
+      /\bappendFileSync\s*\(/i,                          // node fs.appendFileSync
+      /\bPath\s*\([^)]*\)\.write/i,                      // pathlib Path(p).write_*
+      /\bshutil\.(copy|move)/i,                          // python shutil mutating
+    ];
+    if (writeCallPatterns.some(p => p.test(command))) {
+      return "Use the write/edit tools instead — bash exit 0 ≠ work done.";
+    }
+  }
+  // 3. sed -i / awk inplace editing files in-place
+  if (/\bsed\s+(-[a-zA-Z]*i[a-zA-Z]*|-(-in-place))\b/i.test(command)) {
+    return "Use the write/edit tools instead — bash exit 0 ≠ work done.";
+  }
+  if (/\bawk\b[^|]*\binplace\b/i.test(command)) {
+    return "Use the write/edit tools instead — bash exit 0 ≠ work done.";
+  }
+  // 4. Plain redirect of `echo`/`printf` to a writable file path is allowed
+  //    (small one-liners don't trip the silent-noop bug). Heredocs are the
+  //    real problem because they swallow newlines + multi-line content.
+  return null;
+}
+
 export function evaluateShellCommand(command: string): SecurityDecision {
   // Obfuscation detection
   try {
@@ -148,6 +189,12 @@ export function evaluateShellCommand(command: string): SecurityDecision {
     }
   } catch {
     // Don't crash on obfuscation check failure — allow the command through
+  }
+
+  // Block heredoc + inline-script writes (forces use of write/edit tools)
+  const scriptWriteResult = detectScriptWrite(command);
+  if (scriptWriteResult) {
+    return { allowed: false, reason: scriptWriteResult };
   }
 
   // Block dangerous shell metacharacters (command chaining, subshells, command substitution)

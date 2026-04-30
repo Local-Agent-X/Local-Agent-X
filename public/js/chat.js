@@ -453,6 +453,10 @@ async function sendMessage() {
   const msgEl = addMessageEl('assistant', '');
   const bodyEl = msgEl.querySelector('.msg-body');
   bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
+  // Mark as streaming so the CSS adds a pulsing cursor + slight opacity
+  // dim. Removed on `done`. Visual cue that text is still in flight so
+  // mid-turn questions like "Want me to start?" don't read as final.
+  try { bodyEl.classList.add('streaming'); } catch {}
   const streamSessionId = activeChat.id; // Capture which session THIS stream belongs to
   const streamChat = activeChat; // Reference to the chat object (survives navigation)
   streamingSessionId = streamSessionId; stopSpeaking(); ttsSentenceBuffer = '';

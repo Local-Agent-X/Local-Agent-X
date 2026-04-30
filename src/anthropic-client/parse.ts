@@ -37,26 +37,58 @@ export function cleanUrls(text: string): string {
   return text.replace(/(https?:\/\/[^\s)>\]]+)[.,;:!?]+(\s|$)/g, "$1$2");
 }
 
-/** Filter streaming deltas — suppress JSON tool call blocks in real-time */
+/**
+ * Filter streaming deltas — suppress JSON tool call blocks AND Claude's
+ * native XML tool-use blocks in real-time.
+ *
+ * Live failure: Claude's internal XML tool-call format
+ * (<tool_use>...<parameter name="name">...</parameter>...</tool_use>)
+ * sometimes leaks into the streamed text reply instead of being parsed
+ * as a structured tool_use content block. The user sees the raw XML in
+ * chat. Both shapes need streaming-time suppression so the leak doesn't
+ * paint the chat with markup before we can clean it up.
+ */
 export function filterStreamDelta(delta: string, alreadySuppressing: boolean): { text?: string; suppress?: boolean } {
-  // If we're already suppressing (inside a JSON block), keep suppressing
   if (alreadySuppressing) {
-    // Check if block ended
-    if (delta.includes("```") || delta.includes("}\n")) return { text: "" };
+    // Block ended — JSON close OR XML close tag for tool_use / function_calls
+    if (
+      delta.includes("```") ||
+      delta.includes("}\n") ||
+      delta.includes("</tool_use>") ||
+      delta.includes("</function_calls>")
+    ) return { text: "" };
     return { suppress: true };
   }
-  // Check if a tool call block is starting
-  if (delta.includes('```json') || delta.includes('{"tool_calls"')) return { suppress: true };
-  // Check for code fence start (might be a tool call coming)
-  if (delta.trim() === '```') return { suppress: true };
+  // Tool-call block starting — JSON form OR XML form
+  if (
+    delta.includes("```json") ||
+    delta.includes('{"tool_calls"') ||
+    delta.includes("<tool_use>") ||
+    delta.includes("<function_calls>")
+  ) return { suppress: true };
+  // Bare code-fence start (might precede a JSON tool call)
+  if (delta.trim() === "```") return { suppress: true };
   return { text: delta };
 }
 
-/** Strip JSON tool call blocks from text so they don't show in the UI */
+/**
+ * Strip JSON tool-call blocks AND XML tool_use blocks from text so they
+ * don't show in the UI. Used as a post-hoc cleanup for the full assistant
+ * message in case the streaming filter missed a leak (split across deltas,
+ * partial tags, etc).
+ */
 export function stripToolCallBlocks(text: string): string {
-  // Remove ```json tool_calls blocks
-  let cleaned = text.replace(/```(?:json)?\s*\n?\{[\s\S]*?"tool_calls"[\s\S]*?\}\s*\n?```/g, "");
-  // Remove raw JSON tool_calls
+  let cleaned = text;
+  // ```json tool_calls blocks (fenced)
+  cleaned = cleaned.replace(/```(?:json)?\s*\n?\{[\s\S]*?"tool_calls"[\s\S]*?\}\s*\n?```/g, "");
+  // Raw JSON tool_calls
   cleaned = cleaned.replace(/\{"tool_calls"\s*:\s*\[[\s\S]*?\]\s*\}/g, "");
-  return cleaned;
+  // Claude's native XML form: <tool_use>...</tool_use> with <parameter> children
+  cleaned = cleaned.replace(/<tool_use>[\s\S]*?<\/tool_use>/g, "");
+  // Anthropic SDK alternate form: <function_calls>...</function_calls>
+  cleaned = cleaned.replace(/<function_calls>[\s\S]*?<\/function_calls>/g, "");
+  // Standalone <parameter name="...">...</parameter> blocks (in case the
+  // outer <tool_use> tag was already stripped or never streamed)
+  cleaned = cleaned.replace(/<parameter\s+name="[^"]*">[\s\S]*?<\/parameter>/g, "");
+  return cleaned.trim();
 }

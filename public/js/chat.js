@@ -53,6 +53,14 @@ function connectChatWs() {
         } catch(e) { console.warn('[bg_op_queued] sidebar update failed', e); }
         return;
       }
+      if (msg.event.type === 'bg_op_queue_reordered') {
+        try {
+          if (typeof updateAgentFeed === 'function') {
+            updateAgentFeed(msg.event.opId, { status: 'queued #' + msg.event.queuePosition });
+          }
+        } catch(e) { console.warn('[bg_op_queue_reordered] sidebar update failed', e); }
+        return;
+      }
       if (msg.event.type === 'bg_op_started') {
         try {
           // Two cases: op was queued first (card already exists, just flip
@@ -2632,11 +2640,21 @@ function sendAgentRedirect(agentId, instruction) {
 }
 
 function onAgentPause(agentId) {
+  // Backend route by id prefix: op_* → worker pool (real semantics
+  // pending Step 7); agent-* → legacy Handler. UI flips to "paused"
+  // either way so the button toggles to Resume. For worker-pool ops,
+  // pause is best-effort tonight — the worker doesn't actually halt
+  // mid-LLM-call yet (Step 7 polish wires the agent-loop iteration
+  // boundary to honor pause/resume properly).
   var payload = { type: 'agent-control', agentId: agentId, action: 'pause' };
   if (chatWs && chatWs.readyState === WebSocket.OPEN) {
     chatWs.send(JSON.stringify(payload));
   }
-  updateAgentFeed(agentId, { status: 'waiting' });
+  // Status MUST be exactly 'paused' so renderAgentCard's
+  // `isPaused = status === 'paused'` swaps the button to Resume.
+  // Previously this was 'waiting' which never matched and the button
+  // stayed stuck on Pause forever.
+  updateAgentFeed(agentId, { status: 'paused' });
 }
 
 function onAgentResume(agentId) {
@@ -2652,7 +2670,13 @@ function onAgentCancel(agentId) {
   if (chatWs && chatWs.readyState === WebSocket.OPEN) {
     chatWs.send(JSON.stringify(payload));
   }
-  updateAgentFeed(agentId, { status: 'done' });
+  // Mark as cancelled and remove. Backend (chat-ws.ts) routes by id
+  // prefix: op_* → killOp (real worker subprocess kill); agent-* →
+  // legacy Handler.cancelAgent. Either way the worker dies, no more
+  // bg_op_progress events fire, the card stays gone (was respawning
+  // when cancel routed to Handler for op_* ids — handler ignored,
+  // worker kept running, progress events kept re-rendering the card).
+  updateAgentFeed(agentId, { status: 'cancelled' });
   setTimeout(function() { removeAgentFeed(agentId); }, 1500);
 }
 

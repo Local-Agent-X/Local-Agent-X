@@ -137,7 +137,7 @@ export function setupChatWebSocket(server: Server, authToken: string) {
       sessionIds: [...activeChats.keys()].filter(id => !activeChats.get(id)!.done),
     }));
 
-    ws.on("message", (data: Buffer) => {
+    ws.on("message", async (data: Buffer) => {
       let msg: Record<string, unknown>;
       try {
         msg = JSON.parse(data.toString());
@@ -222,17 +222,44 @@ export function setupChatWebSocket(server: Server, authToken: string) {
       }
 
       // Agent control: pause/resume/cancel
+      // The AGENTS sidebar shows TWO kinds of cards:
+      //   - Legacy sub-agents (Handler/agency system) — id like "agent-XXX"
+      //   - Worker-pool ops (Step 5+) — id like "op_freeform_XXX"
+      // Cancel was routed to Handler unconditionally, which silently no-ops
+      // for op_* ids. Worker kept running, kept firing bg_op_progress
+      // events, frontend kept respawning the card. Route by id prefix:
+      // op_* → killOp (worker pool), agent-* / fallthrough → Handler.
       if (type === "agent-control" && msg.agentId && msg.action) {
         try {
-          const { Handler } = require("./agency/handler.js");
-          const handler = Handler.getInstance();
           const agentId = String(msg.agentId);
-          switch (msg.action) {
-            case "pause":  handler.pauseAgent(agentId); break;
-            case "resume": handler.resumeAgent(agentId); break;
-            case "cancel": handler.cancelAgent(agentId); break;
-            default:
-              ws.send(JSON.stringify({ type: "error", message: `Unknown action: ${msg.action}` }));
+          if (agentId.startsWith("op_")) {
+            // Worker-pool op — route to pool
+            const { killOp } = await import("./workers/pool.js");
+            switch (msg.action) {
+              case "cancel": {
+                const ok = killOp(agentId);
+                if (!ok) ws.send(JSON.stringify({ type: "error", message: `Op ${agentId} not running (already finished or queued)` }));
+                break;
+              }
+              case "pause":
+              case "resume":
+                // Worker pool doesn't yet have cooperative pause/resume
+                // (Step 7 polish). Until then, surface the limitation
+                // honestly instead of silently no-opping.
+                ws.send(JSON.stringify({ type: "error", message: `pause/resume not supported for worker-pool ops yet — use cancel + re-submit` }));
+                break;
+            }
+          } else {
+            // Legacy sub-agent — route to Handler
+            const { Handler } = require("./agency/handler.js");
+            const handler = Handler.getInstance();
+            switch (msg.action) {
+              case "pause":  handler.pauseAgent(agentId); break;
+              case "resume": handler.resumeAgent(agentId); break;
+              case "cancel": handler.cancelAgent(agentId); break;
+              default:
+                ws.send(JSON.stringify({ type: "error", message: `Unknown action: ${msg.action}` }));
+            }
           }
         } catch (e) {
           ws.send(JSON.stringify({ type: "error", message: `Agent control failed: ${e}` }));

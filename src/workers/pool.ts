@@ -112,12 +112,28 @@ export function submitOp(op: Op): Promise<OpResult> {
     pendingResults.set(op.id, { resolve, reject });
     if (!tryDispatch(op)) {
       logger.info(`[pool] op ${op.id} queued (all workers busy)`);
+      // Snapshot prior queue order so we can detect shifts after the
+      // priority-sort below — a higher-lane op submitted last must
+      // report its TRUE post-sort position (not the back-of-array
+      // position), and any previously-queued ops bumped down need
+      // their "queued #N" labels refreshed without waiting for the
+      // next dispatch.
+      const priorOrder = opQueue.map(o => o.id);
       opQueue.push(op);
+      sortQueueByLane(opQueue);
       eventBus.emit("queue-changed", { queueLength: opQueue.length });
       // Tell subscribers this op is queued (not yet running) so the
       // frontend can render a "queued" sidebar card with its position.
       const queuePos = opQueue.findIndex(o => o.id === op.id) + 1;
       eventBus.emit("op-queued", { opId: op.id, task: op.task, lane: op.lane, queuePosition: queuePos });
+      // If the priority-insert bumped any earlier op down, broadcast
+      // new positions so existing sidebar cards update without a refetch.
+      const shifted = opQueue.some((o, i) => o.id !== op.id && priorOrder[i] !== o.id);
+      if (shifted) {
+        eventBus.emit("op-queue-reordered", {
+          entries: opQueue.map((q, i) => ({ opId: q.id, queuePosition: i + 1 })),
+        });
+      }
     } else {
       // Dispatched immediately — fire op-dispatched so the bridge can
       // forward bg_op_started without going through the queue path.
@@ -500,12 +516,16 @@ const LANE_PRIORITY: Record<string, number> = {
   background: 1,
 };
 
+function sortQueueByLane(queue: Op[]): void {
+  // Sort by lane priority (desc). Array.sort is stable in modern V8,
+  // so FIFO order is preserved within the same priority lane.
+  queue.sort((a, b) => (LANE_PRIORITY[b.lane] || 2) - (LANE_PRIORITY[a.lane] || 2));
+}
+
 function drainQueue(): void {
   let dispatchedAny = false;
   while (opQueue.length > 0) {
-    // Sort by lane priority (desc), then by FIFO (which is opQueue order).
-    // Stable sort preserves original order within same priority.
-    opQueue.sort((a, b) => (LANE_PRIORITY[b.lane] || 2) - (LANE_PRIORITY[a.lane] || 2));
+    sortQueueByLane(opQueue);
     const op = opQueue[0];
     if (!tryDispatch(op)) break;
     opQueue.shift();

@@ -400,3 +400,93 @@ describe("shouldAutoDelegate — false-negative regressions guarded", () => {
     expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
   });
 });
+
+describe("shouldAutoDelegate — build-verb + app-noun phrase", () => {
+  // Closes the gap that let "create an app to manage all the powerpoints we
+  // create" run inline (10 words, no file cue) and burn 11min of the chat
+  // agent's context. The BUILD_NOUN_RE requires the verb to be directly
+  // attached to an app-shaped noun, so passive mentions stay inline.
+
+  it("delegates on 'create an app to manage all the powerpoints we create'", () => {
+    const msg = "create an app to manage all the powerpoints we create";
+    expect(msg.split(/\s+/).length).toBeLessThan(15); // would fail the old gate
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("delegates on 'build me a notes app' (short, casual)", () => {
+    const msg = "build me a notes app for daily journaling";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("delegates on 'create a dashboard for X'", () => {
+    const msg = "create a dashboard for tracking my workouts each week";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("delegates on 'make a new tool that does Y'", () => {
+    const msg = "make a new tool that converts CSVs to charts";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("delegates on 'set up a small integration with Stripe'", () => {
+    const msg = "set up a small integration with Stripe for one-time payments";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("delegates on 'scaffold an api for the inventory module'", () => {
+    const msg = "scaffold an api for the inventory module with CRUD endpoints";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("delegates on 'spin up a quick page to track expenses'", () => {
+    const msg = "spin up a quick page to track expenses by category";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  // ── Negative cases — passive / discussion mentions of apps must stay inline ──
+
+  it("does NOT delegate on 'the app is broken can you check it'", () => {
+    const msg = "the app is broken can you check it for me";
+    // No build verb at the head → BUILD_NOUN_RE doesn't match. No file cue
+    // and only 10 words → the verb-gate also fails. Stays inline.
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(false);
+  });
+
+  it("does NOT delegate on 'whats the best dashboard tool you recommend'", () => {
+    const msg = "whats the best dashboard tool you recommend for personal use";
+    // No constructive verb on the dashboard noun. Stays inline.
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(false);
+  });
+
+  it("does NOT delegate on 'i was thinking about apps yesterday'", () => {
+    const msg = "i was thinking about apps yesterday and had an idea or two";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(false);
+  });
+
+  it("does NOT delegate on 'this dashboard looks ugly'", () => {
+    const msg = "this dashboard looks ugly to me lately can we discuss";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(false);
+  });
+
+  it("does NOT delegate on 'did you create an app yesterday for that?'", () => {
+    // Past-tense question containing "create an app" — BUILD_NOUN_RE WILL
+    // match this because the literal phrase is there. Acceptable trade-off:
+    // the LLM worker can clarify "you mean look it up?" cheaply, whereas
+    // missing a real build request costs the chat agent its whole context.
+    // This test pins that decision so a future tightening doesn't surprise.
+    const msg = "did you create an app yesterday for that workflow we discussed";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("does NOT delegate on bare 'create' verb without an app-noun (short)", () => {
+    // "create a new branch" — verb fires, "branch" is not in app-noun list,
+    // word count under 15, no file cue → stays inline.
+    const msg = "create a new branch off main and call it experiment";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(false);
+  });
+
+  it("delegates on 'BUILD ME A FULL DASHBOARD' (case insensitivity)", () => {
+    const msg = "BUILD ME A FULL DASHBOARD FOR THE WAREHOUSE STAFF";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+});

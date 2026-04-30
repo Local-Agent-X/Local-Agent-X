@@ -24,7 +24,7 @@
 
 import type { ServerEvent } from "../types.js";
 import type { OpEvent, OpResult } from "./types.js";
-import { subscribeAllOpResults, subscribeAllOps } from "./pool.js";
+import { subscribeAllOpResults, subscribeAllOps, subscribeAllOpQueued, subscribeAllOpDispatched } from "./pool.js";
 import { pushPendingNotification } from "./pending-notifications.js";
 import { scheduleIdleNudge } from "./idle-nudge.js";
 
@@ -59,7 +59,43 @@ export function initSessionBridge(): void {
   initialized = true;
   subscribeAllOpResults((result) => onOpResult(result));
   subscribeAllOps((event) => onOpEvent(event));
+  subscribeAllOpQueued((info) => onOpQueued(info));
+  subscribeAllOpDispatched((info) => onOpDispatched(info));
   logger.info("[session-bridge] initialized");
+}
+
+/** Forward op-queued → bg_op_queued (sidebar card with status: queued + queue position). */
+function onOpQueued(info: { opId: string; task: string; lane: string; queuePosition: number }): void {
+  const sessionId = opSession.get(info.opId);
+  if (!sessionId || !broadcaster) return;
+  try {
+    broadcaster(sessionId, {
+      type: "bg_op_queued",
+      opId: info.opId,
+      task: info.task,
+      provider: "",                       // resolved per-op inside worker; not known here
+      lane: info.lane,
+      queuePosition: info.queuePosition,
+    });
+  } catch (e) {
+    logger.warn(`[session-bridge] queued broadcast threw: ${(e as Error).message}`);
+  }
+}
+
+/** Forward op-dispatched → bg_op_started (sidebar card flips queued → working). */
+function onOpDispatched(info: { opId: string; task: string; lane: string }): void {
+  const sessionId = opSession.get(info.opId);
+  if (!sessionId || !broadcaster) return;
+  try {
+    broadcaster(sessionId, {
+      type: "bg_op_started",
+      opId: info.opId,
+      task: info.task,
+      provider: "",                       // see note above
+    });
+  } catch (e) {
+    logger.warn(`[session-bridge] dispatched broadcast threw: ${(e as Error).message}`);
+  }
 }
 
 /**

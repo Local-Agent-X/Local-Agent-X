@@ -95,17 +95,12 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       const { shouldAutoDelegate, delegateMessageToWorker } = await import("../workers/auto-delegate.js");
       if (shouldAutoDelegate(prepared.provider, message, "web")) {
         const { opId } = await delegateMessageToWorker(message, sessionId, prepared.provider);
-        // Push a card into the global agents sidebar so the user can watch
-        // the op live (status, intermediate tool calls + agent text via the
-        // bg_op_progress events the session bridge fires).
-        try {
-          const { broadcastAll } = await import("../chat-ws.js");
-          broadcastAll({
-            type: "event",
-            sessionId,
-            event: { type: "bg_op_started", opId, task: message.slice(0, 200), provider: prepared.provider },
-          });
-        } catch {}
+        // Sidebar cards are now driven by the pool's op-queued / op-dispatched
+        // events (Step 6) — no manual broadcast needed here. The session
+        // bridge subscribes to those and forwards bg_op_queued (with queue
+        // position) and bg_op_started (when a worker picks it up) to the
+        // chat WS. Cleaner than the old "fire bg_op_started immediately
+        // even if the op is queued" pattern, which lied about state.
         // Instead of streaming a hardcoded "🤖 routing notice" string, run a
         // tiny no-tools chat turn so the AGENT itself acknowledges the
         // delegation in its own voice. Same chat agent the user normally

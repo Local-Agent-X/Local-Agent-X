@@ -45,12 +45,45 @@ async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse | nul
         return null; // notification, no response
 
       case "tools/list": {
-        const res = await fetch(`${BASE}/api/mcp/tools`, {
-          headers: { "Authorization": `Bearer ${TOKEN}` },
-        });
-        if (!res.ok) throw new Error(`Local Agent X tools/list: ${res.status}`);
-        const data = await res.json() as { tools: unknown[] };
-        return { jsonrpc: "2.0", id, result: { tools: data.tools } };
+        // Cold-start race fix: when the worker spawns and Claude CLI
+        // immediately handshakes with the bridge, the bridge subprocess
+        // sometimes initiates its first fetch before the localhost
+        // connection is fully ready (or before any other transient
+        // condition resolves), which made Claude believe LAX exposed zero
+        // tools. Result: agent told user "I don't have file system tools"
+        // and bailed without doing anything.
+        //
+        // Retry the tools/list fetch with backoff. We'll try up to 5 times,
+        // backing off 200ms → 400ms → 800ms → 1.6s → 3.2s. Total worst case
+        // ~6s before giving up; in practice the second attempt almost
+        // always succeeds. Empty tools array also triggers retry — a
+        // legitimate cold-LAX would never return an empty tools list, so
+        // we treat it as a transient failure.
+        let lastErr = "";
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            const res = await fetch(`${BASE}/api/mcp/tools`, {
+              headers: { "Authorization": `Bearer ${TOKEN}` },
+            });
+            if (!res.ok) {
+              lastErr = `HTTP ${res.status}`;
+            } else {
+              const data = await res.json() as { tools: unknown[] };
+              if (Array.isArray(data.tools) && data.tools.length > 0) {
+                return { jsonrpc: "2.0", id, result: { tools: data.tools } };
+              }
+              lastErr = "empty tools list";
+            }
+          } catch (e) {
+            lastErr = (e as Error).message;
+          }
+          if (attempt < 4) {
+            const delay = 200 * Math.pow(2, attempt);
+            process.stderr.write(`[mcp-bridge] tools/list attempt ${attempt + 1} failed (${lastErr}), retrying in ${delay}ms\n`);
+            await new Promise(r => setTimeout(r, delay));
+          }
+        }
+        throw new Error(`Local Agent X tools/list failed after 5 attempts: ${lastErr}`);
       }
 
       case "tools/call": {

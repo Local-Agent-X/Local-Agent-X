@@ -603,7 +603,7 @@ async function saveSettings() {
   await apiPost('/api/settings', settingsPayload);
   // If port changed, tell user to restart the app
   if (s.port && String(s.port) !== String(currentPort)) {
-    alert('Port changed to ' + s.port + '. Please quit and relaunch Open Agent X for this to take effect.');
+    alert('Port changed to ' + s.port + '. Please quit and relaunch Local Agent X for this to take effect.');
   }
   // Also save sync config to server
   await saveSyncConfig();
@@ -1497,7 +1497,7 @@ function showOnboarding() {
     <div id="onboarding-modal">
       <div id="onboarding-steps">
         <div class="onboarding-step active" data-step="0">
-          <h2 class="onboarding-title">Welcome to Open Agent X</h2>
+          <h2 class="onboarding-title">Welcome to Local Agent X</h2>
           <p class="onboarding-desc">Your personal AI agent that runs locally. Let's get you set up in 3 quick steps.</p>
           <div class="onboarding-art">&#9889;</div>
         </div>

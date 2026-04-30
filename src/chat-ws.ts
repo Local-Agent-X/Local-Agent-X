@@ -23,6 +23,7 @@ import type { ServerEvent } from "./types.js";
 import { timingSafeEqual } from "node:crypto";
 import { getApprovalManager } from "./approval-manager.js";
 import { setSessionBroadcaster } from "./workers/session-bridge.js";
+import { setIdleNudgeBroadcaster } from "./workers/idle-nudge.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("chat-ws");
@@ -54,6 +55,11 @@ export function setupChatWebSocket(server: Server, authToken: string) {
     const chat = activeChats.get(sessionId);
     if (chat) chat.events.push(event);          // buffer for replay
     broadcastToSession(sessionId, event);       // live push to subscribers
+  });
+  setIdleNudgeBroadcaster((sessionId, event) => {
+    const chat = activeChats.get(sessionId);
+    if (chat) chat.events.push(event);
+    broadcastToSession(sessionId, event);
   });
 
   // noServer + manual upgrade routing so we can coexist with other

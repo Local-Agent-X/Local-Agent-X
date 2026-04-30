@@ -124,6 +124,10 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   let backgroundCompletionsBlock = "";
   try {
     const { drainPendingNotifications, formatNotificationsForSystemPrompt } = await import("../workers/pending-notifications.js");
+    const { cancelIdleNudge, markSessionExplicitNotify, recordSessionLastMessage } = await import("../workers/idle-nudge.js");
+    cancelIdleNudge(sessionId);
+    markSessionExplicitNotify(sessionId, message);
+    recordSessionLastMessage(sessionId, message);
     const pending = drainPendingNotifications(sessionId);
     if (pending.length > 0) {
       backgroundCompletionsBlock = formatNotificationsForSystemPrompt(pending);

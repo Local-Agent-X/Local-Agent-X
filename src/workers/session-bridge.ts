@@ -26,6 +26,7 @@ import type { ServerEvent } from "../types.js";
 import type { OpEvent, OpResult } from "./types.js";
 import { subscribeAllOpResults, subscribeAllOps } from "./pool.js";
 import { pushPendingNotification } from "./pending-notifications.js";
+import { scheduleIdleNudge } from "./idle-nudge.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.session-bridge");
@@ -179,15 +180,17 @@ function onOpResult(result: OpResult): void {
   // user's next turn (instead of injecting a synthetic "1-line ack" message
   // that the user knows isn't from the agent). The sidebar shows live
   // status; the chat narration happens naturally when the user replies.
+  const taskText = opTask.get(result.opId);
   pushPendingNotification(sessionId, {
     opId: result.opId,
     status,
     summary: result.finalSummary || "(no summary)",
     filesChanged: result.filesChanged,
-    task: opTask.get(result.opId) || "(unknown)",
+    task: taskText || "(unknown)",
     completedAt: Date.now(),
   });
   opTask.delete(result.opId);
+  scheduleIdleNudge(sessionId, taskText);
   void persister; // kept for future callers that legitimately want disk persistence
 
   try {

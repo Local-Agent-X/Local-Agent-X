@@ -110,24 +110,81 @@ const submitParameters = {
 
 // ── op_submit_async — primary verb (non-blocking) ─────────────────────────
 
+// Per-session dedup window. Anthropic's MCP-bridge tool loop (and to a lesser
+// extent every model under tool-use pressure) sometimes re-asserts a delegation
+// 3-5 times in one turn — usually with slightly different task phrasing each
+// time, so a per-task-string dedup misses them. We dedup at the SESSION level:
+// one op_submit_async per session per window, period. If the supervisor needs
+// truly-parallel ops, it can submit again after the window or after the prior
+// op completes. 30s comfortably covers one chat turn end-to-end.
+const RECENT_SUBMITS = new Map<string, { opId: string; ts: number; task: string }>();
+const SUBMIT_DEDUP_WINDOW_MS = 30_000;
+
 export const opSubmitAsyncTool: ToolDefinition = {
   name: "op_submit_async",
   description:
-    "PREFERRED for any task >5 seconds. Delegates to a worker process and returns the opId IMMEDIATELY — your chat turn does not block. Tell the user 'started, I'll let you know when it's done' and move on. The user is automatically notified when the op completes via a chat update; you can also call op_status(opId) on any future turn. Use op_wait(opId) only if you genuinely need the result before answering the current turn.",
+    "PREFERRED for any task >5 seconds. Delegates to a worker process and returns the opId IMMEDIATELY — your chat turn does not block. Submit ONCE per logical task; if you call this tool a second time with the same task in the same turn, you'll get the existing opId back (no second worker spawned). Tell the user 'started, I'll let you know when it's done' and move on. The user is automatically notified when the op completes via a chat update; you can also call op_status(opId) on any future turn. Use op_wait(opId) only if you genuinely need the result before answering the current turn.",
   parameters: submitParameters,
   async execute(args) {
     const task = String(args.task || "").trim();
     if (!task) return { content: "op_submit_async requires a 'task' description.", isError: true };
 
     const sessionId = String(args._sessionId || "");
+    if (sessionId) {
+      const prior = RECENT_SUBMITS.get(sessionId);
+      if (prior && Date.now() - prior.ts < SUBMIT_DEDUP_WINDOW_MS) {
+        const ageS = Math.round((Date.now() - prior.ts) / 1000);
+        return {
+          content:
+            `BLOCKED — you already submitted op ${prior.opId} ${ageS}s ago in this chat session ("${prior.task.slice(0, 80)}${prior.task.length > 80 ? "..." : ""}"). ` +
+            `Stop calling op_submit_async — you cannot spawn parallel workers in one chat turn. ` +
+            `Either: (a) end your turn and tell the user you've delegated; the auto-notify will surface the result, or ` +
+            `(b) call op_status(op_id="${prior.opId}") to check progress without spawning a new op. ` +
+            `If you genuinely need to delegate something *different* later, wait ${Math.ceil((SUBMIT_DEDUP_WINDOW_MS - (Date.now() - prior.ts)) / 1000)}s.`,
+        };
+      }
+      // Casual-reply guard: if the user's last message was short/casual
+      // ("yo", "hey", "ok", "thanks") AND any recent completion exists in
+      // this session, block ALL op spawns — the user is acknowledging, not
+      // requesting new work. Catches paraphrased re-delegations that the
+      // task-similarity check misses (different phrasing, same intent).
+      const { findRecentCompletionMatching, findAnyRecentCompletion } = await import("./pending-notifications.js");
+      const { isLastMessageCasual } = await import("./idle-nudge.js");
+      if (isLastMessageCasual(sessionId)) {
+        const anyRecent = findAnyRecentCompletion(sessionId);
+        if (anyRecent) {
+          const ageMin = Math.round((Date.now() - anyRecent.completedAt) / 60000);
+          return {
+            content:
+              `BLOCKED — your last user message was a short/casual reply (greeting, ack, or filler). ` +
+              `Op ${anyRecent.opId} completed ${ageMin} min ago in this session — the user is most likely acknowledging that, not requesting new work. ` +
+              `Do NOT spawn a worker. Just respond conversationally, surface the prior result if relevant ("that .ts count came back as N — want details?"), and end the turn.`,
+          };
+        }
+      }
+
+      // Task-similarity guard: catches re-delegations where the user message
+      // was substantive but the requested task overlaps with one already
+      // completed (e.g., "redo the count" hitting the same target).
+      const completed = findRecentCompletionMatching(sessionId, task);
+      if (completed) {
+        const ageMin = Math.round((Date.now() - completed.completedAt) / 60000);
+        return {
+          content:
+            `BLOCKED — a near-identical task already completed in this chat ${ageMin} min ago (op ${completed.opId}, status=${completed.status}). ` +
+            `Do NOT re-spawn workers for already-completed work. The result is sitting in the BACKGROUND COMPLETIONS section of your context. ` +
+            `Surface it to the user instead — "that op already finished, want me to walk through it?" — or call op_status(op_id="${completed.opId}") for the full output.`,
+        };
+      }
+    }
+
     const op = await buildOpFromArgs(args);
 
-    // Track BEFORE submitting so the session bridge can route the eventual
-    // completion event even if the worker finishes near-instantly.
-    if (sessionId) trackOpForSession(op.id, sessionId);
+    if (sessionId) {
+      trackOpForSession(op.id, sessionId, task);
+      RECENT_SUBMITS.set(sessionId, { opId: op.id, ts: Date.now(), task });
+    }
 
-    // Fire and forget. Errors are surfaced via the session bridge (op result
-    // event with status="failed") + persisted to op-store.
     void submitOp(op).catch(() => { /* result already routed via bridge */ });
 
     return {
@@ -145,7 +202,7 @@ export const opSubmitAsyncTool: ToolDefinition = {
 export const opWaitTool: ToolDefinition = {
   name: "op_wait",
   description:
-    "Block on a specific opId until it completes (or until timeout_ms). Use when you genuinely need the op's result before continuing the current turn — for example, to compose your final answer to the user. Otherwise prefer op_submit_async + tell the user it's running.",
+    "BLOCKS your chat turn — the user CANNOT reply while this is running, and the chat UI shows a stop button. Default to NOT calling this. After op_submit_async, just tell the user 'started, I'll let you know when it's done' and return; the session bridge auto-surfaces the completion in a future turn. ONLY call op_wait if your CURRENT response cannot be composed without the op's result (e.g., the user asked 'what's the answer?' and you must read it out of the op output to reply). Phrases like 'tell me what status' or 'let me know when done' do NOT require op_wait — auto-notify handles those.",
   parameters: {
     type: "object",
     properties: {
@@ -193,7 +250,7 @@ export const opSubmitTool: ToolDefinition = {
 
     const sessionId = String(args._sessionId || "");
     const op = await buildOpFromArgs(args);
-    if (sessionId) trackOpForSession(op.id, sessionId);
+    if (sessionId) trackOpForSession(op.id, sessionId, task);
 
     const startMs = Date.now();
     const result = await submitOp(op);

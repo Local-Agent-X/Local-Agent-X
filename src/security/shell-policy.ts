@@ -154,7 +154,7 @@ function detectScriptWrite(command: string): string | null {
   const hasInlineScript = /\b(python[23]?|node|perl|ruby)\b\s+-[ce]\s/i.test(command);
   if (hasInlineScript) {
     const writeCallPatterns = [
-      /\bopen\s*\([^)]*['"][wax]/i,                      // open(path, 'w'/'a'/'x')
+      /\bopen\s*\([^)]*,\s*['"][wax]b?\+?/i,              // open(path, 'w'/'a'/'x' or 'wb'/'ab'/'w+') - mode must be 2nd positional arg
       /\.write_text\s*\(/i,                              // pathlib write_text
       /\.write_bytes\s*\(/i,                             // pathlib write_bytes
       /\bwriteFileSync\s*\(/i,                           // node fs.writeFileSync

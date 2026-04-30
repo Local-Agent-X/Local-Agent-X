@@ -114,6 +114,14 @@ export function submitOp(op: Op): Promise<OpResult> {
       logger.info(`[pool] op ${op.id} queued (all workers busy)`);
       opQueue.push(op);
       eventBus.emit("queue-changed", { queueLength: opQueue.length });
+      // Tell subscribers this op is queued (not yet running) so the
+      // frontend can render a "queued" sidebar card with its position.
+      const queuePos = opQueue.findIndex(o => o.id === op.id) + 1;
+      eventBus.emit("op-queued", { opId: op.id, task: op.task, lane: op.lane, queuePosition: queuePos });
+    } else {
+      // Dispatched immediately — fire op-dispatched so the bridge can
+      // forward bg_op_started without going through the queue path.
+      eventBus.emit("op-dispatched", { opId: op.id, task: op.task, lane: op.lane });
     }
   });
 }
@@ -143,6 +151,26 @@ export function subscribeAllOps(listener: (event: OpEvent) => void): () => void 
 export function subscribeAllOpResults(listener: (result: OpResult) => void): () => void {
   eventBus.on("op-result", listener);
   return () => eventBus.off("op-result", listener);
+}
+
+/**
+ * Subscribe to op-queued events — fires when an op is submitted while all
+ * workers are busy and goes into the queue. Used by the session bridge to
+ * surface a "queued" card in the AGENTS sidebar with its queue position.
+ */
+export function subscribeAllOpQueued(listener: (info: { opId: string; task: string; lane: string; queuePosition: number }) => void): () => void {
+  eventBus.on("op-queued", listener);
+  return () => eventBus.off("op-queued", listener);
+}
+
+/**
+ * Subscribe to op-dispatched events — fires when an op transitions from
+ * pending/queued to actually running on a worker. Used by the session
+ * bridge to flip the sidebar card's status from queued → working.
+ */
+export function subscribeAllOpDispatched(listener: (info: { opId: string; task: string; lane: string }) => void): () => void {
+  eventBus.on("op-dispatched", listener);
+  return () => eventBus.off("op-dispatched", listener);
 }
 
 /**
@@ -417,12 +445,27 @@ function tryDispatch(op: Op): boolean {
   return true;
 }
 
+// Step 6: lane priority — interactive (user is waiting) > build (user-
+// initiated background work) > background (cron / idle). Higher number
+// dispatches first; FIFO within same lane preserves submission order.
+const LANE_PRIORITY: Record<string, number> = {
+  interactive: 3,
+  build: 2,
+  background: 1,
+};
+
 function drainQueue(): void {
   while (opQueue.length > 0) {
+    // Sort by lane priority (desc), then by FIFO (which is opQueue order).
+    // Stable sort preserves original order within same priority.
+    opQueue.sort((a, b) => (LANE_PRIORITY[b.lane] || 2) - (LANE_PRIORITY[a.lane] || 2));
     const op = opQueue[0];
     if (!tryDispatch(op)) break;
     opQueue.shift();
     eventBus.emit("queue-changed", { queueLength: opQueue.length });
+    // Notify subscribers that this op transitioned queued → running so
+    // the frontend sidebar card flips its status indicator.
+    eventBus.emit("op-dispatched", { opId: op.id, task: op.task, lane: op.lane });
   }
 }
 

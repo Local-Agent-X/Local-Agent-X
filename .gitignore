@@ -29,3 +29,10 @@ desktop/release/
 
 # Auto-generated on every server start by src/manifest-generator.ts
 config/app-manifest.json
+
+# Scratch files agents/workers write while iterating. Autopilot's overnight
+# run on 2026-04-30 leaked .tmp-build*.txt / .tmp-classifier*.json /
+# .tmp-test*.txt into commits — block the pattern so it can't recur.
+.tmp-*
+probe*.mjs
+junit.xml

@@ -46,6 +46,14 @@ const logger = createLogger("workers.auto-delegate");
 const LONG_TASK_VERB_RE = /\b(refactor|audit|investigate|implement|build|debug|trace|analyze|migrate|rewrite|add|create|make|extend|enhance|fix\s+(all|the|every|every\s+\w+|multiple)|set\s+up|wire\s+up|bootstrap|design\s+(and|then)|review\s+the)\b/i;
 const MULTI_FILE_CUE_RE = /(workspace\/|src\/|node_modules|\.ts\b|\.tsx\b|\.js\b|\.py\b|across|throughout|every\s+file|multiple\s+files|all\s+the\s+(files|tests|components))/i;
 const SHORT_TASK_RE = /^(yes|no|ok|sure|thanks|hi|hello|what|when|where|why|how|who)\b|^.{0,30}$/i;
+// Constructive build phrase: a build verb directly attached to an "app-shaped"
+// noun. Matches "create an app", "build me a notes dashboard", "set up a small
+// integration". Critically, does NOT match passive mentions like "the app
+// crashed" or "what's the best dashboard tool?" — the verb has to be the head
+// of the phrase, with at most an article + one adjective before the noun.
+// This closes the gap where casual "create an app" requests (≤ 14 words, no
+// file path) were running inline and burning the chat agent's context.
+const BUILD_NOUN_RE = /\b(build|create|make|design|develop|set\s+up|wire\s+up|bootstrap|scaffold|spin\s+up|put\s+together)\s+(?:me\s+|us\s+|you\s+)?(?:a|an|the|some|another|new)\s+(?:new\s+|small\s+|simple\s+|basic\s+|quick\s+|tiny\s+|full\s+|proper\s+|\w+\s+)?(app|application|page|dashboard|tool|feature|component|panel|view|widget|integration|service|endpoint|api|website|site|extension|plugin|script|module|workflow|bot|interface|frontend|backend|ui)s?\b/i;
 
 /**
  * Should we delegate this chat message to the worker pool instead of
@@ -71,6 +79,10 @@ export function shouldAutoDelegate(provider: string, message: string, channel: s
   if (SHORT_TASK_RE.test(message.trim())) return false;
   const wordCount = message.split(/\s+/).length;
   if (wordCount >= 50) return true;
+  // Tight verb→noun phrase ("create an app", "build me a dashboard") is on its
+  // own enough — those are always multi-file scaffold jobs that should run in
+  // a worker, regardless of word count or file-path mentions.
+  if (BUILD_NOUN_RE.test(message)) return true;
   if (LONG_TASK_VERB_RE.test(message) && (wordCount >= 15 || MULTI_FILE_CUE_RE.test(message))) return true;
   return false;
 }

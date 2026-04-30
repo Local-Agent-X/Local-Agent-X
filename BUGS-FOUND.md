@@ -42,3 +42,29 @@ An empty string is falsy in JS, so neither branch fires. `suppressing` stays `tr
 Option (a) is the smaller change and keeps the producer in charge of state. The `parse-streaming.test.ts` suite documents the current (buggy) behavior — once fixed, those `.toContain(" after")` / `.toContain(" bye.")` / `.toContain(" trailing")` / `.toContain(" resumed.")` / `.toContain(" done.")` assertions will need to flip from "captured the leak" back to "verifies the fix".
 
 **Tests added that document the bug:** `test/parse-streaming.test.ts` — every test marked with `// documents BUG #2 in BUGS-FOUND.md`.
+
+## 3. `EXPLICIT_NOTIFY_RE` doesn't match "let me know when X" (the most common form)
+
+**File:** `src/workers/idle-nudge.ts:31`
+
+**Symptom:** Users who ask "let me know when this is done" / "let me know once it ships" do NOT get the fast (1s) explicit-notify nudge — they wait the full 2-minute idle window.
+
+**Why it bites:** The regex requires the verb to be followed immediately by `me|us` and then `when|once|after|...`:
+
+```
+/\b(tell|let|notify|ping|alert|message|update)\s+(me|us)\s+(when|once|after|as\s+soon\s+as|the\s+moment|right\s+when)\b/i
+```
+
+So `tell me when`, `notify me when`, `update me once`, etc. all match. But `let me know when` has a `know` between `me` and `when` — the most natural English phrasing falls through.
+
+**Repro:** `markSessionExplicitNotify("s", "let me know when it's done")` followed by a `scheduleIdleNudge` returns the 2-min default delay instead of 1s.
+
+**Suggested fix (do NOT apply this round):** Allow an optional `know` (or any verb-ish word) between `me|us` and the temporal trigger:
+
+```
+/\b(tell|let|notify|ping|alert|message|update)\s+(me|us)(\s+know)?\s+(when|once|after|as\s+soon\s+as|the\s+moment|right\s+when)\b/i
+```
+
+Or split into two alternations. The cleanest fix is the optional `(\s+know)?` group since "let X know when Y" is the common pattern.
+
+**Tests added that document the gap:** `test/idle-nudge.test.ts` — `does NOT match 'let me know when'` and `does NOT match 'let me know once'` regression guards.

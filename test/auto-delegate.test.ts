@@ -167,6 +167,173 @@ describe("shouldAutoDelegate — provider is irrelevant", () => {
   });
 });
 
+describe("shouldAutoDelegate — multi-word verb phrases (regex variants)", () => {
+  it("'wire up' verb phrase qualifies on verb + multi-file cue", () => {
+    const msg = "wire up the new logging hook in src/observability/logger.ts";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'wire up' qualifies on verb + 15+ words", () => {
+    const msg =
+      "wire up the new logging hook so that downstream consumers see structured events instead of raw text strings";
+    expect(msg.split(/\s+/).length).toBeGreaterThanOrEqual(15);
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'set up' verb phrase qualifies on verb + multi-file cue", () => {
+    const msg = "set up the email outbound queue using src/email/outbox.ts";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'bootstrap' verb qualifies on verb + 15+ words", () => {
+    const msg =
+      "bootstrap the new tenant onboarding flow with welcome email and seed sample data so they have something to play with";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'design then' phrase qualifies on verb + 15+ words", () => {
+    const msg =
+      "design then prototype the new agent inbox view that surfaces pending approvals and lets the user act on them in batch";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'design and' phrase qualifies on verb + multi-file cue", () => {
+    const msg = "design and rewrite src/agent/loop.ts properly today";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'review the' phrase qualifies on verb + 15+ words", () => {
+    const msg =
+      "review the current worker pool implementation and tell me what needs to change to support burst capacity for short ops";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'migrate' verb qualifies on verb + multi-file cue", () => {
+    const msg = "migrate src/legacy/auth to the new module structure please";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'analyze' verb qualifies on verb + multi-file cue", () => {
+    const msg = "analyze the call graph in src/workers and find dead code";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'extend' verb qualifies on verb + 15+ words", () => {
+    const msg =
+      "extend the heartbeat protocol so workers can report progress percentages back to the supervisor while running long ops";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'enhance' verb qualifies on verb + multi-file cue", () => {
+    const msg = "enhance the streaming logic in src/anthropic-client/stream.ts";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'trace' verb qualifies on verb + 15+ words", () => {
+    const msg =
+      "trace the path of a chat message from the websocket handler through the prepare-request layer down to the streamer";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'debug' verb qualifies on verb + multi-file cue", () => {
+    const msg = "debug the panic happening in src/workers/pool.ts on shutdown";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'fix every endpoint' fix-every-word variant qualifies on verb + 15+ words", () => {
+    const msg =
+      "fix every endpoint that currently returns 500 when the worker pool is paused so users get a friendly error instead";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'fix multiple' fix-multiple variant qualifies on verb + 15+ words", () => {
+    const msg =
+      "fix multiple flaky tests in the heartbeat suite that fail intermittently when run with the threads pool";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+});
+
+describe("shouldAutoDelegate — multi-file cue variants", () => {
+  it("'.tsx' file cue triggers", () => {
+    const msg = "refactor the dashboard component in pages/Dashboard.tsx today";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'.py' file cue triggers", () => {
+    const msg = "refactor the helpers module in lib/utils.py to add types";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'.js' file cue triggers", () => {
+    const msg = "refactor the build hook in scripts/build-ari.js carefully";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'node_modules' cue triggers", () => {
+    const msg = "audit node_modules for vulnerable dependencies right now";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'across' phrase triggers as multi-file cue", () => {
+    const msg = "refactor the logger usage across the entire codebase now";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'throughout' phrase triggers as multi-file cue", () => {
+    const msg = "audit error handling throughout the worker pipeline today";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'every file' phrase triggers as multi-file cue", () => {
+    const msg = "refactor every file in the workers directory carefully";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'all the tests' phrase triggers as multi-file cue", () => {
+    const msg = "rewrite all the tests in the heartbeat suite to use fakes";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'all the components' phrase triggers as multi-file cue", () => {
+    const msg = "audit all the components in the dashboard for accessibility";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+});
+
+describe("shouldAutoDelegate — exact word-count boundary", () => {
+  it("verb + exactly 15 words delegates (boundary inclusive)", () => {
+    // Exactly 15 words, 'refactor' verb, no file cue
+    const msg = "refactor word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15";
+    expect(msg.split(/\s+/).length).toBe(15);
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("verb + exactly 14 words does NOT delegate (one short of boundary, no file cue, >30 chars)", () => {
+    const msg = "refactor word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14";
+    expect(msg.split(/\s+/).length).toBe(14);
+    expect(msg.length).toBeGreaterThan(30);
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(false);
+  });
+
+  it("exactly 50 neutral words delegates regardless of verb", () => {
+    const msg = neutralWords(50);
+    expect(msg.split(/\s+/).length).toBe(50);
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+});
+
+describe("shouldAutoDelegate — case insensitivity", () => {
+  it("verb regex matches uppercase 'REFACTOR'", () => {
+    const msg = "REFACTOR THE AUTH MODULE PLEASE in src/auth/index.ts now";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("verb regex matches mixed case 'WiRe Up'", () => {
+    const msg = "WiRe Up the new logger throughout the codebase now please";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+});
+
 describe("shouldAutoDelegate — false-negative regressions guarded", () => {
   it("'fix the bug' alone (no scale signal) does NOT delegate", () => {
     // 'fix' is intentionally NOT in the long-task verb list (only fix-all/the/every).

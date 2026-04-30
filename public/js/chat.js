@@ -55,6 +55,20 @@ function connectChatWs() {
         } catch(e) { console.warn('[bg_op_progress] sidebar update failed', e); }
         return;
       }
+      if (msg.event.type === 'bg_op_nudge') {
+        try {
+          if (activeChat && activeChat.id === msg.sessionId) {
+            activeChat.messages = activeChat.messages || [];
+            activeChat.messages.push({ role: 'assistant', content: msg.event.text });
+            if (typeof renderMessages === 'function') renderMessages();
+          } else {
+            activeChatsSet.add(msg.sessionId);
+            if (typeof renderSidebar === 'function') renderSidebar();
+          }
+          if (window.desktop) window.desktop.showNotification('Worker finished', msg.event.text);
+        } catch(e) { console.warn('[bg_op_nudge] failed', e); }
+        return;
+      }
       if (msg.event.type === 'bg_op_completed') {
         try {
           const statusLabel = msg.event.status === 'completed' ? 'completed'
@@ -1034,7 +1048,7 @@ function cancelSecret() {
 function showRetryError(el, originalMessage, errorMsg) {
   let hint = 'Check your internet connection and try again.';
   if (errorMsg.includes('timeout') || errorMsg.includes('Timeout')) hint = 'The server took too long to respond. It may be processing a heavy task — try again in a moment.';
-  else if (errorMsg.includes('Failed to fetch') || errorMsg.includes('network')) hint = 'Could not reach the server. Make sure Open Agent X is running.';
+  else if (errorMsg.includes('Failed to fetch') || errorMsg.includes('network')) hint = 'Could not reach the server. Make sure Local Agent X is running.';
   else if (errorMsg.includes('401') || errorMsg.includes('Unauthorized')) hint = 'Authentication failed. Try refreshing the page.';
   else if (errorMsg.includes('429')) hint = 'Too many requests. Wait a moment and try again.';
   else if (errorMsg.includes('500') || errorMsg.includes('Internal')) hint = 'Server error. Check the server logs for details.';

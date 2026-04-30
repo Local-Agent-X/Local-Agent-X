@@ -20,6 +20,7 @@ import { sendIpc, receiveIpc } from "./ipc.js";
 import { ipcEnvelope, type IpcMessage, type Op, type OpEvent, type OpResult } from "./types.js";
 import { appendEvent } from "./event-log.js";
 import { writeCheckpoint, newCheckpoint } from "./checkpoint.js";
+import type { AgentTurn } from "../types.js";
 import { randomUUID } from "node:crypto";
 
 // Workers shouldn't write to stdout — that's the IPC channel. Route logs to stderr.
@@ -253,12 +254,62 @@ async function executeOp(op: Op, signal: AbortSignal): Promise<OpResult> {
   const finalSummary = extractAgentOutput(result.messages) || "(no output)";
   log("info", `op ${op.id} done in ${Math.round((Date.now() - startMs) / 1000)}s, stopReason=${result.stopReason}`);
 
-  return {
-    opId: op.id,
-    status: result.stopReason === "error" ? "failed" : "completed",
-    finalSummary: finalSummary.slice(0, 2000),
-    filesChanged: [], // TODO: track from worktree diff in Step 11
-  };
+  return classifyOpResult(op.id, result, signal, finalSummary);
+}
+
+/**
+ * Translate runAgent's stopReason + abort state into an OpResult status.
+ *
+ * The naive `stopReason === "error" ? failed : completed` lost real work:
+ * an agent that wrote files then errored on the final iteration was reported
+ * as "failed" with no signal that work landed. Classify by evidence — any
+ * tool calls executed or meaningful final text means progress was made,
+ * regardless of the terminal stopReason.
+ */
+function classifyOpResult(
+  opId: string,
+  result: AgentTurn,
+  signal: AbortSignal,
+  finalSummary: string,
+): OpResult {
+  const trimmedSummary = finalSummary.slice(0, 2000);
+
+  if (signal.aborted) {
+    return { opId, status: "cancelled", finalSummary: trimmedSummary, filesChanged: [] };
+  }
+
+  const toolCallsExecuted = result.messages.filter(m => m.role === "tool").length;
+  const lastAssistant = [...result.messages].reverse().find(m => m.role === "assistant");
+  const lastText = typeof lastAssistant?.content === "string"
+    ? lastAssistant.content
+    : Array.isArray(lastAssistant?.content)
+      ? lastAssistant.content
+          .filter((c): c is { type: "text"; text: string } => typeof c === "object" && c !== null && "type" in c && (c as { type: string }).type === "text")
+          .map(c => c.text)
+          .join("")
+      : "";
+  const didMeaningfulWork = toolCallsExecuted > 0 || lastText.trim().length > 20;
+
+  switch (result.stopReason) {
+    case "end_turn":
+      return { opId, status: "completed", finalSummary: trimmedSummary, filesChanged: [] };
+
+    case "abort":
+      return { opId, status: "cancelled", finalSummary: trimmedSummary, filesChanged: [] };
+
+    case "max_iterations":
+      return didMeaningfulWork
+        ? { opId, status: "completed", finalSummary: `[hit max iterations] ${trimmedSummary}`.slice(0, 2000), filesChanged: [] }
+        : { opId, status: "failed", finalSummary: "Hit max iterations without making progress", filesChanged: [], error: { message: "max_iterations with no work done", recoverable: true } };
+
+    case "error":
+      return didMeaningfulWork
+        ? { opId, status: "completed", finalSummary: `[late error: ${result.errorMessage || "unknown"}] ${trimmedSummary}`.slice(0, 2000), filesChanged: [] }
+        : { opId, status: "failed", finalSummary: result.errorMessage || "Agent errored without making progress", filesChanged: [], error: { message: result.errorMessage || "unknown error", recoverable: true } };
+
+    default:
+      return { opId, status: "failed", finalSummary: trimmedSummary, filesChanged: [], error: { message: `unknown stopReason: ${result.stopReason}`, recoverable: false } };
+  }
 }
 
 function buildSystemPromptFromPack(op: Op): string {

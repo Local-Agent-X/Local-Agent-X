@@ -1,7 +1,7 @@
 {
   "name": "open-agent-x-desktop",
   "version": "0.1.0",
-  "description": "Open Agent X — Desktop Companion",
+  "description": "Local Agent X — Desktop Companion",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",
@@ -17,7 +17,7 @@
   },
   "build": {
     "appId": "com.openagentx.desktop",
-    "productName": "Open Agent X",
+    "productName": "Local Agent X",
     "directories": {
       "output": "release"
     },

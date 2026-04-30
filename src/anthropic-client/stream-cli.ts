@@ -75,7 +75,9 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
       `- After you finish, respond with a SHORT plain-English summary of what you did. 1-2 sentences max.\n` +
       `- NEVER paste raw tool output, JSON, or HTTP response bodies into your reply.\n` +
       `- NEVER echo [called X] / Tool result: / <<<EXTERNAL_UNTRUSTED_CONTENT>>> / <metadata> blocks — the UI renders tool activity as cards, the user doesn't need to see it twice.\n` +
+      `- Do NOT pre-narrate tool plans before calling them ("Bash: find ...", "Glob: **/*.ts", "Grep: pattern"). Just CALL the tool — the UI shows what you ran in a card. Listing intent in plain text duplicates the card and clutters the reply.\n` +
       `- Good: "Switched the app to light mode." Bad: "[called http_request] Tool result: HTTP 200 OK ..."\n` +
+      `- Bad: "Bash: ls src/\\nGlob: **/cron*\\nLet me search the right way." (this is pre-narration — just run the tools)\n` +
       `- ALL tools are pre-approved. Just use them — never ask, never describe what you're about to do.`;
   } else {
     const toolPrompt = `You have access to these tools. When you need to use one, output EXACTLY this JSON format and nothing else:\n` +
@@ -293,7 +295,12 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
                   // Signal to the agent loop that tool activity happened, so
                   // its "toolCalls.length === 0 → auto-route to build_app"
                   // fallback doesn't misfire. The tool already ran via MCP.
-                  yield { type: "mcp_activity", name: b.name };
+                  // Include args so run-anthropic can forward as a real
+                  // tool_start event (sidebar live-progress used to be dark
+                  // for Anthropic workers because mcp_activity carried just
+                  // the name and never reached the worker's event stream).
+                  const mcpArgs = typeof b.input === "object" && b.input ? b.input : {};
+                  yield { type: "mcp_activity", name: b.name, arguments: JSON.stringify(mcpArgs) };
                   continue;
                 }
                 const args = typeof b.input === "object" && b.input ? b.input : {};

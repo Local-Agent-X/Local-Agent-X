@@ -232,12 +232,16 @@ async function executeOp(op: Op, signal: AbortSignal): Promise<OpResult> {
         if (event.type === "stream") {
           emit({ opId: op.id, type: "agent_text", ts: new Date().toISOString(), payload: { delta: event.delta } });
         } else if (event.type === "tool_start") {
-          emit({ opId: op.id, type: "tool_call", ts: new Date().toISOString(), payload: { tool: event.toolName, args: event.args } });
+          // payload uses `toolName` (not `tool`) so the session-bridge's
+          // onOpEvent handler can read it correctly. Earlier mismatch caused
+          // sidebar lines to render as `→ tool` (the fallback string)
+          // instead of `→ bash` / `→ read` / etc.
+          emit({ opId: op.id, type: "tool_call", ts: new Date().toISOString(), payload: { toolName: event.toolName, tool: event.toolName, args: event.args } });
         } else if (event.type === "tool_end") {
           emit({
             opId: op.id, type: "tool_result", ts: new Date().toISOString(),
             sensitive: event.toolName === "request_secret" || event.toolName === "browser_capture_to_secret",
-            payload: { tool: event.toolName, ok: event.allowed !== false, result: typeof event.result === "string" ? event.result.slice(0, 1000) : event.result },
+            payload: { toolName: event.toolName, tool: event.toolName, ok: event.allowed !== false, result: typeof event.result === "string" ? event.result.slice(0, 1000) : event.result },
           });
         }
       } catch (e) { log("warn", `event forward failed: ${(e as Error).message}`); }

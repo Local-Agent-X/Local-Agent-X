@@ -135,10 +135,40 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     }
   } catch { /* best-effort */ }
 
+  // Short-reply context reminder: when the user's message is short AND the
+  // previous assistant turn ended with a question/offer, the model often
+  // takes the short reply LITERALLY as a fresh standalone instruction
+  // instead of as an answer to its prior question. Live failure: agent
+  // asked "Want a diff or browser spot-check?" → user said "open the
+  // browser" → agent opened browser to google.com instead of the kraken
+  // app it had just been talking about. Inject a context reminder so the
+  // model re-reads its prior turn before deciding what to do.
+  let shortReplyContextBlock = "";
+  try {
+    const trimmed = (message || "").trim();
+    const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+    const isShortReply = trimmed.length > 0 && trimmed.length <= 80 && wordCount <= 12;
+    if (isShortReply) {
+      // Find the most recent assistant text message
+      const lastAssistant = [...sessionMessages].reverse().find(m =>
+        m.role === "assistant" && typeof m.content === "string" && (m.content as string).trim().length > 0
+      );
+      const lastAssistantText = typeof lastAssistant?.content === "string" ? (lastAssistant.content as string).trim() : "";
+      // Detect a question/offer at the end of the prior assistant turn
+      const QUESTION_END_RE = /\?[\s)\]"']*$|\b(want me to|want a|should i|or should i|or would you|let me know|tell me|which|or|do you want|or do you)\b[^?]*\?/i;
+      const priorEndedWithQuestion = QUESTION_END_RE.test(lastAssistantText.slice(-220));
+      if (priorEndedWithQuestion) {
+        shortReplyContextBlock =
+          `\n\n[CONTEXT REMINDER] The user's current message is SHORT (${wordCount} word${wordCount === 1 ? "" : "s"}: "${trimmed.slice(0, 80)}"). Your previous turn ended with a question or offer — re-read it before acting. The user is almost certainly answering YOUR question, not giving a fresh standalone instruction. Don't take the short reply literally as a brand-new ask — interpret it in the context of what you just offered.\n\nYour prior message ended with: "${lastAssistantText.slice(-200)}"\n[end context reminder]\n`;
+        logger.info(`[chat] injecting short-reply context reminder for sess=${sessionId} (msg="${trimmed.slice(0, 40)}")`);
+      }
+    }
+  } catch { /* best-effort */ }
+
   let systemPrompt: string;
   if (systemPromptOverride) {
     // Sub-agents provide their own prompt
-    systemPrompt = systemPromptOverride + backgroundCompletionsBlock;
+    systemPrompt = systemPromptOverride + backgroundCompletionsBlock + shortReplyContextBlock;
   } else {
     // Use full prompt for all providers. The empty-response issue was caused
     // by reasoning: { effort: "low" } in codex-client.ts, not prompt size.
@@ -159,7 +189,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       notificationHint,
       bridgeContext: input.bridgeContext,
     });
-    systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock;
+    systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock + shortReplyContextBlock;
   }
 
   // 5. Select tools based on channel (bridges get a smaller set)

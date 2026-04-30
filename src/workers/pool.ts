@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import { EventEmitter } from "node:events";
 import { sendIpc, receiveIpc } from "./ipc.js";
 import { ipcEnvelope, type IpcMessage, type Op, type OpEvent, type OpResult } from "./types.js";
-import { writeOp, readOp, setOpStatus } from "./op-store.js";
+import { writeOp, readOp, setOpStatus, pruneOldOps } from "./op-store.js";
 import { createHeartbeatState, startHeartbeat, stopHeartbeat, recordPong, decideRecovery, recordFailure, isCircuitOpen, type HeartbeatState } from "./heartbeat.js";
 
 import { createLogger } from "../logger.js";
@@ -75,6 +75,21 @@ let started = false;
  * Initialize the worker pool. Idempotent — call once at server startup.
  * Spawns the warm pool of workers.
  */
+const OP_STORE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const OP_STORE_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+let pruneTimer: NodeJS.Timeout | null = null;
+
+function runPrune(): void {
+  try {
+    const r = pruneOldOps(OP_STORE_TTL_MS);
+    if (r.pruned > 0 || r.errors > 0) {
+      logger.info(`[pool] op-store prune: pruned=${r.pruned} kept=${r.kept} errors=${r.errors}`);
+    }
+  } catch (e) {
+    logger.warn(`[pool] op-store prune threw: ${(e as Error).message}`);
+  }
+}
+
 export function startWorkerPool(): void {
   if (started) return;
   started = true;
@@ -82,6 +97,9 @@ export function startWorkerPool(): void {
   for (let i = 0; i < POOL_SIZE; i++) {
     spawnWorker();
   }
+  setTimeout(runPrune, 5000);
+  pruneTimer = setInterval(runPrune, OP_STORE_PRUNE_INTERVAL_MS);
+  pruneTimer.unref?.();
   process.on("exit", shutdownAll);
   process.on("SIGINT", () => { shutdownAll(); process.exit(130); });
   process.on("SIGTERM", () => { shutdownAll(); process.exit(143); });

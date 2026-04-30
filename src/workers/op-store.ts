@@ -10,7 +10,7 @@
  * importable from the parent process.
  */
 
-import { existsSync, writeFileSync, readFileSync, renameSync, readdirSync } from "node:fs";
+import { existsSync, writeFileSync, readFileSync, renameSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { opDir } from "./event-log.js";
@@ -70,4 +70,60 @@ export function setOpStatus(opId: string, status: OpStatus, extras: Partial<Op> 
 
 export function newOpId(prefix = "op"): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+const TERMINAL_STATUSES: OpStatus[] = ["completed", "failed", "cancelled"];
+
+export interface PruneResult {
+  pruned: number;
+  kept: number;
+  errors: number;
+}
+
+export function pruneOldOps(maxAgeMs: number): PruneResult {
+  const result: PruneResult = { pruned: 0, kept: 0, errors: 0 };
+  if (!existsSync(OPS_BASE)) return result;
+  const cutoff = Date.now() - maxAgeMs;
+  let dirs: string[];
+  try { dirs = readdirSync(OPS_BASE); } catch (e) {
+    logger.warn(`[op-store] prune: cannot read ${OPS_BASE}: ${(e as Error).message}`);
+    return result;
+  }
+  for (const id of dirs) {
+    const dir = join(OPS_BASE, id);
+    const op = readOp(id);
+    if (!op) {
+      // No operation.json — fall back to dir mtime so stray dirs still age out.
+      try {
+        const mtime = statSync(dir).mtimeMs;
+        if (mtime < cutoff) {
+          rmSync(dir, { recursive: true, force: true });
+          result.pruned++;
+        } else {
+          result.kept++;
+        }
+      } catch {
+        result.errors++;
+      }
+      continue;
+    }
+    if (!TERMINAL_STATUSES.includes(op.status)) {
+      result.kept++;
+      continue;
+    }
+    const ts = op.completedAt || op.startedAt || op.createdAt;
+    const age = ts ? Date.parse(ts) : NaN;
+    if (!Number.isFinite(age) || age >= cutoff) {
+      result.kept++;
+      continue;
+    }
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      result.pruned++;
+    } catch (e) {
+      logger.warn(`[op-store] prune: failed to delete ${id}: ${(e as Error).message}`);
+      result.errors++;
+    }
+  }
+  return result;
 }

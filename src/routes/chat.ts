@@ -253,22 +253,29 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       const { detectCommittingCalls } = await import("../committing-tool-check.js");
       const committingCalls = detectCommittingCalls(result.messages);
       // User setting: disable auto-fallback to other providers when the
-      // primary fails. Default false (preserves the auto-rescue behavior
-      // that recovered turns from rate-limits / empty responses). When true,
-      // failures stay visible so the user knows their selected provider
-      // isn't working — they can fix it instead of unknowingly running on
-      // a different model. Live ask: "if a fallback kicks in i'll just
-      // think that AI works and i won't know and won't fix it."
-      let disableProviderFallback = false;
+      // primary fails. Default TRUE (failures stay visible so the user
+      // knows their selected provider isn't working and can fix it).
+      // The previous default was false (auto-rescue) but live testing
+      // proved it hides reality: user on local/llama3:8b sees responses
+      // looking fine, never realizes their local Ollama isn't producing
+      // output and Anthropic is silently rescuing every turn.
+      //
+      // Set `disableProviderFallback: false` in settings.json to opt
+      // back into the rescue chain (codex → anthropic → xai). Committing-
+      // call protection is unconditional (always suppresses regardless
+      // of this flag) since double-execute risk outweighs visibility.
+      let disableProviderFallback = true;
       try {
         const { existsSync, readFileSync } = await import("node:fs");
         const { join } = await import("node:path");
         const sp = join(ctx.dataDir, "settings.json");
         if (existsSync(sp)) {
           const ss = JSON.parse(readFileSync(sp, "utf-8"));
-          disableProviderFallback = ss.disableProviderFallback === true;
+          // Explicit `false` opts out of the new default; anything else
+          // (true, missing, malformed) keeps fallback disabled.
+          if (ss.disableProviderFallback === false) disableProviderFallback = false;
         }
-      } catch { /* default to false on any read error */ }
+      } catch { /* default stays true on any read error */ }
 
       const suppressFailover = committingCalls.length > 0 || disableProviderFallback;
 

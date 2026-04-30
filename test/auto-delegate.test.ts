@@ -334,6 +334,52 @@ describe("shouldAutoDelegate — case insensitivity", () => {
   });
 });
 
+describe("shouldAutoDelegate — whitespace + empty inputs", () => {
+  it("empty string never delegates (matches short-task tail with 0 chars)", () => {
+    expect(shouldAutoDelegate("anthropic", "", "web")).toBe(false);
+  });
+
+  it("whitespace-only message never delegates (trims to <= 30 chars)", () => {
+    expect(shouldAutoDelegate("anthropic", "   ", "web")).toBe(false);
+    expect(shouldAutoDelegate("anthropic", "\n\n\t", "web")).toBe(false);
+  });
+
+  it("trailing whitespace doesn't push a short greeting past the 30-char gate", () => {
+    // 'thanks' is in the SHORT_TASK_RE alternation. Even with surrounding
+    // whitespace, .trim() before the regex test ensures it still matches.
+    expect(shouldAutoDelegate("anthropic", "  thanks  ", "web")).toBe(false);
+  });
+
+  it("a tab+newline-padded long message still delegates (trim is upstream)", () => {
+    // Inner content is 80+ chars of non-greeting prose with a long-task verb.
+    const msg = "\n\n  refactor the authentication module so that the new flow returns a different shape with proper validation\n";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+});
+
+describe("shouldAutoDelegate — short-task regex anchor semantics", () => {
+  it("'no' as a leading word triggers the greeting branch (regex is anchored at start)", () => {
+    // SHORT_TASK_RE: `^(yes|no|...)\b` — anchored. The 30-char tail also
+    // matches but the leading-word branch fires first for short input.
+    expect(shouldAutoDelegate("anthropic", "no don't do that", "web")).toBe(false);
+  });
+
+  it("'no' embedded mid-sentence is NOT treated as a greeting (anchor missed)", () => {
+    // 30-char tail still kicks in for short messages, so a long enough
+    // message containing 'no' mid-sentence + verb + 15 words DOES delegate.
+    const msg = "please refactor the module if there is no other clean way to handle the rare overflow case in production";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
+  });
+
+  it("'whatever' (starts with 'what' but not at word boundary) does NOT match the greeting branch", () => {
+    // 'what' has \b after it; 'whatever' has 'e' next so \b fails. The
+    // 30-char tail still applies — short messages stay inline regardless.
+    const msg = "whatever, refactor the entire authentication module please today right now";
+    // Verb present + 11 words + no file cue → fails (need 15+ or file cue).
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(false);
+  });
+});
+
 describe("shouldAutoDelegate — false-negative regressions guarded", () => {
   it("'fix the bug' alone (no scale signal) does NOT delegate", () => {
     // 'fix' is intentionally NOT in the long-task verb list (only fix-all/the/every).

@@ -308,6 +308,15 @@ function classifyOpResult(
     /\bno (filesystem|tool|MCP|standard)\s+(access|tools?)\s+(available|exposed|enabled)/i,
     /\b(could|can|please) you (re-?run|provide|share|paste|enable)/i,
     /\bplease (re-?run|provide|share|paste|enable)\s+(this|the file|tools|file contents)/i,
+    // Punting patterns: agent narrates intent or asks for permission instead
+    // of acting. Only fires when zero tool calls were made (see guard below),
+    // so legitimate "I'll need X" messages where the agent then runs tools
+    // are unaffected — only ones that ENDED that way trip this.
+    /\b(I'll|I will|I would) need\b/i,
+    /\bI should\s+(read|check|look at|inspect|examine|review|edit|modify|update|run)/i,
+    /\blet me know if you (want|'d like)|\blet me know if (you'd like )?I should\b/i,
+    /\b(would you like|do you want) me to\b/i,
+    /\bI (could|can) (read|check|look at|inspect|examine|edit|modify|update|run|do)\b.*\?\s*$/i,
   ];
   const looksLikeRefusal = toolCallsExecuted === 0 && REFUSAL_PATTERNS.some(rx => rx.test(lastText));
 

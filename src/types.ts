@@ -71,7 +71,8 @@ export type ServerEvent =
   | { type: "visual"; kind: "emoji" | "text" | "shape" | "mood"; value: string; durationMs: number }
   | { type: "bg_op_started"; opId: string; task: string; provider: string }
   | { type: "bg_op_progress"; opId: string; line: string }
-  | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[] };
+  | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[] }
+  | { type: "bg_op_nudge"; opIds: string[]; text: string };
 
 // ── Auth Types ──
 

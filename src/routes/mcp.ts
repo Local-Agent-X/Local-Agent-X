@@ -1,6 +1,20 @@
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody, safeErrorMessage } from "../server-utils.js";
 
+// Tools deliberately NOT exposed to the MCP bridge (= the chat supervisor
+// running as claude CLI). These either block the supervisor's chat turn
+// (preventing the user from replying while a worker runs) or duplicate a
+// non-blocking variant the supervisor should use instead. Autopilot and
+// scripted flows use these tools through the inline tool path; only the
+// user-facing supervisor needs them hidden.
+const MCP_HIDDEN_TOOLS = new Set<string>([
+  "op_wait",      // blocks the chat turn — supervisor should let auto-notify surface results
+  "op_submit",    // sugar = op_submit_async + op_wait, same blocking problem
+  "agent_spawn",  // alternate delegation door — supervisor was using it to bypass op_submit_async dedup
+  "delegate",     // generic delegate primitive — same bypass risk
+  "agent_message",// reply-to-agent primitive used inside agency, not by user-facing supervisor
+]);
+
 function serializeMcpContent(results: Array<{ role: string; content: unknown }>): Array<Record<string, unknown>> {
   const blocks: Array<Record<string, unknown>> = [];
 
@@ -49,11 +63,13 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
   if (method === "GET" && url.pathname === "/api/mcp/tools") {
-    const tools = ctx.allAgentTools.map(t => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: t.parameters,
-    }));
+    const tools = ctx.allAgentTools
+      .filter(t => !MCP_HIDDEN_TOOLS.has(t.name))
+      .map(t => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.parameters,
+      }));
     json(200, { tools });
     return true;
   }
@@ -62,6 +78,10 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
     try {
       const body = JSON.parse(await readBody(req)) as { name: string; arguments?: Record<string, unknown>; sessionId?: string };
       if (!body.name) { json(400, { error: "name required" }); return true; }
+      if (MCP_HIDDEN_TOOLS.has(body.name)) {
+        json(403, { error: `tool '${body.name}' is not available via MCP — use op_submit_async + auto-notify instead` });
+        return true;
+      }
 
       const tool = ctx.allAgentTools.find(t => t.name === body.name);
       if (!tool) { json(404, { error: `tool '${body.name}' not found` }); return true; }

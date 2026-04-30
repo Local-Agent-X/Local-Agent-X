@@ -19,12 +19,12 @@ let tray: Tray | null = null;
 export function createTray(config: TrayConfig): void {
   const icon = nativeImage.createFromPath(config.iconPath).resize({ width: 16, height: 16 });
   tray = new Tray(icon);
-  tray.setToolTip("Open Agent X");
+  tray.setToolTip("Local Agent X");
 
   const buildMenu = (serverOnline: boolean) =>
     Menu.buildFromTemplate([
       {
-        label: "Open Agent X",
+        label: "Local Agent X",
         type: "normal",
         enabled: false,
       },

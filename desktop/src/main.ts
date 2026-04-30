@@ -1,5 +1,5 @@
 /**
- * Open Agent X — Electron Main Process
+ * Local Agent X — Electron Main Process
  *
  * Launches the SAX server as a child process (if not already running),
  * wraps the web UI in a native window, provides system tray, global
@@ -629,7 +629,7 @@ app.on("ready", async () => {
   const serverReady = alreadyRunning || (await waitForServer());
   if (!serverReady) {
     showNotification(
-      "Open Agent X",
+      "Local Agent X",
       "Server failed to start. Check that the project is built (npm run build)."
     );
   }
@@ -671,7 +671,7 @@ app.on("ready", async () => {
     registerAutostart();
   }
 
-  showNotification("Open Agent X", serverReady ? "Agent is online." : "Starting up...");
+  showNotification("Local Agent X", serverReady ? "Agent is online." : "Starting up...");
 });
 
 app.on("activate", () => showWindow());

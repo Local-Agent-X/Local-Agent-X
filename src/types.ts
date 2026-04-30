@@ -70,6 +70,7 @@ export type ServerEvent =
   | { type: "context_status"; percentage: number; level: string; usedTokens: number; maxTokens: number; compacted: boolean }
   | { type: "visual"; kind: "emoji" | "text" | "shape" | "mood"; value: string; durationMs: number }
   | { type: "bg_op_queued"; opId: string; task: string; provider: string; lane: string; queuePosition: number }
+  | { type: "bg_op_queue_reordered"; opId: string; queuePosition: number }
   | { type: "bg_op_started"; opId: string; task: string; provider: string }
   | { type: "bg_op_progress"; opId: string; line: string }
   | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[] }

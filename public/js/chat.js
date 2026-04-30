@@ -2567,6 +2567,23 @@ function updateAgentFeed(agentId, update) {
     if (statusEl) {
       statusEl.innerHTML = '<span class="agent-status-dot"></span> ' + esc(existing.status || 'working');
     }
+    // Re-render the control buttons. Without this, hitting Pause flipped the
+    // status text to "paused" but the button stayed as "Pause" forever
+    // (visible in the screenshot — top card showed status PAUSED but the
+    // button row still read PAUSE / REDIRECT / CANCEL). Re-rendering the
+    // controls section based on the new status flips Pause → Resume and
+    // back. Output area and scroll position are left untouched.
+    var controlsEl = card.querySelector('.agent-feed-controls');
+    if (controlsEl) {
+      var safeId = esc(agentId);
+      var isPaused = existing.status === 'paused';
+      controlsEl.innerHTML =
+        (isPaused
+          ? '<button class="agent-ctrl-btn" onclick="onAgentResume(\'' + safeId + '\')">Resume</button>'
+          : '<button class="agent-ctrl-btn" onclick="onAgentPause(\'' + safeId + '\')">Pause</button>') +
+        '<button class="agent-ctrl-btn" onclick="onAgentRedirect(\'' + safeId + '\')">Redirect</button>' +
+        '<button class="agent-ctrl-btn cancel" onclick="onAgentCancel(\'' + safeId + '\')">Cancel</button>';
+    }
   } else {
     _renderAgentFeedsList();
   }

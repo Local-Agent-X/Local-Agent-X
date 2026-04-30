@@ -63,6 +63,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     let outputTokens = 0;
     let stopReason: string | undefined;
     let sawText = false, sawToolCall = false;
+    let responseText = "";
 
     while (true) {
       const { done, value } = await reader.read();
@@ -94,7 +95,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
             }
           } else if (eventType === "content_block_delta") {
             const delta = parsed.delta as Record<string, unknown>;
-            if (delta?.type === "text_delta") { sawText = true; yield { type: "text", delta: delta.text as string }; }
+            if (delta?.type === "text_delta") { sawText = true; const t = delta.text as string; responseText += t; yield { type: "text", delta: t }; }
             else if (delta?.type === "input_json_delta") currentToolArgs += delta.partial_json as string;
           } else if (eventType === "content_block_stop") {
             if (currentToolId) {
@@ -114,7 +115,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
 
     const { classifyAnthropicResponse, logClassification } = await import("../response-classifier.js");
     const classification = classifyAnthropicResponse({
-      hasText: sawText, hasToolCalls: sawToolCall, stopReason, inputTokens, outputTokens,
+      hasText: sawText, hasToolCalls: sawToolCall, stopReason, inputTokens, outputTokens, responseText,
     });
     logClassification("anthropic", resolvedModel, classification);
     yield { type: "done", usage: { inputTokens, outputTokens }, stopReason, classification };

@@ -130,12 +130,28 @@ export function submitOp(op: Op): Promise<OpResult> {
     pendingResults.set(op.id, { resolve, reject });
     if (!tryDispatch(op)) {
       logger.info(`[pool] op ${op.id} queued (all workers busy)`);
+      // Snapshot prior queue order so we can detect shifts after the
+      // priority-sort below — a higher-lane op submitted last must
+      // report its TRUE post-sort position (not the back-of-array
+      // position), and any previously-queued ops bumped down need
+      // their "queued #N" labels refreshed without waiting for the
+      // next dispatch.
+      const priorOrder = opQueue.map(o => o.id);
       opQueue.push(op);
+      sortQueueByLane(opQueue);
       eventBus.emit("queue-changed", { queueLength: opQueue.length });
       // Tell subscribers this op is queued (not yet running) so the
       // frontend can render a "queued" sidebar card with its position.
       const queuePos = opQueue.findIndex(o => o.id === op.id) + 1;
       eventBus.emit("op-queued", { opId: op.id, task: op.task, lane: op.lane, queuePosition: queuePos });
+      // If the priority-insert bumped any earlier op down, broadcast
+      // new positions so existing sidebar cards update without a refetch.
+      const shifted = opQueue.some((o, i) => o.id !== op.id && priorOrder[i] !== o.id);
+      if (shifted) {
+        eventBus.emit("op-queue-reordered", {
+          entries: opQueue.map((q, i) => ({ opId: q.id, queuePosition: i + 1 })),
+        });
+      }
     } else {
       // Dispatched immediately — fire op-dispatched so the bridge can
       // forward bg_op_started without going through the queue path.
@@ -279,6 +295,42 @@ export function killOp(opId: string): boolean {
   const slot = slots.find(s => s.busyWith === opId);
   if (!slot) return false;
   sendIpc(slot.proc.stdin!, ipcEnvelope("kill", { opId }));
+  return true;
+}
+
+/**
+ * Cancel an op that's still waiting in the queue (not yet running). Removes
+ * it from the queue, marks it cancelled, resolves any pending awaitOpResult
+ * promise, and broadcasts both op-result (so the sidebar card flips to
+ * cancelled) and op-queue-reordered (so trailing cards' "queued #N" labels
+ * shift up). Returns true if a queued op was cancelled.
+ *
+ * Pairs with killOp: chat-ws.ts cancel button tries killOp first (running
+ * op) and falls back to this for queued ops, so the user can cancel before
+ * the worker ever picks it up.
+ */
+export function cancelQueuedOp(opId: string): boolean {
+  const idx = opQueue.findIndex(o => o.id === opId);
+  if (idx < 0) return false;
+  opQueue.splice(idx, 1);
+  setOpStatus(opId, "cancelled", { lastFailureReason: "cancelled while queued" });
+  const result: OpResult = {
+    opId,
+    status: "cancelled",
+    finalSummary: "Cancelled before it started running.",
+    filesChanged: [],
+    error: { message: "cancelled while queued", recoverable: false },
+  };
+  completedResultCache.set(opId, { result, ts: Date.now() });
+  pendingResults.get(opId)?.resolve(result);
+  pendingResults.delete(opId);
+  eventBus.emit("queue-changed", { queueLength: opQueue.length });
+  eventBus.emit("op-result", result);
+  if (opQueue.length > 0) {
+    eventBus.emit("op-queue-reordered", {
+      entries: opQueue.map((q, i) => ({ opId: q.id, queuePosition: i + 1 })),
+    });
+  }
   return true;
 }
 
@@ -482,12 +534,16 @@ const LANE_PRIORITY: Record<string, number> = {
   background: 1,
 };
 
+function sortQueueByLane(queue: Op[]): void {
+  // Sort by lane priority (desc). Array.sort is stable in modern V8,
+  // so FIFO order is preserved within the same priority lane.
+  queue.sort((a, b) => (LANE_PRIORITY[b.lane] || 2) - (LANE_PRIORITY[a.lane] || 2));
+}
+
 function drainQueue(): void {
   let dispatchedAny = false;
   while (opQueue.length > 0) {
-    // Sort by lane priority (desc), then by FIFO (which is opQueue order).
-    // Stable sort preserves original order within same priority.
-    opQueue.sort((a, b) => (LANE_PRIORITY[b.lane] || 2) - (LANE_PRIORITY[a.lane] || 2));
+    sortQueueByLane(opQueue);
     const op = opQueue[0];
     if (!tryDispatch(op)) break;
     opQueue.shift();

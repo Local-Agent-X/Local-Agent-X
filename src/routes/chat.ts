@@ -252,17 +252,48 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // Surface the error to the user instead.
       const { detectCommittingCalls } = await import("../committing-tool-check.js");
       const committingCalls = detectCommittingCalls(result.messages);
-      const suppressFailover = committingCalls.length > 0;
+      // User setting: disable auto-fallback to other providers when the
+      // primary fails. Default false (preserves the auto-rescue behavior
+      // that recovered turns from rate-limits / empty responses). When true,
+      // failures stay visible so the user knows their selected provider
+      // isn't working — they can fix it instead of unknowingly running on
+      // a different model. Live ask: "if a fallback kicks in i'll just
+      // think that AI works and i won't know and won't fix it."
+      let disableProviderFallback = false;
+      try {
+        const { existsSync, readFileSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const sp = join(ctx.dataDir, "settings.json");
+        if (existsSync(sp)) {
+          const ss = JSON.parse(readFileSync(sp, "utf-8"));
+          disableProviderFallback = ss.disableProviderFallback === true;
+        }
+      } catch { /* default to false on any read error */ }
+
+      const suppressFailover = committingCalls.length > 0 || disableProviderFallback;
 
       if (suppressFailover && (isEmptyResponse || isTransientError)) {
-        const callList = committingCalls.slice(0, 3).map(c => `${c.toolName} (${c.reason})`).join(", ");
         const reasonText = isTransientError
-          ? (errKind === "content-filter" ? "hit content moderation" : `had a ${errKind} issue`)
+          ? (errKind === "content-filter" ? "hit content moderation" : `had a ${errKind} issue${result.errorMessage ? `: ${result.errorMessage.slice(0, 200)}` : ""}`)
           : "returned an empty reply";
-        const notice =
-          `\n\n_${prepared.provider} ${reasonText} AFTER already executing: ${callList}. ` +
-          `Not auto-retrying on another provider — that could double-execute the action. ` +
-          `If the action completed successfully, you're done. If it didn't, ask me to retry manually._\n\n`;
+        let notice: string;
+        if (committingCalls.length > 0) {
+          // Committing-call suppression — keep existing message (auto-retry
+          // would double-execute the action).
+          const callList = committingCalls.slice(0, 3).map(c => `${c.toolName} (${c.reason})`).join(", ");
+          notice =
+            `\n\n_${prepared.provider} ${reasonText} AFTER already executing: ${callList}. ` +
+            `Not auto-retrying on another provider — that could double-execute the action. ` +
+            `If the action completed successfully, you're done. If it didn't, ask me to retry manually._\n\n`;
+        } else {
+          // disableProviderFallback suppression — clean failure surfaced to
+          // the user so they can fix their provider config instead of
+          // unknowingly running on a different model.
+          notice =
+            `\n\n**Error: ${prepared.provider}/${prepared.model} ${reasonText}.**\n\n` +
+            `_Auto-fallback to other providers is disabled (\`disableProviderFallback: true\` in \`~/.lax/settings.json\`). ` +
+            `Fix the provider — check Ollama is running, model is pulled, API key is valid — or toggle the setting back to \`false\` to re-enable the rescue chain (codex → anthropic → xai)._\n\n`;
+        }
         wrappedOnEvent({ type: "stream", delta: notice });
         logRetry({ kind: "custom", sessionId, provider: prepared.provider, model: prepared.model, detail: { reason: "failover-suppressed-committing-call", committingCalls: committingCalls.map(c => c.toolName) } });
       }

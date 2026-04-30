@@ -37,7 +37,13 @@ const logger = createLogger("workers.auto-delegate");
 // Kept independent (not imported) so a refactor of prepare-request can't
 // accidentally change auto-delegate behavior. They serve different layers
 // (provider routing vs work routing) and may diverge over time.
-const LONG_TASK_VERB_RE = /\b(refactor|audit|investigate|implement|build|debug|trace|analyze|migrate|rewrite|fix\s+(all|the|every|every\s+\w+|multiple)|set\s+up|wire\s+up|bootstrap|design\s+(and|then)|review\s+the)\b/i;
+// Long-task verbs. These DON'T trigger delegation alone — they require either
+// a multi-file cue (workspace/, src/, .ts, etc.) OR 15+ words OR 50+ words
+// total. So "add" with 8 words and no file path stays inline; "Add a feature
+// to workspace/apps/X" delegates correctly. Live-test exposed missing
+// "add"/"create"/"make" — common build verbs that previously slipped through
+// the gate (a 25-word "Add a settings panel to workspace/..." went inline).
+const LONG_TASK_VERB_RE = /\b(refactor|audit|investigate|implement|build|debug|trace|analyze|migrate|rewrite|add|create|make|extend|enhance|fix\s+(all|the|every|every\s+\w+|multiple)|set\s+up|wire\s+up|bootstrap|design\s+(and|then)|review\s+the)\b/i;
 const MULTI_FILE_CUE_RE = /(workspace\/|src\/|node_modules|\.ts\b|\.tsx\b|\.js\b|\.py\b|across|throughout|every\s+file|multiple\s+files|all\s+the\s+(files|tests|components))/i;
 const SHORT_TASK_RE = /^(yes|no|ok|sure|thanks|hi|hello|what|when|where|why|how|who)\b|^.{0,30}$/i;
 

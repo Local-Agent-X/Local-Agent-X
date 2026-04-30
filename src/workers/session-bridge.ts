@@ -24,7 +24,7 @@
 
 import type { ServerEvent } from "../types.js";
 import type { OpEvent, OpResult } from "./types.js";
-import { subscribeAllOpResults, subscribeAllOps, subscribeAllOpQueued, subscribeAllOpDispatched } from "./pool.js";
+import { subscribeAllOpResults, subscribeAllOps, subscribeAllOpQueued, subscribeAllOpDispatched, subscribeAllOpQueueReordered } from "./pool.js";
 import { pushPendingNotification } from "./pending-notifications.js";
 import { scheduleIdleNudge } from "./idle-nudge.js";
 
@@ -61,7 +61,26 @@ export function initSessionBridge(): void {
   subscribeAllOps((event) => onOpEvent(event));
   subscribeAllOpQueued((info) => onOpQueued(info));
   subscribeAllOpDispatched((info) => onOpDispatched(info));
+  subscribeAllOpQueueReordered((info) => onOpQueueReordered(info));
   logger.info("[session-bridge] initialized");
+}
+
+/** Forward op-queue-reordered → per-session bg_op_queue_reordered. */
+function onOpQueueReordered(info: { entries: { opId: string; queuePosition: number }[] }): void {
+  if (!broadcaster) return;
+  for (const entry of info.entries) {
+    const sessionId = opSession.get(entry.opId);
+    if (!sessionId) continue;
+    try {
+      broadcaster(sessionId, {
+        type: "bg_op_queue_reordered",
+        opId: entry.opId,
+        queuePosition: entry.queuePosition,
+      });
+    } catch (e) {
+      logger.warn(`[session-bridge] queue-reordered broadcast threw: ${(e as Error).message}`);
+    }
+  }
 }
 
 /** Forward op-queued → bg_op_queued (sidebar card with status: queued + queue position). */

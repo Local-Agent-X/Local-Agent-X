@@ -174,6 +174,16 @@ export function subscribeAllOpDispatched(listener: (info: { opId: string; task: 
 }
 
 /**
+ * Subscribe to op-queue-reordered events — fires after every queue mutation
+ * (dispatch or new submit) so the sidebar can update each card's "queued
+ * #N" label without a periodic refetch.
+ */
+export function subscribeAllOpQueueReordered(listener: (info: { entries: { opId: string; queuePosition: number }[] }) => void): () => void {
+  eventBus.on("op-queue-reordered", listener);
+  return () => eventBus.off("op-queue-reordered", listener);
+}
+
+/**
  * Wait for an op's terminal result. Used by op_wait + by the sync op_submit
  * sugar wrapper.
  *
@@ -455,6 +465,7 @@ const LANE_PRIORITY: Record<string, number> = {
 };
 
 function drainQueue(): void {
+  let dispatchedAny = false;
   while (opQueue.length > 0) {
     // Sort by lane priority (desc), then by FIFO (which is opQueue order).
     // Stable sort preserves original order within same priority.
@@ -462,10 +473,19 @@ function drainQueue(): void {
     const op = opQueue[0];
     if (!tryDispatch(op)) break;
     opQueue.shift();
+    dispatchedAny = true;
     eventBus.emit("queue-changed", { queueLength: opQueue.length });
     // Notify subscribers that this op transitioned queued → running so
     // the frontend sidebar card flips its status indicator.
     eventBus.emit("op-dispatched", { opId: op.id, task: op.task, lane: op.lane });
+  }
+  // After a dispatch round, every still-queued op has shifted up. Tell
+  // subscribers the new positions so sidebar cards update their "queued
+  // #N" label live without a poll.
+  if (dispatchedAny && opQueue.length > 0) {
+    eventBus.emit("op-queue-reordered", {
+      entries: opQueue.map((q, i) => ({ opId: q.id, queuePosition: i + 1 })),
+    });
   }
 }
 

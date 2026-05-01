@@ -15,6 +15,7 @@
 //   npx tsx scripts/test-tier4-smoke.mjs --write out.wav    (dump 24kHz PCM WAV)
 //   npx tsx scripts/test-tier4-smoke.mjs --stt              (TTS -> Whisper round-trip)
 //   npx tsx scripts/test-tier4-smoke.mjs --stt --whisper-device dml (force whisper EP, cpu fallback)
+//   npx tsx scripts/test-tier4-smoke.mjs --stt --whisper-model small.en (pick variant: tiny.en|base.en|small.en)
 
 import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
@@ -125,14 +126,18 @@ async function runWhisperRoundTrip() {
     await import("../src/voice/whisper-model-fetch.ts");
   const { createWhisperTranscriber } = await import("../src/voice/whisper-stream.ts");
 
+  const whisperModel = arg("--whisper-model") || undefined;
+  const variantOpts = whisperModel ? { variant: whisperModel } : {};
+
   console.log("[tier4 smoke] stt: ensuring whisper model is on disk...");
-  await ensureWhisperModelDownloaded();
-  const paths = getWhisperModelPaths();
+  await ensureWhisperModelDownloaded(undefined, undefined, variantOpts);
+  const paths = getWhisperModelPaths(variantOpts);
 
   const merged = Buffer.concat(chunks);
   const int16 = new Int16Array(merged.buffer, merged.byteOffset, merged.byteLength / 2);
   const resampled = resampleInt16(int16, sampleRate, 16000);
   console.log(`[tier4 smoke] stt: resampled ${int16.length}@${sampleRate} -> ${resampled.length}@16000`);
+  console.log(`[tier4 smoke] stt: whisper variant=${paths.variant}`);
 
   const t0 = performance.now();
   const whisper = createWhisperTranscriber(paths, whisperDevice ? { provider: whisperDevice } : {});

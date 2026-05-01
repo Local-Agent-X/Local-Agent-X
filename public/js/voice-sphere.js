@@ -182,18 +182,11 @@
     const wireMatBright = new THREE.LineBasicMaterial({
       color: 0x9fdcff, transparent: true, opacity: 0.85, depthWrite: false,
     });
-    // Inner architecture: icosa + octa kept smaller than the rings so they
-    // sit inside the orb instead of competing with it.
-    const ico = new THREE.LineSegments(
-      new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(0.55, 1)),
-      wireMat,
-    );
-    scene.add(ico); wires.push(ico);
-    const octa = new THREE.LineSegments(
-      new THREE.WireframeGeometry(new THREE.OctahedronGeometry(0.75, 0)),
-      wireMatBright,
-    );
-    scene.add(octa); wires.push(octa);
+    // Inner icosa + octa removed — they were blocking the active particle
+    // shape (heart, text glyphs) at the center. The big translucent
+    // lat/long sphere below stays as the outer dome cue.
+    // (wireMat / wireMatBright still defined above for any future inner
+    // geometry; safe to leave — Three.js drops unused materials.)
     // Subtle lat/long sphere wireframe — sparser segs so it reads as a faint
     // dome shell, not a fishnet.
     const latLong = new THREE.LineSegments(
@@ -203,11 +196,14 @@
     scene.add(latLong); wires.push(latLong);
 
     // ── Multiple orbital rings at varied tilts/radii
+    // Radii shrunk ~20% (1.55-1.85 → 1.25-1.50) so the rings stop clipping
+    // the top and bottom of the canvas at common viewport heights. The
+    // particle shell still sits comfortably inside the smallest ring.
     const ringDef = [
-      { r: 1.55, tube: 0.006, opacity: 0.85, rot: [Math.PI / 2.4, 0, 0] },
-      { r: 1.62, tube: 0.005, opacity: 0.65, rot: [Math.PI / 3.2, Math.PI / 2, 0] },
-      { r: 1.74, tube: 0.005, opacity: 0.55, rot: [Math.PI / 1.8, Math.PI / 5, 0] },
-      { r: 1.85, tube: 0.004, opacity: 0.45, rot: [Math.PI / 2.8, Math.PI / 7, Math.PI / 3] },
+      { r: 1.25, tube: 0.006, opacity: 0.85, rot: [Math.PI / 2.4, 0, 0] },
+      { r: 1.32, tube: 0.005, opacity: 0.65, rot: [Math.PI / 3.2, Math.PI / 2, 0] },
+      { r: 1.42, tube: 0.005, opacity: 0.55, rot: [Math.PI / 1.8, Math.PI / 5, 0] },
+      { r: 1.50, tube: 0.004, opacity: 0.45, rot: [Math.PI / 2.8, Math.PI / 7, Math.PI / 3] },
     ];
     for (const def of ringDef) {
       const m = new THREE.MeshBasicMaterial({
@@ -308,18 +304,20 @@
     particles = new THREE.Points(pGeom, dotMat);
     scene.add(particles);
 
-    // Sparser, wider scatter for depth — dots that drift outside the main shell
-    const p2Count = 600;
+    // Wider drift cloud for depth — bumped 600 → 2400 for more "dust"
+    // density per user request. Wider radial range too (1.4 → 2.6) so the
+    // dust extends past the rings instead of all bunching at one shell.
+    const p2Count = 2400;
     const p2Pos = new Float32Array(p2Count * 3);
     const p2Size = new Float32Array(p2Count);
     for (let i = 0; i < p2Count; i++) {
-      const r = 1.6 + Math.pow(Math.random(), 2.0) * 0.5;
+      const r = 1.4 + Math.pow(Math.random(), 1.6) * 1.2;
       const t = Math.random() * Math.PI * 2;
       const p = Math.acos(2 * Math.random() - 1);
       p2Pos[i * 3]     = r * Math.sin(p) * Math.cos(t);
       p2Pos[i * 3 + 1] = r * Math.sin(p) * Math.sin(t);
       p2Pos[i * 3 + 2] = r * Math.cos(p);
-      p2Size[i] = 0.3 + Math.random() * 0.4;
+      p2Size[i] = 0.25 + Math.random() * 0.45;
     }
     const p2Geom = new THREE.BufferGeometry();
     p2Geom.setAttribute('position', new THREE.BufferAttribute(p2Pos, 3));
@@ -449,12 +447,13 @@
       r.rotation.y += ax[1] * ringSpeed;
       r.rotation.z += ax[2] * ringSpeed;
     });
-    // Wireframes spin subtly around their own axes
-    wires[0].rotation.y += 0.0030;
-    wires[0].rotation.x += 0.0012;
-    wires[1].rotation.y -= 0.0024;
-    wires[1].rotation.z += 0.0018;
-    wires[2].rotation.y += 0.0006; // lat/long stays nearly still
+    // Wireframes spin subtly around their own axes. Only the lat/long
+    // sphere remains after the ico+octa removal — drive it via the array
+    // index (was wires[2], now wires[0]) and skip the missing entries
+    // instead of indexing past the end (which threw TypeErrors at .rotation).
+    if (wires[0]) {
+      wires[0].rotation.y += 0.0006; // lat/long stays nearly still
+    }
 
     // Particle shells rotate at different speeds for parallax depth.
     // Inner shell rotation is SUSPENDED while a directive is active —
@@ -590,9 +589,17 @@
     const out = new Float32Array(_basePositions.length);
     // Generous canvas + margin so emoji glyphs (which often render outside
     // their nominal em-box, esp. Segoe UI Emoji on Windows) don't clip at
-    // the edges. Previously SIZE=96 with fontSize=80 was clipping the
-    // bottom of taller glyphs like ❤️.
-    const SIZE = 192;
+    // the edges. Iterations:
+    //   SIZE=96, fontSize=80   → clipped ❤️ at bottom (original bug)
+    //   SIZE=192, fontSize=160 → still clipped ❤️ bottom + clipped "loves" text
+    //   SIZE=384, fontSize=160 → ample margin (60% headroom per side); even
+    //     Segoe UI Emoji's variation-selector glyphs fit, and 5-char text
+    //     at 112px stays well within bounds.
+    // The bbox detector below (L606+) only sees pixels *inside* the
+    // canvas — anything that renders outside is silently dropped, which
+    // means the resulting particle silhouette has a flat edge with no
+    // obvious "broken" symptom. So oversize the canvas, don't undersize it.
+    const SIZE = 384;
     const cv = document.createElement('canvas');
     cv.width = SIZE; cv.height = SIZE;
     const cx = cv.getContext('2d');

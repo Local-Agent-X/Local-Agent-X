@@ -71,7 +71,7 @@ export function bootstrapProviderMatrix(): void {
     transport: "cliOauth",
     supportsTools: true, supportsVision: true, supportsLongContext: true,
     supportsStreaming: true, supportsJsonMode: false, supportsLocalFiles: true,
-    maxConcurrent: 4, costTier: "premium", latencyTier: "medium",
+    maxConcurrent: 10, costTier: "premium", latencyTier: "medium",
     resourceLocks: [],
   });
   registerProvider({

@@ -101,6 +101,46 @@ export async function runAutopilotRound(
       sessionId,
       maxIterations: deps.config.maxIterations,
       signal: opts.signal,
+      // Live sidebar progress: forward each tool call as a bg_op_progress
+      // line tagged with this autopilot's opId. Without this the sidebar
+      // card sits silent for whole rounds (5-10 min) — looks like the
+      // agent died. With it, the user can watch the agent work in real time.
+      onEvent: async (event) => {
+        if (event.type !== "tool_start") return;
+        const tn = (event as { toolName?: string }).toolName || "tool";
+        const args = (event as { arguments?: unknown; args?: unknown }).arguments
+                  || (event as { arguments?: unknown; args?: unknown }).args;
+        let detail = "";
+        if (typeof args === "string") {
+          try {
+            const parsed = JSON.parse(args) as Record<string, unknown>;
+            const path = parsed.path || parsed.file_path;
+            const cmd = parsed.command || parsed.cmd;
+            const url = parsed.url;
+            const pattern = parsed.pattern || parsed.query;
+            const task = parsed.task || parsed.description;
+            const pick = (path || cmd || url || pattern || task);
+            if (typeof pick === "string") {
+              const cleaned = pick.replace(/^[A-Za-z]:[/\\]Users[/\\][^/\\]+[/\\]secret-agent-x[/\\]/i, "");
+              detail = cleaned.length > 80 ? cleaned.slice(0, 79) + "…" : cleaned;
+            }
+          } catch { /* args wasn't JSON — fall through with no detail */ }
+        }
+        try {
+          const { broadcastAll } = await import("../chat-ws.js");
+          // Wrap in the worker pool's broadcast envelope so chat.js's
+          // msg.event.type === 'bg_op_progress' check actually fires.
+          broadcastAll({
+            type: "event",
+            sessionId: "autopilot",
+            event: {
+              type: "bg_op_progress",
+              opId: opts.opId,
+              line: detail ? `→ ${tn} ${detail}` : `→ ${tn}`,
+            },
+          });
+        } catch { /* swallow — broadcast is best-effort */ }
+      },
     });
 
     const output = extractAgentOutput(result.messages) || "";

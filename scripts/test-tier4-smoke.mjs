@@ -17,6 +17,13 @@
 //   npx tsx scripts/test-tier4-smoke.mjs --stt              (TTS -> Whisper round-trip)
 //   npx tsx scripts/test-tier4-smoke.mjs --stt --whisper-device dml (force whisper EP, cpu fallback)
 //   npx tsx scripts/test-tier4-smoke.mjs --stt --whisper-model small.en (pick variant: tiny.en|base.en|small.en)
+//
+// Sanity gates (any failure exits 4 with a one-line GATE FAIL: summary):
+//   --min-audio-ms <n>          require >= N ms of synthesised audio
+//   --max-first-audio-ms <n>    require first chunk within N ms
+//   --max-rtf <n>               require realtime factor <= N (lower = faster)
+//   --min-stt-overlap <pct>     with --stt, require word-overlap >= N% (default 50)
+//   --strict                    shorthand: 1500 / 4000 / 1.0 / 50
 
 import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
@@ -28,6 +35,12 @@ const arg = (k) => {
   return i >= 0 ? args[i + 1] : null;
 };
 const flag = (k) => args.includes(k);
+const argNum = (k) => {
+  const v = arg(k);
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
 
 const prompt = arg("--text") || "Tier four is online. This is a quick smoke test of native ONNX voice.";
 let voice = arg("--voice") || undefined;
@@ -42,6 +55,16 @@ const dtype = arg("--dtype") || undefined;
 const wavOut = arg("--write") || null;
 const runStt = flag("--stt");
 const whisperDevice = arg("--whisper-device") || undefined;
+
+const strict = flag("--strict");
+const gateMinAudioMs = argNum("--min-audio-ms") ?? (strict ? 1500 : null);
+const gateMaxFirstAudioMs = argNum("--max-first-audio-ms") ?? (strict ? 4000 : null);
+const gateMaxRtf = argNum("--max-rtf") ?? (strict ? 1.0 : null);
+// Default 50 keeps the historical hard-coded floor; --strict surfaces the
+// same number explicitly so CI logs document what's enforced.
+const gateMinSttOverlap = argNum("--min-stt-overlap") ?? 50;
+
+const gateFailures = [];
 
 const r = tier4Readiness();
 console.log("[tier4 smoke] readiness:", r);
@@ -77,6 +100,15 @@ const ttsDone = new Promise((resolve, reject) => {
       console.log(`[tier4 smoke] total wall: ${totalMs.toFixed(0)}ms`);
       console.log(`[tier4 smoke] audio duration: ${audioMs.toFixed(0)}ms`);
       console.log(`[tier4 smoke] realtime factor: ${rtf.toFixed(3)}x (lower = faster)`);
+      if (gateMinAudioMs != null && audioMs < gateMinAudioMs) {
+        gateFailures.push(`audio ${audioMs.toFixed(0)}ms < min ${gateMinAudioMs}ms`);
+      }
+      if (gateMaxFirstAudioMs != null && firstAudioMs != null && firstAudioMs > gateMaxFirstAudioMs) {
+        gateFailures.push(`first-audio ${firstAudioMs.toFixed(0)}ms > max ${gateMaxFirstAudioMs}ms`);
+      }
+      if (gateMaxRtf != null && rtf > gateMaxRtf) {
+        gateFailures.push(`rtf ${rtf.toFixed(3)} > max ${gateMaxRtf}`);
+      }
       resolve(null);
     },
     onError: (e) => reject(e),
@@ -119,13 +151,22 @@ if (runStt) {
   try {
     await runWhisperRoundTrip();
   } catch (e) {
-    console.error("[tier4 smoke] stt error:", e?.message || e);
-    ttsHandle?.close();
-    process.exit(4);
+    // Collect into gateFailures so a TTS gate failure that happened earlier
+    // also surfaces in the final summary instead of being swallowed by an
+    // STT error exit. Both report together below.
+    const msg = e?.message || String(e);
+    console.error("[tier4 smoke] stt error:", msg);
+    gateFailures.push("stt: " + msg);
   }
 }
 
 ttsHandle?.close();
+
+if (gateFailures.length > 0) {
+  console.error(`[tier4 smoke] GATE FAIL: ${gateFailures.join(" | ")}`);
+  process.exit(4);
+}
+
 process.exit(0);
 
 async function runWhisperRoundTrip() {
@@ -159,9 +200,10 @@ async function runWhisperRoundTrip() {
   console.log(`[tier4 smoke] stt prompt: ${JSON.stringify(prompt)}`);
   console.log(`[tier4 smoke] stt result: ${JSON.stringify(text)}`);
   const overlap = wordOverlap(prompt, text);
-  console.log(`[tier4 smoke] stt word-overlap: ${(overlap * 100).toFixed(0)}%`);
-  if (overlap < 0.5) {
-    throw new Error(`stt word-overlap below 50% (${(overlap * 100).toFixed(0)}%) - likely a regression`);
+  const overlapPct = overlap * 100;
+  console.log(`[tier4 smoke] stt word-overlap: ${overlapPct.toFixed(0)}%`);
+  if (overlapPct < gateMinSttOverlap) {
+    throw new Error(`stt word-overlap ${overlapPct.toFixed(0)}% < min ${gateMinSttOverlap}% - likely a regression`);
   }
 }
 

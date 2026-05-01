@@ -30,6 +30,7 @@ import { createWhisperTranscriber, type WhisperTranscriber } from "./whisper-str
 import { ensureWhisperModelDownloaded, getWhisperModelPaths } from "./whisper-model-fetch.js";
 import { createGpuSession } from "./gpu-session.js";
 import { createTier4, tier4VariantFromEnv } from "./tier4/index.js";
+import type { Tier4StreamingTTS } from "./tier4/types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("voice.voice-session");
@@ -250,7 +251,17 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         });
 
         stackReady = true;
-        ctx.sendEvent({ type: "voice_ready", ttsSampleRate: tts.sampleRate });
+        const ttsRuntime = TIER4_MODE
+          ? (tts as unknown as Tier4StreamingTTS).runtime
+          : null;
+        const sttRuntime = whisper?.runtime ?? null;
+        ctx.sendEvent({
+          type: "voice_ready",
+          ttsSampleRate: tts.sampleRate,
+          engine,
+          tts: ttsRuntime,
+          stt: sttRuntime,
+        });
         logger.info(`[voice-session] ${ctx.sessionId}: ready — draining ${pendingFrames.length} pending frames`);
         while (pendingFrames.length > 0 && !closed && stt) {
           const f = pendingFrames.shift()!;

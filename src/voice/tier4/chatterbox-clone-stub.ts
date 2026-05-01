@@ -87,5 +87,6 @@ function inertTTS(opts: Tier4Config): Tier4StreamingTTS {
     close() {},
     sampleRate: 24000,
     voice: opts.voice ?? "clone",
+    runtime: { device: opts.device ?? "cpu", dtype: opts.dtype ?? "q8", fellBack: false },
   };
 }

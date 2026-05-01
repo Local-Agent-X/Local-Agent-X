@@ -54,4 +54,7 @@ export interface Tier4DiagSnapshot {
   firstAudioMs: number | null;
   totalSentences: number;
   cancelledSentences: number;
+  /** True if the engine was asked for a GPU EP (DML/CUDA/WebGPU) that failed
+   *  to bind and got transparently fallen back to cpu+q8. */
+  fellBack: boolean;
 }

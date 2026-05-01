@@ -7,10 +7,31 @@
 // NOT use kokoro's TextSplitterStream because the orchestrator already chunks
 // by sentence — feeding it our pre-split sentence one-shot is simpler, easier
 // to cancel, and within the latency budget for short clauses on the 3060.
+//
+// GPU opt-in: defaults q8+cpu. Users opt into DirectML/CUDA/WebGPU via
+// LAX_VOICE_TIER4_DEVICE plus optional LAX_VOICE_TIER4_DTYPE. If the GPU EP
+// fails to bind we fall back to cpu+q8 so the user still gets audio.
 
 import { configureHFCache, tier4ModelStatus } from "./voice-clone-loader.js";
 import type { Tier4Config, Tier4Device, Tier4Dtype } from "./types.js";
 import { TIER4_DEFAULTS, TIER4_SAMPLE_RATE } from "./types.js";
+
+const VALID_DEVICES: ReadonlySet<Tier4Device> = new Set<Tier4Device>([
+  "cpu", "wasm", "webgpu", "dml", "cuda", "auto",
+]);
+const VALID_DTYPES: ReadonlySet<Tier4Dtype> = new Set<Tier4Dtype>([
+  "fp32", "fp16", "q8", "q4", "q4f16",
+]);
+
+function envDevice(): Tier4Device | undefined {
+  const v = process.env.LAX_VOICE_TIER4_DEVICE?.toLowerCase() as Tier4Device | undefined;
+  return v && VALID_DEVICES.has(v) ? v : undefined;
+}
+
+function envDtype(): Tier4Dtype | undefined {
+  const v = process.env.LAX_VOICE_TIER4_DTYPE?.toLowerCase() as Tier4Dtype | undefined;
+  return v && VALID_DTYPES.has(v) ? v : undefined;
+}
 
 type RawAudio = { audio: Float32Array; sampling_rate: number };
 
@@ -31,6 +52,7 @@ export interface KokoroEngine {
   readonly sampleRate: number;
   readonly voice: string;
   readonly modelId: string;
+  readonly runtime: { device: Tier4Device; dtype: Tier4Dtype; fellBack: boolean };
 }
 
 export interface KokoroEngineInit {
@@ -39,20 +61,50 @@ export interface KokoroEngineInit {
 }
 
 export async function createKokoroEngine(init: KokoroEngineInit): Promise<KokoroEngine> {
-  const cfg = { ...TIER4_DEFAULTS, ...init.config };
+  // Env vars override the static defaults; explicit init.config still wins
+  // over env so callers (smoke test, gpu probe) can pin a device for tests.
+  const envOverrides: Partial<Tier4Config> = {};
+  const ed = envDevice(); if (ed) envOverrides.device = ed;
+  const et = envDtype(); if (et) envOverrides.dtype = et;
+  const cfg = { ...TIER4_DEFAULTS, ...envOverrides, ...init.config };
   configureHFCache();
 
   const status = tier4ModelStatus(cfg.modelId);
   if (!status.cached && process.env.LAX_VOICE_DEBUG) {
-    console.log(`[tier4/kokoro] cold start — first run will download to ${status.cacheDir}`);
+    console.log(`[tier4/kokoro] cold start - first run will download to ${status.cacheDir}`);
   }
 
   const t0 = Date.now();
   const mod = (await import("kokoro-js")) as unknown as { KokoroTTS: KokoroTTSCtor };
-  const tts = await mod.KokoroTTS.from_pretrained(cfg.modelId, {
-    dtype: cfg.dtype,
-    device: cfg.device,
-  });
+
+  let activeDevice: Tier4Device = cfg.device;
+  let activeDtype: Tier4Dtype = cfg.dtype;
+  let fellBack = false;
+  let tts: KokoroTTSInstance;
+  try {
+    tts = await mod.KokoroTTS.from_pretrained(cfg.modelId, {
+      dtype: activeDtype,
+      device: activeDevice,
+    });
+  } catch (e) {
+    // GPU EP can fail at init (DML kernel coverage gaps, missing CUDA libs,
+    // WebGPU shader compile errors). Fall back to cpu+q8 once - this is the
+    // combo we know works on every machine. CPU/wasm errors surface upward.
+    const requestedNonCpu = activeDevice !== "cpu" && activeDevice !== "wasm";
+    if (!requestedNonCpu) throw e;
+    if (process.env.LAX_VOICE_DEBUG) {
+      console.warn(
+        `[tier4/kokoro] ${activeDevice}+${activeDtype} init failed (${(e as Error).message}); falling back to cpu+q8`,
+      );
+    }
+    activeDevice = "cpu";
+    activeDtype = "q8";
+    fellBack = true;
+    tts = await mod.KokoroTTS.from_pretrained(cfg.modelId, {
+      dtype: activeDtype,
+      device: activeDevice,
+    });
+  }
   const loadMs = Date.now() - t0;
   init.onLoad?.(loadMs);
 
@@ -70,6 +122,7 @@ export async function createKokoroEngine(init: KokoroEngineInit): Promise<Kokoro
     get sampleRate() { return TIER4_SAMPLE_RATE; },
     get voice() { return cfg.voice; },
     get modelId() { return cfg.modelId; },
+    get runtime() { return { device: activeDevice, dtype: activeDtype, fellBack }; },
   };
 }
 

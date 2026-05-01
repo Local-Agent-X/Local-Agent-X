@@ -3,6 +3,7 @@
 // LAX_VOICE_TIER4_*, so the parsing/validation lives here once.
 
 import type { Tier4Device, Tier4Dtype } from "./types.js";
+import { isValidKokoroVoice } from "./kokoro-voices.js";
 
 export const VALID_DEVICES: ReadonlySet<Tier4Device> = new Set<Tier4Device>([
   "cpu", "wasm", "webgpu", "dml", "cuda", "auto",
@@ -29,8 +30,15 @@ export function envDtype(): Tier4Dtype | undefined {
 }
 
 export function envVoice(): string | undefined {
-  const v = process.env.LAX_VOICE_TIER4_VOICE;
-  return v && v.length > 0 ? v : undefined;
+  const v = process.env.LAX_VOICE_TIER4_VOICE?.trim();
+  if (!v) return undefined;
+  if (!isValidKokoroVoice(v)) {
+    if (process.env.LAX_VOICE_DEBUG) {
+      console.warn(`[tier4/env] LAX_VOICE_TIER4_VOICE="${v}" is not a known Kokoro voice; ignoring`);
+    }
+    return undefined;
+  }
+  return v;
 }
 
 export function envSpeed(): number | undefined {

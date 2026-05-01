@@ -20,7 +20,7 @@
 
 import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
-import { createTier4, tier4Readiness, snapshotTier4Diag } from "../src/voice/tier4/index.ts";
+import { createTier4, tier4Readiness, snapshotTier4Diag, isValidKokoroVoice } from "../src/voice/tier4/index.ts";
 
 const args = process.argv.slice(2);
 const arg = (k) => {
@@ -30,7 +30,11 @@ const arg = (k) => {
 const flag = (k) => args.includes(k);
 
 const prompt = arg("--text") || "Tier four is online. This is a quick smoke test of native ONNX voice.";
-const voice = arg("--voice") || undefined;
+let voice = arg("--voice") || undefined;
+if (voice && !isValidKokoroVoice(voice)) {
+  console.error(`[tier4 smoke] --voice "${voice}" is not a known Kokoro voice; falling back to default`);
+  voice = undefined;
+}
 const speedArg = arg("--speed");
 const speed = speedArg != null && Number.isFinite(Number(speedArg)) ? Number(speedArg) : undefined;
 const device = arg("--device") || undefined;

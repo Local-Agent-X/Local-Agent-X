@@ -12,6 +12,12 @@ export const VALID_DTYPES: ReadonlySet<Tier4Dtype> = new Set<Tier4Dtype>([
   "fp32", "fp16", "q8", "q4", "q4f16",
 ]);
 
+// Kokoro's `speed` param is a synthesis-time time-stretch. Values <0.5 sound
+// drunk and unnatural; >2.0 turns into chipmunk and the phoneme model breaks
+// down. Clamp at the same range the kokoro-js docs recommend.
+export const SPEED_MIN = 0.5;
+export const SPEED_MAX = 2.0;
+
 export function envDevice(): Tier4Device | undefined {
   const v = process.env.LAX_VOICE_TIER4_DEVICE?.toLowerCase() as Tier4Device | undefined;
   return v && VALID_DEVICES.has(v) ? v : undefined;
@@ -25,4 +31,13 @@ export function envDtype(): Tier4Dtype | undefined {
 export function envVoice(): string | undefined {
   const v = process.env.LAX_VOICE_TIER4_VOICE;
   return v && v.length > 0 ? v : undefined;
+}
+
+export function envSpeed(): number | undefined {
+  const raw = process.env.LAX_VOICE_TIER4_SPEED;
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return undefined;
+  if (n < SPEED_MIN || n > SPEED_MAX) return undefined;
+  return n;
 }

@@ -588,7 +588,11 @@
   function _genGlyph(text, fontSize) {
     const N = _basePositions.length / 3;
     const out = new Float32Array(_basePositions.length);
-    const SIZE = 96;
+    // Generous canvas + margin so emoji glyphs (which often render outside
+    // their nominal em-box, esp. Segoe UI Emoji on Windows) don't clip at
+    // the edges. Previously SIZE=96 with fontSize=80 was clipping the
+    // bottom of taller glyphs like ❤️.
+    const SIZE = 192;
     const cv = document.createElement('canvas');
     cv.width = SIZE; cv.height = SIZE;
     const cx = cv.getContext('2d');
@@ -599,10 +603,17 @@
     cx.fillText(text, SIZE / 2, SIZE / 2);
     const data = cx.getImageData(0, 0, SIZE, SIZE).data;
     const points = [];
+    let minX = SIZE, minY = SIZE, maxX = 0, maxY = 0;
     for (let y = 0; y < SIZE; y++) {
       for (let x = 0; x < SIZE; x++) {
         const a = data[(y * SIZE + x) * 4 + 3];
-        if (a > 80) points.push([x, y]);
+        if (a > 80) {
+          points.push([x, y]);
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
       }
     }
     if (points.length === 0) {
@@ -610,23 +621,36 @@
       out.set(_basePositions);
       return out;
     }
-    // Map shape to a 2.6×2.6 box in world space, centered at origin.
-    const SCALE = 2.6 / SIZE;
+    // Center on the actual rendered-pixel bbox (NOT canvas center).
+    // Browsers don't position color-emoji glyphs symmetrically around the
+    // canvas midpoint with textBaseline='middle' — vertical bias varies by
+    // font/glyph, so we re-center by measuring what actually got drawn.
+    const cxPx = (minX + maxX) / 2;
+    const cyPx = (minY + maxY) / 2;
+    const extent = Math.max(maxX - minX, maxY - minY) || 1;
+    // Map the bbox's longest side to a world-space size of 2.4 so the shape
+    // fits comfortably inside the orb's particle volume regardless of glyph.
+    const SCALE = 2.4 / extent;
+    const jitterScale = SCALE;
     for (let i = 0; i < N; i++) {
       const p = points[i % points.length];
       // Tiny jitter so multiple particles per pixel don't stack invisibly.
-      const jx = (Math.random() - 0.5) * SCALE * 0.6;
-      const jy = (Math.random() - 0.5) * SCALE * 0.6;
+      const jx = (Math.random() - 0.5) * jitterScale * 0.6;
+      const jy = (Math.random() - 0.5) * jitterScale * 0.6;
       const jz = (Math.random() - 0.5) * 0.05;
-      out[i * 3]     = (p[0] - SIZE / 2) * SCALE + jx;
-      out[i * 3 + 1] = -(p[1] - SIZE / 2) * SCALE + jy;  // canvas Y is flipped
+      out[i * 3]     = (p[0] - cxPx) * SCALE + jx;
+      out[i * 3 + 1] = -(p[1] - cyPx) * SCALE + jy;  // canvas Y is flipped
       out[i * 3 + 2] = jz;
     }
     return out;
   }
 
-  function _genEmoji(char) { return _genGlyph(char, 80); }
-  function _genText(text)  { return _genGlyph(text, Math.max(20, Math.min(56, Math.floor(640 / Math.max(2, text.length))))); }
+  // Font sizes are tuned for the 192px canvas in _genGlyph. Bigger fonts =
+  // more rendered pixels = smoother particle silhouette. Final on-screen
+  // size is determined by bbox auto-fit, not font size, so we can render
+  // generously without worrying about overflow.
+  function _genEmoji(char) { return _genGlyph(char, 160); }
+  function _genText(text)  { return _genGlyph(text, Math.max(40, Math.min(112, Math.floor(1280 / Math.max(2, text.length))))); }
 
   // Procedural geometric shapes — heart, lightning, ring, spiral, line.
   // Each returns N target positions sampled along/within the shape.
@@ -693,7 +717,7 @@
       confused: '😕', excited: '🤩', error: '⚠️',
     };
     const ch = map[value] || '🙂';
-    return _genGlyph(ch, 76);
+    return _genGlyph(ch, 152);
   }
 
   function handleDirective(msg) {

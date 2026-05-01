@@ -93,6 +93,12 @@ const BUILD_INTENT_TOOLS = new Set([
   "write", "edit", "read", "bash", "glob", "grep",
   "web_fetch", "web_search", "tool_search",
   "ask_user", "view_image",
+  // self_edit lets Primal route around protected-files for src/ edits inside a
+  // sandboxed worktree with build/server-bind/agent-smoke gates before merge.
+  "self_edit",
+  // Worker pool — so build-intent messages can still delegate long-running
+  // research/build work without falling back to plain blocking calls.
+  "op_submit_async", "op_status", "op_kill",
 ]);
 const BUILD_INTENT_REGEX = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script)/i;
 

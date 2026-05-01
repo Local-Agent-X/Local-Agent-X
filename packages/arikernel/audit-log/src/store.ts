@@ -10,23 +10,6 @@ import { generateId, now } from "@arikernel/core";
 import Database from "better-sqlite3";
 import { computeHash, genesisHash } from "./hash-chain.js";
 
-/**
- * Deterministic JSON serialization with sorted keys.
- * Critical for hash chain integrity — ensures identical objects always
- * produce identical serializations regardless of property insertion order.
- */
-function canonicalStringify(obj: unknown): string {
-	return JSON.stringify(obj, (_, value) => {
-		if (value && typeof value === "object" && !Array.isArray(value)) {
-			return Object.keys(value).sort().reduce((sorted: Record<string, unknown>, key) => {
-				sorted[key] = (value as Record<string, unknown>)[key];
-				return sorted;
-			}, {});
-		}
-		return value;
-	});
-}
-
 const MIGRATION_001 = `
 CREATE TABLE IF NOT EXISTS runs (
   run_id        TEXT PRIMARY KEY,
@@ -168,7 +151,7 @@ export class AuditStore {
 
 		toolCall.sequence = sequence;
 
-		const eventData = canonicalStringify({ toolCall, decision, result });
+		const eventData = JSON.stringify({ toolCall, decision, result });
 		const previousHash = this.lastHash;
 		const hash = computeHash(eventData, previousHash, this.hmacKey);
 		this.lastHash = hash;
@@ -241,7 +224,7 @@ export class AuditStore {
 			timestamp,
 		};
 
-		const eventData = canonicalStringify({ toolCall, decision });
+		const eventData = JSON.stringify({ toolCall, decision });
 		const previousHash = this.lastHash;
 		const hash = computeHash(eventData, previousHash, this.hmacKey);
 		this.lastHash = hash;

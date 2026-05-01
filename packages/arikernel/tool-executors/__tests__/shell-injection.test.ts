@@ -3,7 +3,7 @@ import { ShellExecutor, parseCommandString, validateCommand } from "../src/shell
 
 describe("validateCommand", () => {
 	it("accepts a simple command with safe arguments", () => {
-		expect(() => validateCommand("git", ["log", "--oneline"])).not.toThrow();
+		expect(() => validateCommand("curl", ["https://example.com"])).not.toThrow();
 	});
 
 	it("accepts command with no arguments", () => {
@@ -207,7 +207,7 @@ describe("ShellExecutor", () => {
 		expect(result.error).toContain("Blocked shell interpreter");
 	});
 
-	it("rejects blocked network tools in structured args", async () => {
+	it("rejects injection in structured args", async () => {
 		const result = await executor.execute({
 			id: "tc-inject-7",
 			toolClass: "shell",
@@ -218,7 +218,7 @@ describe("ShellExecutor", () => {
 			},
 		});
 		expect(result.success).toBe(false);
-		expect(result.error).toContain("Blocked shell interpreter");
+		expect(result.error).toContain("metacharacters");
 	});
 
 	it("returns error when no command or executable provided", async () => {

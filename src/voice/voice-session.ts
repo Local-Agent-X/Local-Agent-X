@@ -15,6 +15,9 @@
 // Barge-in: VAD speech-start during an active agent turn kills the LLM
 // call, flushes the TTS queue, and tells the browser to drop pending audio.
 
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { VoiceSession, VoiceSessionContext } from "./audio-ws.js";
 import { createStreamingSTT, type StreamingSTT } from "./stt-stream.js";
@@ -63,10 +66,44 @@ export type VoiceTurnRunner = (input: VoiceTurnInput) => Promise<VoiceTurnResult
  * Setup: see python/voice/install.ps1.
  * Start:  ~/.lax/python-voice/venv/Scripts/python.exe python/voice/server.py
  */
-const GPU_MODE = process.env.LAX_VOICE_GPU !== "0";
-// Tier 4 = native ONNX TTS (Kokoro) instead of WASM Sherpa Matcha. Only
-// applies in CPU-mode (LAX_VOICE_GPU=0). Set LAX_VOICE_TIER=4 to opt in.
-const TIER4_MODE = process.env.LAX_VOICE_TIER === "4";
+// ── Engine selection ─────────────────────────────────────────────────────
+// The user picks which voice engine to use from Settings → Voice. The choice
+// lives in `~/.lax/settings.json` as `voiceEngine` and is the single source
+// of truth. Env vars (LAX_VOICE_GPU, LAX_VOICE_TIER) are dev escape-hatches
+// only — used for headless/CI runs and to override settings during
+// debugging. Order of precedence:
+//   1. settings.voiceEngine (user choice, primary)
+//   2. LAX_VOICE_TIER=4 → tier4
+//   3. LAX_VOICE_GPU=0   → cpu_fallback (legacy Matcha)
+//   4. default            → python (GPU sidecar, lite tier)
+//
+// Engine values (stable IDs — UI uses these as the dropdown values):
+//   "tier4"        — native ONNX Kokoro, no Python, ~1.2s first-audio
+//   "python"       — Python sidecar (GPU). Sub-tier picked by python sidecar
+//                    via its own LAX_VOICE_PORT (Lite 7008 / Pro 7009 / Studio 7010)
+//   "cpu_fallback" — in-process Sherpa WASM + Matcha (slow, low quality, no
+//                    Python or GPU needed — emergency fallback only)
+export type VoiceEngineId = "tier4" | "python" | "cpu_fallback";
+
+function resolveVoiceEngine(): VoiceEngineId {
+  // 1. Settings file wins. Lives at $LAX_DATA_DIR/settings.json (typically
+  //    ~/.lax/settings.json). Read on each session creation so users can
+  //    flip engines from the UI without restarting the server.
+  try {
+    const dataDir = process.env.LAX_DATA_DIR || join(homedir(), ".lax");
+    const sp = join(dataDir, "settings.json");
+    if (existsSync(sp)) {
+      const saved = JSON.parse(readFileSync(sp, "utf-8")) as { voiceEngine?: string };
+      if (saved.voiceEngine === "tier4" || saved.voiceEngine === "python" || saved.voiceEngine === "cpu_fallback") {
+        return saved.voiceEngine;
+      }
+    }
+  } catch { /* settings file unreadable — fall through to env */ }
+  // 2-4. Env-var fallbacks (dev only).
+  if (process.env.LAX_VOICE_TIER === "4") return "tier4";
+  if (process.env.LAX_VOICE_GPU === "0") return "cpu_fallback";
+  return "python";
+}
 
 const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
 // 0.25s @ 16kHz — single short words like "hey" or "yes" need to make it
@@ -77,10 +114,15 @@ const MAX_UTTERANCE_SAMPLES = 16000 * 22; // 22s hard cap (VAD itself cuts at 20
 
 export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
   return (ctx: VoiceSessionContext): VoiceSession => {
-    if (GPU_MODE) {
-      logger.info(`[voice-session] ${ctx.sessionId}: GPU mode (LAX_VOICE_GPU=1) → routing to Python sidecar`);
+    // Per-session engine resolution — settings.json is the source of truth so
+    // a UI dropdown change picks up on the next voice session without restart.
+    const engine = resolveVoiceEngine();
+    const TIER4_MODE = engine === "tier4";
+    if (engine === "python") {
+      logger.info(`[voice-session] ${ctx.sessionId}: engine=python → routing to Python sidecar`);
       return createGpuSession(ctx, runTurn);
     }
+    logger.info(`[voice-session] ${ctx.sessionId}: engine=${engine} → in-process${TIER4_MODE ? " (Tier 4 native ONNX Kokoro)" : " (CPU fallback Sherpa+Matcha)"}`);
 
     let stt: StreamingSTT | null = null;
     let tts: StreamingTTS | null = null;
@@ -124,7 +166,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
           ensureModelDownloaded((p) => {
             if (!closed) ctx.sendEvent({ type: "stt_model_progress", overallPct: Math.round(p.overallPct), file: p.file });
           }),
-          ensureTTSModelDownloaded((p) => {
+          TIER4_MODE ? Promise.resolve() : ensureTTSModelDownloaded((p) => {
             if (!closed) ctx.sendEvent({ type: "tts_model_progress", overallPct: Math.round(p.overallPct), file: p.file });
           }),
           ensureVadModelDownloaded((p) => {

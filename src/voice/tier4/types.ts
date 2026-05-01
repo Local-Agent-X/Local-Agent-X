@@ -18,8 +18,13 @@ export interface Tier4Config {
 
 export const TIER4_DEFAULTS: Required<Omit<Tier4Config, "cacheDir">> = {
   modelId: "onnx-community/Kokoro-82M-v1.0-ONNX",
-  dtype: "q4f16",
-  device: process.platform === "win32" ? "dml" : "cpu",
+  // q8 + cpu is the safest combo across hardware. q4f16 + DML threw a
+  // ConvTranspose "parameter is incorrect" error on a real session even
+  // though the smoke-test path passed, so the default needs to be the
+  // proven-safe combo. Users can opt back into DML via LAX_VOICE_TIER4_DEVICE=dml
+  // once the failure mode is understood and a fallback handler exists.
+  dtype: "q8",
+  device: "cpu",
   voice: "am_michael",
   speed: 1.05,
 };

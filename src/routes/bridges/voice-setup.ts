@@ -144,6 +144,8 @@ async function tierStatus(tier: VoiceTier) {
         modelId: r.defaultModelId,
         defaultVoice: r.defaultVoice,
         defaultDevice: r.defaultDevice,
+        requestedDevice: r.requestedDevice,
+        requestedDtype: r.requestedDtype,
         modelCached: m.cached,
         approxBytes: m.approxBytes,
         reason: r.reason,

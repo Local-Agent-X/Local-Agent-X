@@ -122,6 +122,9 @@ export async function createTier4StreamingTTS(
     },
     get sampleRate() { return state.engine?.sampleRate ?? TIER4_SAMPLE_RATE; },
     get voice() { return cfg.voice; },
+    get runtime() {
+      return state.engine?.runtime ?? { device: cfg.device, dtype: cfg.dtype, fellBack: false };
+    },
     __diag: state.diag,
   };
 

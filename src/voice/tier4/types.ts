@@ -42,6 +42,10 @@ export interface Tier4StreamingTTS {
   speak(text: string): void;
   readonly sampleRate: number;
   readonly voice: string;
+  /** Active engine binding. fellBack=true means a GPU EP was requested
+   *  but bind failed, so device/dtype show the cpu+q8 fallback. Used by
+   *  voice-session to surface engine state in voice_ready. */
+  readonly runtime: { device: Tier4Device; dtype: Tier4Dtype; fellBack: boolean };
   cancel(): void;
   close(): void;
 }
@@ -54,4 +58,7 @@ export interface Tier4DiagSnapshot {
   firstAudioMs: number | null;
   totalSentences: number;
   cancelledSentences: number;
+  /** True if the engine was asked for a GPU EP (DML/CUDA/WebGPU) that failed
+   *  to bind and got transparently fallen back to cpu+q8. */
+  fellBack: boolean;
 }

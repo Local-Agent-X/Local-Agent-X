@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../../server-utils.js";
 import { createLogger } from "../../logger.js";
+import { kokoroVoiceList, tier4Readiness } from "../../voice/tier4/index.js";
 
 const logger = createLogger("routes.bridges.voice-setup");
 
@@ -144,6 +145,8 @@ async function tierStatus(tier: VoiceTier) {
         modelId: r.defaultModelId,
         defaultVoice: r.defaultVoice,
         defaultDevice: r.defaultDevice,
+        requestedDevice: r.requestedDevice,
+        requestedDtype: r.requestedDtype,
         modelCached: m.cached,
         approxBytes: m.approxBytes,
         reason: r.reason,
@@ -268,6 +271,13 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
       }
       killTier(tier.id);
       json(200, { ok: true });
+    } catch (e) { json(500, { error: safeErrorMessage(e) }); }
+    return true;
+  }
+
+  if (method === "GET" && url.pathname === "/api/voice/tier4/voices") {
+    try {
+      json(200, { default: tier4Readiness().defaultVoice, voices: kokoroVoiceList() });
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }

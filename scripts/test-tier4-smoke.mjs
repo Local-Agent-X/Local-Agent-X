@@ -28,6 +28,9 @@
 import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { createTier4, tier4Readiness, snapshotTier4Diag, isValidKokoroVoice } from "../src/voice/tier4/index.ts";
+import { SPEED_MIN, SPEED_MAX } from "../src/voice/tier4/env.ts";
+import { VALID_WHISPER_VARIANTS } from "../src/voice/whisper-model-fetch.ts";
+import { VALID_WHISPER_PROVIDERS } from "../src/voice/whisper-stream.ts";
 
 const args = process.argv.slice(2);
 const arg = (k) => {
@@ -48,13 +51,38 @@ if (voice && !isValidKokoroVoice(voice)) {
   console.error(`[tier4 smoke] --voice "${voice}" is not a known Kokoro voice; falling back to default`);
   voice = undefined;
 }
+// --speed shares the same SPEED_MIN/SPEED_MAX bounds the env helper and the
+// settings reader enforce. An out-of-range value used to silently flow into
+// kokoro-js and either distort phonemes or throw an opaque ORT error; now
+// the smoke test fails fast with a one-line reason naming the bound.
 const speedArg = arg("--speed");
-const speed = speedArg != null && Number.isFinite(Number(speedArg)) ? Number(speedArg) : undefined;
+let speed;
+if (speedArg != null) {
+  const sn = Number(speedArg);
+  if (!Number.isFinite(sn)) {
+    console.error(`[tier4 smoke] --speed "${speedArg}" is not a number`);
+    process.exit(2);
+  }
+  if (sn < SPEED_MIN || sn > SPEED_MAX) {
+    console.error(`[tier4 smoke] --speed ${sn} out of range [${SPEED_MIN}..${SPEED_MAX}]`);
+    process.exit(2);
+  }
+  speed = sn;
+}
 const device = arg("--device") || undefined;
 const dtype = arg("--dtype") || undefined;
 const wavOut = arg("--write") || null;
 const runStt = flag("--stt");
-const whisperDevice = arg("--whisper-device") || undefined;
+const whisperDeviceRaw = arg("--whisper-device") || undefined;
+const whisperDevice = (() => {
+  if (!whisperDeviceRaw) return undefined;
+  const lower = whisperDeviceRaw.toLowerCase();
+  if (!VALID_WHISPER_PROVIDERS.has(lower)) {
+    console.error(`[tier4 smoke] --whisper-device "${whisperDeviceRaw}" not in [${[...VALID_WHISPER_PROVIDERS].join("|")}]`);
+    process.exit(2);
+  }
+  return lower;
+})();
 
 const strict = flag("--strict");
 const gateMinAudioMs = argNum("--min-audio-ms") ?? (strict ? 1500 : null);
@@ -174,7 +202,17 @@ async function runWhisperRoundTrip() {
     await import("../src/voice/whisper-model-fetch.ts");
   const { createWhisperTranscriber } = await import("../src/voice/whisper-stream.ts");
 
-  const whisperModel = arg("--whisper-model") || undefined;
+  const whisperModelRaw = arg("--whisper-model") || undefined;
+  let whisperModel;
+  if (whisperModelRaw) {
+    const lower = whisperModelRaw.toLowerCase();
+    if (!VALID_WHISPER_VARIANTS.has(lower)) {
+      throw new Error(
+        `--whisper-model "${whisperModelRaw}" not in [${[...VALID_WHISPER_VARIANTS].join("|")}]`,
+      );
+    }
+    whisperModel = lower;
+  }
   const variantOpts = whisperModel ? { variant: whisperModel } : {};
 
   console.log("[tier4 smoke] stt: ensuring whisper model is on disk...");

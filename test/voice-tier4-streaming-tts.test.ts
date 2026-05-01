@@ -28,7 +28,7 @@ vi.mock("../src/voice/tier4/kokoro-engine.js", () => ({
   },
 }));
 
-import { createTier4StreamingTTS } from "../src/voice/tier4/streaming-tts.js";
+import { createTier4StreamingTTS, snapshotTier4Diag } from "../src/voice/tier4/streaming-tts.js";
 
 function flushTask(): Promise<void> {
   // Lets pending microtasks (then handlers attached to a resolved synth)
@@ -118,5 +118,35 @@ describe("createTier4StreamingTTS — cancel + speak race", () => {
     await flushTask();
 
     expect(onAudio).not.toHaveBeenCalled();
+  });
+
+  it("diag tracks totalSentences and cancelledSentences across a barge-in cycle", async () => {
+    const onAudio = vi.fn();
+    const tts = await createTier4StreamingTTS(
+      { device: "cpu", dtype: "q8" },
+      { onAudio },
+    );
+
+    tts.speak("first");
+    await flushTask();
+    tts.cancel();
+    tts.speak("second");
+    await flushTask();
+
+    // First synth resolves AFTER cancel — must count as cancelled, not delivered.
+    pendingSynths.shift()!({ audio: new Float32Array(8).fill(0.1), sampling_rate: 24000 });
+    await flushTask();
+
+    // Second synth resolves cleanly — counts as delivered.
+    pendingSynths.shift()!({ audio: new Float32Array(8).fill(0.2), sampling_rate: 24000 });
+    await flushTask();
+
+    const diag = snapshotTier4Diag(tts);
+    expect(diag).not.toBeNull();
+    expect(diag!.totalSentences).toBe(1);
+    expect(diag!.cancelledSentences).toBe(1);
+    expect(onAudio).toHaveBeenCalledTimes(1);
+
+    tts.close();
   });
 });

@@ -27,3 +27,31 @@ export const KOKORO_VOICES: ReadonlySet<string> = new Set<string>([
 export function isValidKokoroVoice(v: string | undefined | null): boolean {
   return typeof v === 'string' && KOKORO_VOICES.has(v);
 }
+
+// Voice ID convention: <lang_letter><gender_letter>_<name>
+// e.g. am_michael = a (en-US) + m (male) + michael; bf_emma = b (en-GB) + f (female) + emma.
+const LANG_BY_LETTER: Record<string, string> = {
+  a: 'en-US', b: 'en-GB', e: 'es', f: 'fr',
+  h: 'hi', i: 'it', j: 'ja', p: 'pt-BR', z: 'zh-CN',
+};
+
+export interface KokoroVoiceMeta {
+  id: string;
+  language: string;
+  gender: 'female' | 'male' | 'unknown';
+  name: string;
+}
+
+export function kokoroVoiceMeta(id: string): KokoroVoiceMeta {
+  const underscore = id.indexOf('_');
+  const prefix = underscore >= 0 ? id.slice(0, underscore) : id;
+  const name = underscore >= 0 ? id.slice(underscore + 1) : '';
+  const language = LANG_BY_LETTER[prefix[0]] || 'other';
+  const g = prefix[1];
+  const gender: KokoroVoiceMeta['gender'] = g === 'f' ? 'female' : g === 'm' ? 'male' : 'unknown';
+  return { id, language, gender, name };
+}
+
+export function kokoroVoiceList(): KokoroVoiceMeta[] {
+  return [...KOKORO_VOICES].map(kokoroVoiceMeta);
+}

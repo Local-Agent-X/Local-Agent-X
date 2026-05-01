@@ -18,6 +18,10 @@ interface VoiceTier {
   healthUrl: string;
   description: string;
   diskFootprint: string;
+  // "native" tiers run in-process (no Python sidecar). install/start/stop
+  // routes are inert for them; status comes from a readiness probe instead
+  // of /healthz. Defaults to "sidecar" for back-compat with existing tiers.
+  kind?: "sidecar" | "native";
 }
 
 const REPO_ROOT = resolve(process.cwd());
@@ -73,6 +77,18 @@ const TIERS: VoiceTier[] = [
     description: "Fine-tuned voice cloning via GPT-SoVITS v2Pro. Train your own voices (~30–45 min on RTX 3060).",
     diskFootprint: "~5 GB (per trained voice: ~50–100 MB)",
   },
+  {
+    id: "native",
+    label: "Native ONNX (Kokoro)",
+    kind: "native",
+    port: 0,
+    venvDir: "",
+    installerPath: "",
+    startCmd: () => ({ command: "", args: [] }),
+    healthUrl: "",
+    description: "Tier 4 — in-process Kokoro-82M (ONNX). No Python sidecar; uses DirectML/CPU. ~1s first audio, RTF 0.4 on RTX 3060.",
+    diskFootprint: "~80 MB (auto-downloads on first use)",
+  },
 ];
 
 const tierById = (id: string) => TIERS.find(t => t.id === id);
@@ -108,6 +124,33 @@ async function probeHealth(url: string): Promise<{ ok: boolean; ready?: boolean;
 }
 
 async function tierStatus(tier: VoiceTier) {
+  if (tier.kind === "native") {
+    const { tier4Readiness, tier4ModelDownloaded } = await import("../../voice/tier4/index.js");
+    const r = tier4Readiness();
+    const m = await tier4ModelDownloaded();
+    return {
+      id: tier.id,
+      label: tier.label,
+      port: 0,
+      kind: "native" as const,
+      description: tier.description,
+      diskFootprint: tier.diskFootprint,
+      installed: r.ready,           // "installed" == npm deps resolvable
+      hasInstaller: false,          // npm install handles it
+      running: r.ready && m.cached, // model present means ready to use
+      healthy: r.ready && m.cached, // no /healthz to probe
+      pid: null,
+      healthPayload: {
+        modelId: r.defaultModelId,
+        defaultVoice: r.defaultVoice,
+        defaultDevice: r.defaultDevice,
+        modelCached: m.cached,
+        approxBytes: m.approxBytes,
+        reason: r.reason,
+      },
+    };
+  }
+
   const installed = isInstalled(tier);
   const proc = running.get(tier.id);
   const trackedRunning = !!(proc && proc.exitCode === null);
@@ -143,6 +186,9 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
       const tierId = String((body as { tier?: string }).tier || "");
       const tier = tierById(tierId);
       if (!tier) { json(400, { error: `Unknown tier: ${tierId}` }); return true; }
+      if (tier.kind === "native") {
+        json(400, { error: "Tier 4 native is provisioned via npm install — no install/start/stop needed." }); return true;
+      }
       if (!tier.installerPath || !existsSync(tier.installerPath)) {
         json(400, { error: `No installer for ${tier.label}. See docs.` }); return true;
       }
@@ -171,6 +217,9 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
       const tierId = String((body as { tier?: string }).tier || "");
       const tier = tierById(tierId);
       if (!tier) { json(400, { error: `Unknown tier: ${tierId}` }); return true; }
+      if (tier.kind === "native") {
+        json(400, { error: "Tier 4 native runs in-process — no sidecar to start." }); return true;
+      }
       if (!isInstalled(tier)) { json(400, { error: `${tier.label} is not installed yet.` }); return true; }
 
       // Already up?
@@ -214,6 +263,9 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
       const tierId = String((body as { tier?: string }).tier || "");
       const tier = tierById(tierId);
       if (!tier) { json(400, { error: `Unknown tier: ${tierId}` }); return true; }
+      if (tier.kind === "native") {
+        json(400, { error: "Tier 4 native runs in-process — nothing to stop." }); return true;
+      }
       killTier(tier.id);
       json(200, { ok: true });
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }

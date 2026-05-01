@@ -42,6 +42,7 @@ import {
 import { createGpuSession } from "./gpu-session.js";
 import { createTier4, tier4VariantFromEnv } from "./tier4/index.js";
 import { VALID_DEVICES as VALID_TIER4_DEVICES, VALID_DTYPES as VALID_TIER4_DTYPES, SPEED_MIN as TIER4_SPEED_MIN, SPEED_MAX as TIER4_SPEED_MAX } from "./tier4/env.js";
+import { isValidKokoroVoice } from "./tier4/kokoro-voices.js";
 import type { Tier4Device, Tier4Dtype, Tier4StreamingTTS } from "./tier4/types.js";
 
 import { createLogger } from "../logger.js";
@@ -135,7 +136,13 @@ function resolveVoiceSettings(): ResolvedVoiceSettings {
       const tdt = saved.voiceTier4Dtype?.toLowerCase() as Tier4Dtype | undefined;
       if (tdt && VALID_TIER4_DTYPES.has(tdt)) out.tier4Dtype = tdt;
       const tv = typeof saved.voiceTier4Voice === "string" ? saved.voiceTier4Voice.trim() : "";
-      if (tv) out.tier4Voice = tv;
+      if (tv) {
+        if (isValidKokoroVoice(tv)) {
+          out.tier4Voice = tv;
+        } else {
+          logger.warn(`[voice-session] settings.voiceTier4Voice="${tv}" is not a known Kokoro voice; using default`);
+        }
+      }
       const ts = saved.voiceTier4Speed;
       if (typeof ts === "number" && Number.isFinite(ts) && ts >= TIER4_SPEED_MIN && ts <= TIER4_SPEED_MAX) {
         out.tier4Speed = ts;

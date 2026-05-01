@@ -321,8 +321,16 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         });
 
         stackReady = true;
+        // tier4 surfaces the loaded voice ID so the badge can show *which*
+        // Kokoro voice actually loaded; this matters if settings.voiceTier4Voice
+        // was unknown and fell back to default. Speed comes from voiceSettings
+        // (single source of truth — kokoro-engine doesn't re-expose it).
         const ttsRuntime = TIER4_MODE
-          ? (tts as unknown as Tier4StreamingTTS).runtime
+          ? {
+              ...(tts as unknown as Tier4StreamingTTS).runtime,
+              voice: (tts as unknown as Tier4StreamingTTS).voice,
+              ...(voiceSettings.tier4Speed !== undefined ? { speed: voiceSettings.tier4Speed } : {}),
+            }
           : null;
         const sttRuntime = whisper?.runtime
           ? { ...whisper.runtime, model: whisperPaths.variant }

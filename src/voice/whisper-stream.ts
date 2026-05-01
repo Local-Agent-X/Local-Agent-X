@@ -26,14 +26,36 @@ export const VALID_WHISPER_PROVIDERS: ReadonlySet<WhisperProvider> = new Set<Whi
   "cpu", "cuda", "dml", "coreml",
 ]);
 
-function envProvider(): WhisperProvider | undefined {
-  const v = process.env.LAX_VOICE_WHISPER_DEVICE?.toLowerCase() as WhisperProvider | undefined;
-  return v && VALID_WHISPER_PROVIDERS.has(v) ? v : undefined;
+export const DEFAULT_WHISPER_PROVIDER: WhisperProvider = "cpu";
+
+function normalizeProvider(v: unknown): WhisperProvider | undefined {
+  if (typeof v !== "string") return undefined;
+  const trimmed = v.trim().toLowerCase();
+  if (!trimmed) return undefined;
+  return VALID_WHISPER_PROVIDERS.has(trimmed as WhisperProvider)
+    ? (trimmed as WhisperProvider)
+    : undefined;
 }
 
 export interface WhisperTranscriberOptions {
   /** Override the ONNX execution provider. Falls back to env, then "cpu". */
   provider?: WhisperProvider;
+}
+
+/**
+ * Pick the requested execution provider with caller > env > default
+ * precedence. Mirrors `resolveWhisperVariant` in whisper-model-fetch.ts so
+ * both knobs share the same shape (trim+lowercase+validate, invalid values
+ * fall through silently). The returned value is what the caller should
+ * try first; fallback to cpu on actual init failure is handled by
+ * `createWhisperTranscriber`.
+ */
+export function resolveWhisperProvider(
+  opts: WhisperTranscriberOptions = {},
+): WhisperProvider {
+  return normalizeProvider(opts.provider)
+    ?? normalizeProvider(process.env.LAX_VOICE_WHISPER_DEVICE)
+    ?? DEFAULT_WHISPER_PROVIDER;
 }
 
 export interface WhisperTranscriber {
@@ -93,11 +115,7 @@ export function createWhisperTranscriber(
 ): WhisperTranscriber {
   const sherpa = requireCJS("sherpa-onnx") as SherpaModule;
 
-  // Caller-supplied (settings.json) wins over env. Both validated.
-  const requested =
-    (opts.provider && VALID_WHISPER_PROVIDERS.has(opts.provider) ? opts.provider : undefined)
-    ?? envProvider();
-  let activeProvider: WhisperProvider = requested ?? "cpu";
+  let activeProvider: WhisperProvider = resolveWhisperProvider(opts);
   let fellBack = false;
   let recognizer: SherpaOfflineRecognizer;
   try {

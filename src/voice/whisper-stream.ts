@@ -2,24 +2,68 @@
 //
 // Zipformer streaming STT gives us live partials with low WER-vs-latency
 // tradeoff but ~10-12% word errors on conversational speech. Whisper
-// base.en gets ~5% WER — we invoke it once per utterance (between VAD
+// tiny.en gets ~5-7% WER — we invoke it once per utterance (between VAD
 // speech-start and speech-end) to produce the authoritative final
 // transcript that the agent acts on.
 //
 // Whisper is synchronous: acceptWaveform + decode blocks the Node event
-// loop for ~200-400ms per utterance on CPU. We serialize via a promise
+// loop for ~150-300ms per utterance on CPU. We serialize via a promise
 // chain so the mic keeps flowing while one job finishes before the next
 // starts; concurrent jobs would corrupt the internal stream state.
+//
+// GPU opt-in: defaults to provider:cpu. Users opt into CUDA/DirectML via
+// LAX_VOICE_WHISPER_DEVICE. If the GPU EP fails to bind we fall back to
+// cpu once so the user still gets transcripts.
 
 import { createRequire } from "node:module";
 import type { WhisperModelPaths } from "./whisper-model-fetch.js";
 
 const requireCJS = createRequire(import.meta.url);
 
+export type WhisperProvider = "cpu" | "cuda" | "dml" | "coreml";
+
+export const VALID_WHISPER_PROVIDERS: ReadonlySet<WhisperProvider> = new Set<WhisperProvider>([
+  "cpu", "cuda", "dml", "coreml",
+]);
+
+export const DEFAULT_WHISPER_PROVIDER: WhisperProvider = "cpu";
+
+function normalizeProvider(v: unknown): WhisperProvider | undefined {
+  if (typeof v !== "string") return undefined;
+  const trimmed = v.trim().toLowerCase();
+  if (!trimmed) return undefined;
+  return VALID_WHISPER_PROVIDERS.has(trimmed as WhisperProvider)
+    ? (trimmed as WhisperProvider)
+    : undefined;
+}
+
+export interface WhisperTranscriberOptions {
+  /** Override the ONNX execution provider. Falls back to env, then "cpu". */
+  provider?: WhisperProvider;
+}
+
+/**
+ * Pick the requested execution provider with caller > env > default
+ * precedence. Mirrors `resolveWhisperVariant` in whisper-model-fetch.ts so
+ * both knobs share the same shape (trim+lowercase+validate, invalid values
+ * fall through silently). The returned value is what the caller should
+ * try first; fallback to cpu on actual init failure is handled by
+ * `createWhisperTranscriber`.
+ */
+export function resolveWhisperProvider(
+  opts: WhisperTranscriberOptions = {},
+): WhisperProvider {
+  return normalizeProvider(opts.provider)
+    ?? normalizeProvider(process.env.LAX_VOICE_WHISPER_DEVICE)
+    ?? DEFAULT_WHISPER_PROVIDER;
+}
+
 export interface WhisperTranscriber {
   /** Transcribe a completed utterance. Samples must be 16kHz Int16 mono. */
   transcribe(pcm: Int16Array): Promise<string>;
   close(): void;
+  /** Active provider + whether we fell back from a GPU EP. */
+  readonly runtime: { provider: WhisperProvider; fellBack: boolean };
 }
 
 interface SherpaOfflineRecognizer {
@@ -34,12 +78,12 @@ interface SherpaOfflineStream {
   free(): void;
 }
 
-export function createWhisperTranscriber(paths: WhisperModelPaths): WhisperTranscriber {
-  const sherpa = requireCJS("sherpa-onnx") as {
-    createOfflineRecognizer: (config: unknown) => SherpaOfflineRecognizer;
-  };
+interface SherpaModule {
+  createOfflineRecognizer: (config: unknown) => SherpaOfflineRecognizer;
+}
 
-  const config = {
+function buildConfig(paths: WhisperModelPaths, provider: WhisperProvider): unknown {
+  return {
     modelConfig: {
       whisper: {
         encoder: paths.encoder,
@@ -56,19 +100,46 @@ export function createWhisperTranscriber(paths: WhisperModelPaths): WhisperTrans
       // OfflineRecognizer init. For parallelism we'd need the native addon
       // build of sherpa-onnx.
       numThreads: 1,
-      provider: "cpu",
+      provider,
       debug: 0,
       modelType: "whisper",
     },
     decodingMethod: "greedy_search",
     maxActivePaths: 4,
   };
+}
 
+export function createWhisperTranscriber(
+  paths: WhisperModelPaths,
+  opts: WhisperTranscriberOptions = {},
+): WhisperTranscriber {
+  const sherpa = requireCJS("sherpa-onnx") as SherpaModule;
+
+  let activeProvider: WhisperProvider = resolveWhisperProvider(opts);
+  let fellBack = false;
   let recognizer: SherpaOfflineRecognizer;
   try {
-    recognizer = sherpa.createOfflineRecognizer(config);
+    recognizer = sherpa.createOfflineRecognizer(buildConfig(paths, activeProvider));
   } catch (e) {
-    throw new Error(`sherpa-onnx Whisper init failed: ${(e as Error).message}`);
+    // GPU EP can fail at init (CUDA libs missing, DML kernel coverage gaps,
+    // unsupported provider in this sherpa-onnx build). Fall back to CPU
+    // once — the user still gets transcripts even on a misconfigured GPU
+    // setup. CPU init failures bubble up untouched.
+    if (activeProvider === "cpu") {
+      throw new Error(`sherpa-onnx Whisper init failed: ${(e as Error).message}`);
+    }
+    if (process.env.LAX_VOICE_DEBUG) {
+      console.warn(
+        `[whisper] ${activeProvider} init failed (${(e as Error).message}); falling back to cpu`,
+      );
+    }
+    activeProvider = "cpu";
+    fellBack = true;
+    try {
+      recognizer = sherpa.createOfflineRecognizer(buildConfig(paths, activeProvider));
+    } catch (e2) {
+      throw new Error(`sherpa-onnx Whisper init failed: ${(e2 as Error).message}`);
+    }
   }
 
   let closed = false;
@@ -108,5 +179,7 @@ export function createWhisperTranscriber(paths: WhisperModelPaths): WhisperTrans
       closed = true;
       try { recognizer.free(); } catch {}
     },
+
+    get runtime() { return { provider: activeProvider, fellBack }; },
   };
 }

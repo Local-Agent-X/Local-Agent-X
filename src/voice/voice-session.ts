@@ -26,10 +26,24 @@ import { createStreamingTTS, type StreamingTTS } from "./tts-stream.js";
 import { ensureTTSModelDownloaded, getTTSModelPaths } from "./tts-model-fetch.js";
 import { createStreamingVAD, type StreamingVAD } from "./vad-stream.js";
 import { ensureVadModelDownloaded, getVadModelPaths } from "./vad-model-fetch.js";
-import { createWhisperTranscriber, type WhisperTranscriber } from "./whisper-stream.js";
-import { ensureWhisperModelDownloaded, getWhisperModelPaths } from "./whisper-model-fetch.js";
+import {
+  createWhisperTranscriber,
+  VALID_WHISPER_PROVIDERS,
+  type WhisperProvider,
+  type WhisperTranscriber,
+} from "./whisper-stream.js";
+import {
+  ensureWhisperModelDownloaded,
+  getWhisperModelPaths,
+  VALID_WHISPER_VARIANTS,
+  DEFAULT_WHISPER_VARIANT,
+  type WhisperVariant,
+} from "./whisper-model-fetch.js";
 import { createGpuSession } from "./gpu-session.js";
 import { createTier4, tier4VariantFromEnv } from "./tier4/index.js";
+import { VALID_DEVICES as VALID_TIER4_DEVICES, VALID_DTYPES as VALID_TIER4_DTYPES, SPEED_MIN as TIER4_SPEED_MIN, SPEED_MAX as TIER4_SPEED_MAX } from "./tier4/env.js";
+import { isValidKokoroVoice } from "./tier4/kokoro-voices.js";
+import type { Tier4Device, Tier4Dtype, Tier4StreamingTTS } from "./tier4/types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("voice.voice-session");
@@ -85,24 +99,68 @@ export type VoiceTurnRunner = (input: VoiceTurnInput) => Promise<VoiceTurnResult
 //                    Python or GPU needed — emergency fallback only)
 export type VoiceEngineId = "tier4" | "python" | "cpu_fallback";
 
-function resolveVoiceEngine(): VoiceEngineId {
+interface ResolvedVoiceSettings {
+  engine: VoiceEngineId;
+  tier4Device?: Tier4Device;
+  tier4Dtype?: Tier4Dtype;
+  tier4Voice?: string;
+  tier4Speed?: number;
+  whisperDevice?: WhisperProvider;
+  whisperModel?: WhisperVariant;
+}
+
+function resolveVoiceSettings(): ResolvedVoiceSettings {
   // 1. Settings file wins. Lives at $LAX_DATA_DIR/settings.json (typically
   //    ~/.lax/settings.json). Read on each session creation so users can
-  //    flip engines from the UI without restarting the server.
+  //    flip engines / devices from the UI without restarting the server.
+  const out: ResolvedVoiceSettings = { engine: "python" };
+  let savedEngine: VoiceEngineId | undefined;
   try {
     const dataDir = process.env.LAX_DATA_DIR || join(homedir(), ".lax");
     const sp = join(dataDir, "settings.json");
     if (existsSync(sp)) {
-      const saved = JSON.parse(readFileSync(sp, "utf-8")) as { voiceEngine?: string };
+      const saved = JSON.parse(readFileSync(sp, "utf-8")) as {
+        voiceEngine?: string;
+        voiceTier4Device?: string;
+        voiceTier4Dtype?: string;
+        voiceTier4Voice?: string;
+        voiceTier4Speed?: number;
+        voiceWhisperDevice?: string;
+        voiceWhisperModel?: string;
+      };
       if (saved.voiceEngine === "tier4" || saved.voiceEngine === "python" || saved.voiceEngine === "cpu_fallback") {
-        return saved.voiceEngine;
+        savedEngine = saved.voiceEngine;
       }
+      const td = saved.voiceTier4Device?.toLowerCase() as Tier4Device | undefined;
+      if (td && VALID_TIER4_DEVICES.has(td)) out.tier4Device = td;
+      const tdt = saved.voiceTier4Dtype?.toLowerCase() as Tier4Dtype | undefined;
+      if (tdt && VALID_TIER4_DTYPES.has(tdt)) out.tier4Dtype = tdt;
+      const tv = typeof saved.voiceTier4Voice === "string" ? saved.voiceTier4Voice.trim() : "";
+      if (tv) {
+        if (isValidKokoroVoice(tv)) {
+          out.tier4Voice = tv;
+        } else {
+          logger.warn(`[voice-session] settings.voiceTier4Voice="${tv}" is not a known Kokoro voice; using default`);
+        }
+      }
+      const ts = saved.voiceTier4Speed;
+      if (typeof ts === "number" && Number.isFinite(ts) && ts >= TIER4_SPEED_MIN && ts <= TIER4_SPEED_MAX) {
+        out.tier4Speed = ts;
+      }
+      const wd = saved.voiceWhisperDevice?.toLowerCase() as WhisperProvider | undefined;
+      if (wd && VALID_WHISPER_PROVIDERS.has(wd)) out.whisperDevice = wd;
+      const wm = saved.voiceWhisperModel?.toLowerCase() as WhisperVariant | undefined;
+      if (wm && VALID_WHISPER_VARIANTS.has(wm)) out.whisperModel = wm;
     }
   } catch { /* settings file unreadable — fall through to env */ }
-  // 2-4. Env-var fallbacks (dev only).
-  if (process.env.LAX_VOICE_TIER === "4") return "tier4";
-  if (process.env.LAX_VOICE_GPU === "0") return "cpu_fallback";
-  return "python";
+  if (savedEngine) {
+    out.engine = savedEngine;
+  } else if (process.env.LAX_VOICE_TIER === "4") {
+    out.engine = "tier4";
+  } else if (process.env.LAX_VOICE_GPU === "0") {
+    out.engine = "cpu_fallback";
+  }
+  return out;
 }
 
 const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
@@ -114,9 +172,10 @@ const MAX_UTTERANCE_SAMPLES = 16000 * 22; // 22s hard cap (VAD itself cuts at 20
 
 export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
   return (ctx: VoiceSessionContext): VoiceSession => {
-    // Per-session engine resolution — settings.json is the source of truth so
-    // a UI dropdown change picks up on the next voice session without restart.
-    const engine = resolveVoiceEngine();
+    // Per-session settings resolution — settings.json is the source of truth
+    // so a UI dropdown change picks up on the next voice session without restart.
+    const voiceSettings = resolveVoiceSettings();
+    const engine = voiceSettings.engine;
     const TIER4_MODE = engine === "tier4";
     if (engine === "python") {
       logger.info(`[voice-session] ${ctx.sessionId}: engine=python → routing to Python sidecar`);
@@ -174,7 +233,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
           }),
           ensureWhisperModelDownloaded((p) => {
             if (!closed) ctx.sendEvent({ type: "whisper_model_progress", overallPct: Math.round(p.overallPct), file: p.file });
-          }),
+          }, undefined, { variant: voiceSettings.whisperModel }),
         ]);
         if (closed) return;
 
@@ -219,8 +278,17 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
 
         if (TIER4_MODE) {
           logger.info(`[voice-session] ${ctx.sessionId}: TIER4 mode (LAX_VOICE_TIER=4) → native Kokoro ONNX`);
+          // Only spread defined fields — the kokoro-engine merge below treats
+          // explicit `undefined` as a real override and would clobber env vars.
           const t4 = await createTier4(
-            { variant: tier4VariantFromEnv(), referenceWavPath: process.env.LAX_VOICE_CLONE_REF },
+            {
+              variant: tier4VariantFromEnv(),
+              referenceWavPath: process.env.LAX_VOICE_CLONE_REF,
+              ...(voiceSettings.tier4Device ? { device: voiceSettings.tier4Device } : {}),
+              ...(voiceSettings.tier4Dtype ? { dtype: voiceSettings.tier4Dtype } : {}),
+              ...(voiceSettings.tier4Voice ? { voice: voiceSettings.tier4Voice } : {}),
+              ...(voiceSettings.tier4Speed !== undefined ? { speed: voiceSettings.tier4Speed } : {}),
+            },
             ttsCallbacks,
           );
           tts = t4 as unknown as StreamingTTS;
@@ -229,7 +297,10 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         }
         ttsSampleRate = tts.sampleRate;
 
-        whisper = createWhisperTranscriber(getWhisperModelPaths());
+        const whisperPaths = getWhisperModelPaths({ variant: voiceSettings.whisperModel });
+        whisper = createWhisperTranscriber(whisperPaths, {
+          provider: voiceSettings.whisperDevice,
+        });
 
         stt = createStreamingSTT(getModelPaths(), {
           onPartial: (text) => { if (!closed) ctx.sendEvent({ type: "partial", text }); },
@@ -250,7 +321,27 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         });
 
         stackReady = true;
-        ctx.sendEvent({ type: "voice_ready", ttsSampleRate: tts.sampleRate });
+        // tier4 surfaces the loaded voice ID so the badge can show *which*
+        // Kokoro voice actually loaded; this matters if settings.voiceTier4Voice
+        // was unknown and fell back to default. Speed comes from voiceSettings
+        // (single source of truth — kokoro-engine doesn't re-expose it).
+        const ttsRuntime = TIER4_MODE
+          ? {
+              ...(tts as unknown as Tier4StreamingTTS).runtime,
+              voice: (tts as unknown as Tier4StreamingTTS).voice,
+              ...(voiceSettings.tier4Speed !== undefined ? { speed: voiceSettings.tier4Speed } : {}),
+            }
+          : null;
+        const sttRuntime = whisper?.runtime
+          ? { ...whisper.runtime, model: whisperPaths.variant }
+          : null;
+        ctx.sendEvent({
+          type: "voice_ready",
+          ttsSampleRate: tts.sampleRate,
+          engine,
+          tts: ttsRuntime,
+          stt: sttRuntime,
+        });
         logger.info(`[voice-session] ${ctx.sessionId}: ready — draining ${pendingFrames.length} pending frames`);
         while (pendingFrames.length > 0 && !closed && stt) {
           const f = pendingFrames.shift()!;

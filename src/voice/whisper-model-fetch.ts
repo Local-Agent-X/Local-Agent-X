@@ -1,62 +1,92 @@
 // Whisper model fetcher (offline post-correction pass).
 //
-// Downloads OpenAI Whisper tiny.en int8 (~104MB total) on first use to
-// ~/.lax/models/whisper-tiny-en/. Runs after VAD speech-end on the full
-// buffered utterance.
+// Three Whisper variants are supported. Picked per-session in this order:
+//   1. explicit { variant } argument
+//   2. LAX_VOICE_WHISPER_MODEL env var (lowercased + validated)
+//   3. settings.json `voiceWhisperModel` (resolved by voice-session, then
+//      passed in as an option)
+//   4. DEFAULT_WHISPER_VARIANT (tiny.en) — preserves existing behavior.
 //
-// Model: csukuangfj/sherpa-onnx-whisper-tiny.en. Tiny.en is the smallest
-// Whisper variant — ~7-10% WER on English (worse than small.en's ~3%) but
-// transcribes a typical utterance in ~150-300ms instead of small.en's
-// 700-1500ms on consumer CPU. For voice chat where conversation pace
-// beats word-perfect transcripts, tiny.en is the right tradeoff.
-// To switch tiers, change WHISPER_VARIANT + minBytes in MODEL_FILES.
+//   tiny.en   ~104MB   ~7-10% WER   ~150-300ms / utterance   (default)
+//   base.en   ~150MB   ~5-7% WER    ~300-600ms / utterance
+//   small.en  ~280MB   ~3-5% WER    ~700-1500ms / utterance
+//
+// Files live at ~/.lax/models/whisper-<variant-with-dot->dash>/ and are
+// pulled from csukuangfj/sherpa-onnx-whisper-<variant> on first use.
 
 import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const WHISPER_VARIANT = "tiny.en";
-const MODEL_DIR = join(homedir(), ".lax", "models", `whisper-${WHISPER_VARIANT.replace(".", "-")}`);
-const MODEL_BASE = `https://huggingface.co/csukuangfj/sherpa-onnx-whisper-${WHISPER_VARIANT}/resolve/main`;
+export type WhisperVariant = "tiny.en" | "base.en" | "small.en";
+
+export const VALID_WHISPER_VARIANTS: ReadonlySet<WhisperVariant> =
+  new Set<WhisperVariant>(["tiny.en", "base.en", "small.en"]);
+
+export const DEFAULT_WHISPER_VARIANT: WhisperVariant = "tiny.en";
+
+export function resolveWhisperVariant(opts?: { variant?: WhisperVariant }): WhisperVariant {
+  if (opts?.variant && VALID_WHISPER_VARIANTS.has(opts.variant)) return opts.variant;
+  const envRaw = process.env.LAX_VOICE_WHISPER_MODEL?.toLowerCase().trim();
+  if (envRaw && VALID_WHISPER_VARIANTS.has(envRaw as WhisperVariant)) {
+    return envRaw as WhisperVariant;
+  }
+  return DEFAULT_WHISPER_VARIANT;
+}
 
 interface ModelFile { name: string; url: string; minBytes: number; }
 
-// Actual sizes for int8-quantized Whisper small.en:
-//   encoder ~85MB
-//   decoder ~262MB
-//   tokens ~835KB
-// Thresholds catch clearly-truncated downloads; sherpa-onnx re-verifies
-// ONNX integrity on load.
-// Sanity thresholds sized for tiny.en int8: encoder ~13MB, decoder ~90MB,
-// tokens ~836KB. If you change WHISPER_VARIANT, update these too —
-// previous values were calibrated for small.en (~85MB/~262MB) and would
-// reject a healthy tiny.en download as "truncated".
-const MODEL_FILES: ModelFile[] = [
-  { name: `${WHISPER_VARIANT}-encoder.int8.onnx`, url: `${MODEL_BASE}/${WHISPER_VARIANT}-encoder.int8.onnx`, minBytes: 8_000_000 },
-  { name: `${WHISPER_VARIANT}-decoder.int8.onnx`, url: `${MODEL_BASE}/${WHISPER_VARIANT}-decoder.int8.onnx`, minBytes: 50_000_000 },
-  { name: `${WHISPER_VARIANT}-tokens.txt`,        url: `${MODEL_BASE}/${WHISPER_VARIANT}-tokens.txt`,        minBytes: 100_000 },
-];
+interface VariantSpec { encoder: number; decoder: number; tokens: number; }
+
+// Conservative truncation guards — ~60% of real int8 size. sherpa-onnx
+// re-verifies ONNX integrity on load so these only catch obviously
+// truncated downloads.
+const VARIANT_SPECS: Record<WhisperVariant, VariantSpec> = {
+  "tiny.en":  { encoder:  8_000_000, decoder:  50_000_000, tokens: 100_000 },
+  "base.en":  { encoder: 14_000_000, decoder:  55_000_000, tokens: 100_000 },
+  "small.en": { encoder: 50_000_000, decoder: 180_000_000, tokens: 100_000 },
+};
+
+function modelDirFor(variant: WhisperVariant): string {
+  return join(homedir(), ".lax", "models", `whisper-${variant.replace(".", "-")}`);
+}
+
+function modelFilesFor(variant: WhisperVariant): ModelFile[] {
+  const base = `https://huggingface.co/csukuangfj/sherpa-onnx-whisper-${variant}/resolve/main`;
+  const spec = VARIANT_SPECS[variant];
+  return [
+    { name: `${variant}-encoder.int8.onnx`, url: `${base}/${variant}-encoder.int8.onnx`, minBytes: spec.encoder },
+    { name: `${variant}-decoder.int8.onnx`, url: `${base}/${variant}-decoder.int8.onnx`, minBytes: spec.decoder },
+    { name: `${variant}-tokens.txt`,        url: `${base}/${variant}-tokens.txt`,        minBytes: spec.tokens  },
+  ];
+}
 
 export interface WhisperModelPaths {
   encoder: string;
   decoder: string;
   tokens: string;
   modelDir: string;
+  variant: WhisperVariant;
 }
 
-export function getWhisperModelPaths(): WhisperModelPaths {
+export function getWhisperModelPaths(opts?: { variant?: WhisperVariant }): WhisperModelPaths {
+  const variant = resolveWhisperVariant(opts);
+  const modelDir = modelDirFor(variant);
   return {
-    modelDir: MODEL_DIR,
-    encoder: join(MODEL_DIR, `${WHISPER_VARIANT}-encoder.int8.onnx`),
-    decoder: join(MODEL_DIR, `${WHISPER_VARIANT}-decoder.int8.onnx`),
-    tokens:  join(MODEL_DIR, `${WHISPER_VARIANT}-tokens.txt`),
+    variant,
+    modelDir,
+    encoder: join(modelDir, `${variant}-encoder.int8.onnx`),
+    decoder: join(modelDir, `${variant}-decoder.int8.onnx`),
+    tokens:  join(modelDir, `${variant}-tokens.txt`),
   };
 }
 
-export function whisperModelExists(): boolean {
-  const p = getWhisperModelPaths();
+export function whisperModelExists(opts?: { variant?: WhisperVariant }): boolean {
+  const variant = resolveWhisperVariant(opts);
+  const p = getWhisperModelPaths({ variant });
+  const files = modelFilesFor(variant);
   try {
-    for (const f of MODEL_FILES) {
+    for (const f of files) {
       const full = join(p.modelDir, f.name);
       if (!existsSync(full)) return false;
       if (statSync(full).size < f.minBytes) return false;
@@ -77,14 +107,17 @@ export interface WhisperFetchProgress {
 export async function ensureWhisperModelDownloaded(
   onProgress?: (p: WhisperFetchProgress) => void,
   signal?: AbortSignal,
+  opts?: { variant?: WhisperVariant },
 ): Promise<WhisperModelPaths> {
-  if (whisperModelExists()) return getWhisperModelPaths();
+  const variant = resolveWhisperVariant(opts);
+  if (whisperModelExists({ variant })) return getWhisperModelPaths({ variant });
 
-  const paths = getWhisperModelPaths();
+  const paths = getWhisperModelPaths({ variant });
+  const files = modelFilesFor(variant);
   mkdirSync(paths.modelDir, { recursive: true });
 
   let overallTotal = 0;
-  for (const f of MODEL_FILES) {
+  for (const f of files) {
     try {
       const res = await fetch(f.url, { method: "HEAD", redirect: "follow", signal });
       const len = parseInt(res.headers.get("content-length") || "0", 10);
@@ -93,11 +126,11 @@ export async function ensureWhisperModelDownloaded(
   }
 
   let overallSoFar = 0;
-  for (let i = 0; i < MODEL_FILES.length; i++) {
-    const f = MODEL_FILES[i];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
     const outPath = join(paths.modelDir, f.name);
     try {
-      await downloadOne(f, outPath, i, MODEL_FILES.length, overallSoFar, overallTotal, onProgress, signal);
+      await downloadOne(f, outPath, i, files.length, overallSoFar, overallTotal, onProgress, signal);
       overallSoFar += statSync(outPath).size;
     } catch (e) {
       try { unlinkSync(outPath); } catch {}
@@ -105,7 +138,7 @@ export async function ensureWhisperModelDownloaded(
     }
   }
 
-  if (!whisperModelExists()) {
+  if (!whisperModelExists({ variant })) {
     throw new Error("Whisper model download completed but sanity-check failed");
   }
   return paths;

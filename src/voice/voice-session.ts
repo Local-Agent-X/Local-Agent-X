@@ -32,7 +32,13 @@ import {
   type WhisperProvider,
   type WhisperTranscriber,
 } from "./whisper-stream.js";
-import { ensureWhisperModelDownloaded, getWhisperModelPaths } from "./whisper-model-fetch.js";
+import {
+  ensureWhisperModelDownloaded,
+  getWhisperModelPaths,
+  VALID_WHISPER_VARIANTS,
+  DEFAULT_WHISPER_VARIANT,
+  type WhisperVariant,
+} from "./whisper-model-fetch.js";
 import { createGpuSession } from "./gpu-session.js";
 import { createTier4, tier4VariantFromEnv } from "./tier4/index.js";
 import { VALID_DEVICES as VALID_TIER4_DEVICES, VALID_DTYPES as VALID_TIER4_DTYPES } from "./tier4/env.js";
@@ -97,6 +103,7 @@ interface ResolvedVoiceSettings {
   tier4Device?: Tier4Device;
   tier4Dtype?: Tier4Dtype;
   whisperDevice?: WhisperProvider;
+  whisperModel?: WhisperVariant;
 }
 
 function resolveVoiceSettings(): ResolvedVoiceSettings {
@@ -114,6 +121,7 @@ function resolveVoiceSettings(): ResolvedVoiceSettings {
         voiceTier4Device?: string;
         voiceTier4Dtype?: string;
         voiceWhisperDevice?: string;
+        voiceWhisperModel?: string;
       };
       if (saved.voiceEngine === "tier4" || saved.voiceEngine === "python" || saved.voiceEngine === "cpu_fallback") {
         savedEngine = saved.voiceEngine;
@@ -124,6 +132,8 @@ function resolveVoiceSettings(): ResolvedVoiceSettings {
       if (tdt && VALID_TIER4_DTYPES.has(tdt)) out.tier4Dtype = tdt;
       const wd = saved.voiceWhisperDevice?.toLowerCase() as WhisperProvider | undefined;
       if (wd && VALID_WHISPER_PROVIDERS.has(wd)) out.whisperDevice = wd;
+      const wm = saved.voiceWhisperModel?.toLowerCase() as WhisperVariant | undefined;
+      if (wm && VALID_WHISPER_VARIANTS.has(wm)) out.whisperModel = wm;
     }
   } catch { /* settings file unreadable — fall through to env */ }
   if (savedEngine) {
@@ -206,7 +216,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
           }),
           ensureWhisperModelDownloaded((p) => {
             if (!closed) ctx.sendEvent({ type: "whisper_model_progress", overallPct: Math.round(p.overallPct), file: p.file });
-          }),
+          }, undefined, { variant: voiceSettings.whisperModel }),
         ]);
         if (closed) return;
 
@@ -268,7 +278,8 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         }
         ttsSampleRate = tts.sampleRate;
 
-        whisper = createWhisperTranscriber(getWhisperModelPaths(), {
+        const whisperPaths = getWhisperModelPaths({ variant: voiceSettings.whisperModel });
+        whisper = createWhisperTranscriber(whisperPaths, {
           provider: voiceSettings.whisperDevice,
         });
 
@@ -294,7 +305,9 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         const ttsRuntime = TIER4_MODE
           ? (tts as unknown as Tier4StreamingTTS).runtime
           : null;
-        const sttRuntime = whisper?.runtime ?? null;
+        const sttRuntime = whisper?.runtime
+          ? { ...whisper.runtime, model: whisperPaths.variant }
+          : null;
         ctx.sendEvent({
           type: "voice_ready",
           ttsSampleRate: tts.sampleRate,

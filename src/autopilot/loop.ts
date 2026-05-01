@@ -20,6 +20,45 @@ import type { StartAutopilotDeps } from "./start.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("autopilot.loop");
 
+// ── Sidebar broadcast helpers ─────────────────────────────────────────────
+//
+// Autopilot ops were previously invisible to the AGENTS sidebar — they ran
+// for hours emitting nothing the user could watch. The worker pool's
+// session-bridge handles bg_op_* events for op_* IDs, but autopilot uses
+// op_ap_* IDs and runs its own loop, bypassing that bridge entirely.
+// These helpers wire autopilot directly into broadcastAll so the sidebar
+// card surfaces start / per-round progress / completion in real time.
+
+// Autopilot ops aren't tied to a single chat session — pass null so the
+// envelope matches the worker pool's bg_op_* broadcast shape that chat.js
+// expects: { type: "event", sessionId, event: { type: "bg_op_*", ... } }.
+// Earlier I was sending { type: "bg_op_*", ... } at the top level, which
+// chat.js silently dropped because it checks msg.event.type, not msg.type.
+async function broadcast(event: Record<string, unknown>): Promise<void> {
+  try {
+    const { broadcastAll } = await import("../chat-ws.js");
+    // chat.js requires sessionId TRUTHY (`if (msg.type === 'event' && msg.sessionId && msg.event)`).
+    // null is falsy so it'd skip the whole bg_op handler block. Use "autopilot"
+    // as a sentinel session id — chat.js doesn't route bg_op_* per-session
+    // anyway (sidebar is global).
+    broadcastAll({ type: "event", sessionId: "autopilot", event });
+  } catch (e) {
+    logger.warn(`[autopilot.loop] broadcast threw: ${(e as Error).message}`);
+  }
+}
+
+async function broadcastStarted(opId: string, topic: string): Promise<void> {
+  await broadcast({ type: "bg_op_started", opId, task: topic, provider: "autopilot" });
+}
+
+async function broadcastProgress(opId: string, line: string): Promise<void> {
+  await broadcast({ type: "bg_op_progress", opId, line });
+}
+
+async function broadcastCompleted(opId: string, summary: string, ok: boolean): Promise<void> {
+  await broadcast({ type: "bg_op_completed", opId, status: ok ? "completed" : "failed", summary });
+}
+
 // ── Stop signal registry ──────────────────────────────────────────────────
 //
 // POST /api/autopilot/stop/:id sets the flag. Loop checks at top of each
@@ -71,6 +110,10 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
   const startMs = Date.now();
   const deadline = startMs + config.durationMs;
 
+  // Surface the autopilot card in the AGENTS sidebar immediately. Any
+  // connected browser tab gets a live "Autopilot: <topic>" tile to watch.
+  void broadcastStarted(op.id, config.topic);
+
   let round = 0;
   let noopRoundsInARow = 0;
   let totalSelfEditCalls = 0;
@@ -109,6 +152,7 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
 
       addOpEvent(op, "progress", `Round ${round} starting (${Math.round(timeRemainingMs / 60_000)} min left)`);
       persistOp(op, deps.workspaceDir);
+      void broadcastProgress(op.id, `▶ Round ${round} starting (${Math.round(timeRemainingMs / 60_000)} min budget left)`);
 
       // Bound the round agent by the remaining time budget. Without this,
       // a thrashing agent (e.g. tool retry loop) could run far past the
@@ -215,12 +259,15 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
         });
         noopRoundsInARow = 0;
         addOpEvent(op, "progress", `Round ${round} passed (${commitSha?.slice(0, 8) || "no-sha"}, ${validation.filesChanged.length} files)`);
+        void broadcastProgress(op.id, `✓ Round ${round} passed — ${validation.filesChanged.length} file${validation.filesChanged.length === 1 ? "" : "s"}, commit ${commitSha?.slice(0, 8) || "no-sha"}`);
       } else if (validation.outcome === "noop") {
         noopRoundsInARow++;
         addOpEvent(op, "info", `Round ${round} no-op (${noopRoundsInARow}/${config.maxNoopRounds})`);
+        void broadcastProgress(op.id, `⏭ Round ${round} no-op (${noopRoundsInARow}/${config.maxNoopRounds})`);
       } else {
         // failed-build / failed-size / failed-test — already reverted
         addOpEvent(op, "error", `Round ${round} ${validation.outcome}: ${validation.detail.slice(0, 200)}`);
+        void broadcastProgress(op.id, `✗ Round ${round} ${validation.outcome}: ${validation.detail.slice(0, 100)}`);
       }
 
       const result: RoundResult = {
@@ -261,6 +308,17 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
     op.completedAt = Date.now();
     addOpEvent(op, "done", renderSummaryMarkdown(summary));
     persistOp(op, deps.workspaceDir);
+
+    // Sidebar: surface the final state. The card flips from "working" to
+    // completed/failed/cancelled and shows the one-line summary so the user
+    // can see at a glance how the run ended without opening the report.
+    const completedRounds = (op.autopilotRounds || []).length;
+    const passedRounds = (op.autopilotRounds || []).filter(r => r.outcome === "passed").length;
+    void broadcastCompleted(
+      op.id,
+      `${finalState} — ${completedRounds} rounds, ${passedRounds} passed${totalSelfEditCalls > 0 ? `, ${totalSelfEditCalls} self_edit calls` : ""}`,
+      op.status === "completed",
+    );
 
     // Persist a summary file alongside operation.json for easy review
     try {

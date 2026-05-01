@@ -137,6 +137,33 @@ export function setupChatWebSocket(server: Server, authToken: string) {
       sessionIds: [...activeChats.keys()].filter(id => !activeChats.get(id)!.done),
     }));
 
+    // Replay bg_op_started for any currently-running autopilot ops so
+    // a fresh page load (or post-restart reconnect) sees the AGENTS card
+    // for runs that started before this WS connection. Without this, an
+    // autopilot launched at T0, server restarted at T1, browser reconnected
+    // at T2 = the user has no visibility into the live autopilot until it
+    // emits its next bg_op_progress (which could be 5+ minutes away).
+    void (async () => {
+      try {
+        const { listActiveAutopilotOps } = await import("./autopilot/loop.js");
+        for (const op of listActiveAutopilotOps()) {
+          // Match the worker pool's broadcast envelope so chat.js's
+          // msg.event.type handler fires. Earlier I sent
+          // { type: "broadcast", event: ... } which no handler matched.
+          ws.send(JSON.stringify({
+            type: "event",
+            sessionId: "autopilot",  // chat.js requires truthy sessionId
+            event: {
+              type: "bg_op_started",
+              opId: op.id,
+              task: op.autopilot?.topic || "Autopilot",
+              provider: "autopilot",
+            },
+          }));
+        }
+      } catch { /* autopilot module not loadable — skip silently */ }
+    })();
+
     ws.on("message", async (data: Buffer) => {
       let msg: Record<string, unknown>;
       try {

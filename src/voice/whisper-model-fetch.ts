@@ -1,39 +1,38 @@
 // Whisper model fetcher (offline post-correction pass).
 //
-// Downloads OpenAI Whisper tiny.en int8 (~104MB total) on first use to
-// ~/.lax/models/whisper-tiny-en/. Runs after VAD speech-end on the full
+// Downloads OpenAI Whisper small.en int8 (~350MB total) on first use to
+// ~/.lax/models/whisper-small-en/. Runs after VAD speech-end on the full
 // buffered utterance.
 //
-// Model: csukuangfj/sherpa-onnx-whisper-tiny.en. Tiny.en is the smallest
-// Whisper variant — ~7-10% WER on English (worse than small.en's ~3%) but
-// transcribes a typical utterance in ~150-300ms instead of small.en's
-// 700-1500ms on consumer CPU. For voice chat where conversation pace
-// beats word-perfect transcripts, tiny.en is the right tradeoff.
+// Model: csukuangfj/sherpa-onnx-whisper-small.en. Small.en is the
+// quality-vs-speed sweet spot for CPU users — ~3% WER (vs tiny.en's
+// 7-10%, vs base.en's 5-7%) at ~700-1500ms per typical utterance on a
+// modern consumer CPU. Most users don't have a discrete GPU, so making
+// CPU transcription as accurate as practical is the highest-impact win.
+// Upgrade path from tiny.en (Apr 2026): existing tiny.en cache stays at
+// ~/.lax/models/whisper-tiny-en/ and is harmless; small.en lands in its
+// own folder. Users notice ~3x accuracy jump, ~3-5x slower transcription.
 // To switch tiers, change WHISPER_VARIANT + minBytes in MODEL_FILES.
 
 import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const WHISPER_VARIANT = "tiny.en";
+const WHISPER_VARIANT = "small.en";
 const MODEL_DIR = join(homedir(), ".lax", "models", `whisper-${WHISPER_VARIANT.replace(".", "-")}`);
 const MODEL_BASE = `https://huggingface.co/csukuangfj/sherpa-onnx-whisper-${WHISPER_VARIANT}/resolve/main`;
 
 interface ModelFile { name: string; url: string; minBytes: number; }
 
 // Actual sizes for int8-quantized Whisper small.en:
-//   encoder ~85MB
-//   decoder ~262MB
-//   tokens ~835KB
-// Thresholds catch clearly-truncated downloads; sherpa-onnx re-verifies
-// ONNX integrity on load.
-// Sanity thresholds sized for tiny.en int8: encoder ~13MB, decoder ~90MB,
-// tokens ~836KB. If you change WHISPER_VARIANT, update these too —
-// previous values were calibrated for small.en (~85MB/~262MB) and would
-// reject a healthy tiny.en download as "truncated".
+//   encoder ~85MB, decoder ~262MB, tokens ~835KB.
+// Sanity thresholds catch clearly-truncated downloads; sherpa-onnx
+// re-verifies ONNX integrity on load. If you change WHISPER_VARIANT,
+// recalibrate these — wrong thresholds either reject healthy downloads
+// or accept truncated ones.
 const MODEL_FILES: ModelFile[] = [
-  { name: `${WHISPER_VARIANT}-encoder.int8.onnx`, url: `${MODEL_BASE}/${WHISPER_VARIANT}-encoder.int8.onnx`, minBytes: 8_000_000 },
-  { name: `${WHISPER_VARIANT}-decoder.int8.onnx`, url: `${MODEL_BASE}/${WHISPER_VARIANT}-decoder.int8.onnx`, minBytes: 50_000_000 },
+  { name: `${WHISPER_VARIANT}-encoder.int8.onnx`, url: `${MODEL_BASE}/${WHISPER_VARIANT}-encoder.int8.onnx`, minBytes: 60_000_000 },
+  { name: `${WHISPER_VARIANT}-decoder.int8.onnx`, url: `${MODEL_BASE}/${WHISPER_VARIANT}-decoder.int8.onnx`, minBytes: 200_000_000 },
   { name: `${WHISPER_VARIANT}-tokens.txt`,        url: `${MODEL_BASE}/${WHISPER_VARIANT}-tokens.txt`,        minBytes: 100_000 },
 ];
 

@@ -1269,6 +1269,8 @@ function cleanupVoiceResources() {
   const ttsBtn = document.getElementById('tts-toggle');
   if (ttsBtn) { ttsBtn.textContent = 'VOICE OFF'; ttsBtn.className = ''; }
   if (window.VoiceSphere) { try { VoiceSphere.hide(); } catch {} }
+  try { renderVoiceEngineBadge(null); } catch {}
+  window.LAX_VOICE_RUNTIME = null;
   updateVoiceUI();
 }
 
@@ -1300,6 +1302,8 @@ function handleVoiceWsMessage(e) {
       if (voicePlaybackNode && msg.ttsSampleRate) {
         voicePlaybackNode.port.postMessage({ cmd: 'setRate', rate: msg.ttsSampleRate });
       }
+      window.LAX_VOICE_RUNTIME = { engine: msg.engine || null, tts: msg.tts || null, stt: msg.stt || null };
+      try { renderVoiceEngineBadge(window.LAX_VOICE_RUNTIME); } catch (badgeErr) { console.warn('[voice] badge render failed:', badgeErr); }
       break;
     case 'vad_speech_start': isListening = true; updateVoiceUI();
       window.VoiceSphere && VoiceSphere.setState('listening'); break;
@@ -1426,6 +1430,31 @@ function stopSpeaking() {
 }
 function toggleTTS() { toggleMic(); }
 function fetchTTSAudio() { return null; } // shim
+
+
+function renderVoiceEngineBadge(rt) {
+  const el = document.getElementById('voice-engine-badge');
+  if (!el) return;
+  if (!rt || !rt.engine) { el.style.display = 'none'; el.textContent = ''; el.classList.remove('fellback'); return; }
+  const engineLabel = rt.engine === 'tier4' ? 'Tier 4'
+    : rt.engine === 'python' ? 'Python sidecar'
+    : rt.engine === 'cpu_fallback' ? 'CPU fallback'
+    : String(rt.engine);
+  const parts = [engineLabel];
+  if (rt.tts && rt.tts.device) {
+    const dev = String(rt.tts.device).toUpperCase();
+    parts.push(dev);
+    if (rt.tts.dtype) parts.push(String(rt.tts.dtype));
+  }
+  let fellBack = false;
+  if (rt.tts && rt.tts.fellBack) fellBack = true;
+  if (rt.stt && rt.stt.fellBack) fellBack = true;
+  let label = parts.join(' · ');
+  if (fellBack) label += ' (cpu fallback)';
+  el.textContent = label;
+  el.style.display = 'block';
+  el.classList.toggle('fellback', fellBack);
+}
 
 function updateVoiceUI(state) {
   const mic = document.getElementById('mic-btn'), ind = document.getElementById('voice-indicator');

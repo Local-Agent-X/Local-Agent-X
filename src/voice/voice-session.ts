@@ -41,7 +41,7 @@ import {
 } from "./whisper-model-fetch.js";
 import { createGpuSession } from "./gpu-session.js";
 import { createTier4, tier4VariantFromEnv } from "./tier4/index.js";
-import { VALID_DEVICES as VALID_TIER4_DEVICES, VALID_DTYPES as VALID_TIER4_DTYPES } from "./tier4/env.js";
+import { VALID_DEVICES as VALID_TIER4_DEVICES, VALID_DTYPES as VALID_TIER4_DTYPES, SPEED_MIN as TIER4_SPEED_MIN, SPEED_MAX as TIER4_SPEED_MAX } from "./tier4/env.js";
 import type { Tier4Device, Tier4Dtype, Tier4StreamingTTS } from "./tier4/types.js";
 
 import { createLogger } from "../logger.js";
@@ -102,6 +102,8 @@ interface ResolvedVoiceSettings {
   engine: VoiceEngineId;
   tier4Device?: Tier4Device;
   tier4Dtype?: Tier4Dtype;
+  tier4Voice?: string;
+  tier4Speed?: number;
   whisperDevice?: WhisperProvider;
   whisperModel?: WhisperVariant;
 }
@@ -120,6 +122,8 @@ function resolveVoiceSettings(): ResolvedVoiceSettings {
         voiceEngine?: string;
         voiceTier4Device?: string;
         voiceTier4Dtype?: string;
+        voiceTier4Voice?: string;
+        voiceTier4Speed?: number;
         voiceWhisperDevice?: string;
         voiceWhisperModel?: string;
       };
@@ -130,6 +134,12 @@ function resolveVoiceSettings(): ResolvedVoiceSettings {
       if (td && VALID_TIER4_DEVICES.has(td)) out.tier4Device = td;
       const tdt = saved.voiceTier4Dtype?.toLowerCase() as Tier4Dtype | undefined;
       if (tdt && VALID_TIER4_DTYPES.has(tdt)) out.tier4Dtype = tdt;
+      const tv = typeof saved.voiceTier4Voice === "string" ? saved.voiceTier4Voice.trim() : "";
+      if (tv) out.tier4Voice = tv;
+      const ts = saved.voiceTier4Speed;
+      if (typeof ts === "number" && Number.isFinite(ts) && ts >= TIER4_SPEED_MIN && ts <= TIER4_SPEED_MAX) {
+        out.tier4Speed = ts;
+      }
       const wd = saved.voiceWhisperDevice?.toLowerCase() as WhisperProvider | undefined;
       if (wd && VALID_WHISPER_PROVIDERS.has(wd)) out.whisperDevice = wd;
       const wm = saved.voiceWhisperModel?.toLowerCase() as WhisperVariant | undefined;
@@ -269,6 +279,8 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
               referenceWavPath: process.env.LAX_VOICE_CLONE_REF,
               ...(voiceSettings.tier4Device ? { device: voiceSettings.tier4Device } : {}),
               ...(voiceSettings.tier4Dtype ? { dtype: voiceSettings.tier4Dtype } : {}),
+              ...(voiceSettings.tier4Voice ? { voice: voiceSettings.tier4Voice } : {}),
+              ...(voiceSettings.tier4Speed !== undefined ? { speed: voiceSettings.tier4Speed } : {}),
             },
             ttsCallbacks,
           );

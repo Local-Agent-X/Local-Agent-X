@@ -1446,6 +1446,11 @@ function renderVoiceEngineBadge(rt) {
     parts.push(dev);
     if (rt.tts.dtype) parts.push(String(rt.tts.dtype));
   }
+  if (rt.stt && rt.stt.model) {
+    let whisper = 'whisper ' + String(rt.stt.model);
+    if (rt.stt.provider && rt.stt.provider !== 'cpu') whisper += '/' + String(rt.stt.provider);
+    parts.push(whisper);
+  }
   let fellBack = false;
   if (rt.tts && rt.tts.fellBack) fellBack = true;
   if (rt.stt && rt.stt.fellBack) fellBack = true;

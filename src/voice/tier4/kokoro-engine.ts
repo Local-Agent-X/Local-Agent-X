@@ -15,23 +15,7 @@
 import { configureHFCache, tier4ModelStatus } from "./voice-clone-loader.js";
 import type { Tier4Config, Tier4Device, Tier4Dtype } from "./types.js";
 import { TIER4_DEFAULTS, TIER4_SAMPLE_RATE } from "./types.js";
-
-const VALID_DEVICES: ReadonlySet<Tier4Device> = new Set<Tier4Device>([
-  "cpu", "wasm", "webgpu", "dml", "cuda", "auto",
-]);
-const VALID_DTYPES: ReadonlySet<Tier4Dtype> = new Set<Tier4Dtype>([
-  "fp32", "fp16", "q8", "q4", "q4f16",
-]);
-
-function envDevice(): Tier4Device | undefined {
-  const v = process.env.LAX_VOICE_TIER4_DEVICE?.toLowerCase() as Tier4Device | undefined;
-  return v && VALID_DEVICES.has(v) ? v : undefined;
-}
-
-function envDtype(): Tier4Dtype | undefined {
-  const v = process.env.LAX_VOICE_TIER4_DTYPE?.toLowerCase() as Tier4Dtype | undefined;
-  return v && VALID_DTYPES.has(v) ? v : undefined;
-}
+import { envDevice, envDtype, envVoice, envSpeed } from "./env.js";
 
 type RawAudio = { audio: Float32Array; sampling_rate: number };
 
@@ -66,6 +50,8 @@ export async function createKokoroEngine(init: KokoroEngineInit): Promise<Kokoro
   const envOverrides: Partial<Tier4Config> = {};
   const ed = envDevice(); if (ed) envOverrides.device = ed;
   const et = envDtype(); if (et) envOverrides.dtype = et;
+  const ev = envVoice(); if (ev) envOverrides.voice = ev;
+  const es = envSpeed(); if (es !== undefined) envOverrides.speed = es;
   const cfg = { ...TIER4_DEFAULTS, ...envOverrides, ...init.config };
   configureHFCache();
 

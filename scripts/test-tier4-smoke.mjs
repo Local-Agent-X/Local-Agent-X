@@ -10,6 +10,7 @@
 // Usage (run via tsx so the .ts files resolve):
 //   npx tsx scripts/test-tier4-smoke.mjs                    (default voice, TTS only)
 //   npx tsx scripts/test-tier4-smoke.mjs --voice af_bella   (named voice)
+//   npx tsx scripts/test-tier4-smoke.mjs --speed 1.2        (synthesis speed, 0.5-2.0)
 //   npx tsx scripts/test-tier4-smoke.mjs --device cpu       (force CPU EP)
 //   npx tsx scripts/test-tier4-smoke.mjs --device dml --dtype fp16  (GPU TTS opt-in)
 //   npx tsx scripts/test-tier4-smoke.mjs --write out.wav    (dump 24kHz PCM WAV)
@@ -30,6 +31,8 @@ const flag = (k) => args.includes(k);
 
 const prompt = arg("--text") || "Tier four is online. This is a quick smoke test of native ONNX voice.";
 const voice = arg("--voice") || undefined;
+const speedArg = arg("--speed");
+const speed = speedArg != null && Number.isFinite(Number(speedArg)) ? Number(speedArg) : undefined;
 const device = arg("--device") || undefined;
 const dtype = arg("--dtype") || undefined;
 const wavOut = arg("--write") || null;
@@ -51,7 +54,7 @@ const chunks = [];
 const ttsDone = new Promise((resolve, reject) => {
   const tStart = performance.now();
   let tSpeak = 0;
-  createTier4({ voice, device, dtype }, {
+  createTier4({ voice, device, dtype, speed }, {
     onAudio: (pcm, sr) => {
       if (firstAudioMs == null) firstAudioMs = performance.now() - tSpeak;
       sampleRate = sr;

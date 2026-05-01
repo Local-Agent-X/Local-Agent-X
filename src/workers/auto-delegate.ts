@@ -54,30 +54,53 @@ const SHORT_TASK_RE = /^(yes|no|ok|sure|thanks|hi|hello|what|when|where|why|how|
 // This closes the gap where casual "create an app" requests (≤ 14 words, no
 // file path) were running inline and burning the chat agent's context.
 const BUILD_NOUN_RE = /\b(build|create|make|design|develop|set\s+up|wire\s+up|bootstrap|scaffold|spin\s+up|put\s+together)\s+(?:me\s+|us\s+|you\s+)?(?:a|an|the|some|another|new)\s+(?:new\s+|small\s+|simple\s+|basic\s+|quick\s+|tiny\s+|full\s+|proper\s+|\w+\s+)?(app|application|page|dashboard|tool|feature|component|panel|view|widget|integration|service|endpoint|api|website|site|extension|plugin|script|module|workflow|bot|interface|frontend|backend|ui)s?\b/i;
+// Codex-specific: short investigative phrasings ("look into X", "why is Y
+// happening", "check whether Z") tend to spiral on Codex. The chat-side
+// context grows fast (read/grep loops), drift detectors fire mid-turn, and
+// 400 "No tool output found" errors pile up. Routing these to the worker
+// pool gives Codex a fresh ~5K-token context per investigation, which is
+// the failure mode Fix E was designed for. Anthropic doesn't have the same
+// failure profile so we don't lower its bar.
+//
+// This is the narrow re-introduction of provider-specific gating the
+// "remove Codex-only gate" comment below warned against — but only as an
+// additional firing condition on top of the shared rules, never to suppress
+// delegation that would have fired for everyone.
+const CODEX_INVESTIGATIVE_RE = /\b(why\s+(is|are|does|did|won't|can'?t)|what\s+is\s+(causing|wrong|happening)|look\s+into|check\s+(why|if|whether)|find\s+out\s+(why|how)|figure\s+out\s+(why|how)|investigate|diagnose|trace|debug)\b/i;
 
 /**
  * Should we delegate this chat message to the worker pool instead of
  * running it inline?
  *
- * Conditions (all must be true):
- *   - Channel is web (bridges/cron run their own loops; don't second-guess)
- *   - Message looks like a long task (would otherwise burn context AND
- *     hold the chat thread open while it grinds)
- *
- * No provider gate: even Anthropic (which doesn't drift like Codex) benefits
- * from delegation because the chat agent stays free to chat about other
- * things while the worker grinds. The user explicitly asked for this:
- * "if we keep main agent free to chat, all providers should delegate, not
- * just Codex."
+ * Conditions (any one is sufficient, beyond the channel + short-task gates):
+ *   - 50+ words (sheer length signals a long task)
+ *   - Tight build-verb + app-noun phrase ("create an app")
+ *   - Long-task verb + (15+ words OR multi-file cue)
+ *   - Codex specifically: investigative verb ("why is X", "look into Y",
+ *     "investigate", "debug") + > 4 words. Codex drifts on these short
+ *     prompts where Anthropic doesn't, so we widen the gate just for it.
  *
  * Sub-agents (delegate/agent_spawn) and any provider can be the worker —
  * the worker pool resolves provider per-op based on user settings.
  */
 export function shouldAutoDelegate(provider: string, message: string, channel: string): boolean {
-  void provider; // intentionally unused — was the codex-only gate, now removed
   if (channel !== "web") return false;
-  if (SHORT_TASK_RE.test(message.trim())) return false;
+  const trimmed = message.trim();
   const wordCount = message.split(/\s+/).length;
+  // Codex-only widening runs BEFORE the short-task filter because that filter
+  // strips anything starting with "why"/"what"/"how" — the exact words an
+  // investigative prompt opens with. We re-add a tight length+word floor here
+  // so a bare "why?" still stays inline, but "why is voice broken on this
+  // machine" delegates as intended. Anthropic doesn't take this branch.
+  if (
+    provider === "codex" &&
+    trimmed.length > 30 &&
+    wordCount > 4 &&
+    CODEX_INVESTIGATIVE_RE.test(message)
+  ) {
+    return true;
+  }
+  if (SHORT_TASK_RE.test(trimmed)) return false;
   if (wordCount >= 50) return true;
   // Tight verb→noun phrase ("create an app", "build me a dashboard") is on its
   // own enough — those are always multi-file scaffold jobs that should run in

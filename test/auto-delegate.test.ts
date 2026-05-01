@@ -490,3 +490,70 @@ describe("shouldAutoDelegate — build-verb + app-noun phrase", () => {
     expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(true);
   });
 });
+
+describe("shouldAutoDelegate — Codex investigative widening", () => {
+  // Codex drifts on short investigative prompts that Anthropic handles fine.
+  // Real session 2026-05-01 burned 4 turns / 350k tokens with evidence-stale
+  // aborts on prompts like "why isn't voice working" — we want those routed
+  // to the worker pool for fresh context. Anthropic stays inline.
+
+  it("delegates on Codex 'why is voice broken'", () => {
+    const msg = "why is voice broken on this machine";
+    expect(shouldAutoDelegate("codex", msg, "web")).toBe(true);
+  });
+
+  it("does NOT delegate on Anthropic 'why is voice broken' (no drift on short prompts)", () => {
+    const msg = "why is voice broken on this machine";
+    expect(shouldAutoDelegate("anthropic", msg, "web")).toBe(false);
+  });
+
+  it("delegates on Codex 'look into the failing tests'", () => {
+    const msg = "look into the failing tests in the heartbeat suite";
+    expect(shouldAutoDelegate("codex", msg, "web")).toBe(true);
+  });
+
+  it("delegates on Codex 'check why settings won't save'", () => {
+    const msg = "check why the settings won't save anymore today";
+    expect(shouldAutoDelegate("codex", msg, "web")).toBe(true);
+  });
+
+  it("delegates on Codex 'find out how the worker pool boots up'", () => {
+    const msg = "find out how the worker pool boots up at startup";
+    expect(shouldAutoDelegate("codex", msg, "web")).toBe(true);
+  });
+
+  it("delegates on Codex 'investigate the auto-delegate heuristic'", () => {
+    const msg = "investigate the auto-delegate heuristic in detail today";
+    expect(shouldAutoDelegate("codex", msg, "web")).toBe(true);
+  });
+
+  it("delegates on Codex 'figure out why the build is slow'", () => {
+    const msg = "figure out why the build is slow on this branch";
+    expect(shouldAutoDelegate("codex", msg, "web")).toBe(true);
+  });
+
+  it("does NOT delegate on Codex with too few words ('why' alone)", () => {
+    // 4 words doesn't clear the > 4 floor. The whole 30-char gate also kills it.
+    const msg = "why is voice broken anyway";
+    // 5 words but this lands at 28 chars → SHORT_TASK_RE 30-char tail wins.
+    expect(msg.length).toBeLessThanOrEqual(30);
+    expect(shouldAutoDelegate("codex", msg, "web")).toBe(false);
+  });
+
+  it("does NOT delegate on Codex 'how are you doing today' (no investigative pattern)", () => {
+    const msg = "how are you doing today my friend in there";
+    // 'how' triggers SHORT_TASK_RE greeting branch → false regardless.
+    expect(shouldAutoDelegate("codex", msg, "web")).toBe(false);
+  });
+
+  it("does NOT delegate on Codex passive 'the debug page is broken'", () => {
+    // 'debug' as adjective modifying 'page' shouldn't fire — but our regex
+    // matches the word 'debug' anywhere. This test pins the current trade-off:
+    // we accept some over-trigger on Codex because the cost of staying inline
+    // is high (token bloat + drift). If this becomes a real false-positive
+    // pain, tighten with a verb-position lookahead.
+    const msg = "the debug page is broken when I click the link";
+    // 10 words, 'debug' matches CODEX_INVESTIGATIVE_RE → currently delegates.
+    expect(shouldAutoDelegate("codex", msg, "web")).toBe(true);
+  });
+});

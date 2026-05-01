@@ -61,6 +61,100 @@ export const TURN_WALL_CLOCK_MS = 180_000; // 3 min
 export const MID_TURN_MIN_ITERATION = 5;
 export const MID_TURN_EVIDENCE_STALE_WINDOW = 3;
 
+/**
+ * Scrub orphaned tool_use / tool_result pairs from an OpenAI-style messages
+ * array. The Codex 400 "No tool output found for function call" error fires
+ * when an assistant.tool_calls entry references a tool_call_id whose result
+ * message isn't present (or vice versa — a tool result references an id that
+ * no preceding assistant.tool_calls declared).
+ *
+ * Sources of orphan state we've observed:
+ *   - Compaction strips an assistant message but leaves its tool result
+ *   - Tool execution silently fails to produce one of the expected results
+ *   - Subagent push interleaves a message between an assistant and its results
+ *
+ * Strategy: two-pass.
+ *   Pass 1 — collect the set of tool_call_ids declared by every assistant
+ *            message in order, and the set of tool_call_ids satisfied by a
+ *            subsequent tool message before the next assistant message.
+ *   Pass 2 — rewrite assistant.tool_calls to keep only ids that get satisfied
+ *            by a subsequent tool message; drop tool messages whose
+ *            tool_call_id isn't declared by any preceding assistant; drop
+ *            assistant messages that end up with empty tool_calls AND no
+ *            text content.
+ *
+ * This is the recovery for the "No tool output found" 400 — clearing
+ * previousResponseId alone wasn't enough, because the messages array
+ * itself was still corrupt and triggered the same 400 on the retry.
+ */
+export function scrubOrphanedToolCalls(
+  messages: ChatCompletionMessageParam[],
+): { messages: ChatCompletionMessageParam[]; droppedToolCalls: number; droppedToolResults: number; droppedAssistants: number } {
+  type ToolCall = { id: string; type: "function"; function: { name: string; arguments: string } };
+  const declaredIds = new Set<string>();
+  const satisfiedIds = new Set<string>();
+
+  // Pass 1 — what's declared, what's satisfied
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i] as unknown as Record<string, unknown>;
+    if (m.role === "assistant" && Array.isArray(m.tool_calls)) {
+      const ids = (m.tool_calls as ToolCall[]).map((tc) => tc.id);
+      for (const id of ids) declaredIds.add(id);
+      // Look ahead: any tool message before the next assistant satisfies an id
+      for (let j = i + 1; j < messages.length; j++) {
+        const n = messages[j] as unknown as Record<string, unknown>;
+        if (n.role === "tool" && typeof n.tool_call_id === "string") {
+          if (ids.includes(n.tool_call_id as string)) satisfiedIds.add(n.tool_call_id as string);
+        } else if (n.role === "assistant") {
+          break;
+        }
+      }
+    }
+  }
+
+  // Pass 2 — rewrite
+  let droppedToolCalls = 0;
+  let droppedToolResults = 0;
+  let droppedAssistants = 0;
+  const out: ChatCompletionMessageParam[] = [];
+
+  for (const m of messages) {
+    const r = m as unknown as Record<string, unknown>;
+    if (r.role === "assistant" && Array.isArray(r.tool_calls)) {
+      const original = r.tool_calls as ToolCall[];
+      const kept = original.filter((tc) => satisfiedIds.has(tc.id));
+      droppedToolCalls += original.length - kept.length;
+      const text = typeof r.content === "string" ? r.content : "";
+      if (kept.length === 0 && !text.trim()) {
+        // Empty assistant — drop entirely
+        droppedAssistants++;
+        continue;
+      }
+      if (kept.length === 0) {
+        // Keep the assistant text but strip the orphan tool_calls
+        const copy: Record<string, unknown> = { ...r };
+        delete copy.tool_calls;
+        out.push(copy as ChatCompletionMessageParam);
+      } else if (kept.length !== original.length) {
+        out.push({ ...r, tool_calls: kept } as ChatCompletionMessageParam);
+      } else {
+        out.push(m);
+      }
+    } else if (r.role === "tool" && typeof r.tool_call_id === "string") {
+      const id = r.tool_call_id as string;
+      if (!declaredIds.has(id)) {
+        droppedToolResults++;
+        continue;
+      }
+      out.push(m);
+    } else {
+      out.push(m);
+    }
+  }
+
+  return { messages: out, droppedToolCalls, droppedToolResults, droppedAssistants };
+}
+
 export function checkTokenCeiling(state: CeilingState): AgentTurn | null {
   const { totalInput, totalOutput, systemPrompt, messages, sessionId, model } = state;
   if (totalInput + totalOutput > TURN_TOKEN_CEILING) {

@@ -16,6 +16,7 @@ import {
   drainSubagentCompletions,
   handleEmptyResponse,
   handleNoToolCallBranch,
+  scrubOrphanedToolCalls,
 } from "./run-http-helpers.js";
 import { logRetry } from "../retry-telemetry.js";
 import { createLogger } from "../logger.js";
@@ -219,16 +220,42 @@ export async function runCodexAgentHttp(
         onEvent?.({ type: "context_status", percentage: 100, level: "emergency", usedTokens: 0, maxTokens: 0, compacted: true });
         continue;
       }
-      // Recovery for the 400 "No tool output found" error. This fires when
-      // our incremental-response path (previousResponseId + send-only-new-
-      // tool-results) drops or misorders a tool result, so the next request
-      // references a tool_call_id whose output isn't in the context Codex
-      // has. Fix: drop the response-id continuity, force a full-context
-      // resubmission on the next iteration. Costs the input tokens of one
-      // extra turn but recovers cleanly instead of failing the session.
+      // Recovery for the 400 "No tool output found" error. The error means an
+      // assistant.tool_calls entry references a tool_call_id whose tool result
+      // isn't in the context (or vice versa). Causes we've seen: compaction
+      // stripped one half of the pair, tool execution silently dropped a
+      // result, subagent push interleaved between assistant and its results.
+      //
+      // Recovery is two-step:
+      //   1. Drop response-chain continuity (was the only step pre-fix; alone
+      //      it kept hitting the same 400 because the messages array was
+      //      still corrupt).
+      //   2. Scrub the messages array — drop orphan tool_calls and orphan
+      //      tool-result messages so the next request sends a balanced
+      //      conversation. Without this, Codex re-rejects the same payload.
       if (/No tool output found for function call/i.test(errMsg) && iteration < maxIterations - 1) {
-        logger.warn(`[agent] Codex 400 "No tool output found" — invalidating previousResponseId and resending full context`);
-        logRetry({ kind: "custom", sessionId: options.sessionId, provider: "codex", model, detail: { reason: "no-tool-output-recovery", iteration } });
+        const before = messages.length;
+        const scrubbed = scrubOrphanedToolCalls(messages);
+        messages = scrubbed.messages;
+        logger.warn(
+          `[agent] Codex 400 "No tool output found" — scrubbed orphan pairs ` +
+            `(dropped ${scrubbed.droppedToolCalls} tool_calls, ${scrubbed.droppedToolResults} tool_results, ` +
+            `${scrubbed.droppedAssistants} empty assistants; messages ${before}→${messages.length}) ` +
+            `and forcing full-context resend`,
+        );
+        logRetry({
+          kind: "custom",
+          sessionId: options.sessionId,
+          provider: "codex",
+          model,
+          detail: {
+            reason: "no-tool-output-recovery",
+            iteration,
+            droppedToolCalls: scrubbed.droppedToolCalls,
+            droppedToolResults: scrubbed.droppedToolResults,
+            droppedAssistants: scrubbed.droppedAssistants,
+          },
+        });
         previousResponseId = undefined;
         lastContextLength = 0;
         continue;

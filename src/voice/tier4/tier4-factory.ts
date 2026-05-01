@@ -9,8 +9,9 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createTier4StreamingTTS as createKokoroPath } from "./streaming-tts.js";
-import type { Tier4Callbacks, Tier4Config, Tier4StreamingTTS } from "./types.js";
+import type { Tier4Callbacks, Tier4Config, Tier4Device, Tier4Dtype, Tier4StreamingTTS } from "./types.js";
 import { TIER4_DEFAULTS } from "./types.js";
+import { envDevice, envDtype } from "./env.js";
 
 export type Tier4Variant = "kokoro" | "chatterbox-clone";
 
@@ -58,6 +59,8 @@ export interface Tier4Readiness {
   defaultModelId: string;
   defaultVoice: string;
   defaultDevice: string;
+  requestedDevice: Tier4Device;
+  requestedDtype: Tier4Dtype;
   reason?: string;
 }
 
@@ -69,6 +72,8 @@ export function tier4Readiness(): Tier4Readiness {
     defaultModelId: TIER4_DEFAULTS.modelId,
     defaultVoice: TIER4_DEFAULTS.voice,
     defaultDevice: TIER4_DEFAULTS.device,
+    requestedDevice: envDevice() ?? TIER4_DEFAULTS.device,
+    requestedDtype: envDtype() ?? TIER4_DEFAULTS.dtype,
   };
   // resolve kokoro-js + onnxruntime-node lazily; createRequire avoids hard-
   // crashing the host when running outside the repo (e.g. unit tests).

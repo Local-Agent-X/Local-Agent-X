@@ -342,6 +342,17 @@
           <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-stt-engine"><option value="whisper">Whisper (Local — needs Lite sidecar)</option><option value="browser">Browser Web Speech API (No install — lower quality)</option><option value="none">None</option></select></div>
         </div>
         <div class="section-card">
+          <div class="section-title">Voice Engine</div>
+          <div class="section-desc">Which voice backend handles your audio. Pick once, applies to every voice session. Env vars (LAX_VOICE_TIER, LAX_VOICE_GPU) only override this for headless/CI runs.</div>
+          <div id="voice-engine-status" class="status-badge warn"><span class="status-dot"></span> Loading…</div>
+          <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-voice-engine" onchange="onVoiceEngineChange(this.value)">
+            <option value="tier4">Tier 4 Native ONNX (Kokoro) — no Python, ~1.2s first audio, recommended</option>
+            <option value="python">Python Sidecar — Lite / Pro RVC / Studio (cloning support, requires venv install)</option>
+            <option value="cpu_fallback">CPU Fallback (Sherpa+Matcha, slow) — emergency only</option>
+          </select></div>
+          <div class="field-hint" id="voice-engine-active-info" style="font-size:.74rem;color:var(--muted);margin-top:4px">&nbsp;</div>
+        </div>
+        <div class="section-card">
           <div class="section-title">Text-to-Speech</div>
           <div id="tts-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-tts-engine" onchange="onTtsEngineChange(this.value)">

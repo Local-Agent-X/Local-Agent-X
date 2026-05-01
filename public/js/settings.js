@@ -575,6 +575,7 @@ async function saveSettings() {
     ttsEngine: document.getElementById('cfg-tts-engine')?.value,
     ttsVoice: document.getElementById('cfg-tts-voice')?.value,
     xttsVoice: document.getElementById('cfg-xtts-voice')?.value,
+    voiceEngine: document.getElementById('cfg-voice-engine')?.value,
     sandbox: document.getElementById('cfg-sandbox')?.value,
   };
   localStorage.setItem('sax_settings', JSON.stringify(s));
@@ -630,6 +631,8 @@ async function loadSettings() {
     set('cfg-image-engine', s.imageEngine); set('cfg-stt-engine', s.sttEngine);
     set('cfg-tts-engine', s.ttsEngine); set('cfg-tts-voice', s.ttsVoice); set('cfg-sandbox', s.sandbox);
     set('cfg-xtts-voice', s.xttsVoice);
+    set('cfg-voice-engine', s.voiceEngine || 'tier4');
+    if (typeof refreshVoiceEngineStatus === 'function') refreshVoiceEngineStatus(s.voiceEngine || 'tier4');
     // Embedding settings
     set('cfg-emb-provider', s.embeddingProvider || 'ollama');
     set('cfg-emb-model', s.embeddingModel || '');
@@ -642,6 +645,42 @@ async function loadSettings() {
     if (s.provider) onProviderChange(s.provider);
   } catch {}
   checkSyncStatus();
+}
+
+// ── Voice Engine selection ──
+// Picks the backend (tier4 / python / cpu_fallback). Persists immediately to
+// settings.json via /api/settings so the next voice session picks it up — no
+// restart needed. The status row reflects what the server resolved.
+async function onVoiceEngineChange(engine) {
+  if (!engine) return;
+  try {
+    await (typeof apiPost === 'function' ? apiPost('/api/settings', { voiceEngine: engine }) : fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voiceEngine: engine }) }));
+    // Mirror to localStorage so a fresh load picks up the same choice before
+    // the server fetch races back.
+    try {
+      const saved = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+      saved.voiceEngine = engine;
+      localStorage.setItem('sax_settings', JSON.stringify(saved));
+    } catch {}
+    refreshVoiceEngineStatus(engine);
+  } catch (e) {
+    console.warn('[voice-engine] save failed:', e);
+  }
+}
+
+function refreshVoiceEngineStatus(engine) {
+  const badge = document.getElementById('voice-engine-status');
+  const info = document.getElementById('voice-engine-active-info');
+  if (!badge) return;
+  const labels = {
+    tier4: { name: 'Tier 4 Native (Kokoro ONNX)', detail: 'In-process, no Python. ~1.2s first audio on GPU (DirectML).' },
+    python: { name: 'Python Sidecar', detail: 'Requires installed venv. Sub-tier (Lite/Pro/Studio) controlled by which sidecar port is running.' },
+    cpu_fallback: { name: 'CPU Fallback (Sherpa+Matcha)', detail: 'Slow, lower quality. Use only if neither GPU nor Python sidecar are available.' },
+  };
+  const lbl = labels[engine] || { name: engine, detail: '' };
+  badge.className = 'status-badge ok';
+  badge.innerHTML = `<span class="status-dot"></span> Active: ${lbl.name}`;
+  if (info) info.textContent = lbl.detail;
 }
 
 async function onEmbProviderChange(provider) {

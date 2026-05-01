@@ -118,6 +118,64 @@ function onOpDispatched(info: { opId: string; task: string; lane: string }): voi
 }
 
 /**
+ * Pull the most informative single arg from a tool call — the path being
+ * written, the bash command, the search query — so the sidebar shows
+ * "→ write src/voice/voice-session.ts" instead of bare "→ write".
+ *
+ * Truncated to ~80 chars so the card stays readable.
+ */
+function summarizeToolArgs(toolName: string, args: Record<string, unknown> | undefined): string {
+  if (!args) return "";
+  const pick = (k: string): string => {
+    const v = args[k];
+    return typeof v === "string" ? v : "";
+  };
+  const shorten = (s: string, max = 80): string => {
+    const cleaned = s.replace(/\s+/g, " ").trim();
+    return cleaned.length > max ? cleaned.slice(0, max - 1) + "…" : cleaned;
+  };
+  // File paths — collapse the LAX repo prefix to keep the card tight.
+  const cleanPath = (p: string): string => p.replace(/^[A-Za-z]:[/\\]Users[/\\][^/\\]+[/\\]secret-agent-x[/\\]/i, "");
+  switch (toolName) {
+    case "write":
+    case "edit":
+    case "read":
+    case "view_image":
+      return shorten(cleanPath(pick("path") || pick("file_path")));
+    case "bash":
+    case "shell":
+      return shorten(pick("command") || pick("cmd"));
+    case "grep":
+      return shorten(`'${pick("pattern")}'${pick("path") ? " in " + cleanPath(pick("path")) : ""}`);
+    case "glob":
+      return shorten(pick("pattern"));
+    case "web_fetch":
+    case "http_request":
+      return shorten(pick("url"));
+    case "web_search":
+      return shorten(`'${pick("query")}'`);
+    case "self_edit":
+      return shorten(pick("task") || pick("description"));
+    case "op_submit_async":
+    case "op_submit":
+      return shorten(pick("task"));
+    case "op_status":
+    case "op_kill":
+    case "op_wait":
+      return shorten(pick("op_id"));
+    case "ask_user":
+      return shorten(pick("question") || pick("prompt"));
+    default:
+      // Generic fallback: surface the first scalar string arg. Better than blank.
+      for (const k of Object.keys(args)) {
+        const v = args[k];
+        if (typeof v === "string" && v.length > 0) return shorten(v);
+      }
+      return "";
+  }
+}
+
+/**
  * Forward worker events as bg_op_progress lines so the AGENTS sidebar
  * card shows live progress instead of sitting blank until completion.
  */
@@ -132,20 +190,27 @@ function onOpEvent(event: OpEvent): void {
   let line: string | null = null;
   switch (event.type) {
     case "tool_call": {
-      const tn = (event.payload as { toolName?: string })?.toolName || "tool";
-      line = `→ ${tn}`;
+      const p = event.payload as { toolName?: string; args?: Record<string, unknown> };
+      const tn = p?.toolName || "tool";
+      const detail = summarizeToolArgs(tn, p?.args);
+      line = detail ? `→ ${tn} ${detail}` : `→ ${tn}`;
       break;
     }
     case "tool_result": {
-      const tn = (event.payload as { toolName?: string })?.toolName || "tool";
-      const ok = (event.payload as { ok?: boolean })?.ok;
+      const p = event.payload as { toolName?: string; ok?: boolean };
+      const tn = p?.toolName || "tool";
+      const ok = p?.ok;
       line = `  ${ok === false ? "✗" : "✓"} ${tn}`;
       break;
     }
     case "agent_text": {
-      const text = ((event.payload as { text?: string })?.text || "").trim();
-      if (!text) return;
-      line = text.slice(0, 200);
+      // Agent text events emit `delta` (streaming chunks), not `text`. The old
+      // code read `text` and dropped every event. Read `delta` first, fall back
+      // to `text` for any legacy emitter.
+      const p = event.payload as { delta?: string; text?: string };
+      const raw = (p?.delta ?? p?.text ?? "").trim();
+      if (!raw) return;
+      line = raw.slice(0, 200);
       break;
     }
     case "started":

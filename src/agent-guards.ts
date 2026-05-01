@@ -286,14 +286,41 @@ export interface LoopState {
   lastToolKey: string;
   sameToolCount: number;
   toolNameCounts: Map<string, number>;
+  // Iterations elapsed since the last MUTATING tool call (write/edit/commit).
+  // Build_app worker spun 96 bash calls + 0 file changes for 5 min before kill.
+  // No-progress detector: if this exceeds NO_PROGRESS_LIMIT iterations, abort.
+  iterationsSinceMutation: number;
+  // Set to true on the iteration AFTER a successful `git commit` is observed
+  // in a bash tool result. Next iteration the agent gets a nudge to wrap up.
+  // The perma-fix mandate keeps agents going past their commit; this caps it.
+  postCommitNudgePending: boolean;
 }
 
 export function createLoopState(): LoopState {
-  return { lastToolKey: "", sameToolCount: 0, toolNameCounts: new Map() };
+  return {
+    lastToolKey: "",
+    sameToolCount: 0,
+    toolNameCounts: new Map(),
+    iterationsSinceMutation: 0,
+    postCommitNudgePending: false,
+  };
 }
 
 const DISCOVERY_LOOP_THRESHOLD = 8;
 const DISCOVERY_LOOP_THRESHOLD_WEAK = 4;
+// No-progress abort: iterations of consecutive non-mutating tool calls allowed
+// before the agent is forced to end its turn. 12 = ~3x the bash/git/read calls
+// a normal "verify the commit" wrap-up does. Anything beyond is spinning.
+const NO_PROGRESS_LIMIT = 12;
+const NO_PROGRESS_LIMIT_WEAK = 6;
+// A mutation is a tool that committed work. Note `bash` is NOT here despite
+// being in PROGRESS_TOOLS for the spiralable-reset logic — bash can spin
+// without producing changes (git status loops, grep loops). Only count tools
+// that demonstrably changed disk or repo state.
+const MUTATION_TOOLS = new Set([
+  "write", "edit", "self_edit", "build_app",
+  "mcp_filesystem_write_file", "mcp_filesystem_edit_file",
+]);
 
 /**
  * Check for exact-repeat loops and discovery loops. Weak/medium models
@@ -346,10 +373,16 @@ export function checkToolLoops(
     "agent_whoami", "agent_team_list", "issue_list", "issue_search",
     "memory_search", "memory_recall", "memory_get",
     "task_list", "operation_status", "operation_list",
+    // Worker-pool status checks loop just like the legacy operation_status —
+    // chat agent kept polling op_status 16x in one turn waiting for a long
+    // op to finish. Treat as spiralable so the discovery-limit guard fires.
+    "op_status", "op_wait", "agent_status", "agent_output",
   ]);
   let madeProgress = false;
+  let madeMutation = false;
   for (const tc of toolCalls) {
     if (PROGRESS_TOOLS.has(tc.name)) madeProgress = true;
+    if (MUTATION_TOOLS.has(tc.name)) madeMutation = true;
     state.toolNameCounts.set(tc.name, (state.toolNameCounts.get(tc.name) || 0) + 1);
   }
   if (madeProgress) {
@@ -357,6 +390,25 @@ export function checkToolLoops(
     // reads were useful scaffolding, not a spiral. Keep non-spiralable
     // counts intact (they don't gate anything anyway).
     for (const name of SPIRALABLE_TOOLS) state.toolNameCounts.delete(name);
+  }
+  // No-progress detector: count iterations since the last mutating call.
+  // Mutations reset to 0; everything else (bash, read, grep, git status) ticks.
+  // When the counter exceeds NO_PROGRESS_LIMIT, abort the turn — the agent is
+  // either done (and stalling) or stuck (and spinning).
+  if (madeMutation) {
+    state.iterationsSinceMutation = 0;
+  } else {
+    state.iterationsSinceMutation++;
+    const noProgLimit = isWeakOrMedium ? NO_PROGRESS_LIMIT_WEAK : NO_PROGRESS_LIMIT;
+    if (state.iterationsSinceMutation >= noProgLimit) {
+      logRetry({ kind: "loop-abort", tool: "no-progress", detail: { iterations: state.iterationsSinceMutation, limit: noProgLimit, modelTier: opts?.modelTier } });
+      // Reset so the next turn starts clean if the parent loop ignores the abort.
+      state.iterationsSinceMutation = 0;
+      return {
+        abort: true,
+        nudge: `\n\n(No-progress abort: ${noProgLimit}+ iterations of tool calls with zero file mutations. Your work is either done or stuck. End the turn now.)`,
+      };
+    }
   }
   const stuck = [...state.toolNameCounts.entries()].find(([name, count]) =>
     count >= discoveryLimit && SPIRALABLE_TOOLS.has(name)
@@ -378,6 +430,51 @@ export function checkToolLoops(
   }
 
   return { abort: false, nudge: null };
+}
+
+// ── Post-commit nudge ──
+//
+// Today's failure mode: build_app worker committed at iteration N, then
+// continued running for 5 more minutes / 100+ iterations because the
+// perma-fix mandate kept it expanding scope ("now wire it into settings UI
+// too..."). A successful git commit is a strong signal the user-facing work
+// is DONE for this turn — anything more should be a follow-up turn.
+//
+// Pattern: scan tool results for `bash`-style outputs with git's commit
+// success signatures. If found, set state.postCommitNudgePending. The next
+// iteration's prompt-layer code reads the flag and injects a wrap-up nudge.
+
+// Git commit success patterns. Examples:
+//   "[main abc1234] commit message"
+//   "[feature/x f0e1d2c] msg"
+//   " 12 files changed, 345 insertions(+), 67 deletions(-)"
+const GIT_COMMIT_OUTPUT_RE = /\[[\w/-]+\s+[a-f0-9]{7,40}\]|\d+\s+files?\s+changed/;
+
+export function checkPostCommit(
+  toolResults: Array<{ name: string; result: string }>,
+  state: LoopState,
+): { nudge: string | null } {
+  // First: if a PREVIOUS iteration set the flag, emit the nudge now and clear
+  // it. The nudge fires on the iteration AFTER the commit so the agent has a
+  // chance to see its commit landed before being told to wrap up.
+  let nudge: string | null = null;
+  if (state.postCommitNudgePending) {
+    state.postCommitNudgePending = false;
+    nudge =
+      "\n\n(Post-commit nudge: a git commit just landed. Unless the user explicitly asked for additional work in THIS turn, end the turn now with a one-sentence summary of what shipped — further integration is a follow-up task.)";
+  }
+  // Then: detect a fresh commit in THIS iteration's results and set the flag
+  // for the next iteration to see. (Order matters — this must run AFTER the
+  // pending-check so a commit detected this iteration doesn't immediately
+  // get cleared.)
+  for (const r of toolResults) {
+    if (r.name !== "bash" && r.name !== "shell") continue;
+    if (GIT_COMMIT_OUTPUT_RE.test(r.result)) {
+      state.postCommitNudgePending = true;
+      break;
+    }
+  }
+  return { nudge };
 }
 
 // ── Dead-end detector ──

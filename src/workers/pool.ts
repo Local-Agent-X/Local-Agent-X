@@ -345,8 +345,17 @@ export function redirectOp(opId: string, instruction: string): boolean {
 // ── Internal: spawn + lifecycle ────────────────────────────────────────────
 
 function spawnWorker(): void {
-  const entry = fileURLToPath(new URL("./worker-entry.ts", import.meta.url));
-  const proc = spawn("node", ["--max-old-space-size=2048", "--import=tsx", entry], {
+  // Mode-aware spawn: in dev (npm run dev, tsx-watch from src/) we load the
+  // .ts source via --import=tsx; in prod (npm start, plain node from dist/)
+  // we load the compiled .js without tsx. Detection via import.meta.url —
+  // if the loader's own URL contains /dist/ we're compiled.
+  const compiled = import.meta.url.includes("/dist/");
+  const entryName = compiled ? "./worker-entry.js" : "./worker-entry.ts";
+  const entry = fileURLToPath(new URL(entryName, import.meta.url));
+  const args = compiled
+    ? ["--max-old-space-size=2048", entry]
+    : ["--max-old-space-size=2048", "--import=tsx", entry];
+  const proc = spawn("node", args, {
     cwd: process.cwd(),
     stdio: ["pipe", "pipe", "pipe"],
     env: process.env,

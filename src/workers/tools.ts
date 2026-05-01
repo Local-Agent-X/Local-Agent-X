@@ -120,6 +120,14 @@ const submitParameters = {
 const RECENT_SUBMITS = new Map<string, { opId: string; ts: number; task: string }>();
 const SUBMIT_DEDUP_WINDOW_MS = 30_000;
 
+// Polling-loop guard for op_status / op_wait. The chat agent kept calling
+// op_status on the same op_id 16 times in one turn waiting for a long-running
+// op to finish. Track per-session calls per op_id within a short window; after
+// the second call return a STOP-polling message that ends the turn.
+const RECENT_POLLS = new Map<string, { opId: string; tool: string; count: number; firstAt: number; lastAt: number }>();
+const POLL_LOOP_WINDOW_MS = 60_000;
+const POLL_LOOP_MAX = 1; // first call returns rich data; second call returns STOP
+
 export const opSubmitAsyncTool: ToolDefinition = {
   name: "op_submit_async",
   description:
@@ -145,9 +153,11 @@ export const opSubmitAsyncTool: ToolDefinition = {
         const live = liveOps[0];
         return {
           content:
-            `BLOCKED — op ${live.id} is still ${live.status} for this chat session ("${live.task.slice(0, 80)}${live.task.length > 80 ? "..." : ""}"). ` +
-            `One op per chat session at a time. Either wait for it to finish (you'll be auto-notified) or call op_kill(op_id="${live.id}") if it's gone wrong, then submit fresh. ` +
-            `Do NOT spawn a parallel worker on the same task — that's how the user ended up with 4 duplicate research ops.`,
+            `BLOCKED — op ${live.id} is already ${live.status} for this chat session ("${live.task.slice(0, 80)}${live.task.length > 80 ? "..." : ""}"). ` +
+            `STOP. END THIS TURN NOW. Reply to the user in ONE sentence ("op ${live.id} is already running, I'll surface results when it completes") and stop calling tools. ` +
+            `Do NOT call op_submit_async again — every retry will hit this same BLOCKED return until that op finishes. ` +
+            `Do NOT call op_status as a "check first" — the user is auto-notified on completion; you don't need to poll. ` +
+            `Only valid follow-up tool call this turn is op_kill(op_id="${live.id}") IF the op is genuinely stuck or wrong; otherwise just end the turn.`,
         };
       }
       // SECONDARY GUARD: 30s window catches the race where the previous
@@ -159,10 +169,10 @@ export const opSubmitAsyncTool: ToolDefinition = {
         return {
           content:
             `BLOCKED — you already submitted op ${prior.opId} ${ageS}s ago in this chat session ("${prior.task.slice(0, 80)}${prior.task.length > 80 ? "..." : ""}"). ` +
-            `Stop calling op_submit_async — you cannot spawn parallel workers in one chat turn. ` +
-            `Either: (a) end your turn and tell the user you've delegated; the auto-notify will surface the result, or ` +
-            `(b) call op_status(op_id="${prior.opId}") to check progress without spawning a new op. ` +
-            `If you genuinely need to delegate something *different* later, wait ${Math.ceil((SUBMIT_DEDUP_WINDOW_MS - (Date.now() - prior.ts)) / 1000)}s.`,
+            `STOP. END THIS TURN NOW. Reply to the user in ONE sentence ("started op ${prior.opId}, I'll surface results when it completes") and stop calling tools. ` +
+            `Do NOT call op_submit_async again — every retry this turn will hit BLOCKED. ` +
+            `Do NOT call op_status — the user is auto-notified on completion. ` +
+            `If you legitimately need to delegate something *different* later, that's a future turn, not this one.`,
         };
       }
       // Casual-reply guard: if the user's last message was short/casual
@@ -180,7 +190,8 @@ export const opSubmitAsyncTool: ToolDefinition = {
             content:
               `BLOCKED — your last user message was a short/casual reply (greeting, ack, or filler). ` +
               `Op ${anyRecent.opId} completed ${ageMin} min ago in this session — the user is most likely acknowledging that, not requesting new work. ` +
-              `Do NOT spawn a worker. Just respond conversationally, surface the prior result if relevant ("that .ts count came back as N — want details?"), and end the turn.`,
+              `STOP. END THIS TURN NOW. Reply conversationally in ONE sentence (acknowledge, surface the prior result if relevant) and stop calling tools. ` +
+              `Do NOT call op_submit_async again — retries will keep hitting BLOCKED.`,
           };
         }
       }
@@ -322,6 +333,30 @@ export const opStatusTool: ToolDefinition = {
     const opId = String(args.op_id);
     const op = readOp(opId);
     if (!op) return { content: `op ${opId} not found`, isError: true };
+
+    // Per-session polling-loop guard. First call in a 60s window returns full
+    // status. Second call for the same opId in the same window returns STOP —
+    // end the turn. Prevents the "agent calls op_status 16 times" pattern.
+    if (sessionId && (op.status === "running" || op.status === "pending")) {
+      const pollKey = `${sessionId}:status`;
+      const prior = RECENT_POLLS.get(pollKey);
+      if (prior && prior.opId === opId && Date.now() - prior.firstAt < POLL_LOOP_WINDOW_MS) {
+        prior.count++;
+        prior.lastAt = Date.now();
+        if (prior.count > POLL_LOOP_MAX) {
+          const ageS = Math.round((Date.now() - prior.firstAt) / 1000);
+          return {
+            content:
+              `BLOCKED — you've called op_status for ${opId} ${prior.count} times in ${ageS}s. STOP POLLING. ` +
+              `END THIS TURN NOW. Reply to the user in ONE sentence with the current status (op is still ${op.status}) and stop calling tools. ` +
+              `The user is auto-notified the moment the op completes — you don't need to poll. ` +
+              `Any further op_status call this turn will return this same BLOCKED message.`,
+          };
+        }
+      } else {
+        RECENT_POLLS.set(pollKey, { opId, tool: "op_status", count: 1, firstAt: Date.now(), lastAt: Date.now() });
+      }
+    }
 
     const events = readEvents(opId).slice(-(typeof args.events_tail === "number" ? args.events_tail : 10));
     const checkpoint = readCheckpoint(opId);

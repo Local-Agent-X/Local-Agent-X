@@ -305,6 +305,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .desktop-frame #agents-toggle{top:44px}
 #voice-indicator.listening{display:block;background:rgba(255,51,51,.15);color:var(--danger);border:1px solid var(--danger)}
 #voice-indicator.speaking{display:block;background:rgba(64,240,240,.1);color:var(--accent);border:1px solid var(--accent)}
+#voice-engine-badge{position:fixed;top:42px;right:12px;font-family:var(--mono);font-size:.62rem;padding:3px 8px;border-radius:5px;z-index:1000;display:none;letter-spacing:.5px;background:var(--surface);border:1px solid var(--border);color:var(--muted);max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.desktop-frame #voice-engine-badge{top:74px}
+#voice-engine-badge.fellback{border-color:var(--warn);color:var(--warn)}
 #tts-toggle{position:fixed;top:12px;right:140px;font-family:var(--mono);font-size:.65rem;padding:4px 8px;border-radius:5px;background:var(--surface);border:1px solid var(--border);color:var(--muted);cursor:pointer;z-index:1000;transition:all .15s}
 #tts-toggle:hover{border-color:var(--accent);color:var(--accent)}
 #tts-toggle.active{border-color:var(--accent);color:var(--accent);background:#0f1f0f}

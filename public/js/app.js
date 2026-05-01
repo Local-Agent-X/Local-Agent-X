@@ -604,7 +604,16 @@ function renderSidebar() {
 renderSidebar();
 checkAuth();
 window.addEventListener('hashchange', () => navigate(currentRoute()));
-navigate(currentRoute());
+// Defer initial navigate to DOMContentLoaded so per-route init functions
+// (init_chat, etc.) defined in later <script> tags exist by the time we
+// dispatch. Running at top-level here would race chat.js loading and skip
+// initStatusBar — leaving the provider/model dropdowns blank until the
+// user manually triggers a re-navigate (e.g. clicking "New Chat").
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => navigate(currentRoute()));
+} else {
+  navigate(currentRoute());
+}
 
 // Auto-refresh sidebar every 30s to pick up new WhatsApp sessions
 setInterval(() => {

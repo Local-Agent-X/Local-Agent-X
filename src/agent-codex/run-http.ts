@@ -5,7 +5,7 @@ import type { AgentTurn } from "../types.js";
 import { streamCodexResponse, type ReasoningItem } from "../codex-client.js";
 import { executeToolCalls, checkAndCompact } from "../tool-executor.js";
 import { stripEphemeralMessages } from "../agent-providers.js";
-import { checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState, checkTaskAnchor, createTaskAnchorState, checkActedAndAsked } from "../agent-guards.js";
+import { checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState, checkTaskAnchor, createTaskAnchorState, checkActedAndAsked, checkPostCommit } from "../agent-guards.js";
 import { stripSystemInjectionTags } from "../sanitize.js";
 import type { AgentOptions } from "./shared.js";
 import {
@@ -402,6 +402,20 @@ export async function runCodexAgentHttp(
       if (d.nudge) {
         messages.push({ role: "user", content: d.nudge } as ChatCompletionMessageParam);
         break;
+      }
+    }
+
+    // Post-commit nudge — fires the iteration AFTER a successful git commit
+    // is detected in any bash result. Caps the perma-fix-mandate sprawl that
+    // kept the build_app worker spinning 5 min past commit-and-done.
+    {
+      const flatResults = toolResults.map(tr => ({
+        name: toolCalls.find(tc => tc.id === (tr as { tool_call_id?: string }).tool_call_id)?.name || "unknown",
+        result: typeof tr.content === "string" ? tr.content : "",
+      }));
+      const pc = checkPostCommit(flatResults, loopState);
+      if (pc.nudge) {
+        messages.push({ role: "user", content: pc.nudge } as ChatCompletionMessageParam);
       }
     }
 

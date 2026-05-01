@@ -74,6 +74,12 @@ async function collectSubtreeRules(scopeHint: string): Promise<string> {
   }
 }
 
+// Track in-flight self_edit calls per session. Second concurrent call from
+// the same chat session returns BLOCKED instead of spawning a parallel
+// worktree — prevents the "agent fired self_edit 3 times because the first
+// was slow" pattern that produces overlapping branches.
+const ACTIVE_SELF_EDITS = new Map<string, { task: string; startedAt: number }>();
+
 export const selfEditTool: ToolDefinition = {
   name: "self_edit",
   description:
@@ -83,7 +89,14 @@ export const selfEditTool: ToolDefinition = {
     "user reports 'that didn't work' after what looked like success. Delegates the " +
     "code surgery to Claude Code with bash/read/edit access to the SAX source tree. " +
     "Returns a summary of the diagnosis + the files it changed. The SAX server must " +
-    "be restarted after to pick up the changes — tell the user.",
+    "be restarted after to pick up the changes — tell the user. " +
+    "IMPORTANT: when wiring up code that ALREADY exists at a known path (e.g. a " +
+    "prototype in workspace/, integrations/, or a sibling module), name that path " +
+    "in your task — self_edit reads the codebase fresh per call and will REWRITE " +
+    "from scratch otherwise, duplicating work that's already done. " +
+    "ONE self_edit per chat session at a time — if one is already running, wait for " +
+    "it to finish before submitting another. Parallel self_edits create overlapping " +
+    "worktree branches you'll then have to reconcile by hand.",
   parameters: {
     type: "object",
     properties: {
@@ -91,7 +104,9 @@ export const selfEditTool: ToolDefinition = {
         type: "string",
         description: "Describe the bug or requested change in plain English. Include " +
           "what you tried, what happened, and what SHOULD have happened. The more " +
-          "observable detail (symptom, HTTP call, error message) the better.",
+          "observable detail (symptom, HTTP call, error message) the better. " +
+          "If a prototype or reference implementation already exists somewhere, name " +
+          "the path explicitly so self_edit moves/adapts it instead of rewriting.",
       },
       scope_hint: {
         type: "string",
@@ -104,6 +119,26 @@ export const selfEditTool: ToolDefinition = {
   async execute(args, signal) {
     const task = String(args.task || "").trim();
     if (!task) return { content: "self_edit requires a 'task' description.", isError: true };
+
+    // Per-session live-call guard. If another self_edit is already running for
+    // this session, refuse the new call. Prevents the parallel-worktree mess
+    // when a slow self_edit tempts the model to retry.
+    const sessionId = typeof args._sessionId === "string" ? args._sessionId : "";
+    if (sessionId) {
+      const live = ACTIVE_SELF_EDITS.get(sessionId);
+      if (live) {
+        const ageS = Math.round((Date.now() - live.startedAt) / 1000);
+        return {
+          content:
+            `BLOCKED — a self_edit is already running for this chat session ("${live.task.slice(0, 80)}${live.task.length > 80 ? "..." : ""}") — started ${ageS}s ago. ` +
+            `STOP. END THIS TURN NOW. Reply to the user in ONE sentence ("self_edit is in flight, I'll surface results when it completes") and stop calling tools. ` +
+            `Do NOT call self_edit again — every retry will hit this same BLOCKED return until the live call finishes. ` +
+            `Parallel self_edits create overlapping worktree branches that you'd then have to reconcile by hand — that's why this is hard-blocked.`,
+        };
+      }
+      ACTIVE_SELF_EDITS.set(sessionId, { task, startedAt: Date.now() });
+    }
+
     const scopeHintArg = String(args.scope_hint || "").trim();
     const scopeHint = scopeHintArg ? `\n\nScope hint: ${scopeHintArg}` : "";
     // Internal (server-injected) overrides — NOT in the public tool schema:
@@ -138,68 +173,78 @@ export const selfEditTool: ToolDefinition = {
       `BUILD: ok | broken\n` +
       `NOTE: <anything the user needs to know, e.g. 'restart server to apply'>`;
 
-    // Default flow: sandboxed via worktree + 3-gate validation. Skipped when
-    // _cwd is set (autopilot already provides isolation) or _unsafe is set.
-    if (!internalCwd && !unsafe) {
-      const { runSelfEditInSandbox, formatSandboxResult } = await import("./self-edit-sandbox.js");
-      const { getRuntimeConfig } = await import("./config.js");
-      const authToken = getRuntimeConfig().authToken;
-      const result = await runSelfEditInSandbox({
-        task, scopeHint: scopeHintArg, signal,
-        fullPrompt, authToken,
+    // Release the per-session live-call lock no matter how this function
+    // exits — sandbox path, bypass success, spawn error, timeout. Without a
+    // finally the lock would leak on the early returns and permanently block
+    // the session from issuing another self_edit.
+    const releaseLock = () => { if (sessionId) ACTIVE_SELF_EDITS.delete(sessionId); };
+
+    try {
+      // Default flow: sandboxed via worktree + 3-gate validation. Skipped when
+      // _cwd is set (autopilot already provides isolation) or _unsafe is set.
+      if (!internalCwd && !unsafe) {
+        const { runSelfEditInSandbox, formatSandboxResult } = await import("./self-edit-sandbox.js");
+        const { getRuntimeConfig } = await import("./config.js");
+        const authToken = getRuntimeConfig().authToken;
+        const result = await runSelfEditInSandbox({
+          task, scopeHint: scopeHintArg, signal,
+          fullPrompt, authToken,
+        });
+        return { content: formatSandboxResult(result), isError: !result.ok };
+      }
+
+      // Bypass flow: write directly to the supplied cwd (autopilot worktree
+      // OR LAX_REPO_ROOT for unsafe rescues). No gates.
+      const subprocessCwd = internalCwd || LAX_REPO_ROOT;
+
+      return await new Promise((resolveP) => {
+        let stdout = "";
+        let stderr = "";
+        const proc = spawn("claude", [
+          "-p",
+          "--model", "claude-opus-4-7",
+          "--permission-mode", "bypassPermissions",
+          "--no-session-persistence",
+          "--output-format", "text",
+        ], {
+          cwd: subprocessCwd,
+          stdio: ["pipe", "pipe", "pipe"],
+          shell: process.platform === "win32",
+          env: npmAugmentedEnv(),
+        });
+
+        const abortListener = () => { try { proc.kill("SIGTERM"); } catch {} };
+        signal?.addEventListener("abort", abortListener);
+
+        const timer = setTimeout(() => {
+          try { proc.kill("SIGTERM"); } catch {}
+        }, TIMEOUT_MS);
+
+        proc.stdout?.on("data", (c: Buffer) => { stdout += c.toString(); if (stdout.length > MAX_OUTPUT_CHARS * 3) stdout = stdout.slice(-MAX_OUTPUT_CHARS * 3); });
+        proc.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
+
+        proc.on("error", (e) => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", abortListener);
+          resolveP({ content: `self_edit spawn error: ${e.message}`, isError: true });
+        });
+
+        proc.on("close", (code) => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", abortListener);
+          if (code !== 0 && !stdout.trim()) {
+            resolveP({ content: `self_edit failed (exit ${code}):\n${stderr.slice(0, 600)}`, isError: true });
+            return;
+          }
+          const output = stdout.trim().slice(0, MAX_OUTPUT_CHARS);
+          resolveP({ content: output || `(no output, exit ${code})` });
+        });
+
+        proc.stdin?.write(fullPrompt);
+        proc.stdin?.end();
       });
-      return { content: formatSandboxResult(result), isError: !result.ok };
+    } finally {
+      releaseLock();
     }
-
-    // Bypass flow: write directly to the supplied cwd (autopilot worktree
-    // OR LAX_REPO_ROOT for unsafe rescues). No gates.
-    const subprocessCwd = internalCwd || LAX_REPO_ROOT;
-
-    return await new Promise((resolveP) => {
-      let stdout = "";
-      let stderr = "";
-      const proc = spawn("claude", [
-        "-p",
-        "--model", "claude-opus-4-7",
-        "--permission-mode", "bypassPermissions",
-        "--no-session-persistence",
-        "--output-format", "text",
-      ], {
-        cwd: subprocessCwd,
-        stdio: ["pipe", "pipe", "pipe"],
-        shell: process.platform === "win32",
-        env: npmAugmentedEnv(),
-      });
-
-      const abortListener = () => { try { proc.kill("SIGTERM"); } catch {} };
-      signal?.addEventListener("abort", abortListener);
-
-      const timer = setTimeout(() => {
-        try { proc.kill("SIGTERM"); } catch {}
-      }, TIMEOUT_MS);
-
-      proc.stdout?.on("data", (c: Buffer) => { stdout += c.toString(); if (stdout.length > MAX_OUTPUT_CHARS * 3) stdout = stdout.slice(-MAX_OUTPUT_CHARS * 3); });
-      proc.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
-
-      proc.on("error", (e) => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", abortListener);
-        resolveP({ content: `self_edit spawn error: ${e.message}`, isError: true });
-      });
-
-      proc.on("close", (code) => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", abortListener);
-        if (code !== 0 && !stdout.trim()) {
-          resolveP({ content: `self_edit failed (exit ${code}):\n${stderr.slice(0, 600)}`, isError: true });
-          return;
-        }
-        const output = stdout.trim().slice(0, MAX_OUTPUT_CHARS);
-        resolveP({ content: output || `(no output, exit ${code})` });
-      });
-
-      proc.stdin?.write(fullPrompt);
-      proc.stdin?.end();
-    });
   },
 };

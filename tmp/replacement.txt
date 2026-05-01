@@ -1,0 +1,66 @@
+﻿export async function createKokoroEngine(init: KokoroEngineInit): Promise<KokoroEngine> {
+  // Env vars override the static defaults; explicit init.config still wins
+  // over env so callers (smoke test, gpu probe) can pin a device for tests.
+  const cfg = {
+    ...TIER4_DEFAULTS,
+    ...{ device: envDevice(), dtype: envDtype() },
+    ...init.config,
+  };
+  configureHFCache();
+
+  const status = tier4ModelStatus(cfg.modelId);
+  if (!status.cached && process.env.LAX_VOICE_DEBUG) {
+    console.log(`[tier4/kokoro] cold start - first run will download to ${status.cacheDir}`);
+  }
+
+  const t0 = Date.now();
+  const mod = (await import("kokoro-js")) as unknown as { KokoroTTS: KokoroTTSCtor };
+
+  let activeDevice: Tier4Device = cfg.device;
+  let activeDtype: Tier4Dtype = cfg.dtype;
+  let fellBack = false;
+  let tts: KokoroTTSInstance;
+  try {
+    tts = await mod.KokoroTTS.from_pretrained(cfg.modelId, {
+      dtype: activeDtype,
+      device: activeDevice,
+    });
+  } catch (e) {
+    // GPU EP can fail at init (DML kernel coverage gaps, missing CUDA libs,
+    // WebGPU shader compile errors). Fall back to cpu+q8 once - this is the
+    // combo we know works on every machine. CPU/wasm errors surface upward.
+    const requestedNonCpu = activeDevice !== "cpu" && activeDevice !== "wasm";
+    if (!requestedNonCpu) throw e;
+    if (process.env.LAX_VOICE_DEBUG) {
+      console.warn(
+        `[tier4/kokoro] ${activeDevice}+${activeDtype} init failed (${(e as Error).message}); falling back to cpu+q8`,
+      );
+    }
+    activeDevice = "cpu";
+    activeDtype = "q8";
+    fellBack = true;
+    tts = await mod.KokoroTTS.from_pretrained(cfg.modelId, {
+      dtype: activeDtype,
+      device: activeDevice,
+    });
+  }
+  const loadMs = Date.now() - t0;
+  init.onLoad?.(loadMs);
+
+  let closed = false;
+
+  return {
+    async synth(text: string, opts?: { voice?: string; speed?: number }) {
+      if (closed) throw new Error("kokoro engine closed");
+      return tts.generate(text, {
+        voice: opts?.voice ?? cfg.voice,
+        speed: opts?.speed ?? cfg.speed,
+      });
+    },
+    async close() { closed = true; },
+    get sampleRate() { return TIER4_SAMPLE_RATE; },
+    get voice() { return cfg.voice; },
+    get modelId() { return cfg.modelId; },
+    get runtime() { return { device: activeDevice, dtype: activeDtype, fellBack }; },
+  };
+}

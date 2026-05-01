@@ -1,0 +1,24 @@
+﻿  try {
+    tts = await mod.KokoroTTS.from_pretrained(cfg.modelId, {
+      dtype: activeDtype,
+      device: activeDevice,
+    });
+  } catch (e) {
+    // GPU EP can fail at init (DML kernel coverage gaps, missing CUDA libs,
+    // WebGPU shader compile errors). Fall back to cpu+q8 once - this is the
+    // combo we know works on every machine. CPU/wasm errors surface upward.
+    const requestedNonCpu = activeDevice !== "cpu" && activeDevice !== "wasm";
+    if (!requestedNonCpu) throw e;
+    if (process.env.LAX_VOICE_DEBUG) {
+      console.warn(
+        `[tier4/kokoro] ${activeDevice}+${activeDtype} init failed (${(e as Error).message}); falling back to cpu+q8`,
+      );
+    }
+    activeDevice = "cpu";
+    activeDtype = "q8";
+    fellBack = true;
+    tts = await mod.KokoroTTS.from_pretrained(cfg.modelId, {
+      dtype: activeDtype,
+      device: activeDevice,
+    });
+  }

@@ -8,11 +8,12 @@
 //   npx tsx scripts/test-tier4-smoke.mjs                    (default voice)
 //   npx tsx scripts/test-tier4-smoke.mjs --voice af_bella   (named voice)
 //   npx tsx scripts/test-tier4-smoke.mjs --device cpu       (force CPU EP)
+//   npx tsx scripts/test-tier4-smoke.mjs --device dml --dtype fp16  (GPU opt-in)
 //   npx tsx scripts/test-tier4-smoke.mjs --write out.wav    (dump 24kHz PCM WAV)
 
 import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
-import { createTier4, tier4Readiness } from "../src/voice/tier4/index.ts";
+import { createTier4, tier4Readiness, snapshotTier4Diag } from "../src/voice/tier4/index.ts";
 
 const args = process.argv.slice(2);
 const arg = (k) => {
@@ -23,6 +24,7 @@ const arg = (k) => {
 const prompt = arg("--text") || "Tier four is online. This is a quick smoke test of native ONNX voice.";
 const voice = arg("--voice") || undefined;
 const device = arg("--device") || undefined;
+const dtype = arg("--dtype") || undefined;
 const wavOut = arg("--write") || null;
 
 const r = tier4Readiness();
@@ -38,7 +40,7 @@ let sampleRate = 24000;
 const chunks = [];
 
 const tStart = performance.now();
-const tts = await createTier4({ voice, device }, {
+const tts = await createTier4({ voice, device, dtype }, {
   onAudio: (pcm, sr) => {
     if (firstAudioMs == null) firstAudioMs = performance.now() - tSpeak;
     sampleRate = sr;
@@ -57,6 +59,10 @@ const tts = await createTier4({ voice, device }, {
     console.log(`[tier4 smoke] total wall: ${totalMs.toFixed(0)}ms`);
     console.log(`[tier4 smoke] audio duration: ${audioMs.toFixed(0)}ms`);
     console.log(`[tier4 smoke] realtime factor: ${rtf.toFixed(3)}x (lower = faster)`);
+    const diag = snapshotTier4Diag(tts);
+    if (diag) {
+      console.log(`[tier4 smoke] runtime: device=${diag.device} dtype=${diag.dtype} fellBack=${diag.fellBack}`);
+    }
     if (wavOut) {
       const merged = Buffer.concat(chunks);
       const wav = makeWav(merged, sampleRate);

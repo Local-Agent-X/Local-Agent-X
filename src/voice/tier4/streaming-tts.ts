@@ -51,6 +51,7 @@ export async function createTier4StreamingTTS(
       firstAudioMs: null,
       totalSentences: 0,
       cancelledSentences: 0,
+      fellBack: false,
     },
   };
 
@@ -58,6 +59,11 @@ export async function createTier4StreamingTTS(
     config: cfg,
     onLoad: (ms) => { state.diag.loadMs = ms; },
   });
+  // Engine may fall back to cpu+q8 if a GPU EP fails to bind. Reflect the
+  // actual runtime in the diag so the UI / smoke test shows what loaded.
+  state.diag.device = state.engine.runtime.device;
+  state.diag.dtype = state.engine.runtime.dtype;
+  state.diag.fellBack = state.engine.runtime.fellBack;
 
   async function drain(): Promise<void> {
     if (state.draining || !state.engine) return;

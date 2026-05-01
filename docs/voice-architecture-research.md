@@ -185,3 +185,23 @@ VRAM budget on 12 GB: Whisper-turbo (~2 GB) + StyleTTS2 (~2 GB) + LLM headroom (
 ## Bottom line
 
 GPT-SoVITS is the right *quality target*, wrong *runtime*. **StyleTTS2 exported to ONNX FP16 and run from `onnxruntime-node` in a worker thread** delivers the same MOS in ~200 ms first-audio, with zero permanent Python and full TypeScript control. Combined with clause-bounded streaming and an ack chirp, perceived start lands at **250–400 ms** — under the 500 ms bar with margin.
+
+---
+
+## Status update — 2026-04-30
+
+- **Shipped Tier 4 v1: Kokoro-82M ONNX (q4f16) via `kokoro-js`.** Lives at
+  `integrations/voice-tier4-native/`, dispatched from `src/voice/voice-session.ts`
+  when `LAX_VOICE_TIER=4`. UI exposes it under Settings → Voice Engines.
+  Smoke test: `node scripts/test-tier4-smoke.mjs`.
+- **Why Kokoro before StyleTTS2:** Kokoro ships ONNX exports out of the box
+  (~80 MB, 28 voices). StyleTTS2 needs a one-time export run that hasn't
+  landed yet. Kokoro hits the latency target without cloning; StyleTTS2 stays
+  the planned cloning upgrade.
+- **What's deferred:**
+  - StyleTTS2 ONNX export + wire-in (replaces Pro tier, adds zero-shot cloning).
+  - Chatterbox cloning ORT loop (stubbed in `chatterbox-clone-stub.ts`).
+  - Speculative first-chunk synth + ack chirp (#3 §3 §6 step 4 / step 10).
+  - TensorRT EP (§3, §6 step 7).
+
+Detailed ship notes: `docs/voice-tier4-status.md`.

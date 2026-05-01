@@ -26,6 +26,7 @@ import { ensureVadModelDownloaded, getVadModelPaths } from "./vad-model-fetch.js
 import { createWhisperTranscriber, type WhisperTranscriber } from "./whisper-stream.js";
 import { ensureWhisperModelDownloaded, getWhisperModelPaths } from "./whisper-model-fetch.js";
 import { createGpuSession } from "./gpu-session.js";
+import { createTier4, tier4VariantFromEnv } from "./tier4/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("voice.voice-session");
@@ -63,6 +64,9 @@ export type VoiceTurnRunner = (input: VoiceTurnInput) => Promise<VoiceTurnResult
  * Start:  ~/.lax/python-voice/venv/Scripts/python.exe python/voice/server.py
  */
 const GPU_MODE = process.env.LAX_VOICE_GPU !== "0";
+// Tier 4 = native ONNX TTS (Kokoro) instead of WASM Sherpa Matcha. Only
+// applies in CPU-mode (LAX_VOICE_GPU=0). Set LAX_VOICE_TIER=4 to opt in.
+const TIER4_MODE = process.env.LAX_VOICE_TIER === "4";
 
 const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
 // 0.25s @ 16kHz — single short words like "hey" or "yes" need to make it
@@ -137,8 +141,8 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         ctx.sendEvent({ type: "vad_model_ready" });
         ctx.sendEvent({ type: "whisper_model_ready" });
 
-        tts = createStreamingTTS(getTTSModelPaths(), {
-          onAudio: (pcm) => {
+        const ttsCallbacks = {
+          onAudio: (pcm: Int16Array) => {
             if (closed) return;
             ctx.sendAudio(pcm);
             // Push expected end-of-playback forward by this chunk's duration
@@ -165,11 +169,22 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
               }, delay);
             }
           },
-          onError: (err) => {
+          onError: (err: Error) => {
             logger.warn(`[voice-session] ${ctx.sessionId}: tts error: ${err.message}`);
             if (!closed) ctx.sendEvent({ type: "tts_error", message: err.message });
           },
-        });
+        };
+
+        if (TIER4_MODE) {
+          logger.info(`[voice-session] ${ctx.sessionId}: TIER4 mode (LAX_VOICE_TIER=4) → native Kokoro ONNX`);
+          const t4 = await createTier4(
+            { variant: tier4VariantFromEnv(), referenceWavPath: process.env.LAX_VOICE_CLONE_REF },
+            ttsCallbacks,
+          );
+          tts = t4 as unknown as StreamingTTS;
+        } else {
+          tts = createStreamingTTS(getTTSModelPaths(), ttsCallbacks);
+        }
         ttsSampleRate = tts.sampleRate;
 
         whisper = createWhisperTranscriber(getWhisperModelPaths());

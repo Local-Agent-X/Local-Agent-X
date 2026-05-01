@@ -1,0 +1,20 @@
+﻿  const loadMs = Date.now() - t0;
+  init.onLoad?.(loadMs);
+
+  let closed = false;
+
+  return {
+    async synth(text: string, opts?: { voice?: string; speed?: number }) {
+      if (closed) throw new Error("kokoro engine closed");
+      return tts.generate(text, {
+        voice: opts?.voice ?? cfg.voice,
+        speed: opts?.speed ?? cfg.speed,
+      });
+    },
+    async close() { closed = true; },
+    get sampleRate() { return TIER4_SAMPLE_RATE; },
+    get voice() { return cfg.voice; },
+    get modelId() { return cfg.modelId; },
+    get runtime() { return { device: activeDevice, dtype: activeDtype, fellBack }; },
+  };
+}

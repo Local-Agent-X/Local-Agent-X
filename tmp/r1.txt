@@ -1,0 +1,22 @@
+﻿export async function createKokoroEngine(init: KokoroEngineInit): Promise<KokoroEngine> {
+  // Env vars override the static defaults; explicit init.config still wins
+  // over env so callers (smoke test, gpu probe) can pin a device for tests.
+  const cfg = {
+    ...TIER4_DEFAULTS,
+    ...{ device: envDevice(), dtype: envDtype() },
+    ...init.config,
+  };
+  configureHFCache();
+
+  const status = tier4ModelStatus(cfg.modelId);
+  if (!status.cached && process.env.LAX_VOICE_DEBUG) {
+    console.log(`[tier4/kokoro] cold start - first run will download to ${status.cacheDir}`);
+  }
+
+  const t0 = Date.now();
+  const mod = (await import("kokoro-js")) as unknown as { KokoroTTS: KokoroTTSCtor };
+
+  let activeDevice: Tier4Device = cfg.device;
+  let activeDtype: Tier4Dtype = cfg.dtype;
+  let fellBack = false;
+  let tts: KokoroTTSInstance;

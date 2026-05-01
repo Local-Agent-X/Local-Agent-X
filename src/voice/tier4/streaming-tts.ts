@@ -5,11 +5,14 @@
 // `onIdle()` once the queue drains. We mirror that shape exactly so the
 // dispatcher in voice-session.ts is a single branch.
 //
-// Cancel semantics: barge-in flips a flag and clears the in-memory queue.
-// kokoro-js .generate() is a single ORT forward pass that doesn't yield
-// mid-call, so the active synthesis still finishes — same behaviour as
-// the existing Sherpa worker. The cancel flag short-circuits the next
-// queue tick, which matches what voice-session.ts expects.
+// Cancel semantics: barge-in bumps a monotonic epoch counter, clears
+// the in-memory queue, and resets first-audio timing. kokoro-js
+// .generate() is a single ORT forward pass that doesn't yield mid-call,
+// so the in-flight synth still runs to completion. We snapshot the
+// epoch before each await synth(); drop the result on resume if the
+// epoch moved (cancelled or closed). A boolean flag is unsafe: a fresh
+// speak() between cancel() and the in-flight synth resolution would
+// reset it and leak the cancelled audio.
 
 import { createKokoroEngine, float32ToInt16 } from "./kokoro-engine.js";
 import type { KokoroEngine } from "./kokoro-engine.js";
@@ -25,7 +28,7 @@ interface RuntimeState {
   engine: KokoroEngine | null;
   queue: string[];
   draining: boolean;
-  cancelled: boolean;
+  epoch: number;
   closed: boolean;
   diag: Tier4DiagSnapshot;
   speakTs: number | null;
@@ -40,8 +43,8 @@ export async function createTier4StreamingTTS(
     engine: null,
     queue: [],
     draining: false,
-    cancelled: false,
     closed: false,
+    epoch: 0,
     speakTs: null,
     diag: {
       modelId: cfg.modelId,
@@ -51,6 +54,7 @@ export async function createTier4StreamingTTS(
       firstAudioMs: null,
       totalSentences: 0,
       cancelledSentences: 0,
+      fellBack: false,
     },
   };
 
@@ -58,18 +62,25 @@ export async function createTier4StreamingTTS(
     config: cfg,
     onLoad: (ms) => { state.diag.loadMs = ms; },
   });
+  // Engine may fall back to cpu+q8 if a GPU EP fails to bind. Reflect the
+  // actual runtime in the diag so the UI / smoke test shows what loaded.
+  state.diag.device = state.engine.runtime.device;
+  state.diag.dtype = state.engine.runtime.dtype;
+  state.diag.fellBack = state.engine.runtime.fellBack;
 
   async function drain(): Promise<void> {
     if (state.draining || !state.engine) return;
     state.draining = true;
     try {
-      while (state.queue.length > 0 && !state.cancelled && !state.closed) {
+      while (state.queue.length > 0 && !state.closed) {
         const text = state.queue.shift()!;
+        const startEpoch = state.epoch;
         try {
           const audio = await state.engine.synth(text, { voice: cfg.voice, speed: cfg.speed });
-          if (state.cancelled || state.closed) {
+          if (state.closed) break;
+          if (state.epoch !== startEpoch) {
             state.diag.cancelledSentences++;
-            break;
+            continue;
           }
           if (state.diag.firstAudioMs == null && state.speakTs != null) {
             state.diag.firstAudioMs = Date.now() - state.speakTs;
@@ -83,12 +94,12 @@ export async function createTier4StreamingTTS(
           cb.onError?.(e as Error);
         }
       }
-      if (!state.cancelled && !state.closed) {
+      if (!state.closed) {
         try { cb.onIdle?.(); } catch (e) { cb.onError?.(e as Error); }
       }
     } finally {
       state.draining = false;
-      state.speakTs = null;
+      if (state.queue.length === 0) state.speakTs = null;
     }
   }
 
@@ -97,25 +108,27 @@ export async function createTier4StreamingTTS(
       if (state.closed) return;
       const t = text.trim();
       if (!t) return;
-      if (state.cancelled) state.cancelled = false;
       if (state.speakTs == null) state.speakTs = Date.now();
       state.queue.push(t);
       void drain();
     },
     cancel() {
-      state.cancelled = true;
+      state.epoch++;
       state.queue.length = 0;
       state.speakTs = null;
       state.diag.firstAudioMs = null;
     },
     close() {
       state.closed = true;
-      state.cancelled = true;
+      state.epoch++;
       state.queue.length = 0;
       void state.engine?.close();
     },
     get sampleRate() { return state.engine?.sampleRate ?? TIER4_SAMPLE_RATE; },
     get voice() { return cfg.voice; },
+    get runtime() {
+      return state.engine?.runtime ?? { device: cfg.device, dtype: cfg.dtype, fellBack: false };
+    },
     __diag: state.diag,
   };
 

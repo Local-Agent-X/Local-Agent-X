@@ -34,3 +34,6 @@ export type {
   Tier4StreamingTTS,
 } from "./types.js";
 export { TIER4_DEFAULTS, TIER4_SAMPLE_RATE } from "./types.js";
+
+export { KOKORO_VOICES, isValidKokoroVoice, kokoroVoiceMeta, kokoroVoiceList } from "./kokoro-voices.js";
+export type { KokoroVoiceMeta } from "./kokoro-voices.js";

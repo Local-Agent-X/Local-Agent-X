@@ -24,19 +24,13 @@
 //   --max-rtf <n>               require realtime factor <= N (lower = faster)
 //   --min-stt-overlap <pct>     with --stt, require word-overlap >= N% (default 50)
 //   --strict                    shorthand: 1500 / 4000 / 1.0 / 50
-//   --check-only                run readiness probe only, skip engine load/synth (CI fast-fail)
 
 import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
-import { createTier4, tier4Readiness, snapshotTier4Diag } from "../src/voice/tier4/index.ts";
-
-// Lightweight voice-name sanity check: kokoro voices follow lang+gender prefix
-// (af_/am_/bf_/bm_/jf_/jm_/zf_/zm_/ef_/em_/ff_/hf_/hm_/if_/im_/pf_/pm_) plus
-// a name suffix. We don't import the full catalogue here to avoid coupling
-// the smoke test to module internals; if kokoro-js rejects the voice the
-// engine load will surface a clear error.
-const KOKORO_PREFIX_RE = /^(af|am|bf|bm|jf|jm|zf|zm|ef|em|ff|hf|hm|if|im|pf|pm)_[a-z]+$/;
-const isLikelyKokoroVoice = (v) => typeof v === "string" && KOKORO_PREFIX_RE.test(v);
+import { createTier4, tier4Readiness, snapshotTier4Diag, isValidKokoroVoice } from "../src/voice/tier4/index.ts";
+import { SPEED_MIN, SPEED_MAX } from "../src/voice/tier4/env.ts";
+import { VALID_WHISPER_VARIANTS } from "../src/voice/whisper-model-fetch.ts";
+import { VALID_WHISPER_PROVIDERS } from "../src/voice/whisper-stream.ts";
 
 const args = process.argv.slice(2);
 const arg = (k) => {
@@ -53,17 +47,42 @@ const argNum = (k) => {
 
 const prompt = arg("--text") || "Tier four is online. This is a quick smoke test of native ONNX voice.";
 let voice = arg("--voice") || undefined;
-if (voice && !isLikelyKokoroVoice(voice)) {
-  console.error(`[tier4 smoke] --voice "${voice}" doesn't match the kokoro lang_name pattern; falling back to default`);
+if (voice && !isValidKokoroVoice(voice)) {
+  console.error(`[tier4 smoke] --voice "${voice}" is not a known Kokoro voice; falling back to default`);
   voice = undefined;
 }
+// --speed shares the same SPEED_MIN/SPEED_MAX bounds the env helper and the
+// settings reader enforce. An out-of-range value used to silently flow into
+// kokoro-js and either distort phonemes or throw an opaque ORT error; now
+// the smoke test fails fast with a one-line reason naming the bound.
 const speedArg = arg("--speed");
-const speed = speedArg != null && Number.isFinite(Number(speedArg)) ? Number(speedArg) : undefined;
+let speed;
+if (speedArg != null) {
+  const sn = Number(speedArg);
+  if (!Number.isFinite(sn)) {
+    console.error(`[tier4 smoke] --speed "${speedArg}" is not a number`);
+    process.exit(2);
+  }
+  if (sn < SPEED_MIN || sn > SPEED_MAX) {
+    console.error(`[tier4 smoke] --speed ${sn} out of range [${SPEED_MIN}..${SPEED_MAX}]`);
+    process.exit(2);
+  }
+  speed = sn;
+}
 const device = arg("--device") || undefined;
 const dtype = arg("--dtype") || undefined;
 const wavOut = arg("--write") || null;
 const runStt = flag("--stt");
-const whisperDevice = arg("--whisper-device") || undefined;
+const whisperDeviceRaw = arg("--whisper-device") || undefined;
+const whisperDevice = (() => {
+  if (!whisperDeviceRaw) return undefined;
+  const lower = whisperDeviceRaw.toLowerCase();
+  if (!VALID_WHISPER_PROVIDERS.has(lower)) {
+    console.error(`[tier4 smoke] --whisper-device "${whisperDeviceRaw}" not in [${[...VALID_WHISPER_PROVIDERS].join("|")}]`);
+    process.exit(2);
+  }
+  return lower;
+})();
 
 const strict = flag("--strict");
 const gateMinAudioMs = argNum("--min-audio-ms") ?? (strict ? 1500 : null);
@@ -71,22 +90,15 @@ const gateMaxFirstAudioMs = argNum("--max-first-audio-ms") ?? (strict ? 4000 : n
 const gateMaxRtf = argNum("--max-rtf") ?? (strict ? 1.0 : null);
 // Default 50 keeps the historical hard-coded floor; --strict surfaces the
 // same number explicitly so CI logs document what's enforced.
-const gateMinSttOverlap = argNum("--min-stt-overlap") ?? (strict ? 50 : 50);
+const gateMinSttOverlap = argNum("--min-stt-overlap") ?? 50;
 
 const gateFailures = [];
-
-const checkOnly = flag("--check-only");
 
 const r = tier4Readiness();
 console.log("[tier4 smoke] readiness:", r);
 if (!r.ready) {
   console.error("[tier4 smoke] not ready - fix missing deps and rerun");
   process.exit(2);
-}
-
-if (checkOnly) {
-  console.log("[tier4 smoke] --check-only: readiness OK, skipping engine load");
-  process.exit(0);
 }
 
 let firstAudioMs = null;
@@ -167,9 +179,12 @@ if (runStt) {
   try {
     await runWhisperRoundTrip();
   } catch (e) {
-    console.error("[tier4 smoke] stt error:", e?.message || e);
-    ttsHandle?.close();
-    process.exit(4);
+    // Collect into gateFailures so a TTS gate failure that happened earlier
+    // also surfaces in the final summary instead of being swallowed by an
+    // STT error exit. Both report together below.
+    const msg = e?.message || String(e);
+    console.error("[tier4 smoke] stt error:", msg);
+    gateFailures.push("stt: " + msg);
   }
 }
 
@@ -187,7 +202,17 @@ async function runWhisperRoundTrip() {
     await import("../src/voice/whisper-model-fetch.ts");
   const { createWhisperTranscriber } = await import("../src/voice/whisper-stream.ts");
 
-  const whisperModel = arg("--whisper-model") || undefined;
+  const whisperModelRaw = arg("--whisper-model") || undefined;
+  let whisperModel;
+  if (whisperModelRaw) {
+    const lower = whisperModelRaw.toLowerCase();
+    if (!VALID_WHISPER_VARIANTS.has(lower)) {
+      throw new Error(
+        `--whisper-model "${whisperModelRaw}" not in [${[...VALID_WHISPER_VARIANTS].join("|")}]`,
+      );
+    }
+    whisperModel = lower;
+  }
   const variantOpts = whisperModel ? { variant: whisperModel } : {};
 
   console.log("[tier4 smoke] stt: ensuring whisper model is on disk...");

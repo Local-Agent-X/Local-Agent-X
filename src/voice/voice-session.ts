@@ -26,11 +26,17 @@ import { createStreamingTTS, type StreamingTTS } from "./tts-stream.js";
 import { ensureTTSModelDownloaded, getTTSModelPaths } from "./tts-model-fetch.js";
 import { createStreamingVAD, type StreamingVAD } from "./vad-stream.js";
 import { ensureVadModelDownloaded, getVadModelPaths } from "./vad-model-fetch.js";
-import { createWhisperTranscriber, type WhisperTranscriber } from "./whisper-stream.js";
+import {
+  createWhisperTranscriber,
+  VALID_WHISPER_PROVIDERS,
+  type WhisperProvider,
+  type WhisperTranscriber,
+} from "./whisper-stream.js";
 import { ensureWhisperModelDownloaded, getWhisperModelPaths } from "./whisper-model-fetch.js";
 import { createGpuSession } from "./gpu-session.js";
 import { createTier4, tier4VariantFromEnv } from "./tier4/index.js";
-import type { Tier4StreamingTTS } from "./tier4/types.js";
+import { VALID_DEVICES as VALID_TIER4_DEVICES, VALID_DTYPES as VALID_TIER4_DTYPES } from "./tier4/env.js";
+import type { Tier4Device, Tier4Dtype, Tier4StreamingTTS } from "./tier4/types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("voice.voice-session");
@@ -86,24 +92,48 @@ export type VoiceTurnRunner = (input: VoiceTurnInput) => Promise<VoiceTurnResult
 //                    Python or GPU needed — emergency fallback only)
 export type VoiceEngineId = "tier4" | "python" | "cpu_fallback";
 
-function resolveVoiceEngine(): VoiceEngineId {
+interface ResolvedVoiceSettings {
+  engine: VoiceEngineId;
+  tier4Device?: Tier4Device;
+  tier4Dtype?: Tier4Dtype;
+  whisperDevice?: WhisperProvider;
+}
+
+function resolveVoiceSettings(): ResolvedVoiceSettings {
   // 1. Settings file wins. Lives at $LAX_DATA_DIR/settings.json (typically
   //    ~/.lax/settings.json). Read on each session creation so users can
-  //    flip engines from the UI without restarting the server.
+  //    flip engines / devices from the UI without restarting the server.
+  const out: ResolvedVoiceSettings = { engine: "python" };
+  let savedEngine: VoiceEngineId | undefined;
   try {
     const dataDir = process.env.LAX_DATA_DIR || join(homedir(), ".lax");
     const sp = join(dataDir, "settings.json");
     if (existsSync(sp)) {
-      const saved = JSON.parse(readFileSync(sp, "utf-8")) as { voiceEngine?: string };
+      const saved = JSON.parse(readFileSync(sp, "utf-8")) as {
+        voiceEngine?: string;
+        voiceTier4Device?: string;
+        voiceTier4Dtype?: string;
+        voiceWhisperDevice?: string;
+      };
       if (saved.voiceEngine === "tier4" || saved.voiceEngine === "python" || saved.voiceEngine === "cpu_fallback") {
-        return saved.voiceEngine;
+        savedEngine = saved.voiceEngine;
       }
+      const td = saved.voiceTier4Device?.toLowerCase() as Tier4Device | undefined;
+      if (td && VALID_TIER4_DEVICES.has(td)) out.tier4Device = td;
+      const tdt = saved.voiceTier4Dtype?.toLowerCase() as Tier4Dtype | undefined;
+      if (tdt && VALID_TIER4_DTYPES.has(tdt)) out.tier4Dtype = tdt;
+      const wd = saved.voiceWhisperDevice?.toLowerCase() as WhisperProvider | undefined;
+      if (wd && VALID_WHISPER_PROVIDERS.has(wd)) out.whisperDevice = wd;
     }
   } catch { /* settings file unreadable — fall through to env */ }
-  // 2-4. Env-var fallbacks (dev only).
-  if (process.env.LAX_VOICE_TIER === "4") return "tier4";
-  if (process.env.LAX_VOICE_GPU === "0") return "cpu_fallback";
-  return "python";
+  if (savedEngine) {
+    out.engine = savedEngine;
+  } else if (process.env.LAX_VOICE_TIER === "4") {
+    out.engine = "tier4";
+  } else if (process.env.LAX_VOICE_GPU === "0") {
+    out.engine = "cpu_fallback";
+  }
+  return out;
 }
 
 const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
@@ -115,9 +145,10 @@ const MAX_UTTERANCE_SAMPLES = 16000 * 22; // 22s hard cap (VAD itself cuts at 20
 
 export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
   return (ctx: VoiceSessionContext): VoiceSession => {
-    // Per-session engine resolution — settings.json is the source of truth so
-    // a UI dropdown change picks up on the next voice session without restart.
-    const engine = resolveVoiceEngine();
+    // Per-session settings resolution — settings.json is the source of truth
+    // so a UI dropdown change picks up on the next voice session without restart.
+    const voiceSettings = resolveVoiceSettings();
+    const engine = voiceSettings.engine;
     const TIER4_MODE = engine === "tier4";
     if (engine === "python") {
       logger.info(`[voice-session] ${ctx.sessionId}: engine=python → routing to Python sidecar`);
@@ -220,8 +251,15 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
 
         if (TIER4_MODE) {
           logger.info(`[voice-session] ${ctx.sessionId}: TIER4 mode (LAX_VOICE_TIER=4) → native Kokoro ONNX`);
+          // Only spread defined fields — the kokoro-engine merge below treats
+          // explicit `undefined` as a real override and would clobber env vars.
           const t4 = await createTier4(
-            { variant: tier4VariantFromEnv(), referenceWavPath: process.env.LAX_VOICE_CLONE_REF },
+            {
+              variant: tier4VariantFromEnv(),
+              referenceWavPath: process.env.LAX_VOICE_CLONE_REF,
+              ...(voiceSettings.tier4Device ? { device: voiceSettings.tier4Device } : {}),
+              ...(voiceSettings.tier4Dtype ? { dtype: voiceSettings.tier4Dtype } : {}),
+            },
             ttsCallbacks,
           );
           tts = t4 as unknown as StreamingTTS;
@@ -230,7 +268,9 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         }
         ttsSampleRate = tts.sampleRate;
 
-        whisper = createWhisperTranscriber(getWhisperModelPaths());
+        whisper = createWhisperTranscriber(getWhisperModelPaths(), {
+          provider: voiceSettings.whisperDevice,
+        });
 
         stt = createStreamingSTT(getModelPaths(), {
           onPartial: (text) => { if (!closed) ctx.sendEvent({ type: "partial", text }); },

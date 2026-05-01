@@ -22,13 +22,18 @@ const requireCJS = createRequire(import.meta.url);
 
 export type WhisperProvider = "cpu" | "cuda" | "dml" | "coreml";
 
-const VALID_PROVIDERS: ReadonlySet<WhisperProvider> = new Set<WhisperProvider>([
+export const VALID_WHISPER_PROVIDERS: ReadonlySet<WhisperProvider> = new Set<WhisperProvider>([
   "cpu", "cuda", "dml", "coreml",
 ]);
 
 function envProvider(): WhisperProvider | undefined {
   const v = process.env.LAX_VOICE_WHISPER_DEVICE?.toLowerCase() as WhisperProvider | undefined;
-  return v && VALID_PROVIDERS.has(v) ? v : undefined;
+  return v && VALID_WHISPER_PROVIDERS.has(v) ? v : undefined;
+}
+
+export interface WhisperTranscriberOptions {
+  /** Override the ONNX execution provider. Falls back to env, then "cpu". */
+  provider?: WhisperProvider;
 }
 
 export interface WhisperTranscriber {
@@ -82,10 +87,17 @@ function buildConfig(paths: WhisperModelPaths, provider: WhisperProvider): unkno
   };
 }
 
-export function createWhisperTranscriber(paths: WhisperModelPaths): WhisperTranscriber {
+export function createWhisperTranscriber(
+  paths: WhisperModelPaths,
+  opts: WhisperTranscriberOptions = {},
+): WhisperTranscriber {
   const sherpa = requireCJS("sherpa-onnx") as SherpaModule;
 
-  let activeProvider: WhisperProvider = envProvider() ?? "cpu";
+  // Caller-supplied (settings.json) wins over env. Both validated.
+  const requested =
+    (opts.provider && VALID_WHISPER_PROVIDERS.has(opts.provider) ? opts.provider : undefined)
+    ?? envProvider();
+  let activeProvider: WhisperProvider = requested ?? "cpu";
   let fellBack = false;
   let recognizer: SherpaOfflineRecognizer;
   try {

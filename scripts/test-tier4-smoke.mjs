@@ -14,6 +14,7 @@
 //   npx tsx scripts/test-tier4-smoke.mjs --device dml --dtype fp16  (GPU TTS opt-in)
 //   npx tsx scripts/test-tier4-smoke.mjs --write out.wav    (dump 24kHz PCM WAV)
 //   npx tsx scripts/test-tier4-smoke.mjs --stt              (TTS -> Whisper round-trip)
+//   npx tsx scripts/test-tier4-smoke.mjs --stt --whisper-device dml (force whisper EP, cpu fallback)
 
 import { writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
@@ -32,6 +33,7 @@ const device = arg("--device") || undefined;
 const dtype = arg("--dtype") || undefined;
 const wavOut = arg("--write") || null;
 const runStt = flag("--stt");
+const whisperDevice = arg("--whisper-device") || undefined;
 
 const r = tier4Readiness();
 console.log("[tier4 smoke] readiness:", r);
@@ -133,7 +135,7 @@ async function runWhisperRoundTrip() {
   console.log(`[tier4 smoke] stt: resampled ${int16.length}@${sampleRate} -> ${resampled.length}@16000`);
 
   const t0 = performance.now();
-  const whisper = createWhisperTranscriber(paths);
+  const whisper = createWhisperTranscriber(paths, whisperDevice ? { provider: whisperDevice } : {});
   const text = await whisper.transcribe(resampled);
   const ms = performance.now() - t0;
   whisper.close();

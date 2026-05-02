@@ -187,6 +187,31 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
       env: npmAugmentedEnv(),
     });
 
+    // Wire the abort signal to kill the subprocess. Without this, hitting
+    // "Stop" in the chat only aborts the JS-side stream reader while the
+    // spawned `claude` process keeps eating tokens + making tool calls in
+    // the background. Real symptom from a user: stop button "did nothing"
+    // for ~2 minutes after the click. SIGTERM gives it a beat to clean up;
+    // a follow-up SIGKILL after 1.5s handles any subprocess that ignores it.
+    let abortKillTimer: ReturnType<typeof setTimeout> | null = null;
+    const onAbort = () => {
+      try { proc.kill("SIGTERM"); } catch { /* already dead */ }
+      abortKillTimer = setTimeout(() => {
+        try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+      }, 1500);
+    };
+    if (options.signal) {
+      if (options.signal.aborted) {
+        onAbort();
+      } else {
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+    proc.on("close", () => {
+      if (abortKillTimer) clearTimeout(abortKillTimer);
+      if (options.signal) options.signal.removeEventListener("abort", onAbort);
+    });
+
     proc.stdin?.write(fullPrompt);
     proc.stdin?.end();
 

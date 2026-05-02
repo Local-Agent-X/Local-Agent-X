@@ -57,9 +57,15 @@ export async function runAgent(
     });
   } catch {}
 
-  // Execute the agent
+  // Execute the agent. LAX_UNIFIED_LOOP=1 routes through the new
+  // unified runAgentTurn (Phase 1: only the 5 infrastructure
+  // middlewares are wired — no hallucination/action-claim/dead-end
+  // guards yet, so default OFF until Phase 2 lands the full stack).
   let turn: AgentTurn;
-  if (options.provider === "codex") {
+  if (process.env.LAX_UNIFIED_LOOP === "1") {
+    const { runAgentTurn } = await import("./agent-loop/run.js");
+    turn = await runAgentTurn({ ...options, userMessage, history });
+  } else if (options.provider === "codex") {
     turn = await runCodexAgent(userMessage, history, options);
   } else if (options.provider === "anthropic") {
     turn = await runAnthropicAgent(userMessage, history, options);

@@ -7,6 +7,7 @@ import { bashTool } from "./shell-tools.js";
 import { webFetchTool } from "./web-tools.js";
 import { viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool } from "./vision-tools.js";
 import { buildAppTool, createPageTool } from "./builder-tools.js";
+import { extractSiteAssetsTool } from "./asset-tools.js";
 import { youtubeAnalyzeTool } from "../youtube-tool.js";
 import { globTool } from "../glob-tool.js";
 import { grepTool } from "../grep-tool.js";
@@ -38,7 +39,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   globTool, grepTool, webSearchTool, askUserTool, _toolSearchTool,
   selfEditTool,
   viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool,
-  buildAppTool, youtubeAnalyzeTool, createPageTool,
+  buildAppTool, youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool,
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools,
   ...emailTools, ...calendarTools, ...clipboardTools, ...sqlTools,
   ...taskTools, ...planTools, ...configTools, ...autopilotTools, ...opTools,
@@ -108,6 +109,28 @@ export function buildToolRegistry(): { registry: ToolRegistry; eagerTools: ToolD
     if (_registry.get(tool.name)) continue;
     const defer = !EAGER_TOOLS.has(tool.name);
     _registry.register(tool, { defer, tags: [], searchHint: tool.description.slice(0, 80) });
+  }
+
+  // Skill-bundle discovery (opt-in via env LAX_SKILL_BUNDLES=1, off by
+  // default until at least one real skill migrates from src/tools/ to
+  // src/skills/). The discoverer walks src/skills/ at boot, loads each
+  // bundle's tool.js, and registers them alongside the legacy tools.
+  // Discovery is async — fire-and-forget on import, registered tools
+  // become available on subsequent buildToolRegistry calls.
+  if (process.env.LAX_SKILL_BUNDLES === "1") {
+    void (async () => {
+      try {
+        const { discoverSkills } = await import("../skills/discover.js");
+        const skills = await discoverSkills();
+        for (const s of skills) {
+          if (_registry.get(s.tool.name)) continue;
+          _registry.register(s.tool, { defer: !EAGER_TOOLS.has(s.tool.name), tags: ["skill-bundle"], searchHint: s.description.slice(0, 80) });
+        }
+      } catch (e) {
+        // Discovery failure is non-fatal — legacy tools still register.
+        console.warn(`[registry] skill-bundle discovery failed: ${(e as Error).message}`);
+      }
+    })();
   }
 
   const eagerTools = _registry.getEagerTools();

@@ -34,6 +34,9 @@ export interface ProviderRequest {
   signal?: AbortSignal;
   /** Per-event callback for streaming UI updates. Adapters emit normalized events. */
   onEvent?: (event: ServerEvent) => void;
+  /** Codex-style response chaining — pass back the previous turn's responseId
+   *  to keep the encrypted reasoning chain alive without resending it. */
+  previousResponseId?: string;
 }
 
 /**
@@ -46,8 +49,12 @@ export type StreamChunk =
   | { type: "tool_call"; id: string; name: string; arguments: string }
   | { type: "tool_call_delta"; id: string; argumentsDelta: string }
   | { type: "thinking"; delta: string }
+  /** Codex encrypted reasoning item — opaque to non-Codex callers, must
+   *  be preserved verbatim and threaded back via previousResponseId. */
+  | { type: "reasoning"; item: unknown }
   | { type: "usage"; promptTokens: number; completionTokens: number }
-  | { type: "done"; stopReason: string }
+  /** `responseId` is set by Codex (Responses API chain) and undefined elsewhere. */
+  | { type: "done"; stopReason: string; responseId?: string }
   | { type: "error"; message: string; statusCode?: number }
   | { type: "mcp_activity"; toolName?: string; arguments?: string };
 

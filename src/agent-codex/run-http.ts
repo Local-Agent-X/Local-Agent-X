@@ -2,7 +2,10 @@ import type {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions.js";
 import type { AgentTurn } from "../types.js";
-import { streamCodexResponse, type ReasoningItem } from "../codex-client.js";
+import { type ReasoningItem } from "../codex-client.js";
+import { requireAdapter } from "../providers/adapter/registry.js";
+// Side-effect import — registers codex-cli adapter at boot.
+import "../providers/adapters/index.js";
 import { executeToolCalls, checkAndCompact } from "../tool-executor.js";
 import { stripEphemeralMessages } from "../agent-providers.js";
 import { checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState, checkTaskAnchor, createTaskAnchorState, checkActedAndAsked, checkPostCommit } from "../agent-guards.js";
@@ -41,6 +44,10 @@ export async function runCodexAgentHttp(
   // Track how many messages existed before each turn so we can compute
   // incremental input (tool results only) for the next request.
   let lastContextLength = 0;
+  const codexAdapter = requireAdapter("codex-cli");
+  // codexTools still needed by handleEmptyResponse helper which talks to
+  // streamCodexResponse directly. The helper can migrate to the adapter
+  // in a follow-up; keeping the legacy shape here is cheap.
   const codexTools = tools.map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters }));
   const loopState = createLoopState();
   const deadEndState = createDeadEndState();
@@ -185,29 +192,43 @@ export async function runCodexAgentHttp(
     const layeredSystemPrompt = composeSystemPrompt(systemPrompt, promptLayers);
 
     try {
-      const stream = streamCodexResponse({
-        token: apiKey,
+      const stream = codexAdapter.stream({
+        apiKey,
         model,
         messages: streamMessages,
         systemPrompt: layeredSystemPrompt,
-        tools: codexTools,
+        tools,
         previousResponseId: turnPreviousResponseId,
         sessionId: options.sessionId,
         toolChoice,
+        signal: signal || undefined,
+        onEvent,
       });
 
-      for await (const event of stream) {
-        if (event.type === "text") { assistantContent += event.delta; onEvent?.({ type: "stream", delta: event.delta }); }
-        else if (event.type === "tool_call") { toolCalls.push({ id: event.id, name: event.name, arguments: event.arguments }); }
-        else if (event.type === "reasoning") { turnReasoning.push(event.item); }
-        else if (event.type === "done") {
-          totalInput += event.usage.inputTokens;
-          totalOutput += event.usage.outputTokens;
-          if (event.responseId) previousResponseId = event.responseId;
-          // Merge any reasoning from the done event that wasn't streamed
-          if (event.reasoning.length > 0 && turnReasoning.length === 0) {
-            turnReasoning = event.reasoning;
-          }
+      for await (const chunk of stream) {
+        switch (chunk.type) {
+          case "text":
+            assistantContent += chunk.delta;
+            onEvent?.({ type: "stream", delta: chunk.delta });
+            break;
+          case "tool_call":
+            toolCalls.push({ id: chunk.id, name: chunk.name, arguments: chunk.arguments });
+            break;
+          case "reasoning":
+            turnReasoning.push(chunk.item as ReasoningItem);
+            break;
+          case "usage":
+            totalInput += chunk.promptTokens;
+            totalOutput += chunk.completionTokens;
+            break;
+          case "done":
+            if (chunk.responseId) previousResponseId = chunk.responseId;
+            break;
+          case "error":
+            // Re-throw so the existing recovery paths below (context-overflow
+            // force-compact, "No tool output found" scrub, general error
+            // handler) still match on the message string.
+            throw new Error(chunk.message);
         }
       }
     } catch (e) {

@@ -1,6 +1,5 @@
 import type {
   ChatCompletionMessageParam,
-  ChatCompletionTool,
 } from "openai/resources/chat/completions.js";
 import type { ToolDefinition, ToolResult, ServerEvent } from "./types.js";
 import { SecurityLayer } from "./security.js";
@@ -101,19 +100,6 @@ function budgetResult(content: string, maxSize: number = DEFAULT_MAX_RESULT_SIZE
   } catch {
     return content.slice(0, maxSize) + `\n\n... [truncated at ${maxSize} chars]`;
   }
-}
-
-// ── OpenAI tool format conversion ──
-
-export function toolsToOpenAI(tools: ToolDefinition[]): ChatCompletionTool[] {
-  return tools.map((t) => ({
-    type: "function" as const,
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.parameters,
-    },
-  }));
 }
 
 // ── Context compaction helper ──

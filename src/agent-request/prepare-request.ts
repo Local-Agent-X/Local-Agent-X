@@ -110,13 +110,29 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   }
 
   let toolPromptSection = "";
-  // Tool prompt section adds per-tool usage guidance — skip for Codex to save tokens
-  if (!isCodexProvider) {
-    try {
-      const { buildToolPromptSection } = await import("../tool-prompt-builder.js");
-      toolPromptSection = buildToolPromptSection(allAgentTools);
-    } catch {}
+  // Tool prompt section adds per-tool usage guidance. Originally skipped for
+  // Codex entirely "to save tokens" — but live testing (transformforfitness.com
+  // deploy, 2026-05-01) showed Codex stalled on a cold-start ship task because
+  // it never got the tool guidance that tells it to call memory_search /
+  // browser / web_fetch proactively. Now Codex gets the FULL section like
+  // Anthropic. The token-budget concern was overcautious — losing $1.08 to a
+  // failed deploy is worse than spending ~3K extra system-prompt tokens.
+  try {
+    const { buildToolPromptSection } = await import("../tool-prompt-builder.js");
+    toolPromptSection = buildToolPromptSection(allAgentTools);
+  } catch {}
+
+  // Cold-start nudge — applies to BOTH providers, but disproportionately
+  // helps Codex which doesn't auto-call memory_search the way Anthropic does
+  // when the user kicks off a project that might have prior context. Scoped
+  // to ship/build/deploy class messages so we don't burn tokens nudging the
+  // agent on simple chats.
+  const COLD_START_VERBS = /\b(build|create|make|deploy|publish|launch|set\s+up|put\s+\S+\s+(live|online)|ship|generate|scaffold|spin\s+up)\b/i;
+  let coldStartHint = "";
+  if (COLD_START_VERBS.test(message)) {
+    coldStartHint = "\n\n[COLD-START HINT] This message looks like the start of a project/deploy/build task. BEFORE writing code, run memory_search on the project name, domain, or business name in case there's prior context (URLs, prior decisions, brand assets, user preferences) from earlier sessions. Cold-starting without checking memory first is a real failure mode — the agent reinvents stuff that was already discussed and ships thinner output. 1-2 memory_search calls = cheap; missing context = expensive iteration.";
   }
+  toolPromptSection += coldStartHint;
 
   // Drain pending background-op completions for this session so the agent
   // can narrate them naturally on this turn (per the agent-narrates pattern

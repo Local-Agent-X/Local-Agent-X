@@ -44,8 +44,9 @@ export async function runAnthropicAgent(
   const promptLayersAnthropic = (await import("../agent-loop-prompt-layers.js")).createPromptLayers();
   const evidenceHistoryAnthropic: number[] = [];
   {
-    const { isAckMessage, ACK_FAST_PATH_INSTRUCTION } = await import("../agent-loop-prompt-layers.js");
+    const { isAckMessage, ACK_FAST_PATH_INSTRUCTION, isWebsiteBuildIntent, WEBSITE_BUILDER_INSTRUCTION } = await import("../agent-loop-prompt-layers.js");
     if (isAckMessage(userMessage)) promptLayersAnthropic.ackFastPath = ACK_FAST_PATH_INSTRUCTION;
+    if (isWebsiteBuildIntent(userMessage)) promptLayersAnthropic.websiteBuilder = WEBSITE_BUILDER_INSTRUCTION;
   }
   const anthropicTools = tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
 
@@ -118,6 +119,11 @@ export async function runAnthropicAgent(
       temperature,
       toolChoice: (iteration === 0 && shouldForceToolsA) ? "required" : "auto",
       sessionId: options.sessionId,
+      // Forward the abort signal so a user-initiated stop kills the spawned
+      // `claude` subprocess (stream-cli wires this to SIGTERM + SIGKILL fallback).
+      // Without this, stop only halts the JS-side stream consumer; the CLI
+      // process keeps running tool calls in the background.
+      signal,
     });
 
     let streamError: string | null = null;

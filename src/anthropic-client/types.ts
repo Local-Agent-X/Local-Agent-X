@@ -31,6 +31,11 @@ export interface StreamOptions {
    *  server uses that to look up the session's onEvent (so tool side-effects
    *  like voice_visual reach the right WebSocket). */
   sessionId?: string;
+  /** Abort signal — when fired, kills the spawned `claude` subprocess so a
+   *  user "Stop" actually halts the in-flight CLI run (token burn + tool
+   *  calls). Without this, abort only stops the JS-side stream consumption
+   *  while the subprocess keeps running. */
+  signal?: AbortSignal;
 }
 
 export interface AnthropicMessage {

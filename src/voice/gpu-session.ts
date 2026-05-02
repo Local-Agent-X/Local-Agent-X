@@ -135,6 +135,13 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       return;
     }
 
+    // Dictate mode: skip the agent + TTS, transcript already went to client
+    // via the `final` event at line 85 above. Same guard as voice-session.ts.
+    if (ctx.mode === "dictate") {
+      logger.info(`[gpu-session] ${ctx.sessionId}: dictate final, skipping agent/TTS`);
+      return;
+    }
+
     ctx.sendEvent({ type: "agent_start" });
     activeTurn = new AbortController();
     llmDone = false;

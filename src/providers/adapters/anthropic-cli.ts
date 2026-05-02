@@ -59,7 +59,7 @@ export class AnthropicCliAdapter extends BaseAdapter {
           };
           break;
         case "mcp_activity":
-          yield { type: "mcp_activity", toolName: evt.name };
+          yield { type: "mcp_activity", toolName: evt.name, arguments: evt.arguments };
           break;
         case "done":
           if (evt.usage) {

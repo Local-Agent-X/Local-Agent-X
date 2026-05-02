@@ -49,7 +49,7 @@ export type StreamChunk =
   | { type: "usage"; promptTokens: number; completionTokens: number }
   | { type: "done"; stopReason: string }
   | { type: "error"; message: string; statusCode?: number }
-  | { type: "mcp_activity"; toolName?: string };
+  | { type: "mcp_activity"; toolName?: string; arguments?: string };
 
 /**
  * Tool call as emitted in the final response (when not streaming

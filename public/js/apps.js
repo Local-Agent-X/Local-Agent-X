@@ -12,9 +12,9 @@ const APPS_PROVIDERS = [
 ];
 
 const APPS_MODELS = {
-  codex: ['gpt-5.5','gpt-5.4','gpt-5.4-mini','gpt-5.3-codex','gpt-5.3-codex-spark','gpt-4o','gpt-4o-mini','o3','o4-mini'],
+  codex: ['gpt-5.5','gpt-5.4','gpt-5.4-mini','gpt-5.3-codex'],
   anthropic: ['claude-opus-4-7','claude-sonnet-4-6','claude-opus-4-6','claude-haiku-4-5','claude-sonnet-4-5','claude-opus-4-5'],
-  xai: ['grok-3-mini','grok-3','grok-2'],
+  xai: ['grok-4','grok-3-mini','grok-3'],
   openai: ['gpt-5.5-pro','gpt-5.5','gpt-4o','gpt-4o-mini','gpt-4.1','gpt-4.1-mini','o3','o4-mini'],
   gemini: ['gemini-2.0-flash','gemini-2.5-pro-preview-05-06','gemini-2.5-flash-preview-05-20','gemini-1.5-pro'],
 };

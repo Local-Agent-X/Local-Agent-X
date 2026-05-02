@@ -1,6 +1,5 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { AgentTurn } from "../types.js";
-import { streamAnthropicResponse } from "../anthropic-client.js";
 import { executeToolCalls, checkAndCompact } from "../tool-executor.js";
 import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkUnmatchedActionClaim, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState, checkPostCommit } from "../agent-guards.js";
 import { stripEphemeralMessages, sanitizeToolResults } from "./sanitize.js";
@@ -9,6 +8,10 @@ import { detectBuildIntent, extractAppName, extractBuildPrompt } from "./build-i
 import { buildAnthropicUserContent, checkAnthropicTurnSafetyCeilings } from "./run-anthropic-helpers.js";
 import { logRetry } from "../retry-telemetry.js";
 import { createLogger } from "../logger.js";
+import { requireAdapter } from "./adapter/registry.js";
+// Side-effect import — registers anthropic-http + anthropic-cli adapters.
+import "./adapters/index.js";
+import { usesAnthropicSubscriptionAuth } from "../anthropic-models.js";
 
 const logger = createLogger("providers.run-anthropic");
 
@@ -48,7 +51,12 @@ export async function runAnthropicAgent(
     if (isAckMessage(userMessage)) promptLayersAnthropic.ackFastPath = ACK_FAST_PATH_INSTRUCTION;
     if (isWebsiteBuildIntent(userMessage)) promptLayersAnthropic.websiteBuilder = WEBSITE_BUILDER_INSTRUCTION;
   }
-  const anthropicTools = tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
+  // Adapter routing: subscription tokens (cli sentinel, oauth: prefix,
+  // sk-ant-oat, claude-setup-tokens) MUST go through anthropic-cli — the
+  // only path Anthropic still allows under Max accounts since April 2026.
+  // Real pay-as-you-go API keys (sk-ant-api03-*) take anthropic-http.
+  const adapterName = (apiKey === "cli" || usesAnthropicSubscriptionAuth(apiKey)) ? "anthropic-cli" : "anthropic-http";
+  const adapter = requireAdapter(adapterName);
 
   // Force tool use on first iteration for build/action intents
   const BUILD_INTENT_RE_A = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script|file|document|spreadsheet)/i;
@@ -110,70 +118,70 @@ export async function runAnthropicAgent(
     const { composeSystemPrompt: composeA } = await import("../agent-loop-prompt-layers.js");
     const layeredSystemPromptA = composeA(systemPrompt, promptLayersAnthropic);
 
-    const stream = streamAnthropicResponse({
-      token: apiKey,
+    const stream = adapter.stream({
+      apiKey,
       model,
-      messages,
       systemPrompt: layeredSystemPromptA,
-      tools: anthropicTools,
+      messages,
+      tools,
       temperature,
       toolChoice: (iteration === 0 && shouldForceToolsA) ? "required" : "auto",
       sessionId: options.sessionId,
-      // Forward the abort signal so a user-initiated stop kills the spawned
-      // `claude` subprocess (stream-cli wires this to SIGTERM + SIGKILL fallback).
-      // Without this, stop only halts the JS-side stream consumer; the CLI
-      // process keeps running tool calls in the background.
-      signal,
+      // Abort signal — adapter forwards to the underlying stream; for CLI
+      // it kills the spawned `claude` subprocess (SIGTERM + SIGKILL fallback).
+      signal: signal || undefined,
+      onEvent,
     });
 
     let streamError: string | null = null;
     let sawMcpActivity = false;
-    for await (const event of stream) {
-      if (event.type === "text") {
-        assistantContent += event.delta;
-        onEvent?.({ type: "stream", delta: event.delta || "" });
-      } else if (event.type === "tool_call") {
-        toolCalls.push({ id: event.id!, name: event.name!, arguments: event.arguments! });
-        toolsCalledThisTurnAnthropic.add(event.name!);
-      } else if ((event as { type?: string }).type === "mcp_activity") {
-        // Tools executed end-to-end via the MCP bridge — no local re-execution
-        // needed. Flag so the auto-route fallback below doesn't trigger.
-        sawMcpActivity = true;
-        // Capture MCP tool names for the action-claim check AND the turn-lock
-        // registry. They come through as "mcp__lax__bash" etc; strip the
-        // prefix so the check can match against our verb→tool mapping.
-        // (Matcher is prefix-agnostic via /^mcp__[^_]+__/ so legacy sessions
-        // still using mcp__sax__ also work during the rebrand window.)
-        const mcpName = (event as { name?: string }).name || "";
-        const plain = mcpName.replace(/^mcp__[^_]+__/, "");
-        if (plain) {
-          toolsCalledThisTurnAnthropic.add(plain);
-          try {
-            const { isCommittingTool } = await import("../committing-tool-check.js");
-            if (isCommittingTool(plain)) committingToolsThisTurnA.add(plain);
-            const { markIteration } = await import("../session-turn-lock.js");
-            markIteration(options.sessionId, [plain]);
-          } catch {}
-          // Forward as a tool_start + tool_end pair so the worker's onEvent
-          // handler emits a tool_call event the session bridge can route as
-          // bg_op_progress. Without this, the AGENTS sidebar stays dark for
-          // Anthropic workers (MCP tool calls execute inside the CLI subprocess
-          // and never produce visible side-effects in the worker's stream).
-          // We fire both events synchronously because by the time mcp_activity
-          // arrives, the MCP bridge has already executed the tool — there's
-          // no "in flight" state to model.
-          let parsedArgs: unknown = {};
-          try { parsedArgs = JSON.parse((event as { arguments?: string }).arguments || "{}"); } catch {}
-          const tcId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-          onEvent?.({ type: "tool_start", toolName: plain, toolCallId: tcId, args: parsedArgs });
-          onEvent?.({ type: "tool_end", toolName: plain, toolCallId: tcId, result: "(handled by MCP bridge)", allowed: true });
+    for await (const chunk of stream) {
+      switch (chunk.type) {
+        case "text":
+          assistantContent += chunk.delta;
+          onEvent?.({ type: "stream", delta: chunk.delta || "" });
+          break;
+        case "tool_call":
+          toolCalls.push({ id: chunk.id, name: chunk.name, arguments: chunk.arguments });
+          toolsCalledThisTurnAnthropic.add(chunk.name);
+          break;
+        case "mcp_activity": {
+          // Tools executed via the MCP bridge — no local re-execution needed.
+          // Flag so the auto-route fallback below doesn't trigger; surface as
+          // tool_start/tool_end pair so the AGENTS sidebar lights up for
+          // Anthropic workers. Prefix-agnostic match handles both mcp__lax__*
+          // and legacy mcp__sax__* during the rebrand window.
+          sawMcpActivity = true;
+          const mcpName = chunk.toolName || "";
+          const plain = mcpName.replace(/^mcp__[^_]+__/, "");
+          if (plain) {
+            toolsCalledThisTurnAnthropic.add(plain);
+            try {
+              const { isCommittingTool } = await import("../committing-tool-check.js");
+              if (isCommittingTool(plain)) committingToolsThisTurnA.add(plain);
+              const { markIteration } = await import("../session-turn-lock.js");
+              markIteration(options.sessionId, [plain]);
+            } catch {}
+            let parsedArgs: unknown = {};
+            try { parsedArgs = JSON.parse(chunk.arguments || "{}"); } catch {}
+            const tcId = `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            onEvent?.({ type: "tool_start", toolName: plain, toolCallId: tcId, args: parsedArgs });
+            onEvent?.({ type: "tool_end", toolName: plain, toolCallId: tcId, result: "(handled by MCP bridge)", allowed: true });
+          }
+          break;
         }
-      } else if (event.type === "done") {
-        totalInput += event.usage?.inputTokens || 0;
-        totalOutput += event.usage?.outputTokens || 0;
-      } else if (event.type === "error") {
-        streamError = event.error || "Anthropic error";
-        onEvent?.({ type: "error", message: streamError });
+        case "usage":
+          totalInput += chunk.promptTokens;
+          totalOutput += chunk.completionTokens;
+          break;
+        case "done":
+          // Stream ended — nothing else to do here; usage already tallied
+          // above when the adapter yielded the usage chunk.
+          break;
+        case "error":
+          streamError = chunk.message || "Anthropic error";
+          onEvent?.({ type: "error", message: streamError });
+          break;
       }
     }
     if (streamError) {

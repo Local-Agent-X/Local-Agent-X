@@ -1,14 +1,17 @@
-import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { AgentTurn } from "../types.js";
-import { executeToolCalls, toolsToOpenAI, checkAndCompact } from "../tool-executor.js";
+import { executeToolCalls, checkAndCompact } from "../tool-executor.js";
 import { getRuntimeConfig } from "../config.js";
 import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkUnmatchedActionClaim, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState } from "../agent-guards.js";
 import { stripEphemeralMessages, sanitizeToolResults } from "./sanitize.js";
-import { _localNoToolModels, type AgentOptions } from "./types.js";
+import { type AgentOptions } from "./types.js";
 import { buildUserContentWithImages, checkStandardTurnSafetyCeilings } from "./run-standard-helpers.js";
 import { logRetry } from "../retry-telemetry.js";
 import { createLogger } from "../logger.js";
+import { requireAdapter } from "./adapter/registry.js";
+// Importing adapters/index registers all five built-in adapters with the
+// registry. Side-effect import — keep above the requireAdapter call.
+import "./adapters/index.js";
 
 const logger = createLogger("providers.run-standard");
 
@@ -41,7 +44,9 @@ export async function runStandardAgent(
     custom: "https://api.openai.com/v1",
   };
   const baseURL = options.baseURL || providerURLs[options.provider] || "https://api.openai.com/v1";
-  const client = new OpenAI({ apiKey, baseURL });
+  // OpenAI-shape adapter covers OpenAI/xAI/Gemini-compat/custom; ollama-http
+  // is a subclass that exists for registry naming only — same code path.
+  const adapter = requireAdapter(options.provider === "local" ? "ollama-http" : "openai-http");
   const toolMap = new Map(tools.map((t) => [t.name, t]));
 
   // Build user message — include images as vision content parts if present
@@ -64,13 +69,16 @@ export async function runStandardAgent(
   // Post-turn validation state
   const { createRetryCounters, runPostTurnDetectors, computeEvidenceCount, userMessageHasImages } =
     await import("../agent-loop-detectors.js");
-  const { createPromptLayers, composeSystemPrompt, isAckMessage, ACK_FAST_PATH_INSTRUCTION } =
+  const { createPromptLayers, composeSystemPrompt, isAckMessage, ACK_FAST_PATH_INSTRUCTION, isWebsiteBuildIntent, WEBSITE_BUILDER_INSTRUCTION } =
     await import("../agent-loop-prompt-layers.js");
   const retryCounters = createRetryCounters();
   const promptLayers = createPromptLayers();
   const evidenceHistory: number[] = [];
   if (isAckMessage(userMessage)) {
     promptLayers.ackFastPath = ACK_FAST_PATH_INSTRUCTION;
+  }
+  if (isWebsiteBuildIntent(userMessage)) {
+    promptLayers.websiteBuilder = WEBSITE_BUILDER_INSTRUCTION;
   }
 
   // Force tool use on first iteration for build/action intents
@@ -142,70 +150,53 @@ export async function runStandardAgent(
     const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
 
     try {
-      const useTools = !_localNoToolModels.has(model);
-      // tool_choice: "required" disabled — causes empty responses on some models (Grok, Codex)
-      // Enable reasoning on models that support it. Chat-only models (grok-3-mini,
-      // gpt-4o, gemini-2.0-flash) would 400 if we sent reasoning_effort, so match
-      // by name pattern and only opt in for known reasoning-capable models.
-      // grok-4 uses reasoning natively but rejects the `reasoningEffort`
-      // parameter ("Model grok-4 does not support parameter reasoningEffort").
-      // Only grok-3-mini-reasoning accepts the OpenAI-style reasoning_effort on xAI.
-      const reasoningCapable = /grok-3-mini-reasoning|^o[134]|gpt-5|gemini-(2\.5|3)|deepseek-r1|qwen.*reasoning/i.test(model);
-      let stream = await client.chat.completions.create({
+      // The adapter prepends its own system message — pass the freshly
+      // composed system prompt out-of-band and slice it off the messages
+      // array. (messages[0] was overwritten above by composeSystemPrompt
+      // for any other code path that reads it.)
+      const composedSystemPrompt = (messages.length > 0 && messages[0].role === "system" && typeof messages[0].content === "string")
+        ? messages[0].content
+        : systemPrompt;
+      const restMessages = messages[0]?.role === "system" ? messages.slice(1) : messages;
+
+      let finishReason = "end_turn";
+      let usagePrompt = 0, usageCompletion = 0;
+
+      for await (const chunk of adapter.stream({
+        apiKey,
         model,
-        messages,
-        ...(useTools ? { tools: toolsToOpenAI(tools) } : {}),
+        baseURL,
+        systemPrompt: composedSystemPrompt,
+        messages: restMessages,
+        tools,
         temperature,
-        stream: true,
-        ...(reasoningCapable ? { reasoning_effort: "medium" as const } : {}),
-      }, { signal: signal || undefined }).catch(async (err: Error) => {
-        if (options.provider === "local" && err.message?.includes("does not support tools")) {
-          _localNoToolModels.add(model);
-          logger.info(`[agent] Model ${model} doesn't support tools — switching to chat-only mode`);
-          return client.chat.completions.create({
-            model,
-            messages,
-            temperature,
-            stream: true,
-          }, { signal: signal || undefined });
-        }
-        throw err;
-      });
-
-      let finishReason: string | undefined;
-      for await (const chunk of stream) {
-        if (signal?.aborted) {
-          stream.controller.abort();
-          break;
-        }
-        const choice = chunk.choices[0];
-        if (choice?.finish_reason) finishReason = choice.finish_reason;
-        const delta = choice?.delta;
-        if (!delta) continue;
-
-        if (delta.content) {
-          assistantContent += delta.content;
-          onEvent?.({ type: "stream", delta: delta.content });
-        }
-
-        if (delta.tool_calls) {
-          for (const tc of delta.tool_calls) {
-            if (tc.index !== undefined) {
-              while (toolCalls.length <= tc.index) {
-                toolCalls.push({ id: "", name: "", arguments: "" });
-              }
-              if (tc.id) toolCalls[tc.index].id = tc.id;
-              if (tc.function?.name) toolCalls[tc.index].name = tc.function.name;
-              if (tc.function?.arguments) toolCalls[tc.index].arguments += tc.function.arguments;
-            }
-          }
-        }
-
-        if (chunk.usage) {
-          totalPromptTokens += chunk.usage.prompt_tokens || 0;
-          totalCompletionTokens += chunk.usage.completion_tokens || 0;
+        sessionId: options.sessionId,
+        signal: signal || undefined,
+        onEvent,
+      })) {
+        if (signal?.aborted) break;
+        switch (chunk.type) {
+          case "text":
+            assistantContent += chunk.delta;
+            onEvent?.({ type: "stream", delta: chunk.delta });
+            break;
+          case "tool_call":
+            toolCalls.push({ id: chunk.id, name: chunk.name, arguments: chunk.arguments });
+            break;
+          case "usage":
+            usagePrompt = chunk.promptTokens;
+            usageCompletion = chunk.completionTokens;
+            break;
+          case "done":
+            finishReason = chunk.stopReason;
+            break;
+          case "error":
+            throw new Error(chunk.message);
         }
       }
+
+      totalPromptTokens += usagePrompt;
+      totalCompletionTokens += usageCompletion;
 
       // Classify the response
       const { classifyOpenAIResponse, logClassification } = await import("../response-classifier.js");

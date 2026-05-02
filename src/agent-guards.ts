@@ -7,6 +7,7 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { logRetry } from "./retry-telemetry.js";
+import { isEmptyResultText } from "./errors/index.js";
 
 // ── Self-Reflection ──
 
@@ -489,9 +490,9 @@ export function createDeadEndState(): DeadEndState {
   return { consecutive: 0, lastWasEmpty: false };
 }
 
-const EMPTY_RESULT_RE = /^\s*(\(no output\)|\[\]|\{\}|null|none|No results?|0 results?|Nothing found|No matches|No relevant memor|Command failed)/i;
-// Progress-style empty: "Searched 800 files, 0 results" — catches long-running
-// grep/find that scans forever without finding anything.
+// "0 results" patterns owned by src/errors/classifier.ts. Progress-style
+// empty stays here because it's specific to long-running search ops, not
+// a general error pattern.
 const PROGRESS_EMPTY_RE = /Searched\s+\d+\s+files?,\s*0\s+results?/i;
 
 /** Scan a tool result for "empty" signals and update dead-end state. */
@@ -503,9 +504,13 @@ export function checkDeadEnd(
   // Trim to first 400 chars — that's where "no output" / "0 results" land
   const head = (toolResult || "").slice(0, 400);
   const tail = (toolResult || "").slice(-800);
+  // EMPTY_RESULT_RE moved to src/errors/classifier.ts (single owner).
+  // Loaded synchronously via require equivalent — top-level static
+  // import below would create a cycle if errors/ ever imports this file.
+  // Use the dedicated isEmptyResultText helper.
   const isEmpty =
     head.trim().length === 0 ||
-    EMPTY_RESULT_RE.test(head) ||
+    isEmptyResultText(head) ||
     PROGRESS_EMPTY_RE.test(head) || PROGRESS_EMPTY_RE.test(tail);
   if (isEmpty) {
     state.consecutive++;

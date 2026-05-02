@@ -21,7 +21,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
   // mode regex from real corrections.
   // Returns: [{ts, delegate, reason, provider, wordCount, messagePreview, opId?, userOverride?}]
   if (method === "GET" && url.pathname === "/api/auto-delegate/recent") {
-    const { getRecentAutoDelegateDecisions } = await import("../workers/auto-delegate.js");
+    const { getRecentAutoDelegateDecisions } = await import("../routing/index.js");
     const limit = parseInt(url.searchParams.get("limit") || "50", 10);
     json(200, { decisions: getRecentAutoDelegateDecisions(limit) });
     return true;
@@ -36,7 +36,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
     const body = await safeParseBody(req);
     const opId = typeof body?.opId === "string" ? body.opId : "";
     if (!opId) { json(400, { error: "opId required" }); return true; }
-    const { markDecisionAsUserOverride } = await import("../workers/auto-delegate.js");
+    const { markDecisionAsUserOverride } = await import("../routing/index.js");
     const { killOp } = await import("../workers/pool.js");
     const result = markDecisionAsUserOverride(opId);
     const killed = killOp(opId);
@@ -120,22 +120,22 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         return true;
       }
 
-      // Fix E: auto-delegate long tasks to the worker pool when running on
-      // Codex (drift-prone) and prepare-request's Fix D didn't escape to
-      // Anthropic. The worker runs in a subprocess with a fresh context,
-      // dramatically reducing the context-bloat drift that causes Codex to
-      // lose the original task on long agentic loops. Same model, smaller
-      // failure surface.
-      const { shouldAutoDelegate, delegateMessageToWorker, hasDiscussPrefix, stripDiscussPrefix, linkDecisionToOpId } = await import("../workers/auto-delegate.js");
-      // /discuss prefix is the user's explicit "stay inline this turn" escape
-      // hatch. Strip it before passing to the agent so the model doesn't see
-      // a literal "/discuss" in the message. shouldAutoDelegate also short-
-      // circuits on the prefix, but stripping here keeps the agent's input
-      // clean even on the inline path.
+      // Routing decision — single owner is src/routing/. Long tasks /
+      // ship work / "create an app" patterns delegate to a fresh-context
+      // worker subprocess; everything else runs inline. Regex rules +
+      // LLM-as-classifier veto live entirely in src/routing/, no routing
+      // logic should leak back into this file.
+      const { routeMessage, delegateMessageToWorker, hasDiscussPrefix, stripDiscussPrefix, linkDecisionToOpId } = await import("../routing/index.js");
+      // /discuss prefix is the user's explicit "stay inline this turn"
+      // escape hatch. Strip it before passing to the agent so the model
+      // doesn't see a literal "/discuss" in the message. routeMessage
+      // also short-circuits on the prefix, but stripping here keeps the
+      // agent's input clean even on the inline path.
       if (hasDiscussPrefix(message)) {
         message = stripDiscussPrefix(message);
       }
-      if (await shouldAutoDelegate(prepared.provider, message, "web")) {
+      const routeDecision = await routeMessage(prepared.provider, message, "web");
+      if (routeDecision.destination === "delegate") {
         const { opId } = await delegateMessageToWorker(message, sessionId, prepared.provider);
         // Link the decision entry to this opId so the UI's "Stay inline"
         // button can find + override it later. Saves the full message too

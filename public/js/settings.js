@@ -402,11 +402,6 @@ const PROVIDER_MODELS = {
     { value: 'gpt-5.4', label: 'GPT-5.4' },
     { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini (default, faster)' },
     { value: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
-    { value: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
-    { value: 'gpt-4o', label: 'GPT-4o' },
-    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-    { value: 'o3', label: 'o3' },
-    { value: 'o4-mini', label: 'o4-mini' },
   ],
   anthropic: [
     { value: 'claude-opus-4-7', label: 'Claude Opus 4.7 (frontier, 1M context)' },
@@ -417,9 +412,9 @@ const PROVIDER_MODELS = {
     { value: 'claude-opus-4-5', label: 'Claude Opus 4.5' },
   ],
   xai: [
+    { value: 'grok-4', label: 'Grok 4 (frontier)' },
     { value: 'grok-3-mini', label: 'Grok 3 Mini (default)' },
     { value: 'grok-3', label: 'Grok 3' },
-    { value: 'grok-2', label: 'Grok 2' },
   ],
   openai: [
     { value: 'gpt-4o', label: 'GPT-4o (default)' },

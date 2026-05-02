@@ -16,6 +16,40 @@ const logger = createLogger("routes.chat");
 export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx, requestRole) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
+  // Auto-delegate decision log — last N decisions, persistent across restarts
+  // (~/.lax/auto-delegate-decisions.jsonl). Useful for tuning the discussion-
+  // mode regex from real corrections.
+  // Returns: [{ts, delegate, reason, provider, wordCount, messagePreview, opId?, userOverride?}]
+  if (method === "GET" && url.pathname === "/api/auto-delegate/recent") {
+    const { getRecentAutoDelegateDecisions } = await import("../workers/auto-delegate.js");
+    const limit = parseInt(url.searchParams.get("limit") || "50", 10);
+    json(200, { decisions: getRecentAutoDelegateDecisions(limit) });
+    return true;
+  }
+
+  // POST /api/auto-delegate/override — user clicked "Stay inline" on a
+  // worker card. Kill the op, mark the decision as a user-override (THE
+  // training signal), and return the original message so the chat can
+  // resubmit with /discuss prepended. Bypass the auto-delegate next time
+  // for this exact message.
+  if (method === "POST" && url.pathname === "/api/auto-delegate/override") {
+    const body = await safeParseBody(req);
+    const opId = typeof body?.opId === "string" ? body.opId : "";
+    if (!opId) { json(400, { error: "opId required" }); return true; }
+    const { markDecisionAsUserOverride } = await import("../workers/auto-delegate.js");
+    const { killOp } = await import("../workers/pool.js");
+    const result = markDecisionAsUserOverride(opId);
+    const killed = killOp(opId);
+    json(200, {
+      ok: true,
+      opId,
+      killed,
+      message: result.message,
+      hint: "Resubmit the returned message with /discuss prefix to bypass auto-delegate.",
+    });
+    return true;
+  }
+
   // Context compaction
   if (method === "POST" && url.pathname === "/api/compact") {
     const raw = await safeParseBody(req);
@@ -49,7 +83,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
     const parsed = validateBody(raw, ChatRequestSchema);
     if (!parsed.success) { json(400, { error: parsed.error }); return true; }
     // message is optional in the schema (image-only sends are valid) — coerce to string
-    const message = parsed.data.message ?? "";
+    let message = parsed.data.message ?? "";
     const _attachments = parsed.data.attachments;
     const sessionId = parsed.data.sessionId!;
     const attachments = _attachments!;
@@ -92,9 +126,21 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // dramatically reducing the context-bloat drift that causes Codex to
       // lose the original task on long agentic loops. Same model, smaller
       // failure surface.
-      const { shouldAutoDelegate, delegateMessageToWorker } = await import("../workers/auto-delegate.js");
-      if (shouldAutoDelegate(prepared.provider, message, "web")) {
+      const { shouldAutoDelegate, delegateMessageToWorker, hasDiscussPrefix, stripDiscussPrefix, linkDecisionToOpId } = await import("../workers/auto-delegate.js");
+      // /discuss prefix is the user's explicit "stay inline this turn" escape
+      // hatch. Strip it before passing to the agent so the model doesn't see
+      // a literal "/discuss" in the message. shouldAutoDelegate also short-
+      // circuits on the prefix, but stripping here keeps the agent's input
+      // clean even on the inline path.
+      if (hasDiscussPrefix(message)) {
+        message = stripDiscussPrefix(message);
+      }
+      if (await shouldAutoDelegate(prepared.provider, message, "web")) {
         const { opId } = await delegateMessageToWorker(message, sessionId, prepared.provider);
+        // Link the decision entry to this opId so the UI's "Stay inline"
+        // button can find + override it later. Saves the full message too
+        // so we can re-submit on override.
+        linkDecisionToOpId(opId, message);
         // Sidebar cards are now driven by the pool's op-queued / op-dispatched
         // events (Step 6) — no manual broadcast needed here. The session
         // bridge subscribes to those and forwards bg_op_queued (with queue

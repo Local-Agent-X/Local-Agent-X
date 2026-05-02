@@ -320,6 +320,35 @@ function classifyOpResult(
   ];
   const looksLikeRefusal = toolCallsExecuted === 0 && REFUSAL_PATTERNS.some(rx => rx.test(lastText));
 
+  // Honest completion sentinels — workers are now told to emit one of:
+  //   WORK_DONE: <summary>            → real success
+  //   WORK_NEEDS_INPUT: <question>    → can't proceed without user decision
+  //   WORK_FAILED: <reason>           → tried recoveries, exhausted
+  // A worker that gives up silently no longer slips through as "completed"
+  // — the absence of WORK_DONE means we treat the run as inconclusive at
+  // best. This is the fix for the "agent gave up but op marked completed"
+  // failure mode (e.g. sipdirty805 deploy bailing on `gh repo create`).
+  const sentinelDone     = lastText.match(/^\s*WORK_DONE:\s*(.+?)\s*$/m);
+  const sentinelNeeds    = lastText.match(/^\s*WORK_NEEDS_INPUT:\s*(.+?)\s*$/m);
+  const sentinelFailed   = lastText.match(/^\s*WORK_FAILED:\s*(.+?)\s*$/m);
+  if (sentinelNeeds) {
+    return {
+      opId, status: "needs-input",
+      finalSummary: `[needs user input] ${sentinelNeeds[1]}\n\n${trimmedSummary}`.slice(0, 2000),
+      filesChanged: [],
+      // recoverable: caller can re-spawn with the user's answer prepended.
+      error: { message: sentinelNeeds[1], recoverable: true },
+    };
+  }
+  if (sentinelFailed) {
+    return {
+      opId, status: "failed",
+      finalSummary: `[worker failed after retries] ${sentinelFailed[1]}\n\n${trimmedSummary}`.slice(0, 2000),
+      filesChanged: [],
+      error: { message: sentinelFailed[1], recoverable: false },
+    };
+  }
+
   switch (result.stopReason) {
     case "end_turn":
       if (looksLikeRefusal) {
@@ -330,7 +359,26 @@ function classifyOpResult(
           error: { message: "Worker refused or couldn't proceed (likely missing tool access)", recoverable: true },
         };
       }
-      return { opId, status: "completed", finalSummary: trimmedSummary, filesChanged: [] };
+      // Without a WORK_DONE sentinel and with meaningful work done, mark
+      // as "completed" but flag inconclusive so the supervisor can verify.
+      // Future: enforce sentinel hard (no-sentinel = failed) once the
+      // prompt change has soaked in and most workers comply.
+      if (sentinelDone) {
+        return { opId, status: "completed", finalSummary: trimmedSummary, filesChanged: [] };
+      }
+      if (didMeaningfulWork) {
+        return {
+          opId, status: "completed",
+          finalSummary: `[no WORK_DONE sentinel — outcome inconclusive] ${trimmedSummary}`.slice(0, 2000),
+          filesChanged: [],
+        };
+      }
+      return {
+        opId, status: "failed",
+        finalSummary: `[no work done, no WORK_DONE sentinel] ${trimmedSummary}`.slice(0, 2000),
+        filesChanged: [],
+        error: { message: "Worker exited without producing meaningful work", recoverable: true },
+      };
 
     case "abort":
       return { opId, status: "cancelled", finalSummary: trimmedSummary, filesChanged: [] };
@@ -355,11 +403,26 @@ function buildSystemPromptFromPack(op: Op): string {
   const blocks: string[] = [
     `You are a worker sub-agent for Local Agent X. Execute the assigned task and return a result. The supervisor (main agent) is the user-facing voice; you are the muscle.`,
     ``,
+    `## Autonomy contract (HARD)`,
+    `You exist so the user can step away while you finish their work. Bailing out on the first error wastes their trust. The user is NOT watching — you cannot ask them mid-task. Your job is to make the call and finish.`,
+    ``,
+    `Recovery rules — when a tool call fails or returns an unexpected result:`,
+    `1. READ the error message. Most "errors" are obvious recoverables ("file exists", "name taken", "permission denied", "rate limited", "branch already on remote").`,
+    `2. TRY at least 2 alternatives before giving up. Examples:`,
+    `   - "repo name already exists" → try \`<name>-2\`, \`<name>-site\`, or push to the existing repo if it's the user's.`,
+    `   - "git push rejected" → \`git pull --rebase\` then push, or check if the branch needs \`-f\` (only if it's clearly your own branch).`,
+    `   - "directory not empty" → check what's there; rename or merge as appropriate.`,
+    `   - "command not found" → check if there's an alternative tool (\`npm\` vs \`pnpm\`, \`python\` vs \`python3\`).`,
+    `3. ONLY emit \`WORK_NEEDS_INPUT: <one-sentence question>\` if a decision genuinely requires the user (e.g., "which of your 3 GitHub orgs should I push to?"). Do not use it as a lazy way out.`,
+    `4. ONLY emit \`WORK_FAILED: <one-sentence reason>\` if you have exhausted recoveries AND the task is impossible without external action. Include what you tried.`,
+    `5. On success, end your final reply with \`WORK_DONE: <one-sentence summary>\` so the supervisor can verify completion honestly. Without this sentinel, the op is presumed inconclusive.`,
+    ``,
     `## Tool use rules (HARD CONTRACT)`,
     `- For file edits: ALWAYS use the \`write\` or \`edit\` tools directly. NEVER call \`bash\` to run a Python/sed/awk/heredoc script that writes files. The bash tool returns exit code 0 even when the script silently no-ops, which led to a real bug where this worker reported success after a Python script did nothing. write/edit have no length limit and provide direct verifiable results.`,
     `- After EVERY edit/write call, the tool returns "Edited X" or "Wrote X". If you didn't see those confirmations, the edit didn't happen — don't claim it did.`,
     `- Your final summary MUST list ONLY files that you saw a write/edit confirmation for. Do not list files you intended to change but didn't actually edit.`,
     `- For visual/UI redesigns, you almost always need to touch BOTH the HTML AND the CSS. HTML class-name changes alone don't change appearance. If the task asks for a "new look" or "make it look better", expect to edit styles.css.`,
+    `- Memory tools (\`memory_search\`, \`memory_recall\`, \`memory_get\`) are available — USE THEM when the task references past work, the user's preferences, or anything that might be in memory ("deploy like last time", "use the same domain", "same as before"). Don't cold-start what you can recall.`,
     ``,
     `## Task`,
     p.task.description,

@@ -37,6 +37,12 @@ export interface VoiceSession {
 
 export interface VoiceSessionContext {
   sessionId: string;
+  /** Session intent. "chat" runs the full STT → LLM → TTS pipeline.
+   *  "dictate" runs STT only — Whisper finals fire as `final` events for
+   *  the client to consume into a textarea, but the agent + TTS never
+   *  spin up. Saves token cost AND avoids playing a phantom reply when
+   *  the user only wanted speech-to-text. Defaults to "chat" if missing. */
+  mode?: "chat" | "dictate";
   sendAudio: (frame: Int16Array) => void;
   sendEvent: (event: Record<string, unknown>) => void;
 }
@@ -139,13 +145,15 @@ export function setupVoiceWebSocket(server: Server, authToken: string): void {
         if (msg.type === "hello") {
           sessionId = String(msg.sessionId || "");
           if (!sessionId) { ws.close(4000, "hello requires sessionId"); return; }
+          const mode: "chat" | "dictate" = msg.mode === "dictate" ? "dictate" : "chat";
           session = sessionFactory({
             sessionId,
+            mode,
             sendAudio: ctx.sendAudio,
             sendEvent: ctx.sendEvent,
           });
-          ctx.sendEvent({ type: "ready", sessionId });
-          logger.info(`[voice-ws] session opened: ${sessionId}`);
+          ctx.sendEvent({ type: "ready", sessionId, mode });
+          logger.info(`[voice-ws] session opened: ${sessionId} (mode=${mode})`);
         } else if (msg.type === "eos") {
           session?.onEndOfSpeech?.();
         } else if (msg.type === "voice_settings") {

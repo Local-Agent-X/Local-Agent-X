@@ -195,6 +195,18 @@ export function setupChatWebSocket(server: Server, authToken: string) {
         const chat = activeChats.get(sessionId);
         if (chat && !chat.done) {
           chat.abortController.abort();
+          // Also release the turn lock so the user can immediately send a new
+          // message. Without this the next message hits "Your previous request
+          // is still running" because the lock waits for the agent's finally
+          // block to free it — which can take 60+ seconds if a subprocess
+          // stalls. Stop should mean stop, not "stop and wait."
+          try {
+            const { abortTurn, releaseTurn } = await import("./session-turn-lock.js");
+            abortTurn(sessionId);
+            releaseTurn(sessionId);
+          } catch (e) {
+            logger.warn(`[ws-chat] stop: turn-lock release failed: ${(e as Error).message}`);
+          }
           broadcastToSession(sessionId, { type: "error", message: "Stopped by user" });
           broadcastToSession(sessionId, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
           chat.done = true;
@@ -385,6 +397,20 @@ export function setupChatWebSocket(server: Server, authToken: string) {
       const chat = activeChats.get(sessionId);
       if (chat && !chat.done) {
         chat.abortController.abort();
+        // Release the turn lock so the next message isn't rejected with
+        // "previous request still running". The HTTP /api/chats/stop already
+        // calls abortTurn separately; this gives the WS path the same
+        // behavior + adds releaseTurn so the user can send immediately.
+        // Fire-and-forget — if it throws we still want stop to return true.
+        void (async () => {
+          try {
+            const { abortTurn, releaseTurn } = await import("./session-turn-lock.js");
+            abortTurn(sessionId);
+            releaseTurn(sessionId);
+          } catch (e) {
+            logger.warn(`[stopChat] turn-lock release failed: ${(e as Error).message}`);
+          }
+        })();
         broadcastToSession(sessionId, { type: "error", message: "Stopped by user" });
         broadcastToSession(sessionId, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
         chat.done = true;

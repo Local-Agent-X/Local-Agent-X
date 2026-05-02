@@ -56,7 +56,7 @@ export async function runCodexAgentHttp(
   // and evidence history for staleness detection.
   const { createRetryCounters, runPostTurnDetectors, computeEvidenceCount, userMessageHasImages } =
     await import("../agent-loop-detectors.js");
-  const { createPromptLayers, composeSystemPrompt, isAckMessage, ACK_FAST_PATH_INSTRUCTION } =
+  const { createPromptLayers, composeSystemPrompt, isAckMessage, ACK_FAST_PATH_INSTRUCTION, isWebsiteBuildIntent, WEBSITE_BUILDER_INSTRUCTION } =
     await import("../agent-loop-prompt-layers.js");
   const retryCounters = createRetryCounters();
   const promptLayers = createPromptLayers();
@@ -64,6 +64,9 @@ export async function runCodexAgentHttp(
   // One-shot ack fast-path when the user's latest message was a short approval
   if (isAckMessage(userMessage)) {
     promptLayers.ackFastPath = ACK_FAST_PATH_INSTRUCTION;
+  }
+  if (isWebsiteBuildIntent(userMessage)) {
+    promptLayers.websiteBuilder = WEBSITE_BUILDER_INSTRUCTION;
   }
 
   // Detect build/action intent — force tool use on iteration 0 to prevent

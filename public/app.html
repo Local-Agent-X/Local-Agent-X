@@ -14,7 +14,7 @@
 <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css"/>
+<link rel="stylesheet" href="/css/app.css?v=vb2"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
 <!-- Voice: Three.js (self-hosted; CSP blocks CDN scripts) for the Jarvis sphere -->
 <script src="/js/lib/three.min.js"></script>
@@ -151,9 +151,16 @@
           <div id="input-box">
             <div id="upload-previews" role="list" aria-label="Upload previews"></div>
             <textarea id="msg-input" placeholder="Message Agent X..." rows="3" aria-label="Message input"
-              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
+              onkeydown="handleInputKeydown(event)"></textarea>
+            <!-- Dictation live-preview: faint ghost text appears here while
+                 streaming partials arrive; on speech-end the finalized
+                 text commits into msg-input above. Hidden when dictate is
+                 off. Kept BELOW the textarea so partial rewrites don't
+                 jitter the user's cursor in the editable field. -->
+            <div id="dictate-preview" aria-live="polite" style="display:none"></div>
           </div>
-          <button id="mic-btn" class="input-btn" onclick="toggleMic()" title="Voice input" aria-label="Toggle voice input">&#127908;</button>
+          <button id="dictate-btn" class="input-btn" onclick="toggleDictate()" title="Dictate (speech to text only). Works in Chrome / Edge / Safari. On Chrome+Edge audio is processed by Google's cloud ASR; Safari uses Apple's on-device ASR. For all-local transcription, use Voice Mode instead." aria-label="Toggle dictation">&#128221;</button>
+          <button id="mic-btn" class="input-btn" onclick="toggleMic()" title="Voice mode (full hands-free conversation with agent)" aria-label="Toggle voice mode">&#127908;</button>
           <button id="stop-btn" onclick="stopChat()" title="Stop agent" aria-label="Stop agent" style="display:none;background:var(--danger);border-color:var(--danger);color:#fff">&#9632;</button>
           <button id="send-btn" onclick="sendMessage()" aria-label="Send message">&#9650;</button>
         </div>
@@ -868,7 +875,7 @@
 <script src="/js/shared.js"></script>
 <script src="/js/app.js"></script>
 <script src="/js/voice-sphere.js?v=vb5"></script>
-<script src="/js/chat.js?v=vb2"></script>
+<script src="/js/chat.js?v=vc1"></script>
 <script src="/js/settings.js?v=vb2"></script>
 <script src="/js/secrets.js"></script>
 <script src="/js/cron.js"></script>

@@ -455,6 +455,17 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
       }
 
       ctx.sendEvent({ type: "final", text: utterance });
+
+      // Dictate mode: emit the transcript to the client and stop. Skip
+      // agent_start / runTurn / TTS — the user only wanted speech-to-text
+      // and the client routes `final` into the message textarea. Without
+      // this guard the agent would still run server-side and TTS would
+      // synthesize a reply the user never asked for.
+      if (ctx.mode === "dictate") {
+        logger.info(`[voice-session] ${ctx.sessionId}: dictate final, skipping agent/TTS: "${utterance.slice(0, 40)}"`);
+        return;
+      }
+
       ctx.sendEvent({ type: "agent_start" });
       activeTurn = new AbortController();
       llmDone = false;

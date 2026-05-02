@@ -1170,42 +1170,296 @@ let voiceCurrentMsgBody = null;
 let voiceCurrentMsgText = '';
 let _voiceSilenceTimer = null; // sphere → idle if no audio frame for 800ms
 
+// Dictate mode is mutually exclusive with voice mode. Uses the browser's
+// native SpeechRecognition API (instant-on, native streaming partials, no
+// model download, no WebSocket) instead of the full voice-chat pipeline
+// which is overkill for one-shot speech-to-text. Mic stream is still
+// captured so the sphere visualization can react to audio.
+let dictateMode = false;
+let dictateSR = null;          // SpeechRecognition instance
+let dictateMicStream = null;   // MediaStream for sphere analyser only
+let dictateCtx = null;         // AudioContext for sphere analyser
+let dictateRestartGuard = false; // prevent restart-loop on errors
+
 async function toggleMic() {
   if (voiceMode) { stopVoiceMode(); }
-  else { await startVoiceMode(); }
+  else {
+    if (dictateMode) stopDictate();   // mutex: only one mic mode at a time
+    await startVoiceMode();
+  }
+}
+
+// ── Dictate mode ──
+// Speech-to-text only — pipes Whisper finals into the message textarea so
+// the user can review and send manually. No agent reply, no TTS playback.
+// Reuses the voice WS, mic-capture worklet, and sphere visualization, but
+// short-circuits the agent_start / assistant_delta event flow on the client.
+// A pending server-side `mode: "dictate"` flag would let us skip TTS init
+// entirely (~80MB Kokoro download); for v1 the model loads but never fires
+// because we don't auto-submit transcripts.
+
+async function toggleDictate() {
+  if (dictateMode) { stopDictate(); }
+  else {
+    if (voiceMode) stopVoiceMode();   // mutex: only one mic mode at a time
+    await startDictate();
+  }
+}
+
+async function startDictate() {
+  if (dictateMode) return;
+  // Browser SpeechRecognition is the right tool for one-shot dictation:
+  // instant-on, native streaming partials, no model download, no WebSocket.
+  // Quality is roughly base.en-equivalent (~3-5% WER). If unavailable
+  // (Firefox/Safari without webkit prefix) we'd fall back to the WS
+  // pipeline, but Chrome/Edge cover the vast majority of users.
+  // Browser support summary (last verified: 2026-05):
+  //   Chrome / Edge / Brave / Opera (desktop + Android) → works (Google cloud ASR)
+  //   Safari (macOS 14.1+ / iOS 14.5+)                  → works (webkitSpeechRecognition prefix; Apple on-device ASR on newer hardware)
+  //   Firefox                                          → flag-gated, disabled by default
+  //
+  // For Firefox / unsupported browsers we tell the user how to recover
+  // (switch browser, or use Voice Mode which goes through the local
+  // Whisper WS pipeline and works everywhere).
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    alert(
+      "Dictation isn't supported in this browser.\n\n" +
+      "Works in Chrome, Edge, Brave, Opera, and Safari (Mac 14.1+ / iOS 14.5+).\n" +
+      "Doesn't work in Firefox (disabled by default).\n\n" +
+      "Two fallbacks:\n" +
+      "  1. Switch to a Chromium-based browser, or\n" +
+      "  2. Use Voice Mode (the 🎤 button) which uses the local Whisper pipeline and works everywhere.",
+    );
+    return;
+  }
+  try {
+    dictateMode = true;
+    dictateRestartGuard = false;
+
+    // Mic stream for sphere visualization. Browser SR opens its own mic
+    // session internally (we don't get its audio) — this getUserMedia is
+    // ONLY for the AnalyserNode that drives the dust particle reactions.
+    // Cheap; same permission prompt as voice mode.
+    try {
+      dictateMicStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      });
+      dictateCtx = new AudioContext();
+      const source = dictateCtx.createMediaStreamSource(dictateMicStream);
+      if (window.VoiceSphere) {
+        const ana = dictateCtx.createAnalyser();
+        ana.fftSize = 2048;
+        source.connect(ana);
+        const savedMode = localStorage.getItem('lax_voice_view_mode') || 'split';
+        VoiceSphere.show(savedMode);
+        VoiceSphere.attachMicAnalyser(ana);
+        VoiceSphere.setState('listening');
+      }
+    } catch (sphereErr) {
+      // Sphere is decoration — keep going if mic-for-visuals fails.
+      console.warn('[dictate] sphere mic init failed (continuing without visualization):', sphereErr);
+    }
+
+    // SpeechRecognition itself
+    dictateSR = new SR();
+    dictateSR.continuous = true;       // mic stays hot until user stops
+    dictateSR.interimResults = true;   // live streaming partials
+    dictateSR.lang = navigator.language || 'en-US';
+    dictateSR.maxAlternatives = 1;
+
+    dictateSR.onresult = (event) => {
+      const preview = document.getElementById('dictate-preview');
+      let interim = '';
+      // Walk new results since last event. Final results commit to the
+      // textarea via appendDictatedText (handles capitalize + period join).
+      // Interim results stack into the preview row below the textarea.
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const transcript = result[0].transcript;
+        if (result.isFinal) {
+          appendDictatedText(transcript);
+        } else {
+          interim += transcript;
+        }
+      }
+      if (preview) {
+        preview.textContent = interim;
+        preview.style.display = interim ? 'block' : 'none';
+      }
+    };
+
+    dictateSR.onerror = (event) => {
+      console.warn('[dictate] SR error:', event.error, event.message || '');
+      // Non-fatal errors: 'no-speech', 'audio-capture' (transient mic glitch),
+      // 'aborted' (we stopped it). Fatal: 'not-allowed' (mic permission denied).
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        alert('Mic permission denied. Allow microphone access for dictation.');
+        stopDictate();
+      }
+    };
+
+    dictateSR.onend = () => {
+      // SR auto-stops after silence on some browsers even with continuous=true.
+      // Restart it so the mic stays hot until the user explicitly stops.
+      if (dictateMode && !dictateRestartGuard) {
+        try { dictateSR.start(); } catch {} // already-started errors are fine
+      }
+    };
+
+    dictateSR.start();
+    updateDictateUI();
+    // Focus the textarea so Enter routes through handleInputKeydown
+    // (stops dictation) instead of triggering the dictate-btn click again.
+    // Without this the user's Enter could hit whatever element had focus
+    // when they clicked the button.
+    document.getElementById('msg-input')?.focus();
+    console.log('[dictate] started (browser SpeechRecognition)');
+  } catch (e) {
+    console.error('[dictate] start failed:', e);
+    dictateMode = false;
+    cleanupDictateResources();
+    alert('Could not start dictation: ' + (e?.message || e));
+  }
+}
+
+function stopDictate() {
+  if (!dictateMode) return;
+  dictateMode = false;
+  dictateRestartGuard = true; // block onend from auto-restarting
+  cleanupDictateResources();
+  const preview = document.getElementById('dictate-preview');
+  if (preview) { preview.textContent = ''; preview.style.display = 'none'; }
+  updateDictateUI();
+  // Cursor back to the textarea + caret at end so the next Enter sends
+  // the dictated message instead of falling through to nothing.
+  const ta = document.getElementById('msg-input');
+  if (ta) {
+    ta.focus();
+    const len = ta.value.length;
+    try { ta.setSelectionRange(len, len); } catch {}
+  }
+  console.log('[dictate] stopped');
+}
+
+function cleanupDictateResources() {
+  try { dictateSR && dictateSR.stop(); } catch {}
+  dictateSR = null;
+  try { dictateMicStream && dictateMicStream.getTracks().forEach(t => t.stop()); } catch {}
+  dictateMicStream = null;
+  try { dictateCtx && dictateCtx.close(); } catch {}
+  dictateCtx = null;
+  if (window.VoiceSphere) { try { VoiceSphere.hide(); } catch {} }
+}
+
+function updateDictateUI() {
+  const btn = document.getElementById('dictate-btn');
+  if (!btn) return;
+  if (dictateMode) {
+    btn.classList.add('dictating');
+    btn.title = 'Stop dictation (or press Enter)';
+  } else {
+    btn.classList.remove('dictating');
+    btn.title = 'Dictate (speech to text only — no agent reply)';
+  }
+}
+
+// Append a Whisper-finalized utterance into the message textarea with
+// dumb multi-sentence joining: space + capitalize next + add terminal
+// punctuation if missing. Whisper does intra-utterance punctuation well;
+// cross-utterance is best-effort. User edits before sending = safety net.
+function appendDictatedText(utterance) {
+  const ta = document.getElementById('msg-input');
+  if (!ta || !utterance) return;
+  let text = utterance.trim();
+  if (!text) return;
+  const existing = ta.value;
+  if (existing.length === 0) {
+    // First utterance — capitalize first character if it isn't already.
+    text = text.charAt(0).toUpperCase() + text.slice(1);
+    ta.value = text;
+  } else {
+    // Continuation — ensure prior text terminates, then capitalize new.
+    const lastChar = existing.charAt(existing.length - 1);
+    const needsTerminator = !/[.!?,;:]/.test(lastChar);
+    const sep = needsTerminator ? '. ' : ' ';
+    const cap = text.charAt(0).toUpperCase() + text.slice(1);
+    ta.value = existing + sep + cap;
+  }
+  // Auto-grow + scroll to end so the user sees what just landed.
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  ta.scrollTop = ta.scrollHeight;
+  // Clear preview row — that partial is now committed above.
+  const preview = document.getElementById('dictate-preview');
+  if (preview) preview.textContent = '';
+}
+
+// Centralized textarea Enter handler. Dictate mode steals Enter for stop;
+// otherwise normal send. Shift-Enter always inserts a newline (textarea default).
+function handleInputKeydown(event) {
+  if (event.key !== 'Enter' || event.shiftKey) return;
+  event.preventDefault();
+  if (dictateMode) { stopDictate(); }
+  else { sendMessage(); }
 }
 
 async function startVoiceMode() {
   if (voiceMode) return;
   try {
-    // 1) Connect to /ws/voice with auth token
+    // 1) Connect to /ws/voice with auth token.
+    //
+    // Use a LOCAL ws reference for everything in this init function. The
+    // global voiceWS used to be assigned and then read back in handler
+    // attach + send calls — but a stale onclose from a previous session
+    // could fire mid-init and null voiceWS via cleanupVoiceResources,
+    // causing a TypeError on `voiceWS.onmessage = ...`. The local ref
+    // immunizes us from that race; the wrap-onclose closure-guards the
+    // cleanup so only the CURRENT WS triggers a global teardown.
     const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/voice?token=${encodeURIComponent(AUTH_TOKEN)}`;
-    voiceWS = new WebSocket(wsUrl);
-    voiceWS.binaryType = 'arraybuffer';
+    const ws = new WebSocket(wsUrl);
+    voiceWS = ws;
+    ws.binaryType = 'arraybuffer';
 
     await new Promise((resolve, reject) => {
-      voiceWS.onopen = () => resolve();
-      voiceWS.onerror = () => reject(new Error('voice ws error'));
-      voiceWS.onclose = (e) => {
-        if (voiceWS.readyState !== WebSocket.OPEN) reject(new Error(`voice ws closed before open (code ${e.code})`));
+      ws.onopen = () => resolve();
+      ws.onerror = () => reject(new Error('voice ws error'));
+      ws.onclose = (e) => {
+        if (ws.readyState !== WebSocket.OPEN) reject(new Error(`voice ws closed before open (code ${e.code})`));
       };
     });
 
-    // Attach handlers BEFORE hello so server-side ready/init events aren't lost
-    voiceWS.onmessage = handleVoiceWsMessage;
-    voiceWS.onclose = () => { console.log('[voice] ws closed'); cleanupVoiceResources(); };
+    // Attach handlers BEFORE hello so server-side ready/init events aren't lost.
+    // The onclose closure compares ws to the current voiceWS — if a fresh
+    // session has reassigned voiceWS, this stale handler is a no-op.
+    ws.onmessage = handleVoiceWsMessage;
+    ws.onclose = () => {
+      if (voiceWS !== ws) return; // stale handler from a prior session
+      console.log('[voice] ws closed');
+      cleanupVoiceResources();
+    };
 
-    // 2) Send hello + saved voice/speed settings
+    // 2) Send hello + saved voice/speed settings. Mode tells the server
+    // whether to run the full agent pipeline (chat) or stop after Whisper
+    // and emit the transcript only (dictate). Server-side guards in
+    // voice-session.ts and gpu-session.ts skip agent_start + TTS in
+    // dictate mode so the user only gets the transcript, not a phantom
+    // agent reply.
     const sid = (typeof activeChat !== 'undefined' && activeChat?.id) ? activeChat.id : 'default';
-    voiceWS.send(JSON.stringify({ type: 'hello', sessionId: 'chat-' + sid + '-' + Date.now() }));
+    const sessionMode = dictateMode ? 'dictate' : 'chat';
+    ws.send(JSON.stringify({ type: 'hello', sessionId: 'chat-' + sid + '-' + Date.now(), mode: sessionMode }));
     const savedVoice = localStorage.getItem('lax_voice') || 'am_michael';
     const savedSpeed = parseFloat(localStorage.getItem('lax_speed') || '1.15');
-    voiceWS.send(JSON.stringify({ type: 'voice_settings', voice: savedVoice, speed: savedSpeed }));
+    ws.send(JSON.stringify({ type: 'voice_settings', voice: savedVoice, speed: savedSpeed }));
 
-    // 3) AudioContext + worklets
+    // 3) AudioContext + worklets. Cache-bust the worklet URLs — without the
+    // version param, an older browser-cached worklet file (missing the
+    // registerProcessor call) silently "loads" but doesn't register the
+    // processor name, then `new AudioWorkletNode(ctx, 'mic-capture')` throws
+    // "mic-capture is not defined in AudioWorkletGlobalScope". Bump the
+    // version when the worklet code changes.
     voiceCtx = new AudioContext();
-    await voiceCtx.audioWorklet.addModule('/js/voice/mic-capture-worklet.js');
-    await voiceCtx.audioWorklet.addModule('/js/voice/playback-worklet.js');
+    await voiceCtx.audioWorklet.addModule('/js/voice/mic-capture-worklet.js?v=vb2');
+    await voiceCtx.audioWorklet.addModule('/js/voice/playback-worklet.js?v=vb2');
 
     // 4) Mic capture
     voiceMicStream = await navigator.mediaDevices.getUserMedia({
@@ -1241,10 +1495,16 @@ async function startVoiceMode() {
 
     voiceMode = true;
     voiceEnabled = true;
-    const ttsBtn = document.getElementById('tts-toggle');
-    if (ttsBtn) { ttsBtn.textContent = 'VOICE ON'; ttsBtn.className = 'active'; }
+    // Only flip the chat-mode UI labels in actual voice-chat mode. Dictate
+    // reuses the same WS + sphere infra but is a different product surface
+    // — labeling its session as "VOICE ON" + lighting up the mic-btn would
+    // mislead the user into thinking the agent is listening for a reply.
+    if (!dictateMode) {
+      const ttsBtn = document.getElementById('tts-toggle');
+      if (ttsBtn) { ttsBtn.textContent = 'VOICE ON'; ttsBtn.className = 'active'; }
+    }
     updateVoiceUI();
-    console.log('[voice] session started');
+    console.log(`[voice] session started (mode=${dictateMode ? 'dictate' : 'chat'})`);
   } catch (e) {
     console.error('[voice] start failed:', e);
     cleanupVoiceResources();
@@ -1311,6 +1571,12 @@ function handleVoiceWsMessage(e) {
       window.VoiceSphere && VoiceSphere.setState('thinking'); break;
     case 'final': {
       if (!msg.text) break;
+      // Dictate mode: route Whisper finals into the message textarea instead
+      // of the chat thread. User reviews + sends manually.
+      if (dictateMode) {
+        appendDictatedText(msg.text);
+        break;
+      }
       const empty = document.getElementById('empty');
       if (empty) empty.remove();
       if (typeof addMessageEl === 'function') addMessageEl('user', msg.text);
@@ -1320,7 +1586,25 @@ function handleVoiceWsMessage(e) {
       }
       break;
     }
+    case 'partial': {
+      // Streaming Sherpa partial — show in the ghost preview row below the
+      // textarea. Only renders during dictate mode (in voice mode we let
+      // the chat thread handle it). Each partial REPLACES the prior partial
+      // (Sherpa rewrites as it gets more audio); on speech-end the `final`
+      // event commits to textarea via appendDictatedText and clears the row.
+      if (!dictateMode || !msg.text) break;
+      const preview = document.getElementById('dictate-preview');
+      if (preview) {
+        preview.textContent = msg.text;
+        preview.style.display = 'block';
+      }
+      break;
+    }
     case 'agent_start': {
+      // Dictate mode: agent should never run, but if a stale server still
+      // tries to start a turn, just drop the events instead of injecting
+      // a phantom assistant bubble into the chat thread.
+      if (dictateMode) break;
       if (typeof addMessageEl === 'function') {
         voiceCurrentMsgEl = addMessageEl('assistant', '');
         voiceCurrentMsgBody = voiceCurrentMsgEl?.querySelector('.msg-body');
@@ -1469,6 +1753,15 @@ function updateVoiceUI(state) {
   if (state === 'transcribing') {
     mic.className = 'input-btn listening';
     if (ind) { ind.className = 'listening'; ind.textContent = '⚡ TRANSCRIBING...'; }
+    return;
+  }
+  // Dictate mode: keep mic-btn neutral (the dictate-btn pulses cyan via its
+  // own .dictating class). Voice indicator shows DICTATING so the user
+  // knows the mic is hot but the agent isn't replying.
+  if (dictateMode) {
+    mic.className = 'input-btn';
+    mic.title = 'Voice mode (currently in dictate — click to switch)';
+    if (ind) { ind.className = 'listening'; ind.textContent = '✏ DICTATING'; }
     return;
   }
   if (voiceMode) {
@@ -2656,6 +2949,12 @@ function renderAgentCard(agent) {
         ? '<button class="agent-ctrl-btn" onclick="onAgentResume(\'' + safeId + '\')">Resume</button>'
         : '<button class="agent-ctrl-btn" onclick="onAgentPause(\'' + safeId + '\')">Pause</button>') +
       '<button class="agent-ctrl-btn" onclick="onAgentRedirect(\'' + safeId + '\')">Redirect</button>' +
+      // Stay inline: kills the worker, marks the auto-delegate decision as a
+      // user-override (training signal), re-submits the original message
+      // with /discuss prefix so this exact text bypasses auto-delegate.
+      // 404s gracefully for non-auto-delegate ops (autopilot, self_edit) —
+      // the button is harmless on cards that aren't auto-delegate spawns.
+      '<button class="agent-ctrl-btn" title="This should have been a chat reply, not a worker. Kills this op and re-asks inline." onclick="onAgentStayInline(\'' + safeId + '\')">Stay inline</button>' +
       '<button class="agent-ctrl-btn cancel" onclick="onAgentCancel(\'' + safeId + '\')">Cancel</button>' +
     '</div>' +
     '<input class="agent-redirect-input" id="agent-redirect-' + safeId + '" placeholder="New instructions..." ' +
@@ -2736,6 +3035,33 @@ function onAgentCancel(agentId) {
   // worker kept running, progress events kept re-rendering the card).
   updateAgentFeed(agentId, { status: 'cancelled' });
   setTimeout(function() { removeAgentFeed(agentId); }, 1500);
+}
+
+// User clicked "Stay inline" — POST to /api/auto-delegate/override which
+// kills the op + tags the decision as a user-correction (training signal)
+// + returns the original message so we can re-submit with /discuss prefix.
+// The next time the user types this exact message it'll bypass auto-delegate.
+async function onAgentStayInline(agentId) {
+  try {
+    const r = await apiPost('/api/auto-delegate/override', { opId: agentId });
+    const data = await r.json();
+    updateAgentFeed(agentId, { status: 'overridden — re-asking inline' });
+    setTimeout(function() { removeAgentFeed(agentId); }, 1500);
+    if (data && data.message) {
+      // Resubmit with /discuss prefix so the next pass forces inline.
+      // Goes through sendMessage so the chat thread shows the user message
+      // again (Whisper re-render isn't necessary; this is a re-attempt).
+      const ta = document.getElementById('msg-input');
+      if (ta) {
+        ta.value = '/discuss ' + data.message;
+        try { sendMessage(); } catch (e) { console.warn('[stay-inline] resubmit failed:', e); }
+      }
+    } else {
+      console.info('[stay-inline] no message to resubmit (op was not auto-delegated)');
+    }
+  } catch (e) {
+    console.warn('[stay-inline] override failed:', e);
+  }
 }
 
 function onAgentDismiss(agentId) {

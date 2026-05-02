@@ -22,6 +22,7 @@ import { appendEvent } from "./event-log.js";
 import { writeCheckpoint, newCheckpoint } from "./checkpoint.js";
 import type { AgentTurn } from "../types.js";
 import { randomUUID } from "node:crypto";
+import { looksLikeAgentRefusal } from "../errors/index.js";
 
 // Workers shouldn't write to stdout — that's the IPC channel. Route logs to stderr.
 const log = (level: string, msg: string) => process.stderr.write(`[worker ${level}] ${msg}\n`);
@@ -294,31 +295,14 @@ function classifyOpResult(
       : "";
   const didMeaningfulWork = toolCallsExecuted > 0 || lastText.trim().length > 20;
 
-  // Refusal patterns: agent ended its turn without calling any tools AND the
-  // final text sounds like "I can't do this." Live failure mode: a worker
-  // whose Anthropic CLI MCP bridge race-failed got zero filesystem tools,
-  // refused with "I don't have the file system tools (Read, Edit, ...)
-  // available — please re-run", and was marked `completed` because
-  // stopReason was `end_turn`. The supervisor then narrated it to the user
-  // as success. Catch the refusal and label it `failed` so narration tells
-  // the truth.
-  const REFUSAL_PATTERNS = [
-    /\bI (don't|do not) have (the |access to |any )?\w*\s*(file ?system|filesystem|standard)?\s*(tools?|access)/i,
-    /\bI (can't|cannot|am unable to|am not able to|don't have a way to)\s+(audit|refactor|edit|read|modify|access|complete|do this)/i,
-    /\bno (filesystem|tool|MCP|standard)\s+(access|tools?)\s+(available|exposed|enabled)/i,
-    /\b(could|can|please) you (re-?run|provide|share|paste|enable)/i,
-    /\bplease (re-?run|provide|share|paste|enable)\s+(this|the file|tools|file contents)/i,
-    // Punting patterns: agent narrates intent or asks for permission instead
-    // of acting. Only fires when zero tool calls were made (see guard below),
-    // so legitimate "I'll need X" messages where the agent then runs tools
-    // are unaffected — only ones that ENDED that way trip this.
-    /\b(I'll|I will|I would) need\b/i,
-    /\bI should\s+(read|check|look at|inspect|examine|review|edit|modify|update|run)/i,
-    /\blet me know if you (want|'d like)|\blet me know if (you'd like )?I should\b/i,
-    /\b(would you like|do you want) me to\b/i,
-    /\bI (could|can) (read|check|look at|inspect|examine|edit|modify|update|run|do)\b.*\?\s*$/i,
-  ];
-  const looksLikeRefusal = toolCallsExecuted === 0 && REFUSAL_PATTERNS.some(rx => rx.test(lastText));
+  // Refusal detection: agent ended its turn without calling any tools AND
+  // the final text sounds like "I can't do this." Patterns owned by
+  // src/errors/classifier.ts via looksLikeAgentRefusal(). Live failure
+  // case: a worker whose MCP bridge race-failed got zero filesystem
+  // tools, refused with "I don't have access" and was marked `completed`
+  // because stopReason was `end_turn`. Catching the refusal flips it to
+  // `failed` so narration tells the truth.
+  const looksLikeRefusal = toolCallsExecuted === 0 && looksLikeAgentRefusal(lastText);
 
   // Honest completion sentinels — workers are now told to emit one of:
   //   WORK_DONE: <summary>            → real success

@@ -44,9 +44,13 @@ export class OpenAIHttpAdapter extends BaseAdapter {
         },
         { signal: req.signal || undefined },
       ).catch(async (err: Error) => {
-        // Local Ollama fallback: some models reject the `tools` field
-        // entirely. Cache the model name and retry without tools.
-        if (req.baseURL?.includes("localhost") && err.message?.includes("does not support tools")) {
+        // "Does not support tools" fallback — some Ollama models (llama3,
+        // qwen2, etc.) reject the `tools` field entirely. Trigger on the
+        // error string regardless of baseURL: 127.0.0.1, localhost, custom
+        // remote ollama, and any other OpenAI-compat provider with the
+        // same constraint all benefit. Harmless for providers that DO
+        // support tools — they never emit this error.
+        if (err.message?.includes("does not support tools")) {
           _localNoToolModels.add(req.model);
           logger.info(`model ${req.model} doesn't support tools — switching to chat-only`);
           return client.chat.completions.create({

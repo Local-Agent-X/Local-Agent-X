@@ -134,7 +134,7 @@ export function scrubOrphanedToolCalls(
         // Keep the assistant text but strip the orphan tool_calls
         const copy: Record<string, unknown> = { ...r };
         delete copy.tool_calls;
-        out.push(copy as ChatCompletionMessageParam);
+        out.push(copy as unknown as ChatCompletionMessageParam);
       } else if (kept.length !== original.length) {
         out.push({ ...r, tool_calls: kept } as ChatCompletionMessageParam);
       } else {

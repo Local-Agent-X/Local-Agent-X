@@ -20,9 +20,42 @@ import type { AutopilotConfig, StartAutopilotRequest } from "./types.js";
 import type { Operation } from "../operations/types.js";
 import type { LAXConfig, ToolDefinition } from "../types.js";
 import type { AgentOptions } from "../agent.js";
+import { loadAnthropicTokens, isAnthropicTokenExpired } from "../auth-anthropic.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("autopilot.start");
+
+/**
+ * Pin autopilot rounds to Anthropic when available, regardless of who
+ * launched the autopilot. Reason: Codex (gpt-5.x) has a fire-and-forget
+ * disposition that produces narration-only rounds and trips the noop
+ * detector. Sonnet/Opus actually use tools. We've validated this in
+ * production — Codex autopilots hit max-noop-rounds, Anthropic autopilots
+ * commit. Falls back to the launcher's provider only if Anthropic auth
+ * is missing/expired.
+ */
+function pickAutopilotProvider(deps: StartAutopilotDeps): {
+  provider: AgentOptions["provider"];
+  apiKey: string;
+  model: string;
+  pinned: boolean;
+} {
+  if (deps.provider === "anthropic") {
+    return { provider: deps.provider, apiKey: deps.apiKey, model: deps.model, pinned: false };
+  }
+  const tokens = loadAnthropicTokens();
+  if (tokens && !isAnthropicTokenExpired(tokens)) {
+    return {
+      provider: "anthropic",
+      // CLI sentinel — anthropic-cli adapter handles subscription auth.
+      apiKey: "cli",
+      // Sane default; user can override via autopilot.config.json later.
+      model: "claude-sonnet-4-6",
+      pinned: true,
+    };
+  }
+  return { provider: deps.provider, apiKey: deps.apiKey, model: deps.model, pinned: false };
+}
 
 export interface StartAutopilotDeps {
   config: LAXConfig;
@@ -179,12 +212,31 @@ export async function startAutopilot(
   if (!existsSync(opDir)) mkdirSync(opDir, { recursive: true });
   writeFileSync(join(opDir, "operation.json"), JSON.stringify(op, null, 2), "utf-8");
 
+  // Pin to Anthropic for round agents when possible — see pickAutopilotProvider
+  // doc above for rationale (Codex narrates and bails; Anthropic commits).
+  const picked = pickAutopilotProvider(deps);
+  const effectiveDeps: StartAutopilotDeps = {
+    ...deps,
+    provider: picked.provider,
+    apiKey: picked.apiKey,
+    model: picked.model,
+  };
+  if (picked.pinned) {
+    logger.info(`[autopilot.start] pinned round agents to anthropic (launcher was ${deps.provider}); model=${picked.model}`);
+    op.events.push({
+      ts: Date.now(),
+      level: "info",
+      message: `Round agents pinned to Anthropic (${picked.model}) for reliability — launcher was ${deps.provider}`,
+    });
+    writeFileSync(join(opDir, "operation.json"), JSON.stringify(op, null, 2), "utf-8");
+  }
+
   // Kick off the loop in the background. Don't await — we return immediately.
-  runAutopilotLoop(op, deps).catch(e => {
+  runAutopilotLoop(op, effectiveDeps).catch(e => {
     logger.error(`[autopilot.start] loop crashed for op ${opId}: ${(e as Error).message}`);
   });
 
-  logger.info(`[autopilot.start] launched op ${opId} on ${branchName} (worktree ${wt.path})`);
+  logger.info(`[autopilot.start] launched op ${opId} on ${branchName} (worktree ${wt.path}) provider=${picked.provider}`);
 
   return {
     ok: true,

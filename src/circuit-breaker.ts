@@ -82,10 +82,23 @@ export function recordCircuitSuccess(sessionId: string | undefined, toolName: st
   entry.consecutiveFailures = 0;
 }
 
-/** Record a failed tool execution. Trips the breaker after threshold. */
-export function recordCircuitFailure(sessionId: string | undefined, toolName: string): void {
+/** Record a failed tool execution. Trips the breaker after threshold.
+ *  `errorPreview` is the first ~200 chars of the tool result.content — logged
+ *  on EVERY failure so debugging a circuit trip doesn't require guessing what
+ *  the tool returned. (Pre-fix the breaker logged "OPEN after 4 failures"
+ *  with no clue what those failures were — autopilot debugging hell.) */
+export function recordCircuitFailure(
+  sessionId: string | undefined,
+  toolName: string,
+  errorPreview?: string,
+): void {
   const entry = getOrCreate(key(sessionId, toolName));
   entry.consecutiveFailures += 1;
+
+  // Log EVERY failure with the error so we can see the ramp-up, not just
+  // the trip. Capped to 200 chars to keep log lines digestible.
+  const preview = (errorPreview || "(no error message captured)").slice(0, 200).replace(/\s+/g, " ");
+  logger.warn(`[circuit-breaker] FAIL ${toolName} (session=${sessionId || "default"}) #${entry.consecutiveFailures}: ${preview}`);
 
   if (entry.state === "half_open") {
     // Half-open failure → re-open immediately

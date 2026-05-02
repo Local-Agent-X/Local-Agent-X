@@ -89,6 +89,19 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
       const args = body.arguments || {};
       const sessionId = body.sessionId || "mcp-bridge";
 
+      // Autopilot worktree binding — the round-agent process binds the
+      // worktree to its OWN local SecurityLayer, but tool execution
+      // happens HERE on the server using ctx.security (rooted at
+      // LAX_REPO_ROOT). Without this lookup, every bash inside the
+      // worktree fails with "path not allowed", trips the circuit
+      // breaker after 4 fails, and the round dies without committing.
+      // Idempotent — addAllowedPath uses a Set; repeated calls no-op.
+      try {
+        const { getAutopilotWorktree } = await import("../autopilot/registry.js");
+        const wt = getAutopilotWorktree(sessionId);
+        if (wt) ctx.security.addAllowedPath(wt, sessionId);
+      } catch { /* registry optional */ }
+
       // Run through the same path as other agent tool calls: security, policy,
       // RBAC, Ari all apply. Caller role is operator (MCP bridge is trusted —
       // only reachable on localhost, authed via SAX auth token).

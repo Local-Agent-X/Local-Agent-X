@@ -533,7 +533,7 @@ async function executeSingleTool(
       if (succeeded) {
         recordCircuitSuccess(sessionId, tc.name);
       } else {
-        recordCircuitFailure(sessionId, tc.name);
+        recordCircuitFailure(sessionId, tc.name, typeof result.content === "string" ? result.content : undefined);
       }
     }
   }

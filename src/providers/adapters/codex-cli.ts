@@ -4,12 +4,11 @@
  * wire format from OpenAI Chat Completions (uses /v1/responses with
  * encrypted reasoning items and a `previousResponseId` chain).
  *
- * Reasoning items are not part of the StreamChunk vocabulary — the
- * dispatcher (which still owns the loop) needs them for chain
- * continuation. For now this adapter discards them; a follow-up will
- * thread reasoning through ProviderRequest/Response so the loop can
- * pass `previousResponseId` between iterations without bypassing the
- * adapter contract.
+ * Reasoning items are forwarded as `reasoning` chunks (opaque payload).
+ * The responseId is attached to the final `done` chunk so the caller
+ * can thread it back via ProviderRequest.previousResponseId on the
+ * next turn — keeps the encrypted reasoning chain alive without
+ * resending it as plaintext.
  */
 
 import { BaseAdapter } from "../adapter/base-adapter.js";
@@ -36,6 +35,7 @@ export class CodexCliAdapter extends BaseAdapter {
         systemPrompt: req.systemPrompt,
         tools: codexTools,
         temperature: req.temperature,
+        previousResponseId: req.previousResponseId,
         sessionId: req.sessionId,
         toolChoice: req.toolChoice,
       });
@@ -64,9 +64,7 @@ export class CodexCliAdapter extends BaseAdapter {
             };
             break;
           case "reasoning":
-            // Reasoning items kept inside the inner generator's done payload;
-            // dispatcher pulls them via the existing run-http path until
-            // ProviderRequest grows a reasoning channel.
+            yield { type: "reasoning", item: evt.item };
             break;
           case "done":
             if (evt.usage) {
@@ -76,7 +74,12 @@ export class CodexCliAdapter extends BaseAdapter {
                 completionTokens: evt.usage.outputTokens,
               };
             }
-            yield { type: "done", stopReason: "end_turn" };
+            // Surface any reasoning the inner generator collected at
+            // wrap-up time but didn't stream as a separate event.
+            for (const item of evt.reasoning || []) {
+              yield { type: "reasoning", item };
+            }
+            yield { type: "done", stopReason: "end_turn", responseId: evt.responseId };
             return;
         }
       }

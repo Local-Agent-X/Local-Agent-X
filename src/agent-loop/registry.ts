@@ -25,6 +25,7 @@ import { forceToolUseMiddleware } from "./middlewares/force-tool-use.js";
 import { pauseMiddleware } from "./middlewares/pause.js";
 import { postCommitMiddleware } from "./middlewares/post-commit.js";
 import { deadEndMiddleware } from "./middlewares/dead-end.js";
+import { selfCheckMiddleware } from "./middlewares/self-check.js";
 
 export function getDefaultMiddlewareStack(): LoopMiddleware[] {
   return [
@@ -38,8 +39,10 @@ export function getDefaultMiddlewareStack(): LoopMiddleware[] {
     forceToolUseMiddleware,
     // Heartbeat last — only meaningful if we're actually going to run.
     heartbeatMiddleware,
-    // afterModelCall: pause when the assistant asks for credentials/2fa.
+    // afterModelCall: pause first (preempts end-of-turn paths), then
+    // self-check on terminal turns.
     pauseMiddleware,
+    selfCheckMiddleware,
     // afterToolExecution: dead-end FIRST so an empty result in this
     // iteration nudges before the post-commit wrap-up gets a chance.
     deadEndMiddleware,

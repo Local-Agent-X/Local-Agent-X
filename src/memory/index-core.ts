@@ -187,6 +187,18 @@ export class MemoryIndex {
     return Ingest.getIngestStats(this.db);
   }
 
+  getIngestSummary(): Ingest.IngestSourceSummary[] {
+    return Ingest.getIngestSummary(this.db);
+  }
+
+  listImportConversationsBySource(source: string): string[] {
+    return Ingest.listConversationIdsBySource(this.db, source);
+  }
+
+  listImportConversationsSince(sinceMs: number): Array<{ conversation_id: string; source_format: string; ingested_at: number; title: string | null }> {
+    return Ingest.listConversationIdsSince(this.db, sinceMs);
+  }
+
   // ── Forget ──
 
   forgetFacts(pattern: string): number {

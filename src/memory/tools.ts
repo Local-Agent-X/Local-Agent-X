@@ -11,6 +11,8 @@ import { createSaveTools } from "./tools/save.js";
 import { createForgetTool } from "./tools/forget.js";
 import { createProcessTools } from "./tools/process.js";
 import { createIngestTool } from "./tools/ingest.js";
+import { createDiscoverTool } from "./tools/discover.js";
+import { createForgetImportsTool } from "./tools/forget-imports.js";
 
 export function createMemoryTools(memory: MemoryIndex) {
   const search = createSearchTools(memory);
@@ -18,6 +20,8 @@ export function createMemoryTools(memory: MemoryIndex) {
   const forget = createForgetTool(memory);
   const process = createProcessTools(memory);
   const ingest = createIngestTool(memory);
+  const discover = createDiscoverTool(memory);
+  const forgetImports = createForgetImportsTool(memory);
   return [
     search[0],   // memory_search
     search[1],   // memory_reindex
@@ -29,6 +33,8 @@ export function createMemoryTools(memory: MemoryIndex) {
     forget,      // memory_forget
     save[1],     // memory_update_profile
     ingest,      // memory_ingest
+    discover,    // memory_discover
+    forgetImports, // memory_forget_imports
     process[1],  // memory_consolidate
   ];
 }

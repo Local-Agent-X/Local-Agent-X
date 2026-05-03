@@ -283,7 +283,8 @@ function stopChat() {
   const msgs = document.querySelectorAll('.msg.assistant');
   const last = msgs[msgs.length - 1];
   if (last) {
-    last.classList.remove('pin-during-stream');
+    // Keep `pin-bottom` on the stopped turn — it's still the most recent
+    // assistant reply, so it should keep the reserved viewport-height below.
     const body = last.querySelector('.msg-body');
     if (body && !body.textContent.includes('[stopped]')) {
       body.innerHTML += '<div style="color:var(--muted);font-size:.72rem;margin-top:8px;font-style:italic">[stopped by user]</div>';
@@ -321,8 +322,8 @@ function autoScroll() {
   // ChatGPT-style: during an active streaming turn we DO NOT auto-scroll.
   // The user message was scrolled to the top of the viewport at send time,
   // and the assistant placeholder reserves viewport-height of room below
-  // (see .pin-during-stream). The response fills that space; the reader
-  // controls scroll afterward.
+  // (see .pin-bottom). The response fills that space; the reader controls
+  // scroll afterward.
   if (streamingSessionId) return;
   if (userScrolledUp) return;
   const el = document.getElementById('messages');
@@ -443,6 +444,12 @@ function renderMessages() {
       }
     }
   }
+  // Pin the latest assistant message so it carries the reserved viewport-
+  // height of room below it (ChatGPT-style). When navigating to an existing
+  // chat, this gives the most recent reply that breathing room without any
+  // active stream.
+  const allAssistant = el.querySelectorAll('.msg.assistant');
+  if (allAssistant.length > 0) allAssistant[allAssistant.length - 1].classList.add('pin-bottom');
   el.scrollTop = el.scrollHeight;
 }
 
@@ -494,11 +501,11 @@ async function sendMessage() {
   const msgEl = addMessageEl('assistant', '');
   let bodyEl = msgEl.querySelector('.msg-body');
   bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
-  // ChatGPT-style scroll pin: reserve viewport-height under the user message,
-  // then anchor the user message to the top. Auto-scroll is disabled during
-  // the stream (see autoScroll() — it short-circuits while pin is active) so
-  // the user can scroll freely as the response fills the reserved space.
-  msgEl.classList.add('pin-during-stream');
+  // ChatGPT-style scroll pin: the new assistant message reserves viewport-
+  // height of room below it. Migrate the pin off any prior assistant message
+  // (only the latest turn keeps it), then anchor the user prompt to the top.
+  document.querySelectorAll('.msg.assistant.pin-bottom').forEach(el => el.classList.remove('pin-bottom'));
+  msgEl.classList.add('pin-bottom');
   if (userMsgEl) {
     requestAnimationFrame(() => {
       try { userMsgEl.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch {}
@@ -614,7 +621,8 @@ async function sendMessage() {
             // Finalize
             if (streamingSessionId === streamSessionId) streamingSessionId = null;
             _liveStreams.delete(streamSessionId);
-            try { msgEl.classList.remove('pin-during-stream'); } catch {}
+            // Keep `pin-bottom` — it's the latest turn and should retain the
+            // viewport-height reserved space below until the user sends again.
             try {
               const stopBtn2 = document.getElementById('stop-btn');
               if (stopBtn2) stopBtn2.style.display = 'none';
@@ -666,7 +674,9 @@ async function sendMessage() {
             break;
           }
         }
-        if (isViewingThis()) autoScroll();
+        // No post-event auto-scroll. The user message was pinned to the top of
+        // the viewport at send time, the assistant bubble reserves room below,
+        // and the reader stays in control of scroll throughout (and after).
       } catch {}
     };
     chatWs.addEventListener('message', wsHandler);
@@ -784,7 +794,7 @@ async function sendMessage() {
           }
         } catch {}
       }
-      if (isViewingThis()) autoScroll();
+      // No post-event auto-scroll (see WS handler comment above).
     }
     userScrolledUp = false;
     // Finalize the ORIGINAL chat — preserve streamed content; don't lose visible bubbles
@@ -850,7 +860,7 @@ async function sendMessage() {
   // ALWAYS clear streaming state — must happen before anything that could throw
   if (streamingSessionId === streamSessionId) streamingSessionId = null;
   _liveStreams.delete(streamSessionId);
-  try { msgEl.classList.remove('pin-during-stream'); } catch {}
+  // pin-bottom stays — see WS-handler note. Latest turn keeps reserved height.
   // Always hide stop button and re-enable send when stream ends
   try {
     const stopBtn2 = document.getElementById('stop-btn');

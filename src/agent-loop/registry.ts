@@ -31,6 +31,7 @@ import { hallucinationCheckMiddleware } from "./middlewares/hallucination-check.
 import { actionClaimMiddleware } from "./middlewares/action-claim.js";
 import { loopDetectionMiddleware } from "./middlewares/loop-detection.js";
 import { autoBuildAppMiddleware } from "./middlewares/auto-build-app.js";
+import { interjectDrainMiddleware } from "./middlewares/interject-drain.js";
 
 export function getDefaultMiddlewareStack(): LoopMiddleware[] {
   return [
@@ -41,6 +42,10 @@ export function getDefaultMiddlewareStack(): LoopMiddleware[] {
     midTurnStaleMiddleware,
     // Then drain inbound subagent completions (push them into messages).
     subagentDrainMiddleware,
+    // Drain user-injected messages (Step 4 — chat-during-own-turn).
+    // Runs right after subagent-drain so the agent sees both sources of
+    // mid-turn input at the start of each iteration.
+    interjectDrainMiddleware,
     // Set toolChoice for build/action intents on iter 0.
     forceToolUseMiddleware,
     // Heartbeat last — only meaningful if we're actually going to run.

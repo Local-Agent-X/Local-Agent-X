@@ -279,6 +279,7 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
 
     // Secrets — request triggers UI prompt, list shows names only
     { id: "allow-request-secret", tool: "request_secret", decision: "allow", reason: "Secret request (user confirms via UI)", priority: 50 },
+    { id: "allow-request-secrets", tool: "request_secrets", decision: "allow", reason: "Multi-secret request (user confirms via UI)", priority: 50 },
     { id: "allow-list-secrets", tool: "list_secrets", decision: "allow", reason: "List secret names (no values exposed)", priority: 50 },
 
     // voice_visual — read-only side-effect (emits a UI event); rate-limited

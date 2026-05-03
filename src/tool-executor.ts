@@ -209,7 +209,7 @@ async function executeSingleTool(
   // event → modal). Re-running it on retry is the whole point when the user
   // missed the first prompt, and the tool itself short-circuits if the
   // secret already exists.
-  const dup = tc.name === "request_secret" ? null : findPriorIdenticalResult(tc, priorMessages || []);
+  const dup = (tc.name === "request_secret" || tc.name === "request_secrets") ? null : findPriorIdenticalResult(tc, priorMessages || []);
   if (dup) {
     const hint = `[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing. If you need fresh data, change the arguments. Otherwise, focus on the user's current question.]\n\n${dup.result}`;
     onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: hint, allowed: true });
@@ -265,7 +265,7 @@ async function executeSingleTool(
     "enter_plan_mode", "exit_plan_mode", "skill_run", "usage_report",
     "browser", "operation_start",
     "agent_spawn", "browser_capture_to_secret", "browser_fill_from_secret",
-    "session_status", "request_secret",
+    "session_status", "request_secret", "request_secrets",
     "voice_visual",
     // Op tools — async submission needs to know the chat session so the
     // session bridge can route the completion notification back to it.
@@ -301,7 +301,7 @@ async function executeSingleTool(
   // Inject onEvent for tools that need to stream events (e.g. request_secret,
   // browser emits browser_queued when waiting on the per-process mutex,
   // voice_visual emits a `visual` ServerEvent the browser morphs particles to).
-  if (tc.name === "request_secret" || tc.name === "browser" || tc.name === "voice_visual") {
+  if (tc.name === "request_secret" || tc.name === "request_secrets" || tc.name === "browser" || tc.name === "voice_visual") {
     args._onEvent = onEvent;
   }
 

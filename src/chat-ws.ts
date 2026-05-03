@@ -214,6 +214,22 @@ export function setupChatWebSocket(server: Server, authToken: string) {
         }
       }
 
+      // Step 4: user typed during an in-flight turn — push into the
+      // session's inject queue. The interjectDrainMiddleware picks it
+      // up at the start of the next iteration so the agent sees the
+      // message inline. Bypasses the turn-lock entirely (lock guards
+      // "start NEW turn"; inject is "tack onto EXISTING turn").
+      if (type === "inject" && sessionId && typeof msg.message === "string" && msg.message.trim()) {
+        try {
+          const { pushInject } = await import("./agent-loop/inject-queue.js");
+          pushInject(sessionId, msg.message.trim());
+          logger.info(`[ws-chat] inject sess=${sessionId} len=${msg.message.length}`);
+        } catch (e) {
+          logger.warn(`[ws-chat] inject failed: ${(e as Error).message}`);
+        }
+        return;
+      }
+
       if (type === "chat" && sessionId) {
         // Handle chat via WebSocket — trigger the chat handler directly.
         // Accept the message if there's text OR at least one attachment.

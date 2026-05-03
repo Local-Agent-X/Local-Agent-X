@@ -386,13 +386,18 @@ function renderStreamContent(bodyEl, content) {
   if (pending.raf) return;
   pending.raf = requestAnimationFrame(() => {
     pending.raf = 0;
-    const existingCards = bodyEl.querySelectorAll('.tool-card,.approval-card');
+    // Preserve activity-groups + top-level tool-cards/approval-cards across
+    // the markdown re-render. Without preserving the groups, every stream
+    // delta would wipe the consolidated activity container.
+    const existingGroups = bodyEl.querySelectorAll('.activity-group');
+    const orphanCards = bodyEl.querySelectorAll(':scope > .tool-card, :scope > .approval-card');
     // Strip inline plans — the agent's "Plan: 1) X, 2) Y" bullet is for
     // its own reasoning, not for the user's eyes. We remove it before render
     // so the visible bubble just shows the final answer, not the scratchwork.
     const stripped = stripAgentScratchwork(pending.latest);
     bodyEl.innerHTML = stripped ? md(stripped) : '';
-    existingCards.forEach(c => bodyEl.appendChild(c));
+    existingGroups.forEach(g => bodyEl.appendChild(g));
+    orphanCards.forEach(c => bodyEl.appendChild(c));
   });
 }
 
@@ -495,6 +500,26 @@ function renderMessages() {
 }
 
 async function sendMessage() {
+  // Step 4 — interject during own-turn:
+  // If the active chat is currently streaming (main agent mid-tool-loop),
+  // the user's new message gets injected into the running turn instead of
+  // starting a new one. Backend's interjectDrainMiddleware drains the
+  // queue at the start of the next iteration so the agent sees it.
+  if (streamingSessionId && activeChat && streamingSessionId === activeChat.id) {
+    const input = document.getElementById('msg-input');
+    const text = input.value.trim();
+    if (!text) return;
+    if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+      chatWs.send(JSON.stringify({ type: 'inject', sessionId: activeChat.id, message: text }));
+    }
+    // Echo locally as a user message so the chat reflects the interject
+    // immediately without waiting for round-trip confirmation.
+    activeChat.messages.push({ role: 'user', content: text, timestamp: Date.now(), _injected: true });
+    if (typeof renderMessages === 'function') renderMessages();
+    input.value = ''; input.style.height = 'auto';
+    saveChats();
+    return;
+  }
   if (streamingSessionId) return;
   userScrolledUp = false; // Reset scroll lock when user sends
   const input = document.getElementById('msg-input');
@@ -563,7 +588,10 @@ async function sendMessage() {
   if (window.taskStartTime !== undefined) window.taskStartTime = Date.now();
   const stopBtn = document.getElementById('stop-btn');
   if (stopBtn) stopBtn.style.display = 'flex';
-  document.getElementById('send-btn').disabled = true;
+  // Step 4: keep send-btn ENABLED during streaming so user can type
+  // interjects ("actually use blue", "also add Y"). sendMessage routes
+  // through the inject path when streamingSessionId === activeChat.id.
+  document.getElementById('send-btn').disabled = false;
 
   // Helper: is the user still viewing this chat?
   function isViewingThis() { return activeChat && activeChat.id === streamSessionId; }
@@ -614,9 +642,14 @@ async function sendMessage() {
           case 'tool_start':
             toolEvents.push({ type: 'start', name: event.toolName, args: event.args, riskLevel: event.riskLevel });
             if (viewing) {
-              const existingCards = bodyEl.querySelectorAll('.tool-card');
+              // Preserve activity-groups (which contain tool cards) across
+              // the markdown re-render — without this, every text delta wipes
+              // the group container and orphaned tool cards float in body.
+              const existingGroups = bodyEl.querySelectorAll('.activity-group');
+              const orphanCards = bodyEl.querySelectorAll(':scope > .tool-card');
               bodyEl.innerHTML = content ? md(content) : '';
-              existingCards.forEach(c => bodyEl.appendChild(c));
+              existingGroups.forEach(g => bodyEl.appendChild(g));
+              orphanCards.forEach(c => bodyEl.appendChild(c));
               appendToolCardGrouped(bodyEl, event.toolName, event.args, event.riskLevel, event.context);
             }
             break;
@@ -642,6 +675,7 @@ async function sendMessage() {
             break;
           case 'secret_request': showSecretModal(event.name, event.service, event.reason); break;
           case 'secrets_request': showMultiSecretModal(event.secrets); break;
+          case 'image_generated': if (viewing) renderGeneratedImage(bodyEl, event.url, event.prompt); break;
           case 'approval_requested':
             if (viewing) bodyEl.appendChild(makeApprovalCard(event.approvalId, event.toolName, event.context, event.argsPreview));
             break;
@@ -695,17 +729,21 @@ async function sendMessage() {
                 // rAF is pending — force it to flush now synchronously
                 cancelAnimationFrame(pending.raf);
                 pending.raf = 0;
-                const existingCards = bodyEl.querySelectorAll('.tool-card,.approval-card');
+                const existingGroups = bodyEl.querySelectorAll('.activity-group');
+                const orphanCards = bodyEl.querySelectorAll(':scope > .tool-card, :scope > .approval-card');
                 bodyEl.innerHTML = pending.latest ? md(pending.latest) : '';
-                existingCards.forEach(c => bodyEl.appendChild(c));
+                existingGroups.forEach(g => bodyEl.appendChild(g));
+                orphanCards.forEach(c => bodyEl.appendChild(c));
               } else if (content && bodyEl) {
                 // No pending rAF — ensure DOM has latest content (in case last
                 // delta arrived on the same tick as 'done')
-                const existingCards = bodyEl.querySelectorAll('.tool-card,.approval-card');
+                const existingGroups = bodyEl.querySelectorAll('.activity-group');
+                const orphanCards = bodyEl.querySelectorAll(':scope > .tool-card, :scope > .approval-card');
                 const currentMd = md(content);
-                if (bodyEl.innerHTML !== currentMd || existingCards.length > 0) {
+                if (bodyEl.innerHTML !== currentMd || existingGroups.length > 0 || orphanCards.length > 0) {
                   bodyEl.innerHTML = currentMd;
-                  existingCards.forEach(c => bodyEl.appendChild(c));
+                  existingGroups.forEach(g => bodyEl.appendChild(g));
+                  orphanCards.forEach(c => bodyEl.appendChild(c));
                 }
               }
             }
@@ -814,6 +852,7 @@ async function sendMessage() {
               break;
             case 'secret_request': showSecretModal(event.name, event.service, event.reason); break;
             case 'secrets_request': showMultiSecretModal(event.secrets); break;
+            case 'image_generated': if (viewing) renderGeneratedImage(bodyEl, event.url, event.prompt); break;
             case 'approval_requested':
               if (viewing) bodyEl.appendChild(makeApprovalCard(event.approvalId, event.toolName, event.context, event.argsPreview));
               break;
@@ -1025,27 +1064,37 @@ function ensureWorkerBubble(opId, taskHint) {
   if (_workerBubbles.has(opId)) return _workerBubbles.get(opId);
   const el = document.getElementById('messages');
   if (!el) return null;
+  // Use the assistant-bubble layout so the worker message flows inline
+  // with chat. Previously inline styles + raw <pre> placement caused the
+  // bubble to render way below other messages with weird spacing.
   const div = document.createElement('div');
-  div.className = 'msg worker streaming';
+  div.className = 'msg assistant worker-bubble streaming';
   div.setAttribute('role', 'article');
   div.setAttribute('aria-label', 'Worker message');
   div.dataset.opId = opId;
-  const labelText = taskHint ? `Worker — ${taskHint}` : 'Worker';
-  // Inline style is intentional — keeps this self-contained without a
-  // CSS migration. Easy to lift into stylesheet later. Soft purple
-  // distinguishes worker bubbles from main agent (cyan-ish) and user
-  // (right-aligned bubble).
+  const labelText = taskHint ? `⚙ Worker — ${esc(taskHint)}` : '⚙ Worker';
   div.innerHTML =
-    `<div class="msg-label" style="color:#9d9bff">⚙ ${esc(labelText)}</div>` +
-    `<div class="msg-body" style="border-left:2px solid #4a4870;padding-left:10px;opacity:0.92"><pre class="raw-md" style="margin:0;white-space:pre-wrap"></pre></div>`;
+    `<div class="msg-label">${labelText}</div>` +
+    `<div class="msg-body"><div class="worker-content"></div></div>` +
+    `<div class="msg-footer"></div>`;
+  // One-time CSS for worker tinting — keeps the visual distinct from
+  // main agent without a stylesheet migration.
+  const styleId = '_workerBubbleCSS';
+  if (!document.getElementById(styleId)) {
+    const s = document.createElement('style');
+    s.id = styleId;
+    s.textContent =
+      '.msg.assistant.worker-bubble .msg-label{color:#9d9bff}' +
+      '.msg.assistant.worker-bubble .msg-body{border-left:2px solid #4a4870;padding-left:10px;opacity:.92}' +
+      '.msg.assistant.worker-bubble .worker-content{white-space:pre-wrap;font-size:.92rem;line-height:1.45}';
+    document.head.appendChild(s);
+  }
   el.appendChild(div);
-  // Spring entrance like normal messages
   if (typeof Spring !== 'undefined') {
     try { Spring.fadeIn(div, { preset: 'stiff', slide: true, slideFrom: 8 }); } catch {}
   }
-  // Scroll to bottom so user sees the worker bubble appear
   try { el.scrollTop = el.scrollHeight; } catch {}
-  const contentEl = div.querySelector('.msg-body pre');
+  const contentEl = div.querySelector('.worker-content');
   const entry = { div, content: '', contentEl };
   _workerBubbles.set(opId, entry);
   return entry;
@@ -1180,9 +1229,80 @@ function makeToolCard(name, args, riskLevel, context) {
  * within one assistant response always group; the UI for each container
  * starts fresh when a new assistant response begins.
  */
+// Renders a generated image (built-in image_generation tool) inline inside
+// the assistant bubble. The server saves the PNG to workspace/images/generated/
+// and emits the path; we authenticate the fetch via the auth token query
+// param (matches the convention used for uploaded images, see addMessageEl).
+function renderGeneratedImage(container, url, prompt) {
+  if (!container || !url) return;
+  const authedUrl = url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(AUTH_TOKEN);
+  const wrap = document.createElement('div');
+  wrap.className = 'generated-image-wrap';
+  const img = document.createElement('img');
+  img.className = 'generated-image';
+  img.src = authedUrl;
+  img.alt = prompt || 'Generated image';
+  img.loading = 'lazy';
+  img.onclick = () => { try { openLightbox(authedUrl); } catch {} };
+  wrap.appendChild(img);
+  if (prompt) {
+    const cap = document.createElement('div');
+    cap.className = 'generated-image-caption';
+    cap.textContent = prompt;
+    wrap.appendChild(cap);
+  }
+  container.appendChild(wrap);
+}
+
+/**
+ * Find or create the last activity-group inside this container. Activity
+ * groups consolidate ALL consecutive tool calls within one assistant
+ * response into a single collapsible block — instead of 15 stacked tool
+ * cards flooding the chat, you see "⚙ Agent activity (15)" with a
+ * click-to-expand header.
+ *
+ * A new group starts when the assistant emits actual text content — see
+ * the renderStreamContent path which inserts a marker element that
+ * breaks the activity-group lookup.
+ */
+function ensureActivityGroup(container) {
+  // Walk children backwards — if the LAST child is an activity-group,
+  // reuse it. If anything else is in between (text, image, etc.), start
+  // a new group so cards stay grouped per "burst" of activity.
+  const last = container.lastElementChild;
+  if (last && last.classList && last.classList.contains('activity-group')) {
+    return last;
+  }
+  const group = document.createElement('div');
+  group.className = 'activity-group';
+  group.style.cssText = 'border:1px solid var(--border,#333);border-radius:6px;margin:.4rem 0;overflow:hidden;background:rgba(0,0,0,0.15)';
+  group.innerHTML =
+    `<div class="activity-group-header" style="cursor:pointer;padding:.4rem .6rem;display:flex;align-items:center;gap:.5rem;font-size:.75rem;color:var(--muted);user-select:none" onclick="this.parentElement.classList.toggle('open');this.querySelector('.activity-chevron').textContent=this.parentElement.classList.contains('open')?'\\u25BC':'\\u25B6'">` +
+      `<span style="opacity:.8">⚙</span>` +
+      `<span class="activity-label" style="flex:1">Agent activity</span>` +
+      `<span class="activity-count" style="font-variant-numeric:tabular-nums">0</span>` +
+      `<span class="activity-chevron">▶</span>` +
+    `</div>` +
+    `<div class="activity-group-body" style="max-height:320px;overflow-y:auto;padding:0 .4rem .4rem"></div>`;
+  // Hide the body when not .open
+  const styleId = '_activityGroupCSS';
+  if (!document.getElementById(styleId)) {
+    const s = document.createElement('style');
+    s.id = styleId;
+    s.textContent = '.activity-group:not(.open) .activity-group-body{display:none}';
+    document.head.appendChild(s);
+  }
+  container.appendChild(group);
+  return group;
+}
+
 function appendToolCardGrouped(container, name, args, riskLevel, context) {
-  const cards = container.querySelectorAll('.tool-card');
+  const group = ensureActivityGroup(container);
+  const body = group.querySelector('.activity-group-body');
+  const cards = body.querySelectorAll('.tool-card');
   const last = cards[cards.length - 1];
+
+  // Same-name dedup INSIDE the group (preserves the legacy "bash x6" UX).
   if (last && last.getAttribute('data-tool-name') === name) {
     const count = parseInt(last.getAttribute('data-call-count') || '1', 10) + 1;
     last.setAttribute('data-call-count', String(count));
@@ -1197,11 +1317,24 @@ function appendToolCardGrouped(container, name, args, riskLevel, context) {
       sub.textContent = '#' + count + ' ' + toolSummary(name, args);
       detail.appendChild(sub);
     }
+    bumpActivityCount(group);
     return last;
   }
   const card = makeToolCard(name, args, riskLevel, context);
-  container.appendChild(card);
+  body.appendChild(card);
+  bumpActivityCount(group);
   return card;
+}
+
+function bumpActivityCount(group) {
+  const countEl = group.querySelector('.activity-count');
+  if (!countEl) return;
+  const cur = parseInt(countEl.getAttribute('data-total') || '0', 10) + 1;
+  countEl.setAttribute('data-total', String(cur));
+  countEl.textContent = String(cur);
+  // When count gets large, hint that there's more
+  const label = group.querySelector('.activity-label');
+  if (label) label.textContent = cur >= 5 ? `Agent activity — ${cur} actions` : 'Agent activity';
 }
 
 function updateToolProgress(container, toolName, message) {

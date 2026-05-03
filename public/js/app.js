@@ -380,7 +380,10 @@ function selectChat(id) {
   const stopBtn = document.getElementById('stop-btn');
   const sendBtn = document.getElementById('send-btn');
   if (stopBtn) stopBtn.style.display = isThisChatStreaming ? 'flex' : 'none';
-  if (sendBtn) sendBtn.disabled = isThisChatStreaming;
+  // Step 4: send-btn always enabled. When this chat is streaming, the
+  // sendMessage handler routes the message as an interject into the
+  // running turn. When not streaming, normal new-turn flow.
+  if (sendBtn) sendBtn.disabled = false;
   // Subscribe to this chat's events via WS
   if (window.chatWs && window.chatWs.readyState === WebSocket.OPEN) {
     window.chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: id }));

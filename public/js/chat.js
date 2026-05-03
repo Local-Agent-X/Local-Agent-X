@@ -681,7 +681,6 @@ async function sendMessage() {
             break;
           case 'secret_request': showSecretModal(event.name, event.service, event.reason); break;
           case 'secrets_request': showMultiSecretModal(event.secrets); break;
-          case 'image_generated': if (viewing) renderGeneratedImage(bodyEl, event.url, event.prompt); break;
           case 'approval_requested':
             if (viewing) bodyEl.appendChild(makeApprovalCard(event.approvalId, event.toolName, event.context, event.argsPreview));
             break;
@@ -858,8 +857,7 @@ async function sendMessage() {
               break;
             case 'secret_request': showSecretModal(event.name, event.service, event.reason); break;
             case 'secrets_request': showMultiSecretModal(event.secrets); break;
-            case 'image_generated': if (viewing) renderGeneratedImage(bodyEl, event.url, event.prompt); break;
-            case 'approval_requested':
+              case 'approval_requested':
               if (viewing) bodyEl.appendChild(makeApprovalCard(event.approvalId, event.toolName, event.context, event.argsPreview));
               break;
             case 'approval_timeout': {
@@ -1235,30 +1233,10 @@ function makeToolCard(name, args, riskLevel, context) {
  * within one assistant response always group; the UI for each container
  * starts fresh when a new assistant response begins.
  */
-// Renders a generated image (built-in image_generation tool) inline inside
-// the assistant bubble. The server saves the PNG to workspace/images/generated/
-// and emits the path; we authenticate the fetch via the auth token query
-// param (matches the convention used for uploaded images, see addMessageEl).
-function renderGeneratedImage(container, url, prompt) {
-  if (!container || !url) return;
-  const authedUrl = url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(AUTH_TOKEN);
-  const wrap = document.createElement('div');
-  wrap.className = 'generated-image-wrap';
-  const img = document.createElement('img');
-  img.className = 'generated-image';
-  img.src = authedUrl;
-  img.alt = prompt || 'Generated image';
-  img.loading = 'lazy';
-  img.onclick = () => { try { openLightbox(authedUrl); } catch {} };
-  wrap.appendChild(img);
-  if (prompt) {
-    const cap = document.createElement('div');
-    cap.className = 'generated-image-caption';
-    cap.textContent = prompt;
-    wrap.appendChild(cap);
-  }
-  container.appendChild(wrap);
-}
+// (Removed: renderGeneratedImage. The built-in image_generation flow via
+// Codex OAuth never worked — see codex-client.ts ~line 144 for why. Image
+// generation now happens by the agent navigating to a paid LLM site via
+// the browser tool.)
 
 /**
  * Find or create the last activity-group inside this container. Activity

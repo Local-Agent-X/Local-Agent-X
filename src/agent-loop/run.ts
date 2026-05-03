@@ -221,9 +221,6 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
             (ctx.providerState.turnReasoning ??= [] as unknown[]);
             (ctx.providerState.turnReasoning as unknown[]).push(chunk.item);
             break;
-          case "image_generated":
-            onEvent?.({ type: "image_generated", url: chunk.url, prompt: chunk.prompt });
-            break;
           case "usage":
             usagePrompt = chunk.promptTokens;
             usageCompletion = chunk.completionTokens;

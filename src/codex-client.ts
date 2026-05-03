@@ -8,6 +8,8 @@
  * Format: OpenAI Responses API (not Chat Completions)
  */
 
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import {
   convertMessagesToInput,
@@ -15,6 +17,7 @@ import {
   parseReasoningItem,
   type ReasoningItem,
 } from "./codex-message-convert.js";
+import { getRuntimeConfig } from "./config.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("codex-client");
@@ -136,6 +139,12 @@ export async function* streamCodexResponse(params: {
     body.tool_choice = params.toolChoice || "auto";
     body.parallel_tool_calls = true;
   }
+
+  // NOTE: tried adding the built-in {type: "image_generation"} tool here —
+  // documented as supported on the public Responses API. The chatgpt.com
+  // codex/responses OAuth endpoint reasons on it for ~120-200 tokens and
+  // then produces zero output (empty stream, classified as reasoning_timeout).
+  // Removed pending a working request shape for this endpoint.
 
   // Codex endpoint does not support temperature
 
@@ -313,6 +322,12 @@ export async function* streamCodexResponse(params: {
           }
         }
       }
+
+      // (Removed: image_generation_call handler. Codex OAuth endpoint
+      // doesn't actually return image data in the stream — see the note
+      // around line 144 explaining why the request shape doesn't work
+      // for this endpoint. User generates images via browser-driven
+      // navigation to a paid LLM site instead.)
 
       // Response completed
       if (

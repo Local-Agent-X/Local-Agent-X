@@ -43,6 +43,27 @@ import { mergeSignals } from "./signals.js";
 import { extractNotifications, recordFromMessage } from "./notifications.js";
 import { buildAdaptations } from "./adaptations.js";
 
+/**
+ * Detect short conversational follow-ups — acks, vague pronouns, "what
+ * happened" / "why" / "really" style replies that reference the prior
+ * turn rather than asking a new substantive question. On these, the
+ * orchestrator drops high-bleed-risk signal categories so prior-
+ * conversation memory doesn't confabulate the answer.
+ */
+function isConversationalFollowup(message: string): boolean {
+  const m = (message || "").trim().toLowerCase();
+  if (!m) return false;
+  const wordCount = m.split(/\s+/).length;
+  if (wordCount > 8) return false;
+  // Pure acks / yes-no / single-word
+  if (/^(yes|yeah|yep|yup|ok|okay|sure|sounds good|got it|cool|nice|thanks|ty|nope|no|nah|fine|alright)[.!?]*$/i.test(m)) return true;
+  // Short "what / why / how / really / huh" follow-ups
+  if (wordCount <= 6 && /^(what|why|how|when|where|who|really|huh|wait|hm+|hmm+|oh|wow)\b/i.test(m)) return true;
+  // Pronoun-anchored short reactions ("yeha what happened", "what does that mean", "tell me more")
+  if (wordCount <= 8 && /\b(it|that|this|those|them|happened|going on|going|mean|tell me more|continue|go on|keep going)\b/i.test(m)) return true;
+  return false;
+}
+
 export class MemoryOrchestrator {
   private static instance: MemoryOrchestrator;
 
@@ -83,6 +104,25 @@ export class MemoryOrchestrator {
           signals = signals.filter(s => s.source !== mod);
           signals.push(...deepSignal);
         }
+      }
+    }
+
+    // Cross-conversation bleed guard — when the user's latest message is a
+    // short conversational follow-up (ack, vague "what now", "yeha what
+    // happened", pronoun-only reply), drop high-bleed-risk signal
+    // categories. Recall/reference/narrative/followup modules surface
+    // facts from PRIOR conversations; on a short follow-up the agent
+    // misreads them as the user's current ask. Critical (vulnerability,
+    // correction) and emotional categories stay — those are about the
+    // active conversation's state, not historical recall.
+    if (isConversationalFollowup(input.message)) {
+      const HIGH_BLEED = new Set(["reference", "recall", "narrative", "followup", "proactive", "history", "growth", "pattern", "milestone", "unspoken", "behavior-change", "contradiction"]);
+      const before = signals.length;
+      signals = signals.filter(s => !HIGH_BLEED.has(s.category));
+      if (before !== signals.length) {
+        const dropped = before - signals.length;
+        // eslint-disable-next-line no-console
+        console.info(`[orchestrator] follow-up gate dropped ${dropped} high-bleed signals (msg="${input.message.slice(0, 40)}")`);
       }
     }
 

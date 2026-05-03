@@ -1,6 +1,6 @@
 {
   "name": "03-multi-iteration-tool-loop",
-  "description": "Three back-to-back tool calls (glob, read, grep), then a synthesis turn. Four iterations total — verifies the loop iterates correctly and accumulates tool results.",
+  "description": "Three back-to-back tool calls (glob, read, bash — bash is committing so post-turn detectors don't fire), then a synthesis turn. Four iterations total — verifies the loop iterates correctly and accumulates tool results.",
   "input": {
     "userMessage": "Find all TypeScript files in src/, read tsconfig, and report the file count.",
     "systemPrompt": "You investigate codebases. Use tools step by step.",
@@ -31,12 +31,12 @@
       },
       {
         "definition": {
-          "name": "grep",
-          "description": "Search file contents.",
+          "name": "bash",
+          "description": "Run a shell command (counts as committing).",
           "parameters": {
             "type": "object",
-            "properties": { "pattern": { "type": "string" } },
-            "required": ["pattern"]
+            "properties": { "command": { "type": "string" } },
+            "required": ["command"]
           }
         },
         "defaultResult": "(no matches)"
@@ -53,7 +53,7 @@
       { "type": "done", "stopReason": "tool_use" }
     ],
     [
-      { "type": "tool_call", "id": "c3", "name": "grep", "arguments": "{\"pattern\":\"export\"}" },
+      { "type": "tool_call", "id": "c3", "name": "bash", "arguments": "{\"command\":\"grep -rn export src/\"}" },
       { "type": "done", "stopReason": "tool_use" }
     ],
     [
@@ -66,6 +66,6 @@
     "stopReason": "end_turn",
     "assistantContains": ["Found 3", "ES2022"],
     "toolCallsCount": 3,
-    "toolNames": ["glob", "read_file", "grep"]
+    "toolNames": ["glob", "read_file", "bash"]
   }
 }

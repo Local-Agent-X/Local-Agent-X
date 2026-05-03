@@ -18,10 +18,17 @@ export const forceToolUseMiddleware: LoopMiddleware = {
   name: "force-tool-use",
 
   beforeIteration(ctx) {
-    if (ctx.iteration !== 0) return { kind: "continue" };
-    const msg = ctx.req.userMessage || "";
-    if (BUILD_INTENT_RE.test(msg) || ACTION_INTENT_RE.test(msg)) {
-      (ctx.req as { toolChoice?: "auto" | "required" }).toolChoice = "required";
+    const reqMut = ctx.req as { toolChoice?: "auto" | "required" };
+    if (ctx.iteration === 0) {
+      const msg = ctx.req.userMessage || "";
+      if (BUILD_INTENT_RE.test(msg) || ACTION_INTENT_RE.test(msg)) {
+        reqMut.toolChoice = "required";
+      }
+    } else {
+      // Reset on iter > 0 — legacy run-anthropic.ts only sends "required" on
+      // iter 0; subsequent iterations use "auto" so the model can choose to
+      // emit a final answer text instead of being forced into another tool.
+      reqMut.toolChoice = "auto";
     }
     return { kind: "continue" };
   },

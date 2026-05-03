@@ -1,18 +1,18 @@
 {
   "name": "02-single-tool-call",
-  "description": "Model calls one tool, gets the result, summarizes it, end_turn. Two iterations.",
+  "description": "Model calls one tool (bash — counts as committing so post-turn detectors don't fire), gets the result, summarizes it, end_turn. Two iterations.",
   "input": {
     "userMessage": "What's in the README?",
     "systemPrompt": "You read files when asked. Be terse.",
     "tools": [
       {
         "definition": {
-          "name": "read_file",
-          "description": "Read a file from disk and return its contents.",
+          "name": "bash",
+          "description": "Run a shell command and return its output.",
           "parameters": {
             "type": "object",
-            "properties": { "path": { "type": "string" } },
-            "required": ["path"]
+            "properties": { "command": { "type": "string" } },
+            "required": ["command"]
           }
         },
         "defaultResult": "# Open Agent X\n\nLocal-first agent runtime."
@@ -21,7 +21,7 @@
   },
   "responses": [
     [
-      { "type": "tool_call", "id": "call_001", "name": "read_file", "arguments": "{\"path\":\"README.md\"}" },
+      { "type": "tool_call", "id": "call_001", "name": "bash", "arguments": "{\"command\":\"cat README.md\"}" },
       { "type": "usage", "promptTokens": 50, "completionTokens": 12 },
       { "type": "done", "stopReason": "tool_use" }
     ],
@@ -35,6 +35,6 @@
     "stopReason": "end_turn",
     "assistantContains": ["Open Agent X"],
     "toolCallsCount": 1,
-    "toolNames": ["read_file"]
+    "toolNames": ["bash"]
   }
 }

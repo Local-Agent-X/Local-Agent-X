@@ -26,9 +26,15 @@ import { pauseMiddleware } from "./middlewares/pause.js";
 import { postCommitMiddleware } from "./middlewares/post-commit.js";
 import { deadEndMiddleware } from "./middlewares/dead-end.js";
 import { selfCheckMiddleware } from "./middlewares/self-check.js";
+import { postTurnDetectorMiddleware } from "./middlewares/post-turn-detector.js";
+import { hallucinationCheckMiddleware } from "./middlewares/hallucination-check.js";
+import { actionClaimMiddleware } from "./middlewares/action-claim.js";
+import { loopDetectionMiddleware } from "./middlewares/loop-detection.js";
+import { autoBuildAppMiddleware } from "./middlewares/auto-build-app.js";
 
 export function getDefaultMiddlewareStack(): LoopMiddleware[] {
   return [
+    // ── beforeIteration ──
     // Ceilings first — abort cheap before doing other work.
     tokenCeilingMiddleware,
     wallClockCeilingMiddleware,
@@ -39,12 +45,33 @@ export function getDefaultMiddlewareStack(): LoopMiddleware[] {
     forceToolUseMiddleware,
     // Heartbeat last — only meaningful if we're actually going to run.
     heartbeatMiddleware,
-    // afterModelCall: pause first (preempts end-of-turn paths), then
-    // self-check on terminal turns.
+
+    // ── afterModelCall ──
+    // pause first (preempts every other end-of-turn path).
     pauseMiddleware,
+    // post-turn detector stack — sets prompt-layer retry nudges, fires
+    // retry-iteration so the next iteration's recomposed system prompt
+    // carries the correction. Runs BEFORE the no-tool-call branch so
+    // detector wins over hallucination-style nudges.
+    postTurnDetectorMiddleware,
+    // Anthropic-only: synthesize a build_app tool call when the model
+    // emitted build-intent text but didn't actually invoke build_app.
+    // Mutates result.toolCalls so the loop's later branch executes it.
+    autoBuildAppMiddleware,
+    // Hallucination guards — fire only when no tool calls. Approval
+    // first (more specific), creation second (iter 0 only).
+    hallucinationCheckMiddleware,
+    // Action-claim verification — once per turn, terminal turns only.
+    actionClaimMiddleware,
+    // Self-check — once per turn, scans for unresolved tool errors and
+    // injects a reflection prompt.
     selfCheckMiddleware,
-    // afterToolExecution: dead-end FIRST so an empty result in this
-    // iteration nudges before the post-commit wrap-up gets a chance.
+    // Loop detection — checks tool-call repetition, can abort.
+    loopDetectionMiddleware,
+
+    // ── afterToolExecution ──
+    // dead-end FIRST so an empty result in this iteration nudges before
+    // the post-commit wrap-up gets a chance.
     deadEndMiddleware,
     postCommitMiddleware,
   ];

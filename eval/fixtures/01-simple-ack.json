@@ -1,0 +1,21 @@
+{
+  "name": "01-simple-ack",
+  "description": "User says 'hi', model responds with text and end_turn. No tools, no iteration.",
+  "input": {
+    "userMessage": "hi",
+    "systemPrompt": "You are a helpful assistant. Respond concisely.",
+    "tools": []
+  },
+  "responses": [
+    [
+      { "type": "text", "delta": "Hello! How can I help?" },
+      { "type": "usage", "promptTokens": 12, "completionTokens": 7 },
+      { "type": "done", "stopReason": "end_turn" }
+    ]
+  ],
+  "expect": {
+    "stopReason": "end_turn",
+    "assistantContains": ["Hello"],
+    "toolCallsCount": 0
+  }
+}

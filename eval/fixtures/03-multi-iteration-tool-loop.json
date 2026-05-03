@@ -1,0 +1,71 @@
+{
+  "name": "03-multi-iteration-tool-loop",
+  "description": "Three back-to-back tool calls (glob, read, grep), then a synthesis turn. Four iterations total — verifies the loop iterates correctly and accumulates tool results.",
+  "input": {
+    "userMessage": "Find all TypeScript files in src/, read tsconfig, and report the file count.",
+    "systemPrompt": "You investigate codebases. Use tools step by step.",
+    "tools": [
+      {
+        "definition": {
+          "name": "glob",
+          "description": "Find files matching a pattern.",
+          "parameters": {
+            "type": "object",
+            "properties": { "pattern": { "type": "string" } },
+            "required": ["pattern"]
+          }
+        },
+        "defaultResult": "src/agent.ts\nsrc/server.ts\nsrc/security.ts"
+      },
+      {
+        "definition": {
+          "name": "read_file",
+          "description": "Read a file.",
+          "parameters": {
+            "type": "object",
+            "properties": { "path": { "type": "string" } },
+            "required": ["path"]
+          }
+        },
+        "defaultResult": "{\"compilerOptions\":{\"target\":\"ES2022\"}}"
+      },
+      {
+        "definition": {
+          "name": "grep",
+          "description": "Search file contents.",
+          "parameters": {
+            "type": "object",
+            "properties": { "pattern": { "type": "string" } },
+            "required": ["pattern"]
+          }
+        },
+        "defaultResult": "(no matches)"
+      }
+    ]
+  },
+  "responses": [
+    [
+      { "type": "tool_call", "id": "c1", "name": "glob", "arguments": "{\"pattern\":\"src/**/*.ts\"}" },
+      { "type": "done", "stopReason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call", "id": "c2", "name": "read_file", "arguments": "{\"path\":\"tsconfig.json\"}" },
+      { "type": "done", "stopReason": "tool_use" }
+    ],
+    [
+      { "type": "tool_call", "id": "c3", "name": "grep", "arguments": "{\"pattern\":\"export\"}" },
+      { "type": "done", "stopReason": "tool_use" }
+    ],
+    [
+      { "type": "text", "delta": "Found 3 TypeScript files in src/. tsconfig targets ES2022. Done." },
+      { "type": "usage", "promptTokens": 200, "completionTokens": 22 },
+      { "type": "done", "stopReason": "end_turn" }
+    ]
+  ],
+  "expect": {
+    "stopReason": "end_turn",
+    "assistantContains": ["Found 3", "ES2022"],
+    "toolCallsCount": 3,
+    "toolNames": ["glob", "read_file", "grep"]
+  }
+}

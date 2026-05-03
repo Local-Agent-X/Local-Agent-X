@@ -15,6 +15,17 @@ import type { BaseAdapter } from "./base-adapter.js";
 
 const _adapters = new Map<string, BaseAdapter>();
 
+/**
+ * Test-only override. When set, `requireAdapter` returns this adapter
+ * regardless of the requested name. Used by the eval harness to inject
+ * a replay adapter into both legacy and unified agent loops without
+ * monkey-patching anything else. Production code never touches it.
+ */
+let _override: BaseAdapter | null = null;
+export function setRegistryOverride(adapter: BaseAdapter | null): void {
+  _override = adapter;
+}
+
 export function registerAdapter(adapter: BaseAdapter): void {
   if (_adapters.has(adapter.name)) {
     throw new Error(`Adapter already registered: ${adapter.name}`);
@@ -27,6 +38,7 @@ export function getAdapter(name: string): BaseAdapter | undefined {
 }
 
 export function requireAdapter(name: string): BaseAdapter {
+  if (_override) return _override;
   const a = _adapters.get(name);
   if (!a) {
     const known = [..._adapters.keys()].join(", ") || "(none)";

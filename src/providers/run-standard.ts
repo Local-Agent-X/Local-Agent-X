@@ -2,7 +2,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { AgentTurn } from "../types.js";
 import { executeToolCalls, checkAndCompact } from "../tool-executor.js";
 import { getRuntimeConfig } from "../config.js";
-import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkUnmatchedActionClaim, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState } from "../agent-guards.js";
+import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkUnmatchedActionClaim, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState, checkPostCommit } from "../agent-guards.js";
 import { stripEphemeralMessages, sanitizeToolResults } from "./sanitize.js";
 import { type AgentOptions } from "./types.js";
 import { buildUserContentWithImages, checkStandardTurnSafetyCeilings } from "./run-standard-helpers.js";
@@ -368,6 +368,21 @@ export async function runStandardAgent(
       if (d.nudge) {
         messages.push({ role: "user", content: d.nudge } as ChatCompletionMessageParam);
         break;
+      }
+    }
+
+    // Post-commit nudge — if any bash result this iteration emitted a successful
+    // git-commit signature, set a flag and inject a wrap-up nudge on the NEXT
+    // iteration. Stops the perma-fix-mandate sprawl that follows a real ship.
+    // Fixes drift: Anthropic + Codex have this guard, Standard didn't.
+    {
+      const flatResults = toolResults.map(tr => ({
+        name: toolCalls.find(tc => tc.id === (tr as { tool_call_id?: string }).tool_call_id)?.name || "unknown",
+        result: typeof tr.content === "string" ? tr.content : "",
+      }));
+      const pc = checkPostCommit(flatResults, loopState);
+      if (pc.nudge) {
+        messages.push({ role: "user", content: pc.nudge } as ChatCompletionMessageParam);
       }
     }
 

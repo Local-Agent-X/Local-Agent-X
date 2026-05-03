@@ -22,6 +22,7 @@ import { midTurnStaleMiddleware } from "./middlewares/mid-turn-stale.js";
 import { subagentDrainMiddleware } from "./middlewares/subagent-drain.js";
 import { heartbeatMiddleware } from "./middlewares/heartbeat.js";
 import { forceToolUseMiddleware } from "./middlewares/force-tool-use.js";
+import { pauseMiddleware } from "./middlewares/pause.js";
 
 export function getDefaultMiddlewareStack(): LoopMiddleware[] {
   return [
@@ -35,5 +36,7 @@ export function getDefaultMiddlewareStack(): LoopMiddleware[] {
     forceToolUseMiddleware,
     // Heartbeat last — only meaningful if we're actually going to run.
     heartbeatMiddleware,
+    // afterModelCall: pause when the assistant asks for credentials/2fa.
+    pauseMiddleware,
   ];
 }

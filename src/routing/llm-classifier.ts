@@ -13,10 +13,8 @@
  * Disabled via env LAX_ROUTE_CLASSIFIER=0 if pure regex is preferred.
  */
 
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
 import { createLogger } from "../logger.js";
+import { loadAnthropicTokens, isAnthropicTokenExpired } from "../auth-anthropic.js";
 import type { ClassifierResult } from "./types.js";
 
 const logger = createLogger("routing.llm-classifier");
@@ -66,16 +64,18 @@ export async function classifyRouteWithLLM(
   }
 
   // Need Anthropic auth to make the call. If not available, return null.
-  const tokensPath = join(homedir(), ".lax", "anthropic-tokens.json");
-  if (!existsSync(tokensPath)) {
-    return null;
-  }
+  // Use the canonical loader (auth-anthropic.ts) — the file is named
+  // ~/.lax/anthropic-auth.json (NOT anthropic-tokens.json, which is what
+  // an earlier draft of this file looked for, silently disabling the
+  // veto layer entirely). loadAnthropicTokens also handles refresh-token
+  // rotation transparently, which the manual readFileSync didn't.
+  const tokens = loadAnthropicTokens();
+  if (!tokens || isAnthropicTokenExpired(tokens)) return null;
+  const accessToken = tokens.accessToken || "";
+  if (!accessToken) return null;
 
   try {
     const { streamAnthropicResponse } = await import("../anthropic-client.js");
-    const tokens = JSON.parse(readFileSync(tokensPath, "utf-8")) as { access_token?: string };
-    const accessToken = tokens.access_token || "";
-    if (!accessToken) return null;
 
     const stream = streamAnthropicResponse({
       token: accessToken,

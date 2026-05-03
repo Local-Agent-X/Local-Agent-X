@@ -21,6 +21,7 @@ import { wallClockCeilingMiddleware } from "./middlewares/wall-clock-ceiling.js"
 import { midTurnStaleMiddleware } from "./middlewares/mid-turn-stale.js";
 import { subagentDrainMiddleware } from "./middlewares/subagent-drain.js";
 import { heartbeatMiddleware } from "./middlewares/heartbeat.js";
+import { forceToolUseMiddleware } from "./middlewares/force-tool-use.js";
 
 export function getDefaultMiddlewareStack(): LoopMiddleware[] {
   return [
@@ -30,6 +31,8 @@ export function getDefaultMiddlewareStack(): LoopMiddleware[] {
     midTurnStaleMiddleware,
     // Then drain inbound subagent completions (push them into messages).
     subagentDrainMiddleware,
+    // Set toolChoice for build/action intents on iter 0.
+    forceToolUseMiddleware,
     // Heartbeat last — only meaningful if we're actually going to run.
     heartbeatMiddleware,
   ];

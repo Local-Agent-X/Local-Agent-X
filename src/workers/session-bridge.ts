@@ -279,6 +279,13 @@ export function listOpsForSession(sessionId: string): string[] {
   return set ? [...set] : [];
 }
 
+/** Get the original task text submitted with this op, if known.
+ *  Used by the worker-redirect classifier to give the model context
+ *  about what the worker is currently doing. */
+export function getOpTask(opId: string): string | undefined {
+  return opTask.get(opId);
+}
+
 function onOpResult(result: OpResult): void {
   const sessionId = opSession.get(result.opId);
   if (!sessionId) return; // op wasn't submitted by a chat session (e.g. cron, autopilot, internal)

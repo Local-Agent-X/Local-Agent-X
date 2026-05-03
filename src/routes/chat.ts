@@ -264,7 +264,36 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
 
       // Threat engine canary (append to system prompt for injection detection)
       const threatEngine = new ThreatEngine(ctx.dataDir, sessionId);
-      const systemPrompt = prepared.systemPrompt + threatEngine.getCanaryBlock();
+      let systemPrompt = prepared.systemPrompt + threatEngine.getCanaryBlock();
+
+      // ── Step 3 of JARVIS-mode: parallel-worker awareness ──
+      // If this inline turn is running WHILE one or more workers are
+      // already going for this session, the agent should know about
+      // them so it doesn't:
+      //   - try to do the worker's job
+      //   - claim the worker's output as its own
+      //   - act surprised when the user references the worker
+      // Architecture-wise the parallelism already works (worker runs in
+      // its own subprocess on its own stream channel); this just adds
+      // the conversational awareness so the agent behaves like a JARVIS
+      // who knows what every other agent is busy with.
+      try {
+        const { listOpsForSession: listOpsAware } = await import("../workers/session-bridge.js");
+        const { getOpTask: getOpTaskAware } = await import("../workers/session-bridge.js");
+        const activeOpIds = listOpsAware(sessionId);
+        if (activeOpIds.length > 0) {
+          const taskLines = activeOpIds.map(id => {
+            const t = getOpTaskAware(id) || "(unknown task)";
+            return `  - ${t.slice(0, 160)}`;
+          }).join("\n");
+          systemPrompt += `\n\n[PARALLEL CONTEXT — ${activeOpIds.length} background worker${activeOpIds.length === 1 ? "" : "s"} active]\n` +
+            `These workers are already running in separate processes for the user. You can SEE their progress streaming into the same chat. Do NOT try to do their work — they're already on it.\n\n` +
+            `Active:\n${taskLines}\n\n` +
+            `Respond to the user's CURRENT message normally. If they're asking something unrelated to the worker(s), answer it. If they're asking about a worker's status, you can refer to what you've seen in its progress stream. If they're giving feedback for a worker, that's already auto-routed via the redirect classifier — you don't need to handle it here. Speak naturally about the parallel context — like JARVIS would when Tony talks to him while a build is in progress.`;
+        }
+      } catch (e) {
+        logger.warn(`[chat] parallel-worker awareness failed (proceeding without): ${(e as Error).message}`);
+      }
       let canaryBuffer = "";
       let fullResponseText = "";
 

@@ -296,8 +296,11 @@ export async function runAnthropicAgent(
       return { messages: [{ role: "system", content: systemPrompt }, ...messages], usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };
     }
 
-    // Loop detection
-    const loopResult = checkToolLoops(toolCalls, loopStateAnthropic);
+    // Loop detection — tighter thresholds for weak/medium models.
+    // Fixes drift: Standard passes modelTier; Anthropic + Codex didn't.
+    const { classifyModel: classifyModelA } = await import("../model-tiers.js");
+    const modelTierA = classifyModelA(model);
+    const loopResult = checkToolLoops(toolCalls, loopStateAnthropic, { modelTier: modelTierA });
     if (loopResult.abort) {
       onEvent?.({ type: "stream", delta: loopResult.nudge || "" });
       return { messages, usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "end_turn" };

@@ -476,13 +476,19 @@ function renderMessages() {
           try {
             for (const te of toolSrc) {
               if (te.type === 'start') {
-                const card = makeToolCard(te.name, te.args || '', te.riskLevel);
+                // Route through appendToolCardGrouped so re-render matches
+                // the live-stream path: cards land inside the collapsible
+                // "Agent activity" group, and consecutive same-tool calls
+                // collapse into a single ×N card. Without this, re-rendering
+                // a saved chat produced a flat list of cards (no parent
+                // wrapper, no ×N collapse) — the bug visible after a chat
+                // tab switch or reload.
+                const card = appendToolCardGrouped(cardHost, te.name, te.args || '', te.riskLevel);
                 const endEvt = toolSrc.find(t => t.type === 'end' && t.name === te.name);
                 if (endEvt) {
                   card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
                   card.querySelector('.tool-detail').textContent = (endEvt.result || '').slice(0, 200) || '✓ Done';
                 }
-                cardHost.appendChild(card);
               }
             }
           } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
@@ -1217,7 +1223,7 @@ function makeApprovalCard(approvalId, toolName, context, argsPreview) {
 function makeToolCard(name, args, riskLevel, context) {
   const card = document.createElement('div'); card.className = 'tool-card'; card.setAttribute('data-tool-name', name);
   card.setAttribute('data-call-count', '1');
-  card.innerHTML = `<div class="tool-header" onclick="this.parentElement.classList.toggle('open')"><span class="indicator"></span><span class="tool-name">${esc(name)}</span><span class="tool-count" style="color:var(--muted);font-size:.7rem;margin-right:.3rem"></span><span class="tool-summary" style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(toolSummary(name, args))}</span><span style="color:var(--muted);font-size:.65rem">&#9654;</span></div>`
+  card.innerHTML = `<div class="tool-header" onclick="this.parentElement.classList.toggle('open')"><span class="indicator"></span><span class="tool-name">${esc(name)}</span><span class="tool-count" style="font-size:.7rem;margin-right:.3rem"></span><span class="tool-summary" style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${esc(toolSummary(name, args))}</span><span class="chevron">&#9654;</span></div>`
     + `<div class="tool-detail">executing...</div>`;
   return card;
 }
@@ -1275,7 +1281,7 @@ function ensureActivityGroup(container) {
   }
   const group = document.createElement('div');
   group.className = 'activity-group';
-  group.style.cssText = 'border:1px solid var(--border,#333);border-radius:6px;margin:.4rem 0;overflow:hidden;background:rgba(0,0,0,0.15)';
+  group.style.cssText = 'border:1px solid var(--border,#333);border-radius:6px;margin:.4rem 0;overflow:hidden;background:var(--surface-2,rgba(0,0,0,0.15))';
   group.innerHTML =
     `<div class="activity-group-header" style="cursor:pointer;padding:.4rem .6rem;display:flex;align-items:center;gap:.5rem;font-size:.75rem;color:var(--muted);user-select:none" onclick="this.parentElement.classList.toggle('open');this.querySelector('.activity-chevron').textContent=this.parentElement.classList.contains('open')?'\\u25BC':'\\u25B6'">` +
       `<span style="opacity:.8">⚙</span>` +

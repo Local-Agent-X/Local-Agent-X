@@ -537,6 +537,24 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       doneEmitted = true;
       logger.info(`[timing] turn total ${Date.now() - turnStart}ms (${prepared.provider}/${prepared.model}, ${realUsage.totalTokens} tokens)`);
 
+      // End-of-turn memory pass — fire-and-forget. Decoupled from the
+      // user-facing turn so memory writes don't compete with task
+      // completion in the live model's attention. Runs a small classifier
+      // call against the just-finished exchange, decides whether anything
+      // memory-worthy happened, and writes server-side directly. User
+      // already has their answer — this happens in the background.
+      try {
+        const { runEndOfTurnMemoryWrite } = await import("../memory/end-of-turn-write.js");
+        void runEndOfTurnMemoryWrite({
+          sessionId,
+          userMessage: message,
+          assistantReply,
+          provider: prepared.provider,
+          model: prepared.model,
+          apiKey: prepared.apiKey,
+        });
+      } catch { /* end-of-turn write is best-effort */ }
+
       // Format output for bridge channels (plain text for WhatsApp/Telegram)
       let bridgeReply = assistantReply;
       try {

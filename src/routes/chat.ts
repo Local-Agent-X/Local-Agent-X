@@ -154,8 +154,17 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         // was already delegated to a worker, and asked to give a
         // 1-2 sentence conversational acknowledgement.
         const delegationContext =
-          `\n\n[BACKGROUND DELEGATION] The user's message above has been auto-delegated to a worker pool op (id: ${opId}, running on ${prepared.provider}). The work is already in progress in a separate process; you do NOT need to do it yourself.\n\n` +
-          `Your job for THIS turn: respond in 1-2 conversational sentences acknowledging what you've kicked off (briefly summarize what the worker is doing), and let the user know they can keep chatting — you'll narrate the result naturally on a future turn when it lands. Keep it tight and natural, like you'd actually say it. Do NOT call any tools. Do NOT try to do the work yourself. Do NOT mention "delegation" or "worker pool" as jargon — just speak normally about kicking off the work in the background.`;
+          `\n\n[BACKGROUND DELEGATION — STRICT ACK MODE]\n\n` +
+          `The user's message above has been handed to a background worker (op id: ${opId}, ${prepared.provider}). The worker has NOT done the work yet — it is just starting. The user can SEE the worker card in the sidebar with "WORKING" status; if you contradict that, your reply looks like a lie.\n\n` +
+          `HARD RULES for THIS turn — do not break any of them:\n\n` +
+          `1. PRESENT PROGRESSIVE ONLY. Use "I'm starting on X", "kicking off X", "spinning up X". NEVER past tense — no "built", "created", "finished", "saved", "published", "pinned", "live", "shipped", "done". Those words are forbidden.\n` +
+          `2. NO SPECIFIC OUTPUTS. Do NOT name files, paths (workspace/apps/...), URLs, sidebar entries, feature lists, or specific UI elements that "now exist". The worker has produced NOTHING yet — anything specific you name is fabricated.\n` +
+          `3. NO FAKE DETAIL. Do not describe what's "included" in the not-yet-built thing ("with branding", "with FAQ", "with form fields"). Only echo back what the user asked for, in their own words, as the thing being kicked off.\n` +
+          `4. ONE OR TWO SENTENCES. Conversational. Then stop.\n` +
+          `5. NO TOOLS. Do not call any tool. Tools are unavailable this turn anyway.\n` +
+          `6. NO JARGON. Don't say "delegation", "worker pool", "op id" — just normal "kicking it off in the background".\n\n` +
+          `Good shape: "Starting on the [thing user asked for] now — I'll let you know when it's ready."\n` +
+          `Bad shape: "Built it: created at workspace/apps/X/index.html and pinned." (Lies — worker hasn't built anything yet.)`;
         const delegationSystemPrompt = prepared.systemPrompt + delegationContext;
 
         logger.info(`[router] Auto-delegated to worker pool: op=${opId} sess=${sessionId} provider=${prepared.provider} — routing notice now agent-voiced`);

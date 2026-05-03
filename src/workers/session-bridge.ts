@@ -208,9 +208,19 @@ function onOpEvent(event: OpEvent): void {
       // code read `text` and dropped every event. Read `delta` first, fall back
       // to `text` for any legacy emitter.
       const p = event.payload as { delta?: string; text?: string };
-      const raw = (p?.delta ?? p?.text ?? "").trim();
-      if (!raw) return;
-      line = raw.slice(0, 200);
+      const raw = (p?.delta ?? p?.text ?? "");
+      const trimmed = raw.trim();
+      if (!trimmed) return;
+      line = trimmed.slice(0, 200);
+      // ALSO forward the unmodified delta to the main chat thread as a
+      // worker_stream event. Sidebar gets a one-line summary (above);
+      // chat gets the streaming text deltas accumulated into a worker
+      // bubble. Two channels, same source. Step 1 of JARVIS-mode.
+      try {
+        broadcaster(sessionId, { type: "worker_stream", opId: event.opId, delta: raw });
+      } catch (e) {
+        logger.warn(`[session-bridge] worker_stream broadcast threw: ${(e as Error).message}`);
+      }
       break;
     }
     case "started":
@@ -320,6 +330,14 @@ function onOpResult(result: OpResult): void {
       status,
       summary,
       filesChanged: result.filesChanged.slice(0, 10),
+    });
+    // Also close out the worker's chat bubble (stops the streaming
+    // indicator, finalizes the message). Companion to worker_stream.
+    broadcaster(sessionId, {
+      type: "worker_done",
+      opId: result.opId,
+      status,
+      summary,
     });
     logger.info(`[session-bridge] notified session=${sessionId} op=${result.opId} status=${result.status}`);
   } catch (e) {

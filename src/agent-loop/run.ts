@@ -181,6 +181,10 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
     let streamError: string | null = null;
 
     try {
+      // toolChoice can be set by force-tool-use middleware on iter 0 for
+      // build/action intents. Reset between iterations so it doesn't stick
+      // beyond the iteration where it was set.
+      const turnToolChoice = (req as { toolChoice?: "auto" | "required" }).toolChoice;
       for await (const chunk of adapter.stream({
         apiKey: req.apiKey,
         model: req.model,
@@ -189,6 +193,7 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
         messages: restMessages,
         tools,
         temperature: req.temperature,
+        toolChoice: turnToolChoice,
         sessionId: req.sessionId,
         signal: signal || undefined,
         onEvent,
@@ -215,6 +220,9 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
             // adapter to thread back via previousResponseId.
             (ctx.providerState.turnReasoning ??= [] as unknown[]);
             (ctx.providerState.turnReasoning as unknown[]).push(chunk.item);
+            break;
+          case "image_generated":
+            onEvent?.({ type: "image_generated", url: chunk.url, prompt: chunk.prompt });
             break;
           case "usage":
             usagePrompt = chunk.promptTokens;
@@ -259,7 +267,19 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
     ctx.toolCalls = toolCalls;
     ctx.sawMcpActivity = sawMcpActivity;
 
-    // Build assistant message and push.
+    // ── Phase: afterModelCall ──
+    // Run middlewares BEFORE pushing the assistant message so middlewares
+    // (e.g. autoBuildApp) can mutate result.toolCalls — synthetic tool
+    // calls land in the message we push below. Side effect: middlewares
+    // can no longer read the assistant message from ctx.messages here
+    // (they get it via result.assistantContent + result.toolCalls instead).
+    const modelResult: ModelCallResult = {
+      assistantContent, toolCalls, sawMcpActivity, finishReason,
+    };
+    const afterModelRes = await runPhase(middlewares, "afterModelCall", ctx, modelResult);
+
+    // Build assistant message AFTER middleware so any synthetic tool calls
+    // added by autoBuildApp etc. ride along.
     const assistantMsg: ChatCompletionMessageParam = {
       role: "assistant",
       content: assistantContent || null,
@@ -271,11 +291,6 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
     }
     messages.push(assistantMsg);
 
-    // ── Phase: afterModelCall ──
-    const modelResult: ModelCallResult = {
-      assistantContent, toolCalls, sawMcpActivity, finishReason,
-    };
-    const afterModelRes = await runPhase(middlewares, "afterModelCall", ctx, modelResult);
     if (afterModelRes.kind === "abort") return afterModelRes.turn;
     if (afterModelRes.kind === "nudge") {
       messages.push({ role: "user", content: afterModelRes.message } as ChatCompletionMessageParam);

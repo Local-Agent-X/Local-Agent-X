@@ -204,8 +204,12 @@ async function executeSingleTool(
   signal?: AbortSignal,
   priorMessages?: ChatCompletionMessageParam[],
 ): Promise<ChatCompletionMessageParam[]> {
-  // Session-wide duplicate check — short-circuit before any execution
-  const dup = findPriorIdenticalResult(tc, priorMessages || []);
+  // Session-wide duplicate check — short-circuit before any execution.
+  // request_secret is exempt: it emits a UI side-effect (secret_request SSE
+  // event → modal). Re-running it on retry is the whole point when the user
+  // missed the first prompt, and the tool itself short-circuits if the
+  // secret already exists.
+  const dup = tc.name === "request_secret" ? null : findPriorIdenticalResult(tc, priorMessages || []);
   if (dup) {
     const hint = `[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing. If you need fresh data, change the arguments. Otherwise, focus on the user's current question.]\n\n${dup.result}`;
     onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: hint, allowed: true });

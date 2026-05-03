@@ -75,7 +75,15 @@ export type ServerEvent =
   | { type: "bg_op_started"; opId: string; task: string; provider: string }
   | { type: "bg_op_progress"; opId: string; line: string }
   | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[] }
-  | { type: "bg_op_nudge"; opIds: string[]; text: string };
+  | { type: "bg_op_nudge"; opIds: string[]; text: string }
+  // Worker narration → main chat thread (Step 1 of JARVIS-mode roadmap).
+  // The worker's own LLM text deltas, surfaced as a distinct message bubble
+  // in chat (not just the sidebar progress trace) so the user sees what the
+  // worker is doing in real-time, conversationally. opId scopes the bubble
+  // — multiple workers each get their own bubble, identified + styled
+  // separately from the main agent's stream.
+  | { type: "worker_stream"; opId: string; task?: string; delta: string }
+  | { type: "worker_done"; opId: string; status: "completed" | "failed" | "cancelled"; summary?: string };
 
 // ── Auth Types ──
 

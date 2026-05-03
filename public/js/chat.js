@@ -106,6 +106,39 @@ function connectChatWs() {
         } catch(e) { console.warn('[bg_op_progress] sidebar update failed', e); }
         return;
       }
+      // worker_stream: worker's own LLM text deltas → main chat thread as a
+      // distinct "Worker:" bubble (separate from sidebar progress trace).
+      // Step 1 of JARVIS-mode roadmap. Per opId so multiple workers each
+      // get their own bubble in the same chat. Only rendered in the DOM
+      // when the user is viewing the session that owns the worker;
+      // off-screen sessions just accumulate in activeChatsSet for sidebar
+      // attention markers.
+      if (msg.event.type === 'worker_stream') {
+        try {
+          if (activeChat && activeChat.id === msg.sessionId) {
+            const b = ensureWorkerBubble(msg.event.opId, msg.event.task);
+            if (b) {
+              b.content += (msg.event.delta || '');
+              b.contentEl.textContent = b.content;
+            }
+          } else {
+            activeChatsSet.add(msg.sessionId);
+            if (typeof renderSidebar === 'function') renderSidebar();
+          }
+        } catch(e) { console.warn('[worker_stream] failed', e); }
+        return;
+      }
+      if (msg.event.type === 'worker_done') {
+        try {
+          const b = _workerBubbles.get(msg.event.opId);
+          if (b) {
+            b.div.classList.add('done');
+            b.div.classList.add('status-' + (msg.event.status || 'completed'));
+          }
+          _workerBubbles.delete(msg.event.opId);
+        } catch(e) { console.warn('[worker_done] failed', e); }
+        return;
+      }
       if (msg.event.type === 'bg_op_nudge') {
         try {
           if (activeChat && activeChat.id === msg.sessionId) {
@@ -971,6 +1004,43 @@ function formatMsgTime(ts) {
   if (days === 1) return 'Yesterday ' + time;
   if (days < 7) return d.toLocaleDateString([], { weekday: 'short' }) + ' ' + time;
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + time;
+}
+
+// Worker bubbles — Step 1 of JARVIS-mode. Per-opId map of the streaming
+// chat bubbles owned by background workers. Created lazily on first
+// worker_stream event for an opId, finalized on worker_done. Lives
+// outside chat.activeChat.messages because workers can stream
+// independent of the main agent's turn boundary.
+const _workerBubbles = new Map(); // opId -> { div, content, contentEl }
+
+function ensureWorkerBubble(opId, taskHint) {
+  if (_workerBubbles.has(opId)) return _workerBubbles.get(opId);
+  const el = document.getElementById('messages');
+  if (!el) return null;
+  const div = document.createElement('div');
+  div.className = 'msg worker streaming';
+  div.setAttribute('role', 'article');
+  div.setAttribute('aria-label', 'Worker message');
+  div.dataset.opId = opId;
+  const labelText = taskHint ? `Worker — ${taskHint}` : 'Worker';
+  // Inline style is intentional — keeps this self-contained without a
+  // CSS migration. Easy to lift into stylesheet later. Soft purple
+  // distinguishes worker bubbles from main agent (cyan-ish) and user
+  // (right-aligned bubble).
+  div.innerHTML =
+    `<div class="msg-label" style="color:#9d9bff">⚙ ${esc(labelText)}</div>` +
+    `<div class="msg-body" style="border-left:2px solid #4a4870;padding-left:10px;opacity:0.92"><pre class="raw-md" style="margin:0;white-space:pre-wrap"></pre></div>`;
+  el.appendChild(div);
+  // Spring entrance like normal messages
+  if (typeof Spring !== 'undefined') {
+    try { Spring.fadeIn(div, { preset: 'stiff', slide: true, slideFrom: 8 }); } catch {}
+  }
+  // Scroll to bottom so user sees the worker bubble appear
+  try { el.scrollTop = el.scrollHeight; } catch {}
+  const contentEl = div.querySelector('.msg-body pre');
+  const entry = { div, content: '', contentEl };
+  _workerBubbles.set(opId, entry);
+  return entry;
 }
 
 function addMessageEl(role, text, attachments) {

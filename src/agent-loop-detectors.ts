@@ -261,6 +261,14 @@ export function detectUncommittedTurn(state: TurnState): RetryInstruction | null
  * in that window. Prevents endless exploration.
  */
 export function detectEvidenceStale(state: TurnState): RetryInstruction | null {
+  // Skip if the agent JUST called a tool this iteration — its result hasn't
+  // landed in evidence yet, so the flat-history signal is premature. Firing
+  // here also creates orphan tool_calls (we'd push assistant.tool_calls to
+  // messages and then `continue` past executeToolCalls), which crashes the
+  // next API call with 400 "No tool output found". Mirrors the same guard
+  // present on planning-only / uncommitted-turn / reasoning-only / empty-
+  // response — was missed when this detector was added.
+  if (state.toolCallsThisIteration.length > 0) return null;
   const history = state.evidenceHistory;
   if (history.length < 3) return null;
   const last = history[history.length - 1];

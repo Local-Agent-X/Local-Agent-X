@@ -35,13 +35,13 @@ Rules — apply in order, first match wins:
 2. USER WANTS INTERACTIVE: question, discussion, opinion-seeking, brainstorm, back-and-forth ("what do you think", "should we", "kind of like", "thoughts?", "vs", "tradeoff", reaction to prior message)
    → INLINE
 
-3. SHORT/CASUAL: messages under 6 words, greetings, acks ("yes", "ok", "thanks")
+3. SHORT/CASUAL: messages under 6 words that are clearly conversational (greetings, acks: "yes", "ok", "thanks", "hi"). NOTE: short build/work commands like "build me an app for X" or "scan the repo for Y" do NOT count as casual — they're TRUE LONG-RUNNING WORK (rule 4) regardless of length.
    → INLINE
 
-4. TRUE LONG-RUNNING WORK: minutes-long task (build a full app, scan a codebase, refactor across many files, run an autopilot session). User clearly stepped away or wants to keep chatting while it runs.
+4. TRUE LONG-RUNNING WORK: minutes-long task — build an app, build a website/landing page, scan a codebase, refactor across files, generate a deck/document, run an autopilot session, scrape data. **Vague scope is NOT a reason to keep this inline.** A worker can ask for clarifications via its own needs_input mechanism — that's its job, not main agent's. If the user says "build me an app for X" without specifying details, DELEGATE — the worker will ask what it needs. Keeping this inline blocks the chat for the entire build duration, which is exactly what the user wanted to avoid.
    → DELEGATE
 
-5. AMBIGUOUS: when unclear, default to INLINE. Inline failures recover via "I'll start working on that, want me to background it?" — delegated failures lose user trust.
+5. AMBIGUOUS NON-WORK: when the message isn't clearly work AND isn't clearly chat, default to INLINE. Inline failures recover via "I'll start working on that, want me to background it?" — delegated failures lose user trust. But if the message contains a clear work verb (build/create/scan/refactor/scaffold/generate/deploy/publish/setup/install) on a clear noun (app/site/page/script/dashboard/etc.), that's NOT ambiguous — that's rule 4.
 
 Reply with EXACTLY one line in this format:
 DECISION: <INLINE|DELEGATE>

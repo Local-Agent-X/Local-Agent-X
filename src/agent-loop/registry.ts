@@ -23,6 +23,7 @@ import { subagentDrainMiddleware } from "./middlewares/subagent-drain.js";
 import { heartbeatMiddleware } from "./middlewares/heartbeat.js";
 import { forceToolUseMiddleware } from "./middlewares/force-tool-use.js";
 import { pauseMiddleware } from "./middlewares/pause.js";
+import { postCommitMiddleware } from "./middlewares/post-commit.js";
 
 export function getDefaultMiddlewareStack(): LoopMiddleware[] {
   return [
@@ -38,5 +39,7 @@ export function getDefaultMiddlewareStack(): LoopMiddleware[] {
     heartbeatMiddleware,
     // afterModelCall: pause when the assistant asks for credentials/2fa.
     pauseMiddleware,
+    // afterToolExecution: nudge a wrap-up the iteration after a git commit.
+    postCommitMiddleware,
   ];
 }

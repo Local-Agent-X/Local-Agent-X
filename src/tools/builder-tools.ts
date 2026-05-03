@@ -1,9 +1,52 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { resolve, join, relative } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("tools.builder-tools");
+
+// Build-prompt fragment that bakes visual-first rules into the spawned
+// codex/claude CLI subprocess. The subprocess can't see SAX's prompt-layer
+// system, so the rules have to ride inside the prompt itself.
+const WEBSITE_NOUN_IN_PROMPT_RE =
+  /\b(website|web ?site|landing page|landing|home ?page|marketing ?page|micro ?site|one[- ]?pager|business site|biz site|menu page|portfolio|splash page|brochure site)\b/i;
+
+function looksLikeWebsiteRequest(prompt: string): boolean {
+  return WEBSITE_NOUN_IN_PROMPT_RE.test(prompt);
+}
+
+function listAssetsDir(appDir: string): string[] {
+  const dir = join(appDir, "assets");
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  const walk = (cur: string): void => {
+    let entries: string[] = [];
+    try { entries = readdirSync(cur); } catch { return; }
+    for (const name of entries) {
+      const p = join(cur, name);
+      let s: ReturnType<typeof statSync>;
+      try { s = statSync(p); } catch { continue; }
+      if (s.isDirectory()) { walk(p); continue; }
+      if (s.isFile() && /\.(jpg|jpeg|png|webp|avif|gif|svg)$/i.test(name)) {
+        out.push(relative(appDir, p).replace(/\\/g, "/"));
+      }
+    }
+  };
+  walk(dir);
+  return out.sort();
+}
+
+const WEBSITE_RULES_FRAGMENT = [
+  "",
+  "WEBSITE-BUILD MODE — apply these rules:",
+  "• NEVER use placeholder.com, lorem-picsum, unsplash random, or any external stock CDN. If real photos exist in the `assets/` folder of this app dir, USE THEM. If none exist, ask via the conversation rather than inventing placeholders.",
+  "• NO TEXT WALLS. Hero needs a real image (not a color block) plus a short headline + sub + CTA. Each major section needs a visual anchor (photo, icon, or card). If a section has >60 words of body text without a visual, restructure it.",
+  "• IMAGE DISCIPLINE. Every <img> gets explicit width/height OR aspect-ratio, object-fit: cover, loading=\"lazy\", and max-width: 100%. Hero caps at 80vh. Photo grids force consistent ratios so portrait/landscape mix doesn't blow up the layout. Never let a native-resolution photo render at native size.",
+  "• MOBILE FIRST. Default to mobile breakpoint, layer up to desktop with media queries. Use clamp() for fluid type and CSS grid/flex for layout.",
+  "• HIERARCHY: Hero → social proof or photo grid → menu/services as cards → contact/CTA. Modern type scale, generous whitespace, color palette that fits the brand.",
+  "• Light mode by default unless the brand source clearly uses dark.",
+  "",
+].join("\n");
 
 export const buildAppTool: ToolDefinition = {
   name: "build_app",
@@ -57,11 +100,19 @@ export const buildAppTool: ToolDefinition = {
     }
     const context = contextFiles.length > 0 ? `\n\nExisting app context:\n${contextFiles.join("\n\n")}` : "";
 
+    const isWebsite = looksLikeWebsiteRequest(prompt);
+    const assetFiles = listAssetsDir(appDir);
+    const assetManifest = assetFiles.length > 0
+      ? `\n\nLOCAL ASSETS AVAILABLE (use these in <img src="..."> — relative to index.html):\n${assetFiles.map(p => `  - ${p}`).join("\n")}\n`
+      : (isWebsite
+          ? `\n\nNO LOCAL ASSETS YET. If the user mentioned a source URL or attached photos, the parent agent should have extracted them into assets/ before invoking you. Do NOT use placeholder.com or stock CDNs — instead, build a bold typography-driven hero with CSS gradients and ask in PROJECT.md for the photos to be added.\n`
+          : "");
+    const websiteRules = isWebsite ? WEBSITE_RULES_FRAGMENT : "";
+
     const builderPrompt = `You are building a web app in the directory: ${appDir}
 App name: ${appName}
 Task: ${isUpdate ? "UPDATE existing app" : "CREATE new app"}
-${context}
-
+${context}${assetManifest}
 Instructions: ${prompt}
 
 RULES:
@@ -71,9 +122,9 @@ RULES:
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
 - Make it look polished — use modern CSS, good colors, responsive design
 - The app will be served at ${appUrl}
-- If using images from the web, use full URLs (https://)
 - Do NOT ask questions — just build it based on the instructions
-- After writing files, output: APP_READY: ${appUrl}`;
+- After writing files, output: APP_READY: ${appUrl}
+${websiteRules}`;
 
     try {
       if (backend === "codex") {

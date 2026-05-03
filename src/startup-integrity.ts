@@ -59,6 +59,12 @@ export function checkStartupIntegrity(repoRoot: string = process.cwd()): Integri
  * (everything OK) or prints a red banner + exits with code 2.
  */
 export function enforceStartupIntegrity(): void {
+  // self_edit's bind-probe sets this to skip the integrity check —
+  // the probe is short-lived (a few seconds, just verifies port bind +
+  // auth route answers), so a missing arikernel file shouldn't kill it
+  // even though it would kill a real boot. The parent server still
+  // enforces integrity normally; this only loosens it for probes.
+  if (process.env.LAX_SKIP_INTEGRITY === "1") return;
   const result = checkStartupIntegrity();
   if (result.ok) return;
 

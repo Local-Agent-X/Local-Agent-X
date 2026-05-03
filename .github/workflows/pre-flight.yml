@@ -1,0 +1,48 @@
+name: Pre-flight (clean-build + audit)
+
+# Runs the same pre-commit audit script that scripts/install-hooks.sh
+# wires up locally — but server-side, so the commit status is RED if any
+# check fails. Stops "broke main" mistakes (e.g., import-without-file)
+# from sitting silent on the default branch.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  audit-and-build:
+    name: Audit + clean build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need history so the audit script can diff against HEAD~1
+          fetch-depth: 2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Run pre-commit audit (server-side)
+        run: |
+          # Audit checks the diff between the previous commit and the
+          # newly-pushed one — same shape as a local pre-commit run.
+          chmod +x scripts/precommit-audit.sh
+          # Fake a "staged" diff by comparing against the parent commit.
+          # The script reads `git diff --cached`; we simulate it by
+          # resetting against the parent so the new commit's contents
+          # appear staged.
+          git reset --soft HEAD~1 || true
+          bash scripts/precommit-audit.sh
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check (clean tree, no working-dir bleed)
+        run: npx tsc --noEmit
+
+      - name: Full build
+        run: npm run build

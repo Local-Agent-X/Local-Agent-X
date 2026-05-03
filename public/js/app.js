@@ -101,6 +101,7 @@ async function syncChatsFromServer() {
       // slice, not the real content. Always fetch server when we detect truncation, even if
       // local.updatedAt is newer (which it often is mid-stream due to savePartial).
       const hasTruncated = local && local.messages && local.messages.some(m => m._truncated || (typeof m.content === 'string' && m.content.length >= 9_900));
+      const listTruncated = local && local.messages && typeof srv.messageCount === 'number' && srv.messageCount > local.messages.length;
       // Mid-stream protection: NEVER replace the local chat object while a
       // stream is in flight for this session. Replacing it orphans the
       // streamChat closure reference in sendMessage — the stream keeps
@@ -109,7 +110,7 @@ async function syncChatsFromServer() {
       // away mid-stream and coming back shows a blank chat. Keep local
       // until the stream finishes; the next sync after `done` will reconcile.
       const isStreamingNow = local && (window.streamingSessionId === srv.id);
-      if (local && (isStreamingNow || (!hasTruncated && local.updatedAt >= srv.updatedAt))) {
+      if (local && (isStreamingNow || (!hasTruncated && !listTruncated && local.updatedAt >= srv.updatedAt))) {
         merged.push(local);
       } else if (local) {
         try {
@@ -155,6 +156,7 @@ function saveChats() {
   const toSave = chats.map(c => {
     const rec = {
       id: c.id, title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt,
+      messageCount: c.messages.length,
       messages: c.messages.slice(-10).map(m => {
         const raw = m.content || "";
         const truncated = raw.length > PER_MSG_CAP;

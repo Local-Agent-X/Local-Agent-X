@@ -19,4 +19,5 @@ export {
   getAdapter,
   requireAdapter,
   listAdapters,
+  setRegistryOverride,
 } from "./registry.js";

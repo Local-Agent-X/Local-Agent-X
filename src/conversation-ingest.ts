@@ -40,7 +40,8 @@ export interface IngestResult {
 
 // ── File scanning ──
 
-const SUPPORTED_EXTENSIONS = new Set([".json", ".jsonl", ".txt", ".md"]);
+const SUPPORTED_EXTENSIONS = new Set([".json", ".jsonl", ".txt", ".md", ".sqlite", ".sqlite3", ".db"]);
+const SQLITE_EXTENSIONS = new Set([".sqlite", ".sqlite3", ".db"]);
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB safety limit
 
 function scanExportFiles(dirPath: string): string[] {
@@ -75,14 +76,20 @@ export async function ingestConversations(
   const files = scanExportFiles(path);
   const result: IngestResult = { totalConversations: 0, processed: 0, skipped: 0, chunksCreated: 0, errors: 0, formats: {} };
 
-  // Pre-count total conversations across all files for accurate progress
+  // Pre-count total conversations across all files for accurate progress.
+  // SQLite is opened by path (binary); other formats parse string content.
   let globalTotal = 0;
   for (const filePath of files) {
     try {
-      const content = readFileSync(filePath, "utf-8");
       const ext = extname(filePath).toLowerCase();
-      const parsed = parseExportFile(content, ext);
-      globalTotal += parsed.length;
+      if (SQLITE_EXTENSIONS.has(ext)) {
+        const { parseSQLiteFile } = await import("./conversation-parsers-sqlite.js");
+        globalTotal += parseSQLiteFile(filePath).length;
+      } else {
+        const content = readFileSync(filePath, "utf-8");
+        const parsed = parseExportFile(content, ext);
+        globalTotal += parsed.length;
+      }
     } catch { /* skip unreadable files */ }
   }
 
@@ -151,24 +158,36 @@ async function ingestSingleFile(
   const result: IngestResult = { totalConversations: 0, processed: 0, skipped: 0, chunksCreated: 0, errors: 0, formats: {} };
   const progress: IngestProgress = { totalFiles: 1, currentFile: basename(filePath), totalConversations: 0, processed: 0, skipped: 0, chunksCreated: 0, errors: 0 };
 
-  const content = readFileSync(filePath, "utf-8");
   const ext = extname(filePath).toLowerCase();
-  const format = detectFormat(content, ext);
 
-  if (format === "unknown") {
-    logger.warn(`[ingest] Unknown format: ${basename(filePath)}`);
-    return result;
-  }
-
-  // For ChatGPT: file is an array of conversations — parse in streaming fashion
-  // to avoid holding entire parsed structure in memory
   let conversations;
-  try {
-    conversations = parseExportFile(content, ext);
-  } catch (e) {
-    logger.error(`[ingest] Parse error in ${basename(filePath)}:`, (e as Error).message);
-    result.errors++;
-    return result;
+  if (SQLITE_EXTENSIONS.has(ext)) {
+    try {
+      const { parseSQLiteFile } = await import("./conversation-parsers-sqlite.js");
+      conversations = parseSQLiteFile(filePath);
+    } catch (e) {
+      logger.error(`[ingest] SQLite parse error in ${basename(filePath)}:`, (e as Error).message);
+      result.errors++;
+      return result;
+    }
+    if (conversations.length === 0) {
+      logger.warn(`[ingest] No memory-shaped tables in ${basename(filePath)}`);
+      return result;
+    }
+  } else {
+    const content = readFileSync(filePath, "utf-8");
+    const format = detectFormat(content, ext);
+    if (format === "unknown") {
+      logger.warn(`[ingest] Unknown format: ${basename(filePath)}`);
+      return result;
+    }
+    try {
+      conversations = parseExportFile(content, ext);
+    } catch (e) {
+      logger.error(`[ingest] Parse error in ${basename(filePath)}:`, (e as Error).message);
+      result.errors++;
+      return result;
+    }
   }
 
   result.totalConversations = conversations.length;
@@ -184,7 +203,7 @@ async function ingestSingleFile(
         continue;
       }
 
-      if (convo.messages.length < 2) {
+      if (convo.messages.length < 1) {
         result.skipped++;
         progress.skipped++;
         continue;

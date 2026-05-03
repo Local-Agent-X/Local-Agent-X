@@ -165,3 +165,48 @@ export function getIngestStats(
   for (const r of rows) byFormat[r.source_format] = r.c;
   return { total, byFormat };
 }
+
+export interface IngestSourceSummary {
+  source: string;
+  conversations: number;
+  messages: number;
+  firstIngestedAt: number;
+  lastIngestedAt: number;
+}
+
+export function getIngestSummary(
+  db: InstanceType<typeof Database>
+): IngestSourceSummary[] {
+  return db.prepare(
+    `SELECT source_format AS source,
+            COUNT(*) AS conversations,
+            COALESCE(SUM(message_count), 0) AS messages,
+            MIN(ingested_at) AS firstIngestedAt,
+            MAX(ingested_at) AS lastIngestedAt
+       FROM conversation_ingest_log
+       GROUP BY source_format
+       ORDER BY lastIngestedAt DESC`
+  ).all() as IngestSourceSummary[];
+}
+
+export function listConversationIdsBySource(
+  db: InstanceType<typeof Database>,
+  source: string
+): string[] {
+  const rows = db.prepare(
+    "SELECT conversation_id FROM conversation_ingest_log WHERE source_format = ?"
+  ).all(source) as Array<{ conversation_id: string }>;
+  return rows.map(r => r.conversation_id);
+}
+
+export function listConversationIdsSince(
+  db: InstanceType<typeof Database>,
+  sinceMs: number
+): Array<{ conversation_id: string; source_format: string; ingested_at: number; title: string | null }> {
+  return db.prepare(
+    `SELECT conversation_id, source_format, ingested_at, title
+       FROM conversation_ingest_log
+       WHERE ingested_at >= ?
+       ORDER BY ingested_at DESC`
+  ).all(sinceMs) as Array<{ conversation_id: string; source_format: string; ingested_at: number; title: string | null }>;
+}

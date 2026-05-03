@@ -296,7 +296,14 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
       messages.push({ role: "user", content: afterModelRes.message } as ChatCompletionMessageParam);
       continue;
     }
-    if (afterModelRes.kind === "retry-iteration") continue;
+    if (afterModelRes.kind === "retry-iteration") {
+      // Pop the just-pushed assistant message so the next iteration's
+      // corrected response REPLACES it instead of stacking. Otherwise
+      // user sees "I did X" then the retry's "I did X (better version)"
+      // back-to-back — looks like the agent answered twice.
+      messages.pop();
+      continue;
+    }
 
     // No tool calls + no MCP shortcut → end of turn.
     if (toolCalls.length === 0 && !sawMcpActivity) {

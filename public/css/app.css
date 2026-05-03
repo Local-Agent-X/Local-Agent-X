@@ -260,6 +260,15 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .msg-body.streaming{
   opacity:0.92;
 }
+/* ChatGPT-style scroll pin: when a turn is streaming, the assistant message
+   reserves enough min-height that the user's prompt can sit at the top of the
+   viewport with empty space below for the response to fill into. No
+   auto-scroll needed — the user reads as the answer appears, and can scroll
+   freely. The class is removed on `done`, letting the bubble shrink to its
+   natural content height. */
+.msg.assistant.pin-during-stream{
+  min-height:calc(100vh - 240px);
+}
 @keyframes stream-cursor{0%,49%{opacity:1}50%,100%{opacity:0.15}}
 #empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);width:100%}
 .hero-img{max-width:280px;max-height:280px;border-radius:20px;object-fit:contain;margin-bottom:8px;filter:drop-shadow(0 0 30px rgba(64,240,240,.15));animation:heroFade .8s ease}

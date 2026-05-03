@@ -331,6 +331,7 @@ function loadToolsList() {
     { name: 'memory_get', status: 'allowed' }, { name: 'memory_recall', status: 'allowed' },
     { name: 'memory_reflect', status: 'allowed' }, { name: 'memory_update_profile', status: 'allowed' },
     { name: 'memory_stats', status: 'allowed' }, { name: 'request_secret', status: 'allowed' },
+    { name: 'request_secrets', status: 'allowed' },
     { name: 'mission_list', status: 'allowed' }, { name: 'mission_get', status: 'allowed' },
     { name: 'mission_save_preference', status: 'allowed' }, { name: 'mission_format_caption', status: 'allowed' },
     { name: 'cron_list', status: 'allowed' }, { name: 'cron_create', status: 'allowed' },

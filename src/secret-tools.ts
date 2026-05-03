@@ -77,6 +77,83 @@ export function createSecretTools(
     },
   };
 
+  const requestSecretsTool: ToolDefinition = {
+    name: "request_secrets",
+    description:
+      "Request MULTIPLE related credentials in a single secure prompt. Prefer this over calling request_secret twice " +
+      "when a service uses a key/secret pair or multi-field auth. The user gets ONE modal with all fields, fills them " +
+      "in together, and saves once. Common pairings to batch as a single call: " +
+      "WooCommerce (WOO_CONSUMER_KEY + WOO_CONSUMER_SECRET), " +
+      "Stripe (STRIPE_PUBLISHABLE_KEY + STRIPE_SECRET_KEY), " +
+      "Twilio (TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN), " +
+      "Mailgun (MAILGUN_API_KEY + MAILGUN_DOMAIN), " +
+      "OAuth apps (CLIENT_ID + CLIENT_SECRET), " +
+      "AWS (AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY), " +
+      "SoundCloud (SOUNDCLOUD_CLIENT_ID + SOUNDCLOUD_CLIENT_SECRET). " +
+      "You can also batch credentials for DIFFERENT services in one call when the user says they want to provide several at once " +
+      "(e.g. 'here's my Google API and SoundCloud API') — the modal groups fields by service automatically. " +
+      "Already-stored secrets are skipped automatically. If everything is already stored, no prompt is shown.",
+    parameters: {
+      type: "object",
+      properties: {
+        secrets: {
+          type: "array",
+          description: "List of credentials to request. Each entry needs name + reason; service is recommended for grouping.",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Unique secret name in SCREAMING_SNAKE_CASE." },
+              service: { type: "string", description: "Service name for display + grouping (e.g. 'WooCommerce', 'Stripe')." },
+              reason: { type: "string", description: "Why this credential is needed; shown to the user." },
+            },
+            required: ["name", "reason"],
+          },
+        },
+      },
+      required: ["secrets"],
+    },
+    async execute(args) {
+      type SecretReq = { name: string; service?: string; reason: string };
+      const raw = Array.isArray(args.secrets) ? args.secrets : [];
+      const normalized: SecretReq[] = [];
+      for (const s of raw) {
+        const r = s as { name?: unknown; service?: unknown; reason?: unknown };
+        const name = String(r.name || "").toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+        if (!name) continue;
+        const entry: SecretReq = { name, reason: String(r.reason || "Required for API access") };
+        if (r.service) entry.service = String(r.service);
+        normalized.push(entry);
+      }
+
+      if (normalized.length === 0) {
+        return err("request_secrets needs at least one entry with a name + reason.");
+      }
+
+      const missing = normalized.filter(s => !secrets.has(s.name));
+      const existing = normalized.filter(s => secrets.has(s.name)).map(s => s.name);
+
+      if (missing.length === 0) {
+        return ok(
+          `All ${normalized.length} secret(s) already stored: ${existing.join(", ")}. ` +
+            `Use them as ${existing.map(n => `{{${n}}}`).join(" / ")} in http_request headers.`
+        );
+      }
+
+      const emit = (args._onEvent as ((event: ServerEvent) => void) | undefined) || onEvent;
+      emit?.({ type: "secrets_request", secrets: missing });
+
+      const skippedNote = existing.length > 0
+        ? ` Already stored (skipped): ${existing.join(", ")}.`
+        : "";
+      return ok(
+        `Requesting ${missing.length} credential(s) from the user in a single secure prompt: ${missing.map(s => s.name).join(", ")}.` +
+          skippedNote +
+          ` Once saved, use them as ${missing.map(s => `{{${s.name}}}`).join(" / ")} in http_request headers. ` +
+          `Wait for the user to confirm before making API calls.`
+      );
+    },
+  };
+
   const listSecretsTool: ToolDefinition = {
     name: "list_secrets",
     description:
@@ -132,5 +209,5 @@ export function createSecretTools(
     },
   };
 
-  return [requestSecretTool, listSecretsTool, getSecretMetaTool];
+  return [requestSecretTool, requestSecretsTool, listSecretsTool, getSecretMetaTool];
 }

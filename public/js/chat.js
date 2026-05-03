@@ -3,6 +3,21 @@ let streamingSessionId = null; // Track WHICH session is streaming, not global b
 let pendingUploads = [];
 let userScrolledUp = false;
 
+// Registry of in-flight streams. Keyed by sessionId. Lets renderMessages
+// pull the live content (instead of the savePartial-stale persisted copy)
+// when a chat is re-entered mid-stream, and lets the stream handler reattach
+// to a freshly-rendered bodyEl after a chat switch.
+const _liveStreams = new Map(); // sessionId → { content, toolEvents }
+
+function _findStreamingBodyEl(sessionId) {
+  if (!activeChat || activeChat.id !== sessionId) return null;
+  const messages = document.getElementById('messages');
+  if (!messages) return null;
+  const rows = messages.querySelectorAll('.msg-row.assistant');
+  const last = rows[rows.length - 1];
+  return last ? last.querySelector('.msg-body') : null;
+}
+
 // ── WebSocket Chat Connection ──
 let chatWs = null;
 let activeChatsSet = new Set();
@@ -263,10 +278,12 @@ function stopChat() {
     chatWs.close();
     setTimeout(connectChatWs, 500);
   }
-  // Append "stopped" indicator to last message
+  // Append "stopped" indicator to last message; drop the streaming pin so the
+  // message bubble shrinks back to its natural height.
   const msgs = document.querySelectorAll('.msg.assistant');
   const last = msgs[msgs.length - 1];
   if (last) {
+    last.classList.remove('pin-during-stream');
     const body = last.querySelector('.msg-body');
     if (body && !body.textContent.includes('[stopped]')) {
       body.innerHTML += '<div style="color:var(--muted);font-size:.72rem;margin-top:8px;font-style:italic">[stopped by user]</div>';
@@ -301,6 +318,12 @@ function isChatActive(sessionId) {
 })();
 
 function autoScroll() {
+  // ChatGPT-style: during an active streaming turn we DO NOT auto-scroll.
+  // The user message was scrolled to the top of the viewport at send time,
+  // and the assistant placeholder reserves viewport-height of room below
+  // (see .pin-during-stream). The response fills that space; the reader
+  // controls scroll afterward.
+  if (streamingSessionId) return;
   if (userScrolledUp) return;
   const el = document.getElementById('messages');
   if (el) el.scrollTop = el.scrollHeight;
@@ -368,10 +391,14 @@ function renderMessages() {
       const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
       addMessageEl('user', displayText, msg.attachments, msg.timestamp);
     } else if (msg.role === 'assistant' && (msg.content || msg._tools)) {
-      // Clean up stale streaming state on render
-      if (msg._streaming) {
+      const isLast = i === activeChat.messages.length - 1;
+      const live = (isLast && msg._streaming) ? _liveStreams.get(activeChat.id) : null;
+      // Clean up stale streaming state ONLY if the stream is genuinely no
+      // longer active. If we still have a live entry for this session, the
+      // stream is in flight — preserve _streaming so the next event keeps
+      // updating the same message slot.
+      if (msg._streaming && !live) {
         delete msg._streaming;
-        // If tools have no matching end events, mark them as interrupted
         if (msg._tools) {
           for (const te of msg._tools) {
             if (te.type === 'start' && !msg._tools.find(t => t.type === 'end' && t.name === te.name)) {
@@ -380,21 +407,35 @@ function renderMessages() {
           }
         }
       }
-      addMessageEl('assistant', msg.content || '', null, msg.timestamp);
-      // Render saved tool cards
-      if (msg._tools && msg._tools.length > 0) {
+      // When a stream is live for this chat, render the live content (which
+      // is fresher than savePartial's 3-second snapshot in msg.content).
+      const displayContent = live ? live.content : (msg.content || '');
+      addMessageEl('assistant', displayContent, null, msg.timestamp);
+      if (live) {
         const lastBubble = el.querySelector('.msg-row:last-child .bubble');
-        if (lastBubble) {
+        const lastBody = lastBubble ? lastBubble.querySelector('.msg-body') : null;
+        if (lastBody) lastBody.classList.add('streaming');
+      }
+      // Render tool cards — from live registry when streaming, otherwise from
+      // the persisted snapshot. Cards go INSIDE bodyEl (not the bubble) so the
+      // streaming handler's `bodyEl.querySelectorAll('.tool-card')` lookups
+      // for tool_end indicator updates resolve correctly after a chat switch.
+      const toolSrc = live ? live.toolEvents : msg._tools;
+      if (toolSrc && toolSrc.length > 0) {
+        const lastBubble = el.querySelector('.msg-row:last-child .bubble');
+        const lastBody = lastBubble ? lastBubble.querySelector('.msg-body') : null;
+        const cardHost = lastBody || lastBubble;
+        if (cardHost) {
           try {
-            for (const te of msg._tools) {
+            for (const te of toolSrc) {
               if (te.type === 'start') {
                 const card = makeToolCard(te.name, te.args || '', te.riskLevel);
-                const endEvt = msg._tools.find(t => t.type === 'end' && t.name === te.name);
+                const endEvt = toolSrc.find(t => t.type === 'end' && t.name === te.name);
                 if (endEvt) {
                   card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
                   card.querySelector('.tool-detail').textContent = (endEvt.result || '').slice(0, 200) || '✓ Done';
                 }
-                lastBubble.appendChild(card);
+                cardHost.appendChild(card);
               }
             }
           } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
@@ -448,11 +489,21 @@ async function sendMessage() {
   }
   const empty = document.getElementById('empty'); if (empty) empty.remove();
   const msgTime = Date.now();
-  addMessageEl('user', displayText, msgAttachments, msgTime);
+  const userMsgEl = addMessageEl('user', displayText, msgAttachments, msgTime);
   activeChat.messages.push({ role: 'user', content: finalText, attachments: msgAttachments, timestamp: msgTime });
   const msgEl = addMessageEl('assistant', '');
-  const bodyEl = msgEl.querySelector('.msg-body');
+  let bodyEl = msgEl.querySelector('.msg-body');
   bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
+  // ChatGPT-style scroll pin: reserve viewport-height under the user message,
+  // then anchor the user message to the top. Auto-scroll is disabled during
+  // the stream (see autoScroll() — it short-circuits while pin is active) so
+  // the user can scroll freely as the response fills the reserved space.
+  msgEl.classList.add('pin-during-stream');
+  if (userMsgEl) {
+    requestAnimationFrame(() => {
+      try { userMsgEl.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch {}
+    });
+  }
   // Mark as streaming so the CSS adds a pulsing cursor + slight opacity
   // dim. Removed on `done`. Visual cue that text is still in flight so
   // mid-turn questions like "Want me to start?" don't read as final.
@@ -469,11 +520,25 @@ async function sendMessage() {
   // Helper: is the user still viewing this chat?
   function isViewingThis() { return activeChat && activeChat.id === streamSessionId; }
 
+  // Resolve the streaming bodyEl dynamically so chat-switch-and-back reattaches.
+  // The originally-captured bodyEl gets detached when renderMessages rebuilds
+  // the DOM for the other chat. When we come back, renderMessages creates a
+  // fresh bodyEl — this helper finds it.
+  function getBodyEl() {
+    if (bodyEl && bodyEl.isConnected) return bodyEl;
+    const fresh = _findStreamingBodyEl(streamSessionId);
+    if (fresh) bodyEl = fresh;
+    return bodyEl && bodyEl.isConnected ? bodyEl : null;
+  }
+
   // Feature 5: Mood detection — update indicator
   detectMood(text);
 
   let content = '';
   let toolEvents = [];
+
+  // Register so renderMessages can pull live state when re-entering this chat
+  _liveStreams.set(streamSessionId, { get content() { return content; }, get toolEvents() { return toolEvents; } });
 
   // Try WebSocket first (bidirectional, no SSE buffering issues)
   if (chatWs && chatWs.readyState === WebSocket.OPEN) {
@@ -486,6 +551,10 @@ async function sendMessage() {
         if (msg.type !== 'event' || msg.sessionId !== streamSessionId) return;
         const event = msg.event;
         const viewing = isViewingThis();
+        // If we're viewing, make sure bodyEl points to a connected DOM node.
+        // After a chat-switch-and-back, the originally-captured bodyEl is
+        // detached and renderMessages has rendered a fresh one.
+        if (viewing) getBodyEl();
         switch (event.type) {
           case 'stream':
             content += event.delta;
@@ -523,6 +592,8 @@ async function sendMessage() {
           case 'tool_progress':
             if (viewing) updateToolProgress(bodyEl, event.toolName, event.message);
             break;
+          case 'secret_request': showSecretModal(event.name, event.service, event.reason); break;
+          case 'secrets_request': showMultiSecretModal(event.secrets); break;
           case 'approval_requested':
             if (viewing) bodyEl.appendChild(makeApprovalCard(event.approvalId, event.toolName, event.context, event.argsPreview));
             break;
@@ -542,6 +613,8 @@ async function sendMessage() {
             if (saveInterval) clearInterval(saveInterval);
             // Finalize
             if (streamingSessionId === streamSessionId) streamingSessionId = null;
+            _liveStreams.delete(streamSessionId);
+            try { msgEl.classList.remove('pin-during-stream'); } catch {}
             try {
               const stopBtn2 = document.getElementById('stop-btn');
               if (stopBtn2) stopBtn2.style.display = 'none';
@@ -647,6 +720,7 @@ async function sendMessage() {
         try {
           const event = JSON.parse(line.slice(6));
           const viewing = isViewingThis();
+          if (viewing) getBodyEl();
           switch (event.type) {
             case 'stream':
               content += event.delta;
@@ -688,6 +762,7 @@ async function sendMessage() {
               if (viewing) updateToolProgress(bodyEl, event.toolName, event.message);
               break;
             case 'secret_request': showSecretModal(event.name, event.service, event.reason); break;
+            case 'secrets_request': showMultiSecretModal(event.secrets); break;
             case 'approval_requested':
               if (viewing) bodyEl.appendChild(makeApprovalCard(event.approvalId, event.toolName, event.context, event.argsPreview));
               break;
@@ -774,6 +849,8 @@ async function sendMessage() {
   if (typeof window.notifyTaskComplete === 'function') window.notifyTaskComplete(streamChat.title);
   // ALWAYS clear streaming state — must happen before anything that could throw
   if (streamingSessionId === streamSessionId) streamingSessionId = null;
+  _liveStreams.delete(streamSessionId);
+  try { msgEl.classList.remove('pin-during-stream'); } catch {}
   // Always hide stop button and re-enable send when stream ends
   try {
     const stopBtn2 = document.getElementById('stop-btn');
@@ -1075,33 +1152,8 @@ function updateToolProgress(container, toolName, message) {
   if (label) label.textContent = pct + '% — ' + detail + (file ? ' (' + file + ')' : '');
 }
 
-// ── Secret modal ──
-let pendingSecretName = '';
-function showSecretModal(name, service, reason) {
-  pendingSecretName = name;
-  let overlay = document.getElementById('secret-modal-overlay');
-  if (!overlay) {
-    overlay = document.createElement('div'); overlay.id = 'secret-modal-overlay';
-    overlay.innerHTML = `<div id="secret-modal"><h3 style="font-family:var(--mono);color:var(--accent);font-size:.95rem;margin-bottom:6px">Secret Requested</h3><div id="sm-service" style="color:var(--muted);font-size:.72rem;font-family:var(--mono);margin-bottom:12px"></div><div id="sm-name" style="display:inline-block;background:#1a1a30;border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-family:var(--mono);font-size:.78rem;color:var(--accent);margin-bottom:12px"></div><div id="sm-reason" style="color:var(--muted);font-size:.82rem;margin-bottom:16px;line-height:1.5"></div><input type="password" id="secret-input" class="field-input" placeholder="Paste your secret here..." autocomplete="off" onkeydown="if(event.key==='Enter')submitSecret()"/><div style="font-size:.7rem;color:var(--muted);margin-top:8px">Encrypted and stored locally. Never appears in chat.</div><div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end"><button class="action-btn secondary" onclick="cancelSecret()">Cancel</button><button class="action-btn primary" onclick="submitSecret()">Save Secret</button></div></div>`;
-    overlay.onclick = e => { if (e.target === overlay) cancelSecret(); };
-    document.body.appendChild(overlay);
-  }
-  document.getElementById('sm-name').textContent = name;
-  document.getElementById('sm-service').textContent = service ? `Service: ${service}` : '';
-  document.getElementById('sm-reason').textContent = reason;
-  document.getElementById('secret-input').value = '';
-  overlay.classList.add('visible');
-  setTimeout(() => document.getElementById('secret-input').focus(), 100);
-}
-async function submitSecret() {
-  const v = document.getElementById('secret-input').value.trim(); if (!v) return;
-  await apiPost('/api/secrets', { name: pendingSecretName, value: v });
-  cancelSecret();
-}
-function cancelSecret() {
-  const o = document.getElementById('secret-modal-overlay'); if (o) o.classList.remove('visible');
-  pendingSecretName = '';
-}
+// Secret modal lives in /js/secret-modal.js — exposes window.showSecretModal,
+// window.showMultiSecretModal, window.submitSecret, window.cancelSecret.
 
 // ── Upload ──
 // ── Retry with error hints ──

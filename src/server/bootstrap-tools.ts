@@ -37,16 +37,23 @@ export async function bootstrapTools(deps: {
   const memoryTools = createMemoryTools(memoryIndex);
 
   const activeOnEventBySession = new Map<string, EventCallback>();
-  // request_secret needs to emit events back to the calling session. We look up
-  // the session callback at execute time using args._sessionId (injected by the
-  // tool executor for SESSION_SCOPED_TOOLS).
+  // request_secret / request_secrets need to emit events back to the calling
+  // session. We look up the session callback at execute time using
+  // args._sessionId (injected by the tool executor for SESSION_SCOPED_TOOLS).
   const secretTools = createSecretTools(secretsStore, undefined);
-  secretTools[0].execute = async (args, signal) => {
-    const sessionId = args._sessionId ? String(args._sessionId) : "";
-    const onEvent = sessionId ? activeOnEventBySession.get(sessionId) : undefined;
-    const { createSecretTools: f } = await import("../secret-tools.js");
-    return f(secretsStore, onEvent)[0].execute(args, signal);
-  };
+  const SESSION_ONEVENT_TOOLS = new Set(["request_secret", "request_secrets"]);
+  for (let i = 0; i < secretTools.length; i++) {
+    if (!SESSION_ONEVENT_TOOLS.has(secretTools[i].name)) continue;
+    const toolName = secretTools[i].name;
+    secretTools[i].execute = async (args, signal) => {
+      const sessionId = args._sessionId ? String(args._sessionId) : "";
+      const onEvent = sessionId ? activeOnEventBySession.get(sessionId) : undefined;
+      const { createSecretTools: f } = await import("../secret-tools.js");
+      const fresh = f(secretsStore, onEvent).find(t => t.name === toolName);
+      if (!fresh) throw new Error(`Tool ${toolName} not found`);
+      return fresh.execute(args, signal);
+    };
+  }
   const httpRequestTool = createHttpRequestTool(secretsStore);
   const activeBrowserSessionIdRef: { value: string } = { value: "default" };
   const browserTools = createBrowserTools(() => activeBrowserSessionIdRef.value);

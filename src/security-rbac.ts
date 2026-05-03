@@ -92,7 +92,7 @@ const PERMISSION_MATRIX: Record<EnhancedRole, RolePermissions> = {
     canExportReports: false,
     canManageCron: false,
     allowedTools: ["read", "write", "edit", "web_fetch", "browser", "memory_search", "memory_save", "generate_image"],
-    blockedTools: ["bash", "http_request", "request_secret"],
+    blockedTools: ["bash", "http_request", "request_secret", "request_secrets"],
     allowedEndpoints: [
       { methods: ["GET"], allowed: true },
       { methods: ["POST"], allowed: true },
@@ -113,7 +113,7 @@ const PERMISSION_MATRIX: Record<EnhancedRole, RolePermissions> = {
     canExportReports: false,
     canManageCron: false,
     allowedTools: ["read", "memory_search"],
-    blockedTools: ["bash", "write", "edit", "http_request", "web_fetch", "browser", "request_secret", "generate_image"],
+    blockedTools: ["bash", "write", "edit", "http_request", "web_fetch", "browser", "request_secret", "request_secrets", "generate_image"],
     allowedEndpoints: [
       { methods: ["GET"], allowed: true },
     ],

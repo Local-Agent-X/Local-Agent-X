@@ -46,7 +46,7 @@ export const CORE_TOOL_NAMES = new Set([
   // Apps
   "build_app", "app_create", "app_list",
   // Secrets
-  "request_secret", "list_secrets",
+  "request_secret", "request_secrets", "list_secrets",
   // HTTP
   "http_request",
 ]);

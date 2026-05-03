@@ -350,7 +350,16 @@ export async function runCodexAgentHttp(
     // staleness. Each detector has its own retry budget; the first one that
     // fires and has budget left injects a nudge into the next attempt's
     // system prompt and continues the loop.
-    {
+    //
+    // Structural guard: only run post-turn validation when there are NO
+    // pending tool_calls. The assistant just got pushed to messages — if it
+    // has tool_calls and we `continue` from here, executeToolCalls is skipped
+    // and the next API request hits 400 "No tool output found" because the
+    // assistant.tool_calls entry is orphan. Each detector below also guards
+    // against this individually (defense in depth), but enforcing it once at
+    // the call site means a future detector forgetting its guard can't
+    // resurrect the orphan-tool-call class of bug.
+    if (toolCalls.length === 0) {
       evidenceHistory.push(computeEvidenceCount(messages));
       const detectorState = {
         assistantText: assistantContent,

@@ -135,6 +135,19 @@ const ACTION_VERB_TO_TOOLS: Array<{ verb: RegExp; tools: string[] }> = [
     "build_app", "skill_install", "http_request", "agent_spawn", "delegate",
     "email_setup", "operation_start", "bash", "edit",
   ] },
+  // "noted/remembered/recorded/logged X" — memory-specific claim verbs.
+  // Real-world failure: model says "noted, I'll remember that" or "got it,
+  // saved" without calling memory_save/memory_update_profile. This guard
+  // forces a retry — the model has to either actually call the tool or
+  // rephrase its reply to not claim the action. Same pattern as the other
+  // verb classes; just specifically scoped to memory tools so other
+  // claims ("noted in the bash log") don't false-positive into needing
+  // memory_save. Includes both present-tense ("remember", "bookmark") and
+  // past-tense ("remembered", "bookmarked") because future-tense claims
+  // ("I'll remember that") are hollow promises that need the same retry.
+  { verb: /\b(notes?|noted|remembers?|remembered|records?|recorded|logs?|logged|bookmarks?|bookmarked|memorizes?|memorized|stores?|stored)\b/i, tools: [
+    "memory_save", "memory_update_profile",
+  ] },
   // "sent/posted/emailed/messaged"
   { verb: /\b(sent|posted|emailed|messaged|tweeted|published|mailed)\b/i, tools: [
     "email_send", "email_draft", "whatsapp_send", "telegram_send", "http_request",
@@ -150,8 +163,15 @@ const ACTION_VERB_TO_TOOLS: Array<{ verb: RegExp; tools: string[] }> = [
   ] },
 ];
 
-const CLAIM_AT_REPLY_START_RE = /(?:^|\n)\s*[-*]?\s*(Removed|Unpinned|Deleted|Dropped|Cleared|Unscheduled|Added|Pinned|Scheduled|Created|Wrote|Built|Saved|Installed|Sent|Posted|Emailed|Messaged|Published|Mailed|Updated|Edited|Modified|Changed|Renamed|Patched|Configured)\b/i;
-const CLAIM_FIRST_PERSON_RE = /\bI('ve| have)?\s+(removed|unpinned|deleted|dropped|cleared|unscheduled|added|pinned|scheduled|created|wrote|built|saved|installed|sent|posted|emailed|messaged|published|mailed|updated|edited|modified|changed|renamed|patched|configured)\b/i;
+const CLAIM_AT_REPLY_START_RE = /(?:^|\n)\s*[-*]?\s*(Removed|Unpinned|Deleted|Dropped|Cleared|Unscheduled|Added|Pinned|Scheduled|Created|Wrote|Built|Saved|Installed|Sent|Posted|Emailed|Messaged|Published|Mailed|Updated|Edited|Modified|Changed|Renamed|Patched|Configured|Noted|Remembered|Recorded|Logged|Bookmarked|Memorized|Stored)\b/i;
+// First-person claim — past tense for completed actions ("I saved X") plus
+// present/future-tense forms for memory verbs ("I'll remember", "I'll note",
+// "I will bookmark"). The future tense is treated as a claim too because
+// "I'll remember that" without a memory tool call is a hollow promise — the
+// model commits to durable storage that won't actually happen unless we
+// force the retry. Non-memory verbs stay past-tense-only (claiming "I'll
+// send the email" is normal in-task language and shouldn't trigger a retry).
+const CLAIM_FIRST_PERSON_RE = /\bI(?:'ve|'ll| have| will)?\s+(removed|unpinned|deleted|dropped|cleared|unscheduled|added|pinned|scheduled|created|wrote|built|saved|installed|sent|posted|emailed|messaged|published|mailed|updated|edited|modified|changed|renamed|patched|configured|noted?|remembers?|remembered|records?|recorded|logs?|logged|bookmarks?|bookmarked|memorizes?|memorized|stores?|stored)\b/i;
 
 /**
  * Return a nudge if the assistant's reply claims an action verb whose

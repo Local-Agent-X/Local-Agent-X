@@ -96,28 +96,17 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
     }
 
     case "correction-learning": {
+      // Detection still runs (CorrectionLearner persists records to disk for
+      // history/diagnostics), and prepare-request.ts uses the same detector
+      // to boost the memory-curate nudge priority. We deliberately STOPPED
+      // injecting the verbatim "user corrected X to Y" signal here — that
+      // pattern made the system feel like a passive correction logger
+      // instead of a learner. Now the model itself decides what to write to
+      // USER.md / MIND.md via memory_update_profile in response to the
+      // nudge. Synthesis happens at write time, not at recall time.
       if (!input.agentPreviousMessage) return true;
       const cl = CorrectionLearner.getInstance();
-      const correction = cl.detectCorrection(input.message, input.agentPreviousMessage);
-      if (correction) {
-        signals.push({
-          source: "correction-learning",
-          signal: `User is correcting: "${correction.wrongInfo}" should be "${correction.correctInfo}" — avoid repeating this mistake`,
-          priority: 9,
-          category: "correction",
-          confidence: 0.9,
-        });
-        const context = cl.getCorrectiveContext(correction.wrongInfo);
-        if (context) {
-          signals.push({
-            source: "correction-learning",
-            signal: context,
-            priority: 8,
-            category: "correction-context",
-            confidence: 0.8,
-          });
-        }
-      }
+      cl.detectCorrection(input.message, input.agentPreviousMessage);
       return true;
     }
 

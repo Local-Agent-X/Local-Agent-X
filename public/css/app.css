@@ -234,6 +234,27 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .tool-name{color:var(--accent)}
 .tool-detail{display:none;padding:10px 12px;background:#0d0d18;font-family:var(--mono);font-size:.78rem;color:var(--muted);white-space:pre-wrap;max-height:200px;overflow-y:auto}
 .tool-card.open .tool-detail{display:block}
+/* Card chevron — rotates when open so the click-to-expand affordance is obvious */
+.tool-header .chevron{display:inline-block;transition:transform .15s ease;color:var(--muted);font-size:.65rem}
+.tool-card.open .tool-header .chevron{transform:rotate(90deg)}
+/* Stacked-card hint — when the same tool fired N>1 times in a row and got
+   collapsed into one card, show the count as a visible pill so users know
+   it's a stack they can drill into. Without this, the card looks identical
+   to a single-call card and people don't realize there's more inside. */
+.tool-card[data-call-count]:not([data-call-count="1"]) .tool-count{
+  background:var(--accent-dim,rgba(64,240,240,.15));
+  color:var(--accent,#40f0f0);
+  padding:1px 6px;
+  border-radius:10px;
+  font-weight:600;
+  letter-spacing:.02em;
+}
+.tool-card[data-call-count]:not([data-call-count="1"]):hover{
+  border-color:var(--accent-dim,rgba(64,240,240,.3));
+}
+[data-theme="light"] .tool-card[data-call-count]:not([data-call-count="1"]) .tool-count{
+  background:rgba(0,102,204,.12); color:#0066cc;
+}
 .tool-progress-bar{position:relative;height:22px;background:var(--bg);border-radius:6px;overflow:hidden;margin:4px 0}
 .tool-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent-dim),var(--accent));border-radius:6px;transition:width .3s ease;min-width:2px}
 .tool-progress-label{position:absolute;top:0;left:0;right:0;height:100%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:.65rem;color:var(--text)}

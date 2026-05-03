@@ -13,7 +13,12 @@ function _findStreamingBodyEl(sessionId) {
   if (!activeChat || activeChat.id !== sessionId) return null;
   const messages = document.getElementById('messages');
   if (!messages) return null;
-  const rows = messages.querySelectorAll('.msg-row.assistant');
+  // DOM uses class 'msg assistant' (see addMessageEl). Older code here
+  // looked for '.msg-row.assistant' which never matched after a UI
+  // refactor — this helper silently returned null on every chat-switch
+  // re-entry, leaving the streaming bubble frozen at the snapshot it
+  // rendered on entry, with no incoming deltas able to update the DOM.
+  const rows = messages.querySelectorAll('.msg.assistant');
   const last = rows[rows.length - 1];
   return last ? last.querySelector('.msg-body') : null;
 }
@@ -446,8 +451,10 @@ function renderMessages() {
       const displayContent = live ? live.content : (msg.content || '');
       addMessageEl('assistant', displayContent, null, msg.timestamp);
       if (live) {
-        const lastBubble = el.querySelector('.msg-row:last-child .bubble');
-        const lastBody = lastBubble ? lastBubble.querySelector('.msg-body') : null;
+        // Same selector fix — DOM uses '.msg' / '.msg-body', not '.msg-row .bubble'.
+        const allMsgs = el.querySelectorAll('.msg.assistant');
+        const lastMsgEl = allMsgs[allMsgs.length - 1];
+        const lastBody = lastMsgEl ? lastMsgEl.querySelector('.msg-body') : null;
         if (lastBody) lastBody.classList.add('streaming');
       }
       // Render tool cards — from live registry when streaming, otherwise from
@@ -456,9 +463,10 @@ function renderMessages() {
       // for tool_end indicator updates resolve correctly after a chat switch.
       const toolSrc = live ? live.toolEvents : msg._tools;
       if (toolSrc && toolSrc.length > 0) {
-        const lastBubble = el.querySelector('.msg-row:last-child .bubble');
-        const lastBody = lastBubble ? lastBubble.querySelector('.msg-body') : null;
-        const cardHost = lastBody || lastBubble;
+        const allMsgsT = el.querySelectorAll('.msg.assistant');
+        const lastMsgElT = allMsgsT[allMsgsT.length - 1];
+        const lastBody = lastMsgElT ? lastMsgElT.querySelector('.msg-body') : null;
+        const cardHost = lastBody || lastMsgElT;
         if (cardHost) {
           try {
             for (const te of toolSrc) {

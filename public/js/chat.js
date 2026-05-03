@@ -687,7 +687,7 @@ async function sendMessage() {
             case 'tool_progress':
               if (viewing) updateToolProgress(bodyEl, event.toolName, event.message);
               break;
-            case 'secret_request': if (viewing) showSecretModal(event.name, event.service, event.reason); break;
+            case 'secret_request': showSecretModal(event.name, event.service, event.reason); break;
             case 'approval_requested':
               if (viewing) bodyEl.appendChild(makeApprovalCard(event.approvalId, event.toolName, event.context, event.argsPreview));
               break;

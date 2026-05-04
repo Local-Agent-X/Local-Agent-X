@@ -39,8 +39,8 @@ export class OTAManager {
   private repoName: string;
 
   constructor(
-    repoOwner = "manri",
-    repoName = "secret-agent-x",
+    repoOwner = "petermanrique101-sys",
+    repoName = "Local-Agent-X",
     laxDir?: string
   ) {
     this.repoOwner = repoOwner;

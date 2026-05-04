@@ -287,7 +287,10 @@ export const handleVoiceCloneRoutes: RouteHandler = async (method, url, req, res
       return true;
     }
     const venvPython = join(homedir(), "miniconda3", "envs", "GPTSoVits", "python.exe");
-    const script = join(homedir(), "secret-agent-x", "python", "sovits", "train_pipeline.py");
+    // Use process.cwd() so this works regardless of project folder name —
+    // hardcoding the slug ('secret-agent-x') broke when the folder was
+    // renamed to Local-Agent-X (May 2026).
+    const script = join(process.cwd(), "python", "sovits", "train_pipeline.py");
     if (!existsSync(venvPython)) {
       json(503, { error: "GPT-SoVITS conda env not installed", hint: `expected ${venvPython}` });
       return true;

@@ -135,7 +135,12 @@ function summarizeToolArgs(toolName: string, args: Record<string, unknown> | und
     return cleaned.length > max ? cleaned.slice(0, max - 1) + "…" : cleaned;
   };
   // File paths — collapse the LAX repo prefix to keep the card tight.
-  const cleanPath = (p: string): string => p.replace(/^[A-Za-z]:[/\\]Users[/\\][^/\\]+[/\\]secret-agent-x[/\\]/i, "");
+  // Anchored to process.cwd() so it follows any project-folder rename
+  // instead of hardcoding the slug.
+  const projectCwd = process.cwd().replace(/[/\\]+$/, "");
+  const escapedCwd = projectCwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const cwdRe = new RegExp(`^${escapedCwd}[/\\\\]`, "i");
+  const cleanPath = (p: string): string => p.replace(cwdRe, "");
   switch (toolName) {
     case "write":
     case "edit":

@@ -1,6 +1,6 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { AgentTurn } from "../types.js";
-import { executeToolCalls, checkAndCompact } from "../tool-executor.js";
+import { executeToolCalls, checkAndCompactAsync } from "../tool-executor.js";
 import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkUnmatchedActionClaim, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState, checkPostCommit } from "../agent-guards.js";
 import { stripEphemeralMessages, sanitizeToolResults } from "./sanitize.js";
 import type { AgentOptions } from "./types.js";
@@ -95,7 +95,7 @@ export async function runAnthropicAgent(
     if (ceilingHit) return ceilingHit;
 
     if (iteration > 0) messages = stripEphemeralMessages(messages);
-    messages = checkAndCompact(messages, model, onEvent);
+    messages = await checkAndCompactAsync(messages, model, onEvent);
 
     // Drain subagent completion queue (see standard loop for rationale)
     if (options.sessionId) {

@@ -1,6 +1,6 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { AgentTurn } from "../types.js";
-import { executeToolCalls, checkAndCompact } from "../tool-executor.js";
+import { executeToolCalls, checkAndCompactAsync } from "../tool-executor.js";
 import { getRuntimeConfig } from "../config.js";
 import { detectUnresolvedErrors, buildReflectionPrompt, checkApprovalHallucination, checkCreationHallucination, checkUnmatchedActionClaim, checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState, checkPostCommit } from "../agent-guards.js";
 import { stripEphemeralMessages, sanitizeToolResults } from "./sanitize.js";
@@ -117,7 +117,7 @@ export async function runStandardAgent(
     if (ceilingHit) return ceilingHit;
 
     if (iteration > 0) messages = stripEphemeralMessages(messages);
-    messages = checkAndCompact(messages, model, onEvent);
+    messages = await checkAndCompactAsync(messages, model, onEvent);
 
     // Re-compose system prompt with any active retry/ack layers. This layer
     // gets refreshed every iteration — fresh nudges appear, resolved ones

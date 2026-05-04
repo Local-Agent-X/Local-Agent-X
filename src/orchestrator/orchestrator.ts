@@ -32,7 +32,7 @@ import type {
   BackgroundReport,
   HealthReport,
 } from "./types.js";
-import { LAX_DIR } from "./types.js";
+import { LAX_DIR, getModuleScope } from "./types.js";
 import { orchestratorState, safeRun } from "./state.js";
 import { saveState } from "./state.js";
 import { saveExample, autoRateLastExample } from "./storage.js";
@@ -116,7 +116,7 @@ export class MemoryOrchestrator {
     return MemoryOrchestrator.instance;
   }
 
-  processMessage(input: OrchestratorInput): OrchestratorOutput {
+  async processMessage(input: OrchestratorInput): Promise<OrchestratorOutput> {
     const startTime = Date.now();
     orchestratorState.messageCount++;
 
@@ -147,34 +147,84 @@ export class MemoryOrchestrator {
       }
     }
 
-    // Cross-conversation bleed guard. High-bleed signal categories (recall,
-    // narrative, proactive, history, etc.) surface facts from PRIOR
-    // conversations. Two cases:
-    //   (a) Short conversational follow-up — drop ALL high-bleed signals
-    //       (the agent isn't asking for memory recall, it's just reacting
-    //       to the prior turn).
-    //   (b) Substantive new message — drop high-bleed signals UNLESS they
-    //       share 2+ keywords with the user's message. So a "user has
-    //       unfinished logo work" signal won't inject during an
-    //       AI-journey-story conversation (zero shared keywords), but a
-    //       "user previously corrected the logo color" signal WILL inject
-    //       if the user's current message mentions logo (relevant).
-    // Critical (vulnerability, correction) and emotional categories
-    // bypass both gates — those are about active turn state, not recall.
-    const HIGH_BLEED = new Set(["reference", "recall", "narrative", "followup", "proactive", "history", "growth", "pattern", "milestone", "unspoken", "behavior-change", "contradiction"]);
-    const isFollowup = isConversationalFollowup(input.message);
-    const messageWords = isFollowup ? new Set<string>() : topicalKeywords(input.message);
+    // Cross-conversation bleed guard, structural version. Each module is
+    // tagged with its scope in MODULE_SCOPE (orchestrator/types.ts):
+    //   - "profile" modules describe the user as a stable entity
+    //     (emotion, style, trust, growth, milestones, etc.) → always pass.
+    //   - "session" modules pull content that could have originated in a
+    //     different conversation (callbacks, recall, ongoing narratives,
+    //     followups about past topics) → must clear an additional gate:
+    //     short follow-ups drop them entirely; substantive messages
+    //     require 2+ topical-keyword overlap with the user's input.
+    //
+    // Why scope, not category: the prior heuristic used a HIGH_BLEED
+    // category set ("recall", "narrative", etc.) which caught some leaks
+    // but also gated profile-emitting modules whose category happened to
+    // overlap. Scoping at the module boundary is the structural fix —
+    // the audit recommendation #3.
+    // Hybrid follow-up detection. Regex is the cheap pre-filter — it gets
+    // obvious acks ("ok", "thanks") right and obvious substantive asks
+    // ("build me an X") right. The 5-9 word zone is brittle (e.g. "what is
+    // webrtc" misclassified as follow-up; "i love this idea" same). For
+    // those, escalate to the LLM follow-up classifier which gets BOTH the
+    // user message AND the prior assistant turn (relational call).
+    const wordCount = input.message.trim().split(/\s+/).length;
+    const regexFollowup = isConversationalFollowup(input.message);
+    let isFollowup = regexFollowup;
+    if (wordCount >= 3 && wordCount <= 12) {
+      try {
+        const { classifyFollowupWithLLM } = await import("../classifiers/followup-classify.js");
+        const priorAssistant = input.agentPreviousMessage;
+        const llmVerdict = await classifyFollowupWithLLM(input.message, priorAssistant);
+        if (llmVerdict !== null) isFollowup = llmVerdict;
+      } catch {
+        // keep regex verdict on classifier failure
+      }
+    }
     const beforeCount = signals.length;
-    signals = signals.filter(s => {
-      if (!HIGH_BLEED.has(s.category)) return true;
-      if (isFollowup) return false;
-      return signalTopicallyRelevant(messageWords, s.signal);
-    });
+
+    // Phase A — drop on follow-up (cheap, no LLM cost). Profile-scope signals
+    // always pass; session-scope signals get nuked on conversational acks.
+    if (isFollowup) {
+      signals = signals.filter(s => getModuleScope(s.source) === "profile");
+    } else {
+      // Phase B — batch LLM topical-relevance for session-scope signals.
+      // The LLM call replaces the per-signal regex keyword overlap (which
+      // shipped both "monetization plan" vs "revenue strategy" false-
+      // negatives AND cross-project bleed false-positives).
+      const profileSignals = signals.filter(s => getModuleScope(s.source) === "profile");
+      const sessionSignals = signals.filter(s => getModuleScope(s.source) !== "profile");
+
+      if (sessionSignals.length === 0) {
+        signals = profileSignals;
+      } else {
+        let keptSession = sessionSignals;
+        try {
+          const { batchedTopicalRelevance } = await import("../classifiers/topical-relevance.js");
+          const verdict = await batchedTopicalRelevance(
+            input.message,
+            sessionSignals.map(s => s.signal),
+          );
+          if (verdict) {
+            keptSession = sessionSignals.filter((_, i) => verdict.relevantIndices.has(i));
+          } else {
+            // Fallback to regex when LLM unavailable — same behavior as before.
+            const messageWords = topicalKeywords(input.message);
+            keptSession = sessionSignals.filter(s => signalTopicallyRelevant(messageWords, s.signal));
+          }
+        } catch {
+          const messageWords = topicalKeywords(input.message);
+          keptSession = sessionSignals.filter(s => signalTopicallyRelevant(messageWords, s.signal));
+        }
+        signals = [...profileSignals, ...keptSession];
+      }
+    }
+
     if (beforeCount !== signals.length) {
       const dropped = beforeCount - signals.length;
-      const reason = isFollowup ? "follow-up" : "no-topical-match";
+      const reason = isFollowup ? "follow-up" : "topical-gate";
       // eslint-disable-next-line no-console
-      console.info(`[orchestrator] bleed gate (${reason}) dropped ${dropped} high-bleed signals (msg="${input.message.slice(0, 40)}")`);
+      console.info(`[orchestrator] bleed gate (${reason}) dropped ${dropped} session-scoped signals (msg="${input.message.slice(0, 40)}")`);
     }
 
     const merged = mergeSignals(signals, orchestratorState.lastSignalHashes, { sessionId: input.sessionId });

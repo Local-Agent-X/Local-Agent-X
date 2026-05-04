@@ -145,3 +145,49 @@ export const STORY_PATTERNS = [
 
 export const MAX_CONTEXT_SIGNALS = 7;
 export const MAX_CONTEXT_TOKENS = 200;
+
+/**
+ * Per-module scope classification for cross-session bleed control.
+ *
+ * - "profile" modules describe the user as a stable entity (emotion arc,
+ *   stylistic patterns, trust stage, growth, milestones, retained facts).
+ *   Their signals are safe to surface in any session — they're about *who
+ *   you are*, not *what we discussed in chat #47*.
+ *
+ * - "session" modules pull content that could have originated in a
+ *   different conversation (callbacks, followups, cross-session recall,
+ *   ongoing narratives). Their signals must pass an additional topical-
+ *   relevance gate so a "logo work for X" memory doesn't surface when the
+ *   user is writing about an unrelated topic.
+ *
+ * If a new module is added without an entry here, the orchestrator
+ * defaults it to "profile" (signal flows freely) — but you should add
+ * the entry. Forgetting is a quiet leak.
+ */
+export type ModuleScope = "profile" | "session";
+
+export const MODULE_SCOPE: Record<string, ModuleScope> = {
+  // profile — about the user as a stable entity
+  "emotional-memory": "profile",
+  "language-mirror": "profile",
+  "trust-engine": "profile",
+  "vulnerability-awareness": "profile",
+  "shared-history": "profile",
+  "cross-session-learning": "profile",
+  "unspoken-detector": "profile",
+  "growth-tracker": "profile",
+  "milestone-celebrations": "profile",
+  "correction-learning": "profile",
+  "contradiction-detector": "profile",
+  "memory-graph": "profile",
+  "proactive-memory": "profile",
+  // session — pulls from a global pool of past-conversation content
+  "inside-references": "session",
+  "anticipatory-care": "session",
+  "associative-recall": "session",
+  "narrative-memory": "session",
+};
+
+export function getModuleScope(moduleName: string): ModuleScope {
+  return MODULE_SCOPE[moduleName] ?? "profile";
+}

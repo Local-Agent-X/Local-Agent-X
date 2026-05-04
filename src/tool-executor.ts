@@ -9,7 +9,7 @@ import type { RBACManager, Role } from "./rbac.js";
 import { checkSessionPolicy } from "./session-policy.js";
 import { ariEvaluate, isAriActive } from "./ari-kernel.js";
 import { recordSensitiveRead, checkEgressTaint, isSensitivePath } from "./data-lineage.js";
-import { compactIfNeeded } from "./context-manager.js";
+import { compactIfNeeded, compactIfNeededWithLLM } from "./context-manager.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { createHash } from "node:crypto";
@@ -121,6 +121,29 @@ export function checkAndCompact(
     compacted: result.compacted,
   });
 
+  return result.messages;
+}
+
+/**
+ * Async variant — uses real LLM summarization instead of string truncation.
+ * Falls back to the sync truncation path internally if the LLM call fails so
+ * compaction never blocks. Prefer this over `checkAndCompact` in async paths.
+ */
+export async function checkAndCompactAsync(
+  messages: ChatCompletionMessageParam[],
+  model: string,
+  onEvent?: (event: ServerEvent) => void,
+  force: boolean = false,
+): Promise<ChatCompletionMessageParam[]> {
+  const result = await compactIfNeededWithLLM(messages, model, force);
+  onEvent?.({
+    type: "context_status",
+    percentage: result.status.percentage,
+    level: result.status.level,
+    usedTokens: result.status.usedTokens,
+    maxTokens: result.status.maxTokens,
+    compacted: result.compacted,
+  });
   return result.messages;
 }
 
@@ -271,6 +294,12 @@ async function executeSingleTool(
     // session bridge can route the completion notification back to it.
     // op_status / op_wait inherit the session for "ops you submitted" listing.
     "op_submit", "op_submit_async", "op_wait", "op_status",
+    // Memory tools need session id to filter retrieval to current session
+    // (default-deny cross-session bleed). search_past_sessions opts in
+    // explicitly via crossSession=true; memory_search defaults to scoped.
+    // memory_save tags daily-log entries so today_context can filter by
+    // current session at read time.
+    "memory_search", "search_past_sessions", "memory_save",
   ]);
   if (SESSION_SCOPED_TOOLS.has(tc.name)) {
     args._sessionId = sessionId || "default";

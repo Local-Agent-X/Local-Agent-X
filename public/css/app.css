@@ -204,6 +204,11 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .msg-attachments img:hover{transform:scale(1.03);border-color:var(--accent)}
 .att-badge{padding:6px 12px;border-radius:8px;background:var(--surface);border:1px solid var(--border);font-size:.75rem;font-family:var(--mono);color:var(--muted);display:flex;align-items:center;gap:6px}
 .tool-card{margin:4px 0;border-radius:6px;border:1px solid var(--border);overflow:hidden;font-size:.78rem;transition:opacity .2s}
+/* Inline notice rendered when the agent's turn stops early (middleware
+   abort, ceiling, stale evidence). Small, muted, italic — distinct from
+   message body text and never persisted into chat history. The full
+   technical reason lives in the title attribute (hover) and console. */
+.stop-notice{margin:8px 0 4px;padding:6px 10px;border-left:2px solid var(--border);font-size:.74rem;font-style:italic;color:var(--muted);opacity:.85}
 /* Completed tool cards (have an allowed/blocked indicator) fade to a compact
    1-line form. Latest in-progress card stays prominent. Click to expand. */
 .tool-card:has(.indicator.allowed),.tool-card:has(.indicator.blocked){opacity:.55}

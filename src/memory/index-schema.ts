@@ -3,7 +3,7 @@ import type Database from "better-sqlite3";
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
 
-export const CURRENT_SCHEMA_VERSION = 8;
+export const CURRENT_SCHEMA_VERSION = 9;
 
 export function getSchemaVersion(db: InstanceType<typeof Database>): number {
   try {
@@ -182,6 +182,29 @@ export function migrateSchema(
                       WHERE source = 'memory'
                         AND path GLOB '*[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md'`);
       db.exec(`UPDATE files SET source = 'personality' WHERE source = 'memory'`);
+    }
+
+    if (fromVersion < 9) {
+      // Real session_id column on chunks. Previously we stored it inside the
+      // metadata JSON blob, which means filtering required a full scan +
+      // json_extract. The new column lets the search WHERE clause filter
+      // chunks by session at query time, eliminating the entire class of
+      // cross-session bleed bugs at the storage boundary.
+      try { db.exec(`ALTER TABLE chunks ADD COLUMN session_id TEXT`); } catch {}
+      // Backfill from existing metadata JSON. Profile-level chunks have no
+      // session_id (NULL) and stay queryable via WHERE session_id IS NULL OR ...
+      try {
+        db.exec(`
+          UPDATE chunks
+             SET session_id = json_extract(metadata, '$.session_id')
+           WHERE session_id IS NULL
+             AND metadata IS NOT NULL
+             AND json_extract(metadata, '$.session_id') IS NOT NULL
+        `);
+      } catch (e) {
+        logger.warn(`[memory] v9 session_id backfill failed: ${(e as Error).message}`);
+      }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_session_id ON chunks(session_id)`);
     }
 
     db

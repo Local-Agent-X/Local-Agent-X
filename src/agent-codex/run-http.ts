@@ -6,7 +6,7 @@ import { type ReasoningItem } from "../codex-client.js";
 import { requireAdapter } from "../providers/adapter/registry.js";
 // Side-effect import — registers codex-cli adapter at boot.
 import "../providers/adapters/index.js";
-import { executeToolCalls, checkAndCompact } from "../tool-executor.js";
+import { executeToolCalls, checkAndCompactAsync } from "../tool-executor.js";
 import { stripEphemeralMessages } from "../agent-providers.js";
 import { checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState, checkTaskAnchor, createTaskAnchorState, checkActedAndAsked, checkPostCommit } from "../agent-guards.js";
 import { stripSystemInjectionTags } from "../sanitize.js";
@@ -119,7 +119,7 @@ export async function runCodexAgentHttp(
     if (staleAbort) return staleAbort;
 
     if (iteration > 0) messages = stripEphemeralMessages(messages);
-    messages = checkAndCompact(messages, model, onEvent);
+    messages = await checkAndCompactAsync(messages, model, onEvent);
 
     // Drain subagent completion queue — push-based signaling so the parent
     // doesn't burn iterations polling agent_status.

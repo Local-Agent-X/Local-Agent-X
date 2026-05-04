@@ -109,6 +109,42 @@ export const CANONICAL_SOURCES: readonly CanonicalSource[] = [
   "session", "personality", "import",
 ] as const;
 
+/**
+ * Memory scope classification (upstream `MemorySource` equivalent). Profile-
+ * scope content describes the user as a stable entity and is safe to surface
+ * in any session. Session-scope content is bound to a specific conversation
+ * and must NOT auto-leak across sessions — only via the explicit
+ * `search_past_sessions` tool.
+ */
+export type MemoryScope = "profile" | "session";
+
+const SOURCE_SCOPE: Record<CanonicalSource, MemoryScope> = {
+  "entity": "profile",
+  // daily-log is date-keyed, not session-keyed — across-session conversation
+  // transcripts get aggregated into one file per day. The buildContextBlock
+  // path now filters today's daily log to current-session lines only via
+  // [sessionId] tagging, but at the SEARCH layer we treat it as session-
+  // scope so cross-session retrieval still requires explicit opt-in.
+  "daily-log": "session",
+  "mind": "profile",
+  "personality": "profile",
+  "import": "profile",
+  "session-summary": "session",
+  "session": "session",
+};
+
+export function scopeOf(source: CanonicalSource): MemoryScope {
+  return SOURCE_SCOPE[source];
+}
+
+export const PROFILE_SOURCES: readonly CanonicalSource[] = (Object.entries(SOURCE_SCOPE)
+  .filter(([, s]) => s === "profile")
+  .map(([k]) => k) as CanonicalSource[]);
+
+export const SESSION_SOURCES: readonly CanonicalSource[] = (Object.entries(SOURCE_SCOPE)
+  .filter(([, s]) => s === "session")
+  .map(([k]) => k) as CanonicalSource[]);
+
 export interface MemorySearchResult {
   path: string;
   startLine: number;

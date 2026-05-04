@@ -510,6 +510,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         userMessage: message,
         agentResponse: assistantReply,
         skip: isTrivial,
+        sessionId,
       });
       try {
         const { CrossSessionLearner } = await import("../cross-session-learning.js");

@@ -27,6 +27,17 @@ export interface SearchOptions {
   rerank?: boolean;
   rerankModel?: string;
   sessionId?: string;
+  /**
+   * Cross-session opt-in. Default false. When false AND sessionId is set,
+   * results are filtered to chunks with metadata.session_id === sessionId
+   * (or no session_id at all, i.e. profile-level chunks). When true, all
+   * sessions are searched and applySessionGrouping is applied.
+   *
+   * Auto-inject paths (buildTurnContext, autoSearchContext) leave this false
+   * to prevent cross-session bleed. The `search_past_sessions` tool sets it
+   * true so the model explicitly opts in when it wants historical context.
+   */
+  crossSession?: boolean;
   hyde?: boolean;
   hydeProvider?: "ollama" | "anthropic" | "openai" | "auto";
   hydeModel?: string;
@@ -57,13 +68,20 @@ export async function searchInIndex(
   let keywordResults: Array<Chunk & { score: number }> = [];
   let vectorResults: Array<Chunk & { score: number }> = [];
 
+  // Same-session filter pushed into SQL when caller hasn't opted into
+  // cross-session. Profile-level chunks (session_id IS NULL) always pass
+  // because they describe the user as a stable entity, not a conversation.
+  const sqlSessionFilter = options?.sessionId && !options?.crossSession
+    ? options.sessionId
+    : undefined;
+
   if (deps.hasFts) {
-    keywordResults = searchKeyword(deps.db, query, candidateLimit, options?.sources);
+    keywordResults = searchKeyword(deps.db, query, candidateLimit, options?.sources, sqlSessionFilter);
 
     if (keywordResults.length === 0) {
       const keywords = extractKeywords(query);
       for (const kw of keywords) {
-        const partial = searchKeyword(deps.db, kw, candidateLimit, options?.sources);
+        const partial = searchKeyword(deps.db, kw, candidateLimit, options?.sources, sqlSessionFilter);
         keywordResults.push(...partial);
       }
       const deduped = new Map<number, (typeof keywordResults)[0]>();
@@ -86,7 +104,7 @@ export async function searchInIndex(
         if (hyp) embedText = hyp;
       }
       const queryVec = await deps.embeddingProvider.embed(embedText);
-      vectorResults = searchVector(deps.db, queryVec, candidateLimit, options?.sources);
+      vectorResults = searchVector(deps.db, queryVec, candidateLimit, options?.sources, sqlSessionFilter);
     } catch (e) {
       logger.warn("[memory] Vector search failed:", (e as Error).message);
     }
@@ -138,9 +156,26 @@ function postProcess(
   results: MemorySearchResult[],
   maxResults: number,
   minScore: number,
-  options?: { since?: Date; entities?: string[]; kind?: FactKind; project?: string; sourceType?: string; dateFrom?: string; dateTo?: string; query?: string }
+  options?: { since?: Date; entities?: string[]; kind?: FactKind; project?: string; sourceType?: string; dateFrom?: string; dateTo?: string; query?: string; sessionId?: string; crossSession?: boolean }
 ): MemorySearchResult[] {
-  results = applySessionGrouping(results);
+  // Cross-session gate. Default-deny: if a sessionId is provided and the
+  // caller hasn't explicitly opted into cross-session, drop chunks tagged
+  // with a different session_id. Profile-level chunks (no session_id) are
+  // always allowed through — they're the stable per-user knowledge.
+  if (options?.sessionId && !options?.crossSession) {
+    const sid = options.sessionId;
+    results = results.filter((r) => {
+      const chunkSid = r.metadata?.session_id;
+      return !chunkSid || chunkSid === sid;
+    });
+  }
+
+  // applySessionGrouping intentionally boosts results that share a session
+  // with other top hits — it's a cross-session move. Only run it when the
+  // caller is explicitly searching across sessions.
+  if (options?.crossSession) {
+    results = applySessionGrouping(results);
+  }
 
   if (options?.query) {
     const range = parseDateRange(options.query);
@@ -275,23 +310,31 @@ function searchKeyword(
   db: InstanceType<typeof Database>,
   query: string,
   limit: number,
-  sources?: string[]
+  sources?: string[],
+  sessionFilter?: string
 ): Array<Chunk & { score: number }> {
   const ftsQuery = buildFtsQuery(query);
   if (!ftsQuery) return [];
 
   try {
-    const rows = db
-      .prepare(
-        `SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text, c.metadata,
+    // Storage-layer cross-session gate (defense-in-depth on top of postProcess).
+    // session_id IS NULL = profile-level chunks (entity, MIND, daily-log,
+    // personality) — always allowed. Otherwise must match the active session.
+    const sessionWhere = sessionFilter ? `AND (c.session_id IS NULL OR c.session_id = ?)` : "";
+    const sql = `SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text, c.metadata,
                 bm25(chunks_fts) as rank
          FROM chunks_fts f
          JOIN chunks c ON c.id = f.rowid
          WHERE chunks_fts MATCH ?
+         ${sessionWhere}
          ORDER BY rank
-         LIMIT ?`
-      )
-      .all(ftsQuery, limit) as Array<{
+         LIMIT ?`;
+    const params: unknown[] = sessionFilter
+      ? [ftsQuery, sessionFilter, limit]
+      : [ftsQuery, limit];
+    const rows = db
+      .prepare(sql)
+      .all(...params) as Array<{
       id: number;
       path: string;
       source: string;
@@ -324,16 +367,20 @@ function searchVector(
   db: InstanceType<typeof Database>,
   queryVec: number[],
   limit: number,
-  sources?: string[]
+  sources?: string[],
+  sessionFilter?: string
 ): Array<Chunk & { score: number }> {
   const BATCH_SIZE = 1000;
   const sourceFilter = sources ? `AND source IN (${sources.map(() => "?").join(",")})` : "";
-  const params = sources ? [...sources] : [];
+  // Same gate as searchKeyword: profile-level (NULL) + active session only.
+  const sessionWhere = sessionFilter ? `AND (session_id IS NULL OR session_id = ?)` : "";
+  const baseParams: unknown[] = sources ? [...sources] : [];
+  const params = sessionFilter ? [...baseParams, sessionFilter] : baseParams;
 
   const totalCount = (
     db
       .prepare(
-        `SELECT COUNT(*) as n FROM chunks WHERE embedding IS NOT NULL ${sourceFilter}`
+        `SELECT COUNT(*) as n FROM chunks WHERE embedding IS NOT NULL ${sourceFilter} ${sessionWhere}`
       )
       .get(...params) as { n: number }
   ).n;
@@ -345,7 +392,7 @@ function searchVector(
     const batch = db
       .prepare(
         `SELECT id, path, source, start_line, end_line, text, embedding, metadata
-         FROM chunks WHERE embedding IS NOT NULL ${sourceFilter}
+         FROM chunks WHERE embedding IS NOT NULL ${sourceFilter} ${sessionWhere}
          LIMIT ? OFFSET ?`
       )
       .all(...params, BATCH_SIZE, offset) as Array<{

@@ -243,7 +243,7 @@ export class WhatsAppBridge {
         creds: state.creds,
         keys: makeCacheableSignalKeyStore(state.keys, silentLogger),
       },
-      browser: ["Open Agent X", "cli", "1.0"],
+      browser: ["Local Agent X", "cli", "1.0"],
       logger: silentLogger,
       printQRInTerminal: false,
       syncFullHistory: false,

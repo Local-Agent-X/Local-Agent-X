@@ -1,5 +1,5 @@
 /**
- * AriKernel Integration for Open Agent X (in-process)
+ * AriKernel Integration for Local Agent X (in-process)
  *
  * Every tool call routes through the kernel for:
  * - Capability-based access control
@@ -46,7 +46,7 @@ export async function startAriKernel(auditDbPath: string, preset?: string, requi
       autoScope: true,
     });
     firewall = kernel.createFirewall({
-      principal: "open-agent-x",
+      principal: "local-agent-x",
       auditLog: auditDbPath,
     });
     logger.info(`  [ari] Kernel initialized (in-process, preset: ${currentPreset})`);

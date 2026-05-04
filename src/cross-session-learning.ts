@@ -1,5 +1,5 @@
 /**
- * Open Agent X — Cross-Session Learning
+ * Local Agent X — Cross-Session Learning
  *
  * Detects patterns across sessions and suggests automations.
  * Tracks actions, topics, questions, and workflows to surface

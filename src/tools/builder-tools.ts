@@ -258,7 +258,7 @@ export const createPageTool: ToolDefinition = {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${title} — Open Agent X</title>
+  <title>${title} — Local Agent X</title>
   <link rel="stylesheet" href="/css/theme.css">
   <style>
     body { background: var(--bg, #0a0a0a); color: var(--fg, #e0e0e0); font-family: var(--sans, system-ui, sans-serif); margin: 0; padding: 20px; }

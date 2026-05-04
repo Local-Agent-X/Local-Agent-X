@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Open Agent X — AI Model Setup Script
+ * Local Agent X — AI Model Setup Script
  *
  * Downloads and configures local AI models for image and video generation.
  * Run: npm run setup-ai
@@ -40,7 +40,7 @@ function fail(msg) {
 
 async function main() {
   console.log("\n  ╔═══════════════════════════════════╗");
-  console.log("  ║   OPEN AGENT X — AI SETUP       ║");
+  console.log("  ║   LOCAL AGENT X — AI SETUP       ║");
   console.log("  ╚═══════════════════════════════════╝\n");
 
   // 1. Check Python

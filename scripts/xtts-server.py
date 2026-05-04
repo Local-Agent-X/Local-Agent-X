@@ -1,5 +1,5 @@
 """
-XTTS Voice Server for Open Agent X
+XTTS Voice Server for Local Agent X
 Runs a local TTS API with voice cloning support.
 Endpoints:
   POST /tts          — generate speech from text (returns WAV audio)

@@ -83,7 +83,7 @@ const ACTIVE_SELF_EDITS = new Map<string, { task: string; startedAt: number }>()
 export const selfEditTool: ToolDefinition = {
   name: "self_edit",
   description:
-    "Fix a bug in the Open Agent X codebase or make a source change. Use this when " +
+    "Fix a bug in the Local Agent X codebase or make a source change. Use this when " +
     "a tool call succeeded HTTP-wise but the observable outcome is wrong (UI didn't " +
     "update, setting didn't apply, endpoint returns stale data, etc), or when the " +
     "user reports 'that didn't work' after what looked like success. Delegates the " +

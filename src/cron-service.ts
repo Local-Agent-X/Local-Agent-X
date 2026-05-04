@@ -1,5 +1,5 @@
 /**
- * Cron Service for Open Agent X
+ * Cron Service for Local Agent X
  *
  * Runs scheduled jobs (prompts) at defined intervals.
  * Jobs persist to disk so they survive restarts.

@@ -15,7 +15,7 @@
             "required": ["command"]
           }
         },
-        "defaultResult": "# Open Agent X\n\nLocal-first agent runtime."
+        "defaultResult": "# Local Agent X\n\nLocal-first agent runtime."
       }
     ]
   },
@@ -26,14 +26,14 @@
       { "type": "done", "stopReason": "tool_use" }
     ],
     [
-      { "type": "text", "delta": "The README says 'Open Agent X' — a local-first agent runtime." },
+      { "type": "text", "delta": "The README says 'Local Agent X' — a local-first agent runtime." },
       { "type": "usage", "promptTokens": 75, "completionTokens": 18 },
       { "type": "done", "stopReason": "end_turn" }
     ]
   ],
   "expect": {
     "stopReason": "end_turn",
-    "assistantContains": ["Open Agent X"],
+    "assistantContains": ["Local Agent X"],
     "toolCallsCount": 1,
     "toolNames": ["bash"]
   }

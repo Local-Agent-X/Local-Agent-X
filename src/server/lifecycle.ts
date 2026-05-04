@@ -258,7 +258,7 @@ export function startConfigWatcher(dataDir: string): void {
 export function logStartup(deps: { config: LAXConfig; dataDir: string }): void {
   const { config, dataDir } = deps;
   const masked = config.authToken ? config.authToken.slice(0, 4) + "****" + config.authToken.slice(-4) : "none";
-  logger.info(`\n  Open Agent X running at http://127.0.0.1:${config.port}\n  Auth token: ${masked}`);
+  logger.info(`\n  Local Agent X running at http://127.0.0.1:${config.port}\n  Auth token: ${masked}`);
   const realUrl = `http://127.0.0.1:${config.port}/?token=${config.authToken}`;
   writeFileSync(join(dataDir, ".startup-url"), realUrl, { mode: 0o600 });
   logger.info(`\n  ► Open: \x1b]8;;${realUrl}\x1b\\http://127.0.0.1:${config.port}/?token=${masked}\x1b]8;;\x1b\\\n  Memory: ${dataDir}/memory/\n  Sessions: ${dataDir}/sessions/`);

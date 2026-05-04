@@ -1,21 +1,21 @@
 # ═══════════════════════════════════════════════════════════
-#  OPEN AGENT X — One-Click Installer (PowerShell)
+#  LOCAL AGENT X — One-Click Installer (PowerShell)
 # ═══════════════════════════════════════════════════════════
 #
 #  Run with:
-#    iwr -useb https://raw.githubusercontent.com/petermanrique101-sys/Open-Agent-X/main/install.ps1 | iex
+#    iwr -useb https://raw.githubusercontent.com/petermanrique101-sys/Local-Agent-X/main/install.ps1 | iex
 #
 #  Or save and run:
 #    .\install.ps1
 #
 
 $ErrorActionPreference = "Stop"
-$InstallDir = "$env:USERPROFILE\Open-Agent-X"
+$InstallDir = "$env:USERPROFILE\Local-Agent-X"
 
 Write-Host ""
 Write-Host "  ================================================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "    OPEN AGENT X - One-Click Installer" -ForegroundColor Green
+Write-Host "    LOCAL AGENT X - One-Click Installer" -ForegroundColor Green
 Write-Host ""
 Write-Host "    Your personal AI agent — runs locally, 100% private." -ForegroundColor DarkGray
 Write-Host ""
@@ -69,7 +69,7 @@ if (-not $git) {
 $hasGit = $null -ne (Get-Command git -ErrorAction SilentlyContinue)
 
 # ── Step 3: Download ──
-Write-Host "  [3/6] Downloading Open Agent X..." -ForegroundColor Cyan
+Write-Host "  [3/6] Downloading Local Agent X..." -ForegroundColor Cyan
 
 if (Test-Path "$InstallDir\package.json") {
     Write-Host "  Found existing installation. Updating..." -ForegroundColor Yellow
@@ -77,12 +77,12 @@ if (Test-Path "$InstallDir\package.json") {
     if ($hasGit) { git pull origin main 2>$null }
 } elseif ($hasGit) {
     Write-Host "  Cloning repository..." -ForegroundColor DarkGray
-    git clone https://github.com/petermanrique101-sys/Open-Agent-X.git $InstallDir
+    git clone https://github.com/petermanrique101-sys/Local-Agent-X.git $InstallDir
     Set-Location $InstallDir
 } else {
     Write-Host "  Downloading ZIP..." -ForegroundColor DarkGray
-    $zipUrl = "https://github.com/petermanrique101-sys/Open-Agent-X/archive/refs/heads/main.zip"
-    $zipFile = "$env:TEMP\open-agent-x.zip"
+    $zipUrl = "https://github.com/petermanrique101-sys/Local-Agent-X/archive/refs/heads/main.zip"
+    $zipFile = "$env:TEMP\local-agent-x.zip"
     Invoke-WebRequest -Uri $zipUrl -OutFile $zipFile -UseBasicParsing
     Expand-Archive -Path $zipFile -DestinationPath "$env:TEMP\oax-extract" -Force
     $extractDir = Get-ChildItem "$env:TEMP\oax-extract" -Directory | Select-Object -First 1
@@ -120,9 +120,9 @@ Write-Host "  [6/6] Creating shortcuts..." -ForegroundColor Cyan
 # Create start script
 @"
 @echo off
-title Open Agent X
+title Local Agent X
 cd /d "$InstallDir"
-echo Starting Open Agent X...
+echo Starting Local Agent X...
 node --max-old-space-size=512 dist/index.js
 pause
 "@ | Set-Content "$InstallDir\start.bat"
@@ -131,19 +131,19 @@ pause
 $desktop = [Environment]::GetFolderPath("Desktop")
 $iconPath = "$InstallDir\public\icon.ico"
 $ws = New-Object -ComObject WScript.Shell
-$sc = $ws.CreateShortcut("$desktop\Open Agent X.lnk")
+$sc = $ws.CreateShortcut("$desktop\Local Agent X.lnk")
 $sc.TargetPath = "$InstallDir\start.bat"
 $sc.WorkingDirectory = $InstallDir
-$sc.Description = "Open Agent X - Personal AI Agent"
+$sc.Description = "Local Agent X - Personal AI Agent"
 if (Test-Path $iconPath) { $sc.IconLocation = "$iconPath,0" }
 $sc.Save()
 
 # Start Menu shortcut (with custom icon)
 $startMenu = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs"
-$sc2 = $ws.CreateShortcut("$startMenu\Open Agent X.lnk")
+$sc2 = $ws.CreateShortcut("$startMenu\Local Agent X.lnk")
 $sc2.TargetPath = "$InstallDir\start.bat"
 $sc2.WorkingDirectory = $InstallDir
-$sc2.Description = "Open Agent X - Personal AI Agent"
+$sc2.Description = "Local Agent X - Personal AI Agent"
 if (Test-Path $iconPath) { $sc2.IconLocation = "$iconPath,0" }
 $sc2.Save()
 
@@ -158,12 +158,12 @@ Write-Host ""
 Write-Host "    Installed at: $InstallDir" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "    To start anytime:" -ForegroundColor DarkGray
-Write-Host "      - Double-click 'Open Agent X' on your desktop" -ForegroundColor DarkGray
+Write-Host "      - Double-click 'Local Agent X' on your desktop" -ForegroundColor DarkGray
 Write-Host "      - Or: cd $InstallDir && npm start" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  ================================================================" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Starting Open Agent X..." -ForegroundColor Cyan
+Write-Host "  Starting Local Agent X..." -ForegroundColor Cyan
 
 Start-Process cmd -ArgumentList "/c `"cd /d `"$InstallDir`" && node --max-old-space-size=512 dist/index.js`"" -WindowStyle Normal
 
@@ -173,6 +173,6 @@ Start-Sleep -Seconds 5
 Start-Process "http://127.0.0.1:7007"
 
 Write-Host ""
-Write-Host "  Open Agent X is running! Check your browser." -ForegroundColor Green
+Write-Host "  Local Agent X is running! Check your browser." -ForegroundColor Green
 Write-Host "  Press Enter to close this installer." -ForegroundColor DarkGray
 Read-Host

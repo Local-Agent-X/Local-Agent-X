@@ -1,5 +1,5 @@
 /**
- * Open Agent X — Memory Consolidation
+ * Local Agent X — Memory Consolidation
  *
  * Analogous to sleep consolidation in the brain: groups related facts,
  * merges duplicates, detects reinforcement, promotes important facts to

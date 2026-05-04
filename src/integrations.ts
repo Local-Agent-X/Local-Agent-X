@@ -1,7 +1,7 @@
 /**
  * API Integrations Registry
  *
- * Manages third-party API integrations for Open Agent X.
+ * Manages third-party API integrations for Local Agent X.
  * - 10 built-in integrations (Google, GitHub, Slack, Discord, Twitter/X, Facebook, Instagram, Spotify, eBay, Notion)
  * - Dynamic discovery: agent can search for and install new integrations
  * - All API keys/tokens stored in the encrypted secrets vault (never in this file)

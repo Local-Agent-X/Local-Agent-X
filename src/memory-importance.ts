@@ -1,5 +1,5 @@
 /**
- * Open Agent X — Memory Importance Scoring
+ * Local Agent X — Memory Importance Scoring
  *
  * Scores and ranks memories by importance using weighted factors:
  * recency, frequency, user feedback, content richness, emotional weight.

@@ -332,7 +332,7 @@ export function exportSecurityReport(format: "json" | "html", config?: { authTok
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Open Agent X — Security Report</title>
+  <title>Local Agent X — Security Report</title>
   <style>
     body { font-family: -apple-system, sans-serif; max-width: 900px; margin: 2em auto; padding: 0 1em; background: #0d1117; color: #c9d1d9; }
     h1 { border-bottom: 1px solid #30363d; padding-bottom: .5em; }

@@ -123,7 +123,7 @@ class MCPConnection {
     await this.request("initialize", {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: { tools: {} },
-      clientInfo: { name: "open-agent-x", version: "1.0.0" },
+      clientInfo: { name: "local-agent-x", version: "1.0.0" },
     });
     this.notify("initialized", {});
 

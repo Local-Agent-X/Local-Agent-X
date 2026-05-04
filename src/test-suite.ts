@@ -297,7 +297,7 @@ function printReport(elapsed: number): void {
 
   logger.info("");
   logger.info(bar);
-  logger.info("  OPEN AGENT X \u2014 TEST REPORT");
+  logger.info("  LOCAL AGENT X \u2014 TEST REPORT");
   logger.info(bar);
   logger.info("");
 

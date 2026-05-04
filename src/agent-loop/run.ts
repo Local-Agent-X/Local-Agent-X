@@ -253,6 +253,15 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
         onEvent?.({ type: "context_status", percentage: 100, level: "emergency", usedTokens: 0, maxTokens: 0, compacted: true });
         continue;
       }
+      // Surface the stream error to chat so the user sees WHY the turn
+      // ended instead of a frozen cursor. Same shape as the middleware
+      // abort surface — one-line stream message + done event.
+      const visibleErr = streamError.length > 280 ? streamError.slice(0, 280) + "..." : streamError;
+      onEvent?.({ type: "stream", delta: `\n\n*[Stream error: ${visibleErr}]*` });
+      onEvent?.({
+        type: "done",
+        usage: { promptTokens: ctx.totalInput, completionTokens: ctx.totalOutput, totalTokens: ctx.totalInput + ctx.totalOutput },
+      });
       return {
         messages,
         usage: { promptTokens: ctx.totalInput, completionTokens: ctx.totalOutput, totalTokens: ctx.totalInput + ctx.totalOutput },

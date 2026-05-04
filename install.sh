@@ -69,12 +69,16 @@ else
   fi
 fi
 
-# Pull embedding model
-if ! ollama list 2>/dev/null | grep -q nomic-embed-text; then
-  log "Pulling nomic-embed-text (~275MB)…"
-  ollama pull nomic-embed-text
+# Pull embedding model — mxbai-embed-large is the codebase's preferred
+# model (1024d, 97.0% R@5 on LongMemEval). nomic-embed-text (768d, 95.5%)
+# is the runtime fallback in src/embedding-providers.ts if mxbai isn't
+# present. Pulling the preferred one here so everyone gets the better
+# default; the fallback path still kicks in if a machine can't load mxbai.
+if ! ollama list 2>/dev/null | grep -q mxbai-embed-large; then
+  log "Pulling mxbai-embed-large (~670MB, one-time)…"
+  ollama pull mxbai-embed-large
 else
-  ok "nomic-embed-text present"
+  ok "mxbai-embed-large present"
 fi
 
 # ── Claude Code CLI (subscription-based Anthropic auth) ──────

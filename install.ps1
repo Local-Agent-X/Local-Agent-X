@@ -23,7 +23,7 @@ Write-Host "  ================================================================" 
 Write-Host ""
 
 # ── Step 1: Check Node.js ──
-Write-Host "  [1/6] Checking for Node.js..." -ForegroundColor Cyan
+Write-Host "  [1/7] Checking for Node.js..." -ForegroundColor Cyan
 
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) {
@@ -54,7 +54,7 @@ $nodeVer = & node --version
 Write-Host "  Found Node.js $nodeVer" -ForegroundColor Green
 
 # ── Step 2: Check Git ──
-Write-Host "  [2/6] Checking for Git..." -ForegroundColor Cyan
+Write-Host "  [2/7] Checking for Git..." -ForegroundColor Cyan
 
 $git = Get-Command git -ErrorAction SilentlyContinue
 if (-not $git) {
@@ -69,7 +69,7 @@ if (-not $git) {
 $hasGit = $null -ne (Get-Command git -ErrorAction SilentlyContinue)
 
 # ── Step 3: Download ──
-Write-Host "  [3/6] Downloading Local Agent X..." -ForegroundColor Cyan
+Write-Host "  [3/7] Downloading Local Agent X..." -ForegroundColor Cyan
 
 if (Test-Path "$InstallDir\package.json") {
     Write-Host "  Found existing installation. Updating..." -ForegroundColor Yellow
@@ -93,7 +93,7 @@ if (Test-Path "$InstallDir\package.json") {
 }
 
 # ── Step 4: Install dependencies ──
-Write-Host "  [4/6] Installing dependencies..." -ForegroundColor Cyan
+Write-Host "  [4/7] Installing dependencies..." -ForegroundColor Cyan
 
 npm install --no-audit --no-fund 2>$null
 if ($LASTEXITCODE -ne 0) {
@@ -105,7 +105,7 @@ Write-Host "  Installing browser automation..." -ForegroundColor DarkGray
 npx playwright install chromium 2>$null
 
 # ── Step 5: Build ──
-Write-Host "  [5/6] Building..." -ForegroundColor Cyan
+Write-Host "  [5/7] Building..." -ForegroundColor Cyan
 
 npm run build 2>$null
 
@@ -114,8 +114,52 @@ if (-not (Test-Path "dist\index.js")) {
     exit 1
 }
 
-# ── Step 6: Create shortcuts ──
-Write-Host "  [6/6] Creating shortcuts..." -ForegroundColor Cyan
+# ── Step 6: Memory engine (Ollama + embedding model) ──
+# Installs Ollama and pulls mxbai-embed-large so semantic memory recall
+# works out-of-the-box. Without this, the chunks_vec table stays empty
+# and abstract recall queries ("tell me about my AI journey") find
+# nothing — only exact-keyword matches surface. ~1.5GB total disk;
+# runs fine on CPU on most modern PCs (no GPU required).
+Write-Host "  [6/7] Setting up local memory engine (Ollama + embeddings)..." -ForegroundColor Cyan
+
+$ollama = Get-Command ollama -ErrorAction SilentlyContinue
+if (-not $ollama) {
+    Write-Host "  Ollama not found. Installing (~150MB download, ~1GB on disk)..." -ForegroundColor Yellow
+    if ($winget) {
+        winget install Ollama.Ollama --accept-package-agreements --accept-source-agreements -h
+        $env:PATH = "$env:LOCALAPPDATA\Programs\Ollama;$env:PATH"
+    } else {
+        Write-Host "  Downloading Ollama installer..." -ForegroundColor DarkGray
+        $ollamaUrl = "https://ollama.com/download/OllamaSetup.exe"
+        $ollamaInstaller = "$env:TEMP\OllamaSetup.exe"
+        try {
+            Invoke-WebRequest -Uri $ollamaUrl -OutFile $ollamaInstaller -UseBasicParsing
+            Start-Process $ollamaInstaller -ArgumentList "/silent" -Wait
+            Remove-Item $ollamaInstaller -ErrorAction SilentlyContinue
+            $env:PATH = "$env:LOCALAPPDATA\Programs\Ollama;$env:PATH"
+        } catch {
+            Write-Host "  Ollama download failed: $_" -ForegroundColor Yellow
+        }
+    }
+}
+
+$ollama = Get-Command ollama -ErrorAction SilentlyContinue
+if ($ollama) {
+    # Idempotent — Ollama skips the pull if the model is already present.
+    Write-Host "  Pulling mxbai-embed-large embedding model (~670MB, one-time)..." -ForegroundColor DarkGray
+    try {
+        & ollama pull mxbai-embed-large 2>&1 | Out-Null
+        Write-Host "  Memory engine ready." -ForegroundColor Green
+    } catch {
+        Write-Host "  Model pull failed — run manually later: ollama pull mxbai-embed-large" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  Ollama install incomplete — Local Agent X will run with keyword-only memory until Ollama is set up." -ForegroundColor Yellow
+    Write-Host "  Install manually from https://ollama.com, then run: ollama pull mxbai-embed-large" -ForegroundColor DarkGray
+}
+
+# ── Step 7: Create shortcuts ──
+Write-Host "  [7/7] Creating shortcuts..." -ForegroundColor Cyan
 
 # Create start script
 @"

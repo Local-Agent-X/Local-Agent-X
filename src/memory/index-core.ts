@@ -80,10 +80,20 @@ export class MemoryIndex {
     return Files.getDailyLogPath(this.memoryDir, date);
   }
 
-  appendDailyLog(text: string): void {
+  /**
+   * Append a line to today's daily log. The optional sessionId is recorded
+   * inline so today_context injection can filter by current session at read
+   * time — preventing cross-session bleed where one chat sees another
+   * chat's transcript via the date-keyed log. Pass undefined for system /
+   * background entries that aren't tied to a chat.
+   *
+   * Format: `[sessionId] [HH:MM:SS] text` (sessionId omitted if undefined).
+   */
+  appendDailyLog(text: string, sessionId?: string): void {
     const logPath = this.getDailyLogPath();
     const timestamp = new Date().toLocaleTimeString();
-    appendFileSync(logPath, `\n[${timestamp}] ${text}\n`, "utf-8");
+    const sidTag = sessionId ? `[${sessionId}] ` : "";
+    appendFileSync(logPath, `\n${sidTag}[${timestamp}] ${text}\n`, "utf-8");
     this.dirty = true;
     this.reindexThroughUniversal("daily-log").catch(() => {});
   }

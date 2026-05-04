@@ -5,6 +5,45 @@ interface StoredMessage {
   role: string;
   content: unknown;
   timestamp?: number;
+  _ephemeral?: boolean;
+}
+
+/**
+ * Middleware-nudge content prefixes that should never reach the chat UI.
+ * Mirrors the legacy-string list in providers/sanitize.ts so older sessions
+ * on disk (saved before the _ephemeral flag was added) get filtered at read
+ * time. Live persistence path uses stripEphemeralMessages; this is the
+ * defense-in-depth pass for already-polluted session JSONs.
+ */
+const EPHEMERAL_USER_PREFIXES = [
+  "[Self-check]",
+  "Your previous response was empty.",
+  "Tool errors occurred but you did not address them.",
+  "You do NOT need approval.",
+  "You claimed to have created or scheduled",
+  "You claimed to have added/updated/created/scheduled",
+  "You claimed an action ",
+];
+
+function isEphemeral(m: StoredMessage): boolean {
+  if (m._ephemeral === true) return true;
+  if (m.role !== "user" || typeof m.content !== "string") return false;
+  return EPHEMERAL_USER_PREFIXES.some((p) => (m.content as string).startsWith(p));
+}
+
+/**
+ * Older sessions have `*[Stopped: ...]*` markers baked into assistant
+ * content because the prior abort path appended via stream-delta. Strip
+ * those on load so existing transcripts don't keep showing the AI-thoughts
+ * bracket text. Matches the exact pattern emitted at run.ts:403 (now
+ * removed). Idempotent — runs each load, no-op once content is clean.
+ */
+const LEGACY_STOPPED_RE = /\n*\*\[Stopped:[^\]]*\]\*\s*$/g;
+function cleanLegacyStoppedSuffix(m: StoredMessage): StoredMessage {
+  if (m.role !== "assistant" || typeof m.content !== "string") return m;
+  if (!m.content.includes("*[Stopped:")) return m;
+  const cleaned = m.content.replace(LEGACY_STOPPED_RE, "").trimEnd();
+  return cleaned === m.content ? m : { ...m, content: cleaned };
 }
 
 interface StoredSession {
@@ -55,7 +94,12 @@ export function loadSessionPage(
   pageSize: number = DEFAULT_PAGE_SIZE,
 ): PageResult {
   const session = readSession(resolveSessionPath(sessionId));
-  const totalMessages = session.messages.length;
+  // Filter out middleware-nudge / ephemeral messages BEFORE pagination so
+  // page indices stay stable from the user's perspective. A polluted session
+  // JSON would otherwise show "page 1 of 5" with one nudge and one real
+  // message per page.
+  const visible = session.messages.filter((m) => !isEphemeral(m)).map(cleanLegacyStoppedSuffix);
+  const totalMessages = visible.length;
   const totalPages = Math.max(1, Math.ceil(totalMessages / pageSize));
 
   // Clamp page number
@@ -65,7 +109,7 @@ export function loadSessionPage(
   // Page 0 = most recent messages, page N = oldest messages
   const endIndex = totalMessages - validPage * pageSize;
   const startIndex = Math.max(0, endIndex - pageSize);
-  const messages = session.messages.slice(startIndex, endIndex);
+  const messages = visible.slice(startIndex, endIndex);
 
   return {
     messages,

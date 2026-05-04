@@ -26,8 +26,8 @@ export async function indexChunks(
   const now = Date.now();
   try {
     const insertChunk = db.prepare(`
-      INSERT INTO chunks (path, source, start_line, end_line, text, hash, content_hash, embedding, updated_at, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO chunks (path, source, start_line, end_line, text, hash, content_hash, embedding, updated_at, metadata, session_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertFts = hasFts ? db.prepare(`INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)`) : null;
 
@@ -36,7 +36,8 @@ export async function indexChunks(
         const result = insertChunk.run(
           virtualPath, source, chunk.startLine, chunk.endLine, chunk.text, chunk.hash, chunk.hash,
           chunk.embedding ? JSON.stringify(chunk.embedding) : null, now,
-          chunk.metadata ? JSON.stringify(chunk.metadata) : null
+          chunk.metadata ? JSON.stringify(chunk.metadata) : null,
+          chunk.metadata?.session_id ?? null
         );
         const chunkId = result.lastInsertRowid;
         if (insertFts) try { insertFts.run(chunkId, chunk.text); } catch {}
@@ -100,8 +101,8 @@ export async function indexChunksIdempotent(
       }
 
       const insertChunk = db.prepare(`
-        INSERT INTO chunks (path, source, start_line, end_line, text, hash, content_hash, embedding, updated_at, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO chunks (path, source, start_line, end_line, text, hash, content_hash, embedding, updated_at, metadata, session_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const insertFts = hasFts ? db.prepare("INSERT INTO chunks_fts (rowid, text) VALUES (?, ?)") : null;
       const insertVec = hasVec ? db.prepare("INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)") : null;
@@ -109,7 +110,8 @@ export async function indexChunksIdempotent(
         const res = insertChunk.run(
           virtualPath, source, chunk.startLine, chunk.endLine, chunk.text, chunk.hash, chunk.hash,
           chunk.embedding ? JSON.stringify(chunk.embedding) : null, now,
-          chunk.metadata ? JSON.stringify(chunk.metadata) : null
+          chunk.metadata ? JSON.stringify(chunk.metadata) : null,
+          chunk.metadata?.session_id ?? null
         );
         const id = res.lastInsertRowid;
         if (insertFts) try { insertFts.run(id, chunk.text); } catch {}

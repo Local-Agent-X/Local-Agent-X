@@ -690,6 +690,21 @@ async function sendMessage() {
             break;
           }
           case 'context_status': if (viewing) updateContextBar(event); break;
+          case 'stopped':
+            // Render a small italic stop-notice below the message body.
+            // NOT appended to `content` — keeps the message clean and
+            // prevents the technical reason from being persisted into chat
+            // history. The technical `debug` text is logged to console for
+            // diagnostics but never shown in the UI.
+            if (event.debug) console.info('[stopped]', event.firedBy || '?', event.debug);
+            if (viewing) {
+              const note = document.createElement('div');
+              note.className = 'stop-notice';
+              note.textContent = event.reason || 'Stopped.';
+              note.title = event.debug || event.firedBy || '';
+              bodyEl.appendChild(note);
+            }
+            break;
           case 'error':
             if (saveInterval) clearInterval(saveInterval);
             content += '\n\nError: ' + event.message;
@@ -866,6 +881,16 @@ async function sendMessage() {
               break;
             }
             case 'context_status': if (viewing) updateContextBar(event); break;
+            case 'stopped':
+              if (event.debug) console.info('[stopped]', event.firedBy || '?', event.debug);
+              if (viewing) {
+                const note = document.createElement('div');
+                note.className = 'stop-notice';
+                note.textContent = event.reason || 'Stopped.';
+                note.title = event.debug || event.firedBy || '';
+                bodyEl.appendChild(note);
+              }
+              break;
             case 'error': content += '\n\nError: ' + event.message; if (viewing) bodyEl.innerHTML = md(content); break;
             case 'agent_spawn':
               if (event.agent) addAgentFeed(event.agent);

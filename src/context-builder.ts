@@ -75,6 +75,8 @@ export function createSystemPromptBuilder(opts: {
   providerHint: string;
   toolPromptSection?: string;
   integrationsContext?: string;
+  /** Memory dir — when set, the project catalog (apps + entities) is injected. */
+  memoryDir?: string;
   // Dynamic sections
   contextBlock?: string;
   relevantMemories?: string;
@@ -139,6 +141,40 @@ export function createSystemPromptBuilder(opts: {
       id: "tool-guidance", label: "Tool Guidance", type: "static",
       build: () => opts.toolPromptSection!,
       shouldInclude: () => opts.toolPromptSection!.length > 0,
+    });
+  }
+
+  // Memory-recall reflex. Past sessions / built apps / pinned items are
+  // NOT auto-injected anymore (cross-session bleed gates landed May 2026).
+  // Without this nudge the model defaults to guessing from URLs/names
+  // instead of checking what's actually been built or discussed before.
+  // Sits in the static section so it's cacheable.
+  builder.addSection({
+    id: "recall-reflex", label: "Recall Reflex", type: "static",
+    build: () => `## Memory-Recall Reflex
+When the user references a project, website, person, or topic you don't recognize from THIS conversation — INCLUDING brand/project names you can read from an attached IMAGE:
+- Your default reflex is to call \`search_past_sessions\` BEFORE answering.
+- Image counts as a reference. If the user attaches a logo and asks "what's this?", the brand name you read from the image IS the search query. Don't just describe the image and stop — search the brand name too.
+- Don't guess from a domain name, brand, or visible logo. If you read "Baddies & Sugar Daddies" off an image and the user is asking what it is, search "baddies sugar daddies" or "baddiesandsugardaddies" before answering.
+- The tool also surfaces apps you previously built (workspace/apps/<name>/) — read their files if you need actual build details. Cross-reference the Project Catalog above to see if the brand matches a built app slug.
+- If the search returns nothing, say so honestly. Don't fabricate "luxury vibe" descriptions from a URL or logo alone — that's the failure mode this reflex prevents.`,
+  });
+
+  // Project catalog — static list of the user's known projects/entities so
+  // the agent recognizes them by name without needing a tool call. Pairs
+  // with the recall reflex above: this section says "these names you
+  // already know exist", and the reflex says "search for the details when
+  // a known name comes up." Cached for 60s in the catalog module.
+  if (opts.memoryDir) {
+    builder.addSection({
+      id: "project-catalog", label: "Project Catalog", type: "static",
+      build: async () => {
+        try {
+          const { getProjectCatalogSection } = await import("./memory/project-catalog.js");
+          return getProjectCatalogSection(opts.memoryDir!);
+        } catch { return ""; }
+      },
+      shouldInclude: () => !!opts.memoryDir,
     });
   }
 

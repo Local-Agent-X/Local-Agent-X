@@ -134,7 +134,18 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
 
           case "snapshot": {
             const raw = await manager.snapshot();
-            return ok(wrapExternalContent(raw, "browser.snapshot"));
+            // Auth-wall structural backstop. If the page contains a password
+            // input (formatted as `type=password` by formatRef in
+            // browser/observation.ts), prepend a strong directive so the
+            // agent surfaces the auth need to the user instead of grinding
+            // more snapshots/reads. Codex specifically tends to ignore the
+            // text-only PAUSE_RE detection — this catches it structurally.
+            // Anthropic doesn't need it but the notice is harmless there.
+            const hasPasswordField = /type=password\b/.test(raw);
+            const prefix = hasPasswordField
+              ? `[AUTH-WALL DETECTED] This page has a password field. STOP. Tell the user what they need to log into and wait for them to handle it. Do NOT call more browser actions hoping to bypass it. Do NOT type passwords yourself — the user enters credentials in the browser themselves.\n\n`
+              : "";
+            return ok(wrapExternalContent(prefix + raw, "browser.snapshot"));
           }
 
           case "click": {

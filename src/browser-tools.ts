@@ -8,6 +8,45 @@ function ok(content: string): ToolResult {
   return { content };
 }
 
+/**
+ * Smarter auth-wall detection. Old heuristic flagged ANY page with a
+ * `type=password` field, which fired false positives all over —
+ * many sites have hidden / collapsed login forms that aren't actually
+ * blocking the agent (e.g. ChatGPT signup link in nav, Grok's footer
+ * sign-in option). Now we only flag when the password field looks
+ * PRIMARY: it's near the top of the snapshot (within first 60 lines)
+ * AND surrounded by other form elements (email/username/login-button
+ * cues) suggesting it's the page's main interaction.
+ *
+ * False negatives (real auth wall not flagged) are recoverable — the
+ * agent will still try to interact and the user will tell it to log in.
+ * False positives (non-blocking password field flagged) cause Codex to
+ * give up early, which is the user-reported regression.
+ */
+function computeAuthWallPrefix(snapshot: string): string {
+  const lines = snapshot.split("\n");
+  const passwordIdx = lines.findIndex(l => /\btype=password\b/.test(l));
+  if (passwordIdx === -1) return "";
+
+  // Only consider it a primary auth wall if password field is in the first
+  // 60 lines of the snapshot (above-the-fold approximation). Pages where
+  // login is in a hidden modal or footer element won't match.
+  if (passwordIdx > 60) return "";
+
+  // Look for adjacent auth signals (email field, login button, sign-in
+  // text within +/- 15 lines of the password field). Without these,
+  // the password field is probably a stray element, not the page's
+  // primary call to action.
+  const start = Math.max(0, passwordIdx - 15);
+  const end = Math.min(lines.length, passwordIdx + 15);
+  const window = lines.slice(start, end).join("\n").toLowerCase();
+  const hasEmailOrUsername = /\b(type=email|name=(email|username|user|login)|placeholder="?(email|username|user))\b/i.test(window);
+  const hasLoginCta = /\b(sign in|log ?in|continue|submit|enter)\b/i.test(window);
+  if (!hasEmailOrUsername && !hasLoginCta) return "";
+
+  return `[AUTH-WALL DETECTED] This page has a primary login form. STOP. Tell the user what they need to log into and wait for them to handle it. Do NOT call more browser actions hoping to bypass it. Do NOT type passwords yourself — the user enters credentials in the browser themselves.\n\n`;
+}
+
 function err(content: string): ToolResult {
   return { content, isError: true };
 }
@@ -121,7 +160,23 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             // DNS rebinding protection — resolve hostname before browser navigates
             const pinResult = await dnsPinCheck(url);
             if (pinResult) return err(pinResult);
-            return ok(await manager.navigate(url, engine));
+            const navResult = await manager.navigate(url, engine);
+            // Auto-snapshot on navigate. Without this, the agent has to
+            // remember to call snapshot before fill/click/evaluate — which
+            // it routinely forgets, leading to "Could not find input
+            // matching X" errors and blind selector guesses. Bake the
+            // snapshot into the navigate response so the agent sees the
+            // DOM immediately. Same auth-wall + structural prefix logic
+            // as the explicit snapshot action.
+            try {
+              const snap = await manager.snapshot();
+              const prefix = computeAuthWallPrefix(snap);
+              return ok(`${navResult}\n\n--- Page snapshot ---\n${wrapExternalContent(prefix + snap, "browser.snapshot")}`);
+            } catch {
+              // If snapshot fails (page still loading, etc.), return just
+              // the nav result — agent can call snapshot manually next.
+              return ok(navResult);
+            }
           }
 
           case "new_tab": {
@@ -129,22 +184,19 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             if (!url) return err("'url' parameter is required for new_tab action.");
             const pinResult2 = await dnsPinCheck(url);
             if (pinResult2) return err(pinResult2);
-            return ok(await manager.newTab(url));
+            const tabResult = await manager.newTab(url);
+            try {
+              const snap = await manager.snapshot();
+              const prefix = computeAuthWallPrefix(snap);
+              return ok(`${tabResult}\n\n--- Page snapshot ---\n${wrapExternalContent(prefix + snap, "browser.snapshot")}`);
+            } catch {
+              return ok(tabResult);
+            }
           }
 
           case "snapshot": {
             const raw = await manager.snapshot();
-            // Auth-wall structural backstop. If the page contains a password
-            // input (formatted as `type=password` by formatRef in
-            // browser/observation.ts), prepend a strong directive so the
-            // agent surfaces the auth need to the user instead of grinding
-            // more snapshots/reads. Codex specifically tends to ignore the
-            // text-only PAUSE_RE detection — this catches it structurally.
-            // Anthropic doesn't need it but the notice is harmless there.
-            const hasPasswordField = /type=password\b/.test(raw);
-            const prefix = hasPasswordField
-              ? `[AUTH-WALL DETECTED] This page has a password field. STOP. Tell the user what they need to log into and wait for them to handle it. Do NOT call more browser actions hoping to bypass it. Do NOT type passwords yourself — the user enters credentials in the browser themselves.\n\n`
-              : "";
+            const prefix = computeAuthWallPrefix(raw);
             return ok(wrapExternalContent(prefix + raw, "browser.snapshot"));
           }
 

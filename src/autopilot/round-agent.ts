@@ -121,7 +121,12 @@ export async function runAutopilotRound(
             const task = parsed.task || parsed.description;
             const pick = (path || cmd || url || pattern || task);
             if (typeof pick === "string") {
-              const cleaned = pick.replace(/^[A-Za-z]:[/\\]Users[/\\][^/\\]+[/\\]secret-agent-x[/\\]/i, "");
+              // Strip the project-folder prefix from displayed paths. Use
+              // process.cwd() so this tracks any folder rename — earlier
+              // hardcoded `secret-agent-x` slug was brittle.
+              const cwd = process.cwd().replace(/[/\\]+$/, "");
+              const escaped = cwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+              const cleaned = pick.replace(new RegExp(`^${escaped}[/\\\\]`, "i"), "");
               detail = cleaned.length > 80 ? cleaned.slice(0, 79) + "…" : cleaned;
             }
           } catch { /* args wasn't JSON — fall through with no detail */ }

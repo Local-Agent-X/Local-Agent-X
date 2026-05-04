@@ -9,15 +9,39 @@ export function sanitizeToolResults(results: ChatCompletionMessageParam[]): Chat
   });
 }
 
-/** Strip ephemeral self-check / quality-gate user messages before persisting a session. */
+/**
+ * Strip ephemeral self-check / quality-gate / middleware-nudge user messages
+ * before persisting a session.
+ *
+ * Two filter mechanisms (defense-in-depth):
+ *  1. Structural — `_ephemeral: true` flag set by agent-loop/run.ts on every
+ *     middleware nudge push. New nudges are auto-filtered without anyone
+ *     having to remember to update a string list.
+ *  2. Legacy strings — covers nudges that were saved before the flag existed,
+ *     plus self-check / quality-gate messages that aren't routed through the
+ *     middleware nudge path.
+ *
+ * The model still sees the nudge during the turn (it's in the in-memory
+ * messages array). The flag only kicks in at persist + replay boundaries so
+ * the chat transcript on reload doesn't show purple "You claimed..." bubbles
+ * where tool calls used to render live.
+ */
 export function stripEphemeralMessages(messages: ChatCompletionMessageParam[]): ChatCompletionMessageParam[] {
   return messages.filter((m) => {
+    // Structural marker — set on every middleware nudge in agent-loop/run.ts
+    if ((m as unknown as { _ephemeral?: boolean })._ephemeral === true) return false;
+
     if (m.role === "user" && typeof m.content === "string") {
       if (m.content.startsWith("[Self-check]")) return false;
       if (m.content.startsWith("Your previous response was empty.")) return false;
       if (m.content.startsWith("Tool errors occurred but you did not address them.")) return false;
       if (m.content.startsWith("You do NOT need approval.")) return false;
+      // Action-claim / force-tool-use nudges. Listed by exact prefix because
+      // older sessions on disk pre-date the _ephemeral flag — those messages
+      // need to be filtered on load too.
       if (m.content.startsWith("You claimed to have created or scheduled")) return false;
+      if (m.content.startsWith("You claimed to have added/updated/created/scheduled")) return false;
+      if (m.content.startsWith("You claimed an action ")) return false;
       // NOTE: "SYSTEM: You have called ..." loop nudges are kept — the LLM must see them to stop looping
     }
     // Strip legacy empty-response placeholders so they don't pollute

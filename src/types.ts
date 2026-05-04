@@ -63,6 +63,13 @@ export type ServerEvent =
   | { type: "tool_progress"; toolName: string; toolCallId?: string; message: string }
   | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean }
   | { type: "done"; usage: AgentTurn["usage"] }
+  // Out-of-band notice that the turn stopped early (middleware abort,
+  // wall-clock ceiling, stale evidence, loop detection, etc.). The UI
+  // renders this as a small inline note BELOW the message, NOT as
+  // appended message body — keeps technical jargon out of chat content
+  // and out of persisted message history. `reason` is the user-friendly
+  // one-liner; `debug` is the original technical text for diagnostics.
+  | { type: "stopped"; reason: string; debug?: string; firedBy?: string }
   | { type: "error"; message: string }
   | { type: "secret_request"; name: string; service?: string; reason: string }
   | { type: "secrets_request"; secrets: Array<{ name: string; service?: string; reason: string }> }

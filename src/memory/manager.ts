@@ -10,13 +10,12 @@
  * for routes and background jobs that legitimately need lower-level operations.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import type { MemoryIndex } from "./index-core.js";
 import type { FactKind, MemorySearchResult, RetainedFact } from "./types.js";
 import type { SearchOptions } from "./index-search.js";
 import { buildContextBlock, autoSearchContext } from "./context.js";
 import { autoExtractAndSave } from "./auto-extract.js";
+import { findKnownProjectsInMessage, buildKnownProjectsNudge } from "./known-projects.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("memory.manager");
@@ -36,6 +35,11 @@ export interface TurnContextInput {
 export interface TurnContext {
   contextBlock: string;
   relevantMemories: string;
+  /**
+   * @deprecated Always empty. Cross-session summaries are no longer
+   * auto-injected; the model must call `search_past_sessions` explicitly.
+   * Kept on the type to avoid breaking call sites until they migrate.
+   */
   smartContext: string;
   memoryContext: string;
   notifications: Array<{ type: string; message: string; priority: number }>;
@@ -46,6 +50,8 @@ export interface PersistTurnInput {
   agentResponse: string;
   /** Skip auto-extraction + daily log (trivial tool requests). */
   skip?: boolean;
+  /** Tag the daily-log entry so today_context can filter by current session. */
+  sessionId?: string;
 }
 
 export type RecallBy = "entity" | "kind" | "time";
@@ -73,7 +79,7 @@ export class MemoryManager {
 
     if (input.minimalMode) {
       try {
-        out.contextBlock = await buildContextBlock(this.index);
+        out.contextBlock = await buildContextBlock(this.index, { sessionId: input.sessionId });
       } catch (e) {
         logger.warn("buildContextBlock (minimal) failed:", (e as Error).message);
       }
@@ -85,6 +91,7 @@ export class MemoryManager {
         out.contextBlock = await buildContextBlock(this.index, {
           skipDailyLog: input.skipDailyLog,
           userMessage: input.userMessage,
+          sessionId: input.sessionId,
         });
       } catch (e) {
         logger.warn("buildContextBlock (lite) failed:", (e as Error).message);
@@ -96,6 +103,7 @@ export class MemoryManager {
       buildContextBlock(this.index, {
         userMessage: input.userMessage,
         skipDailyLog: input.skipDailyLog,
+        sessionId: input.sessionId,
       }).catch((e) => {
         logger.warn("buildContextBlock failed:", (e as Error).message);
         return "";
@@ -107,7 +115,27 @@ export class MemoryManager {
     ]);
     out.contextBlock = contextBlock;
     out.relevantMemories = relevantMemories;
-    out.smartContext = this.loadSmartContext(input.userMessage);
+    // smartContext is intentionally left empty. Cross-session summary recall
+    // moved to the explicit `search_past_sessions` tool — the prior keyword-
+    // grep auto-inject was the root cause of the recurring cross-conversation
+    // bleed (e.g., AI-journey-doc message getting answered with stale logo
+    // page work from a different session).
+    out.smartContext = "";
+
+    // Known-project recall trigger. When the user mentions a domain or project
+    // name we have prior session content for, append a one-line nudge so the
+    // agent knows it CAN call `search_past_sessions` for context. This is a
+    // pointer, not a content dump — bleed-safe because the model has to
+    // explicitly invoke the tool if it actually wants the context.
+    try {
+      const matches = await findKnownProjectsInMessage(this.index, input.userMessage, {
+        currentSessionId: input.sessionId,
+      });
+      const nudge = buildKnownProjectsNudge(matches);
+      if (nudge) out.smartContext = nudge;
+    } catch (e) {
+      logger.warn("known-projects scan failed:", (e as Error).message);
+    }
 
     try {
       const { processMessage } = await import("../memory-orchestrator.js");
@@ -141,13 +169,13 @@ export class MemoryManager {
   async persistTurn(input: PersistTurnInput): Promise<void> {
     if (input.skip) return;
     try {
-      await autoExtractAndSave(this.index, input.userMessage, input.agentResponse);
+      await autoExtractAndSave(this.index, input.userMessage, input.agentResponse, input.sessionId);
     } catch (e) {
       logger.warn("autoExtractAndSave failed:", (e as Error).message);
     }
     try {
       const userSnippet = input.userMessage.slice(0, 300).replace(/\n/g, " ");
-      if (userSnippet.length > 10) this.index.appendDailyLog(`User: ${userSnippet}`);
+      if (userSnippet.length > 10) this.index.appendDailyLog(`User: ${userSnippet}`, input.sessionId);
     } catch (e) {
       logger.warn("appendDailyLog failed:", (e as Error).message);
     }
@@ -197,40 +225,4 @@ export class MemoryManager {
     return MemoryOrchestrator.getInstance().runBackground(this.index);
   }
 
-  /**
-   * Score recent session summaries against the user message and return up to
-   * two relevant snippets. Pure file-system read — no LLM, no embeddings.
-   */
-  private loadSmartContext(userMessage: string): string {
-    try {
-      const summaryDir = join(this.dataDir, "memory", "session-summaries");
-      if (!existsSync(summaryDir)) return "";
-      const summaryFiles = readdirSync(summaryDir).filter((f) => f.endsWith(".md"));
-      if (summaryFiles.length === 0) return "";
-      const queryWords = userMessage.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
-      if (queryWords.length === 0) return "";
-
-      const scored = summaryFiles
-        .map((f) => {
-          const content = readFileSync(join(summaryDir, f), "utf-8");
-          const lower = content.toLowerCase();
-          let score = 0;
-          for (const w of queryWords) if (lower.includes(w)) score++;
-          return { content: content.slice(0, 400), score };
-        })
-        .filter((s) => s.score > 0)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 2);
-
-      if (scored.length === 0) return "";
-      return (
-        "\n\n--- RELATED PAST SESSIONS ---\n" +
-        scored.map((s) => s.content).join("\n---\n") +
-        "\n--- END ---"
-      );
-    } catch (e) {
-      logger.warn("loadSmartContext failed:", (e as Error).message);
-      return "";
-    }
-  }
 }

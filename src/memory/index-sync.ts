@@ -135,8 +135,8 @@ async function indexFile(
   }
 
   const insertChunk = db.prepare(`
-    INSERT INTO chunks (path, source, start_line, end_line, text, hash, content_hash, embedding, updated_at, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO chunks (path, source, start_line, end_line, text, hash, content_hash, embedding, updated_at, metadata, session_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertFts = hasFts
@@ -159,7 +159,8 @@ async function indexFile(
         chunk.hash,
         chunk.embedding ? JSON.stringify(chunk.embedding) : null,
         now,
-        chunk.metadata ? JSON.stringify(chunk.metadata) : null
+        chunk.metadata ? JSON.stringify(chunk.metadata) : null,
+        chunk.metadata?.session_id ?? null
       );
 
       const chunkId = result.lastInsertRowid;

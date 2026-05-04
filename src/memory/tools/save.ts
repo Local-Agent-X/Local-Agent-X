@@ -26,6 +26,7 @@ export function createSaveTools(memory: MemoryIndex) {
       async execute(args: Record<string, unknown>) {
         let content = String(args.content || "");
         const target = String(args.target || "daily");
+        const sessionId = args._sessionId ? String(args._sessionId) : undefined;
 
         if (!content.trim()) {
           return { content: "Nothing to save.", isError: true };
@@ -72,7 +73,7 @@ export function createSaveTools(memory: MemoryIndex) {
             content: `Retained ${facts.length} fact(s): ${facts.map((f) => `[${f.kind}] ${f.content.slice(0, 60)}`).join("; ")}`,
           };
         } else {
-          memory.appendDailyLog(content);
+          memory.appendDailyLog(content, sessionId);
           return {
             content: `Saved to daily log (${new Date().toISOString().split("T")[0]})`,
           };

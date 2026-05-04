@@ -27,7 +27,7 @@ import type {
   ModelCallResult,
 } from "./types.js";
 import { requireAdapter } from "../providers/adapter/registry.js";
-import { executeToolCalls, checkAndCompact } from "../tool-executor.js";
+import { executeToolCalls, checkAndCompactAsync } from "../tool-executor.js";
 import { stripEphemeralMessages, sanitizeToolResults } from "../providers/sanitize.js";
 import { buildUserContentWithImages } from "../providers/run-standard-helpers.js";
 import { createLogger } from "../logger.js";
@@ -156,13 +156,13 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
       return beforeRes.turn;
     }
     if (beforeRes.kind === "nudge") {
-      messages.push({ role: "user", content: beforeRes.message } as ChatCompletionMessageParam);
+      messages.push({ role: "user", content: beforeRes.message, _ephemeral: true, _nudgeReason: beforeRes.reason } as ChatCompletionMessageParam);
       continue;
     }
     if (beforeRes.kind === "retry-iteration") continue;
 
     if (iteration > 0) messages = stripEphemeralMessages(messages);
-    messages = checkAndCompact(messages, req.model, onEvent);
+    messages = await checkAndCompactAsync(messages, req.model, onEvent);
 
     // Refresh system message every iteration so prompt-layer changes
     // (retry nudges, etc.) propagate without restart.
@@ -305,7 +305,7 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
       return afterModelRes.turn;
     }
     if (afterModelRes.kind === "nudge") {
-      messages.push({ role: "user", content: afterModelRes.message } as ChatCompletionMessageParam);
+      messages.push({ role: "user", content: afterModelRes.message, _ephemeral: true, _nudgeReason: afterModelRes.reason } as ChatCompletionMessageParam);
       continue;
     }
     if (afterModelRes.kind === "retry-iteration") {
@@ -372,7 +372,7 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
       return afterToolRes.turn;
     }
     if (afterToolRes.kind === "nudge") {
-      messages.push({ role: "user", content: afterToolRes.message } as ChatCompletionMessageParam);
+      messages.push({ role: "user", content: afterToolRes.message, _ephemeral: true, _nudgeReason: afterToolRes.reason } as ChatCompletionMessageParam);
       continue;
     }
   }
@@ -393,14 +393,48 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
  * the turn ended early. Followed by a normal `done` event so the chat
  * UI flips out of streaming state.
  */
+/**
+ * Map middleware firedBy code → user-friendly one-line reason. Keeps the
+ * technical "Mid-turn evidence stale (no progress after recovery nudge —
+ * likely browser tool selectors blind, auth wall, or wrong tool for the job)"
+ * text out of the chat surface. Default for unrecognized codes is a generic
+ * "Stopped early" rather than echoing internal jargon.
+ */
+function friendlyStopReason(firedBy: string | undefined): string {
+  switch (firedBy) {
+    case "mid-turn-stale": return "Stopped — agent got stuck, no progress.";
+    case "wall-clock-ceiling": return "Stopped — turn took too long.";
+    case "token-ceiling": return "Stopped — message size limit reached.";
+    case "loop-detection": return "Stopped — repeating itself.";
+    case "dead-end": return "Stopped — couldn't make further progress.";
+    case "subagent-drain": return "Stopped — sub-agent stopped responding.";
+    case "interject-drain": return "Stopped — too many follow-ups queued.";
+    case "pause": return "Stopped — paused.";
+    case "post-turn-detector":
+    case "hallucination-check":
+    case "action-claim":
+    case "self-check":
+    case "post-commit": return "Stopped — internal check.";
+    case "force-tool-use": return "Stopped — tool call required but not made.";
+    case "auto-build-app": return "Stopped — app build complete.";
+    case "heartbeat": return "Stopped — heartbeat timeout.";
+    default: return "Stopped early.";
+  }
+}
+
 function surfaceMiddlewareAbort(
   turn: AgentTurn,
   firedBy: string | undefined,
   onEvent?: (e: import("../types.js").ServerEvent) => void,
 ): void {
   if (!onEvent) return;
-  const reason = turn.errorMessage || `Turn aborted by ${firedBy || "safety check"}.`;
-  onEvent({ type: "stream", delta: `\n\n*[Stopped: ${reason}]*` });
+  const debug = turn.errorMessage || `Turn aborted by ${firedBy || "safety check"}.`;
+  // Out-of-band stopped event — the UI renders this as a small note BELOW
+  // the assistant message (NOT appended into message content). The previous
+  // implementation streamed `*[Stopped: ...]*` as a delta, which got
+  // concatenated into the assistant reply and persisted into the chat
+  // history — looked like AI "thoughts" leaking into the transcript.
+  onEvent({ type: "stopped", reason: friendlyStopReason(firedBy), debug, firedBy });
   onEvent({ type: "done", usage: turn.usage });
 }
 

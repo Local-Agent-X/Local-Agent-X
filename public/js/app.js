@@ -163,7 +163,19 @@ function saveChats() {
         const content = truncated ? raw.slice(0, PER_MSG_CAP) : raw;
         const base = { role: m.role, content };
         if (truncated) base._truncated = true;
-        if (m.attachments) base.attachments = m.attachments.map(a => ({ name: a.name, size: a.size, type: a.type, isImage: a.isImage }));
+        if (m.attachments) base.attachments = m.attachments.map(a => {
+          // Persist `url` (server-hosted, small string) so images survive
+          // reload. The original code stripped url + dataUrl, leaving only
+          // {name,size,type,isImage} — which makes addMessageEl fall through
+          // to the placeholder badge instead of rendering the image.
+          // dataUrl is intentionally NOT persisted because it can be MB
+          // each (data:image/png;base64,…) and would blow localStorage quota.
+          // If the upload completed, we have `url`; if it failed, we have
+          // nothing and the badge fallback is correct.
+          const out = { name: a.name, size: a.size, type: a.type, isImage: a.isImage };
+          if (a.url) out.url = a.url;
+          return out;
+        });
         return base;
       }),
     };

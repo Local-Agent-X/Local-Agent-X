@@ -65,8 +65,25 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   const isTrivialToolRequest = /^(run\s+(bash|command)|execute|bash)\s*(with|:)/i.test(message.trim()) ||
     /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
   const isCodexProvider = resolved.provider === "codex";
+
+  // v3.2: image-aware recall-reflex (revised). Earlier draft tried a
+  // separate vision pre-extract call before the main turn, but that
+  // assumed plain API keys (OPENAI_API_KEY / sk-ant-api03-*) most users
+  // don't have — Codex/Claude subscription auth routes through CLIs that
+  // either don't expose vision or strip images. Instead: the main agent
+  // already has vision (gpt-5.5, Sonnet, etc.). Just flag for the system-
+  // prompt nudge that an image is attached so the agent's reflex extends
+  // to image-extracted entities, not only typed-text entities.
+  let recallScanText = message;
+  if (attachments && attachments.some((a) => a.isImage)) {
+    // Tag the recall-scan input so downstream code (orchestrator,
+    // known-projects scan) knows to be conservative about typed-text
+    // matches and the system-prompt reflex knows an image is present.
+    recallScanText = `${message}\n[user attached an image — reflex: identify any brand/project/domain you can read from it, then call search_past_sessions on that name before answering]`;
+  }
+
   const turnCtx = await memoryManager.buildTurnContext({
-    userMessage: message,
+    userMessage: recallScanText,
     sessionId,
     sessionMessages: sessionMessages.slice(-20).map(m => ({
       role: m.role,
@@ -308,6 +325,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       providerHint,
       toolPromptSection,
       integrationsContext,
+      memoryDir: (memoryIndex as unknown as { memoryDir?: string }).memoryDir,
       contextBlock,
       relevantMemories,
       smartContext,

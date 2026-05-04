@@ -64,6 +64,46 @@ function isConversationalFollowup(message: string): boolean {
   return false;
 }
 
+/**
+ * Cheap topical-relevance check — extracts substantive keywords from
+ * both the user's current message and a candidate signal, returns true
+ * only if they share 2+ keywords. Used to gate high-bleed signal
+ * categories on substantive (non-followup) messages: a signal about
+ * "logo work for baddies-and-daddies" should NOT inject when the user
+ * is writing about their AI journey story doc — zero keyword overlap,
+ * filter drops it.
+ */
+const STOPWORDS = new Set([
+  "the", "and", "for", "with", "from", "this", "that", "have", "will", "your", "you",
+  "but", "are", "was", "were", "been", "what", "when", "where", "who", "why", "how",
+  "can", "would", "could", "should", "about", "into", "onto", "than", "then", "them",
+  "they", "their", "there", "here", "just", "like", "make", "made", "want", "wanted",
+  "really", "much", "many", "more", "most", "some", "all", "also", "still", "only",
+  "tell", "told", "saying", "said", "thing", "things", "going", "got", "get", "getting",
+  "ill", "im", "ive", "dont", "wont", "didnt", "isnt", "arent", "wasnt", "werent", "cant",
+]);
+
+function topicalKeywords(text: string): Set<string> {
+  return new Set(
+    (text || "")
+      .toLowerCase()
+      .split(/\W+/)
+      .filter(w => w.length > 3 && !STOPWORDS.has(w)),
+  );
+}
+
+function signalTopicallyRelevant(messageWords: Set<string>, signalText: string): boolean {
+  const sigWords = topicalKeywords(signalText);
+  let overlap = 0;
+  for (const w of sigWords) {
+    if (messageWords.has(w)) {
+      overlap++;
+      if (overlap >= 2) return true;
+    }
+  }
+  return false;
+}
+
 export class MemoryOrchestrator {
   private static instance: MemoryOrchestrator;
 
@@ -107,23 +147,34 @@ export class MemoryOrchestrator {
       }
     }
 
-    // Cross-conversation bleed guard — when the user's latest message is a
-    // short conversational follow-up (ack, vague "what now", "yeha what
-    // happened", pronoun-only reply), drop high-bleed-risk signal
-    // categories. Recall/reference/narrative/followup modules surface
-    // facts from PRIOR conversations; on a short follow-up the agent
-    // misreads them as the user's current ask. Critical (vulnerability,
-    // correction) and emotional categories stay — those are about the
-    // active conversation's state, not historical recall.
-    if (isConversationalFollowup(input.message)) {
-      const HIGH_BLEED = new Set(["reference", "recall", "narrative", "followup", "proactive", "history", "growth", "pattern", "milestone", "unspoken", "behavior-change", "contradiction"]);
-      const before = signals.length;
-      signals = signals.filter(s => !HIGH_BLEED.has(s.category));
-      if (before !== signals.length) {
-        const dropped = before - signals.length;
-        // eslint-disable-next-line no-console
-        console.info(`[orchestrator] follow-up gate dropped ${dropped} high-bleed signals (msg="${input.message.slice(0, 40)}")`);
-      }
+    // Cross-conversation bleed guard. High-bleed signal categories (recall,
+    // narrative, proactive, history, etc.) surface facts from PRIOR
+    // conversations. Two cases:
+    //   (a) Short conversational follow-up — drop ALL high-bleed signals
+    //       (the agent isn't asking for memory recall, it's just reacting
+    //       to the prior turn).
+    //   (b) Substantive new message — drop high-bleed signals UNLESS they
+    //       share 2+ keywords with the user's message. So a "user has
+    //       unfinished logo work" signal won't inject during an
+    //       AI-journey-story conversation (zero shared keywords), but a
+    //       "user previously corrected the logo color" signal WILL inject
+    //       if the user's current message mentions logo (relevant).
+    // Critical (vulnerability, correction) and emotional categories
+    // bypass both gates — those are about active turn state, not recall.
+    const HIGH_BLEED = new Set(["reference", "recall", "narrative", "followup", "proactive", "history", "growth", "pattern", "milestone", "unspoken", "behavior-change", "contradiction"]);
+    const isFollowup = isConversationalFollowup(input.message);
+    const messageWords = isFollowup ? new Set<string>() : topicalKeywords(input.message);
+    const beforeCount = signals.length;
+    signals = signals.filter(s => {
+      if (!HIGH_BLEED.has(s.category)) return true;
+      if (isFollowup) return false;
+      return signalTopicallyRelevant(messageWords, s.signal);
+    });
+    if (beforeCount !== signals.length) {
+      const dropped = beforeCount - signals.length;
+      const reason = isFollowup ? "follow-up" : "no-topical-match";
+      // eslint-disable-next-line no-console
+      console.info(`[orchestrator] bleed gate (${reason}) dropped ${dropped} high-bleed signals (msg="${input.message.slice(0, 40)}")`);
     }
 
     const merged = mergeSignals(signals, orchestratorState.lastSignalHashes, { sessionId: input.sessionId });

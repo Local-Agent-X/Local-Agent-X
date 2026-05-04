@@ -1,16 +1,15 @@
 /**
- * LLM-as-classifier — second-opinion veto layer for routing decisions.
+ * LLM-as-classifier — primary decider for routing on ambiguous messages.
  *
- * Pattern: regex (regex-rules.ts) decides FAST and CHEAP. If it says
- * DELEGATE, this module gets called as a sanity check — the LLM reads
- * the actual message and can flip to INLINE if it sees user override the
- * regex missed (any phrasing, not just the patterns in the regex). If
- * regex says INLINE, we trust it (cheap path, skip the LLM call).
+ * Pattern: regex (regex-rules.ts) handles three obvious INLINE shortcuts
+ * (slash prefix, no-spawn override, ack/greeting). Everything else lands
+ * here. The LLM's rule: tools = workers, no tools = chat.
  *
- * Cost: ~$0.0001 per classification call (Haiku 4.5). Worth it to
- * honor user intent and avoid $1+ wrong delegations.
+ * Cost: ~$0.0001 per classification call (Haiku 4.5). Adds ~200ms to
+ * non-shortcut chat turns; avoids $0.50+ misroutes and timeouts.
  *
- * Disabled via env LAX_ROUTE_CLASSIFIER=0 if pure regex is preferred.
+ * Disabled via env LAX_ROUTE_CLASSIFIER=0 if pure regex is preferred
+ * (router defaults to INLINE on unavailable / disabled).
  */
 
 import { createLogger } from "../logger.js";
@@ -19,29 +18,30 @@ import type { ClassifierResult } from "./types.js";
 
 const logger = createLogger("routing.llm-classifier");
 
-const CLASSIFIER_SYSTEM_PROMPT = `You are a routing classifier for a chat agent system. Decide whether a user's chat message should run INLINE (in the live chat where the user is watching, agent can ask follow-ups) or DELEGATE (background worker subprocess that runs autonomously).
+const CLASSIFIER_SYSTEM_PROMPT = `You are a routing classifier for a chat agent system. Decide whether a user's chat message should run INLINE (main chat agent answers directly) or DELEGATE (a worker subagent runs the task in the background).
 
-Rules — apply in order, first match wins:
+CORE RULE — apply first:
+If fulfilling the request will require the agent to call ANY tool (file read/write, web search, build_app, scan, scrape, refactor, deploy, etc.), DELEGATE.
+If the agent can answer from its training knowledge or the conversation so far without calling a tool, INLINE.
 
-1. USER OVERRIDE — ABSOLUTE PRIORITY: if the user explicitly says they want inline (anywhere in the message), respect it regardless of task complexity. Catch all variants:
-   - "don't spawn a subagent / worker / background task"
-   - "handle this yourself / you do it / answer me directly"
-   - "no need for a worker / inline please"
-   - "stay in chat / just respond / no delegation"
-   - "/discuss" prefix
-   - Any other plain-language way of asking the agent to NOT delegate
-   → INLINE
+The signal is "will this need tools?" — not "how long will it take." Tools = workers. No tools = chat.
 
-2. USER WANTS INTERACTIVE: question, discussion, opinion-seeking, brainstorm, back-and-forth ("what do you think", "should we", "kind of like", "thoughts?", "vs", "tradeoff", reaction to prior message)
-   → INLINE
+DELEGATE — needs tools to fulfill:
+- "build / create / scaffold / make / generate X" (app, page, file, script, deck, document)
+- "scan / search / look through / find X" in a codebase or files
+- "research X" implying multi-source web fetches
+- "refactor / debug / fix Y" (touches files)
+- "deploy / publish / scrape / install / set up X"
+- Anything that obviously needs to read or write files in the workspace
 
-3. SHORT/CASUAL: messages under 6 words that are clearly conversational (greetings, acks: "yes", "ok", "thanks", "hi"). NOTE: short build/work commands like "build me an app for X" or "scan the repo for Y" do NOT count as casual — they're TRUE LONG-RUNNING WORK (rule 4) regardless of length.
-   → INLINE
+INLINE — answerable without tools:
+- Greetings, acks, opinions, brainstorming, reactions ("ok", "thanks", "what do you think?", "vs", "tradeoff")
+- Questions answerable from training knowledge ("what is a kanban board?")
+- Questions about prior conversation or about how the system works
+- Short follow-ups, clarifications
 
-4. TRUE LONG-RUNNING WORK: minutes-long task — build an app, build a website/landing page, scan a codebase, refactor across files, generate a deck/document, run an autopilot session, scrape data. **Vague scope is NOT a reason to keep this inline.** A worker can ask for clarifications via its own needs_input mechanism — that's its job, not main agent's. If the user says "build me an app for X" without specifying details, DELEGATE — the worker will ask what it needs. Keeping this inline blocks the chat for the entire build duration, which is exactly what the user wanted to avoid.
-   → DELEGATE
-
-5. AMBIGUOUS NON-WORK: when the message isn't clearly work AND isn't clearly chat, default to INLINE. Inline failures recover via "I'll start working on that, want me to background it?" — delegated failures lose user trust. But if the message contains a clear work verb (build/create/scan/refactor/scaffold/generate/deploy/publish/setup/install) on a clear noun (app/site/page/script/dashboard/etc.), that's NOT ambiguous — that's rule 4.
+USER OVERRIDE — ABSOLUTE PRIORITY:
+If the user explicitly says they want inline ("don't spawn", "handle this yourself", "you do it", "/discuss", "no subagent", any plain-language equivalent), INLINE regardless of tool need.
 
 Reply with EXACTLY one line in this format:
 DECISION: <INLINE|DELEGATE>

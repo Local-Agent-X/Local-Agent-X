@@ -151,7 +151,10 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
 
     // ── Phase: beforeIteration ──
     const beforeRes = await runPhase(middlewares, "beforeIteration", ctx);
-    if (beforeRes.kind === "abort") return beforeRes.turn;
+    if (beforeRes.kind === "abort") {
+      surfaceMiddlewareAbort(beforeRes.turn, beforeRes.firedBy, onEvent);
+      return beforeRes.turn;
+    }
     if (beforeRes.kind === "nudge") {
       messages.push({ role: "user", content: beforeRes.message } as ChatCompletionMessageParam);
       continue;
@@ -288,7 +291,10 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
     }
     messages.push(assistantMsg);
 
-    if (afterModelRes.kind === "abort") return afterModelRes.turn;
+    if (afterModelRes.kind === "abort") {
+      surfaceMiddlewareAbort(afterModelRes.turn, afterModelRes.firedBy, onEvent);
+      return afterModelRes.turn;
+    }
     if (afterModelRes.kind === "nudge") {
       messages.push({ role: "user", content: afterModelRes.message } as ChatCompletionMessageParam);
       continue;
@@ -352,7 +358,10 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
 
     // ── Phase: afterToolExecution ──
     const afterToolRes = await runPhase(middlewares, "afterToolExecution", ctx, undefined, toolResults);
-    if (afterToolRes.kind === "abort") return afterToolRes.turn;
+    if (afterToolRes.kind === "abort") {
+      surfaceMiddlewareAbort(afterToolRes.turn, afterToolRes.firedBy, onEvent);
+      return afterToolRes.turn;
+    }
     if (afterToolRes.kind === "nudge") {
       messages.push({ role: "user", content: afterToolRes.message } as ChatCompletionMessageParam);
       continue;
@@ -365,6 +374,25 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
     usage: { promptTokens: ctx.totalInput, completionTokens: ctx.totalOutput, totalTokens: ctx.totalInput + ctx.totalOutput },
     stopReason: "max_iterations",
   };
+}
+
+/**
+ * Make middleware aborts visible to the user. Without this, the loop
+ * silently returns when ceilings/staleness fire and the chat just shows
+ * a frozen stream cursor — looks like the agent died for no reason.
+ * Now we stream a one-line explanation into chat so the user knows WHY
+ * the turn ended early. Followed by a normal `done` event so the chat
+ * UI flips out of streaming state.
+ */
+function surfaceMiddlewareAbort(
+  turn: AgentTurn,
+  firedBy: string | undefined,
+  onEvent?: (e: import("../types.js").ServerEvent) => void,
+): void {
+  if (!onEvent) return;
+  const reason = turn.errorMessage || `Turn aborted by ${firedBy || "safety check"}.`;
+  onEvent({ type: "stream", delta: `\n\n*[Stopped: ${reason}]*` });
+  onEvent({ type: "done", usage: turn.usage });
 }
 
 function abortTurn(ctx: LoopContext): AgentTurn {

@@ -115,11 +115,12 @@ function md(s) {
 
   let h = s;
 
-  // 1. Extract code blocks first (protect from further processing)
+  // 1. Extract code blocks first (protect from further processing).
+  // Note: no inline onclick — sanitizeHtml() strips on*= attributes. Button
+  // is wired via document-level delegation below (see code-copy-btn handler).
   h = h.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    const id = 'cb-' + Math.random().toString(36).slice(2, 8);
     const langClass = lang ? ` class="language-${lang}"` : '';
-    return ph(`<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang">${lang || 'code'}</span><button class="code-copy-btn" onclick="copyCodeBlock('${id}')" aria-label="Copy code">Copy</button></div><pre class="code-block" id="${id}"><code${langClass}>${esc(code)}</code></pre></div>`);
+    return ph(`<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang">${lang || 'code'}</span><button type="button" class="code-copy-btn" aria-label="Copy code">Copy</button></div><pre class="code-block"><code${langClass}>${esc(code)}</code></pre></div>`);
   });
 
   // 2. Extract inline images and links before escaping
@@ -315,16 +316,37 @@ if (_hlObserver) {
   });
 }
 
-// Copy code block to clipboard (feature 91)
-function copyCodeBlock(id) {
-  const block = document.getElementById(id);
-  if (!block) return;
-  const text = block.textContent;
-  navigator.clipboard.writeText(text).then(() => {
-    const btn = block.closest('.code-block-wrapper')?.querySelector('.code-copy-btn');
-    if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 2000); }
-  });
-}
+// Copy code block to clipboard (feature 91) — delegated, since sanitizeHtml()
+// strips inline on*= handlers. Walks from button → wrapper → <pre>.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest?.('.code-copy-btn');
+  if (!btn) return;
+  const pre = btn.closest('.code-block-wrapper')?.querySelector('pre.code-block');
+  if (!pre) return;
+  const text = pre.textContent;
+  const flash = (label) => {
+    btn.textContent = label;
+    setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+  };
+  const fallback = () => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      flash(ok ? 'Copied!' : 'Copy failed');
+    } catch { flash('Copy failed'); }
+  };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).then(() => flash('Copied!'), fallback);
+  } else {
+    fallback();
+  }
+});
 
 // Auth check (updates sidebar footer)
 async function checkAuth() {

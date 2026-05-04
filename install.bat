@@ -39,7 +39,7 @@ set "IS_ADMIN=%errorlevel%"
 
 :: ── Step 1: Check for Node.js ──
 echo.
-echo  [1/6] Checking for Node.js...
+echo  [1/7] Checking for Node.js...
 
 where node >nul 2>&1
 if %errorlevel% neq 0 (
@@ -118,7 +118,7 @@ goto :check_git
 :: ── Step 2: Check for Git ──
 :check_git
 echo.
-echo  [2/6] Checking for Git...
+echo  [2/7] Checking for Git...
 
 where git >nul 2>&1
 if %errorlevel% neq 0 (
@@ -155,7 +155,7 @@ if %errorlevel% equ 0 (
 
 :: ── Step 3: Download Local Agent X ──
 echo.
-echo  [3/6] Downloading Local Agent X...
+echo  [3/7] Downloading Local Agent X...
 
 set "INSTALL_DIR=%USERPROFILE%\Local-Agent-X"
 
@@ -205,7 +205,7 @@ if not exist "%INSTALL_DIR%\package.json" (
     exit /b 1
 )
 echo.
-echo  [4/6] Installing dependencies (this may take a minute)...
+echo  [4/7] Installing dependencies (this may take a minute)...
 
 call npm install --no-audit --no-fund
 if %errorlevel% neq 0 goto :npm_retry
@@ -234,7 +234,7 @@ echo  Browser automation setup complete.
 
 :: ── Step 5: Build ──
 echo.
-echo  [5/6] Building Local Agent X...
+echo  [5/7] Building Local Agent X...
 
 call npm run build
 if %errorlevel% neq 0 goto :build_failed
@@ -257,9 +257,52 @@ exit /b 1
 
 :build_done
 
-:: ── Step 6: Create shortcuts and start ──
+:: ── Step 6: Memory engine (Ollama + mxbai-embed-large) ──
+:: Without these, the embedding/semantic-recall layer of memory never
+:: populates. Keyword (FTS) search would still work, but "tell me about
+:: my AI journey"-style queries would return nothing.
 echo.
-echo  [6/6] Creating shortcuts...
+echo  [6/7] Setting up local memory engine (Ollama + embeddings)...
+
+where ollama >nul 2>&1
+if %errorlevel% neq 0 (
+    echo  Ollama not found. Installing via winget...
+    where winget >nul 2>&1
+    if !errorlevel! equ 0 (
+        winget install Ollama.Ollama --accept-package-agreements --accept-source-agreements -h
+        set "PATH=%LOCALAPPDATA%\Programs\Ollama;%PATH%"
+    ) else (
+        echo  winget not available — downloading Ollama installer...
+        powershell -Command "Invoke-WebRequest -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile '%TEMP%\OllamaSetup.exe' -UseBasicParsing" 2>nul
+        if exist "%TEMP%\OllamaSetup.exe" (
+            start /wait "" "%TEMP%\OllamaSetup.exe" /silent
+            del "%TEMP%\OllamaSetup.exe" 2>nul
+            set "PATH=%LOCALAPPDATA%\Programs\Ollama;%PATH%"
+        ) else (
+            echo  Ollama install failed — install manually from https://ollama.com
+            goto :memory_done
+        )
+    )
+)
+
+where ollama >nul 2>&1
+if %errorlevel% equ 0 (
+    echo  Pulling mxbai-embed-large embedding model ^(~670MB, one-time^)...
+    ollama pull mxbai-embed-large >nul 2>&1
+    if !errorlevel! equ 0 (
+        echo  Memory engine ready.
+    ) else (
+        echo  Model pull failed — run manually later: ollama pull mxbai-embed-large
+    )
+) else (
+    echo  Ollama not in PATH after install — restart shell + run: ollama pull mxbai-embed-large
+)
+
+:memory_done
+
+:: ── Step 7: Create shortcuts and start ──
+echo.
+echo  [7/7] Creating shortcuts...
 
 :: Create a VBS launcher (starts Electron without any visible cmd window)
 set "ICON_PATH=%INSTALL_DIR%\public\icon.ico"

@@ -1,5 +1,5 @@
 /**
- * Open Agent X — Contradiction Detector
+ * Local Agent X — Contradiction Detector
  *
  * Detects and resolves conflicting facts about the same entity.
  * Handles location, employment, preference, status, and numeric

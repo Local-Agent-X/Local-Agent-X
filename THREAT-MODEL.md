@@ -1,8 +1,8 @@
-# Threat Model — Open Agent X
+# Threat Model — Local Agent X
 
 ## Trust Model
 
-Open Agent X operates as a **single-user personal AI agent** on a local workstation. The system is NOT designed for multi-tenant or adversarial multi-user deployments.
+Local Agent X operates as a **single-user personal AI agent** on a local workstation. The system is NOT designed for multi-tenant or adversarial multi-user deployments.
 
 ### Trust Domains
 

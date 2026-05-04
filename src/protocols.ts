@@ -1,5 +1,5 @@
 /**
- * Protocol System for Open Agent X
+ * Protocol System for Local Agent X
  *
  * Protocols are built-in multi-step workflows the agent can execute.
  * Unlike one-shot tools, protocols maintain state across steps and

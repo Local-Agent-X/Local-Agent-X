@@ -1,6 +1,6 @@
 # src/AGENTS.md — Core engine rules
 
-You're about to edit the Open Agent X core engine. Stricter rules here than
+You're about to edit the Local Agent X core engine. Stricter rules here than
 anywhere else.
 
 ## Protected file list

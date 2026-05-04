@@ -10,7 +10,7 @@ async function settingsCheckUpdate() {
     const data = await res.json();
     if (data.updateAvailable) {
       status.style.color = 'var(--accent)';
-      status.innerHTML = `Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''} <a href="https://github.com/petermanrique101-sys/Open-Agent-X" target="_blank" style="color:var(--accent);margin-left:8px">View on GitHub</a>`;
+      status.innerHTML = `Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''} <a href="https://github.com/petermanrique101-sys/Local-Agent-X" target="_blank" style="color:var(--accent);margin-left:8px">View on GitHub</a>`;
     } else {
       status.style.color = 'var(--accent)';
       status.textContent = 'You are up to date! (v' + (data.localVersion || '0.1.0') + ')';

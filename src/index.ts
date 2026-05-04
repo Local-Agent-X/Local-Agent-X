@@ -101,7 +101,7 @@ enforceStartupIntegrity();
 
 logger.info(`
   ╔═══════════════════════════════════╗
-  ║       OPEN AGENT X  v0.1       ║
+  ║      LOCAL AGENT X  v0.1       ║
   ╚═══════════════════════════════════╝
 `);
 

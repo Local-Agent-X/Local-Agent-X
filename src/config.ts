@@ -44,7 +44,7 @@ export const PROFILE_DEFAULTS: Record<DeploymentProfile, ProfileDefaults> = {
 // Falls back to a minimal prompt if the file is missing.
 import { loadSystemPrompt, startConfigWatcher } from "./config-loader.js";
 import { writeManifest, startManifestWatcher } from "./manifest-generator.js";
-const DEFAULT_SYSTEM_PROMPT = loadSystemPrompt() || "You are a personal AI companion running inside Open Agent X. Use your tools to help the user.";
+const DEFAULT_SYSTEM_PROMPT = loadSystemPrompt() || "You are a personal AI companion running inside Local Agent X. Use your tools to help the user.";
 
 // Generate manifest and start watchers for hot-reload
 writeManifest();

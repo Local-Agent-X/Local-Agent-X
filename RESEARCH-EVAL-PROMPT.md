@@ -1,14 +1,14 @@
-# Open Agent X — Research Evaluation Brief
+# Local Agent X — Research Evaluation Brief
 
 ## Objective
 
-Evaluate Open Agent X's readiness for mass consumer adoption by benchmarking it against competing AI agent platforms. The core thesis: **Open Agent X removes the technical barriers that prevent non-developers from using AI agents**, through 1-click installation, OAuth-based LLM connections (no API key copy-pasting), and a UI-driven setup for every feature. Your job is to stress-test that thesis.
+Evaluate Local Agent X's readiness for mass consumer adoption by benchmarking it against competing AI agent platforms. The core thesis: **Local Agent X removes the technical barriers that prevent non-developers from using AI agents**, through 1-click installation, OAuth-based LLM connections (no API key copy-pasting), and a UI-driven setup for every feature. Your job is to stress-test that thesis.
 
 ---
 
 ## What You're Evaluating
 
-**Open Agent X** is a local-first, desktop AI agent that runs entirely on the user's machine. It wraps in an Electron app with a native Windows installer (NSIS, `oneClick: true`). The user downloads, double-clicks, and has a running AI agent with:
+**Local Agent X** is a local-first, desktop AI agent that runs entirely on the user's machine. It wraps in an Electron app with a native Windows installer (NSIS, `oneClick: true`). The user downloads, double-clicks, and has a running AI agent with:
 
 - **1-button LLM connection**: OAuth sign-in flows for both OpenAI and Anthropic Claude — click "Sign In with Claude" or "Sign In with OpenAI", authenticate in your browser, done. No API key hunting, no environment variables, no JSON config files.
 - **6 provider options**: OpenAI (OAuth + API key), Anthropic Claude (OAuth), xAI Grok, Google Gemini, Ollama (local/free), with live switching mid-conversation.
@@ -31,7 +31,7 @@ Everything is configured through the UI. There is no `.env` file to edit, no ter
 
 ### 1. Competitive Positioning
 
-Compare Open Agent X against the following on **ease of use for non-technical users** (someone who has never used a terminal):
+Compare Local Agent X against the following on **ease of use for non-technical users** (someone who has never used a terminal):
 
 | Competitor | Category |
 |---|---|
@@ -56,7 +56,7 @@ For each, evaluate:
 
 ### 2. Mass Adoption Readiness
 
-Score Open Agent X (1–10) on each axis with justification:
+Score Local Agent X (1–10) on each axis with justification:
 
 - **First-run experience**: Can someone's non-technical parent install this and send their first message without help?
 - **Time to value**: Minutes from download to "wow, this is useful."
@@ -114,7 +114,7 @@ Based on your findings, recommend:
 
 ## Repository Access
 
-The full source code is at: `https://github.com/petermanrique101-sys/Open-Agent-X`
+The full source code is at: `https://github.com/petermanrique101-sys/Local-Agent-X`
 
 Key paths for evaluation:
 - `install.bat` / `install.ps1` — Windows installer scripts
@@ -138,4 +138,4 @@ Key paths for evaluation:
 
 The agent space is moving fast. ChatGPT and Claude desktop apps serve hundreds of millions but are closed, cloud-only, and limited in tool access. Open-source agents (AutoGPT, Open Interpreter, CrewAI) are powerful but require developer skills to install and configure. No-code platforms (Lindy, Relevance AI) are cloud-hosted with vendor lock-in.
 
-Open Agent X sits in an unclaimed gap: **the power of an open-source agent framework with the setup experience of a consumer app**. The question is whether that gap is real, large enough to matter, and whether this product fills it convincingly. That's what we need you to answer.
+Local Agent X sits in an unclaimed gap: **the power of an open-source agent framework with the setup experience of a consumer app**. The question is whether that gap is real, large enough to matter, and whether this product fills it convincingly. That's what we need you to answer.

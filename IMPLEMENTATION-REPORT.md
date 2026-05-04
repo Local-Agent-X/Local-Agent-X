@@ -1,7 +1,7 @@
-# Open Agent X: Claude Code-Level Tool Implementation Report
+# Local Agent X: Claude Code-Level Tool Implementation Report
 
 > Date: 2026-04-01
-> Goal: Bring open-agent-x to feature parity with Claude Code's tool system,
+> Goal: Bring local-agent-x to feature parity with Claude Code's tool system,
 > add MS Office integration, and leverage our existing memory + security stack.
 
 ---
@@ -10,7 +10,7 @@
 
 ### What Claude Code Has (40 tools)
 
-| Category | Claude Code Tools | Open Agent X Status |
+| Category | Claude Code Tools | Local Agent X Status |
 |----------|------------------|-------------------|
 | **File System** | Read, Write, Edit, Glob, Grep | **HAVE** (read, write, edit, bash) |
 | **Shell** | Bash, PowerShell | **HAVE** (bash with security) |
@@ -42,7 +42,7 @@
 
 ### Architectural Differences
 
-| Aspect | Claude Code | Open Agent X |
+| Aspect | Claude Code | Local Agent X |
 |--------|------------|--------------|
 | **Tool Interface** | Rich (permissions, concurrency, progress, UI rendering, search hints) | Simple (name, params, execute) |
 | **Tool Loading** | Deferred — tools load on-demand via ToolSearch | Eager — all tools loaded upfront |

@@ -15,7 +15,7 @@ core engine code.
 
 ## Invariants
 
-- **No AI-attribution text in `system-prompt.md`.** No "I'm Claude", no "powered by Anthropic", no vendor branding. Identity is "you are running inside Open Agent X."
+- **No AI-attribution text in `system-prompt.md`.** No "I'm Claude", no "powered by Anthropic", no vendor branding. Identity is "you are running inside Local Agent X."
 - **No dark mode as default** in any behavioral config. Light unless user asks.
 - **Don't embed secrets.** Use `{{SECRET_NAME}}` placeholders — server resolves from `secretsStore`.
 - **`system-prompt.md` changes hot-reload immediately.** No restart, no build. If you edit it and don't see the change in the next turn, something is wrong with the watcher — use `self_edit` to debug.

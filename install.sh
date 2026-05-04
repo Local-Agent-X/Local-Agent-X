@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Open Agent X — macOS/Linux installer
+# Local Agent X — macOS/Linux installer
 # Usage: ./install.sh
 set -euo pipefail
 

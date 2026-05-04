@@ -1,5 +1,5 @@
 {
-  "name": "open-agent-x-desktop",
+  "name": "local-agent-x-desktop",
   "version": "0.1.0",
   "description": "Local Agent X — Desktop Companion",
   "main": "dist/main.js",

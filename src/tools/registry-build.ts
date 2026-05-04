@@ -102,6 +102,7 @@ const EAGER_TOOLS = new Set([
   "web_search", "ask_user", "view_image", "build_app", "create_page",
   "task_create", "task_update", "task_list", "task_get",
   "enter_plan_mode", "exit_plan_mode", "tool_search",
+  "youtube_analyze",
 ]);
 
 export function buildToolRegistry(): { registry: ToolRegistry; eagerTools: ToolDefinition[]; toolSearchTool: ToolDefinition; promptSection: string } {

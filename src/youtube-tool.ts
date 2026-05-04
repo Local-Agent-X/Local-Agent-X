@@ -64,17 +64,39 @@ function parseTranscriptXml(xml: string): string | null {
   return segments.length > 0 ? segments.join("\n") : null;
 }
 
+let _ytDlpReady: boolean | null = null;
+
+/** Ensure yt-dlp is importable; install once per process if missing. */
+async function ensureYtDlp(): Promise<boolean> {
+  if (_ytDlpReady !== null) return _ytDlpReady;
+  try {
+    await execFileAsync("python", ["-c", "import yt_dlp"], { timeout: 5_000, windowsHide: true });
+    _ytDlpReady = true;
+    return true;
+  } catch {
+    try {
+      await execFileAsync("python", ["-m", "pip", "install", "--quiet", "--upgrade", "yt-dlp"], {
+        timeout: 60_000, windowsHide: true,
+      });
+      await execFileAsync("python", ["-c", "import yt_dlp"], { timeout: 5_000, windowsHide: true });
+      _ytDlpReady = true;
+      return true;
+    } catch {
+      _ytDlpReady = false;
+      return false;
+    }
+  }
+}
+
 /** Fetch transcript via yt-dlp (most reliable) */
 async function fetchTranscriptYtDlp(videoId: string): Promise<string | null> {
+  if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
+  if (!(await ensureYtDlp())) return null;
+
   const outPath = join(tmpdir(), `oax_yt_${videoId}`);
   const subFile = `${outPath}.en.srv1`;
   try {
-    // Clean up any previous run
     if (existsSync(subFile)) unlinkSync(subFile);
-
-    if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-      return null; // Invalid YouTube video ID format
-    }
 
     await execFileAsync("python", [
       "-m", "yt_dlp",
@@ -90,7 +112,6 @@ async function fetchTranscriptYtDlp(videoId: string): Promise<string | null> {
       return parseTranscriptXml(xml);
     }
   } catch { /* fall through */ }
-  // Clean up
   try { if (existsSync(subFile)) unlinkSync(subFile); } catch {}
   return null;
 }
@@ -157,8 +178,10 @@ async function fetchPageData(videoId: string) {
 export const youtubeAnalyzeTool: ToolDefinition = {
   name: "youtube_analyze",
   description:
-    "Analyze a YouTube video: fetches title, channel, description, and full transcript. " +
-    "Accepts any YouTube URL or video ID. Use this whenever a user shares a YouTube link.",
+    "ALWAYS use this for any YouTube URL or video ID — never web_fetch the watch page. " +
+    "Returns title, channel, duration, view count, description, and full timestamped transcript. " +
+    "Accepts youtube.com/watch?v=, youtu.be/, youtube.com/shorts/, embeds, or a bare 11-char video ID. " +
+    "Uses yt-dlp (auto-installed via python -m yt_dlp) with a direct caption-URL fallback.",
   parameters: {
     type: "object",
     properties: {

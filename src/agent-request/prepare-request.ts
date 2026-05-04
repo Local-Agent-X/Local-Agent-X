@@ -272,10 +272,29 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     }
   } catch { /* best-effort */ }
 
+  // Codex-specific behavioral rider. Vague tone-shift instructions ("be a
+  // senior dev") barely move Codex; concrete IF-THEN behavioral rules tied
+  // to actual failure modes do. The pattern that triggered this: user asked
+  // Codex to "open chatgpt.com and generate an image"; Codex ground through
+  // ~10 read-only tool calls trying to figure out the login state instead
+  // of stopping to tell the user it needed them to sign in. Anthropic on the
+  // same prompt warned about typing passwords on a public network and asked
+  // the user to log in. Same prompt — different willingness-to-stop-and-ask.
+  let codexBehaviorRider = "";
+  if (isCodexProvider) {
+    codexBehaviorRider =
+      `\n\n[CODEX BEHAVIOR RIDER — concrete rules, follow strictly]\n` +
+      `1. **AUTH WALLS = STOP + SAFETY REMINDER**. The MOMENT you encounter a login page, password field, captcha, 2FA prompt, OAuth consent screen, or "verify it's you" challenge — STOP. Tell the user what's blocking you in one sentence, AND include a brief safety reminder when relevant — examples: "double-check the URL is the real site, not a phish," or "if you're on public WiFi, consider waiting until you're on a trusted network." Do NOT call more snapshot/extract/observe tools hoping to bypass it. Do NOT try to fill credentials yourself. Wait for the user to handle it and confirm.\n` +
+      `2. **NEVER TYPE PASSWORDS YOURSELF**. Even if a password field is empty and you "could" fill it, you must not. The user enters credentials in the browser themselves. If you need a stored secret for an API call, use request_secret — never paste secret values into a browser form.\n` +
+      `3. **READ-THEN-ACT DISCIPLINE**. After ~3 read-only tool calls (read/glob/grep/snapshot/extract/observe/web_fetch) without taking a write/edit/click/bash action, STOP. Either commit to an action with the context you have, or ask the user ONE focused question. Don't keep grinding reads — that's the failure mode that burns tokens and never ships.\n` +
+      `4. **DON'T PRETEND TO HAVE CAPABILITIES YOU LACK**. If a task needs something you can't do (uploading a file via a web UI element, taking a phone call, paying for something, accepting Terms on the user's behalf), say so plainly and ask the user to do that step.\n` +
+      `5. **SECURITY-CAUTIOUS BY DEFAULT**. When the task involves credentials, payments, or anything irreversible, surface the risk briefly before acting ("about to click Pay $X — confirm?") rather than just doing it.\n`;
+  }
+
   let systemPrompt: string;
   if (systemPromptOverride) {
     // Sub-agents provide their own prompt
-    systemPrompt = systemPromptOverride + backgroundCompletionsBlock + shortReplyContextBlock + memoryCurateBlock;
+    systemPrompt = systemPromptOverride + backgroundCompletionsBlock + shortReplyContextBlock + memoryCurateBlock + codexBehaviorRider;
   } else {
     // Use full prompt for all providers. The empty-response issue was caused
     // by reasoning: { effort: "low" } in codex-client.ts, not prompt size.
@@ -296,7 +315,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       notificationHint,
       bridgeContext: input.bridgeContext,
     });
-    systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock + shortReplyContextBlock + memoryCurateBlock;
+    systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock + shortReplyContextBlock + memoryCurateBlock + codexBehaviorRider;
   }
 
   // 5. Select tools based on channel (bridges get a smaller set)

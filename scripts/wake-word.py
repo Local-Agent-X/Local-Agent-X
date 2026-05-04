@@ -112,7 +112,7 @@ def run_openwakeword(sensitivity: float):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Wake word detection for Open Agent X")
+    parser = argparse.ArgumentParser(description="Wake word detection for Local Agent X")
     parser.add_argument("--engine", choices=["porcupine", "openwakeword", "auto"], default="auto")
     parser.add_argument("--sensitivity", type=float, default=0.6)
     args = parser.parse_args()

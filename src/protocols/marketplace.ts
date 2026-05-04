@@ -10,7 +10,7 @@ import type { Protocol } from "../protocols.js";
 import type { ToolDefinition } from "../types.js";
 import { loadCustomProtocols, saveCustomProtocols } from "./builder.js";
 
-const MARKETPLACE_REGISTRY_URL = "https://raw.githubusercontent.com/open-agent-x/protocol-marketplace/main/registry.json";
+const MARKETPLACE_REGISTRY_URL = "https://raw.githubusercontent.com/local-agent-x/protocol-marketplace/main/registry.json";
 const CACHE_PATH = join(homedir(), ".lax", "marketplace-cache.json");
 
 interface MarketplaceEntry {

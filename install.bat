@@ -1,18 +1,18 @@
 @echo off
 setlocal enabledelayedexpansion
-title Open Agent X - Installer
+title Local Agent X - Installer
 color 0A
 
 :: ═══════════════════════════════════════════════════════════
-::  OPEN AGENT X — One-Click Installer for Windows
+::  LOCAL AGENT X — One-Click Installer for Windows
 :: ═══════════════════════════════════════════════════════════
 ::
-::  Downloads, installs, and launches Open Agent X.
+::  Downloads, installs, and launches Local Agent X.
 ::  No technical knowledge required.
 ::
 ::  What this does:
 ::    1. Checks for Node.js (installs if missing)
-::    2. Downloads Open Agent X from GitHub
+::    2. Downloads Local Agent X from GitHub
 ::    3. Installs dependencies
 ::    4. Builds the project
 ::    5. Creates a desktop shortcut
@@ -22,13 +22,13 @@ color 0A
 echo.
 echo  ================================================================
 echo.
-echo    OPEN AGENT X - One-Click Installer
+echo    LOCAL AGENT X - One-Click Installer
 echo.
 echo    Your personal AI agent - runs locally, 100%% private.
 echo.
 echo  ================================================================
 echo.
-echo  This will install Open Agent X on your computer.
+echo  This will install Local Agent X on your computer.
 echo  Installation takes 2-5 minutes depending on your connection.
 echo.
 pause
@@ -153,11 +153,11 @@ if %errorlevel% equ 0 (
     set "HAS_GIT=0"
 )
 
-:: ── Step 3: Download Open Agent X ──
+:: ── Step 3: Download Local Agent X ──
 echo.
-echo  [3/6] Downloading Open Agent X...
+echo  [3/6] Downloading Local Agent X...
 
-set "INSTALL_DIR=%USERPROFILE%\Open-Agent-X"
+set "INSTALL_DIR=%USERPROFILE%\Local-Agent-X"
 
 if exist "%INSTALL_DIR%\package.json" goto :existing_install
 goto :fresh_download
@@ -174,12 +174,12 @@ goto :install_deps
 cd /d "%USERPROFILE%"
 echo.
 echo  Downloading from GitHub (ZIP)...
-set "ZIP_URL=https://github.com/petermanrique101-sys/Open-Agent-X/archive/refs/heads/main.zip"
-set "ZIP_FILE=%TEMP%\open-agent-x.zip"
+set "ZIP_URL=https://github.com/petermanrique101-sys/Local-Agent-X/archive/refs/heads/main.zip"
+set "ZIP_FILE=%TEMP%\local-agent-x.zip"
 powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%ZIP_URL%' -OutFile '%ZIP_FILE%' -UseBasicParsing"
 if not exist "%ZIP_FILE%" (
     echo.
-    echo  ERROR: Could not download Open Agent X.
+    echo  ERROR: Could not download Local Agent X.
     echo  Check your internet connection and try again.
     pause
     exit /b 1
@@ -234,7 +234,7 @@ echo  Browser automation setup complete.
 
 :: ── Step 5: Build ──
 echo.
-echo  [5/6] Building Open Agent X...
+echo  [5/6] Building Local Agent X...
 
 call npm run build
 if %errorlevel% neq 0 goto :build_failed
@@ -270,13 +270,13 @@ powershell -Command "Set-Content -Path '%INSTALL_DIR%\launch.vbs' -Value \"Set W
 powershell -Command "Set-Content -Path '%INSTALL_DIR%\start.bat' -Value \"@echo off`r`ncscript //nologo `\"%INSTALL_DIR%\launch.vbs`\"`r`nexit\"" 2>nul
 
 :: Also keep a start-server.bat for debug
-powershell -Command "Set-Content -Path '%INSTALL_DIR%\start-server.bat' -Value \"@echo off`r`ntitle Open Agent X Server`r`ncd /d %INSTALL_DIR%`r`nnode --max-old-space-size=512 dist/index.js`r`npause\"" 2>nul
+powershell -Command "Set-Content -Path '%INSTALL_DIR%\start-server.bat' -Value \"@echo off`r`ntitle Local Agent X Server`r`ncd /d %INSTALL_DIR%`r`nnode --max-old-space-size=512 dist/index.js`r`npause\"" 2>nul
 
 :: Create desktop shortcut (handles OneDrive Desktop path)
-powershell -Command "$desktop=[Environment]::GetFolderPath('Desktop'); $ws=New-Object -ComObject WScript.Shell; $sc=$ws.CreateShortcut(\"$desktop\Open Agent X.lnk\"); $sc.TargetPath='%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory='%INSTALL_DIR%\desktop'; $sc.Description='Open Agent X'; if(Test-Path '%ICON_PATH%'){$sc.IconLocation='%ICON_PATH%,0'}; $sc.Save(); Write-Host '  Desktop shortcut created.'" 2>nul
+powershell -Command "$desktop=[Environment]::GetFolderPath('Desktop'); $ws=New-Object -ComObject WScript.Shell; $sc=$ws.CreateShortcut(\"$desktop\Local Agent X.lnk\"); $sc.TargetPath='%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory='%INSTALL_DIR%\desktop'; $sc.Description='Local Agent X'; if(Test-Path '%ICON_PATH%'){$sc.IconLocation='%ICON_PATH%,0'}; $sc.Save(); Write-Host '  Desktop shortcut created.'" 2>nul
 
 :: Create Start Menu shortcut
-powershell -Command "$sm=\"$env:APPDATA\Microsoft\Windows\Start Menu\Programs\"; $ws=New-Object -ComObject WScript.Shell; $sc=$ws.CreateShortcut(\"${sm}Open Agent X.lnk\"); $sc.TargetPath='%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory='%INSTALL_DIR%\desktop'; $sc.Description='Open Agent X'; if(Test-Path '%ICON_PATH%'){$sc.IconLocation='%ICON_PATH%,0'}; $sc.Save()" 2>nul
+powershell -Command "$sm=\"$env:APPDATA\Microsoft\Windows\Start Menu\Programs\"; $ws=New-Object -ComObject WScript.Shell; $sc=$ws.CreateShortcut(\"${sm}Local Agent X.lnk\"); $sc.TargetPath='%INSTALL_DIR%\start.bat'; $sc.WorkingDirectory='%INSTALL_DIR%\desktop'; $sc.Description='Local Agent X'; if(Test-Path '%ICON_PATH%'){$sc.IconLocation='%ICON_PATH%,0'}; $sc.Save()" 2>nul
 
 :: ── Launch ──
 echo.
@@ -284,22 +284,22 @@ echo  ================================================================
 echo.
 echo    Installation complete!
 echo.
-echo    Open Agent X is installed at:
+echo    Local Agent X is installed at:
 echo    %INSTALL_DIR%
 echo.
 echo    To start it anytime:
-echo      - Double-click "Open Agent X" on your desktop
+echo      - Double-click "Local Agent X" on your desktop
 echo.
 echo  ================================================================
 echo.
-echo  Starting Open Agent X now...
+echo  Starting Local Agent X now...
 echo.
 
 :: Launch the Electron desktop app (starts server + opens UI automatically)
 cscript //nologo "%INSTALL_DIR%\launch.vbs"
 
 echo.
-echo  Open Agent X is running! Check your browser.
+echo  Local Agent X is running! Check your browser.
 echo  Press any key to close this installer (the server keeps running).
 echo.
 pause

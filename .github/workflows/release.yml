@@ -36,21 +36,21 @@ jobs:
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          tar -czf open-agent-x-${VERSION}.tar.gz dist/ public/ package.json package-lock.json SECURITY.md THREAT-MODEL.md LICENSE
+          tar -czf local-agent-x-${VERSION}.tar.gz dist/ public/ package.json package-lock.json SECURITY.md THREAT-MODEL.md LICENSE
 
       - name: Generate checksums
         run: |
-          sha256sum open-agent-x-*.tar.gz > checksums-sha256.txt
+          sha256sum local-agent-x-*.tar.gz > checksums-sha256.txt
           cat checksums-sha256.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            open-agent-x-*.tar.gz
+            local-agent-x-*.tar.gz
             checksums-sha256.txt
           body: |
-            ## Open Agent X ${{ env.VERSION }}
+            ## Local Agent X ${{ env.VERSION }}
 
             ### Security
             - SHA-256 checksums included for integrity verification
@@ -59,7 +59,7 @@ jobs:
 
             ### Install
             ```bash
-            tar -xzf open-agent-x-${{ env.VERSION }}.tar.gz
+            tar -xzf local-agent-x-${{ env.VERSION }}.tar.gz
             npm install --production
             npm run dev
             ```

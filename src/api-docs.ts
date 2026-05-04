@@ -50,9 +50,9 @@ export function generateApiSpec(
   routes: ApiRoute[],
   options?: { title?: string; version?: string; description?: string; serverUrl?: string }
 ): OpenApiSpec {
-  const title = options?.title ?? "Open Agent X API";
+  const title = options?.title ?? "Local Agent X API";
   const version = options?.version ?? "1.0.0";
-  const description = options?.description ?? "REST API for the Open Agent X platform";
+  const description = options?.description ?? "REST API for the Local Agent X platform";
   const serverUrl = options?.serverUrl ?? "http://localhost:3131";
 
   // Collect unique tags
@@ -103,7 +103,7 @@ export function generateApiSpec(
   };
 }
 
-// ── Built-in route definitions for Open Agent X ──
+// ── Built-in route definitions for Local Agent X ──
 
 export const builtinRoutes: ApiRoute[] = [
   // Chat

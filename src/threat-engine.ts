@@ -3,7 +3,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * THREAT ENGINE — Advanced behavioral security for Open Agent X
+ * THREAT ENGINE — Advanced behavioral security for Local Agent X
  *
  * Five integrated behavioral security systems:
  *

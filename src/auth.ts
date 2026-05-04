@@ -209,7 +209,7 @@ export function initiateOAuthLogin(): { authUrl: string; promise: Promise<OAuthT
         res.end(`
           <html><body style="background:#0a0a0f;color:#00ff41;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
             <div style="text-align:center">
-              <h1>Open Agent X</h1>
+              <h1>Local Agent X</h1>
               <p>Authentication successful. You can close this tab.</p>
             </div>
           </body></html>

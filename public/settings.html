@@ -818,7 +818,7 @@ async function settingsCheckUpdate() {
     const res = await apiGet('/api/updates/check');
     if (res.updateAvailable) {
       status.style.color = 'var(--accent)';
-      status.innerHTML = `Update available: v${res.remoteVersion}${res.remoteCommit ? ' (' + res.remoteCommit + ')' : ''}${res.releaseNotes ? ' — ' + res.releaseNotes : ''} <a href="https://github.com/petermanrique101-sys/Open-Agent-X" target="_blank" style="color:var(--accent);margin-left:8px">View on GitHub</a>`;
+      status.innerHTML = `Update available: v${res.remoteVersion}${res.remoteCommit ? ' (' + res.remoteCommit + ')' : ''}${res.releaseNotes ? ' — ' + res.releaseNotes : ''} <a href="https://github.com/petermanrique101-sys/Local-Agent-X" target="_blank" style="color:var(--accent);margin-left:8px">View on GitHub</a>`;
     } else {
       status.style.color = 'var(--accent)';
       status.textContent = 'You are up to date! (v' + (res.localVersion || '0.1.0') + ')';

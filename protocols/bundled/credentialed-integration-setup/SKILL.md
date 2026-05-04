@@ -16,7 +16,7 @@ End-to-end pattern for any service that issues a one-shot credential (app passwo
    - Twilio / Stripe / etc.: provider's API keys / credentials page
    If you don't know the exact URL, `web_search` for "<provider> app password" or "<provider> api keys settings".
 
-2. **Generate** the credential. Click the create/generate/new-app-password button, set the scope appropriate to the task (SMTP-only for email send, smallest scope for API keys), give it a memorable name like "Open Agent X — SMTP".
+2. **Generate** the credential. Click the create/generate/new-app-password button, set the scope appropriate to the task (SMTP-only for email send, smallest scope for API keys), give it a memorable name like "Local Agent X — SMTP".
 
 3. **Capture immediately** with `browser_capture_to_secret` BEFORE the user dismisses the reveal dialog. Providers only show the value once.
    - Use `text_selector` for `<code>`/`<pre>`/`<span>` elements displaying the value as text.

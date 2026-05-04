@@ -29,7 +29,7 @@ export async function* streamViaOAuthSDK(options: StreamOptions): AsyncGenerator
     "Authorization": `Bearer ${token}`,
     "anthropic-version": "2023-06-01",
     "anthropic-beta": "oauth-2025-04-20,interleaved-thinking-2025-05-14",
-    "user-agent": "open-agent-x/0.1",
+    "user-agent": "local-agent-x/0.1",
     "accept": "application/json",
   };
 

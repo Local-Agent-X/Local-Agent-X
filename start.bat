@@ -1,7 +1,7 @@
 @echo off
-title Open Agent X
+title Local Agent X
 cd /d "%~dp0"
-echo Starting Open Agent X...
+echo Starting Local Agent X...
 echo.
 
 :: Start server in background
@@ -24,7 +24,7 @@ if defined TOKEN (
 )
 
 echo.
-echo Open Agent X is running. Close this window to stop the server.
+echo Local Agent X is running. Close this window to stop the server.
 echo.
 
 :: Keep window open so server stays running

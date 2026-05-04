@@ -1,5 +1,5 @@
 /**
- * Open Agent X — Memory Compression
+ * Local Agent X — Memory Compression
  *
  * Multi-resolution memory storage: keeps four compression levels
  * (full / summary / keypoints / skeleton) so older memories use

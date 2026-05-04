@@ -2,14 +2,14 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in Open Agent X, please report it responsibly.
+If you discover a security vulnerability in Local Agent X, please report it responsibly.
 
 **DO NOT** open a public GitHub issue for security vulnerabilities.
 
 ### How to Report
 
 1. Email: [TBD - add security contact email]
-2. GitHub: Use [GitHub Security Advisories](https://github.com/petermanrique101-sys/Open-Agent-X/security/advisories/new) to privately report vulnerabilities.
+2. GitHub: Use [GitHub Security Advisories](https://github.com/petermanrique101-sys/Local-Agent-X/security/advisories/new) to privately report vulnerabilities.
 
 ### What to Include
 
@@ -28,7 +28,7 @@ If you discover a security vulnerability in Open Agent X, please report it respo
 
 ## Security Architecture
 
-Open Agent X uses a multi-layered security model:
+Local Agent X uses a multi-layered security model:
 
 ### Layer 1: SecurityLayer (Static Rules)
 - SSRF protection with DNS pinning (prevents DNS rebinding)
@@ -63,7 +63,7 @@ Open Agent X uses a multi-layered security model:
 
 ## Trust Model
 
-Open Agent X is designed as a **single-user personal agent** running on a local workstation. Key assumptions:
+Local Agent X is designed as a **single-user personal agent** running on a local workstation. Key assumptions:
 
 - The server binds to `127.0.0.1` only (not exposed to network)
 - Authentication is via a shared bearer token (single-user model)

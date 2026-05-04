@@ -1,5 +1,5 @@
 /**
- * Open Agent X — Tiered Memory Storage
+ * Local Agent X — Tiered Memory Storage
  *
  * Classifies memories into HOT / WARM / COLD / ARCHIVE tiers based on
  * recency and access frequency.  Searches cascade through tiers:

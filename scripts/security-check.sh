@@ -3,7 +3,7 @@
 # Usage: ./scripts/security-check.sh
 
 set -e
-echo "=== Open Agent X Security Check ==="
+echo "=== Local Agent X Security Check ==="
 
 # 1. npm audit
 echo ""

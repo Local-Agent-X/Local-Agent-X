@@ -13,10 +13,12 @@ export type RouteDestination = "inline" | "delegate";
 /** Result of a routing decision. */
 export interface RouteDecision {
   destination: RouteDestination;
-  /** Short rule id for telemetry (e.g. "discuss-prefix", "build-noun-phrase", "LLM-veto"). */
+  /** Short rule id for telemetry (e.g. "discuss-prefix", "ack-greeting", "llm: …"). */
   reason: string;
   /** Word count of the message (caller may use for further routing logic). */
   wordCount: number;
+  /** True when a hard regex shortcut decided this. False/undefined means the router should consult the LLM classifier. */
+  definitive?: boolean;
 }
 
 /** Single entry in the persisted decision log. */

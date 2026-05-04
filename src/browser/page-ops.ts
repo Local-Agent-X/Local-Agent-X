@@ -31,9 +31,25 @@ export async function screenshotAsBase64(page: Page, engine: string): Promise<st
   return `Screenshot captured\nURL: ${url}\nTitle: ${title}\nEngine: ${engine}\nSize: ${buffer.length} bytes\n\n[base64:${base64.slice(0, 200)}...]\n\nUse 'extract' action to read the page text content.`;
 }
 
-/** Run an arbitrary JS expression in the page. Caller must pre-check it. */
+/** Run an arbitrary JS expression in the page. Caller must pre-check it.
+ *  Wraps the script intelligently so the agent can write either an
+ *  expression OR statements with `return`:
+ *    - `document.title`              → wrapped as expression
+ *    - `return document.title`       → wrapped as IIFE
+ *    - `for (...) { return ... }`    → wrapped as IIFE
+ *  Without this wrap, page.evaluate(string) treats the input as an
+ *  expression, so any top-level `return` errors with "Illegal return
+ *  statement" — that's been silently breaking agent browser flows.
+ */
 export async function evaluateScript(page: Page, script: string): Promise<string> {
-  const result = await page.evaluate(script);
+  const trimmed = script.trim().replace(/;\s*$/, "");
+  const hasReturn = /(^|[\s;{}])return\b/.test(trimmed);
+  // IIFE wrap if return appears at any statement-context position.
+  // Otherwise treat the whole thing as an expression and parenthesize.
+  const wrapped = hasReturn
+    ? `(() => { ${trimmed} })()`
+    : `(${trimmed})`;
+  const result = await page.evaluate(wrapped);
   let output = typeof result === "string" ? result : JSON.stringify(result, null, 2);
   if (output && output.length > MAX_TEXT_LENGTH) {
     output = output.slice(0, MAX_TEXT_LENGTH) + `\n\n[Truncated at ${MAX_TEXT_LENGTH} chars]`;

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, rmSync } from "node:fs";
-import { join, resolve, relative, extname } from "node:path";
+import { join, resolve, relative, extname, dirname } from "node:path";
+import { hostname } from "node:os";
 import { promisify } from "node:util";
 
 import { createLogger } from "./logger.js";
@@ -153,7 +154,14 @@ export class AgentSync {
 
     if (this.config.syncWorkspace) {
       const workspace = resolve("workspace");
-      if (existsSync(workspace)) this.mirrorDir(workspace, join(this.syncDir, "workspace"));
+      if (existsSync(workspace)) {
+        // Workspace push uses tombstone-driven deletion (see
+        // writeTombstonesForDeletedApps + applyTombstones). The mirror is
+        // additive-only so local-only apps on other machines aren't
+        // obliterated when this machine pushes.
+        this.writeTombstonesForDeletedApps();
+        this.mirrorDir(workspace, join(this.syncDir, "workspace"), /* additiveOnly */ true);
+      }
     }
 
     if (this.config.syncCronJobs) {
@@ -168,8 +176,17 @@ export class AgentSync {
     }
   }
 
-  /** Mirror src → dest: copies files, deletes dest entries not in src */
-  private mirrorDir(src: string, dest: string): void {
+  /**
+   * Mirror src → dest: copies files. When `additiveOnly` is true, dest entries
+   * not in src are LEFT IN PLACE — caller is responsible for tombstone-driven
+   * deletion. When false (legacy default), dest entries not in src are removed.
+   *
+   * The workspace push path (push() → mirrorDir(workspace, …)) MUST pass
+   * additiveOnly=true. Otherwise A pushing its workspace deletes B's
+   * machine-only apps from sync-repo, which then propagates to all machines
+   * on next pull. That's the bug the tombstone system replaces.
+   */
+  private mirrorDir(src: string, dest: string, additiveOnly = false): void {
     if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
     const srcEntries = new Set<string>();
 
@@ -177,7 +194,7 @@ export class AgentSync {
       const srcPath = join(src, entry);
       const stat = statSync(srcPath);
       if (stat.isDirectory()) {
-        if (!SKIP_DIRS.has(entry)) { srcEntries.add(entry); this.mirrorDir(srcPath, join(dest, entry)); }
+        if (!SKIP_DIRS.has(entry)) { srcEntries.add(entry); this.mirrorDir(srcPath, join(dest, entry), additiveOnly); }
       } else if (stat.isFile()) {
         const ext = extname(entry).toLowerCase();
         const isDoc = /^(PROJECT|CHANGELOG|TODO|README)\.md$/i.test(entry);
@@ -187,11 +204,14 @@ export class AgentSync {
         }
       }
     }
-    // Remove entries deleted from source
-    for (const entry of readdirSync(dest)) {
-      if (!srcEntries.has(entry)) {
-        const p = join(dest, entry);
-        if (statSync(p).isDirectory()) rmSync(p, { recursive: true, force: true }); else unlinkSync(p);
+    if (!additiveOnly) {
+      // Legacy destructive behavior — only safe for caller-controlled trees
+      // where remote-state really IS authoritative. NOT safe for workspace.
+      for (const entry of readdirSync(dest)) {
+        if (!srcEntries.has(entry)) {
+          const p = join(dest, entry);
+          if (statSync(p).isDirectory()) rmSync(p, { recursive: true, force: true }); else unlinkSync(p);
+        }
       }
     }
   }
@@ -265,7 +285,13 @@ export class AgentSync {
     if (this.config.syncWorkspace) {
       const syncWs = join(this.syncDir, "workspace");
       const ws = resolve("workspace");
-      if (existsSync(syncWs)) { if (!existsSync(ws)) mkdirSync(ws, { recursive: true }); this.pullDir(syncWs, ws); }
+      if (existsSync(syncWs)) {
+        if (!existsSync(ws)) mkdirSync(ws, { recursive: true });
+        // Workspace pull is additive-only — files only get copied IN, never
+        // deleted by missing-from-remote. Deletions go through tombstones.
+        this.pullDir(syncWs, ws, /* additiveOnly */ true);
+        this.applyTombstones();
+      }
     }
 
     if (this.config.syncCronJobs) {
@@ -280,8 +306,18 @@ export class AgentSync {
     }
   }
 
-  /** Pull from sync → local. Propagates deletions. */
-  private pullDir(src: string, dest: string): void {
+  /**
+   * Pull from sync → local.
+   *
+   * When `additiveOnly` is true, local entries missing from src are LEFT
+   * ALONE — caller applies tombstones explicitly to drive deletions. When
+   * false (legacy), missing-from-remote propagates as a local delete (the
+   * old buggy behavior — see writeTombstonesForDeletedApps for the fix).
+   *
+   * Used additively for workspace pulls; legacy/destructive for older
+   * pull paths that still rely on it (none currently — kept for safety).
+   */
+  private pullDir(src: string, dest: string, additiveOnly = false): void {
     if (!existsSync(dest)) mkdirSync(dest, { recursive: true });
     const remoteEntries = new Set<string>();
     for (const entry of readdirSync(src)) {
@@ -290,17 +326,108 @@ export class AgentSync {
       const destPath = join(dest, entry);
       const stat = statSync(srcPath);
       if (stat.isDirectory()) {
-        this.pullDir(srcPath, destPath);
+        this.pullDir(srcPath, destPath, additiveOnly);
       } else if (stat.isFile()) {
         if (!existsSync(destPath) || statSync(destPath).mtimeMs < stat.mtimeMs) writeFileSync(destPath, readFileSync(srcPath));
       }
     }
-    // Delete local entries removed from sync repo
-    for (const entry of readdirSync(dest)) {
-      if (!remoteEntries.has(entry)) {
-        const p = join(dest, entry);
-        logger.info(`[sync] Deleting ${relative(resolve("workspace"), p)} (removed from remote)`);
-        if (statSync(p).isDirectory()) rmSync(p, { recursive: true, force: true }); else unlinkSync(p);
+    if (!additiveOnly) {
+      // Legacy: delete local entries removed from sync repo. NOT used for
+      // workspace anymore (see applyTombstones).
+      for (const entry of readdirSync(dest)) {
+        if (!remoteEntries.has(entry)) {
+          const p = join(dest, entry);
+          logger.info(`[sync] Deleting ${relative(resolve("workspace"), p)} (removed from remote)`);
+          if (statSync(p).isDirectory()) rmSync(p, { recursive: true, force: true }); else unlinkSync(p);
+        }
+      }
+    }
+  }
+
+  // ── Tombstones — explicit deletion intent across machines ──
+  //
+  // The bug we replaced: comparing local-vs-remote can't distinguish
+  // "deleted on remote" from "never existed on remote." Both look like
+  // "missing from remote." That meant any app present on machine A but
+  // never on machine B would get deleted from A as soon as B pushed, then
+  // propagated to all machines on pull.
+  //
+  // The fix: every machine maintains a snapshot of which workspace/apps
+  // existed at its last push (~/.lax/sync-state/last-pushed-apps.json).
+  // On the next push, anything in last-snapshot but missing now = "I
+  // intentionally deleted this since last push" → write a tombstone file
+  // into sync-repo/.tombstones/<name>.json. Tombstones are git-tracked so
+  // they propagate to all machines via the existing sync-repo git push/pull.
+  // On pull, every tombstone in remote → ensure local doesn't have that app.
+  // Local-only apps (never in last-snapshot, never tombstoned) survive.
+  //
+  // First-run safety: if the snapshot doesn't exist yet, we initialize it
+  // with the current set of apps and write zero tombstones — so a brand
+  // new machine doesn't retroactively tombstone every app the user has.
+
+  private get snapshotFile(): string { return join(this.dataDir, "sync-state", "last-pushed-apps.json"); }
+  private get tombstonesDir(): string { return join(this.syncDir, ".tombstones"); }
+  private get appsDir(): string { return join(resolve("workspace"), "apps"); }
+
+  /** Top-level subdirectories of workspace/apps — these are the units we tombstone. */
+  private listWorkspaceApps(): string[] {
+    if (!existsSync(this.appsDir)) return [];
+    return readdirSync(this.appsDir).filter(e => {
+      try { return statSync(join(this.appsDir, e)).isDirectory(); } catch { return false; }
+    });
+  }
+
+  /**
+   * Pre-push: detect apps deleted on this machine since the last push,
+   * write tombstones for them into sync-repo/.tombstones/, update the
+   * per-machine snapshot. Idempotent — re-running doesn't re-tombstone.
+   */
+  private writeTombstonesForDeletedApps(): void {
+    const current = new Set(this.listWorkspaceApps());
+    let last: string[] = [];
+    let snapshotExisted = false;
+    if (existsSync(this.snapshotFile)) {
+      snapshotExisted = true;
+      try { last = JSON.parse(readFileSync(this.snapshotFile, "utf-8")); } catch { last = []; }
+    }
+    if (!snapshotExisted) {
+      // First run on this machine — DO NOT tombstone everything not in snapshot.
+      // Just initialize snapshot to current state. Future pushes will detect
+      // real deletions vs. this baseline.
+      mkdirSync(dirname(this.snapshotFile), { recursive: true });
+      writeFileSync(this.snapshotFile, JSON.stringify([...current].sort(), null, 2));
+      logger.info(`[sync] tombstone snapshot initialized (${current.size} apps baseline)`);
+      return;
+    }
+    const deletedSinceLast = last.filter(name => !current.has(name));
+    if (deletedSinceLast.length > 0) {
+      if (!existsSync(this.tombstonesDir)) mkdirSync(this.tombstonesDir, { recursive: true });
+      for (const name of deletedSinceLast) {
+        const tombstone = { name, deletedAt: new Date().toISOString(), deletedBy: hostname() };
+        writeFileSync(join(this.tombstonesDir, `${name}.json`), JSON.stringify(tombstone, null, 2));
+        logger.info(`[sync] tombstone written for "${name}" (deleted on ${tombstone.deletedBy})`);
+      }
+    }
+    // Update snapshot to current state
+    writeFileSync(this.snapshotFile, JSON.stringify([...current].sort(), null, 2));
+  }
+
+  /**
+   * Post-pull: read tombstones in sync-repo and ensure local doesn't have
+   * any tombstoned apps. Idempotent — apps already absent locally are skipped.
+   */
+  private applyTombstones(): void {
+    if (!existsSync(this.tombstonesDir)) return;
+    if (!existsSync(this.appsDir)) return;
+    for (const file of readdirSync(this.tombstonesDir)) {
+      if (!file.endsWith(".json")) continue;
+      const name = file.slice(0, -5);
+      const localApp = join(this.appsDir, name);
+      if (existsSync(localApp)) {
+        logger.info(`[sync] tombstone — removing local "${name}"`);
+        try { rmSync(localApp, { recursive: true, force: true }); } catch (e) {
+          logger.warn(`[sync] tombstone removal failed for ${name}: ${(e as Error).message}`);
+        }
       }
     }
   }

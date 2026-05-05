@@ -108,6 +108,13 @@ export interface Op {
   outputContract?: string[];
   inputBindings?: Record<string, string>;
   resourceLocks?: string[];
+  /**
+   * Additive canonical-loop fields (PRD §9). Optional sub-object so legacy
+   * consumers ignore it; canonical-loop is the sole writer. Absent on every
+   * op submitted under flag OFF and on every op created before Issue 01.
+   * See src/canonical-loop/types.ts for the full shape.
+   */
+  canonical?: import("../canonical-loop/types.js").CanonicalOpFields;
 }
 
 // ── Op events (streamed worker→supervisor→subscribers, also disked) ─────

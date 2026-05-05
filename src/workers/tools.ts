@@ -32,6 +32,7 @@ import { readCheckpoint } from "./checkpoint.js";
 import { buildContextPack } from "./context-pack-builder.js";
 import { getRetryPolicy } from "./heartbeat.js";
 import { trackOpForSession, listOpsForSession } from "./session-bridge.js";
+import { decideSubmitRouting, canonicalLoopEntry } from "../canonical-loop/index.js";
 import type { Op, OpLane, OpVisibility } from "./types.js";
 
 // ── Shared op-construction helper ─────────────────────────────────────────
@@ -218,7 +219,16 @@ export const opSubmitAsyncTool: ToolDefinition = {
       RECENT_SUBMITS.set(sessionId, { opId: op.id, ts: Date.now(), task });
     }
 
-    void submitOp(op).catch(() => { /* result already routed via bridge */ });
+    // Canonical-loop feature-flag routing (PRD §17, Issue 01). Flag default
+    // OFF — legacy path unchanged. Flag ON captures canonical_flag_value on
+    // the op, persists the skeleton state_changed event, and SKIPS the
+    // legacy worker-pool dispatch (Issue 03 lights up the real loop).
+    const routing = decideSubmitRouting(op);
+    if (routing.route === "canonical") {
+      canonicalLoopEntry(op, sessionId ? { sessionId } : {});
+    } else {
+      void submitOp(op).catch(() => { /* result already routed via bridge */ });
+    }
 
     return {
       content:

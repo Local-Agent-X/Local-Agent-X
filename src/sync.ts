@@ -487,7 +487,49 @@ export class AgentSync {
       await this.init();
       this.copyToSync();
       await this.git("add", "-A");
-      try { const s = await this.git("status", "--porcelain"); if (!s) { this.isSyncing = false; return { success: true, message: "Nothing to sync" }; } } catch {}
+      let porcelain = "";
+      try { porcelain = await this.git("status", "--porcelain"); } catch {}
+      if (!porcelain) { this.isSyncing = false; return { success: true, message: "Nothing to sync" }; }
+
+      // Mass-deletion circuit breaker. Live failure (2026-05-05): a sync
+      // push from this machine deleted 21 workspace apps belonging to other
+      // machines, despite the additive-only mirror + tombstone system. Root
+      // cause unconfirmed (likely stale local sync-repo + rebase artifact),
+      // but the FIX is defense-in-depth: refuse any push whose workspace/apps
+      // mass-deletes top-level apps that aren't paired with explicit
+      // tombstones. Forces the user to investigate before destructive sync
+      // changes propagate. Recovery from origin is one git checkout; an
+      // unintended push is permanent and propagates everywhere on next pull.
+      const deletedAppDirs = new Set<string>();
+      const tombstonedNames = new Set<string>();
+      for (const line of porcelain.split("\n")) {
+        const status = line.slice(0, 2);
+        const path = line.slice(3).trim();
+        if (!path) continue;
+        if (status.includes("D")) {
+          const m = path.match(/^workspace\/apps\/([^/]+)\//);
+          if (m) deletedAppDirs.add(m[1]);
+        }
+        if (status.includes("A") || status.includes("?")) {
+          const m = path.match(/^\.tombstones\/([^/]+)\.json$/);
+          if (m) tombstonedNames.add(m[1]);
+        }
+      }
+      const unauthorizedDeletes = [...deletedAppDirs].filter(name => !tombstonedNames.has(name));
+      const ABORT_THRESHOLD = 3;
+      if (unauthorizedDeletes.length >= ABORT_THRESHOLD) {
+        // Don't auto-reset — leave the staged state so the user can inspect
+        // what was about to happen (`git status` / `git diff --cached` in
+        // ~/.lax/sync-repo). Manual recovery: either `git reset HEAD` and
+        // `git checkout -- .` to discard, or wipe and re-clone, then sync
+        // again.
+        const list = unauthorizedDeletes.slice(0, 10).join(", ") + (unauthorizedDeletes.length > 10 ? `, …+${unauthorizedDeletes.length - 10} more` : "");
+        const msg = `[sync] ABORTED: push would mass-delete ${unauthorizedDeletes.length} workspace apps with no matching tombstones (${list}). Likely a stale local sync-repo clone. Inspect ~/.lax/sync-repo (git status / git diff --cached), then manually reconcile (wipe and re-clone, or git pull origin main) before retrying.`;
+        logger.error(msg);
+        this.isSyncing = false;
+        return { success: false, message: msg };
+      }
+
       const hostname = (await execFileAsync("hostname", [], { windowsHide: true })).stdout.trim();
       await this.git("commit", "-m", `sync from ${hostname} at ${new Date().toISOString()}`);
       try { await this.git("pull", "--rebase", "origin", "main"); } catch {

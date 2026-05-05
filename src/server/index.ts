@@ -8,7 +8,7 @@ import { bootstrapTools } from "./bootstrap-tools.js";
 import { createBridgeHandler, bootstrapBridges } from "./bootstrap-bridges.js";
 import { createSessionHelpers } from "./session-helpers.js";
 import { createRequestHandler } from "./request-handler.js";
-import { createHttpServer, setupVoiceWs, wireWsChat, startConfigWatcher, logStartup, registerShutdown } from "./lifecycle.js";
+import { createHttpServer, setupVoiceWs, wireWsChat, startConfigWatcher, logStartup, registerShutdown, bootstrapCanonicalLoop } from "./lifecycle.js";
 import { registerHandlerEvents } from "./handler-events.js";
 import { startBackgroundJobs } from "./background-jobs.js";
 
@@ -103,6 +103,7 @@ export async function startServer(config: LAXConfig) {
   });
 
   startConfigWatcher(dataDir);
+  bootstrapCanonicalLoop();
 
   let jobScheduler: import("./scheduler.js").JobScheduler | undefined;
   server.listen(config.port, "127.0.0.1", () => {

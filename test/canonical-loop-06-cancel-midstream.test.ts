@@ -173,9 +173,13 @@ describe("Issue 06 — happy path cancel mid-stream", () => {
     expect(bodyOf<{ reason: string }>(leaseLost!).reason).toBe("cancelled");
 
     // Partial turn discarded — no commit artifacts for the aborted turn.
+    // The turn-0 user seed is input (appended before the adapter ran) and
+    // remains; only assistant/tool_result output messages are dropped.
     expect(events.some(e => e.type === "turn_committed")).toBe(false);
     expect(readOpTurn(op.id, 0)).toBeNull();
-    expect(readOpMessages(op.id)).toEqual([]);
+    const cancelledMsgs = readOpMessages(op.id);
+    expect(cancelledMsgs.every(m => m.role === "user")).toBe(true);
+    expect(cancelledMsgs.some(m => m.role === "assistant")).toBe(false);
 
     // cancel_requested_at cleared on the terminal write.
     expect(readOp(op.id)?.canonical?.cancelRequestedAt).toBeNull();

@@ -181,6 +181,27 @@ This captures the rollback in the audit trail and feeds the post-mortem.
 
 ---
 
+## Release markers — what each tag actually represents
+
+`canonical-loop-v1.0` (the ship marker) was corrected on 2026-05-05 to
+point at the post-seeding-fix commit `c2fa178`. The earlier `v1.0`
+location (`613edad`) preceded the seeding fix and so marked a version
+that did not actually execute user tasks. The corrected marker
+includes Primal's production bootstrap wiring, the seeding parity
+fix, the extended soak probes, and the Issue 16 follow-up doc.
+
+`canonical-loop-v1.0-rc1` is intentionally left at `613edad` as the
+audit marker for "what the pre-seeding-fix RC looked like." Anyone
+inspecting the history can compare `rc1` (lifecycle-only) against
+`v1.0` (full task execution) to see exactly what changed.
+
+When in doubt, prefer `canonical-loop-v1.0` (= `c2fa178`) for canary
+or rollback baselines. Do NOT pull from `rc1` for production —
+canonical-routed ops there will succeed in lifecycle but the model
+will not see the user's prompt.
+
+---
+
 ## v1.0 history note: pre-seeding soak results are lifecycle-only
 
 **Important context for anyone reading older soak/staging results.**

@@ -35,10 +35,22 @@ export interface PersistOpOptions {
    * 07). Pause and cancel signals are still preserved.
    */
   clearRedirect?: boolean;
+  /**
+   * When false (default true), the in-memory op's `leaseOwner` /
+   * `leaseExpiresAt` columns are persisted as-is — the caller is the
+   * lease writer (`lease.ts`) or the recovery primitive that explicitly
+   * clears a stale lease.
+   *
+   * Default behavior: lease columns are restored from disk so writers
+   * that DO NOT own the lease (state-machine, checkpoint, control APIs)
+   * cannot clobber a lease an active worker is heartbeating (Issue 08).
+   */
+  preserveLeaseFromDisk?: boolean;
 }
 
 export function persistOpKeepingSignals(op: Op, opts: PersistOpOptions = {}): void {
   const onDisk = readOp(op.id);
+  const preserveLease = opts.preserveLeaseFromDisk !== false;
   if (onDisk?.canonical) {
     if (!op.canonical) op.canonical = {};
     op.canonical.pauseRequestedAt = onDisk.canonical.pauseRequestedAt ?? null;
@@ -46,6 +58,10 @@ export function persistOpKeepingSignals(op: Op, opts: PersistOpOptions = {}): vo
     if (!opts.clearRedirect) {
       op.canonical.redirectInstruction = onDisk.canonical.redirectInstruction ?? null;
       op.canonical.redirectReceivedAt = onDisk.canonical.redirectReceivedAt ?? null;
+    }
+    if (preserveLease) {
+      op.canonical.leaseOwner = onDisk.canonical.leaseOwner ?? null;
+      op.canonical.leaseExpiresAt = onDisk.canonical.leaseExpiresAt ?? null;
     }
   }
   writeOp(op);

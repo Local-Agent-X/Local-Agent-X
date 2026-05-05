@@ -31,6 +31,8 @@ Decision #1). Adapters live alongside (e.g., `anthropic-adapter`,
 | `control-api.ts` | Public control API surface: `opEventsSince()` reconnect replay, `subscribeOpEvents()` / `subscribeOpStream()` live subscribers, `reconnectOp()` replay+subscribe with seq-dedup, `opPause()` / `opResume()` (Issue 05), `opCancel()` (Issue 06), `opRedirect()` (Issue 07). | ≤ 400 |
 | `signals.ts` | Bus-side fast-path control signals — `signalChannel(opId)` channel naming, `publishSignal()` (control-API only), `subscribeOpSignals()` for workers / observers. Durable signal columns on the op are still the source of truth. | ≤ 400 |
 | `cancel-handler.ts` | Worker-side cancel primitives (Issue 06): `startCancelTracker`, `finalizeCancel`, `applyPreLeaseCancel`, `applyBoundaryCancel`. Drives `adapter.abort()` with a 1s race timeout; skips commit on partial turns. | ≤ 400 |
+| `lease.ts` | Op-level lease primitives (Issue 08): `acquireLease`, `heartbeatLease`, `releaseLease`, `isLeaseExpired`, `LeaseConfig` (defaults 30s/10s, configurable for tests). Sole writer of `leaseOwner` / `leaseExpiresAt`. | ≤ 400 |
+| `recovery.ts` | Crash-recovery orchestration (Issue 08): `recoverStaleOp` evicts the dead worker, clears the expired lease, emits `lease_lost reason="expired"`, and routes `running → queued` (re-enqueue) or `cancelling → cancelled` (terminal). | ≤ 400 |
 
 ## Boundaries
 
@@ -278,3 +280,94 @@ Two `opRedirect` calls in quick succession on the same op:
 - The next turn folds in only the second instruction.
 - Exactly one `redirect_applied` fires, with the second `instructionId`.
 - The first instruction is not re-emitted and not consumed.
+
+## Issue 08 — Lease heartbeat + crash recovery
+
+Lease lifecycle (PRD §14):
+
+| Primitive (`lease.ts`) | Purpose |
+|---|---|
+| `acquireLease(opId, workerId)` | Atomic-ish acquire. Steals only an EXPIRED lease; returns false if a fresh lease is held by another worker. Persists via `persistOpKeepingSignals` so control-API columns are not clobbered. |
+| `heartbeatLease(opId, workerId)` | Refresh `leaseExpiresAt` to `now + leaseDurationMs`. Returns false if the lease was stolen — worker treats this as "abort the in-flight turn". |
+| `releaseLease(opId, workerId)` | Idempotent release; no-op if another worker took the lease (recovery path). Worker `finally` blocks use the return value to decide whether to emit `lease_lost`. |
+| `setLeaseConfig({ leaseDurationMs, heartbeatIntervalMs })` | Test hook. Defaults: 30s / 10s (PRD §21). |
+
+Heartbeat is a `setInterval` started inside `worker.drive()`. On heartbeat
+failure (lease stolen) the worker calls `adapter.abort()` and exits the
+turn loop without committing the partial turn.
+
+### Resume protocol uses `op_turns`, not the cache
+
+`worker.drive()` now derives the starting `turnIdx` from
+`readLatestOpTurn(opId).turnIdx + 1` (the source of truth) rather than
+`op.canonical.currentTurnIdx` (a denormalized cache that can lag a crash).
+A worker that committed a turn but died before the cache update no
+longer drives the same turn twice.
+
+### Idempotent commit (`checkpoint.ts`, PRD acceptance #8)
+
+`commitTurn` checks `readOpTurn(opId, turnIdx)` first. If the row exists
+the call is a replay — it skips message appends, event emission, and
+state transitions, and returns `{ inserted: false, messages: [] }`. The
+caller advances to the next turn. PK conflict on `(op_id, turn_idx)`
+cannot produce duplicate `op_turns` rows, duplicate `op_messages`, or
+duplicate `turn_committed` events.
+
+### Recovery (`recovery.ts`)
+
+```
+recoverStaleOp(opId):
+  read op
+  guard:  state ∈ {running, cancelling}, lease present, lease expired
+  evict   stale worker from scheduler.active (frees the lane slot)
+  clear   leaseOwner / leaseExpiresAt  ← persistOpKeepingSignals
+  emit    lease_lost { workerId, reason: "expired" }
+  if state === cancelling:
+      transition cancelling → cancelled  (cancel always wins, PRD §13)
+  else:
+      transition running → queued        (state-machine emits state_changed)
+      enqueue + pump scheduler            (replacement worker leases)
+```
+
+Bulk variant `recoverStaleOps(opIds)` exists for janitor sweeps; the
+in-process v1 does not auto-run a janitor — callers (or tests) trigger
+recovery explicitly. Filesystem-backed v1 has no DB row-level guard, so
+recovery is the loop's authoritative way to take ownership back from a
+dead worker.
+
+### Issue 08 events
+
+| Event | Body shape | Emitted by |
+|---|---|---|
+| `lease_acquired` | `{ workerId }` | worker on lease take (existing). |
+| `lease_lost` (worker exit) | `{ workerId, reason }` | worker `finally` ONLY when it still owned the lease. |
+| `lease_lost` (recovery) | `{ workerId, reason: "expired" }` | `recoverStaleOp` before transitioning state. |
+| `state_changed` (running → queued) | `{ from: "running", to: "queued", reason: "lease_expired" }` | `recoverStaleOp` via state-machine. |
+| `state_changed` (cancelling → cancelled) | `{ from: "cancelling", to: "cancelled", reason: "lease_expired_during_cancel" }` | `recoverStaleOp` via state-machine. |
+
+The locked v1 enum already contains `lease_acquired` and `lease_lost`
+(PRD §12) — Issue 08 lights up the `lease_lost reason="expired"` and the
+`lease_expired` state-change reasons.
+
+### Crash recovery happy path (PRD acceptance #7)
+
+```
+Worker A acquires lease. Drives turn 0, commits.
+Worker A's adapter hangs on turn 1.
+Worker A's heartbeat is paused (process death simulation).
+Lease expires.
+recoverStaleOp(opId):
+    lease_lost { workerId: A, reason: "expired" }
+    state_changed { from: "running", to: "queued", reason: "lease_expired" }
+    enqueue + pump
+Worker B leases:
+    lease_acquired { workerId: B }
+    state_changed { from: "queued", to: "running", reason: "leased" }
+Worker B reads op_turns[0], drives turn 1 with prior provider_state,
+    commits, succeeds.
+    state_changed { from: "running", to: "succeeded", reason: "turn_done" }
+    lease_lost { workerId: B, reason: "released" }
+```
+
+Per-op event seq stays monotonic across the recovery boundary; turn 0
+is not re-driven, not re-committed, not re-emitted.

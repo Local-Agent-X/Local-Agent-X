@@ -20,7 +20,7 @@
  * persisted checkpoint (op_turns row present).
  */
 import { randomUUID } from "node:crypto";
-import { insertOpTurn, appendOpMessage } from "./store.js";
+import { insertOpTurn, appendOpMessage, readOpTurn } from "./store.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
@@ -69,6 +69,22 @@ export interface CommitTurnOutput {
 
 export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
   const { op, turnIdx } = input;
+
+  // Idempotent guard (PRD §11 + acceptance #8). If `(op_id, turn_idx)`
+  // already has an op_turns row, this is a replay path: a prior worker
+  // committed the turn, then died (or the transaction ack was lost) before
+  // its in-memory state advanced. Treat as already-committed — skip
+  // message appends, skip event emission, skip state transitions. The
+  // caller advances to `turnIdx + 1`.
+  const existing = readOpTurn(op.id, turnIdx);
+  if (existing) {
+    if (!op.canonical) op.canonical = {};
+    op.canonical.currentTurnIdx = Math.max(op.canonical.currentTurnIdx ?? -1, turnIdx);
+    op.canonical.currentCheckpointId = `${op.id}#${turnIdx}`;
+    persistOpKeepingSignals(op);
+    return { turn: existing, messages: [], inserted: false };
+  }
+
   const persistedMsgs: OpMessageRow[] = [];
 
   for (let i = 0; i < input.messages.length; i++) {

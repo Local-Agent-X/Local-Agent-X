@@ -20,6 +20,11 @@ import type { RBACManager } from "../rbac.js";
 import type { CronService } from "../cron-service.js";
 import type { AgentSync } from "../sync.js";
 import type { RequestHandler } from "./request-handler.js";
+import {
+  isCanonicalLoopEnabled,
+  setDefaultAdapterForLane,
+  createAnthropicAdapter,
+} from "../canonical-loop/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.lifecycle");
@@ -253,6 +258,19 @@ export function wireWsChat(deps: {
 
 export function startConfigWatcher(dataDir: string): void {
   new ConfigWatcher().start(join(dataDir, "config.json"), () => logger.info("[config] Hot-reloaded"));
+}
+
+/**
+ * Production canary: when the canonical-loop flag is on for the interactive
+ * lane, register the default Anthropic adapter so submitted ops have a
+ * factory to drive the turn loop. Without this the canonical route persists
+ * the op as queued and then fails on the next microtask with
+ * adapter_not_configured. Legacy behavior is unchanged when the flag is off.
+ */
+export function bootstrapCanonicalLoop(): void {
+  if (!isCanonicalLoopEnabled("interactive")) return;
+  setDefaultAdapterForLane("interactive", () => createAnthropicAdapter());
+  logger.info("[canonical-loop] interactive lane → AnthropicAdapter registered");
 }
 
 export function logStartup(deps: { config: LAXConfig; dataDir: string }): void {

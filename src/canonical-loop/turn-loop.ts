@@ -33,9 +33,26 @@ export interface DriveTurnResult {
   terminalReason: "done" | "error" | null;
   toolCount: number;
   messageCount: number;
+  /** True if the turn was aborted mid-flight via cancel; commit was skipped. */
+  cancelled: boolean;
 }
 
-export async function driveTurn(op: Op, adapter: Adapter, turnIdx: number): Promise<DriveTurnResult> {
+export interface DriveTurnOptions {
+  /**
+   * Optional cancel-check called after the adapter resolves runTurn and
+   * again after tool dispatch. If it returns true, the partial turn is
+   * discarded — no commitTurn, no op_turns row, no op_messages, no
+   * turn_committed event (PRD §13: cancel discards the partial turn).
+   */
+  isCancelled?: () => boolean;
+}
+
+export async function driveTurn(
+  op: Op,
+  adapter: Adapter,
+  turnIdx: number,
+  opts: DriveTurnOptions = {},
+): Promise<DriveTurnResult> {
   emit(op.id, "turn_started", { turnIdx });
 
   const input = buildTurnInput(op, turnIdx);
@@ -63,7 +80,19 @@ export async function driveTurn(op: Op, adapter: Adapter, turnIdx: number): Prom
     }
   });
 
+  // Cancel-aware bail BEFORE tool dispatch and BEFORE commit. The adapter
+  // has already returned (via abort or natural completion); the worker's
+  // cancel handler is in charge of the running→cancelling→cancelled
+  // transitions, and we must not commit a partial turn.
+  if (opts.isCancelled?.()) {
+    return { terminalReason: null, toolCount: 0, messageCount: 0, cancelled: true };
+  }
+
   const { toolMessages, toolSummary } = await dispatchTools(op.id, turnIdx, toolCalls);
+
+  if (opts.isCancelled?.()) {
+    return { terminalReason: null, toolCount: toolSummary.length, messageCount: 0, cancelled: true };
+  }
 
   const allMessages: CommitTurnMessage[] = [];
   for (const m of finalized) {
@@ -84,7 +113,7 @@ export async function driveTurn(op: Op, adapter: Adapter, turnIdx: number): Prom
     terminalReason,
   });
 
-  return { terminalReason, toolCount: toolSummary.length, messageCount: allMessages.length };
+  return { terminalReason, toolCount: toolSummary.length, messageCount: allMessages.length, cancelled: false };
 }
 
 function buildTurnInput(op: Op, turnIdx: number): TurnInput {

@@ -12,15 +12,17 @@
  * workers (other than via this module), and the public control API never
  * write `canonical.state` directly.
  */
-import { writeOp } from "../workers/op-store.js";
 import { emit } from "./event-emitter.js";
+import { persistOpKeepingSignals } from "./op-persist.js";
 import type { Op, OpStatus } from "../workers/types.js";
 import type { CanonicalEvent, CanonicalState } from "./types.js";
 
 const TRANSITIONS: Record<CanonicalState, ReadonlySet<CanonicalState>> = {
   // queued → failed covers system-level fast-fail (no adapter configured for
   // the op's lane/provider). Per-turn errors still go via running → failed.
-  queued:     new Set<CanonicalState>(["running", "failed"]),
+  // queued → cancelled covers pre-lease cancel (op cancelled before a worker
+  // ever leases it).
+  queued:     new Set<CanonicalState>(["running", "failed", "cancelled"]),
   running:    new Set<CanonicalState>(["paused", "cancelling", "succeeded", "failed", "queued"]),
   paused:     new Set<CanonicalState>(["queued"]),
   cancelling: new Set<CanonicalState>(["cancelled"]),
@@ -64,7 +66,9 @@ export function transitionOp(op: Op, to: CanonicalState, reason: string): Canoni
   op.status = LEGACY_STATUS[to];
   if (to === "running" && !op.startedAt) op.startedAt = new Date().toISOString();
   if (TERMINAL.has(to) && !op.completedAt) op.completedAt = new Date().toISOString();
-  writeOp(op);
+  // Loop-side write — preserve control-API signal columns from disk so a
+  // concurrent opPause/opCancel/etc. is not clobbered.
+  persistOpKeepingSignals(op);
 
   return emit(op.id, "state_changed", { from, to, reason });
 }

@@ -28,6 +28,9 @@ Decision #1). Adapters live alongside (e.g., `anthropic-adapter`,
 | `scheduler.ts` | Single in-process queue + per-lane caps. `enqueueOp` / `pumpScheduler` / `awaitIdle`. | ≤ 400 |
 | `adapter-contract.ts` | Locked PRD §15 adapter interface (`Adapter`, `TurnInput`, `AdapterReport`, `TurnResult`) + sandbox import deny-list. Type-only. | ≤ 400 |
 | `contract-types.ts` | Value-shape types referenced by the adapter contract (`CanonicalMessage`, `ToolCall`, `ToolDescriptor`). Type-only. | ≤ 400 |
+| `control-api.ts` | Public control API surface: `opEventsSince()` reconnect replay, `subscribeOpEvents()` / `subscribeOpStream()` live subscribers, `reconnectOp()` replay+subscribe with seq-dedup, `opPause()` / `opResume()` (Issue 05). Issues 06–07 add cancel/redirect. | ≤ 400 |
+| `signals.ts` | Bus-side fast-path control signals — `signalChannel(opId)` channel naming, `publishSignal()` (control-API only), `subscribeOpSignals()` for workers / observers. Durable signal columns on the op are still the source of truth. | ≤ 400 |
+| `cancel-handler.ts` | Worker-side cancel primitives (Issue 06): `startCancelTracker`, `finalizeCancel`, `applyPreLeaseCancel`, `applyBoundaryCancel`. Drives `adapter.abort()` with a 1s race timeout; skips commit on partial turns. | ≤ 400 |
 
 ## Boundaries
 
@@ -55,3 +58,162 @@ seq=7  lease_lost      { workerId, reason: "released" }
 
 Stream chunks are NOT in this list — they ride `op_stream:{opId}` only and
 are never persisted to `op_events` (PRD §12).
+
+## Issue 04 — Reconnect / event replay
+
+`op_events` is durable; `op_stream:{opId}` is ephemeral. Clients survive
+disconnects by tracking the seq of the last canonical event they received
+and replaying everything after it on reconnect.
+
+### Reconnect protocol (PRD §12)
+
+```
+client tracks last_seq                             // -1 == "from the start"
+on reconnect:
+  rows = opEventsSince(op_id, last_seq)            // disk read, seq-ordered
+  apply rows in order                              // rebuild local state
+  re-attach to bus channel `op_events:{op_id}`     // canonical events
+  re-attach to bus channel `op_stream:{op_id}`     // stream chunks (live tail only)
+```
+
+`reconnectOp(opId, sinceSeq, listener)` packages all three steps into one
+call: it subscribes to the bus first, replays disk events with `seq >
+sinceSeq` in order, then drains any events that arrived during replay
+deduplicated by seq. Each event reaches the listener exactly once.
+
+### Public surface (control-api.ts)
+
+| Function | Purpose |
+|---|---|
+| `opEventsSince(opId, sinceSeq)` | Pure replay. `sinceSeq = OP_EVENTS_FROM_BEGINNING` (`-1`) returns full history. `sinceSeq >= MAX(seq)` returns `{ ok: true, events: [] }`. Unknown op → `{ ok: false, code: "unknown_op" }`. |
+| `subscribeOpEvents(opId, listener)` | Live canonical-event subscription only (no replay). Returns unsubscribe. |
+| `subscribeOpStream(opId, listener)` | Live stream-chunk subscription only (no replay — chunks are ephemeral by design). Returns unsubscribe. |
+| `reconnectOp(opId, sinceSeq, listener)` | Replay + live subscription with seq-dedup. Returns `{ ok, latestReplayedSeq, off }`. |
+
+### Invariants enforced by tests (Issue 04)
+
+- Per-op `seq` is monotonic 0..N with no gaps.
+- Different ops' seq spaces are independent.
+- Stream chunks never appear in `op_events_since` results.
+- Replay works against terminal ops (final state already on disk) and
+  running ops (events still being appended) identically.
+
+## Issue 05 — Pause / resume
+
+Public control APIs:
+
+| Function | Purpose |
+|---|---|
+| `opPause(opId, actor)` | Soft-pause request. Writes `pause_requested_at` on the op, emits `pause_requested`, publishes a fast-path message on `op_signals:{opId}`. Idempotent on already-paused ops AND on ops that already have a pending pause request. |
+| `opResume(opId, actor)` | Resume from `paused`. Emits `resume_requested`, transitions paused→queued (which emits `state_changed`), enqueues + pumps the scheduler so a worker leases the op again. The next adapter call sees the prior `provider_state` from the last `op_turns` row (PRD §11). |
+
+Result envelope: `{ ok: true } | { ok: false, code: "unknown_op" \| "invalid_op_id" \| "terminal" \| "not_paused", message }`.
+
+### Pause is soft (turn-boundary only)
+
+There are no mid-turn pauses in v1. The worker checks `pause_requested_at`
+ONLY between turns, after a turn commits. This means:
+
+- A `running` op continues its current turn to completion.
+- After commit, the worker re-reads the op from disk, sees the durable
+  signal, transitions running→paused, clears `pause_requested_at`, and
+  releases the lease.
+- A `pause_requested` event always precedes the `state_changed running→paused`
+  event in seq order.
+
+### Cancel beats pause beats redirect (PRD §13 precedence)
+
+The turn-boundary handler checks `cancel_requested_at` first; if set, it
+skips the pause path entirely and lets cancel handling take over (Issue 06
+implements that branch — for now the worker just continues looping if a
+cancel-only signal lands).
+
+### Resume protocol
+
+```
+opResume(opId, actor):
+  emit  resume_requested
+  emit  state_changed { from: paused, to: queued, reason: "resumed" }   // via state-machine
+  enqueueOp + pumpScheduler                                              // scheduler picks up the op
+  // worker leases again, transitions queued→running, drives next turn
+  // adapter receives prior provider_state from last op_turns row
+```
+
+### Issue 05 events
+
+| Event | Body shape | Emitted by |
+|---|---|---|
+| `pause_requested` | `{ actor }` | `opPause()` (control API) |
+| `resume_requested` | `{ actor }` | `opResume()` (control API) |
+| `state_changed` (running→paused) | `{ from: "running", to: "paused", reason: "pause_at_turn_boundary" }` | worker turn-boundary handler |
+| `state_changed` (paused→queued) | `{ from: "paused", to: "queued", reason: "resumed" }` | `opResume()` via state-machine |
+
+The locked v1 enum already includes `pause_requested` and `resume_requested`
+(PRD §12) — Issue 05 just lights them up.
+
+## Issue 06 — Cancel (mid-stream, hard cancel)
+
+Public control API:
+
+| Function | Purpose |
+|---|---|
+| `opCancel(opId, actor)` | Hard-cancel request. Read-modify-writes `cancel_requested_at` on the op (preserving pause/redirect signals), emits `cancel_requested`, publishes a `CancelSignal` on `op_signals:{opId}`. Idempotent on `state==="cancelling"` AND on ops that already have a pending cancel request. |
+
+Result envelope: `{ ok: true } | { ok: false, code: "unknown_op" \| "invalid_op_id" \| "terminal", message }`.
+
+### Cancel is mid-stream, not turn-boundary
+
+The worker subscribes to `op_signals:{opId}` for the duration of a lease.
+When a `CancelSignal` arrives, the handler runs synchronously inside the
+publish chain:
+
+1. flips `tracker.cancelled = true`;
+2. immediately transitions `running → cancelling` (PRD §13: "do not wait
+   for adapter.abort() to resolve");
+3. calls `adapter.abort()` and races it against a 1s timeout.
+
+Once abort resolves (or the timeout fires) `finalizeCancel` clears
+`cancel_requested_at` on disk and transitions `cancelling → cancelled`.
+The partial turn is discarded — `driveTurn` checks `tracker.cancelled`
+after the adapter resolves and returns BEFORE `commitTurn`. No `op_turns`
+row, no `op_messages`, no `turn_committed` event.
+
+### Precedence (PRD §13)
+
+`cancel > pause > redirect`. Concretely:
+
+- The cancel **bus signal handler** fires immediately on receipt and
+  preempts everything else.
+- The **per-iteration boundary check** (after a turn commits) checks
+  `cancel_requested_at` BEFORE `pause_requested_at`. A boundary cancel
+  goes through `applyBoundaryCancel` (running → cancelling → cancelled
+  with adapter.abort()) and skips the pause path entirely.
+- A **pre-lease cancel** (cancel set before any worker leases the op)
+  routes directly `queued → cancelled` via `applyPreLeaseCancel` — no
+  `lease_acquired`, no `running` state, no turn ever started.
+
+### Issue 06 events
+
+| Event | Body shape | Emitted by |
+|---|---|---|
+| `cancel_requested` | `{ actor }` | `opCancel()` (control API) |
+| `state_changed` (running → cancelling) | `{ from: "running", to: "cancelling", reason: "cancel_requested" }` | cancel-handler signal subscriber (mid-stream) OR `applyBoundaryCancel` (race-defensive) |
+| `state_changed` (cancelling → cancelled) | `{ from: "cancelling", to: "cancelled", reason: "adapter_aborted" }` | `finalizeCancel` after abort/timeout |
+| `state_changed` (queued → cancelled) | `{ from: "queued", to: "cancelled", reason: "cancel_before_lease" }` | `applyPreLeaseCancel` |
+| `lease_lost` | `{ workerId, reason: "cancelled" }` | worker `finally` block |
+
+### Happy-path cancel event sequence (cancel mid-turn)
+
+```
+seq=0  state_changed   { from: null,        to: "queued",     reason: "submitted" }
+seq=1  lease_acquired  { workerId }
+seq=2  state_changed   { from: "queued",    to: "running",    reason: "leased" }
+seq=3  turn_started    { turnIdx: 0 }
+       (... ephemeral stream chunks on op_stream:{opId}, NOT in this log ...)
+seq=4  cancel_requested      { actor }                                              ← opCancel
+seq=5  state_changed   { from: "running",   to: "cancelling", reason: "cancel_requested" }   ← signal handler
+seq=6  state_changed   { from: "cancelling",to: "cancelled",  reason: "adapter_aborted" }    ← finalizeCancel
+seq=7  lease_lost      { workerId, reason: "cancelled" }
+```
+
+No `turn_committed` event for the aborted turn. No `op_turns/0.json` row.

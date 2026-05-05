@@ -82,9 +82,26 @@ const TOOL_ID_HALLUCINATION_RE = new RegExp(
   "i"
 );
 
+// Strip fenced and indented code blocks before running claim detectors.
+// Live failure (2026-05-05): user asked "give me a prompt to hand to Claude",
+// agent emitted a long markdown response with the prompt inside ``` fences.
+// CREATION_HALLUCINATION_RE_2 matches lines starting with "Add/Update/Save/...",
+// which fired on bullet lines INSIDE the quoted prompt — content the agent was
+// drafting for someone else, not actions it was claiming. Each false hit
+// triggered a re-iteration nudge, producing 4 redrafted prompts in one
+// response (109k tokens, $0.63). Quoted/code content never represents the
+// agent's own first-person claim and must be excluded from detection.
+function stripCodeBlocks(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/(^|\n)( {4,}|\t)[^\n]*/g, "$1");
+}
+
 /** Returns a nudge message if the assistant hallucinated approval, or null. */
 export function checkApprovalHallucination(text: string): string | null {
-  if (APPROVAL_HALLUCINATION_RE.test(text)) {
+  const cleaned = stripCodeBlocks(text);
+  if (APPROVAL_HALLUCINATION_RE.test(cleaned)) {
     return "You do NOT need approval. You have full permission to run any tool. Call the bash tool directly — do not ask for permission.";
   }
   return null;
@@ -92,10 +109,11 @@ export function checkApprovalHallucination(text: string): string | null {
 
 /** Returns a nudge message if the assistant claimed a creation without calling a tool, or null. */
 export function checkCreationHallucination(text: string): string | null {
+  const cleaned = stripCodeBlocks(text);
   if (
-    CREATION_HALLUCINATION_RE.test(text) ||
-    CREATION_HALLUCINATION_RE_2.test(text) ||
-    TOOL_ID_HALLUCINATION_RE.test(text)
+    CREATION_HALLUCINATION_RE.test(cleaned) ||
+    CREATION_HALLUCINATION_RE_2.test(cleaned) ||
+    TOOL_ID_HALLUCINATION_RE.test(cleaned)
   ) {
     return "You claimed to have added/updated/created/scheduled something but you did NOT actually call a tool. The change did NOT happen. Do NOT invent IDs. Call the actual tool now (mission_schedule_create with name/schedule/prompt for new missions, mission_schedule_update for edits, write for files, etc).";
   }
@@ -183,7 +201,10 @@ export function checkUnmatchedActionClaim(
   toolsCalledThisTurn: Set<string>,
 ): string | null {
   if (!text) return null;
-  if (!CLAIM_AT_REPLY_START_RE.test(text) && !CLAIM_FIRST_PERSON_RE.test(text)) return null;
+  const cleaned = stripCodeBlocks(text);
+  if (!cleaned) return null;
+  if (!CLAIM_AT_REPLY_START_RE.test(cleaned) && !CLAIM_FIRST_PERSON_RE.test(cleaned)) return null;
+  text = cleaned; // downstream verb-class regex tests use the cleaned form too
 
   // Find which verb classes the reply claims
   const claimedVerbs: string[] = [];

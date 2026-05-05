@@ -134,13 +134,16 @@ describe("Issue 03 — single-turn happy path (PRD #1)", () => {
     expectMonotonicSeq(events);
 
     // Verify the locked event sequence for a single text-only turn (PRD §12).
+    // Two `message_appended` events: one for the seeded turn-0 user message,
+    // one for the assistant response.
     const types = events.map(e => e.type);
     expect(types).toEqual([
       "state_changed",   // null → queued
       "lease_acquired",
       "state_changed",   // queued → running
+      "message_appended", // turn-0 user seed
       "turn_started",
-      "message_appended",
+      "message_appended", // assistant
       "turn_committed",
       "state_changed",   // running → succeeded
       "lease_lost",
@@ -149,14 +152,16 @@ describe("Issue 03 — single-turn happy path (PRD #1)", () => {
     // state_changed bodies
     expect(bodyOf(events[0])).toMatchObject({ from: null, to: "queued" });
     expect(bodyOf(events[2])).toMatchObject({ from: "queued", to: "running" });
-    expect(bodyOf(events[6])).toMatchObject({ from: "running", to: "succeeded" });
+    expect(bodyOf(events[7])).toMatchObject({ from: "running", to: "succeeded" });
 
-    // op_turns & op_messages populated
+    // op_turns & op_messages populated — user seed precedes the assistant.
     const t0 = readOpTurn(op.id, 0);
     expect(t0?.terminalReason).toBe("done");
     expect(t0?.providerState.adapterName).toBe("fake");
-    expect(readOpMessages(op.id)).toHaveLength(1);
-    expect(readOpMessages(op.id)[0].role).toBe("assistant");
+    const msgs = readOpMessages(op.id);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].role).toBe("user");
+    expect(msgs[1].role).toBe("assistant");
 
     // Denormalized cache matches MAX(op_turns.turn_idx)
     const persisted = readOp(op.id);
@@ -296,6 +301,91 @@ describe("Issue 03 — happy path with a tool call dispatched via the loop", () 
 
     expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
     expectInvariant(op.id);
+  });
+});
+
+// ── Initial user-message seeding (production canonical-loop ship blocker) ─
+
+describe("Issue 03 — canonical-routed op seeds the initial user message", () => {
+  it("op_messages has a turn-0 user row containing the task before any assistant reply", async () => {
+    const op = mkOp("seed-task");
+    op.task = "build the thing the user actually asked for";
+    registerAdapterForOp(
+      op.id,
+      () => new FakeAdapter({ script: [scriptTurn({ text: "ack", terminal: "done" })] }),
+    );
+
+    canonicalLoopEntry(op);
+    await awaitTerminal(op.id);
+
+    const msgs = readOpMessages(op.id);
+    expect(msgs.length).toBeGreaterThanOrEqual(2);
+    const first = msgs[0];
+    expect(first.role).toBe("user");
+    expect(first.turnIdx).toBe(0);
+    expect(first.seqInTurn).toBe(0);
+    const text = (first.content as { text?: string } | null)?.text ?? "";
+    expect(text).toContain("build the thing the user actually asked for");
+
+    // Assistant reply lands AFTER the seed (seqInTurn offset past the user).
+    const assistant = msgs.find(m => m.role === "assistant");
+    expect(assistant).toBeDefined();
+    expect(assistant!.seqInTurn).toBeGreaterThan(0);
+    expectInvariant(op.id);
+  });
+
+  it("buildTurnInput hands the adapter non-empty user messages on turn 0", async () => {
+    const op = mkOp("seed-adapter-input");
+    op.task = "non-empty user content for the model";
+    op.contextPack = {
+      task: {
+        description: "non-empty user content for the model",
+        successCriteria: ["criterion-A", "criterion-B"],
+        constraints: ["no destructive commands"],
+        notWhatToRedo: [],
+      },
+      context: { recentTurns: [], referencedFiles: [], memoryHits: [], agentsRules: "" },
+      capabilities: {},
+      budget: { maxIterations: 10, maxTokens: 1000, maxWallTimeMs: 60_000, maxSelfEditCalls: 0 },
+      routing: { lane: "interactive" },
+      secrets: { allowed: [] },
+    } as Op["contextPack"];
+
+    const adapter = new FakeAdapter({ script: [scriptTurn({ text: "done", terminal: "done" })] });
+    registerAdapterForOp(op.id, () => adapter);
+
+    canonicalLoopEntry(op);
+    await awaitTerminal(op.id);
+
+    expect(adapter.turnInputs.length).toBeGreaterThanOrEqual(1);
+    const turn0 = adapter.turnInputs[0];
+    const userMsgs = turn0.messages.filter(m => m.role === "user");
+    expect(userMsgs.length).toBeGreaterThanOrEqual(1);
+    const text = (userMsgs[0].content as { text?: string } | null)?.text ?? "";
+    expect(text).toContain("non-empty user content for the model");
+    expect(text).toContain("criterion-A");
+    expect(text).toContain("no destructive commands");
+  });
+
+  it("seed is idempotent across worker re-entry (no duplicate user row)", async () => {
+    const op = mkOp("seed-idempotent");
+    op.task = "idempotent seed";
+    registerAdapterForOp(
+      op.id,
+      () => new FakeAdapter({ script: [scriptTurn({ text: "ok", terminal: "done" })] }),
+    );
+
+    canonicalLoopEntry(op);
+    await awaitTerminal(op.id);
+
+    // Re-invoke the seed helper directly — recovery / re-entry should
+    // see existing op_messages and skip without appending again.
+    const { seedInitialUserMessage } = await import("../src/canonical-loop/index.js");
+    const seededAgain = seedInitialUserMessage(readOp(op.id)!);
+    expect(seededAgain).toBe(false);
+
+    const userRows = readOpMessages(op.id).filter(m => m.role === "user");
+    expect(userRows).toHaveLength(1);
   });
 });
 

@@ -358,8 +358,10 @@ describe("Issue 09 — adapter integrated with canonical-loop runtime", () => {
     expect(turn!.providerState.adapterName).toBe("anthropic");
 
     const messages = readOpMessages(op.id);
-    expect(messages).toHaveLength(1);
-    expect(messages[0].role).toBe("assistant");
+    // Turn-0 user seed precedes the assistant response.
+    expect(messages).toHaveLength(2);
+    expect(messages[0].role).toBe("user");
+    expect(messages[1].role).toBe("assistant");
   });
 
   it("provider error → op transitions to failed via the canonical state machine", async () => {

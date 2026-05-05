@@ -21,6 +21,7 @@ import { readOp, writeOp } from "../workers/op-store.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { driveTurn } from "./turn-loop.js";
+import { seedInitialUserMessage } from "./initial-prompt.js";
 import {
   startCancelTracker,
   finalizeCancel,
@@ -106,6 +107,12 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
   HEARTBEATS.set(workerId, hb);
 
   transitionOp(op, "running", "leased");
+
+  // Seed the initial user op_message before the first driveTurn so the
+  // adapter sees the task on turn 0 (PRD §11 parity with the legacy
+  // worker's executeOp). Idempotent — recovery / re-entry sees existing
+  // op_messages and skips.
+  seedInitialUserMessage(op);
 
   let releaseReason = "released";
   try {

@@ -340,6 +340,71 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// ── Missing-adapter fast-fail (Issue 03 blocker fix) ─────────────────────
+
+describe("Issue 03 — flag ON + no adapter registered fails cleanly", () => {
+  it("op transitions queued → failed and persists an adapter_error event", async () => {
+    const op = mkOp("no-adapter");
+    canonicalLoopEntry(op);
+
+    // Synchronous contract preserved: state is still "queued" and only the
+    // initial state_changed event has been written on the same task.
+    expect(op.canonical?.state).toBe("queued");
+    expect(readCanonicalEvents(op.id)).toHaveLength(1);
+
+    // Microtask drains — fail-fast emits error + transitions to failed.
+    const events = await awaitTerminal(op.id, 1_000);
+
+    expectMonotonicSeq(events);
+
+    // Locked sequence for this fast-fail path.
+    expect(events.map(e => e.type)).toEqual([
+      "state_changed", // null → queued
+      "error",         // adapter_error
+      "state_changed", // queued → failed
+    ]);
+
+    // adapter_error event body
+    const err = events[1];
+    expect(err.type).toBe("error");
+    expect(bodyOf<{ code: string; retryable: boolean }>(err)).toMatchObject({
+      code: "adapter_error",
+      retryable: false,
+    });
+
+    // Final state on disk
+    const persisted = readOp(op.id);
+    expect(persisted?.canonical?.state).toBe("failed");
+    expect(persisted?.status).toBe("failed");
+
+    // Op is NOT stuck queued — terminal state reached.
+    expect(bodyOf<{ to: string }>(events[2])).toMatchObject({
+      from: "queued",
+      to: "failed",
+      reason: "adapter_not_configured",
+    });
+
+    expectInvariant(op.id);
+
+    // Lifecycle artifacts: op never reached running, so no op_turns / op_messages.
+    expect(readLatestOpTurn(op.id)).toBeNull();
+    expect(readOpMessages(op.id)).toEqual([]);
+  });
+
+  it("op_submit_async response shape is unchanged on the missing-adapter path", () => {
+    // canonicalLoopEntry returns void either way; the synchronous bookkeeping
+    // it performs is byte-for-byte identical to the adapter-present case for
+    // the sync window the caller observes (PRD §17 hard rule).
+    const op = mkOp("shape-no-adapter");
+    const ret = canonicalLoopEntry(op);
+    expect(ret).toBeUndefined();
+    expect(op.canonical?.flagValue).toBe(true);
+    expect(op.canonical?.state).toBe("queued");
+    expect(typeof op.id).toBe("string");
+    expect(op.id.length).toBeGreaterThan(0);
+  });
+});
+
 // ── Compatibility: legacy path stays unchanged when flag is OFF ──────────
 
 describe("Issue 03 — legacy path untouched when flag OFF", () => {

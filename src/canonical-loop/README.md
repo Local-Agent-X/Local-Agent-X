@@ -447,3 +447,118 @@ recovery with `provider_state` round-trip.
 wires the adapter as the lane=interactive default when the host app
 chooses to. Issue 09 ships the adapter and the wiring helper; the
 actual cutover (flag-flip default) lands separately.
+
+## Issue 11 — v1.0 hardening cap
+
+The "everything together" cap that closes v1.0. Every prior issue ships
+one slice; Issue 11 proves the slices compose under load and stress.
+
+### Permanent invariants (asserted across the suite)
+
+| # | Invariant | Where enforced |
+|---|---|---|
+| I1 | `op.canonical.state` equals the `to` of the latest `state_changed` event | `assertCanonicalInvariants` in `test/canonical-loop-11-invariants.test.ts` |
+| I2 | `op.canonical.currentTurnIdx` equals MAX(`op_turns.turnIdx`) when any turn committed | same |
+| I3 | Per-op `op_events.seq` monotonic 0..N with no gaps and no cross-op leak | same + `concurrency.test.ts` |
+| I4 | Per-op `op_turns.turn_idx` monotonic with no gaps | same |
+| I5 | Exactly one terminal `state_changed` event per op (`succeeded` / `failed` / `cancelled`) | same |
+| I6 | Terminal ops have `leaseOwner=null` and `leaseExpiresAt=null` | same |
+
+`assertCanonicalInvariants(opId)` is exported from the Issue 11
+invariants test as a reusable helper — any test that drives an op to
+terminal can call it to enforce the full invariant set in one shot.
+
+### Boundary audits
+
+`test/canonical-loop-11-boundary-audit.test.ts` runs static-import
+audits on the canonical-loop source tree:
+
+- No file under `src/canonical-loop/` (loop modules) imports
+  `child_process` or `node:child_process`. Subprocess primitives live
+  behind the adapter contract — the loop never spawns processes.
+- Adapter source files (`src/canonical-loop/adapters/*.ts`) import
+  nothing on `FORBIDDEN_ADAPTER_IMPORTS` (`workers/op-store`,
+  `workers/event-log`, `workers/pool`, `canonical-loop/store`,
+  `child_process`).
+- Exception: `adapters/anthropic-transport.ts` is the bounded
+  transport-boundary file. The audit allow-lists this exact path
+  and audits everything else.
+- The `FORBIDDEN_ADAPTER_IMPORTS` set itself is locked — any change
+  to the list fails the audit.
+
+### Concurrency isolation (PRD acceptance #10)
+
+`test/canonical-loop-11-concurrency.test.ts` exercises the
+"5 concurrent ops mixed across lanes" scenario the PRD specifies.
+Lane caps are respected (interactive=1, build=2, ide=1, background=1),
+per-op seq stays monotonic, no cross-op contamination of events,
+messages, provider_state, or workerIds.
+
+### "No op escapes canonical" (PRD §20)
+
+`test/canonical-loop-11-no-op-escapes-canonical.test.ts` is the
+post-cutover invariant the PRD locks in for the lifetime of the
+project — under flag ON, every terminal scenario (succeeded / failed /
+cancelled / pre-lease cancel) leaves canonical artifacts and **zero**
+legacy `events.jsonl`.
+
+### Hardening (cross-slice composition)
+
+`test/canonical-loop-11-hardening.test.ts` exercises edge interleavings
+the per-issue suites don't cover on their own:
+
+- Stale worker waking up after the op terminated cannot mutate state
+  (state-machine throws `IllegalTransitionError`; `commitTurn`
+  idempotent guard returns `inserted: false`).
+- A delayed adapter result arriving after cancel does not commit a
+  turn.
+- A delayed adapter result arriving after lease recovery does not
+  produce a duplicate `op_turns` row (Issue 08 PK guard).
+- `cancel-during-pause` and `cancel-during-redirect` are deterministic:
+  cancel always wins (PRD §13).
+- Pause idempotency holds across racing actors — one
+  `pause_requested` event regardless of how many `opPause` calls land.
+- Pause+resume+redirect chain leaves exactly one `redirect_applied`
+  event on the resumed turn.
+- A burst of concurrent pause+cancel calls produces exactly one of
+  each control event in the durable log.
+
+### Rollback
+
+[docs/runbooks/canonical-loop-rollback.md](../../docs/runbooks/canonical-loop-rollback.md)
+documents the flip-the-flag rollback procedure: per-lane env var,
+in-flight ops drain on canonical (their flag value is captured at
+submit and immutable), new ops route to legacy. No code change, no
+schema migration.
+
+### v1.0 ship readiness
+
+PRD §22 Definition of Done — current state of the canonical loop:
+
+| Item | Status |
+|---|---|
+| canonical-loop modules ≤ 400 LOC each | green |
+| Anthropic adapter implements locked contract | green (Issue 09) |
+| Worker pool with op-level leases + heartbeats | green (Issues 03, 08) |
+| Single queue with lane scheduling | green (Issue 03) |
+| `op_pause` / `op_cancel` / `op_redirect` / `op_resume` / `op_events_since` live | green (Issues 04–07) |
+| Feature flag routing inside `op_submit_async` | green (Issues 01, 10) |
+| Schema additions migrated | green (Issue 01) |
+| All 11 v1 acceptance tests pass under fake adapter | green (Issues 01–11) |
+| All 9 conformance items pass for Anthropic | green (Issue 09) |
+| Real Anthropic CLI smoke tests | gated, opt-in via `LAX_RUN_ANTHROPIC_SMOKE=1` |
+| Permanent invariant tests | green (Issue 11) |
+| Old-path compatibility test #11 | green (Issue 10) |
+| No diff against PRD §19 untouchables | green |
+| Public API signatures unchanged | green (Issue 10 compat fixtures verify) |
+| Feature flag defaults OFF | green |
+| Rollback procedure documented | green (this issue) |
+| Adapter sandbox audit clean | green (Issue 11 boundary audit) |
+| Loop has no `child_process` imports | green (Issue 11 boundary audit) |
+| PRD glossary terms used consistently in code identifiers | green |
+| No code, comment, or commit references competitor products | green |
+
+The remaining DoD items — real-staging exercises (one real worker
+death, one real client reconnect against the live Anthropic adapter)
+— are operational gates, not code work. They block "tag v1.0; canary
+on" but not "Issue 11 ships".

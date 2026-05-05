@@ -33,6 +33,8 @@ Decision #1). Adapters live alongside (e.g., `anthropic-adapter`,
 | `cancel-handler.ts` | Worker-side cancel primitives (Issue 06): `startCancelTracker`, `finalizeCancel`, `applyPreLeaseCancel`, `applyBoundaryCancel`. Drives `adapter.abort()` with a 1s race timeout; skips commit on partial turns. | ≤ 400 |
 | `lease.ts` | Op-level lease primitives (Issue 08): `acquireLease`, `heartbeatLease`, `releaseLease`, `isLeaseExpired`, `LeaseConfig` (defaults 30s/10s, configurable for tests). Sole writer of `leaseOwner` / `leaseExpiresAt`. | ≤ 400 |
 | `recovery.ts` | Crash-recovery orchestration (Issue 08): `recoverStaleOp` evicts the dead worker, clears the expired lease, emits `lease_lost reason="expired"`, and routes `running → queued` (re-enqueue) or `cancelling → cancelled` (terminal). | ≤ 400 |
+| `adapters/anthropic.ts` | Production Anthropic adapter (Issue 09). Implements the locked PRD §15 contract: streams text/tool-calls/errors, maps to canonical adapter_reports, finalizes assistant messages, returns provider_state envelope (256 KB cap). Sandbox-clean — no DB, no events writer, no `child_process`. | ≤ 400 |
+| `adapters/anthropic-transport.ts` | Default transport that wraps `streamAnthropicResponse` (CLI proxy / direct API path) and `getAnthropicApiKey`. Translates provider stream events → canonical `TransportEvent`s. Lives outside the audited adapter file so subprocess primitives don't leak into the adapter surface. | ≤ 400 |
 
 ## Boundaries
 
@@ -371,3 +373,77 @@ Worker B reads op_turns[0], drives turn 1 with prior provider_state,
 
 Per-op event seq stays monotonic across the recovery boundary; turn 0
 is not re-driven, not re-committed, not re-emitted.
+
+## Issue 09 — Anthropic adapter (production conformance)
+
+`AnthropicAdapter` (`adapters/anthropic.ts`) is the first real-provider
+adapter against the locked v1 contract (PRD §15). It is the reference
+implementation for future adapters (Codex v1.1, build_app v1.2, IDE v1.3).
+
+| Concern | Where | Notes |
+|---|---|---|
+| Adapter surface | `adapters/anthropic.ts` | `runTurn` + `abort` only. No DB / event-writer / worker-pool / `child_process` imports — verified by conformance item I against `FORBIDDEN_ADAPTER_IMPORTS`. |
+| Subprocess / OAuth / stream parse | `adapters/anthropic-transport.ts` | Wraps `streamAnthropicResponse` and `getAnthropicApiKey`. Lives outside the audited adapter file so the sandbox boundary stays clean. |
+| Token resolution | `defaultAnthropicTransport` | Lazy — fetched at first stream call. Token is held in transport closure, NEVER passed to the canonical loop, NEVER appears in `provider_state` or events. |
+| Injectable transport | `AnthropicAdapterOptions.transport` | Tests inject a programmable mock without touching subprocess primitives. |
+
+### Streaming → canonical mapping
+
+| Provider event | Canonical adapter_report | Notes |
+|---|---|---|
+| `text { delta }` | `stream_chunk { delta }` | Bus-only, ephemeral. Also accumulated in-memory and finalized as a single `assistant` `message_finalized` at end of turn. |
+| `tool_call { id, name, arguments }` | `tool_call_requested { call }` | Loop dispatches via `tool-executor`; tool result rides back as a `tool_result` canonical message in the next turn (Issue 03 contract). |
+| `error { code, message }` | `error { code, message, retryable }` | Routine errors NEVER throw out of `runTurn` (PRD §15 H). Secrets scrubbed via regex-based redaction before the report fires. |
+| `done { stopReason }` | (not surfaced as a report) | Stop reason is recorded in `provider_state.providerPayload.stopReason`. |
+
+### `provider_state` envelope
+
+```ts
+{
+  adapterName: "anthropic",
+  adapterVersion: "1.0.0",
+  providerPayload: {
+    lastTurnIdx,                  // sanity marker
+    finalizedMessageId | null,    // pointer to op_messages row
+    stopReason | undefined,
+    pendingTools                  // 0 if turn naturally completed
+  }
+}
+```
+
+Intentionally minimal — the canonical loop replays messages on every
+turn, so the adapter doesn't need to remember a conversation id. The
+**256 KB size cap** (PRD §21) is enforced before return; oversize fails
+loudly with an `error` adapter_report (`code: "provider_state_oversize"`)
+and `terminalReason: "error"` rather than silent corruption.
+
+### Abort lifecycle
+
+- `runTurn` mints a fresh `AbortController` per turn so the adapter
+  instance is reusable across resume turns (conformance D).
+- `abort()`:
+  - flips `aborted = true` (preempts the per-iteration loop on the next
+    yielded transport event);
+  - calls `aborter.abort()` (signals the transport to tear down its
+    subprocess / HTTP request — the existing `streamAnthropicResponse`
+    honors `signal` and kills the spawned `claude` subprocess);
+  - awaits the in-flight stream consumption to drain so the promise
+    resolves only when the adapter is actually stopped.
+- Idempotent (F): two `abort()`s are a no-op.
+- Safe after completion (G): `aborter.abort()` on an already-fired
+  controller is a no-op.
+
+### Real-CLI smoke tests
+
+`test/canonical-loop-09-anthropic-smoke.test.ts` is gated behind
+`LAX_RUN_ANTHROPIC_SMOKE=1`. By default it skips — the standard test
+suite never makes live external API calls. Smoke tests cover end-to-end
+submit, real cancel mid-stream (subprocess actually killed), and crash
+recovery with `provider_state` round-trip.
+
+### Wire-up
+
+`setDefaultAdapterForLane("interactive", () => createAnthropicAdapter())`
+wires the adapter as the lane=interactive default when the host app
+chooses to. Issue 09 ships the adapter and the wiring helper; the
+actual cutover (flag-flip default) lands separately.

@@ -188,6 +188,22 @@ export { evictWorker } from "./scheduler.js";
 // `recoverStaleOp` can then recover it. Underscore marks it internal.
 export { _pauseHeartbeat } from "./worker.js";
 
+// ── Issue 09 Anthropic adapter ────────────────────────────────────────────
+
+export {
+  AnthropicAdapter,
+  createAnthropicAdapter,
+  ANTHROPIC_ADAPTER_NAME,
+  ANTHROPIC_ADAPTER_VERSION,
+  PROVIDER_STATE_MAX_BYTES_DEFAULT,
+  type AnthropicAdapterOptions,
+  type AnthropicTransport,
+  type AnthropicTransportRequest,
+  type TransportEvent,
+  type TransportMessage,
+  type TransportTool,
+} from "./adapters/anthropic.js";
+
 export { runWorker, type WorkerHandle } from "./worker.js";
 export { driveTurn, type DriveTurnResult } from "./turn-loop.js";
 export { commitTurn, type CommitTurnInput, type CommitTurnOutput, type CommitTurnMessage } from "./checkpoint.js";

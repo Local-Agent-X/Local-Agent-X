@@ -21,6 +21,7 @@ import { writeOp } from "../workers/op-store.js";
 import { emit } from "./event-emitter.js";
 import { resolveAdapterFactory } from "./runtime.js";
 import { enqueueOp, pumpScheduler } from "./scheduler.js";
+import { transitionOp } from "./state-machine.js";
 import type { CanonicalLane, StateChangedBody } from "./types.js";
 
 export {
@@ -153,10 +154,35 @@ export function canonicalLoopEntry(op: Op, opts: { sessionId?: string } = {}): v
   const body: StateChangedBody = { from: null, to: "queued", reason: "submitted" };
   emit(op.id, "state_changed", body);
 
-  // Issue 03: if there's an adapter to drive this op, schedule it. Otherwise
-  // leave it queued (tests / canary opt-in that didn't register an adapter).
+  // Issue 03: if there's an adapter to drive this op, schedule it. If not,
+  // we must NOT leave the op queued forever (PRD §3 lifecycle invariant).
+  // Fail-fast happens on the next microtask so the synchronous bookkeeping
+  // contract from Issue 01 (return-with-state="queued" + one event) is
+  // preserved for callers that read on the same task.
   if (resolveAdapterFactory(op)) {
     enqueueOp(op.id, op.lane as CanonicalLane);
     pumpScheduler();
+  } else {
+    queueMicrotask(() => failForMissingAdapter(op));
+  }
+}
+
+/**
+ * Fail an op cleanly when no adapter factory is registered for its
+ * lane/provider. Emits a canonical `error` event with `code: "adapter_error"`
+ * and transitions queued → failed. Defensive against double-firing — if the
+ * op is no longer in `queued`, this is a no-op.
+ */
+function failForMissingAdapter(op: Op): void {
+  if (op.canonical?.state !== "queued") return;
+  emit(op.id, "error", {
+    code: "adapter_error",
+    message: `no adapter factory registered for op ${op.id} (lane=${op.lane})`,
+    retryable: false,
+  });
+  try {
+    transitionOp(op, "failed", "adapter_not_configured");
+  } catch {
+    // State machine rejected — op already left queued. Leave alone.
   }
 }

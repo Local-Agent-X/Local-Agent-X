@@ -19,6 +19,7 @@ import { join } from "node:path";
 import {
   createHarness,
   submitOp,
+  makeAndPersistOp,
   awaitState,
   assertEvents,
   assertOpTurns,
@@ -377,8 +378,13 @@ describe("harness — assertion helpers surface clear failures", () => {
   });
 
   it("assertEvents — synthesized seq gap is detected by invariant check", async () => {
+    // Use makeAndPersistOp (no canonicalLoopEntry) so the only events on
+    // disk are the ones the test seeds. submitOp would also enqueue a
+    // microtask-driven adapter_error fail-fast (Issue 03 behavior), which
+    // pollutes the event log this test is checking the invariant against.
     const c = ctx();
-    const op = submitOp(c);
+    const op = makeAndPersistOp(c);
+    injectStateChange(op.id, null, "queued", "submitted"); // seq=0
     // Force a gap by manually inserting a row with seq=7 directly to disk.
     const { canonicalEventsPath } = await import("../src/canonical-loop/index.js");
     const { appendFileSync } = await import("node:fs");

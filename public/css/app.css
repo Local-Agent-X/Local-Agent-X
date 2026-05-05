@@ -197,7 +197,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .msg-body table{margin:10px 0}
 .msg-body h2.md-h,.msg-body h3.md-h,.msg-body h4.md-h,.msg-body h5.md-h{margin-top:16px}
 .msg-body del{opacity:.6}
-.msg.user .msg-body{background:var(--surface-2);border:1px solid var(--border);border-radius:18px;padding:10px 18px;display:inline-block;max-width:85%}
+.msg.user .msg-body{background:var(--surface-2);border:1px solid var(--border);border-radius:18px;padding:10px 18px;display:inline-block;max-width:85%;white-space:pre-wrap}
 .msg.assistant .msg-body{padding:4px 0;background:none;border:none}
 .msg-attachments{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
 .msg-attachments img{max-width:280px;max-height:200px;border-radius:12px;border:1px solid var(--border);cursor:pointer;transition:transform .15s;object-fit:cover}

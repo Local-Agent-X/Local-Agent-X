@@ -387,6 +387,48 @@ describe("Issue 03 — canonical-routed op seeds the initial user message", () =
     const userRows = readOpMessages(op.id).filter(m => m.role === "user");
     expect(userRows).toHaveLength(1);
   });
+
+  it("seed includes pre-loaded referenced files, memory hits, and AGENTS rules from contextPack", async () => {
+    const op = mkOp("seed-extended-pack");
+    op.task = "render the full pack";
+    op.contextPack = {
+      task: {
+        description: "render the full pack",
+        successCriteria: [],
+        constraints: [],
+        notWhatToRedo: [],
+      },
+      context: {
+        recentTurns: [],
+        referencedFiles: [
+          { path: "src/foo.ts", content: "export const FOO = 'bar';", truncated: false },
+        ],
+        memoryHits: [
+          { source: "memory", snippet: "user prefers TypeScript over JavaScript" },
+        ],
+        agentsRules: "Always run tests before committing.",
+      },
+      capabilities: {},
+      budget: { maxIterations: 5, maxTokens: 500, maxWallTimeMs: 30_000, maxSelfEditCalls: 0 },
+      routing: { lane: "interactive" },
+      secrets: { allowed: [] },
+    } as Op["contextPack"];
+
+    const adapter = new FakeAdapter({ script: [scriptTurn({ text: "done", terminal: "done" })] });
+    registerAdapterForOp(op.id, () => adapter);
+
+    canonicalLoopEntry(op);
+    await awaitTerminal(op.id);
+
+    const seedText = ((readOpMessages(op.id)[0].content as { text?: string }).text ?? "");
+    expect(seedText).toContain("Referenced files");
+    expect(seedText).toContain("src/foo.ts");
+    expect(seedText).toContain("export const FOO = 'bar';");
+    expect(seedText).toContain("Relevant memory");
+    expect(seedText).toContain("user prefers TypeScript over JavaScript");
+    expect(seedText).toContain("Architectural rules");
+    expect(seedText).toContain("Always run tests before committing.");
+  });
 });
 
 // ── Boundary tests (PRD §15 sandbox + loop boundary) ─────────────────────

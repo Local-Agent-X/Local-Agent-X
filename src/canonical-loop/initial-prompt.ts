@@ -22,9 +22,17 @@ import type { OpMessageRow } from "./types.js";
 
 /**
  * Render the initial user message content for `op`. Mirrors the legacy
- * worker's prompt construction (workers/worker-entry.ts) when the op's
- * contextPack carries the richer task fields. Falls back to a bare
- * `op.task` string when no extras are present.
+ * worker's prompt construction (workers/worker-entry.ts:buildSystemPromptFromPack)
+ * by including every contextPack field the legacy path renders into the
+ * system prompt — task, success criteria, constraints, do-not-redo,
+ * pre-loaded referenced files (truncated), memory hits, AGENTS.md
+ * architectural rules. Each block is omitted when its source is empty.
+ *
+ * Difference from legacy: legacy splits these between a system prompt
+ * (everything above) and a user message (just `op.task`); canonical
+ * embeds them all in the initial user message because the canonical
+ * adapter's system prompt is fixed at adapter construction. The
+ * model receives the same content, just packaged in one slot.
  *
  * The shape is `{ text: string }` to match the canonical message-content
  * convention used by the Anthropic adapter (`extractText` reads
@@ -35,6 +43,7 @@ export function buildInitialUserContent(op: Op): { text: string } {
   const task = op.task ?? "";
   const pack = op.contextPack as Op["contextPack"] | undefined;
   const taskBlock = pack?.task;
+  const ctx = pack?.context;
 
   const description = (taskBlock?.description ?? "").trim();
   const baseTask = description.length > 0 ? description : task;
@@ -62,6 +71,35 @@ export function buildInitialUserContent(op: Op): { text: string } {
     lines.push("");
     lines.push("## Do NOT redo");
     for (const s of notRedo) lines.push(`- ${s}`);
+  }
+
+  // Pre-loaded referenced files — content is truncated to 3000 chars per
+  // file, same cap legacy uses (workers/worker-entry.ts:427).
+  const referencedFiles = ctx?.referencedFiles ?? [];
+  if (referencedFiles.length > 0) {
+    lines.push("");
+    lines.push("## Referenced files (pre-loaded)");
+    for (const f of referencedFiles) {
+      const content = (f.content ?? "").slice(0, 3000);
+      lines.push(`### ${f.path}${f.truncated ? " (truncated)" : ""}`);
+      lines.push("```");
+      lines.push(content);
+      lines.push("```");
+    }
+  }
+
+  const memoryHits = ctx?.memoryHits ?? [];
+  if (memoryHits.length > 0) {
+    lines.push("");
+    lines.push("## Relevant memory");
+    for (const m of memoryHits) lines.push(`- (${m.source}) ${m.snippet}`);
+  }
+
+  const agentsRules = (ctx?.agentsRules ?? "").trim();
+  if (agentsRules.length > 0) {
+    lines.push("");
+    lines.push("## Architectural rules (follow strictly)");
+    lines.push(agentsRules);
   }
 
   const text = lines.length > 0 ? lines.join("\n") : (task || "(no task)");

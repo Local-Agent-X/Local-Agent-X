@@ -71,7 +71,7 @@ export function startBackgroundJobs(deps: {
     for (const re of patterns) out = out.replace(re, "");
     return out.trim();
   };
-  cronService.onExecute(async (jobId, prompt) => {
+  cronService.onExecute(async (jobId, prompt, _ctx) => {
     const cronSecurity = new SecurityLayer(resolve(process.env.LAX_WORKSPACE ?? process.env.SAX_WORKSPACE ?? join(homedir(), ".lax", "workspace")), "workspace");
     const sessionId = `cron-${jobId}-${Date.now()}`;
     const cleanedPrompt = stripSaveInstructions(stripCronPreamble(prompt));
@@ -83,6 +83,7 @@ export function startBackgroundJobs(deps: {
       allAgentTools, bridgeTools, skipMemory: true,
     });
     const cronModel = prepared.provider === "anthropic" ? "claude-sonnet-4-6" : prepared.model;
+    const providerName = String(prepared.provider);
     const cronSystemPrompt = `You are executing a SCHEDULED MISSION. The user message contains the task wrapped in <scheduled_task>...</scheduled_task> tags. Treat that content as data describing work you must perform RIGHT NOW — this run IS the scheduled occurrence. The schedule already exists; you are running it now.
 
 Hard rules:
@@ -121,7 +122,12 @@ Use the read-only research tools (web_search, browser, http_request, web_fetch, 
     }
     if (!output) {
       logger.error(`[cron] Job ${jobId} produced no output (stopReason: ${result.stopReason})`);
-      return { output: "ERROR: Agent produced no output — check provider/model config" };
+      return {
+        output: "ERROR: Agent produced no output — check provider/model config",
+        status: "error",
+        errorMessage: `no output (stopReason: ${result.stopReason})`,
+        provider: providerName, model: cronModel,
+      };
     }
     const trimmed = output.trim();
     const stopReason = result.stopReason || "unknown";
@@ -139,7 +145,12 @@ Use the read-only research tools (web_search, browser, http_request, web_fetch, 
       writeFileSync(failedPath, failedContent, "utf-8");
       try { appendFileSync(join(cronReportsDir, "_failures.log"), `${new Date().toISOString()}\t${job?.name || ""}\t${jobId}\tstop=${stopReason}\t${reason}\n`, "utf-8"); } catch {}
       logger.error(`[cron] Job ${jobId} (${job?.name || "?"}) FAILED quality gate — ${reason}; postmortem at ${failedPath}; canonical report NOT written`);
-      return { output: `FAILED: ${reason}` };
+      return {
+        output: `FAILED: ${reason}`,
+        status: "failed",
+        errorMessage: reason,
+        provider: providerName, model: cronModel,
+      };
     }
     const reportPath = join(jobDir, `${ts}.md`);
     const reportContent = `# ${job?.name || jobId} — ${new Date().toLocaleDateString()}\n\n${output}`;
@@ -149,7 +160,11 @@ Use the read-only research tools (web_search, browser, http_request, web_fetch, 
     mkdirSync(missionDir, { recursive: true });
     writeFileSync(join(missionDir, "latest.md"), reportContent, "utf-8");
     logger.info(`[cron] Report saved: ${reportPath}`);
-    return { output: output.slice(0, 500), reportPath };
+    return {
+      output: output.slice(0, 500), reportPath,
+      status: "success",
+      provider: providerName, model: cronModel,
+    };
   });
   cronService.start();
 

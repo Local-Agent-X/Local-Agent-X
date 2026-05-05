@@ -30,15 +30,41 @@ function renderCronList() {
     el.innerHTML = '<div style="padding:12px;font-size:.78rem;color:var(--muted)">No scheduled missions yet. Create one above.</div>';
     return;
   }
-  el.innerHTML = cronJobs.map(j => `
+  el.innerHTML = cronJobs.map(j => {
+    const failing = (j.consecutiveFailures || 0) > 0;
+    const status = j.lastStatus ? cronStatusBadge(j.lastStatus) : '';
+    const lastTime = j.lastRun ? formatRelative(j.lastRun) : 'never';
+    const dotColor = !j.enabled ? 'var(--muted)' : (failing ? '#e07b5a' : '');
+    const failNote = failing ? `<span style="color:#e07b5a;font-weight:600"> · ${j.consecutiveFailures} fail${j.consecutiveFailures > 1 ? 's' : ''}</span>` : '';
+    return `
     <div class="secret-item ${selectedJob?.id === j.id ? 'active' : ''}" onclick="selectCronJob('${j.id}')">
-      <span class="secret-dot" style="${j.enabled ? '' : 'background:var(--muted);box-shadow:none'}"></span>
+      <span class="secret-dot" style="${dotColor ? `background:${dotColor};box-shadow:none` : ''}"></span>
       <div class="secret-info">
-        <div class="secret-item-name">${esc(j.name)}</div>
-        <div class="secret-item-service">${esc(j.schedule)} ${j.enabled ? '' : '(paused)'}</div>
+        <div class="secret-item-name">${esc(j.name)} ${status}</div>
+        <div class="secret-item-service">${esc(j.schedule)} ${j.enabled ? '' : '(paused)'} · last ${lastTime}${failNote}</div>
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
+}
+
+function cronStatusBadge(status) {
+  const colors = { success: 'var(--accent)', failed: '#e07b5a', error: '#e07b5a', skipped: 'var(--muted)' };
+  const c = colors[status] || 'var(--muted)';
+  return `<span style="font-size:.65rem;color:${c};margin-left:6px;text-transform:uppercase;letter-spacing:.5px">${esc(status)}</span>`;
+}
+
+function formatRelative(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const diff = Date.now() - d.getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  return `${days}d ago`;
 }
 
 function selectCronJob(id) {
@@ -51,15 +77,20 @@ function selectCronJob(id) {
 function startCronStatusPolling() {
   if (cronStatusTimer) { clearInterval(cronStatusTimer); cronStatusTimer = null; }
   if (!selectedJob) return;
+  let wasRunning = false;
   const poll = async () => {
     if (!selectedJob) { if (cronStatusTimer) { clearInterval(cronStatusTimer); cronStatusTimer = null; } return; }
     try {
       const data = await apiJson(`/api/cron/${selectedJob.id}/status`);
       renderCronLiveStatus(data);
-      // When job finishes, refresh reports list
-      if (!data.running) {
+      // When a run transitions from running → idle, refresh job state + history
+      if (wasRunning && !data.running) {
+        refreshSelectedCronJob();
+        loadCronHistory(selectedJob.id);
+      } else if (!data.running) {
         loadCronReports(selectedJob.id);
       }
+      wasRunning = !!data.running;
     } catch {}
   };
   poll();
@@ -108,13 +139,70 @@ function renderCronDetail() {
   document.getElementById('cron-detail-name').textContent = selectedJob.name;
   document.getElementById('cron-detail-schedule').textContent = selectedJob.schedule;
   document.getElementById('cron-detail-prompt').textContent = selectedJob.prompt;
-  document.getElementById('cron-detail-status').textContent = selectedJob.enabled ? 'Active' : 'Paused';
-  document.getElementById('cron-detail-status').style.color = selectedJob.enabled ? 'var(--accent)' : 'var(--muted)';
+
+  const statusEl = document.getElementById('cron-detail-status');
+  if (selectedJob.enabled) {
+    statusEl.textContent = 'Active';
+    statusEl.style.color = 'var(--accent)';
+  } else {
+    const fails = selectedJob.consecutiveFailures || 0;
+    statusEl.textContent = fails >= 5 ? `Auto-paused (${fails} fails)` : 'Paused';
+    statusEl.style.color = fails >= 5 ? '#e07b5a' : 'var(--muted)';
+  }
+
   const lastRun = selectedJob.lastRun ? new Date(selectedJob.lastRun).toLocaleString() : 'Never';
-  document.getElementById('cron-detail-lastrun').textContent = lastRun;
+  const lastStatus = selectedJob.lastStatus ? ` (${selectedJob.lastStatus})` : '';
+  document.getElementById('cron-detail-lastrun').textContent = lastRun + lastStatus;
+
+  const nextEl = document.getElementById('cron-detail-nextrun');
+  if (nextEl) {
+    nextEl.textContent = selectedJob.nextRunAt
+      ? new Date(selectedJob.nextRunAt).toLocaleString()
+      : (selectedJob.enabled ? '—' : 'paused');
+  }
+
+  const failsEl = document.getElementById('cron-detail-fails');
+  if (failsEl) {
+    const n = selectedJob.consecutiveFailures || 0;
+    failsEl.textContent = String(n);
+    failsEl.style.color = n > 0 ? '#e07b5a' : 'var(--muted)';
+  }
+
   const resultEl = document.getElementById('cron-detail-result');
-  if (resultEl) resultEl.textContent = selectedJob.lastResult || '';
+  if (resultEl) {
+    const errMsg = selectedJob.lastErrorMessage;
+    resultEl.textContent = errMsg ? `⚠ ${errMsg}` : (selectedJob.lastResult || '');
+    resultEl.style.color = errMsg ? '#e07b5a' : 'var(--muted)';
+  }
+
   loadCronReports(selectedJob.id);
+  loadCronHistory(selectedJob.id);
+}
+
+async function loadCronHistory(jobId) {
+  const el = document.getElementById('cron-history');
+  if (!el) return;
+  try {
+    const data = await apiJson(`/api/cron/${jobId}/history?limit=20`);
+    const runs = data.runs || [];
+    if (runs.length === 0) {
+      el.innerHTML = '<div style="color:var(--muted);font-size:.78rem;padding:4px 0">No runs yet</div>';
+      return;
+    }
+    el.innerHTML = runs.map(r => {
+      const when = r.startedAt ? new Date(r.startedAt).toLocaleString() : '';
+      const dur = r.durationMs != null ? ` · ${(r.durationMs / 1000).toFixed(1)}s` : '';
+      const colors = { success: 'var(--accent)', failed: '#e07b5a', error: '#e07b5a', skipped: 'var(--muted)' };
+      const c = colors[r.status] || 'var(--muted)';
+      const tag = `<span style="color:${c};font-weight:600;text-transform:uppercase;font-size:.65rem;letter-spacing:.5px">${esc(r.status)}</span>`;
+      const manual = r.manual ? ' <span style="color:var(--muted);font-size:.65rem">(manual)</span>' : '';
+      const note = r.errorMessage ? `<div style="color:#e07b5a;font-size:.7rem;margin-top:2px;margin-left:14px">${esc(r.errorMessage)}</div>` : '';
+      return `<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:.75rem">
+        <div>${tag} <span>${esc(when)}${esc(dur)}</span>${manual}</div>
+        ${note}
+      </div>`;
+    }).join('');
+  } catch { el.innerHTML = ''; }
 }
 
 async function loadCronReports(jobId) {
@@ -192,7 +280,9 @@ async function toggleCronJob() {
   try {
     const data = await apiPost('/api/cron/' + selectedJob.id + '/toggle', {});
     if (data.ok && data.job) {
-      selectedJob.enabled = data.job.enabled;
+      const id = selectedJob.id;
+      await loadCronJobs();
+      selectedJob = cronJobs.find(j => j.id === id) || null;
       renderCronList();
       renderCronDetail();
     }
@@ -246,10 +336,9 @@ async function saveCronJobEdits() {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     if (data.job) {
-      // Update local state
-      const idx = cronJobs.findIndex(j => j.id === selectedJob.id);
-      if (idx >= 0) cronJobs[idx] = data.job;
-      selectedJob = data.job;
+      const id = selectedJob.id;
+      await loadCronJobs();
+      selectedJob = cronJobs.find(j => j.id === id) || null;
       cancelCronEdit();
       renderCronList();
       renderCronDetail();
@@ -265,4 +354,13 @@ async function runCronJobNow() {
     renderCronDetail();
     startCronStatusPolling();
   } catch (e) { alert('Failed: ' + e.message); }
+}
+
+// Refresh the selected job from the server list (used after status-poll detects completion)
+async function refreshSelectedCronJob() {
+  if (!selectedJob) return;
+  const id = selectedJob.id;
+  await loadCronJobs();
+  selectedJob = cronJobs.find(j => j.id === id) || null;
+  renderCronDetail();
 }

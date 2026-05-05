@@ -18,7 +18,9 @@ import type { Op, OpStatus } from "../workers/types.js";
 import type { CanonicalEvent, CanonicalState } from "./types.js";
 
 const TRANSITIONS: Record<CanonicalState, ReadonlySet<CanonicalState>> = {
-  queued:     new Set<CanonicalState>(["running"]),
+  // queued → failed covers system-level fast-fail (no adapter configured for
+  // the op's lane/provider). Per-turn errors still go via running → failed.
+  queued:     new Set<CanonicalState>(["running", "failed"]),
   running:    new Set<CanonicalState>(["paused", "cancelling", "succeeded", "failed", "queued"]),
   paused:     new Set<CanonicalState>(["queued"]),
   cancelling: new Set<CanonicalState>(["cancelled"]),

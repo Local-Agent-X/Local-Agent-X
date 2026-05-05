@@ -13,7 +13,7 @@ import {
   resolveAdapterFactory,
   ANTHROPIC_ADAPTER_NAME,
 } from "../src/canonical-loop/index.js";
-import { bootstrapCanonicalLoop } from "../src/server/lifecycle.js";
+import { bootstrapCanonicalLoop } from "../src/server/canonical-loop-bootstrap.js";
 import type { Op } from "../src/workers/types.js";
 
 const LANE_ENVS = [

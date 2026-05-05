@@ -1,0 +1,15 @@
+{
+  "scenario": "error-input",
+  "description": "Empty task — `op_submit_async` returns an error envelope before any op is built or persisted. No flag-state branching: the early-return path is identical regardless of `LAX_CANONICAL_LOOP_INTERACTIVE`.",
+  "args": {
+    "task": ""
+  },
+  "expected": {
+    "response": {
+      "isError": true,
+      "content": "op_submit_async requires a 'task' description."
+    },
+    "noOpCreated": true,
+    "flagIndependent": true
+  }
+}

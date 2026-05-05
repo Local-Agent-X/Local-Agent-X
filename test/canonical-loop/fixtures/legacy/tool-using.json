@@ -1,0 +1,46 @@
+{
+  "scenario": "tool-using",
+  "description": "Task that hints at tool use (file listing). Same submit-time contract — actual tool execution happens later via the worker / canonical-loop.",
+  "args": {
+    "task": "List files in src/ and summarize the folder layout.",
+    "type": "research",
+    "lane": "interactive"
+  },
+  "expected": {
+    "response": {
+      "isError": false,
+      "content": "op <OPID> submitted (type=research, lane=interactive).\nRunning in background — you can keep responding to the user. The user will see a notification when it completes.\nInspect anytime: op_status(op_id=\"<OPID>\")  |  block on it: op_wait(op_id=\"<OPID>\")"
+    },
+    "publicOp": {
+      "id": "<OPID>",
+      "type": "research",
+      "task": "List files in src/ and summarize the folder layout.",
+      "lane": "interactive",
+      "ownerId": "compat-test",
+      "visibility": "private",
+      "status": "pending",
+      "attemptCount": 0
+    },
+    "flagOff": {
+      "route": "legacy",
+      "flagValue": false,
+      "operationJsonPresent": true,
+      "opCanonical": null,
+      "canonicalEventsExists": false,
+      "canonicalEventTypes": [],
+      "opTurnsDirExists": false,
+      "opMessagesExists": false
+    },
+    "flagOn": {
+      "route": "canonical",
+      "flagValue": true,
+      "operationJsonPresent": true,
+      "opCanonical": { "flagValue": true, "state": "queued" },
+      "canonicalEventsExists": true,
+      "canonicalEventTypes": ["state_changed"],
+      "opTurnsDirExists": false,
+      "opMessagesExists": false,
+      "legacyEventsExists": false
+    }
+  }
+}

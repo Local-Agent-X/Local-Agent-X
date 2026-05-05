@@ -1,0 +1,46 @@
+{
+  "scenario": "text-only",
+  "description": "Simple freeform task on the interactive lane. No tool hint. Standard ownerId.",
+  "args": {
+    "task": "Reply with: ok.",
+    "type": "freeform",
+    "lane": "interactive"
+  },
+  "expected": {
+    "response": {
+      "isError": false,
+      "content": "op <OPID> submitted (type=freeform, lane=interactive).\nRunning in background — you can keep responding to the user. The user will see a notification when it completes.\nInspect anytime: op_status(op_id=\"<OPID>\")  |  block on it: op_wait(op_id=\"<OPID>\")"
+    },
+    "publicOp": {
+      "id": "<OPID>",
+      "type": "freeform",
+      "task": "Reply with: ok.",
+      "lane": "interactive",
+      "ownerId": "compat-test",
+      "visibility": "private",
+      "status": "pending",
+      "attemptCount": 0
+    },
+    "flagOff": {
+      "route": "legacy",
+      "flagValue": false,
+      "operationJsonPresent": true,
+      "opCanonical": null,
+      "canonicalEventsExists": false,
+      "canonicalEventTypes": [],
+      "opTurnsDirExists": false,
+      "opMessagesExists": false
+    },
+    "flagOn": {
+      "route": "canonical",
+      "flagValue": true,
+      "operationJsonPresent": true,
+      "opCanonical": { "flagValue": true, "state": "queued" },
+      "canonicalEventsExists": true,
+      "canonicalEventTypes": ["state_changed"],
+      "opTurnsDirExists": false,
+      "opMessagesExists": false,
+      "legacyEventsExists": false
+    }
+  }
+}

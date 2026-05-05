@@ -1,0 +1,47 @@
+{
+  "scenario": "background-lane",
+  "description": "Submission on the `background` lane. Lane is preserved verbatim in the response and the persisted op (no rename, no re-classification).",
+  "args": {
+    "task": "Slow-roll a maintenance scan.",
+    "type": "freeform",
+    "lane": "background"
+  },
+  "expected": {
+    "response": {
+      "isError": false,
+      "content": "op <OPID> submitted (type=freeform, lane=background).\nRunning in background — you can keep responding to the user. The user will see a notification when it completes.\nInspect anytime: op_status(op_id=\"<OPID>\")  |  block on it: op_wait(op_id=\"<OPID>\")"
+    },
+    "publicOp": {
+      "id": "<OPID>",
+      "type": "freeform",
+      "task": "Slow-roll a maintenance scan.",
+      "lane": "background",
+      "ownerId": "compat-test",
+      "visibility": "private",
+      "status": "pending",
+      "attemptCount": 0
+    },
+    "flagOff": {
+      "route": "legacy",
+      "flagValue": false,
+      "operationJsonPresent": true,
+      "opCanonical": null,
+      "canonicalEventsExists": false,
+      "canonicalEventTypes": [],
+      "opTurnsDirExists": false,
+      "opMessagesExists": false
+    },
+    "flagOn": {
+      "route": "canonical",
+      "flagValue": true,
+      "operationJsonPresent": true,
+      "opCanonical": { "flagValue": true, "state": "queued" },
+      "canonicalEventsExists": true,
+      "canonicalEventTypes": ["state_changed"],
+      "opTurnsDirExists": false,
+      "opMessagesExists": false,
+      "legacyEventsExists": false
+    },
+    "flagEnvVar": "LAX_CANONICAL_LOOP_BACKGROUND"
+  }
+}

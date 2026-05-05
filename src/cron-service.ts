@@ -1,15 +1,32 @@
 /**
  * Cron Service for Local Agent X
  *
- * Runs scheduled jobs (prompts) at defined intervals.
- * Jobs persist to disk so they survive restarts.
+ * Runs scheduled jobs (prompts) at defined intervals. Jobs persist to disk so
+ * they survive restarts. Each run is recorded in a per-job history file (see
+ * `src/cron/run-history.ts`) regardless of whether it succeeded, failed,
+ * errored, or was skipped due to overlap with a still-running prior execution.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition } from "./types.js";
 
 import { createLogger } from "./logger.js";
+import {
+  msUntilNextCron,
+  msSinceLastCronOccurrence,
+  getIntervalMs,
+  msUntilNextRun,
+} from "./cron/cron-parser.js";
+import {
+  RunHistoryStore,
+  newRunId,
+  summarize,
+  type CronRunRecord,
+  type CronRunStatus,
+} from "./cron/run-history.js";
+import { createCronTools as _createCronTools } from "./cron/tools.js";
+
 const logger = createLogger("cron-service");
 
 export interface CronJob {
@@ -22,115 +39,51 @@ export interface CronJob {
   lastRun?: string;
   lastResult?: string;
   lastReportPath?: string;
+  lastStatus?: CronRunStatus;
+  lastErrorMessage?: string;
+  consecutiveFailures?: number;
+  lastSuccessAt?: string;
   createdAt: string;
 }
 
 interface CronSettings {
   enabled: boolean;
   maxConcurrent: number;
+  /** Auto-pause job after this many consecutive failures (0 = never auto-pause). */
+  maxConsecutiveFailures: number;
+  /** Bounded retries on transient (thrown) failures, per scheduled tick. */
+  maxTransientRetries: number;
 }
 
-interface ExecuteResult { output: string; reportPath?: string }
-type ExecuteHandler = (jobId: string, prompt: string) => Promise<string | ExecuteResult>;
-
-// Parse simple interval strings like "5m", "1h", "30s"
-function parseInterval(schedule: string): number | null {
-  const match = schedule.match(/^(\d+)(s|m|h|d)$/);
-  if (!match) return null;
-  const [, num, unit] = match;
-  const multipliers: Record<string, number> = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
-  return parseInt(num) * (multipliers[unit] || 60000);
+export interface ExecuteResult {
+  output: string;
+  reportPath?: string;
+  /** Optional explicit status hint from the executor. */
+  status?: CronRunStatus;
+  errorMessage?: string;
+  provider?: string;
+  model?: string;
 }
 
-// Check if a cron field matches a value. Supports: *, N, star-slash-N, N-M, comma lists
-function cronFieldMatches(field: string, value: number, max: number): boolean {
-  for (const part of field.split(",")) {
-    const trimmed = part.trim();
-    if (trimmed === "*") return true;
-    if (trimmed.startsWith("*/")) {
-      const step = parseInt(trimmed.slice(2));
-      if (!isNaN(step) && step > 0 && value % step === 0) return true;
-    } else if (trimmed.includes("-")) {
-      const [lo, hi] = trimmed.split("-").map(Number);
-      if (!isNaN(lo) && !isNaN(hi) && value >= lo && value <= hi) return true;
-    } else {
-      if (parseInt(trimmed) === value) return true;
-    }
-  }
-  return false;
+export interface ExecuteContext {
+  scheduledAt: string;
+  manual: boolean;
 }
 
-/** Calculate ms until next cron match (minute hour dom month dow). Returns null for non-cron. */
-function msUntilNextCron(schedule: string): number | null {
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length !== 5) return null;
-  const [minField, hourField, domField, monField, dowField] = parts;
+type ExecuteHandler = (
+  jobId: string,
+  prompt: string,
+  ctx: ExecuteContext,
+) => Promise<string | ExecuteResult>;
 
-  const now = new Date();
-  // Scan up to 48 hours ahead to find next match
-  for (let offset = 1; offset <= 2880; offset++) {
-    const candidate = new Date(now.getTime() + offset * 60_000);
-    const min = candidate.getMinutes();
-    const hour = candidate.getHours();
-    const dom = candidate.getDate();
-    const mon = candidate.getMonth() + 1;
-    const dow = candidate.getDay(); // 0=Sun
-    if (
-      cronFieldMatches(minField, min, 59) &&
-      cronFieldMatches(hourField, hour, 23) &&
-      cronFieldMatches(domField, dom, 31) &&
-      cronFieldMatches(monField, mon, 12) &&
-      cronFieldMatches(dowField, dow, 6)
-    ) {
-      return offset * 60_000;
-    }
-  }
-  // Fallback: 24h if no match found in scan window
-  return 24 * 3600_000;
-}
+const DEFAULT_SETTINGS: CronSettings = {
+  enabled: true,
+  maxConcurrent: 3,
+  maxConsecutiveFailures: 5,
+  maxTransientRetries: 2,
+};
 
-/** Counterpart to msUntilNextCron. Returns how long ago the most recent matching cron
- *  time was. If lastRun is provided and is at or after that occurrence, returns null
- *  (no missed run). Returns null for non-cron schedules or if no match in the past 48h. */
-function msSinceLastCronOccurrence(schedule: string, lastRun?: string): number | null {
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length !== 5) return null;
-  const [minField, hourField, domField, monField, dowField] = parts;
-
-  const now = new Date();
-  for (let offset = 1; offset <= 2880; offset++) {
-    const candidate = new Date(now.getTime() - offset * 60_000);
-    const min = candidate.getMinutes();
-    const hour = candidate.getHours();
-    const dom = candidate.getDate();
-    const mon = candidate.getMonth() + 1;
-    const dow = candidate.getDay();
-    if (
-      cronFieldMatches(minField, min, 59) &&
-      cronFieldMatches(hourField, hour, 23) &&
-      cronFieldMatches(domField, dom, 31) &&
-      cronFieldMatches(monField, mon, 12) &&
-      cronFieldMatches(dowField, dow, 6)
-    ) {
-      if (lastRun && new Date(lastRun).getTime() >= candidate.getTime()) return null;
-      return offset * 60_000;
-    }
-  }
-  return null;
-}
-
-/** For simple interval schedules, return fixed ms. For cron expressions, return null. */
-function getIntervalMs(schedule: string): number | null {
-  const interval = parseInterval(schedule);
-  if (interval) return Math.max(interval, 60000);
-  // Check if it's a */N pattern (uniform interval cron)
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length === 5 && parts[0].startsWith("*/") && parts.slice(1).every(p => p === "*")) {
-    const step = parseInt(parts[0].slice(2));
-    if (!isNaN(step)) return Math.max(step * 60000, 60000);
-  }
-  return null; // Full cron expression — needs dynamic scheduling
-}
+const TRANSIENT_BACKOFF_MS = [60_000, 180_000];
 
 export class CronService {
   private jobs: Map<string, CronJob> = new Map();
@@ -138,11 +91,13 @@ export class CronService {
   private dataDir: string;
   private jobsFile: string;
   private settingsFile: string;
-  private settings: CronSettings = { enabled: true, maxConcurrent: 3 };
+  private settings: CronSettings = { ...DEFAULT_SETTINGS };
   private executeHandler: ExecuteHandler | null = null;
   private running = new Set<string>();
-  private retryCount = new Map<string, number>();
+  private concurrencyDeferCount = new Map<string, number>();
+  private transientRetryCount = new Map<string, number>();
   private lastFileMtime = 0;
+  private history: RunHistoryStore;
 
   constructor(dataDir: string) {
     this.dataDir = dataDir;
@@ -150,59 +105,61 @@ export class CronService {
     if (!existsSync(cronDir)) mkdirSync(cronDir, { recursive: true, mode: 0o700 });
     this.jobsFile = join(cronDir, "jobs.json");
     this.settingsFile = join(cronDir, "settings.json");
+    this.history = new RunHistoryStore(dataDir);
     this.loadJobs();
     this.loadSettings();
   }
 
+  getDataDir(): string { return this.dataDir; }
+  getHistory(): RunHistoryStore { return this.history; }
+  listHistory(jobId: string, limit = 50): CronRunRecord[] { return this.history.list(jobId, limit); }
+
   private loadJobs(): void {
-    if (existsSync(this.jobsFile)) {
-      try {
-        const data = JSON.parse(readFileSync(this.jobsFile, "utf-8"));
-        this.jobs.clear();
-        for (const job of data) this.jobs.set(job.id, job);
-        const { statSync } = require("node:fs");
-        this.lastFileMtime = statSync(this.jobsFile).mtimeMs;
-      } catch {}
-    }
+    if (!existsSync(this.jobsFile)) return;
+    try {
+      const data = JSON.parse(readFileSync(this.jobsFile, "utf-8"));
+      this.jobs.clear();
+      for (const job of data) this.jobs.set(job.id, job);
+      this.lastFileMtime = statSync(this.jobsFile).mtimeMs;
+    } catch { /* corrupt file — keep current state */ }
   }
 
-  /** Re-load jobs from disk if the file was modified externally (e.g., by an agent writing to it). */
   private reloadIfChanged(): void {
     if (!existsSync(this.jobsFile)) return;
     try {
-      const { statSync } = require("node:fs");
       const mtime = statSync(this.jobsFile).mtimeMs;
       if (mtime > this.lastFileMtime) {
         logger.info(`[cron] jobs.json changed externally — reloading`);
         this.loadJobs();
-        // Reschedule any new/changed jobs
         if (this.settings.enabled) {
           for (const job of this.jobs.values()) {
             if (job.enabled && !this.timers.has(job.id)) this.scheduleJob(job);
           }
         }
       }
-    } catch {}
+    } catch { /* ignore */ }
   }
 
   private saveJobs(): void {
     writeFileSync(this.jobsFile, JSON.stringify([...this.jobs.values()], null, 2), "utf-8");
-    try {
-      const { statSync } = require("node:fs");
-      this.lastFileMtime = statSync(this.jobsFile).mtimeMs;
-    } catch {}
+    try { this.lastFileMtime = statSync(this.jobsFile).mtimeMs; } catch { /* ignore */ }
   }
 
   private loadSettings(): void {
-    if (existsSync(this.settingsFile)) {
-      try {
-        this.settings = { ...this.settings, ...JSON.parse(readFileSync(this.settingsFile, "utf-8")) };
-      } catch {}
-    }
+    if (!existsSync(this.settingsFile)) return;
+    try {
+      this.settings = { ...DEFAULT_SETTINGS, ...JSON.parse(readFileSync(this.settingsFile, "utf-8")) };
+    } catch { /* keep defaults */ }
   }
 
-  onExecute(handler: ExecuteHandler): void {
-    this.executeHandler = handler;
+  onExecute(handler: ExecuteHandler): void { this.executeHandler = handler; }
+
+  /** Computed next-run time for a job, in ISO. Returns null if disabled / unscheduled. */
+  getNextRunAt(job: CronJob): string | null {
+    if (!job.enabled || !this.settings.enabled) return null;
+    const ms = msUntilNextRun(job.schedule);
+    if (ms == null) return null;
+    return new Date(Date.now() + ms).toISOString();
   }
 
   start(): void {
@@ -219,7 +176,7 @@ export class CronService {
       const delay = 60_000 + catchUpIndex * 30_000;
       catchUpIndex++;
       logger.info(`[cron] Catching up missed run for ${job.name} (last run: ${job.lastRun || "never"}, missed scheduled time: ${missedTime})`);
-      setTimeout(() => this.executeJob(job), delay);
+      setTimeout(() => this.executeJob(job, { manual: false, isCatchUp: true }), delay);
     }
     logger.info(`[cron] Started with ${this.jobs.size} jobs`);
   }
@@ -233,17 +190,14 @@ export class CronService {
   }
 
   private scheduleJob(job: CronJob): void {
-    // Clear existing timer
     const existing = this.timers.get(job.id);
     if (existing) clearInterval(existing);
 
     const fixedMs = getIntervalMs(job.schedule);
     if (fixedMs) {
-      // Simple interval — use setInterval
-      const timer = setInterval(() => this.executeJob(job), fixedMs);
+      const timer = setInterval(() => this.executeJob(job, { manual: false }), fixedMs);
       this.timers.set(job.id, timer);
     } else {
-      // Full cron expression — schedule next run dynamically
       this.scheduleCronRun(job);
     }
   }
@@ -252,8 +206,7 @@ export class CronService {
     const ms = msUntilNextCron(job.schedule);
     if (!ms) return;
     const timer = setTimeout(async () => {
-      await this.executeJob(job);
-      // Re-schedule for next occurrence
+      await this.executeJob(job, { manual: false });
       if (job.enabled) this.scheduleCronRun(job);
     }, ms);
     this.timers.set(job.id, timer as unknown as ReturnType<typeof setInterval>);
@@ -261,49 +214,174 @@ export class CronService {
     logger.info(`[cron] ${job.name}: next run at ${nextRun.toLocaleString()} (${Math.round(ms / 60000)}m from now)`);
   }
 
-  private async executeJob(job: CronJob): Promise<void> {
+  /**
+   * Public entrypoint for executing a job (used by the timer, catch-up, and
+   * the run-now API). Records a history entry for every attempt — including
+   * skipped runs — and tracks consecutive failures with bounded retries.
+   */
+  async executeJob(
+    job: CronJob,
+    opts: { manual: boolean; isCatchUp?: boolean } = { manual: false },
+  ): Promise<void> {
     if (!this.executeHandler) return;
-    if (this.running.size >= this.settings.maxConcurrent) {
-      const count = (this.retryCount.get(job.id) || 0) + 1;
-      if (count > 3) {
-        logger.error(`[cron] Job ${job.name} (${job.id}) skipped — concurrency limit ${this.settings.maxConcurrent} still full after 3 retries; giving up until next scheduled run`);
-        this.retryCount.delete(job.id);
-        return;
-      }
-      this.retryCount.set(job.id, count);
-      logger.warn(`[cron] Job ${job.name} (${job.id}) deferred — concurrency limit ${this.settings.maxConcurrent} reached, retry ${count}/3 in 60s`);
-      setTimeout(() => this.executeJob(job), 60_000);
+    const scheduledAt = new Date().toISOString();
+
+    if (this.running.has(job.id)) {
+      this.recordSkip(job, scheduledAt, opts.manual, "previous run still active");
+      logger.warn(`[cron] Job ${job.name} (${job.id}) skipped — prior run still active`);
       return;
     }
-    if (this.running.has(job.id)) return;
-    this.retryCount.delete(job.id);
+
+    if (this.running.size >= this.settings.maxConcurrent) {
+      const count = (this.concurrencyDeferCount.get(job.id) || 0) + 1;
+      if (count > 3) {
+        this.concurrencyDeferCount.delete(job.id);
+        this.recordSkip(job, scheduledAt, opts.manual, `concurrency limit ${this.settings.maxConcurrent} full after 3 retries`);
+        logger.error(`[cron] Job ${job.name} (${job.id}) skipped — concurrency limit ${this.settings.maxConcurrent} still full after 3 retries`);
+        return;
+      }
+      this.concurrencyDeferCount.set(job.id, count);
+      logger.warn(`[cron] Job ${job.name} (${job.id}) deferred — concurrency limit ${this.settings.maxConcurrent} reached, retry ${count}/3 in 60s`);
+      setTimeout(() => this.executeJob(job, opts), 60_000);
+      return;
+    }
+    this.concurrencyDeferCount.delete(job.id);
 
     this.running.add(job.id);
+    const startedAt = new Date().toISOString();
+    const startMs = Date.now();
     try {
-      logger.info(`[cron] Running job: ${job.name} (${job.id})`);
-      const raw = await this.executeHandler(job.id, job.prompt);
-      const result = typeof raw === "string" ? { output: raw } : raw;
-      job.lastRun = new Date().toISOString();
-      job.lastResult = result.output.slice(0, 500);
+      logger.info(`[cron] Running job: ${job.name} (${job.id})${opts.manual ? " [manual]" : ""}`);
+      const raw = await this.executeHandler(job.id, job.prompt, { scheduledAt, manual: opts.manual });
+      const result: ExecuteResult = typeof raw === "string" ? { output: raw } : raw;
+      const finishedAt = new Date().toISOString();
+      const durationMs = Date.now() - startMs;
+      const status = this.classifyStatus(result);
+
+      job.lastRun = finishedAt;
+      job.lastResult = summarize(result.output);
       if (result.reportPath) job.lastReportPath = result.reportPath;
+      job.lastStatus = status;
+      job.lastErrorMessage = status === "success" ? undefined : (result.errorMessage || extractErrorMessage(result.output));
+
+      if (status === "success") {
+        job.consecutiveFailures = 0;
+        job.lastSuccessAt = finishedAt;
+        this.transientRetryCount.delete(job.id);
+      } else {
+        job.consecutiveFailures = (job.consecutiveFailures || 0) + 1;
+      }
       this.saveJobs();
+
+      this.history.append({
+        id: newRunId(),
+        jobId: job.id,
+        jobName: job.name,
+        scheduledAt,
+        startedAt,
+        finishedAt,
+        durationMs,
+        status,
+        manual: opts.manual,
+        outputSummary: summarize(result.output),
+        reportPath: result.reportPath,
+        errorMessage: status === "success" ? undefined : (result.errorMessage || extractErrorMessage(result.output)),
+        provider: result.provider,
+        model: result.model,
+      });
+
+      this.maybeAutoPause(job);
     } catch (e) {
-      logger.error(`[cron] Job failed: ${job.name}:`, (e as Error).message);
-      job.lastRun = new Date().toISOString();
-      job.lastResult = `ERROR: ${(e as Error).message}`;
+      const finishedAt = new Date().toISOString();
+      const durationMs = Date.now() - startMs;
+      const errorMessage = (e as Error).message || String(e);
+      logger.error(`[cron] Job failed: ${job.name}:`, errorMessage);
+
+      job.lastRun = finishedAt;
+      job.lastResult = `ERROR: ${errorMessage}`;
+      job.lastStatus = "error";
+      job.lastErrorMessage = errorMessage;
+      job.consecutiveFailures = (job.consecutiveFailures || 0) + 1;
       this.saveJobs();
+
+      this.history.append({
+        id: newRunId(),
+        jobId: job.id,
+        jobName: job.name,
+        scheduledAt,
+        startedAt,
+        finishedAt,
+        durationMs,
+        status: "error",
+        manual: opts.manual,
+        errorMessage,
+      });
+
+      this.scheduleTransientRetry(job, opts);
+      this.maybeAutoPause(job);
     } finally {
       this.running.delete(job.id);
     }
   }
 
+  private classifyStatus(result: ExecuteResult): CronRunStatus {
+    if (result.status) return result.status;
+    const head = (result.output || "").trim().slice(0, 16).toUpperCase();
+    if (head.startsWith("FAILED:")) return "failed";
+    if (head.startsWith("ERROR:")) return "error";
+    return "success";
+  }
+
+  private recordSkip(job: CronJob, scheduledAt: string, manual: boolean, reason: string): void {
+    const now = new Date().toISOString();
+    job.lastStatus = "skipped";
+    job.lastErrorMessage = reason;
+    this.saveJobs();
+    this.history.append({
+      id: newRunId(),
+      jobId: job.id,
+      jobName: job.name,
+      scheduledAt,
+      startedAt: now,
+      finishedAt: now,
+      durationMs: 0,
+      status: "skipped",
+      manual,
+      errorMessage: reason,
+    });
+  }
+
+  private scheduleTransientRetry(job: CronJob, opts: { manual: boolean; isCatchUp?: boolean }): void {
+    if (opts.manual) return; // manual runs surface failure to the caller; no auto-retry
+    const attempt = (this.transientRetryCount.get(job.id) || 0);
+    if (attempt >= this.settings.maxTransientRetries) {
+      this.transientRetryCount.delete(job.id);
+      return;
+    }
+    const delay = TRANSIENT_BACKOFF_MS[Math.min(attempt, TRANSIENT_BACKOFF_MS.length - 1)];
+    this.transientRetryCount.set(job.id, attempt + 1);
+    logger.warn(`[cron] Job ${job.name}: scheduling transient retry ${attempt + 1}/${this.settings.maxTransientRetries} in ${Math.round(delay / 1000)}s`);
+    setTimeout(() => {
+      if (!job.enabled) return;
+      this.executeJob(job, { manual: false }).catch(() => { /* logged inside */ });
+    }, delay);
+  }
+
+  private maybeAutoPause(job: CronJob): void {
+    const cap = this.settings.maxConsecutiveFailures;
+    if (cap <= 0) return;
+    if ((job.consecutiveFailures || 0) < cap) return;
+    if (!job.enabled) return;
+    job.enabled = false;
+    this.saveJobs();
+    const timer = this.timers.get(job.id);
+    if (timer) { clearInterval(timer); this.timers.delete(job.id); }
+    logger.error(`[cron] Auto-paused job ${job.name} (${job.id}) after ${job.consecutiveFailures} consecutive failures`);
+  }
+
   create(name: string, schedule: string, prompt: string, systemJob?: boolean): CronJob {
-    if (prompt.length > 5000) {
-      throw new Error("Cron job prompt too long (max 5000 characters)");
-    }
-    if (!schedule || schedule.trim().length === 0) {
-      throw new Error("Schedule is required");
-    }
+    if (prompt.length > 5000) throw new Error("Cron job prompt too long (max 5000 characters)");
+    if (!schedule || schedule.trim().length === 0) throw new Error("Schedule is required");
     const existing = [...this.jobs.values()].find(j => j.name === name);
     if (existing) {
       logger.info(`[cron] Updated existing job ${name} instead of creating duplicate`);
@@ -314,6 +392,7 @@ export class CronService {
       id, name, schedule, prompt,
       enabled: true,
       systemJob: systemJob || false,
+      consecutiveFailures: 0,
       createdAt: new Date().toISOString(),
     };
     this.jobs.set(id, job);
@@ -325,9 +404,8 @@ export class CronService {
   update(id: string, updates: Partial<CronJob>): CronJob | null {
     const job = this.jobs.get(id);
     if (!job) return null;
-    Object.assign(job, updates, { id }); // don't let id be overwritten
+    Object.assign(job, updates, { id });
     this.saveJobs();
-    // Reschedule if schedule changed or was re-enabled
     if (job.enabled) this.scheduleJob(job);
     else {
       const timer = this.timers.get(id);
@@ -340,7 +418,10 @@ export class CronService {
     const timer = this.timers.get(id);
     if (timer) { clearInterval(timer); this.timers.delete(id); }
     const deleted = this.jobs.delete(id);
-    if (deleted) this.saveJobs();
+    if (deleted) {
+      this.saveJobs();
+      this.history.purge(id);
+    }
     return deleted;
   }
 
@@ -348,8 +429,10 @@ export class CronService {
     const job = this.jobs.get(id);
     if (!job) return null;
     job.enabled = !job.enabled;
-    if (job.enabled) this.scheduleJob(job);
-    else {
+    if (job.enabled) {
+      job.consecutiveFailures = 0; // resume = clear failure streak
+      this.scheduleJob(job);
+    } else {
       const timer = this.timers.get(id);
       if (timer) { clearInterval(timer); this.timers.delete(id); }
     }
@@ -367,9 +450,9 @@ export class CronService {
     return this.jobs.get(id) || null;
   }
 
-  getSettings(): CronSettings {
-    return { ...this.settings };
-  }
+  isRunning(id: string): boolean { return this.running.has(id); }
+
+  getSettings(): CronSettings { return { ...this.settings }; }
 
   updateSettings(updates: Partial<CronSettings>): void {
     this.settings = { ...this.settings, ...updates };
@@ -379,131 +462,13 @@ export class CronService {
   }
 }
 
-// ── Tool Exports ──
-
-export function createCronTools(cron: CronService): ToolDefinition[] {
-  return [
-    {
-      name: "mission_schedule_list",
-      description: "List all scheduled missions",
-      parameters: { type: "object", properties: {} },
-      async execute() {
-        const jobs = cron.list();
-        if (jobs.length === 0) return { content: "No scheduled jobs." };
-        const list = jobs.map(j =>
-          `• ${j.name} [${j.id}] — ${j.schedule} — ${j.enabled ? "✅ enabled" : "⏸️ disabled"}${j.lastRun ? ` — last run: ${j.lastRun}` : ""}`
-        ).join("\n");
-        return { content: list };
-      },
-    },
-    {
-      name: "mission_schedule_create",
-      description: "Schedule a recurring mission. Schedule can be an interval ('5m', '1h', '30s') or cron expression ('*/5 * * * *'). Prompt is what the agent will execute each run. If a job with the same name exists, it will be updated rather than duplicated.",
-      parameters: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "Job name" },
-          schedule: { type: "string", description: "Cron expression or interval (e.g., '5m', '1h', '*/30 * * * *')" },
-          prompt: { type: "string", description: "The prompt/instruction to execute each run" },
-        },
-        required: ["name", "schedule", "prompt"],
-      },
-      async execute(args) {
-        const job = cron.create(String(args.name), String(args.schedule), String(args.prompt));
-        return { content: `Created job "${job.name}" (${job.id}) — runs every ${job.schedule}` };
-      },
-    },
-    {
-      name: "mission_schedule_delete",
-      description: "Delete a scheduled mission by ID",
-      parameters: {
-        type: "object",
-        properties: { id: { type: "string", description: "Job ID" } },
-        required: ["id"],
-      },
-      async execute(args) {
-        const deleted = cron.delete(String(args.id));
-        return { content: deleted ? "Job deleted." : "Job not found." };
-      },
-    },
-    {
-      name: "mission_schedule_update",
-      description: "Update an existing scheduled mission. Provide the id (use mission_schedule_list to find it) and any fields to change: name, schedule, or prompt. Other fields stay the same.",
-      parameters: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "Job ID (from mission_schedule_list)" },
-          name: { type: "string", description: "New name (optional)" },
-          schedule: { type: "string", description: "New cron expression or interval (optional)" },
-          prompt: { type: "string", description: "New prompt that the agent will execute each run (optional)" },
-        },
-        required: ["id"],
-      },
-      async execute(args) {
-        const updates: Record<string, string> = {};
-        if (typeof args.name === "string") updates.name = args.name;
-        if (typeof args.schedule === "string") updates.schedule = args.schedule;
-        if (typeof args.prompt === "string") updates.prompt = args.prompt;
-        if (Object.keys(updates).length === 0) {
-          return { content: "No fields to update. Provide name, schedule, or prompt.", isError: true };
-        }
-        const job = cron.update(String(args.id), updates);
-        if (!job) return { content: `Job "${args.id}" not found.`, isError: true };
-        const changed = Object.keys(updates).join(", ");
-        return { content: `Updated mission "${job.name}" (${changed}).` };
-      },
-    },
-    {
-      name: "mission_schedule_toggle",
-      description: "Enable or disable a scheduled mission",
-      parameters: {
-        type: "object",
-        properties: { id: { type: "string", description: "Job ID" } },
-        required: ["id"],
-      },
-      async execute(args) {
-        const job = cron.toggle(String(args.id));
-        if (!job) return { content: "Job not found." };
-        return { content: `Job "${job.name}" is now ${job.enabled ? "enabled" : "disabled"}.` };
-      },
-    },
-    {
-      name: "mission_schedule_reports",
-      description: "List or read saved reports for a scheduled mission. Without read_latest, lists all reports. With read_latest, returns the most recent report content.",
-      parameters: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "Job ID (optional — if omitted, searches by name)" },
-          name: { type: "string", description: "Job name to search (partial match)" },
-          read_latest: { type: "boolean", description: "If true, return the full content of the latest report" },
-        },
-      },
-      async execute(args) {
-        // Find the job
-        let job: CronJob | null = null;
-        if (args.id) {
-          job = cron.get(String(args.id));
-        } else if (args.name) {
-          const needle = String(args.name).toLowerCase();
-          job = cron.list().find(j => j.name.toLowerCase().includes(needle)) || null;
-        }
-        if (!job) return { content: "No matching job found. Use mission_schedule_list to see all missions." };
-
-        const reportsDir = join(cron["dataDir"], "cron", "reports", job.id);
-        if (!existsSync(reportsDir)) return { content: `Job "${job.name}" has no saved reports yet.` };
-
-        const files = readdirSync(reportsDir).filter(f => f.endsWith(".md")).sort();
-        if (files.length === 0) return { content: `Job "${job.name}" has no saved reports yet.` };
-
-        if (args.read_latest) {
-          const latest = files[files.length - 1];
-          const content = readFileSync(join(reportsDir, latest), "utf-8");
-          return { content: `## Latest report: ${latest}\n\n${content}` };
-        }
-
-        const listing = files.map((f, i) => `${i + 1}. ${f}`).join("\n");
-        return { content: `## ${job.name} — ${files.length} reports\n\nReport dir: ${reportsDir}\nWorkspace: workspace/missions/${job.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}/\n\n${listing}` };
-      },
-    },
-  ];
+function extractErrorMessage(output: string): string | undefined {
+  const trimmed = (output || "").trim();
+  if (!trimmed) return undefined;
+  const firstLine = trimmed.split("\n")[0].trim();
+  return firstLine.length > 240 ? firstLine.slice(0, 240) + "…" : firstLine;
 }
+
+// ── Tool exports (re-export to preserve the existing import surface) ──
+
+export const createCronTools: (cron: CronService) => ToolDefinition[] = _createCronTools;

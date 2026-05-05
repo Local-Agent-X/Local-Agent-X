@@ -78,10 +78,38 @@ async function launch(op: Op, factory: () => Adapter | Promise<Adapter>): Promis
     // Worker.done already converts adapter / loop exceptions into canonical
     // `error` events; nothing more to surface here.
   } finally {
-    active.delete(op.id);
-    activeByLane.set(lane, Math.max(0, (activeByLane.get(lane) ?? 1) - 1));
+    // Identity-checked release: a worker whose lease was stolen by recovery
+    // (Issue 08) may have its `active[opId]` slot already overwritten by
+    // the replacement worker. Only decrement if THIS launch is still the
+    // registered active worker for the op. Recovery's `evictWorker` did
+    // the bookkeeping otherwise.
+    if (handle && active.get(op.id) === handle) {
+      active.delete(op.id);
+      activeByLane.set(lane, Math.max(0, (activeByLane.get(lane) ?? 1) - 1));
+    }
     pumpScheduler();
   }
+}
+
+/**
+ * Issue 08: evict a stale worker from the scheduler's bookkeeping so a
+ * replacement can launch under the lane cap. Used by `recoverStaleOp`
+ * (recovery.ts) — the original worker promise may be permanently
+ * pending (true crash / process death simulation), so the scheduler
+ * needs an explicit way to forget about it.
+ *
+ * Idempotent on already-evicted ops. Returns true if the op was evicted
+ * here, false if there was no active worker for the op.
+ */
+export function evictWorker(opId: string): boolean {
+  if (!active.has(opId)) return false;
+  const op = readOp(opId);
+  active.delete(opId);
+  if (op) {
+    const lane = op.lane as CanonicalLane;
+    activeByLane.set(lane, Math.max(0, (activeByLane.get(lane) ?? 1) - 1));
+  }
+  return true;
 }
 
 /**

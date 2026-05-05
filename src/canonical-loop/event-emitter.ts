@@ -15,6 +15,7 @@
  */
 import { appendCanonicalEvent } from "./store.js";
 import { getBus, eventsChannel, streamChannel } from "./bus.js";
+import { recordCanonicalEvent, recordStreamChunk } from "./soak-metrics.js";
 import type { CanonicalEvent, CanonicalEventType } from "./types.js";
 
 export function emit(
@@ -24,9 +25,11 @@ export function emit(
 ): CanonicalEvent {
   const event = appendCanonicalEvent(opId, type, body);
   getBus().publish(eventsChannel(opId), event);
+  recordCanonicalEvent(event);
   return event;
 }
 
 export function publishStreamChunk(opId: string, chunk: unknown): void {
   getBus().publish(streamChannel(opId), chunk);
+  recordStreamChunk(opId);
 }

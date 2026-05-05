@@ -206,6 +206,7 @@ export {
 
 export { runWorker, type WorkerHandle } from "./worker.js";
 export { driveTurn, type DriveTurnResult } from "./turn-loop.js";
+export { seedInitialUserMessage, buildInitialUserContent } from "./initial-prompt.js";
 export { commitTurn, type CommitTurnInput, type CommitTurnOutput, type CommitTurnMessage } from "./checkpoint.js";
 export {
   transitionOp,

@@ -180,9 +180,10 @@ describe("Issue 11 — stale worker cannot mutate terminal op", () => {
     });
     expect(result.inserted).toBe(false);
 
-    // No new events; no message duplicates.
+    // No new events; no message duplicates. Two messages on disk: the
+    // turn-0 user seed plus the original assistant reply.
     expect(readCanonicalEvents(op.id).length).toBe(baseEvents);
-    expect(readOpMessages(op.id)).toHaveLength(1);
+    expect(readOpMessages(op.id)).toHaveLength(2);
     expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
   });
 });

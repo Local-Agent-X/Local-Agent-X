@@ -20,7 +20,7 @@
  * persisted checkpoint (op_turns row present).
  */
 import { randomUUID } from "node:crypto";
-import { insertOpTurn, appendOpMessage, readOpTurn } from "./store.js";
+import { insertOpTurn, appendOpMessage, readOpMessages, readOpTurn } from "./store.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
@@ -87,13 +87,18 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
 
   const persistedMsgs: OpMessageRow[] = [];
 
+  // Offset seqInTurn past any pre-existing rows for this turn (e.g. the
+  // turn-0 user seed appended by seedInitialUserMessage). Keeps
+  // (op_id, turn_idx, seq_in_turn) unique across input + output messages.
+  const seqBase = readOpMessages(op.id).filter(m => m.turnIdx === turnIdx).length;
+
   for (let i = 0; i < input.messages.length; i++) {
     const m = input.messages[i];
     const row: OpMessageRow = {
       messageId: m.messageId ?? `msg-${randomUUID()}`,
       opId: op.id,
       turnIdx,
-      seqInTurn: i,
+      seqInTurn: seqBase + i,
       role: m.role,
       content: m.content,
       createdAt: new Date().toISOString(),

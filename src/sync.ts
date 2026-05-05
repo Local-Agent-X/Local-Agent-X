@@ -381,6 +381,14 @@ export class AgentSync {
    * Pre-push: detect apps deleted on this machine since the last push,
    * write tombstones for them into sync-repo/.tombstones/, update the
    * per-machine snapshot. Idempotent — re-running doesn't re-tombstone.
+   *
+   * Also handles two edge cases that bite without explicit care:
+   *   1. Resurrection: an app deleted last cycle and recreated this cycle
+   *      keeps getting deleted on every pull because the old tombstone
+   *      lingers. We clear the stale tombstone before writing new ones.
+   *   2. Sync-repo bloat: additive-only push leaves dead app trees in
+   *      sync-repo/workspace/apps/ forever. We prune the tree of any app
+   *      we just tombstoned in the same step.
    */
   private writeTombstonesForDeletedApps(): void {
     const current = new Set(this.listWorkspaceApps());
@@ -399,6 +407,25 @@ export class AgentSync {
       logger.info(`[sync] tombstone snapshot initialized (${current.size} apps baseline)`);
       return;
     }
+
+    // Resurrection: clear any tombstone for an app that exists locally again.
+    // Without this, the old tombstone keeps deleting the recreated app on
+    // every pull anywhere in the fleet.
+    if (existsSync(this.tombstonesDir)) {
+      for (const file of readdirSync(this.tombstonesDir)) {
+        if (!file.endsWith(".json")) continue;
+        const name = file.slice(0, -5);
+        if (current.has(name)) {
+          try {
+            unlinkSync(join(this.tombstonesDir, file));
+            logger.info(`[sync] tombstone cleared — "${name}" exists again locally`);
+          } catch (e) {
+            logger.warn(`[sync] failed to clear tombstone for ${name}: ${(e as Error).message}`);
+          }
+        }
+      }
+    }
+
     const deletedSinceLast = last.filter(name => !current.has(name));
     if (deletedSinceLast.length > 0) {
       if (!existsSync(this.tombstonesDir)) mkdirSync(this.tombstonesDir, { recursive: true });
@@ -406,6 +433,13 @@ export class AgentSync {
         const tombstone = { name, deletedAt: new Date().toISOString(), deletedBy: hostname() };
         writeFileSync(join(this.tombstonesDir, `${name}.json`), JSON.stringify(tombstone, null, 2));
         logger.info(`[sync] tombstone written for "${name}" (deleted on ${tombstone.deletedBy})`);
+        // Prune the dead app tree from sync-repo so it doesn't accumulate.
+        // additiveOnly mirroring leaves these behind otherwise.
+        const syncAppDir = join(this.syncDir, "workspace", "apps", name);
+        if (existsSync(syncAppDir)) {
+          try { rmSync(syncAppDir, { recursive: true, force: true }); }
+          catch (e) { logger.warn(`[sync] failed to prune sync-repo/${name}: ${(e as Error).message}`); }
+        }
       }
     }
     // Update snapshot to current state

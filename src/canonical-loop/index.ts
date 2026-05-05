@@ -106,6 +106,50 @@ export {
   publishStreamChunk,
 } from "./event-emitter.js";
 
+// ── Issue 04 public control API surface ───────────────────────────────────
+
+export {
+  opEventsSince,
+  subscribeOpEvents,
+  subscribeOpStream,
+  reconnectOp,
+  OP_EVENTS_FROM_BEGINNING,
+  type OpEventsSinceResult,
+  type OpEventsSinceOk,
+  type OpEventsSinceErr,
+  type ReconnectResult,
+  type ReconnectOk,
+  type ReconnectErr,
+  type CanonicalEventListener,
+  type StreamChunkListener,
+} from "./control-api.js";
+
+// ── Issue 05 public control API surface (pause / resume) ──────────────────
+
+export {
+  opPause,
+  opResume,
+  type ControlResult,
+  type ControlOk,
+  type ControlErr,
+} from "./control-api.js";
+
+export {
+  signalChannel,
+  publishSignal,
+  subscribeOpSignals,
+  type CanonicalSignal,
+  type CanonicalSignalKind,
+  type PauseSignal,
+  type ResumeSignal,
+  type CancelSignal,
+  type SignalListener,
+} from "./signals.js";
+
+// ── Issue 06 public control API surface (cancel mid-stream) ───────────────
+
+export { opCancel } from "./control-api.js";
+
 export { runWorker, type WorkerHandle } from "./worker.js";
 export { driveTurn, type DriveTurnResult } from "./turn-loop.js";
 export { commitTurn, type CommitTurnInput, type CommitTurnOutput, type CommitTurnMessage } from "./checkpoint.js";

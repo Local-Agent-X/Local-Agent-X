@@ -20,10 +20,10 @@
  * persisted checkpoint (op_turns row present).
  */
 import { randomUUID } from "node:crypto";
-import { writeOp } from "../workers/op-store.js";
 import { insertOpTurn, appendOpMessage } from "./store.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
+import { persistOpKeepingSignals } from "./op-persist.js";
 import type { Op } from "../workers/types.js";
 import type {
   CanonicalMessageRole,
@@ -95,7 +95,10 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
   if (!op.canonical) op.canonical = {};
   op.canonical.currentTurnIdx = turnIdx;
   op.canonical.currentCheckpointId = `${op.id}#${turnIdx}`;
-  writeOp(op);
+  // Preserve control-API signal columns (pause/cancel/redirect) from disk
+  // so a turn commit landing concurrently with opPause does not clobber
+  // the signal the worker is about to read at the next turn boundary.
+  persistOpKeepingSignals(op);
 
   emit(op.id, "turn_committed", {
     turnIdx,

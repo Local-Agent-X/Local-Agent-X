@@ -23,7 +23,9 @@ Default is ON.
 | Field | Type | Notes |
 |---|---|---|
 | `opId` | string | |
-| `provider` | string \| null | From `op.contextPack.routing.preferredProvider` at terminal time. Null when not set. |
+| `provider` | string \| null | Routing hint: from `op.contextPack.routing.preferredProvider` at terminal time. Null when not set. |
+| `adapter` | string \| null | Adapter that actually served the op, from latest `op_turn.providerState.adapterName` (e.g., `"anthropic"`). Null when no turn committed (e.g., pre-lease cancel). |
+| `adapterVersion` | string \| null | From latest `op_turn.providerState.adapterVersion` (e.g., `"1.0.0"`). |
 | `lane` | string | One of `interactive` / `build` / `ide` / `background`. |
 | `startedAt` | ISO 8601 | First time we observed `state_changed null→queued` for this op. |
 | `finishedAt` | ISO 8601 | When the terminal `state_changed` landed. |
@@ -76,17 +78,20 @@ jq -s --arg day "$TODAY" '
 ' "$LOG"
 ```
 
-PowerShell equivalent (uses `jq` if installed, otherwise falls back
-to ConvertFrom-Json):
+PowerShell (Windows hosts without `jq`). Note: PowerShell's
+`ConvertFrom-Json` auto-coerces ISO timestamps into `[DateTime]`, so
+the `startedAt` field is a DateTime by the time you filter — use
+`.Date -eq` rather than `.StartsWith()` (string method on a string
+that no longer exists).
 
 ```powershell
-$today = (Get-Date -Format "yyyy-MM-dd")
+$today = (Get-Date).Date
 $rows = Get-Content workspace/canonical-loop-soak.jsonl |
   ForEach-Object { $_ | ConvertFrom-Json } |
-  Where-Object { $_.startedAt.StartsWith($today) }
+  Where-Object { $_.startedAt.Date -eq $today }
 
 [PSCustomObject]@{
-  day                = $today
+  day                = $today.ToString("yyyy-MM-dd")
   total              = $rows.Count
   succeeded          = ($rows | Where-Object terminal -eq succeeded).Count
   failed             = ($rows | Where-Object terminal -eq failed).Count
@@ -94,12 +99,40 @@ $rows = Get-Content workspace/canonical-loop-soak.jsonl |
   failureRatePct     = if ($rows.Count -eq 0) { 0 } else {
                         [math]::Round(($rows | Where-Object terminal -ne succeeded).Count / $rows.Count * 100, 2)
                       }
-  p50DurationMs      = ($rows.durationMs | Sort-Object)[[math]::Floor($rows.Count / 2)]
-  p95DurationMs      = ($rows.durationMs | Sort-Object)[[math]::Floor(($rows.Count - 1) * 0.95)]
+  p50DurationMs      = if ($rows.Count -eq 0) { $null } else { ($rows.durationMs | Sort-Object)[[math]::Floor($rows.Count / 2)] }
+  p95DurationMs      = if ($rows.Count -eq 0) { $null } else { ($rows.durationMs | Sort-Object)[[math]::Floor(($rows.Count - 1) * 0.95)] }
   crashRecoveryCount = ($rows | Where-Object crashRecovered -eq $true).Count
-}
-$rows | Where-Object failureClass | Group-Object failureClass |
-  Select-Object Name, Count | Format-Table -AutoSize
+} | Format-List
+
+$breakdown = $rows | Where-Object failureClass | Group-Object failureClass |
+  Select-Object Name, Count
+if ($breakdown) { $breakdown | Format-Table -AutoSize } else { Write-Host "(no failures)" }
+```
+
+Node fallback (any host with Node, no jq required):
+
+```bash
+node -e '
+const fs = require("fs");
+const lines = fs.readFileSync("workspace/canonical-loop-soak.jsonl","utf8").trim().split("\n");
+const today = new Date().toISOString().slice(0,10);
+const rows = lines.map(l => JSON.parse(l)).filter(r => r.startedAt.startsWith(today));
+const succeeded = rows.filter(r => r.terminal === "succeeded").length;
+const failures = rows.filter(r => r.terminal !== "succeeded").length;
+const durations = rows.map(r => r.durationMs).sort((a,b) => a - b);
+const p50 = durations[Math.floor(durations.length / 2)];
+const p95 = durations[Math.floor((durations.length - 1) * 0.95)];
+const fc = {};
+for (const r of rows) if (r.failureClass) fc[r.failureClass] = (fc[r.failureClass] || 0) + 1;
+console.log(JSON.stringify({
+  day: today, total: rows.length, succeeded,
+  failed: rows.filter(r => r.terminal === "failed").length,
+  cancelled: rows.filter(r => r.terminal === "cancelled").length,
+  failureRatePct: rows.length ? Math.round(failures / rows.length * 10000) / 100 : 0,
+  p50DurationMs: p50, p95DurationMs: p95,
+  crashRecoveryCount: rows.filter(r => r.crashRecovered).length,
+  failureClassBreakdown: fc,
+}, null, 2));'
 ```
 
 ---

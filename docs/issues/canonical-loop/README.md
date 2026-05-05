@@ -30,6 +30,7 @@ All issues use the PRD glossary verbatim. Each issue is a vertical slice — ind
 | 13 | [`build` lane + build_app adapter (v1.2)](13-build-v1-2.md) | Blocked by v1.1 |
 | 14 | [`ide` lane + session-pinned scheduling (v1.3)](14-ide-v1-3.md) | Blocked by v1.2 |
 | 15 | [Deletion gate + manifest execution](15-deletion-gate-placeholder.md) | Blocked by v1.3 + 2-week bake |
+| 16 | [Pre-stream cancel adapter hang](16-pre-stream-cancel-adapter-hang.md) | Open follow-up (mid-stream cancel works) |
 
 ---
 

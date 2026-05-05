@@ -181,6 +181,43 @@ This captures the rollback in the audit trail and feeds the post-mortem.
 
 ---
 
+## v1.0 history note: pre-seeding soak results are lifecycle-only
+
+**Important context for anyone reading older soak/staging results.**
+
+Between the v1.0 tag (`canonical-loop-v1.0`, `2026-05-04`) and commit
+`32a29b8` (`2026-05-05`), every canonical-routed op shipped to the
+Anthropic adapter with `messages: []` because the canonical loop had
+no path to seed the user's task as the initial op_message. The model
+received only the default system prompt ("You are a helpful
+assistant.") and answered its empty context — typically with "What
+would you like to work on?" — instead of the actual task. Every "PASS"
+result in earlier soak / smoke artifacts proves only that the lifecycle
+primitives (state machine, lease, recovery, replay, cancel, abort) work
+correctly. **It does NOT prove task execution.**
+
+Soak / probe runs collected before `32a29b8`:
+
+- 50-op short soak, 2026-05-05 — lifecycle-only pass.
+- 3-op long soak, 2026-05-05 — lifecycle-only pass; the 60–180 second
+  responses were the model elaborating on its empty context, not
+  executing the prompts.
+- Production-path canary smoke `canary_prod_path_…` — lifecycle-only
+  pass.
+- Live Anthropic CLI smoke (Issue 09 gated suite) — lifecycle-only
+  pass.
+
+Task execution under canonical was first verified on 2026-05-05 by the
+seed probe in `scripts/canonical-loop-seed-probe.ts` after `32a29b8`
+landed (`CANONICAL_SEED_OK_123` round-trip). All later soaks (and any
+future canary) actually exercise model task execution.
+
+When triaging an incident or comparing "before / after" behavior on
+canonical, do NOT cite pre-`32a29b8` soak success as evidence the
+adapter was producing real responses. It wasn't.
+
+---
+
 ## Related
 
 - [docs/canonical-loop-prd.md](../canonical-loop-prd.md) — PRD,

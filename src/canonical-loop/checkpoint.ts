@@ -24,6 +24,7 @@ import { insertOpTurn, appendOpMessage } from "./store.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
+import { readOp } from "../workers/op-store.js";
 import type { Op } from "../workers/types.js";
 import type {
   CanonicalMessageRole,
@@ -47,7 +48,16 @@ export interface CommitTurnInput {
   messages: CommitTurnMessage[];
   toolCallSummary: ToolCallSummary[];
   terminalReason: "done" | "error" | null;
+  /** True if a `pending_redirect` was folded into this turn's prompt. */
   redirectConsumed?: boolean;
+  /**
+   * The instructionId folded into this turn's prompt. Used to:
+   *   - Emit `redirect_applied` with the same id that `redirect_received`
+   *     announced (PRD §12 / acceptance #5).
+   *   - Compare against the disk column so a newer redirect that landed
+   *     mid-turn is preserved for the next turn (latest-wins semantics).
+   */
+  redirectInstructionId?: string;
 }
 
 export interface CommitTurnOutput {
@@ -81,13 +91,15 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
     });
   }
 
+  const redirectConsumed = input.redirectConsumed === true;
+
   const turnRow: OpTurnRow = {
     opId: op.id,
     turnIdx,
     providerState: input.providerState,
     toolCallSummary: input.toolCallSummary,
     terminalReason: input.terminalReason,
-    redirectConsumed: input.redirectConsumed ?? false,
+    redirectConsumed,
     createdAt: new Date().toISOString(),
   };
   const inserted = insertOpTurn(turnRow);
@@ -95,16 +107,37 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
   if (!op.canonical) op.canonical = {};
   op.canonical.currentTurnIdx = turnIdx;
   op.canonical.currentCheckpointId = `${op.id}#${turnIdx}`;
+
+  // Decide whether to clear the redirect column on disk.
+  // - We only clear it if THIS turn applied the same instructionId that's
+  //   currently on disk. If a newer opRedirect landed mid-turn, its
+  //   instructionId now sits on disk and must survive for the next turn
+  //   (latest-wins, but the "previous" instruction was already consumed).
+  // - In the survives-mid-turn-overwrite case we still emit redirect_applied
+  //   for the instruction we DID apply this turn — exactly one
+  //   redirect_applied per consumed redirect (PRD §12).
+  const appliedId = redirectConsumed ? input.redirectInstructionId : undefined;
+  const clearRedirect = appliedId != null && diskRedirectMatches(op.id, appliedId);
   // Preserve control-API signal columns (pause/cancel/redirect) from disk
   // so a turn commit landing concurrently with opPause does not clobber
   // the signal the worker is about to read at the next turn boundary.
-  persistOpKeepingSignals(op);
+  // When `clearRedirect` is true, the redirect column is intentionally
+  // dropped (overrides the on-disk preservation).
+  if (clearRedirect) {
+    op.canonical.redirectInstruction = null;
+    op.canonical.redirectReceivedAt = null;
+  }
+  persistOpKeepingSignals(op, { clearRedirect });
 
   emit(op.id, "turn_committed", {
     turnIdx,
     messageCount: persistedMsgs.length,
     toolCount: input.toolCallSummary.length,
   });
+
+  if (redirectConsumed && appliedId != null) {
+    emit(op.id, "redirect_applied", { turnIdx, instructionId: appliedId });
+  }
 
   if (input.terminalReason === "done") {
     transitionOp(op, "succeeded", "turn_done");
@@ -113,4 +146,9 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
   }
 
   return { turn: turnRow, messages: persistedMsgs, inserted };
+}
+
+function diskRedirectMatches(opId: string, instructionId: string): boolean {
+  const fresh = readOp(opId);
+  return fresh?.canonical?.redirectInstruction?.instructionId === instructionId;
 }

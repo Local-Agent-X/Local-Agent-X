@@ -11,7 +11,7 @@
  */
 import { getBus, type BusListener } from "./bus.js";
 
-export type CanonicalSignalKind = "pause" | "resume" | "cancel";
+export type CanonicalSignalKind = "pause" | "resume" | "cancel" | "redirect";
 
 export interface PauseSignal {
   kind: "pause";
@@ -34,7 +34,15 @@ export interface CancelSignal {
   ts: string;
 }
 
-export type CanonicalSignal = PauseSignal | ResumeSignal | CancelSignal;
+export interface RedirectSignal {
+  kind: "redirect";
+  opId: string;
+  actor: string;
+  ts: string;
+  instructionId: string;
+}
+
+export type CanonicalSignal = PauseSignal | ResumeSignal | CancelSignal | RedirectSignal;
 
 /** Bus channel name for an op's control-signal stream. */
 export function signalChannel(opId: string): string { return `op_signals:${opId}`; }

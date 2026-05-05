@@ -21,12 +21,14 @@ import type { CanonicalMessage, ToolCall } from "./contract-types.js";
 import type {
   CanonicalMessageRole,
   ProviderStateEnvelope,
+  RedirectInstruction,
   ToolCallSummary,
 } from "./types.js";
 import { readLatestOpTurn, readOpMessages } from "./store.js";
 import { emit, publishStreamChunk } from "./event-emitter.js";
 import { commitTurn, type CommitTurnMessage } from "./checkpoint.js";
 import { getToolDispatcher } from "./runtime.js";
+import { readOp } from "../workers/op-store.js";
 import type { Op } from "../workers/types.js";
 
 export interface DriveTurnResult {
@@ -53,9 +55,17 @@ export async function driveTurn(
   turnIdx: number,
   opts: DriveTurnOptions = {},
 ): Promise<DriveTurnResult> {
+  // Snapshot the redirect column from disk BEFORE emitting `turn_started`.
+  // The bus dispatch is synchronous, so a `turn_started` subscriber that
+  // calls `opRedirect` lands on disk AFTER this read — meaning a redirect
+  // arriving during this turn applies to the NEXT turn (PRD acceptance #5:
+  // mid-turn redirect → next-turn application). A redirect that arrived
+  // BEFORE the worker entered driveTurn is captured here and folded into
+  // this turn's prompt.
+  const pendingRedirect = readPendingRedirect(op.id);
   emit(op.id, "turn_started", { turnIdx });
 
-  const input = buildTurnInput(op, turnIdx);
+  const input = buildTurnInput(op, turnIdx, pendingRedirect);
 
   const finalized: CanonicalMessage[] = [];
   const toolCalls: ToolCall[] = [];
@@ -111,12 +121,18 @@ export async function driveTurn(
     messages: allMessages,
     toolCallSummary: toolSummary,
     terminalReason,
+    redirectConsumed: pendingRedirect != null,
+    redirectInstructionId: pendingRedirect?.instructionId,
   });
 
   return { terminalReason, toolCount: toolSummary.length, messageCount: allMessages.length, cancelled: false };
 }
 
-function buildTurnInput(op: Op, turnIdx: number): TurnInput {
+function buildTurnInput(
+  op: Op,
+  turnIdx: number,
+  pendingRedirect: RedirectInstruction | null,
+): TurnInput {
   const history = readOpMessages(op.id);
   const messages: CanonicalMessage[] = history.map(m => ({
     messageId: m.messageId,
@@ -127,13 +143,20 @@ function buildTurnInput(op: Op, turnIdx: number): TurnInput {
     createdAt: m.createdAt,
   }));
   const prior = readLatestOpTurn(op.id);
-  return {
+  const input: TurnInput = {
     opId: op.id,
     turnIdx,
     messages,
     providerState: prior?.providerState,
     tools: [],
   };
+  if (pendingRedirect) input.pendingRedirect = pendingRedirect;
+  return input;
+}
+
+function readPendingRedirect(opId: string): RedirectInstruction | null {
+  const fresh = readOp(opId);
+  return fresh?.canonical?.redirectInstruction ?? null;
 }
 
 interface DispatchedTools {

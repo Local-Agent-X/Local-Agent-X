@@ -22,6 +22,7 @@ import { emit } from "./event-emitter.js";
 import { resolveAdapterFactory } from "./runtime.js";
 import { enqueueOp, pumpScheduler } from "./scheduler.js";
 import { transitionOp } from "./state-machine.js";
+import { readCanonicalEvents as readCanonicalEventsInternal } from "./store.js";
 import type { CanonicalLane, StateChangedBody } from "./types.js";
 
 export {
@@ -160,6 +161,33 @@ export {
 
 export { type RedirectSignal } from "./signals.js";
 
+// ── Issue 08 lease + crash-recovery surface ───────────────────────────────
+
+export {
+  acquireLease,
+  heartbeatLease,
+  releaseLease,
+  isLeaseExpired,
+  getLeaseConfig,
+  setLeaseConfig,
+  resetLeaseConfig,
+  type LeaseConfig,
+} from "./lease.js";
+
+export {
+  recoverStaleOp,
+  recoverStaleOps,
+  type RecoveryOutcome,
+  type RecoveryOutcomeKind,
+} from "./recovery.js";
+
+export { evictWorker } from "./scheduler.js";
+
+// Test-only crash simulation primitive: stops a worker's heartbeat
+// without releasing its lease. Lease will expire on its own and
+// `recoverStaleOp` can then recover it. Underscore marks it internal.
+export { _pauseHeartbeat } from "./worker.js";
+
 export { runWorker, type WorkerHandle } from "./worker.js";
 export { driveTurn, type DriveTurnResult } from "./turn-loop.js";
 export { commitTurn, type CommitTurnInput, type CommitTurnOutput, type CommitTurnMessage } from "./checkpoint.js";
@@ -225,10 +253,26 @@ export function canonicalLoopEntry(op: Op, opts: { sessionId?: string } = {}): v
  * Fail an op cleanly when no adapter factory is registered for its
  * lane/provider. Emits a canonical `error` event with `code: "adapter_error"`
  * and transitions queued → failed. Defensive against double-firing — if the
- * op is no longer in `queued`, this is a no-op.
+ * op is no longer in `queued`, this is a no-op. Also rechecks for a
+ * late-registered adapter (caller registered between submit and this
+ * microtask firing — common in Issue 08 recovery tests that register
+ * after synthesizing state) and routes to the scheduler instead of
+ * failing.
  */
 function failForMissingAdapter(op: Op): void {
   if (op.canonical?.state !== "queued") return;
+  // Defensive (Issue 08): if the op has progress beyond the initial submit
+  // event, some other path is managing it (recovery emitted lease_lost +
+  // state_changed running→queued, opPause/Cancel/Redirect ran, etc.). The
+  // fail-safe was queued before any of that happened — defer to whoever
+  // owns the op now. Without this guard, a recovered op would race the
+  // replacement worker's launch and end up at `failed`.
+  if (readCanonicalEventsInternal(op.id).length > 1) return;
+  if (resolveAdapterFactory(op)) {
+    enqueueOp(op.id, op.lane as CanonicalLane);
+    pumpScheduler();
+    return;
+  }
   emit(op.id, "error", {
     code: "adapter_error",
     message: `no adapter factory registered for op ${op.id} (lane=${op.lane})`,

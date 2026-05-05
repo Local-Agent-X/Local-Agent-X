@@ -50,12 +50,34 @@ export class IllegalTransitionError extends Error {
   }
 }
 
+export interface TransitionOptions {
+  /**
+   * When true, the in-memory op's `leaseOwner` / `leaseExpiresAt` columns
+   * are persisted as-is — the on-disk lease is NOT restored. Used by the
+   * crash-recovery path (Issue 08) so the state transition atomically
+   * clears the dead worker's lease alongside the state change. Without
+   * this, the default `persistOpKeepingSignals` behavior would restore
+   * the stale on-disk lease and leave a recovered op with the dead
+   * worker's `leaseOwner` set.
+   *
+   * Default behavior (lease preserved from disk) is correct for every
+   * non-recovery transition: state-machine writers do not own the lease
+   * columns and must not clobber a live worker's heartbeated lease.
+   */
+  clearLeaseFromOp?: boolean;
+}
+
 /**
  * Transition `op` from its current canonical state to `to`.
  * Throws on illegal transitions. Mutates the op, persists it, emits the
  * `state_changed` event with body `{ from, to, reason }`.
  */
-export function transitionOp(op: Op, to: CanonicalState, reason: string): CanonicalEvent {
+export function transitionOp(
+  op: Op,
+  to: CanonicalState,
+  reason: string,
+  opts: TransitionOptions = {},
+): CanonicalEvent {
   const from = op.canonical?.state;
   if (from === undefined) throw new IllegalTransitionError(from, to);
   const allowed = TRANSITIONS[from];
@@ -67,8 +89,10 @@ export function transitionOp(op: Op, to: CanonicalState, reason: string): Canoni
   if (to === "running" && !op.startedAt) op.startedAt = new Date().toISOString();
   if (TERMINAL.has(to) && !op.completedAt) op.completedAt = new Date().toISOString();
   // Loop-side write — preserve control-API signal columns from disk so a
-  // concurrent opPause/opCancel/etc. is not clobbered.
-  persistOpKeepingSignals(op);
+  // concurrent opPause/opCancel/etc. is not clobbered. `clearLeaseFromOp`
+  // (recovery-only) inverts the default lease preservation so the
+  // transition's writeOp clears the stale lease atomically.
+  persistOpKeepingSignals(op, { preserveLeaseFromDisk: !opts.clearLeaseFromOp });
 
   return emit(op.id, "state_changed", { from, to, reason });
 }

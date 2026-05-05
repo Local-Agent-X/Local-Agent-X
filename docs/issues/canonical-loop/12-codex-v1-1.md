@@ -1,7 +1,7 @@
 # Issue 12 — Codex adapter (v1.1) — boundary proof
 
 **Phase:** v1.1 — provider-neutrality proof
-**Status:** **BLOCKED** by v1.0 completion (issues 01–11 all green, v1.0 tagged).
+**Status:** Design landed 2026-05-05 ([12-codex-v1-1-design.md](12-codex-v1-1-design.md)). Implementation gated on ≥1 week of v1.0 canary clean.
 **Blocks:** Issue 13 (build v1.2)
 
 ---

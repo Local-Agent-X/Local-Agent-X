@@ -573,11 +573,8 @@ async function sendMessage() {
   const msgEl = addMessageEl('assistant', '');
   let bodyEl = msgEl.querySelector('.msg-body');
   bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
-  // ChatGPT-style scroll pin: the new assistant message reserves viewport-
-  // height of room below it. Migrate the pin off any prior assistant message
-  // (only the latest turn keeps it), then anchor the user prompt to the top.
-  document.querySelectorAll('.msg.assistant.pin-bottom').forEach(el => el.classList.remove('pin-bottom'));
-  msgEl.classList.add('pin-bottom');
+  // ChatGPT-style scroll pin: addMessageEl already migrated `pin-bottom` to
+  // the new assistant bubble (this one). Anchor the user prompt to the top.
   if (userMsgEl) {
     requestAnimationFrame(() => {
       try { userMsgEl.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch {}
@@ -1156,6 +1153,15 @@ function addMessageEl(role, text, attachments) {
   const timeHtml = timeStr ? `<span class="msg-time">${timeStr}</span>` : '';
   div.innerHTML = `<div class="msg-label">${role === 'user' ? 'You' : 'Assistant'}</div><div class="msg-body">${attachHtml}${bodyContent}</div><div class="msg-footer">${timeHtml}</div>`;
   el.appendChild(div);
+  // Migrate the viewport-height pin to the newest assistant bubble. Without
+  // this, an agent-emitted follow-up message (build progress, multi-stage
+  // reply, op-status update — anything that doesn't go through the user-send
+  // flow) lands below the prior bubble's reserved 100vh-of-room and shows
+  // up as a giant gap between the two messages.
+  if (role === 'assistant') {
+    document.querySelectorAll('.msg.assistant.pin-bottom').forEach(prev => prev.classList.remove('pin-bottom'));
+    div.classList.add('pin-bottom');
+  }
   // Spring entrance for new messages
   if (typeof Spring !== 'undefined') {
     Spring.fadeIn(div, { preset: 'stiff', slide: true, slideFrom: 8 });

@@ -6,7 +6,13 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
 
   // ── Scheduled Missions ──
   if (method === "GET" && (url.pathname === "/api/missions" || url.pathname === "/api/cron" || url.pathname === "/api/schedules")) {
-    json(200, { missions: ctx.cronService.list(), settings: ctx.cronService.getSettings() }); return true;
+    const jobs = ctx.cronService.list();
+    const missions = jobs.map(j => ({
+      ...j,
+      nextRunAt: ctx.cronService.getNextRunAt(j),
+      isRunning: ctx.cronService.isRunning(j.id),
+    }));
+    json(200, { missions, settings: ctx.cronService.getSettings() }); return true;
   }
   if (method === "POST" && url.pathname === "/api/cron") {
     const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean };
@@ -38,7 +44,16 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     const job = ctx.cronService.get(id);
     if (!job) { json(404, { error: "Job not found" }); return true; }
     json(200, { ok: true, message: `Job "${job.name}" triggered` });
-    ctx.cronService["executeJob"](job).catch(() => {});
+    ctx.cronService.executeJob(job, { manual: true }).catch(() => {});
+    return true;
+  }
+  // Per-job run history (newest first)
+  if (method === "GET" && url.pathname.match(/^\/api\/cron\/[^/]+\/history$/)) {
+    const id = url.pathname.split("/")[3];
+    const job = ctx.cronService.get(id);
+    if (!job) { json(404, { error: "Job not found" }); return true; }
+    const limit = Math.min(parseInt(url.searchParams.get("limit") || "50") || 50, 200);
+    json(200, { runs: ctx.cronService.listHistory(id, limit) });
     return true;
   }
   // Live status of a cron job — includes any active sub-agents for this job
@@ -46,7 +61,8 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     const id = url.pathname.split("/")[3];
     const job = ctx.cronService.get(id);
     if (!job) { json(404, { error: "Job not found" }); return true; }
-    const running = (ctx.cronService as unknown as { running: Set<string> }).running?.has(id) || false;
+    const running = ctx.cronService.isRunning(id);
+    const nextRunAt = ctx.cronService.getNextRunAt(job);
     let subAgents: Array<{ id: string; name: string; role: string; status: string; currentTask?: string; tokensUsed: number; elapsed: number; recentTools: string[] }> = [];
     try {
       const { Handler } = await import("../../agency/handler.js");
@@ -67,7 +83,7 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
         };
       });
     } catch {}
-    json(200, { running, job, subAgents }); return true;
+    json(200, { running, job, nextRunAt, subAgents }); return true;
   }
   if (method === "POST" && url.pathname === "/api/cron/settings") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }

@@ -1,20 +1,27 @@
 /**
- * canonical-loop — module entry point (Issue 01 skeleton).
+ * canonical-loop — module entry point.
  *
- * Issue 01 lands `canonicalLoopEntry(op)` as a stub: it captures the flag
- * value on the op, transitions the op into canonical-state `queued`,
- * persists the op, and emits exactly one `state_changed` canonical event.
- * It does NOT yet drive turns — that is Issue 03.
+ * Issue 01 landed `canonicalLoopEntry(op)` as a stub that captured the flag
+ * value, persisted the op into canonical state `queued`, and emitted the
+ * opening `state_changed` event.
  *
- * Hard rules from the PRD that already apply at this skeleton stage:
- *   - Only canonical-loop writes to canonical-events.jsonl.
- *   - Only canonical-loop writes `op.canonical.state`.
- *   - Adapter / worker / public-control-API code never writes here.
+ * Issue 03 lights up the loop: when an adapter factory has been registered
+ * for the op (per-op or per-lane via runtime.ts), the entry also enqueues
+ * the op and kicks the scheduler. The scheduler grants an in-process lease
+ * to a worker, which drives the turn_loop until terminal and releases.
+ *
+ * Hard rules from the PRD that already apply:
+ *   - Only canonical-loop writes canonical-events.jsonl.
+ *   - Only canonical-loop writes `op.canonical.state` (via state-machine).
+ *   - Adapters / public control APIs / workers from outside this module
+ *     never write canonical state directly.
  */
 import type { Op } from "../workers/types.js";
 import { writeOp } from "../workers/op-store.js";
-import { appendCanonicalEvent } from "./store.js";
-import type { StateChangedBody } from "./types.js";
+import { emit } from "./event-emitter.js";
+import { resolveAdapterFactory } from "./runtime.js";
+import { enqueueOp, pumpScheduler } from "./scheduler.js";
+import type { CanonicalLane, StateChangedBody } from "./types.js";
 
 export {
   isCanonicalLoopEnabled,
@@ -53,35 +60,85 @@ export type {
   ProviderStateEnvelope,
   RedirectInstruction,
   StateChangedBody,
+  ToolCallSummary,
 } from "./types.js";
 
+// ── Issue 03 runtime surface ──────────────────────────────────────────────
+
+export {
+  registerAdapterForOp,
+  setDefaultAdapterForLane,
+  setToolDispatcher,
+  getToolDispatcher,
+  resolveAdapterFactory,
+  resetCanonicalRuntime,
+  type AdapterFactory,
+} from "./runtime.js";
+
+export {
+  enqueueOp,
+  pumpScheduler,
+  awaitIdle,
+  resetScheduler,
+  schedulerSnapshot,
+} from "./scheduler.js";
+
+export {
+  type ToolDispatcher,
+  type ToolDispatchResult,
+  NotConfiguredToolDispatcher,
+  functionToolDispatcher,
+} from "./tool-dispatch.js";
+
+export {
+  getBus,
+  setBus,
+  resetBus,
+  streamChannel,
+  eventsChannel,
+  type CanonicalBus,
+  type BusListener,
+} from "./bus.js";
+
+export {
+  emit as emitCanonicalEvent,
+  publishStreamChunk,
+} from "./event-emitter.js";
+
+export { runWorker, type WorkerHandle } from "./worker.js";
+export { driveTurn, type DriveTurnResult } from "./turn-loop.js";
+export { commitTurn, type CommitTurnInput, type CommitTurnOutput, type CommitTurnMessage } from "./checkpoint.js";
+export {
+  transitionOp,
+  isTerminalCanonicalState,
+  IllegalTransitionError,
+} from "./state-machine.js";
+
 /**
- * Skeleton entry point invoked by `op_submit_async` when the canonical
- * feature flag is ON for the op's lane.
+ * Entry point invoked by `op_submit_async` when the canonical feature flag
+ * is ON for the op's lane. Synchronous bookkeeping; loop driving is
+ * fire-and-forget via the scheduler.
  *
- * Mutates the input `op`:
- *   - sets `op.canonical.flagValue = true`
- *   - sets `op.canonical.state = "queued"`
- *   - sets `op.canonical.sessionId` if provided
+ * Behavior:
+ *   - Mutates `op` to set `canonical.flagValue=true`, `canonical.state="queued"`,
+ *     and the additive PRD §9 columns to their initial values (mostly null).
+ *   - Persists the op via writeOp.
+ *   - Emits exactly one `state_changed` event with body
+ *     `{ from: null, to: "queued", reason: "submitted" }`.
+ *   - If an adapter factory has been registered for this op (per-op or
+ *     per-lane via `registerAdapterForOp` / `setDefaultAdapterForLane`), the
+ *     entry also enqueues the op and kicks the scheduler. With no adapter
+ *     registered, the op stays at `queued` — the same skeleton behavior as
+ *     Issue 01, used by tests that don't drive a loop.
  *
- * Persists:
- *   - operation.json via writeOp (so op_status/listOps see the canonical op)
- *   - exactly one `state_changed` event in canonical-events.jsonl with
- *     body `{ from: null, to: "queued", reason: "submitted" }`
- *
- * Returns the persisted state-changed event for caller convenience.
- *
- * NOTE: real loop execution lands in Issue 03. With this stub, an op
- * submitted under flag ON sits in `queued` and never advances — that is
- * the intended skeleton behavior for v1 canary opt-in.
+ * NOTE: signature unchanged from Issue 01 — `op_submit_async` consumers see
+ * the same return shape regardless of routing (PRD §17 hard rule).
  */
 export function canonicalLoopEntry(op: Op, opts: { sessionId?: string } = {}): void {
   if (!op.canonical) op.canonical = {};
   op.canonical.flagValue = true;
   op.canonical.state = "queued";
   if (opts.sessionId) op.canonical.sessionId = opts.sessionId;
-  // Leave lease/redirect/pause/cancel columns explicitly null so the row
-  // shape on disk matches PRD §9 expectations from Issue 01 onward.
   if (op.canonical.leaseOwner === undefined) op.canonical.leaseOwner = null;
   if (op.canonical.leaseExpiresAt === undefined) op.canonical.leaseExpiresAt = null;
   if (op.canonical.pauseRequestedAt === undefined) op.canonical.pauseRequestedAt = null;
@@ -94,5 +151,12 @@ export function canonicalLoopEntry(op: Op, opts: { sessionId?: string } = {}): v
   writeOp(op);
 
   const body: StateChangedBody = { from: null, to: "queued", reason: "submitted" };
-  appendCanonicalEvent(op.id, "state_changed", body);
+  emit(op.id, "state_changed", body);
+
+  // Issue 03: if there's an adapter to drive this op, schedule it. Otherwise
+  // leave it queued (tests / canary opt-in that didn't register an adapter).
+  if (resolveAdapterFactory(op)) {
+    enqueueOp(op.id, op.lane as CanonicalLane);
+    pumpScheduler();
+  }
 }

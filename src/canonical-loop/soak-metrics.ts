@@ -89,12 +89,22 @@ function finalize(opId: string, terminal: "succeeded" | "failed" | "cancelled"):
   const firstContent = r.firstStreamChunkAt ?? r.firstAssistantMsgAt;
   const firstContentLatencyMs = firstContent !== null ? firstContent - r.startedAt : null;
 
-  // Best-effort token usage from latest op_turn provider_state.
+  // Best-effort metadata from latest op_turn provider_state. The
+  // `adapter` / `adapterVersion` fields identify which adapter
+  // actually served the op (e.g. "anthropic" today, "codex" when
+  // v1.1 lands) — distinct from `provider` above which mirrors the
+  // routing hint. Token usage stays best-effort: adapters that
+  // surface usage in providerPayload populate it; others leave null.
+  let adapter: string | null = null;
+  let adapterVersion: string | null = null;
   let usageInputTokens: number | null = null;
   let usageOutputTokens: number | null = null;
   try {
     const last = readLatestOpTurn(opId);
-    const payload = last?.providerState?.providerPayload as Record<string, unknown> | undefined;
+    const ps = last?.providerState;
+    if (ps && typeof ps.adapterName === "string") adapter = ps.adapterName;
+    if (ps && typeof ps.adapterVersion === "string") adapterVersion = ps.adapterVersion;
+    const payload = ps?.providerPayload as Record<string, unknown> | undefined;
     if (payload) {
       const ui = payload.usageInputTokens;
       const uo = payload.usageOutputTokens;
@@ -106,6 +116,8 @@ function finalize(opId: string, terminal: "succeeded" | "failed" | "cancelled"):
   appendLine({
     opId,
     provider,
+    adapter,
+    adapterVersion,
     lane,
     startedAt: new Date(r.startedAt).toISOString(),
     finishedAt: new Date(finishedAt).toISOString(),

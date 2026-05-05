@@ -150,6 +150,16 @@ export {
 
 export { opCancel } from "./control-api.js";
 
+// ── Issue 07 public control API surface (redirect, latest-wins) ───────────
+
+export {
+  opRedirect,
+  type RedirectControlResult,
+  type RedirectControlErr,
+} from "./control-api.js";
+
+export { type RedirectSignal } from "./signals.js";
+
 export { runWorker, type WorkerHandle } from "./worker.js";
 export { driveTurn, type DriveTurnResult } from "./turn-loop.js";
 export { commitTurn, type CommitTurnInput, type CommitTurnOutput, type CommitTurnMessage } from "./checkpoint.js";

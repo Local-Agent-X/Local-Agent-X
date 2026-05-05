@@ -28,7 +28,7 @@ Decision #1). Adapters live alongside (e.g., `anthropic-adapter`,
 | `scheduler.ts` | Single in-process queue + per-lane caps. `enqueueOp` / `pumpScheduler` / `awaitIdle`. | ≤ 400 |
 | `adapter-contract.ts` | Locked PRD §15 adapter interface (`Adapter`, `TurnInput`, `AdapterReport`, `TurnResult`) + sandbox import deny-list. Type-only. | ≤ 400 |
 | `contract-types.ts` | Value-shape types referenced by the adapter contract (`CanonicalMessage`, `ToolCall`, `ToolDescriptor`). Type-only. | ≤ 400 |
-| `control-api.ts` | Public control API surface: `opEventsSince()` reconnect replay, `subscribeOpEvents()` / `subscribeOpStream()` live subscribers, `reconnectOp()` replay+subscribe with seq-dedup, `opPause()` / `opResume()` (Issue 05). Issues 06–07 add cancel/redirect. | ≤ 400 |
+| `control-api.ts` | Public control API surface: `opEventsSince()` reconnect replay, `subscribeOpEvents()` / `subscribeOpStream()` live subscribers, `reconnectOp()` replay+subscribe with seq-dedup, `opPause()` / `opResume()` (Issue 05), `opCancel()` (Issue 06), `opRedirect()` (Issue 07). | ≤ 400 |
 | `signals.ts` | Bus-side fast-path control signals — `signalChannel(opId)` channel naming, `publishSignal()` (control-API only), `subscribeOpSignals()` for workers / observers. Durable signal columns on the op are still the source of truth. | ≤ 400 |
 | `cancel-handler.ts` | Worker-side cancel primitives (Issue 06): `startCancelTracker`, `finalizeCancel`, `applyPreLeaseCancel`, `applyBoundaryCancel`. Drives `adapter.abort()` with a 1s race timeout; skips commit on partial turns. | ≤ 400 |
 
@@ -217,3 +217,64 @@ seq=7  lease_lost      { workerId, reason: "cancelled" }
 ```
 
 No `turn_committed` event for the aborted turn. No `op_turns/0.json` row.
+
+## Issue 07 — Redirect (latest-wins, turn-boundary)
+
+Public control API:
+
+| Function | Purpose |
+|---|---|
+| `opRedirect(opId, instruction, actor)` | Latest-wins redirect. Direct-writes `redirect_instruction` (UUIDed envelope `{ instructionId, text, receivedAt }`) and `redirect_received_at` on the op, emits `redirect_received` with the new `instructionId`, publishes a `RedirectSignal` on `op_signals:{opId}`. A subsequent call before the prior redirect applies overwrites it on disk; both `redirect_received` events are durable, but only one `redirect_applied` ever fires per consumed redirect. |
+
+Result envelope: `{ ok: true } | { ok: false, code: "unknown_op" \| "invalid_op_id" \| "invalid_instruction" \| "terminal", message }`.
+
+### Redirect is turn-boundary (next prompt assembly)
+
+There is no mid-turn redirect application in v1. The fold-in happens in
+`turn_loop.driveTurn` BEFORE the adapter runs:
+
+1. `driveTurn` snapshots `redirect_instruction` from disk at prompt-assembly
+   time (latest-wins: a later overwrite wins as long as it lands before
+   this read).
+2. The snapshot is passed as `TurnInput.pendingRedirect` (PRD §15
+   adapter contract). The adapter folds it into its provider-specific
+   prompt format.
+3. After the turn commits, `commitTurn` emits `redirect_applied { turnIdx, instructionId }`,
+   sets `op_turns.redirect_consumed = true`, and clears `redirect_instruction`
+   from the op — but **only if the disk's current `instructionId` still
+   matches the one we applied**. If a newer opRedirect landed mid-turn,
+   the new instruction stays on disk for the next prompt. The applied
+   id still gets its single `redirect_applied` event.
+
+### Precedence with cancel and pause (PRD §13)
+
+`cancel > pause > redirect`. Concretely:
+
+- A pending cancel at the worker's per-iteration boundary check is taken
+  BEFORE redirect or pause — the next turn (which would have folded the
+  redirect) never starts. The redirect column survives on the cancelled
+  op as a benign orphan; nothing applies it.
+- Redirect and pause coexist. A redirect set during a paused window
+  survives the pause→resume cycle (worker's pause handler clears only
+  `pause_requested_at`) and is folded into the first turn after resume.
+
+### Issue 07 events
+
+| Event | Body shape | Emitted by |
+|---|---|---|
+| `redirect_received` | `{ actor, instructionId }` | `opRedirect()` (control API). One per call, even when latest-wins overwrites. |
+| `redirect_applied` | `{ turnIdx, instructionId }` | `commitTurn()` (Issue 07 wiring). Same transaction as `turn_committed`. Exactly one per consumed redirect. |
+
+The locked v1 enum already includes `redirect_received` and `redirect_applied`
+(PRD §12) — Issue 07 just lights them up.
+
+### Latest-wins audit trail (PRD acceptance #6)
+
+Two `opRedirect` calls in quick succession on the same op:
+
+- Both calls emit `redirect_received` (durable on `op_events`, distinct
+  `instructionId` per call).
+- Disk's `redirect_instruction` ends as the second call's envelope.
+- The next turn folds in only the second instruction.
+- Exactly one `redirect_applied` fires, with the second `instructionId`.
+- The first instruction is not re-emitted and not consumed.

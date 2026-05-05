@@ -15,7 +15,8 @@
  * Stream chunks (`op_stream:{op_id}`) are bus-only and never replayed —
  * callers that re-attach via `subscribeOpStream` get the live tail only.
  */
-import type { CanonicalEvent, CanonicalLane } from "./types.js";
+import { randomUUID } from "node:crypto";
+import type { CanonicalEvent, CanonicalLane, RedirectInstruction } from "./types.js";
 import { readCanonicalEvents } from "./store.js";
 import { readOp, writeOp } from "../workers/op-store.js";
 import { getBus, eventsChannel, streamChannel, type BusListener } from "./bus.js";
@@ -295,5 +296,73 @@ export function opCancel(opId: string, actor: string): ControlResult {
   writeOp(op);
   emit(opId, "cancel_requested", { actor });
   publishSignal({ kind: "cancel", opId, actor, ts: now });
+  return { ok: true };
+}
+
+// ── Issue 07: opRedirect ──────────────────────────────────────────────────
+
+export interface RedirectControlErr {
+  ok: false;
+  code: "unknown_op" | "invalid_op_id" | "invalid_instruction" | "terminal";
+  message: string;
+}
+export type RedirectControlResult = ControlOk | RedirectControlErr;
+
+/**
+ * Latest-wins redirect (PRD §13).
+ *
+ * Writes `redirect_instruction` + `redirect_received_at` on the op,
+ * overwriting any pending instruction that hasn't applied yet (latest-wins
+ * — PRD §4 explicitly disallows multi-redirect queueing). Emits
+ * `redirect_received` with the new `instructionId`, then publishes a
+ * `RedirectSignal` on `op_signals:{opId}` so workers can fast-path it.
+ *
+ * The actual fold-into-prompt happens at the NEXT turn boundary —
+ * `turn_loop.buildTurnInput` reads the column and passes it as
+ * `TurnInput.pendingRedirect`. `commitTurn` emits `redirect_applied` and
+ * clears the column atomically with the post-turn write.
+ *
+ * Cancel beats pause beats redirect (PRD §13). This entrypoint just
+ * records the intent; precedence is enforced by the worker turn-boundary
+ * handler. A redirect set on a `cancelling` or terminal op is rejected.
+ *
+ * Each call gets a fresh `instructionId` (UUID) and emits a fresh
+ * `redirect_received` event. Only the LAST instruction surviving on disk
+ * at the next prompt assembly is folded in and yields `redirect_applied`
+ * (PRD acceptance #6).
+ */
+export function opRedirect(opId: string, instruction: string, actor: string): RedirectControlResult {
+  if (typeof opId !== "string" || opId.length === 0) {
+    return { ok: false, code: "invalid_op_id", message: "opId must be a non-empty string" };
+  }
+  if (typeof instruction !== "string" || instruction.length === 0) {
+    return {
+      ok: false,
+      code: "invalid_instruction",
+      message: "instruction must be a non-empty string",
+    };
+  }
+  const op = readOp(opId);
+  if (!op) return { ok: false, code: "unknown_op", message: `no op with id ${opId}` };
+  const state = op.canonical?.state;
+  if (state && TERMINAL_STATES.has(state)) {
+    return { ok: false, code: "terminal", message: `op ${opId} is already ${state}` };
+  }
+  // Cancelling/cancelled paths: PRD §13 cancel > pause > redirect. We do
+  // not reject on `cancelling` (matches opPause: silent no-op effect — the
+  // worker's cancel path runs before any next prompt assembly), keeping
+  // the API surface mirror-symmetric with pause/cancel.
+
+  if (!op.canonical) op.canonical = {};
+  const now = new Date().toISOString();
+  const instructionId = `ri-${randomUUID()}`;
+  const next: RedirectInstruction = { instructionId, text: instruction, receivedAt: now };
+  // Latest-wins: overwrite any pending instruction. Direct writeOp
+  // because we are explicitly mutating a signal column owned by this API.
+  op.canonical.redirectInstruction = next;
+  op.canonical.redirectReceivedAt = now;
+  writeOp(op);
+  emit(opId, "redirect_received", { actor, instructionId });
+  publishSignal({ kind: "redirect", opId, actor, ts: now, instructionId });
   return { ok: true };
 }

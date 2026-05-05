@@ -27,14 +27,26 @@
 import { readOp, writeOp } from "../workers/op-store.js";
 import type { Op } from "../workers/types.js";
 
-export function persistOpKeepingSignals(op: Op): void {
+export interface PersistOpOptions {
+  /**
+   * When true, do NOT restore `redirectInstruction` / `redirectReceivedAt`
+   * from disk — leaves them as set on the in-memory op. The canonical
+   * caller is `commitTurn` clearing the redirect after applying it (Issue
+   * 07). Pause and cancel signals are still preserved.
+   */
+  clearRedirect?: boolean;
+}
+
+export function persistOpKeepingSignals(op: Op, opts: PersistOpOptions = {}): void {
   const onDisk = readOp(op.id);
   if (onDisk?.canonical) {
     if (!op.canonical) op.canonical = {};
     op.canonical.pauseRequestedAt = onDisk.canonical.pauseRequestedAt ?? null;
     op.canonical.cancelRequestedAt = onDisk.canonical.cancelRequestedAt ?? null;
-    op.canonical.redirectInstruction = onDisk.canonical.redirectInstruction ?? null;
-    op.canonical.redirectReceivedAt = onDisk.canonical.redirectReceivedAt ?? null;
+    if (!opts.clearRedirect) {
+      op.canonical.redirectInstruction = onDisk.canonical.redirectInstruction ?? null;
+      op.canonical.redirectReceivedAt = onDisk.canonical.redirectReceivedAt ?? null;
+    }
   }
   writeOp(op);
 }

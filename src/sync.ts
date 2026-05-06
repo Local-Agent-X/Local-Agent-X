@@ -742,11 +742,45 @@ export class AgentSync {
 
       const hostname = (await execFileAsync("hostname", [], { windowsHide: true })).stdout.trim();
       await this.git("commit", "-m", `sync from ${hostname} at ${new Date().toISOString()}`);
-      try { await this.git("pull", "--rebase", "origin", "main"); } catch {
-        try { await this.git("rebase", "--abort"); } catch {}
-        try { await this.git("pull", "--no-rebase", "origin", "main"); await this.resolveConflicts(); } catch {}
+
+      // When another machine has pushed since our last sync, our local
+      // commit is on a divergent branch and the final push will reject
+      // with non-fast-forward. Try rebase first, then merge fallback.
+      // Surface why each fallback failed instead of swallowing — the
+      // old code caught both rebase and merge silently, then ran push
+      // anyway and bubbled up only the cryptic "Updates were rejected"
+      // git push error. The user's real problem (rebase couldn't apply
+      // because of conflicting writes, network blip on pull, etc.) was
+      // hidden until they read the server log.
+      let rebaseErr: Error | null = null;
+      let mergeErr: Error | null = null;
+      try {
+        await this.git("pull", "--rebase", "origin", "main");
+      } catch (e) {
+        rebaseErr = e as Error;
+        try { await this.git("rebase", "--abort"); } catch { /* nothing to abort */ }
+        try {
+          await this.git("pull", "--no-rebase", "origin", "main");
+          await this.resolveConflicts();
+        } catch (e2) {
+          mergeErr = e2 as Error;
+        }
       }
-      await this.git("push", "-u", "origin", "HEAD:main");
+      try {
+        await this.git("push", "-u", "origin", "HEAD:main");
+      } catch (pushErr) {
+        // Push failed — almost always non-fast-forward when the rebase
+        // and merge fallback above also failed. Build a single message
+        // that names the real cause, not the downstream symptom.
+        const reasons: string[] = [];
+        if (rebaseErr) reasons.push(`rebase failed: ${rebaseErr.message.split("\n")[0].slice(0, 200)}`);
+        if (mergeErr) reasons.push(`merge fallback failed: ${mergeErr.message.split("\n")[0].slice(0, 200)}`);
+        const detail = reasons.length > 0 ? ` (root cause: ${reasons.join("; ")})` : "";
+        const finalMsg = `[sync] push rejected — remote has commits this machine doesn't have${detail}. Hit Force Pull to integrate the remote state, then sync again. Original git error: ${(pushErr as Error).message.split("\n")[0]}`;
+        logger.error(finalMsg);
+        this.isSyncing = false;
+        return { success: false, message: finalMsg };
+      }
       this.lastSyncTime = Date.now();
       return { success: true, message: "Synced" };
     } catch (e) {

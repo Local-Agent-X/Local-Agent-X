@@ -27,6 +27,9 @@
  * those primitives, except for the explicit lease-clear step that runs
  * just before emitting `lease_lost`.
  */
+import { existsSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { readOp } from "../workers/op-store.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp, IllegalTransitionError } from "./state-machine.js";
@@ -111,6 +114,53 @@ export function recoverStaleOp(opId: string): RecoveryOutcome {
  */
 export function recoverStaleOps(opIds: string[]): RecoveryOutcome[] {
   return opIds.map(recoverStaleOp);
+}
+
+/**
+ * Boot-time sweep of stale canonical-loop ops on disk.
+ *
+ * When the server gets SIGTERM mid-op, the worker dies but the lease
+ * row on disk still says `running` with a now-expired `leaseExpiresAt`.
+ * Without this sweep, that op stays "running" forever — no janitor, no
+ * re-acquire, just an orphan polluting the AGENTS sidebar and the
+ * `op_status` listing until something explicitly drives recovery.
+ *
+ * The sweep walks `~/.lax/operations/`, finds canonical ops where:
+ *   - `op.canonical.flagValue === true`
+ *   - `op.canonical.state ∈ {running, cancelling}` (queued / paused
+ *     don't have leases to expire; terminal states are absorbing)
+ *   - `op.canonical.leaseOwner` is set
+ *   - `isLeaseExpired(op)` is true
+ * and routes each through `recoverStaleOp`.
+ *
+ * Safe to call exactly once at server boot. No-op if the operations
+ * dir is missing. Resilient to per-op read errors (logs and skips).
+ *
+ * Returns the list of outcomes for logging by the caller.
+ */
+export function sweepStaleCanonicalOps(): { opId: string; outcome: RecoveryOutcome }[] {
+  const opsBase = join(homedir(), ".lax", "operations");
+  if (!existsSync(opsBase)) return [];
+
+  let opIds: string[];
+  try { opIds = readdirSync(opsBase); } catch { return []; }
+
+  const out: { opId: string; outcome: RecoveryOutcome }[] = [];
+  for (const opId of opIds) {
+    let op;
+    try { op = readOp(opId); } catch { continue; }
+    if (!op) continue;
+
+    const c = op.canonical;
+    if (!c || c.flagValue !== true) continue;
+    if (c.state !== "running" && c.state !== "cancelling") continue;
+    if (!c.leaseOwner) continue;
+    if (!isLeaseExpired(op)) continue;
+
+    const outcome = recoverStaleOp(opId);
+    out.push({ opId, outcome });
+  }
+  return out;
 }
 
 /**

@@ -373,6 +373,13 @@ export function setupChatWebSocket(server: Server, authToken: string) {
       return {
         abort: abortController,
         onEvent(event: ServerEvent) {
+          // If this turn was already stopped (user pressed Stop, or `done`
+          // already emitted), drop any further events. Provider streams can
+          // keep flushing buffered tokens for a brief window after the abort
+          // signal — without this guard those stale deltas leak into the
+          // next turn on the same session and overwrite the new response.
+          if (chat.done) return;
+
           // Buffer the event
           chat.events.push(event);
 

@@ -1,17 +1,18 @@
 /**
  * protocol_search — keyword-based ranked discovery over the protocol catalog.
  *
- * With ~1,000 protocols in the bundle, listing every name+description in the
- * system prompt would burn ~150KB of token budget per turn. Instead the
- * system prompt mentions only this search tool; the agent calls it when it
- * thinks a protocol might exist for the current task, gets the top N hits,
- * then calls protocol_get on the chosen one.
+ * The default install ships a small curated set of typed built-in protocols.
+ * Users can grow the catalog by importing optional SKILL.md packs (bundled
+ * layer) or authoring their own (imported / custom layers). Even at small
+ * sizes search is preferred over list-browse so the system prompt stays
+ * lean; once a user has imported a large pack, search keeps name+description
+ * out of every-turn context.
  *
  * Ranking: BM25-lite — IDF-weighted term frequency over a denormalized
  * document built from name + description + triggers + tags + first 800
  * chars of body/steps. No embeddings, no external deps. Index is rebuilt
- * lazily on the first call after a protocol-list mutation; for ~1,000
- * docs the rebuild is sub-100ms in Node.
+ * lazily on the first call after a protocol-list mutation; rebuild stays
+ * sub-100ms in Node up to ~1,000 docs.
  */
 
 import type { ToolDefinition, ToolResult } from "../types.js";

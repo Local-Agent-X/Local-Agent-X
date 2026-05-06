@@ -5,6 +5,10 @@
  *                          Stamped with source.type = "builtin" if missing.
  *   2. Bundled imports  — SKILL.md files vendored at protocols/bundled/<name>/.
  *                          Parsed via parseSkillMd(); source.type = "bundled".
+ *                          The default install ships with this directory empty
+ *                          (or absent) — bundled is an optional layer that
+ *                          users can populate by running scripts/import-protocols.mjs
+ *                          or by dropping in a curated pack repo.
  *   3. User overlay     — SKILL.md files at ~/.lax/protocols/imported/<name>/
  *                          plus typed records from ~/.lax/custom-protocols.json.
  *                          source.type = "imported" or "custom".
@@ -105,10 +109,11 @@ function scanSkillMdDir(dir: string, sourceType: "bundled" | "imported"): Protoc
 
 // ── Cache layer ────────────────────────────────────────────────────────────
 //
-// Reading + parsing ~1,000 SKILL.md files on every boot would add real
-// latency. Cache parsed bundled protocols in memory; the bundled directory
-// changes only when the importer runs, which is rare. Imported (user) layer
-// is small enough to read every call; users edit those frequently.
+// Bundled protocols are cached in memory: the directory only changes when
+// the importer runs, which is rare. The default install has zero bundled
+// SKILL.md files, but a user-populated pack can grow large, so caching
+// keeps boot fast. Imported (user) layer is read every call — users edit
+// those frequently and the count is always small.
 
 let _bundledCache: Protocol[] | null = null;
 

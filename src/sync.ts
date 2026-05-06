@@ -808,10 +808,19 @@ export class AgentSync {
   }
 
   getStatus() {
+    // Include EVERY persisted flag so the settings UI can populate its
+    // toggles correctly. Missing fields default to off in the UI, and
+    // the next saveSyncConfig sends them back as `false`, silently
+    // overwriting the on-disk `true` value. That was the bug behind
+    // "workspace sync flips off after every server restart": getStatus
+    // never returned syncWorkspace / syncCronJobs, so the toggles came
+    // up off, the user (or auto-save) wrote them off, and the disk
+    // state never recovered.
     return {
       enabled: this.config.enabled, lastSync: this.lastSyncTime, isSyncing: this.isSyncing,
       repoUrl: this.config.repoUrl, interval: this.config.interval,
       autoDownload: this.config.autoDownload, syncSessions: this.config.syncSessions,
+      syncWorkspace: this.config.syncWorkspace, syncCronJobs: this.config.syncCronJobs,
     };
   }
 }

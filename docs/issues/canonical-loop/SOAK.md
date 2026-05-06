@@ -1,9 +1,13 @@
 # canonical-loop soak telemetry — read side
 
-Soak metrics land at `workspace/canonical-loop-soak.jsonl`, one JSON
-line per terminated canonical-loop op. Append-only. The file is
-auto-created on the first event; `workspace/*` is gitignored, so
-nothing leaks into the repo.
+Soak metrics land at `workspace/canonical-loop-soak-<hostname>.jsonl`,
+one JSON line per terminated canonical-loop op. Append-only.
+Per-host filename so multi-machine canary data syncs cleanly via the
+AgentSync workspace mirror without last-write-wins clobbering each
+other. The file is auto-created on the first event; `workspace/*` is
+gitignored, so nothing leaks into the code repo. The roll-up commands
+below glob `canonical-loop-soak-*.jsonl` so they read every host's
+file in one pass once they're synced down.
 
 The sink is wired into `src/canonical-loop/event-emitter.ts` —
 passive observer at the `emit()` and `publishStreamChunk()` seams.
@@ -48,10 +52,11 @@ daily roll-up.
 ## Daily roll-up (one-shot bash + jq)
 
 ```bash
-LOG=workspace/canonical-loop-soak.jsonl
 TODAY=$(date +%Y-%m-%d)
 
-jq -s --arg day "$TODAY" '
+# Reads every per-host file at once; safe even if some hosts haven't
+# synced yet (cat just sees fewer files).
+cat workspace/canonical-loop-soak-*.jsonl 2>/dev/null | jq -s --arg day "$TODAY" '
   map(select(.startedAt | startswith($day))) as $today
   | {
       day: $day,
@@ -80,7 +85,7 @@ jq -s --arg day "$TODAY" '
         | add // {}
       )
     }
-' "$LOG"
+'
 ```
 
 PowerShell (Windows hosts without `jq`). Note: PowerShell's
@@ -91,7 +96,8 @@ that no longer exists).
 
 ```powershell
 $today = (Get-Date).Date
-$rows = Get-Content workspace/canonical-loop-soak.jsonl |
+$rows = Get-ChildItem workspace/canonical-loop-soak-*.jsonl -ErrorAction SilentlyContinue |
+  ForEach-Object { Get-Content $_ } |
   ForEach-Object { $_ | ConvertFrom-Json } |
   Where-Object { $_.startedAt.Date -eq $today }
 
@@ -118,10 +124,14 @@ Node fallback (any host with Node, no jq required):
 
 ```bash
 node -e '
-const fs = require("fs");
-const lines = fs.readFileSync("workspace/canonical-loop-soak.jsonl","utf8").trim().split("\n");
+const fs = require("fs"), path = require("path");
+const dir = "workspace";
+const files = fs.readdirSync(dir).filter(f => /^canonical-loop-soak-.*\.jsonl$/.test(f));
 const today = new Date().toISOString().slice(0,10);
-const rows = lines.map(l => JSON.parse(l)).filter(r => r.startedAt.startsWith(today));
+const rows = files.flatMap(f =>
+  fs.readFileSync(path.join(dir, f), "utf8").trim().split("\n").filter(Boolean).map(l => JSON.parse(l))
+).filter(r => r.startedAt.startsWith(today));
+rows.length || (() => { console.log("(no rows yet for today)"); process.exit(0); })();
 const succeeded = rows.filter(r => r.terminal === "succeeded").length;
 const failures = rows.filter(r => r.terminal !== "succeeded").length;
 const durations = rows.map(r => r.durationMs).sort((a,b) => a - b);

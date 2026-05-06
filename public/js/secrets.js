@@ -37,8 +37,9 @@ function selectSecretItem(name) {
 function renderSecretDetail() {
   const empty = document.getElementById('secret-detail-empty');
   const view = document.getElementById('secret-detail-view');
-  if (!selectedSecret) { empty.style.display = 'flex'; view.style.display = 'none'; return; }
-  empty.style.display = 'none'; view.style.display = 'block';
+  if (!selectedSecret) { if (empty) empty.style.display = 'flex'; if (view) view.style.display = 'none'; return; }
+  if (empty) empty.style.display = 'none';
+  if (view) view.style.display = 'block';
   document.getElementById('detail-name').textContent = selectedSecret.name;
   document.getElementById('detail-service').textContent = selectedSecret.service ? `Service: ${selectedSecret.service}` : '';
   document.getElementById('detail-usage').textContent = `{{${selectedSecret.name}}}`;
@@ -46,15 +47,23 @@ function renderSecretDetail() {
   document.getElementById('detail-meta').innerHTML = `Added: ${fmt(selectedSecret.addedAt)}<br>Updated: ${fmt(selectedSecret.updatedAt)}`;
 }
 
+function openSecretModal() {
+  const o = document.getElementById('secret-create-modal-overlay'); if (!o) return;
+  o.classList.add('visible');
+  setTimeout(() => document.getElementById('new-secret-name')?.focus(), 50);
+}
+function closeSecretModal() { document.getElementById('secret-create-modal-overlay')?.classList.remove('visible'); }
+
 async function addSecret() {
   const name = document.getElementById('new-secret-name').value.trim();
   const value = document.getElementById('new-secret-value').value.trim();
   const service = document.getElementById('new-secret-service').value.trim();
-  if (!name || !value) return;
+  if (!name || !value) { alert('Name and value are required.'); return; }
   await apiPost('/api/secrets', { name, value, service: service || undefined });
   document.getElementById('new-secret-name').value = '';
   document.getElementById('new-secret-value').value = '';
   document.getElementById('new-secret-service').value = '';
+  closeSecretModal();
   await loadSecrets();
   selectSecretItem(name.toUpperCase().replace(/[^A-Z0-9_]/g, '_'));
 }

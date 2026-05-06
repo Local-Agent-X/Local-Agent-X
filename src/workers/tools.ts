@@ -101,7 +101,7 @@ const submitParameters = {
     context_files: { type: "array", items: { type: "string" }, description: "File paths to pre-load into the worker's context." },
     scope_hint: { type: "string", description: "File or directory hint for AGENTS.md walking + context bootstrapping." },
     memory_query: { type: "string", description: "If set, pre-fetch memory hits matching this query." },
-    lane: { type: "string", enum: ["interactive", "build", "background"], description: "Priority lane. Default: 'build'." },
+    lane: { type: "string", enum: ["interactive", "build", "background"], description: "Which lane to schedule on. CHOOSE EXPLICITLY — do not omit. interactive: pure reasoning, Q&A, summarization, research synthesis, status checks, planning, reviewing, explaining, non-mutating analysis (the worker does NOT touch files, run builds, or change repo state). build: code edits, app builds, file writes, repo changes, long implementation, shell/test work, anything that mutates the workspace. background: scheduled / low-priority recurring jobs. If unsure, prefer 'interactive' for any read-only / advisory task and 'build' for any task that produces or modifies artifacts. Fallback when omitted is 'build' for safety, but you should still pick explicitly." },
     preferred_provider: { type: "string", description: "Optional provider id (e.g., 'httpKeyOpenAi', 'cliOauthAnthropic')." },
     max_iterations: { type: "number", description: "Cap on agent iterations. Default 30." },
     max_wall_time_ms: { type: "number", description: "Hard wall-time cap. Default 900000 (15 min)." },
@@ -132,7 +132,7 @@ const POLL_LOOP_MAX = 1; // first call returns rich data; second call returns ST
 export const opSubmitAsyncTool: ToolDefinition = {
   name: "op_submit_async",
   description:
-    "PREFERRED for any task >5 seconds. Delegates to a worker process and returns the opId IMMEDIATELY — your chat turn does not block. Submit ONCE per logical task; if you call this tool a second time with the same task in the same turn, you'll get the existing opId back (no second worker spawned). Tell the user 'started, I'll let you know when it's done' and move on. The user is automatically notified when the op completes via a chat update; you can also call op_status(opId) on any future turn. Use op_wait(opId) only if you genuinely need the result before answering the current turn.",
+    "PREFERRED for any task >5 seconds. Delegates to a worker process and returns the opId IMMEDIATELY — your chat turn does not block. Submit ONCE per logical task; if you call this tool a second time with the same task in the same turn, you'll get the existing opId back (no second worker spawned). Tell the user 'started, I'll let you know when it's done' and move on. The user is automatically notified when the op completes via a chat update; you can also call op_status(opId) on any future turn. Use op_wait(opId) only if you genuinely need the result before answering the current turn. ALWAYS pass `lane` explicitly: use `lane:'interactive'` for pure reasoning / Q&A / summarization / research synthesis / status checks / planning / reviewing / explaining / non-mutating analysis (worker does NOT touch files or run builds), `lane:'build'` for code edits / app builds / file writes / refactors / shell or test work, `lane:'background'` for scheduled or low-priority recurring jobs. Picking the right lane matters — interactive ops finish in seconds; build ops can take minutes.",
   parameters: submitParameters,
   async execute(args) {
     const task = String(args.task || "").trim();
@@ -285,7 +285,7 @@ export const opWaitTool: ToolDefinition = {
 export const opSubmitTool: ToolDefinition = {
   name: "op_submit",
   description:
-    "Convenience: submit an op AND wait for the result, in one call. Equivalent to op_submit_async + op_wait. ONLY use this for short ops (<10s) where blocking the user is acceptable. For anything heavier — builds, refactors, multi-file research — call op_submit_async instead so you can respond to the user immediately and surface the result via the auto-notification when it's ready.",
+    "Convenience: submit an op AND wait for the result, in one call. Equivalent to op_submit_async + op_wait. ONLY use this for short ops (<10s) where blocking the user is acceptable. For anything heavier — builds, refactors, multi-file research — call op_submit_async instead so you can respond to the user immediately and surface the result via the auto-notification when it's ready. ALWAYS pass `lane` explicitly: `lane:'interactive'` for pure reasoning / Q&A / summarization / research synthesis / status checks / planning / reviewing / explaining / non-mutating analysis, `lane:'build'` for code edits / app builds / file writes / refactors / shell or test work, `lane:'background'` for scheduled or low-priority recurring jobs.",
   parameters: submitParameters,
   async execute(args) {
     const task = String(args.task || "").trim();
@@ -326,6 +326,8 @@ export const opStatusTool: ToolDefinition = {
 
     if (!args.op_id) {
       const status = getPoolStatus();
+      const { listActiveCanonicalOps } = await import("../canonical-loop/index.js");
+      const canonicalActive = listActiveCanonicalOps();
       const sessionOpIds = sessionId ? listOpsForSession(sessionId) : [];
       const sessionOpEntries = sessionOpIds
         .map(id => readOp(id))
@@ -333,9 +335,16 @@ export const opStatusTool: ToolDefinition = {
       const recent = sessionOpEntries.length > 0
         ? sessionOpEntries.slice(-10).map(o => `  - ${o.id} [${o.status}] ${o.task.slice(0, 80)}`).join("\n")
         : (listOps().slice(0, 10).map(o => `  - ${o.id} [${o.status}] ${o.task.slice(0, 80)}`).join("\n") || "  (none)");
+      const canonicalLine = canonicalActive.length === 0
+        ? ""
+        : `Canonical-loop active: ${canonicalActive.length}\n` +
+          canonicalActive.map(c =>
+            `  - ${c.opId} [${c.state}]  lane=${c.lane ?? "?"}  adapter=${c.adapter ?? "(no turn yet)"}`,
+          ).join("\n") + "\n\n";
       return {
         content:
           `Pool: ${status.workers.length} workers (${status.workers.filter(w => w.busyWith).length} busy), ${status.queueLength} queued.\n\n` +
+          canonicalLine +
           (sessionOpIds.length > 0 ? `Your ops (this session):\n${recent}` : `Recent ops (all sessions):\n${recent}`),
       };
     }

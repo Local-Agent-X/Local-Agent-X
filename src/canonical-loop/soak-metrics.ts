@@ -42,6 +42,12 @@ const records = new Map<string, InFlightRecord>();
 let warnedOnce = false;
 
 function isEnabled(): boolean {
+  // Test-mode guard: vitest runs canonical-loop tests through the real
+  // seam, which would otherwise append a row per test op to the
+  // production soak JSONL and inflate the daily roll-up. Short-circuit
+  // here so the production canary file only ever carries real traffic.
+  if (process.env.VITEST) return false;
+  if (process.env.NODE_ENV === "test") return false;
   const v = (process.env.CANONICAL_LOOP_SOAK ?? "1").trim().toLowerCase();
   return !FALSY.has(v);
 }

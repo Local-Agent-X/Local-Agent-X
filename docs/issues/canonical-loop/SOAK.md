@@ -16,6 +16,11 @@ CANONICAL_LOOP_SOAK=0   # also accepts: false, no, off
 
 Default is ON.
 
+The sink also short-circuits when `VITEST` or `NODE_ENV=test` is set,
+so test-suite canonical-loop ops never pollute the production JSONL.
+Run `vitest` freely during the canary week without inflating the
+daily roll-up.
+
 ---
 
 ## Per-line schema

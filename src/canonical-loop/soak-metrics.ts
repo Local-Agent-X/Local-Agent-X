@@ -15,6 +15,7 @@
  * Read side: `docs/issues/canonical-loop/SOAK.md`.
  */
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { readOp } from "../workers/op-store.js";
 import { readLatestOpTurn } from "./store.js";
@@ -23,8 +24,16 @@ import type { CanonicalEvent } from "./types.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("canonical-loop.soak-metrics");
 
+// Per-host filename so multi-machine canary data sync (via the
+// AgentSync workspace mirror) doesn't last-writes-wins across hosts.
+// One file per machine; the SOAK.md roll-up globs them all. Hostname
+// is sanitized to filesystem-safe chars and capped.
+function sanitizeHost(h: string): string {
+  return (h || "unknown-host").replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 64);
+}
+const HOST = sanitizeHost(hostname());
 const SOAK_LOG_DIR = join(process.cwd(), "workspace");
-const SOAK_LOG_PATH = join(SOAK_LOG_DIR, "canonical-loop-soak.jsonl");
+const SOAK_LOG_PATH = join(SOAK_LOG_DIR, `canonical-loop-soak-${HOST}.jsonl`);
 const FALSY = new Set(["0", "false", "no", "off", ""]);
 
 interface InFlightRecord {

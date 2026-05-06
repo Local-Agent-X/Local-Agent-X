@@ -26,7 +26,7 @@ const DEFAULT_CONFIG: SyncConfig = {
 };
 
 const SYNC_EXTENSIONS = new Set([
-  ".html", ".css", ".js", ".ts", ".tsx", ".jsx", ".json", ".md", ".txt",
+  ".html", ".css", ".js", ".ts", ".tsx", ".jsx", ".json", ".jsonl", ".md", ".txt",
   ".yaml", ".yml", ".toml", ".svg", ".env.example", ".py", ".sh", ".bat",
   ".sql", ".graphql", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
   ".bmp", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".ogg", ".pdf", ".csv",

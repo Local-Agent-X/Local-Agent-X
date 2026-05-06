@@ -1147,6 +1147,12 @@ function ensureWorkerBubble(opId, taskHint) {
     document.head.appendChild(s);
   }
   el.appendChild(div);
+  // Migrate pin-bottom to this worker bubble so the prior assistant
+  // ("Kicking off ..." reply) doesn't keep its ~100vh viewport reservation
+  // below it, which would push the worker stream way down the page and
+  // visually separate the kickoff message from the worker output.
+  document.querySelectorAll('.msg.assistant.pin-bottom').forEach(prev => prev.classList.remove('pin-bottom'));
+  div.classList.add('pin-bottom');
   if (typeof Spring !== 'undefined') {
     try { Spring.fadeIn(div, { preset: 'stiff', slide: true, slideFrom: 8 }); } catch {}
   }

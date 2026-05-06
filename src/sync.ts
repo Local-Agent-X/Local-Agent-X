@@ -132,6 +132,21 @@ export class AgentSync {
     const policyPath = join(this.dataDir, "tool-policy.json");
     if (existsSync(policyPath)) writeFileSync(join(this.syncDir, "tool-policy.json"), readFileSync(policyPath, "utf-8"));
 
+    // Sidebar pins (user-level UI state — per-user, not per-machine).
+    // Extract just the `sidebarPins` key from settings.json and ship it
+    // as its own file so machine-specific keys (port, voiceTier4Device,
+    // etc.) don't ride along.
+    const settingsPath = join(this.dataDir, "settings.json");
+    if (existsSync(settingsPath)) {
+      try {
+        const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+        const pins = Array.isArray(settings.sidebarPins) ? settings.sidebarPins : [];
+        writeFileSync(join(this.syncDir, "sidebar-pins.json"), JSON.stringify(pins, null, 2));
+      } catch (e) {
+        logger.warn(`[sync] sidebar-pins push skipped: ${(e as Error).message}`);
+      }
+    }
+
     const configPath = join(this.dataDir, "config.json");
     if (existsSync(configPath)) {
       try {
@@ -269,6 +284,30 @@ export class AgentSync {
           writeFileSync(localPath, readFileSync(syncPolicy, "utf-8"));
         }
       } catch { writeFileSync(join(this.dataDir, "tool-policy.json"), readFileSync(syncPolicy, "utf-8")); }
+    }
+
+    // Sidebar pins: replace the local sidebarPins array with the remote
+    // one. Other settings.json keys (port, voiceTier4Device, etc.) are
+    // preserved — only the pins array is overwritten so this machine
+    // gets the same sidebar layout as whichever workstation pushed
+    // last. If remote file is missing or unreadable, leave local pins
+    // alone.
+    const syncPins = join(this.syncDir, "sidebar-pins.json");
+    if (existsSync(syncPins)) {
+      try {
+        const remotePins = JSON.parse(readFileSync(syncPins, "utf-8"));
+        if (Array.isArray(remotePins)) {
+          const localSettingsPath = join(this.dataDir, "settings.json");
+          let localSettings: Record<string, unknown> = {};
+          if (existsSync(localSettingsPath)) {
+            try { localSettings = JSON.parse(readFileSync(localSettingsPath, "utf-8")); } catch { /* swallow */ }
+          }
+          localSettings.sidebarPins = remotePins;
+          writeFileSync(localSettingsPath, JSON.stringify(localSettings, null, 2), "utf-8");
+        }
+      } catch (e) {
+        logger.warn(`[sync] sidebar-pins pull skipped: ${(e as Error).message}`);
+      }
     }
 
     if (this.config.syncSessions) {

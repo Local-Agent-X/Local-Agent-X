@@ -37,6 +37,86 @@ const SKIP_DIRS = new Set([
 ]);
 const MAX_FILE_SIZE = 10_000_000;
 
+// ── Agent-brain sync surface ─────────────────────────────────────────────
+//
+// Sync's primary mission is BACKUP + restore. A user wiping their
+// machine should be able to recover the same look + feel + content of
+// their agent. Cross-machine continuity (move from workstation A to B)
+// is the same job. These files are the user-level brain state — moods,
+// missions, milestones, history — never machine-specific or sensitive.
+//
+// `BRAIN_JSON_FILES` are flat JSON files at the root of `dataDir`.
+// `BRAIN_DIRS` are mirrored as additive trees (no destructive deletes
+// unless the file is removed from src), respecting SYNC_EXTENSIONS.
+// `BRAIN_BINARY_FILES` are byte-for-byte copies — currently `memory.db`
+// for the SQLite memory store. WAL/SHM sidecars are intentionally NOT
+// shipped; SQLite reconstructs them on first read and shipping stale
+// sidecars can corrupt the DB.
+const BRAIN_JSON_FILES: readonly string[] = [
+  "agent-issues.json",
+  "agent-projects.json",
+  "agent-templates.json",
+  "associative-memory.json",
+  "calendar.json",
+  "consolidation-log.json",
+  "correction-history.json",
+  "cross-session-data.json",
+  "custom-missions.json",
+  "mission-schedules.json",
+  "emotional-history.json",
+  "hooks.json",
+  "language-style.json",
+  "mcp.json",
+  "memory-graph.json",
+  "memory-tiers.json",
+  "milestones.json",
+  "orchestration-examples.json",
+  "orchestrator-state.json",
+  "proactive-patterns.json",
+  "security.json",
+  "shared-history.json",
+  "tasks.json",
+  "tool-stats.json",
+  "trust-engine.json",
+  "vulnerable-shares.json",
+] as const;
+
+const BRAIN_DIRS: readonly string[] = [
+  "agent-runs",
+  "dashboards",
+  "skills",
+] as const;
+
+// `memory.db` is intentionally NOT in this list. The SQLite memory
+// store routinely sits in the hundreds of MB once a user has accrued
+// real history; shipping that through a git sync-repo on every
+// after_chat tick would balloon the repo and saturate bandwidth.
+// Memory consistency across machines is a Phase-2 concern that needs
+// VACUUM INTO compaction, or sqlite3 .dump + gzip, or an external
+// blob store. The memory/ directory of markdown files (synced via
+// copyToSync's existing memory-mirror block) carries the durable
+// long-term notes that matter most; the .db is a derived index.
+const BRAIN_BINARY_FILES: readonly string[] = [] as const;
+
+// Explicit security boundary — these files MUST NEVER be synced. Tokens,
+// credentials, and machine-bound encryption keys stay local. Users
+// re-create tokens per workstation; that's the security model. Listed
+// here so a future maintainer searching for "what about secrets.enc"
+// finds an unambiguous answer instead of guessing from omission.
+const NEVER_SYNC_DOC: readonly string[] = [
+  "master.dpapi",          // Windows DPAPI encryption key — machine-bound
+  "secrets.enc",           // Encrypted secrets (decryption key is master.dpapi)
+  "secrets.salt",          // Secrets-store salt
+  "tokens.json",           // OAuth tokens
+  "auth.json",             // Server auth-token file
+  "anthropic-auth.json",   // Anthropic OAuth tokens
+  "telegram-config.json",  // Bot token
+  "whatsapp-auth",         // WhatsApp session credentials
+  "voice-auth",            // Voice WS auth state
+  "tls",                   // TLS certs / keys
+];
+void NEVER_SYNC_DOC; // anchored for grep, not used at runtime
+
 export class AgentSync {
   private config: SyncConfig;
   private dataDir: string;
@@ -187,6 +267,51 @@ export class AgentSync {
         for (const f of readdirSync(cronDir)) {
           if (f.endsWith(".json")) writeFileSync(join(syncCronDir, f), readFileSync(join(cronDir, f), "utf-8"));
         }
+      }
+    }
+
+    // Brain backup — flat JSON files. Last-push-wins. Skip if file
+    // doesn't exist locally (means the user never created that surface).
+    for (const file of BRAIN_JSON_FILES) {
+      const src = join(this.dataDir, file);
+      if (!existsSync(src)) continue;
+      try {
+        writeFileSync(join(this.syncDir, file), readFileSync(src, "utf-8"), "utf-8");
+      } catch (e) {
+        logger.warn(`[sync] brain push skipped ${file}: ${(e as Error).message}`);
+      }
+    }
+
+    // Brain backup — directory trees. mirrorDir is destructive (matches
+    // source on the destination side); the goal here is "the user's
+    // workstation should match this push," so destructive mirror is
+    // correct.
+    for (const dir of BRAIN_DIRS) {
+      const src = join(this.dataDir, dir);
+      if (!existsSync(src)) continue;
+      try {
+        this.mirrorDir(src, join(this.syncDir, dir), /* additiveOnly */ false);
+      } catch (e) {
+        logger.warn(`[sync] brain push skipped dir ${dir}: ${(e as Error).message}`);
+      }
+    }
+
+    // Brain backup — binary files (currently memory.db). Copy the .db
+    // alone; WAL/SHM sidecars are intentionally NOT shipped because
+    // SQLite reconstructs them on first read and shipping stale
+    // sidecars can corrupt the DB on the destination.
+    for (const file of BRAIN_BINARY_FILES) {
+      const src = join(this.dataDir, file);
+      if (!existsSync(src)) continue;
+      try {
+        const data = readFileSync(src);
+        if (data.length > 100 * 1024 * 1024) {
+          logger.warn(`[sync] brain push skipped ${file}: size ${data.length} exceeds 100MB cap`);
+          continue;
+        }
+        writeFileSync(join(this.syncDir, file), data);
+      } catch (e) {
+        logger.warn(`[sync] brain push skipped ${file}: ${(e as Error).message}`);
       }
     }
   }
@@ -341,6 +466,52 @@ export class AgentSync {
         for (const f of readdirSync(syncCronDir)) {
           if (f.endsWith(".json")) writeFileSync(join(cronDir, f), readFileSync(join(syncCronDir, f), "utf-8"));
         }
+      }
+    }
+
+    // Brain backup — flat JSON files. Last-push-wins overwrite. Only
+    // pull when the remote file exists; never delete a local-only
+    // file just because it's missing from the remote (a fresh sync
+    // repo wouldn't have these yet).
+    for (const file of BRAIN_JSON_FILES) {
+      const remote = join(this.syncDir, file);
+      if (!existsSync(remote)) continue;
+      try {
+        writeFileSync(join(this.dataDir, file), readFileSync(remote, "utf-8"), "utf-8");
+      } catch (e) {
+        logger.warn(`[sync] brain pull skipped ${file}: ${(e as Error).message}`);
+      }
+    }
+
+    // Brain backup — directory trees. Destructive mirror so the
+    // destination matches the remote tree exactly.
+    for (const dir of BRAIN_DIRS) {
+      const remote = join(this.syncDir, dir);
+      if (!existsSync(remote)) continue;
+      const local = join(this.dataDir, dir);
+      try {
+        this.pullDir(remote, local, /* additiveOnly */ false);
+      } catch (e) {
+        logger.warn(`[sync] brain pull skipped dir ${dir}: ${(e as Error).message}`);
+      }
+    }
+
+    // Brain backup — binary files (memory.db). Drop any stale
+    // .db-wal / .db-shm sidecars before overwriting; SQLite recreates
+    // them from the new .db on first read. Without this, a stale WAL
+    // pointing at the previous .db can corrupt memory after restore.
+    for (const file of BRAIN_BINARY_FILES) {
+      const remote = join(this.syncDir, file);
+      if (!existsSync(remote)) continue;
+      const localPath = join(this.dataDir, file);
+      try {
+        for (const sidecar of [`${file}-wal`, `${file}-shm`]) {
+          const sidecarPath = join(this.dataDir, sidecar);
+          if (existsSync(sidecarPath)) { try { unlinkSync(sidecarPath); } catch { /* swallow */ } }
+        }
+        writeFileSync(localPath, readFileSync(remote));
+      } catch (e) {
+        logger.warn(`[sync] brain pull skipped ${file}: ${(e as Error).message}`);
       }
     }
   }

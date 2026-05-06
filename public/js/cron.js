@@ -5,19 +5,13 @@ let cronJobs = [];
 let selectedJob = null;
 let cronStatusTimer = null;
 
-// Alias so the router's init_missions call works
 function init_missions() { loadCronJobs(); }
-// Keep backward compat
-function init_cron() { loadCronJobs(); }
 
 async function loadCronJobs() {
   try {
     const data = await apiJson('/api/cron');
     cronJobs = data.missions || data.jobs || [];
-  } catch {
-    // Fallback to localStorage if server is unreachable
-    try { cronJobs = JSON.parse(localStorage.getItem('sax_cron_v1') || '[]'); } catch { cronJobs = []; }
-  }
+  } catch { cronJobs = []; }
   renderCronList();
 }
 
@@ -36,15 +30,36 @@ function renderCronList() {
     const lastTime = j.lastRun ? formatRelative(j.lastRun) : 'never';
     const dotColor = !j.enabled ? 'var(--muted)' : (failing ? '#e07b5a' : '');
     const failNote = failing ? `<span style="color:#e07b5a;font-weight:600"> · ${j.consecutiveFailures} fail${j.consecutiveFailures > 1 ? 's' : ''}</span>` : '';
+    const nextNote = (j.enabled && j.nextRunAt) ? ` · next ${formatRelativeFuture(j.nextRunAt)}` : '';
+    const errLine = (j.lastErrorMessage && (j.lastStatus === 'failed' || j.lastStatus === 'error'))
+      ? `<div class="cron-row-err" title="${esc(j.lastErrorMessage)}">⚠ ${esc(truncate(j.lastErrorMessage, 90))}</div>` : '';
+    const pauseGlyph = j.enabled ? '⏸' : '▶';
+    const actions = `<span class="cron-row-actions">`
+      + `<span class="cron-row-act" title="Run now" onclick="event.stopPropagation();runCronById('${j.id}')">▶▶</span>`
+      + `<span class="cron-row-act" title="${j.enabled ? 'Pause' : 'Resume'}" onclick="event.stopPropagation();toggleCronById('${j.id}')">${pauseGlyph}</span>`
+      + `</span>`;
     return `
     <div class="secret-item ${selectedJob?.id === j.id ? 'active' : ''}" onclick="selectCronJob('${j.id}')">
       <span class="secret-dot" style="${dotColor ? `background:${dotColor};box-shadow:none` : ''}"></span>
       <div class="secret-info">
         <div class="secret-item-name">${esc(j.name)} ${status}</div>
-        <div class="secret-item-service">${esc(j.schedule)} ${j.enabled ? '' : '(paused)'} · last ${lastTime}${failNote}</div>
+        <div class="secret-item-service">${esc(j.schedule)} ${j.enabled ? '' : '(paused)'} · last ${lastTime}${nextNote}${failNote}</div>
+        ${errLine}
       </div>
+      ${actions}
     </div>`;
   }).join('');
+}
+
+function truncate(s, n) { return !s ? '' : (s.length > n ? s.slice(0, n - 1) + '…' : s); }
+
+function formatRelativeFuture(iso) {
+  const d = new Date(iso); if (isNaN(d.getTime())) return iso;
+  const diff = d.getTime() - Date.now(); if (diff <= 0) return 'soon';
+  const s = Math.floor(diff / 1000); if (s < 60) return `in ${s}s`;
+  const m = Math.floor(s / 60); if (m < 60) return `in ${m}m`;
+  const h = Math.floor(m / 60); if (h < 24) return `in ${h}h`;
+  return `in ${Math.floor(h / 24)}d`;
 }
 
 function cronStatusBadge(status) {
@@ -54,17 +69,11 @@ function cronStatusBadge(status) {
 }
 
 function formatRelative(iso) {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  const diff = Date.now() - d.getTime();
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const days = Math.floor(h / 24);
-  return `${days}d ago`;
+  const d = new Date(iso); if (isNaN(d.getTime())) return iso;
+  const s = Math.floor((Date.now() - d.getTime()) / 1000); if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
 function selectCronJob(id) {
@@ -255,11 +264,21 @@ async function viewCronReport(jobId, fileName) {
   } catch (e) { alert('Failed to load report: ' + e.message); }
 }
 
+function openMissionModal() {
+  const o = document.getElementById('mission-modal-overlay'); if (!o) return;
+  o.classList.add('visible');
+  setTimeout(() => document.getElementById('new-cron-name')?.focus(), 50);
+}
+function closeMissionModal() { document.getElementById('mission-modal-overlay')?.classList.remove('visible'); }
+
 async function addCronJob() {
   const name = document.getElementById('new-cron-name').value.trim();
   const schedule = document.getElementById('new-cron-schedule').value.trim();
   const prompt = document.getElementById('new-cron-prompt').value.trim();
-  if (!name || !schedule || !prompt) return;
+  if (!name || !schedule || !prompt) {
+    alert('Name, schedule, and instructions are all required.');
+    return;
+  }
   try {
     const data = await apiPost('/api/cron', { name, schedule, prompt });
     if (data.ok && data.job) {
@@ -267,6 +286,7 @@ async function addCronJob() {
       document.getElementById('new-cron-name').value = '';
       document.getElementById('new-cron-schedule').value = '';
       document.getElementById('new-cron-prompt').value = '';
+      closeMissionModal();
       renderCronList();
       selectCronJob(data.job.id);
     }
@@ -356,11 +376,25 @@ async function runCronJobNow() {
   } catch (e) { alert('Failed: ' + e.message); }
 }
 
-// Refresh the selected job from the server list (used after status-poll detects completion)
 async function refreshSelectedCronJob() {
   if (!selectedJob) return;
   const id = selectedJob.id;
   await loadCronJobs();
   selectedJob = cronJobs.find(j => j.id === id) || null;
   renderCronDetail();
+}
+
+async function toggleCronById(id) {
+  try {
+    const data = await apiPost('/api/cron/' + id + '/toggle', {});
+    if (data && data.ok) { await loadCronJobs(); if (selectedJob && selectedJob.id === id) refreshSelectedCronJob(); }
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+async function runCronById(id) {
+  try {
+    await apiPost('/api/cron/' + id + '/run', {});
+    setTimeout(() => loadCronJobs(), 800);
+    if (selectedJob && selectedJob.id === id) startCronStatusPolling();
+  } catch (e) { alert('Failed: ' + e.message); }
 }

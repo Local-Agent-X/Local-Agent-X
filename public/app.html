@@ -614,42 +614,64 @@
 
   <!-- ══ SECRETS PAGE ══ -->
   <div id="page-secrets" class="page">
-    <div class="page-header"><h2>SECRETS VAULT</h2><div style="flex:1"></div><span class="page-subtitle" id="secret-count">0 stored</span></div>
-    <div class="page-body-centered">
-      <p style="font-size:.75rem;color:var(--muted);margin-bottom:16px">Encrypted API keys and tokens. Referenced as <code style="color:var(--accent);font-size:.68rem">{{NAME}}</code> in agent tools.</p>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div class="field"><label class="field-label">Name</label><input class="field-input" id="new-secret-name" placeholder="GITHUB_TOKEN"/></div>
-        <div class="field"><label class="field-label">Service</label><input class="field-input" id="new-secret-service" placeholder="GitHub"/></div>
+    <div class="page-header">
+      <h2>SECRETS VAULT</h2>
+      <span class="page-subtitle" id="secret-count">0 stored</span>
+      <div style="flex:1"></div>
+      <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="openSecretModal()">+ New Secret</button>
+    </div>
+    <div class="split-pane">
+      <div class="split-pane-list">
+        <div id="secrets-list"></div>
       </div>
-      <div class="field"><label class="field-label">Value</label><input class="field-input" id="new-secret-value" type="password" placeholder="ghp_xxx" autocomplete="off"/></div>
-      <button class="action-btn primary" style="width:100%;margin:10px 0" onclick="addSecret()">Add Secret</button>
-      <div id="secrets-list" style="margin-top:16px"></div>
-      <div id="secret-detail-empty" style="display:none"></div>
-      <div id="secret-detail-view" style="display:none;margin-top:16px;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)">
-        <h2 id="detail-name" style="font-family:var(--mono);font-size:.9rem;color:var(--accent);margin-bottom:4px"></h2>
-        <div id="detail-service" style="font-size:.75rem;color:var(--muted);margin-bottom:8px"></div>
-        <div id="detail-meta" style="font-size:.72rem;color:var(--muted);margin-bottom:12px"></div>
-        <div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Usage:</div>
-        <code id="detail-usage" style="display:block;font-family:var(--mono);font-size:.8rem;color:var(--accent);padding:8px;background:var(--bg);border-radius:6px;margin-bottom:12px"></code>
-        <div class="btn-row"><button class="action-btn primary" onclick="updateSecretValue()">Update Value</button><button class="action-btn danger" onclick="deleteSecretItem()">Delete</button></div>
+      <div class="split-pane-detail">
+        <div id="secret-detail-empty" class="split-pane-empty">Select a secret on the left to view its metadata and usage.<br><br>Encrypted keys and tokens. Reference them as <code style="color:var(--accent)">{{NAME}}</code> in agent tools.</div>
+        <div id="secret-detail-view" style="display:none;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)">
+          <h2 id="detail-name" style="font-family:var(--mono);font-size:.9rem;color:var(--accent);margin-bottom:4px"></h2>
+          <div id="detail-service" style="font-size:.75rem;color:var(--muted);margin-bottom:8px"></div>
+          <div id="detail-meta" style="font-size:.72rem;color:var(--muted);margin-bottom:12px"></div>
+          <div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Usage:</div>
+          <code id="detail-usage" style="display:block;font-family:var(--mono);font-size:.8rem;color:var(--accent);padding:8px;background:var(--bg);border-radius:6px;margin-bottom:12px"></code>
+          <div class="btn-row"><button class="action-btn primary" onclick="updateSecretValue()">Update Value</button><button class="action-btn danger" onclick="deleteSecretItem()">Delete</button></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="secret-create-modal-overlay" class="app-modal-overlay" onclick="if(event.target===this)closeSecretModal()">
+      <div class="app-modal">
+        <div class="app-modal-header">
+          <h3>New Secret</h3>
+          <button class="app-modal-close" onclick="closeSecretModal()" title="Close">×</button>
+        </div>
+        <p style="font-size:.75rem;color:var(--muted);margin-bottom:16px">Encrypted at rest. Reference in agent tools as <code style="color:var(--accent)">{{NAME}}</code>.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="field"><label class="field-label">Name</label><input class="field-input" id="new-secret-name" placeholder="GITHUB_TOKEN"/></div>
+          <div class="field"><label class="field-label">Service <span style="color:var(--muted);font-weight:400">(optional)</span></label><input class="field-input" id="new-secret-service" placeholder="GitHub"/></div>
+        </div>
+        <div class="field"><label class="field-label">Value</label><input class="field-input" id="new-secret-value" type="password" placeholder="ghp_xxx" autocomplete="off"/></div>
+        <div class="btn-row" style="margin-top:16px;justify-content:flex-end">
+          <button class="action-btn secondary" onclick="closeSecretModal()">Cancel</button>
+          <button class="action-btn primary" onclick="addSecret()">Add Secret</button>
+        </div>
       </div>
     </div>
   </div>
 
   <!-- ══ CRON JOBS PAGE ══ -->
   <div id="page-missions" class="page">
-    <div class="page-header"><h2>MISSIONS</h2><div style="flex:1"></div><span class="page-subtitle" id="cron-count">0 scheduled</span></div>
-    <div class="page-body-centered">
-      <p style="font-size:.75rem;color:var(--muted);margin-bottom:16px">Schedule recurring tasks. The agent executes your instructions on a timer.</p>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div class="field"><label class="field-label">Mission Name</label><input class="field-input" id="new-cron-name" placeholder="Daily report"/></div>
-        <div class="field"><label class="field-label">Schedule</label><input class="field-input" id="new-cron-schedule" placeholder="every 1h / daily 9am"/></div>
+    <div class="page-header">
+      <h2>MISSIONS</h2>
+      <span class="page-subtitle" id="cron-count">0 scheduled</span>
+      <div style="flex:1"></div>
+      <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="openMissionModal()">+ New Mission</button>
+    </div>
+    <div class="split-pane">
+      <div class="split-pane-list">
+        <div id="cron-list"></div>
       </div>
-      <div class="field"><label class="field-label">Agent Instructions</label><textarea class="field-input" id="new-cron-prompt" rows="3" placeholder="Check my email and summarize..." style="resize:vertical"></textarea></div>
-      <button class="action-btn primary" style="width:100%;margin:10px 0" onclick="addCronJob()">Schedule Mission</button>
-      <div id="cron-list" style="margin-top:16px"></div>
-      <div id="cron-detail-empty" style="display:none"></div>
-      <div id="cron-detail-view" style="display:none;margin-top:16px;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)">
+      <div class="split-pane-detail">
+        <div id="cron-detail-empty" class="split-pane-empty">Select a mission on the left to see details, history, and reports.</div>
+        <div id="cron-detail-view" style="display:none;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)">
         <h2 id="cron-detail-name" style="font-family:var(--mono);font-size:.9rem;color:var(--accent);margin-bottom:8px"></h2>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;font-family:var(--mono);font-size:.75rem">
           <div><span style="color:var(--muted)">Schedule:</span> <span id="cron-detail-schedule"></span></div>
@@ -706,6 +728,24 @@
           <button class="action-btn secondary" onclick="editCronJob()">Edit</button>
           <button class="action-btn secondary" onclick="toggleCronJob()">Pause / Resume</button>
           <button class="action-btn danger" onclick="deleteCronJob()">Delete</button>
+        </div>
+      </div>
+      </div>
+    </div>
+
+    <div id="mission-modal-overlay" class="app-modal-overlay" onclick="if(event.target===this)closeMissionModal()">
+      <div class="app-modal">
+        <div class="app-modal-header">
+          <h3>New Mission</h3>
+          <button class="app-modal-close" onclick="closeMissionModal()" title="Close">×</button>
+        </div>
+        <p style="font-size:.75rem;color:var(--muted);margin-bottom:16px">Schedule a recurring task. The agent executes your instructions on a timer.</p>
+        <div class="field"><label class="field-label">Mission Name</label><input class="field-input" id="new-cron-name" placeholder="Daily report"/></div>
+        <div class="field"><label class="field-label">Schedule <span style="color:var(--muted);font-weight:400">— cron expression or interval (e.g. <code>every 1h</code>, <code>daily 9am</code>, <code>0 9 * * *</code>)</span></label><input class="field-input" id="new-cron-schedule" placeholder="every 1h / daily 9am"/></div>
+        <div class="field"><label class="field-label">Agent Instructions</label><textarea class="field-input" id="new-cron-prompt" rows="6" placeholder="Check my email and summarize the most important threads..." style="resize:vertical;font-family:var(--mono);font-size:.78rem"></textarea></div>
+        <div class="btn-row" style="margin-top:16px;justify-content:flex-end">
+          <button class="action-btn secondary" onclick="closeMissionModal()">Cancel</button>
+          <button class="action-btn primary" onclick="addCronJob()">Schedule Mission</button>
         </div>
       </div>
     </div>

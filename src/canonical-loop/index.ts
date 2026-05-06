@@ -204,6 +204,8 @@ export {
   type TransportTool,
 } from "./adapters/anthropic.js";
 
+export { listActiveCanonicalOps, type ActiveCanonicalOp } from "./active-ops.js";
+
 export { runWorker, type WorkerHandle } from "./worker.js";
 export { driveTurn, type DriveTurnResult } from "./turn-loop.js";
 export { seedInitialUserMessage, buildInitialUserContent } from "./initial-prompt.js";

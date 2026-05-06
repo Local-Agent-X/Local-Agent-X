@@ -259,6 +259,31 @@ export function setSessionBroadcaster(fn: (sessionId: string, event: ServerEvent
   broadcaster = fn;
 }
 
+/**
+ * Push a ServerEvent into a session's chat WS stream. Used by the
+ * canonical-loop bridge to surface canonical ops in the AGENTS sidebar
+ * the same way legacy worker-pool ops surface today. No-op if no
+ * broadcaster is registered yet (e.g. during bootstrap).
+ */
+export function broadcastToSession(sessionId: string, event: ServerEvent): void {
+  if (!broadcaster || !sessionId) return;
+  try {
+    broadcaster(sessionId, event);
+  } catch (e) {
+    logger.warn(`[session-bridge] broadcastToSession threw: ${(e as Error).message}`);
+  }
+}
+
+/** Look up the session that submitted an op (read-only accessor). */
+export function getSessionForOp(opId: string): string | undefined {
+  return opSession.get(opId);
+}
+
+/** Look up the original task text for an op (used by canonical bridge). */
+export function getTaskForOp(opId: string): string | undefined {
+  return opTask.get(opId);
+}
+
 /** Register the persistence callback (server bootstrap). */
 export function setSessionPersister(fn: (sessionId: string, content: string) => void): void {
   persister = fn;

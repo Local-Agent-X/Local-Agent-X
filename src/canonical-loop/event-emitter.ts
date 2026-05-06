@@ -16,6 +16,7 @@
 import { appendCanonicalEvent } from "./store.js";
 import { getBus, eventsChannel, streamChannel } from "./bus.js";
 import { recordCanonicalEvent, recordStreamChunk } from "./soak-metrics.js";
+import { recordCanonicalEvent as bridgeRecord } from "./session-bridge-observer.js";
 import type { CanonicalEvent, CanonicalEventType } from "./types.js";
 
 export function emit(
@@ -26,6 +27,7 @@ export function emit(
   const event = appendCanonicalEvent(opId, type, body);
   getBus().publish(eventsChannel(opId), event);
   recordCanonicalEvent(event);
+  bridgeRecord(event);
   return event;
 }
 

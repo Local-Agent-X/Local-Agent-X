@@ -139,6 +139,28 @@ function connectChatWs() {
           if (b) {
             b.div.classList.add('done');
             b.div.classList.add('status-' + (msg.event.status || 'completed'));
+            b.div.classList.remove('streaming');
+            // Persist the accumulated worker output into activeChat.messages
+            // so a subsequent renderMessages() (typically triggered by the
+            // bg_op_nudge "that op just finished" path) preserves the
+            // worker bubble across re-renders. Without this, the live DOM
+            // bubble is the only record and gets wiped on the next full
+            // render — exactly what made worker output appear to "vanish"
+            // once the completion notification landed.
+            if (activeChat && activeChat.id === msg.sessionId && b.content) {
+              activeChat.messages = activeChat.messages || [];
+              activeChat.messages.push({
+                role: 'assistant',
+                content: b.content,
+                timestamp: Date.now(),
+                _worker: true,
+                _opId: msg.event.opId,
+                _taskHint: b.taskHint || null,
+                _workerStatus: msg.event.status || 'completed',
+              });
+              try { if (typeof saveChats === 'function') saveChats(); } catch {}
+              try { if (typeof renderSidebar === 'function') renderSidebar(); } catch {}
+            }
           }
           _workerBubbles.delete(msg.event.opId);
         } catch(e) { console.warn('[worker_done] failed', e); }
@@ -434,6 +456,11 @@ function renderMessages() {
     if (msg.role === 'user') {
       const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
       addMessageEl('user', displayText, msg.attachments, msg.timestamp);
+    } else if (msg.role === 'assistant' && msg._worker) {
+      // Persisted worker bubble — render with the same styling as a live
+      // worker_stream bubble, just static. Skip the regular assistant
+      // path so the agent's pin-bottom and tool-card logic doesn't apply.
+      appendStaticWorkerBubble(msg._opId, msg.content || '', msg._taskHint, msg._workerStatus);
     } else if (msg.role === 'assistant' && (msg.content || msg._tools)) {
       const isLast = i === activeChat.messages.length - 1;
       const live = (isLast && msg._streaming) ? _liveStreams.get(activeChat.id) : null;
@@ -499,8 +526,12 @@ function renderMessages() {
   // Pin the latest assistant message so it carries the reserved viewport-
   // height of room below it (ChatGPT-style). When navigating to an existing
   // chat, this gives the most recent reply that breathing room without any
-  // active stream.
+  // active stream. Strip the pin from every other assistant first — without
+  // this, a sequence of renderMessages() calls (e.g. bg_op_nudge after a
+  // worker finishes) would leave pin-bottom on every prior assistant and
+  // stack ~100vh of reserved space between every pair of replies.
   const allAssistant = el.querySelectorAll('.msg.assistant');
+  allAssistant.forEach(m => m.classList.remove('pin-bottom'));
   if (allAssistant.length > 0) allAssistant[allAssistant.length - 1].classList.add('pin-bottom');
   el.scrollTop = el.scrollHeight;
 }
@@ -1121,9 +1152,33 @@ function ensureWorkerBubble(opId, taskHint) {
   }
   try { el.scrollTop = el.scrollHeight; } catch {}
   const contentEl = div.querySelector('.worker-content');
-  const entry = { div, content: '', contentEl };
+  const entry = { div, content: '', contentEl, taskHint: taskHint || null };
   _workerBubbles.set(opId, entry);
   return entry;
+}
+
+// Static worker-bubble for renderMessages — recreates a finished worker
+// bubble from a persisted activeChat.messages entry (msg._worker === true).
+// Mirrors ensureWorkerBubble's DOM shape but without the streaming class
+// or the in-flight registry. Used after a worker_done has copied content
+// into messages so subsequent renderMessages() calls keep the bubble.
+function appendStaticWorkerBubble(opId, content, taskHint, status) {
+  const el = document.getElementById('messages');
+  if (!el) return null;
+  const div = document.createElement('div');
+  div.className = 'msg assistant worker-bubble done status-' + (status || 'completed');
+  div.setAttribute('role', 'article');
+  div.setAttribute('aria-label', 'Worker message');
+  if (opId) div.dataset.opId = opId;
+  const labelText = taskHint ? `⚙ Worker — ${esc(taskHint)}` : '⚙ Worker';
+  div.innerHTML =
+    `<div class="msg-label">${labelText}</div>` +
+    `<div class="msg-body"><div class="worker-content"></div></div>` +
+    `<div class="msg-footer"></div>`;
+  const contentEl = div.querySelector('.worker-content');
+  if (contentEl) contentEl.textContent = content || '';
+  el.appendChild(div);
+  return div;
 }
 
 function addMessageEl(role, text, attachments) {

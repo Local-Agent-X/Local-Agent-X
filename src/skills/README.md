@@ -37,3 +37,24 @@ from day one; legacy tools migrate as they're touched.
 `SKILL.md`, imports each `tool.ts`, and returns an array of
 `ToolDefinition` ready to register. The result is folded into
 `src/tools/registry-build.ts` `allTools` so callers see no difference.
+
+## Default skill set is intentionally minimal
+
+The base install ships only the curated typed protocols in
+`src/protocols/packs/*.ts` plus the `example/` skill in this directory —
+roughly fifteen high-signal entries. We deliberately do not ship a giant
+generic skill catalog: large bundled libraries dilute search, blow up
+boot work, and most entries are irrelevant to any one user.
+
+Users who want more can layer them in:
+
+- **Optional skill packs** — drop a curated SKILL.md pack into
+  `protocols/bundled/` (or run `scripts/import-protocols.mjs` against a
+  source list). The bundled loader picks them up automatically.
+- **User-specific skills** — write SKILL.md files into
+  `~/.lax/protocols/imported/<name>/` or typed records into
+  `~/.lax/custom-protocols.json`. These override anything bundled or
+  built-in on name collision.
+
+If you find yourself reaching for the same skill across projects, promote
+it to a pack repo rather than re-adding it to this default tree.

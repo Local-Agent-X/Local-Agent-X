@@ -44,10 +44,19 @@ const ACK_GREETING_RE = /^\s*(yes|no|ok|okay|sure|thanks|thank\s+you|ty|yep|yeah
 // mode" is absurd; the worker has no UI context and can't even reach
 // the settings the chat agent flips inline. Short-circuit them here.
 //
-// Conservative — only matches whole-phrase commands that are clearly
-// about flipping app state. Anything ambiguous still falls through to
-// the LLM.
-const UI_TOGGLE_RE = /^\s*(?:please\s+)?(?:can\s+you\s+|could\s+you\s+|would\s+you\s+)?(?:turn|switch|set|change|flip|enable|disable|use|go|put)\s+(?:on\s+|off\s+|to\s+)?(?:the\s+app\s+|app\s+|the\s+)?(?:dark|light|system)\s*(?:mode|theme)?[\s.!?]*$/i;
+// Two patterns:
+//   UI_TOGGLE_RE   — "<polite>? <verb> <up to 40 chars> (dark|light|system) (mode|theme)"
+//                    Accepts every natural phrasing seen in real traffic
+//                    ("turn app to light mode", "switch the app to dark
+//                     mode", "go to dark theme"), without requiring a
+//                    rigid order of "to/on/off" vs "app/the".
+//   UI_TOGGLE_RE_2 — bare "<dark|light|system> mode" (no verb)
+//
+// Conservative — both require an explicit (dark|light|system) +
+// (mode|theme) anchor so we don't false-positive on "make it dim" or
+// "is light good for the eyes?". Anything ambiguous still falls
+// through to the LLM.
+const UI_TOGGLE_RE = /^\s*(?:please\s+)?(?:can\s+you\s+|could\s+you\s+|would\s+you\s+)?(?:turn|switch|set|change|flip|enable|use|go|put|make|toggle)\b[a-z'\s,]{0,40}?(?:dark|light|system)\s*(?:mode|theme)[\s.!?]*$/i;
 const UI_TOGGLE_RE_2 = /^\s*(?:dark|light|system)\s*(?:mode|theme)\s*(?:please)?[\s.!?]*$/i;
 
 export function hasDiscussPrefix(message: string): boolean {

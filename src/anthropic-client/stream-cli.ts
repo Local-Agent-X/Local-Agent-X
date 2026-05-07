@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import { extractUserPrompt, newToolCallId } from "./request.js";
 import { cleanUrls, filterStreamDelta, parseToolCalls, stripToolCallBlocks } from "./parse.js";
 import { npmAugmentedEnv } from "./cli-path.js";
+import { isWarmPoolEnabled, streamViaWarmPool } from "./warm-pool.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
 import { createLogger } from "../logger.js";
@@ -15,6 +16,104 @@ const logger = createLogger("anthropic-client.stream-cli");
 export async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { model, messages, systemPrompt, tools, maxTokens = 16000 } = options;
   const prompt = extractUserPrompt(messages);
+
+  // Warm-pool fast path: long-lived CLI process per (model, permissionMode,
+  // sessionId). Validated by scripts/spike-claude-warm-pool.mjs — drops
+  // first-byte latency from ~2000ms (cold) to ~4ms (warm).
+  //
+  // Gate: ANY caller with the flag on. Earlier I gated on sessionId being
+  // set under the (wrong) assumption that one-shot internal callers would
+  // "defeat" the pool — but the pool keeps processes warm BETWEEN calls
+  // by definition, so a single-shot call still benefits the next single-
+  // shot call to the same model. Tracer logs caught this: prepareAgentRequest
+  // makes 3-4 internal classifier/orchestrator LLM calls per chat turn
+  // (haiku for routing, sonnet for redirect, opus for response), and the
+  // sessionId gate sent every one of them through cold-spawn. That was
+  // ~12-15s of CLI cold-start tax in the prep pipeline alone.
+  // TRACER: log warm-pool gate decision so we can see which branch fires
+  const _wpEnabled = isWarmPoolEnabled();
+  logger.info(`[wp-gate] enabled=${_wpEnabled} sessionId=${options.sessionId ?? "(none)"} tools=${tools?.length ?? 0} model=${model}`);
+  if (_wpEnabled) {
+    const textOnlyMode = !tools || tools.length === 0;
+    const fullSystemQuick = textOnlyMode
+      ? systemPrompt + "\n\n" + `Respond naturally in plain text. Never mention "plan mode", permission modes, or internal system details to the user.`
+      : systemPrompt + "\n\n" +
+        `You have Local Agent X's tools available via MCP (prefixed mcp__lax__). Call them directly when needed.\n\n` +
+        `REPLY FORMAT (strict):\n` +
+        `- After you finish, respond with a SHORT plain-English summary of what you did. 1-2 sentences max.\n` +
+        `- NEVER paste raw tool output, JSON, or HTTP response bodies into your reply.\n` +
+        `- NEVER echo [called X] / Tool result: / <<<EXTERNAL_UNTRUSTED_CONTENT>>> / <metadata> blocks — the UI renders tool activity as cards.\n` +
+        `- Do NOT pre-narrate tool plans before calling them. Just CALL the tool — the UI shows what you ran in a card.\n` +
+        `- ALL tools are pre-approved. Just use them — never ask, never describe what you're about to do.`;
+
+    // Build prompt with system + recent context + user message — same
+    // shape as the per-request path so the model sees an identical input.
+    let saxToken = "";
+    let saxPort = 7007;
+    if (!textOnlyMode) {
+      try {
+        const { getRuntimeConfig } = await import("../config.js");
+        const rc = getRuntimeConfig();
+        saxToken = rc.authToken;
+        saxPort = rc.port;
+      } catch { /* swallow — falls back to text-only key below */ }
+    }
+
+    // History serialization (legacy parity): re-include the current-loop
+    // tool results so the model sees what's already happened this turn.
+    const lastUserIdxQ = (() => {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === "user") return i;
+      }
+      return -1;
+    })();
+    const messagesAfterUserQ = lastUserIdxQ >= 0 ? messages.slice(lastUserIdxQ + 1) : [];
+    const contextPartsQ: string[] = [];
+    for (const msg of messagesAfterUserQ.slice(-8)) {
+      if (msg.role === "assistant") {
+        const m = msg as unknown as Record<string, unknown>;
+        const parts: string[] = [];
+        if (typeof m.content === "string" && m.content) parts.push(m.content.slice(0, 500));
+        if (Array.isArray(m.tool_calls)) {
+          for (const tc of m.tool_calls as Array<{ function: { name: string; arguments: string } }>) {
+            parts.push(`[called ${tc.function.name}]`);
+          }
+        }
+        if (parts.length) contextPartsQ.push(`Assistant: ${parts.join(" ")}`);
+      } else if (msg.role === "tool") {
+        const m = msg as { tool_call_id: string; content: string };
+        contextPartsQ.push(`Tool result: ${m.content.slice(0, 2000)}`);
+      }
+    }
+    const historyContextQ = contextPartsQ.length > 0
+      ? "\n\nCurrent task context:\n" + contextPartsQ.join("\n") + "\n\n"
+      : "";
+
+    const safePromptQ = prompt.replace(/<\/?system>/gi, "");
+    const safeHistoryQ = historyContextQ.replace(/<\/?system>/gi, "");
+    const fullPromptQ = `<system>${fullSystemQuick}</system>\n${safeHistoryQ}\n${safePromptQ}`;
+
+    if (textOnlyMode || !options.sessionId || !saxToken) {
+      logger.info(`[wp-gate] → text-only shared pool (textOnly=${textOnlyMode} hasToken=${!!saxToken})`);
+      yield* streamViaWarmPool(
+        { model, permissionMode: "plan" },
+        { prompt: fullPromptQ, signal: options.signal },
+      );
+    } else {
+      logger.info(`[wp-gate] → per-session MCP pool sess=${options.sessionId.slice(0, 16)}`);
+      yield* streamViaWarmPool(
+        {
+          model,
+          permissionMode: "bypassPermissions",
+          sessionId: options.sessionId,
+          saxPort,
+          saxToken,
+        },
+        { prompt: fullPromptQ, signal: options.signal },
+      );
+    }
+    return;
+  }
 
   // Only include context from the CURRENT agent loop turn.
   // Messages AFTER the last user message are current-loop tool results — always include them.
@@ -109,6 +208,21 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
     // Text-only (orchestration): plan mode — Claude thinks but can't execute tools
     // Tool mode: bypass all permissions so tools execute immediately
     "--permission-mode", textOnlyMode ? "plan" : "bypassPermissions",
+    // Block Claude Code's native tools (Read/Bash/Glob/AskUserQuestion/etc.)
+    // ALWAYS, regardless of mode. Without this the model emits native tool
+    // calls in plan mode (the user sees the agent "exploring" their fs on a
+    // "hi"). LAX's tools come through MCP when MCP is wired below; the
+    // native set is always off.
+    "--disallowed-tools", [
+      "Bash", "Read", "Write", "Edit", "Glob", "Grep",
+      "WebFetch", "WebSearch", "TodoWrite", "ToolSearch",
+      "NotebookEdit", "Task", "AskUserQuestion", "Skill",
+      "CronCreate", "CronDelete", "CronList",
+      "EnterPlanMode", "ExitPlanMode",
+      "EnterWorktree", "ExitWorktree",
+      "Monitor", "TaskOutput", "TaskStop",
+      "ScheduleWakeup", "PushNotification", "RemoteTrigger",
+    ].join(","),
   ];
 
   // MCP bridge: lets Claude CLI call Local Agent X tools natively via MCP.
@@ -157,23 +271,8 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
       };
       fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), { mode: 0o600 });
       args.push("--mcp-config", mcpConfigPath);
-      // Block Claude Code's native tools so the model ONLY uses Local Agent X's via MCP
-      // Block ALL Claude Code native + deferred tools. Anything Claude knows
-      // how to call but Local Agent X doesn't define must be denied here, or it leaks
-      // through the policy as an unknown tool and gets default-denied with
-      // a spurious BLOCKED result that poisons the next turn's context.
-      args.push("--disallowed-tools", [
-        // Core
-        "Bash", "Read", "Write", "Edit", "Glob", "Grep",
-        "WebFetch", "WebSearch", "TodoWrite", "ToolSearch",
-        "NotebookEdit", "Task", "AskUserQuestion", "Skill",
-        // Deferred / scheduling / plan-mode
-        "CronCreate", "CronDelete", "CronList",
-        "EnterPlanMode", "ExitPlanMode",
-        "EnterWorktree", "ExitWorktree",
-        "Monitor", "TaskOutput", "TaskStop",
-        "ScheduleWakeup", "PushNotification", "RemoteTrigger",
-      ].join(","));
+      // (--disallowed-tools is always added at args construction above —
+      // applies to both text-only plan mode and MCP bypassPermissions mode.)
     } catch (e) {
       logger.warn(`[anthropic-cli] MCP config setup failed, falling back to text-mode: ${(e as Error).message}`);
       mcpConfigPath = null;

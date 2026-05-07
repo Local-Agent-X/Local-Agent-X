@@ -150,6 +150,44 @@ describe("decideSubmitRouting — pure routing decision at submit time", () => {
     expect(decideSubmitRouting({ lane: "interactive" }).route).toBe("canonical");
     expect(decideSubmitRouting({ lane: "build" }).route).toBe("legacy");
   });
+
+  // Anthropic-only gate: when LAX_CANONICAL_LOOP_ANTHROPIC_ONLY=1 is set,
+  // the canonical route is only taken when the op's effective provider is
+  // Anthropic. This lets us flip every lane's flag on while the v1.1 Codex
+  // adapter is still unimplemented — Codex/openai ops keep falling through
+  // to legacy instead of failing fast on adapter_not_configured.
+  describe("ANTHROPIC_ONLY gate", () => {
+    it("anthropic preferredProvider → canonical when gate ON", () => {
+      process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
+      process.env.LAX_CANONICAL_LOOP_ANTHROPIC_ONLY = "1";
+      const r = decideSubmitRouting({
+        lane: "interactive",
+        contextPack: { routing: { lane: "interactive", preferredProvider: "anthropic" } } as Op["contextPack"],
+      });
+      expect(r.route).toBe("canonical");
+    });
+
+    it("non-anthropic preferredProvider → legacy when gate ON", () => {
+      process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
+      process.env.LAX_CANONICAL_LOOP_ANTHROPIC_ONLY = "1";
+      const r = decideSubmitRouting({
+        lane: "interactive",
+        contextPack: { routing: { lane: "interactive", preferredProvider: "codex" } } as Op["contextPack"],
+      });
+      expect(r.route).toBe("legacy");
+      expect(r.flagValue).toBe(false);
+    });
+
+    it("gate OFF → preferredProvider ignored, lane flag is the only gate", () => {
+      process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
+      delete process.env.LAX_CANONICAL_LOOP_ANTHROPIC_ONLY;
+      const r = decideSubmitRouting({
+        lane: "interactive",
+        contextPack: { routing: { lane: "interactive", preferredProvider: "codex" } } as Op["contextPack"],
+      });
+      expect(r.route).toBe("canonical");
+    });
+  });
 });
 
 // ── Schema/store layer (Issue 01: "all four new tables exist") ────────────

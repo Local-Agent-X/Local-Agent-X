@@ -67,10 +67,11 @@ export async function bootstrapTools(deps: {
   const voiceVisualTool = createVoiceVisualTool();
   const { createOperationTools } = await import("../operations/tools.js");
   const operationTools = createOperationTools();
+  const { installSoftwareTool } = await import("../tools/install-software.js");
   const { registry: toolRegistry } = buildToolRegistry();
 
   const allAgentTools: ToolDefinition[] = [
-    ...allTools, httpRequestTool,
+    ...allTools, httpRequestTool, installSoftwareTool,
     ...memoryTools, ...secretTools, browserSecretCaptureTool, browserSecretFillTool, sessionStatusTool, voiceVisualTool, ...browserTools, ...imageTools,
     ...createCoreProtocolTools(), ...createCronTools(cronService),
     ...createAgencyTools(), ...createHandlerTools(), ...appTools, ...issueTools,

@@ -37,3 +37,9 @@ export { TIER4_DEFAULTS, TIER4_SAMPLE_RATE } from "./types.js";
 
 export { KOKORO_VOICES, isValidKokoroVoice, kokoroVoiceMeta, kokoroVoiceList } from "./kokoro-voices.js";
 export type { KokoroVoiceMeta } from "./kokoro-voices.js";
+
+export { registerTtsProvider, hasTtsProvider, createTtsProvider, listTtsProviders } from "./registry.js";
+export type { TtsProviderFactory, TtsProviderOptions, TtsProviderEntry } from "./registry.js";
+
+export { EDGE_VOICES, EDGE_DEFAULT_VOICE, isCuratedEdgeVoice, edgeVoiceList } from "./edge-voices.js";
+export { createEdgeTtsProvider, edgeTtsReadiness } from "./edge-tts-adapter.js";

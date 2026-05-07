@@ -1,19 +1,55 @@
 // Public Tier 4 entry — used by src/voice/voice-session.ts when LAX_VOICE_TIER=4.
 //
-// Two reasons this lives in its own file:
-//   (1) keeps streaming-tts.ts focused on the chunk-pump,
-//   (2) gives one obvious place to add tier 5 (Chatterbox cloning) without
-//       touching the kokoro engine.
+// ARCHITECTURE
+// ============
+// Adapters live behind a string-keyed registry (registry.ts). Each provider
+// auto-registers itself when this module imports it. createTier4() then
+// dispatches via createTtsProvider(name, ...).
+//
+// Built-in providers:
+//   - "kokoro"            (streaming-tts.ts, default)
+//   - "chatterbox-clone"  (chatterbox-clone-stub.ts, opt-in via LAX_VOICE_CLONE_REF)
+//   - "edge-tts"          (edge-tts-adapter.ts, cloud Edge Read-Aloud)
+//
+// SELECTION (env)
+// ===============
+// When LAX_VOICE_TIER4_PROVIDER=edge-tts, voice-session dispatches via
+// createTtsProvider("edge-tts", ...). Otherwise the existing logic decides
+// between "kokoro" and "chatterbox-clone" based on LAX_VOICE_CLONE_REF.
+//
+// The voice-session.ts wiring will read LAX_VOICE_TIER4_PROVIDER and pass it
+// through to createTier4 via opts.variant — no shape change to this file's
+// exports. tier4Readiness() still reports the kokoro install state so the
+// existing UI tier-card keeps rendering correctly; the new listTtsProviders()
+// is what the UI will call once provider-pick UX lands.
 
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createTier4StreamingTTS as createKokoroPath } from "./streaming-tts.js";
+import { createChatterboxClonePath } from "./chatterbox-clone-stub.js";
+import { createEdgeTtsProvider, edgeTtsReadiness } from "./edge-tts-adapter.js";
 import type { Tier4Callbacks, Tier4Config, Tier4Device, Tier4Dtype, Tier4StreamingTTS } from "./types.js";
 import { TIER4_DEFAULTS } from "./types.js";
 import { envDevice, envDtype } from "./env.js";
+import {
+  registerTtsProvider,
+  createTtsProvider,
+  listTtsProviders as listProvidersFromRegistry,
+} from "./registry.js";
 
-export type Tier4Variant = "kokoro" | "chatterbox-clone";
+// Built-in provider auto-registration. Side-effectful imports above pull each
+// adapter into the bundle; the calls below wire them into the registry. Tier 5
+// adapters can either register here or self-register from their own module.
+registerTtsProvider("kokoro", (opts, cb) => createKokoroPath(opts, cb));
+registerTtsProvider("chatterbox-clone", (opts, cb) =>
+  createChatterboxClonePath({ ...opts, referenceWavPath: opts.referenceWavPath }, cb),
+);
+registerTtsProvider("edge-tts", (opts, cb) => createEdgeTtsProvider(opts, cb), edgeTtsReadiness);
+
+// Variant key is now an open string so external adapters can register their
+// own. Kept the union members for back-compat call sites.
+export type Tier4Variant = "kokoro" | "chatterbox-clone" | "edge-tts" | (string & {});
 
 export interface CreateTier4Options extends Tier4Config {
   variant?: Tier4Variant;
@@ -25,17 +61,7 @@ export async function createTier4(
   cb: Tier4Callbacks,
 ): Promise<Tier4StreamingTTS> {
   const variant: Tier4Variant = opts.variant ?? "kokoro";
-
-  if (variant === "kokoro") {
-    return createKokoroPath(opts, cb);
-  }
-
-  if (variant === "chatterbox-clone") {
-    const stub = await import("./chatterbox-clone-stub.js");
-    return stub.createChatterboxClonePath(opts, cb);
-  }
-
-  throw new Error(`unknown tier 4 variant: ${variant}`);
+  return createTtsProvider(variant, opts, cb);
 }
 
 export function tier4Enabled(): boolean {
@@ -43,6 +69,8 @@ export function tier4Enabled(): boolean {
 }
 
 export function tier4VariantFromEnv(): Tier4Variant {
+  const explicit = process.env.LAX_VOICE_TIER4_PROVIDER?.trim().toLowerCase();
+  if (explicit) return explicit;
   return process.env.LAX_VOICE_CLONE_REF ? "chatterbox-clone" : "kokoro";
 }
 
@@ -90,6 +118,11 @@ export function tier4Readiness(): Tier4Readiness {
   }
   result.ready = result.hasKokoro && result.hasOnnxRuntime;
   return result;
+}
+
+/** Lightweight provider listing for the UI provider-picker. */
+export function listTtsProviders(): { name: string; ready: boolean; reason?: string }[] {
+  return listProvidersFromRegistry();
 }
 
 /**

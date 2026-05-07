@@ -12,6 +12,7 @@
  *   LAX_CANONICAL_LOOP_IDE
  *   LAX_CANONICAL_LOOP_BACKGROUND
  *   LAX_CANONICAL_LOOP_ALL          (catch-all override; ON forces every lane ON)
+ *   LAX_CANONICAL_LOOP_CHAT         (opt-in: route chat WS turns through canonical)
  */
 import type { CanonicalLane } from "./types.js";
 
@@ -35,6 +36,22 @@ export function isCanonicalLoopEnabled(lane: CanonicalLane): boolean {
   const envName = LANE_ENV[lane];
   if (!envName) return false;
   return readBoolEnv(envName);
+}
+
+/**
+ * Opt-in: when set, the chat WS forward layer creates an `op_chat_turn`
+ * canonical op (interactive lane) instead of POSTing to /api/chat. The
+ * Anthropic adapter drives the turn end-to-end; chunks stream back via
+ * the bus to the WS session. Stays OFF until the chat-canonical bridge is
+ * proven against real traffic.
+ *
+ * Tools are NOT plumbed in Phase 1 — pure-conversational turns work; any
+ * tool_call_requested falls into the `NotConfiguredToolDispatcher` and the
+ * model sees an error result. Don't flip this on for chats that need tools
+ * until the dispatcher bridge lands.
+ */
+export function isCanonicalChatEnabled(): boolean {
+  return readBoolEnv("LAX_CANONICAL_LOOP_CHAT");
 }
 
 /** Test helper — read the env var name for a lane. Not for production logic. */

@@ -27,6 +27,7 @@ import type { CanonicalLane, StateChangedBody } from "./types.js";
 
 export {
   isCanonicalLoopEnabled,
+  isCanonicalChatEnabled,
   envVarForLane,
 } from "./feature-flag.js";
 
@@ -72,6 +73,8 @@ export {
   setDefaultAdapterForLane,
   setToolDispatcher,
   getToolDispatcher,
+  registerToolDispatcherForOp,
+  unregisterToolDispatcherForOp,
   resolveAdapterFactory,
   resetCanonicalRuntime,
   type AdapterFactory,
@@ -206,6 +209,16 @@ export {
 } from "./adapters/anthropic.js";
 
 export { listActiveCanonicalOps, type ActiveCanonicalOp } from "./active-ops.js";
+
+export {
+  runChatViaCanonical,
+  type CanonicalChatContext,
+} from "./chat-runner.js";
+
+export {
+  makeChatToolDispatcher,
+  type ChatToolDispatcherOptions,
+} from "./chat-tool-dispatcher.js";
 
 export { runWorker, type WorkerHandle } from "./worker.js";
 export { driveTurn, type DriveTurnResult } from "./turn-loop.js";

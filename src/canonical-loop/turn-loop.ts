@@ -166,7 +166,7 @@ interface DispatchedTools {
 
 async function dispatchTools(opId: string, turnIdx: number, calls: ToolCall[]): Promise<DispatchedTools> {
   if (calls.length === 0) return { toolMessages: [], toolSummary: [] };
-  const dispatcher = getToolDispatcher();
+  const dispatcher = getToolDispatcher(opId);
   const toolMessages: CommitTurnMessage[] = [];
   const toolSummary: ToolCallSummary[] = [];
 

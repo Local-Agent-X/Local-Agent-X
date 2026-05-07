@@ -56,6 +56,12 @@ export interface AnthropicTransportRequest {
   tools: TransportTool[];
   signal: AbortSignal;
   maxTokens?: number;
+  /**
+   * Chat session id, when this transport is driving a chat op. Used for
+   * warm-pool keying so a session reuses a long-lived CLI process across
+   * turns instead of cold-spawning per request.
+   */
+  sessionId?: string;
 }
 
 export interface TransportMessage {
@@ -94,6 +100,12 @@ export interface AnthropicAdapterOptions {
   maxTokens?: number;
   /** PRD §21: 256 KB suggested cap on `provider_state` JSON size. */
   providerStateMaxBytes?: number;
+  /**
+   * When this adapter drives a chat op, the session id is propagated to
+   * the transport so the warm pool reuses one CLI process across turns
+   * for the session.
+   */
+  sessionId?: string;
 }
 
 export class AnthropicAdapter implements Adapter {
@@ -149,6 +161,7 @@ export class AnthropicAdapter implements Adapter {
       tools: convertTools(input.tools),
       signal: this.aborter.signal,
       maxTokens: this.opts.maxTokens,
+      sessionId: this.opts.sessionId,
     };
 
     const consume = async (): Promise<void> => {

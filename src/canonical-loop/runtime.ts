@@ -11,7 +11,7 @@
  * resetCanonicalRuntime() to drop registrations between tests.
  */
 import type { Op } from "../workers/types.js";
-import type { Adapter } from "./adapter-contract.js";
+import type { Adapter, ToolDescriptor } from "./adapter-contract.js";
 import { NotConfiguredToolDispatcher, type ToolDispatcher } from "./tool-dispatch.js";
 import type { CanonicalLane } from "./types.js";
 
@@ -20,6 +20,7 @@ export type AdapterFactory = () => Adapter | Promise<Adapter>;
 const opAdapters = new Map<string, AdapterFactory>();
 const laneAdapters = new Map<CanonicalLane, AdapterFactory>();
 const opDispatchers = new Map<string, ToolDispatcher>();
+const opTools = new Map<string, ToolDescriptor[]>();
 let toolDispatcher: ToolDispatcher = new NotConfiguredToolDispatcher();
 
 /** Register a factory that produces the adapter for a specific op_id. */
@@ -47,6 +48,29 @@ export function registerToolDispatcherForOp(opId: string, d: ToolDispatcher): vo
 
 export function unregisterToolDispatcherForOp(opId: string): void {
   opDispatchers.delete(opId);
+}
+
+/**
+ * Register the tool list for an op. The canonical loop's `turn-loop` reads
+ * this on every turn to populate `TurnInput.tools` for the adapter — that's
+ * how the model is told which tools are available. Without this, ops get
+ * `tools: []` and the model has no tool surface (the user sees "refused"
+ * or "in planning mode" responses for tool-needing requests).
+ *
+ * Lifetime: caller is responsible for `unregisterToolsForOp(opId)` on
+ * terminal — same pattern as the per-op dispatcher.
+ */
+export function registerToolsForOp(opId: string, tools: ToolDescriptor[]): void {
+  opTools.set(opId, tools);
+}
+
+export function unregisterToolsForOp(opId: string): void {
+  opTools.delete(opId);
+}
+
+/** Resolve tools for an op. Returns [] when nothing is registered. */
+export function getToolsForOp(opId: string): ToolDescriptor[] {
+  return opTools.get(opId) ?? [];
 }
 
 /** Inject the global tool dispatcher used when no per-op dispatcher is registered. */
@@ -82,5 +106,6 @@ export function resetCanonicalRuntime(): void {
   opAdapters.clear();
   laneAdapters.clear();
   opDispatchers.clear();
+  opTools.clear();
   toolDispatcher = new NotConfiguredToolDispatcher();
 }

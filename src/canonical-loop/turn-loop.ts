@@ -27,7 +27,7 @@ import type {
 import { readLatestOpTurn, readOpMessages } from "./store.js";
 import { emit, publishStreamChunk } from "./event-emitter.js";
 import { commitTurn, type CommitTurnMessage } from "./checkpoint.js";
-import { getToolDispatcher } from "./runtime.js";
+import { getToolDispatcher, getToolsForOp } from "./runtime.js";
 import { readOp } from "../workers/op-store.js";
 import type { Op } from "../workers/types.js";
 
@@ -143,12 +143,16 @@ function buildTurnInput(
     createdAt: m.createdAt,
   }));
   const prior = readLatestOpTurn(op.id);
+  // Tools come from the per-op registry (chat-runner registers them on
+  // submit; legacy worker-pool ops don't register and get []). Without
+  // this, the adapter never tells the model about its tool surface and
+  // tool-needing chats degrade to "I'm in planning mode" responses.
   const input: TurnInput = {
     opId: op.id,
     turnIdx,
     messages,
     providerState: prior?.providerState,
-    tools: [],
+    tools: getToolsForOp(op.id),
   };
   if (pendingRedirect) input.pendingRedirect = pendingRedirect;
   return input;

@@ -345,6 +345,23 @@
         </div>
         <!-- ─── SPEECH ─── (STT + TTS + sidecar tier status all adjacent) -->
         <div class="section-card">
+          <div class="section-title">Voice Input</div>
+          <div class="section-desc">How the mic is gated during a voice session. Off = always-on (VAD-driven). Push-to-talk = mic open only while a key is held. Toggle = tap to start/stop.</div>
+          <div class="field"><label class="field-label">Mode</label><select class="field-select" id="cfg-ptt-mode" onchange="onPttModeChange(this.value)">
+            <option value="off">Off (always-on / VAD)</option>
+            <option value="push-to-talk">Push-to-talk (hold key)</option>
+            <option value="toggle">Toggle (tap key)</option>
+          </select></div>
+          <div class="field" id="ptt-chord-field" style="display:none">
+            <label class="field-label">Hotkey</label>
+            <div style="display:flex;align-items:center;gap:8px">
+              <code id="ptt-chord-display" style="font-family:var(--mono);font-size:.78rem;padding:4px 8px;border:1px solid var(--border);border-radius:4px">Space</code>
+              <button class="action-btn" type="button" onclick="onPttChordCapture()">Set hotkey</button>
+            </div>
+            <div class="field-hint">Default Space. Avoid keys you use during normal typing.</div>
+          </div>
+        </div>
+        <div class="section-card">
           <div class="section-title">Speech-to-Text</div>
           <div id="stt-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-stt-engine"><option value="whisper">Whisper (Local — needs Lite sidecar)</option><option value="browser">Browser Web Speech API (No install — lower quality)</option><option value="none">None</option></select></div>
@@ -925,6 +942,8 @@
 <script src="/js/shared.js"></script>
 <script src="/js/app.js?v=va2"></script>
 <script src="/js/voice-sphere.js?v=vb5"></script>
+<script src="/js/voice/hotkey-capture.js?v=v1"></script>
+<script src="/js/voice/push-to-talk.js?v=v1"></script>
 <script src="/js/chat.js?v=vc8"></script>
 <script src="/js/secret-modal.js?v=v1"></script>
 <script src="/js/settings.js?v=vb2"></script>

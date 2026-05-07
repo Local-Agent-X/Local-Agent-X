@@ -83,20 +83,28 @@ const ACTIVE_SELF_EDITS = new Map<string, { task: string; startedAt: number }>()
 export const selfEditTool: ToolDefinition = {
   name: "self_edit",
   description:
-    "Fix a bug in the Local Agent X codebase or make a source change. Use this when " +
-    "a tool call succeeded HTTP-wise but the observable outcome is wrong (UI didn't " +
-    "update, setting didn't apply, endpoint returns stale data, etc), or when the " +
-    "user reports 'that didn't work' after what looked like success. Delegates the " +
-    "code surgery to Claude Code with bash/read/edit access to the SAX source tree. " +
-    "Returns a summary of the diagnosis + the files it changed. The SAX server must " +
-    "be restarted after to pick up the changes — tell the user. " +
-    "IMPORTANT: when wiring up code that ALREADY exists at a known path (e.g. a " +
-    "prototype in workspace/, integrations/, or a sibling module), name that path " +
-    "in your task — self_edit reads the codebase fresh per call and will REWRITE " +
-    "from scratch otherwise, duplicating work that's already done. " +
-    "ONE self_edit per chat session at a time — if one is already running, wait for " +
-    "it to finish before submitting another. Parallel self_edits create overlapping " +
-    "worktree branches you'll then have to reconcile by hand.",
+    "ONLY for fixing bugs IN THE LOCAL AGENT X SOURCE CODE (.ts files in src/, route handlers, " +
+    "tool implementations, server logic). Delegates source-code surgery to a code-specialized " +
+    "subprocess that reads/edits/builds the codebase. Returns a diagnosis + list of changed files. " +
+    "The user must restart the server after to pick up changes — tell them.\n\n" +
+    "USE self_edit FOR: a tool returned 200 but the UI didn't update, an endpoint returns wrong " +
+    "shape, a route is missing, a feature works on one provider but not another due to a code path " +
+    "difference, the user reports 'that didn't work' after a tool call appeared to succeed. " +
+    "Anything that's a CODE bug or a missing CODE capability.\n\n" +
+    "DO NOT USE self_edit FOR (these are common misuses):\n" +
+    "- Launching/running an installer or .exe → use install_software with strategy='launch'\n" +
+    "- Installing software → use install_software\n" +
+    "- Running a one-off command → use bash (sparingly) or the appropriate native tool\n" +
+    "- Editing a USER file in workspace/ → use edit (self_edit only touches SOURCE code)\n" +
+    "- Configuring settings → use http_request POST to /api/settings\n" +
+    "- Editing config files in config/ → use edit directly (hot-reloads)\n" +
+    "- Anything the user said 'launch'/'run'/'open'/'start'/'install' about → never self_edit, " +
+    "those are runtime actions not source changes\n\n" +
+    "If you're tempted to self_edit but the user's intent is to RUN something, you have the wrong tool.\n\n" +
+    "When wiring up code that ALREADY exists at a known path (e.g. a prototype in workspace/, " +
+    "integrations/, or a sibling module), name that path in your task — self_edit reads the " +
+    "codebase fresh per call and will REWRITE from scratch otherwise, duplicating work.\n\n" +
+    "ONE self_edit per chat session at a time — if one is already running, wait for it to finish.",
   parameters: {
     type: "object",
     properties: {

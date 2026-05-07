@@ -10,6 +10,7 @@ import { checkSessionPolicy } from "./session-policy.js";
 import { ariEvaluate, isAriActive } from "./ari-kernel.js";
 import { recordSensitiveRead, checkEgressTaint, isSensitivePath } from "./data-lineage.js";
 import { compactIfNeeded, compactIfNeededWithLLM } from "./context-manager.js";
+import { renderToolResultForModel } from "./tools/result-helpers.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { createHash } from "node:crypto";
@@ -443,7 +444,7 @@ async function executeSingleTool(
       if (egressCheck.blocked) {
         result = { content: `BLOCKED by data lineage: ${egressCheck.reason}`, isError: true };
         onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
-        msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
+        msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
         return msgs;
       }
     }
@@ -490,7 +491,7 @@ async function executeSingleTool(
       if (argValidationErrors.length > 0) {
         result = { content: `Invalid arguments for ${tc.name}: ${argValidationErrors.join("; ")}. Fix and retry.`, isError: true };
         onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
-        msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
+        msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
         return msgs;
       }
 
@@ -501,7 +502,7 @@ async function executeSingleTool(
         if (!preHook.continue) {
           result = { content: `BLOCKED by hook: ${preHook.reason || "PreToolUse hook returned false"}`, isError: true };
           onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
-          msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
+          msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
           return msgs;
         }
       }
@@ -511,7 +512,7 @@ async function executeSingleTool(
       if (!circuit.allowed) {
         result = { content: `BLOCKED by circuit breaker: ${circuit.reason}`, isError: true };
         onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
-        msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
+        msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
         return msgs;
       }
 
@@ -520,7 +521,7 @@ async function executeSingleTool(
       if (!rate.allowed) {
         result = { content: `BLOCKED by rate limit: ${rate.reason}`, isError: true };
         onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
-        msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
+        msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
         return msgs;
       }
 
@@ -544,7 +545,7 @@ async function executeSingleTool(
         if (!approved) {
           result = { content: `BLOCKED by user: declined approval for ${tc.name}`, isError: true };
           onEvent({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
-          msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content } as ChatCompletionMessageParam);
+          msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
           return msgs;
         }
       }
@@ -633,7 +634,7 @@ async function executeSingleTool(
       { type: "image_url", image_url: { url: `data:${imageData.mime};base64,${imageData.b64}`, detail: "auto" } },
     ]} as ChatCompletionMessageParam);
   } else {
-    msgs.push({ role: "tool", tool_call_id: tc.id, content: result.content });
+    msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) });
   }
 
   return msgs;

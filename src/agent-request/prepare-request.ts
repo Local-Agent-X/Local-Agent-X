@@ -152,11 +152,15 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     try {
       const { getToolRAG } = await import("../tool-rag.js");
       const rag = getToolRAG();
-      const embedder = (memoryIndex as unknown as { embeddingProvider?: { embed(t: string): Promise<number[]> } }).embeddingProvider;
-      if (embedder && rag.size === 0) {
-        rag.setEmbedder(embedder);
-        await rag.build(allAgentTools);
-      }
+      // IMPORTANT: do NOT call rag.build() from the chat path. Building
+      // requires embedding all 167 tools serially on Ollama; on CPU-only
+      // boxes that's 50-100s. The pre-warm at server boot
+      // (src/server/index.ts) is the ONLY caller that builds. If a chat
+      // arrives before pre-warm finishes, we just don't filter tools this
+      // turn — the chat ships with the full tool list (after the model-
+      // tier shrink above) and RAG kicks in on later turns once warm.
+      // Logged once per cold-start chat to surface the rare "first chat
+      // beat the pre-warm" case for telemetry.
       if (rag.isReady) {
         const semantic = await rag.select(message, allAgentTools, {
           topK: 22,
@@ -167,6 +171,8 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
         const union = new Set(tools.map(t => t.name));
         for (const t of semantic) union.add(t.name);
         tools = allAgentTools.filter(t => union.has(t.name));
+      } else {
+        logger.info(`[tool-rag] not ready yet — shipping all tools this turn (pre-warm in flight)`);
       }
     } catch (e) {
       logger.warn(`[tool-rag] Skipped: ${(e as Error).message}`);

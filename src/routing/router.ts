@@ -53,25 +53,54 @@ export async function routeMessage(
   const regexDecision = decideByRegex(provider, message, channel);
   const preview = `${message.slice(0, 80).replace(/\s+/g, " ")}${message.length > 80 ? "…" : ""}`;
 
+  // Senior-dev architecture (revised 2026-05-06): the LLM classifier is
+  // GONE from the live chat path. Instead of trying to predict whether a
+  // turn needs a worker, we default INLINE for every regex-non-shortcut
+  // message. The previous approach (Haiku/Sonnet predict on every turn)
+  // misrouted simple lookups ("what does primal stand for?") to background
+  // workers while also adding 200-1000ms of pre-turn latency AND requiring
+  // Anthropic auth even when the user was on Codex.
+  //
+  // The right signal isn't "predict if this needs work" — it's "observe
+  // when work is taking too long" (mid-turn escalation, follow-up phase).
+  //
+  // Workers are still reachable via:
+  //   - The /discuss prefix (regex shortcut → INLINE — opposite, keeps user
+  //     in chat) — handled in regex layer
+  //   - Explicit "background this", "delegate", agent_spawn tool calls
+  //   - User-initiated pin-to-worker UI controls
+  //   - Auto-delegate boost path in prepare-request.ts (BUILD_NOUN_RE etc.)
+  //     for unambiguous "build me an X" patterns
+  //
+  // Set LAX_ROUTE_CLASSIFIER=1 to RE-ENABLE the legacy predictor (off
+  // switch flipped to opt-in for the rare A/B comparison case).
   let finalDecision = regexDecision;
 
-  if (!regexDecision.definitive && process.env.LAX_ROUTE_CLASSIFIER !== "0") {
-    try {
-      const llmResult = await classifyRouteWithLLM(message);
-      if (llmResult) {
-        finalDecision = {
-          destination: llmResult.inline ? "inline" : "delegate",
-          reason: `llm: ${llmResult.reason}`,
-          wordCount: regexDecision.wordCount,
-          definitive: true,
-        };
-      } else {
-        finalDecision = { ...regexDecision, reason: "llm-unavailable-default-inline", definitive: true };
-        logger.warn("LLM classifier returned null; defaulting to inline");
+  if (!regexDecision.definitive) {
+    if (process.env.LAX_ROUTE_CLASSIFIER === "1") {
+      // Opt-in: legacy predictor for A/B testing
+      try {
+        const llmResult = await classifyRouteWithLLM(message);
+        if (llmResult) {
+          finalDecision = {
+            destination: llmResult.inline ? "inline" : "delegate",
+            reason: `llm-optin: ${llmResult.reason}`,
+            wordCount: regexDecision.wordCount,
+            definitive: true,
+          };
+        } else {
+          finalDecision = { ...regexDecision, reason: "llm-unavailable-default-inline", definitive: true };
+        }
+      } catch (e) {
+        finalDecision = { ...regexDecision, reason: "llm-error-default-inline", definitive: true };
+        logger.warn(`LLM classifier failed (defaulting to inline): ${(e as Error).message}`);
       }
-    } catch (e) {
-      finalDecision = { ...regexDecision, reason: "llm-error-default-inline", definitive: true };
-      logger.warn(`LLM classifier failed (defaulting to inline): ${(e as Error).message}`);
+    } else {
+      // Default: no predictor. Inline for everything that didn't match a
+      // regex shortcut. Cheap, fast, predictable. Misroutes (rare worker-
+      // class tasks that should have delegated) recover via mid-turn
+      // escalation in the agent loop, not a pre-turn predictor.
+      finalDecision = { ...regexDecision, reason: "no-predictor-default-inline", definitive: true };
     }
   }
 

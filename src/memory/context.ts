@@ -69,6 +69,28 @@ export async function buildContextBlock(
   const sections: string[] = [];
   const memDir = memory["memoryDir"];
 
+  // Current date+time. Without this, the model has no fresh clock signal —
+  // it would otherwise infer "now" from timestamps in the daily-log slice,
+  // which freezes if no entry has been written in a while. `new Date()`
+  // pulls from the host OS clock; Intl resolves the IANA timezone from
+  // OS settings (Windows registry on Windows). Re-rendered every turn.
+  const _now = new Date();
+  const _tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const _localStr = _now.toLocaleString("en-US", {
+    timeZone: _tz,
+    weekday: "long",
+    year: "numeric", month: "long", day: "numeric",
+    hour: "numeric", minute: "2-digit", second: "2-digit",
+    hour12: true, timeZoneName: "short",
+  });
+  sections.push(
+    `<current_datetime>\n` +
+    `${_localStr}\n` +
+    `ISO: ${_now.toISOString()}\n` +
+    `Timezone: ${_tz}\n` +
+    `</current_datetime>`
+  );
+
   ensurePersonalityFiles(memDir);
 
   const identity = await readPersonalityFile(memDir, "identity");

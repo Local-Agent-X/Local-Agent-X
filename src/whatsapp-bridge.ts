@@ -19,7 +19,15 @@ import { mkdirSync, existsSync, rmSync } from "node:fs";
 import QRCode from "qrcode";
 
 import { createLogger } from "./logger.js";
+import { encodeWavToOgg, isFfmpegAvailable, transcribeOggBuffer, getVoicePref } from "./bridge-voice/index.js";
+import { synthesize } from "./voice.js";
 const logger = createLogger("whatsapp-bridge");
+
+// Per-turn voice-mirror flag: when the user sent a voice note in, the
+// reply for THAT turn goes back as a voice note regardless of the
+// /voice toggle. Keyed by phone number (not JID — same person on
+// @lid vs @s.whatsapp.net is the same chat). Cleared in finally.
+const _voiceMirrorForPhone = new Set<string>();
 
 // ── Types ──
 
@@ -162,6 +170,23 @@ export class WhatsAppBridge {
       if (chunks.length > 1) await new Promise(r => setTimeout(r, 300));
     }
     return true;
+  }
+
+  /** Send an OGG/Opus buffer as a WhatsApp voice note (ptt=true so it
+   *  renders as a playable voice bubble, not an attached audio file). */
+  async sendVoiceToJid(jid: string, ogg: Buffer): Promise<boolean> {
+    if (!this.sock || this.state !== "connected") return false;
+    try {
+      await this.sock.sendMessage(jid, {
+        audio: ogg,
+        mimetype: "audio/ogg; codecs=opus",
+        ptt: true,
+      });
+      return true;
+    } catch (e) {
+      logger.error("[whatsapp] sendVoice error:", (e as Error).message);
+      return false;
+    }
   }
 
   /** Send an image (buffer) with optional caption. */
@@ -337,10 +362,33 @@ export class WhatsAppBridge {
         // Skip group messages for now
         if (remoteJid.endsWith("@g.us")) continue;
 
-        const text = msg.message?.conversation
+        let text = msg.message?.conversation
           || msg.message?.extendedTextMessage?.text
           || msg.message?.imageMessage?.caption
           || null;
+
+        // Inbound voice note (ptt) → transcribe via the bridge-voice STT
+        // helper. On success, mark this turn as voice-mirrored so the
+        // reply goes back as a voice note. On failure (no ffmpeg, no
+        // whisper, hallucination filter) fall through and Baileys'
+        // typical "audio without text" branch logs + skips below.
+        const audioMsg = msg.message?.audioMessage;
+        if (!text && audioMsg) {
+          try {
+            const { downloadMediaMessage } = await import("@whiskeysockets/baileys");
+            const oggBuf = await downloadMediaMessage(msg as any, "buffer", {}) as Buffer;
+            if (oggBuf && oggBuf.length > 0) {
+              const transcript = await transcribeOggBuffer(oggBuf);
+              if (transcript && transcript.trim()) {
+                text = transcript.trim();
+                // chatPhone (the key we use for voice-mirror) is computed
+                // a few lines below; defer the .add() until then.
+              }
+            }
+          } catch (e) {
+            logger.warn(`[whatsapp] voice transcribe failed: ${(e as Error).message}`);
+          }
+        }
 
         if (text && (typeof text !== "string" || text.length > 10000)) continue;
 
@@ -397,6 +445,11 @@ export class WhatsAppBridge {
         // Use real phone number for self-chat sessions (not the LID)
         const phone = isSelfChat ? (this.phoneNumber || senderPhone) : senderPhone;
 
+        // If the inbound was a transcribed voice note, mark this phone for
+        // voice-mirror reply (handled by dispatchReplyToJid in the try
+        // block below). Cleared in finally regardless of outcome.
+        if (audioMsg && text) _voiceMirrorForPhone.add(phone);
+
         // Check allowed numbers — DEFAULT-DENY: only owner + explicitly allowed numbers
         const isOwner = this.phoneNumber && phone === this.phoneNumber;
         if (!isOwner && !this.allowedNumbers.has(phone)) {
@@ -436,7 +489,7 @@ export class WhatsAppBridge {
         try {
           const reply = await this.onMessage({ from: phone, name, text: sanitizedText, sessionId });
           if (reply) {
-            await this.sendToJid(replyJid, reply);
+            await this.dispatchReplyToJid(replyJid, phone, reply);
           }
         } catch (e) {
           logger.error(`[whatsapp] Agent error for ${phone}:`, (e as Error).message);
@@ -447,6 +500,7 @@ export class WhatsAppBridge {
           // Small delay before clearing — gives time for the sent message event to be processed
           setTimeout(() => replyingTo.delete(replyJid), 3000);
           this.processingLock.delete(phone);
+          _voiceMirrorForPhone.delete(phone);
         }
       }
     };
@@ -475,6 +529,60 @@ export class WhatsAppBridge {
       if (chunks.length > 1) await new Promise(r => setTimeout(r, 300));
     }
     return true;
+  }
+
+  /**
+   * Send the agent's reply choosing voice vs text. Voice mode is active
+   * when the user has /voice on, OR when this turn was triggered by an
+   * inbound voice note (mirror-the-channel for that one reply).
+   *
+   * Long replies (>800 chars): speak the first sentence as a voice note,
+   * then send the full text as a follow-up. Voice notes much over a
+   * minute feel obnoxious in WhatsApp.
+   *
+   * Any TTS / encode / sendVoice failure falls back to text so the user
+   * always receives the reply.
+   */
+  private async dispatchReplyToJid(jid: string, phone: string, reply: string): Promise<void> {
+    const wantVoice = getVoicePref("whatsapp", phone) || _voiceMirrorForPhone.has(phone);
+    if (!wantVoice) {
+      await this.sendToJid(jid, reply);
+      return;
+    }
+
+    if (!(await isFfmpegAvailable())) {
+      logger.warn("[whatsapp] voice reply requested but ffmpeg unavailable — sending text");
+      await this.sendToJid(jid, reply);
+      return;
+    }
+
+    const VOICE_MAX = 800;
+    let toSpeak = reply;
+    let sendTextFollowup = false;
+    if (reply.length > VOICE_MAX) {
+      const m = reply.match(/^[\s\S]*?[.!?](?:\s|$)/);
+      toSpeak = m ? m[0].trim() : reply.slice(0, VOICE_MAX);
+      sendTextFollowup = true;
+    }
+
+    try {
+      const wav = await synthesize(toSpeak);
+      const ogg = await encodeWavToOgg(wav);
+      const ok = await this.sendVoiceToJid(jid, ogg);
+      if (!ok) {
+        logger.warn("[whatsapp] sendVoice returned false — falling back to text");
+        await this.sendToJid(jid, reply);
+        return;
+      }
+    } catch (e) {
+      logger.warn(`[whatsapp] voice synthesis failed: ${(e as Error).message} — falling back to text`);
+      await this.sendToJid(jid, reply);
+      return;
+    }
+
+    if (sendTextFollowup) {
+      await this.sendToJid(jid, reply);
+    }
   }
 
   private toJid(phone: string): string {

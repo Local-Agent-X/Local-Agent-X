@@ -138,18 +138,18 @@ async function runWithTimeout(
 export const installSoftwareTool: ToolDefinition = {
   name: "install_software",
   description:
-    "Install software by name (e.g. 'ollama', 'node', 'python'). Encapsulates OS-specific install logic so you don't have to compose winget/brew/apt + retries + fallbacks yourself. " +
-    "Strategies: 'package' tries the OS-native package manager (winget/brew/apt) with silent flags; 'direct' downloads the official binary to ~/Downloads via http_request; 'verify' confirms the install by running the version command. " +
-    "Call with strategy='package' first; if it returns needs-fallback, call again with strategy='direct'; finally call strategy='verify' to confirm. " +
-    "Always use this tool for install requests — do NOT compose winget/brew/curl in bash directly. Bash composition hits UAC, source-agreement, shell-policy, and retry-storm failure modes that this tool handles.",
+    "Install or launch software by name (e.g. 'ollama', 'node', 'python'). Encapsulates OS-specific install logic so you don't have to compose winget/brew/apt + retries + fallbacks yourself. " +
+    "Strategies: 'package' tries the OS-native package manager (winget/brew/apt) with silent flags; 'direct' downloads the official binary to ~/Downloads via http_request; 'launch' runs an already-downloaded installer (UAC prompt expected on Windows); 'verify' confirms the install by running the version command. " +
+    "Call with strategy='package' first; if it returns needs-fallback, call again with strategy='direct'; if user says 'launch it' or 'run it' or 'install it', call strategy='launch'; finally call strategy='verify' to confirm. " +
+    "ALWAYS use this tool for install/launch/run-installer intents — do NOT compose winget/brew/curl in bash directly, and DO NOT call self_edit to launch an installer. self_edit is for SOURCE CODE CHANGES, not running executables. Bash composition hits UAC, source-agreement, shell-policy, and retry-storm failure modes that this tool handles.",
   parameters: {
     type: "object",
     properties: {
       name: { type: "string", description: "Software name (lowercase). Supported: 'ollama', 'node', 'python'. Other names return 'unknown'." },
       strategy: {
         type: "string",
-        enum: ["package", "direct", "verify"],
-        description: "package = OS package manager (default first attempt). direct = download official binary to ~/Downloads. verify = run version command.",
+        enum: ["package", "direct", "launch", "verify"],
+        description: "package = OS package manager (default first attempt). direct = download official binary to ~/Downloads. launch = run an already-downloaded installer. verify = run version command.",
       },
       timeout_ms: { type: "number", description: "Max wait for the package manager attempt. Default 90000 (90s)." },
     },
@@ -224,7 +224,12 @@ export const installSoftwareTool: ToolDefinition = {
       }
       const downloadPath = join(homedir(), "Downloads", filename);
       if (existsSync(downloadPath)) {
-        return ok(`${entry.display} installer already at: ${downloadPath}\n\n${hint || ""}\nLaunch via bash: ${os === "win32" ? `Start-Process "${downloadPath}"` : os === "darwin" ? `open "${downloadPath}"` : `chmod +x "${downloadPath}" && "${downloadPath}"`}`);
+        return ok(
+          `${entry.display} installer already downloaded: ${downloadPath}\n\n` +
+          `${hint || ""}\n\n` +
+          `To run the installer: call install_software again with strategy='launch'. ` +
+          `Do NOT call bash, self_edit, or any other tool to launch — use the 'launch' strategy.`,
+        );
       }
       // Tell the agent to do the actual download via http_request — this
       // tool encapsulates KNOWLEDGE (URL, filename, post-install hint) but
@@ -236,10 +241,55 @@ export const installSoftwareTool: ToolDefinition = {
         `Save to: ${downloadPath}\n` +
         `Use http_request to GET the URL and write the response body to ${downloadPath}.\n` +
         `After download: ${hint || "Run the installer manually."}\n` +
-        `Then call install_software with strategy='verify' to confirm.`,
+        `Then call install_software with strategy='launch' to run the installer, ` +
+        `and strategy='verify' to confirm install.`,
       );
     }
 
-    return err(`Unknown strategy '${strategy}'. Use 'package', 'direct', or 'verify'.`);
+    if (strategy === "launch") {
+      const filename = entry.directFilename?.[os];
+      if (!filename) {
+        return err(`No installer filename known for ${entry.display} on ${os}. Catalog entry incomplete.`);
+      }
+      const installerPath = join(homedir(), "Downloads", filename);
+      if (!existsSync(installerPath)) {
+        return err(`Installer not found at ${installerPath}. Call install_software with strategy='direct' first to download.`);
+      }
+      emit(`Launching ${entry.display} installer…`);
+      // Spawn the installer detached so it runs independently of the agent
+      // turn (UAC prompts and installer windows can take minutes; we don't
+      // want to hold the chat turn open). The installer's GUI is the user's
+      // responsibility to drive — we just kick it off.
+      try {
+        if (os === "win32") {
+          // PowerShell Start-Process with -Verb RunAs would force UAC, but
+          // most installers handle their own elevation prompt — better to
+          // launch normally and let the installer's manifest decide. The
+          // installer .exe pops UAC if it needs admin (typical for system
+          // installs). For user-scoped installs (Ollama default), no UAC.
+          const child = spawn("cmd.exe", ["/c", "start", "", installerPath], {
+            detached: true,
+            stdio: "ignore",
+            windowsHide: false,
+          });
+          child.unref();
+        } else if (os === "darwin") {
+          const child = spawn("open", [installerPath], { detached: true, stdio: "ignore" });
+          child.unref();
+        } else {
+          const child = spawn(installerPath, [], { detached: true, stdio: "ignore" });
+          child.unref();
+        }
+        return ok(
+          `Launched ${entry.display} installer at ${installerPath}.\n` +
+          `The installer window should appear now (UAC prompt may appear first if admin install).\n` +
+          `After the user finishes the installer GUI, call install_software with strategy='verify' to confirm install.`,
+        );
+      } catch (e) {
+        return err(`Failed to launch installer: ${(e as Error).message}`);
+      }
+    }
+
+    return err(`Unknown strategy '${strategy}'. Use 'package', 'direct', 'launch', or 'verify'.`);
   },
 };

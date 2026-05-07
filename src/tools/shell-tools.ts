@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { homedir, platform } from "node:os";
 import type { ServerEvent, ToolDefinition } from "../types.js";
 import { getSandboxMode, execInSandbox } from "../sandbox.js";
-import { ok, err } from "./result-helpers.js";
+import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 
 // ── Antivirus interference detector ──────────────────────────────────────
 //
@@ -134,22 +134,39 @@ export const bashTool: ToolDefinition = {
 
     const sandboxMode = getSandboxMode();
     if (sandboxMode === "docker") {
+      const sandboxStart = Date.now();
       const result = execInSandbox(cmd);
+      const sandboxDuration = Date.now() - sandboxStart;
+      const meta = { exit_code: result.exitCode, duration_ms: sandboxDuration, sandbox: "docker" };
       if (result.exitCode === 0) {
-        return ok(result.stdout || "[exit 0 — command succeeded with no output]");
+        return ok(
+          result.stdout || `[exit 0 in ${sandboxDuration}ms — command succeeded with no captured output]`,
+          meta,
+        );
       }
-      return err(result.stderr || result.stdout || `Exit code: ${result.exitCode}`);
+      return err(
+        result.stderr || result.stdout || `Exit code: ${result.exitCode}`,
+        { ...meta, stderr: result.stderr },
+      );
     }
 
     try {
       const startMs = Date.now();
-      const output = await new Promise<string>((resolveP, rejectP) => {
+      // Resolve with structured fields so the call site can populate the
+      // tool-result envelope (exit_code, duration_ms, stderr separately).
+      // Rejection is reserved for runtime failures (spawn error, abort,
+      // timeout) — non-zero exits resolve normally with `code` set.
+      type ExecOutcome =
+        | { kind: "exit"; code: number | null; stdout: string; stderr: string; durationMs: number; avSuspect: boolean }
+        | { kind: "timeout"; durationMs: number; stdout: string; stderr: string }
+        | { kind: "abort"; durationMs: number };
+      const outcome = await new Promise<ExecOutcome>((resolveP, rejectP) => {
         let settled = false;
-        const settle = (fn: typeof resolveP | typeof rejectP, val: string) => {
+        const settle = (fn: typeof resolveP | typeof rejectP, val: ExecOutcome | Error) => {
           if (settled) return;
           settled = true;
           clearTimeout(killTimer);
-          fn(val);
+          (fn as (v: unknown) => void)(val);
         };
 
         const isWin = process.platform === "win32";
@@ -175,13 +192,16 @@ export const bashTool: ToolDefinition = {
 
         const abortSignal = args._signal as AbortSignal | undefined;
         if (abortSignal) {
-          if (abortSignal.aborted) { killTree(); settle(rejectP, "Aborted"); return; }
-          abortSignal.addEventListener("abort", () => { killTree(); settle(rejectP, "Aborted by signal"); }, { once: true });
+          if (abortSignal.aborted) { killTree(); settle(resolveP, { kind: "abort", durationMs: 0 }); return; }
+          abortSignal.addEventListener("abort", () => {
+            killTree();
+            settle(resolveP, { kind: "abort", durationMs: Date.now() - startMs });
+          }, { once: true });
         }
 
         const killTimer = setTimeout(() => {
           killTree();
-          settle(rejectP, `Command timed out after ${timeout / 1000}s`);
+          settle(resolveP, { kind: "timeout", durationMs: Date.now() - startMs, stdout, stderr });
         }, timeout);
 
         const MAX_OUTPUT = 10 * 1024 * 1024;
@@ -240,7 +260,7 @@ export const bashTool: ToolDefinition = {
           emitProgress();
         });
 
-        child.on("error", (e) => settle(rejectP, e.message));
+        child.on("error", (e) => settle(rejectP, e));
         child.on("exit", (code) => {
           // Antivirus detection: on Windows, AV behavior shields (AVG, Avast,
           // Norton, Defender heuristic) kill powershell mid-execution. The
@@ -260,21 +280,67 @@ export const bashTool: ToolDefinition = {
           if (looksLikeAvKill) {
             recordAvSuspectKill(onEvent);
           }
-
-          if (code === 0 || code === null) {
-            const result = stdout
-              ? (stderr ? stdout + "\n[stderr]\n" + stderr : stdout)
-              : "[exit 0 — command succeeded with no output]";
-            settle(resolveP, result);
-          } else {
-            const out = [stdout, stderr].filter(Boolean).join("\n");
-            settle(rejectP, out || `Exit code: ${code}`);
-          }
+          settle(resolveP, { kind: "exit", code, stdout, stderr, durationMs: elapsed, avSuspect: looksLikeAvKill });
         });
       });
-      return ok(output);
+
+      // Map structured outcome to a tool-result envelope. metadata carries
+      // structured fields (exit_code, duration_ms, stderr, recovery) so the
+      // renderer can surface them as a compact header. See src/types.ts.
+      if (outcome.kind === "abort") {
+        return err("Aborted", { duration_ms: outcome.durationMs });
+      }
+      if (outcome.kind === "timeout") {
+        return timeoutResult(
+          `Command timed out after ${timeout / 1000}s.`,
+          {
+            duration_ms: outcome.durationMs,
+            stderr: outcome.stderr || undefined,
+            partial_output: (outcome.stdout || outcome.stderr)
+              ? (outcome.stdout + (outcome.stderr ? "\n[stderr]\n" + outcome.stderr : "")).slice(-1500)
+              : undefined,
+            recovery: "Increase the `timeout` arg, OR use process_start for long-running commands so the call returns immediately with a session_id you can poll.",
+          },
+        );
+      }
+
+      const { code, stdout, stderr, durationMs, avSuspect } = outcome;
+
+      if (avSuspect) {
+        return blocked(
+          `Command was killed externally in ${durationMs}ms with no output — antivirus signature.`,
+          {
+            exit_code: code,
+            duration_ms: durationMs,
+            av_suspect: true,
+            recovery: "Add the project folder to AV exclusions, OR use http_request / install_software / native tools to avoid spawning a shell.",
+          },
+        );
+      }
+
+      if (code === 0 || code === null) {
+        // exit 0 with no captured output is a real, named state — say so.
+        // Programs writing only to a TTY (ollama pull, winget install)
+        // routinely produce empty stdout. Don't retry; verify another way.
+        const content = stdout
+          ? (stderr ? stdout + "\n[stderr]\n" + stderr : stdout)
+          : `[exit ${code === null ? "?" : code} in ${durationMs}ms — command finished with no captured output. If this was a CLI that writes progress to a TTY (ollama, npm install, winget), verify via filesystem or its REST API rather than re-running.]`;
+        return ok(content, {
+          exit_code: code,
+          duration_ms: durationMs,
+          stderr: stderr || undefined,
+          stdout_empty: stdout.length === 0,
+        });
+      }
+
+      const out = [stdout, stderr].filter(Boolean).join("\n");
+      return err(out || `Exit code: ${code}`, {
+        exit_code: code,
+        duration_ms: durationMs,
+        stderr: stderr || undefined,
+      });
     } catch (e) {
-      return err((e as Error).message);
+      return err((e as Error).message, { reason: "spawn failure" });
     }
   },
 };

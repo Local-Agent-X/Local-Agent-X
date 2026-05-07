@@ -323,41 +323,15 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     }
   } catch { /* best-effort */ }
 
-  let shortReplyContextBlock = "";
-  try {
-    const trimmed = (message || "").trim();
-    const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
-    const isShortReply = trimmed.length > 0 && trimmed.length <= 80 && wordCount <= 12;
-    if (isShortReply) {
-      // Find the most recent assistant text message
-      const lastAssistant = [...sessionMessages].reverse().find(m =>
-        m.role === "assistant" && typeof m.content === "string" && (m.content as string).trim().length > 0
-      );
-      const lastAssistantText = typeof lastAssistant?.content === "string" ? (lastAssistant.content as string).trim() : "";
-      // Detect a question/offer at the end of the prior assistant turn
-      const QUESTION_END_RE = /\?[\s)\]"']*$|\b(want me to|want a|should i|or should i|or would you|let me know|tell me|which|or|do you want|or do you)\b[^?]*\?/i;
-      // Detect when the user's short message references a PRIOR directive,
-      // not a question-answer. Live failure (2026-05-07): user said "download
-      // ollama" → agent gave instructions instead of doing it → user said "I
-      // asked you to do it" → agent replied "I don't see your earlier request
-      // in this turn — what's the task?" The prior assistant turn wasn't a
-      // question (so the original detector didn't fire), but the user message
-      // is clearly reiterating an earlier directive. Catch this pattern with
-      // a phrase regex on the user's reply.
-      const REITERATION_RE = /^\s*(i\s+(asked|told|said|wanted)|you\s+(were|need\s+to|should)|please\s+(just\s+)?do\s+(it|that)|just\s+do\s+(it|that)|do\s+(it|that|what\s+i)|then\s+do\s+(it|that)|yes\s+(do|please)|go\s+ahead|do\s+as\s+(asked|told)|finish\s+(it|that))\b/i;
-      const priorEndedWithQuestion = QUESTION_END_RE.test(lastAssistantText.slice(-220));
-      const looksLikeReiteration = REITERATION_RE.test(trimmed);
-      if (priorEndedWithQuestion) {
-        shortReplyContextBlock =
-          `\n\n[CONTEXT REMINDER] The user's current message is SHORT (${wordCount} word${wordCount === 1 ? "" : "s"}: "${trimmed.slice(0, 80)}"). Your previous turn ended with a question or offer — re-read it before acting. The user is almost certainly answering YOUR question, not giving a fresh standalone instruction. Don't take the short reply literally as a brand-new ask — interpret it in the context of what you just offered.\n\nYour prior message ended with: "${lastAssistantText.slice(-200)}"\n[end context reminder]\n`;
-        logger.info(`[chat] injecting short-reply context reminder for sess=${sessionId} (msg="${trimmed.slice(0, 40)}")`);
-      } else if (looksLikeReiteration) {
-        shortReplyContextBlock =
-          `\n\n[CONTEXT REMINDER — REITERATION] The user said "${trimmed.slice(0, 80)}". This phrasing means they are REFERRING BACK to a previous request in this conversation, not giving a fresh standalone instruction. Look back through the LAST 2-3 user/assistant turns to find the antecedent. Common patterns:\n- "I asked you to do X" → the user is rebuking that you didn't actually do X. Go do X now. Don't re-explain or hand back instructions.\n- "do it" / "yes do it" / "just do it" → execute whatever you most recently offered or proposed.\n- "do as asked" / "finish it" → complete the task that was already specified.\n\nDo NOT reply with "I don't see your earlier request" or "what's the task?" — the task is in the prior turns of this exact conversation. Find it and act.\n[end context reminder]\n`;
-        logger.info(`[chat] injecting reiteration context reminder for sess=${sessionId} (msg="${trimmed.slice(0, 40)}")`);
-      }
-    }
-  } catch { /* best-effort */ }
+  // Short-reply context handling moved to the base system prompt. Two
+  // constitutional rules in config/system-prompt.md ("Directives are commands"
+  // + "Short replies are continuations") cover this without per-turn regex
+  // detection. Anthropic-style: feed the model durable principles upfront,
+  // trust it to apply them. The earlier regex pile-up (QUESTION_END_RE +
+  // REITERATION_RE) was a maintenance trap — every new phrasing variant
+  // ("hello?", "and?", "still waiting", "you didn't do it") needed another
+  // pattern. The constitutional rule covers all of those by intent, not text.
+  const shortReplyContextBlock = "";
 
   // Codex-specific behavioral rider. Vague tone-shift instructions ("be a
   // senior dev") barely move Codex; concrete IF-THEN behavioral rules tied

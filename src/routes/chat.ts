@@ -255,27 +255,14 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       const isIdeSession = sessionId.startsWith("ide-");
       let sessionTools = isIdeSession ? prepared.tools.filter(t => !IDE_BLOCKED_TOOLS.has(t.name)) : prepared.tools;
 
-      // Lazy tool loading: when the message is clearly conversational (no
-      // verbs implying tool need), drop the entire tools array. This puts
-      // the model into pure-text mode — warm-pool's plan-mode path fires
-      // with a tiny prompt — and recovers the ~1.5s first-byte speed the
-      // canonical-chat probe demonstrated, while keeping the full memory
-      // pipeline (prepareAgentRequest already ran). If the user follows up
-      // with a tool-needing message, the next turn re-evaluates and
-      // restores the full tool list.
-      const needsTools = (() => {
-        const m = message.trim().toLowerCase();
-        if (m.length === 0) return false;
-        // Long messages keep tools — task-class requests almost always need them.
-        if (m.length > 220) return true;
-        // Tool-trigger keywords: file ops, web/search, build/scaffold, scheduling,
-        // memory ops, theme/UI, browser, deploy, send-message, bridges, etc.
-        return /\b(open|close|browse|fetch|search|find|look\s+up|read|write|edit|delete|run|execute|build|create|make|generate|scaffold|install|deploy|push|commit|merge|publish|schedule|remind|set|change|switch|toggle|flip|enable|disable|theme|sidebar|memory|recall|note|save|store|email|message|send|post|tweet|sms|slack|telegram|whatsapp|browser|click|type|navigate|scroll|screenshot|kraken|trade|order|buy|sell|cron|job|backup|sync|pull)\b/.test(m);
-      })();
-      if (!needsTools && sessionTools.length > 0) {
-        logger.info(`[chat] lazy-tool: stripping ${sessionTools.length} tools for conversational turn (msg_len=${message.length})`);
-        sessionTools = [];
-      }
+      // Lazy tool loading was here — stripped tools on conversational-looking
+      // turns to recover ~1-2s of latency. Removed because the keyword regex
+      // was a moving target: real example "go to x.com" got classified as
+      // "no tool needed" (no `go to` in the keyword list) and the model
+      // refused the navigation because it had no browser tool. Same trade as
+      // the toolPromptSection revert — correctness over a 1-2s speed win.
+      // Keep the full tool set for every chat turn; the model decides what
+      // (if any) to call.
 
       const wsChat = ctx.chatWs.startChat(sessionId);
       const onEvent = (event: ServerEvent) => { sseWrite(res, event); wsChat.onEvent(event); };
@@ -410,6 +397,47 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
           }
           const canonicalElapsed = Date.now() - turnStart;
           logger.info(`[timing] canonical/chat ${prepared.model} ${canonicalElapsed}ms (sess=${sessionId.slice(0, 16)})`);
+
+          // Persist this turn to session.messages and trigger memory indexing —
+          // mirror of what the legacy path does at lines ~582+604. Without this
+          // canonical chats lose their conversation history across server
+          // restarts and the memory-ingestion pipeline never sees them.
+          // `fullResponseText` was accumulated by `wrappedOnEvent` as the
+          // canonical stream chunks arrived, so we already have the assistant's
+          // full reply in scope.
+          const assistantText = fullResponseText.trim();
+          if (assistantText) {
+            const { stripEphemeralMessages: stripCanonical } = await import("../agent-providers.js");
+            type MsgRecordC = Record<string, unknown>;
+            const synthesized = [
+              ...session.messages,
+              { role: "user" as const, content: message },
+              { role: "assistant" as const, content: assistantText },
+            ];
+            session.messages = stripCanonical(synthesized).filter((m) => {
+              if (m.role === "system") return false;
+              if (m.role === "tool") return true;
+              return m.content || (m as unknown as MsgRecordC).tool_calls;
+            });
+            session.updatedAt = Date.now();
+
+            const isTrivialCanonical =
+              /^(run\s+(bash|command)|execute|bash)\s*(with|:)/i.test(message.trim()) ||
+              /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
+            try {
+              await ctx.memoryManager.persistTurn({
+                userMessage: message,
+                agentResponse: assistantText,
+                skip: isTrivialCanonical,
+                sessionId,
+              });
+            } catch (persistErr) {
+              logger.warn(`[chat] canonical persistTurn failed (proceeding): ${(persistErr as Error).message}`);
+            }
+            ctx.saveSession(session);
+          } else {
+            logger.warn(`[chat] canonical turn produced no assistant text — skipping session persist (sess=${sessionId.slice(0, 16)})`);
+          }
 
           // Emit terminal events through the wrapped path so the WS client
           // releases its turn lock and the SSE stream closes cleanly.

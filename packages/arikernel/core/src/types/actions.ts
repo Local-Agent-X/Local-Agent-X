@@ -18,6 +18,9 @@ export const SHELL_ACTIONS = ["exec"] as const;
 export const DATABASE_ACTIONS = ["query", "exec", "mutate"] as const;
 export const BROWSER_ACTIONS = ["navigate", "click", "fill", "submit"] as const;
 export const RETRIEVAL_ACTIONS = ["search", "retrieve"] as const;
+// secret-vault is a closed three-action surface. New actions get added here
+// (and to the allow rules in policy-spec.json) — never via dynamic strings.
+export const SECRET_VAULT_ACTIONS = ["capture", "fill", "clipboard"] as const;
 
 export type HttpAction = (typeof HTTP_ACTIONS)[number];
 export type FileAction = (typeof FILE_ACTIONS)[number];
@@ -25,6 +28,7 @@ export type ShellAction = (typeof SHELL_ACTIONS)[number];
 export type DatabaseAction = (typeof DATABASE_ACTIONS)[number];
 export type BrowserAction = (typeof BROWSER_ACTIONS)[number];
 export type RetrievalAction = (typeof RETRIEVAL_ACTIONS)[number];
+export type SecretVaultAction = (typeof SECRET_VAULT_ACTIONS)[number];
 
 /**
  * Complete registry of known actions per tool class.
@@ -37,6 +41,7 @@ export const TOOL_CLASS_ACTIONS: Record<string, readonly string[]> = {
 	database: DATABASE_ACTIONS,
 	browser: BROWSER_ACTIONS,
 	retrieval: RETRIEVAL_ACTIONS,
+	"secret-vault": SECRET_VAULT_ACTIONS,
 };
 
 // ── Action categories ──────────────────────────────────────────────
@@ -59,12 +64,22 @@ const CATEGORY_MAP: ReadonlyMap<string, ActionCategory> = buildCategoryMap({
 		database: ["query"],
 		browser: ["navigate"],
 		retrieval: ["search", "retrieve"],
+		// `capture` reads a value off the page; from the kernel's
+		// taint-tracking perspective it's a read of web-tainted data
+		// into a privileged store. Behavioral rules can still flag
+		// capture→fill across origins via the secret_access_then_egress
+		// pattern.
+		"secret-vault": ["capture"],
 	},
 	write: {
 		http: ["post", "put", "patch", "delete"],
 		file: ["write"],
 		database: ["mutate"],
 		browser: ["click", "fill", "submit"],
+		// `fill` writes a vault value into a page input; `clipboard` writes
+		// to the OS clipboard. Both are write-class because they egress
+		// the secret from the privileged store into a visible surface.
+		"secret-vault": ["fill", "clipboard"],
 	},
 	execute: {
 		shell: ["exec"],

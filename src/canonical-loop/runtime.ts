@@ -19,6 +19,7 @@ export type AdapterFactory = () => Adapter | Promise<Adapter>;
 
 const opAdapters = new Map<string, AdapterFactory>();
 const laneAdapters = new Map<CanonicalLane, AdapterFactory>();
+const opDispatchers = new Map<string, ToolDispatcher>();
 let toolDispatcher: ToolDispatcher = new NotConfiguredToolDispatcher();
 
 /** Register a factory that produces the adapter for a specific op_id. */
@@ -31,12 +32,40 @@ export function setDefaultAdapterForLane(lane: CanonicalLane, factory: AdapterFa
   laneAdapters.set(lane, factory);
 }
 
-/** Inject the tool dispatcher used by the loop's turn_loop when it sees `tool_call_requested`. */
+/**
+ * Register a per-op tool dispatcher. Per-op dispatchers take precedence over
+ * the global one — needed for chat ops where each session has its own tool
+ * registry, security context, and event-emit callback.
+ *
+ * Lifetime: caller is responsible for removing the entry when the op
+ * terminates (call `unregisterToolDispatcherForOp(opId)`). The runtime
+ * doesn't auto-clean because it has no terminal-state hook today.
+ */
+export function registerToolDispatcherForOp(opId: string, d: ToolDispatcher): void {
+  opDispatchers.set(opId, d);
+}
+
+export function unregisterToolDispatcherForOp(opId: string): void {
+  opDispatchers.delete(opId);
+}
+
+/** Inject the global tool dispatcher used when no per-op dispatcher is registered. */
 export function setToolDispatcher(d: ToolDispatcher): void {
   toolDispatcher = d;
 }
 
-export function getToolDispatcher(): ToolDispatcher {
+/**
+ * Resolve the dispatcher for an op. Per-op override wins; falls back to the
+ * global dispatcher (default `NotConfiguredToolDispatcher`).
+ *
+ * The legacy zero-arg signature stays valid for callers that don't have an
+ * opId in scope — they get the global dispatcher.
+ */
+export function getToolDispatcher(opId?: string): ToolDispatcher {
+  if (opId) {
+    const d = opDispatchers.get(opId);
+    if (d) return d;
+  }
   return toolDispatcher;
 }
 
@@ -52,5 +81,6 @@ export function resolveAdapterFactory(op: Op): AdapterFactory | null {
 export function resetCanonicalRuntime(): void {
   opAdapters.clear();
   laneAdapters.clear();
+  opDispatchers.clear();
   toolDispatcher = new NotConfiguredToolDispatcher();
 }

@@ -127,14 +127,63 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     notificationHint = "\n\n[Naturally weave into your response: " + topNotifs.map(n => n.message).join(" | ") + "]";
   }
 
+  // Tool selection (moved up from §5): we need the FINAL filtered tool list
+  // BEFORE building toolPromptSection so the per-tool usage hints only cover
+  // tools the model can actually call this turn. Earlier the section was built
+  // over allAgentTools (74 entries), but the API only ships filtered tools —
+  // ~50-70% of the toolPromptSection bytes were nudges for tools that weren't
+  // even in the call set, just consuming input tokens.
+  const isBridge = channel === "telegram" || channel === "whatsapp";
+  let tools = isBridge ? bridgeTools : filterToolsForMessage(allAgentTools, message);
+
+  // Shrink for weaker models. 100+ tool catalogs paralyze Grok / small local
+  // models (0-token responses). Cap aggressively while keeping essentials
+  // ordered first.
+  const { classifyModel, shrinkToolsForTier } = await import("../model-tiers.js");
+  const tier = classifyModel(resolved.model);
+  if (tier !== "strong") {
+    const before = tools.length;
+    tools = shrinkToolsForTier(tools, tier, allAgentTools);
+    if (tools.length !== before) {
+      logger.info(`[tools] Shrunk ${before}→${tools.length} for ${tier} model ${resolved.model} (${tools.map(t=>t.name).join(",")})`);
+    }
+  }
+  if (!isBridge) {
+    try {
+      const { getToolRAG } = await import("../tool-rag.js");
+      const rag = getToolRAG();
+      const embedder = (memoryIndex as unknown as { embeddingProvider?: { embed(t: string): Promise<number[]> } }).embeddingProvider;
+      if (embedder && rag.size === 0) {
+        rag.setEmbedder(embedder);
+        await rag.build(allAgentTools);
+      }
+      if (rag.isReady) {
+        const semantic = await rag.select(message, allAgentTools, {
+          topK: 22,
+          minScore: 0.25,
+          corePinned: [...CORE_TOOL_NAMES],
+          includeMCP: true,
+        });
+        const union = new Set(tools.map(t => t.name));
+        for (const t of semantic) union.add(t.name);
+        tools = allAgentTools.filter(t => union.has(t.name));
+      }
+    } catch (e) {
+      logger.warn(`[tool-rag] Skipped: ${(e as Error).message}`);
+    }
+  }
+
   let toolPromptSection = "";
-  // Tool prompt section adds per-tool usage guidance. Originally skipped for
-  // Codex entirely "to save tokens" — but live testing (transformforfitness.com
-  // deploy, 2026-05-01) showed Codex stalled on a cold-start ship task because
-  // it never got the tool guidance that tells it to call memory_search /
-  // browser / web_fetch proactively. Now Codex gets the FULL section like
-  // Anthropic. The token-budget concern was overcautious — losing $1.08 to a
-  // failed deploy is worse than spending ~3K extra system-prompt tokens.
+  // Per-tool usage guidance. Built over allAgentTools (NOT the filtered
+  // `tools`) because the keyword/RAG filters sometimes drop a tool's
+  // behavioral nudge while still including the tool in the API call —
+  // model sees the tool but loses the "USE PROACTIVELY" encouragement.
+  // Live regression: chat where browser was needed but didn't fire,
+  // because the message had no obvious browser keyword. Spending the
+  // ~3-5KB on the full nudge set is cheaper than missed tool calls.
+  // Codex used to skip this entirely "to save tokens" but live testing
+  // (transformforfitness deploy, 2026-05-01) showed Codex stalled on a
+  // cold-start ship task without the proactive memory_search nudge.
   try {
     const { buildToolPromptSection } = await import("../tool-prompt-builder.js");
     toolPromptSection = buildToolPromptSection(allAgentTools);
@@ -337,61 +386,9 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock + shortReplyContextBlock + memoryCurateBlock + codexBehaviorRider;
   }
 
-  // 5. Select tools based on channel (bridges get a smaller set)
-  //    For web/codex: filter to core + message-relevant tools to reduce schema overhead.
-  //    tool_search is always included so the agent can discover anything else.
-  //
-  //    Pipeline: keyword filter first (fast, always works) → semantic rerank
-  //    via Tool RAG if an embedder is available (more accurate for phrasing
-  //    the keyword regex misses). Falls back to keyword-only result on failure.
-  const isBridge = channel === "telegram" || channel === "whatsapp";
-  let tools = isBridge ? bridgeTools : filterToolsForMessage(allAgentTools, message);
-
-  // Shrink for weaker models. 100+ tool catalogs paralyze Grok / small local
-  // models (0-token responses). Cap aggressively while keeping essentials
-  // ordered first. Strong models (GPT-5, Opus 4.7, o3, Gemini 2.5) pass through.
-  // Pass allAgentTools as a source for essentials so we can guarantee
-  // read/write/bash/http_request/etc. are present even if the prefilter
-  // dropped them.
-  const { classifyModel, shrinkToolsForTier } = await import("../model-tiers.js");
-  const tier = classifyModel(resolved.model);
-  if (tier !== "strong") {
-    const before = tools.length;
-    tools = shrinkToolsForTier(tools, tier, allAgentTools);
-    if (tools.length !== before) {
-      logger.info(`[tools] Shrunk ${before}→${tools.length} for ${tier} model ${resolved.model} (${tools.map(t=>t.name).join(",")})`);
-    }
-  }
-  if (!isBridge) {
-    try {
-      const { getToolRAG } = await import("../tool-rag.js");
-      const rag = getToolRAG();
-      // Use the memory embedder if available (already configured at startup)
-      const embedder = (memoryIndex as unknown as { embeddingProvider?: { embed(t: string): Promise<number[]> } }).embeddingProvider;
-      if (embedder && rag.size === 0) {
-        rag.setEmbedder(embedder);
-        await rag.build(allAgentTools);
-      }
-      if (rag.isReady) {
-        // Semantic select across ALL tools (broader than keyword). Pin the core
-        // set so always-available tools never get filtered out, even if the
-        // user's message doesn't semantically mention them.
-        const semantic = await rag.select(message, allAgentTools, {
-          topK: 22,
-          minScore: 0.25,
-          corePinned: [...CORE_TOOL_NAMES],
-          includeMCP: true,
-        });
-        // Union with keyword result — never narrower than keyword-only
-        const union = new Set(tools.map(t => t.name));
-        for (const t of semantic) union.add(t.name);
-        tools = allAgentTools.filter(t => union.has(t.name));
-      }
-    } catch (e) {
-      // Fail open: use keyword result unchanged
-      logger.warn(`[tool-rag] Skipped: ${(e as Error).message}`);
-    }
-  }
+  // §5 (tool selection) moved up so toolPromptSection could be built over
+  // the filtered set. `tools`, `isBridge`, tier-shrink and RAG rerank all
+  // already ran before this point.
 
   // 6. Process image attachments
   const images: Array<{ url: string; filePath?: string; name: string }> = [];

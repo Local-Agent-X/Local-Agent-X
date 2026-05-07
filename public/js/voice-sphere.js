@@ -113,6 +113,11 @@
   let viewMode = 'split';
   let startTime = 0;
   let materializeT = 0;
+  // Push-to-talk gate state. 'open' (or null = N/A) = mic frames flow; the
+  // sphere renders at full brightness. 'closed' = mic muted; we dim the
+  // canvas so the user has an obvious visual cue that input isn't being
+  // captured. Set via setGateState() from the push-to-talk module.
+  let gateState = null;
 
   // ── Particle morph engine state ────────────────────────────────────────
   // The inner shell (particles, 2200 pts) is the active "canvas" the LLM
@@ -497,6 +502,7 @@
     materializeT = 0;
     startTime = performance.now();
     resize();
+    applyGateVisual();
     if (!raf) tick();
     playStartupChime();
   }
@@ -758,6 +764,34 @@
   function attachMicAnalyser(node) { micAnalyser = node || null; }
   function attachTtsAnalyser(node) { ttsAnalyser = node || null; }
 
+  // Push-to-talk visual states. The sphere already has rich state
+  // visuals (idle/listening/thinking/speaking) so we layer this on as a
+  // canvas-level dim/brighten effect — muted = 0.45 opacity + slight
+  // desaturation, hot = full opacity. Pure CSS, no shader changes
+  // required, and stacks gracefully with the existing state visuals.
+  function setGateState(s) {
+    gateState = (s === 'open' || s === 'closed') ? s : null;
+    applyGateVisual();
+  }
+  function applyGateVisual() {
+    if (!root) return;
+    const wrap = root.querySelector('.vs-canvas-wrap');
+    if (!wrap) return;
+    if (gateState === 'closed') {
+      wrap.style.opacity = '0.42';
+      wrap.style.filter = 'saturate(0.55)';
+      wrap.style.transition = 'opacity .25s ease, filter .25s ease';
+    } else if (gateState === 'open') {
+      wrap.style.opacity = '1';
+      wrap.style.filter = 'saturate(1.15) brightness(1.05)';
+      wrap.style.transition = 'opacity .15s ease, filter .15s ease';
+    } else {
+      // gateState null — push-to-talk is off, render normally
+      wrap.style.opacity = '';
+      wrap.style.filter = '';
+    }
+  }
+
   let chimeCtx = null;
   function playStartupChime() {
     try {
@@ -782,7 +816,9 @@
     attachMicAnalyser, attachTtsAnalyser,
     playStartupChime,
     handleDirective, morphTo,
+    setGateState,
     get currentMode() { return viewMode; },
     get currentState() { return state; },
+    get currentGate() { return gateState; },
   };
 })();

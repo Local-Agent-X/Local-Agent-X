@@ -1841,6 +1841,10 @@ async function startVoiceMode() {
     voiceMicNode = new AudioWorkletNode(voiceCtx, 'mic-capture');
     voiceMicNode.port.onmessage = (e) => {
       if (!e.data || e.data.type !== 'pcm') return;
+      // Push-to-talk gate: when the configured mode is 'push-to-talk' or
+      // 'toggle' and the gate is closed, drop frames instead of forwarding.
+      // Mode 'off' returns gate=open (or null) so behavior is unchanged.
+      if (window.PushToTalk && window.PushToTalk.getState() === 'closed') return;
       if (voiceWS && voiceWS.readyState === WebSocket.OPEN) voiceWS.send(e.data.pcm);
     };
     source.connect(voiceMicNode);
@@ -1863,6 +1867,21 @@ async function startVoiceMode() {
         VoiceSphere.attachTtsAnalyser(ttsAna);
         VoiceSphere.setState('idle');
       } catch (sphereErr) { console.warn('[voice-sphere] init failed:', sphereErr); }
+    }
+
+    // 7) Push-to-talk: bind the configured hotkey now that the session is
+    // live. The gate's open/closed state is checked inside the mic-frame
+    // forwarder above; this also drives the sphere dim/brighten visual.
+    if (window.PushToTalk) {
+      try {
+        window.PushToTalk.init({
+          onStateChange: (s) => {
+            if (window.VoiceSphere && window.VoiceSphere.setGateState) {
+              window.VoiceSphere.setGateState(s);
+            }
+          },
+        });
+      } catch (pttErr) { console.warn('[push-to-talk] init failed:', pttErr); }
     }
 
     voiceMode = true;
@@ -1894,6 +1913,9 @@ function stopVoiceMode() {
 
 function cleanupVoiceResources() {
   voiceMode = false; voiceEnabled = false; isListening = false; isSpeaking = false;
+  if (window.PushToTalk && window.PushToTalk.destroy) {
+    try { window.PushToTalk.destroy(); } catch {}
+  }
   try { voiceMicStream && voiceMicStream.getTracks().forEach(t => t.stop()); } catch {}
   try { voiceCtx && voiceCtx.close(); } catch {}
   voiceWS = null; voiceCtx = null; voiceMicNode = null; voicePlaybackNode = null; voiceMicStream = null;

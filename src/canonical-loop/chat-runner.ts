@@ -43,6 +43,8 @@ import {
   registerAdapterForOp,
   registerToolDispatcherForOp,
   unregisterToolDispatcherForOp,
+  registerToolsForOp,
+  unregisterToolsForOp,
 } from "./runtime.js";
 import { createAnthropicAdapter } from "./adapters/anthropic.js";
 import { subscribeOpStream, subscribeOpEvents } from "./control-api.js";
@@ -217,6 +219,19 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     signal: ctx.signal,
   }));
 
+  // 4b. Tool descriptors for the adapter — turn-loop reads these into
+  //     TurnInput.tools so the model sees the available tool surface.
+  //     Without this the adapter receives `tools: []` and chats refuse
+  //     tool work ("I'm in planning mode" / "I can't open browsers").
+  //     `parameters` on ToolDefinition maps to `inputSchema` on
+  //     ToolDescriptor — the canonical contract uses the latter name.
+  const toolDescriptors = ctx.tools.map(t => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.parameters,
+  }));
+  registerToolsForOp(op.id, toolDescriptors);
+
   // 5. Subscribe BEFORE submitting so we don't miss the synchronous
   //    `state_changed: queued` event that canonicalLoopEntry emits.
   const eventQueue: ServerEvent[] = [];
@@ -275,6 +290,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     offStream();
     offEvents();
     unregisterToolDispatcherForOp(op.id);
+    unregisterToolsForOp(op.id);
     return;
   }
 
@@ -301,5 +317,6 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     offStream();
     offEvents();
     unregisterToolDispatcherForOp(op.id);
+    unregisterToolsForOp(op.id);
   }
 }

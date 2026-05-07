@@ -11,6 +11,9 @@ import { createRequestHandler } from "./request-handler.js";
 import { createHttpServer, setupVoiceWs, wireWsChat, startConfigWatcher, logStartup, registerShutdown, bootstrapCanonicalLoop } from "./lifecycle.js";
 import { registerHandlerEvents } from "./handler-events.js";
 import { startBackgroundJobs } from "./background-jobs.js";
+import { createLogger } from "../logger.js";
+
+const bootLogger = createLogger("server.index");
 
 export async function startServer(config: LAXConfig) {
   const services = await bootstrapServices(config);
@@ -39,6 +42,34 @@ export async function startServer(config: LAXConfig) {
 
   const tools = await bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir });
   const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef } = tools;
+
+  // Pre-warm the tool-RAG embedding index in the background. Without this,
+  // the FIRST chat after every server restart paid 30-50s to embed all ~66
+  // tool descriptions before the lazy `rag.size === 0` branch in
+  // prepareAgentRequest could resolve. Pre-warming amortizes that cost
+  // once at startup; by the time a user sends their first message, the
+  // index is built and prep falls through to the cheap `rag.select()`
+  // path instead. Fire-and-forget — don't block server startup.
+  void (async () => {
+    try {
+      const t0 = Date.now();
+      const { getToolRAG } = await import("../tool-rag.js");
+      const rag = getToolRAG();
+      const embedder = (memoryIndex as unknown as {
+        embeddingProvider?: { embed(t: string): Promise<number[]> };
+      }).embeddingProvider;
+      if (!embedder) {
+        bootLogger.info("[tool-rag] pre-warm skipped — no embedding provider");
+        return;
+      }
+      if (rag.size > 0) return;
+      rag.setEmbedder(embedder);
+      await rag.build(allAgentTools);
+      bootLogger.info(`[tool-rag] pre-warmed ${allAgentTools.length} tools in ${Date.now() - t0}ms`);
+    } catch (e) {
+      bootLogger.warn(`[tool-rag] pre-warm failed: ${(e as Error).message}`);
+    }
+  })();
 
   // Wire autopilot tool context — resolves provider/model/key on each invocation
   // so auth refreshes don't leave stale credentials inside the autopilot tools.

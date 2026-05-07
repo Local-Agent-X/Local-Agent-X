@@ -42,13 +42,12 @@ export function isCanonicalLoopEnabled(lane: CanonicalLane): boolean {
  * Opt-in: when set, the chat WS forward layer creates an `op_chat_turn`
  * canonical op (interactive lane) instead of POSTing to /api/chat. The
  * Anthropic adapter drives the turn end-to-end; chunks stream back via
- * the bus to the WS session. Stays OFF until the chat-canonical bridge is
- * proven against real traffic.
+ * the bus to the WS session.
  *
- * Tools are NOT plumbed in Phase 1 — pure-conversational turns work; any
- * tool_call_requested falls into the `NotConfiguredToolDispatcher` and the
- * model sees an error result. Don't flip this on for chats that need tools
- * until the dispatcher bridge lands.
+ * Tool dispatching is fully plumbed via `chat-tool-dispatcher.ts` — the
+ * chat runner registers a per-op dispatcher that bridges canonical-loop
+ * tool_call_requested events to the existing executeToolCalls path. Tools
+ * work end-to-end on the canonical chat path.
  */
 export function isCanonicalChatEnabled(): boolean {
   return readBoolEnv("LAX_CANONICAL_LOOP_CHAT");

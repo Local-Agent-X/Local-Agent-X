@@ -41,6 +41,8 @@ import {
 } from "./whisper-model-fetch.js";
 import { createGpuSession } from "./gpu-session.js";
 import { createTier4, tier4VariantFromEnv } from "./tier4/index.js";
+import { createSttProvider, resolveSttProviderName } from "./stt-providers/index.js";
+import { createRealtimeSessionFromEnv, realtimeReadiness } from "./realtime/index.js";
 import { VALID_DEVICES as VALID_TIER4_DEVICES, VALID_DTYPES as VALID_TIER4_DTYPES, SPEED_MIN as TIER4_SPEED_MIN, SPEED_MAX as TIER4_SPEED_MAX } from "./tier4/env.js";
 import { isValidKokoroVoice } from "./tier4/kokoro-voices.js";
 import type { Tier4Device, Tier4Dtype, Tier4StreamingTTS } from "./tier4/types.js";
@@ -172,6 +174,20 @@ const MAX_UTTERANCE_SAMPLES = 16000 * 22; // 22s hard cap (VAD itself cuts at 20
 
 export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
   return (ctx: VoiceSessionContext): VoiceSession => {
+    // OpenAI Realtime full-duplex bridge takes over the entire session when
+    // LAX_VOICE_MODE=realtime. Skips STT/LLM/TTS — browser audio is proxied
+    // straight to OpenAI and back. Falls through to the normal pipeline if
+    // the API key is missing so the user still gets a working session
+    // (with a clear voice_error event from the realtime factory).
+    if (process.env.LAX_VOICE_MODE === "realtime") {
+      const ready = realtimeReadiness();
+      if (ready.ready) {
+        logger.info(`[voice-session] ${ctx.sessionId}: LAX_VOICE_MODE=realtime → OpenAI Realtime full-duplex bridge`);
+        return createRealtimeSessionFromEnv(ctx);
+      }
+      logger.warn(`[voice-session] ${ctx.sessionId}: LAX_VOICE_MODE=realtime but ${ready.reason || "not ready"} — falling back to normal pipeline`);
+    }
+
     // Per-session settings resolution — settings.json is the source of truth
     // so a UI dropdown change picks up on the next voice session without restart.
     const voiceSettings = resolveVoiceSettings();
@@ -277,12 +293,20 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         };
 
         if (TIER4_MODE) {
-          logger.info(`[voice-session] ${ctx.sessionId}: TIER4 mode (LAX_VOICE_TIER=4) → native Kokoro ONNX`);
+          // Provider selection. LAX_VOICE_TIER4_PROVIDER overrides the
+          // default kokoro/chatterbox-clone variant picker — set to
+          // "edge-tts" to route through the edge-tts adapter (no API key,
+          // requires `npm i msedge-tts mpg123-decoder`).
+          const providerOverride = process.env.LAX_VOICE_TIER4_PROVIDER?.trim();
+          const variant = providerOverride && providerOverride.length > 0
+            ? providerOverride
+            : tier4VariantFromEnv();
+          logger.info(`[voice-session] ${ctx.sessionId}: TIER4 mode → variant=${variant}`);
           // Only spread defined fields — the kokoro-engine merge below treats
           // explicit `undefined` as a real override and would clobber env vars.
           const t4 = await createTier4(
             {
-              variant: tier4VariantFromEnv(),
+              variant,
               referenceWavPath: process.env.LAX_VOICE_CLONE_REF,
               ...(voiceSettings.tier4Device ? { device: voiceSettings.tier4Device } : {}),
               ...(voiceSettings.tier4Dtype ? { dtype: voiceSettings.tier4Dtype } : {}),
@@ -297,10 +321,29 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         }
         ttsSampleRate = tts.sampleRate;
 
+        // STT provider selection. LAX_VOICE_STT_PROVIDER picks between
+        // local-whisper (default), groq, openai, mistral. Cloud providers
+        // ignore the local model paths but we still resolve them so a
+        // missing key falls back gracefully to local whisper.
         const whisperPaths = getWhisperModelPaths({ variant: voiceSettings.whisperModel });
-        whisper = createWhisperTranscriber(whisperPaths, {
-          provider: voiceSettings.whisperDevice,
-        });
+        const sttProviderName = resolveSttProviderName() ?? "local-whisper";
+        if (sttProviderName === "local-whisper") {
+          whisper = createWhisperTranscriber(whisperPaths, {
+            provider: voiceSettings.whisperDevice,
+          });
+        } else {
+          logger.info(`[voice-session] ${ctx.sessionId}: STT provider=${sttProviderName} (cloud)`);
+          try {
+            whisper = createSttProvider(sttProviderName, {
+              local: { paths: whisperPaths, provider: voiceSettings.whisperDevice },
+            });
+          } catch (e) {
+            logger.warn(`[voice-session] ${ctx.sessionId}: cloud STT init failed (${(e as Error).message}) — falling back to local whisper`);
+            whisper = createWhisperTranscriber(whisperPaths, {
+              provider: voiceSettings.whisperDevice,
+            });
+          }
+        }
 
         stt = createStreamingSTT(getModelPaths(), {
           onPartial: (text) => { if (!closed) ctx.sendEvent({ type: "partial", text }); },

@@ -9,7 +9,10 @@
 		"database.read": { "toolClass": "database", "actions": ["query"] },
 		"database.write": { "toolClass": "database", "actions": ["exec", "mutate"] },
 		"file.read": { "toolClass": "file", "actions": ["read"] },
-		"file.write": { "toolClass": "file", "actions": ["write"] }
+		"file.write": { "toolClass": "file", "actions": ["write"] },
+		"secret-vault.capture": { "toolClass": "secret-vault", "actions": ["capture"] },
+		"secret-vault.fill": { "toolClass": "secret-vault", "actions": ["fill"] },
+		"secret-vault.clipboard": { "toolClass": "secret-vault", "actions": ["clipboard"] }
 	},
 
 	"policyFragments": {
@@ -76,6 +79,22 @@
 			"match": { "toolClass": "database", "taintSources": ["derived-sensitive"] },
 			"decision": "deny",
 			"reason": "Shared store writes blocked for data derived from sensitive file reads"
+		},
+		"allow-secret-vault": {
+			"id": "allow-secret-vault",
+			"name": "Allow secret-vault tool calls (capture/fill/clipboard)",
+			"priority": 100,
+			"match": { "toolClass": "secret-vault" },
+			"decision": "allow",
+			"reason": "Secret-vault operations are server-side; the value never crosses the model boundary. The tool itself enforces origin binding, selector whitelisting, and an approval ladder. ARI provides audit + behavioral observation."
+		},
+		"deny-secret-vault": {
+			"id": "deny-secret-vault",
+			"name": "Deny secret-vault tool calls",
+			"priority": 10,
+			"match": { "toolClass": "secret-vault" },
+			"decision": "deny",
+			"reason": "Secret-vault operations are forbidden in this preset"
 		},
 		"deny-all": {
 			"id": "__builtin_deny_all",
@@ -155,11 +174,13 @@
 					"constraints": { "allowedPaths": ["./**"] }
 				},
 				{ "toolClass": "http", "actions": ["get"], "constraints": { "allowedHosts": ["*"] } },
-				{ "toolClass": "shell", "actions": ["exec"] }
+				{ "toolClass": "shell", "actions": ["exec"] },
+				{ "toolClass": "secret-vault", "actions": ["capture", "fill", "clipboard"] }
 			],
 			"policies": [
 				"allow-http-get",
 				"allow-file-read",
+				"allow-secret-vault",
 				{
 					"id": "allow-file-write-workspace",
 					"name": "Allow workspace file writes",
@@ -314,6 +335,7 @@
 				"deny-shell",
 				"deny-http-write",
 				"deny-file-write",
+				"deny-secret-vault",
 				{
 					"id": "allow-http-get-strict",
 					"name": "Allow HTTP GET (host-constrained)",
@@ -439,7 +461,8 @@
 					"match": { "toolClass": "shell" },
 					"decision": "require-approval",
 					"reason": "Shell commands require approval even in research mode"
-				}
+				},
+				"allow-secret-vault"
 			],
 			"runStatePolicy": {
 				"maxDeniedSensitiveActions": 20,

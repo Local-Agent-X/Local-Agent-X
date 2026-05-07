@@ -5,6 +5,7 @@ import { loadSystemPrompt } from "../config-loader.js";
 import type { AgentRequestInput, PreparedAgentRequest } from "./types.js";
 import { resolveProvider } from "./resolve-provider.js";
 import { CORE_TOOL_NAMES, filterToolsForMessage } from "./tool-filter.js";
+import { buildTurnContextCached } from "./turn-context-cache.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("agent-request.prepare-request");
@@ -82,7 +83,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     recallScanText = `${message}\n[user attached an image — reflex: identify any brand/project/domain you can read from it, then call search_past_sessions on that name before answering]`;
   }
 
-  const turnCtx = await memoryManager.buildTurnContext({
+  const turnCtx = await buildTurnContextCached(memoryManager, {
     userMessage: recallScanText,
     sessionId,
     sessionMessages: sessionMessages.slice(-20).map(m => ({

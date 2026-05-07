@@ -42,6 +42,14 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
   try {
     const sessionId = getSessionForOp(event.opId);
     if (!sessionId) return; // op wasn't submitted by a chat session — nothing to surface
+
+    // Suppress AGENTS-sidebar cards for `chat_turn` ops. The canonical
+    // chat-bridge submits one of these per chat reply for path unification;
+    // they are NOT worker delegations and shouldn't appear as worker cards.
+    // The chat reply itself surfaces through the WS stream channel directly.
+    const op = readOp(event.opId);
+    if (op?.type === "chat_turn") return;
+
     const task = getTaskForOp(event.opId) ?? "";
     const b = (event.body ?? {}) as Record<string, unknown>;
 
@@ -53,7 +61,6 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
         if (from === null && to === "queued") {
           // Op submitted into canonical scheduler. Lane caps mean queueing
           // is real but typically brief.
-          const op = readOp(event.opId);
           const lane = (op?.lane as string | undefined) ?? "interactive";
           broadcastToSession(sessionId, {
             type: "bg_op_queued",

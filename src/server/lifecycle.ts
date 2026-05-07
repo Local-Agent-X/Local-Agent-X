@@ -226,6 +226,9 @@ export function wireWsChat(deps: {
   chatWs.onChat(async (sessionId, message, attachments) => {
     const _imgCount = (attachments || []).filter((a: any) => a?.isImage).length;
     logger.info(`[ws-chat] onChat sess=${sessionId} msg_len=${message.length} atts=${(attachments || []).length} imgs=${_imgCount}`);
+    // Canonical-chat decision lives inside /api/chat now (after
+    // prepareAgentRequest, where the prepared payload is available). The WS
+    // forward layer just transports — it doesn't route.
     try {
       const body = JSON.stringify({ message, sessionId, attachments: attachments || [] });
       logger.info(`[ws-chat] body_bytes=${body.length} → fetch /api/chat`);

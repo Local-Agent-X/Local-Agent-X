@@ -55,6 +55,7 @@ export function defaultAnthropicTransport(): AnthropicTransport {
           tools: req.tools.length > 0 ? req.tools : undefined,
           maxTokens: req.maxTokens,
           signal: req.signal,
+          sessionId: req.sessionId,
         });
 
         for await (const ev of stream) {

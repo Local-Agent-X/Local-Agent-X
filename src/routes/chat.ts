@@ -102,6 +102,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       const { prepareAgentRequest } = await import("../agent-request.js");
 
       // Unified request preparation: provider, context, history, tools — one call
+      const prepStart = Date.now();
       const prepared = await prepareAgentRequest({
         channel: sessionId.startsWith("ide-") ? "web" : "web",
         message, sessionMessages: session.messages, sessionId,
@@ -113,6 +114,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         compactedSummary: session.compactedSummary,
         compactedAt: session.compactedAt,
       });
+      logger.info(`[timing] prepareAgentRequest ${Date.now() - prepStart}ms (sess=${sessionId.slice(0, 16)})`);
 
       // Abort early if no API key — let finally emit done and end the response
       if (!prepared.apiKey) {
@@ -251,7 +253,29 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // IDE sessions: strip delegation tools
       const IDE_BLOCKED_TOOLS = new Set(["agent_spawn", "delegate", "build_app", "agent_status", "agent_cancel", "agent_pause", "agent_resume", "agent_message"]);
       const isIdeSession = sessionId.startsWith("ide-");
-      const sessionTools = isIdeSession ? prepared.tools.filter(t => !IDE_BLOCKED_TOOLS.has(t.name)) : prepared.tools;
+      let sessionTools = isIdeSession ? prepared.tools.filter(t => !IDE_BLOCKED_TOOLS.has(t.name)) : prepared.tools;
+
+      // Lazy tool loading: when the message is clearly conversational (no
+      // verbs implying tool need), drop the entire tools array. This puts
+      // the model into pure-text mode — warm-pool's plan-mode path fires
+      // with a tiny prompt — and recovers the ~1.5s first-byte speed the
+      // canonical-chat probe demonstrated, while keeping the full memory
+      // pipeline (prepareAgentRequest already ran). If the user follows up
+      // with a tool-needing message, the next turn re-evaluates and
+      // restores the full tool list.
+      const needsTools = (() => {
+        const m = message.trim().toLowerCase();
+        if (m.length === 0) return false;
+        // Long messages keep tools — task-class requests almost always need them.
+        if (m.length > 220) return true;
+        // Tool-trigger keywords: file ops, web/search, build/scaffold, scheduling,
+        // memory ops, theme/UI, browser, deploy, send-message, bridges, etc.
+        return /\b(open|close|browse|fetch|search|find|look\s+up|read|write|edit|delete|run|execute|build|create|make|generate|scaffold|install|deploy|push|commit|merge|publish|schedule|remind|set|change|switch|toggle|flip|enable|disable|theme|sidebar|memory|recall|note|save|store|email|message|send|post|tweet|sms|slack|telegram|whatsapp|browser|click|type|navigate|scroll|screenshot|kraken|trade|order|buy|sell|cron|job|backup|sync|pull)\b/.test(m);
+      })();
+      if (!needsTools && sessionTools.length > 0) {
+        logger.info(`[chat] lazy-tool: stripping ${sessionTools.length} tools for conversational turn (msg_len=${message.length})`);
+        sessionTools = [];
+      }
 
       const wsChat = ctx.chatWs.startChat(sessionId);
       const onEvent = (event: ServerEvent) => { sseWrite(res, event); wsChat.onEvent(event); };
@@ -340,6 +364,64 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         logger.info(`[turn-lock] aborted prior non-committing turn for sess=${sessionId} (was ${decision.previous?.elapsedMs}ms in, iter=${decision.previous?.iteration})`);
       }
       const turnStart = Date.now();
+
+      // Canonical-loop chat path. Gate: opt-in flag + Anthropic + no images
+      // + canonical-loop interactive lane is on. The runner takes the SAME
+      // prepared payload (memory, AGENTS, history, tools) and dispatches
+      // through canonical-loop instead of the legacy runAgent → providers
+      // chain. Memory parity is preserved; canonical observability is gained.
+      // Edge cases that still go legacy: image attachments, non-anthropic
+      // providers, or any failure during canonical setup.
+      const canonicalChatEligible = await (async () => {
+        try {
+          const { isCanonicalChatEnabled, isCanonicalLoopEnabled } = await import("../canonical-loop/feature-flag.js");
+          if (!isCanonicalChatEnabled()) return false;
+          if (!isCanonicalLoopEnabled("interactive")) return false;
+        } catch { return false; }
+        if (prepared.provider !== "anthropic") return false;
+        if (prepared.images && prepared.images.length > 0) return false;
+        return true;
+      })();
+
+      if (canonicalChatEligible) {
+        try {
+          const { runChatViaCanonical } = await import("../canonical-loop/index.js");
+          const eventStream = runChatViaCanonical({
+            message,
+            sessionId,
+            prepared,
+            tools: sessionTools,
+            security: ctx.security,
+            toolPolicy: ctx.toolPolicy,
+            threatEngine,
+            rbac: ctx.rbac,
+            callerRole: requestRole,
+            onToolEvent: primaryEventProxy,
+            signal: wsChat.abort.signal,
+          });
+
+          let canonicalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+          for await (const ev of eventStream) {
+            if (ev.type === "done") {
+              if (ev.usage) canonicalUsage = ev.usage;
+              continue; // emit single done at end via primary path below
+            }
+            primaryEventProxy(ev);
+          }
+          const canonicalElapsed = Date.now() - turnStart;
+          logger.info(`[timing] canonical/chat ${prepared.model} ${canonicalElapsed}ms (sess=${sessionId.slice(0, 16)})`);
+
+          // Emit terminal events through the wrapped path so the WS client
+          // releases its turn lock and the SSE stream closes cleanly.
+          wrappedOnEvent({ type: "done", usage: canonicalUsage });
+          doneEmitted = true;
+          return true;
+        } catch (e) {
+          logger.warn(`[chat] canonical chat path threw, falling back to legacy: ${(e as Error).message}`);
+          // Fall through to runAgent below.
+        }
+      }
+
       let result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
         apiKey: prepared.apiKey, model: prepared.model,
         provider: prepared.provider as Parameters<typeof runAgent>[2]["provider"],

@@ -83,6 +83,12 @@ export type ServerEvent =
   | { type: "bg_op_progress"; opId: string; line: string }
   | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[] }
   | { type: "bg_op_nudge"; opIds: string[]; text: string }
+  // Antivirus interference detected. Bash tool detected ≥3 powershell
+  // processes killed mid-stream within 60s — the AV-behavior-shield
+  // signature. UI renders as a sticky banner with a one-time message
+  // pointing at the project path the user should whitelist. Emitted
+  // ONCE per server uptime so we don't spam.
+  | { type: "av_blocked_warning"; platform: string; projectPath: string; message: string }
   // Worker narration → main chat thread (Step 1 of JARVIS-mode roadmap).
   // The worker's own LLM text deltas, surfaced as a distinct message bubble
   // in chat (not just the sidebar progress trace) so the user sees what the

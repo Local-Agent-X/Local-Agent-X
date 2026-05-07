@@ -173,7 +173,7 @@ export async function classifyTeachMoment(
  * the main chat agent uses, so CLI OAuth tokens "just work" — no special
  * handling needed for the Authorization: Bearer vs x-api-key distinction.
  */
-async function streamForResponse_anthropic(token: string, model: string, userMessage: string): Promise<string | null> {
+export async function streamForResponse_anthropic(token: string, model: string, userMessage: string): Promise<string | null> {
   const ac = new AbortController();
   const timeoutId = setTimeout(() => ac.abort(), CLASSIFIER_TIMEOUT_MS);
   try {
@@ -205,7 +205,7 @@ async function streamForResponse_anthropic(token: string, model: string, userMes
  * backend-api) work without dispatch needing a Codex-specific provider.
  * Tools=[] tells Codex this is a one-shot completion, not a tool loop.
  */
-async function streamForResponse_codex(token: string, model: string, userMessage: string): Promise<string | null> {
+export async function streamForResponse_codex(token: string, model: string, userMessage: string): Promise<string | null> {
   const ac = new AbortController();
   const timeoutId = setTimeout(() => ac.abort(), CLASSIFIER_TIMEOUT_MS);
   try {

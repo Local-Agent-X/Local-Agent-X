@@ -417,6 +417,7 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     // Build app / create page
     { id: "allow-build-app", tool: "build_app", decision: "allow", reason: "Build workspace apps", priority: 50 },
     { id: "allow-create-page", tool: "create_page", decision: "allow", reason: "Create custom pages", priority: 50 },
+    { id: "allow-install-software", tool: "install_software", decision: "allow", reason: "OS-aware software installer (bounded timeout + http_request fallback)", priority: 50 },
 
     // ── Business & Personal Assistant tools ──
 

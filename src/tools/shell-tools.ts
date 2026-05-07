@@ -1,14 +1,77 @@
 import { spawn } from "node:child_process";
-import type { ToolDefinition } from "../types.js";
+import { homedir, platform } from "node:os";
+import type { ServerEvent, ToolDefinition } from "../types.js";
 import { getSandboxMode, execInSandbox } from "../sandbox.js";
 import { ok, err } from "./result-helpers.js";
+
+// ── Antivirus interference detector ──────────────────────────────────────
+//
+// On Windows, behavior-based antivirus (AVG, Avast, Norton, Defender
+// heuristic mode) frequently kills `powershell.exe` mid-execution because
+// the constantly-varying `-Command` strings our agent runs match the
+// "command-line attacker" pattern. Symptoms: command dies in <800ms with
+// non-zero/null exit code and no stdout. The user has no way to diagnose
+// this — they see "agent is hanging" or "winget timed out" and don't know
+// AV is silently killing every shell call.
+//
+// This detector tracks suspect kills in a sliding 60s window. On the 3rd
+// suspect within the window, we emit ONE `av_blocked_warning` ServerEvent
+// (the chat-ws layer can render it as a sticky banner with a one-click
+// "open AV exclusions" link). The threshold-of-3 gate prevents false
+// positives from a single weird command. We only emit ONCE per server
+// uptime — repeating the banner is annoying and the user already saw it.
+const avSuspectKillTimes: number[] = [];
+const AV_WINDOW_MS = 60_000;
+const AV_THRESHOLD = 3;
+let avBannerEmitted = false;
+
+function recordAvSuspectKill(
+  onEvent: ((e: ServerEvent) => void) | undefined,
+): void {
+  const now = Date.now();
+  // Drop kills outside the rolling window
+  while (avSuspectKillTimes.length > 0 && now - avSuspectKillTimes[0] > AV_WINDOW_MS) {
+    avSuspectKillTimes.shift();
+  }
+  avSuspectKillTimes.push(now);
+  if (avBannerEmitted || avSuspectKillTimes.length < AV_THRESHOLD) return;
+  avBannerEmitted = true;
+  // Best path the user can whitelist: their LAX project root. We don't
+  // know that exactly here, but `cwd` of the server is a safe approximation.
+  const projectPath = process.cwd();
+  const homePath = homedir();
+  const message =
+    `Your antivirus is blocking PowerShell commands from this app. Add an exclusion for the project folder to fix it.\n\n` +
+    `Path to whitelist: ${projectPath}\n` +
+    `(also recommend: ${homePath}\\.lax — your local agent data dir)\n\n` +
+    `How to add the exclusion:\n` +
+    `• Windows Defender: Settings → Privacy & Security → Windows Security → Virus & threat protection → Manage settings → Add or remove exclusions → Add a folder\n` +
+    `• AVG/Avast: Menu → Settings → General → Exceptions → Add Exception → Folder\n` +
+    `• Norton: Settings → Antivirus → Scans and Risks → Items to Exclude from Scans → Configure (+ Add Folders)\n\n` +
+    `${AV_THRESHOLD} PowerShell commands have been killed mid-execution in the last ${AV_WINDOW_MS / 1000}s — that's the antivirus signature, not a bug in this app.`;
+  try {
+    onEvent?.({ type: "av_blocked_warning", platform: platform(), projectPath, message } as ServerEvent);
+  } catch { /* best-effort */ }
+}
 
 export const bashTool: ToolDefinition = {
   name: "bash",
   description:
-    process.platform === "win32"
-      ? "Execute a PowerShell command. Use Get-ChildItem, Get-Content, Select-Object, etc. For processing large JSON/CSV files, use: python -c \"import json; ...\" instead of reading them line by line."
-      : "Execute a bash command. For processing large JSON/CSV files, use: python -c \"import json; ...\" instead of reading them line by line.",
+    "Run a shell command (PowerShell on Windows, bash elsewhere). " +
+    "BASH IS THE ESCAPE HATCH, NOT THE DEFAULT. Spawning a shell is expensive and on Windows triggers antivirus heuristics that kill the process mid-stream. Use these native tools instead whenever possible:\n" +
+    "- List files in a directory → `glob` (NOT `ls`/`Get-ChildItem`)\n" +
+    "- Read a file's contents → `read` (NOT `cat`/`Get-Content`/`type`)\n" +
+    "- Search file contents → `grep` (NOT `grep`/`Select-String`/`findstr`)\n" +
+    "- Find files by name → `glob` with a pattern (NOT `find`/`Get-ChildItem -Recurse`)\n" +
+    "- Edit a file → `edit` (NOT `sed`/`awk` piping)\n" +
+    "- Write a file → `write` (NOT `echo >` / heredoc)\n" +
+    "- Install software → `install_software` (NOT `winget`/`brew`/`apt` directly)\n" +
+    "- Make HTTP requests → `http_request` (NOT `curl`/`wget`/`Invoke-WebRequest`)\n" +
+    "- Open a URL → `browser` (NOT `start`/`open`)\n\n" +
+    "Use bash ONLY for: build/test commands the project defines (npm/yarn/pytest/cargo), git operations beyond what tool surface covers, custom user-supplied scripts, OS-level operations no native tool exposes (process listing, env vars, services). " +
+    "If you can do it with a native tool above, you MUST. Reaching for bash on something a native tool covers is a behavior bug — antivirus kills will follow and the user will see hangs.\n\n" +
+    "When you DO use bash, prefer ONE focused command over piping multiple together. " +
+    "For processing large JSON/CSV files, use `python -c \"import json; ...\"` instead of reading them line by line.",
   parameters: {
     type: "object",
     properties: {
@@ -79,6 +142,7 @@ export const bashTool: ToolDefinition = {
     }
 
     try {
+      const startMs = Date.now();
       const output = await new Promise<string>((resolveP, rejectP) => {
         let settled = false;
         const settle = (fn: typeof resolveP | typeof rejectP, val: string) => {
@@ -178,6 +242,25 @@ export const bashTool: ToolDefinition = {
 
         child.on("error", (e) => settle(rejectP, e.message));
         child.on("exit", (code) => {
+          // Antivirus detection: on Windows, AV behavior shields (AVG, Avast,
+          // Norton, Defender heuristic) kill powershell mid-execution. The
+          // signature is consistent: very fast death (< 800ms), exit code
+          // non-zero or null (the AV killed it before clean exit), no stdout
+          // produced, command was non-trivial. We track per-process via the
+          // module-scoped detector (below) and surface a one-time UI banner
+          // when the count crosses threshold so the user sees what's wrong
+          // BEFORE debugging hangs themselves.
+          const elapsed = Date.now() - startMs;
+          const looksLikeAvKill =
+            isWin &&
+            (code === null || (code !== 0 && code !== 1)) &&
+            elapsed < 800 &&
+            stdout.length === 0 &&
+            cmd.trim().length > 8; // skip trivial commands
+          if (looksLikeAvKill) {
+            recordAvSuspectKill(onEvent);
+          }
+
           if (code === 0 || code === null) {
             const result = stdout
               ? (stderr ? stdout + "\n[stderr]\n" + stderr : stdout)

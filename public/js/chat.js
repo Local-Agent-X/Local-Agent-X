@@ -166,6 +166,29 @@ function connectChatWs() {
         } catch(e) { console.warn('[worker_done] failed', e); }
         return;
       }
+      if (msg.event.type === 'av_blocked_warning') {
+        try {
+          // Sticky banner — user CAN'T fix bash failures without seeing this.
+          // Renders once per browser session (matches the once-per-server
+          // emission gate so two browser tabs don't double-banner). Stays
+          // until user dismisses with the X button.
+          if (document.getElementById('av-banner')) return;
+          var banner = document.createElement('div');
+          banner.id = 'av-banner';
+          banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#3a1a1a;border-bottom:2px solid #ff5555;color:#ffe5e5;padding:14px 20px;font-family:var(--font);font-size:.85rem;line-height:1.45;box-shadow:0 2px 12px rgba(255,85,85,.3)';
+          var safeMsg = String(msg.event.message || '').replace(/[<>&]/g, function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c]});
+          banner.innerHTML =
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;max-width:1100px;margin:0 auto">' +
+              '<div style="flex:1">' +
+                '<strong style="color:#ff8888;display:block;margin-bottom:4px;font-size:.95rem">⚠ Antivirus is blocking the agent</strong>' +
+                '<div style="white-space:pre-wrap">' + safeMsg + '</div>' +
+              '</div>' +
+              '<button onclick="document.getElementById(\'av-banner\').remove()" style="background:none;border:1px solid #ff5555;color:#ff8888;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:.75rem;flex-shrink:0">Dismiss</button>' +
+            '</div>';
+          document.body.appendChild(banner);
+        } catch(e) { console.warn('[av_blocked_warning] failed', e); }
+        return;
+      }
       if (msg.event.type === 'bg_op_nudge') {
         try {
           if (activeChat && activeChat.id === msg.sessionId) {

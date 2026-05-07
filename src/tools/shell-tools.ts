@@ -127,13 +127,53 @@ export const bashTool: ToolDefinition = {
         child.stdout.setEncoding("utf-8");
         child.stderr.setEncoding("utf-8");
 
+        // Tool-progress streaming. Emits a `tool_progress` ServerEvent at
+        // most every 500ms with the latest tail of combined stdout/stderr,
+        // so the chat UI can show live output during long-running commands
+        // (winget install, npm install, model downloads). Without this the
+        // bash card sits silent for the full timeout — agent and user can't
+        // distinguish "still working" from "hung." Live failure (2026-05-07):
+        // ollama install via winget hung on UAC for 5+ minutes; agent
+        // retried 11 times and tripped circuit breaker because there was no
+        // progress signal to confirm forward motion.
+        type ToolProgressEvent = { type: "tool_progress"; toolName: string; toolCallId?: string; message: string };
+        const onEvent = args._onEvent as ((e: ToolProgressEvent) => void) | undefined;
+        const toolCallId = args._toolCallId as string | undefined;
+        const PROGRESS_INTERVAL_MS = 500;
+        const PROGRESS_TAIL_CHARS = 200;
+        let lastProgressEmit = 0;
+        let pendingProgress = false;
+        const emitProgress = (): void => {
+          if (!onEvent) return;
+          const now = Date.now();
+          if (now - lastProgressEmit < PROGRESS_INTERVAL_MS) {
+            if (!pendingProgress) {
+              pendingProgress = true;
+              setTimeout(emitProgress, PROGRESS_INTERVAL_MS - (now - lastProgressEmit));
+            }
+            return;
+          }
+          pendingProgress = false;
+          lastProgressEmit = now;
+          // Tail of combined output, with carriage-return overwrites collapsed
+          // (winget/curl-style "downloading X% \r" updates) so the agent sees
+          // the latest line, not a glob of overwrites.
+          const combined = (stdout + stderr).slice(-PROGRESS_TAIL_CHARS * 4);
+          const lastLine = combined.split(/\r|\n/).filter(s => s.trim()).slice(-1)[0] || combined.trim();
+          const message = lastLine.slice(-PROGRESS_TAIL_CHARS);
+          if (!message) return;
+          try { onEvent({ type: "tool_progress", toolName: "bash", toolCallId, message }); } catch { /* best-effort */ }
+        };
+
         child.stdout.on("data", (chunk: string) => {
           totalBytes += chunk.length;
           if (totalBytes <= MAX_OUTPUT) stdout += chunk;
+          emitProgress();
         });
         child.stderr.on("data", (chunk: string) => {
           totalBytes += chunk.length;
           if (totalBytes <= MAX_OUTPUT) stderr += chunk;
+          emitProgress();
         });
 
         child.on("error", (e) => settle(rejectP, e.message));

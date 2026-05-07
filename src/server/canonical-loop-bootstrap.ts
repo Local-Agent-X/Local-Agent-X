@@ -11,16 +11,19 @@ import {
   createAnthropicAdapter,
   sweepStaleCanonicalOps,
 } from "../canonical-loop/index.js";
+import type { CanonicalLane } from "../canonical-loop/types.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("server.canonical-loop-bootstrap");
 
+const ALL_LANES: CanonicalLane[] = ["interactive", "build", "ide", "background"];
+
 /**
- * When the canonical-loop flag is on for the interactive lane, register
- * the default Anthropic adapter so submitted ops have a factory to drive
- * the turn loop. Without this the canonical route persists the op as
- * queued and then fails on the next microtask with adapter_not_configured.
- * Legacy behavior is unchanged when the flag is off.
+ * For every lane whose canonical-loop flag is on, register the default
+ * Anthropic adapter so submitted ops have a factory to drive the turn
+ * loop. Without this the canonical route persists the op as queued and
+ * then fails on the next microtask with adapter_not_configured. Legacy
+ * behavior is unchanged when a lane's flag is off.
  *
  * Also runs a one-shot sweep of stale canonical ops on disk: any op
  * left in `running` / `cancelling` with an expired lease (typically
@@ -29,9 +32,13 @@ const logger = createLogger("server.canonical-loop-bootstrap");
  * a clean terminal/queued state instead of sitting orphaned forever.
  */
 export function bootstrapCanonicalLoop(): void {
-  if (!isCanonicalLoopEnabled("interactive")) return;
-  setDefaultAdapterForLane("interactive", () => createAnthropicAdapter());
-  logger.info("[canonical-loop] interactive lane → AnthropicAdapter registered");
+  const enabled = ALL_LANES.filter(isCanonicalLoopEnabled);
+  if (enabled.length === 0) return;
+
+  for (const lane of enabled) {
+    setDefaultAdapterForLane(lane, () => createAnthropicAdapter());
+  }
+  logger.info(`[canonical-loop] AnthropicAdapter registered for lanes: ${enabled.join(", ")}`);
 
   try {
     const recovered = sweepStaleCanonicalOps();

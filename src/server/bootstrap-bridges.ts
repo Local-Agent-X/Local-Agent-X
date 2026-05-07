@@ -6,6 +6,7 @@ import { enqueue } from "../execution-lanes.js";
 import { formatForChannel, getChannelConfig } from "../channel-formatter.js";
 import { resolveSession, buildChannelContext, type ChannelType } from "../session-router.js";
 import { detectInjection } from "../sanitize.js";
+import { getVoicePref, setVoicePref, type BridgePlatform } from "../bridge-voice/index.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore, MemoryIndex, MemoryManager } from "../memory.js";
 import type { SecretsStore } from "../secrets.js";
@@ -61,6 +62,26 @@ export function createBridgeHandler(deps: {
       } catch (e) {
         return `Reset failed: ${(e as Error).message}`;
       }
+    }
+
+    // /voice on|off — per-chat voice-reply toggle, persisted to
+    // ~/.lax/bridge-voice-prefs.json. Bare /voice reports current state.
+    // Only valid on platforms that have a voice path (telegram, whatsapp).
+    if (trimmed === "/voice" || trimmed === "/voice on" || trimmed === "/voice off") {
+      if (channelType !== "telegram" && channelType !== "whatsapp") {
+        return "Voice replies are not supported on this platform.";
+      }
+      const platformKey = channelType as BridgePlatform;
+      if (trimmed === "/voice on") {
+        setVoicePref(platformKey, from, true);
+        return "Voice replies enabled. Reply with /voice off to switch back to text.";
+      }
+      if (trimmed === "/voice off") {
+        setVoicePref(platformKey, from, false);
+        return "Voice replies disabled.";
+      }
+      const on = getVoicePref(platformKey, from);
+      return `Voice replies are currently ${on ? "ON" : "OFF"}. Toggle with /voice on or /voice off.`;
     }
 
     const session = getOrCreateSession(route.sessionKey);

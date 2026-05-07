@@ -2,24 +2,41 @@
  * classifyWithLLM — shared abstraction for short-form LLM-as-classifier calls.
  *
  * Pattern: regex (cheap) decides obvious yes/no. Maybe-cases escalate here for
- * an LLM second opinion. Mirrors the shape of routing/llm-classifier.ts and
- * memory/curate-classifier.ts so adding new classifiers stops being a copy-
- * paste exercise of auth + timeout + parse + fallback boilerplate.
+ * an LLM second opinion.
  *
- * Model policy: defaults to the same Sonnet model the main agent uses. Per
- * project decision (May 2026), we don't downgrade classifiers to Haiku — the
- * cost delta isn't worth the model-switching tech debt across updates.
+ * **Provider policy (revised 2026-05-06):** uses the user's CURRENTLY-SELECTED
+ * provider and model — whatever they're chatting on. No more Haiku/Sonnet
+ * fallback to Anthropic when the user is on Codex; that broke the multi-user-
+ * app guarantee and produced the dark-mode-freeze bug (5+ Anthropic-only
+ * classifier calls fired on a Codex turn, hanging the UI for tens of seconds
+ * after the actual reply finished).
  *
- * Auth: routes through the user's Claude CLI OAuth (loadAnthropicTokens).
- * If the user isn't signed into Anthropic, returns null and the caller falls
- * back to its regex verdict.
+ * Provider routing mirrors `src/memory/curate-classifier.ts`:
+ *   - Anthropic (CLI OAuth or API key) → streamAnthropicResponse
+ *   - Codex (subscription bearer)      → streamCodexResponse
+ *   - OpenAI (API key)                 → llm-dispatch openai
+ *   - Ollama / local                   → llm-dispatch ollama
+ *   - xAI / Gemini / custom            → null (caller falls back to regex)
+ *
+ * Reading the active provider: settings.json's `provider` field +
+ * resolveProvider's auth getter for that provider. Each classifier call
+ * looks this up at firing time so a provider switch in the UI takes effect
+ * on the next classifier invocation.
  */
 
 import { createLogger } from "../logger.js";
-import { loadAnthropicTokens, isAnthropicTokenExpired } from "../auth-anthropic.js";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
-const DEFAULT_MODEL = "claude-sonnet-4-6";
-const DEFAULT_TIMEOUT_MS = 4000;
+// Aggressive default timeout. These classifiers shape signal quality but
+// aren't load-bearing — every call site already has a regex/heuristic
+// fallback that kicks in on null/error. So the perf budget for each
+// classifier should be small. 1.5s = "fast provider returns, slow provider
+// gives up gracefully." On Codex the underlying streamCodexResponse may
+// have a longer cold-start; abortion via AbortController unblocks the
+// caller even if the upstream stream eventually completes in background.
+const DEFAULT_TIMEOUT_MS = 1500;
 const DEFAULT_MAX_RESPONSE_CHARS = 800;
 
 export interface ClassifyOptions<T> {
@@ -43,19 +60,83 @@ export interface ClassifyOptions<T> {
   signal?: AbortSignal;
 }
 
+/**
+ * Read the user's currently-selected provider + model + apiKey, using the
+ * same logic the chat path uses. Returns null if no usable provider is
+ * configured or auth is unavailable. Cached per call (re-reads settings on
+ * every invocation — provider switches take effect immediately).
+ */
+async function resolveActiveProvider(): Promise<{
+  provider: string; model: string; apiKey: string;
+} | null> {
+  // 1. Read the user's active provider choice from settings.json
+  let provider = "anthropic";
+  let model = "";
+  try {
+    const settingsPath = join(homedir(), ".lax", "settings.json");
+    if (existsSync(settingsPath)) {
+      const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
+        provider?: string; model?: string;
+      };
+      if (s.provider) provider = String(s.provider).toLowerCase();
+      if (s.model) model = String(s.model);
+    }
+  } catch { /* fall through to defaults */ }
+
+  // 2. Resolve apiKey using the same per-provider getters resolveProvider uses
+  let apiKey = "";
+  try {
+    if (provider === "anthropic") {
+      const { loadAnthropicTokens, isAnthropicTokenExpired } = await import("../auth-anthropic.js");
+      const tokens = loadAnthropicTokens();
+      if (!tokens || isAnthropicTokenExpired(tokens)) return null;
+      apiKey = tokens.accessToken || "";
+      if (!model) model = "claude-sonnet-4-6";
+    } else if (provider === "codex" || provider === "openai") {
+      // Codex subscription bearer or OpenAI API key — try secrets store first
+      try {
+        const { secretsStore } = await import("../secrets.js");
+        apiKey = secretsStore.get("OPENAI_API_KEY") || "";
+      } catch {}
+      if (!apiKey) {
+        try { apiKey = process.env.OPENAI_API_KEY || ""; } catch {}
+      }
+      if (provider === "codex" && !model) model = "gpt-5.5";
+      if (provider === "openai" && !model) model = "gpt-4o-mini";
+    } else if (provider === "ollama" || provider === "local") {
+      apiKey = "ollama";
+      if (!model) model = "llama3:8b";
+    } else if (provider === "xai") {
+      try {
+        const { secretsStore } = await import("../secrets.js");
+        apiKey = secretsStore.get("XAI_API_KEY") || "";
+      } catch {}
+    } else if (provider === "gemini") {
+      try {
+        const { secretsStore } = await import("../secrets.js");
+        apiKey = secretsStore.get("GEMINI_API_KEY") || "";
+      } catch {}
+    }
+  } catch { /* fall through */ }
+
+  if (!apiKey) return null;
+  return { provider, model, apiKey };
+}
+
 export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | null> {
   const logger = createLogger(`classifier.${opts.category}`);
 
   if (opts.envDisableVar && process.env[opts.envDisableVar] === "0") return null;
 
-  const tokens = loadAnthropicTokens();
-  if (!tokens || isAnthropicTokenExpired(tokens)) return null;
-  const accessToken = tokens.accessToken || "";
-  if (!accessToken) return null;
+  const ctx = await resolveActiveProvider();
+  if (!ctx) return null;
+  const { provider, model: defaultModel, apiKey } = ctx;
+  // Caller can override the model, but otherwise we use whatever the
+  // resolved provider's default is (matches what chat uses).
+  const model = opts.model ?? defaultModel;
 
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxChars = opts.maxResponseChars ?? DEFAULT_MAX_RESPONSE_CHARS;
-  const model = opts.model ?? DEFAULT_MODEL;
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
@@ -63,24 +144,106 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
     ? linkAbortSignals(opts.signal, ac.signal)
     : ac.signal;
 
-  try {
-    const { streamAnthropicResponse } = await import("../anthropic-client.js");
-    const stream = streamAnthropicResponse({
-      token: accessToken,
-      model,
-      messages: [{ role: "user", content: opts.userPrompt } as never],
-      systemPrompt: opts.systemPrompt,
-      temperature: 0,
-      signal: linkedSignal,
-    });
+  // Hard wallclock race: wraps every call below in Promise.race against a
+  // timeout that resolves with null. We learned (2026-05-06) that the
+  // underlying provider clients (especially streamAnthropicResponse via the
+  // claude CLI) don't reliably honor AbortController.signal — the await on
+  // their async iterator keeps hanging until the upstream process actually
+  // ends, which for cold-start CLI spawns can be 30-60 seconds. Without
+  // this race, a "1.5s timeout" was actually waiting tens of seconds before
+  // returning. The race guarantees the wrapper returns within timeoutMs no
+  // matter what the upstream does. The underlying call may still complete
+  // in background — we just don't wait for it.
+  const RACE_SENTINEL = Symbol("classifier-race-timeout");
+  const wallclock = new Promise<typeof RACE_SENTINEL>((resolve) =>
+    setTimeout(() => resolve(RACE_SENTINEL), timeoutMs),
+  );
 
-    let response = "";
-    for await (const event of stream) {
-      if (event.type === "text") response += event.delta || "";
-      if (response.length >= maxChars) break;
+  try {
+    let response: string | null = null;
+
+    // Per-provider call. Each branch uses the same client the main chat
+    // agent uses, so auth automatically just works (CLI OAuth for Anthropic,
+    // subscription bearer for Codex, API key for standard OpenAI, localhost
+    // for Ollama). xAI/Gemini fall through — caller treats null as "no
+    // classifier available" and proceeds with the regex fallback.
+    let providerCall: Promise<string | null>;
+    if (provider === "anthropic") {
+      providerCall = (async () => {
+        const { streamAnthropicResponse } = await import("../anthropic-client.js");
+        const stream = streamAnthropicResponse({
+          token: apiKey, model,
+          messages: [{ role: "user", content: opts.userPrompt } as never],
+          systemPrompt: opts.systemPrompt,
+          temperature: 0,
+          signal: linkedSignal,
+        });
+        let acc = "";
+        for await (const event of stream) {
+          if (event.type === "text") acc += event.delta || "";
+          if (acc.length >= maxChars) break;
+        }
+        return acc;
+      })();
+    } else if (provider === "codex") {
+      providerCall = (async () => {
+        const { streamCodexResponse } = await import("../codex-client.js");
+        const stream = streamCodexResponse({
+          token: apiKey, model,
+          messages: [{ role: "user", content: opts.userPrompt } as never],
+          systemPrompt: opts.systemPrompt,
+          tools: [],
+          sessionId: undefined,
+        });
+        let acc = "";
+        for await (const event of stream) {
+          if (event.type === "text") acc += event.delta || "";
+          if (acc.length >= maxChars) break;
+        }
+        return acc;
+      })();
+    } else if (provider === "openai") {
+      providerCall = (async () => {
+        const { dispatch } = await import("../llm-dispatch.js");
+        return await dispatch({
+          prompt: `${opts.systemPrompt}\n\n---\n\n${opts.userPrompt}`,
+          provider: "openai",
+          openaiModel: model,
+          temperature: 0, maxTokens: 400, timeoutMs,
+        });
+      })();
+    } else if (provider === "ollama" || provider === "local") {
+      providerCall = (async () => {
+        const { dispatch } = await import("../llm-dispatch.js");
+        return await dispatch({
+          prompt: `${opts.systemPrompt}\n\n---\n\n${opts.userPrompt}`,
+          provider: "ollama",
+          ollamaModel: model,
+          temperature: 0, maxTokens: 400, timeoutMs,
+        });
+      })();
+    } else {
+      // xAI / Gemini / custom — not yet routed through a unified client
+      return null;
     }
 
-    if (!response.trim()) {
+    // Race the provider call against the wallclock. Whoever finishes first
+    // wins. If wallclock wins, we return null and the caller falls back to
+    // its regex/heuristic verdict; the actual provider call keeps running
+    // in background to completion (it'll eventually resolve and the result
+    // is silently discarded — the abort signal still fires, helping the
+    // call short-circuit if its provider honors signals).
+    const raced = await Promise.race([providerCall, wallclock]);
+    if (raced === RACE_SENTINEL) {
+      logger.info(`wallclock timeout at ${timeoutMs}ms (provider=${provider})`);
+      // Best-effort: drop the orphan promise rejection if the provider call
+      // eventually fails. We don't want it to surface as an unhandled rejection.
+      providerCall.catch(() => {});
+      return null;
+    }
+    response = raced;
+
+    if (!response || !response.trim()) {
       logger.warn(`empty response`);
       return null;
     }
@@ -94,9 +257,9 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
   } catch (e) {
     const msg = (e as Error).message || "";
     if (msg.includes("aborted") || msg.includes("AbortError")) {
-      logger.info(`timed out after ${timeoutMs}ms`);
+      logger.info(`timed out after ${timeoutMs}ms (provider=${provider})`);
     } else {
-      logger.warn(`call failed: ${msg}`);
+      logger.warn(`call failed (provider=${provider}): ${msg}`);
     }
     return null;
   } finally {

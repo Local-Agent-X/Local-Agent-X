@@ -30,11 +30,15 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("agent-request.turn-context-cache");
 
-// 5 minutes covers typical chat rhythm (think, coffee, brief distraction).
-// 45s was too tight — most follow-ups landed past it and rebuilt the
-// memory pipeline for nothing. Topic shifts within 5 minutes are uncommon
-// enough that the staleness cost is rare; on session-end the LRU evicts.
-const TTL_MS = 5 * 60 * 1000;
+// 30 minutes — aligned with the warm-pool eviction TTL. Real chat has
+// long natural pauses (lunch, meeting, coffee, walking away) and 5 min
+// was killing context just past most "I came back to my desk" returns,
+// so the user paid a 6-10s memory-pipeline rebuild on the FIRST turn
+// after any longer break. 30 min covers normal workday rhythm; on actual
+// session-end the LRU evicts. Staleness within 30 min is rare in practice;
+// when it matters, the agent's memory_search tool fetches fresh data
+// without the cache helping or hurting.
+const TTL_MS = 30 * 60 * 1000;
 const MAX_ENTRIES = 32;
 
 interface CacheEntry {
@@ -50,18 +54,25 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 
 function hashContext(input: TurnContextInput): string {
-  // Hash on the EARLIEST messages of the session (or the empty signature
-  // for a brand-new session). The memory pipeline's expensive parts —
-  // user/profile context, session-summary recall, vec-search seeded from
-  // the conversation's running theme — are stable across follow-ups within
-  // the same chat. Hashing on tail messages caused MISS on every 2-3 turns
-  // (history grows → hash drifts → rebuild). Anchoring on session start
-  // gives a stable signature for the TTL window; on TTL expiry the cache
-  // refreshes and may pick up a topic shift.
-  const head = input.sessionMessages.slice(0, 4)
-    .map(m => `${m.role}:${m.content.slice(0, 200)}`)
-    .join("\n");
-  return createHash("sha1").update(head || "(new-session)").digest("hex").slice(0, 16);
+  // Anchor the cache hash on the FIRST user message (or empty for a
+  // brand-new session). The earlier strategy hashed `slice(0, 4)` of
+  // session messages, but the first 4 message slots don't stabilize
+  // until turn 4 — so turns 1-3 all paid the full ~6-10s memory-pipeline
+  // cost on every follow-up. Empirically: 3 MISSes then 2 HITs in a
+  // 5-turn session, exactly when users feel slowness least.
+  //
+  // Hashing on the first user message gives stability from turn 2
+  // forward. Topic shifts within the TTL (5 min) are rare in chat
+  // patterns; staleness on shift is handled by TTL expiry, not by
+  // hash drift. On a brand-new session (no prior user message yet),
+  // we use the CURRENT user message as the anchor — this means turn 1
+  // and turn 2 share the same key (turn 1 stores it, turn 2 hits it).
+  const firstUser =
+    input.sessionMessages.find(m => m.role === "user")?.content ??
+    input.userMessage ??
+    "";
+  const anchor = firstUser.slice(0, 200) || "(new-session)";
+  return createHash("sha1").update(anchor).digest("hex").slice(0, 16);
 }
 
 function evictIfNeeded(): void {

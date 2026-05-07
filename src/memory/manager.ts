@@ -99,7 +99,21 @@ export class MemoryManager {
       return out;
     }
 
-    const [contextBlock, relevantMemories] = await Promise.all([
+    // Parallelize the four independent memory operations. Sequencing them
+    // turned cold-cache turns into 60-90s freezes — buildContextBlock,
+    // autoSearchContext, known-projects scan, and the orchestrator each
+    // spend significant time on disk + embedding queries, but they don't
+    // depend on each other's results. Running them concurrently turns the
+    // tail-latency-bound serial chain into a ceiling at the slowest single
+    // op (typically buildContextBlock at ~10-20s, others ~3-8s).
+    //
+    // smartContext is intentionally left empty by default. Cross-session
+    // summary recall moved to the explicit `search_past_sessions` tool —
+    // the prior keyword-grep auto-inject was the root cause of recurring
+    // cross-conversation bleed.
+    out.smartContext = "";
+    const lastAssistant = input.sessionMessages.filter((m) => m.role === "assistant").pop()?.content;
+    const [contextBlock, relevantMemories, knownProjectsNudge, orch] = await Promise.all([
       buildContextBlock(this.index, {
         userMessage: input.userMessage,
         skipDailyLog: input.skipDailyLog,
@@ -112,42 +126,40 @@ export class MemoryManager {
         logger.warn("autoSearchContext failed:", (e as Error).message);
         return "";
       }),
+      // Known-project recall trigger. One-line nudge when user mentions a
+      // domain/project name we have prior content for. Bleed-safe — the
+      // model has to call search_past_sessions explicitly to get content.
+      findKnownProjectsInMessage(this.index, input.userMessage, {
+        currentSessionId: input.sessionId,
+      }).then(buildKnownProjectsNudge).catch((e) => {
+        logger.warn("known-projects scan failed:", (e as Error).message);
+        return "";
+      }),
+      // Orchestrator (signal modules + LLM classifiers under tight
+      // timeouts). Returns null on failure; we treat that as "no
+      // memory context to inject."
+      (async () => {
+        try {
+          const { processMessage } = await import("../memory-orchestrator.js");
+          return await processMessage({
+            message: input.userMessage,
+            sessionId: input.sessionId,
+            sessionMessages: input.sessionMessages,
+            timeOfDay: new Date().getHours(),
+            dayOfWeek: new Date().getDay(),
+            agentPreviousMessage: lastAssistant || undefined,
+          });
+        } catch (e) {
+          logger.warn("Orchestrator failed:", (e as Error).message);
+          return null;
+        }
+      })(),
     ]);
+
     out.contextBlock = contextBlock;
     out.relevantMemories = relevantMemories;
-    // smartContext is intentionally left empty. Cross-session summary recall
-    // moved to the explicit `search_past_sessions` tool — the prior keyword-
-    // grep auto-inject was the root cause of the recurring cross-conversation
-    // bleed (e.g., AI-journey-doc message getting answered with stale logo
-    // page work from a different session).
-    out.smartContext = "";
-
-    // Known-project recall trigger. When the user mentions a domain or project
-    // name we have prior session content for, append a one-line nudge so the
-    // agent knows it CAN call `search_past_sessions` for context. This is a
-    // pointer, not a content dump — bleed-safe because the model has to
-    // explicitly invoke the tool if it actually wants the context.
-    try {
-      const matches = await findKnownProjectsInMessage(this.index, input.userMessage, {
-        currentSessionId: input.sessionId,
-      });
-      const nudge = buildKnownProjectsNudge(matches);
-      if (nudge) out.smartContext = nudge;
-    } catch (e) {
-      logger.warn("known-projects scan failed:", (e as Error).message);
-    }
-
-    try {
-      const { processMessage } = await import("../memory-orchestrator.js");
-      const orch = await processMessage({
-        message: input.userMessage,
-        sessionId: input.sessionId,
-        sessionMessages: input.sessionMessages,
-        timeOfDay: new Date().getHours(),
-        dayOfWeek: new Date().getDay(),
-        agentPreviousMessage:
-          input.sessionMessages.filter((m) => m.role === "assistant").pop()?.content || undefined,
-      });
+    if (knownProjectsNudge) out.smartContext = knownProjectsNudge;
+    if (orch) {
       out.memoryContext = orch.contextInjection ? `\n\n${orch.contextInjection}` : "";
       out.notifications = orch.notifications || [];
       if (orch.debug) {
@@ -155,8 +167,6 @@ export class MemoryManager {
           `Orchestrator: ${orch.debug.modulesActivated.length} modules, ${orch.debug.totalTimeMs}ms`,
         );
       }
-    } catch (e) {
-      logger.warn("Orchestrator failed:", (e as Error).message);
     }
 
     return out;

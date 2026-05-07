@@ -114,25 +114,33 @@ export async function classifyTeachMoment(
     let response: string | null = null;
 
     // Per-provider call. Each branch uses the SAME client the main chat
-    // agent uses for that provider, so auth automatically just works (CLI
-    // OAuth for Anthropic, subscription bearer for Codex, API key for
-    // standard OpenAI, localhost for Ollama). When dispatch grows xAI /
-    // Gemini paths, add branches here — the model+apiKey are already
-    // threaded through from prepare-request.
+    // agent uses for that provider, so auth automatically just works.
+    //
+    // Wallclock race: every provider call is wrapped in Promise.race
+    // against a hard timeout. The underlying clients (especially the
+    // Anthropic CLI path) don't reliably honor AbortController.signal —
+    // a "1.5s timeout" was actually waiting tens of seconds for cold-
+    // start CLI spawns. The race guarantees the wrapper returns within
+    // CLASSIFIER_TIMEOUT_MS regardless. Orphan call drains in background.
+    const RACE_SENTINEL = Symbol("curate-race-timeout");
+    const wallclock = new Promise<typeof RACE_SENTINEL>((resolve) =>
+      setTimeout(() => resolve(RACE_SENTINEL), CLASSIFIER_TIMEOUT_MS),
+    );
+
+    let providerCall: Promise<string | null>;
     if (provider === "anthropic" && apiKey) {
-      response = await streamForResponse_anthropic(apiKey, model, userBlock);
+      providerCall = streamForResponse_anthropic(apiKey, model, userBlock);
     } else if (provider === "codex" && apiKey) {
-      response = await streamForResponse_codex(apiKey, model, userBlock);
+      providerCall = streamForResponse_codex(apiKey, model, userBlock);
     } else if (provider === "openai") {
-      // Real OpenAI API users — dispatch handles env-key + api.openai.com
-      response = await dispatch({
+      providerCall = dispatch({
         prompt: `${SYSTEM_PROMPT}\n\n---\n\n${userBlock}`,
         provider: "openai",
         openaiModel: model || undefined,
         temperature: 0, maxTokens: 150, timeoutMs: CLASSIFIER_TIMEOUT_MS,
       });
     } else if (provider === "ollama" || provider === "local") {
-      response = await dispatch({
+      providerCall = dispatch({
         prompt: `${SYSTEM_PROMPT}\n\n---\n\n${userBlock}`,
         provider: "ollama",
         ollamaModel: model || undefined,
@@ -143,6 +151,14 @@ export async function classifyTeachMoment(
       // through to "no boost" and let cadence catch the teach moment.
       return null;
     }
+
+    const raced = await Promise.race([providerCall, wallclock]);
+    if (raced === RACE_SENTINEL) {
+      logger.info(`[curate-classifier] wallclock timeout at ${CLASSIFIER_TIMEOUT_MS}ms (provider=${provider})`);
+      providerCall.catch(() => {}); // drop orphan rejection
+      return null;
+    }
+    response = raced;
 
     if (!response) return null;
     return parseClassifierResponse(response);

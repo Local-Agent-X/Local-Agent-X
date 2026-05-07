@@ -10,7 +10,16 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { createLogger } from "./logger.js";
+import { encodeWavToOgg, isFfmpegAvailable, transcribeOggBuffer, getVoicePref } from "./bridge-voice/index.js";
+import { synthesize } from "./voice.js";
 const logger = createLogger("telegram-bridge");
+
+// Per-turn flag: when the user sent a voice note in, we reply via voice
+// regardless of the toggle state for that single response. Keyed by chatId.
+// Cleared after the reply is dispatched. This avoids widening BridgeHandler
+// — the bridge already owns inbound/outbound side-effects so keeping the
+// voice-vs-text decision local is the smaller surgery.
+const _voiceMirrorForChat = new Set<string>();
 
 // ── Types ──
 
@@ -141,6 +150,32 @@ export class TelegramBridge {
       if (chunks.length > 1) await new Promise(r => setTimeout(r, 300));
     }
     return true;
+  }
+
+  /** Send an OGG/Opus buffer as a Telegram voice note (rendered as a
+   *  playable bubble in chat, not an attached file). */
+  async sendVoice(chatId: string, ogg: Buffer): Promise<boolean> {
+    const token = this.getToken();
+    if (!token || this.state !== "connected") return false;
+    try {
+      const form = new FormData();
+      form.append("chat_id", chatId);
+      const blob = new Blob([ogg], { type: "audio/ogg" });
+      form.append("voice", blob, "reply.ogg");
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendVoice`, {
+        method: "POST",
+        body: form,
+      });
+      const result = await res.json() as { ok: boolean; description?: string };
+      if (!result.ok) {
+        logger.error(`[telegram] sendVoice failed: ${result.description}`);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      logger.error("[telegram] sendVoice error:", (e as Error).message);
+      return false;
+    }
   }
 
   /** Send a photo (buffer) with optional caption. */
@@ -341,12 +376,33 @@ export class TelegramBridge {
       return;
     }
 
-    // Non-text messages: forward as a text signal the agent can act on.
-    // Instead of silently dropping voice/audio/video/photo/document, we
-    // download the media, save locally, and pass a text description
-    // including the file path. The agent can then recognize "I don't have
-    // a transcription/OCR tool" and call self_edit to add one.
+    // Inbound voice: try to transcribe via the bridge-voice STT helper
+    // BEFORE falling back to the legacy "saved file path" placeholder.
+    // On any failure (no ffmpeg, no model, hallucination filter, etc.)
+    // transcribeOggBuffer returns null and we fall through to the old path.
+    // When we DO get a transcript, mark this turn as voice-mirrored so the
+    // reply goes back as a voice note regardless of the per-chat toggle.
     let text = typeof msg.text === "string" ? msg.text : "";
+    if (!text && msg.voice && msg.voice.file_id) {
+      try {
+        const info = await this.apiCall(token, "getFile", { file_id: msg.voice.file_id }, false);
+        if (info.ok && info.result?.file_path) {
+          const fileUrl = `https://api.telegram.org/file/bot${token}/${info.result.file_path}`;
+          const res = await fetch(fileUrl);
+          if (res.ok) {
+            const oggBuf = Buffer.from(await res.arrayBuffer());
+            const transcript = await transcribeOggBuffer(oggBuf);
+            if (transcript && transcript.trim()) {
+              text = transcript.trim();
+              _voiceMirrorForChat.add(chatId);
+              logger.info(`[telegram] transcribed voice (${oggBuf.length}B): "${text.slice(0, 80)}${text.length > 80 ? "..." : ""}"`);
+            }
+          }
+        }
+      } catch (e) {
+        logger.warn(`[telegram] voice transcribe failed: ${(e as Error).message}`);
+      }
+    }
     if (!text) {
       text = await this.describeNonTextMessage(msg, token) || "";
     }
@@ -377,13 +433,70 @@ export class TelegramBridge {
     this.processingLock.add(chatId);
     try {
       const reply = await this.onMessage({ from: chatId, name: senderName, text, sessionId });
-      if (reply) await this.sendMessage(chatId, reply);
+      if (reply) await this.dispatchReply(chatId, reply);
     } catch (e) {
       logger.error(`[telegram] Agent error for ${chatId}:`, (e as Error).message);
       await this.sendMessage(chatId, "Something went wrong. Try again?");
     } finally {
       clearInterval(typingInterval);
       this.processingLock.delete(chatId);
+      _voiceMirrorForChat.delete(chatId);
+    }
+  }
+
+  /**
+   * Send the agent's reply, choosing voice vs text per-chat. Voice mode is
+   * active when the user has /voice on, OR when this turn was triggered by
+   * an inbound voice note (mirror-the-channel for that one reply).
+   *
+   * Long replies in voice mode: send the FIRST sentence as a voice note,
+   * then the full text as a follow-up message. Voice notes much over a
+   * minute feel obnoxious in messaging apps.
+   *
+   * Failure paths: any TTS / encode / send-voice failure falls back to
+   * sendMessage(text) so the user always gets the reply.
+   */
+  private async dispatchReply(chatId: string, reply: string): Promise<void> {
+    const wantVoice = getVoicePref("telegram", chatId) || _voiceMirrorForChat.has(chatId);
+    if (!wantVoice) {
+      await this.sendMessage(chatId, reply);
+      return;
+    }
+
+    if (!(await isFfmpegAvailable())) {
+      logger.warn("[telegram] voice reply requested but ffmpeg unavailable — sending text");
+      await this.sendMessage(chatId, reply);
+      return;
+    }
+
+    // Long reply in voice mode: speak the first sentence, send the full
+    // text as a follow-up so nothing is lost.
+    const VOICE_MAX = 800;
+    let toSpeak = reply;
+    let sendTextFollowup = false;
+    if (reply.length > VOICE_MAX) {
+      const m = reply.match(/^[\s\S]*?[.!?](?:\s|$)/);
+      toSpeak = m ? m[0].trim() : reply.slice(0, VOICE_MAX);
+      sendTextFollowup = true;
+    }
+
+    try {
+      const wav = await synthesize(toSpeak);
+      const ogg = await encodeWavToOgg(wav);
+      const ok = await this.sendVoice(chatId, ogg);
+      if (!ok) {
+        logger.warn("[telegram] sendVoice returned false — falling back to text");
+        await this.sendMessage(chatId, reply);
+        return;
+      }
+    } catch (e) {
+      logger.warn(`[telegram] voice synthesis failed: ${(e as Error).message} — falling back to text`);
+      await this.sendMessage(chatId, reply);
+      return;
+    }
+
+    if (sendTextFollowup) {
+      await this.sendMessage(chatId, reply);
     }
   }
 

@@ -74,6 +74,79 @@ async function collectSubtreeRules(scopeHint: string): Promise<string> {
   }
 }
 
+/**
+ * Layer 1 — intent gate. Sanity-check the self_edit task against the
+ * user's most recent message via a small LLM call on the SAME provider+
+ * model the chat is currently using (no provider hardcode → no migration
+ * tax when switching models). Returns null on any classifier failure
+ * (no creds, timeout, parse error) and the caller fails open.
+ *
+ * The gate prompt is intentionally narrow: "does the task match the
+ * intent?" rather than open-ended. Yes/no/unsure with a one-line
+ * reason. Tiny output, fast classification, low chance of weird drift.
+ */
+async function checkSelfEditIntent(
+  task: string,
+  lastUserMessage: string,
+  lastAssistantMessage: string,
+): Promise<{ verdict: "match" | "mismatch" | "unsure"; reason: string } | null> {
+  try {
+    const { getRuntimeConfig } = await import("./config.js");
+    const { SecretsStore } = await import("./secrets.js");
+    const { resolveProvider } = await import("./agent-request.js");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+
+    const runtime = getRuntimeConfig();
+    const dataDir = join(homedir(), ".lax");
+    const secretsStore = new SecretsStore(dataDir);
+    const resolved = await resolveProvider(runtime, secretsStore, dataDir);
+    if (!resolved.apiKey) return null;
+
+    const prompt =
+      `You are a sanity-check classifier for a destructive tool. Decide if a self_edit task description matches what the user is actually asking for.\n\n` +
+      `self_edit modifies the agent's own source code. It should ONLY run when the user wants source-code changes (bug fix, missing capability) related to the chat.\n\n` +
+      `User's most recent message:\n"""${lastUserMessage.slice(0, 600)}"""\n\n` +
+      (lastAssistantMessage ? `Most recent assistant text:\n"""${lastAssistantMessage.slice(0, 400)}"""\n\n` : "") +
+      `self_edit task being submitted:\n"""${task.slice(0, 600)}"""\n\n` +
+      `Reply with ONE LINE of JSON, nothing else:\n` +
+      `{"verdict": "match" | "mismatch" | "unsure", "reason": "<one short sentence>"}\n\n` +
+      `- "match": the task addresses the same intent the user expressed (e.g. user asks "fix the chat freeze", task says "fix race in chat-ws.ts where streamingSessionId leaks")\n` +
+      `- "mismatch": the task is on a different topic, or solves a problem the user didn't ask about (e.g. user says "launch the installer", task says "edit cron jobs")\n` +
+      `- "unsure": ambiguous — task could plausibly relate but you can't tell. Bias toward "unsure" when uncertain; we fail open on unsure.`;
+
+    const TIMEOUT_MS = 8000;
+    const RACE_SENTINEL = Symbol("intent-gate-timeout");
+    const wallclock = new Promise<typeof RACE_SENTINEL>(r => setTimeout(() => r(RACE_SENTINEL), TIMEOUT_MS));
+
+    let providerCall: Promise<string | null>;
+    if (resolved.provider === "anthropic") {
+      const { streamForResponse_anthropic } = await import("./memory/curate-classifier.js");
+      providerCall = streamForResponse_anthropic(resolved.apiKey, resolved.model, prompt);
+    } else if (resolved.provider === "codex" || resolved.provider === "openai") {
+      const { streamForResponse_codex } = await import("./memory/curate-classifier.js");
+      providerCall = streamForResponse_codex(resolved.apiKey, resolved.model, prompt);
+    } else {
+      return null; // unsupported provider — fail open
+    }
+
+    const raced = await Promise.race([providerCall, wallclock]);
+    if (raced === RACE_SENTINEL) {
+      providerCall.catch(() => {});
+      return null;
+    }
+    const text = String(raced || "").trim();
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    try {
+      const parsed = JSON.parse(m[0]) as { verdict?: string; reason?: string };
+      const v = parsed.verdict;
+      if (v !== "match" && v !== "mismatch" && v !== "unsure") return null;
+      return { verdict: v, reason: String(parsed.reason || "").slice(0, 200) };
+    } catch { return null; }
+  } catch { return null; }
+}
+
 // Track in-flight self_edit calls per session. Second concurrent call from
 // the same chat session returns BLOCKED instead of spawning a parallel
 // worktree — prevents the "agent fired self_edit 3 times because the first
@@ -83,28 +156,35 @@ const ACTIVE_SELF_EDITS = new Map<string, { task: string; startedAt: number }>()
 export const selfEditTool: ToolDefinition = {
   name: "self_edit",
   description:
-    "ONLY for fixing bugs IN THE LOCAL AGENT X SOURCE CODE (.ts files in src/, route handlers, " +
-    "tool implementations, server logic). Delegates source-code surgery to a code-specialized " +
-    "subprocess that reads/edits/builds the codebase. Returns a diagnosis + list of changed files. " +
-    "The user must restart the server after to pick up changes — tell them.\n\n" +
-    "USE self_edit FOR: a tool returned 200 but the UI didn't update, an endpoint returns wrong " +
-    "shape, a route is missing, a feature works on one provider but not another due to a code path " +
-    "difference, the user reports 'that didn't work' after a tool call appeared to succeed. " +
-    "Anything that's a CODE bug or a missing CODE capability.\n\n" +
-    "DO NOT USE self_edit FOR (these are common misuses):\n" +
-    "- Launching/running an installer or .exe → use install_software with strategy='launch'\n" +
-    "- Installing software → use install_software\n" +
-    "- Running a one-off command → use bash (sparingly) or the appropriate native tool\n" +
-    "- Editing a USER file in workspace/ → use edit (self_edit only touches SOURCE code)\n" +
-    "- Configuring settings → use http_request POST to /api/settings\n" +
-    "- Editing config files in config/ → use edit directly (hot-reloads)\n" +
-    "- Anything the user said 'launch'/'run'/'open'/'start'/'install' about → never self_edit, " +
-    "those are runtime actions not source changes\n\n" +
-    "If you're tempted to self_edit but the user's intent is to RUN something, you have the wrong tool.\n\n" +
+    "Self-repair AND self-extension: modify the Local Agent X source code (.ts files in src/, " +
+    "route handlers, tool implementations, server logic) to fix a bug OR add a capability that " +
+    "doesn't exist yet. Delegates source-code surgery to a code-specialized subprocess with " +
+    "read/edit/bash access to the whole repo (including protected files where regular `edit` is " +
+    "blocked). Returns a diagnosis + list of changed files. The user must restart the server " +
+    "after to pick up changes — tell them.\n\n" +
+    "USE self_edit FOR:\n" +
+    "- Bug fixes in source: a tool returned 200 but the UI didn't update, an endpoint returns " +
+    "wrong shape, a route is missing, a feature works on one provider but not another, user " +
+    "reports 'that didn't work' after what looked like success.\n" +
+    "- Missing capabilities: you NEED a tool that doesn't exist to complete the user's task. " +
+    "Examples: user sends voice message and there's no transcribe_audio tool → self_edit({task: " +
+    "'Add transcribe_audio tool using local whisper, install whisper-node via npm'}). User wants " +
+    "to schedule a recurring email and there's no recurring_email tool → self_edit to add it. " +
+    "If after this self_edit the agent will have a new tool that matches the intent, that's the " +
+    "right call.\n\n" +
+    "BEFORE calling self_edit, CHECK THE EXISTING TOOL LIST. If a tool already covers the intent, " +
+    "use that tool — don't add a duplicate. Common misroutes that should NOT be self_edit:\n" +
+    "- 'Launch an installer' → install_software has strategy='launch' (don't add launch_installer)\n" +
+    "- 'Install software' → install_software handles it (don't add install_X)\n" +
+    "- 'Run a shell command' → bash exists for this (don't add run_command)\n" +
+    "- 'Edit a workspace/ file' → edit covers it (self_edit is for SOURCE only)\n" +
+    "- 'Change a setting' → http_request POST to /api/settings (don't add settings_set)\n" +
+    "- 'Hot-reload config' → edit a file in config/ directly (don't go through self_edit)\n\n" +
     "When wiring up code that ALREADY exists at a known path (e.g. a prototype in workspace/, " +
     "integrations/, or a sibling module), name that path in your task — self_edit reads the " +
     "codebase fresh per call and will REWRITE from scratch otherwise, duplicating work.\n\n" +
-    "ONE self_edit per chat session at a time — if one is already running, wait for it to finish.",
+    "ONE self_edit per chat session at a time — if one is already running, wait for it to finish. " +
+    "Parallel self_edits create overlapping worktree branches you'll have to reconcile by hand.",
   parameters: {
     type: "object",
     properties: {
@@ -127,6 +207,70 @@ export const selfEditTool: ToolDefinition = {
   async execute(args, signal) {
     const task = String(args.task || "").trim();
     if (!task) return { content: "self_edit requires a 'task' description.", isError: true };
+
+    // ── Layer 2: scope-evidence gate ───────────────────────────────────────
+    // self_edit is destructive (commits source changes that propagate via
+    // git pull). Reject task descriptions too vague to safely act on. The
+    // task must contain at least ONE concrete scope marker:
+    //   - File path: src/, public/, packages/, config/, /path/file.ext
+    //   - Function/symbol name: CamelCase or snake_case identifier (≥4 chars)
+    //   - Observable bug pattern: "returns 500", "doesn't render", "missing",
+    //     "fails", "broken", "throws", "undefined", "404", "500", "stale"
+    // A vague "fix the cron stuff" with no path AND no symbol AND no
+    // observable bug language is the failure mode where the subprocess
+    // wanders into unrelated code. Force the caller to be specific.
+    const TASK_PATH_RE = /(?:^|\s|['"`])((?:src|public|packages|config|workspace|integrations|test|scripts)\/[a-zA-Z0-9_./-]+|[a-zA-Z0-9_-]+\.(ts|tsx|js|jsx|html|css|json|md|py|sh|bat|ps1))\b/;
+    const TASK_SYMBOL_RE = /\b([A-Z][a-zA-Z0-9]{3,}|[a-z][a-z0-9_]{4,}_[a-z][a-z0-9_]+)\b/;
+    const TASK_OBSERVABLE_RE = /\b(returns?\s+\d{3}|exits?\s+\d|status\s+\d{3}|\bfails?\b|\bthrows?\b|\bbroken\b|\bdoesn'?t\s+(render|update|work|apply|persist)|\bmissing\b|\bundefined\b|\bnull\s+pointer|\bstale\b|\bcrash(es|ed|ing)?\b|\b404\b|\b500\b|\bempty\s+response\b|\bhang(s|ing)?\b)/i;
+    const hasPath = TASK_PATH_RE.test(task);
+    const hasSymbol = TASK_SYMBOL_RE.test(task);
+    const hasObservable = TASK_OBSERVABLE_RE.test(task);
+    if (!hasPath && !hasSymbol && !hasObservable) {
+      return {
+        content:
+          `BLOCKED — self_edit task is too vague. Self_edit modifies source code; the task description must include at least one concrete scope marker:\n` +
+          `- A FILE PATH (e.g. "src/routes/chat.ts", "public/js/chat.js")\n` +
+          `- A SYMBOL NAME (function, class, type — CamelCase or snake_case ≥5 chars)\n` +
+          `- An OBSERVABLE BUG (specific failure: "returns 500", "doesn't render", "throws on X", "broken after Y")\n\n` +
+          `Your task: "${task.slice(0, 200)}${task.length > 200 ? "..." : ""}"\n\n` +
+          `Rewrite with specifics. If you don't have specifics, you probably don't have enough information to call self_edit yet — read the relevant code first or ask the user for details.`,
+        isError: true,
+      };
+    }
+
+    // ── Layer 1: intent-match gate ─────────────────────────────────────────
+    // Sanity-check that the task description matches what the user is
+    // actually asking about. Defends against the "agent grabs self_edit
+    // under intent-mapping uncertainty and submits a task on a different
+    // topic" failure mode (live failure 2026-05-07: user said "launch the
+    // ollama installer" → agent self_edit'd to modify cron jobs).
+    //
+    // Uses the SAME provider+model the chat is currently on (no Haiku
+    // hardcode — minimizes future tech debt when models change). On any
+    // failure (no provider creds, classifier timeout, parse error) we
+    // FAIL OPEN and proceed — better to allow the occasional misuse than
+    // to block legitimate self_edits when the classifier is flaky.
+    const lastUserMessage = typeof args._lastUserMessage === "string" ? args._lastUserMessage : "";
+    const lastAssistantMessage = typeof args._lastAssistantMessage === "string" ? args._lastAssistantMessage : "";
+    if (lastUserMessage) {
+      try {
+        const verdict = await checkSelfEditIntent(task, lastUserMessage, lastAssistantMessage);
+        if (verdict?.verdict === "mismatch") {
+          return {
+            content:
+              `BLOCKED — the self_edit task doesn't match what the user is asking for.\n\n` +
+              `User's most recent message: "${lastUserMessage.slice(0, 200)}${lastUserMessage.length > 200 ? "..." : ""}"\n` +
+              `Self_edit task you submitted: "${task.slice(0, 200)}${task.length > 200 ? "..." : ""}"\n` +
+              `Reason: ${verdict.reason}\n\n` +
+              `If the user wants the change you described, they need to ask for it explicitly. ` +
+              `If you misread their intent, use a different tool. ` +
+              `Common misroutes: "launch installer" → install_software strategy='launch', "run command" → bash, "edit workspace file" → edit, "change setting" → http_request to /api/settings.`,
+            isError: true,
+          };
+        }
+        // verdict.match or verdict.unsure → proceed
+      } catch { /* classifier unavailable — fail open */ }
+    }
 
     // Per-session live-call guard. If another self_edit is already running for
     // this session, refuse the new call. Prevents the parallel-worktree mess

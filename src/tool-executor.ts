@@ -300,9 +300,23 @@ async function executeSingleTool(
     // memory_save tags daily-log entries so today_context can filter by
     // current session at read time.
     "memory_search", "search_past_sessions", "memory_save",
+    // self_edit needs sessionId for the per-session live-call lock AND for
+    // the intent/approval gates added in the safety pass — see self-edit-tool.ts.
+    "self_edit",
   ]);
   if (SESSION_SCOPED_TOOLS.has(tc.name)) {
     args._sessionId = sessionId || "default";
+  }
+  // Inject conversational context for tools that need to sanity-check their
+  // task against user intent (currently self_edit's intent gate). Last user
+  // message + most recent assistant text are extracted from priorMessages
+  // here so individual tools don't need to thread session-store access.
+  if (tc.name === "self_edit" && Array.isArray(priorMessages)) {
+    const reversed = [...priorMessages].reverse();
+    const lastUser = reversed.find(m => m?.role === "user" && typeof m.content === "string");
+    const lastAssistant = reversed.find(m => m?.role === "assistant" && typeof m.content === "string");
+    if (lastUser?.content) args._lastUserMessage = String(lastUser.content);
+    if (lastAssistant?.content) args._lastAssistantMessage = String(lastAssistant.content);
   }
   // Autopilot: re-route subprocess-style tools to the worktree CWD (NOT main repo)
   // and enforce the per-shift ceiling on self_edit invocations. The agent

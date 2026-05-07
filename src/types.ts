@@ -13,9 +13,81 @@ export interface ToolDefinition {
   concurrencySafe?: boolean;
 }
 
+/**
+ * Tool result envelope (lightweight).
+ *
+ * Why: the original `{ content, isError? }` collapsed every outcome into
+ * a binary. The model couldn't distinguish "command ran cleanly with no
+ * stdout" from "killed by policy" from "still running async." Result:
+ * 47-call retry loops where empty looked like uncertain.
+ *
+ * The fix is a single optional discriminator — `status` — for the four
+ * non-default outcomes that change how the model should react. Everything
+ * else (recovery hints, timing, exit codes) lives in `metadata` so the
+ * envelope stays thin and authors don't need to learn five new fields.
+ *
+ * Status values:
+ *   ok       — completed (default; inferred when status omitted).
+ *              `content` is the output, may be "".
+ *   error    — definite failure (default for isError: true).
+ *   blocked  — refused by policy/safety. Retrying the same call WILL fail.
+ *              The model should pivot. Recommend a `recovery` hint in
+ *              metadata (e.g. "use http_request instead of bash curl").
+ *   timeout  — runtime deadline expired. Distinct from error because work
+ *              may have partially landed; metadata.partial_output captures
+ *              what was produced before the kill.
+ *   running  — async session was started; `session_id` is the handle.
+ *              The model must poll, not wait.
+ *
+ * 95% of tools just call `ok(s)` / `err(s)` and never see this enum.
+ * Tools that need the new states opt in by setting `status`.
+ */
+export type ToolResultStatus = "ok" | "error" | "blocked" | "timeout" | "running";
+
 export interface ToolResult {
+  /**
+   * Output payload. May be "" when the call ran but produced no captured
+   * output (ConPTY-only progress on Windows, etc.). Empty content with
+   * `status: "ok"` is meaningful — the model should NOT retry.
+   */
   content: string;
+  /**
+   * Legacy binary failure flag. The dispatcher derives:
+   *   isError === true  → status "error"
+   *   isError !== true  → status "ok"
+   * New code should set `status` directly; this field stays for the ~60
+   * existing tools that already use it.
+   */
   isError?: boolean;
+
+  /**
+   * Optional outcome discriminator. When unset, derived from `isError`.
+   * Set this only when the tool needs to express blocked/timeout/running
+   * — the four non-default cases that change the model's next move.
+   */
+  status?: ToolResultStatus;
+
+  /**
+   * Handle for `status: "running"`. The receiving model polls a status
+   * tool with this id rather than waiting on the original call. Tools
+   * returning `running` MUST set `content` to a brief poll hint
+   * ("started; poll process_status with session_id=<id>") so a model
+   * that ignores `status` still has a usable instruction.
+   */
+  session_id?: string;
+
+  /**
+   * Free-form metadata bag. Conventional keys (callers should use these
+   * names so the renderer can emit a consistent header):
+   *   duration_ms: number  — wall-clock time the call took
+   *   exit_code:   number  — for subprocess tools
+   *   recovery:    string  — suggested next move on blocked/timeout
+   *                          ("use http_request", "split the call", ...)
+   *   stderr:      string  — separate-stream output for subprocesses
+   *   partial_output: string — content captured before a timeout kill
+   *   truncated:   boolean — content was cut for context safety
+   *   bytes:       number  — full payload size when truncated
+   */
   metadata?: Record<string, unknown>;
 }
 

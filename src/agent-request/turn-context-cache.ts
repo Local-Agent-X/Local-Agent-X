@@ -30,7 +30,11 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("agent-request.turn-context-cache");
 
-const TTL_MS = 45 * 1000;
+// 5 minutes covers typical chat rhythm (think, coffee, brief distraction).
+// 45s was too tight — most follow-ups landed past it and rebuilt the
+// memory pipeline for nothing. Topic shifts within 5 minutes are uncommon
+// enough that the staleness cost is rare; on session-end the LRU evicts.
+const TTL_MS = 5 * 60 * 1000;
 const MAX_ENTRIES = 32;
 
 interface CacheEntry {

@@ -344,6 +344,14 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
       constraints: { maxCallsPerSession: 100 },
     },
 
+    // Privacy-preserving secret tools: server-side reads/writes the vault and
+    // pipes the value to clipboard or page input. The value never enters the
+    // model's context — only a length confirmation comes back. Origin
+    // binding, selector whitelist, and approval ladder are enforced inside
+    // each tool. ARI provides audit + behavioral observation.
+    { id: "allow-browser-capture-to-secret", tool: "browser_capture_to_secret", decision: "allow", reason: "Capture page value into encrypted vault (value never enters model context)", priority: 50 },
+    { id: "allow-browser-fill-from-secret", tool: "browser_fill_from_secret", decision: "allow", reason: "Fill vault value into page input (origin-bound, selector-whitelisted, approval-gated)", priority: 50 },
+
     // View image — safe, path-checked by SecurityLayer
     { id: "allow-view-image", tool: "view_image", decision: "allow", reason: "Image viewing (path-checked)", priority: 50 },
 

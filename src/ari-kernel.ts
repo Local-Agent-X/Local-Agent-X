@@ -49,6 +49,28 @@ export async function startAriKernel(auditDbPath: string, preset?: string, requi
       principal: "local-agent-x",
       auditLog: auditDbPath,
     });
+
+    // Register a no-op executor for `secret-vault` so the ARI pipeline can
+    // complete its audit/policy/behavioral steps without trying to actually
+    // run the tool. The real secret-vault logic (DOM read, vault write, page
+    // fill, clipboard write) lives in the tool's own execute() and runs
+    // AFTER ariEvaluate returns allowed. ARI's role here is observer + gate.
+    try {
+      (firewall as unknown as { registerExecutor: (e: { toolClass: string; execute: (tc: { id: string }) => Promise<{ callId: string; success: boolean; durationMs: number; taintLabels: never[] }> }) => void }).registerExecutor({
+        toolClass: "secret-vault",
+        async execute(tc) {
+          return {
+            callId: tc.id,
+            success: true,
+            durationMs: 0,
+            taintLabels: [],
+          };
+        },
+      });
+    } catch (e) {
+      logger.warn(`[ari] secret-vault executor registration failed: ${(e as Error).message}`);
+    }
+
     logger.info(`  [ari] Kernel initialized (in-process, preset: ${currentPreset})`);
     return true;
   } catch (e) {
@@ -127,16 +149,27 @@ export async function ariEvaluate(
     mission_schedule_update: "internal",
     mission_schedule_toggle: "internal",
     mission_schedule_reports: "internal",
-    browser_capture_to_secret: "internal",
-    browser_fill_from_secret: "internal",
+    browser_capture_to_secret: "secret-vault",
+    browser_fill_from_secret: "secret-vault",
+    clipboard_write_from_secret: "secret-vault",
+  };
+
+  // Per-tool action override: secret-vault tools have a fixed action mapping
+  // (capture / fill / clipboard) regardless of what the executor passes in.
+  // ARI sees the canonical action in audit logs and behavioral rules.
+  const secretVaultActionMap: Record<string, string> = {
+    browser_capture_to_secret: "capture",
+    browser_fill_from_secret: "fill",
+    clipboard_write_from_secret: "clipboard",
   };
 
   const toolClass = toolClassMap[toolName] || "shell";
+  const effectiveAction = secretVaultActionMap[toolName] ?? action;
 
   try {
     const execRequest: Record<string, unknown> = {
       toolClass: toolClass as any,
-      action,
+      action: effectiveAction,
       parameters: params,
     };
     if (taintLabels && taintLabels.length > 0) {

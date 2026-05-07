@@ -631,6 +631,7 @@ async function loadSettings() {
     if (typeof refreshVoiceEngineStatus === 'function') refreshVoiceEngineStatus(s.voiceEngine || 'tier4');
     if (typeof loadVoiceTier4Settings === 'function') loadVoiceTier4Settings(s);
     if (typeof refreshVoiceTier4Visibility === 'function') refreshVoiceTier4Visibility(s.voiceEngine || 'tier4');
+    if (typeof syncPttUiFromConfig === 'function') syncPttUiFromConfig();
     // Embedding settings
     set('cfg-emb-provider', s.embeddingProvider || 'ollama');
     set('cfg-emb-model', s.embeddingModel || '');
@@ -718,6 +719,35 @@ function refreshVoiceTier4Visibility(engine) {
   panel.style.display = engine === 'tier4' ? '' : 'none';
 }
 window.refreshVoiceTier4Visibility = refreshVoiceTier4Visibility;
+
+// Push-to-talk settings UI. Driven by window.PushToTalk (push-to-talk.js)
+// which owns localStorage persistence; this section only renders the saved
+// state and forwards user input back into PushToTalk.setMode/setChord.
+function syncPttUiFromConfig() {
+  if (!window.PushToTalk) return;
+  const cfg = window.PushToTalk.getConfig();
+  const modeSel = document.getElementById('cfg-ptt-mode');
+  if (modeSel) modeSel.value = cfg.mode;
+  const field = document.getElementById('ptt-chord-field');
+  if (field) field.style.display = cfg.mode === 'off' ? 'none' : '';
+  const display = document.getElementById('ptt-chord-display');
+  if (display) display.textContent = window.PushToTalk.formatChord(cfg.chord);
+}
+function onPttModeChange(mode) {
+  if (!window.PushToTalk) return;
+  window.PushToTalk.setMode(mode);
+  syncPttUiFromConfig();
+}
+async function onPttChordCapture() {
+  if (!window.PushToTalk || !window.HotkeyCapture) return;
+  const chord = await window.HotkeyCapture.open();
+  if (!chord) return;
+  window.PushToTalk.setChord(chord);
+  syncPttUiFromConfig();
+}
+window.onPttModeChange = onPttModeChange;
+window.onPttChordCapture = onPttChordCapture;
+window.syncPttUiFromConfig = syncPttUiFromConfig;
 
 let _tier4VoiceCatalog = null;
 async function loadVoiceTier4Settings(s) {

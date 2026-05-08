@@ -389,8 +389,6 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       const canonicalChatEligible = await (async () => {
         try {
           const { isCanonicalChatEnabled, isCanonicalChatLaneEnabled } = await import("../canonical-loop/feature-flag.js");
-          // Both default-on; LAX_CANONICAL_LOOP_CHAT=0 or
-          // LAX_CANONICAL_LOOP_INTERACTIVE=0 force legacy.
           if (!isCanonicalChatEnabled()) return false;
           if (!isCanonicalChatLaneEnabled()) return false;
         } catch { return false; }

@@ -117,7 +117,32 @@ function seedOpMessages(opId: string, prepared: PreparedAgentRequest, currentMes
     const role = messageRoleToCanonicalRole(msg.role);
     if (!role) continue;
     const text = extractTextContent(msg.content);
-    if (!text) continue;
+
+    // Carry tool_calls through on assistant messages. The codex adapter's
+    // convertMessages reads `content.toolCalls` and emits function_call
+    // items in the API input; without this round-trip, a session whose
+    // history includes a tool-using turn surfaces orphan
+    // function_call_outputs ("No tool call found for function call output
+    // with call_id ..." 400s on Codex). The tool_call's id is the compound
+    // call_id|item_id encoded by codex-message-convert.
+    let toolCalls: Array<{ id: string; name: string; arguments: string }> | undefined;
+    if (role === "assistant") {
+      const m = msg as ChatCompletionMessageParam & {
+        tool_calls?: Array<{ id: string; type?: string; function: { name: string; arguments: string } }>;
+      };
+      if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+        toolCalls = m.tool_calls.map(tc => ({
+          id: tc.id,
+          name: tc.function?.name ?? "",
+          arguments: tc.function?.arguments ?? "",
+        }));
+      }
+    }
+
+    // Skip empty assistant rows ONLY when there are also no tool calls —
+    // a tool-only assistant turn (no text, just function calls) is
+    // structurally important for Codex pairing and must be persisted.
+    if (!text && !toolCalls) continue;
 
     // For tool_result rows, embed tool_call_id inside the content payload
     // (canonical OpMessageRow has a free-form `content` field; the adapter
@@ -126,6 +151,9 @@ function seedOpMessages(opId: string, prepared: PreparedAgentRequest, currentMes
     if (role === "tool_result") {
       const toolMsg = msg as ChatCompletionMessageParam & { tool_call_id?: string };
       if (toolMsg.tool_call_id) content = { text, toolCallId: toolMsg.tool_call_id };
+    }
+    if (role === "assistant" && toolCalls) {
+      content = { text, toolCalls };
     }
 
     const row: OpMessageRow = {

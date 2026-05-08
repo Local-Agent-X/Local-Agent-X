@@ -673,11 +673,23 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // - Keep all tool messages (the model needs them to interpret previous tool calls)
       // - Keep assistant messages with content OR tool_calls
       // - Drop empty user messages (sanity)
-      session.messages = stripEphemeralMessages(result.messages).filter((m) => {
-        if (m.role === "system") return false;
-        if (m.role === "tool") return true; // never drop tool results
-        return m.content || (m as unknown as MsgRecord).tool_calls;
-      });
+      session.messages = stripEphemeralMessages(result.messages)
+        .filter((m) => {
+          if (m.role === "system") return false;
+          if (m.role === "tool") return true; // never drop tool results
+          return m.content || (m as unknown as MsgRecord).tool_calls;
+        })
+        // Strip the engine-side temporal marker on inject messages so the
+        // chat UI shows what the user actually typed. The marker
+        // (`[mid-turn user message] `) is added by drainInjectsIntoTurn
+        // (canonical) / interjectDrainMiddleware (legacy) so the model
+        // gets temporal context; users don't need to see it in their
+        // chat history. Same regex as the canonical persist path.
+        .map((m) => {
+          if (m.role !== "user" || typeof m.content !== "string") return m;
+          const stripped = m.content.replace(/^\[mid-turn user message\]\s*/, "");
+          return stripped === m.content ? m : { ...m, content: stripped };
+        });
       session.updatedAt = Date.now();
 
       const assistantReply = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).join("\n");

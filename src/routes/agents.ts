@@ -354,12 +354,15 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     const sid = String(body.sessionId || "");
     if (!sid) { json(400, { error: "sessionId required" }); return true; }
     const stopped = ctx.chatWs.stopChat(sid);
-    // Also abort any active turn lock for this session so a stuck agent loop
-    // doesn't keep running after the stop signal.
+    // Abort + release the turn lock — mirrors the WS stop handler in chat-ws.ts.
+    // Without releaseTurn the next message hits "previous request still running"
+    // because the lock waits for the agent loop's finally block, which can take
+    // 60s+ if a subprocess stalls. Stop should mean stop.
     let lockAborted = false;
     try {
-      const { abortTurn } = await import("../session-turn-lock.js");
+      const { abortTurn, releaseTurn } = await import("../session-turn-lock.js");
       lockAborted = abortTurn(sid);
+      releaseTurn(sid);
     } catch {}
     json(200, { ok: true, stopped: sid, wasActive: stopped, turnLockAborted: lockAborted }); return true;
   }

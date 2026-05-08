@@ -18,7 +18,9 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { readOp } from "../workers/op-store.js";
-import { readLatestOpTurn } from "./store.js";
+import { readLatestOpTurn, readOpTurns } from "./store.js";
+import { schedulerSnapshot } from "./scheduler.js";
+import { getPricing } from "../cost-tracker.js";
 import type { CanonicalEvent } from "./types.js";
 
 import { createLogger } from "../logger.js";
@@ -44,7 +46,11 @@ interface InFlightRecord {
   firstAssistantMsgAt: number | null;
   turnsCommitted: number;
   lastErrorCode: string | null;
+  lastErrorMessage: string | null;
   crashRecovered: boolean;
+  /** Scheduler queue depth at the moment this op was queued. Captured
+   *  from `schedulerSnapshot()` on the first state_changed event. */
+  queueDepthAtSubmit: number | null;
 }
 
 const records = new Map<string, InFlightRecord>();
@@ -99,37 +105,80 @@ function finalize(opId: string, terminal: "succeeded" | "failed" | "cancelled"):
   const op = readOp(opId);
   const lane = op?.lane ?? null;
   const provider = op?.contextPack?.routing?.preferredProvider ?? null;
+  const sessionId = op?.canonical?.sessionId ?? null;
 
   const finishedAt = Date.now();
   const firstContent = r.firstStreamChunkAt ?? r.firstAssistantMsgAt;
   const firstContentLatencyMs = firstContent !== null ? firstContent - r.startedAt : null;
 
-  // Best-effort metadata from latest op_turn provider_state. The
-  // `adapter` / `adapterVersion` fields identify which adapter
-  // actually served the op (e.g. "anthropic" today, "codex" when
-  // v1.1 lands) — distinct from `provider` above which mirrors the
-  // routing hint. Token usage stays best-effort: adapters that
-  // surface usage in providerPayload populate it; others leave null.
+  // Aggregate per-turn metadata across ALL rounds. Earlier we only read
+  // the latest op_turn, which lost token + tool data from earlier rounds
+  // in multi-round ops (chat with tool chains regularly hit 2-5 rounds).
   let adapter: string | null = null;
   let adapterVersion: string | null = null;
-  let usageInputTokens: number | null = null;
-  let usageOutputTokens: number | null = null;
+  let usageInputTokens = 0;
+  let usageOutputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreateTokens = 0;
+  let modelMs = 0;
+  let toolDispatchMs = 0;
+  const toolsCalledSet = new Set<string>();
+  let sawAnyUsage = false;
+  let sawAnyCache = false;
+  let sawAnyModelMs = false;
+  let sawAnyToolDispatchMs = false;
   try {
-    const last = readLatestOpTurn(opId);
-    const ps = last?.providerState;
-    if (ps && typeof ps.adapterName === "string") adapter = ps.adapterName;
-    if (ps && typeof ps.adapterVersion === "string") adapterVersion = ps.adapterVersion;
-    const payload = ps?.providerPayload as Record<string, unknown> | undefined;
-    if (payload) {
-      const ui = payload.usageInputTokens;
-      const uo = payload.usageOutputTokens;
-      if (typeof ui === "number") usageInputTokens = ui;
-      if (typeof uo === "number") usageOutputTokens = uo;
+    const turns = readOpTurns(opId);
+    for (const t of turns) {
+      // adapter identity from the LAST turn that has it (Codex+Anthropic
+      // both stamp every turn, but use last-wins for safety).
+      const ps = t.providerState;
+      if (ps && typeof ps.adapterName === "string") adapter = ps.adapterName;
+      if (ps && typeof ps.adapterVersion === "string") adapterVersion = ps.adapterVersion;
+      const payload = ps?.providerPayload as Record<string, unknown> | undefined;
+      if (payload) {
+        const ui = payload.usageInputTokens;
+        const uo = payload.usageOutputTokens;
+        const cr = payload.cacheReadTokens;
+        const cc = payload.cacheCreateTokens;
+        if (typeof ui === "number") { usageInputTokens += ui; sawAnyUsage = true; }
+        if (typeof uo === "number") { usageOutputTokens += uo; sawAnyUsage = true; }
+        if (typeof cr === "number") { cacheReadTokens += cr; sawAnyCache = true; }
+        if (typeof cc === "number") { cacheCreateTokens += cc; sawAnyCache = true; }
+      }
+      if (typeof t.modelMs === "number") { modelMs += t.modelMs; sawAnyModelMs = true; }
+      if (typeof t.toolDispatchMs === "number") { toolDispatchMs += t.toolDispatchMs; sawAnyToolDispatchMs = true; }
+      for (const tc of t.toolCallSummary ?? []) {
+        if (tc.tool) toolsCalledSet.add(tc.tool);
+      }
     }
   } catch { /* swallow */ }
 
+  // Cost estimate from the model + tokens. Cache-aware when we saw
+  // cache fields (Anthropic), otherwise plain input × rate.
+  const model = (op?.contextPack?.routing as Record<string, unknown> | undefined)?.preferredModel as string | undefined
+    ?? (readLatestOpTurn(opId)?.providerState?.providerPayload as Record<string, unknown> | undefined)?.model as string | undefined
+    ?? null;
+  let estimatedCostUsd: number | null = null;
+  if (sawAnyUsage && model) {
+    try {
+      const pricing = getPricing(model);
+      // Anthropic cache: cache reads are ~10% of input rate, cache writes ~125%.
+      const billableInput = sawAnyCache
+        ? Math.max(0, usageInputTokens - cacheReadTokens - cacheCreateTokens)
+        : usageInputTokens;
+      const cost =
+        (billableInput * pricing.input) / 1_000_000 +
+        (cacheReadTokens * pricing.input * 0.10) / 1_000_000 +
+        (cacheCreateTokens * pricing.input * 1.25) / 1_000_000 +
+        (usageOutputTokens * pricing.output) / 1_000_000;
+      estimatedCostUsd = Math.round(cost * 1_000_000) / 1_000_000;
+    } catch { /* swallow — pricing table miss; cost stays null */ }
+  }
+
   appendLine({
     opId,
+    sessionId,
     provider,
     adapter,
     adapterVersion,
@@ -139,10 +188,19 @@ function finalize(opId: string, terminal: "succeeded" | "failed" | "cancelled"):
     durationMs: finishedAt - r.startedAt,
     terminal,
     failureClass: classifyFailure(r, terminal),
+    failureCode: r.lastErrorCode,
+    failureMessage: r.lastErrorMessage,
     rounds: r.turnsCommitted,
     firstContentLatencyMs,
-    usageInputTokens,
-    usageOutputTokens,
+    modelMs: sawAnyModelMs ? modelMs : null,
+    toolDispatchMs: sawAnyToolDispatchMs ? toolDispatchMs : null,
+    usageInputTokens: sawAnyUsage ? usageInputTokens : null,
+    usageOutputTokens: sawAnyUsage ? usageOutputTokens : null,
+    cacheReadTokens: sawAnyCache ? cacheReadTokens : null,
+    cacheCreateTokens: sawAnyCache ? cacheCreateTokens : null,
+    estimatedCostUsd,
+    toolsCalled: toolsCalledSet.size > 0 ? [...toolsCalledSet].sort() : null,
+    queueDepthAtSubmit: r.queueDepthAtSubmit,
     crashRecovered: r.crashRecovered,
   });
 }
@@ -162,6 +220,12 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
         const to = b.to as string | undefined;
         if (from === null && to === "queued") {
           if (!records.has(opId)) {
+            // Capture scheduler queue depth at submit-time. Best-effort:
+            // schedulerSnapshot is sync and cheap; on failure we log null.
+            let queueDepth: number | null = null;
+            try {
+              queueDepth = schedulerSnapshot().queueDepth;
+            } catch { /* ignore — null is acceptable */ }
             records.set(opId, {
               opId,
               startedAt: Date.now(),
@@ -170,7 +234,9 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
               firstAssistantMsgAt: null,
               turnsCommitted: 0,
               lastErrorCode: null,
+              lastErrorMessage: null,
               crashRecovered: false,
+              queueDepthAtSubmit: queueDepth,
             });
           }
         } else if (to === "succeeded" || to === "failed" || to === "cancelled") {
@@ -204,8 +270,15 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
       }
       case "error": {
         const code = b.code as string | undefined;
+        const message = b.message as string | undefined;
         const r = records.get(opId);
-        if (r && code) r.lastErrorCode = code;
+        if (r) {
+          if (code) r.lastErrorCode = code;
+          // Truncate + scrub-light to keep soak rows compact.
+          if (message && !r.lastErrorMessage) {
+            r.lastErrorMessage = message.replace(/\s+/g, " ").trim().slice(0, 300);
+          }
+        }
         break;
       }
     }

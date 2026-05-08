@@ -41,6 +41,7 @@ export {
   insertOpTurn,
   readLatestOpTurn,
   readOpTurn,
+  readOpTurns,
   appendOpMessage,
   readOpMessages,
 } from "./store.js";

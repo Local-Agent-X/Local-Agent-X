@@ -445,6 +445,13 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
             prevText = result;
           }
           usage = event.usage || {};
+          // DEBUG: inspect the raw `usage` shape so we can see whether the
+          // CLI surfaces cache_read_input_tokens / cache_creation_input_tokens
+          // (or similar) under OAuth subscription auth. Remove once the
+          // soak file shows non-null cache fields on Anthropic chats.
+          try {
+            logger.info(`[claude] usage-keys=${Object.keys(usage).join(",")} usage-json=${JSON.stringify(usage).slice(0, 500)}`);
+          } catch { /* ignore */ }
           logger.info(`[claude] Done: ${result.slice(0, 100).replace(/\n/g, "\\n")}...`);
 
           // Parse tool calls from full response ONLY if we didn't already emit
@@ -464,7 +471,15 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
               logger.warn(`[claude] WARNING: response contains "tool_calls" but parser extracted 0 calls. Response head: ${fullText.slice(0, 300).replace(/\n/g, "\\n")}`);
             }
           }
-          yield { type: "done", usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0 } };
+          yield {
+  type: "done",
+  usage: {
+    inputTokens: usage.input_tokens || 0,
+    outputTokens: usage.output_tokens || 0,
+    cacheReadTokens: usage.cache_read_input_tokens,
+    cacheCreateTokens: usage.cache_creation_input_tokens,
+  },
+};
           return;
         }
       }
@@ -491,7 +506,15 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
     const exitCode = await new Promise<number>((resolve) => { proc.on("close", (code) => resolve(code ?? 0)); });
     if (mcpConfigPath) { try { const fs = await import("node:fs"); fs.unlinkSync(mcpConfigPath); } catch {} }
     if (exitCode !== 0 && stderr) { yield { type: "error", error: `Claude CLI error (${exitCode}): ${stderr.slice(0, 300)}` }; return; }
-    yield { type: "done", usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0 } };
+    yield {
+  type: "done",
+  usage: {
+    inputTokens: usage.input_tokens || 0,
+    outputTokens: usage.output_tokens || 0,
+    cacheReadTokens: usage.cache_read_input_tokens,
+    cacheCreateTokens: usage.cache_creation_input_tokens,
+  },
+};
   } catch (e) {
     if (mcpConfigPath) { try { const fs = await import("node:fs"); fs.unlinkSync(mcpConfigPath); } catch {} }
     yield { type: "error", error: `Claude CLI error: ${(e as Error).message}` };

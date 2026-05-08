@@ -58,6 +58,10 @@ export interface CommitTurnInput {
    *     mid-turn is preserved for the next turn (latest-wins semantics).
    */
   redirectInstructionId?: string;
+  /** Wall-clock ms inside `adapter.runTurn`. Recorded for soak telemetry. */
+  modelMs?: number;
+  /** Wall-clock ms inside `dispatchTools`. Recorded for soak telemetry. */
+  toolDispatchMs?: number;
 }
 
 export interface CommitTurnOutput {
@@ -122,6 +126,8 @@ export function commitTurn(input: CommitTurnInput): CommitTurnOutput {
     terminalReason: input.terminalReason,
     redirectConsumed,
     createdAt: new Date().toISOString(),
+    ...(input.modelMs !== undefined ? { modelMs: input.modelMs } : {}),
+    ...(input.toolDispatchMs !== undefined ? { toolDispatchMs: input.toolDispatchMs } : {}),
   };
   const inserted = insertOpTurn(turnRow);
 

@@ -6,7 +6,14 @@ export interface StreamEvent {
   id?: string;
   name?: string;
   arguments?: string;
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    /** Anthropic prompt-cache hit tokens (10% of normal cost). */
+    cacheReadTokens?: number;
+    /** Anthropic prompt-cache write tokens (1.25× normal cost). */
+    cacheCreateTokens?: number;
+  };
   error?: string;
   /** Stop reason from the API — populated on done/error */
   stopReason?: string;

@@ -77,7 +77,19 @@ export function defaultAnthropicTransport(): AnthropicTransport {
               retryable: false,
             };
           } else if (ev.type === "done") {
-            yield { type: "done", stopReason: ev.stopReason };
+            yield {
+              type: "done",
+              stopReason: ev.stopReason,
+              // Forward usage including cache fields when present.
+              usage: ev.usage
+                ? {
+                    inputTokens: ev.usage.inputTokens,
+                    outputTokens: ev.usage.outputTokens,
+                    cacheReadTokens: ev.usage.cacheReadTokens,
+                    cacheCreateTokens: ev.usage.cacheCreateTokens,
+                  }
+                : undefined,
+            };
           }
           // mcp_activity events are observability; the canonical loop
           // surfaces tool runs through `tool_started` / `tool_finished`

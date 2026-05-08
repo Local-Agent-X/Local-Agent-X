@@ -191,6 +191,106 @@ export function setupChatWebSocket(server: Server, authToken: string) {
         subscriptions.delete(sessionId);
       }
 
+      // Reconnect to a canonical op's event stream after a connection drop.
+      // The client tracks `opId` from the `chat_op_started` event and the
+      // last canonical `seq` it observed; on WS reconnect it sends this
+      // message to replay missed events and re-attach to the live tail.
+      // Stream chunks during the disconnect window are NOT replayed (they
+      // are ephemeral by design); the assistant's finalized message text
+      // arrives via canonical `message_appended` events whose payload
+      // points at op_messages on disk. Net UX: connection drops become
+      // a brief visual pause rather than a lost response.
+      if (type === "reconnect_op" && sessionId && typeof msg.opId === "string") {
+        const opId = msg.opId;
+        const sinceSeq = typeof msg.sinceSeq === "number" ? msg.sinceSeq : -1;
+        try {
+          const { reconnectOp, OP_EVENTS_FROM_BEGINNING, readOpMessages } =
+            await import("./canonical-loop/index.js");
+          const result = await reconnectOp(opId, sinceSeq < 0 ? OP_EVENTS_FROM_BEGINNING : sinceSeq, (event) => {
+            // Translate canonical events to chat ServerEvents and send
+            // ONLY to this WS (not broadcast — other connections didn't
+            // ask for this replay). The session-bridge-observer handles
+            // ongoing live broadcasts to all session subscribers.
+            const b = (event.body ?? {}) as Record<string, unknown>;
+            if (event.type === "state_changed") {
+              const to = b.to as string | undefined;
+              if (to === "succeeded" || to === "failed" || to === "cancelled") {
+                ws.send(JSON.stringify({
+                  type: "event",
+                  sessionId,
+                  event: { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } },
+                  _opId: opId,
+                  _seq: event.seq,
+                }));
+              }
+            } else if (event.type === "error") {
+              const code = (b.code as string | undefined) ?? "error";
+              const message = (b.message as string | undefined) ?? "";
+              ws.send(JSON.stringify({
+                type: "event",
+                sessionId,
+                event: { type: "error", message: `${code}${message ? ": " + message.slice(0, 240) : ""}` },
+                _opId: opId,
+                _seq: event.seq,
+              }));
+            }
+          });
+          // Send the assistant's finalized text from op_messages (the
+          // stream chunks are gone but the persisted assistant message
+          // contains the full reply).
+          if (result.ok) {
+            try {
+              const messages = readOpMessages(opId);
+              for (const m of messages) {
+                if (m.role !== "assistant") continue;
+                const content = m.content as { text?: unknown } | null | undefined;
+                const text = typeof content?.text === "string" ? content.text : "";
+                if (text) {
+                  ws.send(JSON.stringify({
+                    type: "event",
+                    sessionId,
+                    event: { type: "stream", delta: text },
+                    _opId: opId,
+                    _replay: true,
+                  }));
+                }
+              }
+            } catch { /* best-effort replay */ }
+          } else {
+            ws.send(JSON.stringify({
+              type: "error",
+              message: `reconnect_op failed: ${result.code} ${result.message}`,
+            }));
+          }
+          // Detach the live subscription when WS closes.
+          if (result.ok) ws.on("close", result.off);
+        } catch (e) {
+          logger.warn(`[ws-chat] reconnect_op error: ${(e as Error).message}`);
+        }
+        return;
+      }
+
+      // Cancel a running canonical op (chat or worker delegation). The
+      // canonical control API handles the queued→cancelled / running→
+      // cancelling→cancelled transitions cleanly, including aborting the
+      // adapter's in-flight request and signaling the warm-pool to kill
+      // the CLI process (via the "stop" reason matching).
+      if (type === "cancel_op" && typeof msg.opId === "string") {
+        const opId = msg.opId;
+        try {
+          const { opCancel } = await import("./canonical-loop/index.js");
+          const result = opCancel(opId, "user-stop");
+          if (!result.ok) {
+            logger.warn(`[ws-chat] cancel_op ${opId} failed: ${result.code} ${result.message}`);
+          } else {
+            logger.info(`[ws-chat] cancel_op ${opId} → success`);
+          }
+        } catch (e) {
+          logger.warn(`[ws-chat] cancel_op error: ${(e as Error).message}`);
+        }
+        return;
+      }
+
       if (type === "stop" && sessionId) {
         const chat = activeChats.get(sessionId);
         if (chat && !chat.done) {

@@ -58,9 +58,15 @@ export class CodexAdapter implements Adapter {
     let assembledText = "";
     let finalizedMessageId: string | null = null;
     const toolCallIds: string[] = [];
+    // Track full tool_call info (not just IDs) so we can finalize an
+    // assistant message that includes them — required for the next turn's
+    // function_call_output to chain correctly through the API.
+    const pendingToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
     let firstError: { code: string; message: string } | null = null;
     let providerStop: string | undefined;
     let newResponseId: string | undefined;
+    let usageInputTokens: number | undefined;
+    let usageOutputTokens: number | undefined;
 
     const req: AnthropicTransportRequest & { previousResponseId?: string } = {
       model: this.opts.model ?? "gpt-5.4-mini",
@@ -72,6 +78,8 @@ export class CodexAdapter implements Adapter {
       sessionId: this.opts.sessionId,
       previousResponseId: prevResponseId,
     };
+
+    // Idle-event detection lives in turn-loop now (provider-agnostic).
 
     const consume = async (): Promise<void> => {
       try {
@@ -86,6 +94,7 @@ export class CodexAdapter implements Adapter {
           if (ev.type === "tool_call") {
             const tc = ev as { id: string; name: string; arguments: string };
             toolCallIds.push(tc.id);
+            pendingToolCalls.push({ id: tc.id, name: tc.name, arguments: tc.arguments });
             report({ kind: "tool_call_requested", call: { toolCallId: tc.id, tool: tc.name, args: parseArgs(tc.arguments) } });
             continue;
           }
@@ -98,6 +107,11 @@ export class CodexAdapter implements Adapter {
           if (ev.type === "done") {
             providerStop = (ev as { stopReason?: string }).stopReason;
             newResponseId = (ev as { responseId?: string }).responseId;
+            const usage = (ev as { usage?: { inputTokens: number; outputTokens: number } }).usage;
+            if (usage) {
+              usageInputTokens = usage.inputTokens;
+              usageOutputTokens = usage.outputTokens;
+            }
             continue;
           }
         }
@@ -111,12 +125,21 @@ export class CodexAdapter implements Adapter {
     this.inflight = consume();
     try { await this.inflight; } finally { this.inflight = null; }
 
-    if (assembledText.length > 0) {
+    // Finalize an assistant message whenever there is EITHER text OR tool
+    // calls. Earlier this only fired on text, dropping tool-only turns —
+    // which broke the next turn's tool_result chain on Codex (the API
+    // requires the matching function_call item to appear before its
+    // function_call_output).
+    if (assembledText.length > 0 || pendingToolCalls.length > 0) {
       finalizedMessageId = `cm-${input.opId}-${input.turnIdx}-${Date.now().toString(36)}`;
+      const content: { text: string; toolCalls?: typeof pendingToolCalls } = {
+        text: assembledText,
+      };
+      if (pendingToolCalls.length > 0) content.toolCalls = pendingToolCalls;
       const msg: CanonicalMessage = {
         messageId: finalizedMessageId,
         role: "assistant",
-        content: { text: assembledText },
+        content,
       };
       report({ kind: "message_finalized", message: msg });
     }
@@ -136,6 +159,13 @@ export class CodexAdapter implements Adapter {
       finalizedMessageId,
       stopReason: providerStop,
       pendingTools: toolCallIds.length,
+      // model is surfaced for soak-metrics' cost lookup (getPricing).
+      model: this.opts.model ?? "gpt-5.4-mini",
+      // Codex CLI surfaces usage as a separate event before `done`;
+      // the transport buffers + attaches it. Skip when absent so we
+      // don't pollute soak with spurious zeros.
+      ...(usageInputTokens !== undefined ? { usageInputTokens } : {}),
+      ...(usageOutputTokens !== undefined ? { usageOutputTokens } : {}),
     }, newResponseId);
 
     const sizeCheck = this.checkProviderStateSize(providerState);
@@ -152,9 +182,9 @@ export class CodexAdapter implements Adapter {
     return { providerState, terminalReason };
   }
 
-  async abort(): Promise<void> {
+  async abort(reason?: unknown): Promise<void> {
     this.aborted = true;
-    try { this.aborter.abort(); } catch { /* ignore */ }
+    try { this.aborter.abort(reason); } catch { /* ignore */ }
     if (this.inflight) { try { await this.inflight; } catch { /* swallow */ } }
   }
 
@@ -192,8 +222,23 @@ function convertMessages(
   const out: TransportMessage[] = [];
   for (const m of messages) {
     const c = m.content as Record<string, unknown> | string | null | undefined;
-    if (m.role === "system" || m.role === "user" || m.role === "assistant") {
+    if (m.role === "system" || m.role === "user") {
       out.push({ role: m.role, content: extractText(c) });
+      continue;
+    }
+    if (m.role === "assistant") {
+      // Pull tool_calls off content when the prior turn finalized them on
+      // an assistant message. The downstream transport (codex-transport)
+      // translates these into ChatCompletionMessageParam.tool_calls, which
+      // codex-message-convert emits as `function_call` items in the
+      // Responses API input.
+      const obj = (c ?? {}) as { text?: unknown; toolCalls?: unknown };
+      const tc = Array.isArray(obj.toolCalls) ? obj.toolCalls as Array<{ id: string; name: string; arguments: string }> : undefined;
+      out.push({
+        role: "assistant",
+        content: extractText(c),
+        ...(tc && tc.length > 0 ? { toolCalls: tc } : {}),
+      });
       continue;
     }
     if (m.role === "tool_result") {

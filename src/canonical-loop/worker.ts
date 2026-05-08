@@ -36,6 +36,8 @@ import {
   getLeaseConfig,
 } from "./lease.js";
 import { readLatestOpTurn } from "./store.js";
+import { getSessionForOp } from "../workers/session-bridge.js";
+import { hasInjects } from "../agent-loop/inject-queue.js";
 import type { Op } from "../workers/types.js";
 import type { Adapter } from "./adapter-contract.js";
 
@@ -152,7 +154,34 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
         break;
       }
 
-      if (r.terminalReason !== null) break;
+      // JARVIS resume-gate: the inject queue is the source of truth for
+      // "is the agent done?". The adapter signaled end_turn, but if the
+      // user typed a follow-up while this turn was running and it's still
+      // sitting in the queue, the agent ISN'T actually done — it just
+      // didn't get to see the new input. Override terminalReason so the
+      // worker loops one more turn; driveTurn will drainInjectsIntoTurn
+      // at the top, append the user's text to op_messages, and the
+      // adapter will see it as a fresh user message on the next call.
+      //
+      // Without this guard, mid-turn injects on long single-turn replies
+      // (e.g. a 298-action tool loop that ends with end_turn) get
+      // stranded forever — the agent finishes, the chat ends, the queue
+      // sits populated until the user types again, and even then their
+      // earlier inject mixes confusingly into a fresh request.
+      if (r.terminalReason !== null && op.type === "chat_turn") {
+        const sessionId = getSessionForOp(op.id);
+        if (sessionId && hasInjects(sessionId)) {
+          // fall through to next iteration so drainInjectsIntoTurn at
+          // the top of driveTurn pulls the user's queued message into
+          // op_messages and the adapter sees it.
+          // (No event emitted — telemetry hook can be added later when
+          // CanonicalEventType is extended.)
+        } else {
+          break;
+        }
+      } else if (r.terminalReason !== null) {
+        break;
+      }
 
       // Turn-boundary signal check (PRD §13 precedence: cancel > pause >
       // redirect). Re-read the op from disk to pick up any signal columns

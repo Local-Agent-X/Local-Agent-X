@@ -272,3 +272,88 @@ describe("Issue 12 — empty queue is a clean no-op", () => {
     expect(userRows.every(r => r.turnIdx === 0 && r.seqInTurn === 0)).toBe(true);
   });
 });
+
+// ── Resume-gate: end_turn with pending inject keeps the worker looping ──
+//
+// Real failure (session chat-mox9veaj-i2zwt, 2026-05-08): a 298-action turn
+// ended with terminalReason=done while a user inject was still queued. The
+// worker's loop broke on terminal, the chat ended, and the inject was
+// stranded — the agent never saw it. Fix in src/canonical-loop/worker.ts:
+// if op.type==="chat_turn" and the inject queue is non-empty when the
+// adapter signals done, override the break and let the worker loop one
+// more turn so driveTurn drains the queue at the top.
+
+describe("Issue 12 — terminal end_turn with pending inject extends the worker loop", () => {
+  it("end_turn on turn 0 + mid-turn inject → worker runs turn 1 and adapter sees the inject", async () => {
+    const sessionId = "sess-inject-resume-gate";
+    const op = mkOp("resume-gate");
+    trackOpForSession(op.id, sessionId);
+
+    // Adapter scripts TWO turns, both ending in done. Turn 0 streams a few
+    // chunks (gives us a window to inject AFTER drain has already happened
+    // for this turn) then ends with done. Without the resume-gate fix the
+    // worker would break here and turn 1 would never run; with the fix,
+    // turn 0's done is overridden because hasInjects() is true, the worker
+    // iterates, and turn 1 sees the inject on its drain.
+    const adapter = new FakeAdapter({
+      script: scriptMultiTurn([
+        { streamChunks: ["s0", "s1"], text: "turn 0 reply", terminal: "done" },
+        { text: "turn 1 reply seeing inject", terminal: "done" },
+      ]),
+    });
+    registerAdapterForOp(op.id, () => adapter);
+
+    // Push the inject DURING turn 0's stream — after turn 0's drain has
+    // already run, so the inject sits in the queue when turn 0 ends with
+    // done. That's the resume-gate trigger.
+    let injected = false;
+    const offStream = subscribeOpStream(op.id, () => {
+      if (!injected) {
+        injected = true;
+        pushInject(sessionId, "actually skip the pink cup line — never added");
+      }
+    });
+
+    canonicalLoopEntry(op);
+    await awaitTerminal(op.id);
+    offStream();
+
+    // The worker must have driven TWO turns despite turn 0 returning done,
+    // because the resume-gate kept it looping for the queued inject.
+    expect(adapter.turnInputs).toHaveLength(2);
+
+    // Turn 1's input contains the inject as a user message.
+    const turn1Messages = adapter.turnInputs[1].messages;
+    const injectRow = turn1Messages.find(
+      m => m.role === "user" &&
+        m.turnIdx === 1 &&
+        typeof (m.content as { text?: unknown })?.text === "string" &&
+        (m.content as { text: string }).text ===
+          "actually skip the pink cup line — never added",
+    );
+    expect(injectRow, "inject must surface as a user message on turn 1").toBeDefined();
+
+    // Queue is drained.
+    expect(hasInjects(sessionId)).toBe(false);
+  });
+
+  it("end_turn with empty queue terminates immediately (no spurious extra turn)", async () => {
+    const sessionId = "sess-inject-no-extend";
+    const op = mkOp("no-extend");
+    trackOpForSession(op.id, sessionId);
+
+    // Adapter scripts ONE turn that signals done. With NO inject queued,
+    // the resume-gate must NOT keep looping — that would re-call the
+    // adapter for a turn it doesn't have a script for, surfacing as a
+    // test failure. This pins the gate to firing only when injects exist.
+    const adapter = new FakeAdapter({
+      script: [scriptTurn({ text: "clean done", terminal: "done" })],
+    });
+    registerAdapterForOp(op.id, () => adapter);
+
+    canonicalLoopEntry(op);
+    await awaitTerminal(op.id);
+
+    expect(adapter.turnInputs).toHaveLength(1);
+  });
+});

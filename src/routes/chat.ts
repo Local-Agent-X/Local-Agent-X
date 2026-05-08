@@ -415,10 +415,17 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
           });
 
           let canonicalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+          // Capture the canonical op id when the runner emits chat_op_started.
+          // Used at turn-end to read back any mid-turn injects from
+          // op_messages and persist them to session.messages.
+          let canonicalOpId = "";
           for await (const ev of eventStream) {
             if (ev.type === "done") {
               if (ev.usage) canonicalUsage = ev.usage;
               continue; // emit single done at end via primary path below
+            }
+            if (ev.type === "chat_op_started" && typeof ev.opId === "string") {
+              canonicalOpId = ev.opId;
             }
             primaryEventProxy(ev);
           }
@@ -436,9 +443,35 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
           if (assistantText) {
             const { stripEphemeralMessages: stripCanonical } = await import("../agent-providers.js");
             type MsgRecordC = Record<string, unknown>;
+            // Pull mid-turn injects that the user typed while this canonical
+            // turn was running (drained by turn-loop into op_messages with
+            // messageId prefixed `inject-`). Without this they exist on the
+            // canonical side but never land in session.messages — so on chat
+            // reload the user's mid-turn comments disappear from history.
+            // Position-wise we slot them between the original user message
+            // and the assistant's final reply, in arrival order, mirroring
+            // how the agent actually saw them.
+            let injectMessages: Array<{ role: "user"; content: string }> = [];
+            if (canonicalOpId) {
+              try {
+                const { readOpMessages } = await import("../canonical-loop/store.js");
+                const rows = readOpMessages(canonicalOpId);
+                injectMessages = rows
+                  .filter(m => m.role === "user" && m.messageId.startsWith("inject-"))
+                  .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
+                  .map(m => {
+                    const c = (m.content as { text?: string })?.text;
+                    return { role: "user" as const, content: typeof c === "string" ? c : "" };
+                  })
+                  .filter(m => m.content);
+              } catch (e) {
+                logger.warn(`[chat] canonical inject persist read failed: ${(e as Error).message}`);
+              }
+            }
             const synthesized = [
               ...session.messages,
               { role: "user" as const, content: message },
+              ...injectMessages,
               { role: "assistant" as const, content: assistantText },
             ];
             session.messages = stripCanonical(synthesized).filter((m) => {

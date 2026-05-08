@@ -1,0 +1,102 @@
+/**
+ * Provider-agnostic CanonicalMessage[] → TransportMessage[] conversion.
+ *
+ * Every adapter (anthropic, codex, and any future addition) needs to take
+ * the canonical loop's role-tagged op_messages and reshape them into the
+ * TransportMessage envelope that adapters' transports consume. Doing
+ * that conversion *inside each adapter* meant:
+ *
+ *   - The same logic existed twice (anthropic.ts + codex.ts had near-
+ *     identical convertMessages functions).
+ *   - When the seed path started persisting `content.toolCalls` on
+ *     assistant rows so tool-using histories survive a chat resume,
+ *     each adapter had to learn to read that field independently.
+ *     The Codex adapter learned it; the Anthropic adapter did not, and
+ *     Anthropic chats with tool-using history would have hit the same
+ *     "orphan tool_result" rejection eventually.
+ *
+ * Promoting the conversion to a shared helper means every adapter gets
+ * the same round-trip semantics for free. New adapters just import this
+ * helper; their adapter-specific code is the thin shell that hands
+ * TransportMessage[] to whichever transport they wrap.
+ *
+ * Rules encoded here:
+ *   - "system" / "user" canonical rows pass through unchanged (text only).
+ *   - "assistant" rows pass through their text AND any toolCalls they
+ *     carry on `content.toolCalls`. Adapters whose transport translates
+ *     toolCalls into the provider's tool_use shape get them automatically.
+ *   - "tool_result" rows become role:"tool" with toolCallId pulled from
+ *     `content.toolCallId`; the result body is a string (JSON-stringified
+ *     when not already a string).
+ *   - "control" rows (rare; redirect/system-injection markers) become
+ *     user messages with a `[CONTROL] ` prefix.
+ *   - A pendingRedirect (turn-boundary user message from the redirect
+ *     control API) is appended as a user message with a `[REDIRECT] `
+ *     prefix.
+ *
+ * Anything that's adapter-SPECIFIC (e.g. Codex's compound call_id|item_id
+ * encoding inside transport→provider conversion) stays inside that
+ * adapter's own files. This helper draws the line at "canonical →
+ * transport" — provider wire format conversion is the next layer down.
+ */
+import type { CanonicalMessage } from "../contract-types.js";
+import type { TurnInput } from "../adapter-contract.js";
+import type { TransportMessage } from "./anthropic.js";
+
+export function canonicalToTransport(
+  messages: CanonicalMessage[],
+  pendingRedirect: TurnInput["pendingRedirect"],
+): TransportMessage[] {
+  const out: TransportMessage[] = [];
+  for (const m of messages) {
+    const c = m.content as Record<string, unknown> | string | null | undefined;
+    if (m.role === "system" || m.role === "user") {
+      out.push({ role: m.role, content: extractText(c) });
+      continue;
+    }
+    if (m.role === "assistant") {
+      const obj = (c ?? {}) as { text?: unknown; toolCalls?: unknown };
+      const tc = Array.isArray(obj.toolCalls)
+        ? (obj.toolCalls as Array<{ id: string; name: string; arguments: string }>)
+        : undefined;
+      out.push({
+        role: "assistant",
+        content: extractText(c),
+        ...(tc && tc.length > 0 ? { toolCalls: tc } : {}),
+      });
+      continue;
+    }
+    if (m.role === "tool_result") {
+      const obj = (c ?? {}) as { toolCallId?: string; result?: unknown };
+      const content =
+        typeof obj.result === "string"
+          ? obj.result
+          : JSON.stringify(obj.result ?? null);
+      out.push({
+        role: "tool",
+        toolCallId: obj.toolCallId ?? "tc-unknown",
+        content,
+      });
+      continue;
+    }
+    if (m.role === "control") {
+      const text = extractText(c);
+      if (text) out.push({ role: "user", content: `[CONTROL] ${text}` });
+      continue;
+    }
+  }
+  if (pendingRedirect) {
+    out.push({ role: "user", content: `[REDIRECT] ${pendingRedirect.text}` });
+  }
+  return out;
+}
+
+function extractText(c: unknown): string {
+  if (c == null) return "";
+  if (typeof c === "string") return c;
+  if (typeof c === "object" && "text" in (c as Record<string, unknown>)) {
+    const v = (c as { text?: unknown }).text;
+    return typeof v === "string" ? v : "";
+  }
+  return "";
+}

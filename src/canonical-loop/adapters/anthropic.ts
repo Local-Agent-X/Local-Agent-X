@@ -42,6 +42,7 @@
  */
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
+import { canonicalToTransport } from "./canonical-to-transport.js";
 
 export const ANTHROPIC_ADAPTER_NAME = "anthropic";
 export const ANTHROPIC_ADAPTER_VERSION = "1.0.0";
@@ -189,7 +190,7 @@ export class AnthropicAdapter implements Adapter {
     const req: AnthropicTransportRequest = {
       model: this.opts.model ?? "claude-opus-4-7",
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
-      messages: convertMessages(input.messages, input.pendingRedirect),
+      messages: canonicalToTransport(input.messages, input.pendingRedirect),
       tools: convertTools(input.tools),
       signal: this.aborter.signal,
       maxTokens: this.opts.maxTokens,
@@ -363,41 +364,6 @@ export class AnthropicAdapter implements Adapter {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-function convertMessages(
-  messages: CanonicalMessage[],
-  pendingRedirect: TurnInput["pendingRedirect"],
-): TransportMessage[] {
-  const out: TransportMessage[] = [];
-  for (const m of messages) {
-    const c = m.content as Record<string, unknown> | string | null | undefined;
-    if (m.role === "system" || m.role === "user" || m.role === "assistant") {
-      out.push({ role: m.role, content: extractText(c) });
-      continue;
-    }
-    if (m.role === "tool_result") {
-      const obj = (c ?? {}) as { toolCallId?: string; result?: unknown; status?: string };
-      const content =
-        typeof obj.result === "string"
-          ? obj.result
-          : JSON.stringify(obj.result ?? null);
-      out.push({
-        role: "tool",
-        toolCallId: obj.toolCallId ?? "tc-unknown",
-        content,
-      });
-      continue;
-    }
-    if (m.role === "control") {
-      const text = extractText(c);
-      if (text) out.push({ role: "user", content: `[CONTROL] ${text}` });
-      continue;
-    }
-  }
-  if (pendingRedirect) {
-    out.push({ role: "user", content: `[REDIRECT] ${pendingRedirect.text}` });
-  }
-  return out;
-}
 
 function convertTools(tools: TurnInput["tools"]): TransportTool[] {
   return tools.map(t => ({
@@ -405,16 +371,6 @@ function convertTools(tools: TurnInput["tools"]): TransportTool[] {
     description: t.description ?? "",
     parameters: ((t.inputSchema as Record<string, unknown>) ?? {}),
   }));
-}
-
-function extractText(c: unknown): string {
-  if (c == null) return "";
-  if (typeof c === "string") return c;
-  if (typeof c === "object" && "text" in (c as Record<string, unknown>)) {
-    const v = (c as { text?: unknown }).text;
-    return typeof v === "string" ? v : "";
-  }
-  return "";
 }
 
 function parseArgs(raw: string): unknown {

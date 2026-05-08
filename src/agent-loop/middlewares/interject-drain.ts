@@ -19,16 +19,8 @@ export const interjectDrainMiddleware: LoopMiddleware = {
     if (!ctx.req.sessionId) return { kind: "continue" };
     const injects = drainInjects(ctx.req.sessionId);
     if (injects.length === 0) return { kind: "continue" };
-    // Wrap with the same temporal-context marker the canonical path uses
-    // (turn-loop.ts:drainInjectsIntoTurn). The model gets one piece of
-    // metadata it can't otherwise know — the message arrived MID-TURN.
-    // routes/chat.ts strips this marker before persisting to session.messages
-    // so the chat UI shows the user's verbatim text, not the engine's framing.
     for (const text of injects) {
-      ctx.messages.push({
-        role: "user",
-        content: `[mid-turn user message] ${text}`,
-      } as ChatCompletionMessageParam);
+      ctx.messages.push({ role: "user", content: text } as ChatCompletionMessageParam);
     }
     return { kind: "continue" };
   },

@@ -111,9 +111,16 @@
   transform: scale(1.06);
 }
 
-/* Both controls cluster bottom-right so they don't fight the chat header */
+/* Both controls live OUTSIDE the canvas area so they never overlay sphere
+ * particles. Default placement is fixed at viewport bottom-right so they
+ * stay clear of the sphere regardless of mode (split, floating, fullscreen).
+ * Earlier they were `position:absolute; bottom:24px` inside the root, which
+ * meant in split mode they overlapped the bottom ~80px of the canvas and
+ * clipped centered emoji glyphs.
+ */
 #voice-sphere-root .vs-back-btn {
-  bottom: 24px;
+  position: fixed;
+  bottom: 96px;
   right: 24px;
   width: 56px;
   height: 56px;
@@ -121,16 +128,21 @@
 }
 
 #voice-sphere-root .vs-mode-toggle {
-  bottom: 24px;
+  position: fixed;
+  bottom: 96px;
   right: 92px;
   width: 40px;
   height: 40px;
   font-size: 16px;
 }
 
-/* In floating mode, both controls cluster under the sphere as a small pair */
+/* In floating mode, both controls cluster under the sphere as a small pair.
+ * Override the default fixed-positioning back to absolute so they're
+ * positioned relative to the floating sphere root and travel with it
+ * when the user drags. */
 #voice-sphere-root.vs-mode-floating .vs-back-btn,
 #voice-sphere-root.vs-mode-floating .vs-mode-toggle {
+  position: absolute;
   bottom: -10px;
   width: 28px;
   height: 28px;

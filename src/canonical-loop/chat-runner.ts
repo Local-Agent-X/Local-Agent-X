@@ -196,14 +196,27 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
 
   // 3. Per-op adapter — uses the FULL prepared system prompt (memory,
   //    AGENTS, history is already in op_messages, so the system prompt
-  //    is the static system context only).
-  registerAdapterForOp(op.id, () =>
-    createAnthropicAdapter({
-      systemPrompt: ctx.prepared.systemPrompt,
-      model: ctx.prepared.model,
-      sessionId: ctx.sessionId,
-    }),
-  );
+  //    is the static system context only). Provider follows the prepared
+  //    request, so when the user picks Codex in settings the chat goes
+  //    through CodexAdapter end-to-end (pure-canonical, no random canary).
+  if (ctx.prepared.provider === "codex") {
+    const { createCodexAdapter } = await import("./adapters/codex.js");
+    registerAdapterForOp(op.id, () =>
+      createCodexAdapter({
+        systemPrompt: ctx.prepared.systemPrompt,
+        model: ctx.prepared.model,
+        sessionId: ctx.sessionId,
+      }),
+    );
+  } else {
+    registerAdapterForOp(op.id, () =>
+      createAnthropicAdapter({
+        systemPrompt: ctx.prepared.systemPrompt,
+        model: ctx.prepared.model,
+        sessionId: ctx.sessionId,
+      }),
+    );
+  }
 
   // 4. Per-op tool dispatcher — wraps tool-executor with this turn's
   //    security context. Cleaned up in `finally` below.

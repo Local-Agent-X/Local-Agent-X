@@ -111,6 +111,23 @@ export function defaultAnthropicTransport(): AnthropicTransport {
 // ── helpers ──────────────────────────────────────────────────────────────
 
 function toOpenAiMessage(m: AnthropicTransportRequest["messages"][number]): ChatCompletionMessageParam {
+  // Round-trip assistant tool_calls — same reason as codex-transport's
+  // toOaiMessage. The downstream anthropic-client converts ChatCompletion
+  // tool_calls into Anthropic SDK tool_use blocks; without this, prior
+  // tool-using turns surface as orphan tool_results and the API rejects
+  // the request. Drops tool_calls would break canonical chat for any
+  // provider whose history includes a tool turn.
+  if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
+    return {
+      role: "assistant",
+      content: m.content || null,
+      tool_calls: m.toolCalls.map(tc => ({
+        id: tc.id,
+        type: "function" as const,
+        function: { name: tc.name, arguments: tc.arguments },
+      })),
+    } as ChatCompletionMessageParam;
+  }
   if (m.role === "system" || m.role === "user" || m.role === "assistant") {
     return { role: m.role, content: m.content } as ChatCompletionMessageParam;
   }

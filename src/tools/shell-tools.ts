@@ -220,8 +220,12 @@ export const bashTool: ToolDefinition = {
         // ollama install via winget hung on UAC for 5+ minutes; agent
         // retried 11 times and tripped circuit breaker because there was no
         // progress signal to confirm forward motion.
-        type ToolProgressEvent = { type: "tool_progress"; toolName: string; toolCallId?: string; message: string };
-        const onEvent = args._onEvent as ((e: ToolProgressEvent) => void) | undefined;
+        // ServerEvent's union already includes tool_progress + av_blocked_warning
+        // (see src/types.ts). Use the broader type so this same callback is
+        // also compatible with recordAvSuspectKill below, which expects
+        // (e: ServerEvent) => void. Narrowing locally to ToolProgressEvent
+        // produced a TS2345 mismatch on the recordAvSuspectKill(onEvent) call.
+        const onEvent = args._onEvent as ((e: ServerEvent) => void) | undefined;
         const toolCallId = args._toolCallId as string | undefined;
         const PROGRESS_INTERVAL_MS = 500;
         const PROGRESS_TAIL_CHARS = 200;

@@ -95,8 +95,8 @@ async function resolveActiveProvider(): Promise<{
     } else if (provider === "codex" || provider === "openai") {
       // Codex subscription bearer or OpenAI API key — try secrets store first
       try {
-        const { secretsStore } = await import("../secrets.js");
-        apiKey = secretsStore.get("OPENAI_API_KEY") || "";
+        const { getSecretsStoreSingleton } = await import("../secrets.js");
+        apiKey = getSecretsStoreSingleton()?.get("OPENAI_API_KEY") || "";
       } catch {}
       if (!apiKey) {
         try { apiKey = process.env.OPENAI_API_KEY || ""; } catch {}
@@ -108,13 +108,13 @@ async function resolveActiveProvider(): Promise<{
       if (!model) model = "llama3:8b";
     } else if (provider === "xai") {
       try {
-        const { secretsStore } = await import("../secrets.js");
-        apiKey = secretsStore.get("XAI_API_KEY") || "";
+        const { getSecretsStoreSingleton } = await import("../secrets.js");
+        apiKey = getSecretsStoreSingleton()?.get("XAI_API_KEY") || "";
       } catch {}
     } else if (provider === "gemini") {
       try {
-        const { secretsStore } = await import("../secrets.js");
-        apiKey = secretsStore.get("GEMINI_API_KEY") || "";
+        const { getSecretsStoreSingleton } = await import("../secrets.js");
+        apiKey = getSecretsStoreSingleton()?.get("GEMINI_API_KEY") || "";
       } catch {}
     }
   } catch { /* fall through */ }

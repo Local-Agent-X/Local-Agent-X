@@ -228,6 +228,10 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       });
 
       if (activeTurn?.signal.aborted) {
+        // Persist partial history on barge-in (runTurn returns it with
+        // an "[interrupted by user]" marker) so the next turn has a
+        // record of what was said.
+        history = result.updatedHistory;
         ctx.sendEvent({ type: "assistant_interrupted" });
         activeTurn = null;
         return;

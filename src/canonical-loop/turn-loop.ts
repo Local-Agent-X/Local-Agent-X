@@ -82,7 +82,44 @@ export async function driveTurn(
   const toolCalls: ToolCall[] = [];
   let adapterError: { code: string; message: string } | null = null;
 
+  // Idle-event detection — provider-agnostic. Watches the report stream
+  // for ANY activity (stream chunks, tool calls, finalized messages,
+  // errors). If nothing arrives for IDLE_TIMEOUT_MS the adapter is
+  // assumed stuck and we abort with reason "idle-stalled" so transports
+  // that recognize it (warm-pool's reason matcher) can hard-kill the
+  // underlying CLI/HTTP connection. Productive long turns reset the
+  // timer on every event and never trip this; only true stalls die.
+  // Lives here so any future adapter (xai, gemini, local) inherits it.
+  const idleMs = parseInt(process.env.LAX_CANONICAL_IDLE_TIMEOUT_MS ?? "120000", 10);
+  let lastReportAt = Date.now();
+  let idleFired = false;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const armIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (Date.now() - lastReportAt < idleMs) {
+        armIdleTimer();
+        return;
+      }
+      idleFired = true;
+      adapterError = { code: "stalled", message: `no adapter reports for ${idleMs}ms — model presumed stuck` };
+      emit(op.id, "error", { code: "stalled", message: adapterError.message, retryable: false });
+      // Fire-and-forget — don't await; runTurn may still need a beat to
+      // unwind. The reason propagates through the abort signal so
+      // transports that watch reason (warm-pool kill on /idle|stalled|stop/)
+      // do the right thing.
+      void adapter.abort(new Error("idle-stalled"));
+    }, idleMs);
+  };
+  armIdleTimer();
+
+  // Time-component split for soak: how much of the turn was spent inside
+  // the adapter's model call vs dispatching tools. Together with
+  // commitMs (small, not separately tracked) and any caller-side prep,
+  // they reconstruct where the turn's wall-clock went.
+  const modelStart = Date.now();
   const result = await adapter.runTurn(input, (r: AdapterReport) => {
+    lastReportAt = Date.now();
     if (r.kind === "stream_chunk") {
       publishStreamChunk(op.id, r.body);
       return;
@@ -100,6 +137,9 @@ export async function driveTurn(
       emit(op.id, "error", { code: r.code, message: r.message, retryable: r.retryable });
     }
   });
+  if (idleTimer) clearTimeout(idleTimer);
+  void idleFired; // surfaced via adapterError; reserved for telemetry
+  const modelMs = Date.now() - modelStart;
 
   // Cancel-aware bail BEFORE tool dispatch and BEFORE commit. The adapter
   // has already returned (via abort or natural completion); the worker's
@@ -109,7 +149,9 @@ export async function driveTurn(
     return { terminalReason: null, toolCount: 0, messageCount: 0, cancelled: true };
   }
 
+  const toolDispatchStart = Date.now();
   const { toolMessages, toolSummary } = await dispatchTools(op.id, turnIdx, toolCalls);
+  const toolDispatchMs = Date.now() - toolDispatchStart;
 
   if (opts.isCancelled?.()) {
     return { terminalReason: null, toolCount: toolSummary.length, messageCount: 0, cancelled: true };
@@ -134,6 +176,8 @@ export async function driveTurn(
     terminalReason,
     redirectConsumed: pendingRedirect != null,
     redirectInstructionId: pendingRedirect?.instructionId,
+    modelMs,
+    toolDispatchMs,
   });
 
   return { terminalReason, toolCount: toolSummary.length, messageCount: allMessages.length, cancelled: false };

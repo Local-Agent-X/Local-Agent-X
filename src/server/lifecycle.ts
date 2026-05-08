@@ -232,11 +232,20 @@ export function wireWsChat(deps: {
     try {
       const body = JSON.stringify({ message, sessionId, attachments: attachments || [] });
       logger.info(`[ws-chat] body_bytes=${body.length} → fetch /api/chat`);
+      // 30 min cap on the WS-forward HTTP self-loop. Earlier 10 min was
+      // truncating productive Opus + tool turns mid-flight (the model
+      // would still be making real tool calls, but the UI's SSE stream
+      // got cut). 30 min covers realistic agentic chat without becoming
+      // an infinite-hang risk — true stalls are caught by the per-adapter
+      // idle-event detector (LAX_CANONICAL_IDLE_TIMEOUT_MS, 120s default).
+      // Long-term, this whole fetch hop should be replaced by direct
+      // canonical-op subscription so connection drops become invisible
+      // (UI calls reconnectOp on the opId after disconnect).
       const res = await fetch(`http://127.0.0.1:${config.port}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.authToken}` },
         body,
-        signal: AbortSignal.timeout(600_000),
+        signal: AbortSignal.timeout(1_800_000),
       });
       logger.info(`[ws-chat] /api/chat status=${res.status} hasBody=${!!res.body}`);
       if (res.body) { for await (const _ of res.body) { /* drain */ } }

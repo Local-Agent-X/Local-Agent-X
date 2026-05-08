@@ -36,7 +36,15 @@ export interface Adapter {
   readonly name: string;
   readonly version: string;
   runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult>;
-  abort(): Promise<void>;
+  /**
+   * Cancel the in-flight turn. Optional `reason` propagates through the
+   * adapter's AbortController so transports can implement reason-aware
+   * cleanup (e.g. warm-pool kills the CLI process when reason matches
+   * `/idle|stalled|stop/`, but drains gracefully on routine cleanup).
+   * Adapters that don't honor reason are still spec-compliant — the
+   * argument is informational only.
+   */
+  abort(reason?: unknown): Promise<void>;
 }
 
 export interface TurnInput {

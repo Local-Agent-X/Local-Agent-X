@@ -116,6 +116,25 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       });
       logger.info(`[timing] prepareAgentRequest ${Date.now() - prepStart}ms (sess=${sessionId.slice(0, 16)})`);
 
+      // Emit a context_status event so the chat-bar gauge reflects actual
+      // prompt size BEFORE the agent runs. Previously this only fired from
+      // tool-executor's compaction check (i.e. mid-turn during tool use), so
+      // text-only chat sessions saw "0% / 1000K" forever even with hundreds
+      // of K of cached history. The UI was misleading users into thinking
+      // their context was being flushed every turn.
+      try {
+        const { getContextStatus } = await import("../context-manager.js");
+        const status = getContextStatus(prepared.cleanHistory, prepared.model);
+        sseWrite(res, {
+          type: "context_status",
+          percentage: status.percentage,
+          level: status.level,
+          usedTokens: status.usedTokens,
+          maxTokens: status.maxTokens,
+          compacted: false,
+        });
+      } catch { /* best-effort telemetry */ }
+
       // Abort early if no API key — let finally emit done and end the response
       if (!prepared.apiKey) {
         sseWrite(res, { type: "error", message: `No API key configured for ${prepared.provider}.` });

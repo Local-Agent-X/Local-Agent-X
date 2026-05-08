@@ -1594,6 +1594,15 @@ let voiceCurrentMsgEl = null;  // assistant chat bubble being built
 let voiceCurrentMsgBody = null;
 let voiceCurrentMsgText = '';
 let _voiceSilenceTimer = null; // sphere → idle if no audio frame for 800ms
+// Browser-tier voice chat uses Web Speech API for STT (same as dictate) so the
+// "no install" promise actually holds. Server still runs the LLM + TTS, only
+// STT moves client-side. voiceSR tracks the recognizer for cleanup.
+let voiceSR = null;
+let voiceSRRestartGuard = false;
+// When true, assistant_delta events feed window.speechSynthesis instead of
+// the playback worklet (browser tier — server isn't sending PCM TTS frames).
+let voiceBrowserTtsActive = false;
+let _voiceBrowserTtsBuf = "";
 
 // Dictate mode is mutually exclusive with voice mode. Uses the browser's
 // native SpeechRecognition API (instant-on, native streaming partials, no
@@ -1882,42 +1891,109 @@ async function startVoiceMode() {
     // processor name, then `new AudioWorkletNode(ctx, 'mic-capture')` throws
     // "mic-capture is not defined in AudioWorkletGlobalScope". Bump the
     // version when the worklet code changes.
+    //
+    // Browser tier branch: if the user picked the "Browser" voice tier the
+    // server has no STT — we run Web Speech API client-side and ship final
+    // transcripts via the WS `transcript` message. We still need a mic stream
+    // for the sphere's analyser, but skip the mic-capture worklet (no PCM
+    // streaming) and skip the playback worklet (browser tier uses
+    // window.speechSynthesis for TTS, never receives PCM frames).
+    const activeTier = (typeof window.getActiveVoiceTier === 'function') ? window.getActiveVoiceTier() : null;
+    const isBrowserTier = activeTier?.id === 'browser';
+    voiceBrowserTtsActive = isBrowserTier;
+    _voiceBrowserTtsBuf = "";
+
     voiceCtx = new AudioContext();
-    await voiceCtx.audioWorklet.addModule('/js/voice/mic-capture-worklet.js?v=vb2');
-    await voiceCtx.audioWorklet.addModule('/js/voice/playback-worklet.js?v=vb2');
+    if (!isBrowserTier) {
+      await voiceCtx.audioWorklet.addModule('/js/voice/mic-capture-worklet.js?v=vb2');
+      await voiceCtx.audioWorklet.addModule('/js/voice/playback-worklet.js?v=vb2');
+    }
 
     // 4) Mic capture
     voiceMicStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
     });
     const source = voiceCtx.createMediaStreamSource(voiceMicStream);
-    voiceMicNode = new AudioWorkletNode(voiceCtx, 'mic-capture');
-    voiceMicNode.port.onmessage = (e) => {
-      if (!e.data || e.data.type !== 'pcm') return;
-      // Push-to-talk gate: when the configured mode is 'push-to-talk' or
-      // 'toggle' and the gate is closed, drop frames instead of forwarding.
-      // Mode 'off' returns gate=open (or null) so behavior is unchanged.
-      if (window.PushToTalk && window.PushToTalk.getState() === 'closed') return;
-      if (voiceWS && voiceWS.readyState === WebSocket.OPEN) voiceWS.send(e.data.pcm);
-    };
-    source.connect(voiceMicNode);
-    voiceMicNode.port.postMessage({ cmd: 'start' });
+    if (!isBrowserTier) {
+      voiceMicNode = new AudioWorkletNode(voiceCtx, 'mic-capture');
+      voiceMicNode.port.onmessage = (e) => {
+        if (!e.data || e.data.type !== 'pcm') return;
+        // Push-to-talk gate: when the configured mode is 'push-to-talk' or
+        // 'toggle' and the gate is closed, drop frames instead of forwarding.
+        // Mode 'off' returns gate=open (or null) so behavior is unchanged.
+        if (window.PushToTalk && window.PushToTalk.getState() === 'closed') return;
+        if (voiceWS && voiceWS.readyState === WebSocket.OPEN) voiceWS.send(e.data.pcm);
+      };
+      source.connect(voiceMicNode);
+      voiceMicNode.port.postMessage({ cmd: 'start' });
+    } else {
+      // Browser tier — start SpeechRecognition. Same engine the dictate
+      // button uses, but here finals go to the server over the WS as
+      // transcript messages so the agent loop runs.
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) {
+        alert('This browser does not support SpeechRecognition. Switch to a Chromium-based browser, or pick a different voice tier (Edge cloud, Kokoro local).');
+        throw new Error('SpeechRecognition unavailable');
+      }
+      voiceSR = new SR();
+      voiceSR.continuous = true;
+      voiceSR.interimResults = true;
+      voiceSR.lang = navigator.language || 'en-US';
+      voiceSR.maxAlternatives = 1;
+      voiceSR.onresult = (event) => {
+        if (window.PushToTalk && window.PushToTalk.getState() === 'closed') return;
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const result = event.results[i];
+          const transcript = (result[0].transcript || '').trim();
+          if (!transcript) continue;
+          const isFinal = !!result.isFinal;
+          if (voiceWS && voiceWS.readyState === WebSocket.OPEN) {
+            voiceWS.send(JSON.stringify({ type: 'transcript', text: transcript, isFinal }));
+          }
+        }
+      };
+      voiceSR.onerror = (event) => {
+        // 'no-speech' and 'aborted' are routine — ignore. Other errors
+        // surface to console; we attempt to restart unless we already are.
+        if (event.error === 'no-speech' || event.error === 'aborted') return;
+        console.warn('[voice-sr] error:', event.error);
+      };
+      voiceSR.onend = () => {
+        // SR stops itself after periods of silence; auto-restart while voice
+        // mode is on. Guard against tight loops if start() throws.
+        if (!voiceMode || voiceSRRestartGuard) return;
+        voiceSRRestartGuard = true;
+        try { voiceSR && voiceSR.start(); } catch (e) {
+          console.warn('[voice-sr] restart failed:', e && e.message);
+        }
+        setTimeout(() => { voiceSRRestartGuard = false; }, 250);
+      };
+      try { voiceSR.start(); } catch (e) {
+        console.warn('[voice-sr] initial start failed:', e && e.message);
+      }
+    }
 
-    // 5) Playback
-    voicePlaybackNode = new AudioWorkletNode(voiceCtx, 'pcm-playback');
-    voicePlaybackNode.connect(voiceCtx.destination);
+    // 5) Playback — only for tiers that receive PCM TTS frames over the WS.
+    // Browser tier uses window.speechSynthesis (driven by assistant_delta
+    // events), so no PCM playback worklet is needed.
+    if (!isBrowserTier) {
+      voicePlaybackNode = new AudioWorkletNode(voiceCtx, 'pcm-playback');
+      voicePlaybackNode.connect(voiceCtx.destination);
+    }
 
     // 6) Sphere visualization — tap mic + TTS playback through analysers
     if (window.VoiceSphere) {
       try {
         const micAna = voiceCtx.createAnalyser(); micAna.fftSize = 2048;
         source.connect(micAna);
-        const ttsAna = voiceCtx.createAnalyser(); ttsAna.fftSize = 2048;
-        voicePlaybackNode.connect(ttsAna);
         const savedMode = localStorage.getItem('lax_voice_view_mode') || 'split';
         VoiceSphere.show(savedMode);
         VoiceSphere.attachMicAnalyser(micAna);
-        VoiceSphere.attachTtsAnalyser(ttsAna);
+        if (voicePlaybackNode) {
+          const ttsAna = voiceCtx.createAnalyser(); ttsAna.fftSize = 2048;
+          voicePlaybackNode.connect(ttsAna);
+          VoiceSphere.attachTtsAnalyser(ttsAna);
+        }
         VoiceSphere.setState('idle');
       } catch (sphereErr) { console.warn('[voice-sphere] init failed:', sphereErr); }
     }
@@ -1971,6 +2047,16 @@ function cleanupVoiceResources() {
   }
   try { voiceMicStream && voiceMicStream.getTracks().forEach(t => t.stop()); } catch {}
   try { voiceCtx && voiceCtx.close(); } catch {}
+  // Stop client-side STT (browser tier) + cancel any pending speech.
+  if (voiceSR) {
+    try { voiceSR.onend = null; voiceSR.onresult = null; voiceSR.onerror = null; voiceSR.stop(); } catch {}
+    voiceSR = null;
+  }
+  if (voiceBrowserTtsActive && 'speechSynthesis' in window) {
+    try { window.speechSynthesis.cancel(); } catch {}
+  }
+  voiceBrowserTtsActive = false;
+  _voiceBrowserTtsBuf = "";
   voiceWS = null; voiceCtx = null; voiceMicNode = null; voicePlaybackNode = null; voiceMicStream = null;
   voiceCurrentMsgEl = null; voiceCurrentMsgBody = null; voiceCurrentMsgText = '';
   const ttsBtn = document.getElementById('tts-toggle');
@@ -2071,6 +2157,28 @@ function handleVoiceWsMessage(e) {
       voiceCurrentMsgBody.innerHTML = (typeof md === 'function' ? md(voiceCurrentMsgText) : voiceCurrentMsgText);
       const msgs = document.getElementById('messages');
       if (msgs) msgs.scrollTop = msgs.scrollHeight;
+      // Browser tier — server isn't sending TTS PCM frames; speak deltas
+      // locally via window.speechSynthesis. Buffer until a sentence
+      // terminator so we don't speak fragmented words.
+      if (voiceBrowserTtsActive && msg.text) {
+        _voiceBrowserTtsBuf += msg.text;
+        const SENT = /[.!?]["')\]]?(\s|$)/g;
+        let lastCut = 0;
+        let m;
+        while ((m = SENT.exec(_voiceBrowserTtsBuf)) !== null) {
+          const sentence = _voiceBrowserTtsBuf.slice(lastCut, m.index + m[0].length).trim();
+          if (sentence && 'speechSynthesis' in window) {
+            const u = new SpeechSynthesisUtterance(sentence);
+            try {
+              const r = parseFloat(localStorage.getItem('lax_speed') || '1.0');
+              if (r > 0.4 && r < 2.5) u.rate = r;
+            } catch {}
+            window.speechSynthesis.speak(u);
+          }
+          lastCut = m.index + m[0].length;
+        }
+        if (lastCut > 0) _voiceBrowserTtsBuf = _voiceBrowserTtsBuf.slice(lastCut);
+      }
       break;
     case 'assistant_done':
     case 'assistant_interrupted':
@@ -2079,6 +2187,19 @@ function handleVoiceWsMessage(e) {
         activeChat.updatedAt = Date.now();
         if (typeof saveChats === 'function') saveChats();
         if (typeof renderSidebar === 'function') renderSidebar();
+      }
+      // Speak any leftover buffer (last sentence without terminator)
+      if (voiceBrowserTtsActive) {
+        const tail = _voiceBrowserTtsBuf.trim();
+        if (tail && 'speechSynthesis' in window) {
+          const u = new SpeechSynthesisUtterance(tail);
+          try {
+            const r = parseFloat(localStorage.getItem('lax_speed') || '1.0');
+            if (r > 0.4 && r < 2.5) u.rate = r;
+          } catch {}
+          window.speechSynthesis.speak(u);
+        }
+        _voiceBrowserTtsBuf = "";
       }
       voiceCurrentMsgEl = null; voiceCurrentMsgBody = null; voiceCurrentMsgText = '';
       break;

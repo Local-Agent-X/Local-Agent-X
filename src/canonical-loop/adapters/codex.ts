@@ -13,6 +13,7 @@ import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-c
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import type { CodexTransport } from "./codex-transport.js";
 import type { AnthropicTransportRequest } from "./anthropic.js";
+import { canonicalToTransport } from "./canonical-to-transport.js";
 
 export const CODEX_ADAPTER_NAME = "codex";
 export const CODEX_ADAPTER_VERSION = "1.0.0";
@@ -71,7 +72,7 @@ export class CodexAdapter implements Adapter {
     const req: AnthropicTransportRequest & { previousResponseId?: string } = {
       model: this.opts.model ?? "gpt-5.4-mini",
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
-      messages: convertMessages(input.messages, input.pendingRedirect),
+      messages: canonicalToTransport(input.messages, input.pendingRedirect),
       tools: convertTools(input.tools),
       signal: this.aborter.signal,
       maxTokens: this.opts.maxTokens,
@@ -211,66 +212,15 @@ export class CodexAdapter implements Adapter {
   }
 }
 
-// ── helpers (mirrors anthropic.ts) ──────────────────────────────────────────
+// ── helpers ──────────────────────────────────────────────────────────────
+// CanonicalMessage[] → TransportMessage[] conversion lives in the shared
+// canonicalToTransport helper. Adapters are expected to import it instead
+// of rolling their own — see canonical-to-transport.ts for the contract.
 
-import type { TransportMessage, TransportTool } from "./anthropic.js";
-
-function convertMessages(
-  messages: CanonicalMessage[],
-  pendingRedirect: TurnInput["pendingRedirect"],
-): TransportMessage[] {
-  const out: TransportMessage[] = [];
-  for (const m of messages) {
-    const c = m.content as Record<string, unknown> | string | null | undefined;
-    if (m.role === "system" || m.role === "user") {
-      out.push({ role: m.role, content: extractText(c) });
-      continue;
-    }
-    if (m.role === "assistant") {
-      // Pull tool_calls off content when the prior turn finalized them on
-      // an assistant message. The downstream transport (codex-transport)
-      // translates these into ChatCompletionMessageParam.tool_calls, which
-      // codex-message-convert emits as `function_call` items in the
-      // Responses API input.
-      const obj = (c ?? {}) as { text?: unknown; toolCalls?: unknown };
-      const tc = Array.isArray(obj.toolCalls) ? obj.toolCalls as Array<{ id: string; name: string; arguments: string }> : undefined;
-      out.push({
-        role: "assistant",
-        content: extractText(c),
-        ...(tc && tc.length > 0 ? { toolCalls: tc } : {}),
-      });
-      continue;
-    }
-    if (m.role === "tool_result") {
-      const obj = (c ?? {}) as { toolCallId?: string; result?: unknown };
-      const content = typeof obj.result === "string" ? obj.result : JSON.stringify(obj.result ?? null);
-      out.push({ role: "tool", toolCallId: obj.toolCallId ?? "tc-unknown", content });
-      continue;
-    }
-    if (m.role === "control") {
-      const text = extractText(c);
-      if (text) out.push({ role: "user", content: `[CONTROL] ${text}` });
-      continue;
-    }
-  }
-  if (pendingRedirect) {
-    out.push({ role: "user", content: `[REDIRECT] ${pendingRedirect.text}` });
-  }
-  return out;
-}
+import type { TransportTool } from "./anthropic.js";
 
 function convertTools(tools: TurnInput["tools"]): TransportTool[] {
   return tools.map(t => ({ name: t.name, description: t.description ?? "", parameters: ((t.inputSchema as Record<string, unknown>) ?? {}) }));
-}
-
-function extractText(c: unknown): string {
-  if (c == null) return "";
-  if (typeof c === "string") return c;
-  if (typeof c === "object" && "text" in (c as Record<string, unknown>)) {
-    const v = (c as { text?: unknown }).text;
-    return typeof v === "string" ? v : "";
-  }
-  return "";
 }
 
 function parseArgs(raw: string): unknown {

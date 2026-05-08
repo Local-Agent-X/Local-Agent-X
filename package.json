@@ -37,6 +37,8 @@
     "imapflow": "^1.2.18",
     "kokoro-js": "^1.2.1",
     "mammoth": "^1.12.0",
+    "mpg123-decoder": "^1.0.3",
+    "msedge-tts": "^2.0.5",
     "nodemailer": "^8.0.4",
     "openai": "^4.86.0",
     "pdf-lib": "^1.17.1",

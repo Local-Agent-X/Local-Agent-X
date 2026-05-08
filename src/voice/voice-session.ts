@@ -277,8 +277,21 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
     const prerollFrames: Int16Array[] = [];
     let prerollSampleCount = 0;
 
+    // Browser tier: client runs SpeechRecognition for STT + speechSynthesis
+    // for TTS. Server-side STT/VAD/Whisper/TTS models are all dead weight —
+    // skip both downloads and engine init. Detected by the overall tier
+    // marker (sttProvider==="browser"); the matching tier4Provider would
+    // be "browser" too, but checking either is sufficient.
+    const isBrowserTier = voiceSettings.sttProvider === "browser";
+
     (async () => {
       try {
+        if (isBrowserTier) {
+          logger.info(`[voice-session] ${ctx.sessionId}: browser tier → skipping server-side STT/TTS/VAD/Whisper model setup`);
+          stackReady = true;
+          ctx.sendEvent({ type: "voice_ready", ttsSampleRate: 0, engine, tts: null, stt: { provider: "browser" } });
+          return;
+        }
         logger.info(`[voice-session] ${ctx.sessionId}: fetching STT + TTS + VAD + Whisper models (parallel)…`);
         await Promise.all([
           ensureModelDownloaded((p) => {
@@ -367,17 +380,22 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
 
         // STT provider selection. settings.voiceSttProvider beats
         // LAX_VOICE_STT_PROVIDER. Picks between local-whisper (default),
-        // groq, openai, mistral. Cloud providers ignore the local model
-        // paths but we still resolve them so a missing key falls back
-        // gracefully to local whisper.
+        // groq, openai, mistral, or "browser" (client-side Web Speech API).
+        // Cloud providers ignore the local model paths but we still resolve
+        // them so a missing key falls back gracefully to local whisper.
+        // "browser" skips server-side STT entirely — transcripts arrive via
+        // the WS `transcript` message and feed handleFinalTranscript directly.
         const whisperPaths = getWhisperModelPaths({ variant: voiceSettings.whisperModel });
         const settingsStt = voiceSettings.sttProvider as
-          | "local-whisper" | "groq" | "openai" | "mistral" | undefined;
+          | "local-whisper" | "groq" | "openai" | "mistral" | "browser" | undefined;
         const sttProviderName = settingsStt
-          && (settingsStt === "local-whisper" || settingsStt === "groq" || settingsStt === "openai" || settingsStt === "mistral")
+          && (settingsStt === "local-whisper" || settingsStt === "groq" || settingsStt === "openai" || settingsStt === "mistral" || settingsStt === "browser")
           ? settingsStt
           : (resolveSttProviderName() ?? "local-whisper");
-        if (sttProviderName === "local-whisper") {
+        if (sttProviderName === "browser") {
+          logger.info(`[voice-session] ${ctx.sessionId}: STT provider=browser (client-side Web Speech API; server-side Whisper/VAD skipped)`);
+          // Leave whisper/stt/vad as null — onTranscript bypasses them.
+        } else if (sttProviderName === "local-whisper") {
           whisper = createWhisperTranscriber(whisperPaths, {
             provider: voiceSettings.whisperDevice,
           });
@@ -395,23 +413,28 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
           }
         }
 
-        stt = createStreamingSTT(getModelPaths(), {
-          onPartial: (text) => { if (!closed) ctx.sendEvent({ type: "partial", text }); },
-          // Streaming final is ignored — Whisper's output is the authoritative
-          // transcript. We still call stt.flush() on speech-end to reset the
-          // Zipformer decoder between utterances.
-          onFinal: () => { /* suppressed */ },
-          onError: (err) => {
-            logger.warn(`[voice-session] ${ctx.sessionId}: stt runtime error: ${err.message}`);
-            if (!closed) ctx.sendEvent({ type: "stt_error", message: err.message });
-          },
-        });
+        // Streaming-STT (Zipformer for live partials) + VAD only spin up
+        // when the server is doing transcription. Browser tier sends finals
+        // over the WS directly, so these models are dead weight there.
+        if (sttProviderName !== "browser") {
+          stt = createStreamingSTT(getModelPaths(), {
+            onPartial: (text) => { if (!closed) ctx.sendEvent({ type: "partial", text }); },
+            // Streaming final is ignored — Whisper's output is the authoritative
+            // transcript. We still call stt.flush() on speech-end to reset the
+            // Zipformer decoder between utterances.
+            onFinal: () => { /* suppressed */ },
+            onError: (err) => {
+              logger.warn(`[voice-session] ${ctx.sessionId}: stt runtime error: ${err.message}`);
+              if (!closed) ctx.sendEvent({ type: "stt_error", message: err.message });
+            },
+          });
 
-        vad = createStreamingVAD(getVadModelPaths(), {
-          onSpeechStart: () => handleSpeechStart(),
-          onSpeechEnd: () => handleSpeechEnd(),
-          onError: (err) => logger.warn(`[voice-session] ${ctx.sessionId}: vad error: ${err.message}`),
-        });
+          vad = createStreamingVAD(getVadModelPaths(), {
+            onSpeechStart: () => handleSpeechStart(),
+            onSpeechEnd: () => handleSpeechEnd(),
+            onError: (err) => logger.warn(`[voice-session] ${ctx.sessionId}: vad error: ${err.message}`),
+          });
+        }
 
         stackReady = true;
         // tier4 surfaces the loaded voice ID so the badge can show *which*
@@ -637,6 +660,11 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
     return {
       onMicFrame(frame: Int16Array) {
         if (closed) return;
+        // Browser tier: server-side STT is disabled; PCM frames are noise here
+        // (the client uses Web Speech API and posts transcripts via the
+        // `transcript` WS message instead). Drop them to avoid pointless work
+        // and the pending-frames buffer filling up.
+        if (!stt && !vad) return;
         if (!stackReady) {
           if (pendingFrames.length < 17) pendingFrames.push(new Int16Array(frame));
           return;
@@ -652,6 +680,23 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
 
       onEndOfSpeech() {
         if (!closed && stt) stt.flush();
+      },
+
+      onTranscript(text: string, isFinal: boolean) {
+        // Browser tier path: client-side SpeechRecognition produced this
+        // transcript. Skip VAD/Whisper entirely — interim results stream
+        // as `partial` events for live UI, finals enter the agent loop
+        // through the same path Whisper finals use.
+        if (closed) return;
+        const t = text.trim();
+        if (!t) return;
+        if (!isFinal) {
+          ctx.sendEvent({ type: "partial", text: t });
+          return;
+        }
+        handleFinalTranscript(t).catch((e) => {
+          logger.warn(`[voice-session] ${ctx.sessionId}: handleFinalTranscript failed: ${(e as Error).message}`);
+        });
       },
 
       close() {

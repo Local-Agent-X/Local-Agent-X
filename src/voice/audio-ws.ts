@@ -31,6 +31,9 @@ export interface VoiceSession {
   onEndOfSpeech?(): void;
   /** Called when the client updates voice settings (live, no restart) */
   onVoiceSettings?(settings: { voice?: string; speed?: number }): void;
+  /** Called when the client transcribed locally (browser tier — Web Speech API).
+   *  Bypasses server-side VAD + Whisper; finals go straight into the agent. */
+  onTranscript?(text: string, isFinal: boolean): void;
   /** Called when the client disconnects or sends bye */
   close(): void;
 }
@@ -156,6 +159,13 @@ export function setupVoiceWebSocket(server: Server, authToken: string): void {
           logger.info(`[voice-ws] session opened: ${sessionId} (mode=${mode})`);
         } else if (msg.type === "eos") {
           session?.onEndOfSpeech?.();
+        } else if (msg.type === "transcript") {
+          // Client-side STT (browser tier). The browser ran SpeechRecognition
+          // locally and is feeding us the transcript directly — no PCM, no
+          // server-side Whisper. Pass through to the session.
+          if (typeof msg.text === "string" && msg.text.length > 0) {
+            session?.onTranscript?.(msg.text, msg.isFinal !== false);
+          }
         } else if (msg.type === "voice_settings") {
           session?.onVoiceSettings?.({
             voice: typeof msg.voice === "string" ? msg.voice : undefined,

@@ -42,17 +42,25 @@
 }
 
 /* ── Split: large sphere centered, transcript area visible below ── */
+/* Bound the overlay to the sphere's actual area (canvas + top margin).
+ * `inset: 0` made the dark gradient cover the entire viewport, hiding the
+ * chat messages underneath even though autoScroll() was scrolling them
+ * correctly — the user just couldn't see the bubbles. */
 #voice-sphere-root.vs-mode-split {
-  inset: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 64vh;
   background: radial-gradient(ellipse at center top,
     rgba(8, 18, 38, 0.92) 0%,
     rgba(2, 6, 18, 0.85) 50%,
     rgba(0, 0, 0, 0.55) 100%);
-  pointer-events: auto;
+  pointer-events: none;
 }
 #voice-sphere-root.vs-mode-split .vs-canvas-wrap {
   height: 60vh;
   margin-top: 4vh;
+  pointer-events: auto;
 }
 
 /* ── Floating: small sphere upper-right, chat layout intact ── */

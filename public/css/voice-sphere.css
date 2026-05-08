@@ -41,29 +41,32 @@
   pointer-events: auto;
 }
 
-/* ── Split: large sphere centered, transcript area visible below ── */
-/* Bound the overlay to the sphere's actual area (canvas + top margin).
- * `inset: 0` made the dark gradient cover the entire viewport, hiding the
- * chat messages underneath even though autoScroll() was scrolling them
- * correctly — the user just couldn't see the bubbles. */
+/* ── Split: medium-large sphere at top, no full-width backdrop. ──
+ * Earlier this had `inset: 0` + a viewport-wide dark gradient, which
+ * hid the chat behind it. Now the sphere is just a sized box at the
+ * top of the screen — no chat-blocking overlay. The chat sits
+ * entirely beneath/around the sphere unaffected.
+ */
 #voice-sphere-root.vs-mode-split {
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 64vh;
-  background: radial-gradient(ellipse at center top,
-    rgba(8, 18, 38, 0.92) 0%,
-    rgba(2, 6, 18, 0.85) 50%,
-    rgba(0, 0, 0, 0.55) 100%);
+  top: 4vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(60vw, 600px);
+  height: 50vh;
+  background: transparent;
   pointer-events: none;
 }
 #voice-sphere-root.vs-mode-split .vs-canvas-wrap {
-  height: 60vh;
-  margin-top: 4vh;
+  height: 100%;
+  margin-top: 0;
   pointer-events: auto;
 }
 
-/* ── Floating: small sphere upper-right, chat layout intact ── */
+/* ── Floating: small sphere, drag to anywhere on screen. ──
+ * Default position is upper-right; the user can grab and drop the
+ * sphere wherever via voice-sphere.js drag handlers (which set inline
+ * top/left and persist to localStorage as `lax_voice_sphere_pos`).
+ */
 #voice-sphere-root.vs-mode-floating {
   top: 64px;
   right: 24px;
@@ -74,6 +77,11 @@
     rgba(2, 6, 18, 0.0) 70%);
   border-radius: 50%;
   pointer-events: auto;
+  cursor: grab;
+  user-select: none;
+}
+#voice-sphere-root.vs-mode-floating.vs-dragging {
+  cursor: grabbing;
 }
 
 /* ── Toggle buttons (cycle view + back-to-chat) ── */

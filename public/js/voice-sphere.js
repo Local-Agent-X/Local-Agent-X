@@ -157,6 +157,87 @@
       if (typeof window.stopVoiceMode === 'function') window.stopVoiceMode();
       else hide();
     });
+    attachDrag();
+    restoreFloatingPosition();
+  }
+
+  // ── Drag-to-reposition (floating mode only) ──
+  // The user wants the sphere to feel independent of the chat layout — in
+  // floating mode they can grab it and drop it anywhere on the screen. Only
+  // active while vs-mode-floating is on; in split/fullscreen the sphere fills
+  // a fixed area and dragging would fight the layout.
+  let dragState = null;
+  function attachDrag() {
+    if (!root) return;
+    const onPointerDown = (e) => {
+      if (viewMode !== 'floating') return;
+      // Don't start a drag when the user clicks one of the sphere's buttons.
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'BUTTON' || (e.target && e.target.closest('button'))) return;
+      const rect = root.getBoundingClientRect();
+      dragState = {
+        offX: e.clientX - rect.left,
+        offY: e.clientY - rect.top,
+        w: rect.width,
+        h: rect.height,
+      };
+      root.classList.add('vs-dragging');
+      try { root.setPointerCapture(e.pointerId); } catch {}
+      e.preventDefault();
+    };
+    const onPointerMove = (e) => {
+      if (!dragState) return;
+      const left = Math.max(0, Math.min(window.innerWidth - dragState.w, e.clientX - dragState.offX));
+      const top = Math.max(0, Math.min(window.innerHeight - dragState.h, e.clientY - dragState.offY));
+      // Inline style overrides the default top/right anchor in CSS so the
+      // sphere can sit anywhere. We clear `right` to avoid conflicting with
+      // the explicit left we're setting now.
+      root.style.left = left + 'px';
+      root.style.top = top + 'px';
+      root.style.right = 'auto';
+    };
+    const onPointerUp = (e) => {
+      if (!dragState) return;
+      dragState = null;
+      root.classList.remove('vs-dragging');
+      try { root.releasePointerCapture(e.pointerId); } catch {}
+      // Persist the position so it survives reloads / sessions.
+      try {
+        localStorage.setItem('lax_voice_sphere_pos', JSON.stringify({
+          left: parseInt(root.style.left, 10) || null,
+          top: parseInt(root.style.top, 10) || null,
+        }));
+      } catch {}
+    };
+    root.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+  }
+
+  function restoreFloatingPosition() {
+    try {
+      const raw = localStorage.getItem('lax_voice_sphere_pos');
+      if (!raw) return;
+      const p = JSON.parse(raw);
+      if (typeof p.left === 'number' && typeof p.top === 'number') {
+        // Only apply when in floating mode — split/fullscreen own positioning.
+        if (viewMode === 'floating') {
+          root.style.left = p.left + 'px';
+          root.style.top = p.top + 'px';
+          root.style.right = 'auto';
+        }
+      }
+    } catch {}
+  }
+
+  function clearFloatingPositionInline() {
+    // When leaving floating mode, drop the inline drag overrides so the
+    // class-based positioning (split/fullscreen) takes effect cleanly.
+    if (!root) return;
+    root.style.left = '';
+    root.style.top = '';
+    root.style.right = '';
   }
 
   function initThree() {
@@ -522,6 +603,11 @@
     root.classList.remove('vs-mode-fullscreen', 'vs-mode-split', 'vs-mode-floating');
     root.classList.add('vs-mode-' + mode);
     try { localStorage.setItem('lax_voice_view_mode', mode); } catch {}
+    // When entering floating mode, restore the user's saved drag position.
+    // Leaving floating mode, drop the inline overrides so split/fullscreen
+    // CSS owns the layout cleanly.
+    if (mode === 'floating') restoreFloatingPosition();
+    else clearFloatingPositionInline();
     setTimeout(resize, 60);
   }
 

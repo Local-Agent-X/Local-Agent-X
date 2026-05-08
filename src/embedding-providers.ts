@@ -411,11 +411,18 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
     if (!text || !text.trim()) return emptyVector(this.dimensions);
     // Truncate to ~512 tokens (~2000 chars) for models with smaller context windows
     const truncated = text.trim().slice(0, 2000);
+    // 30s wallclock cap. Without this, a wedged Ollama request blocks chat
+    // prepare-request indefinitely (the fetch had no timeout). Returning an
+    // empty vector lets semantic-search/tool-RAG degrade gracefully instead
+    // of stalling the whole turn.
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 30_000);
     try {
       const res = await fetch(`${this.baseUrl}/api/embed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: this.model, input: truncated }),
+        signal: ac.signal,
       });
       if (!res.ok) {
         throw new Error(`Ollama embed HTTP ${res.status}`);
@@ -431,6 +438,8 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
     } catch (err: any) {
       // Suppress noisy per-chunk errors — batch fallback handles it
       return emptyVector(this.dimensions);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -447,11 +456,16 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
     const cleaned = texts.map(t => (t && t.trim()) ? t.trim().slice(0, 2000) : null);
     const validTexts = cleaned.filter((t): t is string => t !== null);
     if (validTexts.length === 0) return texts.map(() => emptyVector(this.dimensions));
+    // 60s wallclock cap for batches (10 items max per maxBatchSize). Same
+    // rationale as embed() — never let Ollama hang the caller.
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 60_000);
     try {
       const res = await fetch(`${this.baseUrl}/api/embed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: this.model, input: validTexts }),
+        signal: ac.signal,
       });
       if (!res.ok) {
         throw new Error(`Ollama batch embed HTTP ${res.status}`);
@@ -474,6 +488,8 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
         results.push(await this.embed(text));
       }
       return results;
+    } finally {
+      clearTimeout(timer);
     }
   }
 

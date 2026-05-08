@@ -731,8 +731,21 @@
     // fits comfortably inside the orb's particle volume regardless of glyph.
     const SCALE = 2.4 / extent;
     const jitterScale = SCALE;
+    // Distribute particles UNIFORMLY across the pixel set instead of walking
+    // points[i % points.length]. The pixel-scan above is row-major top-to-
+    // bottom, so when an emoji renders more pixels than we have particles
+    // (N=2048; 💰 at fontSize=160 produces ~6-9k pixels), the modulo wrap
+    // only covers points 0..N-1 — the FIRST N pixels found, which are all
+    // in the top rows of the canvas. Result: the bottom half of tall/square
+    // emoji never received a particle. Hearts/shapes were unaffected because
+    // they're parametric, not pixel-sampled.
+    //
+    // The fix is one line: stride through the full points array so every
+    // particle picks a roughly evenly-spaced sample. With N=2048 and
+    // ~7000 points, stride=~3.4, hitting the entire silhouette uniformly.
+    const stride = points.length / N;
     for (let i = 0; i < N; i++) {
-      const p = points[i % points.length];
+      const p = points[Math.floor(i * stride) % points.length];
       // Tiny jitter so multiple particles per pixel don't stack invisibly.
       const jx = (Math.random() - 0.5) * jitterScale * 0.6;
       const jy = (Math.random() - 0.5) * jitterScale * 0.6;

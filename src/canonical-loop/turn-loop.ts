@@ -15,21 +15,24 @@
  *   - The adapter never writes anything; it only emits adapter_report items
  *     through the report callback.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Adapter, AdapterReport, TurnInput } from "./adapter-contract.js";
 import type { CanonicalMessage, ToolCall } from "./contract-types.js";
 import type {
   CanonicalMessageRole,
+  OpMessageRow,
   ProviderStateEnvelope,
   RedirectInstruction,
   ToolCallSummary,
 } from "./types.js";
-import { readLatestOpTurn, readOpMessages } from "./store.js";
+import { appendOpMessage, readLatestOpTurn, readOpMessages } from "./store.js";
 import { emit, publishStreamChunk } from "./event-emitter.js";
 import { commitTurn, type CommitTurnMessage } from "./checkpoint.js";
 import { getToolDispatcher, getToolsForOp } from "./runtime.js";
 import { readOp } from "../workers/op-store.js";
 import type { Op } from "../workers/types.js";
+import { drainInjects } from "../agent-loop/inject-queue.js";
+import { getSessionForOp } from "../workers/session-bridge.js";
 
 export interface DriveTurnResult {
   terminalReason: "done" | "error" | null;
@@ -64,6 +67,14 @@ export async function driveTurn(
   // this turn's prompt.
   const pendingRedirect = readPendingRedirect(op.id);
   emit(op.id, "turn_started", { turnIdx });
+
+  // Mid-turn injects: messages the user typed during a previous turn / tool
+  // call, queued by chat-ws via pushInject(). Drain into op_messages BEFORE
+  // buildTurnInput so the adapter sees them inline as user messages on this
+  // turn. Mirrors agent-loop's interjectDrainMiddleware. Scoped to chat_turn
+  // so background/delegated workers sharing the session don't drain the
+  // user's chat-bound injects.
+  if (op.type === "chat_turn") drainInjectsIntoTurn(op, turnIdx);
 
   const input = buildTurnInput(op, turnIdx, pendingRedirect);
 
@@ -161,6 +172,31 @@ function buildTurnInput(
 function readPendingRedirect(opId: string): RedirectInstruction | null {
   const fresh = readOp(opId);
   return fresh?.canonical?.redirectInstruction ?? null;
+}
+
+function drainInjectsIntoTurn(op: Op, turnIdx: number): void {
+  const sessionId = getSessionForOp(op.id);
+  if (!sessionId) return;
+  const injects = drainInjects(sessionId);
+  if (injects.length === 0) return;
+  // Offset past any pre-existing rows for this turn (e.g. the seeded turn-0
+  // user message) so (op_id, turn_idx, seq_in_turn) stays unique.
+  let seqInTurn = readOpMessages(op.id).filter(m => m.turnIdx === turnIdx).length;
+  const now = new Date().toISOString();
+  for (const text of injects) {
+    const row: OpMessageRow = {
+      messageId: `inject-${op.id}-${turnIdx}-${seqInTurn}-${randomUUID().slice(0, 6)}`,
+      opId: op.id,
+      turnIdx,
+      seqInTurn,
+      role: "user",
+      content: { text },
+      createdAt: now,
+    };
+    appendOpMessage(row);
+    emit(op.id, "message_appended", { turnIdx, role: row.role, messageId: row.messageId });
+    seqInTurn += 1;
+  }
 }
 
 interface DispatchedTools {

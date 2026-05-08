@@ -631,6 +631,7 @@ async function loadSettings() {
     if (typeof refreshVoiceEngineStatus === 'function') refreshVoiceEngineStatus(s.voiceEngine || 'tier4');
     if (typeof loadVoiceTier4Settings === 'function') loadVoiceTier4Settings(s);
     if (typeof refreshVoiceTier4Visibility === 'function') refreshVoiceTier4Visibility(s.voiceEngine || 'tier4');
+    if (typeof loadVoicePicker === 'function') loadVoicePicker(s);
     if (typeof syncPttUiFromConfig === 'function') syncPttUiFromConfig();
     // Embedding settings
     set('cfg-emb-provider', s.embeddingProvider || 'ollama');
@@ -1016,6 +1017,15 @@ async function initVoiceSettings() {
     // was already saved from a prior session.
     const engSel = document.getElementById('cfg-tts-engine');
     if (engSel) onTtsEngineChange(engSel.value);
+    // Re-render the unified Media-tab picker once clone lists landed so
+    // sv:/cb: voices (e.g. "Optimus") show up under Python sidecar.
+    if (typeof loadVoicePicker === 'function') {
+      try {
+        const r2 = await (typeof apiFetch === 'function' ? apiFetch('/api/settings') : fetch('/api/settings'));
+        const s2 = r2.ok ? await r2.json() : {};
+        loadVoicePicker(s2);
+      } catch { loadVoicePicker({}); }
+    }
   } catch { /* silent — Settings page works fine without sidecars */ }
 }
 

@@ -49,11 +49,21 @@ export function realtimeReadiness(): RealtimeReadiness {
   return { ready: true };
 }
 
+/** Optional per-session overrides resolved from settings.json before env. */
+export interface RealtimeOverrides {
+  voice?: string;
+  model?: string;
+  instructions?: string;
+}
+
 /** Factory matching the createGpuSession / createVoiceSessionFactory shape
  *  so the dispatcher in voice-session.ts can swap it in. Reads its config
- *  from env at call time (per-session) so flipping LAX_REALTIME_VOICE
- *  takes effect without a restart. */
-export function createRealtimeSessionFromEnv(ctx: VoiceSessionContext): VoiceSession {
+ *  from env at call time (per-session); any field present in `overrides`
+ *  beats env so settings.json wins on every flip without a restart. */
+export function createRealtimeSessionFromEnv(
+  ctx: VoiceSessionContext,
+  overrides?: RealtimeOverrides,
+): VoiceSession {
   const apiKey = resolveApiKey();
   if (!apiKey) {
     // Defensive: the dispatcher should have called realtimeReadiness()
@@ -65,12 +75,13 @@ export function createRealtimeSessionFromEnv(ctx: VoiceSessionContext): VoiceSes
     });
     return { onMicFrame() {}, close() {} };
   }
+  const overrideVoice = overrides?.voice?.trim().toLowerCase();
   const opts: RealtimeSessionOptions = {
     apiKey,
-    model: resolveModel(),
-    voice: resolveVoice(),
+    model: overrides?.model?.trim() || resolveModel(),
+    voice: overrideVoice && VALID_VOICES.has(overrideVoice) ? overrideVoice : resolveVoice(),
   };
-  const instr = process.env.LAX_REALTIME_INSTRUCTIONS;
+  const instr = overrides?.instructions?.trim() || process.env.LAX_REALTIME_INSTRUCTIONS;
   if (instr && instr.trim()) opts.instructions = instr;
   return createRealtimeSession(opts, ctx);
 }

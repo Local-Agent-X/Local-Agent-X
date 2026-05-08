@@ -2572,60 +2572,50 @@ function updateStatusBar() {
   // (Chatterbox sidecar at :7010, populated when reachable).
   const savedVoice = localStorage.getItem('lax_voice') || 'am_michael';
   const savedSpeed = parseFloat(localStorage.getItem('lax_speed') || '1.15');
-  const voiceGroups = [
-    ['American Male', ['am_michael','am_adam','am_echo','am_eric','am_fenrir','am_liam','am_onyx','am_puck']],
-    ['American Female', ['af_nicole','af_bella','af_sarah','af_sky','af_heart','af_nova','af_river','af_alloy']],
-    ['British Male', ['bm_george','bm_daniel','bm_fable','bm_lewis']],
-    ['British Female', ['bf_emma','bf_alice','bf_isabella','bf_lily']],
-  ];
-  const voiceLabel = (id) => id.split('_')[1].replace(/\b\w/g, c => c.toUpperCase());
-  // Cloned voices come from two optional sidecars:
-  //   * SoVITS (:7012)     — "sv:<id>"  trained or zero-shot, best quality
-  //   * Chatterbox (:7010) — "cb:<id>"  zero-shot, kept as fallback
-  // refreshClonedVoices() populates these arrays async on page init; we
-  // re-render the bar once they land.
-  const svClones = Array.isArray(window._sovitsVoices) ? window._sovitsVoices : [];
-  const cbClones = Array.isArray(window._chatterboxVoices) ? window._chatterboxVoices : [];
-  const allCloneIds = [
-    ...svClones.map(c => 'sv:' + c.id),
-    ...cbClones.map(c => 'cb:' + c.id),
-  ];
-  // If the saved voice references a clone that no longer exists, or uses
-  // the legacy "clone:<id>" prefix from the dropped RVC tier, fall back
-  // to the default Kokoro voice.
-  const isStaleClone = (savedVoice.startsWith('clone:') || savedVoice.startsWith('cb:') || savedVoice.startsWith('sv:'))
-    && !allCloneIds.includes(savedVoice);
-  const effectiveVoice = isStaleClone ? 'am_michael' : savedVoice;
-  if (effectiveVoice !== savedVoice) localStorage.setItem('lax_voice', effectiveVoice);
-  let voiceOpts = voiceGroups.map(([group, ids]) =>
-    `<optgroup label="${esc(group)}">` +
-    ids.map(id => `<option value="${esc(id)}" ${id === effectiveVoice ? 'selected' : ''}>${esc(voiceLabel(id))}</option>`).join('') +
-    `</optgroup>`
-  ).join('');
-  if (svClones.length > 0) {
-    voiceOpts += `<optgroup label="My Trained Voices">` +
-      svClones.map(c => {
-        const tag = c.fine_tuned ? ' ★' : '';
-        return `<option value="sv:${esc(c.id)}" ${('sv:' + c.id) === effectiveVoice ? 'selected' : ''}>${esc(c.name)}${tag}</option>`;
-      }).join('') +
-      `</optgroup>`;
+  // Voice list filters by the active voice tier (Browser / Edge cloud /
+  // Kokoro local / Studio local / Realtime). The picker renderer lives in
+  // /js/voice-picker.js — chat-bar just calls into it for consistency.
+  let activeTier = null;
+  try { activeTier = (typeof getActiveVoiceTier === 'function') ? getActiveVoiceTier() : null; } catch {}
+  // Drop a saved voice that no longer fits the current tier (e.g. user was
+  // on Studio with Optimus selected, switched to Browser — clear it).
+  let effectiveVoice = savedVoice;
+  if (activeTier && typeof voiceFitsTier === 'function' && !voiceFitsTier(savedVoice, activeTier)) {
+    effectiveVoice = '';
   }
-  if (cbClones.length > 0) {
-    voiceOpts += `<optgroup label="Zero-shot Cloned Voices">` +
-      cbClones.map(c => `<option value="cb:${esc(c.id)}" ${('cb:' + c.id) === effectiveVoice ? 'selected' : ''}>${esc(c.name)}</option>`).join('') +
-      `</optgroup>`;
+  let voiceOpts;
+  if (activeTier && typeof voiceListForTier === 'function') {
+    voiceOpts = voiceListForTier(activeTier.id, effectiveVoice);
+    // Tier-aware quick actions: only relevant when the active tier supports clones.
+    if ((activeTier.voicePool || []).includes('clones')) {
+      voiceOpts += `<optgroup label=" ">`;
+      if (window._sovitsTierReady) voiceOpts += `<option value="__train_voice__">+ Train a new voice (30 min)…</option>`;
+      if (window._studioTierReady) voiceOpts += `<option value="__add_chatterbox__">+ Add a quick zero-shot voice…</option>`;
+      if ((window._sovitsVoices?.length || window._chatterboxVoices?.length)) {
+        voiceOpts += `<option value="__manage_clones__">&#9881; Manage cloned voices…</option>`;
+      }
+      voiceOpts += `</optgroup>`;
+    }
+  } else {
+    // Fallback if voice-picker.js hasn't loaded yet — minimal Kokoro list.
+    const fallback = [
+      ['American Male', ['am_michael','am_adam','am_eric']],
+      ['American Female', ['af_nicole','af_bella','af_sarah']],
+    ];
+    voiceOpts = fallback.map(([g, ids]) =>
+      `<optgroup label="${esc(g)}">` +
+      ids.map(id => `<option value="${esc(id)}" ${id === effectiveVoice ? 'selected' : ''}>${esc(id.split('_')[1])}</option>`).join('') +
+      `</optgroup>`,
+    ).join('');
   }
-  // Voice management actions: only show if at least one cloning sidecar is reachable.
-  if (window._sovitsTierReady || window._studioTierReady) {
-    voiceOpts += `<optgroup label=" ">`;
-    if (window._sovitsTierReady) {
-      voiceOpts += `<option value="__train_voice__">+ Train a new voice (30 min)…</option>`;
-    }
-    if (window._studioTierReady) {
-      voiceOpts += `<option value="__add_chatterbox__">+ Add a quick zero-shot voice…</option>`;
-    }
-    if (cbClones.length > 0 || svClones.length > 0) {
-      voiceOpts += `<option value="__manage_clones__">&#9881; Manage cloned voices…</option>`;
+  // Tier switcher at the bottom of the dropdown — pick a different voice
+  // system without leaving chat. Sentinels are __tier:<id>; quickSwitchVoice
+  // routes them to switchVoiceTier().
+  if (window.LAX_VOICE_CATALOG && Array.isArray(window.LAX_VOICE_CATALOG.TIERS)) {
+    voiceOpts += `<optgroup label=" Switch system">`;
+    for (const t of window.LAX_VOICE_CATALOG.TIERS) {
+      if (activeTier && t.id === activeTier.id) continue;
+      voiceOpts += `<option value="__tier:${esc(t.id)}">→ ${esc(t.label)}</option>`;
     }
     voiceOpts += `</optgroup>`;
   }
@@ -2645,6 +2635,16 @@ function updateStatusBar() {
 }
 
 function quickSwitchVoice(voice) {
+  // Tier switcher sentinel — routes to voice-picker.switchVoiceTier(id).
+  if (typeof voice === 'string' && voice.startsWith('__tier:')) {
+    const tierId = voice.slice('__tier:'.length);
+    if (typeof switchVoiceTier === 'function') {
+      switchVoiceTier(tierId).then(() => {
+        showVoiceToast('Voice system → ' + tierId);
+      });
+    }
+    return;
+  }
   if (voice === '__manage_clones__' || voice === '__add_chatterbox__' || voice === '__train_voice__') {
     if (voice === '__add_chatterbox__') openAddChatterboxModal();
     else if (voice === '__train_voice__') openTrainVoiceModal();

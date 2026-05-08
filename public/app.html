@@ -362,64 +362,27 @@
           </div>
         </div>
         <div class="section-card">
-          <div class="section-title">Speech-to-Text</div>
-          <div id="stt-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
-          <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-stt-engine"><option value="whisper">Whisper (Local — needs Lite sidecar)</option><option value="browser">Browser Web Speech API (No install — lower quality)</option><option value="none">None</option></select></div>
-        </div>
-        <div class="section-card">
-          <div class="section-title">Voice Engine</div>
-          <div class="section-desc">Which voice backend handles your audio. Pick once, applies to every voice session. Env vars (LAX_VOICE_TIER, LAX_VOICE_GPU) only override this for headless/CI runs.</div>
+          <div class="section-title">Voice System</div>
+          <div class="section-desc">Pick the system that produces the agent's speech and listens to your mic. Each option lists what it needs — install or start prerequisites right here, no separate setup panel.</div>
           <div id="voice-engine-status" class="status-badge warn"><span class="status-dot"></span> Loading…</div>
-          <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-voice-engine" onchange="onVoiceEngineChange(this.value)">
-            <option value="tier4">Tier 4 Native ONNX (Kokoro) — no Python, ~1.2s first audio, recommended</option>
-            <option value="python">Python Sidecar — Lite / Pro RVC / Studio (cloning support, requires venv install)</option>
-            <option value="cpu_fallback">CPU Fallback (Sherpa+Matcha, slow) — emergency only</option>
-          </select></div>
-          <div class="field-hint" id="voice-engine-active-info" style="font-size:.74rem;color:var(--muted);margin-top:4px">&nbsp;</div>
+          <div class="field"><label class="field-label">System</label><select class="field-select" id="cfg-voice-tier" onchange="onTierChange(this.value)"><option value="">Loading…</option></select></div>
+          <div id="voice-tier-status"></div>
+          <div class="field-row" style="margin-top:14px">
+            <div class="field"><label class="field-label">Voice</label><select class="field-select" id="cfg-voice-voice" onchange="onVoicePickChange(this.value)"><option value="">Loading…</option></select></div>
+            <div class="field" style="max-width:140px"><label class="field-label">Speed</label><input class="field-input" id="cfg-voice-speed" type="number" step="0.05" min="0.5" max="2" placeholder="1.15" onchange="onVoiceSpeedChange(this.value)"/><div class="field-hint">0.5–2.0</div></div>
+          </div>
           <div id="voice-tier4-options" style="display:none;margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-            <div style="font-family:var(--mono);font-size:.65rem;color:var(--accent);letter-spacing:1px;margin-bottom:8px">TIER 4 ADVANCED</div>
+            <div style="font-family:var(--mono);font-size:.65rem;color:var(--accent);letter-spacing:1px;margin-bottom:8px">ADVANCED — IN-PROCESS DEVICE</div>
             <div class="field-row">
-              <div class="field"><label class="field-label">Kokoro voice</label><select class="field-select" id="cfg-voice-tier4-voice" onchange="onTier4SettingChange('voiceTier4Voice', this.value)"><option value="">Loading…</option></select><div class="field-hint">English voices first; full Kokoro catalog from the runtime.</div></div>
-              <div class="field"><label class="field-label">Speed</label><input class="field-input" id="cfg-voice-tier4-speed" type="number" step="0.05" min="0.5" max="2" placeholder="1.0" onchange="onTier4SettingChange('voiceTier4Speed', this.value)"/><div class="field-hint">0.5–2.0. Blank = default (1.0).</div></div>
+              <div class="field"><label class="field-label">TTS device</label><select class="field-select" id="cfg-voice-tier4-device" onchange="onTier4SettingChange('voiceTier4Device', this.value)"><option value="">Auto</option><option value="cpu">CPU</option><option value="dml">DirectML (GPU)</option><option value="cuda">CUDA (GPU)</option></select></div>
+              <div class="field"><label class="field-label">TTS dtype</label><select class="field-select" id="cfg-voice-tier4-dtype" onchange="onTier4SettingChange('voiceTier4Dtype', this.value)"><option value="">Auto</option><option value="fp32">fp32</option><option value="fp16">fp16</option><option value="q8">q8</option><option value="q4">q4</option></select></div>
             </div>
             <div class="field-row">
-              <div class="field"><label class="field-label">TTS device</label><select class="field-select" id="cfg-voice-tier4-device" onchange="onTier4SettingChange('voiceTier4Device', this.value)"><option value="">Auto</option><option value="cpu">CPU</option><option value="dml">DirectML (GPU)</option><option value="cuda">CUDA (GPU)</option></select><div class="field-hint">Auto-falls back to CPU if the GPU EP can't bind.</div></div>
-              <div class="field"><label class="field-label">TTS dtype</label><select class="field-select" id="cfg-voice-tier4-dtype" onchange="onTier4SettingChange('voiceTier4Dtype', this.value)"><option value="">Auto</option><option value="fp32">fp32</option><option value="fp16">fp16</option><option value="q8">q8</option><option value="q4">q4</option></select><div class="field-hint">CPU works best with q8; GPU prefers fp16.</div></div>
-            </div>
-            <div class="field-row">
-              <div class="field"><label class="field-label">Whisper model</label><select class="field-select" id="cfg-voice-whisper-model" onchange="onTier4SettingChange('voiceWhisperModel', this.value)"><option value="">Auto (tiny.en)</option><option value="tiny.en">tiny.en (fastest)</option><option value="base.en">base.en</option><option value="small.en">small.en (best accuracy)</option></select></div>
+              <div class="field"><label class="field-label">Whisper model</label><select class="field-select" id="cfg-voice-whisper-model" onchange="onTier4SettingChange('voiceWhisperModel', this.value)"><option value="">Auto (tiny.en)</option><option value="tiny.en">tiny.en (fastest)</option><option value="base.en">base.en</option><option value="small.en">small.en (best)</option></select></div>
               <div class="field"><label class="field-label">Whisper device</label><select class="field-select" id="cfg-voice-whisper-device" onchange="onTier4SettingChange('voiceWhisperDevice', this.value)"><option value="">Auto</option><option value="cpu">CPU</option><option value="dml">DirectML (GPU)</option><option value="cuda">CUDA (GPU)</option></select></div>
             </div>
-            <div class="field-hint" style="margin-top:6px">Saved to <code>~/.lax/settings.json</code>. New voice sessions pick up changes automatically — no restart.</div>
-          </div>
-        </div>
-        <div class="section-card">
-          <div class="section-title">Text-to-Speech</div>
-          <div id="tts-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
-          <div class="field"><label class="field-label">Engine</label><select class="field-select" id="cfg-tts-engine" onchange="onTtsEngineChange(this.value)">
-            <optgroup label="Built-in (needs Lite sidecar)">
-              <option value="kokoro">Kokoro</option>
-              <option value="piper">Piper</option>
-            </optgroup>
-            <optgroup label="Cloned voices" id="cfg-tts-clone-group" style="display:none">
-              <option value="chatterbox" id="cfg-tts-engine-cb" disabled>Chatterbox (zero-shot clone)</option>
-              <option value="sovits" id="cfg-tts-engine-sv" disabled>GPT-SoVITS (trained clone)</option>
-            </optgroup>
-            <optgroup label="No install">
-              <option value="browser">Browser SpeechSynthesis (Robotic — works without GPU)</option>
-              <option value="none">None</option>
-            </optgroup>
-          </select></div>
-          <div class="field" id="tts-voice-field"><label class="field-label">Voice</label><select class="field-select" id="cfg-tts-voice"><option value="am_onyx">Onyx (Male, deep)</option><option value="am_eric">Eric (Male)</option><option value="bm_george">George (British)</option><option value="bm_lewis">Lewis (British)</option></select></div>
-          <div class="field" id="tts-clone-field" style="display:none"><label class="field-label">Cloned voice</label><select class="field-select" id="cfg-tts-clone"><option value="">-- pick a clone --</option></select><div class="field-hint" style="font-size:.74rem;color:var(--muted);margin-top:4px">Add or train clones from the chat voice picker (mic icon → ☰).</div></div>
-        </div>
-        <div class="section-card">
-          <div class="section-title">Voice Engines</div>
-          <div class="section-desc">Detect, install, and start voice sidecars. Each tier is independent — install only what you need.</div>
-          <div id="voice-setup-status" style="font-size:.78rem;color:var(--muted);margin-bottom:8px">Loading…</div>
-          <div id="voice-setup-tiers"></div>
-          <div class="btn-row" style="margin-top:8px">
-            <button class="action-btn" onclick="refreshVoiceSetup()">Refresh</button>
+            <input type="hidden" id="cfg-voice-tier4-voice" value=""/>
+            <input type="hidden" id="cfg-voice-tier4-speed" value=""/>
           </div>
         </div>
         <div class="section-card">
@@ -947,6 +910,8 @@
 <script src="/js/chat.js?v=vc8"></script>
 <script src="/js/secret-modal.js?v=v1"></script>
 <script src="/js/settings.js?v=vb2"></script>
+<script src="/js/voice-picker-catalog.js?v=v1"></script>
+<script src="/js/voice-picker.js?v=v2"></script>
 <script src="/js/secrets.js"></script>
 <script src="/js/cron.js"></script>
 <script src="/js/protocols.js"></script>

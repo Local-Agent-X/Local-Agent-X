@@ -4,6 +4,7 @@ import { buildToolPromptSection } from "../tool-prompt-builder.js";
 import { applyPrompts } from "./result-helpers.js";
 import { readTool, writeTool, editTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";
+import { processTools } from "./process-tools.js";
 import { webFetchTool } from "./web-tools.js";
 import { viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool } from "./vision-tools.js";
 import { buildAppTool, createPageTool } from "./builder-tools.js";
@@ -40,6 +41,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   selfEditTool,
   viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool,
   buildAppTool, youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool,
+  ...processTools,
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools,
   ...emailTools, ...calendarTools, ...clipboardTools, ...sqlTools,
   ...taskTools, ...planTools, ...configTools, ...autopilotTools, ...opTools,

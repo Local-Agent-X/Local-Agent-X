@@ -34,9 +34,10 @@ export const webFetchTool: ToolDefinition = {
   },
   async execute(args) {
     const url = String(args.url);
+    const startMs = Date.now();
 
     const pinResult = await dnsPin(url);
-    if (pinResult) return err(pinResult);
+    if (pinResult) return err(pinResult, { url, duration_ms: Date.now() - startMs, dns_pin: "blocked" });
 
     try {
       let currentUrl = url;
@@ -73,20 +74,33 @@ export const webFetchTool: ToolDefinition = {
         res = await doFetch();
       }
 
+      const durationMs = Date.now() - startMs;
       if (!res.ok && !(res.status >= 300 && res.status < 400)) {
-        return err(`HTTP ${res.status}: ${res.statusText}`);
+        return err(`HTTP ${res.status}: ${res.statusText}`, {
+          url: currentUrl,
+          status: res.status,
+          duration_ms: durationMs,
+        });
       }
 
       let body = await res.text();
 
       const MAX_CHARS = 50_000;
-      if (body.length > MAX_CHARS) {
+      const fullBytes = body.length;
+      const truncated = fullBytes > MAX_CHARS;
+      if (truncated) {
         body = body.slice(0, MAX_CHARS) + `\n\n[Truncated at ${MAX_CHARS} chars]`;
       }
 
-      return ok(wrapExternalContent(body, "web_fetch", { url, status: String(res.status) }));
+      return ok(wrapExternalContent(body, "web_fetch", { url, status: String(res.status) }), {
+        url: currentUrl,
+        status: res.status,
+        duration_ms: durationMs,
+        bytes: fullBytes,
+        truncated: truncated || undefined,
+      });
     } catch (e) {
-      return err(`Fetch failed: ${(e as Error).message}`);
+      return err(`Fetch failed: ${(e as Error).message}`, { url, duration_ms: Date.now() - startMs });
     }
   },
 };
@@ -128,13 +142,16 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       const url = String(args.url);
       const method = String(args.method || "GET").toUpperCase();
       const timeout = Math.min((args.timeout as number) || 30_000, 120_000);
+      const startMs = Date.now();
 
       const pinResult = await dnsPin(url);
-      if (pinResult) return err(pinResult);
+      if (pinResult) return err(pinResult, { url, method, dns_pin: "blocked" });
 
       const validMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
       if (!validMethods.includes(method)) {
-        return err(`Invalid HTTP method: ${method}. Must be one of: ${validMethods.join(", ")}`);
+        return err(`Invalid HTTP method: ${method}. Must be one of: ${validMethods.join(", ")}`, {
+          recovery: "Use one of the valid methods.",
+        });
       }
 
       let autoAuth = false;
@@ -251,8 +268,14 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           resHeaders.push(`${key}: ${value}`);
         });
 
+        const durationMs = Date.now() - startMs;
         if (method === "HEAD") {
-          return ok(`HTTP ${statusLine}\n\n${resHeaders.join("\n")}`);
+          return ok(`HTTP ${statusLine}\n\n${resHeaders.join("\n")}`, {
+            url: currentUrl,
+            method,
+            status: res.status,
+            duration_ms: durationMs,
+          });
         }
 
         let body = await res.text();
@@ -267,7 +290,9 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         }
 
         const MAX_CHARS = 100_000;
-        if (body.length > MAX_CHARS) {
+        const fullBytes = body.length;
+        const truncated = fullBytes > MAX_CHARS;
+        if (truncated) {
           body = body.slice(0, MAX_CHARS) + `\n\n[Truncated at ${MAX_CHARS} chars]`;
         }
 
@@ -277,9 +302,22 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           status: statusLine,
         });
         const output = `HTTP ${statusLine}\n\n${wrapped}`;
-        return res.ok ? ok(output) : err(output);
+        const meta = {
+          url: currentUrl,
+          method,
+          status: res.status,
+          duration_ms: durationMs,
+          bytes: fullBytes,
+          truncated: truncated || undefined,
+          content_type: contentType || undefined,
+        };
+        return res.ok ? ok(output, meta) : err(output, meta);
       } catch (e) {
-        return err(`HTTP request failed: ${(e as Error).message}`);
+        return err(`HTTP request failed: ${(e as Error).message}`, {
+          url,
+          method,
+          duration_ms: Date.now() - startMs,
+        });
       }
     },
   };

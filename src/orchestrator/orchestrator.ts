@@ -83,7 +83,11 @@ const STOPWORDS = new Set([
   "ill", "im", "ive", "dont", "wont", "didnt", "isnt", "arent", "wasnt", "werent", "cant",
 ]);
 
-function topicalKeywords(text: string): Set<string> {
+// Exported for the bleed-gate regression test in
+// test/orchestrator-resume-bleed.test.ts. Internal callers still hit the
+// same function — exporting just unlocks unit-level coverage of the
+// deterministic fallback path.
+export function topicalKeywords(text: string): Set<string> {
   return new Set(
     (text || "")
       .toLowerCase()
@@ -92,7 +96,7 @@ function topicalKeywords(text: string): Set<string> {
   );
 }
 
-function signalTopicallyRelevant(messageWords: Set<string>, signalText: string): boolean {
+export function signalTopicallyRelevant(messageWords: Set<string>, signalText: string): boolean {
   const sigWords = topicalKeywords(signalText);
   let overlap = 0;
   for (const w of sigWords) {
@@ -170,28 +174,70 @@ export class MemoryOrchestrator {
     // user message AND the prior assistant turn (relational call).
     const wordCount = input.message.trim().split(/\s+/).length;
     const regexFollowup = isConversationalFollowup(input.message);
-    let isFollowup = regexFollowup;
+    // Three-state verdict from the LLM classifier:
+    //   "followup" — short ack: drop session-scope signals.
+    //   "resume"   — user is resuming an in-flight task the agent paused on.
+    //                Filter ALL signals (profile + session) by topical
+    //                relevance to the active-task ANCHOR (first substantive
+    //                user message), not the resume message itself ("go" has
+    //                no topic words and would let everything through). This
+    //                is the structural fix for the bug where profile recall
+    //                of a stale unrelated task ("Sports Life products") got
+    //                surfaced after the user said "im logged in go" while
+    //                entering a new PO.
+    //   "new"      — substantive new ask: normal topical-relevance gate.
+    // Regex stays as a cheap default; LLM upgrades it on the 3-12 word zone.
+    type Verdict = "followup" | "resume" | "new";
+    let verdict: Verdict = regexFollowup ? "followup" : "new";
+    // Active-task anchor — the first substantive user message in this
+    // session. Used as the topical reference for the resume branch (and
+    // logged so we can audit decisions).
+    const firstUserMessage =
+      input.sessionMessages.find(m => m.role === "user")?.content ?? input.message;
+    const anchorText = typeof firstUserMessage === "string" ? firstUserMessage : "";
     if (wordCount >= 3 && wordCount <= 12) {
       try {
         const { classifyFollowupWithLLM } = await import("../classifiers/followup-classify.js");
-        const priorAssistant = input.agentPreviousMessage;
-        const llmVerdict = await classifyFollowupWithLLM(input.message, priorAssistant);
-        if (llmVerdict !== null) isFollowup = llmVerdict;
+        const llmVerdict = await classifyFollowupWithLLM(
+          input.message,
+          input.agentPreviousMessage,
+          { firstUserMessage: anchorText },
+        );
+        if (llmVerdict !== null) verdict = llmVerdict;
       } catch {
         // keep regex verdict on classifier failure
       }
     }
+    const isFollowup = verdict === "followup";
+    const isResume = verdict === "resume";
     const beforeCount = signals.length;
 
-    // Phase A — drop on follow-up (cheap, no LLM cost). Profile-scope signals
-    // always pass; session-scope signals get nuked on conversational acks.
     if (isFollowup) {
+      // Phase A — drop session-scope signals on cheap acks. Profile-scope
+      // always passes (stable user identity).
       signals = signals.filter(s => getModuleScope(s.source) === "profile");
+    } else if (isResume) {
+      // Phase A' — resume: gate ALL signals (profile + session) against the
+      // active-task anchor, not the resume message. Profile signals about
+      // the active task pass through; profile signals about other tasks
+      // get dropped. This is what makes "im logged in go" continue the
+      // current PO instead of surfacing an unrelated past project.
+      try {
+        const { batchedTopicalRelevance } = await import("../classifiers/topical-relevance.js");
+        const v = await batchedTopicalRelevance(anchorText, signals.map(s => s.signal));
+        if (v) {
+          signals = signals.filter((_, i) => v.relevantIndices.has(i));
+        } else {
+          const anchorWords = topicalKeywords(anchorText);
+          signals = signals.filter(s => signalTopicallyRelevant(anchorWords, s.signal));
+        }
+      } catch {
+        const anchorWords = topicalKeywords(anchorText);
+        signals = signals.filter(s => signalTopicallyRelevant(anchorWords, s.signal));
+      }
     } else {
-      // Phase B — batch LLM topical-relevance for session-scope signals.
-      // The LLM call replaces the per-signal regex keyword overlap (which
-      // shipped both "monetization plan" vs "revenue strategy" false-
-      // negatives AND cross-project bleed false-positives).
+      // Phase B — substantive new ask. Profile passes; session-scope is
+      // gated by topical relevance to the user's current message.
       const profileSignals = signals.filter(s => getModuleScope(s.source) === "profile");
       const sessionSignals = signals.filter(s => getModuleScope(s.source) !== "profile");
 
@@ -201,14 +247,10 @@ export class MemoryOrchestrator {
         let keptSession = sessionSignals;
         try {
           const { batchedTopicalRelevance } = await import("../classifiers/topical-relevance.js");
-          const verdict = await batchedTopicalRelevance(
-            input.message,
-            sessionSignals.map(s => s.signal),
-          );
-          if (verdict) {
-            keptSession = sessionSignals.filter((_, i) => verdict.relevantIndices.has(i));
+          const v = await batchedTopicalRelevance(input.message, sessionSignals.map(s => s.signal));
+          if (v) {
+            keptSession = sessionSignals.filter((_, i) => v.relevantIndices.has(i));
           } else {
-            // Fallback to regex when LLM unavailable — same behavior as before.
             const messageWords = topicalKeywords(input.message);
             keptSession = sessionSignals.filter(s => signalTopicallyRelevant(messageWords, s.signal));
           }
@@ -222,9 +264,9 @@ export class MemoryOrchestrator {
 
     if (beforeCount !== signals.length) {
       const dropped = beforeCount - signals.length;
-      const reason = isFollowup ? "follow-up" : "topical-gate";
+      const reason = verdict === "followup" ? "follow-up" : verdict === "resume" ? "resume-gate" : "topical-gate";
       // eslint-disable-next-line no-console
-      console.info(`[orchestrator] bleed gate (${reason}) dropped ${dropped} session-scoped signals (msg="${input.message.slice(0, 40)}")`);
+      console.info(`[orchestrator] bleed gate (${reason}) dropped ${dropped} signals (msg="${input.message.slice(0, 40)}")`);
     }
 
     const merged = mergeSignals(signals, orchestratorState.lastSignalHashes, { sessionId: input.sessionId });

@@ -618,6 +618,13 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .status-select:hover{border-color:var(--accent);color:var(--text)}
 .status-select:focus{border-color:var(--accent);color:var(--accent);box-shadow:0 0 6px rgba(64,240,240,.1)}
 .status-select option{background:var(--surface);color:var(--text);font-family:var(--mono);font-size:.72rem}
+/* Optgroup labels are unreadable in dark mode by default (Chromium renders
+   them in faint italic gray that gets lost on var(--surface)). Force the
+   accent color + bold + plain style so "American Male" / "British Male"
+   read clearly in both the chat-bar voice picker and the Media tab. */
+.status-select optgroup{color:var(--accent);background:var(--surface);font-weight:600;font-style:normal;font-family:var(--mono);font-size:.7rem}
+.field-select optgroup{color:var(--accent);background:var(--bg);font-weight:600;font-style:normal}
+.field-select option{background:var(--bg);color:var(--text)}
 
 /* ── Onboarding wizard (feature 99) ── */
 #onboarding-overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);backdrop-filter:blur(6px);z-index:30000;display:flex;align-items:center;justify-content:center}

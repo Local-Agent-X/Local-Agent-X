@@ -103,19 +103,36 @@ export type VoiceEngineId = "tier4" | "python" | "cpu_fallback";
 
 interface ResolvedVoiceSettings {
   engine: VoiceEngineId;
+  /** "realtime" routes the whole session through OpenAI Realtime. Anything
+   *  else (or undefined) keeps the standard STT + LLM + TTS pipeline. */
+  mode?: "standard" | "realtime";
   tier4Device?: Tier4Device;
   tier4Dtype?: Tier4Dtype;
   tier4Voice?: string;
   tier4Speed?: number;
+  /** Picks the TTS adapter when engine === "tier4". One of the keys in the
+   *  registry (kokoro / chatterbox-clone / edge-tts / future). */
+  tier4Provider?: string;
   whisperDevice?: WhisperProvider;
   whisperModel?: WhisperVariant;
+  /** local-whisper / groq / openai / mistral. */
+  sttProvider?: string;
+  /** alloy / echo / fable / onyx / nova / shimmer (only when mode=realtime). */
+  realtimeVoice?: string;
+  realtimeModel?: string;
 }
 
 function resolveVoiceSettings(): ResolvedVoiceSettings {
   // 1. Settings file wins. Lives at $LAX_DATA_DIR/settings.json (typically
   //    ~/.lax/settings.json). Read on each session creation so users can
   //    flip engines / devices from the UI without restarting the server.
-  const out: ResolvedVoiceSettings = { engine: "python" };
+  //
+  // Default for fresh users (no voice keys saved): tier4 in-process Kokoro.
+  // Browser-only TTS routing happens client-side (the chat bar uses
+  // window.speechSynthesis directly when voiceMode === "browser") — the
+  // server side falls back to tier4 so the WebSocket path still works for
+  // STT during the same session.
+  const out: ResolvedVoiceSettings = { engine: "tier4" };
   let savedEngine: VoiceEngineId | undefined;
   try {
     const dataDir = process.env.LAX_DATA_DIR || join(homedir(), ".lax");
@@ -123,23 +140,37 @@ function resolveVoiceSettings(): ResolvedVoiceSettings {
     if (existsSync(sp)) {
       const saved = JSON.parse(readFileSync(sp, "utf-8")) as {
         voiceEngine?: string;
+        voiceMode?: string;
         voiceTier4Device?: string;
         voiceTier4Dtype?: string;
         voiceTier4Voice?: string;
         voiceTier4Speed?: number;
+        voiceTier4Provider?: string;
         voiceWhisperDevice?: string;
         voiceWhisperModel?: string;
+        voiceSttProvider?: string;
+        voiceRealtimeVoice?: string;
+        voiceRealtimeModel?: string;
       };
       if (saved.voiceEngine === "tier4" || saved.voiceEngine === "python" || saved.voiceEngine === "cpu_fallback") {
         savedEngine = saved.voiceEngine;
       }
+      const mode = saved.voiceMode?.trim().toLowerCase();
+      if (mode === "realtime" || mode === "standard") out.mode = mode;
       const td = saved.voiceTier4Device?.toLowerCase() as Tier4Device | undefined;
       if (td && VALID_TIER4_DEVICES.has(td)) out.tier4Device = td;
       const tdt = saved.voiceTier4Dtype?.toLowerCase() as Tier4Dtype | undefined;
       if (tdt && VALID_TIER4_DTYPES.has(tdt)) out.tier4Dtype = tdt;
+      const tp = saved.voiceTier4Provider?.trim().toLowerCase();
+      if (tp) out.tier4Provider = tp;
       const tv = typeof saved.voiceTier4Voice === "string" ? saved.voiceTier4Voice.trim() : "";
       if (tv) {
-        if (isValidKokoroVoice(tv)) {
+        // Only the kokoro provider has a strict validation list; pass-through
+        // for edge-tts / chatterbox-clone / future adapters that own their
+        // own catalogs. Empty/unset provider is treated as kokoro for back-
+        // compat with installs that never wrote voiceTier4Provider.
+        const isKokoro = !out.tier4Provider || out.tier4Provider === "kokoro";
+        if (!isKokoro || isValidKokoroVoice(tv)) {
           out.tier4Voice = tv;
         } else {
           logger.warn(`[voice-session] settings.voiceTier4Voice="${tv}" is not a known Kokoro voice; using default`);
@@ -153,6 +184,12 @@ function resolveVoiceSettings(): ResolvedVoiceSettings {
       if (wd && VALID_WHISPER_PROVIDERS.has(wd)) out.whisperDevice = wd;
       const wm = saved.voiceWhisperModel?.toLowerCase() as WhisperVariant | undefined;
       if (wm && VALID_WHISPER_VARIANTS.has(wm)) out.whisperModel = wm;
+      const sp2 = saved.voiceSttProvider?.trim().toLowerCase();
+      if (sp2) out.sttProvider = sp2;
+      const rv = saved.voiceRealtimeVoice?.trim().toLowerCase();
+      if (rv) out.realtimeVoice = rv;
+      const rm = saved.voiceRealtimeModel?.trim();
+      if (rm) out.realtimeModel = rm;
     }
   } catch { /* settings file unreadable — fall through to env */ }
   if (savedEngine) {
@@ -174,23 +211,29 @@ const MAX_UTTERANCE_SAMPLES = 16000 * 22; // 22s hard cap (VAD itself cuts at 20
 
 export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
   return (ctx: VoiceSessionContext): VoiceSession => {
-    // OpenAI Realtime full-duplex bridge takes over the entire session when
-    // LAX_VOICE_MODE=realtime. Skips STT/LLM/TTS — browser audio is proxied
-    // straight to OpenAI and back. Falls through to the normal pipeline if
-    // the API key is missing so the user still gets a working session
-    // (with a clear voice_error event from the realtime factory).
-    if (process.env.LAX_VOICE_MODE === "realtime") {
-      const ready = realtimeReadiness();
-      if (ready.ready) {
-        logger.info(`[voice-session] ${ctx.sessionId}: LAX_VOICE_MODE=realtime → OpenAI Realtime full-duplex bridge`);
-        return createRealtimeSessionFromEnv(ctx);
-      }
-      logger.warn(`[voice-session] ${ctx.sessionId}: LAX_VOICE_MODE=realtime but ${ready.reason || "not ready"} — falling back to normal pipeline`);
-    }
-
     // Per-session settings resolution — settings.json is the source of truth
     // so a UI dropdown change picks up on the next voice session without restart.
     const voiceSettings = resolveVoiceSettings();
+
+    // OpenAI Realtime full-duplex bridge takes over the entire session when
+    // either settings.voiceMode === "realtime" or LAX_VOICE_MODE=realtime is
+    // set. Skips STT/LLM/TTS — browser audio is proxied straight to OpenAI
+    // and back. Falls through to the normal pipeline if the API key is
+    // missing (so the user still gets a working session with a clear
+    // voice_error event from the realtime factory).
+    const realtimeWanted = voiceSettings.mode === "realtime" || process.env.LAX_VOICE_MODE === "realtime";
+    if (realtimeWanted) {
+      const ready = realtimeReadiness();
+      if (ready.ready) {
+        logger.info(`[voice-session] ${ctx.sessionId}: voiceMode=realtime → OpenAI Realtime full-duplex bridge`);
+        return createRealtimeSessionFromEnv(ctx, {
+          voice: voiceSettings.realtimeVoice,
+          model: voiceSettings.realtimeModel,
+        });
+      }
+      logger.warn(`[voice-session] ${ctx.sessionId}: voiceMode=realtime but ${ready.reason || "not ready"} — falling back to normal pipeline`);
+    }
+
     const engine = voiceSettings.engine;
     const TIER4_MODE = engine === "tier4";
     if (engine === "python") {
@@ -293,11 +336,12 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         };
 
         if (TIER4_MODE) {
-          // Provider selection. LAX_VOICE_TIER4_PROVIDER overrides the
-          // default kokoro/chatterbox-clone variant picker — set to
-          // "edge-tts" to route through the edge-tts adapter (no API key,
-          // requires `npm i msedge-tts mpg123-decoder`).
-          const providerOverride = process.env.LAX_VOICE_TIER4_PROVIDER?.trim();
+          // Provider selection. settings.voiceTier4Provider beats env
+          // (LAX_VOICE_TIER4_PROVIDER), env beats the kokoro/chatterbox-clone
+          // auto-pick. Set to "edge-tts" to route through the edge-tts
+          // adapter (no API key, requires `npm i msedge-tts mpg123-decoder`).
+          const providerOverride = voiceSettings.tier4Provider
+            || process.env.LAX_VOICE_TIER4_PROVIDER?.trim();
           const variant = providerOverride && providerOverride.length > 0
             ? providerOverride
             : tier4VariantFromEnv();
@@ -321,12 +365,18 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         }
         ttsSampleRate = tts.sampleRate;
 
-        // STT provider selection. LAX_VOICE_STT_PROVIDER picks between
-        // local-whisper (default), groq, openai, mistral. Cloud providers
-        // ignore the local model paths but we still resolve them so a
-        // missing key falls back gracefully to local whisper.
+        // STT provider selection. settings.voiceSttProvider beats
+        // LAX_VOICE_STT_PROVIDER. Picks between local-whisper (default),
+        // groq, openai, mistral. Cloud providers ignore the local model
+        // paths but we still resolve them so a missing key falls back
+        // gracefully to local whisper.
         const whisperPaths = getWhisperModelPaths({ variant: voiceSettings.whisperModel });
-        const sttProviderName = resolveSttProviderName() ?? "local-whisper";
+        const settingsStt = voiceSettings.sttProvider as
+          | "local-whisper" | "groq" | "openai" | "mistral" | undefined;
+        const sttProviderName = settingsStt
+          && (settingsStt === "local-whisper" || settingsStt === "groq" || settingsStt === "openai" || settingsStt === "mistral")
+          ? settingsStt
+          : (resolveSttProviderName() ?? "local-whisper");
         if (sttProviderName === "local-whisper") {
           whisper = createWhisperTranscriber(whisperPaths, {
             provider: voiceSettings.whisperDevice,

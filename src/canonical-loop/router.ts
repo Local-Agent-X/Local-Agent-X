@@ -7,14 +7,19 @@
  * the caller).
  *
  * Provider gating: when `LAX_CANONICAL_LOOP_ANTHROPIC_ONLY=1` is set, the
- * canonical route is only taken when the op's effective provider resolves to
- * Anthropic. Codex/openai/etc. stay on the legacy path (necessary because
- * v1.0 only ships an Anthropic adapter — Codex adapter is v1.1).
+ * canonical route is only taken when the op's effective provider resolves
+ * to Anthropic. With the Codex adapter shipped (v1.1), Codex now has
+ * canonical support too — the gate is kept as an opt-in safety knob but
+ * the *default* (env unset) lets any supported provider take canonical.
+ *
+ * Supported provider list: anthropic, codex. Other providers (xai, gemini,
+ * local, openai-direct) don't have canonical adapters yet and fall through
+ * to legacy regardless of the gate.
  *
  * Effective provider precedence:
  *   1. op.contextPack.routing.preferredProvider (caller hint)
  *   2. settings.json `provider` (global default)
- *   3. unknown → treated as non-anthropic (safer default)
+ *   3. unknown → treated as unsupported (safer default — falls to legacy)
  */
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -42,16 +47,29 @@ function readGlobalProvider(): string | null {
   }
 }
 
+const CANONICAL_SUPPORTED_PROVIDERS = new Set(["anthropic", "codex"]);
+
 export function decideSubmitRouting(op: Pick<Op, "lane"> & { contextPack?: Op["contextPack"] }): SubmitRouting {
   const lane = op.lane as CanonicalLane;
   let flagValue = isCanonicalLoopEnabled(lane);
 
   if (flagValue) {
+    const opProvider = op.contextPack?.routing?.preferredProvider;
+    const effective = opProvider ?? readGlobalProvider();
+
+    // Always require a SUPPORTED canonical provider. Without an adapter
+    // for the provider, the op would fail-fast on adapter_not_configured;
+    // routing to legacy is the safe default.
+    if (!effective || !CANONICAL_SUPPORTED_PROVIDERS.has(effective)) {
+      flagValue = false;
+    }
+
+    // Optional opt-in gate: ANTHROPIC_ONLY narrows further to anthropic.
+    // Useful as a safety knob during Codex canary periods. Default unset =
+    // both providers go canonical when supported.
     const raw = (process.env.LAX_CANONICAL_LOOP_ANTHROPIC_ONLY ?? "").trim().toLowerCase();
-    if (TRUTHY.has(raw)) {
-      const opProvider = op.contextPack?.routing?.preferredProvider;
-      const effective = opProvider ?? readGlobalProvider();
-      if (effective !== "anthropic") flagValue = false;
+    if (TRUTHY.has(raw) && effective !== "anthropic") {
+      flagValue = false;
     }
   }
 

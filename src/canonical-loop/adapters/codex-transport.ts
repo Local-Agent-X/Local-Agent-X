@@ -64,6 +64,11 @@ export function defaultCodexTransport(): CodexTransport {
           signal: req.signal,
         });
 
+        // Codex emits a separate `usage` event BEFORE `done`. Buffer it so
+        // we can attach to the canonical `done` frame's optional usage
+        // field — same shape soak-metrics already reads from anthropic.
+        let pendingUsage: { inputTokens: number; outputTokens: number } | undefined;
+
         for await (const chunk of stream) {
           if (req.signal?.aborted) return;
           switch (chunk.type) {
@@ -78,11 +83,21 @@ export function defaultCodexTransport(): CodexTransport {
                 arguments: chunk.arguments,
               };
               break;
+            case "usage": {
+              // Codex CLI's separate usage event — buffer until done.
+              const u = chunk as { promptTokens?: number; completionTokens?: number };
+              pendingUsage = {
+                inputTokens: u.promptTokens ?? 0,
+                outputTokens: u.completionTokens ?? 0,
+              };
+              break;
+            }
             case "done":
               yield {
                 type: "done" as const,
                 stopReason: chunk.stopReason,
                 responseId: chunk.responseId,
+                usage: pendingUsage,
               };
               return;
             case "error":
@@ -93,7 +108,7 @@ export function defaultCodexTransport(): CodexTransport {
                 retryable: false,
               };
               break;
-            // "reasoning" and "usage" are Codex-specific; not in TransportEvent contract.
+            // "reasoning" is Codex-specific; not in TransportEvent contract.
           }
         }
       } catch (e) {
@@ -110,6 +125,21 @@ export function defaultCodexTransport(): CodexTransport {
 }
 
 function toOaiMessage(m: AnthropicTransportRequest["messages"][number]): ChatCompletionMessageParam {
+  // Assistant turns that emitted tool_calls must round-trip them in the
+  // Chat Completions message shape so codex-message-convert.ts sees the
+  // tool_calls field and emits matching `function_call` input items.
+  // Without this the next turn's function_call_output orphans on Codex.
+  if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
+    return {
+      role: "assistant",
+      content: m.content || null,
+      tool_calls: m.toolCalls.map(tc => ({
+        id: tc.id,
+        type: "function" as const,
+        function: { name: tc.name, arguments: tc.arguments },
+      })),
+    } as ChatCompletionMessageParam;
+  }
   if (m.role === "system" || m.role === "user" || m.role === "assistant") {
     return { role: m.role, content: m.content } as ChatCompletionMessageParam;
   }

@@ -69,6 +69,17 @@ export interface TransportMessage {
   content: string;
   /** Required when role === "tool". */
   toolCallId?: string;
+  /**
+   * Optional assistant tool_calls for round-tripping function_call items
+   * across turns. Codex's ChatGPT-backend doesn't support
+   * `previous_response_id`, so the message history must include the
+   * assistant's prior tool_call(s) before the matching tool_result —
+   * otherwise the API rejects with "no tool call found for function call
+   * output with call_id …". Set when role === "assistant" and the model
+   * emitted tool calls; the per-provider transport translates this to the
+   * underlying client's tool-call shape.
+   */
+  toolCalls?: Array<{ id: string; name: string; arguments: string }>;
 }
 
 export interface TransportTool {
@@ -81,7 +92,24 @@ export type TransportEvent =
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
   | { type: "error"; code: string; message: string; retryable?: boolean }
-  | { type: "done"; stopReason?: string };
+  | {
+      type: "done";
+      stopReason?: string;
+      /**
+       * Optional usage from the underlying provider's terminal frame.
+       * Captured into providerState so soak-metrics can read it without
+       * subscribing to provider-specific shapes. Populated by both the
+       * Anthropic and Codex transports when their respective `result` /
+       * `done` events carry usage. Cache fields are Anthropic-specific —
+       * Codex returns them as undefined.
+       */
+      usage?: {
+        inputTokens: number;
+        outputTokens: number;
+        cacheReadTokens?: number;
+        cacheCreateTokens?: number;
+      };
+    };
 
 export interface AnthropicTransport {
   stream(req: AnthropicTransportRequest): AsyncIterable<TransportEvent>;
@@ -153,6 +181,10 @@ export class AnthropicAdapter implements Adapter {
     const toolCallIds: string[] = [];
     let firstError: { code: string; message: string } | null = null;
     let providerStop: string | undefined;
+    let usageInputTokens: number | undefined;
+    let usageOutputTokens: number | undefined;
+    let cacheReadTokens: number | undefined;
+    let cacheCreateTokens: number | undefined;
 
     const req: AnthropicTransportRequest = {
       model: this.opts.model ?? "claude-opus-4-7",
@@ -163,6 +195,10 @@ export class AnthropicAdapter implements Adapter {
       maxTokens: this.opts.maxTokens,
       sessionId: this.opts.sessionId,
     };
+
+    // Idle-event detection lives in turn-loop now (provider-agnostic).
+    // The adapter just yields events; turn-loop watches the report stream
+    // and calls adapter.abort("idle-stalled") if no events for IDLE_TIMEOUT_MS.
 
     const consume = async (): Promise<void> => {
       try {
@@ -202,6 +238,12 @@ export class AnthropicAdapter implements Adapter {
           }
           if (ev.type === "done") {
             providerStop = ev.stopReason;
+            if (ev.usage) {
+              usageInputTokens = ev.usage.inputTokens;
+              usageOutputTokens = ev.usage.outputTokens;
+              cacheReadTokens = ev.usage.cacheReadTokens;
+              cacheCreateTokens = ev.usage.cacheCreateTokens;
+            }
             continue;
           }
         }
@@ -255,6 +297,14 @@ export class AnthropicAdapter implements Adapter {
       finalizedMessageId,
       stopReason: providerStop,
       pendingTools: toolCallIds.length,
+      // Soak-metrics reads model + usage off providerPayload to compute
+      // cost. Skip empty values so we don't pollute soak with zeros for
+      // turns that didn't yield usage info.
+      model: this.opts.model ?? "claude-opus-4-7",
+      ...(usageInputTokens !== undefined ? { usageInputTokens } : {}),
+      ...(usageOutputTokens !== undefined ? { usageOutputTokens } : {}),
+      ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+      ...(cacheCreateTokens !== undefined ? { cacheCreateTokens } : {}),
     });
 
     // Size cap (PRD §21): fail loudly. Surface via error report so the
@@ -280,9 +330,9 @@ export class AnthropicAdapter implements Adapter {
     return { providerState, terminalReason };
   }
 
-  async abort(): Promise<void> {
+  async abort(reason?: unknown): Promise<void> {
     this.aborted = true;
-    try { this.aborter.abort(); } catch { /* ignore */ }
+    try { this.aborter.abort(reason); } catch { /* ignore */ }
     if (this.inflight) {
       try { await this.inflight; } catch { /* swallow */ }
     }

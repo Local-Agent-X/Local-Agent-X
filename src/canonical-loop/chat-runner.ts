@@ -169,7 +169,11 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     successCriteria: [],
     constraints: [],
     lane: "interactive",
-    preferredProvider: "anthropic",
+    // Pass through the actual provider so soak-metrics' `provider` column
+    // matches the `adapter` column. Earlier this was hardcoded "anthropic"
+    // and Codex turns surfaced as `provider:"anthropic" adapter:"codex"`,
+    // breaking apples-to-apples filtering.
+    preferredProvider: ctx.prepared.provider,
     budget: { maxIterations: ctx.prepared.maxIterations || 30, maxWallTimeMs: 5 * 60 * 1000 },
   });
 
@@ -297,6 +301,10 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   try {
     canonicalLoopEntry(op, { sessionId: ctx.sessionId });
     logger.info(`[chat-runner] submitted op ${op.id} sess=${ctx.sessionId.slice(0, 16)} model=${ctx.prepared.model} tools=${ctx.tools.length}`);
+    // Tell the UI the opId immediately so it can track for reconnect /
+    // cancel — independent of any HTTP/SSE connection that may drop.
+    eventQueue.push({ type: "chat_op_started", opId: op.id });
+    wake();
   } catch (e) {
     yield { type: "error", message: `canonical chat submit failed: ${(e as Error).message}` };
     yield { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } };

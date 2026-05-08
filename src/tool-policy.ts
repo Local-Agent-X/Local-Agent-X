@@ -277,6 +277,12 @@ const DEFAULT_POLICY: ToolPolicyConfig = {
     // Worker pool — op_submit/status/kill/redirect, heavy work in isolated subprocess
     { id: "allow-op", tool: "op_*", decision: "allow", reason: "Worker pool ops — heavy work runs in isolated subprocess", priority: 50 },
 
+    // Long-running processes — process_start/status/kill/list. Same address
+    // space as the agent (no subprocess agent), session-buffered output, the
+    // right primitive for "wait for a 5-minute install" instead of bash
+    // blocking the turn or escalating to op_submit_async.
+    { id: "allow-process", tool: "process_*", decision: "allow", reason: "Long-running process sessions (in-process buffered)", priority: 50 },
+
     // Secrets — request triggers UI prompt, list shows names only
     { id: "allow-request-secret", tool: "request_secret", decision: "allow", reason: "Secret request (user confirms via UI)", priority: 50 },
     { id: "allow-request-secrets", tool: "request_secrets", decision: "allow", reason: "Multi-secret request (user confirms via UI)", priority: 50 },

@@ -49,6 +49,22 @@ export function statusOf(r: ToolResult): ToolResultStatus {
 }
 
 /**
+ * Parse the leading status header from a rendered tool-result string —
+ * the inverse of `renderToolResultForModel`. Used by the canonical
+ * ChatToolDispatcher to recover the envelope status when it only has
+ * the rendered message back from `executeToolCalls`. Returns "ok" when
+ * no header is present (legacy verbatim path).
+ *
+ * Header shape (matches renderToolResultForModel):
+ *   [<status>, k=v ...]\n...
+ */
+export function parseStatusHeader(rendered: string): ToolResultStatus {
+  if (typeof rendered !== "string") return "ok";
+  const m = rendered.match(/^\[(ok|error|blocked|timeout|running)(?:[,\s\]])/);
+  return (m?.[1] as ToolResultStatus | undefined) ?? "ok";
+}
+
+/**
  * Render an envelope into the string the model sees inside its tool_result
  * block. Goals:
  *   - Zero behaviour change for the ~60 legacy tools that only set

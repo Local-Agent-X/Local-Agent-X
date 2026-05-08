@@ -228,13 +228,23 @@ function drainInjectsIntoTurn(op: Op, turnIdx: number): void {
   let seqInTurn = readOpMessages(op.id).filter(m => m.turnIdx === turnIdx).length;
   const now = new Date().toISOString();
   for (const text of injects) {
+    // Lightweight temporal-context marker. The model already has the
+    // conversation history (so it knows what task is active) — what it
+    // doesn't otherwise know is that this message arrived WHILE a turn
+    // was running, not after it ended. Marking that fact is real signal:
+    // it nudges the model to treat the message as relevant to the
+    // current work without prescribing an interpretation. Deliberately
+    // does NOT say "this applies to the active task" — the user might
+    // be redirecting, and biasing toward continuation would suppress
+    // legitimate course corrections.
+    const framed = `[mid-turn user message] ${text}`;
     const row: OpMessageRow = {
       messageId: `inject-${op.id}-${turnIdx}-${seqInTurn}-${randomUUID().slice(0, 6)}`,
       opId: op.id,
       turnIdx,
       seqInTurn,
       role: "user",
-      content: { text },
+      content: { text: framed },
       createdAt: now,
     };
     appendOpMessage(row);

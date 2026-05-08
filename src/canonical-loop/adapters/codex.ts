@@ -1,0 +1,250 @@
+/**
+ * Codex adapter — v1.1 implementation of the canonical adapter contract.
+ * Structurally mirrors anthropic.ts; the transport calls the Codex
+ * Responses API instead of the Anthropic CLI proxy.
+ *
+ * `previousResponseId` chaining: Codex threads encrypted reasoning
+ * across turns via this ID. We store it in `provider_state` at the end
+ * of each turn and read it back at the start of the next, passing it to
+ * the transport so the model can reconstruct its reasoning context
+ * without resending it as plaintext.
+ */
+import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
+import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
+import type { CodexTransport } from "./codex-transport.js";
+import type { AnthropicTransportRequest } from "./anthropic.js";
+
+export const CODEX_ADAPTER_NAME = "codex";
+export const CODEX_ADAPTER_VERSION = "1.0.0";
+export const CODEX_PROVIDER_STATE_MAX_BYTES = 256 * 1024;
+
+export interface CodexAdapterOptions {
+  transport?: CodexTransport;
+  model?: string;
+  systemPrompt?: string;
+  maxTokens?: number;
+  providerStateMaxBytes?: number;
+  sessionId?: string;
+}
+
+export class CodexAdapter implements Adapter {
+  readonly name = CODEX_ADAPTER_NAME;
+  readonly version = CODEX_ADAPTER_VERSION;
+
+  private aborted = false;
+  private aborter: AbortController = new AbortController();
+  private inflight: Promise<void> | null = null;
+  private readonly transportPromise: Promise<CodexTransport>;
+
+  constructor(private readonly opts: CodexAdapterOptions = {}) {
+    this.transportPromise = opts.transport
+      ? Promise.resolve(opts.transport)
+      : import("./codex-transport.js").then(m => m.defaultCodexTransport());
+  }
+
+  async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
+    if (this.aborted) {
+      report({ kind: "error", code: "aborted", message: "adapter aborted before runTurn", retryable: false });
+      return { providerState: this.buildProviderState(input, {}, undefined), terminalReason: "error" };
+    }
+
+    this.aborter = new AbortController();
+    const transport = await this.transportPromise;
+
+    // Read previousResponseId stored from the prior turn.
+    const prevResponseId = (input.providerState?.providerPayload as Record<string, unknown> | undefined)
+      ?.previousResponseId as string | undefined;
+
+    let assembledText = "";
+    let finalizedMessageId: string | null = null;
+    const toolCallIds: string[] = [];
+    let firstError: { code: string; message: string } | null = null;
+    let providerStop: string | undefined;
+    let newResponseId: string | undefined;
+
+    const req: AnthropicTransportRequest & { previousResponseId?: string } = {
+      model: this.opts.model ?? "gpt-5.4-mini",
+      systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
+      messages: convertMessages(input.messages, input.pendingRedirect),
+      tools: convertTools(input.tools),
+      signal: this.aborter.signal,
+      maxTokens: this.opts.maxTokens,
+      sessionId: this.opts.sessionId,
+      previousResponseId: prevResponseId,
+    };
+
+    const consume = async (): Promise<void> => {
+      try {
+        for await (const ev of transport.stream(req as Parameters<typeof transport.stream>[0])) {
+          if (this.aborted) break;
+          if (ev.type === "text") {
+            if ((ev as { delta?: string }).delta?.length === 0) continue;
+            assembledText += (ev as { delta: string }).delta;
+            report({ kind: "stream_chunk", body: { delta: (ev as { delta: string }).delta } });
+            continue;
+          }
+          if (ev.type === "tool_call") {
+            const tc = ev as { id: string; name: string; arguments: string };
+            toolCallIds.push(tc.id);
+            report({ kind: "tool_call_requested", call: { toolCallId: tc.id, tool: tc.name, args: parseArgs(tc.arguments) } });
+            continue;
+          }
+          if (ev.type === "error") {
+            const err = ev as { code: string; message: string; retryable?: boolean };
+            if (!firstError) firstError = { code: err.code, message: err.message };
+            report({ kind: "error", code: err.code, message: err.message, retryable: err.retryable === true });
+            continue;
+          }
+          if (ev.type === "done") {
+            providerStop = (ev as { stopReason?: string }).stopReason;
+            newResponseId = (ev as { responseId?: string }).responseId;
+            continue;
+          }
+        }
+      } catch (e) {
+        const message = (e as Error).message ?? String(e);
+        if (!firstError) firstError = { code: "transport_exception", message };
+        report({ kind: "error", code: "transport_exception", message, retryable: false });
+      }
+    };
+
+    this.inflight = consume();
+    try { await this.inflight; } finally { this.inflight = null; }
+
+    if (assembledText.length > 0) {
+      finalizedMessageId = `cm-${input.opId}-${input.turnIdx}-${Date.now().toString(36)}`;
+      const msg: CanonicalMessage = {
+        messageId: finalizedMessageId,
+        role: "assistant",
+        content: { text: assembledText },
+      };
+      report({ kind: "message_finalized", message: msg });
+    }
+
+    let terminalReason: "done" | "error" | undefined;
+    if (this.aborted) {
+      terminalReason = "error";
+    } else if (firstError) {
+      terminalReason = "error";
+    } else if (toolCallIds.length > 0) {
+      terminalReason = undefined;
+    } else {
+      terminalReason = "done";
+    }
+
+    let providerState = this.buildProviderState(input, {
+      finalizedMessageId,
+      stopReason: providerStop,
+      pendingTools: toolCallIds.length,
+    }, newResponseId);
+
+    const sizeCheck = this.checkProviderStateSize(providerState);
+    if (sizeCheck) {
+      report({ kind: "error", code: "provider_state_oversize", message: sizeCheck, retryable: false });
+      providerState = {
+        adapterName: CODEX_ADAPTER_NAME,
+        adapterVersion: CODEX_ADAPTER_VERSION,
+        providerPayload: { error: "provider_state_oversize" },
+      };
+      terminalReason = "error";
+    }
+
+    return { providerState, terminalReason };
+  }
+
+  async abort(): Promise<void> {
+    this.aborted = true;
+    try { this.aborter.abort(); } catch { /* ignore */ }
+    if (this.inflight) { try { await this.inflight; } catch { /* swallow */ } }
+  }
+
+  private buildProviderState(
+    input: TurnInput,
+    payload: Record<string, unknown>,
+    responseId: string | undefined,
+  ): ProviderStateEnvelope {
+    return {
+      adapterName: CODEX_ADAPTER_NAME,
+      adapterVersion: CODEX_ADAPTER_VERSION,
+      providerPayload: {
+        lastTurnIdx: input.turnIdx,
+        ...(responseId ? { previousResponseId: responseId } : {}),
+        ...payload,
+      },
+    };
+  }
+
+  private checkProviderStateSize(env: ProviderStateEnvelope): string | null {
+    const max = this.opts.providerStateMaxBytes ?? CODEX_PROVIDER_STATE_MAX_BYTES;
+    const size = byteLengthUtf8(JSON.stringify(env));
+    return size > max ? `provider_state size ${size} bytes exceeds cap ${max}` : null;
+  }
+}
+
+// ── helpers (mirrors anthropic.ts) ──────────────────────────────────────────
+
+import type { TransportMessage, TransportTool } from "./anthropic.js";
+
+function convertMessages(
+  messages: CanonicalMessage[],
+  pendingRedirect: TurnInput["pendingRedirect"],
+): TransportMessage[] {
+  const out: TransportMessage[] = [];
+  for (const m of messages) {
+    const c = m.content as Record<string, unknown> | string | null | undefined;
+    if (m.role === "system" || m.role === "user" || m.role === "assistant") {
+      out.push({ role: m.role, content: extractText(c) });
+      continue;
+    }
+    if (m.role === "tool_result") {
+      const obj = (c ?? {}) as { toolCallId?: string; result?: unknown };
+      const content = typeof obj.result === "string" ? obj.result : JSON.stringify(obj.result ?? null);
+      out.push({ role: "tool", toolCallId: obj.toolCallId ?? "tc-unknown", content });
+      continue;
+    }
+    if (m.role === "control") {
+      const text = extractText(c);
+      if (text) out.push({ role: "user", content: `[CONTROL] ${text}` });
+      continue;
+    }
+  }
+  if (pendingRedirect) {
+    out.push({ role: "user", content: `[REDIRECT] ${pendingRedirect.text}` });
+  }
+  return out;
+}
+
+function convertTools(tools: TurnInput["tools"]): TransportTool[] {
+  return tools.map(t => ({ name: t.name, description: t.description ?? "", parameters: ((t.inputSchema as Record<string, unknown>) ?? {}) }));
+}
+
+function extractText(c: unknown): string {
+  if (c == null) return "";
+  if (typeof c === "string") return c;
+  if (typeof c === "object" && "text" in (c as Record<string, unknown>)) {
+    const v = (c as { text?: unknown }).text;
+    return typeof v === "string" ? v : "";
+  }
+  return "";
+}
+
+function parseArgs(raw: string): unknown {
+  if (!raw) return {};
+  try { return JSON.parse(raw); } catch { return { _raw: raw }; }
+}
+
+function byteLengthUtf8(s: string): number {
+  let len = 0;
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (code < 0x80) len += 1;
+    else if (code < 0x800) len += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) { len += 4; i++; }
+    else len += 3;
+  }
+  return len;
+}
+
+export function createCodexAdapter(opts: CodexAdapterOptions = {}): CodexAdapter {
+  return new CodexAdapter(opts);
+}

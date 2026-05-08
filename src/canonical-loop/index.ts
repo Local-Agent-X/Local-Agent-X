@@ -208,6 +208,16 @@ export {
   type TransportTool,
 } from "./adapters/anthropic.js";
 
+// ── Issue 11 Codex adapter (v1.1 canary) ────────────────────────────────────
+
+export {
+  CodexAdapter,
+  createCodexAdapter,
+  CODEX_ADAPTER_NAME,
+  CODEX_ADAPTER_VERSION,
+  type CodexAdapterOptions,
+} from "./adapters/codex.js";
+
 export { listActiveCanonicalOps, type ActiveCanonicalOp } from "./active-ops.js";
 
 export {

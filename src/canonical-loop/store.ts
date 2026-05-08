@@ -155,6 +155,35 @@ export function readLatestOpTurn(opId: string): OpTurnRow | null {
   }
 }
 
+/**
+ * Read all op_turns for an op, ascending by turn_idx. Used by soak
+ * telemetry to aggregate per-turn fields (modelMs, toolDispatchMs, tool
+ * names) across the full op lifetime — readLatestOpTurn alone misses
+ * the rounds that happened earlier in a multi-turn op.
+ */
+export function readOpTurns(opId: string): OpTurnRow[] {
+  const dir = opTurnsDir(opId);
+  if (!existsSync(dir)) return [];
+  try {
+    const entries = readdirSync(dir).filter((f: string) => f.endsWith(".json"));
+    const idxs: number[] = [];
+    for (const f of entries) {
+      const n = parseInt(f.replace(/\.json$/, ""), 10);
+      if (Number.isFinite(n) && n >= 0) idxs.push(n);
+    }
+    idxs.sort((a, b) => a - b);
+    const rows: OpTurnRow[] = [];
+    for (const i of idxs) {
+      const r = readOpTurn(opId, i);
+      if (r) rows.push(r);
+    }
+    return rows;
+  } catch (e) {
+    logger.warn(`[store] readOpTurns failed for ${opId}: ${(e as Error).message}`);
+    return [];
+  }
+}
+
 export function readOpTurn(opId: string, turnIdx: number): OpTurnRow | null {
   const path = opTurnPath(opId, turnIdx);
   if (!existsSync(path)) return null;

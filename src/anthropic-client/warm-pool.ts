@@ -312,15 +312,26 @@ export async function* streamViaWarmPool(
   const wp = await acquire(key);
   let released = false;
   let aborted = false;
-  // Per-turn cleanup signal: when the consumer's signal fires, stop reading
-  // CLI output but DO NOT kill the warm process. The CLI has no in-band
-  // abort, so the in-flight turn keeps spending tokens until done — that's
-  // a cost we accept to keep the process warm. The dropped output never
-  // reaches the consumer (state-flag below). Catastrophic stop (user-initiated
-  // hard kill) goes through `evictWarmProcess` rather than the per-turn signal.
-  const onAbort = () => { aborted = true; };
+  // Two abort modes, distinguished by the AbortSignal's `reason`:
+  //   - reason matches /idle|stalled|stop/i → KILL the warm process. The
+  //     model is wedged or the user pressed stop; we need to free the
+  //     subprocess so it stops burning Anthropic tokens.
+  //   - any other reason (or no reason) → DRAIN silently. This is the
+  //     gentle path for session-turn-lock evictions and similar internal
+  //     cleanup — preserves the warm process for the next turn.
+  const onAbort = () => {
+    aborted = true;
+    const reason = opts.signal?.reason;
+    const reasonText =
+      reason instanceof Error ? reason.message :
+      typeof reason === "string" ? reason : "";
+    if (/idle|stalled|stop/i.test(reasonText)) {
+      try { wp.proc.kill("SIGKILL"); } catch { /* dead */ }
+      wp.state = "dead";
+    }
+  };
   if (opts.signal) {
-    if (opts.signal.aborted) aborted = true;
+    if (opts.signal.aborted) onAbort();
     else opts.signal.addEventListener("abort", onAbort, { once: true });
   }
 
@@ -346,7 +357,12 @@ export async function* streamViaWarmPool(
     wp.proc.stdin.write(userMsg);
 
     let fullText = "";
-    let usage: { input_tokens?: number; output_tokens?: number } = {};
+    let usage: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+    } = {};
 
     while (!finished) {
       let next: { done: boolean; frame?: unknown };
@@ -416,6 +432,13 @@ export async function* streamViaWarmPool(
       if (t === "result") {
         const u = frame.usage as Record<string, unknown> | undefined;
         if (u && typeof u === "object") usage = u as typeof usage;
+        // DEBUG: inspect raw usage shape so we can see whether the CLI
+        // surfaces cache_read_input_tokens / cache_creation_input_tokens
+        // under OAuth subscription auth. Drop once cache fields are
+        // confirmed in soak rows.
+        try {
+          logger.info(`[warm-pool] usage-keys=${Object.keys(usage).join(",")} usage-json=${JSON.stringify(usage).slice(0, 500)}`);
+        } catch { /* ignore */ }
         // If no streamed deltas arrived (no --include-partial-messages
         // support, or the model emitted a single content block), back-fill
         // from result text.
@@ -424,7 +447,15 @@ export async function* streamViaWarmPool(
           const tail = resultText.slice(fullText.length);
           if (tail.length > 0) yield { type: "text", delta: tail };
         }
-        yield { type: "done", usage: { inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0 } };
+        yield {
+          type: "done",
+          usage: {
+            inputTokens: usage.input_tokens || 0,
+            outputTokens: usage.output_tokens || 0,
+            cacheReadTokens: usage.cache_read_input_tokens,
+            cacheCreateTokens: usage.cache_creation_input_tokens,
+          },
+        };
         finished = true;
         break;
       }

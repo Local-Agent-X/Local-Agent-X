@@ -74,6 +74,17 @@ export interface OpTurnRow {
   terminalReason: "done" | "error" | "cancelled" | null;
   redirectConsumed: boolean;
   createdAt: string;
+  /**
+   * Wall-clock spent inside `adapter.runTurn` (model thinking + provider
+   * round-trip). Excludes tool dispatch and post-turn commit work.
+   * Soak telemetry sums across rounds for the per-op `modelMs` column.
+   */
+  modelMs?: number;
+  /**
+   * Wall-clock spent inside `dispatchTools` (sum of every tool's
+   * dispatch duration this turn). Soak telemetry sums across rounds.
+   */
+  toolDispatchMs?: number;
 }
 
 export interface ToolCallSummary {

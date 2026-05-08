@@ -32,7 +32,7 @@ import { readCheckpoint } from "./checkpoint.js";
 import { buildContextPack } from "./context-pack-builder.js";
 import { getRetryPolicy } from "./heartbeat.js";
 import { trackOpForSession, listOpsForSession } from "./session-bridge.js";
-import { decideSubmitRouting, canonicalLoopEntry } from "../canonical-loop/index.js";
+import { decideSubmitRouting, canonicalLoopEntry, registerAdapterForOp } from "../canonical-loop/index.js";
 import type { Op, OpLane, OpVisibility } from "./types.js";
 
 // ── Shared op-construction helper ─────────────────────────────────────────
@@ -225,6 +225,13 @@ export const opSubmitAsyncTool: ToolDefinition = {
     // legacy worker-pool dispatch (Issue 03 lights up the real loop).
     const routing = decideSubmitRouting(op);
     if (routing.route === "canonical") {
+      // 20% canary: route to Codex adapter instead of the lane-default Anthropic.
+      // Controlled by LAX_CODEX_CANARY_RATE env (0.0–1.0, default 0.2).
+      const canaryRate = parseFloat(process.env.LAX_CODEX_CANARY_RATE ?? "0.2");
+      if (canaryRate > 0 && Math.random() < canaryRate) {
+        const { createCodexAdapter } = await import("../canonical-loop/index.js");
+        registerAdapterForOp(op.id, () => createCodexAdapter({ sessionId: sessionId || undefined }));
+      }
       canonicalLoopEntry(op, sessionId ? { sessionId } : {});
     } else {
       void submitOp(op).catch(() => { /* result already routed via bridge */ });

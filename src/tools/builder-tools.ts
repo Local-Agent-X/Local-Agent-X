@@ -127,13 +127,20 @@ RULES:
 ${websiteRules}`;
 
     try {
+      // No silent provider fallback. If Codex was selected (because the user
+      // is on the Codex provider) and the Codex CLI fails — most commonly
+      // because the ChatGPT subscription endpoint truncates large tool
+      // outputs and the build doesn't finish writing index.html — surface
+      // the error so the user/model can act on it. Earlier this transparently
+      // fell back to the Claude CLI, which:
+      //   1. hid which provider actually did the work,
+      //   2. masked the truncation problem so we never fixed it upstream,
+      //   3. produced silent UI gaps because the user thought their selected
+      //      provider was working when it wasn't.
+      // The model gets a clear error and can decide to retry, simplify the
+      // build, or ask the user to switch providers.
       if (backend === "codex") {
-        const result = await buildWithCodex(builderPrompt, appDir, appUrl);
-        if (result.isError && !existsSync(resolve(appDir, "index.html"))) {
-          logger.warn(`[build_app] Codex failed, falling back to Claude CLI`);
-          return await buildWithClaude(builderPrompt, appDir, appUrl);
-        }
-        return result;
+        return await buildWithCodex(builderPrompt, appDir, appUrl);
       }
       return await buildWithClaude(builderPrompt, appDir, appUrl);
     } catch (e) {
@@ -175,7 +182,24 @@ export async function buildWithCodex(prompt: string, appDir: string, appUrl: str
     if (output.includes("APP_READY") || existsSync(resolve(appDir, "index.html"))) {
       return { content: `App built with Codex CLI!\n\nOpen: ${appUrl}\n\n${output.slice(-500)}` };
     }
-    return { content: `Codex CLI finished but index.html not found.\n${output.slice(-1000)}`, isError: true };
+    // Common cause: the ChatGPT subscription endpoint truncates large tool
+    // outputs mid-stream, so the model emits the start of index.html but
+    // never finishes the file write. The build appears to "succeed" (exit
+    // code 0, output looks plausible) but no file lands on disk. Tell the
+    // user/model exactly what happened so they can react — switch to a
+    // smaller scope, retry, or ask the user to switch providers.
+    return {
+      content:
+        `Codex CLI exit code 0 but no index.html in ${appDir}. ` +
+        `Most likely the ChatGPT subscription truncated the build mid-write ` +
+        `(its tool-output limit is smaller than what build_app needs for a ` +
+        `full single-file app). Options: (1) ask the user to switch the chat ` +
+        `provider to Anthropic and retry, (2) write the file directly with ` +
+        `the \`write\` tool instead of build_app, or (3) keep the prompt ` +
+        `short enough that the response fits inside the subscription cap.\n\n` +
+        `Tail of CLI output:\n${output.slice(-1000)}`,
+      isError: true,
+    };
   } catch (e) {
     const errMsg = (e as Error).message || "unknown";
     if (existsSync(resolve(appDir, "index.html"))) {

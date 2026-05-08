@@ -44,17 +44,8 @@ export function isCanonicalLoopEnabled(lane: CanonicalLane): boolean {
  * Anthropic / Codex adapter drives the turn end-to-end; chunks stream
  * back via the bus to the WS session.
  *
- * Tool dispatching is fully plumbed via `chat-tool-dispatcher.ts` — the
- * chat runner registers a per-op dispatcher that bridges canonical-loop
- * tool_call_requested events to the existing executeToolCalls path. Tools
- * work end-to-end on the canonical chat path.
- *
- * Was opt-in via LAX_CANONICAL_LOOP_CHAT during canary; canonical chat
- * is now the only correctness-complete path (mid-turn inject resume-gate
- * lives in canonical-loop/worker.ts; the legacy agent-loop has no
- * equivalent and was sending injects into stranded queues). Default
- * flipped to ON. Set LAX_CANONICAL_LOOP_CHAT=0 to fall back to legacy
- * for emergency rollback.
+ * Set LAX_CANONICAL_LOOP_CHAT=0 to fall back to legacy for emergency
+ * rollback.
  */
 export function isCanonicalChatEnabled(): boolean {
   const raw = (process.env.LAX_CANONICAL_LOOP_CHAT ?? "").trim().toLowerCase();
@@ -62,14 +53,8 @@ export function isCanonicalChatEnabled(): boolean {
   return true;
 }
 
-/**
- * Same default-ON treatment for the interactive lane gate that chat ALSO
- * checks. Chat needs both gates true; flipping just the chat-specific
- * one wouldn't take effect without also flipping the lane gate. Other
- * interactive ops (agent-spawn, voice) remain controlled by the
- * existing per-lane env var via isCanonicalLoopEnabled — only chat reads
- * this default-on accessor.
- */
+/** Same default-ON treatment for the interactive lane gate that chat ALSO
+ *  checks. Other interactive ops keep their existing opt-in semantics. */
 export function isCanonicalChatLaneEnabled(): boolean {
   if (readBoolEnv("LAX_CANONICAL_LOOP_ALL")) return true;
   const raw = (process.env.LAX_CANONICAL_LOOP_INTERACTIVE ?? "").trim().toLowerCase();

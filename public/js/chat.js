@@ -466,6 +466,39 @@ function autoScroll() {
   if (el) el.scrollTop = el.scrollHeight;
 }
 
+// Upsert the in-flight streaming assistant message into a chat's messages
+// array. Critical: identify by the `_streaming: true` flag, NOT by array
+// position. The earlier "is the last message a streaming assistant?" check
+// broke the moment a mid-turn user inject pushed itself onto the array
+// after the assistant — the next save-partial saw the user inject as
+// `lastMsg`, missed the streaming assistant, and APPENDED a second
+// streaming-assistant entry. renderMessages then rendered both, pulling
+// the same live content into two slots, with the user inject sandwiched
+// between them. Visually: the user's bubble appeared cut into the middle
+// of the assistant's growing reply.
+//
+// Used by both the WS save-interval and the HTTP-fallback savePartial.
+function _upsertStreamingAssistant(chat, content, toolEvents) {
+  if (!chat || !Array.isArray(chat.messages)) return;
+  // Find the most recent existing streaming-assistant entry.
+  let idx = -1;
+  for (let i = chat.messages.length - 1; i >= 0; i--) {
+    const m = chat.messages[i];
+    if (m && m.role === 'assistant' && m._streaming) { idx = i; break; }
+  }
+  if (idx >= 0) {
+    chat.messages[idx].content = content;
+    chat.messages[idx]._tools = toolEvents.length > 0 ? [...toolEvents] : undefined;
+    return;
+  }
+  chat.messages.push({
+    role: 'assistant',
+    content,
+    _streaming: true,
+    _tools: toolEvents.length > 0 ? [...toolEvents] : undefined,
+  });
+}
+
 // Throttled stream renderer — batches many deltas into one DOM write per ~50ms.
 // Previously every stream token triggered `bodyEl.innerHTML = md(content)` which
 // rebuilt the whole message DOM dozens of times per second, causing flicker,
@@ -538,8 +571,15 @@ function renderMessages() {
       // path so the agent's pin-bottom and tool-card logic doesn't apply.
       appendStaticWorkerBubble(msg._opId, msg.content || '', msg._taskHint, msg._workerStatus);
     } else if (msg.role === 'assistant' && (msg.content || msg._tools)) {
-      const isLast = i === activeChat.messages.length - 1;
-      const live = (isLast && msg._streaming) ? _liveStreams.get(activeChat.id) : null;
+      // Live-content lookup is gated on `_streaming` ONLY, not on array
+      // position. Earlier this required the streaming entry to be the
+      // LAST message — which broke as soon as a mid-turn inject pushed a
+      // user row after the streaming assistant. `live` would resolve null
+      // even though the registry still had content, the next branch would
+      // strip `_streaming`, and the save-interval would lose track and
+      // append a duplicate streaming entry. The streaming-state flag is
+      // the source of truth — array position is incidental.
+      const live = msg._streaming ? _liveStreams.get(activeChat.id) : null;
       // Clean up stale streaming state ONLY if the stream is genuinely no
       // longer active. If we still have a live entry for this session, the
       // stream is in flight — preserve _streaming so the next event keeps
@@ -883,12 +923,14 @@ async function sendMessage() {
       } catch {}
     };
     chatWs.addEventListener('message', wsHandler);
-    // Save partial periodically
+    // Save partial periodically. Use the shared upsert helper so a mid-turn
+    // inject (which pushes a user row AFTER the streaming assistant) doesn't
+    // trick this branch into appending a SECOND streaming-assistant entry —
+    // the bug that made the user's bubble appear sandwiched between two
+    // copies of the assistant's growing reply.
     const saveInterval = setInterval(function() {
       if (!content.trim() && toolEvents.length === 0) return;
-      const lastMsg = streamChat.messages[streamChat.messages.length - 1];
-      if (lastMsg && lastMsg.role === 'assistant' && lastMsg._streaming) { lastMsg.content = content; lastMsg._tools = toolEvents.length > 0 ? [...toolEvents] : undefined; }
-      else { streamChat.messages.push({ role: 'assistant', content, _streaming: true, _tools: toolEvents.length > 0 ? [...toolEvents] : undefined }); }
+      _upsertStreamingAssistant(streamChat, content, toolEvents);
       streamChat.updatedAt = Date.now(); saveChats();
     }, 3000);
     // Clean up save interval when done
@@ -909,16 +951,12 @@ async function sendMessage() {
     let buffer = '';
     let lastSaveTime = 0;
 
-    // Always save to the ORIGINAL chat object, not whatever activeChat is now
+    // Always save to the ORIGINAL chat object, not whatever activeChat is now.
+    // Routes through the shared upsert so mid-turn injects don't cause a
+    // duplicate streaming-assistant entry (see _upsertStreamingAssistant).
     function savePartial() {
       if ((!content.trim() && toolEvents.length === 0)) return;
-      const lastMsg = streamChat.messages[streamChat.messages.length - 1];
-      if (lastMsg && lastMsg.role === 'assistant' && lastMsg._streaming) {
-        lastMsg.content = content;
-        lastMsg._tools = toolEvents.length > 0 ? [...toolEvents] : undefined;
-      } else {
-        streamChat.messages.push({ role: 'assistant', content, _streaming: true, _tools: toolEvents.length > 0 ? [...toolEvents] : undefined });
-      }
+      _upsertStreamingAssistant(streamChat, content, toolEvents);
       streamChat.updatedAt = Date.now();
       saveChats();
     }

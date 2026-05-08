@@ -432,17 +432,37 @@ async function executeSingleTool(
   let result: ToolResult;
 
   if (!secDecision.allowed) {
-    result = { content: `BLOCKED by security: ${secDecision.reason}`, isError: true };
+    result = {
+      content: `BLOCKED by security: ${secDecision.reason}`,
+      isError: true,
+      status: "blocked",
+      metadata: { layer: "security", recovery: "Adjust the call to stay within the workspace and security boundaries — retrying the same args will be denied again." },
+    };
   } else if (rbacBlocked) {
-    result = { content: `BLOCKED by RBAC: ${rbacReason}`, isError: true };
+    result = {
+      content: `BLOCKED by RBAC: ${rbacReason}`,
+      isError: true,
+      status: "blocked",
+      metadata: { layer: "rbac", recovery: "This role lacks the permission to call this tool. Use a different tool or ask the user to elevate." },
+    };
   } else if (policyBlocked) {
-    result = { content: `BLOCKED by policy: ${policyReason}`, isError: true };
+    result = {
+      content: `BLOCKED by policy: ${policyReason}`,
+      isError: true,
+      status: "blocked",
+      metadata: { layer: "tool-policy", recovery: "Retrying the same call will be denied again. Read the reason — it usually points to the right alternative tool (e.g. http_request instead of bash curl)." },
+    };
   } else {
     // Data lineage egress check
     if (["http_request", "web_fetch"].includes(tc.name)) {
       const egressCheck = checkEgressTaint(sessionId || "default");
       if (egressCheck.blocked) {
-        result = { content: `BLOCKED by data lineage: ${egressCheck.reason}`, isError: true };
+        result = {
+          content: `BLOCKED by data lineage: ${egressCheck.reason}`,
+          isError: true,
+          status: "blocked",
+          metadata: { layer: "data-lineage", recovery: "Sensitive data was tainted earlier this session and may not egress. Either don't include the tainted data or end the session." },
+        };
         onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
         msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
         return msgs;
@@ -451,7 +471,12 @@ async function executeSingleTool(
 
     const tool = toolMap.get(tc.name);
     if (!tool) {
-      result = { content: `Unknown tool: ${tc.name}`, isError: true };
+      result = {
+        content: `Unknown tool: ${tc.name}`,
+        isError: true,
+        status: "error",
+        metadata: { recovery: "Tool name typo or the tool isn't registered. Use tool_search to find the right name." },
+      };
     } else {
       // Lightweight argument validation against the tool's JSON schema.
       // Weak models emit malformed args (missing required fields, wrong
@@ -489,7 +514,12 @@ async function executeSingleTool(
         }
       }
       if (argValidationErrors.length > 0) {
-        result = { content: `Invalid arguments for ${tc.name}: ${argValidationErrors.join("; ")}. Fix and retry.`, isError: true };
+        result = {
+          content: `Invalid arguments for ${tc.name}: ${argValidationErrors.join("; ")}. Fix and retry.`,
+          isError: true,
+          status: "error",
+          metadata: { recovery: "Schema validation failed — fix the listed fields and retry. This is NOT a policy denial; the tool itself is available." },
+        };
         onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
         msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
         return msgs;
@@ -500,7 +530,12 @@ async function executeSingleTool(
       if (hookEngine.hasHooks) {
         const preHook = await hookEngine.fire({ event: "PreToolUse", toolName: tc.name, toolArgs: args, sessionId, callContext });
         if (!preHook.continue) {
-          result = { content: `BLOCKED by hook: ${preHook.reason || "PreToolUse hook returned false"}`, isError: true };
+          result = {
+            content: `BLOCKED by hook: ${preHook.reason || "PreToolUse hook returned false"}`,
+            isError: true,
+            status: "blocked",
+            metadata: { layer: "hook", recovery: "A user-configured hook blocked this call. Check ~/.lax/hooks.json or proceed without the gated action." },
+          };
           onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
           msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
           return msgs;
@@ -510,7 +545,12 @@ async function executeSingleTool(
       // Circuit breaker — refuse calls to tools that have repeatedly failed in this session
       const circuit = checkCircuit(sessionId, tc.name);
       if (!circuit.allowed) {
-        result = { content: `BLOCKED by circuit breaker: ${circuit.reason}`, isError: true };
+        result = {
+          content: `BLOCKED by circuit breaker: ${circuit.reason}`,
+          isError: true,
+          status: "blocked",
+          metadata: { layer: "circuit-breaker", recovery: "This tool has failed repeatedly in this session. Stop calling it and use an alternative — the breaker will reset after several successful unrelated calls." },
+        };
         onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
         msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
         return msgs;
@@ -519,7 +559,12 @@ async function executeSingleTool(
       // Per-tool rate limit (sliding window)
       const rate = checkToolRateLimit(tc.name, sessionId);
       if (!rate.allowed) {
-        result = { content: `BLOCKED by rate limit: ${rate.reason}`, isError: true };
+        result = {
+          content: `BLOCKED by rate limit: ${rate.reason}`,
+          isError: true,
+          status: "blocked",
+          metadata: { layer: "rate-limit", recovery: "Per-tool rate limit hit. Wait or batch fewer calls; immediate retries will keep being denied." },
+        };
         onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
         msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
         return msgs;

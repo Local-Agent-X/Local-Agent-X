@@ -88,9 +88,19 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
           ? toolMsg.content
           : JSON.stringify(toolMsg.content);
 
+        // The canonical ToolDispatchResult.status is a narrow 3-value enum
+        // (ok | error | cancelled). Recover the underlying envelope status
+        // from the rendered header so failures, blocks, and timeouts don't
+        // get reported as "ok" in the canonical summary. `running` maps to
+        // "ok" because the START succeeded — the work continues async.
+        const { parseStatusHeader } = await import("../tools/result-helpers.js");
+        const envStatus = parseStatusHeader(content);
+        const canonicalStatus: ToolDispatchResult["status"] =
+          envStatus === "ok" || envStatus === "running" ? "ok" : "error";
+
         return {
           toolCallId: call.toolCallId,
-          status: "ok",
+          status: canonicalStatus,
           result: content,
           durationMs: Date.now() - t0,
         };

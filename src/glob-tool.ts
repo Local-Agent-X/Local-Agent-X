@@ -6,9 +6,7 @@ import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import fg from "fast-glob";
 import type { ToolDefinition, ToolResult } from "./types.js";
-
-function ok(content: string): ToolResult { return { content }; }
-function err(content: string): ToolResult { return { content, isError: true }; }
+import { ok, err } from "./tools/result-helpers.js";
 
 function humanSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
@@ -66,15 +64,27 @@ export const globTool: ToolDefinition = {
     if (!pattern) return err("pattern is required");
 
     const cwd = resolve(String(args.path ?? process.cwd()));
+    const startMs = Date.now();
 
     try {
       const entries = await globFiles(pattern, cwd, 200);
-      if (entries.length === 0) return ok("No files matched.");
+      const durationMs = Date.now() - startMs;
+      if (entries.length === 0) return ok("No files matched.", { pattern, cwd, count: 0, duration_ms: durationMs });
 
       const lines = entries.map((e) => `${e.path}  (${humanSize(e.size)})`);
-      return ok(lines.join("\n"));
+      return ok(lines.join("\n"), {
+        pattern,
+        cwd,
+        count: entries.length,
+        capped: entries.length === 200 || undefined,
+        duration_ms: durationMs,
+      });
     } catch (e: unknown) {
-      return err(`Glob failed: ${e instanceof Error ? e.message : String(e)}`);
+      return err(`Glob failed: ${e instanceof Error ? e.message : String(e)}`, {
+        pattern,
+        cwd,
+        duration_ms: Date.now() - startMs,
+      });
     }
   },
 };

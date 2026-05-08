@@ -24,6 +24,9 @@
  * shape feel like a parallel system instead of a sync RPC.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ToolDefinition } from "../types.js";
 import { submitOp, killOp, redirectOp, getPoolStatus, awaitOpResult } from "./pool.js";
 import { readOp, listOps, newOpId } from "./op-store.js";
@@ -33,6 +36,23 @@ import { buildContextPack } from "./context-pack-builder.js";
 import { getRetryPolicy } from "./heartbeat.js";
 import { trackOpForSession, listOpsForSession } from "./session-bridge.js";
 import { decideSubmitRouting, canonicalLoopEntry, registerAdapterForOp } from "../canonical-loop/index.js";
+
+/**
+ * Read the user's currently-selected provider from ~/.lax/settings.json.
+ * Used to pick the canonical adapter for ops that don't carry an explicit
+ * provider hint. Same source as the chat resolver, so adapter selection
+ * stays consistent with what the rest of the app shows.
+ */
+async function readSettingsProvider(): Promise<string | null> {
+  try {
+    const sp = join(homedir(), ".lax", "settings.json");
+    if (!existsSync(sp)) return null;
+    const s = JSON.parse(readFileSync(sp, "utf-8"));
+    return typeof s.provider === "string" ? s.provider : null;
+  } catch {
+    return null;
+  }
+}
 import type { Op, OpLane, OpVisibility } from "./types.js";
 
 // ── Shared op-construction helper ─────────────────────────────────────────
@@ -225,13 +245,21 @@ export const opSubmitAsyncTool: ToolDefinition = {
     // legacy worker-pool dispatch (Issue 03 lights up the real loop).
     const routing = decideSubmitRouting(op);
     if (routing.route === "canonical") {
-      // 20% canary: route to Codex adapter instead of the lane-default Anthropic.
-      // Controlled by LAX_CODEX_CANARY_RATE env (0.0–1.0, default 0.2).
-      const canaryRate = parseFloat(process.env.LAX_CODEX_CANARY_RATE ?? "0.2");
-      if (canaryRate > 0 && Math.random() < canaryRate) {
+      // Per-op adapter selection by the op's effective provider. Earlier
+      // there was a 20% random-Codex canary on top of an Anthropic-only
+      // gate — too noisy ("which provider answered THIS turn?") and
+      // blocked pure Codex testing. Now: provider follows the op's
+      // explicit hint, falling back to settings.json. The user picks
+      // codex in settings → ops register CodexAdapter → soak file shows
+      // adapter=codex; switch back → adapter=anthropic.
+      const opProvider = op.contextPack?.routing?.preferredProvider;
+      const effectiveProvider = opProvider ?? (await readSettingsProvider());
+      if (effectiveProvider === "codex") {
         const { createCodexAdapter } = await import("../canonical-loop/index.js");
         registerAdapterForOp(op.id, () => createCodexAdapter({ sessionId: sessionId || undefined }));
       }
+      // anthropic / unset / other → fall through to lane-default
+      // AnthropicAdapter from canonical-loop-bootstrap.ts.
       canonicalLoopEntry(op, sessionId ? { sessionId } : {});
     } else {
       void submitOp(op).catch(() => { /* result already routed via bridge */ });

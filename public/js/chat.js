@@ -27,6 +27,14 @@ function _findStreamingBodyEl(sessionId) {
 let chatWs = null;
 let activeChatsSet = new Set();
 
+// Track in-flight canonical chat ops by opId. Populated when the server
+// emits `chat_op_started` and cleared on terminal events (`done` / `error`).
+// On WebSocket reconnect we replay missed canonical events for each one
+// via `reconnect_op` so a connection drop becomes a brief visual pause
+// rather than a lost response. Keyed by opId → sessionId so the replay
+// reaches the right chat.
+const inflightChatOps = new Map(); // opId → { sessionId, lastSeenSeq }
+
 function connectChatWs() {
   if (chatWs && chatWs.readyState === WebSocket.OPEN) return;
   const wsUrl = `ws://${location.host}/ws/chat`;
@@ -36,6 +44,20 @@ function connectChatWs() {
     console.log('[ws] Chat WebSocket connected');
     // Subscribe to active chat if we have one
     if (activeChat) chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: activeChat.id }));
+    // Reconnect-resume: for any chat ops that were in flight when the
+    // socket dropped, ask the server to replay missed canonical events
+    // and re-attach to the live tail. The server replays via
+    // `reconnectOp(opId, sinceSeq)` and translates events back to chat
+    // ServerEvents on this WS only (other connections are unaffected).
+    for (const [opId, info] of inflightChatOps.entries()) {
+      console.log(`[ws] reconnect_op opId=${opId} sinceSeq=${info.lastSeenSeq}`);
+      chatWs.send(JSON.stringify({
+        type: 'reconnect_op',
+        sessionId: info.sessionId,
+        opId,
+        sinceSeq: info.lastSeenSeq,
+      }));
+    }
   };
 
   chatWs.onmessage = (e) => {
@@ -48,6 +70,26 @@ function connectChatWs() {
     }
 
     if (msg.type === 'event' && msg.sessionId && msg.event) {
+      // Track canonical chat opId + seq so we can reconnect-resume after
+      // a WS drop. The opId arrives once per turn via `chat_op_started`;
+      // every subsequent canonical-tagged event carries `_opId` + `_seq`
+      // on the envelope so we know how far we've consumed. Terminal
+      // events (done / error) clear the entry.
+      if (msg._opId && inflightChatOps.has(msg._opId)) {
+        if (typeof msg._seq === 'number') {
+          inflightChatOps.get(msg._opId).lastSeenSeq = msg._seq;
+        }
+      }
+      if (msg.event.type === 'chat_op_started' && msg.event.opId) {
+        inflightChatOps.set(msg.event.opId, {
+          sessionId: msg.sessionId,
+          lastSeenSeq: -1,
+        });
+        return;
+      }
+      if (msg.event.type === 'done' || msg.event.type === 'error') {
+        if (msg._opId) inflightChatOps.delete(msg._opId);
+      }
       // Worker-pool ops surface in the AGENTS sidebar (not the chat thread)
       // so background work doesn't pollute the conversation. The sidebar
       // already handles live status updates, output streaming, and removal,
@@ -344,9 +386,20 @@ setTimeout(connectChatWs, 1000);
 
 function stopChat() {
   if (!activeChat) return;
-  // Send stop via WS
+  // Send stop via WS — preserves the legacy session-turn-lock abort path.
   if (chatWs && chatWs.readyState === WebSocket.OPEN) {
     chatWs.send(JSON.stringify({ type: 'stop', sessionId: activeChat.id }));
+    // Also cancel any canonical chat op still running for this session.
+    // `cancel_op` routes through the canonical control API (`opCancel`)
+    // which transitions the op cleanly to "cancelling" → "cancelled" and
+    // signals the warm-pool to kill the CLI process. Without this, the
+    // canonical op kept running server-side after a stop click and the
+    // old `stop` only released the session lock.
+    for (const [opId, info] of inflightChatOps.entries()) {
+      if (info.sessionId === activeChat.id) {
+        chatWs.send(JSON.stringify({ type: 'cancel_op', sessionId: activeChat.id, opId }));
+      }
+    }
   }
   // Also try HTTP fallback
   fetch(`${API}/api/chats/stop`, {

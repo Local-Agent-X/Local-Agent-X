@@ -168,7 +168,13 @@ export type ServerEvent =
   // — multiple workers each get their own bubble, identified + styled
   // separately from the main agent's stream.
   | { type: "worker_stream"; opId: string; task?: string; delta: string }
-  | { type: "worker_done"; opId: string; status: "completed" | "failed" | "cancelled"; summary?: string };
+  | { type: "worker_done"; opId: string; status: "completed" | "failed" | "cancelled"; summary?: string }
+  // Canonical chat lifecycle: emitted at the START of a chat turn so the UI
+  // can track the opId for reconnect/cancel. After connection drops, the
+  // client sends `{type:"reconnect_op", opId}` over WS and the server
+  // replays missed canonical events via `reconnectOp(opId, sinceSeq)`.
+  // Stop button → `{type:"cancel_op", opId}` → `opCancel(opId)`.
+  | { type: "chat_op_started"; opId: string };
 
 // ── Auth Types ──
 

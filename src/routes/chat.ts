@@ -357,15 +357,23 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // prepared payload (memory, AGENTS, history, tools) and dispatches
       // through canonical-loop instead of the legacy runAgent → providers
       // chain. Memory parity is preserved; canonical observability is gained.
-      // Edge cases that still go legacy: image attachments, non-anthropic
-      // providers, or any failure during canonical setup.
+      // Edge cases that still go legacy: image attachments, providers without
+      // canonical adapters, or any failure during canonical setup.
+      //
+      // Both Anthropic and Codex routed through canonical chat. Codex's
+      // ChatGPT-backend doesn't support `previous_response_id`, so its
+      // adapter+convertMessages must include the assistant `function_call`
+      // item alongside the tool_result so the API can match call_ids.
+      // See chat-runner.ts / codex.ts for the assistant tool_call message
+      // finalization that makes the chain complete.
+      const CANONICAL_CHAT_PROVIDERS = new Set(["anthropic", "codex"]);
       const canonicalChatEligible = await (async () => {
         try {
           const { isCanonicalChatEnabled, isCanonicalLoopEnabled } = await import("../canonical-loop/feature-flag.js");
           if (!isCanonicalChatEnabled()) return false;
           if (!isCanonicalLoopEnabled("interactive")) return false;
         } catch { return false; }
-        if (prepared.provider !== "anthropic") return false;
+        if (!CANONICAL_CHAT_PROVIDERS.has(prepared.provider)) return false;
         if (prepared.images && prepared.images.length > 0) return false;
         return true;
       })();

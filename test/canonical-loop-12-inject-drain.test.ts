@@ -142,20 +142,24 @@ describe("Issue 12 — inject drained at next turn (chat_turn op)", () => {
     // user-role row. Find it by content text — the seed produces no text
     // rows in this test (no chat-runner pre-seed), so the inject is the
     // only user message at turnIdx=1.
+    // turn-loop wraps the inject body with a temporal-context marker so
+    // the model knows this message arrived mid-turn. Assert the wrapped
+    // form here (and that the user's text is preserved verbatim inside).
+    const expectedText = "[mid-turn user message] actually use blue not red";
     expect(adapter.turnInputs).toHaveLength(2);
     const turn1Messages = adapter.turnInputs[1].messages;
     const injectRow = turn1Messages.find(
       m => m.role === "user" &&
         m.turnIdx === 1 &&
         typeof (m.content as { text?: unknown })?.text === "string" &&
-        (m.content as { text: string }).text === "actually use blue not red",
+        (m.content as { text: string }).text === expectedText,
     );
     expect(injectRow, "inject must appear as a user message on turn 1").toBeDefined();
 
     // The inject lives in op_messages too, at turnIdx=1, role=user.
     const persisted = readOpMessages(op.id).filter(
       m => m.turnIdx === 1 && m.role === "user" &&
-        (m.content as { text?: string })?.text === "actually use blue not red",
+        (m.content as { text?: string })?.text === expectedText,
     );
     expect(persisted).toHaveLength(1);
 
@@ -202,15 +206,17 @@ describe("Issue 12 — multiple injects coalesce on the next turn in order", () 
     await awaitTerminal(op.id);
     offStream();
 
+    const first = "[mid-turn user message] first thought";
+    const second = "[mid-turn user message] second thought";
     const persisted = readOpMessages(op.id).filter(
       m => m.turnIdx === 1 && m.role === "user" &&
-        ((m.content as { text?: string })?.text === "first thought" ||
-         (m.content as { text?: string })?.text === "second thought"),
+        ((m.content as { text?: string })?.text === first ||
+         (m.content as { text?: string })?.text === second),
     );
     expect(persisted).toHaveLength(2);
     // Order preserved.
-    expect((persisted[0].content as { text: string }).text).toBe("first thought");
-    expect((persisted[1].content as { text: string }).text).toBe("second thought");
+    expect((persisted[0].content as { text: string }).text).toBe(first);
+    expect((persisted[1].content as { text: string }).text).toBe(second);
     // Contiguous seqInTurn (offset past any turn-1 prefix; injects sit
     // adjacent in the order pushed).
     expect(persisted[1].seqInTurn).toBe(persisted[0].seqInTurn + 1);
@@ -322,19 +328,33 @@ describe("Issue 12 — terminal end_turn with pending inject extends the worker 
     // because the resume-gate kept it looping for the queued inject.
     expect(adapter.turnInputs).toHaveLength(2);
 
-    // Turn 1's input contains the inject as a user message.
+    // Turn 1's input contains the inject as a user message, wrapped with
+    // the temporal-context marker so the model knows it arrived mid-turn.
+    const expected = "[mid-turn user message] actually skip the pink cup line — never added";
     const turn1Messages = adapter.turnInputs[1].messages;
     const injectRow = turn1Messages.find(
       m => m.role === "user" &&
         m.turnIdx === 1 &&
         typeof (m.content as { text?: unknown })?.text === "string" &&
-        (m.content as { text: string }).text ===
-          "actually skip the pink cup line — never added",
+        (m.content as { text: string }).text === expected,
     );
     expect(injectRow, "inject must surface as a user message on turn 1").toBeDefined();
 
     // Queue is drained.
     expect(hasInjects(sessionId)).toBe(false);
+  });
+
+  it("the chat-history strip-marker pulls the user-visible text back out of the wrapped form", () => {
+    // routes/chat.ts strips the engine marker for session.messages so the
+    // chat UI shows what the user actually typed, not the framing the
+    // model sees. Pin the regex contract here.
+    const wrapped = "[mid-turn user message] actually skip that line";
+    const stripped = wrapped.replace(/^\[mid-turn user message\]\s*/, "");
+    expect(stripped).toBe("actually skip that line");
+
+    // Idempotent: stripping a non-wrapped string is a no-op.
+    const plain = "hello there";
+    expect(plain.replace(/^\[mid-turn user message\]\s*/, "")).toBe(plain);
   });
 
   it("end_turn with empty queue terminates immediately (no spurious extra turn)", async () => {

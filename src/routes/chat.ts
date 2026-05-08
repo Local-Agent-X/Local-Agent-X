@@ -461,7 +461,13 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
                   .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
                   .map(m => {
                     const c = (m.content as { text?: string })?.text;
-                    return { role: "user" as const, content: typeof c === "string" ? c : "" };
+                    if (typeof c !== "string") return { role: "user" as const, content: "" };
+                    // Strip the engine-side temporal marker for the chat UI.
+                    // turn-loop wraps inject text with `[mid-turn user message] `
+                    // so the model gets temporal context; the user-visible
+                    // history should show what the user actually typed.
+                    const stripped = c.replace(/^\[mid-turn user message\]\s*/, "");
+                    return { role: "user" as const, content: stripped };
                   })
                   .filter(m => m.content);
               } catch (e) {

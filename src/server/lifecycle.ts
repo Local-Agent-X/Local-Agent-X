@@ -163,6 +163,14 @@ export async function setupVoiceWs(deps: {
         "spoken English." + visualPromptTail;
 
       let assistantText = "";
+      // Capture tool calls so the next turn's history records what the agent
+      // *did*, not just what it spoke. Without this the model sees only its
+      // streamed reply ("hell yeah") and self-references break — "what emoji
+      // did you make?" answers "I never did that" because the voice_visual
+      // call was invisible to subsequent turns. We surface them as a brief
+      // text marker appended to assistantText so the existing string-shaped
+      // history slot carries the information.
+      const toolCalls: Array<{ name: string; args: unknown; result?: string }> = [];
       const onEvent = (event: ServerEvent) => {
         if (event.type === "stream" && event.delta) {
           assistantText += event.delta;
@@ -170,6 +178,12 @@ export async function setupVoiceWs(deps: {
         } else if (event.type === "visual" && onVisual) {
           // Forward the visual directive through to the voice WebSocket.
           onVisual(event.kind, event.value, event.durationMs);
+        } else if (event.type === "tool_start") {
+          toolCalls.push({ name: event.toolName, args: event.args });
+        } else if (event.type === "tool_end") {
+          // Pair the result onto the most recent matching tool_start.
+          const last = [...toolCalls].reverse().find(tc => tc.name === event.toolName && tc.result === undefined);
+          if (last) last.result = event.result;
         }
       };
 
@@ -181,6 +195,12 @@ export async function setupVoiceWs(deps: {
       const hadPrev = activeOnEventBySession.has(sessionId);
       const prev = activeOnEventBySession.get(sessionId);
       activeOnEventBySession.set(sessionId, onEvent);
+      // Track whether the turn aborted so we can build a sensible history
+      // entry instead of dropping the partial reply. AbortError from the
+      // signal triggers if the user barges in or stops mid-reply; without
+      // catching it here, voice-session's catch swallows the whole turn
+      // and the model has no record of what it just said.
+      let aborted = false;
       try {
         await runAgent(text, prepared.cleanHistory, {
           apiKey: prepared.apiKey,
@@ -199,19 +219,42 @@ export async function setupVoiceWs(deps: {
           signal,
           onEvent,
         });
+      } catch (e) {
+        if (signal.aborted) {
+          aborted = true;
+        } else {
+          throw e;
+        }
       } finally {
         // Restore prior onEvent registration (if any) so we don't leak.
         if (hadPrev && prev) activeOnEventBySession.set(sessionId, prev);
         else activeOnEventBySession.delete(sessionId);
       }
 
+      // Compose the assistant message that goes back into history. We embed
+      // tool-call traces as a structured text marker after the spoken reply
+      // so the next turn's prompt shows the model exactly what it did.
+      // This is a pragmatic workaround for sessionMessages being string-only
+      // (lifecycle.ts:94-97 strips tool_calls when mapping history → prompt);
+      // the proper fix is to round-trip OpenAI-shape tool_calls through the
+      // canonical loop, but that's a bigger refactor.
+      const trace = toolCalls.length === 0 ? "" :
+        "\n\n[Tool calls this turn: " +
+        toolCalls.map(tc => {
+          const argStr = (() => { try { return JSON.stringify(tc.args); } catch { return "{…}"; } })();
+          const resultPreview = tc.result ? ` → ${tc.result.slice(0, 120)}` : "";
+          return `${tc.name}(${argStr})${resultPreview}`;
+        }).join("; ") + "]";
+      const interruptedMarker = aborted ? " [interrupted by user]" : "";
+      const finalAssistantText = (assistantText + trace + interruptedMarker).trim();
+
       const updatedHistory = [
         ...history,
         { role: "user" as const, content: text },
-        { role: "assistant" as const, content: assistantText },
+        { role: "assistant" as const, content: finalAssistantText || "[no reply]" },
       ];
 
-      return { assistantText, updatedHistory };
+      return { assistantText: finalAssistantText, updatedHistory };
     };
 
     setVoiceSessionFactory(createVoiceSessionFactory(voiceTurnRunner));

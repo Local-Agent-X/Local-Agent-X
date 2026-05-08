@@ -623,6 +623,12 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         });
 
         if (activeTurn?.signal.aborted) {
+          // Persist the partial history on abort too — runTurn now catches
+          // the abort and returns updatedHistory containing whatever streamed
+          // before the interrupt plus an "[interrupted by user]" marker.
+          // Earlier we dropped this entirely and the next turn had no record
+          // the conversation ever happened.
+          history = result.updatedHistory;
           ctx.sendEvent({ type: "assistant_interrupted" });
           activeTurn = null; // free immediately on abort
         } else {

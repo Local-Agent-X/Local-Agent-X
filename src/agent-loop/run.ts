@@ -317,24 +317,8 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
       continue;
     }
 
-    // Inject resume-gate. The inject queue is the source of truth for
-    // "is the agent done?" — if the user typed a message mid-turn while
-    // we were waiting on the model, we shouldn't break out of the loop
-    // just because this iteration produced no tool calls. The
-    // interjectDrainMiddleware drains at the START of each iteration,
-    // so `continue` here is enough: the next iteration drains the
-    // queue, the user's message lands as a fresh user-role row, and
-    // the model sees it on its next call. Mirrors the canonical-loop
-    // worker.ts gate. Without this, mid-turn injects on long replies
-    // get stranded — the agent ends, the chat closes, and the queued
-    // message sits there forever.
+    // No tool calls + no MCP shortcut → end of turn.
     if (toolCalls.length === 0 && !sawMcpActivity) {
-      if (req.sessionId) {
-        try {
-          const { hasInjects } = await import("./inject-queue.js");
-          if (hasInjects(req.sessionId)) continue;
-        } catch { /* fall through to normal end_turn */ }
-      }
       onEvent?.({ type: "done", usage: { promptTokens: ctx.totalInput, completionTokens: ctx.totalOutput, totalTokens: ctx.totalInput + ctx.totalOutput } });
       return {
         messages: [{ role: "system", content: systemPrompt }, ...messages.slice(1)],
@@ -343,15 +327,8 @@ export async function runAgentTurn(req: AgentTurnRequest): Promise<AgentTurn> {
       };
     }
 
-    // MCP path: tools already ran via the bridge — wrap up. Same
-    // resume-gate as the no-tool path above.
+    // MCP path: tools already ran via the bridge — wrap up.
     if (toolCalls.length === 0 && sawMcpActivity) {
-      if (req.sessionId) {
-        try {
-          const { hasInjects } = await import("./inject-queue.js");
-          if (hasInjects(req.sessionId)) continue;
-        } catch { /* fall through to normal end_turn */ }
-      }
       onEvent?.({ type: "done", usage: { promptTokens: ctx.totalInput, completionTokens: ctx.totalOutput, totalTokens: ctx.totalInput + ctx.totalOutput } });
       return {
         messages: [{ role: "system", content: systemPrompt }, ...messages.slice(1)],

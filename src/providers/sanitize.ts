@@ -130,42 +130,57 @@ export function sanitizeHistory(messages: ChatCompletionMessageParam[]): ChatCom
 /**
  * Truncate a long history to a working window, with an optional summary header.
  * Cuts at the nearest user message so we never split a tool-call/tool-result pair.
+ *
+ * Preserves a leading `system` message verbatim (e.g. a compaction summary
+ * from /api/compact). Without that special-case, truncate's own summary
+ * loop ignores system rows and the explicit compaction content gets
+ * silently dropped from `old` when a session grows past maxKeep
+ * post-compaction.
  */
 export function truncateHistory(messages: ChatCompletionMessageParam[], maxKeep: number = 30): ChatCompletionMessageParam[] {
-  if (messages.length <= maxKeep) return messages;
+  let preservedLeader: ChatCompletionMessageParam | null = null;
+  let body: ChatCompletionMessageParam[] = messages;
+  if (body[0]?.role === "system") {
+    preservedLeader = body[0];
+    body = body.slice(1);
+  }
 
-  const targetIdx = messages.length - maxKeep;
+  if (body.length <= maxKeep) {
+    return preservedLeader ? [preservedLeader, ...body] : body;
+  }
+
+  const targetIdx = body.length - maxKeep;
   // Find nearest user message at or after target
   let cutIdx = targetIdx;
-  for (let i = targetIdx; i < messages.length; i++) {
-    if (messages[i].role === "user") { cutIdx = i; break; }
+  for (let i = targetIdx; i < body.length; i++) {
+    if (body[i].role === "user") { cutIdx = i; break; }
   }
-  if (cutIdx >= messages.length) {
+  if (cutIdx >= body.length) {
     for (let i = targetIdx; i >= 0; i--) {
-      if (messages[i].role === "user") { cutIdx = i; break; }
+      if (body[i].role === "user") { cutIdx = i; break; }
     }
   }
 
   // Walk cutIdx backward if we'd split a tool_call/tool_result pair
   // (assistant with tool_calls must be followed by its tool results)
-  if (cutIdx > 0 && messages[cutIdx - 1]?.role === "assistant") {
-    const prev = messages[cutIdx - 1] as unknown as Record<string, unknown>;
+  if (cutIdx > 0 && body[cutIdx - 1]?.role === "assistant") {
+    const prev = body[cutIdx - 1] as unknown as Record<string, unknown>;
     if (prev.tool_calls && Array.isArray(prev.tool_calls)) {
       // The assistant before the cut has tool_calls — include it and its results
       cutIdx = cutIdx - 1;
       // Also include all following tool result messages
-      while (cutIdx + 1 < messages.length && messages[cutIdx + 1]?.role === "tool") {
+      while (cutIdx + 1 < body.length && body[cutIdx + 1]?.role === "tool") {
         // These will be included in 'recent' anyway since cutIdx moved back
       }
     }
   }
   // Also skip forward past any orphaned tool results at the start of recent
-  while (cutIdx < messages.length && messages[cutIdx]?.role === "tool") {
+  while (cutIdx < body.length && body[cutIdx]?.role === "tool") {
     cutIdx++;
   }
 
-  const old = messages.slice(0, cutIdx);
-  const recent = messages.slice(cutIdx);
+  const old = body.slice(0, cutIdx);
+  const recent = body.slice(cutIdx);
 
   // Summarize older messages so the model knows there was prior context.
   // CRITICAL: do NOT use "User: X / Agent: Y" format here — the model will
@@ -183,5 +198,6 @@ export function truncateHistory(messages: ChatCompletionMessageParam[], maxKeep:
   }
   const summary = `<prior_conversation count="${old.length}">\n${summaryLines.join("\n")}\n</prior_conversation>`;
 
-  return [{ role: "system", content: summary } as ChatCompletionMessageParam, ...recent];
+  const autoSummary: ChatCompletionMessageParam = { role: "system", content: summary } as ChatCompletionMessageParam;
+  return preservedLeader ? [preservedLeader, autoSummary, ...recent] : [autoSummary, ...recent];
 }

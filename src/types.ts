@@ -111,20 +111,34 @@ export interface SecurityDecision {
 
 // ── Session Types ──
 
+/**
+ * Compacted system messages start with this marker so the on-disk format
+ * (a `summary` row in the session jsonl) and the in-memory format (a
+ * leading `system` message in `Session.messages`) can be round-tripped
+ * cleanly. Used by `writeSessionLog` to detect a compaction-summary
+ * leading message and emit it as a `summary` row instead of a `msg` row,
+ * and by `prepareAgentRequest` to recognise a session as compacted
+ * without a separate field.
+ */
+export const COMPACTION_PREFIX = "[COMPACTED CONTEXT —";
+
 export interface Session {
   id: string;
   title: string;
   messages: ChatCompletionMessageParam[];
   createdAt: number;
   updatedAt: number;
-  /** Summary of compacted (older) messages */
-  compactedSummary?: string;
-  /** Index at which compaction was applied */
-  compactedAt?: number;
   /** Session ID this session was forked from */
   forkedFrom?: string;
   /** Message index at which the fork was taken */
   forkAtIndex?: number;
+  /**
+   * Compaction lives as a leading `{role:"system", content:"[COMPACTED CONTEXT — …]"}`
+   * entry in `messages` (round-tripped through a `summary` row in the
+   * jsonl log). `compactedSummary` / `compactedAt` no longer exist as
+   * top-level fields — code should check `messages[0]?.role === "system" &&
+   * messages[0].content.startsWith(COMPACTION_PREFIX)` to detect it.
+   */
 }
 
 // ── Server Types ──

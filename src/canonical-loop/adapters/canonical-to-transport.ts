@@ -50,8 +50,18 @@ export function canonicalToTransport(
   const out: TransportMessage[] = [];
   for (const m of messages) {
     const c = m.content as Record<string, unknown> | string | null | undefined;
-    if (m.role === "system" || m.role === "user") {
-      out.push({ role: m.role, content: extractText(c) });
+    if (m.role === "system") {
+      out.push({ role: "system", content: extractText(c) });
+      continue;
+    }
+    if (m.role === "user") {
+      const text = extractText(c);
+      const images = extractUserImages(c);
+      out.push({
+        role: "user",
+        content: text,
+        ...(images.length > 0 ? { images } : {}),
+      });
       continue;
     }
     if (m.role === "assistant") {
@@ -99,4 +109,22 @@ function extractText(c: unknown): string {
     return typeof v === "string" ? v : "";
   }
   return "";
+}
+
+function extractUserImages(c: unknown): Array<{ url: string; name: string; filePath?: string }> {
+  if (c == null || typeof c !== "object") return [];
+  const v = (c as { images?: unknown }).images;
+  if (!Array.isArray(v)) return [];
+  const out: Array<{ url: string; name: string; filePath?: string }> = [];
+  for (const x of v) {
+    if (x && typeof x === "object" && typeof (x as { name?: unknown }).name === "string" && typeof (x as { url?: unknown }).url === "string") {
+      const o = x as { url: string; name: string; filePath?: unknown };
+      out.push({
+        url: o.url,
+        name: o.name,
+        ...(typeof o.filePath === "string" ? { filePath: o.filePath } : {}),
+      });
+    }
+  }
+  return out;
 }

@@ -81,6 +81,16 @@ export interface TransportMessage {
    * underlying client's tool-call shape.
    */
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+  /**
+   * Image attachments riding on this message (only meaningful when
+   * role === "user"). Each transport picks them up at request time and
+   * folds them into the wire format its provider accepts: OpenAI-compat
+   * gets multi-part text+image_url base64; Anthropic gets the same
+   * multi-part shape and lets `anthropic-client/request.ts` convert it
+   * to Anthropic's `image` content blocks. Codex ignores these — its
+   * Responses API path doesn't currently support vision.
+   */
+  images?: Array<{ url: string; name: string; filePath?: string }>;
 }
 
 export interface TransportTool {

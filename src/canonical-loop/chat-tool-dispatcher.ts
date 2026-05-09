@@ -66,11 +66,19 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
           /* priorMessages */ undefined,
         );
 
-        // executeToolCalls returns 1+ ChatCompletionMessageParam. Pull the
-        // first tool-role message — that's the canonical "result" payload.
-        // Other roles (e.g. injected user messages from some tools) are
-        // not part of the canonical result contract; drop them. If no tool
-        // message came back, surface the issue as an error result.
+        // executeToolCalls returns 1+ ChatCompletionMessageParam. The
+        // first tool-role message is the canonical "result" payload.
+        // Vision-emitting tools (browser screenshot, image_read, etc.)
+        // ALSO push a user-role message with multi-part image_url
+        // content — that's how the legacy loop fed images back to the
+        // model. Extract those image bytes and ride them on the
+        // dispatch-result envelope so:
+        //   1. The next-turn adapter can re-emit them as a user
+        //      message (so the model SEES the screenshot it took).
+        //   2. Bridge handlers can scan op_messages tool_result rows
+        //      and forward the bytes to Telegram/WhatsApp.
+        // Without this the dispatcher silently drops tool-emitted
+        // images and vision-using tools regress on canonical.
         const toolMsg = messages.find(m => m.role === "tool") as
           | (ChatCompletionMessageParam & { role: "tool"; content: string | unknown })
           | undefined;
@@ -88,6 +96,19 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
           ? toolMsg.content
           : JSON.stringify(toolMsg.content);
 
+        // Harvest image_url parts from any user-role messages the
+        // executor produced for this tool call.
+        const harvestedImages: Array<{ mime: string; b64: string }> = [];
+        for (const m of messages) {
+          if (m.role !== "user" || !Array.isArray(m.content)) continue;
+          for (const part of m.content as Array<{ type: string; image_url?: { url: string } }>) {
+            if (part.type !== "image_url" || !part.image_url?.url) continue;
+            const match = /^data:([^;]+);base64,(.+)$/.exec(part.image_url.url);
+            if (!match) continue;
+            harvestedImages.push({ mime: match[1], b64: match[2] });
+          }
+        }
+
         // The canonical ToolDispatchResult.status is a narrow 3-value enum
         // (ok | error | cancelled). Recover the underlying envelope status
         // from the rendered header so failures, blocks, and timeouts don't
@@ -98,10 +119,14 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
         const canonicalStatus: ToolDispatchResult["status"] =
           envStatus === "ok" || envStatus === "running" ? "ok" : "error";
 
+        const result: unknown = harvestedImages.length > 0
+          ? { text: content, images: harvestedImages }
+          : content;
+
         return {
           toolCallId: call.toolCallId,
           status: canonicalStatus,
-          result: content,
+          result,
           durationMs: Date.now() - t0,
         };
       } catch (e) {

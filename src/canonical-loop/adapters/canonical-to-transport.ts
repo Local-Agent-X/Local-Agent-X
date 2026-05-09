@@ -78,15 +78,39 @@ export function canonicalToTransport(
     }
     if (m.role === "tool_result") {
       const obj = (c ?? {}) as { toolCallId?: string; result?: unknown };
-      const content =
-        typeof obj.result === "string"
-          ? obj.result
-          : JSON.stringify(obj.result ?? null);
+      const r = obj.result;
+      // Vision-emitting tools (browser screenshot, image_read, etc.)
+      // produce a `{ text, images: [{mime, b64}, ...] }` envelope so the
+      // image bytes survive across the canonical seam. Detect the shape
+      // and emit two transport messages: a `tool` row with the text
+      // summary, then a follow-up `user` row carrying the images
+      // sidecar so the next turn's adapter feeds them back to the model.
+      let resultText: string;
+      let imagesPayload: Array<{ mime: string; b64: string }> | null = null;
+      if (r && typeof r === "object" && Array.isArray((r as { images?: unknown }).images)) {
+        const env = r as { text?: unknown; images: unknown[] };
+        resultText = typeof env.text === "string" ? env.text : JSON.stringify(env);
+        imagesPayload = env.images.filter((x): x is { mime: string; b64: string } =>
+          !!x && typeof x === "object" && typeof (x as { mime?: unknown }).mime === "string" && typeof (x as { b64?: unknown }).b64 === "string",
+        );
+      } else {
+        resultText = typeof r === "string" ? r : JSON.stringify(r ?? null);
+      }
       out.push({
         role: "tool",
         toolCallId: obj.toolCallId ?? "tc-unknown",
-        content,
+        content: resultText,
       });
+      if (imagesPayload && imagesPayload.length > 0) {
+        out.push({
+          role: "user",
+          content: `[Tool returned ${imagesPayload.length} image${imagesPayload.length === 1 ? "" : "s"} — analyze and use them in your reply.]`,
+          images: imagesPayload.map((img, i) => ({
+            url: `data:${img.mime};base64,${img.b64}`,
+            name: `tool-image-${i}.${(img.mime.split("/")[1] || "png").replace(/[^a-z0-9]/gi, "")}`,
+          })),
+        });
+      }
       continue;
     }
     if (m.role === "control") {

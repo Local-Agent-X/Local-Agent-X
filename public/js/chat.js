@@ -2211,6 +2211,8 @@ function handleVoiceWsMessage(e) {
               const r = parseFloat(localStorage.getItem('lax_speed') || '1.0');
               if (r > 0.4 && r < 2.5) u.rate = r;
             } catch {}
+            const v = _browserResolveVoice();
+            if (v) u.voice = v;
             window.speechSynthesis.speak(u);
           }
           lastCut = m.index + m[0].length;
@@ -2235,6 +2237,8 @@ function handleVoiceWsMessage(e) {
             const r = parseFloat(localStorage.getItem('lax_speed') || '1.0');
             if (r > 0.4 && r < 2.5) u.rate = r;
           } catch {}
+          const v = _browserResolveVoice();
+          if (v) u.voice = v;
           window.speechSynthesis.speak(u);
         }
         _voiceBrowserTtsBuf = "";
@@ -2279,6 +2283,46 @@ let _browserTtsBuf = "";
 function _browserTtsActive() {
   try { return localStorage.getItem('lax_tts_engine') === 'browser'; } catch { return false; }
 }
+
+// Voice-picker selection resolver. The picker writes the chosen voice's
+// `.name` to lax_browser_voice; we look it up against speechSynthesis's
+// async voice list and cache the SpeechSynthesisVoice handle. Cache is
+// invalidated on voiceschanged so installing a new system voice or
+// flipping locales re-resolves cleanly. Returning null falls back to the
+// browser default (matches the picker's "(default browser voice)" option).
+let _browserResolvedVoice = null;
+let _browserResolvedVoiceName = null;
+function _browserResolveVoice() {
+  let want = '';
+  try { want = localStorage.getItem('lax_browser_voice') || ''; } catch {}
+  // Migration: existing users had `voiceTier4Voice` saved server-side before
+  // we added the dedicated localStorage key. Fall back to the server-settings
+  // mirror so their previous pick keeps working without a re-pick.
+  if (!want) {
+    try {
+      const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+      if (s.voiceTier4Provider === 'browser' && s.voiceTier4Voice) want = String(s.voiceTier4Voice);
+    } catch {}
+  }
+  if (!want) return null;
+  if (_browserResolvedVoiceName === want && _browserResolvedVoice) return _browserResolvedVoice;
+  if (!('speechSynthesis' in window)) return null;
+  const voices = window.speechSynthesis.getVoices() || [];
+  const match = voices.find(v => v.name === want);
+  if (!match) return null;
+  _browserResolvedVoice = match;
+  _browserResolvedVoiceName = want;
+  return match;
+}
+if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  try {
+    window.speechSynthesis.addEventListener('voiceschanged', () => {
+      _browserResolvedVoice = null;
+      _browserResolvedVoiceName = null;
+    });
+  } catch {}
+}
+
 function _browserSpeak(text) {
   if (!('speechSynthesis' in window)) return;
   const u = new SpeechSynthesisUtterance(text);
@@ -2287,6 +2331,8 @@ function _browserSpeak(text) {
     const r = parseFloat(localStorage.getItem('lax_speed') || '1.0');
     if (r > 0.4 && r < 2.5) u.rate = r;
   } catch {}
+  const v = _browserResolveVoice();
+  if (v) u.voice = v;
   window.speechSynthesis.speak(u);
 }
 function feedTTS(delta) {
@@ -2569,10 +2615,32 @@ let serverStartTime = Date.now();
 let _providersCache = null;
 let _providersCacheTime = 0;
 
+async function _primeSaxSettings() {
+  try {
+    const r = await apiFetch('/api/settings');
+    if (!r || !r.ok) return;
+    const server = await r.json();
+    if (!server || typeof server !== 'object') return;
+    const local = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    // Server is source of truth for tier-defining keys — overwrite local
+    // copies that might be stale from a previous session. We don't replace
+    // the entire blob because settings.js stores some client-only keys
+    // (lax_*) under sax_settings too on some flows.
+    const tierKeys = ['voiceMode', 'voiceEngine', 'voiceTier4Provider', 'voiceTier4Voice', 'voiceSttProvider', 'voiceRealtimeVoice', 'ttsVoice'];
+    for (const k of tierKeys) if (k in server) local[k] = server[k];
+    localStorage.setItem('sax_settings', JSON.stringify(local));
+  } catch {}
+}
+
 function initStatusBar() {
   const bar = document.getElementById('status-bar');
   if (!bar) return;
-  loadProviders().then(() => updateStatusBar());
+  // Prime sax_settings from the server before the chat-bar renders. Without
+  // this, getActiveVoiceTier() reads stale localStorage and shows browser-
+  // tier voices in the picker even when settings.json on disk says tier 2.
+  // Settings page also writes sax_settings, but the chat page is the entry
+  // point users hit first — we can't assume settings.js has run this session.
+  _primeSaxSettings().then(() => loadProviders()).then(() => updateStatusBar());
   setInterval(updateStatusBar, 10000);
   apiFetch('/api/auth/status').then(r => r.json()).then(d => {
     if (d.uptime) serverStartTime = Date.now() - (d.uptime * 1000);
@@ -2696,6 +2764,19 @@ function classifyModelTier(model) {
 function updateStatusBar() {
   const bar = document.getElementById('status-bar-dynamic');
   if (!bar) return;
+  // Skip re-render while the user is actively interacting with one of the
+  // bar's controls. The bar is rebuilt via innerHTML below — clobbering it
+  // while a <select> dropdown is open destroys the element and slams the
+  // dropdown shut, which is the "picker closes if I'm not fast enough" bug.
+  // <select> doesn't expose its open state, but Chrome/Edge/Firefox hold
+  // focus on a select whose dropdown is open, so activeElement is a
+  // reliable proxy. Same applies to the speed slider mid-drag. The 10s
+  // cadence is for eventual freshness — skipping a tick is harmless.
+  const ae = document.activeElement;
+  if (ae && bar.contains(ae)) {
+    const tag = ae.tagName;
+    if (tag === 'SELECT' || tag === 'INPUT' || tag === 'OPTION') return;
+  }
   const tokenInfo = window.lastContextStatus ? `${(window.lastContextStatus.usedTokens / 1000).toFixed(0)}K tokens` : '';
   const data = _providersCache;
   const currentProvider = data?.current?.provider || '—';
@@ -2814,6 +2895,16 @@ function quickSwitchVoice(voice) {
     return;
   }
   localStorage.setItem('lax_voice', voice);
+  // Browser-tier TTS uses speechSynthesis directly (no WS). The resolver in
+  // _browserResolveVoice reads lax_browser_voice. The settings-page picker
+  // writes that key; this chat-bar quick-pick is a parallel path so we need
+  // to mirror it here, otherwise picking via the chat bar updates the UI
+  // but never affects the actual SpeechSynthesisUtterance.voice.
+  let activeTierLocal = null;
+  try { activeTierLocal = (typeof getActiveVoiceTier === 'function') ? getActiveVoiceTier() : null; } catch {}
+  if (activeTierLocal && activeTierLocal.id === 'browser') {
+    try { localStorage.setItem('lax_browser_voice', voice); } catch {}
+  }
   const wsState = (typeof voiceWS !== 'undefined' && voiceWS) ? voiceWS.readyState : 'no-ws';
   console.log('[voice] picker → ' + voice + ' (ws=' + wsState + ')');
   if (typeof voiceWS !== 'undefined' && voiceWS && voiceWS.readyState === WebSocket.OPEN) {

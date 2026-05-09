@@ -209,7 +209,13 @@ const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
 const MIN_UTTERANCE_SAMPLES = 4000;
 const MAX_UTTERANCE_SAMPLES = 16000 * 22; // 22s hard cap (VAD itself cuts at 20s)
 
-export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
+/** Secret lookup injected from the host (so voice-session doesn't need a
+ *  hard dep on the secrets-store module). Returns the decrypted value or
+ *  empty string when missing. The cloud STT path needs this — the API key
+ *  lives in the encrypted store, not in process.env. */
+export type SecretLookup = (name: string) => string;
+
+export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: SecretLookup = () => "") {
   return (ctx: VoiceSessionContext): VoiceSession => {
     // Per-session settings resolution — settings.json is the source of truth
     // so a UI dropdown change picks up on the next voice session without restart.
@@ -400,10 +406,23 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
             provider: voiceSettings.whisperDevice,
           });
         } else {
-          logger.info(`[voice-session] ${ctx.sessionId}: STT provider=${sttProviderName} (cloud)`);
+          // Map provider → secret name. The encrypted secrets store is the
+          // source of truth; process.env is a fallback for env-driven
+          // deployments. Without this, picking "Groq" in the UI silently
+          // fell back to local-whisper because the adapter throws on
+          // missing key and we catch+fallback below.
+          const SECRET_BY_PROVIDER: Record<string, string> = {
+            groq: "GROQ_API_KEY",
+            openai: "OPENAI_API_KEY",
+            mistral: "MISTRAL_API_KEY",
+          };
+          const secretName = SECRET_BY_PROVIDER[sttProviderName];
+          const apiKey = (secretName && getSecret(secretName)) || process.env[secretName ?? ""] || undefined;
+          logger.info(`[voice-session] ${ctx.sessionId}: STT provider=${sttProviderName} (cloud, key ${apiKey ? "present" : "MISSING"})`);
           try {
             whisper = createSttProvider(sttProviderName, {
               local: { paths: whisperPaths, provider: voiceSettings.whisperDevice },
+              cloud: apiKey ? { apiKey } : undefined,
             });
           } catch (e) {
             logger.warn(`[voice-session] ${ctx.sessionId}: cloud STT init failed (${(e as Error).message}) — falling back to local whisper`);
@@ -703,6 +722,24 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner) {
         handleFinalTranscript(t).catch((e) => {
           logger.warn(`[voice-session] ${ctx.sessionId}: handleFinalTranscript failed: ${(e as Error).message}`);
         });
+      },
+
+      onVoiceSettings(settings: { voice?: string; speed?: number }) {
+        // Live voice swap from the chat-bar picker. Without this, picking a
+        // new voice mid-session updated localStorage but the live edge-tts
+        // adapter kept speaking with the voice it was created with — toast
+        // says "next reply" but the next reply was the old voice. Adapters
+        // that don't expose setVoice (kokoro picks per-utterance) are
+        // no-ops here — kokoro handles voice change via the speak() path.
+        if (closed) return;
+        const v = settings.voice;
+        if (!v) return;
+        const t4 = tts as unknown as Tier4StreamingTTS;
+        if (typeof t4?.setVoice === "function") {
+          void t4.setVoice(v).catch((e) => {
+            logger.warn(`[voice-session] ${ctx.sessionId}: setVoice failed: ${(e as Error).message}`);
+          });
+        }
       },
 
       close() {

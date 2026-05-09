@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join, resolve } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
@@ -52,9 +52,15 @@ const TIERS: VoiceTier[] = [
     port: Number(process.env.LAX_CHATTERBOX_PORT) || 7010,
     venvDir: join(HOME, ".lax", "python-chatterbox", "venv"),
     installerPath: join(REPO_ROOT, "python", "chatterbox", "install.ps1"),
+    // Note: invoked as `server:app` with --app-dir pointing at our local
+    // chatterbox/ directory, NOT as `chatterbox.server:app`. The venv has
+    // the upstream `chatterbox-tts` pip package which exposes `chatterbox.
+    // ChatterboxTTS`; if we treat our local dir as a `chatterbox` package
+    // (e.g. by adding __init__.py) we shadow that import and the sidecar
+    // crashes with `cannot import name 'ChatterboxTTS' from 'chatterbox'`.
     startCmd: () => ({
       command: join(HOME, ".lax", "python-chatterbox", "venv", PYTHON_EXE),
-      args: ["-m", "uvicorn", "chatterbox.server:app", "--host", "127.0.0.1", "--port", String(Number(process.env.LAX_CHATTERBOX_PORT) || 7010)],
+      args: ["-m", "uvicorn", "server:app", "--app-dir", join(REPO_ROOT, "python", "chatterbox"), "--host", "127.0.0.1", "--port", String(Number(process.env.LAX_CHATTERBOX_PORT) || 7010)],
       cwd: join(REPO_ROOT, "python"),
       env: { ...process.env },
     }),
@@ -67,7 +73,12 @@ const TIERS: VoiceTier[] = [
     label: "Studio-Trained (GPT-SoVITS)",
     port: Number(process.env.LAX_SOVITS_PORT) || 7012,
     venvDir: join(HOME, ".lax", "sovits", "venv"),
-    installerPath: "", // no one-click installer — training pipeline drives setup
+    // The installer rebuilds the venv on top of an existing GPT-SoVITS
+    // checkout (~/.lax/sovits/repo). Trained voice weights survive a venv
+    // wipe but the picker said "Not installed" with no recovery path —
+    // this is the recovery path. If the repo isn't present, the installer
+    // exits cleanly with instructions to run the training pipeline first.
+    installerPath: join(REPO_ROOT, "python", "sovits", "install.ps1"),
     startCmd: () => ({
       command: join(HOME, ".lax", "sovits", "venv", PYTHON_EXE),
       args: [join(REPO_ROOT, "python", "sovits", "server.py")],
@@ -115,6 +126,32 @@ function isInstalled(tier: VoiceTier): boolean {
   return existsSync(join(tier.venvDir, PYTHON_EXE));
 }
 
+// Studio-trained-specific: detect partial state where the GPT-SoVITS repo
+// + trained voice weights are on disk but the venv isn't. This is the
+// "venv got wiped, weights survived" state — picker shows "Weights present,
+// click Rebuild" instead of the misleading "Not installed".
+function studioTrainedAssetState(): { repoPresent: boolean; weightsPresent: boolean } {
+  const repoDir = join(HOME, ".lax", "sovits", "repo");
+  const repoPresent = existsSync(repoDir);
+  if (!repoPresent) return { repoPresent: false, weightsPresent: false };
+  // Any *.pth file in the SoVITS_weights* sibling dirs counts as a trained voice.
+  const weightDirs = ["SoVITS_weights", "SoVITS_weights_v2", "SoVITS_weights_v2Pro", "SoVITS_weights_v2ProPlus", "SoVITS_weights_v3", "SoVITS_weights_v4"];
+  let weightsPresent = false;
+  for (const d of weightDirs) {
+    const candidate = join(repoDir, d);
+    if (!existsSync(candidate)) continue;
+    try {
+      if (!statSync(candidate).isDirectory()) continue;
+      const items = readdirSync(candidate);
+      if (items.some(name => name.toLowerCase().endsWith(".pth"))) {
+        weightsPresent = true;
+        break;
+      }
+    } catch { /* ignore unreadable dirs */ }
+  }
+  return { repoPresent, weightsPresent };
+}
+
 async function probeHealth(url: string): Promise<{ ok: boolean; ready?: boolean; payload?: unknown }> {
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(1500) });
@@ -158,6 +195,11 @@ async function tierStatus(tier: VoiceTier) {
   const proc = running.get(tier.id);
   const trackedRunning = !!(proc && proc.exitCode === null);
   const health = installed ? await probeHealth(tier.healthUrl) : { ok: false };
+  // Studio-trained gets extra fields so the picker can distinguish:
+  //   - venv missing + weights present → "Weights found, click Install to rebuild"
+  //   - venv missing + no weights      → "Not installed (run training pipeline)"
+  // For other tiers, leave undefined.
+  const studioAssets = tier.id === "studio-trained" ? studioTrainedAssetState() : undefined;
   return {
     id: tier.id,
     label: tier.label,
@@ -170,7 +212,34 @@ async function tierStatus(tier: VoiceTier) {
     healthy: !!health.ok && !!health.ready,
     pid: proc?.pid || null,
     healthPayload: health.payload || null,
+    ...(studioAssets ? { repoPresent: studioAssets.repoPresent, weightsPresent: studioAssets.weightsPresent } : {}),
   };
+}
+
+// ── Npm dep probe ───────────────────────────────────────────────────────────
+// Cheap "is this package on disk" check for voice-tier deps that aren't
+// gated through a sidecar tier (i.e. msedge-tts, mpg123-decoder for the
+// Edge cloud tier). The voice-picker UI used to render "Assumed installed"
+// for these, which was misleading — this gives the picker real signal so
+// users see "Installed" with a version, or "Missing — run npm install".
+const VOICE_NPM_PACKAGES = ["msedge-tts", "mpg123-decoder"] as const;
+
+function probeVoiceNpmDeps(): Record<string, { installed: boolean; version?: string }> {
+  const out: Record<string, { installed: boolean; version?: string }> = {};
+  for (const pkg of VOICE_NPM_PACKAGES) {
+    const pkgJsonPath = join(REPO_ROOT, "node_modules", pkg, "package.json");
+    if (!existsSync(pkgJsonPath)) {
+      out[pkg] = { installed: false };
+      continue;
+    }
+    try {
+      const j = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version?: string };
+      out[pkg] = { installed: true, version: j.version };
+    } catch {
+      out[pkg] = { installed: true };
+    }
+  }
+  return out;
 }
 
 // ── Routes ──────────────────────────────────────────────────────────────────
@@ -179,7 +248,7 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
 
   if (method === "GET" && url.pathname === "/api/voices/setup/status") {
     const tiers = await Promise.all(TIERS.map(tierStatus));
-    json(200, { platform: platform(), tiers });
+    json(200, { platform: platform(), tiers, npm: probeVoiceNpmDeps() });
     return true;
   }
 
@@ -247,15 +316,18 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
       proc.stderr?.on("data", c => logger.info(`[${tier.id}] ${c.toString().trim().slice(0, 300)}`));
       proc.on("exit", code => { logger.info(`[voice-setup] ${tier.id} exited (${code})`); if (running.get(tier.id) === proc) running.delete(tier.id); });
 
-      // Wait up to 60s for /healthz to come up.
-      const deadline = Date.now() + 60_000;
+      // Wait up to 3 min for /healthz. Cold-start is heavy: faster-whisper
+      // large-v3-turbo loading on CUDA + Kokoro warmup + Silero VAD can take
+      // 90-120s on first launch (model files paged in, CUDA context init).
+      // Subsequent starts after OS file cache is warm are usually <20s.
+      const deadline = Date.now() + 180_000;
       while (Date.now() < deadline) {
         if (proc.exitCode !== null) { json(500, { error: `${tier.label} exited during startup (code ${proc.exitCode})` }); return true; }
         const h = await probeHealth(tier.healthUrl);
         if (h.ok) { json(200, { ok: true, pid: proc.pid, healthPayload: h.payload }); return true; }
         await new Promise(r => setTimeout(r, 1000));
       }
-      json(504, { error: `${tier.label} did not become healthy within 60s. Process pid=${proc.pid} still running; check logs.` });
+      json(504, { error: `${tier.label} didn't report healthy within 3 min — but pid ${proc.pid} is still running. Cold-start can be slow; try clicking Start again in 30s, or check logs.` });
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }

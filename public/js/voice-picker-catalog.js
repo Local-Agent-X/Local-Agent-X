@@ -58,26 +58,32 @@ window.LAX_VOICE_CATALOG = {
       id: 'edge',
       label: 'Edge cloud',
       tagline: '~22 neural voices · Microsoft cloud · no API key',
-      detail: 'Edge Read-Aloud TTS + Groq Whisper STT. ~250ms STT latency. Needs `npm i msedge-tts mpg123-decoder` for TTS and a Groq API key for STT.',
+      detail: 'Edge Read-Aloud TTS + cloud Whisper STT. ~250ms STT latency. Needs `npm i msedge-tts mpg123-decoder` for TTS and one of the supported STT providers for transcription.',
       settings: { voiceMode: 'standard', voiceEngine: 'tier4', voiceTier4Provider: 'edge-tts', voiceSttProvider: 'groq' },
       voicePool: ['edge'],
+      // STT providers the Edge tier can pair with. Picker renders a dropdown
+      // and rewrites the `secret:` prereq to whatever the user selects. The
+      // first entry is the default for fresh installs.
+      sttProviders: [
+        { id: 'groq',    label: 'Groq Whisper-large-v3 (free tier)',         secret: 'GROQ_API_KEY' },
+        { id: 'openai',  label: 'OpenAI Whisper-1 (~$0.006/min, paid)',      secret: 'OPENAI_API_KEY' },
+        { id: 'mistral', label: 'Mistral Voxtral (cheap, EU-hosted)',        secret: 'MISTRAL_API_KEY' },
+      ],
       prerequisites: [
         { kind: 'npm:msedge-tts', label: 'msedge-tts npm package' },
-        { kind: 'secret:GROQ_API_KEY', label: 'GROQ_API_KEY (for STT)' },
+        // Tier-2 secret is dynamic — voice-picker.js synthesizes the right
+        // `secret:<KEY>` prereq based on the selected sttProvider above.
       ],
     },
-    {
-      id: 'kokoro',
-      label: 'Kokoro local',
-      tagline: '50+ voices · in-process ONNX · CPU or GPU',
-      detail: 'Kokoro TTS + local Whisper STT, all in-process via ONNX. ~1.2s first audio on a 3060. Recommended once you\'ve run npm install.',
-      settings: { voiceMode: 'standard', voiceEngine: 'tier4', voiceTier4Provider: 'kokoro', voiceSttProvider: 'local-whisper' },
-      voicePool: ['kokoro'],
-      prerequisites: [
-        { kind: 'npm:kokoro-js', label: 'kokoro-js + onnxruntime-node' },
-        { kind: 'model:kokoro', label: 'Kokoro ONNX weights (~80MB, auto-downloads on first use)' },
-      ],
-    },
+    // NOTE: Tier 3 "Kokoro local" (in-process kokoro-js + Node ONNX) was
+    // removed from the picker. Studio Lite (tier 4) ships the same Kokoro
+    // voices via a Python sidecar with the more robust faster-whisper STT
+    // and proper VAD — and users wanting voice cloning need tier 4 anyway,
+    // so the in-process variant was redundant and finicky on GPU
+    // (DirectML ConvTranspose crashes, no smart Auto device pick).
+    // The kokoro-js / tier4-factory adapter stays in the codebase so
+    // env-var driven configs (LAX_VOICE_TIER4_PROVIDER=kokoro) and tests
+    // still work; only the user-facing picker entry is gone.
     {
       id: 'studio',
       label: 'Studio local',

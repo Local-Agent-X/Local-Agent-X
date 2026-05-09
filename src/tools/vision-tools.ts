@@ -58,17 +58,19 @@ export const screenCaptureTool: ToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      monitor: { type: "number", description: "Monitor index, 0-based. 0 = primary, 1 = second screen, 2 = third, etc. Omit to capture primary. Use list_monitors to see what's connected." },
+      monitor: { type: "number", description: "Monitor index, 0-based. 0 = first detected, 1 = second, etc. The PRIMARY display is not always index 0 — call list_monitors first to see which index is primary and which physical screen each index maps to. OMIT this field to capture the primary display by default." },
       region: {
         type: "object",
-        description: "Capture a specific region instead of full screen",
+        description: "ADVANCED: capture a sub-region of the screen. OMIT this entirely for a full-screen capture. Do NOT include this field with zeros or placeholder values — only include it when the user explicitly wants a specific rectangle. width and height MUST both be > 0 if provided.",
         properties: {
-          x: { type: "number" }, y: { type: "number" },
-          width: { type: "number" }, height: { type: "number" },
+          x: { type: "number", description: "Left edge in pixels" },
+          y: { type: "number", description: "Top edge in pixels" },
+          width: { type: "number", description: "Region width in pixels (must be > 0)" },
+          height: { type: "number", description: "Region height in pixels (must be > 0)" },
         },
         required: ["x", "y", "width", "height"],
       },
-      scale: { type: "number", description: "Scale factor 0.1-1.0 to reduce size (default 0.5)" },
+      scale: { type: "number", description: "Scale factor 0.1-1.0 to reduce image size (default 0.5). Lower = smaller file." },
       question: { type: "string", description: "What to analyze about the screen (default: describe it)" },
     },
     required: [],

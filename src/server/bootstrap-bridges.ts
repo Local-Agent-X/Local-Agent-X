@@ -1,12 +1,12 @@
-import { runAgent, type AgentOptions } from "../agent.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { stripEphemeralMessages } from "../agent-providers.js";
 import { WhatsAppBridge } from "../whatsapp-bridge.js";
 import { TelegramBridge } from "../telegram-bridge.js";
-import { enqueue } from "../execution-lanes.js";
 import { formatForChannel, getChannelConfig } from "../channel-formatter.js";
 import { resolveSession, buildChannelContext, type ChannelType } from "../session-router.js";
 import { detectInjection } from "../sanitize.js";
 import { getVoicePref, setVoicePref, type BridgePlatform } from "../bridge-voice/index.js";
+import { COMPACTION_PREFIX } from "../types.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore, MemoryIndex, MemoryManager } from "../memory.js";
 import type { SecretsStore } from "../secrets.js";
@@ -103,50 +103,87 @@ export function createBridgeHandler(deps: {
     });
 
     logger.info(`[bridge:${platform}] provider=${prepared.provider} model=${prepared.model} tools=${prepared.tools.length} (${prepared.tools.slice(0, 5).map(t => t.name).join(",")}${prepared.tools.length > 5 ? ",..." : ""})`);
-    const result = await enqueue("main", () => runAgent(text, prepared.cleanHistory, {
-      apiKey: prepared.apiKey, model: prepared.model,
-      provider: prepared.provider as AgentOptions["provider"],
-      systemPrompt: prepared.systemPrompt, tools: prepared.tools,
-      security, toolPolicy, rbac, callerRole: "operator" as const,
-      sessionId: route.sessionKey, maxIterations: prepared.maxIterations,
-      temperature: prepared.temperature,
-    }), { label: `bridge:${platform}:${from}` });
-    const toolCallsMade = result.messages.filter(m => {
-      const tc = (m as unknown as { tool_calls?: unknown[] }).tool_calls;
-      return m.role === "assistant" && Array.isArray(tc) && tc.length > 0;
-    }).length;
-    logger.info(`[bridge:${platform}] done — ${result.messages.length} msgs, ${toolCallsMade} tool-call turns, stopReason=${result.stopReason}`);
 
-    const turnStartIdx = prepared.cleanHistory.length;
-    const images: Buffer[] = [];
-    for (let i = turnStartIdx; i < result.messages.length; i++) {
-      const m = result.messages[i];
-      if (m.role !== "user" || !Array.isArray(m.content)) continue;
-      for (const part of m.content as Array<{ type: string; image_url?: { url: string } }>) {
-        if (part.type !== "image_url" || !part.image_url?.url) continue;
-        const match = /^data:[^;]+;base64,(.+)$/.exec(part.image_url.url);
-        if (!match) continue;
-        try { images.push(Buffer.from(match[1], "base64")); } catch {}
-      }
-    }
-    if (images.length > 0) {
-      logger.info(`[bridge:${platform}] sending ${images.length} image(s) to ${from}`);
-      for (const img of images) {
-        if (channelType === "whatsapp") {
-          await getWhatsappBridge().sendImage(from, img).catch((e: Error) => logger.error(`[whatsapp] image send failed: ${e.message}`));
-        } else if (channelType === "telegram") {
-          await getTelegramBridge().sendPhoto(from, img).catch((e: Error) => logger.error(`[telegram] photo send failed: ${e.message}`));
-        }
-      }
-    }
-
-    session.messages = stripEphemeralMessages(result.messages).filter(m => {
-      if (m.role === "system") return false;
-      if (m.role === "tool") return true;
-      return m.content || (m as unknown as Record<string, unknown>).tool_calls;
+    // Bridge handlers consume canonical-loop too. Same dispatch path the
+    // web chat uses — runChatViaCanonical yields ServerEvents; we
+    // collect text into a single response (bridges don't stream to the
+    // user — Telegram/WhatsApp send one message per reply).
+    const { runChatViaCanonical } = await import("../canonical-loop/chat-runner.js");
+    let assistantText = "";
+    let canonicalOpId = "";
+    let firstError: string | null = null;
+    const eventStream = runChatViaCanonical({
+      message: text,
+      sessionId: route.sessionKey,
+      prepared,
+      tools: prepared.tools,
+      security,
+      toolPolicy,
+      rbac,
+      callerRole: "operator" as const,
     });
-    session.updatedAt = Date.now(); saveSession(session);
-    return formatForChannel(result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).pop() || "Done.", channelType).join("\n\n");
+    for await (const ev of eventStream) {
+      if (ev.type === "stream" && typeof ev.delta === "string") {
+        assistantText += ev.delta;
+      } else if (ev.type === "chat_op_started" && typeof ev.opId === "string") {
+        canonicalOpId = ev.opId;
+      } else if (ev.type === "error" && typeof ev.message === "string" && !firstError) {
+        firstError = ev.message;
+      }
+    }
+    if (firstError && !assistantText) {
+      logger.warn(`[bridge:${platform}] canonical errored: ${firstError}`);
+    }
+
+    // Persist session.messages by reading the just-finished op's
+    // message rows (same pattern as chat.ts canonical persist —
+    // captures tool_calls + tool_result structure that text-only
+    // synthesis would lose).
+    if (canonicalOpId) {
+      try {
+        const { readOpMessages } = await import("../canonical-loop/store.js");
+        const { opMessageRowToChatParam } = await import("../canonical-loop/chat-runner.js");
+        const newRows: ChatCompletionMessageParam[] = [];
+        for (const row of readOpMessages(canonicalOpId)) {
+          if (row.messageId.startsWith("hist-")) continue;
+          const param = opMessageRowToChatParam(row);
+          if (param) newRows.push(param);
+        }
+        type MsgRecord = Record<string, unknown>;
+        session.messages = stripEphemeralMessages([...session.messages, ...newRows]).filter(m => {
+          if (m.role === "system") {
+            return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX);
+          }
+          if (m.role === "tool") return true;
+          return m.content || (m as unknown as MsgRecord).tool_calls;
+        });
+      } catch (e) {
+        logger.warn(`[bridge:${platform}] canonical persist read failed: ${(e as Error).message}`);
+      }
+    }
+    // Fallback: if op_messages read produced nothing (unlikely), at
+    // least preserve the user message + assistant text we observed
+    // streaming. Mirrors the same defensive path in chat.ts canonical
+    // persist.
+    if (canonicalOpId === "" || (session.messages[session.messages.length - 1]?.role !== "assistant" && assistantText)) {
+      session.messages = [
+        ...session.messages,
+        { role: "user", content: text },
+        ...(assistantText ? [{ role: "assistant" as const, content: assistantText }] : []),
+      ];
+    }
+    session.updatedAt = Date.now();
+    saveSession(session);
+
+    // TODO: image-sending from agent-generated images (browser
+    // screenshots, generated artwork). The legacy path scanned
+    // result.messages for user-role image_url content parts (how the
+    // OpenAI client wraps tool-result images for the model). The
+    // canonical equivalent lives in op_messages tool_result rows; the
+    // shape varies per tool. Wire this back up in a follow-up commit
+    // once the basic text path is verified.
+
+    return formatForChannel(assistantText.trim() || "Done.", channelType).join("\n\n");
   };
 }
 

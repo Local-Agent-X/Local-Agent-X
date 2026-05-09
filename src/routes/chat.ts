@@ -425,7 +425,6 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
           if (!isCanonicalChatLaneEnabled()) return false;
         } catch { return false; }
         if (!CANONICAL_CHAT_PROVIDERS.has(prepared.provider)) return false;
-        if (prepared.images && prepared.images.length > 0) return false;
         return true;
       })();
 

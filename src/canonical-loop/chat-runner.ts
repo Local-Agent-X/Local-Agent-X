@@ -226,13 +226,18 @@ function seedOpMessages(opId: string, prepared: PreparedAgentRequest, currentMes
   // Current user message — last in the seed so the model sees it as the
   // "ask". seedInitialUserMessage is a no-op when op_messages is non-empty,
   // so this row replaces its default behavior with our prepared payload.
+  // Image attachments ride on the same content payload — adapters extract
+  // `images` and convert to their provider's wire format (OpenAI multi-
+  // part for OpenAI-compat, image content blocks for Anthropic).
+  const userContent: { text: string; images?: PreparedAgentRequest["images"] } = { text: currentMessage };
+  if (prepared.images && prepared.images.length > 0) userContent.images = prepared.images;
   appendOpMessage({
     messageId: `um-${opId}-${turnIdx}-${seqInTurn}-${randomUUID().slice(0, 6)}`,
     opId,
     turnIdx,
     seqInTurn,
     role: "user",
-    content: { text: currentMessage },
+    content: userContent,
     createdAt: new Date().toISOString(),
   });
 }

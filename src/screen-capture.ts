@@ -51,16 +51,48 @@ export function captureScreen(options: ScreenCaptureOptions = {}): ScreenCapture
   const outPath = tmpPath(format);
   const scale = safeNum(options.scale ?? 1.0, "scale");
 
-  let psScript: string;
+  // Sanitize region. LLMs love to auto-fill optional struct args with
+  // zeros — `region:{x:0,y:0,width:0,height:0}` arrives whenever the
+  // model "completes" the schema even though the user didn't ask for
+  // a region. A zero-dimension region falls through to
+  // `New-Object Bitmap(0,0)` → "Parameter is not valid" and the whole
+  // capture fails. Treat any region with non-positive width/height as
+  // "no region" and route through the monitor path instead.
+  let effectiveRegion = options.region;
+  if (effectiveRegion) {
+    const w = Number(effectiveRegion.width);
+    const h = Number(effectiveRegion.height);
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+      effectiveRegion = undefined;
+    }
+  }
 
-  if (options.region) {
-    const x = safeNum(options.region.x, "region.x");
-    const y = safeNum(options.region.y, "region.y");
-    const width = safeNum(options.region.width, "region.width");
-    const height = safeNum(options.region.height, "region.height");
-    psScript = `
-Add-Type -AssemblyName System.Drawing
-Add-Type -AssemblyName System.Windows.Forms
+  // Pre-validate monitor index against listMonitors() so a bad index
+  // surfaces as a real error the agent can self-correct against.
+  if (options.monitor != null && !effectiveRegion) {
+    const monitorIdx = safeNum(options.monitor, "monitor");
+    const monitors = listMonitors();
+    if (monitorIdx < 0 || monitorIdx >= monitors.length) {
+      const list = monitors.map(m => `${m.index}=${m.name}${m.primary ? " (primary)" : ""}`).join(", ");
+      throw new Error(
+        `Monitor index ${monitorIdx} out of range. Connected monitors: ${list || "(none detected)"}. ` +
+        `Call list_monitors first or omit monitor for primary.`
+      );
+    }
+  }
+
+  // PS script body. We'll wrap the whole thing in try/catch + strict
+  // error preference so any failure surfaces with a real message
+  // instead of silently leaving $bmp null and chaining null-method
+  // errors down the script.
+  let psBody: string;
+
+  if (effectiveRegion) {
+    const x = safeNum(effectiveRegion.x, "region.x");
+    const y = safeNum(effectiveRegion.y, "region.y");
+    const width = safeNum(effectiveRegion.width, "region.width");
+    const height = safeNum(effectiveRegion.height, "region.height");
+    psBody = `
 $w = ${width}; $h = ${height}
 $bmp = New-Object System.Drawing.Bitmap($w, $h)
 $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -69,10 +101,11 @@ $g.Dispose()
 `;
   } else {
     const monitorIdx = safeNum(options.monitor ?? 0, "monitor");
-    psScript = `
-Add-Type -AssemblyName System.Drawing
-Add-Type -AssemblyName System.Windows.Forms
+    psBody = `
 $screens = [System.Windows.Forms.Screen]::AllScreens
+if (${monitorIdx} -ge $screens.Count -or ${monitorIdx} -lt 0) {
+  throw "Monitor index ${monitorIdx} out of range (only $($screens.Count) connected)"
+}
 $screen = $screens[${monitorIdx}]
 $bounds = $screen.Bounds
 $w = $bounds.Width; $h = $bounds.Height
@@ -82,6 +115,13 @@ $g.CopyFromScreen($bounds.X, $bounds.Y, 0, 0, [System.Drawing.Size]::new($w, $h)
 $g.Dispose()
 `;
   }
+
+  let psScript = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
+try {
+${psBody}`;
 
   // Optionally scale down
   if (scale < 1.0) {
@@ -114,20 +154,34 @@ $bmp.Save('${outPath.replace(/\\/g, "\\\\")}', [System.Drawing.Imaging.ImageForm
   psScript += `
 $bmp.Dispose()
 Write-Output "$w,$h"
+} catch {
+  Write-Error "screen_capture: $($_.Exception.Message)"
+  exit 1
+}
 `;
 
   const scriptPath = join(TMP_DIR, `capture_${randomBytes(6).toString("hex")}.ps1`);
   writeFileSync(scriptPath, psScript, "utf-8");
 
   try {
-    const output = execSync(
-      `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`,
-      { encoding: "utf-8", timeout: 10_000, windowsHide: true },
-    ).trim();
+    let output = "";
+    try {
+      output = execSync(
+        `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`,
+        { encoding: "utf-8", timeout: 10_000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+      ).toString().trim();
+    } catch (e) {
+      // execSync throws on non-zero exit; surface stderr as the real reason.
+      const err = e as { stderr?: Buffer | string; stdout?: Buffer | string; message?: string };
+      const stderr = err.stderr ? err.stderr.toString().trim() : "";
+      const stdout = err.stdout ? err.stdout.toString().trim() : "";
+      const reason = stderr || stdout || err.message || "unknown PowerShell failure";
+      throw new Error(`Screenshot capture failed: ${reason.split("\n").slice(0, 3).join(" | ")}`);
+    }
 
     try { unlinkSync(scriptPath); } catch {}
 
-    if (!existsSync(outPath)) throw new Error("Screenshot capture failed");
+    if (!existsSync(outPath)) throw new Error("Screenshot capture failed: output file missing");
 
     const image = readFileSync(outPath);
     const [w, h] = output.split(",").map(Number);

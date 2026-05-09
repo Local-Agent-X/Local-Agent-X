@@ -412,7 +412,12 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // item alongside the tool_result so the API can match call_ids.
       // See chat-runner.ts / codex.ts for the assistant tool_call message
       // finalization that makes the chain complete.
-      const CANONICAL_CHAT_PROVIDERS = new Set(["anthropic", "codex", "local", "ollama-cloud"]);
+      // Every chat provider goes through canonical now. If a new provider
+      // shows up (e.g. a future "ollama-fly" or "modal"), add it here AND
+      // teach `resolveOpenAICompatTarget` how to map it. The legacy
+      // runStandardAgent path is dead code post-this commit and slated
+      // for removal.
+      const CANONICAL_CHAT_PROVIDERS = new Set(["anthropic", "codex", "local", "ollama-cloud", "xai", "openai", "gemini", "custom"]);
       const canonicalChatEligible = await (async () => {
         try {
           const { isCanonicalChatEnabled, isCanonicalChatLaneEnabled } = await import("../canonical-loop/feature-flag.js");

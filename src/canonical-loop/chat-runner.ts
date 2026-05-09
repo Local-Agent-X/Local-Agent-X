@@ -285,7 +285,15 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   //    is the static system context only). Provider follows the prepared
   //    request, so when the user picks Codex in settings the chat goes
   //    through CodexAdapter end-to-end (pure-canonical, no random canary).
-  if (ctx.prepared.provider === "codex") {
+  if (ctx.prepared.provider === "anthropic") {
+    registerAdapterForOp(op.id, () =>
+      createAnthropicAdapter({
+        systemPrompt: ctx.prepared.systemPrompt,
+        model: ctx.prepared.model,
+        sessionId: ctx.sessionId,
+      }),
+    );
+  } else if (ctx.prepared.provider === "codex") {
     const { createCodexAdapter } = await import("./adapters/codex.js");
     registerAdapterForOp(op.id, () =>
       createCodexAdapter({
@@ -294,32 +302,35 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
         sessionId: ctx.sessionId,
       }),
     );
-  } else if (ctx.prepared.provider === "local" || ctx.prepared.provider === "ollama-cloud") {
-    const { createLocalOllamaAdapter } = await import("./adapters/local-ollama.js");
-    // Route per-provider:
-    //   - "ollama-cloud": always cloud baseURL + cloud API key (top-level
-    //     dropdown choice; user picked Turbo explicitly).
-    //   - "local": cloud routing per-model when the chosen model is
-    //     registered as a cloud model (mixed local+cloud picker), else
-    //     localhost.
-    // Same canonical adapter either way — only the URL + key swap.
-    const { isCloudModel, getCloudOllamaCallTarget } = await import("../ollama-cloud.js");
-    const wantsCloud = ctx.prepared.provider === "ollama-cloud" || isCloudModel(ctx.prepared.model);
-    const cloudTarget = wantsCloud ? getCloudOllamaCallTarget() : null;
-    registerAdapterForOp(op.id, () =>
-      createLocalOllamaAdapter({
-        systemPrompt: ctx.prepared.systemPrompt,
-        model: ctx.prepared.model,
-        temperature: ctx.prepared.temperature,
-        sessionId: ctx.sessionId,
-        ...(cloudTarget ? { baseURL: cloudTarget.baseURL, apiKey: cloudTarget.apiKey } : {}),
-      }),
-    );
   } else {
+    // OpenAI-compat providers: local, ollama-cloud, xai, openai, gemini,
+    // custom. One adapter, one wire shape — only the baseURL + apiKey
+    // swap per provider. For "local" we additionally check the per-model
+    // cloud-Ollama set, so picking a Turbo model from inside the local
+    // dropdown still routes to the cloud endpoint.
+    const { createOpenAICompatAdapter, resolveOpenAICompatTarget } = await import("./adapters/openai-compat.js");
+    let target = await resolveOpenAICompatTarget(ctx.prepared.provider, ctx.prepared);
+    if (ctx.prepared.provider === "local") {
+      const { isCloudModel, getCloudOllamaCallTarget } = await import("../ollama-cloud.js");
+      if (isCloudModel(ctx.prepared.model)) {
+        const cloudTarget = getCloudOllamaCallTarget();
+        if (cloudTarget) target = cloudTarget;
+      }
+    }
+    if (!target) {
+      // No usable target (e.g. ollama-cloud picked but no key configured,
+      // or custom provider without baseURL). Surface the failure cleanly
+      // by registering a no-op adapter that errors on first runTurn.
+      throw new Error(`provider ${ctx.prepared.provider} has no usable OpenAI-compat target — check API key and base URL config`);
+    }
+    const finalTarget = target;
     registerAdapterForOp(op.id, () =>
-      createAnthropicAdapter({
+      createOpenAICompatAdapter({
         systemPrompt: ctx.prepared.systemPrompt,
         model: ctx.prepared.model,
+        baseURL: finalTarget.baseURL,
+        apiKey: finalTarget.apiKey,
+        temperature: ctx.prepared.temperature,
         sessionId: ctx.sessionId,
       }),
     );

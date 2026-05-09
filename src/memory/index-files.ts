@@ -63,7 +63,7 @@ export function listSessionFiles(dataDir: string): FileRecord[] {
   if (!existsSync(sessDir)) return [];
   const records: FileRecord[] = [];
 
-  const files = readdirSync(sessDir).filter((f) => f.endsWith(".json"));
+  const files = readdirSync(sessDir).filter((f) => f.endsWith(".jsonl"));
   for (const file of files) {
     const fullPath = join(sessDir, file);
     try {

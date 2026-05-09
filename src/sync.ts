@@ -242,7 +242,9 @@ export class AgentSync {
       if (!existsSync(syncSessDir)) mkdirSync(syncSessDir, { recursive: true });
       if (existsSync(sessDir)) {
         for (const f of readdirSync(sessDir)) {
-          if (f.endsWith(".json")) writeFileSync(join(syncSessDir, f), readFileSync(join(sessDir, f), "utf-8"));
+          // Sync both .jsonl (current) and .json (legacy/pre-migration) so
+          // round-tripping a sync from an older machine still works.
+          if (f.endsWith(".jsonl") || f.endsWith(".json")) writeFileSync(join(syncSessDir, f), readFileSync(join(sessDir, f), "utf-8"));
         }
       }
     }
@@ -441,7 +443,12 @@ export class AgentSync {
       if (!existsSync(sessDir)) mkdirSync(sessDir, { recursive: true });
       if (existsSync(syncSessDir)) {
         for (const f of readdirSync(syncSessDir)) {
-          if (f.endsWith(".json") && !existsSync(join(sessDir, f))) writeFileSync(join(sessDir, f), readFileSync(join(syncSessDir, f), "utf-8"));
+          // Pull both .jsonl (current) and .json (legacy) so round-tripping
+          // from an older machine still works; the SessionStore migration
+          // on next boot converts any pulled .json to .jsonl.
+          if ((f.endsWith(".jsonl") || f.endsWith(".json")) && !existsSync(join(sessDir, f))) {
+            writeFileSync(join(sessDir, f), readFileSync(join(syncSessDir, f), "utf-8"));
+          }
         }
       }
     }

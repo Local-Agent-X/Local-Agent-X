@@ -48,7 +48,8 @@ export function createRequestHandler(deps: {
   toolRegistry: ToolRegistry;
   bridgeTools: ToolDefinition[];
   getOrCreateSession: (id: string) => Session;
-  saveSession: (s: Session) => void;
+  saveSession: (s: Session) => Promise<void>;
+  flushSession: (id: string) => Promise<void>;
   getChatWs: () => ServerContext["chatWs"];
   broadcastAll: (event: Record<string, unknown>) => void;
   activeOnEventBySession: Map<string, (event: ServerEvent) => void>;
@@ -58,7 +59,7 @@ export function createRequestHandler(deps: {
     config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, memoryManager,
     secretsStore, cronService, integrations, whatsappBridge, telegramBridge, agentSync,
     appRegistry, agentRunStore, agentTemplateStore, issueStore, projectStore,
-    allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession,
+    allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession, flushSession,
     getChatWs, broadcastAll, activeOnEventBySession, activeBrowserSessionIdRef,
   } = deps;
 
@@ -95,7 +96,7 @@ export function createRequestHandler(deps: {
     const ctx: ServerContext = {
       config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations,
       whatsappBridge, telegramBridge, agentSync, appRegistry, agentRunStore, agentTemplateStore, issueStore, projectStore,
-      allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession, chatWs: getChatWs(), broadcastAll,
+      allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession, flushSession, chatWs: getChatWs(), broadcastAll,
       getActiveOnEvent: (sid) => activeOnEventBySession.get(sid),
       setActiveOnEvent: (sid, fn) => {
         if (fn) activeOnEventBySession.set(sid, fn);

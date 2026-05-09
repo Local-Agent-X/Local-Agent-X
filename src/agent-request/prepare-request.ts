@@ -27,37 +27,14 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   const resolved = await resolveProvider(config, secretsStore, dataDir);
   void logger; // logger kept for future routing diagnostics
 
-  // 2. Sanitize + truncate history. If the session has a stored compaction
-  // summary from /api/compact, slice the message list to the post-compaction
-  // tail and prepend the summary as a system message — preserves long-session
-  // grounding without re-summarizing every turn.
+  // 2. Sanitize + truncate history. Compaction now lives as a leading
+  // `system` message in sessionMessages itself (round-tripped through a
+  // `summary` row in the per-session jsonl log on disk). No special-case
+  // slice/prepend logic needed here — the session passed in is already
+  // the right shape, with `[system_summary, ...recent_msgs]` when
+  // compacted and just `[...msgs]` otherwise.
   const maxKeep = input.maxHistory || (channel === "web" ? 40 : 30);
-  let historyForPrep: ChatCompletionMessageParamLike[] = sessionMessages;
-  if (
-    input.compactedSummary &&
-    typeof input.compactedAt === "number" &&
-    input.compactedAt > 0 &&
-    input.compactedAt < sessionMessages.length
-  ) {
-    // Defensive floor: even if compaction was triggered very close to the
-    // end, always keep the last KEEP_RECENT_MIN messages verbatim. Without
-    // this floor, a "yes" / "1" / "3" reply to a numbered list could land
-    // after the cut and the agent would have no way to interpret the short
-    // answer — the prior assistant turn would only exist as a one-line
-    // summary entry. Bug observed in Apr 2026 session: user replied "3" to
-    // a numbered list and the agent answered "I don't have a numbered list
-    // in front of you" because the list got swallowed by compaction.
-    const KEEP_RECENT_MIN = 6;
-    const minTailStart = Math.max(0, sessionMessages.length - KEEP_RECENT_MIN);
-    const tailStart = Math.min(input.compactedAt, minTailStart);
-    const tail = sessionMessages.slice(tailStart);
-    historyForPrep = [
-      { role: "system", content: input.compactedSummary } as ChatCompletionMessageParamLike,
-      ...tail,
-    ];
-    logger.info(`[compaction] reusing stored summary (compactedAt=${input.compactedAt}, tailStart=${tailStart}, summaryLen=${input.compactedSummary.length}, tail=${tail.length})`);
-  }
-  const cleanHistory = truncateHistory(sanitizeHistory(historyForPrep), maxKeep);
+  const cleanHistory = truncateHistory(sanitizeHistory(sessionMessages), maxKeep);
 
   // 3. Build context (skip heavy parts for bridges/cron). The memory pipeline
   // runs for every provider — the orchestrator's grounding signals help Codex

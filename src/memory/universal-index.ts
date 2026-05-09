@@ -169,15 +169,24 @@ export class UniversalIndex {
   }
 
   async indexSessionTranscript(sessionId: string): Promise<IndexResult> {
-    const path = join(this.sessionsDir, `${sessionId}.json`);
+    const path = join(this.sessionsDir, `${sessionId}.jsonl`);
     if (!existsSync(path)) return { added: 0, removed: 0, unchanged: 0 };
     const messages = extractSessionPairs(path);
     if (messages.length < 2) return { added: 0, removed: 0, unchanged: 0 };
 
+    // Read createdAt from the meta line. extractSessionPairs already parses
+    // the file but doesn't expose meta — re-scan just for the timestamp.
     let sessionDate: string | undefined;
     try {
-      const sess = JSON.parse(readFileSync(path, "utf-8"));
-      if (sess.createdAt) sessionDate = new Date(sess.createdAt).toISOString().split("T")[0];
+      for (const line of readFileSync(path, "utf-8").split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const row = JSON.parse(trimmed);
+        if (row.kind === "meta" && typeof row.createdAt === "number") {
+          sessionDate = new Date(row.createdAt).toISOString().split("T")[0];
+          break;
+        }
+      }
     } catch {}
 
     const metadata: ChunkMetadata = {
@@ -274,12 +283,12 @@ export class UniversalIndex {
     }
 
     // Raw session transcripts — the retroactive fix for pre-pipeline sessions.
-    // Walks ~/.lax/sessions/*.json and reindexes every transcript via the
+    // Walks ~/.lax/sessions/*.jsonl and reindexes every transcript via the
     // idempotent path. Hash-deduped, so already-indexed sessions cost ~nothing.
     if (existsSync(this.sessionsDir)) {
-      const files = readdirSync(this.sessionsDir).filter(f => f.endsWith(".json"));
+      const files = readdirSync(this.sessionsDir).filter(f => f.endsWith(".jsonl"));
       for (const f of files) {
-        const sessionId = basename(f, ".json");
+        const sessionId = basename(f, ".jsonl");
         try { accum("session", await this.indexSessionTranscript(sessionId)); }
         catch (e) { logger.warn(`[universal-index] session ${sessionId}:`, (e as Error).message); }
       }

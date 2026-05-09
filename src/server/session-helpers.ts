@@ -8,7 +8,19 @@ const logger = createLogger("server.session-helpers");
 export interface SessionHelpers {
   sessions: Map<string, Session>;
   getOrCreateSession: (id: string) => Session;
-  saveSession: (session: Session) => void;
+  /**
+   * Queue a session write. Returns a Promise that resolves when the write
+   * (cache update + disk + memory index) has finished. Callers may
+   * fire-and-forget by ignoring the return value. The next turn that
+   * needs to read this session should `await flushSession(id)` first.
+   */
+  saveSession: (session: Session) => Promise<void>;
+  /**
+   * Wait for any pending write for this session to complete. No-op if
+   * nothing is queued. Call this at the start of a request that depends
+   * on the prior turn's bytes being durable (cache + disk).
+   */
+  flushSession: (id: string) => Promise<void>;
 }
 
 export function createSessionHelpers(deps: {
@@ -31,7 +43,7 @@ export function createSessionHelpers(deps: {
     sessions.set(id, s); if (sessions.size > maxCached) sessions.delete(sessions.keys().next().value!); return s;
   }
 
-  function saveSession(session: Session): void {
+  function saveSession(session: Session): Promise<void> {
     const prev = writeQueues.get(session.id) ?? Promise.resolve();
     const next = prev.then(async () => {
       sessions.set(session.id, session);
@@ -41,13 +53,19 @@ export function createSessionHelpers(deps: {
     }).catch(e => logger.error(`[session] Save failed:`, e));
     writeQueues.set(session.id, next);
     next.finally(() => { if (writeQueues.get(session.id) === next) writeQueues.delete(session.id); });
+    return next;
+  }
+
+  async function flushSession(id: string): Promise<void> {
+    const pending = writeQueues.get(id);
+    if (pending) await pending;
   }
 
   async function indexSessionIncrementally(session: Session): Promise<void> {
     if (session.id.startsWith("dream-") || session.id.startsWith("ide-")) return;
     logger.info(`[memory-live] Indexing session ${session.id} (${session.messages?.length || 0} messages)`);
     const { extractSessionPairs, chunkConversationPairs } = await import("../memory-chunking.js");
-    const messages = extractSessionPairs(join(dataDir, "sessions", session.id + ".json"));
+    const messages = extractSessionPairs(join(dataDir, "sessions", session.id + ".jsonl"));
     if (messages.length < 2) return;
 
     const pairs: Array<{ user: string; assistant: string }> = [];
@@ -88,5 +106,5 @@ export function createSessionHelpers(deps: {
     }
   }
 
-  return { sessions, getOrCreateSession, saveSession };
+  return { sessions, getOrCreateSession, saveSession, flushSession };
 }

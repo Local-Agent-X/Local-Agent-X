@@ -106,11 +106,25 @@ async function indexFile(
   if (file.source === "session") {
     const messages = extractSessionPairs(file.path);
     if (messages.length < 2) return;
-    const sessionId = basename(file.path, ".json");
+    // Strip whichever extension is on the file path (.jsonl post migration,
+    // .json on legacy callers) to recover the bare session id.
+    const sessionId = basename(file.path, file.path.endsWith(".jsonl") ? ".jsonl" : ".json");
     let sessionDate: string | undefined;
     try {
-      const sess = JSON.parse(readFileSync(file.path, "utf-8"));
-      if (sess.createdAt) sessionDate = new Date(sess.createdAt).toISOString().split("T")[0];
+      if (file.path.endsWith(".jsonl")) {
+        for (const line of readFileSync(file.path, "utf-8").split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const row = JSON.parse(trimmed);
+          if (row.kind === "meta" && typeof row.createdAt === "number") {
+            sessionDate = new Date(row.createdAt).toISOString().split("T")[0];
+            break;
+          }
+        }
+      } else {
+        const sess = JSON.parse(readFileSync(file.path, "utf-8"));
+        if (sess.createdAt) sessionDate = new Date(sess.createdAt).toISOString().split("T")[0];
+      }
     } catch {}
     const metadata: ChunkMetadata = { source_type: "agent-x-session", session_id: sessionId, date: sessionDate };
     chunks = chunkConversationPairs(messages, file.path, file.source, metadata) as Chunk[];

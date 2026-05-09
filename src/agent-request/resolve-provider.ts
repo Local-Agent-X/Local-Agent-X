@@ -33,7 +33,7 @@ export async function resolveProvider(
   // Resolve provider. If a saved provider exists but has no usable credentials,
   // fall through to auto-detection so a stale "codex" default from a previous
   // run doesn't block a freshly-signed-in Anthropic user.
-  const VALID = ["codex", "xai", "openai", "anthropic", "local", "gemini", "custom"];
+  const VALID = ["codex", "xai", "openai", "anthropic", "local", "ollama-cloud", "gemini", "custom"];
   const hasCredsFor = (p: string): boolean => {
     if (p === "anthropic") return !!loadAnthropicTokens();
     if (p === "codex") return !!loadTokens();
@@ -41,6 +41,7 @@ export async function resolveProvider(
     if (p === "xai") return !!secretsStore.get("XAI_API_KEY");
     if (p === "gemini") return !!secretsStore.get("GEMINI_API_KEY");
     if (p === "custom") return !!secretsStore.get("CUSTOM_API_KEY");
+    if (p === "ollama-cloud") return !!secretsStore.get("OLLAMA_CLOUD_API_KEY");
     if (p === "local") return true;
     return false;
   };
@@ -77,6 +78,11 @@ export async function resolveProvider(
 
   if (provider === "local") {
     apiKey = "ollama";
+  } else if (provider === "ollama-cloud") {
+    // Ollama Turbo (cloud) uses the same canonical adapter as local; the
+    // chat-runner detects this provider and routes to the cloud baseURL
+    // with the cloud API key. resolveProvider just surfaces the key.
+    apiKey = secretsStore.get("OLLAMA_CLOUD_API_KEY") || "";
   } else if (provider === "anthropic") {
     apiKey = await getAnthropicApiKey();
     try { codexApiKey = await getApiKey(config.openaiApiKey); } catch {}

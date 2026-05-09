@@ -257,7 +257,7 @@ export async function setupVoiceWs(deps: {
       return { assistantText: finalAssistantText, updatedHistory };
     };
 
-    setVoiceSessionFactory(createVoiceSessionFactory(voiceTurnRunner));
+    setVoiceSessionFactory(createVoiceSessionFactory(voiceTurnRunner, (name) => secretsStore.get(name) || ""));
   } catch (e) { logger.warn("[voice-ws] setup failed:", (e as Error).message); }
 }
 

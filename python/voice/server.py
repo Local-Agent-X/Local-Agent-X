@@ -594,7 +594,18 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True, "stt": _stt is not None, "tts": _tts is not None, "gpu": _detect_gpu() or "cpu-only"}
+    # `ready` is the canonical "fully booted" signal voice-setup.ts checks.
+    # Without it the picker shows "Installed, not running" even though the
+    # sidecar is fine. Ready = both STT + TTS pre-warmed.
+    stt_ready = _stt is not None
+    tts_ready = _tts is not None
+    return {
+        "ok": True,
+        "ready": stt_ready and tts_ready,
+        "stt": stt_ready,
+        "tts": tts_ready,
+        "gpu": _detect_gpu() or "cpu-only",
+    }
 
 
 @app.websocket("/voice")

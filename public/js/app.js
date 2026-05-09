@@ -75,59 +75,58 @@ function onChatSearch(val) {
 // Cache-only load (instant, for page load)
 function loadChatsFromCache() { try { return JSON.parse(localStorage.getItem('sax_chats_v2') || '[]'); } catch { return []; } }
 
-// Fetch chats from server (source of truth), merge with cache
+// Fetch chats from server (source of truth), merge with cache.
+// Sidebar render only needs {id, title, updatedAt, messageCount} — full
+// message bodies are fetched lazily in selectChat() on click. Eagerly
+// fetching every session here used to fan-out 50+ GETs on page load,
+// draining the per-token rate-limit bucket and 429ing legitimate work
+// (voice session polls, WS reconnects). Pay the per-session cost only
+// when the user actually opens that chat.
 async function syncChatsFromServer() {
   try {
     const res = await fetch(`${API}/api/sessions`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     if (!res.ok) return;
     const serverList = await res.json(); // [{id, title, updatedAt, messageCount}]
 
-    // Build map of server sessions
-    const serverMap = new Map(serverList.map(s => [s.id, s]));
     const localMap = new Map(chats.map(c => [c.id, c]));
-
-    // Merge: server wins for sessions it knows about, keep local-only sessions
     const merged = [];
     const seen = new Set();
-
-    // Server sessions first (sorted by updatedAt desc)
     const deletedIds = getDeletedIds();
+
     for (const srv of serverList) {
       seen.add(srv.id);
-      // Skip tombstoned sessions — they were deliberately deleted
       if (deletedIds[srv.id]) continue;
       const local = localMap.get(srv.id);
-      // Detect "truncated local" — any message flagged or near the 10K cap is a localStorage
-      // slice, not the real content. Always fetch server when we detect truncation, even if
-      // local.updatedAt is newer (which it often is mid-stream due to savePartial).
-      const hasTruncated = local && local.messages && local.messages.some(m => m._truncated || (typeof m.content === 'string' && m.content.length >= 9_900));
-      const listTruncated = local && local.messages && typeof srv.messageCount === 'number' && srv.messageCount > local.messages.length;
       // Mid-stream protection: NEVER replace the local chat object while a
       // stream is in flight for this session. Replacing it orphans the
-      // streamChat closure reference in sendMessage — the stream keeps
-      // writing to the old object, but the user sees the new object (which
-      // is missing the in-flight assistant message). Result: navigating
-      // away mid-stream and coming back shows a blank chat. Keep local
-      // until the stream finishes; the next sync after `done` will reconcile.
+      // streamChat closure reference in sendMessage.
       const isStreamingNow = local && (window.streamingSessionId === srv.id);
-      if (local && (isStreamingNow || (!hasTruncated && !listTruncated && local.updatedAt >= srv.updatedAt))) {
+      if (local && (isStreamingNow || local.updatedAt >= srv.updatedAt)) {
+        // Local copy is at-or-newer than server — keep it but tag if we
+        // know full content is bigger than what's cached, so selectChat
+        // knows to hydrate on click.
+        const listTruncated = local.messages && typeof srv.messageCount === 'number' && srv.messageCount > local.messages.length;
+        const hasTruncated = local.messages && local.messages.some(m => m._truncated || (typeof m.content === 'string' && m.content.length >= 9_900));
+        if (!isStreamingNow && (listTruncated || hasTruncated)) local._needsHydrate = true;
         merged.push(local);
-      } else if (local) {
-        try {
-          const full = await fetch(`${API}/api/sessions/${srv.id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-          if (full.ok) {
-            const session = await full.json();
-            session.projectId = local.projectId;
-            session.compactedAt = local.compactedAt;
-            merged.push(session);
-          } else merged.push(local);
-        } catch { merged.push(local); }
       } else {
-        // Server-only session (from another machine) — skip if tombstoned
-        try {
-          const full = await fetch(`${API}/api/sessions/${srv.id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-          if (full.ok) merged.push(await full.json());
-        } catch {}
+        // Server is newer or session is server-only. Build a metadata stub —
+        // selectChat will hydrate the body when the user clicks in.
+        const stub = {
+          id: srv.id,
+          title: srv.title,
+          updatedAt: srv.updatedAt,
+          createdAt: srv.createdAt || (local && local.createdAt) || srv.updatedAt,
+          messageCount: srv.messageCount,
+          messages: (local && local.messages) || [],
+          _needsHydrate: true,
+        };
+        if (local) {
+          stub.projectId = local.projectId;
+          stub.compactedAt = local.compactedAt;
+          if (local.archived) stub.archived = true;
+        }
+        merged.push(stub);
       }
     }
 
@@ -138,7 +137,14 @@ async function syncChatsFromServer() {
 
     merged.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     chats = merged;
-    saveChats(); // Uses the safe, truncated save
+    // If activeChat got replaced by a stub during the merge, swap the in-memory
+    // pointer to the merged record so selectChat / renderMessages see the same
+    // object that's in the chats[] array.
+    if (activeChat) {
+      const merged2 = chats.find(c => c.id === activeChat.id);
+      if (merged2 && merged2 !== activeChat) activeChat = merged2;
+    }
+    saveChats();
     renderSidebar();
   } catch (e) {
     console.warn('[sync] Failed to fetch sessions from server:', e.message);
@@ -400,6 +406,33 @@ function selectChat(id) {
   if (window.chatWs && window.chatWs.readyState === WebSocket.OPEN) {
     window.chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
   }
+  // Lazy hydration: if the sidebar handed us a metadata stub (or a known-stale
+  // local copy), fetch the full session JSON now. One fetch per click instead
+  // of N on page load. Skip if we're already streaming into this chat.
+  if (activeChat && activeChat._needsHydrate && !isThisChatStreaming) {
+    hydrateChat(activeChat).catch(e => console.warn('[hydrate] failed:', e?.message));
+  }
+}
+
+async function hydrateChat(chat) {
+  try {
+    const res = await fetch(`${API}/api/sessions/${chat.id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    if (!res.ok) { delete chat._needsHydrate; return; }
+    const session = await res.json();
+    // Preserve client-only fields the server doesn't know about.
+    session.projectId = chat.projectId;
+    session.compactedAt = chat.compactedAt;
+    if (chat.archived) session.archived = true;
+    // Mutate in place so the activeChat pointer (and any closures holding it)
+    // stay valid. Replace messages, copy server fields.
+    Object.assign(chat, session);
+    delete chat._needsHydrate;
+    saveChats();
+    if (activeChat && activeChat.id === chat.id && window.renderMessages) renderMessages();
+  } catch (e) {
+    delete chat._needsHydrate;
+    throw e;
+  }
 }
 
 // Tombstones: track deleted session IDs so sync doesn't resurrect them
@@ -447,10 +480,13 @@ function archiveChat(id, e) {
   if (window.renderMessages) renderMessages();
 }
 
-function exportChat(id, e) {
+async function exportChat(id, e) {
   e.stopPropagation();
   const chat = chats.find(c => c.id === id);
   if (!chat) return;
+  if (chat._needsHydrate) {
+    try { await hydrateChat(chat); } catch {}
+  }
   let md = '# ' + (chat.title || 'Chat') + '\n\n';
   for (const m of (chat.messages || [])) {
     const role = m.role === 'user' ? 'You' : 'Agent';

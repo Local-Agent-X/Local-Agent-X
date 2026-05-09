@@ -1,0 +1,8 @@
+# Dependencies for python/sovits/server.py — our FastAPI wrapper around
+# GPT-SoVITS's api_v2.py. The upstream GPT-SoVITS requirements.txt
+# (installed first) covers the model-side deps; this file covers ONLY
+# what our server shim adds on top.
+fastapi
+uvicorn[standard]
+httpx
+soundfile

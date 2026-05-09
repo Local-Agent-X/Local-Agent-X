@@ -1,5 +1,8 @@
 // Voice-mode 3D sphere visualization. Audio-reactive Jarvis-style core with
-// orbiting rings + particle halo. Three.js (loaded via CDN script tag).
+// orbiting rings + particle halo. Three.js loaded as an ES module via the
+// importmap declared in app.html — `three` resolves to the self-hosted
+// /vendor/three/three.module.min.js bundle (the legacy build/three.min.js
+// global was removed in r160).
 //
 // API:
 //   VoiceSphere.show(mode)              // 'fullscreen' | 'split' | 'floating'
@@ -12,6 +15,8 @@
 //
 // All state is internal — caller just toggles modes/states and pumps audio
 // analyser nodes when they have them.
+
+import * as THREE from 'three';
 
 (function () {
   'use strict';

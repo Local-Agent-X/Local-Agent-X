@@ -81,7 +81,18 @@ export async function createEdgeTtsProvider(
   config: Tier4Config,
   cb: Tier4Callbacks,
 ): Promise<Tier4StreamingTTS> {
-  const voice = process.env.LAX_VOICE_EDGE_VOICE?.trim() || config.voice || EDGE_DEFAULT_VOICE;
+  // msedge-tts only accepts the short-name format (e.g. "en-US-AriaNeural")
+  // and infers the locale via /\w{2}-\w{2}/ on the voice string. If a caller
+  // hands us a long-name browser voice ("Microsoft Zira - English (United
+  // States)") — which happens when a user switches tiers and the picker
+  // carries over the previous tier's voice — the regex misses and the
+  // adapter throws "Could not infer voiceLocale". Fall back to the curated
+  // default instead of crashing.
+  const requested = process.env.LAX_VOICE_EDGE_VOICE?.trim() || config.voice || EDGE_DEFAULT_VOICE;
+  const voice = /\w{2}-\w{2}/.test(requested) ? requested : EDGE_DEFAULT_VOICE;
+  if (voice !== requested) {
+    logger.warn("edge-tts voice not in short-name format; falling back to default", { requested, fallback: voice });
+  }
 
   let MsEdgeTTSMod: { MsEdgeTTS: MsEdgeTTSCtor; OUTPUT_FORMAT: Record<string, string> };
   try {
@@ -192,6 +203,10 @@ export async function createEdgeTtsProvider(
 
   logger.info("edge-tts ready", { voice, format: outputFormat });
 
+  // Mutable so setVoice() can swap mid-session. The getter below reflects
+  // the live value so voice-session can log the actual voice in use.
+  let activeVoice = voice;
+
   const adapter: Tier4StreamingTTS = {
     speak(text: string) {
       if (state.closed) return;
@@ -216,8 +231,26 @@ export async function createEdgeTtsProvider(
       state.tts = null;
       state.decoder = null;
     },
+    async setVoice(newVoice: string): Promise<void> {
+      if (state.closed || !state.tts) return;
+      // Same regex msedge-tts uses internally; reject names it can't
+      // resolve (e.g. browser-style "Microsoft Zira - English (US)") to
+      // avoid throwing inside the live session.
+      if (!/\w{2}-\w{2}/.test(newVoice)) {
+        logger.warn("edge-tts setVoice ignored — bad short-name format", { newVoice });
+        return;
+      }
+      if (newVoice === activeVoice) return;
+      try {
+        await state.tts.setMetadata(newVoice, outputFormat);
+        activeVoice = newVoice;
+        logger.info("edge-tts voice swapped", { voice: newVoice });
+      } catch (e) {
+        logger.warn("edge-tts setVoice failed", { newVoice, err: (e as Error).message });
+      }
+    },
     get sampleRate() { return TIER4_SAMPLE_RATE; },
-    get voice() { return voice; },
+    get voice() { return activeVoice; },
     get runtime() {
       // edge-tts is a cloud websocket, so device/dtype don't apply. Report
       // cpu+q8 to keep the runtime field shape stable for voice-session.

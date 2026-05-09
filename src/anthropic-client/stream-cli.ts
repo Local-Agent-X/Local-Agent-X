@@ -1,4 +1,5 @@
 import { spawn } from "child_process";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { extractUserPrompt, newToolCallId } from "./request.js";
 import { cleanUrls, filterStreamDelta, parseToolCalls, stripToolCallBlocks } from "./parse.js";
 import { npmAugmentedEnv } from "./cli-path.js";
@@ -7,6 +8,52 @@ import type { StreamEvent, StreamOptions } from "./types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("anthropic-client.stream-cli");
+
+const PRIOR_TURNS_MSG_CAP = 20;
+const PRIOR_TURNS_CHAR_CAP = 1500;
+
+/**
+ * Serialize prior-turn user/assistant text into a `Prior conversation:` block
+ * for the CLI prompt. The Anthropic CLI proxy is the only transport that
+ * doesn't natively carry message arrays — it takes a single text prompt and
+ * runs with `--no-session-persistence`, so without this block every chat
+ * turn looks like a fresh conversation to the model and prior context is
+ * lost (the literal symptom: "open my x account" → "X is open" → "make a
+ * post" → "what platform?").
+ *
+ * Skips tool/system rows: tool messages without their `tool_use` pair are
+ * structurally orphan-prone and the model already saw whatever the prior
+ * assistant said about the result; system rows are baked into fullSystem
+ * upstream. Caps last 20 messages × 1500 chars to bound prompt growth —
+ * upstream truncateHistory(maxKeep=40) already capped the array, so this
+ * is the second tightener for cost.
+ */
+export function serializePriorTurns(messages: ChatCompletionMessageParam[], lastUserIdx: number): string {
+  if (lastUserIdx <= 0) return "";
+  const prior = messages.slice(0, lastUserIdx).slice(-PRIOR_TURNS_MSG_CAP);
+  const lines: string[] = [];
+  for (const msg of prior) {
+    if (msg.role === "user") {
+      const text = extractTextFromContent(msg.content);
+      if (text) lines.push(`User: ${text.slice(0, PRIOR_TURNS_CHAR_CAP)}`);
+    } else if (msg.role === "assistant") {
+      const text = extractTextFromContent((msg as { content?: unknown }).content);
+      if (text) lines.push(`Assistant: ${text.slice(0, PRIOR_TURNS_CHAR_CAP)}`);
+    }
+  }
+  if (lines.length === 0) return "";
+  return `\n\nPrior conversation:\n${lines.join("\n\n")}\n`;
+}
+
+function extractTextFromContent(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const p of content as Array<Record<string, unknown>>) {
+    if (p.type === "text" && typeof p.text === "string") parts.push(p.text);
+  }
+  return parts.join("\n").trim();
+}
 
 /**
  * CLI proxy with tool support: embeds tool definitions in the prompt,
@@ -88,10 +135,12 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
     const historyContextQ = contextPartsQ.length > 0
       ? "\n\nCurrent task context:\n" + contextPartsQ.join("\n") + "\n\n"
       : "";
+    const priorConversationQ = serializePriorTurns(messages, lastUserIdxQ);
 
     const safePromptQ = prompt.replace(/<\/?system>/gi, "");
     const safeHistoryQ = historyContextQ.replace(/<\/?system>/gi, "");
-    const fullPromptQ = `<system>${fullSystemQuick}</system>\n${safeHistoryQ}\n${safePromptQ}`;
+    const safePriorQ = priorConversationQ.replace(/<\/?system>/gi, "");
+    const fullPromptQ = `<system>${fullSystemQuick}</system>${safePriorQ}${safeHistoryQ}\n${safePromptQ}`;
 
     if (textOnlyMode || !options.sessionId || !saxToken) {
       logger.info(`[wp-gate] → text-only shared pool (textOnly=${textOnlyMode} hasToken=${!!saxToken})`);
@@ -115,9 +164,12 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
     return;
   }
 
-  // Only include context from the CURRENT agent loop turn.
-  // Messages AFTER the last user message are current-loop tool results — always include them.
-  // Messages BEFORE the last user message are from prior turns — skip to avoid stale history.
+  // Current-turn context: messages AFTER the last user message (tool results
+  // for the in-flight turn). Cross-turn conversational context (messages
+  // BEFORE the last user message) is serialized separately by
+  // serializePriorTurns and prepended to fullPrompt — without that block
+  // the CLI proxy sees a fresh chat every turn (--no-session-persistence
+  // is set, and extractUserPrompt only pulls the last user message).
   const lastUserIdx = (() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i].role === "user") return i;
@@ -192,10 +244,12 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
     fullSystem = systemPrompt + "\n\n" + toolPrompt;
   }
   const historyContext = contextParts.length > 0 ? "\n\nCurrent task context:\n" + contextParts.join("\n") + "\n\n" : "";
+  const priorConversation = serializePriorTurns(messages, lastUserIdx);
   // Strip system tags from user input to prevent prompt injection
   const safePrompt = prompt.replace(/<\/?system>/gi, "");
   const safeHistory = historyContext.replace(/<\/?system>/gi, "");
-  const fullPrompt = `<system>${fullSystem}</system>\n${safeHistory}\n${safePrompt}`;
+  const safePrior = priorConversation.replace(/<\/?system>/gi, "");
+  const fullPrompt = `<system>${fullSystem}</system>${safePrior}${safeHistory}\n${safePrompt}`;
 
   const args = [
     "-p", "--model", model, "--output-format", "stream-json", "--verbose",

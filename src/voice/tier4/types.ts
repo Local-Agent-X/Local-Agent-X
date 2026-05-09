@@ -48,6 +48,11 @@ export interface Tier4StreamingTTS {
   readonly runtime: { device: Tier4Device; dtype: Tier4Dtype; fellBack: boolean };
   cancel(): void;
   close(): void;
+  /** Optional live voice swap. Adapters that hold a single TTS connection
+   *  per-session (edge-tts) implement this so a chat-bar voice change
+   *  takes effect on the next `speak()` instead of needing a full session
+   *  restart. Adapters that pick voice per-utterance (kokoro) can omit. */
+  setVoice?(voice: string): Promise<void>;
 }
 
 export interface Tier4DiagSnapshot {

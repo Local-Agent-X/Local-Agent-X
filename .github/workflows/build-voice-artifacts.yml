@@ -1,0 +1,172 @@
+# Build pre-bundled voice sidecar venvs as GitHub Release artifacts.
+#
+# Why this exists:
+#   The naive "pip install at user-time" path is fragile — Windows Defender
+#   silently deletes wheels mid-stream, upstream requirements drift, and a
+#   non-tech user has no recovery path. Pre-built artifacts solve all of
+#   that: AV scans the zip ONCE on download, install becomes "unzip", and
+#   we ship verified known-good binaries instead of assembling them on
+#   each user's box.
+#
+# What this builds:
+#   sovits-venv-cu126-py311.zip       — GPT-SoVITS sidecar (Studio-Trained)
+#   chatterbox-venv-cu126-py311.zip   — Chatterbox sidecar (Studio)
+#   lite-venv-cu126-py311.zip         — Lite voice sidecar (TTS+STT base)
+#
+# Each runs the matching install.ps1 from a CLEAN Windows runner, then
+# zips the resulting venv. Generated artifacts are uploaded to the GitHub
+# Release matching the tag that triggered the workflow.
+#
+# How users consume them:
+#   The install.ps1 reads $env:LAX_*_VENV_ARTIFACT_URL or
+#   ~/.lax/voice-bundles.json. If a URL is set, install becomes
+#   download-and-extract instead of pip install. See install.ps1 for the
+#   artifact-first path.
+#
+# Trigger:
+#   - Manual via workflow_dispatch
+#   - Release tag (v*-voice) so we don't rebuild artifacts on every commit
+#     (these are big and CI minutes aren't free).
+name: Build voice sidecar artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*-voice'
+
+jobs:
+  build-sovits:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Clone GPT-SoVITS repo
+        shell: pwsh
+        run: |
+          $repoDir = Join-Path $env:USERPROFILE ".lax\sovits\repo"
+          New-Item -ItemType Directory -Path (Split-Path $repoDir -Parent) -Force | Out-Null
+          git clone --depth 1 https://github.com/RVC-Boss/GPT-SoVITS $repoDir
+
+      - name: Run install.ps1 (bootstrap path → generates fresh venv)
+        shell: pwsh
+        run: |
+          ./python/sovits/install.ps1
+        env:
+          # Force CPU torch on CI (no GPU on standard runners). End users
+          # on GPU boxes still get the cu126 path locally — this artifact
+          # is the CPU-only build. For GPU builds, add a separate matrix
+          # entry with self-hosted GPU runners.
+          LAX_FORCE_CPU_TORCH: '1'
+
+      - name: Generate requirements.lock from working venv
+        shell: pwsh
+        run: |
+          $venvPy = Join-Path $env:USERPROFILE ".lax\sovits\venv\Scripts\python.exe"
+          & $venvPy -m pip freeze | Out-File -Encoding utf8 ./python/sovits/requirements.lock
+          Get-Content ./python/sovits/requirements.lock | Select-Object -First 20
+
+      - name: Pack venv as zip
+        shell: pwsh
+        run: |
+          $venvDir = Join-Path $env:USERPROFILE ".lax\sovits\venv"
+          $out = "./sovits-venv-cpu-py311.zip"
+          Compress-Archive -Path "$venvDir\*" -DestinationPath $out -CompressionLevel Optimal
+          $sha = (Get-FileHash $out -Algorithm SHA256).Hash
+          "$sha *$(Split-Path $out -Leaf)" | Out-File -Encoding utf8 "$out.sha256"
+          Get-Item $out | Select-Object Name, @{n='SizeMB';e={[math]::Round($_.Length/1MB,1)}}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sovits-venv-cpu-py311
+          path: |
+            sovits-venv-cpu-py311.zip
+            sovits-venv-cpu-py311.zip.sha256
+            python/sovits/requirements.lock
+
+  build-lite:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run install.ps1 (Lite sidecar)
+        shell: pwsh
+        run: |
+          ./python/voice/install.ps1
+        env:
+          LAX_FORCE_CPU_TORCH: '1'
+
+      - name: Pack venv
+        shell: pwsh
+        run: |
+          $venvDir = Join-Path $env:USERPROFILE ".lax\python-voice\venv"
+          $out = "./lite-venv-cpu-py311.zip"
+          Compress-Archive -Path "$venvDir\*" -DestinationPath $out -CompressionLevel Optimal
+          $sha = (Get-FileHash $out -Algorithm SHA256).Hash
+          "$sha *$(Split-Path $out -Leaf)" | Out-File -Encoding utf8 "$out.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lite-venv-cpu-py311
+          path: |
+            lite-venv-cpu-py311.zip
+            lite-venv-cpu-py311.zip.sha256
+
+  build-chatterbox:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run install.ps1 (Chatterbox sidecar)
+        shell: pwsh
+        run: |
+          ./python/chatterbox/install.ps1
+        env:
+          LAX_FORCE_CPU_TORCH: '1'
+
+      - name: Pack venv
+        shell: pwsh
+        run: |
+          $venvDir = Join-Path $env:USERPROFILE ".lax\python-chatterbox\venv"
+          $out = "./chatterbox-venv-cpu-py311.zip"
+          Compress-Archive -Path "$venvDir\*" -DestinationPath $out -CompressionLevel Optimal
+          $sha = (Get-FileHash $out -Algorithm SHA256).Hash
+          "$sha *$(Split-Path $out -Leaf)" | Out-File -Encoding utf8 "$out.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chatterbox-venv-cpu-py311
+          path: |
+            chatterbox-venv-cpu-py311.zip
+            chatterbox-venv-cpu-py311.zip.sha256
+
+  publish-release:
+    needs: [build-sovits, build-lite, build-chatterbox]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

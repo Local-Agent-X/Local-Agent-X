@@ -26,7 +26,12 @@ function _resolveActiveTierId(saved) {
   if (saved?.voiceMode === 'browser') return 'browser';
   if (saved?.voiceEngine === 'python') return 'studio';
   if (saved?.voiceTier4Provider === 'edge-tts') return 'edge';
-  if (saved?.voiceTier4Provider === 'kokoro' || saved?.voiceEngine === 'tier4') return 'kokoro';
+  // The standalone Kokoro-local tier was removed from the picker. Existing
+  // users with voiceTier4Provider='kokoro' get migrated to Studio (which
+  // also ships Kokoro voices via the more robust Python Lite sidecar). The
+  // kokoro-js adapter still works for env-var driven configs, but the
+  // picker no longer surfaces it as a tier choice.
+  if (saved?.voiceTier4Provider === 'kokoro' || saved?.voiceEngine === 'tier4') return 'studio';
   return C.DEFAULT_TIER_ID;
 }
 
@@ -90,6 +95,16 @@ function _checkPrereq(p) {
     if (!t) return { ok: false, hint: 'Probing…', action: 'none', tierId: id };
     if (t.healthy) return { ok: true, hint: 'Running', action: 'none', tierId: id };
     if (t.installed) return { ok: false, hint: 'Installed, not running', action: 'start-sidecar', tierId: id };
+    // Studio-trained partial-state nuance: if the GPT-SoVITS repo + trained
+    // weights are on disk but the venv is missing, surface that explicitly
+    // so users with a wiped venv know their voices (Optimus etc.) survived
+    // and they just need to click Install to rebuild the venv.
+    if (id === 'studio-trained' && t.weightsPresent) {
+      return { ok: false, hint: 'Weights found — click Install to rebuild venv', action: 'install-sidecar', tierId: id };
+    }
+    if (id === 'studio-trained' && t.repoPresent) {
+      return { ok: false, hint: 'Repo present, no trained voices yet', action: 'install-sidecar', tierId: id };
+    }
     return { ok: false, hint: 'Not installed', action: 'install-sidecar', tierId: id };
   }
   if (p.kind.startsWith('secret:')) {
@@ -100,16 +115,27 @@ function _checkPrereq(p) {
   }
   if (p.kind.startsWith('npm:')) {
     const pkg = p.kind.slice('npm:'.length);
-    // Use the tier4 native readiness probe — it tells us if kokoro-js +
-    // onnxruntime-node resolve. msedge-tts isn't in that probe; we treat it
-    // as best-effort optimistic and let the runtime fail loudly if missing.
     const tier4Native = (_setupStatus?.tiers || []).find(x => x.id === 'native');
     if (pkg === 'kokoro-js' || pkg === 'kokoro-js + onnxruntime-node') {
       const ok = !!(tier4Native && tier4Native.installed);
       const cached = !!(tier4Native?.healthPayload?.modelCached);
       return { ok: ok && cached, hint: !ok ? 'Run npm install' : (cached ? 'Ready' : 'Will download on first use'), action: 'none' };
     }
-    return { ok: true, hint: 'Assumed installed', action: 'none' };
+    // Real probe via /api/voices/setup/status `npm` block. Server checks
+    // node_modules/<pkg>/package.json existence + parses version. The label
+    // for this prereq is usually "msedge-tts npm package" — match by the
+    // first whitespace-delimited token so future deps pick up automatically.
+    const probed = _setupStatus?.npm || {};
+    const pkgKey = pkg.split(/\s+/)[0];
+    const info = probed[pkgKey];
+    if (info === undefined) {
+      // Probe hasn't returned yet, or this package isn't tracked server-side.
+      return { ok: false, hint: 'Probing…', action: 'none' };
+    }
+    if (info.installed) {
+      return { ok: true, hint: info.version ? `Installed v${info.version}` : 'Installed', action: 'none' };
+    }
+    return { ok: false, hint: 'Missing — run npm install', action: 'none' };
   }
   if (p.kind.startsWith('model:')) {
     const tier4Native = (_setupStatus?.tiers || []).find(x => x.id === 'native');
@@ -144,18 +170,71 @@ function _renderPrereqRow(p, idx, tierId) {
   return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--border)"><div style="font-size:.78rem">${_esc(p.label)}${p.optional ? ' <span style="color:var(--muted);font-size:.7rem">(optional)</span>' : ''}</div><div style="display:flex;align-items:center;gap:8px">${pill}${action}</div></div>`;
 }
 
+function _resolveSttProvider(tier) {
+  if (!tier?.sttProviders?.length) return null;
+  let picked = '';
+  try {
+    const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    picked = String(s.voiceSttProvider || '').toLowerCase();
+  } catch {}
+  const found = tier.sttProviders.find(p => p.id === picked);
+  return found || tier.sttProviders[0];
+}
+
+function _renderSttProviderPicker(tier) {
+  if (!tier?.sttProviders?.length) return '';
+  const current = _resolveSttProvider(tier)?.id || tier.sttProviders[0].id;
+  const opts = tier.sttProviders.map(p =>
+    `<option value="${_esc(p.id)}"${p.id === current ? ' selected' : ''}>${_esc(p.label)}</option>`,
+  ).join('');
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--border)">`
+    + `<div style="font-size:.78rem">STT provider</div>`
+    + `<select onchange="onSttProviderChange('${_esc(tier.id)}', this.value)" style="font-size:.75rem;padding:3px 6px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px">${opts}</select>`
+    + `</div>`;
+}
+
+async function onSttProviderChange(tierId, providerId) {
+  const tier = getTierById(tierId);
+  if (!tier?.sttProviders?.length) return;
+  const provider = tier.sttProviders.find(p => p.id === providerId);
+  if (!provider) return;
+  await _persist({ voiceSttProvider: provider.id });
+  try {
+    const local = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+    local.voiceSttProvider = provider.id;
+    localStorage.setItem('sax_settings', JSON.stringify(local));
+  } catch {}
+  // Re-render so the dynamic secret prereq updates to match.
+  await _refreshSecretNames();
+  _renderTierStatus(tier);
+}
+window.onSttProviderChange = onSttProviderChange;
+
 function _renderTierStatus(tier) {
   const wrap = document.getElementById('voice-tier-status');
   if (!wrap) return;
-  const required = tier.prerequisites.filter(p => !p.optional);
+  // Build the effective prereqs list. For tiers with sttProviders we
+  // synthesize a `secret:` prereq from the user's selected provider so the
+  // same row can show "GROQ_API_KEY · Set" or "OPENAI_API_KEY · Missing"
+  // depending on the dropdown above.
+  const provider = _resolveSttProvider(tier);
+  const effectivePrereqs = tier.prerequisites.slice();
+  if (provider) {
+    effectivePrereqs.push({
+      kind: `secret:${provider.secret}`,
+      label: `${provider.secret} (for STT)`,
+    });
+  }
+  const required = effectivePrereqs.filter(p => !p.optional);
   const allOk = required.every(p => _checkPrereq(p).ok);
   const status = document.getElementById('voice-engine-status');
   if (status) {
     status.className = 'status-badge ' + (allOk ? 'ok' : 'warn');
     status.innerHTML = `<span class="status-dot"></span> ${allOk ? 'Ready: ' : 'Setup needed: '}${_esc(tier.label)}`;
   }
-  const rows = tier.prerequisites.map((p, i) => _renderPrereqRow(p, i, tier.id)).join('');
-  wrap.innerHTML = `<div style="margin-top:10px;padding:10px 12px;background:var(--surface);border-radius:8px;border:1px solid var(--border)"><div style="font-size:.74rem;color:var(--muted);margin-bottom:4px">${_esc(tier.detail)}</div>${rows}</div>`;
+  const rows = effectivePrereqs.map((p, i) => _renderPrereqRow(p, i, tier.id)).join('');
+  const sttPicker = _renderSttProviderPicker(tier);
+  wrap.innerHTML = `<div style="margin-top:10px;padding:10px 12px;background:var(--surface);border-radius:8px;border:1px solid var(--border)"><div style="font-size:.74rem;color:var(--muted);margin-bottom:4px">${_esc(tier.detail)}</div>${rows}${sttPicker}</div>`;
 }
 
 function _kokoroOptions(current) {
@@ -280,9 +359,12 @@ async function loadVoicePicker(saved) {
     speedEl.placeholder = s || '1.15';
   }
 
-  // Hide tier-4 advanced panel unless this tier uses the in-process kokoro stack.
+  // The "in-process device" advanced panel was tied to the old standalone
+  // Kokoro-local tier. With that tier dropped, no remaining tier exposes
+  // those knobs — Studio's Python sidecar manages its own device internally,
+  // Edge/cloud tiers don't run on a local device at all. Always hide.
   const advanced = document.getElementById('voice-tier4-options');
-  if (advanced) advanced.style.display = (tierId === 'kokoro' || tierId === 'edge') ? '' : 'none';
+  if (advanced) advanced.style.display = 'none';
 }
 window.loadVoicePicker = loadVoicePicker;
 
@@ -296,14 +378,24 @@ async function _persist(payload) {
 async function onTierChange(tierId) {
   const tier = getTierById(tierId);
   if (!tier) return;
-  await _persist(tier.settings);
+  // Clear any previously-saved voice. Each tier expects a different voice-name
+  // format (browser uses "Microsoft Zira - English (United States)", edge uses
+  // "en-US-AriaNeural", kokoro uses "am_michael", etc.). Carrying a voice
+  // across a tier switch sends a name the new adapter can't parse — edge-tts
+  // crashes with "Could not infer voiceLocale", kokoro silently picks default,
+  // etc. Wiping the keys forces each adapter to fall back to its own default.
+  try {
+    localStorage.removeItem('lax_voice');
+    localStorage.removeItem('lax_browser_voice');
+  } catch {}
+  await _persist({ ...tier.settings, voiceTier4Voice: '', voiceRealtimeVoice: '', ttsVoice: '' });
   // Refresh sax_settings cache so getActiveVoiceTier() (chat-bar reader) sees the new tier.
   try {
     const local = JSON.parse(localStorage.getItem('sax_settings') || '{}');
-    Object.assign(local, tier.settings);
+    Object.assign(local, tier.settings, { voiceTier4Voice: '', voiceRealtimeVoice: '', ttsVoice: '' });
     localStorage.setItem('sax_settings', JSON.stringify(local));
   } catch {}
-  await loadVoicePicker(tier.settings);
+  await loadVoicePicker({ ...tier.settings, voiceTier4Voice: '', voiceRealtimeVoice: '' });
   // Re-render the chat bar so its voice list re-filters.
   if (typeof updateStatusBar === 'function') updateStatusBar();
 }
@@ -322,6 +414,11 @@ async function onVoicePickChange(voice) {
   }
   if (!voice) return;
   if (tierId === 'kokoro' || tierId === 'studio') { try { localStorage.setItem('lax_voice', voice); } catch {} }
+  // Browser tier reads the chosen voice synchronously from localStorage at
+  // utterance-build time (chat.js _browserResolveVoice). Server settings are
+  // persisted async via _persist() below — that round-trip is too slow for
+  // streaming TTS, hence the dedicated key.
+  if (tierId === 'browser') { try { localStorage.setItem('lax_browser_voice', voice); } catch {} }
   const payload = tierId === 'realtime' ? { voiceRealtimeVoice: voice } : { voiceTier4Voice: voice, ttsVoice: voice };
   await _persist(payload);
   try {
@@ -357,7 +454,24 @@ async function onTierPrereqAction(tierId, action, target, btn) {
     if (action === 'install-sidecar') {
       btn.textContent = 'Installing… (5–15 min)';
       const d = await apiPost('/api/voices/setup/install', { tier: target });
-      if (!d?.ok) throw new Error('Installer exited with code ' + d?.exitCode);
+      if (!d?.ok) {
+        // Surface the actual installer output so users see the AV-exclusion
+        // hint or whatever else install.ps1 emitted on failure. Generic
+        // "exited with code 1" alerts are useless for non-tech users — the
+        // installer's stdout has the recovery instructions.
+        const tail = (d?.output || '').toString().slice(-1500);
+        const isAvLikely = /Defender|antivirus|exclusions|verify|wheel/i.test(tail);
+        const lead = d?.exitCode === 2
+          ? 'Install verify failed (AV may have deleted a wheel mid-install).'
+          : isAvLikely
+          ? 'Installer reported a problem likely caused by antivirus.'
+          : `Installer exited with code ${d?.exitCode ?? '?'}.`;
+        const recovery = isAvLikely || d?.exitCode === 2
+          ? '\n\nFix:\n  1. Open Windows Security → Virus & threat protection\n  2. Manage settings → Add or remove exclusions\n  3. Add: %USERPROFILE%\\.lax\n  4. Click Install again.'
+          : '';
+        alert(lead + recovery + (tail ? '\n\nLast output:\n' + tail : ''));
+        throw new Error(lead);
+      }
     } else if (action === 'start-sidecar') {
       btn.textContent = 'Starting…';
       const d = await apiPost('/api/voices/setup/start', { tier: target });
@@ -372,7 +486,8 @@ async function onTierPrereqAction(tierId, action, target, btn) {
     _renderTierStatus(tier);
   } catch (e) {
     btn.disabled = false; btn.textContent = orig;
-    alert('Failed: ' + (e?.message || e));
+    // Don't double-alert when we already surfaced a rich install message above.
+    if (action !== 'install-sidecar') alert('Failed: ' + (e?.message || e));
   }
 }
 window.onTierPrereqAction = onTierPrereqAction;

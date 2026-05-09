@@ -26,10 +26,13 @@ Synth flow:
   4. Stream WAV back
 """
 
+import asyncio
 import io
 import json
 import logging
 import os
+import subprocess
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -112,18 +115,84 @@ async def _ensure_weights(client: httpx.AsyncClient, meta: dict) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Probe api_v2 availability on boot — log status but don't fail to start.
+    # Spawn the upstream GPT-SoVITS api_v2 server we proxy to. Without this
+    # the wrapper boots fine but every synth fails because api_v2 isn't
+    # running. We start it as a subprocess scoped to our lifetime — when
+    # the wrapper exits we tear it down too.
+    api_v2_proc = None
+    api_v2_port = API_V2_URL.rsplit(":", 1)[-1]
+    repo_dir = os.path.expanduser("~/.lax/sovits/repo")
+    api_v2_script = os.path.join(repo_dir, "api_v2.py")
+
+    # Skip spawn if something is already on the port (manual launch / tests).
+    already_up = False
     try:
-        async with httpx.AsyncClient(timeout=3.0) as c:
+        async with httpx.AsyncClient(timeout=2.0) as c:
             r = await c.get(f"{API_V2_URL}/docs")
-            if r.status_code == 200:
-                log.info("api_v2 reachable at %s", API_V2_URL)
-            else:
-                log.warning("api_v2 reachable but /docs returned %d", r.status_code)
-    except Exception as e:
-        log.warning("api_v2 not yet reachable at %s (%s) — synth will fail until it boots",
-                    API_V2_URL, e)
-    yield
+            already_up = r.status_code == 200
+    except Exception:
+        already_up = False
+
+    if already_up:
+        log.info("api_v2 already running at %s — using existing process", API_V2_URL)
+    elif not os.path.exists(api_v2_script):
+        log.error("api_v2.py not found at %s — synth will fail", api_v2_script)
+    else:
+        log.info("spawning api_v2 (port %s, cwd %s)...", api_v2_port, repo_dir)
+        api_v2_proc = subprocess.Popen(
+            [sys.executable, api_v2_script, "-a", "127.0.0.1", "-p", api_v2_port],
+            cwd=repo_dir,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        # Drain stdout to our log so users can see api_v2's progress.
+        async def _drain():
+            assert api_v2_proc is not None and api_v2_proc.stdout is not None
+            loop = asyncio.get_event_loop()
+            while api_v2_proc.poll() is None:
+                line = await loop.run_in_executor(None, api_v2_proc.stdout.readline)
+                if not line:
+                    break
+                log.info("[api_v2] %s", line.rstrip())
+        asyncio.create_task(_drain())
+
+        # Poll /docs until ready — first launch is heavy (model files + CUDA
+        # context, can take 30-60s on RTX 3060). Bail at 120s so the wrapper
+        # doesn't hang forever if api_v2 crashed.
+        ready = False
+        async with httpx.AsyncClient(timeout=2.0) as c:
+            for i in range(120):
+                if api_v2_proc.poll() is not None:
+                    log.error("api_v2 exited early (code %s) — synth will fail", api_v2_proc.returncode)
+                    api_v2_proc = None
+                    break
+                try:
+                    r = await c.get(f"{API_V2_URL}/docs")
+                    if r.status_code == 200:
+                        ready = True
+                        log.info("api_v2 ready after %ds", i + 1)
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+        if not ready and api_v2_proc:
+            log.warning("api_v2 didn't report ready in 120s but process is alive — synth may still work")
+
+    try:
+        yield
+    finally:
+        if api_v2_proc and api_v2_proc.poll() is None:
+            log.info("stopping api_v2 (pid=%s)", api_v2_proc.pid)
+            try:
+                api_v2_proc.terminate()
+                try:
+                    api_v2_proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    api_v2_proc.kill()
+            except Exception as e:
+                log.warning("api_v2 shutdown error: %s", e)
 
 
 app = FastAPI(lifespan=lifespan, title="LAX SoVITS sidecar")

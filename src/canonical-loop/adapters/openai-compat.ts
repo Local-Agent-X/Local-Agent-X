@@ -1,17 +1,29 @@
 /**
- * Local Ollama adapter — v1 implementation of the canonical adapter
- * contract for the `local` provider (Ollama-served chat models like
- * qwen, llama, etc.).
+ * OpenAI-compatible canonical adapter.
  *
- * Structurally mirrors codex.ts: convert canonical messages → OpenAI-
- * compatible ChatCompletionMessageParam[], hand off to the existing
- * `OllamaHttpAdapter` (which already streams + handles tool calls +
- * gracefully falls back when a model rejects the `tools` field), and
- * report stream/tool/done events back through the canonical contract.
+ * Covers every provider whose wire protocol is OpenAI Chat Completions:
+ * Ollama (local + Turbo cloud), xAI Grok, OpenAI direct, Gemini's
+ * OpenAI-compat layer, Together / OpenRouter / any custom OpenAI-shape
+ * endpoint. The differences between them are baseURL + apiKey + model
+ * name. That's it. So one adapter handles all of them — caller passes
+ * the resolved `baseURL` + `apiKey` and we stream, accumulate, finalize.
  *
- * Stateless: Ollama doesn't have an analogue of Codex's
- * `previousResponseId`. Each turn re-sends full history. provider_state
- * is minimal — just `lastTurnIdx`, model, and usage.
+ * Mirrors `codex.ts` shape: convert canonical messages →
+ * ChatCompletionMessageParam[], hand off to the existing
+ * `OllamaHttpAdapter` (which inherits OpenAIHttpAdapter — same code
+ * path used by the legacy `runStandardAgent`), and report stream/tool/
+ * done events back through the canonical contract.
+ *
+ * Stateless: no Codex-style `previousResponseId` chaining. Each turn
+ * re-sends full history. provider_state is just `lastTurnIdx`, model,
+ * and usage.
+ *
+ * Empty-response retry: if a turn produces zero text + zero tool calls
+ * after sending tools, we retry once without tools and add the model
+ * to `_localNoToolModels` so subsequent turns skip the dead first leg.
+ * Catches qwen2's silent-fail pattern (cf. the explicit-error fallback
+ * already inside OllamaHttpAdapter). For models that don't have this
+ * failure mode (gpt-5, grok, etc.), the condition just never fires.
  */
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
@@ -20,34 +32,34 @@ import type { ProviderRequest } from "../../providers/adapter/types.js";
 import { _localNoToolModels } from "../../providers/types.js";
 import { createLogger } from "../../logger.js";
 
-const logger = createLogger("canonical-loop.adapters.local-ollama");
+const logger = createLogger("canonical-loop.adapters.openai-compat");
 
-export const LOCAL_OLLAMA_ADAPTER_NAME = "local-ollama";
-export const LOCAL_OLLAMA_ADAPTER_VERSION = "1.0.0";
+export const OPENAI_COMPAT_ADAPTER_NAME = "openai-compat";
+export const OPENAI_COMPAT_ADAPTER_VERSION = "1.0.0";
 const PROVIDER_STATE_MAX_BYTES = 256 * 1024;
 
-export interface LocalOllamaAdapterOptions {
-  model?: string;
+export interface OpenAICompatAdapterOptions {
+  /** Required. The model id the OpenAI-compat endpoint expects. */
+  model: string;
+  /** Required. Full OpenAI-compatible base URL (must include `/v1`). */
+  baseURL: string;
+  /** Required. Bearer token. Use a placeholder ("ollama") for local
+   *  Ollama which doesn't auth. */
+  apiKey: string;
   systemPrompt?: string;
   temperature?: number;
-  /** Override the Ollama base URL. Defaults to `${runtimeConfig.ollamaUrl}/v1`.
-   *  Set to `<cloudUrl>/v1` to route through Ollama Cloud. */
-  baseURL?: string;
-  /** Bearer token. Defaults to a placeholder for local Ollama (no auth).
-   *  Set to the cloud API key when routing through Ollama Cloud. */
-  apiKey?: string;
   sessionId?: string;
 }
 
-export class LocalOllamaAdapter implements Adapter {
-  readonly name = LOCAL_OLLAMA_ADAPTER_NAME;
-  readonly version = LOCAL_OLLAMA_ADAPTER_VERSION;
+export class OpenAICompatAdapter implements Adapter {
+  readonly name = OPENAI_COMPAT_ADAPTER_NAME;
+  readonly version = OPENAI_COMPAT_ADAPTER_VERSION;
 
   private aborted = false;
   private aborter: AbortController = new AbortController();
   private inflight: Promise<StreamOnceResult> | null = null;
 
-  constructor(private readonly opts: LocalOllamaAdapterOptions = {}) {}
+  constructor(private readonly opts: OpenAICompatAdapterOptions) {}
 
   async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
     if (this.aborted) {
@@ -56,16 +68,10 @@ export class LocalOllamaAdapter implements Adapter {
     }
 
     this.aborter = new AbortController();
-    const model = this.opts.model ?? "qwen3:14b";
-
-    let baseURL = this.opts.baseURL;
-    if (!baseURL) {
-      const { getRuntimeConfig } = await import("../../config.js");
-      baseURL = `${getRuntimeConfig().ollamaUrl}/v1`;
-    }
+    const { model, baseURL, apiKey } = this.opts;
 
     const req: ProviderRequest = {
-      apiKey: this.opts.apiKey ?? "ollama",
+      apiKey,
       baseURL,
       model,
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
@@ -83,16 +89,15 @@ export class LocalOllamaAdapter implements Adapter {
     this.inflight = this.streamOnce(req, report);
     let result = await this.inflight;
 
-    // Empty-response retry. Some local models (qwen2:7b is the canonical
-    // offender) accept the `tools` field, run for ~10s, then return
-    // ZERO text and ZERO tool calls — silent failure. The existing
-    // `_localNoToolModels` fallback at openai-http only catches the
-    // explicit "does not support tools" error string, not the silent
-    // case. Without this retry the user sees a 14-second blank turn
-    // and has no idea anything went wrong. Mirrors the post-turn
-    // empty-response detector + retry from the legacy
-    // `runStandardAgent` loop, kept inside the adapter so it doesn't
-    // leak into the canonical-loop architecture.
+    // Empty-response retry. Some models (qwen2:7b is the canonical
+    // offender) accept the `tools` field, run for several seconds, then
+    // return ZERO text and ZERO tool calls — silent failure. The
+    // existing string-match fallback in OpenAIHttpAdapter only catches
+    // the explicit "does not support tools" error string, not the
+    // silent case. Without this retry the user sees a blank turn.
+    // Mirrors the post-turn empty-response detector + retry from the
+    // legacy runStandardAgent loop. No-op for healthy providers (gpt-5,
+    // grok, sonnet) — they don't silent-fail on tools.
     const noOutput =
       !this.aborted &&
       !result.firstError &&
@@ -112,8 +117,8 @@ export class LocalOllamaAdapter implements Adapter {
     let finalizedMessageId: string | null = null;
 
     // Finalize an assistant CanonicalMessage when there's text OR tool
-    // calls (mirroring codex.ts). A tool-only turn must still produce an
-    // assistant row so the next turn's tool_result can chain to it.
+    // calls. A tool-only turn must still produce an assistant row so
+    // the next turn's tool_result can chain to it.
     if (assembledText.length > 0 || pendingToolCalls.length > 0) {
       finalizedMessageId = `cm-${input.opId}-${input.turnIdx}-${Date.now().toString(36)}`;
       const content: { text: string; toolCalls?: typeof pendingToolCalls } = { text: assembledText };
@@ -145,8 +150,8 @@ export class LocalOllamaAdapter implements Adapter {
     if (sizeCheck) {
       report({ kind: "error", code: "provider_state_oversize", message: sizeCheck, retryable: false });
       providerState = {
-        adapterName: LOCAL_OLLAMA_ADAPTER_NAME,
-        adapterVersion: LOCAL_OLLAMA_ADAPTER_VERSION,
+        adapterName: OPENAI_COMPAT_ADAPTER_NAME,
+        adapterVersion: OPENAI_COMPAT_ADAPTER_VERSION,
         providerPayload: { error: "provider_state_oversize" },
       };
       terminalReason = "error";
@@ -163,8 +168,8 @@ export class LocalOllamaAdapter implements Adapter {
 
   private buildProviderState(input: TurnInput, payload: Record<string, unknown>): ProviderStateEnvelope {
     return {
-      adapterName: LOCAL_OLLAMA_ADAPTER_NAME,
-      adapterVersion: LOCAL_OLLAMA_ADAPTER_VERSION,
+      adapterName: OPENAI_COMPAT_ADAPTER_NAME,
+      adapterVersion: OPENAI_COMPAT_ADAPTER_VERSION,
       providerPayload: { lastTurnIdx: input.turnIdx, ...payload },
     };
   }
@@ -186,6 +191,10 @@ export class LocalOllamaAdapter implements Adapter {
       usageCompletionTokens: undefined,
     };
     try {
+      // OllamaHttpAdapter extends OpenAIHttpAdapter — same streaming +
+      // tool-call accumulation code path used by every OpenAI-compat
+      // provider. The class name is historical; the wire shape is what
+      // matters and it's universal here.
       const { ollamaHttpAdapter } = await import("../../providers/adapters/ollama-http.js");
       for await (const ev of ollamaHttpAdapter.stream(req)) {
         if (this.aborted) break;
@@ -238,10 +247,10 @@ interface StreamOnceResult {
 
 /**
  * Convert canonical messages → OpenAI ChatCompletionMessageParam[] for
- * the OllamaHttpAdapter (which inherits OpenAI-compat shape). Distinct
- * from `canonicalToTransport` because that helper produces
- * `TransportMessage[]` with `toolCalls`/`toolCallId` keys, while the
- * OpenAI client expects `tool_calls`/`tool_call_id`.
+ * the OpenAI-compatible transport. Distinct from `canonicalToTransport`
+ * because that helper produces TransportMessage[] with `toolCalls`/
+ * `toolCallId` keys (Anthropic shape), while the OpenAI client expects
+ * `tool_calls`/`tool_call_id`.
  */
 function canonicalToChatParam(
   messages: CanonicalMessage[],
@@ -326,6 +335,43 @@ function byteLengthUtf8(s: string): number {
   return len;
 }
 
-export function createLocalOllamaAdapter(opts: LocalOllamaAdapterOptions = {}): LocalOllamaAdapter {
-  return new LocalOllamaAdapter(opts);
+export function createOpenAICompatAdapter(opts: OpenAICompatAdapterOptions): OpenAICompatAdapter {
+  return new OpenAICompatAdapter(opts);
+}
+
+/**
+ * Resolve the OpenAI-compat baseURL + apiKey for a given canonical
+ * provider id. Mirrors the providerURLs map in run-standard.ts so we
+ * don't drift while both code paths exist. Once the legacy path is
+ * removed, this becomes the only source of truth.
+ *
+ * Returns null when the provider isn't OpenAI-compat (anthropic/codex
+ * use their own adapters) or when required config is missing.
+ */
+export interface OpenAICompatTarget {
+  baseURL: string;
+  apiKey: string;
+}
+
+export async function resolveOpenAICompatTarget(
+  provider: string,
+  prepared: { apiKey: string; customBaseURL?: string },
+): Promise<OpenAICompatTarget | null> {
+  if (provider === "local") {
+    const { getRuntimeConfig } = await import("../../config.js");
+    return { baseURL: `${getRuntimeConfig().ollamaUrl}/v1`, apiKey: prepared.apiKey || "ollama" };
+  }
+  if (provider === "ollama-cloud") {
+    const { getCloudOllamaCallTarget } = await import("../../ollama-cloud.js");
+    return getCloudOllamaCallTarget();  // null when cache cold; caller handles
+  }
+  if (provider === "xai") return { baseURL: "https://api.x.ai/v1", apiKey: prepared.apiKey };
+  if (provider === "openai") return { baseURL: "https://api.openai.com/v1", apiKey: prepared.apiKey };
+  if (provider === "gemini") return { baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", apiKey: prepared.apiKey };
+  if (provider === "custom") {
+    const baseURL = prepared.customBaseURL || "";
+    if (!baseURL) return null;
+    return { baseURL, apiKey: prepared.apiKey };
+  }
+  return null;
 }

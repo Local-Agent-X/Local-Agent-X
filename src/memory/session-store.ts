@@ -1,13 +1,31 @@
 /**
- * SessionStore — persists chat sessions as JSON files.
+ * SessionStore — persists chat sessions to one append-friendly jsonl file
+ * per session.
  *
- * Maintains an in-memory metadata cache for fast listings. The cache is
- * persisted alongside the sessions so we don't re-read every file on boot.
+ * On disk: `~/.lax/sessions/{id}.jsonl` is the single source of truth for
+ * the session. The actual format helpers live in `session-message-log.ts`;
+ * this class wraps them with an in-memory metadata cache (used by the
+ * sessions-list endpoint to avoid re-reading every file).
+ *
+ * Migration: on construction, any legacy `{id}.json` files in the sessions
+ * dir are converted to `{id}.jsonl` and the originals renamed to
+ * `{id}.json.pre-migration`. Idempotent — re-running on an already-migrated
+ * dir is a no-op.
  */
-import { existsSync, mkdirSync, readFileSync, unlinkSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Session } from "../types.js";
 import { atomicWriteFileSync } from "./utils.js";
+import {
+  readSessionLog,
+  writeSessionLog,
+  deleteSessionLog,
+  listSessionIds,
+  migrateAllLegacy,
+} from "./session-message-log.js";
+
+import { createLogger } from "../logger.js";
+const logger = createLogger("memory.session-store");
 
 export class SessionStore {
   private dir: string;
@@ -19,13 +37,15 @@ export class SessionStore {
   constructor(dataDir: string) {
     this.dir = join(dataDir, "sessions");
     if (!existsSync(this.dir)) mkdirSync(this.dir, { recursive: true });
+    const result = migrateAllLegacy(this.dir);
+    if (result.migrated > 0) {
+      logger.info(`migrated ${result.migrated} legacy .json sessions to .jsonl (skipped ${result.skipped})`);
+    }
     this.loadMetadataCache();
   }
 
   save(session: Session): void {
-    const filePath = join(this.dir, `${session.id}.json`);
-    atomicWriteFileSync(filePath, JSON.stringify(session, null, 2));
-
+    writeSessionLog(this.dir, session);
     this.metadataCache.set(session.id, {
       id: session.id,
       title: session.title,
@@ -36,13 +56,7 @@ export class SessionStore {
   }
 
   load(id: string): Session | null {
-    const filePath = join(this.dir, `${id}.json`);
-    if (!existsSync(filePath)) return null;
-    try {
-      return JSON.parse(readFileSync(filePath, "utf-8"));
-    } catch {
-      return null;
-    }
+    return readSessionLog(this.dir, id);
   }
 
   list(): Array<{ id: string; title: string; updatedAt: number; messageCount: number }> {
@@ -50,8 +64,7 @@ export class SessionStore {
   }
 
   delete(id: string): void {
-    const filePath = join(this.dir, `${id}.json`);
-    try { unlinkSync(filePath); } catch {}
+    deleteSessionLog(this.dir, id);
     this.metadataCache.delete(id);
     this.saveMetadataCache();
   }
@@ -84,24 +97,16 @@ export class SessionStore {
 
   private rebuildMetadataCache(): void {
     if (!existsSync(this.dir)) return;
-    const files = readdirSync(this.dir).filter(
-      (f) => f.endsWith(".json") && !f.startsWith(".")
-    );
-
-    for (const file of files) {
-      try {
-        const data = JSON.parse(readFileSync(join(this.dir, file), "utf-8")) as Session;
-        this.metadataCache.set(data.id, {
-          id: data.id,
-          title: data.title,
-          updatedAt: data.updatedAt,
-          messageCount: data.messages.length,
-        });
-      } catch {
-        // skip corrupted files
-      }
+    for (const id of listSessionIds(this.dir)) {
+      const session = readSessionLog(this.dir, id);
+      if (!session) continue;
+      this.metadataCache.set(session.id, {
+        id: session.id,
+        title: session.title,
+        updatedAt: session.updatedAt,
+        messageCount: session.messages.length,
+      });
     }
-
     this.saveMetadataCache();
   }
 
@@ -109,7 +114,7 @@ export class SessionStore {
     try {
       atomicWriteFileSync(
         this.metadataPath,
-        JSON.stringify([...this.metadataCache.values()])
+        JSON.stringify([...this.metadataCache.values()]),
       );
     } catch {
       // non-fatal

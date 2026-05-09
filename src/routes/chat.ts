@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { RouteHandler } from "../server-context.js";
 import type { ServerEvent } from "../types.js";
 import { isValidSessionId, safeErrorMessage, sseWrite, corsHeaders, jsonResponse, safeParseBody } from "../server-utils.js";
@@ -50,7 +51,11 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
     return true;
   }
 
-  // Context compaction
+  // Context compaction. Builds a summary of older messages and persists it
+  // as a leading `system` row in `session.messages` (round-tripped through
+  // a `summary` row in the per-session jsonl on disk). prepareAgentRequest
+  // then sees the system message at index 0 and uses it without any
+  // special-case slice/prepend logic.
   if (method === "POST" && url.pathname === "/api/compact") {
     const raw = await safeParseBody(req);
     const parsed = validateBody(raw, CompactSchema);
@@ -69,8 +74,11 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       else if (m.role === "assistant" && typeof m.content === "string") summaryLines.push(`[Agent] ${m.content.split("\n").filter(l => l.trim()).slice(0, 2).join(" ").slice(0, 200)}`);
     }
     const compactSummary = `[COMPACTED CONTEXT — ${oldMessages.length} messages summarized]\n${summaryLines.join("\n")}\n[END COMPACTED CONTEXT — ${recentMessages.length} recent messages follow]`;
-    session.compactedSummary = compactSummary;
-    session.compactedAt = oldMessages.length;
+    session.messages = [
+      { role: "system", content: compactSummary },
+      ...recentMessages,
+    ];
+    session.updatedAt = Date.now();
     ctx.sessionStore.save(session);
     json(200, { ok: true, compactedAt: oldMessages.length, oldCount: oldMessages.length, recentCount: recentMessages.length });
     return true;
@@ -90,6 +98,13 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
 
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", ...corsHeaders(req) });
 
+    // Wait for any in-flight write from a prior turn to land before reading
+    // session state. Without this, a fast next-turn (e.g. user types "yes"
+    // while the prior turn's saveSession is still queued) can race the LRU
+    // cache: if the session was evicted between turns, getOrCreateSession
+    // reloads from disk and gets stale bytes — losing the assistant's last
+    // turn from history. flushSession is a no-op when nothing is pending.
+    await ctx.flushSession(sessionId);
     const session = ctx.getOrCreateSession(sessionId);
     if (session.messages.length === 0) session.title = message.slice(0, 60) + (message.length > 60 ? "..." : "");
 
@@ -111,8 +126,6 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         secretsStore: ctx.secretsStore,
         allAgentTools: ctx.allAgentTools, bridgeTools: ctx.bridgeTools,
         attachments, uploadsDir: join(ctx.dataDir, "uploads"),
-        compactedSummary: session.compactedSummary,
-        compactedAt: session.compactedAt,
       });
       logger.info(`[timing] prepareAgentRequest ${Date.now() - prepStart}ms (sess=${sessionId.slice(0, 16)})`);
 
@@ -175,7 +188,18 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
           // (Set iteration preserves insertion order in JS).
           const targetOpId = activeOps[activeOps.length - 1];
           const taskHint = getOpTask(targetOpId);
-          const cls = await classifyWorkerRedirect(message, taskHint);
+          // Feed the classifier the last few main-agent turns. Without
+          // this, Haiku sees only (workerTask, message) and a "yes"
+          // answering the MAIN agent's question gets misrouted to the
+          // worker. With recent turns, Haiku can see the question that
+          // "yes" is answering and route to MAIN_AGENT.
+          const recentTurns = session.messages
+            .filter((m): m is typeof m & { role: "user" | "assistant" } =>
+              (m.role === "user" || m.role === "assistant") && typeof m.content === "string",
+            )
+            .slice(-4)
+            .map(m => ({ role: m.role, content: m.content as string }));
+          const cls = await classifyWorkerRedirect(message, taskHint, recentTurns);
           if (cls?.redirect) {
             const ok = redirectOp(targetOpId, message);
             logger.info(`[router] worker-redirect → op=${targetOpId} ok=${ok} reason="${cls.reason}"`);
@@ -254,9 +278,12 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
           onEvent,
         });
         const { stripEphemeralMessages } = await import("../agent-providers.js");
+        const { COMPACTION_PREFIX: COMPACTION_PREFIX_DEL } = await import("../types.js");
         type MsgRecordD = Record<string, unknown>;
         session.messages = stripEphemeralMessages(result.messages).filter((m) => {
-          if (m.role === "system") return false;
+          if (m.role === "system") {
+            return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX_DEL);
+          }
           if (m.role === "tool") return true;
           return m.content || (m as unknown as MsgRecordD).tool_calls;
         });
@@ -398,6 +425,13 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       })();
 
       if (canonicalChatEligible) {
+        // Snapshot session.messages before the canonical attempt. If the
+        // canonical path throws partway through synthesis (e.g. memory
+        // persist fails after we've already mutated session.messages), the
+        // catch block reverts so the legacy fallback runs against a known-
+        // good state — never half-mutated. Cheap shallow copy; messages
+        // themselves are not mutated, only the array reference.
+        const sessionMessagesSnapshot: ChatCompletionMessageParam[] = [...session.messages];
         try {
           const { runChatViaCanonical } = await import("../canonical-loop/index.js");
           const eventStream = runChatViaCanonical({
@@ -432,61 +466,69 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
           const canonicalElapsed = Date.now() - turnStart;
           logger.info(`[timing] canonical/chat ${prepared.model} ${canonicalElapsed}ms (sess=${sessionId.slice(0, 16)})`);
 
-          // Persist this turn to session.messages and trigger memory indexing —
-          // mirror of what the legacy path does at lines ~582+604. Without this
-          // canonical chats lose their conversation history across server
-          // restarts and the memory-ingestion pipeline never sees them.
-          // `fullResponseText` was accumulated by `wrappedOnEvent` as the
-          // canonical stream chunks arrived, so we already have the assistant's
-          // full reply in scope.
+          // Persist this turn to session.messages by reading the rows the
+          // canonical loop produced for this op and appending the new ones
+          // to the session log. We filter out seeded history (`hist-` prefix
+          // — that's already in session.messages) and append everything else
+          // in op_messages chronological order: original user message,
+          // mid-turn injects, assistant tool_calls / tool_result / text rows.
+          //
+          // This replaces a string-only synthesis that previously lost
+          // tool_calls and tool_result structure across turn boundaries —
+          // canonical chats with tool use surfaced as text-only on next
+          // turn, which broke "do that thing again" follow-ups. Reading
+          // straight from op_messages preserves the full structured turn.
+          //
+          // Persist policy (split-gate, May 2026): user input always
+          // persists, even if the assistant produced no text (aborted,
+          // errored, or pure tool-only). Memory indexing still requires
+          // assistant text since an empty turn isn't a meaningful Q/A pair.
           const assistantText = fullResponseText.trim();
-          if (assistantText) {
-            const { stripEphemeralMessages: stripCanonical } = await import("../agent-providers.js");
-            type MsgRecordC = Record<string, unknown>;
-            // Pull mid-turn injects that the user typed while this canonical
-            // turn was running (drained by turn-loop into op_messages with
-            // messageId prefixed `inject-`). Without this they exist on the
-            // canonical side but never land in session.messages — so on chat
-            // reload the user's mid-turn comments disappear from history.
-            // Position-wise we slot them between the original user message
-            // and the assistant's final reply, in arrival order, mirroring
-            // how the agent actually saw them.
-            let injectMessages: Array<{ role: "user"; content: string }> = [];
-            if (canonicalOpId) {
-              try {
-                const { readOpMessages } = await import("../canonical-loop/store.js");
-                const rows = readOpMessages(canonicalOpId);
-                injectMessages = rows
-                  .filter(m => m.role === "user" && m.messageId.startsWith("inject-"))
-                  .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
-                  .map(m => {
-                    const c = (m.content as { text?: string })?.text;
-                    if (typeof c !== "string") return { role: "user" as const, content: "" };
-                    // Strip the engine-side temporal marker for the chat UI.
-                    // turn-loop wraps inject text with `[mid-turn user message] `
-                    // so the model gets temporal context; the user-visible
-                    // history should show what the user actually typed.
-                    const stripped = c.replace(/^\[mid-turn user message\]\s*/, "");
-                    return { role: "user" as const, content: stripped };
-                  })
-                  .filter(m => m.content);
-              } catch (e) {
-                logger.warn(`[chat] canonical inject persist read failed: ${(e as Error).message}`);
-              }
-            }
-            const synthesized = [
-              ...session.messages,
-              { role: "user" as const, content: message },
-              ...injectMessages,
-              { role: "assistant" as const, content: assistantText },
-            ];
-            session.messages = stripCanonical(synthesized).filter((m) => {
-              if (m.role === "system") return false;
-              if (m.role === "tool") return true;
-              return m.content || (m as unknown as MsgRecordC).tool_calls;
-            });
-            session.updatedAt = Date.now();
+          const { stripEphemeralMessages: stripCanonical } = await import("../agent-providers.js");
+          type MsgRecordC = Record<string, unknown>;
 
+          const newChatMessages: ChatCompletionMessageParam[] = [];
+          if (canonicalOpId) {
+            try {
+              const { readOpMessages } = await import("../canonical-loop/store.js");
+              const { opMessageRowToChatParam } = await import("../canonical-loop/chat-runner.js");
+              const rows = readOpMessages(canonicalOpId);
+              for (const row of rows) {
+                if (row.messageId.startsWith("hist-")) continue;
+                const param = opMessageRowToChatParam(row);
+                if (param) newChatMessages.push(param);
+              }
+            } catch (e) {
+              logger.warn(`[chat] canonical op-messages read failed: ${(e as Error).message}`);
+            }
+          }
+
+          // Defensive fallback: if op_messages read failed (or produced no
+          // rows), fall back to the legacy text-only synthesis for the
+          // user message + assistant text. Never silently drop the user's
+          // input — that's the original context-loss bug.
+          if (newChatMessages.length === 0) {
+            newChatMessages.push({ role: "user", content: message });
+            if (assistantText) {
+              newChatMessages.push({ role: "assistant", content: assistantText });
+            }
+          }
+
+          const { COMPACTION_PREFIX: COMPACTION_PREFIX_CHAT } = await import("../types.js");
+          session.messages = stripCanonical([...session.messages, ...newChatMessages]).filter((m) => {
+            // Preserve a leading compaction summary system message — it's
+            // the in-memory representation of a `summary` row in the
+            // session log. Other system messages (canaries, threat-engine
+            // markers, etc.) are stripped as before.
+            if (m.role === "system") {
+              return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX_CHAT);
+            }
+            if (m.role === "tool") return true;
+            return m.content || (m as unknown as MsgRecordC).tool_calls;
+          });
+          session.updatedAt = Date.now();
+
+          if (assistantText) {
             const isTrivialCanonical =
               /^(run\s+(bash|command)|execute|bash)\s*(with|:)/i.test(message.trim()) ||
               /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
@@ -500,10 +542,11 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
             } catch (persistErr) {
               logger.warn(`[chat] canonical persistTurn failed (proceeding): ${(persistErr as Error).message}`);
             }
-            ctx.saveSession(session);
           } else {
-            logger.warn(`[chat] canonical turn produced no assistant text — skipping session persist (sess=${sessionId.slice(0, 16)})`);
+            logger.warn(`[chat] canonical turn produced no assistant text — persisting user turn only (sess=${sessionId.slice(0, 16)})`);
           }
+
+          ctx.saveSession(session);
 
           // Emit terminal events through the wrapped path so the WS client
           // releases its turn lock and the SSE stream closes cleanly.
@@ -512,6 +555,12 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
           return true;
         } catch (e) {
           logger.warn(`[chat] canonical chat path threw, falling back to legacy: ${(e as Error).message}`);
+          // Revert any partial mutation the canonical path may have left on
+          // session.messages. The legacy runAgent path below mutates session
+          // state itself; we want it to start from the same snapshot the
+          // canonical path saw, not from a half-finished synthesis.
+          session.messages = sessionMessagesSnapshot;
+          session.updatedAt = Date.now();
           // Fall through to runAgent below.
         }
       }
@@ -673,8 +722,14 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // - Keep all tool messages (the model needs them to interpret previous tool calls)
       // - Keep assistant messages with content OR tool_calls
       // - Drop empty user messages (sanity)
+      const { COMPACTION_PREFIX: COMPACTION_PREFIX_LEG } = await import("../types.js");
       session.messages = stripEphemeralMessages(result.messages).filter((m) => {
-        if (m.role === "system") return false;
+        if (m.role === "system") {
+          // Preserve compaction summaries (in-memory shape of a `summary`
+          // row in the session log). Drop other system messages
+          // (canaries, threat-engine markers, etc.).
+          return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX_LEG);
+        }
         if (m.role === "tool") return true; // never drop tool results
         return m.content || (m as unknown as MsgRecord).tool_calls;
       });

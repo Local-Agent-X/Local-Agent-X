@@ -27,7 +27,7 @@ export function createBridgeHandler(deps: {
   sessions: Map<string, Session>;
   sessionStore: SessionStore;
   getOrCreateSession: (id: string) => Session;
-  saveSession: (s: Session) => void;
+  saveSession: (s: Session) => Promise<void>;
   config: LAXConfig;
   dataDir: string;
   memoryIndex: MemoryIndex;

@@ -43,15 +43,11 @@ export interface AgentRequestInput {
   attachments?: Array<{ isImage: boolean; url: string; name: string }>;
   /** Uploads directory for resolving attachment paths */
   uploadsDir?: string;
-  /**
-   * Frozen summary written by /api/compact. When present and matched by
-   * compactedAt, prepare-request prepends it as a leading system message and
-   * trims the older history below the compaction cut. Lets long sessions
-   * survive without re-summarizing on every turn.
+  /*
+   * (compactedSummary / compactedAt were here before. Compaction now lives
+   * as a leading system message in sessionMessages — see types.ts
+   * COMPACTION_PREFIX. prepare-request no longer special-cases it.)
    */
-  compactedSummary?: string;
-  /** Index in sessionMessages at which the compaction was applied. */
-  compactedAt?: number;
 }
 
 export interface PreparedAgentRequest {

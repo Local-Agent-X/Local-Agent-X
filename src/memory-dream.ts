@@ -60,7 +60,7 @@ function countRecentSessions(since: number): number {
   if (!existsSync(SESSIONS_DIR)) return 0;
   try {
     return readdirSync(SESSIONS_DIR)
-      .filter((f) => f.endsWith(".json"))
+      .filter((f) => f.endsWith(".jsonl"))
       .filter((f) => {
         try { return statSync(join(SESSIONS_DIR, f)).mtimeMs > since; }
         catch { return false; }
@@ -107,7 +107,7 @@ export function listRecentSessionTranscripts(n = DEFAULT_SESSION_COUNT): Session
   if (!existsSync(SESSIONS_DIR)) return [];
 
   const candidates = readdirSync(SESSIONS_DIR)
-    .filter((f) => f.endsWith(".json"))
+    .filter((f) => f.endsWith(".jsonl"))
     .map((f) => {
       const fullPath = join(SESSIONS_DIR, f);
       try {
@@ -122,13 +122,21 @@ export function listRecentSessionTranscripts(n = DEFAULT_SESSION_COUNT): Session
   const out: SessionTranscript[] = [];
   for (const { file } of candidates) {
     const fullPath = join(SESSIONS_DIR, file);
-    const sessionId = file.replace(/\.json$/, "");
+    const sessionId = file.replace(/\.jsonl$/, "");
     let date: string | undefined;
     let title: string | undefined;
     try {
-      const sess = JSON.parse(readFileSync(fullPath, "utf-8"));
-      if (sess.createdAt) date = new Date(sess.createdAt).toISOString().split("T")[0];
-      if (sess.title) title = sess.title;
+      // Read meta line from the jsonl file for date/title.
+      for (const line of readFileSync(fullPath, "utf-8").split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const row = JSON.parse(trimmed);
+        if (row.kind === "meta") {
+          if (typeof row.createdAt === "number") date = new Date(row.createdAt).toISOString().split("T")[0];
+          if (typeof row.title === "string") title = row.title;
+          break;
+        }
+      }
     } catch {}
     const pairs = extractSessionPairs(fullPath);
     if (pairs.length < 2) continue;

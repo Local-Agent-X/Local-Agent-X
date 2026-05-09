@@ -187,16 +187,29 @@ interface SessionData {
 
 /**
  * Extract user/assistant message pairs from an Agent X session file.
+ *
+ * Accepts either the new `.jsonl` format (one row per line, first row is
+ * meta, subsequent rows are messages) or the legacy `.json` blob format.
+ * If the caller passes a `.json` path that no longer exists (post
+ * migration), transparently falls back to the `.jsonl` sibling.
  */
 export function extractSessionPairs(sessionPath: string): ConversationMessage[] {
-  let session: SessionData;
-  try {
-    session = JSON.parse(readFileSync(sessionPath, "utf-8"));
-  } catch {
-    return [];
-  }
+  let session: SessionData | null = null;
 
-  if (!session.messages || !Array.isArray(session.messages)) return [];
+  if (sessionPath.endsWith(".jsonl")) {
+    session = parseJsonlSession(sessionPath);
+  } else {
+    // Legacy `.json` path — try the file directly first, then fall back
+    // to a `.jsonl` sibling for post-migration callers that still pass
+    // the old extension.
+    try {
+      session = JSON.parse(readFileSync(sessionPath, "utf-8")) as SessionData;
+    } catch {
+      const jsonlAlt = sessionPath.replace(/\.json$/, ".jsonl");
+      session = parseJsonlSession(jsonlAlt);
+    }
+  }
+  if (!session || !session.messages || !Array.isArray(session.messages)) return [];
 
   const messages: ConversationMessage[] = [];
   for (const msg of session.messages) {
@@ -211,4 +224,29 @@ export function extractSessionPairs(sessionPath: string): ConversationMessage[] 
   }
 
   return messages;
+}
+
+function parseJsonlSession(path: string): SessionData | null {
+  let content: string;
+  try {
+    content = readFileSync(path, "utf-8");
+  } catch {
+    return null;
+  }
+  const messages: Array<{ role: string; content: unknown }> = [];
+  let title: string | undefined;
+  let createdAt: number | undefined;
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let row: { kind?: string; message?: { role: string; content: unknown }; title?: string; createdAt?: number };
+    try { row = JSON.parse(trimmed); } catch { continue; }
+    if (row.kind === "meta") {
+      if (typeof row.title === "string") title = row.title;
+      if (typeof row.createdAt === "number") createdAt = row.createdAt;
+    } else if (row.kind === "msg" && row.message && typeof row.message.role === "string") {
+      messages.push({ role: row.message.role, content: row.message.content });
+    }
+  }
+  return { messages, title, createdAt };
 }

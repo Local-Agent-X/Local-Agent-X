@@ -46,6 +46,8 @@ const SYSTEM_PROMPT = `You are a routing classifier. A background worker is curr
 
 (B) MAIN_AGENT — be handled by the main chat agent (worker is untouched). Use this for: unrelated questions ("what's the weather", "explain Y"), status queries ("how's it going", "what are you doing", "is it done"), new requests on a different topic, conversational chit-chat, or when intent is ambiguous. The user is NOT specifically directing the worker.
 
+If "Recent main-agent chat" is provided, use it: a short or ambiguous reply ("yes", "ok", "3", "the second one", "do it") that is clearly an answer to a question the MAIN agent just asked is MAIN_AGENT — not a worker redirect. The worker has its own context and won't understand answers meant for the main chat.
+
 When in doubt, choose MAIN_AGENT. False redirects are far worse than false main-agent calls — diverting a real question to a worker means the user gets no answer.
 
 Reply with EXACTLY one line in this format:
@@ -54,20 +56,35 @@ REASON: <one short sentence>
 
 Nothing else.`;
 
+export interface RecentTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 /**
  * Classify a single user message in the context of an active worker.
  * `workerTask` is the original task the worker was given (if known) so
  * the model has context about what the worker is doing.
+ *
+ * `recentTurns` is the last few main-agent turns. Critical for short
+ * replies: a "yes" answering the main agent's last question must NOT be
+ * routed to the worker. Without this, Haiku sees only the message string
+ * and the worker task — it has no way to know the user is replying to a
+ * different agent.
  */
 export async function classifyWorkerRedirect(
   message: string,
   workerTask: string | undefined,
+  recentTurns: RecentTurn[] = [],
   signal?: AbortSignal,
 ): Promise<WorkerRedirectResult | null> {
   // Trivially short messages can't really be feedback worth routing.
-  // (One-word "yes"/"ok"/"thanks" should go to main agent.)
-  if (message.trim().length < 3) {
-    return { redirect: false, reason: "message too short to be redirect-worthy", raw: "(skipped)" };
+  // "yes"/"yep"/"yeah"/"sure"/"ok"/"3"/"no" answering the main agent's
+  // question always belong in MAIN_AGENT — the worker has its own context
+  // and won't understand the answer. Threshold 5 covers single-word
+  // confirmations and menu picks ("3.") without burning a Haiku call.
+  if (message.trim().length < 5) {
+    return { redirect: false, reason: "message too short — short confirmations go to main agent", raw: "(skipped)" };
   }
   // Very long messages are almost never worker feedback — they're new
   // turns or detailed asks. Skip the LLM call.
@@ -80,9 +97,22 @@ export async function classifyWorkerRedirect(
   const accessToken = tokens.accessToken || "";
   if (!accessToken) return null;
 
+  // Format the last few main-agent turns (most recent last). Cap each
+  // turn at 400 chars and the whole block at the last 4 entries — enough
+  // signal for "the main agent just asked X" without bloating the Haiku
+  // prompt.
+  const recentBlock = recentTurns.length > 0
+    ? "Recent main-agent chat (most recent last):\n"
+      + recentTurns
+        .slice(-4)
+        .map(t => `${t.role.toUpperCase()}: ${t.content.slice(0, 400).replace(/\s+/g, " ").trim()}`)
+        .join("\n\n")
+      + "\n\n"
+    : "";
+
   const userPrompt = workerTask
-    ? `Worker is currently working on: ${workerTask.slice(0, 200)}\n\nUser's new message: ${message}`
-    : `(Worker task unknown — judge by the message alone.)\n\nUser's new message: ${message}`;
+    ? `${recentBlock}Worker is currently working on: ${workerTask.slice(0, 200)}\n\nUser's new message: ${message}`
+    : `${recentBlock}(Worker task unknown — judge by the message alone.)\n\nUser's new message: ${message}`;
 
   try {
     const { streamAnthropicResponse } = await import("../anthropic-client.js");

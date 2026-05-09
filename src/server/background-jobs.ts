@@ -37,7 +37,7 @@ export function startBackgroundJobs(deps: {
   allAgentTools: ToolDefinition[];
   bridgeTools: ToolDefinition[];
   getOrCreateSession: (id: string) => Session;
-  saveSession: (s: Session) => void;
+  saveSession: (s: Session) => Promise<void>;
 }): BackgroundJobsHandle {
   const {
     config, dataDir, sessionStore, memoryIndex, memoryManager, secretsStore, security, toolPolicy,

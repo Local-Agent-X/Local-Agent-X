@@ -25,6 +25,7 @@
  * already inside OllamaHttpAdapter). For models that don't have this
  * failure mode (gpt-5, grok, etc.), the condition just never fires.
  */
+import { readFileSync } from "node:fs";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
@@ -259,8 +260,23 @@ function canonicalToChatParam(
   const out: ChatCompletionMessageParam[] = [];
   for (const m of messages) {
     const c = m.content as Record<string, unknown> | string | null | undefined;
-    if (m.role === "system" || m.role === "user") {
-      out.push({ role: m.role, content: extractText(c) });
+    if (m.role === "system") {
+      out.push({ role: "system", content: extractText(c) });
+      continue;
+    }
+    if (m.role === "user") {
+      const text = extractText(c);
+      const images = extractImages(c);
+      if (images.length > 0) {
+        // Build OpenAI vision content parts: text + base64 image_url(s).
+        // Mirrors the legacy buildUserContentWithImages format so existing
+        // vision-capable models (gpt-5, qwen-vl, gemini, etc.) parse the
+        // request unchanged. File reads happen synchronously here — small
+        // cost paid once per turn, no async on the hot path.
+        out.push({ role: "user", content: imagesToOpenAIParts(text, images) });
+      } else {
+        out.push({ role: "user", content: text });
+      }
       continue;
     }
     if (m.role === "assistant") {
@@ -316,6 +332,65 @@ function extractText(c: unknown): string {
     return typeof v === "string" ? v : "";
   }
   return "";
+}
+
+interface CanonicalImageRef {
+  url: string;
+  name: string;
+  filePath?: string;
+}
+
+function extractImages(c: unknown): CanonicalImageRef[] {
+  if (c == null || typeof c !== "object") return [];
+  const v = (c as { images?: unknown }).images;
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is CanonicalImageRef =>
+    !!x && typeof x === "object" && typeof (x as CanonicalImageRef).name === "string",
+  );
+}
+
+/**
+ * Build OpenAI vision content parts: a text part plus one image_url
+ * part per attachment, base64-data-url'd from the on-disk file. Mirrors
+ * `buildUserContentWithImages` in run-standard-helpers.ts (legacy path)
+ * so the wire shape is identical for any provider that's vision-capable.
+ *
+ * Adds a trailing text part listing on-disk file paths so the agent can
+ * `read`/`bash cp` the original bytes when an app needs the asset on
+ * disk (matches legacy behavior — the agent uses these hints to avoid
+ * regenerating an image when the user already attached one).
+ */
+function imagesToOpenAIParts(
+  text: string,
+  images: CanonicalImageRef[],
+): Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> {
+  const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> = [
+    { type: "text", text },
+  ];
+  const filePathHints: string[] = [];
+  for (const img of images) {
+    try {
+      if (!img.filePath) continue;
+      const data = readFileSync(img.filePath);
+      const ext = (img.name.split(".").pop() || "png").toLowerCase();
+      const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+      const dataUrl = `data:${mime};base64,${data.toString("base64")}`;
+      parts.push({ type: "image_url", image_url: { url: dataUrl, detail: "auto" } });
+      filePathHints.push(`  - ${img.name} → ${img.filePath}`);
+    } catch {
+      // Skip unreadable attachments rather than fail the whole turn.
+    }
+  }
+  if (filePathHints.length > 0) {
+    parts.push({
+      type: "text",
+      text:
+        `\n\n[Attached file paths on disk — use these if you need to copy the real bytes into the workspace]\n` +
+        filePathHints.join("\n") +
+        `\n\nTo use an attachment as an app asset: read the file with bash/read, then write it to the target path under workspace/apps/<app>/, or use bash cp. Do NOT generate a new image or download from the web when a user attachment exists — use the file at the path above.`,
+    });
+  }
+  return parts;
 }
 
 function parseArgs(raw: string): unknown {

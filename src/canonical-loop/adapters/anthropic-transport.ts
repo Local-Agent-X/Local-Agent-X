@@ -17,6 +17,7 @@
  *   - If the user has not authenticated, `getAnthropicApiKey` throws —
  *     the adapter surfaces that as an `error` adapter_report.
  */
+import { readFileSync } from "node:fs";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type {
   AnthropicTransport,
@@ -128,6 +129,14 @@ function toOpenAiMessage(m: AnthropicTransportRequest["messages"][number]): Chat
       })),
     } as ChatCompletionMessageParam;
   }
+  if (m.role === "user" && m.images && m.images.length > 0) {
+    // Build OpenAI vision multi-part content (text + image_url base64).
+    // anthropic-client/request.ts converts these to Anthropic's `image`
+    // content blocks at request time — same wire shape used by the
+    // legacy run-anthropic path, so vision quality on Sonnet/Opus is
+    // unchanged.
+    return { role: "user", content: imagesToOpenAIParts(m.content, m.images) } as ChatCompletionMessageParam;
+  }
   if (m.role === "system" || m.role === "user" || m.role === "assistant") {
     return { role: m.role, content: m.content } as ChatCompletionMessageParam;
   }
@@ -137,6 +146,27 @@ function toOpenAiMessage(m: AnthropicTransportRequest["messages"][number]): Chat
     tool_call_id: m.toolCallId ?? "tc-unknown",
     content: m.content,
   } as ChatCompletionMessageParam;
+}
+
+function imagesToOpenAIParts(
+  text: string,
+  images: Array<{ url: string; name: string; filePath?: string }>,
+): Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: string } }> {
+  const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: string } }> = [
+    { type: "text", text },
+  ];
+  for (const img of images) {
+    try {
+      if (!img.filePath) continue;
+      const data = readFileSync(img.filePath);
+      const ext = (img.name.split(".").pop() || "png").toLowerCase();
+      const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+      parts.push({ type: "image_url", image_url: { url: `data:${mime};base64,${data.toString("base64")}`, detail: "auto" } });
+    } catch {
+      // Skip unreadable attachments rather than fail the whole turn.
+    }
+  }
+  return parts;
 }
 
 function scrub(s: string): string {

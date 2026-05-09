@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, rmSync } from "node:fs";
 import { join, resolve, relative, extname, dirname } from "node:path";
-import { hostname } from "node:os";
+import { hostname, homedir } from "node:os";
 import { promisify } from "node:util";
 
 import { createLogger } from "./logger.js";
@@ -116,6 +116,29 @@ const NEVER_SYNC_DOC: readonly string[] = [
   "tls",                   // TLS certs / keys
 ];
 void NEVER_SYNC_DOC; // anchored for grep, not used at runtime
+
+// Rewrite this machine's home-dir literal into the ${HOME} placeholder
+// that mcp-client.ts expands at load time on the destination machine.
+// Without this, an MCP server entry like
+//   ["@modelcontextprotocol/server-filesystem", "C:/Users/manri/Documents"]
+// pushed from this box would ENOENT on every other machine that doesn't
+// have a "manri" user. Matches both forward-slash form (C:/Users/manri)
+// and JSON-escaped backslash form (C:\\Users\\manri); case-insensitive
+// for Windows. Belt-and-suspenders to mcp-client's runtime expansion —
+// the bytes on the wire stay portable even if expansion regresses.
+function canonicalizeHomePaths(jsonText: string): string {
+  const home = homedir();
+  if (!home) return jsonText;
+  const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const homeForward = home.replace(/\\/g, "/");
+  const homeJsonEscaped = home.replace(/\\/g, "\\\\");
+  let out = jsonText;
+  out = out.replace(new RegExp(escapeRegex(homeForward), "gi"), "${HOME}");
+  if (homeJsonEscaped !== homeForward) {
+    out = out.replace(new RegExp(escapeRegex(homeJsonEscaped), "gi"), "${HOME}");
+  }
+  return out;
+}
 
 export class AgentSync {
   private config: SyncConfig;
@@ -274,11 +297,16 @@ export class AgentSync {
 
     // Brain backup — flat JSON files. Last-push-wins. Skip if file
     // doesn't exist locally (means the user never created that surface).
+    // mcp.json gets path canonicalization on push so per-machine literal
+    // paths (C:/Users/manri/Documents) become portable ${HOME} placeholders
+    // for every other machine that pulls.
     for (const file of BRAIN_JSON_FILES) {
       const src = join(this.dataDir, file);
       if (!existsSync(src)) continue;
       try {
-        writeFileSync(join(this.syncDir, file), readFileSync(src, "utf-8"), "utf-8");
+        let content = readFileSync(src, "utf-8");
+        if (file === "mcp.json") content = canonicalizeHomePaths(content);
+        writeFileSync(join(this.syncDir, file), content, "utf-8");
       } catch (e) {
         logger.warn(`[sync] brain push skipped ${file}: ${(e as Error).message}`);
       }

@@ -83,6 +83,10 @@ export async function bootstrapTools(deps: {
     const { MCPManager } = await import("../mcp-client.js");
     const mcpManager = MCPManager.getInstance(dataDir);
     await mcpManager.connectAll();
+    // Hot-reload on mcp.json change so new servers / token additions don't
+    // need a server restart. Mirrors the existing config-hot-reload pattern
+    // for system-prompt.md / tools.json.
+    mcpManager.startConfigWatcher();
     const mcpTools = mcpManager.getAllTools();
     // Filter redundant filesystem MCP tools — native `read`/`write`/`edit`/
     // `bash` already cover read/write/edit/list/search with full audit and

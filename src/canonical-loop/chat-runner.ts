@@ -135,10 +135,30 @@ export function opMessageRowToChatParam(row: OpMessageRow): ChatCompletionMessag
     return { role: "assistant", content: text };
   }
   if (row.role === "tool_result") {
+    // Tool result rows have two shapes:
+    //   - just-written by turn-loop: { toolCallId, result, status }
+    //   - re-seeded from session.messages: { text, toolCallId }
+    // Plus the new image-envelope from chat-tool-dispatcher:
+    //   { toolCallId, result: { text, images }, status }
+    // All three need to produce a non-empty content field on the chat
+    // tool message. Empty content gets dropped by seedOpMessages's
+    // filter, orphans the assistant tool_call on the next turn, and
+    // triggers Codex 400 "No tool output found for function call X".
+    let resultText = text;
+    if (!resultText) {
+      const r = (content as { result?: unknown }).result;
+      if (typeof r === "string") {
+        resultText = r;
+      } else if (r && typeof r === "object" && typeof (r as { text?: unknown }).text === "string") {
+        resultText = (r as { text: string }).text;
+      } else if (r != null) {
+        resultText = JSON.stringify(r);
+      }
+    }
     return {
       role: "tool",
       tool_call_id: content.toolCallId ?? "",
-      content: text,
+      content: resultText,
     } as ChatCompletionMessageParam;
   }
   return null;
@@ -196,7 +216,14 @@ function seedOpMessages(opId: string, prepared: PreparedAgentRequest, currentMes
     // Skip empty assistant rows ONLY when there are also no tool calls —
     // a tool-only assistant turn (no text, just function calls) is
     // structurally important for Codex pairing and must be persisted.
-    if (!text && !toolCalls) continue;
+    // Same rule applies to tool_result rows: a tool message with empty
+    // text but a real tool_call_id is still load-bearing — dropping it
+    // orphans the matching assistant tool_call on the next Codex turn,
+    // surfacing as the "No tool output found for function call X" 400
+    // error. So preserve tool_result rows whenever they carry a
+    // tool_call_id, regardless of text content.
+    const isToolResultWithId = role === "tool_result" && (msg as ChatCompletionMessageParam & { tool_call_id?: string }).tool_call_id;
+    if (!text && !toolCalls && !isToolResultWithId) continue;
 
     // For tool_result rows, embed tool_call_id inside the content payload
     // (canonical OpMessageRow has a free-form `content` field; the adapter

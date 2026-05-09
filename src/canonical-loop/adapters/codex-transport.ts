@@ -9,6 +9,7 @@
  * This file is intentionally separate from codex.ts so the adapter
  * sandbox audit (PRD §15 conformance I) scopes correctly.
  */
+import { readFileSync } from "node:fs";
 import type {
   AnthropicTransportRequest,
   TransportEvent,
@@ -140,6 +141,18 @@ function toOaiMessage(m: AnthropicTransportRequest["messages"][number]): ChatCom
       })),
     } as ChatCompletionMessageParam;
   }
+  if (m.role === "user" && m.images && m.images.length > 0) {
+    // gpt-5/gpt-5.5 on the Responses API support vision via input_image
+    // content blocks. codex-message-convert.ts maps OpenAI Chat
+    // Completions `image_url` parts into the Responses API shape, so
+    // emitting the same multi-part user content used by openai-compat
+    // and the anthropic transport works here too — different downstream
+    // mapper, same upstream wire shape.
+    return {
+      role: "user",
+      content: imagesToOpenAIParts(m.content, m.images),
+    } as ChatCompletionMessageParam;
+  }
   if (m.role === "system" || m.role === "user" || m.role === "assistant") {
     return { role: m.role, content: m.content } as ChatCompletionMessageParam;
   }
@@ -148,6 +161,34 @@ function toOaiMessage(m: AnthropicTransportRequest["messages"][number]): ChatCom
     tool_call_id: m.toolCallId ?? "tc-unknown",
     content: m.content,
   } as ChatCompletionMessageParam;
+}
+
+function imagesToOpenAIParts(
+  text: string,
+  images: Array<{ url: string; name: string; filePath?: string }>,
+): Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> {
+  const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> = [
+    { type: "text", text },
+  ];
+  for (const img of images) {
+    try {
+      let dataUrl: string;
+      if (img.url && img.url.startsWith("data:")) {
+        dataUrl = img.url;
+      } else if (img.filePath) {
+        const data = readFileSync(img.filePath);
+        const ext = (img.name.split(".").pop() || "png").toLowerCase();
+        const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+        dataUrl = `data:${mime};base64,${data.toString("base64")}`;
+      } else {
+        continue;
+      }
+      parts.push({ type: "image_url", image_url: { url: dataUrl, detail: "auto" } });
+    } catch {
+      // Skip unreadable attachments rather than fail the whole turn.
+    }
+  }
+  return parts;
 }
 
 function scrub(s: string): string {

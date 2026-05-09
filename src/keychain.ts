@@ -198,41 +198,79 @@ function fileFallbackGetOrCreate(dataDir: string): Buffer {
 export function getOrCreateMasterKey(dataDir: string): KeychainResult {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const dpapiPath = join(dataDir, "master.dpapi");
+  const secretsPath = join(dataDir, "secrets.enc");
+
+  // Critical safety rule: an EXISTING master key file is load-only. We
+  // never auto-rotate on retrieve failure — the previous behavior
+  // silently regenerated the key on transient PowerShell / DPAPI / OS
+  // glitches, which then made `secrets.enc` (encrypted with the old
+  // key) permanently unrecoverable. Real incident: 2026-05-09, lost a
+  // user's TELEGRAM_BOT_TOKEN + other API keys to this race when a
+  // worker subprocess hit a transient retrieve hiccup and rotated
+  // master.dpapi, invalidating the main server's secrets.enc on the
+  // next reload. Fix: split "first-run" (file does NOT exist; safe to
+  // generate) from "existing key" (must succeed or throw — caller
+  // surfaces the error and the user investigates rather than the
+  // store silently nuking their data).
+  const refuseRotateMessage = (provider: string, why: string) =>
+    `Cannot retrieve ${provider}-protected master key — ${why}\n` +
+    `Refusing to auto-regenerate; that would silently invalidate every secret in ${secretsPath}.\n` +
+    `If you've intentionally rotated credentials, delete ${dpapiPath} AND ${secretsPath} together to start fresh, then re-add your secrets.`;
 
   // ── Try DPAPI (Windows) ──
   if (dpapiAvailable()) {
-    try {
-      if (existsSync(dpapiPath)) {
+    if (existsSync(dpapiPath)) {
+      // Existing key — must load successfully. Don't fall through.
+      try {
         const key = dpapiRetrieve(dpapiPath);
         if (key.length === 32) {
           return { key, provider: "dpapi" };
         }
+        throw new Error(`DPAPI returned ${key.length} bytes (expected 32) — file likely corrupt`);
+      } catch (e) {
+        throw new Error(refuseRotateMessage("DPAPI", (e as Error).message));
       }
-      // Generate new key and protect with DPAPI
+    }
+    // First-run — no master.dpapi yet. Safe to generate.
+    try {
       const key = randomBytes(32);
       dpapiStore(key, dpapiPath);
       logger.info("[keychain] Master key stored in Windows DPAPI");
       return { key, provider: "dpapi" };
     } catch (e) {
-      logger.warn(`[keychain] DPAPI failed: ${(e as Error).message}. Trying next provider.`);
+      logger.warn(`[keychain] DPAPI store failed: ${(e as Error).message}. Trying next provider.`);
     }
   }
 
   // ── Try macOS Keychain ──
   if (macKeychainAvailable()) {
+    // Try retrieve first. If a key exists in Keychain and retrieve
+    // succeeds, return it; if retrieve fails, throw (don't rotate).
+    // Only generate if Keychain has no key for our service yet.
     try {
       const key = macKeychainRetrieve();
       if (key.length === 32) {
         return { key, provider: "macos-keychain" };
       }
-    } catch {
+      throw new Error(`Keychain returned ${key.length} bytes (expected 32) — entry corrupt`);
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      // Distinguish "no entry" (safe to generate) from "retrieve broke"
+      // (must throw). Keychain `security find-generic-password` exits
+      // with code 44 / "could not be found" when the entry is absent.
+      const isMissing = /could not be found|44|SecKeychainSearchCopyNext|errSecItemNotFound/i.test(msg);
+      if (!isMissing && existsSync(secretsPath)) {
+        // We have an encrypted secrets file but can't get the key — fail loud.
+        throw new Error(refuseRotateMessage("macOS Keychain", msg));
+      }
+      // Either no key entry yet, or no secrets file to lose — safe to init.
       try {
         const key = randomBytes(32);
         macKeychainStore(key);
         logger.info("[keychain] Master key stored in macOS Keychain");
         return { key, provider: "macos-keychain" };
-      } catch (e) {
-        logger.warn(`[keychain] macOS Keychain failed: ${(e as Error).message}. Trying next provider.`);
+      } catch (e2) {
+        logger.warn(`[keychain] macOS Keychain failed: ${(e2 as Error).message}. Trying next provider.`);
       }
     }
   }
@@ -244,14 +282,20 @@ export function getOrCreateMasterKey(dataDir: string): KeychainResult {
       if (key.length === 32) {
         return { key, provider: "libsecret" };
       }
-    } catch {
+      throw new Error(`libsecret returned ${key.length} bytes (expected 32) — entry corrupt`);
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      const isMissing = /no such secret|item not found|no results/i.test(msg);
+      if (!isMissing && existsSync(secretsPath)) {
+        throw new Error(refuseRotateMessage("libsecret", msg));
+      }
       try {
         const key = randomBytes(32);
         libsecretStore(key);
         logger.info("[keychain] Master key stored in libsecret");
         return { key, provider: "libsecret" };
-      } catch (e) {
-        logger.warn(`[keychain] libsecret failed: ${(e as Error).message}. Using file fallback.`);
+      } catch (e2) {
+        logger.warn(`[keychain] libsecret failed: ${(e2 as Error).message}. Using file fallback.`);
       }
     }
   }

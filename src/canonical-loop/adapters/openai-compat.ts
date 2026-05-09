@@ -302,14 +302,38 @@ function canonicalToChatParam(
     }
     if (m.role === "tool_result") {
       const obj = (c ?? {}) as { toolCallId?: string; result?: unknown };
-      const content = typeof obj.result === "string"
-        ? obj.result
-        : JSON.stringify(obj.result ?? null);
+      const r = obj.result;
+      // Vision-emitting tools (browser screenshot, image_read, etc.)
+      // produce a `{ text, images: [{mime, b64}, ...] }` envelope. Emit
+      // a tool message with the text summary, then a follow-up user
+      // message with image_url multi-part content so the next turn's
+      // model actually sees the image. Mirrors the legacy
+      // tool-executor.ts pattern at line ~677.
+      let resultText: string;
+      let imagesPayload: Array<{ mime: string; b64: string }> | null = null;
+      if (r && typeof r === "object" && Array.isArray((r as { images?: unknown }).images)) {
+        const env = r as { text?: unknown; images: unknown[] };
+        resultText = typeof env.text === "string" ? env.text : JSON.stringify(env);
+        imagesPayload = env.images.filter((x): x is { mime: string; b64: string } =>
+          !!x && typeof x === "object" && typeof (x as { mime?: unknown }).mime === "string" && typeof (x as { b64?: unknown }).b64 === "string",
+        );
+      } else {
+        resultText = typeof r === "string" ? r : JSON.stringify(r ?? null);
+      }
       out.push({
         role: "tool",
         tool_call_id: obj.toolCallId ?? "tc-unknown",
-        content,
+        content: resultText,
       });
+      if (imagesPayload && imagesPayload.length > 0) {
+        const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> = [
+          { type: "text", text: `[Tool returned ${imagesPayload.length} image${imagesPayload.length === 1 ? "" : "s"} — analyze and use them in your reply.]` },
+        ];
+        for (const img of imagesPayload) {
+          parts.push({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.b64}`, detail: "auto" } });
+        }
+        out.push({ role: "user", content: parts });
+      }
       continue;
     }
     if (m.role === "control") {

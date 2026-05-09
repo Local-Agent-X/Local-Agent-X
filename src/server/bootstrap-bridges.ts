@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { stripEphemeralMessages } from "../agent-providers.js";
 import { WhatsAppBridge } from "../whatsapp-bridge.js";
@@ -175,13 +177,43 @@ export function createBridgeHandler(deps: {
     session.updatedAt = Date.now();
     saveSession(session);
 
-    // TODO: image-sending from agent-generated images (browser
-    // screenshots, generated artwork). The legacy path scanned
-    // result.messages for user-role image_url content parts (how the
-    // OpenAI client wraps tool-result images for the model). The
-    // canonical equivalent lives in op_messages tool_result rows; the
-    // shape varies per tool. Wire this back up in a follow-up commit
-    // once the basic text path is verified.
+    // Scan this turn's tool_result rows for vision-tool image bytes
+    // (browser screenshot, image_read, etc.) and forward them to the
+    // user via the channel's image-send API. Mirrors the legacy
+    // result.messages scan, but reads from op_messages — the
+    // chat-tool-dispatcher rides image bytes on the result envelope
+    // as { text, images: [{mime, b64}] } when a tool emits them.
+    if (canonicalOpId) {
+      try {
+        const { readOpMessages } = await import("../canonical-loop/store.js");
+        const images: Buffer[] = [];
+        for (const row of readOpMessages(canonicalOpId)) {
+          if (row.role !== "tool_result") continue;
+          const r = (row.content as { result?: unknown })?.result;
+          if (!r || typeof r !== "object") continue;
+          const imgs = (r as { images?: unknown }).images;
+          if (!Array.isArray(imgs)) continue;
+          for (const img of imgs) {
+            if (!img || typeof img !== "object") continue;
+            const b64 = (img as { b64?: unknown }).b64;
+            if (typeof b64 !== "string") continue;
+            try { images.push(Buffer.from(b64, "base64")); } catch { /* skip malformed */ }
+          }
+        }
+        if (images.length > 0) {
+          logger.info(`[bridge:${platform}] sending ${images.length} image(s) to ${from}`);
+          for (const img of images) {
+            if (channelType === "whatsapp") {
+              await getWhatsappBridge().sendImage(from, img).catch((e: Error) => logger.error(`[whatsapp] image send failed: ${e.message}`));
+            } else if (channelType === "telegram") {
+              await getTelegramBridge().sendPhoto(from, img).catch((e: Error) => logger.error(`[telegram] photo send failed: ${e.message}`));
+            }
+          }
+        }
+      } catch (e) {
+        logger.warn(`[bridge:${platform}] image scan failed: ${(e as Error).message}`);
+      }
+    }
 
     return formatForChannel(assistantText.trim() || "Done.", channelType).join("\n\n");
   };
@@ -202,5 +234,16 @@ export function bootstrapBridges(deps: {
   const whatsappBridge = new WhatsAppBridge({ dataDir, onMessage: (p) => bridgeHandler("WhatsApp", p) });
   const telegramBridge = new TelegramBridge({ dataDir, getToken: () => secretsStore.get("TELEGRAM_BOT_TOKEN") ?? null, onMessage: (p) => bridgeHandler("Telegram", p) });
   if (secretsStore.has("TELEGRAM_BOT_TOKEN")) telegramBridge.connect().then(r => { if (r.state === "connected") logger.info(`[telegram] Auto-reconnected as @${r.botUsername}`); }).catch(() => {});
+  // WhatsApp auto-reconnect on boot. Only attempts when a saved Baileys
+  // session exists (creds.json under whatsapp-auth/) — otherwise the
+  // first connect generates a fresh QR that nobody is around to scan,
+  // wasting cycles. Mirrors the telegram pattern. The bridge's connect
+  // method is idempotent and returns immediately if already connected.
+  const waCredsPath = join(dataDir, "whatsapp-auth", "creds.json");
+  if (existsSync(waCredsPath)) {
+    whatsappBridge.connect()
+      .then(r => { if (r.state === "connected") logger.info(`[whatsapp] Auto-reconnected as ${r.phone || "(phone unknown)"}`); })
+      .catch((e: Error) => logger.warn(`[whatsapp] Auto-reconnect failed: ${e.message}`));
+  }
   return { whatsappBridge, telegramBridge, bridgeMessageHandler: bridgeHandler };
 }

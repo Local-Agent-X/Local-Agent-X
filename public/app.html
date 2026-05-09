@@ -4,20 +4,25 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* wss://127.0.0.1:* wss://localhost:*; img-src 'self' data: https: blob:; font-src 'self'; media-src 'self' blob: mediastream:; worker-src 'self' blob: data:; frame-src 'self' http://127.0.0.1:* http://localhost:*;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* wss://127.0.0.1:* wss://localhost:*; img-src 'self' data: https: blob:; font-src 'self'; media-src 'self' blob: mediastream:; worker-src 'self' blob: data:; frame-src 'self' http://127.0.0.1:* http://localhost:*;">
 <meta http-equiv="Permissions-Policy" content="microphone=*, camera=*">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
 <meta http-equiv="Pragma" content="no-cache"/>
 <meta http-equiv="Expires" content="0"/>
 <title>Local Agent X</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css"/>
-<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+<link rel="stylesheet" href="/vendor/highlightjs/github-dark.min.css"/>
+<script src="/vendor/highlightjs/highlight.min.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
 <link rel="stylesheet" href="/css/app.css?v=vb3"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
-<!-- Voice: Three.js (self-hosted; CSP blocks CDN scripts) for the Jarvis sphere -->
-<script src="/js/lib/three.min.js"></script>
+<!-- Voice: Three.js (self-hosted ESM build) for the Jarvis sphere.
+     Import map lets `import * as THREE from 'three'` resolve cleanly in
+     voice-sphere.js. Replaces the deprecated build/three.min.js global
+     (removed in r160). -->
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/three.module.min.js" } }
+</script>
 </head>
 <body>
 
@@ -280,7 +285,7 @@
       <div id="stab-ai" class="tab-pane">
         <div class="section-card">
           <div class="section-title">Model Provider</div>
-          <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-provider" onchange="onProviderChange(this.value)"><option value="xai">xAI Grok</option><option value="gemini">Google Gemini</option><option value="codex">OpenAI Codex (ChatGPT OAuth — free)</option><option value="anthropic">Anthropic Claude (subscription auth)</option><option value="openai">OpenAI API (direct key)</option><option value="local">Local Model (Ollama)</option><option value="custom">Custom Provider</option></select></div>
+          <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-provider" onchange="onProviderChange(this.value)"><option value="xai">xAI Grok</option><option value="gemini">Google Gemini</option><option value="codex">OpenAI Codex (ChatGPT OAuth — free)</option><option value="anthropic">Anthropic Claude (subscription auth)</option><option value="openai">OpenAI API (direct key)</option><option value="local">Local Model (Ollama)</option><option value="ollama-cloud">Ollama Turbo (cloud)</option><option value="custom">Custom Provider</option></select></div>
           <div class="field"><label class="field-label">Model</label><select class="field-select" id="cfg-model-select"></select><input class="field-input" id="cfg-model" value="" placeholder="Custom model name..." style="display:none"/><div class="field-hint" id="cfg-model-hint"></div><div id="ollama-status" style="display:none;margin-top:8px"></div></div>
           <div class="field" id="api-key-field" style="display:none"><label class="field-label" id="api-key-label">API Key</label><div style="display:flex;gap:8px"><input class="field-input" id="cfg-api-key" type="password" placeholder="Enter API key..." autocomplete="off" style="flex:1"/><button class="action-btn" onclick="toggleApiKeyVisibility()" style="min-width:60px" id="btn-toggle-key">Show</button></div><div class="field-hint" id="api-key-hint"></div><div id="api-key-status" style="margin-top:4px"></div></div>
           <div style="margin:12px 0;font-size:.68rem;border:1px solid var(--border);border-radius:8px;overflow:hidden">
@@ -904,14 +909,14 @@
 <script src="/js/spring.js"></script>
 <script src="/js/shared.js"></script>
 <script src="/js/app.js?v=va2"></script>
-<script src="/js/voice-sphere.js?v=vb5"></script>
+<script type="module" src="/js/voice-sphere.js?v=vb6"></script>
 <script src="/js/voice/hotkey-capture.js?v=v1"></script>
 <script src="/js/voice/push-to-talk.js?v=v1"></script>
-<script src="/js/chat.js?v=vc8"></script>
+<script src="/js/chat.js?v=vc9"></script>
 <script src="/js/secret-modal.js?v=v1"></script>
 <script src="/js/settings.js?v=vb2"></script>
-<script src="/js/voice-picker-catalog.js?v=v1"></script>
-<script src="/js/voice-picker.js?v=v2"></script>
+<script src="/js/voice-picker-catalog.js?v=v2"></script>
+<script src="/js/voice-picker.js?v=v6"></script>
 <script src="/js/secrets.js"></script>
 <script src="/js/cron.js"></script>
 <script src="/js/protocols.js"></script>

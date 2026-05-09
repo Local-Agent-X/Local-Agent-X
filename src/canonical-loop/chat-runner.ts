@@ -294,6 +294,27 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
         sessionId: ctx.sessionId,
       }),
     );
+  } else if (ctx.prepared.provider === "local" || ctx.prepared.provider === "ollama-cloud") {
+    const { createLocalOllamaAdapter } = await import("./adapters/local-ollama.js");
+    // Route per-provider:
+    //   - "ollama-cloud": always cloud baseURL + cloud API key (top-level
+    //     dropdown choice; user picked Turbo explicitly).
+    //   - "local": cloud routing per-model when the chosen model is
+    //     registered as a cloud model (mixed local+cloud picker), else
+    //     localhost.
+    // Same canonical adapter either way — only the URL + key swap.
+    const { isCloudModel, getCloudOllamaCallTarget } = await import("../ollama-cloud.js");
+    const wantsCloud = ctx.prepared.provider === "ollama-cloud" || isCloudModel(ctx.prepared.model);
+    const cloudTarget = wantsCloud ? getCloudOllamaCallTarget() : null;
+    registerAdapterForOp(op.id, () =>
+      createLocalOllamaAdapter({
+        systemPrompt: ctx.prepared.systemPrompt,
+        model: ctx.prepared.model,
+        temperature: ctx.prepared.temperature,
+        sessionId: ctx.sessionId,
+        ...(cloudTarget ? { baseURL: cloudTarget.baseURL, apiKey: cloudTarget.apiKey } : {}),
+      }),
+    );
   } else {
     registerAdapterForOp(op.id, () =>
       createAnthropicAdapter({

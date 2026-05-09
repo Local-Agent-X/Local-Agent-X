@@ -169,11 +169,19 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     return true;
   }
 
-  // Get session
+  // Get session — UI projection by default (drops tool rows + tool_calls so
+  // chat.js renders the conversation cleanly). Pass `?view=raw` for the
+  // rich form (debug/admin/replay only). Model-side code paths
+  // (`prepareAgentRequest`, `seedOpMessages`) never call this endpoint —
+  // they read the rich session directly via the session store.
   if (method === "GET" && url.pathname.startsWith("/api/sessions/")) {
     const id = url.pathname.split("/").pop()!;
     if (!isValidSessionId(id)) { json(400, { error: "Invalid session ID" }); return true; }
-    json(200, ctx.getOrCreateSession(id));
+    const raw = url.searchParams.get("view") === "raw";
+    const session = ctx.getOrCreateSession(id);
+    if (raw) { json(200, session); return true; }
+    const { projectSessionForUI } = await import("../memory/session-message-log.js");
+    json(200, projectSessionForUI(session));
     return true;
   }
 

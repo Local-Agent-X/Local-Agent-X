@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, readBody } from "../../server-utils.js";
 import { getRuntimeConfig } from "../../config.js";
+import { isEmbeddingModel } from "../../canonical-loop/model-capabilities.js";
 
 export const handleProvidersRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -30,8 +31,37 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     if (hasOpenAIKey) providers.push({ id: "openai", name: "OpenAI API", models: ["gpt-4o", "gpt-4o-mini", "o3-pro"], active: currentProvider === "openai" });
     if (hasOllama) {
       let ollamaModels: string[] = [];
-      try { const r = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) }); const d = await r.json() as { models?: Array<{ name: string }> }; ollamaModels = (d.models || []).map(m => m.name); } catch {}
+      try {
+        const r = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
+        const d = await r.json() as { models?: Array<{ name: string }> };
+        // Filter out embedding-only models — they can't serve chat
+        // completions and showing them in the chat-model picker leads
+        // to confusing runtime errors.
+        ollamaModels = (d.models || []).map(m => m.name).filter(n => !isEmbeddingModel(n));
+      } catch {}
       providers.push({ id: "local", name: "Ollama", models: ollamaModels, active: currentProvider === "local" });
+    }
+    // Ollama Turbo (cloud) — separate top-level entry so users find it
+    // by name in the dropdown. When the API key isn't set yet, we still
+    // surface the provider with an empty model list so the picker shows
+    // the option (and the connect-key field appears, same UX as xAI/
+    // Gemini before keys are added).
+    {
+      const hasCloudKey = ctx.secretsStore.has("OLLAMA_CLOUD_API_KEY");
+      let cloudModels: string[] = [];
+      if (hasCloudKey) {
+        try {
+          const { refreshCloudOllama } = await import("../../ollama-cloud.js");
+          const r = await refreshCloudOllama(ctx.secretsStore, getRuntimeConfig().ollamaCloudUrl);
+          cloudModels = r.models;
+        } catch { /* cloud unreachable; surface empty list */ }
+      }
+      providers.push({
+        id: "ollama-cloud",
+        name: "Ollama Turbo (cloud)",
+        models: cloudModels,
+        active: currentProvider === "ollama-cloud",
+      });
     }
     if (hasCustomKey) providers.push({ id: "custom", name: "Custom Provider", models: ["custom-model"], active: currentProvider === "custom" });
     json(200, { providers, current: { provider: currentProvider, model: currentModel } }); return true;
@@ -76,6 +106,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
         anthropic: "claude-opus-4-7",
         gemini: "gemini-2.5-pro-preview-05-06",
         local: "qwen2:7b",
+        "ollama-cloud": "",  // user picks from cloud catalog; no sane default
       };
       model = DEFAULT_MODEL[provider] || String(settings.model || "");
     }
@@ -91,14 +122,39 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     json(200, { ok: true, provider, model: model || settings.model }); return true;
   }
 
-  // Local models
+  // Local models — chat-capable only (embedding models filtered out).
+  // Pass `?include=embeddings` to get the full list (e.g. for an
+  // embedding-provider settings page).
   if (method === "GET" && url.pathname === "/api/models/local") {
     try {
       const ollamaRes = await fetch(`${getRuntimeConfig().ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
       if (!ollamaRes.ok) { json(502, { error: "Ollama returned " + ollamaRes.status }); return true; }
       const data = await ollamaRes.json() as { models?: Array<{ name: string; size: number; modified_at: string }> };
-      json(200, { models: (data.models || []).map(m => ({ name: m.name, size: m.size, modified: m.modified_at })) });
+      const all = data.models || [];
+      const includeEmbeddings = url.searchParams.get("include") === "embeddings";
+      const filtered = includeEmbeddings ? all : all.filter(m => !isEmbeddingModel(m.name));
+      json(200, { models: filtered.map(m => ({ name: m.name, size: m.size, modified: m.modified_at })) });
     } catch { json(502, { error: "Ollama not running. Start it with: ollama serve" }); }
+    return true;
+  }
+  // Test the Ollama Cloud connection. Used by the settings UI's "Connect"
+  // button: user pastes the API key (which the UI saves as the
+  // OLLAMA_CLOUD_API_KEY secret first), then we attempt a model-list
+  // fetch to confirm reachability. Returns the model count so the UI
+  // can render "Connected · N models".
+  if (method === "POST" && url.pathname === "/api/ollama/test-cloud") {
+    try {
+      const { refreshCloudOllama, invalidateCloudOllamaCache } = await import("../../ollama-cloud.js");
+      invalidateCloudOllamaCache();
+      const r = await refreshCloudOllama(ctx.secretsStore, getRuntimeConfig().ollamaCloudUrl);
+      if (r.reachable) {
+        json(200, { ok: true, modelCount: r.models.length, models: r.models });
+      } else {
+        json(200, { ok: false, error: r.error || "unreachable" });
+      }
+    } catch (e: unknown) {
+      json(500, { ok: false, error: e instanceof Error ? e.message : String(e) });
+    }
     return true;
   }
   if (method === "POST" && url.pathname === "/api/ollama/start") {

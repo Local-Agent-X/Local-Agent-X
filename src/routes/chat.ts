@@ -412,7 +412,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // item alongside the tool_result so the API can match call_ids.
       // See chat-runner.ts / codex.ts for the assistant tool_call message
       // finalization that makes the chain complete.
-      const CANONICAL_CHAT_PROVIDERS = new Set(["anthropic", "codex"]);
+      const CANONICAL_CHAT_PROVIDERS = new Set(["anthropic", "codex", "local", "ollama-cloud"]);
       const canonicalChatEligible = await (async () => {
         try {
           const { isCanonicalChatEnabled, isCanonicalChatLaneEnabled } = await import("../canonical-loop/feature-flag.js");
@@ -554,14 +554,21 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
           doneEmitted = true;
           return true;
         } catch (e) {
-          logger.warn(`[chat] canonical chat path threw, falling back to legacy: ${(e as Error).message}`);
-          // Revert any partial mutation the canonical path may have left on
-          // session.messages. The legacy runAgent path below mutates session
-          // state itself; we want it to start from the same snapshot the
-          // canonical path saw, not from a half-finished synthesis.
+          // One-path policy: every canonical-eligible provider (anthropic,
+          // codex, local) takes canonical or fails — no silent fallback to
+          // legacy runAgent. The fallback masked real adapter bugs and
+          // produced inconsistent observability (some turns canonical,
+          // some legacy, indistinguishable from outside). Surface the
+          // error to the user; revert any partial session.messages
+          // mutation so the next turn starts from the right state.
+          logger.error(`[chat] canonical chat path threw: ${(e as Error).message}`);
           session.messages = sessionMessagesSnapshot;
           session.updatedAt = Date.now();
-          // Fall through to runAgent below.
+          ctx.saveSession(session);
+          sseWrite(res, { type: "error", message: `chat: ${(e as Error).message}` });
+          sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+          doneEmitted = true;
+          return true;
         }
       }
 

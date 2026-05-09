@@ -231,6 +231,10 @@ export interface LAXConfig {
 
   // ── Externalized service URLs ──
   ollamaUrl: string;
+  /** Ollama Cloud (Turbo) endpoint. Empty disables cloud routing. Pairs
+   *  with the OLLAMA_CLOUD_API_KEY secret to merge cloud models into the
+   *  Ollama provider's picker and route per-model at chat dispatch. */
+  ollamaCloudUrl: string;
   sdServerUrl: string;
   videoServerUrl: string;
   xttsServerUrl: string;

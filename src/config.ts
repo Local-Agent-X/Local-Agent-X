@@ -69,6 +69,10 @@ const configSchema = z.object({
 
   // Service URLs
   ollamaUrl: z.string().default("http://127.0.0.1:11434"),
+  /** Ollama Cloud (Turbo) endpoint. When set + OLLAMA_CLOUD_API_KEY secret
+   *  is present, the Ollama provider lists cloud models alongside local
+   *  ones in the picker and routes per-model. Empty disables cloud. */
+  ollamaCloudUrl: z.string().default("https://ollama.com"),
   sdServerUrl: z.string().default("http://127.0.0.1:7860"),
   videoServerUrl: z.string().default("http://127.0.0.1:7861"),
   xttsServerUrl: z.string().default("http://127.0.0.1:7862"),
@@ -140,6 +144,8 @@ export function loadConfig(): LAXConfig {
   // Service URL overrides
   const ollamaEnv = process.env.LAX_OLLAMA_URL ?? process.env.SAX_OLLAMA_URL;
   if (ollamaEnv) raw.ollamaUrl = ollamaEnv;
+  const ollamaCloudEnv = process.env.LAX_OLLAMA_CLOUD_URL ?? process.env.SAX_OLLAMA_CLOUD_URL;
+  if (ollamaCloudEnv) raw.ollamaCloudUrl = ollamaCloudEnv;
   const sdEnv = process.env.LAX_SD_SERVER_URL ?? process.env.SAX_SD_SERVER_URL;
   if (sdEnv) raw.sdServerUrl = sdEnv;
   const videoEnv = process.env.LAX_VIDEO_SERVER_URL ?? process.env.SAX_VIDEO_SERVER_URL;

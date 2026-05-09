@@ -18,6 +18,7 @@ import type { Session } from "../types.js";
 import { atomicWriteFileSync } from "./utils.js";
 import {
   readSessionLog,
+  readSessionLogForUI,
   writeSessionLog,
   deleteSessionLog,
   listSessionIds,
@@ -57,6 +58,17 @@ export class SessionStore {
 
   load(id: string): Session | null {
     return readSessionLog(this.dir, id);
+  }
+
+  /**
+   * Load the UI projection — text-only user/assistant timeline plus
+   * compaction summary. Drops `tool` rows and `tool_calls` on assistants
+   * so chat.js can render without per-row special-casing. Frontend
+   * routes use this; model-side code uses {@link load} for the rich
+   * form. See `readSessionLogForUI` for rationale.
+   */
+  loadForUI(id: string): Session | null {
+    return readSessionLogForUI(this.dir, id);
   }
 
   list(): Array<{ id: string; title: string; updatedAt: number; messageCount: number }> {

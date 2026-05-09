@@ -72,9 +72,9 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     minimalMode: skipMemory,
   });
   let contextBlock = turnCtx.contextBlock;
-  const relevantMemories = turnCtx.relevantMemories;
-  const smartContext = turnCtx.smartContext;
-  const memoryContext = turnCtx.memoryContext;
+  let relevantMemories = turnCtx.relevantMemories;
+  let smartContext = turnCtx.smartContext;
+  let memoryContext = turnCtx.memoryContext;
   const memoryNotifications = turnCtx.notifications;
   if (isTrivialToolRequest && !skipMemory) logger.info(`[chat] Trivial tool request — skipping memory injection`);
   else if (isCodexProvider && !skipMemory) logger.info(`[chat] Codex provider — daily log skipped`);
@@ -124,6 +124,24 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     if (tools.length !== before) {
       logger.info(`[tools] Shrunk ${before}→${tools.length} for ${tier} model ${resolved.model} (${tools.map(t=>t.name).join(",")})`);
     }
+  }
+
+  // Weak-model context strip. Small local models (qwen2:7b, llama3:8b,
+  // qwen2.5:7b) cannot reliably separate "third-person facts about the
+  // user" from "instructions for what voice to write in" — the bulky
+  // user-profile + core_memory + RAG-hit context blocks trigger them to
+  // collapse into the user's first-person voice and produce a fake
+  // nightly-update-as-Peter response. The Voice Guard in the base
+  // prompt helps, but the cleaner fix on weak models is to not put
+  // most of that context in front of them in the first place. Strong
+  // models (Sonnet/Opus, gpt-5-class) keep the full context — they
+  // parse it as third-person info correctly.
+  if (tier === "weak") {
+    contextBlock = "";
+    relevantMemories = "";
+    smartContext = "";
+    memoryContext = "";
+    logger.info(`[chat] weak tier ${resolved.model} — stripped memory/profile context to prevent roleplay drift`);
   }
   if (!isBridge) {
     try {

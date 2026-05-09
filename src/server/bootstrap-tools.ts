@@ -84,9 +84,21 @@ export async function bootstrapTools(deps: {
     const mcpManager = MCPManager.getInstance(dataDir);
     await mcpManager.connectAll();
     const mcpTools = mcpManager.getAllTools();
-    if (mcpTools.length > 0) {
-      allAgentTools.push(...mcpTools);
-      logger.info(`[mcp] Added ${mcpTools.length} tools from MCP servers`);
+    // Filter redundant filesystem MCP tools — native `read`/`write`/`edit`/
+    // `bash` already cover read/write/edit/list/search with full audit and
+    // SecurityLayer integration. Exposing both surfaces to the model
+    // doubles tool noise and lets weak models pick the MCP variant which
+    // tool-policy then denies (since MCP tools default-deny). Result: the
+    // "tried to write a doc file but it was blocked" failure mode. MCP
+    // earns its keep when it adds NEW capabilities (GitHub, Postgres,
+    // Slack, etc.) — not when it duplicates the native filesystem.
+    const nonRedundantMcpTools = mcpTools.filter(t => !t.name.startsWith("mcp_filesystem_"));
+    const filteredCount = mcpTools.length - nonRedundantMcpTools.length;
+    if (nonRedundantMcpTools.length > 0) {
+      allAgentTools.push(...nonRedundantMcpTools);
+      logger.info(`[mcp] Added ${nonRedundantMcpTools.length} tools from MCP servers${filteredCount > 0 ? ` (filtered ${filteredCount} redundant filesystem duplicates)` : ""}`);
+    } else if (filteredCount > 0) {
+      logger.info(`[mcp] Filtered ${filteredCount} redundant filesystem MCP tools (native covers these)`);
     }
     process.on("SIGINT", () => { mcpManager.disconnectAll(); });
   } catch (e) {

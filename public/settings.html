@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:*; img-src 'self' data: https:; font-src 'self';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* ws://127.0.0.1:* wss://localhost:* wss://127.0.0.1:*; img-src 'self' data: https:; font-src 'self';">
 <title>Local Agent X — Settings</title>
 <style>
 :root {
@@ -457,6 +457,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
           <option value="xai">xAI (Grok)</option>
           <option value="openai">OpenAI API (direct key)</option>
           <option value="local">Local Model (Ollama)</option>
+          <option value="ollama-cloud">Ollama Turbo (cloud)</option>
         </select>
       </div>
       <div class="field">
@@ -465,6 +466,17 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
         <select class="field-select" id="cfg-model-select" style="display:none"></select>
         <div class="field-hint" id="cfg-model-hint">Codex: gpt-5.5 | Anthropic: claude-sonnet-4-6 | xAI: grok-3-mini | OpenAI: gpt-5.5</div>
         <div id="ollama-status" style="display:none;margin-top:8px"></div>
+        <div id="ollama-cloud-card" style="display:none;margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg2)">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px">
+            <strong style="font-size:.82rem">Ollama Cloud (Turbo)</strong>
+            <span id="ollama-cloud-status" style="font-size:.7rem;color:var(--muted)">Not connected</span>
+          </div>
+          <div style="font-size:.7rem;color:var(--muted);margin-bottom:8px">Add your Ollama Cloud API key to access hosted models. They show up in the same picker, alongside local ones.</div>
+          <div style="display:flex;gap:8px">
+            <input class="field-input" id="ollama-cloud-key" type="password" placeholder="Paste your Ollama Cloud API key" style="flex:1" />
+            <button class="btn" id="btn-ollama-cloud-connect" onclick="connectOllamaCloud()" style="padding:6px 14px;font-size:.74rem">Connect</button>
+          </div>
+        </div>
       </div>
       <div class="field-row">
         <div class="field">

@@ -351,6 +351,7 @@ const PROVIDER_KEY_CONFIG = {
   gemini: { label: 'Google API Key', placeholder: 'AIza...', hint: 'Get your key at ai.google.dev', secretName: 'GEMINI_API_KEY' },
   openai: { label: 'OpenAI API Key', placeholder: 'sk-...', hint: 'Get your key at platform.openai.com/api-keys', secretName: 'OPENAI_API_KEY' },
   custom: { label: 'API Key', placeholder: 'Enter API key...', hint: 'Key for your custom OpenAI-compatible provider', secretName: 'CUSTOM_API_KEY' },
+  'ollama-cloud': { label: 'Ollama Cloud API Key', placeholder: 'ollama-...', hint: 'Get your key at ollama.com — Turbo grants access to large hosted models', secretName: 'OLLAMA_CLOUD_API_KEY' },
 };
 
 function updateApiKeyField(provider) {
@@ -445,8 +446,21 @@ async function onProviderChange(provider, keepModel) {
     modelSelect.style.display = '';
     if (ollamaStatus) ollamaStatus.style.display = '';
     if (hint) hint.textContent = 'Showing models downloaded via Ollama. Run "ollama pull <model>" to add more.';
+    const cloudCard = document.getElementById('ollama-cloud-card');
+    if (cloudCard) cloudCard.style.display = 'none';
     await loadLocalModels();
+  } else if (provider === 'ollama-cloud') {
+    modelInput.style.display = 'none';
+    modelSelect.style.display = '';
+    if (ollamaStatus) ollamaStatus.style.display = 'none';
+    if (hint) hint.textContent = 'Hosted models served by Ollama Turbo. Connect your account below to populate the list.';
+    const cloudCard = document.getElementById('ollama-cloud-card');
+    if (cloudCard) cloudCard.style.display = '';
+    await loadOllamaCloudModels();
+    refreshOllamaCloudStatus();
   } else {
+    const cloudCard = document.getElementById('ollama-cloud-card');
+    if (cloudCard) cloudCard.style.display = 'none';
     const models = PROVIDER_MODELS[provider] || [];
     if (models.length) {
       modelSelect.style.display = '';
@@ -525,6 +539,84 @@ async function loadLocalModels() {
   } catch {
     sel.innerHTML = '<option value="">Ollama not running</option>';
     if (statusEl) statusEl.innerHTML = `<span class="status-badge err"><span class="status-dot"></span> Not running</span> <button class="btn" onclick="startOllama()" id="btn-start-ollama" style="padding:4px 12px;font-size:.72rem;color:var(--accent);margin-left:8px">Start Ollama</button>`;
+  }
+}
+
+async function loadOllamaCloudModels() {
+  const sel = document.getElementById('cfg-model-select');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Loading...</option>';
+  try {
+    const data = await apiJson('/api/providers');
+    const cloud = (data.providers || []).find(p => p.id === 'ollama-cloud');
+    const models = (cloud && cloud.models) || [];
+    if (models.length === 0) {
+      sel.innerHTML = '<option value="">Not connected — paste your API key below</option>';
+      return;
+    }
+    sel.innerHTML = models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+    try {
+      const s = JSON.parse(localStorage.getItem('sax_settings') || '{}');
+      if (s.model && models.includes(s.model)) sel.value = s.model;
+    } catch {}
+  } catch {
+    sel.innerHTML = '<option value="">Failed to load cloud models</option>';
+  }
+}
+
+async function refreshOllamaCloudStatus() {
+  const statusEl = document.getElementById('ollama-cloud-status');
+  if (!statusEl) return;
+  try {
+    // Hit the test endpoint with the existing secret. Returns ok:false
+    // when no key is configured — that surfaces as "Not connected"
+    // without spamming a real auth attempt.
+    const j = await apiPost('/api/ollama/test-cloud', {});
+    if (j && j.ok) {
+      statusEl.textContent = `Connected · ${j.modelCount} model${j.modelCount === 1 ? '' : 's'}`;
+      statusEl.style.color = 'var(--accent)';
+    } else {
+      statusEl.textContent = 'Not connected';
+      statusEl.style.color = 'var(--muted)';
+    }
+  } catch {
+    statusEl.textContent = 'Not connected';
+    statusEl.style.color = 'var(--muted)';
+  }
+}
+
+async function connectOllamaCloud() {
+  const keyInput = document.getElementById('ollama-cloud-key');
+  const btn = document.getElementById('btn-ollama-cloud-connect');
+  const statusEl = document.getElementById('ollama-cloud-status');
+  if (!keyInput || !btn) return;
+  const key = keyInput.value.trim();
+  if (!key) { if (statusEl) { statusEl.textContent = 'Paste a key first'; statusEl.style.color = 'var(--err, #c66)'; } return; }
+  btn.disabled = true;
+  btn.textContent = 'Connecting...';
+  try {
+    await apiPost('/api/secrets', { name: 'OLLAMA_CLOUD_API_KEY', value: key });
+    const j = await apiPost('/api/ollama/test-cloud', {});
+    if (j && j.ok) {
+      if (statusEl) { statusEl.textContent = `Connected · ${j.modelCount} model${j.modelCount === 1 ? '' : 's'}`; statusEl.style.color = 'var(--accent)'; }
+      keyInput.value = '';
+      // Refresh whichever model dropdown is currently visible. If the
+      // user is on the new "Ollama Turbo (cloud)" entry, repopulate
+      // its model list. Otherwise (they connected from inside the
+      // Local provider's card), refresh local — though that's now a
+      // legacy path since the card primarily lives under Turbo.
+      const curProvider = document.getElementById('cfg-provider')?.value;
+      if (curProvider === 'ollama-cloud') await loadOllamaCloudModels();
+      else if (curProvider === 'local') await loadLocalModels();
+    } else {
+      const errMsg = (j && j.error) || 'unreachable';
+      if (statusEl) { statusEl.textContent = `Failed: ${errMsg}`; statusEl.style.color = 'var(--err, #c66)'; }
+    }
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = `Error: ${e?.message || e}`; statusEl.style.color = 'var(--err, #c66)'; }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Connect';
   }
 }
 

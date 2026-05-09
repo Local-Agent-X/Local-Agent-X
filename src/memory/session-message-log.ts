@@ -158,6 +158,49 @@ export function readSessionLog(dir: string, id: string): Session | null {
 }
 
 /**
+ * UI projection of a Session. Same model state, different shape: drops
+ * `tool` rows, drops `tool_calls` from assistants, keeps only the
+ * visible text timeline. Compaction summary stays as a leading `system`
+ * message (the UI knows how to render that).
+ *
+ * Why a separate projection: model state and display state have different
+ * requirements. The model needs full tool_calls / tool_result structure
+ * across turns to chain follow-ups. The UI just needs the visible
+ * conversation. Coupling them in one array means whichever consumer's
+ * invariants change, the other breaks — exactly the bug that landed when
+ * canonical-chat started persisting tool rows into session.messages and
+ * the chat renderer (built around text-only) silently dropped assistant
+ * bubbles.
+ *
+ * Frontend-facing API endpoints serve this projection. Model-facing code
+ * paths (`prepareAgentRequest`, `seedOpMessages`) read the rich form.
+ */
+export function projectSessionForUI(session: Session): Session {
+  const messages: ChatCompletionMessageParam[] = [];
+  for (const m of session.messages) {
+    if (m.role === "tool") continue;
+    if (m.role === "assistant") {
+      // Drop tool_calls — UI only renders visible text. Structured
+      // calls live on disk in op-messages.jsonl + the session log's
+      // rich form for the model.
+      const text = typeof m.content === "string" ? m.content : "";
+      if (!text) continue;
+      messages.push({ role: "assistant", content: text });
+      continue;
+    }
+    messages.push(m);
+  }
+  return { ...session, messages };
+}
+
+/** Disk-read convenience: load + project. Equivalent to
+ *  `readSessionLog(...).then(projectSessionForUI)`. */
+export function readSessionLogForUI(dir: string, id: string): Session | null {
+  const session = readSessionLog(dir, id);
+  return session ? projectSessionForUI(session) : null;
+}
+
+/**
  * Atomically rewrite a session's jsonl file from a Session value.
  *
  * If `session.messages[0]` is a system message starting with the

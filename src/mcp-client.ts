@@ -16,16 +16,126 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, watch as fsWatch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { wrapExternalContent } from "./sanitize.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("mcp-client");
 
 const PROTOCOL_VERSION = "2025-11-25";
 const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Secret lookup is INJECTABLE so unit tests can drive it without booting
+ * the real vault. Default delegates to the secrets-store singleton if it
+ * exists; tests overwrite via `setSecretLookup` to drive deterministic
+ * scenarios.
+ *
+ * Lazy delegation also handles bootstrap order — the MCP manager is
+ * instantiated before the vault is guaranteed to exist (test envs, fresh
+ * installs, CLI bootstrap). A missing vault yields `undefined` instead of
+ * crashing the manager.
+ */
+type SecretLookup = (name: string) => string | undefined;
+
+let secretLookup: SecretLookup = (name: string) => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("./secrets.js") as { getSecretsStoreSingleton?: () => { get(n: string): string | undefined } | null };
+    const store = mod.getSecretsStoreSingleton?.();
+    return store?.get(name);
+  } catch {
+    return undefined;
+  }
+};
+
+/** Test seam: override the secret-resolution function. Pass `null` to reset. */
+export function setSecretLookup(fn: SecretLookup | null): void {
+  secretLookup = fn ?? ((name: string) => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const mod = require("./secrets.js") as { getSecretsStoreSingleton?: () => { get(n: string): string | undefined } | null };
+      const store = mod.getSecretsStoreSingleton?.();
+      return store?.get(name);
+    } catch {
+      return undefined;
+    }
+  });
+}
+
+function lookupSecret(name: string): string | undefined {
+  return secretLookup(name);
+}
+
+/**
+ * Expand `${...}` placeholders in a config string. Supported forms:
+ *   - `${HOME}` / `${USERPROFILE}` — OS home directory (portable across machines)
+ *   - `${secret:NAME}` — read from the encrypted secrets vault
+ *   - `~/` prefix — also expands to home directory
+ *
+ * Deliberately does NOT expand bare `$VAR` or `$(cmd)` — only the explicit
+ * `${...}` form. This blocks shell-style injection from a config file an
+ * attacker might tamper with: `command: "$(rm -rf /)"` would be passed
+ * through verbatim, never evaluated.
+ *
+ * Returns the expanded string AND a list of placeholders that couldn't be
+ * resolved (e.g. `${secret:MISSING}` when the vault has no MISSING). Callers
+ * use the `missing` list to decide whether to skip starting a server with
+ * unresolved required env.
+ */
+export function expandPlaceholders(input: string): { value: string; missing: string[] } {
+  if (typeof input !== "string") return { value: input, missing: [] };
+  const missing: string[] = [];
+  let out = input;
+
+  // 1. `~/` prefix → home dir (POSIX convention, also works on Windows).
+  if (out.startsWith("~/") || out.startsWith("~\\")) {
+    out = homedir() + out.slice(1);
+  }
+
+  // 2. ${HOME} / ${USERPROFILE} — OS home dir
+  out = out.replace(/\$\{HOME\}/g, () => homedir());
+  out = out.replace(/\$\{USERPROFILE\}/g, () => process.env.USERPROFILE || homedir());
+
+  // 3. ${secret:NAME} — vault lookup. Anything still missing after lookup
+  //    is reported back to the caller via `missing`; we leave the original
+  //    placeholder in the string so logs surface the unresolved name
+  //    instead of an empty value silently injected.
+  out = out.replace(/\$\{secret:([A-Z0-9_]+)\}/g, (match, name: string) => {
+    const v = lookupSecret(name);
+    if (v) return v;
+    missing.push(name);
+    return match;
+  });
+
+  return { value: out, missing };
+}
+
+function expandPlaceholdersDeep(
+  config: MCPServerConfig,
+): { config: MCPServerConfig; missing: string[] } {
+  const allMissing: string[] = [];
+  const args = (config.args || []).map(a => {
+    const r = expandPlaceholders(a);
+    allMissing.push(...r.missing);
+    return r.value;
+  });
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(config.env || {})) {
+    const r = expandPlaceholders(v);
+    allMissing.push(...r.missing);
+    env[k] = r.value;
+  }
+  const cmd = expandPlaceholders(config.command);
+  allMissing.push(...cmd.missing);
+  return {
+    config: { ...config, command: cmd.value, args, env },
+    missing: Array.from(new Set(allMissing)),
+  };
+}
 
 interface MCPServerConfig {
   command: string;
@@ -167,7 +277,17 @@ class MCPConnection {
         .filter(c => c.type === "text" && c.text)
         .map(c => c.text)
         .join("\n");
-      return { content: text || "(no output)", isError: result.isError || false };
+      const raw = text || "(no output)";
+      // Wrap MCP server output as external untrusted content. The server is a
+      // third-party process — its responses can carry prompt-injection
+      // payloads, malformed data, or content we have no provenance on. The
+      // wrap surfaces an explicit warning to the model AND runs the secret
+      // redactor over the body so any vault value that leaked through gets
+      // scrubbed before reaching the agent's prompt.
+      const wrapped = wrapExternalContent(raw, `mcp:${this.serverName}`, {
+        tool: name,
+      });
+      return { content: wrapped, isError: result.isError || false };
     } catch (e) {
       return { content: `MCP tool error: ${(e as Error).message}`, isError: true };
     }
@@ -210,19 +330,81 @@ export class MCPManager {
     return MCPManager.instance;
   }
 
-  /** Load config and connect to all enabled servers. */
+  /**
+   * Load config and connect to all enabled servers.
+   *
+   * Servers whose config references a `${secret:NAME}` placeholder that
+   * doesn't resolve are SKIPPED (with INFO log) — not warnings. Missing
+   * tokens are an expected state on a fresh install or before the user
+   * configures the relevant integration; spamming WARN noise on every boot
+   * trains operators to ignore real warnings.
+   */
   async connectAll(): Promise<void> {
     const config = this.loadConfig();
-    for (const [name, serverConfig] of Object.entries(config.servers)) {
-      if (serverConfig.disabled) continue;
+    for (const [name, raw] of Object.entries(config.servers)) {
+      if (raw.disabled) continue;
       if (this.connections.has(name) && this.connections.get(name)!.connected) continue;
+
+      // Expand ${HOME}/${secret:...}/etc. before spawning. If a server
+      // requires a secret that isn't in the vault, skip it cleanly.
+      const expanded = expandPlaceholdersDeep(raw);
+      if (expanded.missing.length > 0) {
+        logger.info(
+          `[mcp] Skipping "${name}" — missing secret(s): ${expanded.missing.join(", ")}. ` +
+          `Add via secret_save or the secrets UI to enable.`,
+        );
+        continue;
+      }
+
       try {
-        const conn = new MCPConnection(name, serverConfig);
+        const conn = new MCPConnection(name, expanded.config);
         await conn.connect();
         this.connections.set(name, conn);
       } catch (e) {
         logger.warn(`[mcp] Failed to connect to ${name}: ${(e as Error).message}`);
       }
+    }
+  }
+
+  /**
+   * Disconnect everything, then reconnect from the (re-read) config file.
+   * Used by the file watcher when ~/.lax/mcp.json changes — no server
+   * restart required to pick up new servers, removed servers, or token
+   * additions in the vault. Safe to call repeatedly.
+   */
+  async reload(): Promise<void> {
+    this.disconnectAll();
+    await this.connectAll();
+  }
+
+  private fileWatcher: FSWatcher | null = null;
+
+  /**
+   * Start watching the config file. On change, debounce briefly (the editor
+   * fires multiple events on a single save) then call reload().
+   */
+  startConfigWatcher(): void {
+    if (this.fileWatcher) return;
+    if (!existsSync(this.configPath)) return;
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    try {
+      this.fileWatcher = fsWatch(this.configPath, () => {
+        if (pending) clearTimeout(pending);
+        pending = setTimeout(() => {
+          pending = null;
+          logger.info("[mcp] config changed — reloading");
+          this.reload().catch(e => logger.warn(`[mcp] reload failed: ${(e as Error).message}`));
+        }, 250);
+      });
+    } catch (e) {
+      logger.warn(`[mcp] config watcher init failed: ${(e as Error).message}`);
+    }
+  }
+
+  stopConfigWatcher(): void {
+    if (this.fileWatcher) {
+      try { this.fileWatcher.close(); } catch {}
+      this.fileWatcher = null;
     }
   }
 
@@ -281,23 +463,28 @@ export class MCPManager {
         return { servers: {} };
       }
     }
-    // Create default config with examples (all disabled)
+    // Default template. Servers ship `disabled: true` — flip the flag and
+    // make sure the referenced secret exists in the vault to enable.
+    // Placeholders `${HOME}` and `${secret:NAME}` resolve at load time so
+    // a single config syncs across machines without per-machine forks.
     const defaultConfig: MCPConfig = {
       servers: {
-        // Uncomment and configure to enable:
-        // "github": {
-        //   "command": "npx",
-        //   "args": ["-y", "@modelcontextprotocol/server-github"],
-        //   "env": { "GITHUB_TOKEN": "your-token-here" }
-        // },
-        // "filesystem": {
-        //   "command": "npx",
-        //   "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/dir"]
-        // },
-        // "postgres": {
-        //   "command": "npx",
-        //   "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"]
-        // },
+        "filesystem": {
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-filesystem", "${HOME}/Documents"],
+          disabled: true,
+        },
+        "github": {
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-github"],
+          env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${secret:GITHUB_TOKEN}" },
+          disabled: true,
+        },
+        "postgres": {
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-postgres", "${secret:POSTGRES_URL}"],
+          disabled: true,
+        },
       },
     };
     try {

@@ -48,7 +48,12 @@ interface KeychainResult {
 /** Store a key using Windows DPAPI (encrypted to current user's login) */
 function dpapiStore(data: Buffer, filePath: string): void {
   const b64 = data.toString("base64");
-  const scriptPath = filePath + ".ps1";
+  // Unique script suffix per call. Multiple SecretsStore instances run
+  // concurrently on boot (server + self-edit tool + workers + mcp-client);
+  // a fixed shared script/output path lets one process's cleanup unlink
+  // another's file mid-flight, which surfaced as ENOENT master.dpapi.b64
+  // crashes in 2026-05-09 logs.
+  const scriptPath = filePath + "." + randomBytes(6).toString("hex") + ".ps1";
   const script =
     `Add-Type -AssemblyName System.Security\n` +
     `$bytes = [Convert]::FromBase64String('${b64}')\n` +
@@ -67,9 +72,18 @@ function dpapiStore(data: Buffer, filePath: string): void {
 
 /** Retrieve a key using Windows DPAPI */
 function dpapiRetrieve(filePath: string): Buffer {
-  const scriptPath = filePath + ".retrieve.ps1";
-  const outPath = filePath + ".b64";
+  // Unique paths per call — see dpapiStore comment. Without this,
+  // concurrent SecretsStore boots race on the shared `.retrieve.ps1`
+  // + `.b64` filenames; one process's `unlinkSync(outPath)` deletes
+  // another's output before its `readFileSync` runs.
+  const suffix = randomBytes(6).toString("hex");
+  const scriptPath = filePath + "." + suffix + ".retrieve.ps1";
+  const outPath = filePath + "." + suffix + ".b64";
+  // $ErrorActionPreference=Stop so a silent Unprotect failure exits
+  // non-zero (so execFileSync throws) instead of writing an empty .b64
+  // that we later parse as 0 bytes of "key material".
   const script =
+    `$ErrorActionPreference = 'Stop'\n` +
     `Add-Type -AssemblyName System.Security\n` +
     `$encrypted = [IO.File]::ReadAllBytes('${filePath.replace(/\\/g, "/")}')\n` +
     `$decrypted = [System.Security.Cryptography.ProtectedData]::Unprotect($encrypted, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)\n` +

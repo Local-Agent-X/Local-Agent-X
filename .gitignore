@@ -36,3 +36,13 @@ config/app-manifest.json
 .tmp-*
 probe*.mjs
 junit.xml
+
+# Python bytecode cache — regenerated on every import, version-tied,
+# never useful in the repo. Universal Python convention.
+__pycache__/
+*.pyc
+
+# Local research / scratch notes kept next to the repo. Not committed
+# because they tend to accumulate personal/business content (supplement-
+# brand comparisons, etc.) that shouldn't ride along on a public push.
+research/

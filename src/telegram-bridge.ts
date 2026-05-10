@@ -11,6 +11,7 @@ import { join } from "node:path";
 
 import { createLogger } from "./logger.js";
 import { encodeWavToOgg, isFfmpegAvailable, transcribeOggBuffer, getVoicePref, splitForVoiceChunks } from "./bridge-voice/index.js";
+import { splitMessage } from "./whatsapp-bridge/text-utils.js";
 import { synthesize } from "./voice.js";
 const logger = createLogger("telegram-bridge");
 
@@ -130,7 +131,7 @@ export class TelegramBridge {
     const token = this.getToken();
     if (!token || this.state !== "connected") return false;
 
-    const chunks = this.splitMessage(text, 4000);
+    const chunks = splitMessage(text, 4000);
     for (const chunk of chunks) {
       try {
         // The channel-formatter produces MarkdownV2-escaped text (escaping
@@ -517,20 +518,6 @@ export class TelegramBridge {
     }
   }
 
-  private splitMessage(text: string, maxLen: number): string[] {
-    if (text.length <= maxLen) return [text];
-    const chunks: string[] = [];
-    let remaining = text;
-    while (remaining.length > 0) {
-      if (remaining.length <= maxLen) { chunks.push(remaining); break; }
-      let splitAt = remaining.lastIndexOf("\n", maxLen);
-      if (splitAt < maxLen * 0.5) splitAt = remaining.lastIndexOf(" ", maxLen);
-      if (splitAt < maxLen * 0.5) splitAt = maxLen;
-      chunks.push(remaining.slice(0, splitAt));
-      remaining = remaining.slice(splitAt).trimStart();
-    }
-    return chunks;
-  }
 
   private loadAllowedChats(): void {
     try {

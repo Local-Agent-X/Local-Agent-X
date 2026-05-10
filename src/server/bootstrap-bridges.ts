@@ -20,10 +20,12 @@ import type { RBACManager } from "../rbac.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.bootstrap-bridges");
 
+import type { BridgeReply } from "../whatsapp-bridge.js";
+
 export type BridgeHandler = (
   platform: string,
   payload: { from: string; name: string; text: string; sessionId: string }
-) => Promise<string>;
+) => Promise<string | BridgeReply>;
 
 export function createBridgeHandler(deps: {
   sessions: Map<string, Session>;
@@ -76,14 +78,74 @@ export function createBridgeHandler(deps: {
       const platformKey = channelType as BridgePlatform;
       if (trimmed === "/voice on") {
         setVoicePref(platformKey, from, true);
-        return "Voice replies enabled. Reply with /voice off to switch back to text.";
+        return "Voice replies enabled. Reply with /voice off to switch back to text. " +
+          "If you get text back anyway, no voice engine is running — send /voice start to bring one up.";
       }
       if (trimmed === "/voice off") {
         setVoicePref(platformKey, from, false);
         return "Voice replies disabled.";
       }
       const on = getVoicePref(platformKey, from);
-      return `Voice replies are currently ${on ? "ON" : "OFF"}. Toggle with /voice on or /voice off.`;
+      return `Voice replies are currently ${on ? "ON" : "OFF"}. Toggle with /voice on or /voice off. Engine controls: /voice start | /voice stop | /voice status.`;
+    }
+
+    // /voice start|stop|status [tier] — remote control of the voice
+    // sidecar processes (Lite / Studio Chatterbox / SoVITS). Lets the user
+    // bring an engine up from their phone when they're away from the
+    // computer, without needing the Settings UI. Hits the same
+    // /api/voices/setup/start | /stop endpoints the UI uses, just from
+    // inside the server (localhost loopback).
+    if (trimmed.startsWith("/voice start") || trimmed.startsWith("/voice stop") || trimmed.startsWith("/voice status")) {
+      if (channelType !== "telegram" && channelType !== "whatsapp") {
+        return "Voice engine control is not supported on this platform.";
+      }
+      const parts = trimmed.split(/\s+/);
+      const action = parts[1] as "start" | "stop" | "status";
+      const tierArg = (parts[2] || "lite").toLowerCase();
+      const tierMap: Record<string, string> = {
+        lite: "lite",
+        studio: "studio-chatterbox",
+        chatterbox: "studio-chatterbox",
+        sovits: "studio-sovits",
+      };
+      const tierId = tierMap[tierArg];
+      if (!tierId) return "Unknown tier. Use: lite (default) | studio | sovits.";
+
+      const port = process.env.LAX_PORT || "7007";
+      const base = `http://127.0.0.1:${port}`;
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const tok = (config as { authToken?: string }).authToken;
+      if (tok) headers["Authorization"] = `Bearer ${tok}`;
+
+      try {
+        if (action === "status") {
+          const r = await fetch(`${base}/api/voices/setup`, { headers });
+          if (!r.ok) return `Status check failed: HTTP ${r.status}`;
+          const data = await r.json() as { tiers?: Array<{ id: string; label: string; running: boolean; installed: boolean }> };
+          const t = (data.tiers ?? []).find(x => x.id === tierId);
+          if (!t) return `Unknown tier id ${tierId}.`;
+          return `${t.label}: ${t.running ? "running" : t.installed ? "installed, not running" : "not installed"}.`;
+        }
+        if (action === "stop") {
+          const r = await fetch(`${base}/api/voices/setup/stop`, { method: "POST", headers, body: JSON.stringify({ tierId }) });
+          if (!r.ok) return `Stop failed: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`;
+          return `Stopped ${tierArg}.`;
+        }
+        // start — heavy (90-120s cold start on first launch). The setup/
+        // start endpoint blocks until /healthz returns OK, which can
+        // exceed bridge handler timeouts. Fire-and-forget here, return
+        // immediately with a "kicked off" message; the user can /voice
+        // status to poll.
+        void fetch(`${base}/api/voices/setup/start`, { method: "POST", headers, body: JSON.stringify({ tierId }) })
+          .then(async r => {
+            if (!r.ok) logger.warn(`[bridge:${platform}] /voice start ${tierArg} failed: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+            else logger.info(`[bridge:${platform}] /voice start ${tierArg} succeeded`);
+          })
+          .catch(e => logger.warn(`[bridge:${platform}] /voice start ${tierArg} threw: ${(e as Error).message}`));
+        return `Starting ${tierArg} sidecar — cold start is 90-120s. Send /voice status ${tierArg} to check, or just wait and try voice replies in ~2 min.`;
+      } catch (e) {
+        return `Voice engine ${action} failed: ${(e as Error).message}`;
+      }
     }
 
     const session = getOrCreateSession(route.sessionKey);
@@ -215,7 +277,16 @@ export function createBridgeHandler(deps: {
       }
     }
 
-    return formatForChannel(assistantText.trim() || "Done.", channelType).join("\n\n");
+    // Return BOTH the channel-formatted wire text and the raw speakable
+    // text so bridges can route each to the right destination:
+    //   text       → sendMessage (escapes preserved for MarkdownV2 etc.)
+    //   speakable  → synthesize() (no bridge-formatter escapes — TTS reads
+    //                what the agent wrote, not "\." pronounced "backslash dot")
+    const raw = assistantText.trim() || "Done.";
+    return {
+      text: formatForChannel(raw, channelType).join("\n\n"),
+      speakable: raw,
+    };
   };
 }
 

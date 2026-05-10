@@ -33,6 +33,19 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
   // training signal), and return the original message so the chat can
   // resubmit with /discuss prepended. Bypass the auto-delegate next time
   // for this exact message.
+  // POST /api/op/kill — UI kill button (e.g. tool_chip "blocked-by-op"
+  // chip). Direct call to pool.killOp by op_id; no auto-delegate side
+  // effects. Returns { ok: boolean }.
+  if (method === "POST" && url.pathname === "/api/op/kill") {
+    const body = await safeParseBody(req);
+    const opId = typeof body?.op_id === "string" ? body.op_id : "";
+    if (!opId) { json(400, { ok: false, error: "op_id required" }); return true; }
+    const { killOp } = await import("../workers/pool.js");
+    const ok = killOp(opId);
+    json(200, { ok });
+    return true;
+  }
+
   if (method === "POST" && url.pathname === "/api/auto-delegate/override") {
     const body = await safeParseBody(req);
     const opId = typeof body?.opId === "string" ? body.opId : "";

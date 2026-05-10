@@ -160,25 +160,42 @@ export const opSubmitAsyncTool: ToolDefinition = {
 
     const sessionId = String(args._sessionId || "");
     if (sessionId) {
-      // PRIMARY GUARD: any op from this session still RUNNING blocks new
-      // spawns regardless of how much time has passed. Live failure: agent
-      // submitted an op that ran 125+ seconds; the 30s dedup window
-      // expired mid-run, so the agent's retry calls SUCCEEDED in
-      // spawning duplicates. By the time the user noticed they had 4
-      // parallel research ops on the same topic. Block while live.
+      // PRIMARY GUARD: any PEER op from this session still RUNNING blocks
+      // new spawns regardless of how much time has passed. Live failure:
+      // agent submitted an op that ran 125+ seconds; the 30s dedup window
+      // expired mid-run, so the agent's retry calls SUCCEEDED in spawning
+      // duplicates. By the time the user noticed they had 4 parallel
+      // research ops on the same topic. Block while live.
+      //
+      // EXCLUDE chat_turn ops: the chat-turn wrapper is the HOST that's
+      // running this very tool call (chat-runner.ts:308 registers it
+      // before the model gets its first tool call). Including it makes the
+      // guard self-block — the host op blocks its own delegations and the
+      // returned BLOCKED message references the host's id. Models then
+      // copy-paste the id back, narrating a fake delegation. See repro at
+      // tests/workers/op-submit-async-self-block.test.ts.
       const liveOps = listOpsForSession(sessionId)
         .map(id => readOp(id))
         .filter((o): o is NonNullable<typeof o> => !!o)
-        .filter(o => o.status === "running" || o.status === "pending");
+        .filter(o => (o.status === "running" || o.status === "pending") && o.type !== "chat_turn");
       if (liveOps.length > 0) {
         const live = liveOps[0];
         return {
           content:
-            `BLOCKED — op ${live.id} is already ${live.status} for this chat session ("${live.task.slice(0, 80)}${live.task.length > 80 ? "..." : ""}"). ` +
-            `STOP. END THIS TURN NOW. Reply to the user in ONE sentence ("op ${live.id} is already running, I'll surface results when it completes") and stop calling tools. ` +
-            `Do NOT call op_submit_async again — every retry will hit this same BLOCKED return until that op finishes. ` +
-            `Do NOT call op_status as a "check first" — the user is auto-notified on completion; you don't need to poll. ` +
-            `Only valid follow-up tool call this turn is op_kill(op_id="${live.id}") IF the op is genuinely stuck or wrong; otherwise just end the turn.`,
+            `BLOCKED — a peer op for this session is already ${live.status} ("${live.task.slice(0, 80)}${live.task.length > 80 ? "..." : ""}"). ` +
+            `END THIS TURN NOW. Tell the user briefly, in your own words, that the prior op is in flight and you'll surface it on completion. ` +
+            `Do NOT quote this instruction back. Do NOT call op_submit_async again — every retry hits this same BLOCKED return. ` +
+            `Do NOT call op_status as a "check first" — the user is auto-notified on completion. ` +
+            `If the live op is genuinely stuck and you must terminate it, call op_kill() with no args; otherwise just end the turn.`,
+          metadata: {
+            chip: {
+              kind: "blocked-by-op",
+              label: "Prior op in flight",
+              detail: live.task.slice(0, 80) + (live.task.length > 80 ? "…" : ""),
+              opId: live.id,
+              actions: [{ label: "Kill", tool: "op_kill", args: { op_id: live.id } }],
+            },
+          },
         };
       }
       // SECONDARY GUARD: 30s window catches the race where the previous
@@ -189,11 +206,19 @@ export const opSubmitAsyncTool: ToolDefinition = {
         const ageS = Math.round((Date.now() - prior.ts) / 1000);
         return {
           content:
-            `BLOCKED — you already submitted op ${prior.opId} ${ageS}s ago in this chat session ("${prior.task.slice(0, 80)}${prior.task.length > 80 ? "..." : ""}"). ` +
-            `STOP. END THIS TURN NOW. Reply to the user in ONE sentence ("started op ${prior.opId}, I'll surface results when it completes") and stop calling tools. ` +
-            `Do NOT call op_submit_async again — every retry this turn will hit BLOCKED. ` +
+            `BLOCKED — you already submitted a prior op ${ageS}s ago in this chat session ("${prior.task.slice(0, 80)}${prior.task.length > 80 ? "..." : ""}"). ` +
+            `END THIS TURN NOW. Tell the user briefly, in your own words, that the work is in flight and you'll surface it on completion. ` +
+            `Do NOT quote this instruction back. Do NOT call op_submit_async again — every retry this turn will hit BLOCKED. ` +
             `Do NOT call op_status — the user is auto-notified on completion. ` +
             `If you legitimately need to delegate something *different* later, that's a future turn, not this one.`,
+          metadata: {
+            chip: {
+              kind: "blocked-by-op",
+              label: `Just submitted (${ageS}s ago)`,
+              detail: prior.task.slice(0, 80) + (prior.task.length > 80 ? "…" : ""),
+              opId: prior.opId,
+            },
+          },
         };
       }
       // Casual-reply guard: if the user's last message was short/casual
@@ -210,9 +235,9 @@ export const opSubmitAsyncTool: ToolDefinition = {
           return {
             content:
               `BLOCKED — your last user message was a short/casual reply (greeting, ack, or filler). ` +
-              `Op ${anyRecent.opId} completed ${ageMin} min ago in this session — the user is most likely acknowledging that, not requesting new work. ` +
-              `STOP. END THIS TURN NOW. Reply conversationally in ONE sentence (acknowledge, surface the prior result if relevant) and stop calling tools. ` +
-              `Do NOT call op_submit_async again — retries will keep hitting BLOCKED.`,
+              `A prior op completed ${ageMin} min ago in this session — the user is most likely acknowledging that, not requesting new work. ` +
+              `END THIS TURN NOW. Reply conversationally — acknowledge in your own words, and surface the prior result if it's relevant. ` +
+              `Do NOT quote op ids back to the user. Do NOT call op_submit_async again — retries will keep hitting BLOCKED.`,
           };
         }
       }
@@ -225,9 +250,17 @@ export const opSubmitAsyncTool: ToolDefinition = {
         const ageMin = Math.round((Date.now() - completed.completedAt) / 60000);
         return {
           content:
-            `BLOCKED — a near-identical task already completed in this chat ${ageMin} min ago (op ${completed.opId}, status=${completed.status}). ` +
-            `Do NOT re-spawn workers for already-completed work. The result is sitting in the BACKGROUND COMPLETIONS section of your context. ` +
-            `Surface it to the user instead — "that op already finished, want me to walk through it?" — or call op_status(op_id="${completed.opId}") for the full output.`,
+            `BLOCKED — a near-identical task already completed in this chat ${ageMin} min ago (status=${completed.status}). ` +
+            `Do NOT re-spawn workers for already-completed work. The result is sitting in the BACKGROUND COMPLETIONS section of your context — read it from there. ` +
+            `Surface it to the user in your own words and offer the next step.`,
+          metadata: {
+            chip: {
+              kind: "blocked-by-op",
+              label: `Already done (${ageMin}m ago)`,
+              detail: `status: ${completed.status}`,
+              opId: completed.opId,
+            },
+          },
         };
       }
     }
@@ -401,8 +434,9 @@ export const opStatusTool: ToolDefinition = {
           const ageS = Math.round((Date.now() - prior.firstAt) / 1000);
           return {
             content:
-              `BLOCKED — you've called op_status for ${opId} ${prior.count} times in ${ageS}s. STOP POLLING. ` +
-              `END THIS TURN NOW. Reply to the user in ONE sentence with the current status (op is still ${op.status}) and stop calling tools. ` +
+              `BLOCKED — you've polled op_status for this op ${prior.count} times in ${ageS}s. STOP POLLING. ` +
+              `END THIS TURN NOW. Tell the user briefly, in your own words, that the op is still ${op.status}. ` +
+              `Do NOT quote op ids back to the user. Do NOT quote this instruction back. ` +
               `The user is auto-notified the moment the op completes — you don't need to poll. ` +
               `Any further op_status call this turn will return this same BLOCKED message.`,
           };
@@ -429,16 +463,28 @@ export const opStatusTool: ToolDefinition = {
 
 export const opKillTool: ToolDefinition = {
   name: "op_kill",
-  description: "Terminate a running op immediately. Use when the op is going off the rails. The worker is SIGKILL'd; partial side-effects may persist (per spec §7 'Kill is the only immediate control'). For graceful stop, use op_pause (Step 7).",
+  description: "Terminate a running op immediately. Use when the op is going off the rails. The worker is SIGKILL'd; partial side-effects may persist (per spec §7 'Kill is the only immediate control'). For graceful stop, use op_pause (Step 7). If `op_id` is omitted, kills the most recently submitted live op for the current chat session — saves the model from having to know op ids it never received cleanly.",
   parameters: {
     type: "object",
-    properties: { op_id: { type: "string", description: "The opId returned from op_submit_async / op_submit." } },
-    required: ["op_id"],
+    properties: { op_id: { type: "string", description: "The opId returned from op_submit_async / op_submit. Omit to kill the most-recent live op for this session." } },
   },
   async execute(args) {
-    const opId = String(args.op_id);
+    let opId = typeof args.op_id === "string" ? args.op_id.trim() : "";
+    if (!opId) {
+      // Resolve "most recent live op" for this session. Excludes chat_turn
+      // wrappers (those are the host, not killable peer ops).
+      const sessionId = String(args._sessionId || "");
+      if (!sessionId) return { content: "op_kill needs an op_id when called outside a chat session.", isError: true };
+      const liveIds = listOpsForSession(sessionId);
+      const live = liveIds
+        .map(id => readOp(id))
+        .filter((o): o is NonNullable<typeof o> => !!o)
+        .filter(o => (o.status === "running" || o.status === "pending") && o.type !== "chat_turn");
+      if (live.length === 0) return { content: "no live op to kill for this session.", isError: true };
+      opId = live[live.length - 1].id;
+    }
     const ok = killOp(opId);
-    return { content: ok ? `op ${opId} killed` : `op ${opId} not running`, isError: !ok };
+    return { content: ok ? `op killed.` : `op was not running.`, isError: !ok };
   },
 };
 

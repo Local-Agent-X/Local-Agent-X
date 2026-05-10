@@ -209,24 +209,24 @@ function onOpEvent(event: OpEvent): void {
       break;
     }
     case "agent_text": {
-      // Agent text events emit `delta` (streaming chunks), not `text`. The old
-      // code read `text` and dropped every event. Read `delta` first, fall back
-      // to `text` for any legacy emitter.
+      // Worker LLM text deltas → worker_stream ONLY. Earlier this also
+      // emitted a bg_op_progress line (same delta, sliced to 200 chars)
+      // which fed the sidebar's "Worker activity" area. With per-token
+      // streaming that meant a long worker reasoning produced thousands
+      // of one-token "activity" lines (3364 in one observed case),
+      // burying the actual tool-call lines and turning the activity
+      // area into a duplicate of the worker text bubble. Activity area
+      // is for tool calls + lifecycle markers; text deltas live in the
+      // worker_stream channel that feeds the worker text bubble.
       const p = event.payload as { delta?: string; text?: string };
       const raw = (p?.delta ?? p?.text ?? "");
-      const trimmed = raw.trim();
-      if (!trimmed) return;
-      line = trimmed.slice(0, 200);
-      // ALSO forward the unmodified delta to the main chat thread as a
-      // worker_stream event. Sidebar gets a one-line summary (above);
-      // chat gets the streaming text deltas accumulated into a worker
-      // bubble. Two channels, same source. Step 1 of JARVIS-mode.
+      if (!raw) return;
       try {
         broadcaster(sessionId, { type: "worker_stream", opId: event.opId, delta: raw });
       } catch (e) {
         logger.warn(`[session-bridge] worker_stream broadcast threw: ${(e as Error).message}`);
       }
-      break;
+      return;
     }
     case "started":
       line = "▶ started";

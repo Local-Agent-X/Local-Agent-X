@@ -349,14 +349,33 @@ export function setupChatWebSocket(server: Server, authToken: string) {
         }
       }
 
-      // Agent redirect: forward to Handler
+      // Agent redirect — route by id prefix (mirrors the agent-control
+      // handler's three-way split below).
+      //   - op_*     → worker-pool op, use pool.redirectOp (cooperative
+      //                inject — worker reads at next safe boundary)
+      //   - agent-*  → legacy Handler.redirectAgent
+      // Live failure before this fix: the handler used Handler unconditionally
+      // for both id shapes. op_* redirects silently no-opped because Handler
+      // doesn't track worker-pool ids — the user typed a redirect, hit Enter,
+      // saw nothing happen, and the worker kept doing the wrong thing.
+      // (Bonus: the previous version also used `require()` in this ESM file,
+      // which throws — every redirect attempt landed in the catch and sent
+      // a generic "Redirect failed" error toast.)
       if (type === "agent-redirect" && msg.agentId && msg.instruction) {
         try {
-          const { Handler } = require("./agency/handler.js");
-          const handler = Handler.getInstance();
-          handler.redirectAgent(String(msg.agentId), String(msg.instruction));
+          const agentId = String(msg.agentId);
+          const instruction = String(msg.instruction);
+          if (agentId.startsWith("op_")) {
+            const { redirectOp } = await import("./workers/pool.js");
+            const ok = redirectOp(agentId, instruction);
+            if (!ok) ws.send(JSON.stringify({ type: "error", message: `Op ${agentId} not running (cannot redirect)` }));
+          } else {
+            const { Handler } = await import("./agency/handler.js");
+            const handler = Handler.getInstance();
+            handler.redirectAgent(agentId, instruction);
+          }
         } catch (e) {
-          ws.send(JSON.stringify({ type: "error", message: `Redirect failed: ${e}` }));
+          ws.send(JSON.stringify({ type: "error", message: `Redirect failed: ${(e as Error).message}` }));
         }
       }
 
@@ -433,7 +452,7 @@ export function setupChatWebSocket(server: Server, authToken: string) {
             }
           } else {
             // Legacy sub-agent — route to Handler
-            const { Handler } = require("./agency/handler.js");
+            const { Handler } = await import("./agency/handler.js");
             const handler = Handler.getInstance();
             switch (msg.action) {
               case "pause":  handler.pauseAgent(agentId); break;

@@ -143,6 +143,36 @@ export interface Session {
 
 // ── Server Types ──
 
+/**
+ * Structured chip a tool can attach to its result so the UI renders an
+ * out-of-band affordance (badge + optional action button) in the agent
+ * panel. The chip carries machine identifiers (op ids) the model never
+ * sees in its text channel — preventing the "model parrots its host op
+ * id back as a fake delegation" failure mode.
+ *
+ * Tools emit a chip by including `metadata.chip: ToolChip` on their
+ * `ToolResult`. The executor harvests it and emits a `tool_chip`
+ * `ServerEvent` alongside the normal `tool_end`. The chat dispatcher
+ * forwards both to SSE/WS; the client renders the chip below the
+ * matching tool card.
+ */
+export interface ToolChip {
+  /** Discriminator. Today: "blocked-by-op". Add new kinds as new affordances. */
+  kind: "blocked-by-op";
+  /** Short human label rendered on the chip ("Prior op in flight"). */
+  label: string;
+  /** Optional one-line subtitle ("yes import them"). Truncated by UI. */
+  detail?: string;
+  /**
+   * Op id this chip refers to. **Server-side only** — used by client to
+   * wire the kill-button to the right op. The model never receives the
+   * chip event; it stays in the `onEvent` channel that flows to the UI.
+   */
+  opId?: string;
+  /** Optional action buttons. UI renders one button per entry. */
+  actions?: Array<{ label: string; tool: string; args?: Record<string, unknown> }>;
+}
+
 export type ServerEvent =
   | { type: "stream"; delta: string }
   | { type: "tool_start"; toolName: string; toolCallId?: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean }
@@ -188,7 +218,15 @@ export type ServerEvent =
   // client sends `{type:"reconnect_op", opId}` over WS and the server
   // replays missed canonical events via `reconnectOp(opId, sinceSeq)`.
   // Stop button → `{type:"cancel_op", opId}` → `opCancel(opId)`.
-  | { type: "chat_op_started"; opId: string };
+  | { type: "chat_op_started"; opId: string }
+  // Out-of-band UI hint emitted by tools that want to surface a structured
+  // affordance (op id, kill button, blocked reason) WITHOUT putting that
+  // info in the model-visible result text. Originally added so BLOCKED
+  // op_submit_async / self_edit results could carry the live op id to the
+  // agent panel as a chip while the model never sees the id (and therefore
+  // can't parrot it back as a fake delegation message — see
+  // tests/op-submit-async-self-block.test.ts).
+  | { type: "tool_chip"; toolCallId?: string; chip: ToolChip };
 
 // ── Auth Types ──
 

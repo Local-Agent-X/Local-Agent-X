@@ -25,12 +25,19 @@ export async function startServer(config: LAXConfig) {
   const { startWorkerPool } = await import("../workers/pool.js");
   const { bootstrapProviderMatrix } = await import("../workers/provider-matrix.js");
   const { initSessionBridge, setSessionPersister } = await import("../workers/session-bridge.js");
+  const { setIdleNudgePersister } = await import("../workers/idle-nudge.js");
   bootstrapProviderMatrix();
   startWorkerPool();
   initSessionBridge();
-  // Persist worker completion ack into session.messages so the chat thread
-  // shows a short "✓ Worker finished" note (full result lives in sidebar).
-  setSessionPersister((sessionId, content) => {
+  // Persist worker completion acks (session-bridge worker-completed path)
+  // AND idle-nudge proactive narrations ("Quick heads up — that op just
+  // finished…") into session.messages. Without persistence the UI shows
+  // the auto-narration but the agent's history doesn't, so a follow-up
+  // user reply like "yes" arrives at the next turn with no antecedent in
+  // context — the agent sees only its prior "Started …" reply and
+  // misinterprets the "yes" as confirming a fresh spawn. Both surfaces
+  // share the same persister shape.
+  const persistAssistant = (sessionId: string, content: string) => {
     try {
       const session = sessionStore.load(sessionId);
       if (!session) return;
@@ -38,7 +45,9 @@ export async function startServer(config: LAXConfig) {
       session.updatedAt = Date.now();
       sessionStore.save(session);
     } catch { /* persister must never break worker completion */ }
-  });
+  };
+  setSessionPersister(persistAssistant);
+  setIdleNudgePersister(persistAssistant);
 
   const tools = await bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir });
   const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef } = tools;

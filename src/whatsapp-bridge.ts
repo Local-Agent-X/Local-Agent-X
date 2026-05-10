@@ -19,7 +19,7 @@ import { mkdirSync, existsSync, rmSync } from "node:fs";
 import QRCode from "qrcode";
 
 import { createLogger } from "./logger.js";
-import { encodeWavToOgg, isFfmpegAvailable, transcribeOggBuffer, getVoicePref } from "./bridge-voice/index.js";
+import { encodeWavToOgg, isFfmpegAvailable, transcribeOggBuffer, getVoicePref, splitForVoiceChunks } from "./bridge-voice/index.js";
 import { synthesize } from "./voice.js";
 const logger = createLogger("whatsapp-bridge");
 
@@ -28,8 +28,27 @@ const logger = createLogger("whatsapp-bridge");
 // /voice toggle. Keyed by phone number (not JID — same person on
 // @lid vs @s.whatsapp.net is the same chat). Cleared in finally.
 const _voiceMirrorForPhone = new Set<string>();
+// Tracks chats we've already told "voice engine is down" so the hint only
+// fires once per server-uptime per phone — avoids spamming every reply
+// when the engine is offline. Resets on server restart so a fresh boot
+// re-arms.
+const _voiceFailHintSentByPhone = new Set<string>();
 
 // ── Types ──
+
+/**
+ * Reply payload returned by `onMessage`. `text` is the channel-formatted
+ * string sent verbatim via `sendMessage` (WhatsApp markdown flavor — escaped
+ * for the wire). `speakable` is the RAW unformatted reply used for TTS;
+ * without this split the TTS path reads bridge-escape characters literally
+ * (Windows SAPI famously narrated the word "backslash" for every Telegram
+ * MarkdownV2 escape). Bridges fall back to `text` when `speakable` is
+ * absent so legacy / synchronous-string returns still work.
+ */
+export interface BridgeReply {
+  text: string;
+  speakable?: string;
+}
 
 export interface WhatsAppBridgeConfig {
   dataDir: string;  // ~/.sax — session auth persisted here
@@ -38,7 +57,7 @@ export interface WhatsAppBridgeConfig {
     name: string;
     text: string;
     sessionId: string;
-  }) => Promise<string>;
+  }) => Promise<string | BridgeReply>;
 }
 
 type ConnectionState = "disconnected" | "connecting" | "qr" | "connected";
@@ -487,7 +506,10 @@ export class WhatsAppBridge {
         this.processingLock.add(phone);
         replyingTo.add(replyJid);
         try {
-          const reply = await this.onMessage({ from: phone, name, text: sanitizedText, sessionId });
+          const replyRaw = await this.onMessage({ from: phone, name, text: sanitizedText, sessionId });
+          const reply = !replyRaw ? null
+            : typeof replyRaw === "string" ? { text: replyRaw, speakable: replyRaw }
+            : { text: replyRaw.text, speakable: replyRaw.speakable ?? replyRaw.text };
           if (reply) {
             await this.dispatchReplyToJid(replyJid, phone, reply);
           }
@@ -543,45 +565,51 @@ export class WhatsAppBridge {
    * Any TTS / encode / sendVoice failure falls back to text so the user
    * always receives the reply.
    */
-  private async dispatchReplyToJid(jid: string, phone: string, reply: string): Promise<void> {
+  private async dispatchReplyToJid(jid: string, phone: string, reply: { text: string; speakable: string }): Promise<void> {
+    const { text: textForWire, speakable } = reply;
     const wantVoice = getVoicePref("whatsapp", phone) || _voiceMirrorForPhone.has(phone);
     if (!wantVoice) {
-      await this.sendToJid(jid, reply);
+      await this.sendToJid(jid, textForWire);
       return;
     }
+
+    const sendWithHintOnce = async (text: string, hint: string) => {
+      if (_voiceFailHintSentByPhone.has(phone)) {
+        await this.sendToJid(jid, text);
+        return;
+      }
+      _voiceFailHintSentByPhone.add(phone);
+      await this.sendToJid(jid, `${text}\n\n— ${hint}`);
+    };
 
     if (!(await isFfmpegAvailable())) {
       logger.warn("[whatsapp] voice reply requested but ffmpeg unavailable — sending text");
-      await this.sendToJid(jid, reply);
+      await sendWithHintOnce(textForWire, "Voice replies need ffmpeg installed on the server. Falling back to text until that's fixed.");
       return;
     }
 
-    const VOICE_MAX = 800;
-    let toSpeak = reply;
-    let sendTextFollowup = false;
-    if (reply.length > VOICE_MAX) {
-      const m = reply.match(/^[\s\S]*?[.!?](?:\s|$)/);
-      toSpeak = m ? m[0].trim() : reply.slice(0, VOICE_MAX);
-      sendTextFollowup = true;
-    }
-
-    try {
-      const wav = await synthesize(toSpeak);
-      const ogg = await encodeWavToOgg(wav);
-      const ok = await this.sendVoiceToJid(jid, ogg);
-      if (!ok) {
-        logger.warn("[whatsapp] sendVoice returned false — falling back to text");
-        await this.sendToJid(jid, reply);
-        return;
+    // Chunk on paragraph/sentence boundaries; send each as its own voice
+    // note. Replaces the prior "first sentence audio + rest as text" which
+    // broke the "transcribe this report so I can listen" intent. WhatsApp
+    // voice notes cap around 16MB (~15 min Opus) but per-note is more
+    // reliable when chunked smaller (~2-3 min each).
+    const chunks = splitForVoiceChunks(speakable, 3000);
+    let anySent = false;
+    for (const chunk of chunks) {
+      try {
+        const wav = await synthesize(chunk);
+        const ogg = await encodeWavToOgg(wav);
+        const ok = await this.sendVoiceToJid(jid, ogg);
+        if (ok) { anySent = true; continue; }
+        logger.warn("[whatsapp] sendVoice returned false on chunk — bailing to text fallback");
+        break;
+      } catch (e) {
+        logger.warn(`[whatsapp] voice synthesis failed on chunk: ${(e as Error).message} — bailing to text fallback`);
+        break;
       }
-    } catch (e) {
-      logger.warn(`[whatsapp] voice synthesis failed: ${(e as Error).message} — falling back to text`);
-      await this.sendToJid(jid, reply);
-      return;
     }
-
-    if (sendTextFollowup) {
-      await this.sendToJid(jid, reply);
+    if (!anySent) {
+      await sendWithHintOnce(textForWire, "Voice engine isn't reachable. Send /voice start lite to bring one up (cold start ~90-120s), then try again.");
     }
   }
 

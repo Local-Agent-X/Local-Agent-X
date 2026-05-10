@@ -103,6 +103,14 @@ function cleanForTTS(text: string): string {
   clean = clean.replace(/\[.*?\]\(.*?\)/g, "");                  // markdown links
   clean = clean.replace(/\[\[.*?\]\]/g, "");                      // tags
   clean = clean.replace(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF\u23E9-\u23FA]+/gu, ""); // emojis
+  // Strip backslash escapes BEFORE the markdown-char strip below. The
+  // bridge formatter (Telegram MarkdownV2) escapes specials with `\` \u2014
+  // `\.`, `\!`, `\_`, `\(` etc. \u2014 and SAPI reads each backslash as the
+  // literal word "backslash" ("loud and clear backslash"). The next-line
+  // strip removes the underscore/star/etc., but NOT the leading backslash.
+  // Drop all backslashes here so the special char that follows gets
+  // pronounced naturally (or stripped by the markdown-char rule next).
+  clean = clean.replace(/\\/g, "");                               // backslash escapes
   clean = clean.replace(/[*_`#~>]/g, "");                        // markdown formatting
   clean = clean.replace(/[—–]/g, ", ");                            // dashes → pause
   clean = clean.replace(/\b\d{4,}\b/g, "");                       // long numbers (ports, IDs)
@@ -267,20 +275,150 @@ export function synthesizePiper(text: string): Buffer {
 /**
  * Synthesize text to speech using best available engine.
  */
+/**
+ * Probe an HTTP voice sidecar's /healthz, list its first available clone,
+ * and POST text to /clones/{id}/synth. Returns WAV bytes on success or
+ * null if the sidecar is unreachable / has no clones / synth fails.
+ *
+ * Used by `synthesize()` so bridges (Telegram, WhatsApp) can hit Chatterbox
+ * or SoVITS without going through Lite's WebSocket — Lite is WS-only and
+ * server-to-server audio over WS is overkill for a one-shot text-to-WAV
+ * call. Probing direct gives bridges a real WAV buffer or a clear "no
+ * engine reachable" log line.
+ */
+async function trySidecarSynth(port: number, tierLabel: string, text: string): Promise<Buffer | null> {
+  try {
+    const health = await fetch(`http://127.0.0.1:${port}/healthz`, { signal: AbortSignal.timeout(1500) });
+    if (!health.ok) {
+      logger.info(`[synthesize] ${tierLabel} :${port} health not ok (${health.status})`);
+      return null;
+    }
+  } catch (e) {
+    logger.info(`[synthesize] ${tierLabel} :${port} unreachable (${(e as Error).message})`);
+    return null;
+  }
+  // Clone list. Both sidecars expose `{clones: [{id, name, ...}]}`.
+  let cloneId: string | null = null;
+  try {
+    const list = await fetch(`http://127.0.0.1:${port}/clones`, { signal: AbortSignal.timeout(2000) });
+    if (!list.ok) {
+      logger.info(`[synthesize] ${tierLabel} /clones returned ${list.status}`);
+      return null;
+    }
+    const data = await list.json() as { clones?: Array<{ id?: string }> };
+    const first = (data.clones ?? []).find(c => typeof c.id === "string");
+    if (!first?.id) {
+      logger.info(`[synthesize] ${tierLabel} :${port} has no clones — skipping (clone-only sidecar)`);
+      return null;
+    }
+    cloneId = first.id;
+  } catch (e) {
+    logger.warn(`[synthesize] ${tierLabel} /clones threw: ${(e as Error).message}`);
+    return null;
+  }
+  // Synth.
+  try {
+    const t0 = Date.now();
+    const r = await fetch(`http://127.0.0.1:${port}/clones/${encodeURIComponent(cloneId)}/synth`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!r.ok) {
+      logger.warn(`[synthesize] ${tierLabel} /synth returned ${r.status}`);
+      return null;
+    }
+    const ab = await r.arrayBuffer();
+    const buf = Buffer.from(ab);
+    logger.info(`[synthesize] ${tierLabel} clone=${cloneId} bytes=${buf.length} in ${Date.now() - t0}ms`);
+    return buf.length > 0 ? buf : null;
+  } catch (e) {
+    logger.warn(`[synthesize] ${tierLabel} /synth threw: ${(e as Error).message}`);
+    return null;
+  }
+}
+
 export async function synthesize(
   text: string,
   voice?: string,
   speed?: number
 ): Promise<Buffer> {
-  const caps = await detectCapabilities();
+  // Try clone-based sidecars first (Studio Chatterbox at 7010, then SoVITS at
+  // 7009). Both run server-side, both produce WAV. Bridges (Telegram/WhatsApp)
+  // can ONLY use server-side TTS — there's no browser to run window.speech-
+  // Synthesis on the user's behalf. The previous version checked only local
+  // Kokoro/Piper binary installs and silently returned empty when neither was
+  // present, which made bridge voice replies always fall back to text even
+  // when the Studio sidecar was running for the web chat.
+  const cbPort = Number(process.env.LAX_CHATTERBOX_PORT) || 7010;
+  const svPort = Number(process.env.LAX_SOVITS_PORT) || 7009;
+  const cb = await trySidecarSynth(cbPort, "chatterbox", text);
+  if (cb) return cb;
+  const sv = await trySidecarSynth(svPort, "sovits", text);
+  if (sv) return sv;
 
+  // Fall through to local-binary engines.
+  const caps = await detectCapabilities();
+  logger.info(`[synthesize] sidecars unavailable, caps.tts=${caps.tts}`);
   if (caps.tts === "kokoro") {
     return synthesizeKokoro(text, voice || "am_onyx", speed || 0.95);
   }
   if (caps.tts === "piper") {
     return synthesizePiper(text);
   }
+  // Final fallback: Windows SAPI (System.Speech.Synthesis). Built into every
+  // Windows box — no install, no model files, no Python. Robotic 2003-era
+  // voice but it ALWAYS works as long as we're on Windows. Better than the
+  // bridge silently dropping to text. Skipped on non-Windows.
+  if (process.platform === "win32") {
+    const sapi = synthesizeWinSapi(text);
+    if (sapi.length > 0) return sapi;
+  }
+  logger.warn(`[synthesize] no TTS engine reachable — returning empty buffer (caller will fall back to text)`);
   return Buffer.alloc(0);
+}
+
+/**
+ * Windows SAPI fallback (System.Speech.Synthesis.SpeechSynthesizer).
+ * Synchronous — produces a 16kHz/mono/PCM WAV via PowerShell. Quality is
+ * low (robotic, classic Windows narrator-tier voice) but works zero-install
+ * on every Windows box, which makes it the right "always-available" floor
+ * for bridge voice replies when no real engine is up.
+ */
+function synthesizeWinSapi(text: string): Buffer {
+  const clean = cleanForTTS(text);
+  if (!clean) return Buffer.alloc(0);
+  const outPath = tmpPath("wav");
+  // Single-quote escaping for PowerShell literal: '' inside ' '.
+  const escaped = clean.replace(/'/g, "''");
+  const ps = `
+Add-Type -AssemblyName System.Speech
+$s = New-Object System.Speech.Synthesis.SpeechSynthesizer
+$s.SetOutputToWaveFile('${outPath.replace(/\\/g, "\\\\")}')
+$s.Speak('${escaped}')
+$s.Dispose()
+`.trim();
+  const scriptPath = join(TMP_DIR, `sapi_${randomBytes(6).toString("hex")}.ps1`);
+  try {
+    writeFileSync(scriptPath, ps, "utf-8");
+    try {
+      execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath], {
+        timeout: 30_000, stdio: "ignore", windowsHide: true,
+      });
+    } finally { try { unlinkSync(scriptPath); } catch {} }
+    if (existsSync(outPath)) {
+      const buf = readFileSync(outPath);
+      logger.info(`[synthesize] win-sapi bytes=${buf.length}`);
+      return buf;
+    }
+    return Buffer.alloc(0);
+  } catch (e) {
+    logger.warn(`[synthesize] win-sapi failed: ${(e as Error).message}`);
+    return Buffer.alloc(0);
+  } finally {
+    try { unlinkSync(outPath); } catch {}
+  }
 }
 
 // ── Feature 17: Continuous Listening with VAD ──

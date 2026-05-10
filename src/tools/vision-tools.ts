@@ -1,6 +1,9 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ToolDefinition } from "../types.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("tools.vision");
 
 export const viewImageTool: ToolDefinition = {
   name: "view_image",
@@ -58,13 +61,13 @@ export const screenCaptureTool: ToolDefinition = {
   parameters: {
     type: "object",
     properties: {
-      monitor: { type: "number", description: "Monitor index, 0-based. 0 = first detected, 1 = second, etc. The PRIMARY display is not always index 0 — call list_monitors first to see which index is primary and which physical screen each index maps to. OMIT this field to capture the primary display by default." },
+      monitor: { type: "number", description: "Monitor index, 0-BASED. CRITICAL: when the user says 'monitor 1' / 'first monitor' they mean index 0; 'monitor 2' / 'second monitor' = index 1. ALWAYS subtract 1 from the user's natural-language number. The PRIMARY display is not always index 0 — call list_monitors first to see which index is primary and which physical screen each index maps to. OMIT this field to capture the primary display by default." },
       region: {
         type: "object",
-        description: "ADVANCED: capture a sub-region of the screen. OMIT this entirely for a full-screen capture. Do NOT include this field with zeros or placeholder values — only include it when the user explicitly wants a specific rectangle. width and height MUST both be > 0 if provided.",
+        description: "ADVANCED — almost never needed. OMIT this field for a full-screen capture (which is what the user wants 99% of the time). When present, captures a sub-rectangle. Coords are RELATIVE to the chosen `monitor`'s top-left (NOT global virtual-screen coords). If `monitor` is omitted, region is relative to the primary screen. Do NOT include this field with zeros, placeholders, or values that span the whole screen — those are signs you should be omitting it. width and height MUST both be > 0 if provided.",
         properties: {
-          x: { type: "number", description: "Left edge in pixels" },
-          y: { type: "number", description: "Top edge in pixels" },
+          x: { type: "number", description: "Left edge in pixels, relative to the chosen monitor" },
+          y: { type: "number", description: "Top edge in pixels, relative to the chosen monitor" },
           width: { type: "number", description: "Region width in pixels (must be > 0)" },
           height: { type: "number", description: "Region height in pixels (must be > 0)" },
         },
@@ -77,19 +80,49 @@ export const screenCaptureTool: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const { captureScreen } = await import("../screen-capture.js");
+      const { captureScreen, listMonitors } = await import("../screen-capture.js");
       const scale = Math.min(1, Math.max(0.1, Number(args.scale) || 0.5));
+      const monitorArg = args.monitor != null ? Number(args.monitor) : undefined;
+      logger.info(`[screen_capture] monitor=${monitorArg ?? "<primary>"} scale=${scale} region=${args.region ? "set" : "none"}`);
       const result = captureScreen({
-        monitor: args.monitor != null ? Number(args.monitor) : undefined,
+        monitor: monitorArg,
         region: args.region as any,
         format: "jpg",
         quality: 80,
         scale,
       });
+      // Resolve which monitor was actually captured. listMonitors() so the
+      // tool result tells the agent which physical screen it just saw + the
+      // full list of OTHER monitors available — without this metadata the
+      // agent has no way to know whether monitor=0 was the laptop screen
+      // or the external display, and on subsequent "show me the OTHER
+      // monitor" requests it has to guess. The WhatsApp-vs-Telegram bug
+      // ("WhatsApp shows the same image for monitor 1 vs 2") was the
+      // agent guessing wrong because there was no monitor context in the
+      // tool result. Telegram only worked because earlier turns had
+      // accumulated list_monitors output in conversation history; a fresh
+      // WhatsApp session lacked that context.
+      let captureMeta = "";
+      try {
+        const monitors = listMonitors();
+        const captured = (monitorArg != null)
+          ? monitors.find(m => m.index === monitorArg)
+          : monitors.find(m => m.primary);
+        if (captured) {
+          captureMeta = `Captured Monitor ${captured.index + 1} (tool index=${captured.index}) — ${captured.name}${captured.primary ? " (PRIMARY)" : ""} ${captured.width}x${captured.height}.`;
+        }
+        if (monitors.length > 1) {
+          const others = monitors
+            .filter(m => m.index !== captured?.index)
+            .map(m => `Monitor ${m.index + 1} (tool index=${m.index}): ${m.name}${m.primary ? " (primary)" : ""} ${m.width}x${m.height}`)
+            .join("; ");
+          if (others) captureMeta += ` Other monitors: ${others}.`;
+        }
+      } catch { /* metadata is best-effort — never break the capture */ }
       const b64 = result.image.toString("base64");
       const question = String(args.question || "Describe what's on the screen.");
       return {
-        content: `[IMAGE:image/jpeg:${b64.slice(0, 100)}...${b64.length} bytes]\nScreen capture: ${result.width}x${result.height}\nQuestion: ${question}\n\nPlease analyze this screenshot.`,
+        content: `[IMAGE:image/jpeg:${b64.slice(0, 100)}...${b64.length} bytes]\n${captureMeta}\nScreen capture: ${result.width}x${result.height}\nQuestion: ${question}\n\nPlease analyze this screenshot.`,
         _image: { mime: "image/jpeg", b64, path: "screen-capture", question },
       } as any;
     } catch (e) {
@@ -101,20 +134,31 @@ export const screenCaptureTool: ToolDefinition = {
 export const listMonitorsTool: ToolDefinition = {
   name: "list_monitors",
   description:
-    "List physical monitors connected to the user's machine. Returns each monitor's 0-based " +
-    "index, device name, resolution, and whether it's the primary. Call this BEFORE screen_capture " +
-    "when the user references a non-primary display (e.g. 'second screen', 'my laptop', 'other monitor') " +
-    "so you know which `monitor` index to target.",
+    "List physical monitors connected to the user's machine. Returns each monitor with both " +
+    "its user-facing label ('Monitor 1', 'Monitor 2') AND its 0-based tool index. Call this " +
+    "BEFORE screen_capture when the user references a non-primary display (e.g. 'second screen', " +
+    "'my laptop', 'other monitor') so you know which 0-based `monitor` index to target.",
   parameters: { type: "object", properties: {}, required: [] },
   async execute() {
     try {
       const { listMonitors } = await import("../screen-capture.js");
       const monitors = listMonitors();
       if (monitors.length === 0) return { content: "No monitors detected." };
+      // Show BOTH the 1-based label users say in natural language AND the
+      // 0-based index the tool wants. Without the dual labeling the agent
+      // routinely passed `monitor=1` for "monitor 1" and got monitor index
+      // 1 (the second physical screen) instead of index 0 — the visible
+      // failure was "asked for monitor 1, got monitor 2" until the user
+      // realized they needed to subtract 1.
       const lines = monitors.map(m =>
-        `${m.index}: ${m.name} — ${m.width}x${m.height}${m.primary ? " (PRIMARY)" : ""}`
+        `Monitor ${m.index + 1} (tool index=${m.index}): ${m.name} — ${m.width}x${m.height}${m.primary ? " (PRIMARY)" : ""}`
       );
-      return { content: `Monitors (${monitors.length}):\n${lines.join("\n")}` };
+      return {
+        content:
+          `Monitors (${monitors.length}):\n${lines.join("\n")}\n\n` +
+          `When passing the \`monitor\` arg to screen_capture, use the 0-based "tool index" above. ` +
+          `User says "monitor 1" → pass \`monitor: 0\`. User says "monitor 2" → pass \`monitor: 1\`.`,
+      };
     } catch (e) {
       return { content: `list_monitors failed: ${(e as Error).message}`, isError: true };
     }

@@ -1,0 +1,228 @@
+// ── Chat: Dictate mode ──
+//
+// Speech-to-text only path. Native browser SpeechRecognition; no LLM, no TTS.
+// Drops Whisper-equivalent transcripts into the message textarea so the
+// user can review and send manually. Mutually exclusive with full voice
+// mode — toggleMic / toggleDictate stop each other.
+//
+// State (dictateMode, dictateSR, dictateMicStream, dictateCtx,
+// dictateRestartGuard) lives in chat-voice.js so the kernel/voice-mic
+// path can read it without circular deps. References resolve via the
+// shared script-global lexical environment of classic <script> tags.
+//
+// External deps: VoiceSphere (voice-sphere.js), apiFetch / esc (shared.js).
+
+// ── Dictate mode ──
+// Speech-to-text only — pipes Whisper finals into the message textarea so
+// the user can review and send manually. No agent reply, no TTS playback.
+// Reuses the voice WS, mic-capture worklet, and sphere visualization, but
+// short-circuits the agent_start / assistant_delta event flow on the client.
+// A pending server-side `mode: "dictate"` flag would let us skip TTS init
+// entirely (~80MB Kokoro download); for v1 the model loads but never fires
+// because we don't auto-submit transcripts.
+
+async function toggleDictate() {
+  if (dictateMode) { stopDictate(); }
+  else {
+    if (voiceMode) stopVoiceMode();   // mutex: only one mic mode at a time
+    await startDictate();
+  }
+}
+
+async function startDictate() {
+  if (dictateMode) return;
+  // Browser SpeechRecognition is the right tool for one-shot dictation:
+  // instant-on, native streaming partials, no model download, no WebSocket.
+  // Quality is roughly base.en-equivalent (~3-5% WER). If unavailable
+  // (Firefox/Safari without webkit prefix) we'd fall back to the WS
+  // pipeline, but Chrome/Edge cover the vast majority of users.
+  // Browser support summary (last verified: 2026-05):
+  //   Chrome / Edge / Brave / Opera (desktop + Android) → works (Google cloud ASR)
+  //   Safari (macOS 14.1+ / iOS 14.5+)                  → works (webkitSpeechRecognition prefix; Apple on-device ASR on newer hardware)
+  //   Firefox                                          → flag-gated, disabled by default
+  //
+  // For Firefox / unsupported browsers we tell the user how to recover
+  // (switch browser, or use Voice Mode which goes through the local
+  // Whisper WS pipeline and works everywhere).
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    alert(
+      "Dictation isn't supported in this browser.\n\n" +
+      "Works in Chrome, Edge, Brave, Opera, and Safari (Mac 14.1+ / iOS 14.5+).\n" +
+      "Doesn't work in Firefox (disabled by default).\n\n" +
+      "Two fallbacks:\n" +
+      "  1. Switch to a Chromium-based browser, or\n" +
+      "  2. Use Voice Mode (the 🎤 button) which uses the local Whisper pipeline and works everywhere.",
+    );
+    return;
+  }
+  try {
+    dictateMode = true;
+    dictateRestartGuard = false;
+
+    // Mic stream for sphere visualization. Browser SR opens its own mic
+    // session internally (we don't get its audio) — this getUserMedia is
+    // ONLY for the AnalyserNode that drives the dust particle reactions.
+    // Cheap; same permission prompt as voice mode.
+    try {
+      dictateMicStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      });
+      dictateCtx = new AudioContext();
+      const source = dictateCtx.createMediaStreamSource(dictateMicStream);
+      if (window.VoiceSphere) {
+        const ana = dictateCtx.createAnalyser();
+        ana.fftSize = 2048;
+        source.connect(ana);
+        const savedMode = localStorage.getItem('lax_voice_view_mode') || 'split';
+        VoiceSphere.show(savedMode);
+        VoiceSphere.attachMicAnalyser(ana);
+        VoiceSphere.setState('listening');
+      }
+    } catch (sphereErr) {
+      // Sphere is decoration — keep going if mic-for-visuals fails.
+      console.warn('[dictate] sphere mic init failed (continuing without visualization):', sphereErr);
+    }
+
+    // SpeechRecognition itself
+    dictateSR = new SR();
+    dictateSR.continuous = true;       // mic stays hot until user stops
+    dictateSR.interimResults = true;   // live streaming partials
+    dictateSR.lang = navigator.language || 'en-US';
+    dictateSR.maxAlternatives = 1;
+
+    dictateSR.onresult = (event) => {
+      const preview = document.getElementById('dictate-preview');
+      let interim = '';
+      // Walk new results since last event. Final results commit to the
+      // textarea via appendDictatedText (handles capitalize + period join).
+      // Interim results stack into the preview row below the textarea.
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const transcript = result[0].transcript;
+        if (result.isFinal) {
+          appendDictatedText(transcript);
+        } else {
+          interim += transcript;
+        }
+      }
+      if (preview) {
+        preview.textContent = interim;
+        preview.style.display = interim ? 'block' : 'none';
+      }
+    };
+
+    dictateSR.onerror = (event) => {
+      console.warn('[dictate] SR error:', event.error, event.message || '');
+      // Non-fatal errors: 'no-speech', 'audio-capture' (transient mic glitch),
+      // 'aborted' (we stopped it). Fatal: 'not-allowed' (mic permission denied).
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        alert('Mic permission denied. Allow microphone access for dictation.');
+        stopDictate();
+      }
+    };
+
+    dictateSR.onend = () => {
+      // SR auto-stops after silence on some browsers even with continuous=true.
+      // Restart it so the mic stays hot until the user explicitly stops.
+      if (dictateMode && !dictateRestartGuard) {
+        try { dictateSR.start(); } catch {} // already-started errors are fine
+      }
+    };
+
+    dictateSR.start();
+    updateDictateUI();
+    // Focus the textarea so Enter routes through handleInputKeydown
+    // (stops dictation) instead of triggering the dictate-btn click again.
+    // Without this the user's Enter could hit whatever element had focus
+    // when they clicked the button.
+    document.getElementById('msg-input')?.focus();
+    console.log('[dictate] started (browser SpeechRecognition)');
+  } catch (e) {
+    console.error('[dictate] start failed:', e);
+    dictateMode = false;
+    cleanupDictateResources();
+    alert('Could not start dictation: ' + (e?.message || e));
+  }
+}
+
+function stopDictate() {
+  if (!dictateMode) return;
+  dictateMode = false;
+  dictateRestartGuard = true; // block onend from auto-restarting
+  cleanupDictateResources();
+  const preview = document.getElementById('dictate-preview');
+  if (preview) { preview.textContent = ''; preview.style.display = 'none'; }
+  updateDictateUI();
+  // Cursor back to the textarea + caret at end so the next Enter sends
+  // the dictated message instead of falling through to nothing.
+  const ta = document.getElementById('msg-input');
+  if (ta) {
+    ta.focus();
+    const len = ta.value.length;
+    try { ta.setSelectionRange(len, len); } catch {}
+  }
+  console.log('[dictate] stopped');
+}
+
+function cleanupDictateResources() {
+  try { dictateSR && dictateSR.stop(); } catch {}
+  dictateSR = null;
+  try { dictateMicStream && dictateMicStream.getTracks().forEach(t => t.stop()); } catch {}
+  dictateMicStream = null;
+  try { dictateCtx && dictateCtx.close(); } catch {}
+  dictateCtx = null;
+  if (window.VoiceSphere) { try { VoiceSphere.hide(); } catch {} }
+}
+
+function updateDictateUI() {
+  const btn = document.getElementById('dictate-btn');
+  if (!btn) return;
+  if (dictateMode) {
+    btn.classList.add('dictating');
+    btn.title = 'Stop dictation (or press Enter)';
+  } else {
+    btn.classList.remove('dictating');
+    btn.title = 'Dictate (speech to text only — no agent reply)';
+  }
+}
+
+// Append a Whisper-finalized utterance into the message textarea with
+// dumb multi-sentence joining: space + capitalize next + add terminal
+// punctuation if missing. Whisper does intra-utterance punctuation well;
+// cross-utterance is best-effort. User edits before sending = safety net.
+function appendDictatedText(utterance) {
+  const ta = document.getElementById('msg-input');
+  if (!ta || !utterance) return;
+  let text = utterance.trim();
+  if (!text) return;
+  const existing = ta.value;
+  if (existing.length === 0) {
+    // First utterance — capitalize first character if it isn't already.
+    text = text.charAt(0).toUpperCase() + text.slice(1);
+    ta.value = text;
+  } else {
+    // Continuation — ensure prior text terminates, then capitalize new.
+    const lastChar = existing.charAt(existing.length - 1);
+    const needsTerminator = !/[.!?,;:]/.test(lastChar);
+    const sep = needsTerminator ? '. ' : ' ';
+    const cap = text.charAt(0).toUpperCase() + text.slice(1);
+    ta.value = existing + sep + cap;
+  }
+  // Auto-grow + scroll to end so the user sees what just landed.
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  ta.scrollTop = ta.scrollHeight;
+  // Clear preview row — that partial is now committed above.
+  const preview = document.getElementById('dictate-preview');
+  if (preview) preview.textContent = '';
+}
+
+// Centralized textarea Enter handler. Dictate mode steals Enter for stop;
+// otherwise normal send. Shift-Enter always inserts a newline (textarea default).
+function handleInputKeydown(event) {
+  if (event.key !== 'Enter' || event.shiftKey) return;
+  event.preventDefault();
+  if (dictateMode) { stopDictate(); }
+  else { sendMessage(); }
+}
+

@@ -283,9 +283,16 @@ export const selfEditTool: ToolDefinition = {
         return {
           content:
             `BLOCKED — a self_edit is already running for this chat session ("${live.task.slice(0, 80)}${live.task.length > 80 ? "..." : ""}") — started ${ageS}s ago. ` +
-            `STOP. END THIS TURN NOW. Reply to the user in ONE sentence ("self_edit is in flight, I'll surface results when it completes") and stop calling tools. ` +
-            `Do NOT call self_edit again — every retry will hit this same BLOCKED return until the live call finishes. ` +
+            `END THIS TURN NOW. Tell the user briefly, in your own words, that the self_edit is in flight and you'll surface it on completion. ` +
+            `Do NOT quote this instruction back. Do NOT call self_edit again — every retry will hit this same BLOCKED return until the live call finishes. ` +
             `Parallel self_edits create overlapping worktree branches that you'd then have to reconcile by hand — that's why this is hard-blocked.`,
+          metadata: {
+            chip: {
+              kind: "blocked-by-op",
+              label: `self_edit in flight (${ageS}s)`,
+              detail: live.task.slice(0, 80) + (live.task.length > 80 ? "…" : ""),
+            },
+          },
         };
       }
       ACTIVE_SELF_EDITS.set(sessionId, { task, startedAt: Date.now() });

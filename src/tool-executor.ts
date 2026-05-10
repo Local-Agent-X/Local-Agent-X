@@ -671,6 +671,16 @@ async function executeSingleTool(
 
   onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed });
 
+  // Harvest a structured chip if the tool attached one to metadata. Stays
+  // in the onEvent channel — the model's tool_result message body
+  // (`renderToolResultForModel(result)` below) is built from `result.content`
+  // only and never sees the chip. See ToolChip docstring in src/types.ts
+  // for why op ids must NOT round-trip through the model's text channel.
+  const chip = (result.metadata as { chip?: import("./types.js").ToolChip } | undefined)?.chip;
+  if (chip && onEvent) {
+    onEvent({ type: "tool_chip", toolCallId: tc.id, chip });
+  }
+
   const imageData = (result as ToolResultWithImage)._image;
   if (imageData) {
     msgs.push({ role: "tool", tool_call_id: tc.id, content: `Image loaded: ${imageData.path}\nQuestion: ${imageData.question}` } as ChatCompletionMessageParam);

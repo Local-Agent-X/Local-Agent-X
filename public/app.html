@@ -912,9 +912,50 @@
 <script type="module" src="/js/voice-sphere.js?v=vb6"></script>
 <script src="/js/voice/hotkey-capture.js?v=v1"></script>
 <script src="/js/voice/push-to-talk.js?v=v1"></script>
-<script src="/js/chat.js?v=vc9"></script>
+<!-- chat.js modules — load BEFORE chat.js so its call sites see the
+     extracted helpers (toolSummary, makeApprovalCard, addAgentFeed, …).
+     Inverse direction (chat.js helpers like sendChatWsControl) resolves at
+     runtime via the shared classic-script global lexical environment. -->
+<script src="/js/chat-tool-cards.js?v=v1"></script>
+<script src="/js/chat-agent-feeds.js?v=v1"></script>
+<script src="/js/chat-status-bar.js?v=v1"></script>
+<script src="/js/chat-voice-modal-train.js?v=v1"></script>
+<script src="/js/chat-voice-modal-chatterbox.js?v=v1"></script>
+<script src="/js/chat-voice-modal-manage.js?v=v1"></script>
+<script src="/js/chat-voice-modals.js?v=v2"></script>
+<script src="/js/chat-voice.js?v=v2"></script>
+<script src="/js/chat-dictate.js?v=v1"></script>
+<script src="/js/chat-voice-mic.js?v=v1"></script>
+<script src="/js/chat-voice-ws-handler.js?v=v1"></script>
+<script src="/js/chat-voice-tts.js?v=v1"></script>
+<script src="/js/chat-voice-ui.js?v=v1"></script>
+<script src="/js/chat-extras.js?v=v1"></script>
+<script src="/js/chat-helpers.js?v=v1"></script>
+<script src="/js/chat-ws.js?v=v1"></script>
+<script src="/js/chat-render.js?v=v1"></script>
+<script src="/js/chat-send.js?v=v1"></script>
+<script src="/js/chat-uploads.js?v=v1"></script>
+<script src="/js/chat.js?v=vd3"></script>
 <script src="/js/secret-modal.js?v=v1"></script>
-<script src="/js/settings.js?v=vb2"></script>
+<!-- settings.js modules — load BEFORE settings.js for the same reason. -->
+<script src="/js/settings-whatsapp.js?v=v1"></script>
+<script src="/js/settings-telegram.js?v=v1"></script>
+<script src="/js/settings-onboarding.js?v=v1"></script>
+<script src="/js/settings-anthropic.js?v=v1"></script>
+<script src="/js/settings-providers.js?v=v1"></script>
+<script src="/js/settings-ollama.js?v=v1"></script>
+<script src="/js/settings-save-load.js?v=v1"></script>
+<script src="/js/settings-voice-tier4.js?v=v1"></script>
+<script src="/js/settings-embedding.js?v=v1"></script>
+<script src="/js/settings-conversation-ingest.js?v=v1"></script>
+<script src="/js/settings-tts.js?v=v1"></script>
+<script src="/js/settings-agent-sync.js?v=v1"></script>
+<script src="/js/settings-file-access.js?v=v1"></script>
+<script src="/js/settings-search.js?v=v1"></script>
+<script src="/js/settings-integrations.js?v=v1"></script>
+<script src="/js/settings-import-export.js?v=v1"></script>
+<script src="/js/settings-voice-engines.js?v=v1"></script>
+<script src="/js/settings.js?v=vc0"></script>
 <script src="/js/voice-picker-catalog.js?v=v2"></script>
 <script src="/js/voice-picker.js?v=v6"></script>
 <script src="/js/secrets.js"></script>

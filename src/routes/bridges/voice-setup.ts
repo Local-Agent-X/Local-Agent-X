@@ -108,6 +108,40 @@ const tierById = (id: string) => TIERS.find(t => t.id === id);
 // ── Process tracking ────────────────────────────────────────────────────────
 const running: Map<string, ChildProcess> = new Map();
 
+/**
+ * Start one tier's sidecar and block until /healthz reports OK or the
+ * 3-min deadline passes. Returns true on healthy start, false on timeout.
+ * Extracted from the start-route handler so it can be reused as a prereq
+ * step (Studio / SoVITS auto-start Lite first).
+ */
+async function startTierAndWait(tier: VoiceTier): Promise<boolean> {
+  killTier(tier.id);
+  const cmd = tier.startCmd();
+  logger.info(`[voice-setup] Starting ${tier.id}: ${cmd.command} ${cmd.args.join(" ")}`);
+  const proc = spawn(cmd.command, cmd.args, {
+    cwd: cmd.cwd,
+    env: cmd.env,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: false,
+    windowsHide: true,
+  });
+  running.set(tier.id, proc);
+  proc.stdout?.on("data", c => logger.info(`[${tier.id}] ${c.toString().trim().slice(0, 300)}`));
+  proc.stderr?.on("data", c => logger.info(`[${tier.id}] ${c.toString().trim().slice(0, 300)}`));
+  proc.on("exit", code => { logger.info(`[voice-setup] ${tier.id} exited (${code})`); if (running.get(tier.id) === proc) running.delete(tier.id); });
+  // Cold-start is heavy: faster-whisper large-v3-turbo + Kokoro + Silero
+  // VAD on first CUDA load can take 90-120s. Subsequent starts after OS
+  // file cache is warm are <20s.
+  const deadline = Date.now() + 180_000;
+  while (Date.now() < deadline) {
+    if (proc.exitCode !== null) return false;
+    const h = await probeHealth(tier.healthUrl);
+    if (h.ok) return true;
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  return false;
+}
+
 function killTier(tierId: string): void {
   const proc = running.get(tierId);
   if (proc && proc.exitCode === null) {
@@ -294,40 +328,45 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
       }
       if (!isInstalled(tier)) { json(400, { error: `${tier.label} is not installed yet.` }); return true; }
 
+      // Studio (Chatterbox) and Studio-Trained (SoVITS) are clone WORKERS —
+      // they synthesize from reference clips but have no STT, no VAD, and
+      // no internal routing. Lite is the API frontdoor that web voice mode
+      // talks to over WS, and Lite proxies trained/clone synth requests
+      // INTO Studio/SoVITS at synth time. Starting Studio without Lite
+      // gives you a worker with nothing to dispatch to it. Auto-start
+      // Lite as a hard prereq so the user doesn't have to remember the
+      // dependency order. Skipped if Lite isn't installed (no recovery
+      // path from here — surface that as a clear error).
+      if (tier.id === "studio" || tier.id === "studio-trained") {
+        const lite = tierById("lite");
+        if (lite && isInstalled(lite)) {
+          const lh = await probeHealth(lite.healthUrl);
+          if (!lh.ok) {
+            const ok = await startTierAndWait(lite);
+            if (!ok) {
+              json(502, { error: `${tier.label} requires Lite as a dispatcher, but Lite failed to start. Open the Lite card and start it manually to see the error.` });
+              return true;
+            }
+            logger.info(`[voice-setup] auto-started Lite as prereq for ${tier.id}`);
+          }
+        } else if (lite && !isInstalled(lite)) {
+          json(400, { error: `${tier.label} requires Lite as a dispatcher. Lite isn't installed yet — install it first.` });
+          return true;
+        }
+      }
+
       // Already up?
       const existingHealth = await probeHealth(tier.healthUrl);
       if (existingHealth.ok) { json(200, { ok: true, already: true, healthPayload: existingHealth.payload }); return true; }
 
-      // Kill any tracked-but-dead process
-      killTier(tier.id);
-
-      const cmd = tier.startCmd();
-      logger.info(`[voice-setup] Starting ${tier.id}: ${cmd.command} ${cmd.args.join(" ")}`);
-      const proc = spawn(cmd.command, cmd.args, {
-        cwd: cmd.cwd,
-        env: cmd.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: false,
-        windowsHide: true,
-      });
-      running.set(tier.id, proc);
-
-      proc.stdout?.on("data", c => logger.info(`[${tier.id}] ${c.toString().trim().slice(0, 300)}`));
-      proc.stderr?.on("data", c => logger.info(`[${tier.id}] ${c.toString().trim().slice(0, 300)}`));
-      proc.on("exit", code => { logger.info(`[voice-setup] ${tier.id} exited (${code})`); if (running.get(tier.id) === proc) running.delete(tier.id); });
-
-      // Wait up to 3 min for /healthz. Cold-start is heavy: faster-whisper
-      // large-v3-turbo loading on CUDA + Kokoro warmup + Silero VAD can take
-      // 90-120s on first launch (model files paged in, CUDA context init).
-      // Subsequent starts after OS file cache is warm are usually <20s.
-      const deadline = Date.now() + 180_000;
-      while (Date.now() < deadline) {
-        if (proc.exitCode !== null) { json(500, { error: `${tier.label} exited during startup (code ${proc.exitCode})` }); return true; }
-        const h = await probeHealth(tier.healthUrl);
-        if (h.ok) { json(200, { ok: true, pid: proc.pid, healthPayload: h.payload }); return true; }
-        await new Promise(r => setTimeout(r, 1000));
+      const ok = await startTierAndWait(tier);
+      if (!ok) {
+        const proc = running.get(tier.id);
+        json(504, { error: `${tier.label} didn't report healthy within 3 min — but pid ${proc?.pid ?? "?"} is still running. Cold-start can be slow; try clicking Start again in 30s, or check logs.` });
+        return true;
       }
-      json(504, { error: `${tier.label} didn't report healthy within 3 min — but pid ${proc.pid} is still running. Cold-start can be slow; try clicking Start again in 30s, or check logs.` });
+      const proc = running.get(tier.id);
+      json(200, { ok: true, pid: proc?.pid });
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }

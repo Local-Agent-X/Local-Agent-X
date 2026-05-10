@@ -34,40 +34,10 @@ const _voiceMirrorForPhone = new Set<string>();
 // re-arms.
 const _voiceFailHintSentByPhone = new Set<string>();
 
-// ── Types ──
+import type { ConnectionState, WhatsAppBridgeConfig } from "./whatsapp-bridge/types.js";
+import { splitMessage, toJid } from "./whatsapp-bridge/text-utils.js";
 
-/**
- * Reply payload returned by `onMessage`. `text` is the channel-formatted
- * string sent verbatim via `sendMessage` (WhatsApp markdown flavor — escaped
- * for the wire). `speakable` is the RAW unformatted reply used for TTS;
- * without this split the TTS path reads bridge-escape characters literally
- * (Windows SAPI famously narrated the word "backslash" for every Telegram
- * MarkdownV2 escape). Bridges fall back to `text` when `speakable` is
- * absent so legacy / synchronous-string returns still work.
- */
-export interface BridgeReply {
-  text: string;
-  speakable?: string;
-}
-
-export interface WhatsAppBridgeConfig {
-  dataDir: string;  // ~/.sax — session auth persisted here
-  onMessage: (params: {
-    from: string;
-    name: string;
-    text: string;
-    sessionId: string;
-  }) => Promise<string | BridgeReply>;
-}
-
-type ConnectionState = "disconnected" | "connecting" | "qr" | "connected";
-
-interface QueuedMessage {
-  from: string;
-  name: string;
-  text: string;
-  timestamp: number;
-}
+export type { BridgeReply, WhatsAppBridgeConfig } from "./whatsapp-bridge/types.js";
 
 // ── WhatsApp Bridge ──
 
@@ -176,8 +146,8 @@ export class WhatsAppBridge {
       return false;
     }
 
-    const jid = this.toJid(to);
-    const chunks = this.splitMessage(text, 4000);
+    const jid = toJid(to);
+    const chunks = splitMessage(text, 4000);
 
     for (const chunk of chunks) {
       try {
@@ -214,7 +184,7 @@ export class WhatsAppBridge {
       logger.error("[whatsapp] Cannot send image — not connected");
       return false;
     }
-    const jid = this.toJid(to);
+    const jid = toJid(to);
     try {
       await this.sock.sendMessage(jid, { image, caption: caption || "" });
       return true;
@@ -540,7 +510,7 @@ export class WhatsAppBridge {
   /** Send directly to a JID (used internally for replying to the correct chat) */
   private async sendToJid(jid: string, text: string): Promise<boolean> {
     if (!this.sock || this.state !== "connected") return false;
-    const chunks = this.splitMessage(text, 4000);
+    const chunks = splitMessage(text, 4000);
     for (const chunk of chunks) {
       try {
         await this.sock.sendMessage(jid, { text: chunk });
@@ -611,26 +581,6 @@ export class WhatsAppBridge {
     if (!anySent) {
       await sendWithHintOnce(textForWire, "Voice engine isn't reachable. Send /voice start lite to bring one up (cold start ~90-120s), then try again.");
     }
-  }
-
-  private toJid(phone: string): string {
-    const clean = phone.replace(/\D/g, "");
-    return clean.includes("@") ? clean : `${clean}@s.whatsapp.net`;
-  }
-
-  private splitMessage(text: string, maxLen: number): string[] {
-    if (text.length <= maxLen) return [text];
-    const chunks: string[] = [];
-    let remaining = text;
-    while (remaining.length > 0) {
-      if (remaining.length <= maxLen) { chunks.push(remaining); break; }
-      let splitAt = remaining.lastIndexOf("\n", maxLen);
-      if (splitAt < maxLen * 0.5) splitAt = remaining.lastIndexOf(" ", maxLen);
-      if (splitAt < maxLen * 0.5) splitAt = maxLen;
-      chunks.push(remaining.slice(0, splitAt));
-      remaining = remaining.slice(splitAt).trimStart();
-    }
-    return chunks;
   }
 
   private loadAllowedNumbers(): void {

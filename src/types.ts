@@ -299,4 +299,13 @@ export interface LAXConfig {
    *  moods during emotionally significant moments. Off = strict no-tools
    *  voice mode (existing behavior). Hot-reloads via the config watcher. */
   voice_visuals_enabled?: boolean;
+
+  /** Preferred voice engine for Telegram/WhatsApp bridge replies. The bridge
+   *  TTS chain tries the preferred engine first, then falls back through the
+   *  others so a missing/unhealthy preference doesn't silence the bridge.
+   *  - "auto"       — clones first (sovits→chatterbox), then lite kokoro
+   *  - "sovits"     — fine-tuned clone (best when trained weights exist)
+   *  - "chatterbox" — zero-shot reference-clip clone
+   *  - "lite"       — built-in kokoro voice (fastest, no clone needed) */
+  bridgeVoicePreference?: "auto" | "sovits" | "chatterbox" | "lite";
 }

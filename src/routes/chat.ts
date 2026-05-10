@@ -6,96 +6,23 @@ import type { ServerEvent } from "../types.js";
 import { isValidSessionId, safeErrorMessage, sseWrite, corsHeaders, jsonResponse, safeParseBody } from "../server-utils.js";
 import { runAgent } from "../agent.js";
 import { detectInjection } from "../sanitize.js";
-import { ChatRequestSchema, CompactSchema, validateBody } from "../route-schemas.js";
+import { ChatRequestSchema, validateBody } from "../route-schemas.js";
 import { ThreatEngine } from "../threat-engine.js";
 import { enqueue } from "../execution-lanes.js";
 import { logRetry } from "../retry-telemetry.js";
 import { createLogger } from "../logger.js";
+import { handleAutoDelegateRoutes } from "./chat/auto-delegate-routes.js";
+import { handleCompactRoute } from "./chat/compact-route.js";
+import { runDelegationHandoff } from "./chat/delegation-handoff.js";
+import { tryWorkerRedirect } from "./chat/jarvis-redirect.js";
 
 const logger = createLogger("routes.chat");
 
 export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx, requestRole) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
-  // Auto-delegate decision log — last N decisions, persistent across restarts
-  // (~/.lax/auto-delegate-decisions.jsonl). Useful for tuning the discussion-
-  // mode regex from real corrections.
-  // Returns: [{ts, delegate, reason, provider, wordCount, messagePreview, opId?, userOverride?}]
-  if (method === "GET" && url.pathname === "/api/auto-delegate/recent") {
-    const { getRecentAutoDelegateDecisions } = await import("../routing/index.js");
-    const limit = parseInt(url.searchParams.get("limit") || "50", 10);
-    json(200, { decisions: getRecentAutoDelegateDecisions(limit) });
-    return true;
-  }
-
-  // POST /api/auto-delegate/override — user clicked "Stay inline" on a
-  // worker card. Kill the op, mark the decision as a user-override (THE
-  // training signal), and return the original message so the chat can
-  // resubmit with /discuss prepended. Bypass the auto-delegate next time
-  // for this exact message.
-  // POST /api/op/kill — UI kill button (e.g. tool_chip "blocked-by-op"
-  // chip). Direct call to pool.killOp by op_id; no auto-delegate side
-  // effects. Returns { ok: boolean }.
-  if (method === "POST" && url.pathname === "/api/op/kill") {
-    const body = await safeParseBody(req);
-    const opId = typeof body?.op_id === "string" ? body.op_id : "";
-    if (!opId) { json(400, { ok: false, error: "op_id required" }); return true; }
-    const { killOp } = await import("../workers/pool.js");
-    const ok = killOp(opId);
-    json(200, { ok });
-    return true;
-  }
-
-  if (method === "POST" && url.pathname === "/api/auto-delegate/override") {
-    const body = await safeParseBody(req);
-    const opId = typeof body?.opId === "string" ? body.opId : "";
-    if (!opId) { json(400, { error: "opId required" }); return true; }
-    const { markDecisionAsUserOverride } = await import("../routing/index.js");
-    const { killOp } = await import("../workers/pool.js");
-    const result = markDecisionAsUserOverride(opId);
-    const killed = killOp(opId);
-    json(200, {
-      ok: true,
-      opId,
-      killed,
-      message: result.message,
-      hint: "Resubmit the returned message with /discuss prefix to bypass auto-delegate.",
-    });
-    return true;
-  }
-
-  // Context compaction. Builds a summary of older messages and persists it
-  // as a leading `system` row in `session.messages` (round-tripped through
-  // a `summary` row in the per-session jsonl on disk). prepareAgentRequest
-  // then sees the system message at index 0 and uses it without any
-  // special-case slice/prepend logic.
-  if (method === "POST" && url.pathname === "/api/compact") {
-    const raw = await safeParseBody(req);
-    const parsed = validateBody(raw, CompactSchema);
-    if (!parsed.success) { json(400, { error: parsed.error }); return true; }
-    const sessionId = parsed.data.sessionId!;
-    const session = ctx.getOrCreateSession(sessionId);
-    if (session.messages.length < 10) { json(200, { ok: false, reason: `Only ${session.messages.length} messages (need 10+)` }); return true; }
-    const KEEP_RECENT = Math.min(20, session.messages.length - 5);
-    let cutIdx = Math.max(0, session.messages.length - KEEP_RECENT);
-    for (let i = cutIdx; i < session.messages.length; i++) { if (session.messages[i].role === "user") { cutIdx = i; break; } }
-    const oldMessages = session.messages.slice(0, cutIdx);
-    const recentMessages = session.messages.slice(cutIdx);
-    const summaryLines: string[] = [];
-    for (const m of oldMessages) {
-      if (m.role === "user" && typeof m.content === "string") summaryLines.push(`[User] ${m.content.slice(0, 200).replace(/\n/g, " ")}`);
-      else if (m.role === "assistant" && typeof m.content === "string") summaryLines.push(`[Agent] ${m.content.split("\n").filter(l => l.trim()).slice(0, 2).join(" ").slice(0, 200)}`);
-    }
-    const compactSummary = `[COMPACTED CONTEXT — ${oldMessages.length} messages summarized]\n${summaryLines.join("\n")}\n[END COMPACTED CONTEXT — ${recentMessages.length} recent messages follow]`;
-    session.messages = [
-      { role: "system", content: compactSummary },
-      ...recentMessages,
-    ];
-    session.updatedAt = Date.now();
-    ctx.sessionStore.save(session);
-    json(200, { ok: true, compactedAt: oldMessages.length, oldCount: oldMessages.length, recentCount: recentMessages.length });
-    return true;
-  }
+  if (await handleAutoDelegateRoutes(method, url, req, res)) return true;
+  if (await handleCompactRoute(method, url, req, res, ctx)) return true;
 
   // Main chat SSE endpoint
   if (method === "POST" && url.pathname === "/api/chat") {
@@ -182,130 +109,19 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         message = stripDiscussPrefix(message);
       }
 
-      // ── Step 2 of JARVIS-mode: redirect-to-active-worker ──
-      // If a worker is already running for this session, the user's
-      // new message might be feedback for the worker ("make it blue")
-      // rather than a new chat turn. Classify it; if the LLM says
-      // REDIRECT, forward to the worker via redirectOp() and emit a
-      // small ack into chat. Otherwise fall through to normal flow.
       // /discuss prefix is treated as an explicit override — user
       // wants to talk to main agent regardless of worker state.
-      try {
-        const { listOpsForSession } = await import("../workers/session-bridge.js");
-        const activeOps = listOpsForSession(sessionId);
-        if (activeOps.length > 0) {
-          const { redirectOp } = await import("../workers/pool.js");
-          const { getOpTask } = await import("../workers/session-bridge.js");
-          const { classifyWorkerRedirect } = await import("../routing/worker-redirect-classifier.js");
-          // Pick the most recently submitted op as the redirect target
-          // (Set iteration preserves insertion order in JS).
-          const targetOpId = activeOps[activeOps.length - 1];
-          const taskHint = getOpTask(targetOpId);
-          // Feed the classifier the last few main-agent turns. Without
-          // this, Haiku sees only (workerTask, message) and a "yes"
-          // answering the MAIN agent's question gets misrouted to the
-          // worker. With recent turns, Haiku can see the question that
-          // "yes" is answering and route to MAIN_AGENT.
-          const recentTurns = session.messages
-            .filter((m): m is typeof m & { role: "user" | "assistant" } =>
-              (m.role === "user" || m.role === "assistant") && typeof m.content === "string",
-            )
-            .slice(-4)
-            .map(m => ({ role: m.role, content: m.content as string }));
-          const cls = await classifyWorkerRedirect(message, taskHint, recentTurns);
-          if (cls?.redirect) {
-            const ok = redirectOp(targetOpId, message);
-            logger.info(`[router] worker-redirect → op=${targetOpId} ok=${ok} reason="${cls.reason}"`);
-            if (ok) {
-              // Emit an inline ack so the user sees their message landed.
-              // Worker will narrate its acknowledgement via the
-              // worker_stream channel (Step 1) on its next iteration.
-              sseWrite(res, {
-                type: "stream",
-                delta: `*→ telling the worker:* "${message.slice(0, 200)}"\n\n`,
-              });
-              sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
-              return true;
-            }
-          }
-        }
-      } catch (e) {
-        logger.warn(`[router] worker-redirect check failed (falling through): ${(e as Error).message}`);
+      if (await tryWorkerRedirect({ sessionId, message, recentSessionMessages: session.messages, res })) {
+        return true;
       }
 
       const routeDecision = await routeMessage(prepared.provider, message, "web");
       if (routeDecision.destination === "delegate") {
-        const { opId } = await delegateMessageToWorker(message, sessionId, prepared.provider);
-        // Link the decision entry to this opId so the UI's "Stay inline"
-        // button can find + override it later. Saves the full message too
-        // so we can re-submit on override.
-        linkDecisionToOpId(opId, message);
-        // Sidebar cards are now driven by the pool's op-queued / op-dispatched
-        // events (Step 6) — no manual broadcast needed here. The session
-        // bridge subscribes to those and forwards bg_op_queued (with queue
-        // position) and bg_op_started (when a worker picks it up) to the
-        // chat WS. Cleaner than the old "fire bg_op_started immediately
-        // even if the op is queued" pattern, which lied about state.
-        // Instead of streaming a hardcoded "🤖 routing notice" string, run a
-        // tiny no-tools chat turn so the AGENT itself acknowledges the
-        // delegation in its own voice. Same chat agent the user normally
-        // talks to — just told via system note that the user's message
-        // was already delegated to a worker, and asked to give a
-        // 1-2 sentence conversational acknowledgement.
-        const delegationContext =
-          `\n\n[BACKGROUND DELEGATION — STRICT ACK MODE]\n\n` +
-          `The user's message above has been handed to a background worker (op id: ${opId}, ${prepared.provider}). The worker has NOT done the work yet — it is just starting. The user can SEE the worker card in the sidebar with "WORKING" status; if you contradict that, your reply looks like a lie.\n\n` +
-          `HARD RULES for THIS turn — do not break any of them:\n\n` +
-          `1. PRESENT PROGRESSIVE ONLY. Use "I'm starting on X", "kicking off X", "spinning up X". NEVER past tense — no "built", "created", "finished", "saved", "published", "pinned", "live", "shipped", "done". Those words are forbidden.\n` +
-          `2. NO SPECIFIC OUTPUTS. Do NOT name files, paths (workspace/apps/...), URLs, sidebar entries, feature lists, or specific UI elements that "now exist". The worker has produced NOTHING yet — anything specific you name is fabricated.\n` +
-          `3. NO FAKE DETAIL. Do not describe what's "included" in the not-yet-built thing ("with branding", "with FAQ", "with form fields"). Only echo back what the user asked for, in their own words, as the thing being kicked off.\n` +
-          `4. ONE OR TWO SENTENCES. Conversational. Then stop.\n` +
-          `5. NO TOOLS. Do not call any tool. Tools are unavailable this turn anyway.\n` +
-          `6. NO JARGON. Don't say "delegation", "worker pool", "op id" — just normal "kicking it off in the background".\n\n` +
-          `Good shape: "Starting on the [thing user asked for] now — I'll let you know when it's ready."\n` +
-          `Bad shape: "Built it: created at workspace/apps/X/index.html and pinned." (Lies — worker hasn't built anything yet.)`;
-        const delegationSystemPrompt = prepared.systemPrompt + delegationContext;
-
-        logger.info(`[router] Auto-delegated to worker pool: op=${opId} sess=${sessionId} provider=${prepared.provider} — routing notice now agent-voiced`);
-
-        // Continue with the normal chat flow: set up onEvent + threat engine,
-        // run runAgent with the delegation context + tools=[] (force text-only).
-        const wsChat = ctx.chatWs.startChat(sessionId);
-        const onEvent = (event: ServerEvent) => { sseWrite(res, event); wsChat.onEvent(event); };
-        ctx.setActiveOnEvent(sessionId, onEvent);
-        onEventInstalled = true;
-        const threatEngineDel = new ThreatEngine(ctx.dataDir, sessionId);
-        const turnStart = Date.now();
-        const result = await runAgent(message, prepared.cleanHistory, {
-          apiKey: prepared.apiKey, model: prepared.model,
-          provider: prepared.provider as Parameters<typeof runAgent>[2]["provider"],
-          baseURL: prepared.customBaseURL,
-          systemPrompt: delegationSystemPrompt,
-          tools: [],                                      // force text-only — no tool calls
-          security: ctx.security, toolPolicy: ctx.toolPolicy,
-          threatEngine: threatEngineDel, rbac: ctx.rbac, callerRole: requestRole, sessionId,
-          images: prepared.images,
-          maxIterations: 1,                               // 1-shot — agent says its piece, ends turn
-          temperature: prepared.temperature,
-          signal: wsChat.abort.signal,
-          onEvent,
+        const handoff = await runDelegationHandoff({
+          message, sessionId, prepared, ctx, session, requestRole, res,
         });
-        const { stripEphemeralMessages } = await import("../agent-providers.js");
-        const { COMPACTION_PREFIX: COMPACTION_PREFIX_DEL } = await import("../types.js");
-        type MsgRecordD = Record<string, unknown>;
-        session.messages = stripEphemeralMessages(result.messages).filter((m) => {
-          if (m.role === "system") {
-            return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX_DEL);
-          }
-          if (m.role === "tool") return true;
-          return m.content || (m as unknown as MsgRecordD).tool_calls;
-        });
-        session.updatedAt = Date.now();
-        ctx.saveSession(session);
-        const realUsage = result.usage || { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-        onEvent({ type: "done", usage: realUsage });
-        doneEmitted = true;
-        logger.info(`[timing] delegation-ack turn ${Date.now() - turnStart}ms (${prepared.provider}/${prepared.model}, ${realUsage.totalTokens} tokens)`);
+        if (handoff.onEventInstalled) onEventInstalled = true;
+        if (handoff.doneEmitted) doneEmitted = true;
         return true;
       }
 

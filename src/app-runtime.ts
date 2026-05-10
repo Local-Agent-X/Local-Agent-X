@@ -13,265 +13,61 @@
  * - Component type whitelist
  *
  * Persisted to ~/.lax/apps/
+ *
+ * Pure logic lives in src/app-runtime/:
+ *   - types.ts          — shapes + size limits + ALLOWED_COMPONENT_TYPES
+ *   - validation.ts     — validateAppId / validateComponent / validateAppDefinition
+ *                         + meetsAccessLevel
+ *   - audit-signing.ts  — HMAC sign + verify
+ *   - rate-limiter.ts   — token bucket rate limiter
+ *   - paths.ts          — APPS_DIR, per-app file paths, ensureDir
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
-import { createHmac, randomBytes } from "node:crypto";
+import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
-// ── Types ────────────────────────────────────────────────────
+import { signAuditEntry } from "./app-runtime/audit-signing.js";
+import { APPS_DIR, AUDIT_DIR, appDir, auditPath, defPath, ensureDir, eventsPath, statePath } from "./app-runtime/paths.js";
+import { RateLimiter } from "./app-runtime/rate-limiter.js";
+import {
+  type AccessLevel,
+  type AppDefinition,
+  type AppEvent,
+  type AppState,
+  type AppStatus,
+  type AppVisibility,
+  type AuditEntry,
+  MAX_ACTIONS_QUEUED,
+  MAX_APPS_TOTAL,
+  MAX_EVENTS_STORED,
+  MAX_STATE_SIZE_BYTES,
+  type QueuedAction,
+} from "./app-runtime/types.js";
+import { meetsAccessLevel, validateAppDefinition } from "./app-runtime/validation.js";
 
-export type ComponentType =
-  | "button" | "text" | "input" | "form" | "table" | "chart"
-  | "list" | "stat" | "image" | "select" | "toggle" | "custom"
-  | "progress" | "alert" | "code" | "markdown" | "divider"
-  | "tabs" | "accordion" | "modal" | "badge" | "avatar";
-
-const ALLOWED_COMPONENT_TYPES = new Set<string>([
-  "button", "text", "input", "form", "table", "chart",
-  "list", "stat", "image", "select", "toggle", "custom",
-  "progress", "alert", "code", "markdown", "divider",
-  "tabs", "accordion", "modal", "badge", "avatar",
-]);
-
-export interface ComponentDefinition {
-  id: string;
-  type: ComponentType;
-  props: Record<string, unknown>;
-  children?: ComponentDefinition[];
-}
-
-export interface DataBinding {
-  componentId: string;
-  property: string;
-  source: "agent" | "api" | "computed";
-  expression: string;
-}
-
-export interface ActionDefinition {
-  name: string;
-  targetComponent?: string;
-  handler: string;
-}
-
-export interface EventDefinition {
-  name: string;
-  sourceComponent?: string;
-  description: string;
-}
-
-export type LayoutType = "grid" | "flex" | "stack" | "tabs" | "sidebar" | "custom";
-
-export interface LayoutDefinition {
-  type: LayoutType;
-  columns?: number;
-  gap?: string;
-  areas?: string[][];
-}
-
-// ── Security & Permissions ───────────────────────────────────
-
-export type AppVisibility = "private" | "team" | "public";
-export type AppStatus = "active" | "suspended" | "archived";
-export type AccessLevel = "read" | "write" | "admin";
-
-export interface AppPermissions {
-  owner: string;                              // agent ID or 'user'
-  visibility: AppVisibility;
-  allowedAgents: string[];                    // agent IDs with access
-  accessLevels: Record<string, AccessLevel>;  // agentId -> level
-}
-
-export interface AuditEntry {
-  id: string;
-  timestamp: number;
-  actor: string;       // agent ID, 'user', or 'system'
-  action: string;      // 'app:create', 'app:update', 'app:delete', 'state:update', 'event:push', etc.
-  appId: string;
-  details: Record<string, unknown>;
-  signature: string;   // HMAC signature for tamper detection
-}
-
-// ── App Definition ───────────────────────────────────────────
-
-export interface AppDefinition {
-  id: string;
-  name: string;
-  description: string;
-  components: ComponentDefinition[];
-  dataBindings: DataBinding[];
-  actions: ActionDefinition[];
-  events: EventDefinition[];
-  layout: LayoutDefinition;
-  standalone?: boolean;
-  status: AppStatus;
-  permissions: AppPermissions;
-  version: number;
-  createdAt: number;
-  updatedAt: number;
-}
-
-// ── State ────────────────────────────────────────────────────
-
-export interface AppState {
-  componentValues: Record<string, unknown>;
-  actionQueue: QueuedAction[];
-  metadata: {
-    lastAgentUpdate: number;
-    lastUserUpdate: number;
-    version: number;
-  };
-}
-
-export interface QueuedAction {
-  id: string;
-  action: string;
-  target?: string;
-  value?: unknown;
-  timestamp: number;
-  consumed: boolean;
-}
-
-export interface AppEvent {
-  id: string;
-  appId: string;
-  type: string;
-  sourceComponent?: string;
-  data: unknown;
-  timestamp: number;
-  consumed: boolean;
-}
-
-// ── Validation ───────────────────────────────────────────────
-
-const MAX_COMPONENTS = 200;
-const MAX_EVENTS_STORED = 500;
-const MAX_ACTIONS_QUEUED = 100;
-const MAX_STATE_SIZE_BYTES = 2 * 1024 * 1024;  // 2MB
-const MAX_APP_NAME_LENGTH = 128;
-const MAX_APP_DESC_LENGTH = 1024;
-const MAX_COMPONENT_ID_LENGTH = 64;
-const MAX_APPS_TOTAL = 500;
-
-export interface ValidationResult {
-  valid: boolean;
-  errors: string[];
-}
-
-export function validateAppId(id: string): ValidationResult {
-  const errors: string[] = [];
-  if (!id) errors.push("App ID is required");
-  if (id.length > 64) errors.push("App ID must be 64 characters or fewer");
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(id)) errors.push("App ID must start with alphanumeric and contain only [a-zA-Z0-9_-]");
-  return { valid: errors.length === 0, errors };
-}
-
-export function validateComponent(comp: ComponentDefinition, depth = 0): ValidationResult {
-  const errors: string[] = [];
-  if (depth > 5) { errors.push(`Component nesting too deep (max 5 levels)`); return { valid: false, errors }; }
-  if (!comp.id) errors.push("Component missing ID");
-  if (comp.id && comp.id.length > MAX_COMPONENT_ID_LENGTH) errors.push(`Component ID "${comp.id}" exceeds ${MAX_COMPONENT_ID_LENGTH} chars`);
-  if (!ALLOWED_COMPONENT_TYPES.has(comp.type)) errors.push(`Invalid component type "${comp.type}"`);
-  if (comp.id && /[<>"'&]/.test(comp.id)) errors.push(`Component ID "${comp.id}" contains unsafe characters`);
-  if (comp.children) {
-    for (const child of comp.children) {
-      const childResult = validateComponent(child, depth + 1);
-      errors.push(...childResult.errors);
-    }
-  }
-  return { valid: errors.length === 0, errors };
-}
-
-export function validateAppDefinition(def: Partial<AppDefinition>): ValidationResult {
-  const errors: string[] = [];
-
-  if (def.id) {
-    const idResult = validateAppId(def.id);
-    errors.push(...idResult.errors);
-  }
-
-  if (def.name && def.name.length > MAX_APP_NAME_LENGTH) errors.push(`App name exceeds ${MAX_APP_NAME_LENGTH} chars`);
-  if (def.description && def.description.length > MAX_APP_DESC_LENGTH) errors.push(`App description exceeds ${MAX_APP_DESC_LENGTH} chars`);
-
-  if (def.components) {
-    if (def.components.length > MAX_COMPONENTS) errors.push(`Too many components (max ${MAX_COMPONENTS})`);
-    const ids = new Set<string>();
-    for (const comp of def.components) {
-      const compResult = validateComponent(comp);
-      errors.push(...compResult.errors);
-      if (comp.id) {
-        if (ids.has(comp.id)) errors.push(`Duplicate component ID "${comp.id}"`);
-        ids.add(comp.id);
-      }
-    }
-  }
-
-  return { valid: errors.length === 0, errors };
-}
-
-// ── Audit System ─────────────────────────────────────────────
-
-const AUDIT_HMAC_KEY = (process.env.LAX_AUDIT_KEY ?? process.env.SAX_AUDIT_KEY) || randomBytes(32).toString("hex");
-
-function signAuditEntry(entry: Omit<AuditEntry, "signature">): string {
-  const payload = `${entry.id}|${entry.timestamp}|${entry.actor}|${entry.action}|${entry.appId}`;
-  return createHmac("sha256", AUDIT_HMAC_KEY).update(payload).digest("hex").slice(0, 16);
-}
-
-export function verifyAuditEntry(entry: AuditEntry): boolean {
-  const expected = signAuditEntry(entry);
-  return entry.signature === expected;
-}
-
-// ── Rate Limiter ─────────────────────────────────────────────
-
-interface RateBucket {
-  count: number;
-  resetAt: number;
-}
-
-class RateLimiter {
-  private buckets = new Map<string, RateBucket>();
-  private maxPerWindow: number;
-  private windowMs: number;
-
-  constructor(maxPerWindow: number, windowMs: number) {
-    this.maxPerWindow = maxPerWindow;
-    this.windowMs = windowMs;
-  }
-
-  check(key: string): boolean {
-    const now = Date.now();
-    const bucket = this.buckets.get(key);
-    if (!bucket || now >= bucket.resetAt) {
-      this.buckets.set(key, { count: 1, resetAt: now + this.windowMs });
-      return true;
-    }
-    if (bucket.count >= this.maxPerWindow) return false;
-    bucket.count++;
-    return true;
-  }
-
-  reset(key: string): void {
-    this.buckets.delete(key);
-  }
-}
-
-// ── Registry ─────────────────────────────────────────────────
-
-const APPS_DIR = join(homedir(), ".lax", "apps");
-const AUDIT_DIR = join(homedir(), ".lax", "apps", "_audit");
-
-function ensureDir(dir: string): void {
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-}
-
-function appDir(id: string): string { return join(APPS_DIR, id); }
-function defPath(id: string): string { return join(appDir(id), "definition.json"); }
-function statePath(id: string): string { return join(appDir(id), "state.json"); }
-function eventsPath(id: string): string { return join(appDir(id), "events.json"); }
-function auditPath(id: string): string { return join(appDir(id), "audit.json"); }
+// Re-export public surface so existing imports (`import { ... } from "./app-runtime.js"`) keep working.
+export type {
+  AccessLevel,
+  ActionDefinition,
+  AppDefinition,
+  AppEvent,
+  AppPermissions,
+  AppState,
+  AppStatus,
+  AppVisibility,
+  AuditEntry,
+  ComponentDefinition,
+  ComponentType,
+  DataBinding,
+  EventDefinition,
+  LayoutDefinition,
+  LayoutType,
+  QueuedAction,
+} from "./app-runtime/types.js";
+export { validateAppDefinition, validateAppId, validateComponent, type ValidationResult } from "./app-runtime/validation.js";
+export { verifyAuditEntry } from "./app-runtime/audit-signing.js";
 
 export class AppRegistry {
   private static instance: AppRegistry;
@@ -742,13 +538,6 @@ export class AppRegistry {
     this.writeAudit(appId, actor, "access:revoke", { agentId });
     return { success: true };
   }
-}
-
-// ── Helpers ──────────────────────────────────────────────────
-
-function meetsAccessLevel(has: AccessLevel, needs: AccessLevel): boolean {
-  const levels: Record<AccessLevel, number> = { read: 1, write: 2, admin: 3 };
-  return levels[has] >= levels[needs];
 }
 
 // ── Backward compatibility ───────────────────────────────────

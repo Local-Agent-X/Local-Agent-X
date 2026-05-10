@@ -1,0 +1,176 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+import { mockResponse } from "./helpers/http-mocks.js";
+
+// Mocks for the three modules tryWorkerRedirect imports dynamically.
+const activeOpsBySession = new Map<string, string[]>();
+const tasksByOpId = new Map<string, string>();
+const redirectedCalls: Array<{ opId: string; instruction: string }> = [];
+let redirectOpReturn = true;
+type ClassifyResult = { redirect: boolean; reason: string } | null;
+let classifierResult: ClassifyResult = { redirect: true, reason: "feedback for worker" };
+
+vi.mock("../src/workers/session-bridge.js", () => ({
+  listOpsForSession: vi.fn((sessionId: string) => activeOpsBySession.get(sessionId) ?? []),
+  getOpTask: vi.fn((opId: string) => tasksByOpId.get(opId) ?? "(unknown)"),
+}));
+
+vi.mock("../src/workers/pool.js", () => ({
+  redirectOp: vi.fn((opId: string, instruction: string) => {
+    redirectedCalls.push({ opId, instruction });
+    return redirectOpReturn;
+  }),
+}));
+
+vi.mock("../src/routing/worker-redirect-classifier.js", () => ({
+  classifyWorkerRedirect: vi.fn(async () => classifierResult),
+}));
+
+import { tryWorkerRedirect } from "../src/routes/chat/jarvis-redirect.js";
+
+beforeEach(() => {
+  activeOpsBySession.clear();
+  tasksByOpId.clear();
+  redirectedCalls.length = 0;
+  redirectOpReturn = true;
+  classifierResult = { redirect: true, reason: "feedback for worker" };
+  vi.clearAllMocks();
+});
+
+describe("tryWorkerRedirect — no active workers", () => {
+  it("returns false when there are no active ops for the session", async () => {
+    const cap = mockResponse();
+    const result = await tryWorkerRedirect({
+      sessionId: "s1",
+      message: "make it blue",
+      recentSessionMessages: [],
+      res: cap.res,
+    });
+    expect(result).toBe(false);
+    expect(cap.status).toBeNull();
+  });
+});
+
+describe("tryWorkerRedirect — classifier says redirect", () => {
+  it("redirects to the most-recently-submitted op and emits two SSE events", async () => {
+    activeOpsBySession.set("s1", ["op-old", "op-new"]);
+    tasksByOpId.set("op-new", "build a landing page");
+    classifierResult = { redirect: true, reason: "feedback" };
+
+    const cap = mockResponse();
+    const result = await tryWorkerRedirect({
+      sessionId: "s1",
+      message: "make the header blue",
+      recentSessionMessages: [],
+      res: cap.res,
+    });
+    expect(result).toBe(true);
+    // most recent (last) op gets the redirect, not the older one
+    expect(redirectedCalls).toEqual([{ opId: "op-new", instruction: "make the header blue" }]);
+    // Two SSE events were written to res: stream + done
+    expect(cap.body).toContain(`"type":"stream"`);
+    expect(cap.body).toContain(`"type":"done"`);
+    expect(cap.body).toContain("telling the worker");
+  });
+
+  it("falls through (returns false) when redirectOp itself returns false", async () => {
+    activeOpsBySession.set("s1", ["op-x"]);
+    redirectOpReturn = false;
+    classifierResult = { redirect: true, reason: "feedback" };
+
+    const cap = mockResponse();
+    const result = await tryWorkerRedirect({
+      sessionId: "s1",
+      message: "x",
+      recentSessionMessages: [],
+      res: cap.res,
+    });
+    expect(result).toBe(false);
+    expect(cap.body).toBe("");
+  });
+});
+
+describe("tryWorkerRedirect — classifier says no", () => {
+  it("returns false when classifier sets redirect=false", async () => {
+    activeOpsBySession.set("s1", ["op-x"]);
+    classifierResult = { redirect: false, reason: "main agent should answer" };
+
+    const cap = mockResponse();
+    const result = await tryWorkerRedirect({
+      sessionId: "s1",
+      message: "yes",
+      recentSessionMessages: [],
+      res: cap.res,
+    });
+    expect(result).toBe(false);
+    expect(redirectedCalls).toEqual([]);
+    expect(cap.body).toBe("");
+  });
+
+  it("returns false when classifier returns null", async () => {
+    activeOpsBySession.set("s1", ["op-x"]);
+    classifierResult = null;
+
+    const cap = mockResponse();
+    const result = await tryWorkerRedirect({
+      sessionId: "s1",
+      message: "x",
+      recentSessionMessages: [],
+      res: cap.res,
+    });
+    expect(result).toBe(false);
+  });
+});
+
+describe("tryWorkerRedirect — recentSessionMessages plumbing", () => {
+  it("filters down to user/assistant string messages and forwards last 4 turns to classifier", async () => {
+    activeOpsBySession.set("s1", ["op-x"]);
+    classifierResult = { redirect: false, reason: "no" };
+
+    const messages = [
+      { role: "system", content: "system prompt" }, // filtered (not user/assistant)
+      { role: "tool", content: "tool result" },     // filtered
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "a1" },
+      { role: "user", content: "u2" },
+      { role: "assistant", content: "a2" },
+      { role: "user", content: "u3" },
+      { role: "assistant", content: "a3" },
+    ];
+    const cap = mockResponse();
+    await tryWorkerRedirect({
+      sessionId: "s1",
+      message: "current",
+      recentSessionMessages: messages,
+      res: cap.res,
+    });
+
+    const { classifyWorkerRedirect } = await import("../src/routing/worker-redirect-classifier.js");
+    const calls = (classifyWorkerRedirect as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(calls).toHaveLength(1);
+    const [msg, taskHint, recent] = calls[0] as [string, string, Array<{ role: string; content: string }>];
+    expect(msg).toBe("current");
+    expect(taskHint).toBe("(unknown)");
+    // Last 4 user/assistant turns only
+    expect(recent.map(t => t.content)).toEqual(["u2", "a2", "u3", "a3"]);
+  });
+});
+
+describe("tryWorkerRedirect — error handling", () => {
+  it("returns false (does not throw) when a downstream import throws", async () => {
+    activeOpsBySession.set("s1", ["op-x"]);
+    const { classifyWorkerRedirect } = await import("../src/routing/worker-redirect-classifier.js");
+    (classifyWorkerRedirect as unknown as { mockImplementationOnce: (fn: () => Promise<never>) => void })
+      .mockImplementationOnce(() => Promise.reject(new Error("classifier blew up")));
+
+    const cap = mockResponse();
+    const result = await tryWorkerRedirect({
+      sessionId: "s1",
+      message: "x",
+      recentSessionMessages: [],
+      res: cap.res,
+    });
+    expect(result).toBe(false);
+    expect(cap.body).toBe("");
+  });
+});

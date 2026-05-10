@@ -10,7 +10,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { createLogger } from "./logger.js";
-import { encodeWavToOgg, isFfmpegAvailable, transcribeOggBuffer, getVoicePref } from "./bridge-voice/index.js";
+import { encodeWavToOgg, isFfmpegAvailable, transcribeOggBuffer, getVoicePref, splitForVoiceChunks } from "./bridge-voice/index.js";
 import { synthesize } from "./voice.js";
 const logger = createLogger("telegram-bridge");
 
@@ -20,18 +20,25 @@ const logger = createLogger("telegram-bridge");
 // — the bridge already owns inbound/outbound side-effects so keeping the
 // voice-vs-text decision local is the smaller surgery.
 const _voiceMirrorForChat = new Set<string>();
+// Tracks chats we've already told "voice engine is down" so the hint only
+// fires once per server-uptime per chat — avoids spamming every reply when
+// the engine is offline. Resets on server restart so a fresh boot re-arms.
+const _voiceFailHintSent = new Set<string>();
 
 // ── Types ──
 
 export interface TelegramBridgeConfig {
   dataDir: string;
   getToken: () => string | null;
+  // Returns either a plain channel-formatted string (legacy) or a
+  // {text, speakable} pair so TTS gets the raw unescaped text. See
+  // BridgeReply in whatsapp-bridge.ts for why this split exists.
   onMessage: (params: {
     from: string;
     name: string;
     text: string;
     sessionId: string;
-  }) => Promise<string>;
+  }) => Promise<string | import("./whatsapp-bridge.js").BridgeReply>;
 }
 
 type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
@@ -433,7 +440,12 @@ export class TelegramBridge {
     this.processingLock.add(chatId);
     try {
       const reply = await this.onMessage({ from: chatId, name: senderName, text, sessionId });
-      if (reply) await this.dispatchReply(chatId, reply);
+      if (!reply) { /* nothing to send */ }
+      else if (typeof reply === "string") {
+        await this.dispatchReply(chatId, reply, reply);
+      } else {
+        await this.dispatchReply(chatId, reply.text, reply.speakable ?? reply.text);
+      }
     } catch (e) {
       logger.error(`[telegram] Agent error for ${chatId}:`, (e as Error).message);
       await this.sendMessage(chatId, "Something went wrong. Try again?");
@@ -456,47 +468,52 @@ export class TelegramBridge {
    * Failure paths: any TTS / encode / send-voice failure falls back to
    * sendMessage(text) so the user always gets the reply.
    */
-  private async dispatchReply(chatId: string, reply: string): Promise<void> {
+  private async dispatchReply(chatId: string, textForWire: string, speakable: string): Promise<void> {
     const wantVoice = getVoicePref("telegram", chatId) || _voiceMirrorForChat.has(chatId);
     if (!wantVoice) {
-      await this.sendMessage(chatId, reply);
+      await this.sendMessage(chatId, textForWire);
       return;
     }
+
+    const sendWithHintOnce = async (text: string, hint: string) => {
+      if (_voiceFailHintSent.has(chatId)) {
+        await this.sendMessage(chatId, text);
+        return;
+      }
+      _voiceFailHintSent.add(chatId);
+      await this.sendMessage(chatId, `${text}\n\n— ${hint}`);
+    };
 
     if (!(await isFfmpegAvailable())) {
       logger.warn("[telegram] voice reply requested but ffmpeg unavailable — sending text");
-      await this.sendMessage(chatId, reply);
+      await sendWithHintOnce(textForWire, "Voice replies need ffmpeg installed on the server. Falling back to text until that's fixed.");
       return;
     }
 
-    // Long reply in voice mode: speak the first sentence, send the full
-    // text as a follow-up so nothing is lost.
-    const VOICE_MAX = 800;
-    let toSpeak = reply;
-    let sendTextFollowup = false;
-    if (reply.length > VOICE_MAX) {
-      const m = reply.match(/^[\s\S]*?[.!?](?:\s|$)/);
-      toSpeak = m ? m[0].trim() : reply.slice(0, VOICE_MAX);
-      sendTextFollowup = true;
-    }
-
-    try {
-      const wav = await synthesize(toSpeak);
-      const ogg = await encodeWavToOgg(wav);
-      const ok = await this.sendVoice(chatId, ogg);
-      if (!ok) {
-        logger.warn("[telegram] sendVoice returned false — falling back to text");
-        await this.sendMessage(chatId, reply);
-        return;
+    // Voice-only mode: split long replies into multiple voice notes at
+    // paragraph/sentence boundaries. The previous "speak first sentence,
+    // send rest as text" was wrong for the "transcribe this report so I
+    // can listen" use case — user wanted the WHOLE thing audible.
+    // Telegram voice notes hold ~50MB / over an hour at Opus, so we have
+    // huge headroom. Cap each chunk at 3000 chars (~2-3 min audio) to
+    // keep individual notes loadable on slow connections.
+    const chunks = splitForVoiceChunks(speakable, 3000);
+    let anySent = false;
+    for (const chunk of chunks) {
+      try {
+        const wav = await synthesize(chunk);
+        const ogg = await encodeWavToOgg(wav);
+        const ok = await this.sendVoice(chatId, ogg);
+        if (ok) { anySent = true; continue; }
+        logger.warn("[telegram] sendVoice returned false on chunk — bailing to text fallback");
+        break;
+      } catch (e) {
+        logger.warn(`[telegram] voice synthesis failed on chunk: ${(e as Error).message} — bailing to text fallback`);
+        break;
       }
-    } catch (e) {
-      logger.warn(`[telegram] voice synthesis failed: ${(e as Error).message} — falling back to text`);
-      await this.sendMessage(chatId, reply);
-      return;
     }
-
-    if (sendTextFollowup) {
-      await this.sendMessage(chatId, reply);
+    if (!anySent) {
+      await sendWithHintOnce(textForWire, "Voice engine isn't reachable. Send /voice start lite to bring one up (cold start ~90-120s), then try again.");
     }
   }
 

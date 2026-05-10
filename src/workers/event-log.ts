@@ -12,7 +12,7 @@
  * state, it reads checkpoint.json (see checkpoint.ts).
  */
 
-import { existsSync, mkdirSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { redactEventForDisk } from "./redactor.js";
@@ -56,7 +56,6 @@ export function readEvents(opId: string): OpEvent[] {
   const path = join(opDir(opId), "events.jsonl");
   if (!existsSync(path)) return [];
   try {
-    const { readFileSync } = require("node:fs");
     const raw = readFileSync(path, "utf-8") as string;
     const out: OpEvent[] = [];
     for (const line of raw.split("\n")) {

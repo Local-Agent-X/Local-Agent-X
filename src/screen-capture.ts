@@ -68,8 +68,11 @@ export function captureScreen(options: ScreenCaptureOptions = {}): ScreenCapture
   }
 
   // Pre-validate monitor index against listMonitors() so a bad index
-  // surfaces as a real error the agent can self-correct against.
-  if (options.monitor != null && !effectiveRegion) {
+  // surfaces as a real error the agent can self-correct against. Validate
+  // even when a region is passed — caller may want a sub-rect of a NON-
+  // primary monitor and the index still has to be in range.
+  let monitorOffset = { x: 0, y: 0 };
+  if (options.monitor != null) {
     const monitorIdx = safeNum(options.monitor, "monitor");
     const monitors = listMonitors();
     if (monitorIdx < 0 || monitorIdx >= monitors.length) {
@@ -79,6 +82,14 @@ export function captureScreen(options: ScreenCaptureOptions = {}): ScreenCapture
         `Call list_monitors first or omit monitor for primary.`
       );
     }
+    // When monitor + region are BOTH set, region is RELATIVE to the chosen
+    // monitor's origin. Earlier the code silently ignored monitor whenever
+    // region was set, so an LLM that auto-filled `region:{x:0,y:0,w:1920,
+    // h:1080}` while asking for monitor 2 just got the primary screen.
+    // Visible failure: WhatsApp "show me monitor 2" returned the same
+    // image as "monitor 1" because region won and stayed at (0,0) which
+    // is on the primary screen.
+    monitorOffset = { x: monitors[monitorIdx].x, y: monitors[monitorIdx].y };
   }
 
   // PS script body. We'll wrap the whole thing in try/catch + strict
@@ -88,8 +99,8 @@ export function captureScreen(options: ScreenCaptureOptions = {}): ScreenCapture
   let psBody: string;
 
   if (effectiveRegion) {
-    const x = safeNum(effectiveRegion.x, "region.x");
-    const y = safeNum(effectiveRegion.y, "region.y");
+    const x = safeNum(effectiveRegion.x, "region.x") + monitorOffset.x;
+    const y = safeNum(effectiveRegion.y, "region.y") + monitorOffset.y;
     const width = safeNum(effectiveRegion.width, "region.width");
     const height = safeNum(effectiveRegion.height, "region.height");
     psBody = `
@@ -217,14 +228,14 @@ export function captureScreenBase64(options: ScreenCaptureOptions = {}): {
 }
 
 /** List available monitors */
-export function listMonitors(): Array<{ index: number; name: string; width: number; height: number; primary: boolean }> {
+export function listMonitors(): Array<{ index: number; name: string; x: number; y: number; width: number; height: number; primary: boolean }> {
   try {
     const ps = `
 Add-Type -AssemblyName System.Windows.Forms
 $screens = [System.Windows.Forms.Screen]::AllScreens
 $i = 0
 foreach ($s in $screens) {
-  Write-Output "$i|$($s.DeviceName)|$($s.Bounds.Width)|$($s.Bounds.Height)|$($s.Primary)"
+  Write-Output "$i|$($s.DeviceName)|$($s.Bounds.X)|$($s.Bounds.Y)|$($s.Bounds.Width)|$($s.Bounds.Height)|$($s.Primary)"
   $i++
 }
 `;
@@ -241,16 +252,18 @@ foreach ($s in $screens) {
     }
 
     return output.split("\n").filter(Boolean).map((line) => {
-      const [idx, name, w, h, primary] = line.trim().split("|");
+      const [idx, name, x, y, w, h, primary] = line.trim().split("|");
       return {
         index: parseInt(idx),
         name: name || `Monitor ${idx}`,
+        x: parseInt(x) || 0,
+        y: parseInt(y) || 0,
         width: parseInt(w) || 1920,
         height: parseInt(h) || 1080,
         primary: primary === "True",
       };
     });
   } catch {
-    return [{ index: 0, name: "Primary", width: 1920, height: 1080, primary: true }];
+    return [{ index: 0, name: "Primary", x: 0, y: 0, width: 1920, height: 1080, primary: true }];
   }
 }

@@ -33,6 +33,9 @@ import { readOp } from "../workers/op-store.js";
 import type { Op } from "../workers/types.js";
 import { drainInjects } from "../agent-loop/inject-queue.js";
 import { getSessionForOp } from "../workers/session-bridge.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("canonical-loop.turn-loop");
 
 export interface DriveTurnResult {
   terminalReason: "done" | "error" | null;
@@ -223,6 +226,15 @@ function drainInjectsIntoTurn(op: Op, turnIdx: number): void {
   if (!sessionId) return;
   const injects = drainInjects(sessionId);
   if (injects.length === 0) return;
+  // Pair this with chat-ws's `[ws-chat] inject sess=… len=N` enqueue line
+  // for end-to-end visibility — until this log existed there was no way to
+  // confirm an inject ever made it into an iteration vs sat in the queue
+  // past the turn's end. The legacy agent-loop has its own
+  // interjectDrainMiddleware that logs separately; chat turns go through
+  // the canonical-loop and this function instead, so the message logged
+  // there never fired for chats.
+  const totalChars = injects.reduce((s, t) => s + t.length, 0);
+  logger.info(`[interject-drain] consumed=${injects.length} sess=${sessionId} op=${op.id} turn=${turnIdx} totalChars=${totalChars}`);
   // Offset past any pre-existing rows for this turn (e.g. the seeded turn-0
   // user message) so (op_id, turn_idx, seq_in_turn) stays unique.
   let seqInTurn = readOpMessages(op.id).filter(m => m.turnIdx === turnIdx).length;

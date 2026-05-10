@@ -47,14 +47,23 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     return true;
   }
 
-  // Agent redirect (HTTP fallback for when WS is unavailable)
+  // Agent redirect (HTTP fallback for when WS is unavailable). Routes by id
+  // prefix — same split as the agent-control / agent-redirect WS handlers
+  // in chat-ws.ts. Without the prefix split, op_* worker-pool ops silently
+  // no-op'd because Handler doesn't track them.
   if (method === "POST" && url.pathname.match(/^\/api\/agents\/[^/]+\/redirect$/)) {
     const agentId = url.pathname.split("/")[3];
     const body = await safeParseBody(req);
     if (!body || typeof body.instruction !== "string") { json(400, { error: "instruction (string) required" }); return true; }
     try {
-      const handler = (await import("../agency/handler.js")).Handler.getInstance();
-      handler.redirectAgent(agentId, body.instruction);
+      if (agentId.startsWith("op_")) {
+        const { redirectOp } = await import("../workers/pool.js");
+        const ok = redirectOp(agentId, body.instruction);
+        if (!ok) { json(404, { error: `op ${agentId} not running` }); return true; }
+      } else {
+        const handler = (await import("../agency/handler.js")).Handler.getInstance();
+        handler.redirectAgent(agentId, body.instruction);
+      }
       json(200, { ok: true, agentId, instruction: body.instruction });
     } catch (e) { json(404, { error: safeErrorMessage(e) }); }
     return true;

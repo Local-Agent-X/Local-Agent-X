@@ -121,29 +121,35 @@ function convertMarkdown(text: string, flavor: ChannelConfig["markdownFlavor"]):
 }
 
 function convertToTelegramMarkdown(text: string): string {
-  // Preserve code blocks as-is
+  // Placeholder shape uses ONLY letters + digits — Telegram MarkdownV2 has no
+  // letters in its escape set, so the placeholder survives the escape pass
+  // intact. The previous shape (`__CODE_BLOCK_0__`) embedded underscores
+  // which got escaped to `\_\_CODE\_BLOCK\_0\_\_` during the escape pass,
+  // causing the subsequent `replace('__CODE_BLOCK_0__', code)` to MISS the
+  // (now-escaped) form and leak the literal placeholder into the rendered
+  // message — that was the visible `__INLINE_CODE_0__` strings users saw
+  // in Telegram replies.
   const codeBlocks: string[] = [];
   let result = text.replace(/```[\s\S]*?```/g, (match) => {
     codeBlocks.push(match);
-    return `__CODE_BLOCK_${codeBlocks.length - 1}__`;
+    return `XCODEBLOCKX${codeBlocks.length - 1}XENDX`;
   });
 
-  // Preserve inline code
   const inlineCode: string[] = [];
   result = result.replace(/`[^`]+`/g, (match) => {
     inlineCode.push(match);
-    return `__INLINE_CODE_${inlineCode.length - 1}__`;
+    return `XINLINECODEX${inlineCode.length - 1}XENDX`;
   });
 
   // Escape Telegram special chars: _ * [ ] ( ) ~ ` > # + - = | { } . !
   result = result.replace(/([_*\[\]()~>#+\-=|{}.!])/g, "\\$1");
 
-  // Restore code blocks and inline code (unescaped)
+  // Restore (unescaped — code spans pass through MarkdownV2 raw).
   for (let i = 0; i < codeBlocks.length; i++) {
-    result = result.replace(`__CODE_BLOCK_${i}__`, codeBlocks[i]);
+    result = result.replace(`XCODEBLOCKX${i}XENDX`, codeBlocks[i]);
   }
   for (let i = 0; i < inlineCode.length; i++) {
-    result = result.replace(`__INLINE_CODE_${i}__`, inlineCode[i]);
+    result = result.replace(`XINLINECODEX${i}XENDX`, inlineCode[i]);
   }
 
   return result;

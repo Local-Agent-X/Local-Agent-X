@@ -53,6 +53,15 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       const { saveConfig } = await import("../../config.js");
       saveConfig(ctx.config);
     }
+    // Bridge voice preference is read from runtime config by voice.ts
+    // synthesize(); persist to config.json + update in-memory so the next
+    // bridge reply picks the new chain order without a server restart.
+    if (body.bridgeVoicePreference === "auto" || body.bridgeVoicePreference === "sovits"
+        || body.bridgeVoicePreference === "chatterbox" || body.bridgeVoicePreference === "lite") {
+      ctx.config.bridgeVoicePreference = body.bridgeVoicePreference;
+      const { saveConfig } = await import("../../config.js");
+      saveConfig(ctx.config);
+    }
     json(200, { ok: true }); return true;
   }
   if (method === "GET" && url.pathname === "/api/settings") {

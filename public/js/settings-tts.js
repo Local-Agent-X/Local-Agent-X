@@ -104,10 +104,11 @@ async function initVoiceSettings() {
 // Auto-init on page load. Settings.html may load this script before chat.js,
 // so we guard against the DOM not being ready yet.
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => { initVoiceSettings(); initVoiceVisualsToggle(); });
+  document.addEventListener('DOMContentLoaded', () => { initVoiceSettings(); initVoiceVisualsToggle(); initBridgeVoicePreference(); });
 } else {
   initVoiceSettings();
   initVoiceVisualsToggle();
+  initBridgeVoicePreference();
 }
 
 // Persist the visualizer toggle to /api/settings. Server stores it on the
@@ -131,6 +132,29 @@ function onVoiceVisualsToggle(checked) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
     body: JSON.stringify({ voice_visuals_enabled: !!checked }),
+  }).catch(() => {});
+}
+
+// ── Bridge voice preference (Telegram/WhatsApp synth chain order) ──
+async function initBridgeVoicePreference() {
+  const el = document.getElementById('cfg-bridge-voice-preference');
+  if (!el) return;
+  try {
+    const r = await (typeof apiFetch === 'function' ? apiFetch('/api/settings') : fetch('/api/settings'));
+    if (r.ok) {
+      const s = await r.json();
+      const v = s.bridgeVoicePreference;
+      if (v === 'auto' || v === 'sovits' || v === 'chatterbox' || v === 'lite') el.value = v;
+    }
+  } catch { /* leave default 'auto' */ }
+}
+function onBridgeVoicePreferenceChange(value) {
+  if (!['auto','sovits','chatterbox','lite'].includes(value)) return;
+  const tok = (new URLSearchParams(location.search).get('token') || localStorage.getItem('sax_token') || '');
+  fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok },
+    body: JSON.stringify({ bridgeVoicePreference: value }),
   }).catch(() => {});
 }
 

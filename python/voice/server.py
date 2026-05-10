@@ -587,7 +587,7 @@ async def lifespan(app):
     log.info("lax-voice sidecar shutdown")
 
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # noqa: E402
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Response  # noqa: E402
 
 app = FastAPI(lifespan=lifespan)
 
@@ -606,6 +606,54 @@ async def healthz():
         "tts": tts_ready,
         "gpu": _detect_gpu() or "cpu-only",
     }
+
+
+@app.post("/synth")
+async def synth(req: Request):
+    # One-shot HTTP TTS for non-WebSocket callers (Telegram/WhatsApp bridges).
+    # The WS pipeline at /voice is the right path for live conversation, but
+    # bridges only need text->WAV in a single round trip — wiring them through
+    # WS would mean per-message handshake + chunked reassembly for nothing.
+    # Returns a 24kHz mono WAV body.
+    try:
+        body = await req.json()
+    except Exception:
+        return Response(content=b'{"error":"bad json"}', status_code=400, media_type="application/json")
+    text = (body.get("text") or "").strip()
+    if not text:
+        return Response(content=b'{"error":"text required"}', status_code=400, media_type="application/json")
+    voice = body.get("voice") or os.environ.get("LAX_TTS_VOICE", "am_onyx")
+    try:
+        speed = float(body.get("speed") or 1.0)
+    except Exception:
+        speed = 1.0
+    try:
+        tts = _load_tts()
+    except Exception as e:
+        log.exception("/synth: kokoro load failed")
+        return Response(content=f'{{"error":"tts load: {e}"}}'.encode(), status_code=500, media_type="application/json")
+    try:
+        loop = asyncio.get_running_loop()
+        samples, sr = await loop.run_in_executor(
+            None,
+            lambda: tts.create(text, voice=voice, speed=speed, lang="en-us"),
+        )
+    except Exception as e:
+        log.exception("/synth: kokoro synth failed")
+        return Response(content=f'{{"error":"synth: {e}"}}'.encode(), status_code=500, media_type="application/json")
+    # Pack to int16 mono WAV in-memory.
+    import io
+    import wave
+    pcm16 = (np.asarray(samples) * 32767.0).clip(-32768, 32767).astype(np.int16).tobytes()
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(int(sr))
+        w.writeframes(pcm16)
+    wav = buf.getvalue()
+    log.info(f"/synth voice={voice} speed={speed} chars={len(text)} -> {len(wav)}B@{sr}Hz")
+    return Response(content=wav, media_type="audio/wav", headers={"X-Voice": voice, "X-Sample-Rate": str(int(sr))})
 
 
 @app.websocket("/voice")

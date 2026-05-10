@@ -391,6 +391,16 @@
           </div>
         </div>
         <div class="section-card">
+          <div class="section-title">Bridge Voice (Telegram &amp; WhatsApp)</div>
+          <div class="section-desc">Which engine speaks for replies sent over the messaging bridges. The chain falls back automatically if your preferred engine isn't running, so this is a preference, not a hard switch.</div>
+          <div class="field"><label class="field-label">Preferred engine</label><select class="field-select" id="cfg-bridge-voice-preference" onchange="onBridgeVoicePreferenceChange(this.value)">
+            <option value="auto">Auto — clones first (SoVITS → Chatterbox → Lite)</option>
+            <option value="sovits">GPT-SoVITS (fine-tuned clone)</option>
+            <option value="chatterbox">Chatterbox (zero-shot clone)</option>
+            <option value="lite">Lite Kokoro (built-in, fastest)</option>
+          </select><div class="field-hint">Falls through to the next available engine if the chosen one isn't reachable. Voice you hear in the browser is set above; this only affects bridge messages.</div></div>
+        </div>
+        <div class="section-card">
           <div class="section-title">Visualizer</div>
           <div class="section-desc">Let the agent morph the on-screen particle sphere into emojis, short text, shapes, or moods during emotionally significant voice replies. Rate-limited (max 1 per reply, 2.5s cooldown). When off, voice replies stay tool-free.</div>
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:6px">

@@ -297,7 +297,7 @@ async function trySidecarSynth(port: number, tierLabel: string, text: string): P
     logger.info(`[synthesize] ${tierLabel} :${port} unreachable (${(e as Error).message})`);
     return null;
   }
-  // Clone list. Both sidecars expose `{clones: [{id, name, ...}]}`.
+  // Clone list. Both clone-tier sidecars expose `{clones: [{id, name, ...}]}`.
   let cloneId: string | null = null;
   try {
     const list = await fetch(`http://127.0.0.1:${port}/clones`, { signal: AbortSignal.timeout(2000) });
@@ -339,24 +339,83 @@ async function trySidecarSynth(port: number, tierLabel: string, text: string): P
   }
 }
 
+/**
+ * Lite sidecar (Kokoro+Whisper at :7008) doesn't have clones — it has a flat
+ * `/synth` endpoint that takes `{text, voice?, speed?}` and returns WAV.
+ * Used as the no-clone fallback so bridges still get a real human-quality
+ * voice when neither Chatterbox nor SoVITS has a clone loaded.
+ */
+async function tryLiteSynth(port: number, text: string, voice?: string, speed?: number): Promise<Buffer | null> {
+  try {
+    const health = await fetch(`http://127.0.0.1:${port}/healthz`, { signal: AbortSignal.timeout(1500) });
+    if (!health.ok) {
+      logger.info(`[synthesize] lite :${port} health not ok (${health.status})`);
+      return null;
+    }
+  } catch (e) {
+    logger.info(`[synthesize] lite :${port} unreachable (${(e as Error).message})`);
+    return null;
+  }
+  try {
+    const t0 = Date.now();
+    const body: Record<string, unknown> = { text };
+    if (voice) body.voice = voice;
+    if (typeof speed === "number") body.speed = speed;
+    const r = await fetch(`http://127.0.0.1:${port}/synth`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!r.ok) {
+      logger.warn(`[synthesize] lite /synth returned ${r.status}`);
+      return null;
+    }
+    const ab = await r.arrayBuffer();
+    const buf = Buffer.from(ab);
+    logger.info(`[synthesize] lite voice=${voice ?? "default"} bytes=${buf.length} in ${Date.now() - t0}ms`);
+    return buf.length > 0 ? buf : null;
+  } catch (e) {
+    logger.warn(`[synthesize] lite /synth threw: ${(e as Error).message}`);
+    return null;
+  }
+}
+
 export async function synthesize(
   text: string,
   voice?: string,
   speed?: number
 ): Promise<Buffer> {
-  // Try clone-based sidecars first (Studio Chatterbox at 7010, then SoVITS at
-  // 7009). Both run server-side, both produce WAV. Bridges (Telegram/WhatsApp)
-  // can ONLY use server-side TTS — there's no browser to run window.speech-
-  // Synthesis on the user's behalf. The previous version checked only local
-  // Kokoro/Piper binary installs and silently returned empty when neither was
-  // present, which made bridge voice replies always fall back to text even
-  // when the Studio sidecar was running for the web chat.
+  // Bridges (Telegram/WhatsApp) can ONLY use server-side TTS — there's no
+  // browser to run window.speechSynthesis on the user's behalf.
+  // Probe order is user-configurable via config.bridgeVoicePreference. The
+  // preferred engine is tried first; the others remain in the chain as a
+  // fallback so an unhealthy preference doesn't silence the bridge.
   const cbPort = Number(process.env.LAX_CHATTERBOX_PORT) || 7010;
-  const svPort = Number(process.env.LAX_SOVITS_PORT) || 7009;
-  const cb = await trySidecarSynth(cbPort, "chatterbox", text);
-  if (cb) return cb;
-  const sv = await trySidecarSynth(svPort, "sovits", text);
-  if (sv) return sv;
+  const svPort = Number(process.env.LAX_SOVITS_PORT) || 7012;
+  const litePort = Number(process.env.LAX_VOICE_PORT) || 7008;
+  type EngineId = "sovits" | "chatterbox" | "lite";
+  const trySovits = (): Promise<Buffer | null> => trySidecarSynth(svPort, "sovits", text);
+  const tryChatterbox = (): Promise<Buffer | null> => trySidecarSynth(cbPort, "chatterbox", text);
+  const tryLite = (): Promise<Buffer | null> => tryLiteSynth(litePort, text, voice, speed);
+  const ENGINE: Record<EngineId, () => Promise<Buffer | null>> = {
+    sovits: trySovits, chatterbox: tryChatterbox, lite: tryLite,
+  };
+  // Read user preference from runtime config. Default chain (auto) is
+  // sovits→chatterbox→lite — clones first, then built-in.
+  let preference: "auto" | EngineId = "auto";
+  try {
+    const { getRuntimeConfig } = await import("./config.js");
+    preference = getRuntimeConfig().bridgeVoicePreference ?? "auto";
+  } catch {}
+  const baseOrder: EngineId[] = ["sovits", "chatterbox", "lite"];
+  const order: EngineId[] = preference === "auto"
+    ? baseOrder
+    : [preference, ...baseOrder.filter(e => e !== preference)];
+  for (const id of order) {
+    const buf = await ENGINE[id]();
+    if (buf) return buf;
+  }
 
   // Fall through to local-binary engines.
   const caps = await detectCapabilities();

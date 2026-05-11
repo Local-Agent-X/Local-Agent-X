@@ -8,6 +8,7 @@ import { createCoreProtocolTools } from "../protocols.js";
 import { CronService, createCronTools } from "../cron-service.js";
 import { createAgencyTools } from "../agency/index.js";
 import { createHandlerTools } from "../agency/handler.js";
+import { createAgentTools } from "../agents/tools.js";
 import { createMemoryTools } from "../memory.js";
 import type { SecretsStore } from "../secrets.js";
 import type { ServerEvent, ToolDefinition } from "../types.js";
@@ -74,7 +75,7 @@ export async function bootstrapTools(deps: {
     ...allTools, httpRequestTool, installSoftwareTool,
     ...memoryTools, ...secretTools, browserSecretCaptureTool, browserSecretFillTool, sessionStatusTool, voiceVisualTool, ...browserTools, ...imageTools,
     ...createCoreProtocolTools(), ...createCronTools(cronService),
-    ...createAgencyTools(), ...createHandlerTools(), ...appTools, ...issueTools,
+    ...createAgentTools(), ...createAgencyTools(), ...createHandlerTools(), ...appTools, ...issueTools,
     ...operationTools,
   ];
   const bridgeTools: ToolDefinition[] = [...allTools, ...memoryTools, browserSecretCaptureTool, sessionStatusTool, ...browserTools, ...imageTools, ...createCoreProtocolTools(), ...issueTools];

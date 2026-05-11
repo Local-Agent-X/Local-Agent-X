@@ -864,3 +864,15 @@ button:focus-visible,.chat-item:focus-visible,.util-btn:focus-visible{outline:2p
 .app-action-btn.edit{color:var(--accent);border-color:var(--accent-dim)}
 .app-action-btn.edit:hover{background:rgba(64,240,240,.08)}
 
+
+/* Slash-command autocomplete popup */
+#slash-popup{position:fixed;display:none;z-index:1000;background:var(--bg-card,var(--surface));border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.4);font-family:var(--mono);max-height:280px;overflow-y:auto}
+.slash-popup-header{padding:6px 10px;font-size:.62rem;color:var(--muted);letter-spacing:1px;text-transform:uppercase;border-bottom:1px solid var(--border)}
+.slash-popup-item{padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border)}
+.slash-popup-item:last-child{border-bottom:none}
+.slash-popup-item.active{background:var(--accent-dim,rgba(64,240,240,.12))}
+.slash-popup-item:hover{background:var(--hover)}
+.slash-popup-name{font-size:.78rem;color:var(--text);font-weight:600}
+.slash-popup-item.active .slash-popup-name{color:var(--accent,#40f0f0)}
+.slash-popup-desc{font-size:.62rem;color:var(--muted);margin-top:2px;line-height:1.3}
+

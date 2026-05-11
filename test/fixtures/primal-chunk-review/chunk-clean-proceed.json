@@ -1,0 +1,10 @@
+{
+  "_comment": "Synthetic clean-chunk fixture. Standard 'ships clean' pattern with no gray areas: done-when met, tests pass, no spec gaps, no launch-readiness items, no new failures. Reviewer MUST classify as proceed. Used to guard against the reviewer false-positiving on every chunk (which would block the whole tool).",
+  "chunkNumber": 5,
+  "chunkTitle": "CalendarAdapter interface + registry",
+  "doneWhen": "unit tests cover registry resolution and a fake adapter implementing the interface.",
+  "agentReport": "STATUS: done\nDONE_WHEN: met\nCHANGED: lib/calendar/adapter.ts, lib/calendar/registry.ts, lib/calendar/adapter.test.ts\nTESTS: 12/12\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: Clean shipment — interface + registry land, fake adapter exercises the contract, 12 unit tests pass.",
+  "expectedAction": "proceed",
+  "expectedReasonContains": "",
+  "specDiff": null
+}

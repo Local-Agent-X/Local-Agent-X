@@ -47,6 +47,14 @@ export function startBackgroundJobs(deps: {
 
   const cronReportsDir = join(dataDir, "cron", "reports");
   if (!existsSync(cronReportsDir)) mkdirSync(cronReportsDir, { recursive: true });
+  // Hard ceiling on a single mission run. Without this a hung adapter (network
+  // blackhole, stuck CLI subprocess) holds a concurrency slot forever; after
+  // 3 such hangs every cron tick gets skipped. 10 min buffers normal research
+  // missions (~1-3 min observed) without letting bad runs leak. On hit the
+  // AbortSignal flips the agent loop to stopReason="abort" — content already
+  // streamed gets salvaged through the same path as transient stream errors.
+  const MISSION_HARD_TIMEOUT_MS = Number(process.env.LAX_MISSION_TIMEOUT_MS) || 10 * 60_000;
+  const SUB_AGENT_WAIT_MS = Number(process.env.LAX_SUB_AGENT_WAIT_MS) || 5 * 60_000;
   const stripCronPreamble = (p: string): string => {
     const patterns = [
       /^every day at \d{1,2}(:\d{2})?\s*(am|pm)?,?\s*/i,
@@ -99,7 +107,19 @@ Use the read-only research tools (web_search, browser, http_request, web_fetch, 
     const wrappedPrompt = `<scheduled_task>\n${cleanedPrompt}\n</scheduled_task>`;
     // no recursive scheduling, no file writes — agent's returned text IS the report
     const cronTools = prepared.tools.filter(t => !t.name.startsWith("mission_schedule_") && t.name !== "write" && t.name !== "edit");
-    const result = await runAgent(wrappedPrompt, [], { apiKey: prepared.apiKey, model: cronModel, provider: prepared.provider as AgentOptions["provider"], systemPrompt: cronSystemPrompt, tools: cronTools, security: cronSecurity, toolPolicy, sessionId, maxIterations: config.maxIterations });
+    const abortController = new AbortController();
+    const timeoutHandle = setTimeout(() => {
+      logger.error(`[cron] Job ${jobId}: hard timeout ${MISSION_HARD_TIMEOUT_MS}ms reached — aborting agent loop`);
+      abortController.abort();
+    }, MISSION_HARD_TIMEOUT_MS);
+    cronService.registerRunAbort(jobId, abortController);
+    let result;
+    try {
+      result = await runAgent(wrappedPrompt, [], { apiKey: prepared.apiKey, model: cronModel, provider: prepared.provider as AgentOptions["provider"], systemPrompt: cronSystemPrompt, tools: cronTools, security: cronSecurity, toolPolicy, sessionId, maxIterations: config.maxIterations, signal: abortController.signal });
+    } finally {
+      clearTimeout(timeoutHandle);
+      cronService.unregisterRunAbort(jobId);
+    }
     const session = getOrCreateSession(sessionId);
     session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);
     let output = extractAgentOutput(result.messages);
@@ -112,11 +132,15 @@ Use the read-only research tools (web_search, browser, http_request, web_fetch, 
       try {
         const { Handler } = await import("../agency/handler.js");
         const handler = Handler.getInstance();
-        const subResults = await handler.waitForSessionAgents(sessionId, 60_000);
+        const subWaitStart = Date.now();
+        const subResults = await handler.waitForSessionAgents(sessionId, SUB_AGENT_WAIT_MS);
+        const subWaitMs = Date.now() - subWaitStart;
         if (subResults.length > 0) {
           const subOutput = subResults.join("\n\n---\n\n");
           output = subOutput.length > output.length ? subOutput : output + "\n\n---\n\n" + subOutput;
-          logger.info(`[cron] Job ${jobId}: collected ${subResults.length} sub-agent result(s)`);
+          logger.info(`[cron] Job ${jobId}: collected ${subResults.length} sub-agent result(s) in ${subWaitMs}ms`);
+        } else if (subWaitMs >= SUB_AGENT_WAIT_MS - 500) {
+          logger.warn(`[cron] Job ${jobId}: sub-agent wait timed out after ${subWaitMs}ms — any in-flight sub-agent output is dropped`);
         }
       } catch (e) { logger.warn(`[cron] Sub-agent wait error:`, (e as Error).message); }
     }
@@ -136,7 +160,13 @@ Use the read-only research tools (web_search, browser, http_request, web_fetch, 
     if (!existsSync(jobDir)) mkdirSync(jobDir, { recursive: true });
     const job = cronService.get(jobId);
     const validation = validateMissionOutput(cleanedPrompt, trimmed, stopReason);
-    if (!validation.valid) {
+    // Salvage rule (mirrors src/workers/worker-entry.ts classifyOpResult):
+    // judge by evidence — if the agent produced substantive content that
+    // passes refusal/topic/length/truncation checks, ship it to canonical
+    // even when the terminal stopReason is "error". Provider streams often
+    // emit a transient error event after the final assistant message has
+    // already landed; the report is real, the gate was throwing it away.
+    if (!validation.valid && !validation.contentValid) {
       const reason = validation.reason!;
       const failedDir = join(jobDir, "failed");
       if (!existsSync(failedDir)) mkdirSync(failedDir, { recursive: true });
@@ -152,14 +182,21 @@ Use the read-only research tools (web_search, browser, http_request, web_fetch, 
         provider: providerName, model: cronModel,
       };
     }
+    const salvaged = !validation.valid && validation.contentValid;
     const reportPath = join(jobDir, `${ts}.md`);
-    const reportContent = `# ${job?.name || jobId} — ${new Date().toLocaleDateString()}\n\n${output}`;
+    const salvageBanner = salvaged ? `\n\n> Note: terminal stopReason was \`${stopReason}\` — content checks passed, salvaged to canonical.\n` : "";
+    const reportContent = `# ${job?.name || jobId} — ${new Date().toLocaleDateString()}${salvageBanner}\n\n${output}`;
     writeFileSync(reportPath, reportContent, "utf-8");
     const slug = (job?.name || jobId).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+$/, "");
     const missionDir = join(resolve(config.workspace), "missions", slug);
     mkdirSync(missionDir, { recursive: true });
     writeFileSync(join(missionDir, "latest.md"), reportContent, "utf-8");
-    logger.info(`[cron] Report saved: ${reportPath}`);
+    if (salvaged) {
+      try { appendFileSync(join(cronReportsDir, "_failures.log"), `${new Date().toISOString()}\t${job?.name || ""}\t${jobId}\tstop=${stopReason}\tSALVAGED ${trimmed.length} chars to canonical\n`, "utf-8"); } catch {}
+      logger.warn(`[cron] Job ${jobId} (${job?.name || "?"}) salvaged: stopReason=${stopReason} but ${trimmed.length} chars passed content checks — saved to ${reportPath}`);
+    } else {
+      logger.info(`[cron] Report saved: ${reportPath}`);
+    }
     return {
       output: output.slice(0, 500), reportPath,
       status: "success",

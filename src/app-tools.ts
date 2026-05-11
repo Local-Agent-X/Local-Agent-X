@@ -517,8 +517,8 @@ const sidebarPin: ToolDefinition = {
     try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
     const pins = (settings.sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
 
-    if (pins.length >= 8 && !pins.some(p => p.name === name)) {
-      return err("Maximum 8 pinned apps. Unpin one first.");
+    if (pins.length >= 10 && !pins.some(p => p.name === name)) {
+      return err("Maximum 10 pinned apps. Unpin one first.");
     }
     if (pins.some(p => p.name === name)) {
       return ok(`${name} is already pinned to the sidebar.`);

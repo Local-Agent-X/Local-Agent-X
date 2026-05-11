@@ -36,6 +36,23 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
     const sessionId = parsed.data.sessionId!;
     const attachments = _attachments!;
 
+    // Slash-command interceptor. Runs BEFORE memory recall, history truncation,
+    // or anything else that reads `message`. When the user typed `/<known-skill>`
+    // (e.g. /app-build, /senior-engineer, /vibe-code), the SKILL.md body is
+    // inlined as load-bearing methodology and the agent sees a rewritten
+    // message. Unknown commands pass through unchanged so we don't swallow
+    // legitimate slash-prefixed input. See src/slash-commands.ts.
+    try {
+      const { expandSlashCommand } = await import("../slash-commands.js");
+      const expanded = expandSlashCommand(message);
+      if (expanded) {
+        logger.info(`[slash] /${expanded.command} expanded for sess=${sessionId.slice(0, 16)}${expanded.argText ? " (with arg)" : ""}`);
+        message = expanded.agentMessage;
+      }
+    } catch (e) {
+      logger.warn(`[slash] expansion failed (passing through): ${(e as Error).message}`);
+    }
+
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", ...corsHeaders(req) });
 
     // Wait for any in-flight write from a prior turn to land before reading

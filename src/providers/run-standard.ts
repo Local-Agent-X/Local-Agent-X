@@ -231,6 +231,13 @@ export async function runStandardAgent(
       });
       logClassification(options.provider, model, classification);
       onEvent?.({ type: "error", message: errMsg });
+      // Mirror the Anthropic path: preserve the final assistant text on
+      // stream-error so cron's salvage gate (background-jobs.ts) can still
+      // ship legitimate output. Skip when a tool_call was in flight to avoid
+      // pushing a partial tool_call without its matching tool_result.
+      if (assistantContent.trim() && toolCalls.length === 0) {
+        messages.push({ role: "assistant", content: assistantContent } as ChatCompletionMessageParam);
+      }
       return {
         messages,
         usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens },

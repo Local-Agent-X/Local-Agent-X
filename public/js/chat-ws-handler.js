@@ -334,13 +334,6 @@ function handleChatWsMessage(e) {
     }
 
     // ── Desktop notifications for important events ──
-    if (msg.type === 'issue:created' && msg.issue?.needsApproval) {
-      if (window.desktop) window.desktop.showNotification('Approval Needed', msg.issue.title);
-      else if (Notification.permission === 'granted') new Notification('Approval Needed', { body: msg.issue.title });
-    }
-    if (msg.type === 'inbox:approved') {
-      if (window.desktop) window.desktop.showNotification('Approved', msg.issue?.title || 'Request approved');
-    }
     if (msg.type === 'agent-complete' && msg.agentId) {
       if (window.desktop) window.desktop.showNotification('Agent Finished', msg.result?.slice(0, 100) || 'Task complete');
     }

@@ -26,7 +26,8 @@ const TOPIC_STOPWORDS = new Set([
 ]);
 
 const SENTENCE_END_CHARS = `.!?)]}"'\``;
-const MIN_OUTPUT_LENGTH = 400;
+const MIN_OUTPUT_LENGTH = 200;
+const TRUNCATION_CHECK_MAX_LENGTH = 1500;
 const TOPIC_MIN_KEYWORDS = 4;
 const TOPIC_MIN_SCORE = 0.3;
 
@@ -68,6 +69,7 @@ export function scoreTopicMatch(prompt: string, output: string): TopicMatch {
 export function looksTruncated(text: string): boolean {
   const t = text.trimEnd();
   if (!t) return true;
+  if (t.length > TRUNCATION_CHECK_MAX_LENGTH) return false;
   const lastLine = (t.split('\n').pop() || '').trim();
   if (/^#{1,6}\s+\S/.test(lastLine)) return false;
   if (/^([-*+]|\d+\.)\s*$/.test(lastLine)) return true;
@@ -80,6 +82,7 @@ export function looksTruncated(text: string): boolean {
 
 export interface ValidationResult {
   valid: boolean;
+  contentValid: boolean;
   reason?: string;
   details?: {
     matchedBad?: string;
@@ -94,7 +97,7 @@ export interface ValidationResult {
 export function validateMissionOutput(prompt: string, output: string, stopReason: string): ValidationResult {
   const trimmed = output.trim();
   if (!trimmed) {
-    return { valid: false, reason: `empty output (stop=${stopReason})`, details: { tooShort: true } };
+    return { valid: false, contentValid: false, reason: `empty output (stop=${stopReason})`, details: { tooShort: true } };
   }
   const badStop = stopReason !== 'end_turn';
   const refusal = detectRefusalOrError(trimmed);
@@ -103,20 +106,22 @@ export function validateMissionOutput(prompt: string, output: string, stopReason
   const topic = scoreTopicMatch(prompt, trimmed);
   const offTopic = topic.total >= TOPIC_MIN_KEYWORDS && topic.score < TOPIC_MIN_SCORE;
   const truncated = looksTruncated(trimmed);
+  const contentValid = !refusal.refused && !matchedBad && !tooShort && !offTopic && !truncated;
 
-  if (!badStop && !refusal.refused && !matchedBad && !tooShort && !offTopic && !truncated) {
-    return { valid: true };
+  if (!badStop && contentValid) {
+    return { valid: true, contentValid: true };
   }
 
-  const reason = badStop ? `bad stopReason: ${stopReason}`
-    : refusal.refused ? `refusal/error pattern: ${refusal.pattern} (stop=${stopReason})`
-    : matchedBad ? `matched bad pattern: ${matchedBad.source} (stop=${stopReason})`
-    : tooShort ? `output too short (${trimmed.length} chars, expected >= ${MIN_OUTPUT_LENGTH}) (stop=${stopReason})`
-    : offTopic ? `off-topic (${topic.matched}/${topic.total} prompt keywords matched, score ${(topic.score * 100).toFixed(0)}%) (stop=${stopReason})`
-    : `output looks truncated (stop=${stopReason})`;
+  const reason = !contentValid && refusal.refused ? `refusal/error pattern: ${refusal.pattern} (stop=${stopReason})`
+    : !contentValid && matchedBad ? `matched bad pattern: ${matchedBad.source} (stop=${stopReason})`
+    : !contentValid && tooShort ? `output too short (${trimmed.length} chars, expected >= ${MIN_OUTPUT_LENGTH}) (stop=${stopReason})`
+    : !contentValid && offTopic ? `off-topic (${topic.matched}/${topic.total} prompt keywords matched, score ${(topic.score * 100).toFixed(0)}%) (stop=${stopReason})`
+    : !contentValid ? `output looks truncated (stop=${stopReason})`
+    : `bad stopReason: ${stopReason}`;
 
   return {
     valid: false,
+    contentValid,
     reason,
     details: {
       matchedBad: matchedBad?.source,

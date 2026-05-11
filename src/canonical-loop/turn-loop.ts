@@ -93,7 +93,12 @@ export async function driveTurn(
   // underlying CLI/HTTP connection. Productive long turns reset the
   // timer on every event and never trip this; only true stalls die.
   // Lives here so any future adapter (xai, gemini, local) inherits it.
-  const idleMs = parseInt(process.env.LAX_CANONICAL_IDLE_TIMEOUT_MS ?? "120000", 10);
+  // Default 600s. Used to be 120s, which killed legitimately long
+  // thinking + tool-prep turns (Opus on a big prompt, planning convos
+  // with the methodology body inlined, etc.). 10 min is still tight
+  // enough that true stalls die; productive turns reset the timer on
+  // every adapter event so they never trip it. Override via env var.
+  const idleMs = parseInt(process.env.LAX_CANONICAL_IDLE_TIMEOUT_MS ?? "600000", 10);
   let lastReportAt = Date.now();
   let idleFired = false;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;

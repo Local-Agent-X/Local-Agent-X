@@ -7,7 +7,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "node --max-old-space-size=4096 --import=tsx --watch-path=src --watch src/index.ts",
+    "dev": "node --max-old-space-size=4096 --import=tsx src/index.ts",
+    "dev:watch": "node --max-old-space-size=4096 --import=tsx --watch-path=src --watch src/index.ts",
     "dev:nowatch": "node --max-old-space-size=4096 --import=tsx src/index.ts",
     "dev:supervised": "node scripts/supervisor.mjs",
     "start": "node --max-old-space-size=4096 dist/index.js",

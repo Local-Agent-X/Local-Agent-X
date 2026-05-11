@@ -22,9 +22,9 @@ import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { parsePlanFile } from "./plan-parser.js";
-import { runBuildLoop } from "./loop.js";
 import { readBuildState, checkSystemic } from "./failure-recovery.js";
 import { defaultJudgmentHook } from "./chunk-review/judgment-hook.js";
+import { startOrchestration } from "./orchestrator/manager.js";
 
 export const FEATURE_FLAG_ENV = "PRIMAL_AUTO_BUILD_ENABLED";
 
@@ -36,11 +36,13 @@ export function isFeatureEnabled(): boolean {
 export const primalRunBuildPlanTool: ToolDefinition = {
   name: "primal_run_build_plan",
   description:
-    "Run an /app-build plan to code-completion. Reads spec/plan.md from a target project, " +
-    "spawns a fresh Claude Code subprocess per chunk with the right skill (/senior-engineer for " +
-    "trunk, /vibe-code for leaf), runs a /chunk-review gate after each (done-when + additive " +
-    "spec-diff + phase-gate + launch-readiness + test-failure), halts at phase-gates and " +
-    "launch-readiness blockers instead of trying to drive scenarios autonomously. " +
+    "Run an /app-build plan to code-completion. **Returns immediately with an opId**; the actual " +
+    "build runs in the background and progresses live in the AGENTS sidebar. State persists " +
+    "across LAX restarts; use `primal_build_resume` to pick up where a halted build left off.\n\n" +
+    "Loop: spawns a fresh Claude Code (or Codex) subprocess per chunk with the right skill " +
+    "(/senior-engineer for trunk, /vibe-code for leaf), runs the /chunk-review gates (done-when + " +
+    "additive spec-diff + phase-gate + launch-readiness + test-failure), halts at phase-gates and " +
+    "launch-readiness blockers. Each gate halt persists to disk so a restart can resume.\n\n" +
     "Companion to /app-build: where that produces the spec, this consumes it.\n\n" +
     "Opt-out via PRIMAL_AUTO_BUILD_ENABLED env flag — default ON. Set the flag to " +
     "0/false/no/off to disable for this server.",
@@ -129,40 +131,39 @@ export const primalRunBuildPlanTool: ToolDefinition = {
       : plan.chunks[0].number;
     const maxChunks = Number.isFinite(maxChunksArg) && maxChunksArg > 0 ? Math.floor(maxChunksArg) : undefined;
 
-    const startedAt = Date.now();
-    const result = await runBuildLoop({
+    const sessionId = typeof args._sessionId === "string" ? args._sessionId : "";
+    if (!sessionId) {
+      return {
+        content: "primal_run_build_plan needs a chat session context to surface live progress in the sidebar. Internal: _sessionId was not injected.",
+        isError: true,
+      };
+    }
+
+    // Async kick-off: register the orchestrator op, return immediately.
+    // Loop runs in background; bg_op_progress / bg_op_completed events
+    // populate the AGENTS sidebar and route a completion message back to
+    // the chat session. State persists across LAX restarts via
+    // .primal-orchestrator-state.json — primal_build_resume picks it up.
+    const kick = startOrchestration({
+      sessionId,
       projectDir,
       planPath,
       plan,
       startingChunk,
       maxChunks,
-      signal,
       judgmentHook: defaultJudgmentHook,
     });
-    const durationMs = Date.now() - startedAt;
-
-    const head =
-      `primal_run_build_plan\n` +
-      `project_dir: ${projectDir}\n` +
-      `plan_path: ${planPath} (${plan.chunks.length} chunks)\n` +
-      `starting_chunk: ${startingChunk}${maxChunks ? `, max_chunks: ${maxChunks}` : ""}\n` +
-      `status: ${result.status}, lastChunk: ${result.lastChunk}, committed: ${result.chunksCommitted}, duration: ${durationMs}ms\n` +
-      (result.haltReason ? `halt: ${result.haltReason}\n` : "") +
-      `---\n`;
-
-    const eventTrail = result.events.map(e =>
-      `[${(e.elapsedMs / 1000).toFixed(1)}s] [chunk ${e.chunkNumber}/${e.totalChunks}] ${e.type}: ${e.message}`,
-    ).join("\n");
 
     return {
-      content: head + eventTrail,
-      isError: result.status === "halted",
+      content: kick.initialMessage,
+      status: "running",
+      session_id: kick.opId,
       metadata: {
-        duration_ms: durationMs,
-        status: result.status,
-        last_chunk: result.lastChunk,
-        chunks_committed: result.chunksCommitted,
-        halt_reason: result.haltReason || undefined,
+        op_id: kick.opId,
+        project_dir: projectDir,
+        plan_chunks: plan.chunks.length,
+        starting_chunk: startingChunk,
+        max_chunks: maxChunks,
       },
     };
   },

@@ -117,9 +117,8 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     let settings: Record<string, unknown> = {};
     try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
     const pins = (settings.sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
-    // Cap at 8 pins
-    if (pins.length >= 8 && !pins.some(p => p.name === name)) {
-      json(400, { error: "Maximum 8 pinned apps. Unpin one first." }); return true;
+    if (pins.length >= 10 && !pins.some(p => p.name === name)) {
+      json(400, { error: "Maximum 10 pinned apps. Unpin one first." }); return true;
     }
     // Don't duplicate
     if (!pins.some(p => p.name === name)) {

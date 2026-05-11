@@ -47,6 +47,20 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     ctx.cronService.executeJob(job, { manual: true }).catch(() => {});
     return true;
   }
+  if (method === "POST" && url.pathname.match(/^\/api\/cron\/[^/]+\/cancel$/)) {
+    const id = url.pathname.split("/")[3];
+    if (!ctx.cronService.get(id)) { json(404, { error: "Job not found" }); return true; }
+    const cancelled = ctx.cronService.cancelRun(id);
+    json(200, { ok: true, cancelled });
+    return true;
+  }
+  if (method === "POST" && url.pathname.match(/^\/api\/cron\/[^/]+\/clear-error$/)) {
+    const id = url.pathname.split("/")[3];
+    const cleared = ctx.cronService.clearLastError(id);
+    if (!cleared) { json(404, { error: "Job not found" }); return true; }
+    json(200, { ok: true, job: ctx.cronService.get(id) });
+    return true;
+  }
   // Per-job run history (newest first)
   if (method === "GET" && url.pathname.match(/^\/api\/cron\/[^/]+\/history$/)) {
     const id = url.pathname.split("/")[3];

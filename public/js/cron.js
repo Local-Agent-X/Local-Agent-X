@@ -4,6 +4,12 @@
 let cronJobs = [];
 let selectedJob = null;
 let cronStatusTimer = null;
+// Tracks jobs the user has clicked Stop on. Cleared once the live-status
+// poll confirms the run actually wound down (abort signal can take 5-30s
+// to propagate through an in-flight tool call). Without this flag the Stop
+// button feels broken — the click registers but the UI doesn't change until
+// the next /api/cron list poll, and the user mashes the button repeatedly.
+const cronStopping = new Set();
 
 function init_missions() { loadCronJobs(); }
 
@@ -32,10 +38,19 @@ function renderCronList() {
     const failNote = failing ? `<span style="color:#e07b5a;font-weight:600"> · ${j.consecutiveFailures} fail${j.consecutiveFailures > 1 ? 's' : ''}</span>` : '';
     const nextNote = (j.enabled && j.nextRunAt) ? ` · next ${formatRelativeFuture(j.nextRunAt)}` : '';
     const errLine = (j.lastErrorMessage && (j.lastStatus === 'failed' || j.lastStatus === 'error'))
-      ? `<div class="cron-row-err" title="${esc(j.lastErrorMessage)}">⚠ ${esc(truncate(j.lastErrorMessage, 90))}</div>` : '';
+      ? `<div class="cron-row-err" title="${esc(j.lastErrorMessage)}">⚠ ${esc(truncate(j.lastErrorMessage, 80))} <span style="color:var(--muted);cursor:pointer;margin-left:4px" title="Dismiss" onclick="event.stopPropagation();clearCronErrorById('${j.id}')">✕</span></div>` : '';
     const pauseGlyph = j.enabled ? '⏸' : '▶';
+    const stopping = cronStopping.has(j.id);
+    // Stopping state shows as a distinct text chip rather than a tiny glyph —
+    // a `…` next to `⏸` was visually indistinguishable from `▶▶ ⏸` at icon
+    // size, so users couldn't tell the click landed.
+    const runAct = stopping
+      ? `<span class="cron-row-act" title="Aborting…" style="color:#e07b5a;font-size:.65rem;font-weight:600;letter-spacing:.5px;cursor:wait;opacity:.85">STOPPING</span>`
+      : j.isRunning
+        ? `<span class="cron-row-act" title="Stop run" style="color:#e07b5a" onclick="event.stopPropagation();cancelCronRunById('${j.id}')">■</span>`
+        : `<span class="cron-row-act" title="Run now" onclick="event.stopPropagation();runCronById('${j.id}')">▶▶</span>`;
     const actions = `<span class="cron-row-actions">`
-      + `<span class="cron-row-act" title="Run now" onclick="event.stopPropagation();runCronById('${j.id}')">▶▶</span>`
+      + runAct
       + `<span class="cron-row-act" title="${j.enabled ? 'Pause' : 'Resume'}" onclick="event.stopPropagation();toggleCronById('${j.id}')">${pauseGlyph}</span>`
       + `</span>`;
     return `
@@ -92,6 +107,16 @@ function startCronStatusPolling() {
     try {
       const data = await apiJson(`/api/cron/${selectedJob.id}/status`);
       renderCronLiveStatus(data);
+      if (selectedJob.isRunning !== data.running) {
+        selectedJob.isRunning = !!data.running;
+      }
+      // Run wound down — clear "stopping" state so the Run button can come
+      // back. Until this fires, Stop stays disabled and Run stays hidden.
+      if (!data.running && cronStopping.has(selectedJob.id)) {
+        cronStopping.delete(selectedJob.id);
+        renderCronList();
+      }
+      applyCronRunButtonState(selectedJob);
       // When a run transitions from running → idle, refresh job state + history
       if (wasRunning && !data.running) {
         refreshSelectedCronJob();
@@ -104,6 +129,29 @@ function startCronStatusPolling() {
   };
   poll();
   cronStatusTimer = setInterval(poll, 2500);
+}
+
+function applyCronRunButtonState(job) {
+  const runBtn = document.getElementById('cron-run-btn');
+  const stopBtn = document.getElementById('cron-stop-btn');
+  if (!runBtn || !stopBtn) return;
+  const stopping = cronStopping.has(job.id);
+  if (stopping) {
+    runBtn.style.display = 'none';
+    stopBtn.style.display = '';
+    stopBtn.disabled = true;
+    stopBtn.textContent = 'Stopping…';
+  } else if (job.isRunning) {
+    runBtn.style.display = 'none';
+    stopBtn.style.display = '';
+    stopBtn.disabled = false;
+    stopBtn.textContent = 'Stop';
+  } else {
+    runBtn.style.display = '';
+    stopBtn.style.display = 'none';
+    stopBtn.disabled = false;
+    stopBtn.textContent = 'Stop';
+  }
 }
 
 function renderCronLiveStatus(data) {
@@ -183,6 +231,10 @@ function renderCronDetail() {
     resultEl.textContent = errMsg ? `⚠ ${errMsg}` : (selectedJob.lastResult || '');
     resultEl.style.color = errMsg ? '#e07b5a' : 'var(--muted)';
   }
+
+  applyCronRunButtonState(selectedJob);
+  const clearErrBtn = document.getElementById('cron-clear-error-btn');
+  if (clearErrBtn) clearErrBtn.style.display = selectedJob.lastErrorMessage ? '' : 'none';
 
   loadCronReports(selectedJob.id);
   loadCronHistory(selectedJob.id);
@@ -396,5 +448,52 @@ async function runCronById(id) {
     await apiPost('/api/cron/' + id + '/run', {});
     setTimeout(() => loadCronJobs(), 800);
     if (selectedJob && selectedJob.id === id) startCronStatusPolling();
+  } catch (e) { alert('Failed: ' + e.message); }
+}
+
+async function cancelCronRun() {
+  if (!selectedJob) return;
+  return cancelCronRunById(selectedJob.id);
+}
+
+async function cancelCronRunById(id) {
+  // Idempotent — repeated clicks while the abort propagates are no-ops.
+  // Without this guard the user mashes the button (because nothing visible
+  // changes for 5-30s while the agent loop checks its abort signal between
+  // iterations) and queues up redundant POSTs.
+  if (cronStopping.has(id)) return;
+  cronStopping.add(id);
+  // Immediate visual feedback BEFORE the network call so the click feels
+  // landed even if the server takes a moment to respond.
+  if (selectedJob && selectedJob.id === id) applyCronRunButtonState(selectedJob);
+  renderCronList();
+  try {
+    const data = await apiPost('/api/cron/' + id + '/cancel', {});
+    if (data && !data.cancelled) {
+      // Server didn't find an in-flight run — clear stopping state so the
+      // button corrects immediately rather than waiting for the next poll.
+      cronStopping.delete(id);
+      await loadCronJobs();
+      if (selectedJob && selectedJob.id === id) refreshSelectedCronJob();
+      renderCronList();
+    }
+  } catch (e) {
+    cronStopping.delete(id);
+    if (selectedJob && selectedJob.id === id) applyCronRunButtonState(selectedJob);
+    renderCronList();
+    alert('Cancel failed: ' + e.message);
+  }
+}
+
+async function clearCronError() {
+  if (!selectedJob) return;
+  return clearCronErrorById(selectedJob.id);
+}
+
+async function clearCronErrorById(id) {
+  try {
+    await apiPost('/api/cron/' + id + '/clear-error', {});
+    await loadCronJobs();
+    if (selectedJob && selectedJob.id === id) refreshSelectedCronJob();
   } catch (e) { alert('Failed: ' + e.message); }
 }

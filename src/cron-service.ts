@@ -94,6 +94,7 @@ export class CronService {
   private settings: CronSettings = { ...DEFAULT_SETTINGS };
   private executeHandler: ExecuteHandler | null = null;
   private running = new Set<string>();
+  private runAborts = new Map<string, AbortController>();
   private concurrencyDeferCount = new Map<string, number>();
   private transientRetryCount = new Map<string, number>();
   private lastFileMtime = 0;
@@ -451,6 +452,41 @@ export class CronService {
   }
 
   isRunning(id: string): boolean { return this.running.has(id); }
+
+  /**
+   * Lets the executeHandler register the AbortController that owns the
+   * agent loop for this run, so external callers (UI Stop button) can
+   * cancel an in-flight mission. The handler still controls timeout and
+   * abort-on-finally; the cron service just brokers external access.
+   */
+  registerRunAbort(id: string, ctrl: AbortController): void { this.runAborts.set(id, ctrl); }
+  unregisterRunAbort(id: string): void { this.runAborts.delete(id); }
+
+  /** Returns true if there was an in-flight run to cancel. */
+  cancelRun(id: string): boolean {
+    const ctrl = this.runAborts.get(id);
+    if (!ctrl) return false;
+    ctrl.abort();
+    logger.warn(`[cron] Job ${id}: run cancelled by user`);
+    return true;
+  }
+
+  /**
+   * Acknowledge and dismiss the last failure surface for a job: clears
+   * the sticky error message, demotes the status badge from failed/error,
+   * and resets the consecutive-failure streak. Useful after the user has
+   * read or fixed the underlying problem and wants a clean panel.
+   */
+  clearLastError(id: string): boolean {
+    const job = this.jobs.get(id);
+    if (!job) return false;
+    job.lastErrorMessage = undefined;
+    if (job.lastStatus === "failed" || job.lastStatus === "error") job.lastStatus = undefined;
+    job.consecutiveFailures = 0;
+    this.transientRetryCount.delete(id);
+    this.saveJobs();
+    return true;
+  }
 
   getSettings(): CronSettings { return { ...this.settings }; }
 

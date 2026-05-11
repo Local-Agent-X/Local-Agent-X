@@ -161,7 +161,7 @@ async function testModuleImports(): Promise<void> {
     "./audio-agent.js",
     "./audio-cues.js",
     "./video-summary.js",
-    "./missions/index.js",
+    "./protocols.js",
   ];
 
   for (const mod of modules) {
@@ -179,7 +179,7 @@ async function testToolRegistration(): Promise<void> {
     "agent_status",
     "delegate",
     "agency_create",
-    "mission_list",
+    "protocol_list",
     "bash",
     "read",
     "write",

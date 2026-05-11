@@ -77,7 +77,7 @@ export function buildChunkPrompt(opts: BuildChunkPromptOptions): string {
 
   // Inline the skill's methodology body so workers don't depend on the
   // operator having `~/.claude/skills/` populated. Body is bundled in
-  // `src/skills/<skill>/SKILL.md`. See skill-bodies.ts.
+  // `protocols/bundled/<skill>/SKILL.md`. See skill-bodies.ts.
   const skillBody = loadSkillBody(skill);
 
   return (

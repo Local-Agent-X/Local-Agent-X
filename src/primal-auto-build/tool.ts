@@ -30,7 +30,7 @@ export const FEATURE_FLAG_ENV = "PRIMAL_AUTO_BUILD_ENABLED";
 
 export function isFeatureEnabled(): boolean {
   const v = String(process.env[FEATURE_FLAG_ENV] || "").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes" || v === "on";
+  return !(v === "0" || v === "false" || v === "no" || v === "off");
 }
 
 export const primalRunBuildPlanTool: ToolDefinition = {
@@ -42,10 +42,8 @@ export const primalRunBuildPlanTool: ToolDefinition = {
     "spec-diff + phase-gate + launch-readiness + test-failure), halts at phase-gates and " +
     "launch-readiness blockers instead of trying to drive scenarios autonomously. " +
     "Companion to /app-build: where that produces the spec, this consumes it.\n\n" +
-    "GATED BEHIND PRIMAL_AUTO_BUILD_ENABLED env flag — default OFF. The tool refuses to run " +
-    "unless explicitly enabled. Graduation criteria (≤2 manual rescues end-to-end, zero " +
-    "false-positive spec-drift halts in 30 chunks, phase gates always halt correctly) must " +
-    "be met before the default flips.",
+    "Opt-out via PRIMAL_AUTO_BUILD_ENABLED env flag — default ON. Set the flag to " +
+    "0/false/no/off to disable for this server.",
   parameters: {
     type: "object",
     properties: {
@@ -73,15 +71,12 @@ export const primalRunBuildPlanTool: ToolDefinition = {
     if (!isFeatureEnabled()) {
       return {
         content:
-          `BLOCKED — primal_run_build_plan is gated behind the ${FEATURE_FLAG_ENV} env flag, ` +
-          `which is currently OFF. The tool is not yet graduated for default-on use. ` +
-          `Graduation criteria (≤2 manual rescues end-to-end, zero false-positive spec-drift ` +
-          `halts in 30 chunks, phase gates always halt correctly) live in ` +
-          `~/.claude/projects/c--Users-manri-local-agent-x/memory/project_primal_auto_build_tool_design.md. ` +
-          `To enable for this server: set ${FEATURE_FLAG_ENV}=1 and restart.`,
+          `BLOCKED — primal_run_build_plan was explicitly disabled via ${FEATURE_FLAG_ENV} ` +
+          `(set to 0/false/no/off). The tool is opt-out and runs by default; unset the flag ` +
+          `or set it to any other value, then restart to re-enable.`,
         isError: true,
         status: "blocked",
-        metadata: { recovery: `set ${FEATURE_FLAG_ENV}=1 in the LAX server environment and restart` },
+        metadata: { recovery: `unset ${FEATURE_FLAG_ENV} (or set to a non-disabling value) in the LAX server environment and restart` },
       };
     }
 

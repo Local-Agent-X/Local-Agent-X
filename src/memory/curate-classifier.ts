@@ -173,9 +173,17 @@ export async function classifyTeachMoment(
  * the main chat agent uses, so CLI OAuth tokens "just work" — no special
  * handling needed for the Authorization: Bearer vs x-api-key distinction.
  */
-export async function streamForResponse_anthropic(token: string, model: string, userMessage: string): Promise<string | null> {
+export async function streamForResponse_anthropic(token: string, model: string, userMessage: string, signal?: AbortSignal): Promise<string | null> {
   const ac = new AbortController();
   const timeoutId = setTimeout(() => ac.abort(), CLASSIFIER_TIMEOUT_MS);
+  let onExternalAbort: (() => void) | undefined;
+  if (signal) {
+    if (signal.aborted) ac.abort();
+    else {
+      onExternalAbort = () => ac.abort();
+      signal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
   try {
     const { streamAnthropicResponse } = await import("../anthropic-client.js");
     const stream = streamAnthropicResponse({
@@ -196,6 +204,7 @@ export async function streamForResponse_anthropic(token: string, model: string, 
     return null;
   } finally {
     clearTimeout(timeoutId);
+    if (signal && onExternalAbort) signal.removeEventListener("abort", onExternalAbort);
   }
 }
 
@@ -205,9 +214,17 @@ export async function streamForResponse_anthropic(token: string, model: string, 
  * backend-api) work without dispatch needing a Codex-specific provider.
  * Tools=[] tells Codex this is a one-shot completion, not a tool loop.
  */
-export async function streamForResponse_codex(token: string, model: string, userMessage: string): Promise<string | null> {
+export async function streamForResponse_codex(token: string, model: string, userMessage: string, signal?: AbortSignal): Promise<string | null> {
   const ac = new AbortController();
   const timeoutId = setTimeout(() => ac.abort(), CLASSIFIER_TIMEOUT_MS);
+  let onExternalAbort: (() => void) | undefined;
+  if (signal) {
+    if (signal.aborted) ac.abort();
+    else {
+      onExternalAbort = () => ac.abort();
+      signal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
   try {
     const { streamCodexResponse } = await import("../codex-client.js");
     const stream = streamCodexResponse({
@@ -220,6 +237,7 @@ export async function streamForResponse_codex(token: string, model: string, user
     });
     let response = "";
     for await (const event of stream) {
+      if (ac.signal.aborted) break;
       if (event.type === "text") response += event.delta || "";
       if (response.length > 500) break;
     }
@@ -228,6 +246,7 @@ export async function streamForResponse_codex(token: string, model: string, user
     return null;
   } finally {
     clearTimeout(timeoutId);
+    if (signal && onExternalAbort) signal.removeEventListener("abort", onExternalAbort);
   }
 }
 

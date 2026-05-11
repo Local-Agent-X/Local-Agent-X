@@ -113,3 +113,70 @@ describe("CronService — manual run records history and updates lastRun", () =>
     expect(onDisk.some(j => j.id === job.id && j.name === "persisted")).toBe(true);
   });
 });
+
+describe("CronService — clearLastError", () => {
+  it("clears sticky error message, demotes failed/error status, resets streak", async () => {
+    cron.onExecute(async () => { throw new Error("boom"); });
+    const job = cron.create("flaky", "1h", "x");
+    await cron.executeJob(job, { manual: true });
+    const after = cron.get(job.id)!;
+    expect(after.lastErrorMessage).toBe("boom");
+    expect(after.lastStatus).toBe("error");
+    expect(after.consecutiveFailures).toBe(1);
+
+    expect(cron.clearLastError(job.id)).toBe(true);
+
+    const cleared = cron.get(job.id)!;
+    expect(cleared.lastErrorMessage).toBeUndefined();
+    expect(cleared.lastStatus).toBeUndefined();
+    expect(cleared.consecutiveFailures).toBe(0);
+  });
+
+  it("does not overwrite a successful status badge", () => {
+    const job = cron.create("good", "1h", "x");
+    cron.update(job.id, { lastStatus: "success", lastErrorMessage: undefined });
+    cron.clearLastError(job.id);
+    expect(cron.get(job.id)?.lastStatus).toBe("success");
+  });
+
+  it("returns false for an unknown job id", () => {
+    expect(cron.clearLastError("nope_does_not_exist")).toBe(false);
+  });
+
+  it("persists the cleared state to disk", async () => {
+    cron.onExecute(async () => { throw new Error("boom"); });
+    const job = cron.create("persist-clear", "1h", "x");
+    await cron.executeJob(job, { manual: true });
+    cron.clearLastError(job.id);
+    const file = join(dataDir, "cron", "jobs.json");
+    const onDisk = JSON.parse(readFileSync(file, "utf-8")) as Array<{ id: string; lastErrorMessage?: string; consecutiveFailures?: number }>;
+    const row = onDisk.find(j => j.id === job.id)!;
+    expect(row.lastErrorMessage).toBeUndefined();
+    expect(row.consecutiveFailures).toBe(0);
+  });
+});
+
+describe("CronService — cancelRun / abort registry", () => {
+  it("cancelRun() returns false when no run is in flight", () => {
+    const job = cron.create("idle", "1h", "x");
+    expect(cron.cancelRun(job.id)).toBe(false);
+  });
+
+  it("cancelRun() aborts a registered controller and returns true", () => {
+    const job = cron.create("midflight", "1h", "x");
+    const ctrl = new AbortController();
+    cron.registerRunAbort(job.id, ctrl);
+    expect(ctrl.signal.aborted).toBe(false);
+    expect(cron.cancelRun(job.id)).toBe(true);
+    expect(ctrl.signal.aborted).toBe(true);
+  });
+
+  it("unregisterRunAbort() prevents future cancellation", () => {
+    const job = cron.create("clean", "1h", "x");
+    const ctrl = new AbortController();
+    cron.registerRunAbort(job.id, ctrl);
+    cron.unregisterRunAbort(job.id);
+    expect(cron.cancelRun(job.id)).toBe(false);
+    expect(ctrl.signal.aborted).toBe(false);
+  });
+});

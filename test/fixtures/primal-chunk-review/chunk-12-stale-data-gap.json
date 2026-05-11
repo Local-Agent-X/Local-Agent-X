@@ -1,0 +1,14 @@
+{
+  "_comment": "Calenbella chunk 12 — Public booking page UI. Agent shipped the page correctly per the chunk's done-when, but the reviewer noticed a missing constraint: when any of the host's calendar connections is in 'degraded' state, the page must show a stale-data warning. This is a Constitution #8 surface (no silent failures affecting the user) that the spec hadn't explicitly named. Verdict: amend_spec (additive — adds a constraint, doesn't relax one).",
+  "chunkNumber": 12,
+  "chunkTitle": "Public booking page UI",
+  "doneWhen": "booking page renders correctly with slots in invitee TZ, hides slots that conflict with host's busy time, submits to a server action.",
+  "agentReport": "STATUS: done\nDONE_WHEN: met\nCHANGED: app/[host-slug]/[event-type-slug]/page.tsx, app/[host-slug]/[event-type-slug]/SlotPicker.tsx, app/[host-slug]/[event-type-slug]/BookingForm.tsx, lib/scheduling/render-slots.ts\nTESTS: 18/18\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: Booking page renders correctly. TZ detection + override works, slot picker hides conflicts, form submits to server action stub. No issues to flag.",
+  "expectedAction": "amend_spec",
+  "expectedReasonContains": "stale",
+  "specDiff": {
+    "filePath": "spec/product.md",
+    "additions": "**Stale-data warning (degraded connections):** if any of the host's `read_for_availability` calendar connections is in `degraded` state at the time the booking page renders, the page must display a small but visible notice on the slot list — e.g. \"Showing the host's last-synced availability — recent calendar changes may not be reflected\". Silently rendering stale availability without a warning is forbidden. The page must not 500 in this case; it shows the cached/last-synced view with the notice. (This is the user-facing surface of Constitution #8 applied to a sync-failure mode.)",
+    "removalsWithJustification": []
+  }
+}

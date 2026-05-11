@@ -197,7 +197,7 @@ export type ServerEvent =
   | { type: "bg_op_queue_reordered"; opId: string; queuePosition: number }
   | { type: "bg_op_started"; opId: string; task: string; provider: string }
   | { type: "bg_op_progress"; opId: string; line: string }
-  | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[] }
+  | { type: "bg_op_completed"; opId: string; status: "completed" | "failed" | "cancelled"; summary: string; filesChanged: string[]; metadata?: Record<string, unknown> }
   | { type: "bg_op_nudge"; opIds: string[]; text: string }
   // Antivirus interference detected. Bash tool detected ≥3 powershell
   // processes killed mid-stream within 60s — the AV-behavior-shield

@@ -194,6 +194,14 @@ export async function runAnthropicAgent(
         onEvent?.({ type: "context_status", percentage: 100, level: "emergency", usedTokens: 0, maxTokens: 0, compacted: true });
         continue;
       }
+      // Preserve the final assistant text when the stream errors after the
+      // agent narrated but before the loop's push-message phase. Skip if any
+      // tool_use was emitted — pushing a partial tool_use without a matching
+      // tool_result would corrupt history on resume. Without this, cron's
+      // salvage path (background-jobs.ts) can't recover legitimate output.
+      if (assistantContent.trim() && toolCalls.length === 0) {
+        messages.push({ role: "assistant", content: assistantContent } as ChatCompletionMessageParam);
+      }
       return { messages, usage: { promptTokens: totalInput, completionTokens: totalOutput, totalTokens: totalInput + totalOutput }, stopReason: "error", errorMessage: streamError || undefined };
     }
 

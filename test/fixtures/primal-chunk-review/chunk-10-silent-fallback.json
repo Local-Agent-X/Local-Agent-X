@@ -1,0 +1,10 @@
+{
+  "_comment": "Calenbella chunk 10 — Event types CRUD. Agent reported 'ships clean' but flagged in NOTE that the edit page falls back to default JSON shapes when DB content fails guards — a Constitution #8 (no silent failures) gray area. Reviewer's correct verdict is push_back (fix the silent fallback) OR halt-for-user-decision because the agent itself surfaced two valid options. Either way, the verdict is NOT proceed; the chunk should not auto-commit until the silent-failure question is resolved.",
+  "chunkNumber": 10,
+  "chunkTitle": "Event types CRUD",
+  "doneWhen": "Maya creates and edits event types via dashboard, slug uniqueness enforced.",
+  "agentReport": "STATUS: done\nDONE_WHEN: met\nCHANGED: app/dashboard/event-types/page.tsx, app/dashboard/event-types/[id]/page.tsx, lib/event-types/actions.ts, lib/event-types/validation.ts, lib/event-types/actions.test.ts\nTESTS: 244/244\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: spec is silent on what the edit page should do when DB-stored JSON (availability_rules or custom_questions) fails the validation guards — current impl silently falls back to default shapes; this is a Constitution #8 gray area.\nLAUNCH_READINESS: none\nNOTE: Chunk 10 ships clean. 244 unit tests, full trunk coverage on validation/slugs/types. Constitution #8 concern: the edit page falls back to default JSON shapes if DB content fails the guards. That's a silent fallback. Real risk in practice: low. All writes go through validated server actions, so corrupt JSON is a theoretical hedge against future bugs. But the silent-fallback pattern is the wrong shape — it should throw with actionable text ('This event type's stored data couldn't be loaded — contact support') so the user sees the problem. Two options: A) push back to agent, ~10 min fix to replace fallback with actionable throw; B) accept theater since it never triggers in practice. Surfacing the choice rather than deciding unilaterally.",
+  "expectedAction": "halt",
+  "expectedReasonContains": "Constitution #8",
+  "specDiff": null
+}

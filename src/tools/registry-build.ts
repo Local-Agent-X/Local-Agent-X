@@ -27,6 +27,9 @@ import { planTools } from "../plan-tools.js";
 import { buildDreamPrompt } from "../memory-dream.js";
 import { configTools } from "../config-tool.js";
 import { selfEditTool } from "../self-edit-tool.js";
+import { primalRunBuildPlanTool } from "../primal-auto-build/tool.js";
+import { startAppBuildTool, finalizeAppBuildTool } from "../primal-auto-build/app-build-tool.js";
+import { primalBuildStatusTool, primalBuildResumeTool } from "../primal-auto-build/orchestrator/tools.js";
 import { autopilotTools } from "../autopilot/tools.js";
 import { opTools } from "../workers/tools.js";
 // Legacy skill_list/skill_run tools removed — protocol_list / protocol_get cover the same surface.
@@ -38,7 +41,8 @@ const _toolSearchTool = createToolSearchTool(_registry);
 export const allTools: ToolDefinition[] = applyPrompts([
   readTool, writeTool, editTool, bashTool, webFetchTool,
   globTool, grepTool, webSearchTool, askUserTool, _toolSearchTool,
-  selfEditTool,
+  selfEditTool, primalRunBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
+  primalBuildStatusTool, primalBuildResumeTool,
   viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool,
   buildAppTool, youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool,
   ...processTools,

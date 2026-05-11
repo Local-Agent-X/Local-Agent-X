@@ -49,6 +49,21 @@ export async function startServer(config: LAXConfig) {
   setSessionPersister(persistAssistant);
   setIdleNudgePersister(persistAssistant);
 
+  // Auto-resume any orchestrator runs that were in flight when LAX last
+  // died. Fire-and-forget — never blocks boot. Skips if the feature flag
+  // is off OR no in-flight registry entries exist (the common case).
+  void (async () => {
+    try {
+      const { autoResumeOrchestrations } = await import("../primal-auto-build/orchestrator/resume.js");
+      const report = autoResumeOrchestrations();
+      if (report.attempted > 0) {
+        bootLogger.info(`[orchestrator-resume] scanned ${report.attempted}: ${report.resumed} resumed, ${report.abandoned} abandoned, ${report.cleared} cleared`);
+      }
+    } catch (e) {
+      bootLogger.warn(`[orchestrator-resume] scan failed: ${(e as Error).message}`);
+    }
+  })();
+
   const tools = await bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir });
   const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef } = tools;
 

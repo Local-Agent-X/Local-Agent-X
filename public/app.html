@@ -719,7 +719,9 @@
           </div>
         </div>
         <div class="btn-row" id="cron-default-actions">
-          <button class="action-btn primary" onclick="runCronJobNow()">Run Now</button>
+          <button class="action-btn primary" id="cron-run-btn" onclick="runCronJobNow()">Run Now</button>
+          <button class="action-btn danger" id="cron-stop-btn" onclick="cancelCronRun()" style="display:none">Stop</button>
+          <button class="action-btn secondary" id="cron-clear-error-btn" onclick="clearCronError()" style="display:none">Clear error</button>
           <button class="action-btn secondary" onclick="editCronJob()">Edit</button>
           <button class="action-btn secondary" onclick="toggleCronJob()">Pause / Resume</button>
           <button class="action-btn danger" onclick="deleteCronJob()">Delete</button>
@@ -935,12 +937,14 @@
 <script src="/js/chat-voice-modals.js?v=v2"></script>
 <script src="/js/chat-voice.js?v=v2"></script>
 <script src="/js/chat-dictate.js?v=v1"></script>
+<script src="/js/chat-slash-popup.js?v=v2"></script>
 <script src="/js/chat-voice-mic.js?v=v1"></script>
 <script src="/js/chat-voice-ws-handler.js?v=v1"></script>
 <script src="/js/chat-voice-tts.js?v=v1"></script>
 <script src="/js/chat-voice-ui.js?v=v1"></script>
 <script src="/js/chat-extras.js?v=v1"></script>
 <script src="/js/chat-helpers.js?v=v1"></script>
+<script src="/js/chat-ws-handler.js?v=v1"></script>
 <script src="/js/chat-ws.js?v=v1"></script>
 <script src="/js/chat-render.js?v=v1"></script>
 <script src="/js/chat-send.js?v=v1"></script>

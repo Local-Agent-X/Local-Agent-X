@@ -1,6 +1,6 @@
 /**
- * Read SKILL.md bodies from src/skills/{name}/ at runtime and cache them
- * for the life of the process. Strips YAML frontmatter so what's left
+ * Read protocol bodies from protocols/bundled/{name}/ at runtime and cache
+ * them for the life of the process. Strips YAML frontmatter so what's left
  * is the methodology body that goes into a worker subprocess's prompt.
  *
  * Why inline the body instead of just emitting "/senior-engineer"?
@@ -13,9 +13,12 @@
  * negligible against the cost of a worker run.
  *
  * Bundled bodies live at:
- *   src/skills/senior-engineer/SKILL.md
- *   src/skills/vibe-code/SKILL.md
- *   src/skills/app-build/SKILL.md
+ *   protocols/bundled/senior-engineer/SKILL.md
+ *   protocols/bundled/vibe-code/SKILL.md
+ *   protocols/bundled/app-build/SKILL.md
+ *
+ * Same directory the Protocols browser scans (see src/protocols/loader.ts)
+ * — one source of truth for SKILL.md content, two consumers.
  *
  * If the file is missing OR the frontmatter says `user-invocable: true`
  * but we need it as worker-only, we still return the body — the loader
@@ -29,7 +32,9 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SKILLS_DIR = join(HERE, "..", "skills");
+// HERE is src/primal-auto-build/ (or dist/primal-auto-build/ after tsc).
+// Both resolve to <repo>/protocols/bundled via two levels up.
+const SKILLS_DIR = join(HERE, "..", "..", "protocols", "bundled");
 
 const cache = new Map<string, string>();
 
@@ -45,7 +50,7 @@ export function loadSkillBody(name: string): string {
 
   const path = join(SKILLS_DIR, name, "SKILL.md");
   if (!existsSync(path)) {
-    throw new Error(`skill body missing at ${path} — expected src/skills/${name}/SKILL.md to be present in the repo`);
+    throw new Error(`protocol body missing at ${path} — expected protocols/bundled/${name}/SKILL.md to be present in the repo`);
   }
 
   const raw = readFileSync(path, "utf-8");

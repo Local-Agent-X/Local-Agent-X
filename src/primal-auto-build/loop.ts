@@ -28,6 +28,7 @@ import { runChunkReviewWithJudgment, type ChunkReviewOutcome, type ReviewAction 
 import type { JudgmentHook } from "./chunk-review/judgment-hook.js";
 import { getHeadSha, gitDiffPath } from "./git-helpers.js";
 import { appendHalt } from "./failure-recovery.js";
+import { attemptPhaseGateScoring } from "./loop-phase-gate.js";
 import {
   applyAdditiveSpecAmendment,
   commitChunk,
@@ -165,6 +166,21 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
           message: `Chunk ${chunk.number}: push_back retry also failed — escalating to halt.`,
         });
       }
+    }
+
+    // Phase-gate scoring + auto-fix push-back. Fires only when the
+    // halt is from the phase-gate gate AND the project carries a
+    // .primal-launch.json. Per Alex's spec: score >= 7 → proceed;
+    // score < 7 → spawn one fix-worker, re-score, halt if still < 7.
+    if (finalAction === "halt" && finalOutcome.findings.some(f => f.gate === "phase-gate")) {
+      const recovery = await attemptPhaseGateScoring(opts, chunk, emit, totalChunks);
+      if (recovery.kind === "recovered") {
+        finalAction = "proceed";
+        emit({ type: "review-result", chunkNumber: chunk.number, totalChunks, message: `phase-gate auto-scoring passed — overriding halt to proceed` });
+      } else if (recovery.kind === "halt-with-context") {
+        finalOutcome = { ...finalOutcome, reasoning: recovery.reason };
+      }
+      // kind === "no-spec" → leave the halt unchanged for manual scoring.
     }
 
     outcomes.push({ chunkNumber: chunk.number, outcome: finalOutcome, action: finalAction });

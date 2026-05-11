@@ -274,9 +274,6 @@ export interface Issue {
   projectId?: string;    // scoped to a project (agents can only see issues in their project)
   blockedBy?: string[];  // issue IDs this is waiting on
   comments: IssueComment[];
-  needsApproval?: boolean;  // true = sitting in inbox
-  approvalType?: string;    // "hire" | "action" | "spend" | "deploy"
-  approvalData?: Record<string, unknown>;  // context for the approval
   createdBy: string;     // who created it (agent ID or "user")
   createdAt: number;
   updatedAt: number;
@@ -439,7 +436,7 @@ How to work:
 
 Decision framework:
 - Default to action. Ship fast, iterate later.
-- The user IS the board. When they ask you to do something, do it directly — don't create approval requests for things they just asked for.
+- The user IS the board. When they ask you to do something, do it directly.
 - Protect focus — don't let the team get distracted by low-priority work
 - Hold the long view while executing the near-term`,
         allowedTools: ["issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "agent_team_list", "agent_whoami", "agent_wakeup", "read", "web_fetch"],
@@ -545,18 +542,12 @@ export class IssueStore {
     return this.issues.find(i => i.id === id) || null;
   }
 
-  list(opts?: { assignee?: string; status?: IssueStatus; needsApproval?: boolean; project?: string }): Issue[] {
+  list(opts?: { assignee?: string; status?: IssueStatus; project?: string }): Issue[] {
     let result = [...this.issues];
     if (opts?.assignee) result = result.filter(i => i.assignee === opts.assignee);
     if (opts?.status) result = result.filter(i => i.status === opts.status);
-    if (opts?.needsApproval !== undefined) result = result.filter(i => !!i.needsApproval === opts.needsApproval);
     if (opts?.project) result = result.filter(i => i.project === opts.project);
     return result.sort((a, b) => b.updatedAt - a.updatedAt);
-  }
-
-  /** Get inbox: issues needing approval */
-  inbox(): Issue[] {
-    return this.list({ needsApproval: true });
   }
 
   update(id: string, partial: Partial<Issue>): Issue | null {
@@ -579,31 +570,6 @@ export class IssueStore {
     issue.updatedAt = Date.now();
     this.persist();
     return c;
-  }
-
-  /** Approve an issue (clears needsApproval, sets status to open/in-progress) */
-  approve(id: string): Issue | null {
-    const issue = this.get(id);
-    if (!issue) return null;
-    issue.needsApproval = false;
-    if (issue.status === "open") issue.status = "in-progress";
-    issue.updatedAt = Date.now();
-    this.persist();
-    return issue;
-  }
-
-  /** Reject an issue (clears needsApproval, sets status to cancelled) */
-  reject(id: string, reason?: string): Issue | null {
-    const issue = this.get(id);
-    if (!issue) return null;
-    issue.needsApproval = false;
-    issue.status = "cancelled";
-    if (reason) {
-      this.comment(id, "user", `Rejected: ${reason}`);
-    }
-    issue.updatedAt = Date.now();
-    this.persist();
-    return issue;
   }
 
   delete(id: string): boolean {
@@ -649,14 +615,13 @@ export class IssueStore {
   }
 
   /** Get stats for dashboard */
-  stats(): { total: number; open: number; inProgress: number; blocked: number; done: number; pendingApproval: number } {
+  stats(): { total: number; open: number; inProgress: number; blocked: number; done: number } {
     return {
       total: this.issues.length,
       open: this.issues.filter(i => i.status === "open").length,
       inProgress: this.issues.filter(i => i.status === "in-progress").length,
       blocked: this.issues.filter(i => i.status === "blocked").length,
       done: this.issues.filter(i => i.status === "done").length,
-      pendingApproval: this.issues.filter(i => i.needsApproval).length,
     };
   }
 }

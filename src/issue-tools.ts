@@ -36,8 +36,7 @@ const issueCreate: ToolDefinition = {
   name: "issue_create",
   description:
     "Create a new issue/task. Assign it to yourself or another agent. " +
-    "Set needsApproval=true to request user approval before proceeding (appears in their inbox). " +
-    "Use this to break work into trackable tasks, delegate to other agents, or ask for permission.",
+    "Use this to break work into trackable tasks or delegate to other agents.",
   parameters: {
     type: "object",
     properties: {
@@ -45,8 +44,6 @@ const issueCreate: ToolDefinition = {
       description: { type: "string", description: "Detailed description of what needs to be done" },
       assignee: { type: "string", description: "Agent template ID to assign to (e.g. 'builtin-coder'). Leave empty for unassigned." },
       priority: { type: "string", enum: ["low", "medium", "high", "urgent"], description: "Priority level (default: medium)" },
-      needsApproval: { type: "boolean", description: "If true, this goes to the user's inbox for approval before work begins" },
-      approvalType: { type: "string", description: "Type of approval: 'hire', 'action', 'spend', 'deploy', or custom label" },
       project: { type: "string", description: "Optional project name to group this under" },
       blockedBy: { type: "array", items: { type: "string" }, description: "Issue IDs this task is blocked by (e.g. ['LAX-1', 'LAX-2'])" },
     },
@@ -57,24 +54,14 @@ const issueCreate: ToolDefinition = {
     // Auto-scope to the assigning agent's project if not specified
     const assignee = String(args.assignee || "");
     const projectId = args.project ? String(args.project) : (assignee ? getAgentProjectId(assignee) : undefined);
-    // Security: cross-project assignment gets auto-escalated to inbox
+    // Cross-project assignment is not allowed. The acting agent must be
+    // in the same project as the target; if they need work done in another
+    // project, surface that as a blocker so the parent (CEO / user) can
+    // route it appropriately.
     if (assignee && projectId) {
       const targetProject = getAgentProjectId(assignee);
       if (targetProject && targetProject !== projectId) {
-        // Create approval request instead of blocking
-        store.create({
-          title: `Cross-project task for ${assignee}: ${String(args.title || "")}`,
-          description: `An agent wants to assign work to ${assignee} (different project).\n\nOriginal task: ${String(args.description || args.title || "")}`,
-          assignee: "",
-          status: "open",
-          priority: "high",
-          needsApproval: true,
-          approvalType: "cross-project",
-          approvalData: { targetAgent: assignee, originalTitle: String(args.title || ""), originalDescription: String(args.description || "") },
-          createdBy: "agent",
-          projectId,
-        });
-        return ok(`Cross-project assignment requires approval. Sent to user inbox. ${assignee} is in a different project.`);
+        return err(`Cannot assign to ${assignee}: agent is in a different project. Surface this as a blocker in your run report so the parent can route it.`);
       }
     }
     const issue = store.create({
@@ -83,15 +70,12 @@ const issueCreate: ToolDefinition = {
       assignee,
       status: "open",
       priority: (args.priority as IssuePriority) || "medium",
-      needsApproval: !!args.needsApproval,
-      approvalType: args.approvalType ? String(args.approvalType) : undefined,
       project: args.project ? String(args.project) : undefined,
       projectId,
       blockedBy: Array.isArray(args.blockedBy) ? args.blockedBy.map(String) : undefined,
       createdBy: "agent",
     });
-    const approval = issue.needsApproval ? " (sent to user inbox for approval)" : "";
-    return ok(`Created ${issue.id}: "${issue.title}"${issue.assignee ? ` assigned to ${issue.assignee}` : ""}${projectId ? ` [project: ${projectId}]` : ""}${approval}`);
+    return ok(`Created ${issue.id}: "${issue.title}"${issue.assignee ? ` assigned to ${issue.assignee}` : ""}${projectId ? ` [project: ${projectId}]` : ""}`);
   },
 };
 
@@ -119,7 +103,7 @@ const issueList: ToolDefinition = {
     }
     if (issues.length === 0) return ok("No issues found matching the filter.");
     const lines = issues.map(i =>
-      `${i.id} [${i.status}] ${i.priority.toUpperCase()} — ${i.title}${i.assignee ? ` (${i.assignee})` : ""}${i.needsApproval ? " ⏳ PENDING APPROVAL" : ""}`
+      `${i.id} [${i.status}] ${i.priority.toUpperCase()} — ${i.title}${i.assignee ? ` (${i.assignee})` : ""}`
     );
     return ok(`${issues.length} issue(s):\n\n${lines.join("\n")}`);
   },
@@ -178,62 +162,6 @@ const issueUpdate: ToolDefinition = {
     }
 
     return ok(`Updated ${id}: ${updates.join(", ") || "no changes"}`);
-  },
-};
-
-const issueRequestApproval: ToolDefinition = {
-  name: "issue_request_approval",
-  description:
-    "Request approval for something. If you have a manager, the request goes to them first. " +
-    "If you don't have a manager (or your manager is the board), it goes to the user's inbox. " +
-    "Use this when you need permission for: hiring a new agent, making an expensive API call, deploying code, " +
-    "or any action that should have human oversight.",
-  parameters: {
-    type: "object",
-    properties: {
-      title: { type: "string", description: "What you're requesting approval for" },
-      description: { type: "string", description: "Explain why this is needed and what will happen if approved" },
-      approvalType: { type: "string", description: "Category: 'hire', 'action', 'spend', 'deploy'" },
-      requestingAgent: { type: "string", description: "Your agent template ID (if known)" },
-    },
-    required: ["title", "description"],
-  },
-  async execute(args) {
-    const store = IssueStore.getInstance();
-    const templateStore = AgentTemplateStore.getInstance();
-
-    // Check if the requesting agent has a manager
-    const requestingId = String(args.requestingAgent || "");
-    const requestingAgent = requestingId ? templateStore.get(requestingId) : null;
-    const manager = requestingAgent?.reportsTo ? templateStore.get(requestingAgent.reportsTo) : null;
-
-    if (manager && manager.hired && manager.role !== "ceo") {
-      // Route to manager first — they can approve or escalate to board
-      const issue = store.create({
-        title: String(args.title || ""),
-        description: `From ${requestingAgent?.name || "agent"}: ${String(args.description || "")}\n\n[Manager ${manager.name} can approve this or escalate to the board]`,
-        assignee: manager.id,
-        status: "open",
-        priority: "high",
-        needsApproval: true,
-        approvalType: String(args.approvalType || "action"),
-        createdBy: requestingId || "agent",
-      });
-      return ok(`Approval request ${issue.id} sent to manager ${manager.name}: "${issue.title}"\nThey can approve or escalate to the board.`);
-    }
-
-    // No manager or CEO is the manager — goes straight to user inbox
-    const issue = store.create({
-      title: String(args.title || ""),
-      description: String(args.description || ""),
-      assignee: "",
-      status: "open",
-      priority: "high",
-      needsApproval: true,
-      approvalType: String(args.approvalType || "action"),
-      createdBy: requestingId || "agent",
-    });
-    return ok(`Approval request ${issue.id} sent to board (user inbox): "${issue.title}"\nWaiting for approval.`);
   },
 };
 
@@ -345,7 +273,7 @@ const agentWhoAmI: ToolDefinition = {
       return ok(
         `No specific agent identity provided.\n\n` +
         `Team: ${hired.length} hired agent(s)\n` +
-        `Issues: ${stats.open} open, ${stats.inProgress} in progress, ${stats.blocked} blocked, ${stats.pendingApproval} pending approval`
+        `Issues: ${stats.open} open, ${stats.inProgress} in progress, ${stats.blocked} blocked`
       );
     }
 
@@ -431,25 +359,12 @@ const agentWakeup: ToolDefinition = {
     const target = templateStore.get(targetId);
     if (!target || !target.hired) return err(`Agent ${targetId} not found or not hired`);
 
-    // SECURITY: Cross-project communication goes through approval
+    // Cross-project messaging is not allowed. Acting agent must be in
+    // the same project as the target.
     if (issue.projectId) {
       const targetProject = projectStore.getAgentProject(targetId);
       if (targetProject && targetProject.id !== issue.projectId) {
-        // Don't block — create an approval request instead
-        const approvalStore = IssueStore.getInstance();
-        approvalStore.create({
-          title: `Cross-project message: ${target.name}`,
-          description: `Agent wants to send a message to ${target.name} (project: ${targetProject.name}) on issue ${issueId}:\n\n"${message}"`,
-          assignee: "",
-          status: "open",
-          priority: "high",
-          needsApproval: true,
-          approvalType: "cross-project",
-          approvalData: { sourceIssue: issueId, targetAgent: targetId, message },
-          createdBy: "agent",
-          projectId: issue.projectId,
-        });
-        return ok(`Cross-project message requires approval. Sent to user inbox for review. ${target.name} is in project "${targetProject.name}" — you are in a different project.`);
+        return err(`Cannot wake ${target.name}: agent is in project "${targetProject.name}", a different project from this issue. Surface this as a blocker so the parent can route it.`);
       }
     }
 
@@ -480,7 +395,6 @@ export const issueTools: ToolDefinition[] = [
   issueCreate,
   issueList,
   issueUpdate,
-  issueRequestApproval,
   issueCheckout,
   issueRelease,
   issueSearch,

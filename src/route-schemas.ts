@@ -63,9 +63,6 @@ export const CreateIssueSchema = z.object({
   project: z.string().optional(),
   parentIssue: z.string().optional(),
   blockedBy: z.string().optional(),
-  needsApproval: z.boolean().optional().default(false),
-  approvalType: z.string().optional(),
-  approvalData: z.record(z.unknown()).optional(),
   createdBy: z.string().optional().default("user"),
 });
 

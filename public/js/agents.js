@@ -3,7 +3,6 @@
 async function init_agents() {
   loadProjects();
   loadTeam();
-  loadInbox();
   loadIssues();
   loadAgentHistory();
   loadAgentTemplates();
@@ -125,7 +124,6 @@ function switchAgentsTab(tab, btn) {
   if (btn) btn.classList.add('active');
   // Refresh data
   if (tab === 'team') loadTeam();
-  if (tab === 'inbox') loadInbox();
   if (tab === 'issues') loadIssues();
   if (tab === 'history') loadAgentHistory();
   if (tab === 'templates') loadAgentTemplates();
@@ -230,60 +228,6 @@ async function fireAgent(id) {
     await fetch(`${API}/api/agents/templates/${id}/fire`, { method: 'POST', headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     loadTeam();
     closeAgentDetail();
-  } catch {}
-}
-
-// ── Inbox ──
-
-async function loadInbox() {
-  const list = document.getElementById('agents-inbox-list');
-  const badge = document.getElementById('inbox-badge');
-  if (!list) return;
-  try {
-    const r = await fetch(`${API}/api/inbox`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-    const items = await r.json();
-    if (badge) {
-      badge.textContent = items.length;
-      badge.style.display = items.length > 0 ? '' : 'none';
-    }
-    if (!Array.isArray(items) || items.length === 0) {
-      list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:.78rem">Nothing needs your approval</div>';
-      return;
-    }
-    list.innerHTML = items.map(i => `
-      <div class="agent-history-item" style="border-left:3px solid var(--warn)">
-        <div class="agent-history-header">
-          <span class="agent-role-badge" style="background:rgba(255,170,0,.15);color:var(--warn)">${esc(i.approvalType || 'approval')}</span>
-          <span style="font-size:.65rem;font-family:var(--mono);color:var(--muted)">${i.id}</span>
-        </div>
-        <div class="agent-history-name">${esc(i.title)}</div>
-        <div class="agent-history-task">${esc(i.description.slice(0, 100))}</div>
-        <div style="display:flex;gap:6px;margin-top:8px">
-          <button class="action-btn primary" style="font-size:.68rem;padding:3px 12px" onclick="event.stopPropagation();approveIssue('${i.id}')">Approve</button>
-          <button class="action-btn danger" style="font-size:.68rem;padding:3px 12px" onclick="event.stopPropagation();rejectIssue('${i.id}')">Reject</button>
-        </div>
-      </div>
-    `).join('');
-  } catch { list.innerHTML = '<div style="color:var(--muted);padding:20px;text-align:center">Failed to load</div>'; }
-}
-
-async function approveIssue(id) {
-  try {
-    await fetch(`${API}/api/issues/${id}/approve`, { method: 'POST', headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-    loadInbox();
-    loadIssues();
-  } catch {}
-}
-
-async function rejectIssue(id) {
-  const reason = prompt('Reason for rejection (optional):');
-  try {
-    await fetch(`${API}/api/issues/${id}/reject`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ reason: reason || '' })
-    });
-    loadInbox();
-    loadIssues();
   } catch {}
 }
 

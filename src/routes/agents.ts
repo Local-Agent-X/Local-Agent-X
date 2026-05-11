@@ -216,25 +216,6 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     json(200, comment); return true;
   }
 
-  // Inbox / Approvals
-  if (method === "GET" && url.pathname === "/api/inbox") {
-    json(200, ctx.issueStore.inbox()); return true;
-  }
-  if (method === "POST" && url.pathname.match(/^\/api\/issues\/(SAX|LAX)-\d+\/approve$/)) {
-    const id = url.pathname.split("/")[3];
-    const issue = ctx.issueStore.approve(id);
-    if (!issue) { json(404, { error: "Issue not found" }); return true; }
-    ctx.broadcastAll({ type: "inbox:approved", issue });
-    json(200, issue); return true;
-  }
-  if (method === "POST" && url.pathname.match(/^\/api\/issues\/(SAX|LAX)-\d+\/reject$/)) {
-    const id = url.pathname.split("/")[3];
-    const body = await safeParseBody(req);
-    const issue = ctx.issueStore.reject(id, body?.reason as string | undefined);
-    if (!issue) { json(404, { error: "Issue not found" }); return true; }
-    ctx.broadcastAll({ type: "inbox:rejected", issue });
-    json(200, issue); return true;
-  }
   if (method === "GET" && url.pathname === "/api/issues/stats") {
     json(200, ctx.issueStore.stats()); return true;
   }
@@ -248,7 +229,6 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     json(200, {
       agents: { hired: hired.length, active: laneInfo.agent?.active || 0 },
       issues: issueStats, projects: projects.length, lanes: laneInfo,
-      inbox: issueStats.pendingApproval,
     }); return true;
   }
 

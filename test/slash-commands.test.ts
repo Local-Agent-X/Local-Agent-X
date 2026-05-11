@@ -102,10 +102,38 @@ describe("expandSlashCommand — pass-through cases", () => {
 });
 
 describe("listAvailableSlashCommands", () => {
-  it("returns the three canonical skill bundles shipped in the repo", () => {
+  it("includes the three bundled SKILL.md protocols", () => {
     const cmds = listAvailableSlashCommands();
     expect(cmds).toContain("app-build");
     expect(cmds).toContain("senior-engineer");
     expect(cmds).toContain("vibe-code");
+  });
+
+  it("also includes typed protocols from src/protocols/packs", () => {
+    // The slash popup should surface every protocol the agent knows so
+    // the user can invoke them by name from chat. instagram_post is a
+    // representative typed pack — if it's listed, so are the others.
+    const cmds = listAvailableSlashCommands();
+    expect(cmds).toContain("instagram_post");
+    expect(cmds.length).toBeGreaterThan(3);
+  });
+});
+
+describe("expandSlashCommand — typed protocols (no SKILL.md body)", () => {
+  it("expands /instagram_post to a directive pointing at protocol_get", () => {
+    const r = expandSlashCommand("/instagram_post photo of my coffee");
+    expect(r).not.toBeNull();
+    expect(r!.command).toBe("instagram_post");
+    expect(r!.argText).toBe("photo of my coffee");
+    expect(r!.agentMessage).toContain("SLASH COMMAND");
+    expect(r!.agentMessage).toContain('protocol_get("instagram_post")');
+    expect(r!.agentMessage).toContain("photo of my coffee");
+  });
+
+  it("handles bare typed protocol invocation by asking for input", () => {
+    const r = expandSlashCommand("/instagram_post");
+    expect(r).not.toBeNull();
+    expect(r!.argText).toBe("");
+    expect(r!.agentMessage.toLowerCase()).toContain("ask");
   });
 });

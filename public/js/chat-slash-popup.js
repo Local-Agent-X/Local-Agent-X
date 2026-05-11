@@ -6,9 +6,14 @@
  * user types more characters after the slash. Arrow keys navigate;
  * Enter selects; Escape dismisses. Clicking an item also selects.
  *
- * Commands are filled from `window.__SLASH_COMMANDS__` (hardcoded for
- * now — three skills bundled in src/skills/). Later this can fetch
- * `/api/slash-commands` if we add a dynamic registry.
+ * Commands are fetched from `/api/protocols` on init (every protocol
+ * the agent knows — typed packs + bundled SKILL.md + user-imported).
+ * Falls back to a hardcoded list of the three bundled prompt-style
+ * protocols if the fetch fails (e.g., user not authenticated yet).
+ *
+ * The popup is capped via CSS (max-height:280px; overflow-y:auto) so a
+ * long list scrolls. Arrow navigation calls scrollIntoView so the
+ * active row stays visible even when the list overflows.
  *
  * Wiring:
  *   - One input listener on #msg-input (textarea) — opens/updates/hides
@@ -24,7 +29,10 @@
 (function () {
   "use strict";
 
-  const COMMANDS = [
+  // Fallback list if the /api/protocols fetch fails. Mirrors the three
+  // prompt-style bundles in protocols/bundled/ so the popup still works
+  // for an unauthenticated user or during a transient API outage.
+  let COMMANDS = [
     { name: "app-build", description: "Plan a new app spec-first (drives the directed-build conversation)" },
     { name: "senior-engineer", description: "Apply senior-engineer discipline (root cause, smallest correct change)" },
     { name: "vibe-code", description: "Vibe-code a leaf feature responsibly (PM-for-the-model methodology)" },
@@ -39,6 +47,13 @@
     textareaEl = document.getElementById("msg-input");
     if (!textareaEl) return;
 
+    // Populate from /api/protocols in the background. Same endpoint the
+    // Protocols browser uses — one source for both UIs. Fetch is async so
+    // the popup is usable immediately via the hardcoded fallback; the
+    // first time a user types `/`, they'll see the full list if the
+    // fetch landed.
+    loadCommandsFromServer();
+
     textareaEl.addEventListener("input", onInput);
     textareaEl.addEventListener("keydown", onKeydown, true); // capture phase so we win over inline onkeydown
     textareaEl.addEventListener("blur", () => {
@@ -47,13 +62,34 @@
     });
   }
 
+  async function loadCommandsFromServer() {
+    try {
+      // /api/protocols is bearer-auth gated. Use the shared apiFetch
+      // wrapper (defined in shared.js) when available — it injects the
+      // Authorization header from window.AUTH_TOKEN. Plain fetch would
+      // 401 and silently leave us with the hardcoded fallback.
+      const doFetch = (typeof window.apiFetch === "function")
+        ? () => window.apiFetch("/api/protocols")
+        : () => fetch("/api/protocols", { credentials: "same-origin" });
+      const resp = await doFetch();
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (!data || !Array.isArray(data.protocols) || data.protocols.length === 0) return;
+      COMMANDS = data.protocols.map((p) => ({
+        name: String(p.name || ""),
+        description: String(p.description || ""),
+      })).filter((c) => c.name);
+    } catch { /* keep fallback */ }
+  }
+
   function onInput() {
     const raw = textareaEl.value;
-    const match = raw.match(/^\/([a-zA-Z0-9-]*)$/);
+    // Underscore allowed for typed protocol names like `instagram_post`.
+    const match = raw.match(/^\/([a-zA-Z0-9_-]*)$/);
     if (!match) { closePopup(); return; }
 
     const prefix = match[1].toLowerCase();
-    currentMatches = COMMANDS.filter(c => c.name.startsWith(prefix));
+    currentMatches = COMMANDS.filter(c => c.name.toLowerCase().startsWith(prefix));
     if (currentMatches.length === 0) { closePopup(); return; }
 
     highlightedIdx = 0;
@@ -74,6 +110,7 @@
       e.stopImmediatePropagation();
       highlightedIdx = (highlightedIdx + 1) % currentMatches.length;
       renderPopup();
+      scrollActiveIntoView();
       return;
     }
     if (e.key === "ArrowUp") {
@@ -81,6 +118,7 @@
       e.stopImmediatePropagation();
       highlightedIdx = (highlightedIdx - 1 + currentMatches.length) % currentMatches.length;
       renderPopup();
+      scrollActiveIntoView();
       return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
@@ -182,6 +220,16 @@
   function closePopup() {
     if (popupEl) {
       popupEl.style.display = "none";
+    }
+  }
+
+  function scrollActiveIntoView() {
+    if (!popupEl) return;
+    const active = popupEl.querySelector(".slash-popup-item.active");
+    if (active && typeof active.scrollIntoView === "function") {
+      // "nearest" avoids jarring jumps when the active item is already
+      // visible — only scrolls when it's out of view.
+      active.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
   }
 

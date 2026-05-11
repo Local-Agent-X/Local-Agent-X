@@ -73,7 +73,16 @@ function protocolRenderTree() {
         </div>
         <div class="proto-cat-items">
           ${items.map(p => {
-            const sourceTag = p.source?.type && p.source.type !== 'builtin' ? `<span class="proto-item-source">${esc(p.source.type)}</span>` : '';
+            // Only user-created protocols get a tag. builtin (typed packs)
+            // and bundled (SKILL.md vendored in protocols/bundled/) both
+            // ship with the app — same tier from the user's perspective —
+            // so neither shows a label. imported (user SKILL.md imports)
+            // and custom (user typed records) collapse to a single "custom"
+            // tag since the distinction is internal plumbing.
+            const stype = p.source?.type;
+            const sourceTag = (stype === 'imported' || stype === 'custom')
+              ? `<span class="proto-item-source">custom</span>`
+              : '';
             const active = selectedName === p.name ? 'active' : '';
             return `<div class="proto-item ${active}" onclick="protocolSelect('${esc(p.name)}')" title="${esc(p.description || '')}">
               <span>${esc(p.name)}</span>${sourceTag}
@@ -128,7 +137,10 @@ function protocolRenderDetail() {
 
   const sourceLine = (() => {
     const parts = [];
-    parts.push(`source: <strong>${esc(stype)}</strong>`);
+    // Collapse internal source types to the two tiers users care about:
+    // built-in (ships with the app) vs custom (user-created or imported).
+    const tier = (stype === 'imported' || stype === 'custom') ? 'custom' : 'built-in';
+    parts.push(`source: <strong>${esc(tier)}</strong>`);
     if (p.source?.repo) {
       const url = p.source.repo.startsWith('http') ? p.source.repo : `https://github.com/${p.source.repo}`;
       parts.push(`repo: <a href="${esc(url)}" target="_blank" rel="noopener">${esc(p.source.repo)}</a>`);

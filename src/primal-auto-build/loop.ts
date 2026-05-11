@@ -29,6 +29,7 @@ import type { JudgmentHook } from "./chunk-review/judgment-hook.js";
 import { getHeadSha, gitDiffPath } from "./git-helpers.js";
 import { appendHalt } from "./failure-recovery.js";
 import { attemptPhaseGateScoring } from "./loop-phase-gate.js";
+import { consultAdvisor } from "./advisor/index.js";
 import {
   applyAdditiveSpecAmendment,
   commitChunk,
@@ -144,27 +145,60 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
     let finalAction = outcome.action;
 
     if (outcome.action === "push_back") {
-      emit({ type: "push-back", chunkNumber: chunk.number, totalChunks, message: `Push-back retry: ${outcome.reasoning}` });
-      const retryOutcome = await runChunkOnce({
+      const advice = await consultAdvisor({
+        kind: "chunk-review-push-back",
         chunk,
-        totalChunks,
-        planPath: opts.planPath,
-        plan: opts.plan,
+        reviewReason: outcome.reasoning,
+        workerReport: outcome.report.note || JSON.stringify(outcome.report).slice(0, 4000),
         projectDir: opts.projectDir,
-        preSha: preSha.value,
-        subprocessTimeoutMs: opts.subprocessTimeoutMs,
-        signal: opts.signal,
-        emit,
-        retryReason: outcome.reasoning,
-        judgmentHook: opts.judgmentHook,
+      }, { signal: opts.signal });
+
+      const adviceAction = advice?.action || "retry-with-hint";
+      emit({
+        type: "push-back", chunkNumber: chunk.number, totalChunks,
+        message: `push-back advisor: ${adviceAction}${advice?.reasoning ? ` — ${advice.reasoning}` : " (advisor unavailable; mechanical retry)"}`,
       });
-      finalOutcome = retryOutcome;
-      finalAction = retryOutcome.action === "push_back" ? "halt" : retryOutcome.action;
-      if (retryOutcome.action === "push_back") {
-        emit({
-          type: "halt", chunkNumber: chunk.number, totalChunks,
-          message: `Chunk ${chunk.number}: push_back retry also failed — escalating to halt.`,
+
+      if (adviceAction === "halt") {
+        finalAction = "halt";
+        finalOutcome = { ...outcome, reasoning: advice?.haltReason || outcome.reasoning };
+      } else if (adviceAction === "amend-spec-additively" && advice?.specAddition) {
+        const amend = await applyAdditiveSpecAmendment(opts.projectDir, chunk, advice.specAddition);
+        if (!amend.ok) {
+          finalAction = "halt";
+          finalOutcome = { ...outcome, reasoning: `additive-diff gate rejected advisor's spec amendment: ${amend.error}` };
+        } else {
+          await safeGet(() => commitSpecAmendment(opts.projectDir, chunk));
+          emit({ type: "spec-amended", chunkNumber: chunk.number, totalChunks, message: `advisor amended spec additively before retry` });
+          const retryOutcome = await runChunkOnce({
+            chunk, totalChunks, planPath: opts.planPath, plan: opts.plan,
+            projectDir: opts.projectDir, preSha: preSha.value,
+            subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
+            retryReason: `spec was amended to clarify: ${advice.specAddition.slice(0, 200)}`,
+            judgmentHook: opts.judgmentHook,
+          });
+          finalOutcome = retryOutcome;
+          finalAction = retryOutcome.action === "push_back" ? "halt" : retryOutcome.action;
+        }
+      } else {
+        const retryReason = adviceAction === "retry-with-hint" && advice?.retryHint
+          ? advice.retryHint
+          : outcome.reasoning;
+        const retryOutcome = await runChunkOnce({
+          chunk, totalChunks, planPath: opts.planPath, plan: opts.plan,
+          projectDir: opts.projectDir, preSha: preSha.value,
+          subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
+          retryReason,
+          judgmentHook: opts.judgmentHook,
         });
+        finalOutcome = retryOutcome;
+        finalAction = retryOutcome.action === "push_back" ? "halt" : retryOutcome.action;
+        if (retryOutcome.action === "push_back") {
+          emit({
+            type: "halt", chunkNumber: chunk.number, totalChunks,
+            message: `Chunk ${chunk.number}: push_back retry also failed — escalating to halt.`,
+          });
+        }
       }
     }
 

@@ -17,6 +17,8 @@ import {
   parseAdvisorResponse,
   buildAdvisorPrompt,
   type PhaseGateFailureSituation,
+  type ChunkReviewPushBackSituation,
+  type SystemicHaltPatternSituation,
 } from "../src/primal-auto-build/advisor/index.js";
 import type { ParsedChunk } from "../src/primal-auto-build/plan-parser.js";
 import type { ScoreReport } from "../src/primal-auto-build/scenario-scorer/types.js";
@@ -204,5 +206,113 @@ describe("consultAdvisor — end to end with stub LLM", () => {
       chunk: baseChunk, failedReports: [], passedReports: [], projectDir, attemptNumber: 1,
     }, { llmCall: async () => "I'm sorry, can't help with that." });
     expect(rec).toBeNull();
+  });
+});
+
+describe("parseAdvisorResponse — Day 3B actions", () => {
+  it("parses retry-as-is", () => {
+    const rec = parseAdvisorResponse(JSON.stringify({
+      action: "retry-as-is",
+      reasoning: "Looks like a network flake; let it run again clean.",
+    }));
+    expect(rec).not.toBeNull();
+    expect(rec!.action).toBe("retry-as-is");
+  });
+
+  it("parses retry-with-hint and requires retryHint", () => {
+    const rec = parseAdvisorResponse(JSON.stringify({
+      action: "retry-with-hint",
+      reasoning: "Worker skipped the DST edge case.",
+      retryHint: "Focus the retry on lib/scheduling/availability.ts's DST handling; cover spring-forward and fall-back.",
+    }));
+    expect(rec!.action).toBe("retry-with-hint");
+    expect(rec!.retryHint).toContain("DST");
+  });
+
+  it("rejects retry-with-hint without retryHint", () => {
+    const rec = parseAdvisorResponse(JSON.stringify({
+      action: "retry-with-hint", reasoning: "vague", retryHint: "",
+    }));
+    expect(rec).toBeNull();
+  });
+});
+
+describe("chunk-review-push-back situation", () => {
+  it("buildAdvisorPrompt for push-back covers review reason + worker report", () => {
+    const situation: ChunkReviewPushBackSituation = {
+      kind: "chunk-review-push-back",
+      chunk: baseChunk,
+      reviewReason: "Test SchedulingAvailability.test.ts fails: DST spring-forward returns wrong slot count.",
+      workerReport: "STATUS: done\nDONE_WHEN: met\nNOTE: tests pass locally for the cases I added.",
+      projectDir: "/tmp/proj",
+    };
+    const prompt = buildAdvisorPrompt(situation);
+    expect(prompt).toContain("DST spring-forward");
+    expect(prompt).toContain("tests pass locally");
+    expect(prompt).toContain("retry-as-is");
+    expect(prompt).toContain("retry-with-hint");
+  });
+
+  it("consultAdvisor returns retry-with-hint for push-back", async () => {
+    const situation: ChunkReviewPushBackSituation = {
+      kind: "chunk-review-push-back",
+      chunk: baseChunk,
+      reviewReason: "DST edge cases failed",
+      workerReport: "STATUS: done",
+      projectDir: "/tmp/proj",
+    };
+    const rec = await consultAdvisor(situation, {
+      llmCall: async () => JSON.stringify({
+        action: "retry-with-hint",
+        reasoning: "Worker missed DST cases",
+        retryHint: "Add tests for both spring-forward and fall-back boundaries",
+      }),
+    });
+    expect(rec!.action).toBe("retry-with-hint");
+    expect(rec!.retryHint).toContain("spring-forward");
+  });
+});
+
+describe("systemic-halt-pattern situation", () => {
+  it("buildAdvisorPrompt for systemic includes halt history + gate", () => {
+    const situation: SystemicHaltPatternSituation = {
+      kind: "systemic-halt-pattern",
+      gate: "additive-diff",
+      recentHalts: [
+        { chunk: 7, gate: "additive-diff", reason: "Removed line about session token hashing", at: "2026-05-11T10:00:00Z" },
+        { chunk: 8, gate: "additive-diff", reason: "Removed line about CSRF protection", at: "2026-05-11T10:30:00Z" },
+        { chunk: 9, gate: "additive-diff", reason: "Removed line about rate limiting", at: "2026-05-11T11:00:00Z" },
+      ],
+      projectDir: "/tmp/proj",
+    };
+    const prompt = buildAdvisorPrompt(situation);
+    expect(prompt).toContain("additive-diff");
+    expect(prompt).toContain("chunk 7");
+    expect(prompt).toContain("chunk 9");
+    expect(prompt).toContain("3 consecutive halts");
+    expect(prompt).toContain("informational");
+  });
+
+  it("consultAdvisor produces a diagnostic for systemic halt", async () => {
+    const situation: SystemicHaltPatternSituation = {
+      kind: "systemic-halt-pattern",
+      gate: "test-failures",
+      recentHalts: [
+        { chunk: 4, gate: "test-failures", reason: "pg pool exhausted", at: "2026-05-11T10:00:00Z" },
+        { chunk: 4, gate: "test-failures", reason: "pg pool exhausted again", at: "2026-05-11T10:15:00Z" },
+        { chunk: 4, gate: "test-failures", reason: "pg pool exhausted again", at: "2026-05-11T10:30:00Z" },
+      ],
+      projectDir: "/tmp/proj",
+    };
+    const rec = await consultAdvisor(situation, {
+      llmCall: async () => JSON.stringify({
+        action: "halt",
+        reasoning: "Pool exhaustion is infra not code",
+        haltReason: "Three halts on test-failures all blame postgres pool exhaustion. Inspect apps/api/tests/setup.ts — the cross-file TRUNCATE pattern keeps connections open. Switch to per-test transaction rollback or per-file pg schemas.",
+      }),
+    });
+    expect(rec!.action).toBe("halt");
+    expect(rec!.haltReason).toContain("pool exhaustion");
+    expect(rec!.haltReason).toContain("TRUNCATE");
   });
 });

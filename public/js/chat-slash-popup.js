@@ -33,10 +33,20 @@
   // prompt-style bundles in protocols/bundled/ so the popup still works
   // for an unauthenticated user or during a transient API outage.
   let COMMANDS = [
-    { name: "app-build", description: "Plan a new app spec-first (drives the directed-build conversation)" },
-    { name: "senior-engineer", description: "Apply senior-engineer discipline (root cause, smallest correct change)" },
-    { name: "vibe-code", description: "Vibe-code a leaf feature responsibly (PM-for-the-model methodology)" },
+    { name: "app-build", description: "Plan a new app spec-first (drives the directed-build conversation)", category: "Developer" },
+    { name: "senior-engineer", description: "Apply senior-engineer discipline (root cause, smallest correct change)", category: "Developer" },
+    { name: "vibe-code", description: "Vibe-code a leaf feature responsibly (PM-for-the-model methodology)", category: "Developer" },
   ];
+
+  // Category sort: pinned tier first, then alphabetical. "General" is a
+  // catch-all so it sinks to the bottom.
+  const CATEGORY_ORDER = ["Developer", "Social Media", "Communication", "Research", "Documents", "Smart Home"];
+  function categoryRank(cat) {
+    const i = CATEGORY_ORDER.indexOf(cat);
+    if (i >= 0) return i;
+    if (cat === "General") return 99;
+    return 50; // unknown categories sit between pinned and "General"
+  }
 
   let popupEl = null;
   let highlightedIdx = 0;
@@ -78,6 +88,7 @@
       COMMANDS = data.protocols.map((p) => ({
         name: String(p.name || ""),
         description: String(p.description || ""),
+        category: String(p.category || "General"),
       })).filter((c) => c.name);
     } catch { /* keep fallback */ }
   }
@@ -168,38 +179,66 @@
     header.textContent = "Slash Commands";
     popupEl.appendChild(header);
 
-    currentMatches.forEach((cmd, idx) => {
-      const item = document.createElement("div");
-      item.className = "slash-popup-item" + (idx === highlightedIdx ? " active" : "");
-      item.setAttribute("role", "option");
-      item.setAttribute("aria-selected", idx === highlightedIdx ? "true" : "false");
-      item.addEventListener("mousedown", (ev) => {
-        // mousedown (not click) so we beat the textarea blur close.
-        ev.preventDefault();
-        highlightedIdx = idx;
-        selectCurrent();
-      });
-      item.addEventListener("mouseenter", () => {
-        highlightedIdx = idx;
-        // refresh just the active class without rebuilding
-        Array.from(popupEl.querySelectorAll(".slash-popup-item")).forEach((el, i) => {
-          el.classList.toggle("active", i === highlightedIdx);
-          el.setAttribute("aria-selected", i === highlightedIdx ? "true" : "false");
-        });
-      });
-
-      const name = document.createElement("div");
-      name.className = "slash-popup-name";
-      name.textContent = `/${cmd.name}`;
-      item.appendChild(name);
-
-      const desc = document.createElement("div");
-      desc.className = "slash-popup-desc";
-      desc.textContent = cmd.description;
-      item.appendChild(desc);
-
-      popupEl.appendChild(item);
+    // Group filtered matches by category, then sort categories by
+    // CATEGORY_ORDER. Within each category, preserve the API's incoming
+    // order (already alphabetical from /api/protocols). When only one
+    // category is present (e.g. user typed `/inst` and only matched
+    // Social Media), skip the subheader — it'd be empty chrome.
+    const groups = new Map();
+    for (const cmd of currentMatches) {
+      const cat = cmd.category || "General";
+      if (!groups.has(cat)) groups.set(cat, []);
+      groups.get(cat).push(cmd);
+    }
+    const orderedCats = [...groups.keys()].sort((a, b) => {
+      const r = categoryRank(a) - categoryRank(b);
+      return r !== 0 ? r : a.localeCompare(b);
     });
+    const showCategoryHeaders = orderedCats.length > 1;
+
+    let flatIdx = 0;
+    for (const cat of orderedCats) {
+      if (showCategoryHeaders) {
+        const catHeader = document.createElement("div");
+        catHeader.className = "slash-popup-category";
+        catHeader.textContent = cat;
+        popupEl.appendChild(catHeader);
+      }
+      for (const cmd of groups.get(cat)) {
+        const idx = flatIdx;
+        const item = document.createElement("div");
+        item.className = "slash-popup-item" + (idx === highlightedIdx ? " active" : "");
+        item.setAttribute("role", "option");
+        item.setAttribute("aria-selected", idx === highlightedIdx ? "true" : "false");
+        item.addEventListener("mousedown", (ev) => {
+          // mousedown (not click) so we beat the textarea blur close.
+          ev.preventDefault();
+          highlightedIdx = idx;
+          selectCurrent();
+        });
+        item.addEventListener("mouseenter", () => {
+          highlightedIdx = idx;
+          // refresh just the active class without rebuilding
+          Array.from(popupEl.querySelectorAll(".slash-popup-item")).forEach((el, i) => {
+            el.classList.toggle("active", i === highlightedIdx);
+            el.setAttribute("aria-selected", i === highlightedIdx ? "true" : "false");
+          });
+        });
+
+        const name = document.createElement("div");
+        name.className = "slash-popup-name";
+        name.textContent = `/${cmd.name}`;
+        item.appendChild(name);
+
+        const desc = document.createElement("div");
+        desc.className = "slash-popup-desc";
+        desc.textContent = cmd.description;
+        item.appendChild(desc);
+
+        popupEl.appendChild(item);
+        flatIdx++;
+      }
+    }
 
     positionPopup();
     popupEl.style.display = "block";

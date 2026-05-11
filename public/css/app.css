@@ -875,4 +875,6 @@ button:focus-visible,.chat-item:focus-visible,.util-btn:focus-visible{outline:2p
 .slash-popup-name{font-size:.78rem;color:var(--text);font-weight:600}
 .slash-popup-item.active .slash-popup-name{color:var(--accent,#40f0f0)}
 .slash-popup-desc{font-size:.62rem;color:var(--muted);margin-top:2px;line-height:1.3}
+.slash-popup-category{padding:4px 10px;font-size:.58rem;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;background:rgba(255,255,255,.02);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.slash-popup-category:first-of-type{border-top:none}
 

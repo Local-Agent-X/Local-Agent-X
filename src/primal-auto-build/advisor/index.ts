@@ -35,6 +35,8 @@ const ADVISOR_TIMEOUT_MS = 18_000;
 export type AdvisorAction =
   | "try-fix-worker"
   | "amend-spec-additively"
+  | "retry-as-is"
+  | "retry-with-hint"
   | "halt";
 
 export interface AdvisorRecommendation {
@@ -43,6 +45,8 @@ export interface AdvisorRecommendation {
   fixWorkerHint?: string;
   /** Additive constraint text when action === amend-spec-additively. */
   specAddition?: string;
+  /** Sharpened retry instruction when action === retry-with-hint. */
+  retryHint?: string;
   /** One-sentence reasoning, surfaced to the user. */
   reasoning: string;
   /** Halt explanation when action === halt. */
@@ -59,7 +63,40 @@ export interface PhaseGateFailureSituation {
   attemptNumber: 1 | 2;
 }
 
-export type AdvisorSituation = PhaseGateFailureSituation;
+/**
+ * Chunk-review wants to push the chunk back to a fresh worker. Advisor
+ * decides whether to retry as-is, retry with a sharper hint, amend
+ * spec, or halt. Replaces the "retry once mechanically then halt"
+ * default with judgment over the worker's own report.
+ */
+export interface ChunkReviewPushBackSituation {
+  kind: "chunk-review-push-back";
+  chunk: ParsedChunk;
+  /** Verbatim text of the chunk-review's reasoning for the push-back. */
+  reviewReason: string;
+  /** The worker's report body — often contains the real root cause signal. */
+  workerReport: string;
+  projectDir: string;
+}
+
+/**
+ * Failure-recovery's systemic-issue detector fired (3 same-gate halts).
+ * Advisor reads the history + spec and returns a focused diagnostic
+ * for the user. Action is informational (halt with rich reasoning).
+ */
+export interface SystemicHaltPatternSituation {
+  kind: "systemic-halt-pattern";
+  /** The gate name that keeps firing. */
+  gate: string;
+  /** Last 3 halt records, oldest first. */
+  recentHalts: Array<{ chunk: number; gate: string; reason: string; at: string }>;
+  projectDir: string;
+}
+
+export type AdvisorSituation =
+  | PhaseGateFailureSituation
+  | ChunkReviewPushBackSituation
+  | SystemicHaltPatternSituation;
 
 export interface AdvisorOptions {
   llmCall?: LlmCall;
@@ -86,6 +123,17 @@ export async function consultAdvisor(situation: AdvisorSituation, opts: AdvisorO
 // ── prompt construction ────────────────────────────────────────────────────
 
 export function buildAdvisorPrompt(situation: AdvisorSituation): string {
+  switch (situation.kind) {
+    case "phase-gate-scenario-failure":
+      return buildPhaseGatePrompt(situation);
+    case "chunk-review-push-back":
+      return buildPushBackPrompt(situation);
+    case "systemic-halt-pattern":
+      return buildSystemicHaltPrompt(situation);
+  }
+}
+
+function buildPhaseGatePrompt(situation: PhaseGateFailureSituation): string {
   const constitution = readConstitution(situation.projectDir);
   const failureBlock = situation.failedReports.map(r =>
     `- ${r.scenarioTitle} — score ${r.score}/10\n  reasoning: ${r.reasoning}\n  failed criteria: ${r.failedCriteria.join("; ") || "(none enumerated)"}`,
@@ -124,24 +172,93 @@ export function buildAdvisorPrompt(situation: AdvisorSituation): string {
   );
 }
 
+function buildPushBackPrompt(situation: ChunkReviewPushBackSituation): string {
+  const constitution = readConstitution(situation.projectDir);
+  return (
+    `You are advising a build orchestrator on how to handle a chunk-review push_back. ` +
+    `A worker shipped a chunk; the review pass rejected the result and wants the chunk ` +
+    `retried. Pick the right retry strategy.\n\n` +
+    `## Chunk\n\nchunk ${situation.chunk.number} — ${situation.chunk.title}\n` +
+    `class: ${situation.chunk.klass}\nslice: ${situation.chunk.slice}\n` +
+    `done-when: ${situation.chunk.doneWhen}\n\n` +
+    `## Review's push-back reason\n\n${situation.reviewReason}\n\n` +
+    `## Worker's report\n\n${situation.workerReport.slice(0, 4000)}\n\n` +
+    `## Project constitution\n\n${constitution || "(no constitution file)"}\n\n` +
+    `## Options\n\n` +
+    `- **retry-as-is** — fire the same prompt again; failure was likely transient (test flake, ` +
+    `network, race). Use sparingly — usually the worker already saw the issue.\n` +
+    `- **retry-with-hint** — re-fire the chunk with a sharpened retryHint that focuses the worker ` +
+    `on the specific gap. Use when the worker's report shows it misunderstood scope or missed a ` +
+    `done-when criterion.\n` +
+    `- **amend-spec-additively** — the spec was ambiguous in a way that caused the failure. ` +
+    `Provide a specAddition that nails the ambiguity. Then the worker re-runs with the clearer spec.\n` +
+    `- **halt** — failure looks fundamental: missing creds, broken dependency, design decision ` +
+    `needed. Halt with haltReason naming what the human must resolve.\n\n` +
+    `Hard rules: same as the phase-gate situation — no spec weakening, no test bypassing.\n\n` +
+    `Reply with ONE JSON line, nothing else:\n` +
+    `{"action": "retry-as-is" | "retry-with-hint" | "amend-spec-additively" | "halt",\n` +
+    ` "reasoning": "<one sentence>",\n` +
+    ` "retryHint": "<focused retry instruction when retry-with-hint, else empty>",\n` +
+    ` "specAddition": "<additive constraint when amend-spec-additively, else empty>",\n` +
+    ` "haltReason": "<halt context when halt, else empty>"}`
+  );
+}
+
+function buildSystemicHaltPrompt(situation: SystemicHaltPatternSituation): string {
+  const constitution = readConstitution(situation.projectDir);
+  const haltLines = situation.recentHalts.map((h, i) =>
+    `  ${i + 1}. chunk ${h.chunk} @ ${h.at} — gate=${h.gate}\n     reason: ${h.reason}`,
+  ).join("\n");
+
+  return (
+    `You are diagnosing a SYSTEMIC build problem. The loop hit 3 consecutive halts that ALL ` +
+    `tripped the same gate ("${situation.gate}"). The user is paused; your job is to give them ` +
+    `a focused investigation prompt — what to look at, what the likely root cause is, what to ` +
+    `try next. This is informational; the action is always "halt" with a rich haltReason.\n\n` +
+    `## Recent halts (oldest first)\n\n${haltLines}\n\n` +
+    `## Project constitution\n\n${constitution || "(no constitution file)"}\n\n` +
+    `## What to produce\n\n` +
+    `A 3-5 sentence diagnostic. Include:\n` +
+    `  - Most likely root cause of the recurring gate failure (specific to "${situation.gate}").\n` +
+    `  - One concrete thing the user should inspect first (a file path, a spec section, a class ` +
+    `of test, an external dependency).\n` +
+    `  - What kind of fix would unblock the gate without violating spec/constitution.\n\n` +
+    `Reply with ONE JSON line, nothing else:\n` +
+    `{"action": "halt",\n` +
+    ` "reasoning": "<one sentence summary of the diagnostic>",\n` +
+    ` "haltReason": "<the full 3-5 sentence diagnostic surfaced to the user>"}`
+  );
+}
+
+const VALID_ACTIONS: AdvisorAction[] = [
+  "try-fix-worker", "amend-spec-additively", "retry-as-is", "retry-with-hint", "halt",
+];
+
 export function parseAdvisorResponse(raw: string): AdvisorRecommendation | null {
   const m = raw.trim().match(/\{[\s\S]*\}/);
   if (!m) return null;
   try {
     const parsed = JSON.parse(m[0]) as Partial<AdvisorRecommendation>;
-    const action = parsed.action;
-    if (action !== "try-fix-worker" && action !== "amend-spec-additively" && action !== "halt") return null;
+    const action = parsed.action as AdvisorAction | undefined;
+    if (!action || !VALID_ACTIONS.includes(action)) return null;
     const reasoning = String(parsed.reasoning || "").trim();
     if (!reasoning) return null;
 
     if (action === "try-fix-worker") {
-      const hint = String(parsed.fixWorkerHint || "").trim();
-      return { action, reasoning, fixWorkerHint: hint };
+      return { action, reasoning, fixWorkerHint: String(parsed.fixWorkerHint || "").trim() };
     }
     if (action === "amend-spec-additively") {
       const addition = String(parsed.specAddition || "").trim();
       if (!addition) return null;
       return { action, reasoning, specAddition: addition };
+    }
+    if (action === "retry-with-hint") {
+      const hint = String(parsed.retryHint || "").trim();
+      if (!hint) return null;
+      return { action, reasoning, retryHint: hint };
+    }
+    if (action === "retry-as-is") {
+      return { action, reasoning };
     }
     return { action: "halt", reasoning, haltReason: String(parsed.haltReason || reasoning) };
   } catch {

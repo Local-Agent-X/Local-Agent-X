@@ -111,16 +111,31 @@ export const primalRunBuildPlanTool: ToolDefinition = {
 
     // Systemic-issue pre-flight check. If the last 3 halts all fired on
     // the same gate, refuse to start and ask the user to investigate
-    // root cause rather than blindly retrying.
-    const systemic = checkSystemic(readBuildState(projectDir));
+    // root cause rather than blindly retrying. When the advisor is
+    // available, also ask it for a focused diagnostic the user can act
+    // on — turning a dead-end into a directed investigation.
+    const buildState = readBuildState(projectDir);
+    const systemic = checkSystemic(buildState);
     if (systemic.systemic) {
+      let diagnostic = "";
+      try {
+        const { consultAdvisor } = await import("./advisor/index.js");
+        const advice = await consultAdvisor({
+          kind: "systemic-halt-pattern",
+          gate: systemic.gate || "",
+          recentHalts: buildState.haltHistory.slice(-3),
+          projectDir,
+        });
+        if (advice?.haltReason) diagnostic = `\n\nAdvisor diagnostic:\n${advice.haltReason}`;
+      } catch { /* fail open — advisor is augmentation, not gating */ }
+
       return {
         content:
-          `BLOCKED — ${systemic.advice}\n\n` +
+          `BLOCKED — ${systemic.advice}${diagnostic}\n\n` +
           `To override: delete .primal-build-state.json in the project dir, or amend the spec / fix the gate cause first.`,
         isError: true,
         status: "blocked",
-        metadata: { systemic_gate: systemic.gate, systemic_count: systemic.count },
+        metadata: { systemic_gate: systemic.gate, systemic_count: systemic.count, advisor_diagnosed: diagnostic.length > 0 },
       };
     }
 

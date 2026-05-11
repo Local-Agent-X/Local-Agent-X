@@ -105,6 +105,17 @@ export function listRoles(): AgentRole[] {
   ];
 }
 
+/**
+ * Seed accessor used by the canonical catalog (src/agents/catalog.ts)
+ * to fold this module's built-in roles into the unified definition
+ * list. Distinct from listRoles() so the catalog can read the raw seed
+ * without going through any view-layer that itself reads the catalog
+ * (avoids the cycle once listRoles migrates to a view).
+ */
+export function _seedBuiltinRoles(): AgentRole[] {
+  return Object.values(BUILT_IN_ROLES);
+}
+
 export function createCustomRole(config: AgentRole): AgentRole {
   customRoles.set(config.name, config);
   return config;

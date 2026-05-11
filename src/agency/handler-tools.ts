@@ -2,7 +2,6 @@ import { EventBus } from "../event-bus.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 
 import { Handler } from "./handler.js";
-import type { FieldAgentStatus } from "./handler-types.js";
 
 function ok(content: string): ToolResult {
   return { content };
@@ -14,51 +13,6 @@ function err(content: string): ToolResult {
 
 export function createHandlerTools(): ToolDefinition[] {
   return [
-    {
-      name: "agent_spawn",
-      description:
-        "Spawn a new agent with a specific role and task. " +
-        "The agent runs asynchronously and reports back when done.",
-      parameters: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "Name for the agent" },
-          role: { type: "string", description: "Agent role (researcher, coder, reviewer, planner, etc.)" },
-          task: { type: "string", description: "The task for the agent to perform" },
-          system_prompt: { type: "string", description: "Optional system prompt override" },
-          tools: {
-            type: "array",
-            items: { type: "string" },
-            description: "Optional list of tool names the agent can use",
-          },
-        },
-        required: ["name", "role", "task"],
-      },
-      async execute(args) {
-        try {
-          const handler = Handler.getInstance();
-          const sessionFromArgs = args._sessionId ? String(args._sessionId) : undefined;
-          const agentId = handler.spawnAgent({
-            name: String(args.name),
-            role: String(args.role),
-            task: String(args.task),
-            systemPrompt: args.system_prompt ? String(args.system_prompt) : undefined,
-            tools: Array.isArray(args.tools) ? args.tools.map(String) : undefined,
-            parentSessionId: sessionFromArgs,
-          });
-          const status = handler.getAgentStatus(agentId) as FieldAgentStatus;
-          return ok(
-            `Agent spawned: ${agentId}\n` +
-            `Name: ${status.name}\n` +
-            `Role: ${status.role}\n` +
-            `Task: ${status.currentTask}\n` +
-            `Status: ${status.status}`,
-          );
-        } catch (e) {
-          return err(`Failed to spawn agent: ${String(e)}`);
-        }
-      },
-    },
     {
       name: "agent_redirect",
       description: "Change a running agent's task or focus to a new instruction.",

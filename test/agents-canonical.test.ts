@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { AgentCatalog } from "../src/agents/catalog.js";
 import { invokeAgent, AgentNotFoundError, applyProjectToolGate } from "../src/agents/invoke.js";
+import { createAgentTools } from "../src/agents/tools.js";
 import { _seedBuiltinRoles } from "../src/agency/agent-roles.js";
 import { AgentTemplateStore, ProjectStore } from "../src/agent-store.js";
 
@@ -185,6 +186,70 @@ describe("AgentCatalog — project scoping", () => {
     // CEO exists in the global catalog but not on this project — scoped
     // lookup must miss, otherwise the org boundary is purely decorative.
     expect(() => invokeAgent("ceo", "do a thing", { scope: { projectId } })).toThrow(AgentNotFoundError);
+  });
+});
+
+describe("createAgentTools — three primitives for delegating agents", () => {
+  it("exposes exactly agent_list, agent_spawn, agent_create", () => {
+    const names = createAgentTools().map((t) => t.name).sort();
+    expect(names).toEqual(["agent_create", "agent_list", "agent_spawn"]);
+  });
+
+  it("agent_list returns formatted catalog rows", async () => {
+    const tool = createAgentTools().find((t) => t.name === "agent_list");
+    expect(tool).toBeDefined();
+    const res = await tool!.execute({}, new AbortController().signal);
+    expect(res.isError).toBeFalsy();
+    expect(res.content).toContain("Researcher");
+    expect(res.content).toContain("role: researcher");
+  });
+
+  it("agent_spawn rejects unknown agents with AgentNotFoundError text", async () => {
+    const tool = createAgentTools().find((t) => t.name === "agent_spawn");
+    expect(tool).toBeDefined();
+    const res = await tool!.execute({ agent: "does-not-exist", task: "x" }, new AbortController().signal);
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain("does-not-exist");
+  });
+
+  it("agent_create rejects empty allowed_tools", async () => {
+    const tool = createAgentTools().find((t) => t.name === "agent_create");
+    expect(tool).toBeDefined();
+    const res = await tool!.execute(
+      { name: "x", role: "x", system_prompt: "x", allowed_tools: [] },
+      new AbortController().signal,
+    );
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain("allowed_tools");
+  });
+
+  it("agent_create adds a new agent to the catalog and makes it visible to agent_list", async () => {
+    AgentCatalog._resetForTest();
+    const tools = createAgentTools();
+    const create = tools.find((t) => t.name === "agent_create")!;
+    const list = tools.find((t) => t.name === "agent_list")!;
+
+    const created = await create.execute({
+      name: "Test Compliance Reviewer",
+      role: "test-compliance-reviewer",
+      system_prompt: "Review for compliance gaps.",
+      allowed_tools: ["read", "write"],
+      description: "Test fixture — delete after test",
+    }, new AbortController().signal);
+    expect(created.isError).toBeFalsy();
+
+    try {
+      const after = await list.execute({}, new AbortController().signal);
+      expect(after.content).toContain("Test Compliance Reviewer");
+      expect(after.content).toContain("role: test-compliance-reviewer");
+    } finally {
+      // Cleanup — find the fixture and delete it. AgentTemplateStore.create
+      // assigns a "tpl-<rand>" id; we locate it by role since that's stable.
+      const store = AgentTemplateStore.getInstance();
+      const fixture = store.list().find((t) => t.role === "test-compliance-reviewer");
+      if (fixture) store.delete(fixture.id);
+      AgentCatalog._resetForTest();
+    }
   });
 });
 

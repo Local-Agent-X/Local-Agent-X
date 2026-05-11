@@ -20,6 +20,7 @@
 import type { AgentDefinition, InvokeOpts, RunRef } from "./types.js";
 import { AgentCatalog } from "./catalog.js";
 import { Handler } from "../agency/handler.js";
+import { ProjectStore } from "../agent-store.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("agents.invoke");
@@ -46,7 +47,7 @@ export function invokeAgent(
   task: string,
   opts: InvokeOpts = {},
 ): RunRef {
-  const def = AgentCatalog.getInstance().get(idOrRole);
+  const def = AgentCatalog.getInstance().get(idOrRole, opts.scope);
   if (!def) throw new AgentNotFoundError(idOrRole);
   return invokeDefinition(def, task, opts);
 }
@@ -64,7 +65,7 @@ export function invokeDefinition(
   task: string,
   opts: InvokeOpts = {},
 ): RunRef {
-  const tools = capTools(def.allowedTools, opts.toolOverride);
+  const tools = capTools(applyProjectToolGate(def.allowedTools, opts), opts.toolOverride);
   const systemPrompt = def.persona
     ? `${def.systemPrompt}\n\n## Persona\n\n${def.persona}`
     : def.systemPrompt;
@@ -90,10 +91,10 @@ export function invokeDefinition(
 }
 
 /**
- * Apply a tool override. Override must be a SUBSET of the definition's
- * allowedTools — broader requests are silently capped to the
- * definition's surface so a caller can't escalate privileges by
- * asking for tools the role wasn't designed to use.
+ * Apply a tool override. Override must be a SUBSET of the allowed
+ * surface (already project-gated) — broader requests are silently
+ * capped so a caller can't escalate privileges by asking for tools
+ * the role wasn't designed to use.
  */
 function capTools(allowed: string[], override: string[] | undefined): string[] {
   if (!override) return [...allowed];
@@ -101,7 +102,29 @@ function capTools(allowed: string[], override: string[] | undefined): string[] {
   const out = override.filter((t) => allowedSet.has(t));
   if (out.length < override.length) {
     const dropped = override.filter((t) => !allowedSet.has(t));
-    logger.warn(`[invoke] tool override dropped (not in definition.allowedTools): ${dropped.join(", ")}`);
+    logger.warn(`[invoke] tool override dropped (not in allowed surface): ${dropped.join(", ")}`);
   }
   return out;
+}
+
+/**
+ * Intersect the definition's allowedTools with the project's
+ * allowedTools when an org scope is set. A project with no
+ * allowedTools (undefined or empty array) means "no project-level
+ * restriction" — the definition's full surface stands. This keeps
+ * org membership opt-in for tool gating; just being in a project
+ * doesn't shrink your tools unless the project owner declared an
+ * allowlist.
+ */
+export function applyProjectToolGate(allowed: string[], opts: InvokeOpts): string[] {
+  if (!opts.scope) return [...allowed];
+  const project = ProjectStore.getInstance().get(opts.scope.projectId);
+  if (!project?.allowedTools || project.allowedTools.length === 0) return [...allowed];
+  const projectSet = new Set(project.allowedTools);
+  const gated = allowed.filter((t) => projectSet.has(t));
+  if (gated.length < allowed.length) {
+    const dropped = allowed.filter((t) => !projectSet.has(t));
+    logger.info(`[invoke] project ${opts.scope.projectId} gate dropped: ${dropped.join(", ")}`);
+  }
+  return gated;
 }

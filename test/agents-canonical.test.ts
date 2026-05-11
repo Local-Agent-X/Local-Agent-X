@@ -17,11 +17,11 @@
  * downstream consumers by name. These tests make that loud.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { AgentCatalog } from "../src/agents/catalog.js";
-import { invokeAgent, AgentNotFoundError } from "../src/agents/invoke.js";
+import { invokeAgent, AgentNotFoundError, applyProjectToolGate } from "../src/agents/invoke.js";
 import { _seedBuiltinRoles } from "../src/agency/agent-roles.js";
-import { AgentTemplateStore } from "../src/agent-store.js";
+import { AgentTemplateStore, ProjectStore } from "../src/agent-store.js";
 
 describe("AgentCatalog — superset merge of legacy sources", () => {
   beforeEach(() => {
@@ -126,5 +126,113 @@ describe("invokeAgent — error shape", () => {
       expect(e).toBeInstanceOf(AgentNotFoundError);
       expect((e as Error).message).toContain("does-not-exist");
     }
+  });
+});
+
+describe("AgentCatalog — project scoping", () => {
+  let testProjectId: string | null = null;
+
+  beforeEach(() => {
+    AgentCatalog._resetForTest();
+  });
+
+  afterEach(() => {
+    if (testProjectId) {
+      ProjectStore.getInstance().delete(testProjectId);
+      testProjectId = null;
+    }
+  });
+
+  function createTestProject(agentIds: string[], allowedTools?: string[]): string {
+    const p = ProjectStore.getInstance().create({
+      name: "test-scope-fixture",
+      description: "transient fixture for canonical scoping tests",
+      agentIds,
+      ...(allowedTools !== undefined ? { allowedTools } : {}),
+    });
+    testProjectId = p.id;
+    return p.id;
+  }
+
+  it("list(scope) filters to the project's roster", () => {
+    const projectId = createTestProject(["builtin-researcher", "builtin-writer"]);
+    const scoped = AgentCatalog.getInstance().list({ projectId });
+    expect(scoped).toHaveLength(2);
+    const ids = scoped.map((d) => d.id).sort();
+    expect(ids).toEqual(["builtin-researcher", "builtin-writer"]);
+  });
+
+  it("list(scope) returns empty for a non-existent project", () => {
+    const scoped = AgentCatalog.getInstance().list({ projectId: "proj-does-not-exist" });
+    expect(scoped).toEqual([]);
+  });
+
+  it("list(scope) silently skips roster ids the catalog doesn't recognize", () => {
+    const projectId = createTestProject(["builtin-researcher", "tpl-ghost-agent-deleted"]);
+    const scoped = AgentCatalog.getInstance().list({ projectId });
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0].id).toBe("builtin-researcher");
+  });
+
+  it("get(role, scope) resolves only agents on the roster", () => {
+    const projectId = createTestProject(["builtin-researcher"]);
+    expect(AgentCatalog.getInstance().get("researcher", { projectId })?.id).toBe("builtin-researcher");
+    expect(AgentCatalog.getInstance().get("ceo", { projectId })).toBeUndefined();
+  });
+
+  it("invokeAgent throws AgentNotFoundError when the agent isn't on the project roster", () => {
+    const projectId = createTestProject(["builtin-researcher"]);
+    // CEO exists in the global catalog but not on this project — scoped
+    // lookup must miss, otherwise the org boundary is purely decorative.
+    expect(() => invokeAgent("ceo", "do a thing", { scope: { projectId } })).toThrow(AgentNotFoundError);
+  });
+});
+
+describe("applyProjectToolGate — tool intersection", () => {
+  let testProjectId: string | null = null;
+
+  afterEach(() => {
+    if (testProjectId) {
+      ProjectStore.getInstance().delete(testProjectId);
+      testProjectId = null;
+    }
+  });
+
+  function createProjectWithTools(allowedTools: string[] | undefined): string {
+    const p = ProjectStore.getInstance().create({
+      name: "test-tool-gate-fixture",
+      description: "transient fixture",
+      agentIds: [],
+      ...(allowedTools !== undefined ? { allowedTools } : {}),
+    });
+    testProjectId = p.id;
+    return p.id;
+  }
+
+  it("no scope → full surface unchanged", () => {
+    const out = applyProjectToolGate(["a", "b", "c"], {});
+    expect(out).toEqual(["a", "b", "c"]);
+  });
+
+  it("scope with no project.allowedTools → full surface unchanged", () => {
+    const projectId = createProjectWithTools(undefined);
+    const out = applyProjectToolGate(["a", "b", "c"], { scope: { projectId } });
+    expect(out).toEqual(["a", "b", "c"]);
+  });
+
+  it("scope with empty project.allowedTools → full surface unchanged", () => {
+    // Empty array means "no restriction declared," same as undefined.
+    // A project owner who wants to grant nothing must use a different
+    // mechanism — this is a deliberate ergonomic choice so a default
+    // {allowedTools: []} doesn't accidentally lock every agent out.
+    const projectId = createProjectWithTools([]);
+    const out = applyProjectToolGate(["a", "b", "c"], { scope: { projectId } });
+    expect(out).toEqual(["a", "b", "c"]);
+  });
+
+  it("intersects when project.allowedTools is set", () => {
+    const projectId = createProjectWithTools(["read", "write"]);
+    const out = applyProjectToolGate(["read", "write", "bash", "edit"], { scope: { projectId } });
+    expect(out).toEqual(["read", "write"]);
   });
 });

@@ -71,6 +71,14 @@ export interface OrganizationMember {
   budget?: { maxPerMonth: number; spent: number; resetAt: number };
 }
 
+/** Project-scoping for catalog lookups and invocations. When set, the
+ *  catalog filters to agents on the project's roster (Project.agentIds)
+ *  and the invoke layer intersects the agent's allowedTools with the
+ *  project's allowedTools. Absent → full catalog, full tool surface. */
+export interface InvokeScope {
+  projectId: string;
+}
+
 /** Options passed to invokeAgent. */
 export interface InvokeOpts {
   /** Parent session — captured at spawn so streams/UI can attribute the
@@ -85,6 +93,10 @@ export interface InvokeOpts {
   /** Display name override — when the caller wants to name this
    *  particular run (e.g. "Q3 research"). */
   nameOverride?: string;
+  /** Org-scope. Main agent (default chat) omits this and sees the full
+   *  catalog. Agents running inside a project pass scope so delegation
+   *  is gated by the org's roster + tool allowlist. */
+  scope?: InvokeScope;
 }
 
 /** Handle returned from invokeAgent. Callers poll run status via

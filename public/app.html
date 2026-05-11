@@ -848,12 +848,12 @@
 
   <div id="page-agents" class="page">
     <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
-      <!-- Top bar: org selector + tabs -->
+      <!-- Top bar: project selector + tabs -->
       <div style="display:flex;align-items:center;gap:12px;padding:10px 20px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap">
-        <select id="agents-org-select" class="field-input" style="font-size:.72rem;padding:4px 10px;min-width:160px" onchange="switchOrg(this.value)">
-          <option value="">All Organizations</option>
+        <select id="agents-project-select" class="field-input" style="font-size:.72rem;padding:4px 10px;min-width:160px" onchange="switchProject(this.value)">
+          <option value="">All Projects</option>
         </select>
-        <button class="action-btn primary" style="font-size:.65rem;padding:3px 10px" onclick="showNewOrgForm()">+ New Org</button>
+        <button class="action-btn primary" style="font-size:.65rem;padding:3px 10px" onclick="showNewProjectForm()">+ New Project</button>
         <div style="flex:1"></div>
         <div class="agents-tabs" style="border-bottom:none;padding:0">
           <button class="agents-tab active" onclick="switchAgentsTab('team',this)">Team</button>

@@ -1,7 +1,7 @@
 // ── Agents Page ──
 
 async function init_agents() {
-  loadOrgs();
+  loadProjects();
   loadTeam();
   loadInbox();
   loadIssues();
@@ -42,43 +42,43 @@ function closeAgentDetail() {
   if (panel) panel.style.display = 'none';
 }
 
-// ── Organization management ──
+// ── Project management ──
 
-let _currentOrg = '';
+let _currentProject = '';
 
-async function loadOrgs() {
-  const sel = document.getElementById('agents-org-select');
+async function loadProjects() {
+  const sel = document.getElementById('agents-project-select');
   if (!sel) return;
   try {
     const r = await fetch(`${API}/api/projects`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     const projects = await r.json();
-    sel.innerHTML = '<option value="">All Organizations</option>' +
+    sel.innerHTML = '<option value="">All Projects</option>' +
       (Array.isArray(projects) ? projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('') : '');
   } catch {}
 }
 
-function switchOrg(orgId) {
-  _currentOrg = orgId;
+function switchProject(orgId) {
+  _currentProject = orgId;
   loadTeam();
   loadIssues();
   loadOrgChart();
 }
 
-function showNewOrgForm() {
+function showNewProjectForm() {
   openAgentForm();
   const form = document.getElementById('agents-template-form');
   if (!form) return;
   form.innerHTML = `
-    <h2 style="font-family:var(--mono);font-size:1rem;color:var(--accent);margin-bottom:16px">New Organization</h2>
-    <div class="field"><label class="field-label">Name</label><input class="field-input" id="org-name" placeholder="e.g. Marketing Team, My Startup"></div>
-    <div class="field"><label class="field-label">Description</label><textarea class="field-input" id="org-desc" rows="3" style="resize:vertical" placeholder="What this organization does..."></textarea></div>
-    <div class="field"><label class="field-label">Workspace folder (optional)</label><input class="field-input" id="org-workspace" placeholder="e.g. ./workspace/marketing"></div>
+    <h2 style="font-family:var(--mono);font-size:1rem;color:var(--accent);margin-bottom:16px">New Project</h2>
+    <div class="field"><label class="field-label">Name</label><input class="field-input" id="project-name" placeholder="e.g. Marketing Team, My Startup"></div>
+    <div class="field"><label class="field-label">Description</label><textarea class="field-input" id="project-desc" rows="3" style="resize:vertical" placeholder="What this project does..."></textarea></div>
+    <div class="field"><label class="field-label">Workspace folder (optional)</label><input class="field-input" id="project-workspace" placeholder="e.g. ./workspace/marketing"></div>
     <div style="margin-top:12px">
-      <div class="field-label" style="margin-bottom:8px">Quick Start — hire agents for this org:</div>
-      <div id="org-agent-picks" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+      <div class="field-label" style="margin-bottom:8px">Quick Start — hire agents for this project:</div>
+      <div id="project-agent-picks" style="display:flex;flex-wrap:wrap;gap:6px"></div>
     </div>
     <div style="display:flex;gap:8px;margin-top:16px">
-      <button class="action-btn primary" onclick="createOrg()">Create Organization</button>
+      <button class="action-btn primary" onclick="createProject()">Create Project</button>
       <button class="action-btn secondary" onclick="closeAgentDetail()">Cancel</button>
     </div>
   `;
@@ -86,7 +86,7 @@ function showNewOrgForm() {
   fetch(API + '/api/agents/templates', { headers: { Authorization: 'Bearer ' + AUTH_TOKEN } })
     .then(function(r) { return r.json(); })
     .then(function(templates) {
-      var el = document.getElementById('org-agent-picks');
+      var el = document.getElementById('project-agent-picks');
       if (!el || !Array.isArray(templates)) return;
       el.innerHTML = templates.map(function(t) {
         return '<label style="display:flex;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:.72rem;cursor:pointer">' +
@@ -96,13 +96,13 @@ function showNewOrgForm() {
     }).catch(function() {});
 }
 
-async function createOrg() {
-  const name = document.getElementById('org-name')?.value.trim();
-  const desc = document.getElementById('org-desc')?.value.trim();
-  const workspace = document.getElementById('org-workspace')?.value.trim();
+async function createProject() {
+  const name = document.getElementById('project-name')?.value.trim();
+  const desc = document.getElementById('project-desc')?.value.trim();
+  const workspace = document.getElementById('project-workspace')?.value.trim();
   if (!name) { alert('Name is required'); return; }
   // Get selected agents
-  const checks = document.querySelectorAll('#org-agent-picks input:checked');
+  const checks = document.querySelectorAll('#project-agent-picks input:checked');
   const agentIds = Array.from(checks).map(c => c.value);
   try {
     await fetch(API + '/api/projects/from-starter', {
@@ -110,7 +110,7 @@ async function createOrg() {
       body: JSON.stringify({ name, description: desc, workspace, agentIds })
     });
     closeAgentDetail();
-    loadOrgs();
+    loadProjects();
     loadTeam();
   } catch {}
 }
@@ -142,9 +142,9 @@ async function loadTeam() {
   try {
     const r = await fetch(`${API}/api/agents/hired`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     let agents = await r.json();
-    // Filter by selected org
-    if (_currentOrg && Array.isArray(agents)) {
-      const pr = await fetch(`${API}/api/projects/${_currentOrg}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    // Filter by selected project
+    if (_currentProject && Array.isArray(agents)) {
+      const pr = await fetch(`${API}/api/projects/${_currentProject}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
       const proj = await pr.json();
       if (proj && Array.isArray(proj.agentIds)) {
         const orgSet = new Set(proj.agentIds);

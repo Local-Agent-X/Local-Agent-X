@@ -32,10 +32,10 @@
  * migrate.
  */
 
-import type { AgentDefinition } from "./types.js";
+import type { AgentDefinition, InvokeScope } from "./types.js";
 import type { AgentTemplate } from "../agent-store.js";
 import type { AgentRole } from "../agency/agent-roles.js";
-import { AgentTemplateStore } from "../agent-store.js";
+import { AgentTemplateStore, ProjectStore } from "../agent-store.js";
 import { _seedBuiltinRoles } from "../agency/agent-roles.js";
 
 /** Adapter: legacy AgentTemplate -> canonical AgentDefinition. Strips
@@ -93,8 +93,15 @@ export class AgentCatalog {
    * Re-reads the legacy sources on each call. Cheap (in-memory maps)
    * and keeps the catalog hot-reload friendly while persistence still
    * lives downstream.
+   *
+   * When `scope` is provided, the result is filtered to the project's
+   * roster (Project.agentIds). Definitions are matched against the
+   * roster by id. A scope pointing at a non-existent project returns
+   * an empty list. A roster entry pointing at a non-existent agent id
+   * is silently skipped — the catalog is the source of truth for what
+   * exists; the roster only declares membership.
    */
-  list(): AgentDefinition[] {
+  list(scope?: InvokeScope): AgentDefinition[] {
     const out: AgentDefinition[] = [];
     const seenIds = new Set<string>();
     const seenRoles = new Set<string>();
@@ -121,18 +128,23 @@ export class AgentCatalog {
       out.push(def);
     }
 
-    return out;
+    if (!scope) return out;
+    const project = ProjectStore.getInstance().get(scope.projectId);
+    if (!project) return [];
+    const rosterIds = new Set(project.agentIds);
+    return out.filter((d) => rosterIds.has(d.id));
   }
 
   /** Look up by canonical id (template id OR "builtin-<role>") OR by
-   *  role slug. Returns undefined when nothing matches.
+   *  role slug. Returns undefined when nothing matches OR when the
+   *  agent isn't on the scoped project's roster.
    *
-   *  Accepting both is intentional: legacy callers pass roles
-   *  ("researcher"); newer callers should pass canonical ids
+   *  Accepting both id and role is intentional: legacy callers pass
+   *  roles ("researcher"); newer callers should pass canonical ids
    *  ("tpl-..." or "builtin-researcher"). Both must work during the
    *  migration. Id wins on ambiguity. */
-  get(idOrRole: string): AgentDefinition | undefined {
-    const all = this.list();
+  get(idOrRole: string, scope?: InvokeScope): AgentDefinition | undefined {
+    const all = this.list(scope);
     return all.find((d) => d.id === idOrRole) ?? all.find((d) => d.role === idOrRole);
   }
 }

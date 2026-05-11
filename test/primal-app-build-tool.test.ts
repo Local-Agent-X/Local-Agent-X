@@ -19,9 +19,11 @@ import { FEATURE_FLAG_ENV } from "../src/primal-auto-build/tool.js";
 import { startAppBuildTool, finalizeAppBuildTool } from "../src/primal-auto-build/app-build-tool.js";
 
 const originalFlag = process.env[FEATURE_FLAG_ENV];
+// Flag is opt-out (default ON). To DISABLE, set to "0"/"false"/etc.
+// To ENABLE, unset or set to any other value.
 function setFlag(on: boolean) {
-  if (on) process.env[FEATURE_FLAG_ENV] = "1";
-  else delete process.env[FEATURE_FLAG_ENV];
+  if (on) delete process.env[FEATURE_FLAG_ENV]; // default ON
+  else process.env[FEATURE_FLAG_ENV] = "0";     // explicit disable
 }
 
 afterEach(() => {

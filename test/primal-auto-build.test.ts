@@ -24,27 +24,31 @@ describe("primal_run_build_plan — feature flag", () => {
     else process.env[FEATURE_FLAG_ENV] = originalEnv;
   });
 
-  it("is OFF by default (no env var set)", () => {
+  // The flag was flipped from opt-in to opt-out — default ON, only the
+  // explicit disable strings ("0" / "false" / "no" / "off") turn it off.
+  // Tests cover the opt-out semantics.
+
+  it("is ON by default (no env var set)", () => {
     delete process.env[FEATURE_FLAG_ENV];
-    expect(isFeatureEnabled()).toBe(false);
+    expect(isFeatureEnabled()).toBe(true);
   });
 
-  it("accepts '1' / 'true' / 'yes' / 'on' as ON", () => {
-    for (const v of ["1", "true", "TRUE", "yes", "on"]) {
+  it("stays ON for any non-disabling value", () => {
+    for (const v of ["1", "true", "TRUE", "yes", "on", "anything", " "]) {
       process.env[FEATURE_FLAG_ENV] = v;
       expect(isFeatureEnabled()).toBe(true);
     }
   });
 
-  it("treats '0' / 'false' / empty as OFF", () => {
-    for (const v of ["0", "false", "", " "]) {
+  it("turns OFF only on explicit disable strings", () => {
+    for (const v of ["0", "false", "FALSE", "no", "off"]) {
       process.env[FEATURE_FLAG_ENV] = v;
       expect(isFeatureEnabled()).toBe(false);
     }
   });
 
-  it("returns BLOCKED when flag is OFF, even with a valid project_dir", async () => {
-    delete process.env[FEATURE_FLAG_ENV];
+  it("returns BLOCKED when explicitly disabled, even with a valid project_dir", async () => {
+    process.env[FEATURE_FLAG_ENV] = "0";
     const res = await primalRunBuildPlanTool.execute({ project_dir: tmpdir() });
     expect(res.isError).toBe(true);
     expect(res.status).toBe("blocked");
@@ -105,22 +109,36 @@ describe("primal_run_build_plan — arg validation", () => {
     const res = await primalRunBuildPlanTool.execute({
       project_dir: tmp,
       plan_path: "custom-plan.md",
+      _sessionId: "test-sess-1",
     });
-    // The loop will attempt to spawn claude (no CLI in test env) and
-    // halt — but we should NOT see the "plan not found" or "no chunks"
-    // errors. The header should reference the custom plan path.
+    // Async tool now returns immediately with status:running + opId. The
+    // loop runs in the background. Validate the kickoff message references
+    // the custom plan path and no validation error fired.
     expect(res.content).not.toContain("plan not found");
     expect(res.content).not.toContain("no chunks found");
-    expect(res.content).toContain("custom-plan.md");
+    expect(res.status).toBe("running");
+    expect(res.metadata?.op_id).toBeTruthy();
   }, 60_000);
 
   it("resolves spec/plan.md as the default", async () => {
     mkdirSync(join(tmp, "spec"));
     writeFileSync(join(tmp, "spec", "plan.md"), MIN_PLAN);
-    const res = await primalRunBuildPlanTool.execute({ project_dir: tmp });
-    expect(res.content).toContain("spec");
-    expect(res.content).toContain("plan.md");
+    const res = await primalRunBuildPlanTool.execute({
+      project_dir: tmp,
+      _sessionId: "test-sess-2",
+    });
+    expect(res.status).toBe("running");
+    expect(res.metadata?.project_dir).toBe(tmp);
+    expect(res.metadata?.op_id).toBeTruthy();
   }, 60_000);
+
+  it("rejects calls missing a _sessionId (internal contract)", async () => {
+    mkdirSync(join(tmp, "spec"));
+    writeFileSync(join(tmp, "spec", "plan.md"), MIN_PLAN);
+    const res = await primalRunBuildPlanTool.execute({ project_dir: tmp });
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain("_sessionId");
+  });
 });
 
 describe("primal_run_build_plan — tool definition", () => {

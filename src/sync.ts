@@ -216,6 +216,31 @@ export class AgentSync {
     if (this.config.enabled && this.config.interval === "after_chat") this.push().catch(() => {});
   }
 
+  private pushDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastChangeReasons: string[] = [];
+
+  /**
+   * Queue a debounced push triggered by a state mutation (unpin, delete
+   * project, delete folder, etc.). Without this, deletes only propagate
+   * on the heartbeat interval — a 15-min window where another machine
+   * pulling sees stale data. The debounce coalesces a burst of mutations
+   * (e.g. user unpins 5 things in a row) into a single push.
+   *
+   * Quiet period: 5s. Each new call resets the timer. If sync is
+   * disabled or already running, this becomes a no-op.
+   */
+  notifyChange(reason: string): void {
+    if (!this.config.enabled) return;
+    this.lastChangeReasons.push(reason);
+    if (this.pushDebounceTimer) clearTimeout(this.pushDebounceTimer);
+    this.pushDebounceTimer = setTimeout(() => {
+      this.pushDebounceTimer = null;
+      const reasons = this.lastChangeReasons.splice(0).join(", ");
+      logger.info(`[sync] push-on-change firing: ${reasons}`);
+      this.push().catch((e) => logger.warn(`[sync] push-on-change failed: ${(e as Error).message}`));
+    }, 5_000);
+  }
+
   getStatus() {
     // Include EVERY persisted flag so the settings UI can populate its
     // toggles correctly. Missing fields default to off in the UI, and

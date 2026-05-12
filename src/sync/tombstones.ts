@@ -120,6 +120,31 @@ export function writeTombstonesForDeletedApps(paths: TombstonePaths, syncDir: st
 }
 
 /**
+ * Eager tombstone — called the moment a workspace app folder is
+ * deleted via the API/UI, NOT at push time. Why: without this, the
+ * sequence "user deletes folder → server restart before push → pull
+ * from remote re-creates folder (remote still has it)" caused the
+ * folder to reappear on next boot. Writing the tombstone here means
+ * even a restart-before-push survives the round-trip — applyTombstones
+ * during the next pull reads this tombstone and re-deletes the local
+ * copy that just got resurrected by pullDir(additiveOnly).
+ *
+ * Idempotent. Writes only to the synced store (sync-repo/.tombstones).
+ * The push-time diff in writeTombstonesForDeletedApps will harmlessly
+ * re-overwrite this same file on the next push — same content, no new
+ * git churn. The snapshot file is left alone so push-time diff still
+ * sees the name as "deleted since last push" and prunes the synced
+ * workspace/apps/<name> tree (eager doesn't prune; only push does).
+ */
+export function tombstoneAppEagerly(syncDir: string, name: string): void {
+  const tombstonesDir = join(syncDir, ".tombstones");
+  if (!existsSync(tombstonesDir)) mkdirSync(tombstonesDir, { recursive: true });
+  const tombstone = { name, deletedAt: new Date().toISOString(), deletedBy: hostname() };
+  writeFileSync(join(tombstonesDir, `${name}.json`), JSON.stringify(tombstone, null, 2));
+  logger.info(`[sync] eager tombstone written for "${name}"`);
+}
+
+/**
  * Post-pull: read tombstones in sync-repo and ensure local doesn't have
  * any tombstoned apps. Idempotent — apps already absent locally are skipped.
  */

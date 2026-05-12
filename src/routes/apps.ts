@@ -101,12 +101,24 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
         const { rmSync } = await import("node:fs");
         rmSync(wsDir, { recursive: true, force: true });
         workspaceDeleted = true;
+        // Eager tombstone — write the delete intent into the synced
+        // tombstone store NOW so a restart-before-push followed by
+        // a pull doesn't resurrect this app from the remote.
+        try {
+          const { homedir } = await import("node:os");
+          const { tombstoneAppEagerly } = await import("../sync/tombstones.js");
+          const syncDir = join(homedir(), ".lax", "sync-repo");
+          if (existsSync(syncDir)) tombstoneAppEagerly(syncDir, id);
+        } catch (e) {
+          logger.warn(`[apps] eager tombstone write failed for ${id}: ${(e as Error).message}`);
+        }
       } catch (e) { logger.warn(`[apps] workspace delete failed for ${id}:`, (e as Error).message); }
     }
     if (!registryResult.deleted && !workspaceDeleted) {
       json(404, { error: "Not found" });
       return true;
     }
+    try { ctx.agentSync.notifyChange(`app-delete:${id}`); } catch {}
     json(200, { ok: true, registry: registryResult.deleted, workspace: workspaceDeleted });
     return true;
   }

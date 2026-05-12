@@ -3,11 +3,8 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { RouteHandler } from "../server-context.js";
 import type { ServerEvent } from "../types.js";
 import { safeErrorMessage, sseWrite, corsHeaders, jsonResponse, safeParseBody } from "../server-utils.js";
-import { runAgent } from "../agent.js";
 import { ChatRequestSchema, validateBody } from "../route-schemas.js";
 import { ThreatEngine } from "../threat-engine.js";
-import { enqueue } from "../execution-lanes.js";
-import { logRetry } from "../retry-telemetry.js";
 import { createLogger } from "../logger.js";
 import { handleAutoDelegateRoutes } from "./chat/auto-delegate-routes.js";
 import { handleCompactRoute } from "./chat/compact-route.js";
@@ -77,7 +74,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
     let doneEmitted = false;
     let lockHeld = false;
     let onEventInstalled = false;
-    const { tryAcquireOrReplace, markIteration: markTurnIteration, releaseTurn: releaseTurnLock } = await import("../session-turn-lock.js");
+    const { tryAcquireOrReplace, releaseTurn: releaseTurnLock } = await import("../session-turn-lock.js");
     try {
       const { prepareAgentRequest } = await import("../agent-request.js");
 
@@ -252,416 +249,162 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       }
       const turnStart = Date.now();
 
-      // Canonical-loop chat path. Gate: opt-in flag + Anthropic + no images
-      // + canonical-loop interactive lane is on. The runner takes the SAME
-      // prepared payload (memory, AGENTS, history, tools) and dispatches
-      // through canonical-loop instead of the legacy runAgent → providers
-      // chain. Memory parity is preserved; canonical observability is gained.
-      // Edge cases that still go legacy: image attachments, providers without
-      // canonical adapters, or any failure during canonical setup.
+      // Canonical-loop chat path. Every chat turn drives through canonical
+      // — Anthropic + Codex + the OpenAI-compat providers all go through
+      // the same machinery. Memory parity preserved; canonical observability
+      // gained. Errors surface to the user; no silent fallback to legacy
+      // (the legacy runAgent path + per-provider rescue chain was deleted
+      // in P4.C5b ahead of P4.C6's removal of agent.ts).
       //
-      // Both Anthropic and Codex routed through canonical chat. Codex's
-      // ChatGPT-backend doesn't support `previous_response_id`, so its
-      // adapter+convertMessages must include the assistant `function_call`
-      // item alongside the tool_result so the API can match call_ids.
-      // See chat-runner.ts / codex.ts for the assistant tool_call message
-      // finalization that makes the chain complete.
-      // Every chat provider goes through canonical now. If a new provider
-      // shows up (e.g. a future "ollama-fly" or "modal"), add it here AND
-      // teach `resolveOpenAICompatTarget` how to map it. The legacy
-      // runStandardAgent path is dead code post-this commit and slated
-      // for removal.
-      const CANONICAL_CHAT_PROVIDERS = new Set(["anthropic", "codex", "local", "ollama-cloud", "xai", "openai", "gemini", "custom"]);
-      const canonicalChatEligible = await (async () => {
-        try {
-          const { isCanonicalChatEnabled, isCanonicalChatLaneEnabled } = await import("../canonical-loop/feature-flag.js");
-          if (!isCanonicalChatEnabled()) return false;
-          if (!isCanonicalChatLaneEnabled()) return false;
-        } catch { return false; }
-        if (!CANONICAL_CHAT_PROVIDERS.has(prepared.provider)) return false;
-        return true;
-      })();
-
-      if (canonicalChatEligible) {
-        // Snapshot session.messages before the canonical attempt. If the
-        // canonical path throws partway through synthesis (e.g. memory
-        // persist fails after we've already mutated session.messages), the
-        // catch block reverts so the legacy fallback runs against a known-
-        // good state — never half-mutated. Cheap shallow copy; messages
-        // themselves are not mutated, only the array reference.
-        const sessionMessagesSnapshot: ChatCompletionMessageParam[] = [...session.messages];
-        try {
-          const { runChatViaCanonical } = await import("../canonical-loop/index.js");
-          const eventStream = runChatViaCanonical({
-            message,
-            sessionId,
-            prepared,
-            tools: sessionTools,
-            security: ctx.security,
-            toolPolicy: ctx.toolPolicy,
-            threatEngine,
-            rbac: ctx.rbac,
-            callerRole: requestRole,
-            onToolEvent: primaryEventProxy,
-            signal: wsChat.abort.signal,
-          });
-
-          let canonicalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-          // Capture the canonical op id when the runner emits chat_op_started.
-          // Used at turn-end to read back any mid-turn injects from
-          // op_messages and persist them to session.messages.
-          let canonicalOpId = "";
-          for await (const ev of eventStream) {
-            if (ev.type === "done") {
-              if (ev.usage) canonicalUsage = ev.usage;
-              continue; // emit single done at end via primary path below
-            }
-            if (ev.type === "chat_op_started" && typeof ev.opId === "string") {
-              canonicalOpId = ev.opId;
-            }
-            primaryEventProxy(ev);
-          }
-          const canonicalElapsed = Date.now() - turnStart;
-          logger.info(`[timing] canonical/chat ${prepared.model} ${canonicalElapsed}ms (sess=${sessionId.slice(0, 16)})`);
-
-          // Persist this turn to session.messages by reading the rows the
-          // canonical loop produced for this op and appending the new ones
-          // to the session log. We filter out seeded history (`hist-` prefix
-          // — that's already in session.messages) and append everything else
-          // in op_messages chronological order: original user message,
-          // mid-turn injects, assistant tool_calls / tool_result / text rows.
-          //
-          // This replaces a string-only synthesis that previously lost
-          // tool_calls and tool_result structure across turn boundaries —
-          // canonical chats with tool use surfaced as text-only on next
-          // turn, which broke "do that thing again" follow-ups. Reading
-          // straight from op_messages preserves the full structured turn.
-          //
-          // Persist policy (split-gate, May 2026): user input always
-          // persists, even if the assistant produced no text (aborted,
-          // errored, or pure tool-only). Memory indexing still requires
-          // assistant text since an empty turn isn't a meaningful Q/A pair.
-          const assistantText = fullResponseText.trim();
-          const { stripEphemeralMessages: stripCanonical } = await import("../agent-providers.js");
-          type MsgRecordC = Record<string, unknown>;
-
-          const newChatMessages: ChatCompletionMessageParam[] = [];
-          if (canonicalOpId) {
-            try {
-              const { readOpMessages } = await import("../canonical-loop/store.js");
-              const { opMessageRowToChatParam } = await import("../canonical-loop/chat-runner.js");
-              const rows = readOpMessages(canonicalOpId);
-              for (const row of rows) {
-                if (row.messageId.startsWith("hist-")) continue;
-                const param = opMessageRowToChatParam(row);
-                if (param) newChatMessages.push(param);
-              }
-            } catch (e) {
-              logger.warn(`[chat] canonical op-messages read failed: ${(e as Error).message}`);
-            }
-          }
-
-          // Defensive fallback: if op_messages read failed (or produced no
-          // rows), fall back to the legacy text-only synthesis for the
-          // user message + assistant text. Never silently drop the user's
-          // input — that's the original context-loss bug.
-          if (newChatMessages.length === 0) {
-            newChatMessages.push({ role: "user", content: message });
-            if (assistantText) {
-              newChatMessages.push({ role: "assistant", content: assistantText });
-            }
-          }
-
-          const { COMPACTION_PREFIX: COMPACTION_PREFIX_CHAT } = await import("../types.js");
-          session.messages = stripCanonical([...session.messages, ...newChatMessages]).filter((m) => {
-            // Preserve a leading compaction summary system message — it's
-            // the in-memory representation of a `summary` row in the
-            // session log. Other system messages (canaries, threat-engine
-            // markers, etc.) are stripped as before.
-            if (m.role === "system") {
-              return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX_CHAT);
-            }
-            if (m.role === "tool") return true;
-            return m.content || (m as unknown as MsgRecordC).tool_calls;
-          });
-          session.updatedAt = Date.now();
-
-          if (assistantText) {
-            const isTrivialCanonical =
-              /^(run\s+(bash|command)|execute|bash)\s*(with|:)/i.test(message.trim()) ||
-              /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
-            try {
-              await ctx.memoryManager.persistTurn({
-                userMessage: message,
-                agentResponse: assistantText,
-                skip: isTrivialCanonical,
-                sessionId,
-              });
-            } catch (persistErr) {
-              logger.warn(`[chat] canonical persistTurn failed (proceeding): ${(persistErr as Error).message}`);
-            }
-          } else {
-            logger.warn(`[chat] canonical turn produced no assistant text — persisting user turn only (sess=${sessionId.slice(0, 16)})`);
-          }
-
-          ctx.saveSession(session);
-
-          // Emit terminal events through the wrapped path so the WS client
-          // releases its turn lock and the SSE stream closes cleanly.
-          wrappedOnEvent({ type: "done", usage: canonicalUsage });
-          doneEmitted = true;
-          return true;
-        } catch (e) {
-          // One-path policy: every canonical-eligible provider (anthropic,
-          // codex, local) takes canonical or fails — no silent fallback to
-          // legacy runAgent. The fallback masked real adapter bugs and
-          // produced inconsistent observability (some turns canonical,
-          // some legacy, indistinguishable from outside). Surface the
-          // error to the user; revert any partial session.messages
-          // mutation so the next turn starts from the right state.
-          logger.error(`[chat] canonical chat path threw: ${(e as Error).message}`);
-          session.messages = sessionMessagesSnapshot;
-          session.updatedAt = Date.now();
-          ctx.saveSession(session);
-          sseWrite(res, { type: "error", message: `chat: ${(e as Error).message}` });
-          sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
-          doneEmitted = true;
-          return true;
-        }
-      }
-
-      let result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
-        apiKey: prepared.apiKey, model: prepared.model,
-        provider: prepared.provider as Parameters<typeof runAgent>[2]["provider"],
-        baseURL: prepared.customBaseURL, systemPrompt,
-        tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
-        threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
-        images: prepared.images, maxIterations: prepared.maxIterations,
-        temperature: prepared.temperature, signal: wsChat.abort.signal,
-        onEvent: primaryEventProxy,
-      }), { label: `chat:${sessionId}`, timeout: 1_800_000 });
-      // Expose mark helper to the agent loops via module import (done inside the loops)
-      void markTurnIteration;
-      const primaryElapsed = Date.now() - turnStart;
-      logger.info(`[timing] ${prepared.provider}/${prepared.model} primary ${primaryElapsed}ms`);
-
-      // Auto-fallback triggers. Two classes:
-      //   1. Empty-response: primary returned zero tokens/text/tool_calls.
-      //   2. Transient error: primary threw a rate-limit / auth / overload /
-      //      network error. These don't improve by retrying the same provider
-      //      and almost always succeed on a different one.
-      const lastAssistant = [...result.messages].reverse().find(m => m.role === "assistant");
-      const emptyText = !lastAssistant || !lastAssistant.content || (typeof lastAssistant.content === "string" && !lastAssistant.content.trim());
-      const noToolCalls = !((lastAssistant as unknown as { tool_calls?: unknown[] })?.tool_calls?.length);
-      const zeroTokens = (result.usage?.completionTokens || 0) === 0;
-      const isEmptyResponse = emptyText && noToolCalls && zeroTokens;
-
-      const { classifyProviderError } = await import("../provider-fallback.js");
-      const errKind = result.stopReason === "error" ? classifyProviderError(result.errorMessage || "") : null;
-      const isTransientError = errKind !== null;
-
-      // Double-send guard: if the turn already performed a committing tool
-      // call (email send, HTTP POST/PUT/DELETE, browser click on Send/Submit/
-      // Pay/Delete, secret/memory/cron mutations, etc.), DO NOT auto-failover.
-      // Replaying the turn on a different provider would re-execute the call.
-      // Surface the error to the user instead.
-      const { detectCommittingCalls } = await import("../committing-tool-check.js");
-      const committingCalls = detectCommittingCalls(result.messages);
-      // User setting: disable auto-fallback to other providers when the
-      // primary fails. Default TRUE (failures stay visible so the user
-      // knows their selected provider isn't working and can fix it).
-      // The previous default was false (auto-rescue) but live testing
-      // proved it hides reality: user on local/llama3:8b sees responses
-      // looking fine, never realizes their local Ollama isn't producing
-      // output and Anthropic is silently rescuing every turn.
+      // Codex's ChatGPT backend doesn't support `previous_response_id`, so
+      // its adapter+convertMessages must include the assistant
+      // `function_call` item alongside the tool_result so the API can match
+      // call_ids. See chat-runner.ts / codex.ts.
       //
-      // Set `disableProviderFallback: false` in settings.json to opt
-      // back into the rescue chain (codex → anthropic → xai). Committing-
-      // call protection is unconditional (always suppresses regardless
-      // of this flag) since double-execute risk outweighs visibility.
-      let disableProviderFallback = true;
+      // Snapshot session.messages before the canonical attempt. If the
+      // canonical path throws partway through synthesis (e.g. memory
+      // persist fails after we've already mutated session.messages), the
+      // catch block reverts so the next turn starts from a known-good
+      // state — never half-mutated. Cheap shallow copy; messages
+      // themselves are not mutated, only the array reference.
+      const sessionMessagesSnapshot: ChatCompletionMessageParam[] = [...session.messages];
       try {
-        const { existsSync, readFileSync } = await import("node:fs");
-        const { join } = await import("node:path");
-        const sp = join(ctx.dataDir, "settings.json");
-        if (existsSync(sp)) {
-          const ss = JSON.parse(readFileSync(sp, "utf-8"));
-          // Explicit `false` opts out of the new default; anything else
-          // (true, missing, malformed) keeps fallback disabled.
-          if (ss.disableProviderFallback === false) disableProviderFallback = false;
-        }
-      } catch { /* default stays true on any read error */ }
-
-      const suppressFailover = committingCalls.length > 0 || disableProviderFallback;
-
-      if (suppressFailover && (isEmptyResponse || isTransientError)) {
-        const reasonText = isTransientError
-          ? (errKind === "content-filter" ? "hit content moderation" : `had a ${errKind} issue${result.errorMessage ? `: ${result.errorMessage.slice(0, 200)}` : ""}`)
-          : "returned an empty reply";
-        let notice: string;
-        if (committingCalls.length > 0) {
-          // Committing-call suppression — keep existing message (auto-retry
-          // would double-execute the action).
-          const callList = committingCalls.slice(0, 3).map(c => `${c.toolName} (${c.reason})`).join(", ");
-          notice =
-            `\n\n_${prepared.provider} ${reasonText} AFTER already executing: ${callList}. ` +
-            `Not auto-retrying on another provider — that could double-execute the action. ` +
-            `If the action completed successfully, you're done. If it didn't, ask me to retry manually._\n\n`;
-        } else {
-          // disableProviderFallback suppression — clean failure surfaced to
-          // the user so they can fix their provider config instead of
-          // unknowingly running on a different model.
-          notice =
-            `\n\n**Error: ${prepared.provider}/${prepared.model} ${reasonText}.**\n\n` +
-            `_Auto-fallback to other providers is disabled (\`disableProviderFallback: true\` in \`~/.lax/settings.json\`). ` +
-            `Fix the provider — check Ollama is running, model is pulled, API key is valid — or toggle the setting back to \`false\` to re-enable the rescue chain (codex → anthropic → xai)._\n\n`;
-        }
-        wrappedOnEvent({ type: "stream", delta: notice });
-        logRetry({ kind: "custom", sessionId, provider: prepared.provider, model: prepared.model, detail: { reason: "failover-suppressed-committing-call", committingCalls: committingCalls.map(c => c.toolName) } });
-      }
-
-      if ((isEmptyResponse || isTransientError) && !suppressFailover && !wsChat.abort.signal.aborted) {
-        const triggerKind = isTransientError ? errKind : "empty-response";
-        const kind = isTransientError
-          ? (errKind === "auth" ? "provider-auth-rotate" : "model-fallback")
-          : "empty-response-fallback";
-        logRetry({ kind, sessionId, provider: prepared.provider, model: prepared.model, detail: { trigger: triggerKind, errorMessage: result.errorMessage } });
-        const getKey = async (p: string): Promise<string | null> => {
-          if (p === "codex") { const { loadTokens } = await import("../auth.js"); const t = loadTokens(); return t ? "cli" : null; }
-          if (p === "anthropic") { const { loadAnthropicTokens } = await import("../auth-anthropic.js"); const t = loadAnthropicTokens(); return t ? "cli" : null; }
-          if (p === "xai") return ctx.secretsStore.get("XAI_API_KEY") || null;
-          if (p === "openai") return ctx.secretsStore.get("OPENAI_API_KEY") || ctx.config.openaiApiKey || null;
-          if (p === "gemini") return ctx.secretsStore.get("GEMINI_API_KEY") || null;
-          return null;
-        };
-        const fallbackOrder: Array<{ provider: string; model: string }> = [
-          { provider: "codex", model: "gpt-5.4" },
-          { provider: "anthropic", model: "claude-sonnet-4-6" },
-          { provider: "xai", model: "grok-4" },
-        ].filter(f => f.provider !== prepared.provider);
-        const reason = isTransientError
-          ? (errKind === "rate-limit" ? "is rate-limited"
-            : errKind === "auth" ? "auth expired"
-            : errKind === "overload" ? "is overloaded"
-            : errKind === "content-filter" ? "hit content moderation on this context"
-            : "had a network error")
-          : "returned nothing";
-        for (const next of fallbackOrder) {
-          const key = await getKey(next.provider);
-          if (!key) continue;
-          try {
-            wrappedOnEvent({ type: "stream", delta: `\n\n_${prepared.provider} ${reason}. Retrying with ${next.provider} (${next.model})..._\n\n` });
-            const fbStart = Date.now();
-            result = await enqueue("main", () => runAgent(message, prepared.cleanHistory, {
-              apiKey: key, model: next.model,
-              provider: next.provider as Parameters<typeof runAgent>[2]["provider"],
-              systemPrompt, tools: sessionTools, security: ctx.security, toolPolicy: ctx.toolPolicy,
-              threatEngine, rbac: ctx.rbac, callerRole: requestRole, sessionId,
-              images: prepared.images, maxIterations: prepared.maxIterations,
-              temperature: prepared.temperature, signal: wsChat.abort.signal,
-              // Swallow this fallback's 'done' too — we emit our own consolidated
-              // done after the whole chain finishes (or we've decided no more retries).
-              onEvent: (event: ServerEvent) => { if (event.type !== "done") wrappedOnEvent(event); },
-            }), { label: `chat-fallback:${next.provider}:${sessionId}`, timeout: 1_800_000 });
-            logger.info(`[timing] ${next.provider}/${next.model} fallback ${Date.now() - fbStart}ms`);
-            // Success condition depends on trigger: for empty-response we need
-            // non-empty text; for transient errors we need anything that's not
-            // another error.
-            if (result.stopReason === "error") {
-              const nextErr = classifyProviderError(result.errorMessage || "");
-              if (nextErr !== null) continue; // still transient — try next provider
-              break; // non-transient error: stop cascading
-            }
-            const newLast = [...result.messages].reverse().find(m => m.role === "assistant");
-            const stillEmpty = !newLast || !newLast.content || (typeof newLast.content === "string" && !newLast.content.trim());
-            const hasToolCalls = !!((newLast as unknown as { tool_calls?: unknown[] })?.tool_calls?.length);
-            if (!stillEmpty || hasToolCalls) break;
-          } catch (e) { logger.warn(`[fallback] ${next.provider} failed: ${(e as Error).message}`); }
-        }
-      }
-
-      const { stripEphemeralMessages } = await import("../agent-providers.js");
-      type MsgRecord = Record<string, unknown>;
-      // Keep system-stripped messages. Filter rules:
-      // - Drop system messages (rebuilt per request)
-      // - Keep all tool messages (the model needs them to interpret previous tool calls)
-      // - Keep assistant messages with content OR tool_calls
-      // - Drop empty user messages (sanity)
-      const { COMPACTION_PREFIX: COMPACTION_PREFIX_LEG } = await import("../types.js");
-      session.messages = stripEphemeralMessages(result.messages).filter((m) => {
-        if (m.role === "system") {
-          // Preserve compaction summaries (in-memory shape of a `summary`
-          // row in the session log). Drop other system messages
-          // (canaries, threat-engine markers, etc.).
-          return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX_LEG);
-        }
-        if (m.role === "tool") return true; // never drop tool results
-        return m.content || (m as unknown as MsgRecord).tool_calls;
-      });
-      session.updatedAt = Date.now();
-
-      const assistantReply = result.messages.filter(m => m.role === "assistant" && typeof m.content === "string").map(m => m.content as string).join("\n");
-      const isTrivial = /^(run\s+(bash|command)|execute|bash)\s*(with|:)/i.test(message.trim()) || /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
-      await ctx.memoryManager.persistTurn({
-        userMessage: message,
-        agentResponse: assistantReply,
-        skip: isTrivial,
-        sessionId,
-      });
-      try {
-        const { CrossSessionLearner } = await import("../cross-session-learning.js");
-        const csl = CrossSessionLearner.getInstance();
-        const toolCalls = result.messages.filter(m => (m as unknown as Record<string, unknown>).tool_calls).flatMap(m => ((m as unknown as Record<string, unknown>).tool_calls as Array<{ function?: { name: string }; name?: string }>) || []);
-        for (const tc of toolCalls) csl.recordAction(sessionId, { type: "tool", details: tc.function?.name || tc.name || "unknown", timestamp: Date.now() });
-      } catch {}
-
-      ctx.saveSession(session);
-
-      // Track real token usage and cost
-      const realUsage = result.usage || { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
-      let costUsd: number | undefined;
-      try {
-        const { trackUsage } = await import("../cost-tracker.js");
-        const usedModel = prepared.model || ctx.config.model;
-        const record = trackUsage(sessionId, usedModel, prepared.provider, realUsage.promptTokens, realUsage.completionTokens);
-        costUsd = record.costUsd;
-      } catch {}
-      // Emit final done through BOTH channels (SSE + WebSocket). We swallowed
-      // the primary and fallback 'done' events earlier so the UI didn't close
-      // mid-chain; this is the consolidated turn-end signal.
-      const doneEvent: ServerEvent = { type: "done", usage: realUsage, ...(costUsd !== undefined ? { costUsd } : {}) } as ServerEvent;
-      wrappedOnEvent(doneEvent);
-      doneEmitted = true;
-      logger.info(`[timing] turn total ${Date.now() - turnStart}ms (${prepared.provider}/${prepared.model}, ${realUsage.totalTokens} tokens)`);
-
-      // End-of-turn memory pass — fire-and-forget. Decoupled from the
-      // user-facing turn so memory writes don't compete with task
-      // completion in the live model's attention. Runs a small classifier
-      // call against the just-finished exchange, decides whether anything
-      // memory-worthy happened, and writes server-side directly. User
-      // already has their answer — this happens in the background.
-      try {
-        const { runEndOfTurnMemoryWrite } = await import("../memory/end-of-turn-write.js");
-        void runEndOfTurnMemoryWrite({
+        const { runChatViaCanonical } = await import("../canonical-loop/index.js");
+        const eventStream = runChatViaCanonical({
+          message,
           sessionId,
-          userMessage: message,
-          assistantReply,
-          provider: prepared.provider,
-          model: prepared.model,
-          apiKey: prepared.apiKey,
+          prepared,
+          tools: sessionTools,
+          security: ctx.security,
+          toolPolicy: ctx.toolPolicy,
+          threatEngine,
+          rbac: ctx.rbac,
+          callerRole: requestRole,
+          onToolEvent: primaryEventProxy,
+          signal: wsChat.abort.signal,
         });
-      } catch { /* end-of-turn write is best-effort */ }
 
-      // Format output for bridge channels (plain text for WhatsApp/Telegram)
-      let bridgeReply = assistantReply;
-      try {
-        const { formatOutput, detectStyle } = await import("../output-styles.js");
-        const style = detectStyle(sessionId);
-        if (style !== "rich") bridgeReply = formatOutput(assistantReply, style);
-      } catch {}
-      if (sessionId.startsWith("wa-") && bridgeReply) ctx.whatsappBridge.sendMessage(sessionId.slice(3), bridgeReply).catch(() => {});
-      if (sessionId.startsWith("tg-") && bridgeReply) ctx.telegramBridge.sendMessage(sessionId.slice(3), bridgeReply).catch(() => {});
-      ctx.agentSync.onChatEnd().catch(() => {});
+        let canonicalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+        // Capture the canonical op id when the runner emits chat_op_started.
+        // Used at turn-end to read back any mid-turn injects from
+        // op_messages and persist them to session.messages.
+        let canonicalOpId = "";
+        for await (const ev of eventStream) {
+          if (ev.type === "done") {
+            if (ev.usage) canonicalUsage = ev.usage;
+            continue; // emit single done at end via primary path below
+          }
+          if (ev.type === "chat_op_started" && typeof ev.opId === "string") {
+            canonicalOpId = ev.opId;
+          }
+          primaryEventProxy(ev);
+        }
+        const canonicalElapsed = Date.now() - turnStart;
+        logger.info(`[timing] canonical/chat ${prepared.model} ${canonicalElapsed}ms (sess=${sessionId.slice(0, 16)})`);
+
+        // Persist this turn to session.messages by reading the rows the
+        // canonical loop produced for this op and appending the new ones
+        // to the session log. We filter out seeded history (`hist-` prefix
+        // — that's already in session.messages) and append everything else
+        // in op_messages chronological order: original user message,
+        // mid-turn injects, assistant tool_calls / tool_result / text rows.
+        //
+        // This replaces a string-only synthesis that previously lost
+        // tool_calls and tool_result structure across turn boundaries —
+        // canonical chats with tool use surfaced as text-only on next
+        // turn, which broke "do that thing again" follow-ups. Reading
+        // straight from op_messages preserves the full structured turn.
+        //
+        // Persist policy (split-gate, May 2026): user input always
+        // persists, even if the assistant produced no text (aborted,
+        // errored, or pure tool-only). Memory indexing still requires
+        // assistant text since an empty turn isn't a meaningful Q/A pair.
+        const assistantText = fullResponseText.trim();
+        const { stripEphemeralMessages: stripCanonical } = await import("../agent-providers.js");
+        type MsgRecordC = Record<string, unknown>;
+
+        const newChatMessages: ChatCompletionMessageParam[] = [];
+        if (canonicalOpId) {
+          try {
+            const { readOpMessages } = await import("../canonical-loop/store.js");
+            const { opMessageRowToChatParam } = await import("../canonical-loop/chat-runner.js");
+            const rows = readOpMessages(canonicalOpId);
+            for (const row of rows) {
+              if (row.messageId.startsWith("hist-")) continue;
+              const param = opMessageRowToChatParam(row);
+              if (param) newChatMessages.push(param);
+            }
+          } catch (e) {
+            logger.warn(`[chat] canonical op-messages read failed: ${(e as Error).message}`);
+          }
+        }
+
+        // Defensive fallback: if op_messages read failed (or produced no
+        // rows), fall back to the legacy text-only synthesis for the
+        // user message + assistant text. Never silently drop the user's
+        // input — that's the original context-loss bug.
+        if (newChatMessages.length === 0) {
+          newChatMessages.push({ role: "user", content: message });
+          if (assistantText) {
+            newChatMessages.push({ role: "assistant", content: assistantText });
+          }
+        }
+
+        const { COMPACTION_PREFIX: COMPACTION_PREFIX_CHAT } = await import("../types.js");
+        session.messages = stripCanonical([...session.messages, ...newChatMessages]).filter((m) => {
+          // Preserve a leading compaction summary system message — it's
+          // the in-memory representation of a `summary` row in the
+          // session log. Other system messages (canaries, threat-engine
+          // markers, etc.) are stripped as before.
+          if (m.role === "system") {
+            return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX_CHAT);
+          }
+          if (m.role === "tool") return true;
+          return m.content || (m as unknown as MsgRecordC).tool_calls;
+        });
+        session.updatedAt = Date.now();
+
+        if (assistantText) {
+          const isTrivialCanonical =
+            /^(run\s+(bash|command)|execute|bash)\s*(with|:)/i.test(message.trim()) ||
+            /^(ls|dir|cat|echo|Write-Output|Get-ChildItem|pwd|whoami|git\s)/i.test(message.trim());
+          try {
+            await ctx.memoryManager.persistTurn({
+              userMessage: message,
+              agentResponse: assistantText,
+              skip: isTrivialCanonical,
+              sessionId,
+            });
+          } catch (persistErr) {
+            logger.warn(`[chat] canonical persistTurn failed (proceeding): ${(persistErr as Error).message}`);
+          }
+        } else {
+          logger.warn(`[chat] canonical turn produced no assistant text — persisting user turn only (sess=${sessionId.slice(0, 16)})`);
+        }
+
+        ctx.saveSession(session);
+
+        // Emit terminal events through the wrapped path so the WS client
+        // releases its turn lock and the SSE stream closes cleanly.
+        wrappedOnEvent({ type: "done", usage: canonicalUsage });
+        doneEmitted = true;
+        return true;
+      } catch (e) {
+        // One-path policy: every chat turn takes canonical or fails — no
+        // silent fallback to legacy runAgent. The fallback masked real
+        // adapter bugs and produced inconsistent observability (some turns
+        // canonical, some legacy, indistinguishable from outside). Surface
+        // the error to the user; revert any partial session.messages
+        // mutation so the next turn starts from the right state.
+        logger.error(`[chat] canonical chat path threw: ${(e as Error).message}`);
+        session.messages = sessionMessagesSnapshot;
+        session.updatedAt = Date.now();
+        ctx.saveSession(session);
+        sseWrite(res, { type: "error", message: `chat: ${(e as Error).message}` });
+        sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+        doneEmitted = true;
+        return true;
+      }
     } catch (e) {
       if (!res.writableEnded) {
         sseWrite(res, { type: "error", message: safeErrorMessage(e) });

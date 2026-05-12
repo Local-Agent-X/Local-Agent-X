@@ -90,7 +90,29 @@ export const writeTool: ToolDefinition = {
     }
     try {
       mkdirSync(dirname(filePath), { recursive: true });
-      writeFileSync(filePath, content, "utf-8");
+      // Preserve the file's existing line-ending style on overwrite. The
+      // model emits LF (\n) regardless of platform; if the file on disk
+      // was CRLF (typical for Windows-saved files), a naive write
+      // silently converts it to LF and changes line-ending style on
+      // every overwrite — visible in git as "the entire file changed"
+      // diffs, and noisy across machines syncing the same file. Only
+      // detect on EXISTING files; new-file writes use whatever the model
+      // emitted (LF, matching every other code-gen tool).
+      let toWrite = content;
+      if (existsSync(filePath)) {
+        try {
+          const existing = readFileSync(filePath, "utf-8");
+          // Simple majority heuristic: if the existing file's \r\n count
+          // exceeds half its \n count, the file is CRLF — promote new
+          // content to CRLF. Otherwise leave as LF.
+          const lfCount = (existing.match(/\n/g) || []).length;
+          const crlfCount = (existing.match(/\r\n/g) || []).length;
+          if (lfCount > 0 && crlfCount > lfCount / 2) {
+            toWrite = content.replace(/\r?\n/g, "\r\n");
+          }
+        } catch { /* read failed — fall back to writing as-is */ }
+      }
+      writeFileSync(filePath, toWrite, "utf-8");
       return ok(`Wrote ${filePath}`);
     } catch (e) {
       return err(`Failed to write ${filePath}: ${(e as Error).message}`);

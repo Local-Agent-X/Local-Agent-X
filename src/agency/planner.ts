@@ -8,6 +8,7 @@ import type {
 } from "./types.js";
 import type { AgentRole } from "./agent-roles.js";
 import { getRole, listRoles } from "./agent-roles.js";
+import { AgentCatalog } from "../agents/catalog.js";
 import { EventBus } from "../event-bus.js";
 
 let taskCounter = 0;
@@ -174,11 +175,23 @@ export class AgencyPlanner {
   }
 
   assignRoles(tasks: AgencyTask[]): Map<string, AgentRole> {
-    const available = listRoles();
+    // Pull from the canonical catalog (same source the chat-side
+    // agent_spawn sees) and adapt to the legacy AgentRole shape the
+    // planner's pickBestRole expects. One source of truth across
+    // both the autonomous orchestrator and the chat surface.
+    const available: AgentRole[] = AgentCatalog.getInstance().list().map((d) => ({
+      name: d.role,
+      systemPrompt: d.systemPrompt,
+      suggestedTools: d.allowedTools,
+      description: d.description,
+    }));
+    // Fallback to legacy if catalog returns empty (e.g. failed init in
+    // an isolated test) so this code path stays loud, not silent.
+    const roles = available.length > 0 ? available : listRoles();
     const assignments = new Map<string, AgentRole>();
 
     for (const task of tasks) {
-      const role = pickBestRole(task.description, available);
+      const role = pickBestRole(task.description, roles);
       assignments.set(task.id, role);
     }
 

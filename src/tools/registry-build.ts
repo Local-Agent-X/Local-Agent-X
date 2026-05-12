@@ -2,6 +2,7 @@ import type { ToolDefinition } from "../types.js";
 import { ToolRegistry, createToolSearchTool } from "../tool-search.js";
 import { buildToolPromptSection } from "../tool-prompt-builder.js";
 import { applyPrompts } from "./result-helpers.js";
+import { tagToolsByAudience } from "../agent-request/audience-tagger.js";
 import { readTool, writeTool, editTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";
 import { processTools } from "./process-tools.js";
@@ -120,6 +121,12 @@ const EAGER_TOOLS = new Set([
 ]);
 
 export function buildToolRegistry(): { registry: ToolRegistry; eagerTools: ToolDefinition[]; toolSearchTool: ToolDefinition; promptSection: string } {
+  // Tag every tool's `audiences` field from the legacy Sets BEFORE
+  // registry insertion so the canonical resolver (tool-search.ts:
+  // resolveToolsForRequest) has accurate audience info. Transitional —
+  // tagToolsByAudience deletes in P1.C4 when tools self-declare.
+  tagToolsByAudience(allTools);
+
   for (const tool of allTools) {
     if (_registry.get(tool.name)) continue;
     const defer = !EAGER_TOOLS.has(tool.name);

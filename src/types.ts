@@ -2,6 +2,18 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 
 // ── Agent Types ──
 
+/**
+ * Audience = the consumer context that decides which tools are visible.
+ * Canonical resolver in src/tool-search.ts reads `audiences` on each
+ * ToolDefinition to build the per-request tool list. See
+ * docs/tool-resolver-design.md (AUDIT Cluster 11) for the migration.
+ */
+export type Audience =
+  | "main-chat"      // top-level user-facing chat (Primal)
+  | "spawned-agent"  // sub-agents spawned via agent_spawn (default)
+  | "operator"       // Operations-phase workers (browser + file + memory)
+  | "build-intent";  // strip-down used when main-chat detects build intent
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -11,6 +23,8 @@ export interface ToolDefinition {
   readOnly?: boolean;
   /** Explicit opt-in to parallel execution alongside adjacent concurrent-safe tools. */
   concurrencySafe?: boolean;
+  /** Audiences that see this tool eagerly. Unset/empty = deferred (only via tool_search). */
+  audiences?: Audience[];
 }
 
 /**

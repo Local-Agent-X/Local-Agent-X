@@ -120,18 +120,44 @@ export const editTool: ToolDefinition = {
       const oldStr = String(args.old_string);
       const newStr = String(args.new_string);
 
-      if (!content.includes(oldStr)) {
+      // Line-ending tolerance. The model emits LF (\n) almost universally.
+      // Files saved on Windows or from certain editors use CRLF (\r\n). Doing
+      // strict substring match on those means every multi-line edit fails
+      // with "old_string not found" even when the content is semantically
+      // identical. Live failure (2026-05-12, Mario todo question-blocks):
+      // ~90 tool-call loop because each edit failed → agent re-read →
+      // tried another anchor → failed again. Root cause was CRLF in the file
+      // vs LF in old_string. Strategy:
+      //   1. Try direct match (covers LF files + perfectly-quoted CRLF).
+      //   2. If miss AND old_string contains \n, retry with old_string
+      //      converted to CRLF. Translate new_string to CRLF too so the
+      //      file's line-ending style is preserved.
+      //   3. If still no match, report the original "not found" error.
+      // No "tolerant match" applied silently when the line endings really
+      // ARE different — that would erase the LF/CRLF distinction the file's
+      // owner relies on. We only switch when the file already uses CRLF.
+      let effOld = oldStr;
+      let effNew = newStr;
+      if (!content.includes(effOld) && oldStr.includes("\n")) {
+        const crlfOld = oldStr.replace(/\r?\n/g, "\r\n");
+        if (content.includes(crlfOld)) {
+          effOld = crlfOld;
+          effNew = newStr.replace(/\r?\n/g, "\r\n");
+        }
+      }
+
+      if (!content.includes(effOld)) {
         return err(`old_string not found in ${filePath}. Make sure it matches exactly.`);
       }
 
-      const occurrences = content.split(oldStr).length - 1;
+      const occurrences = content.split(effOld).length - 1;
       if (occurrences > 1) {
         return err(
-          `old_string found ${occurrences} times in ${filePath}. Provide more context to make it unique.`
+          `old_string found ${occurrences} times in ${filePath}. Provide more context to make it unique.`,
         );
       }
 
-      const updated = content.replace(oldStr, newStr);
+      const updated = content.replace(effOld, effNew);
       writeFileSync(filePath, updated, "utf-8");
       return ok(`Edited ${filePath}`);
     } catch (e) {

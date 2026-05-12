@@ -76,6 +76,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .project-delete{display:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:.7rem;padding:2px 5px;border-radius:3px}
 .project-item:hover .project-delete{display:block}
 .project-delete:hover{color:var(--danger);background:#2a1010}
+.project-new-chat{display:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:.85rem;line-height:1;padding:1px 6px;border-radius:3px;font-weight:600}
+.project-item:hover .project-new-chat{display:block}
+.project-new-chat:hover{color:var(--accent);background:var(--accent-dim,rgba(64,240,240,.12))}
 .project-chats{display:none;padding:2px 0 4px 20px}
 .project-item.expanded+.project-chats{display:block}
 .chat-group-label{padding:6px 12px 2px;font-size:.6rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:4px}

@@ -3,6 +3,9 @@
 
 let chats = loadChatsFromCache(); // Start with cache, then fetch from server
 let projects = loadProjects();
+// Mirror to window so cross-script consumers (chat-status-bar's project
+// selector) can read the live list without redoing the API call.
+try { window.projects = projects; window.activeChat = null; } catch {}
 let activeChat = null;
 let expandedProjects = new Set();
 let serverSyncing = false; // Prevent save loops
@@ -225,8 +228,12 @@ async function syncProjectsFromServer() {
     if (!Array.isArray(list)) return;
     // Server returns the full Project record; sidebar only needs id + name.
     projects = list.map(p => ({ id: p.id, name: p.name, createdAt: p.createdAt }));
+    try { window.projects = projects; } catch {}
     saveProjects();
     renderSidebar();
+    // Status bar's project selector reads window.projects, so re-render
+    // it now that the list is fresh.
+    try { if (typeof window.updateStatusBar === 'function') window.updateStatusBar(); } catch {}
   } catch { /* leave cached snapshot */ }
 }
 
@@ -438,9 +445,13 @@ function moveChat(chatId, projectId, e) {
 }
 
 // ── Chats ──
-function newChat() {
+function newChat(projectId) {
   activeChat = { id: 'chat-' + uid(), title: 'New Chat', messages: [], createdAt: Date.now(), updatedAt: Date.now() };
+  if (projectId) activeChat.projectId = projectId;
+  try { window.activeChat = activeChat; } catch {}
   chats.unshift(activeChat);
+  // Expand the project the new chat lives under so the user can see it.
+  if (projectId && typeof expandedProjects !== 'undefined') expandedProjects.add(projectId);
   saveChats(); renderSidebar();
   navigate('chat');
   if (window.renderMessages) renderMessages();
@@ -452,9 +463,17 @@ function newChat() {
   if (sendBtn) sendBtn.disabled = false;
 }
 
+function newChatInProject(projectId, e) {
+  if (e) { e.stopPropagation(); e.preventDefault(); }
+  if (!projectId) return;
+  newChat(projectId);
+}
+
 function selectChat(id) {
   activeChat = chats.find(c => c.id === id) || null;
+  try { window.activeChat = activeChat; } catch {}
   renderSidebar();
+  try { if (typeof window.updateStatusBar === 'function') window.updateStatusBar(); } catch {}
   navigate('chat');
   if (window.renderMessages) renderMessages();
   // Update send/stop button state for THIS chat
@@ -581,6 +600,7 @@ function renderProjects() {
         <span class="project-arrow">&#9654;</span>
         <span class="project-name">${esc(p.name)}</span>
         ${count ? `<span class="project-count">${count}</span>` : ''}
+        <button class="project-new-chat" onclick="newChatInProject('${p.id}',event)" title="New chat in this project">+</button>
         <button class="project-delete" onclick="deleteProject('${p.id}',event)" title="Delete">&times;</button>
       </div>
       <div class="project-chats">

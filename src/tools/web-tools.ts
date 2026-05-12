@@ -76,7 +76,15 @@ export const webFetchTool: ToolDefinition = {
 
       const durationMs = Date.now() - startMs;
       if (!res.ok && !(res.status >= 300 && res.status < 400)) {
-        return err(`HTTP ${res.status}: ${res.statusText}`, {
+        // Recovery hint inline in the error string so the agent's LLM
+        // sees a clear next action instead of inferring one. Without
+        // this hint, agents tend to give up after 2-3 failed fetches
+        // rather than pivot — see src/agents/result-guard.ts for the
+        // failure mode this addresses.
+        const recoveryHint = res.status >= 400
+          ? " — source unavailable. Try web_search for alternative URLs, or fetch a different source. Don't give up; report what you couldn't reach as a limitation."
+          : "";
+        return err(`HTTP ${res.status}: ${res.statusText}${recoveryHint}`, {
           url: currentUrl,
           status: res.status,
           duration_ms: durationMs,

@@ -59,21 +59,23 @@ export interface SecretMetaView {
   updatedAt: number;
 }
 
+interface SecretsFileEntry {
+  name: string;
+  service?: string;
+  account?: string;
+  url?: string;
+  notes?: string;
+  origin?: string;
+  createdBySession?: string;
+  approvedFills?: Array<{ origin: string; approvedAt: number }>;
+  addedAt: number;
+  updatedAt: number;
+  encrypted: string; // hex: iv(12) + authTag(16) + ciphertext
+}
+
 interface SecretsFile {
   version: 1;
-  secrets: Array<{
-    name: string;
-    service?: string;
-    account?: string;
-    url?: string;
-    notes?: string;
-    origin?: string;
-    createdBySession?: string;
-    approvedFills?: Array<{ origin: string; approvedAt: number }>;
-    addedAt: number;
-    updatedAt: number;
-    encrypted: string; // hex: iv(12) + authTag(16) + ciphertext
-  }>;
+  secrets: SecretsFileEntry[];
 }
 
 /** Derive a canonical origin (scheme://host[:port]) from an arbitrary URL. Returns undefined on failure. */
@@ -111,6 +113,19 @@ export class SecretsStore {
   private filePath: string;
   private key: Buffer;
   private secrets: Map<string, SecretEntry> = new Map();
+  /**
+   * Entries that failed to decrypt at load time. Held verbatim so save()
+   * can write them BACK unchanged — preserving the ciphertext on disk in
+   * case the user later restores the right master key (e.g. recovers
+   * master.dpapi from backup) and reboots the server.
+   *
+   * Without this, any save() (triggered by `set` / `delete` / `approveFill`
+   * / `revokeFillApproval`) would silently overwrite undecryptable
+   * entries with only the survivors — which is exactly the wipe pattern
+   * that lost a user's API keys after the 2026-05-09 master-key rotation
+   * incident documented in keychain.ts:217-228.
+   */
+  private quarantined: SecretsFileEntry[] = [];
   public readonly keychainProvider: KeychainProvider;
 
   constructor(dataDir: string) {
@@ -126,12 +141,28 @@ export class SecretsStore {
   private load(): void {
     if (!existsSync(this.filePath)) return;
 
+    let raw: SecretsFile;
     try {
-      const raw: SecretsFile = JSON.parse(readFileSync(this.filePath, "utf-8"));
-      for (const entry of raw.secrets) {
+      raw = JSON.parse(readFileSync(this.filePath, "utf-8")) as SecretsFile;
+    } catch (e) {
+      // File-level corruption — JSON parse fail. Distinct from per-entry
+      // decrypt failure; nothing we can quarantine because we can't even
+      // see the entries. Log loud and bail; save() won't be called until
+      // a successful `set()`, which would still nuke the unparseable
+      // file. That's a known tradeoff — if JSON is unparseable, the file
+      // is effectively dead anyway.
+      logger.error(`[secrets] CRITICAL: Failed to parse ${this.filePath}: ${(e as Error).message}. Existing secrets are unreadable. Restore from backup before adding new secrets or they will overwrite the file.`);
+      return;
+    }
+
+    let okCount = 0;
+    let failCount = 0;
+    for (const entry of raw.secrets) {
+      try {
+        const value = decrypt(entry.encrypted, this.key);
         this.secrets.set(entry.name, {
           name: entry.name,
-          value: decrypt(entry.encrypted, this.key),
+          value,
           service: entry.service,
           account: entry.account,
           url: entry.url,
@@ -142,30 +173,77 @@ export class SecretsStore {
           addedAt: entry.addedAt,
           updatedAt: entry.updatedAt,
         });
+        okCount++;
+      } catch (e) {
+        // Per-entry decrypt failure. Keep the ciphertext alive in
+        // `quarantined` so the next save() writes it back unchanged. A
+        // future boot with the correct master key (restored from
+        // backup, OS keychain restored, etc.) will decrypt it
+        // successfully and lift the quarantine.
+        this.quarantined.push(entry);
+        failCount++;
+        logger.warn(`[secrets] decrypt failed for "${entry.name}" (added ${new Date(entry.addedAt).toISOString()}): ${(e as Error).message} — quarantined, ciphertext preserved on disk`);
       }
-    } catch (e) {
-      logger.warn(`[secrets] Failed to load secrets: ${(e as Error).message}`);
+    }
+
+    if (failCount > 0) {
+      logger.error(
+        `[secrets] CRITICAL: ${failCount} of ${raw.secrets.length} secrets failed to decrypt. ` +
+        `Master key likely rotated since these entries were encrypted (see keychain.ts:217-228 for the May 2026 incident).\n` +
+        `${this.quarantined.map(e => `  - ${e.name} (added ${new Date(e.addedAt).toISOString()})`).join("\n")}\n` +
+        `Their ciphertext is preserved on disk and will be written back verbatim on the next save. ` +
+        `If you have a backup of the matching master.dpapi / OS keychain entry, restore it and reboot. ` +
+        `Otherwise the values are unrecoverable — re-add the secrets via the UI; the dead entries will be replaced.`,
+      );
+    } else {
+      logger.info(`[secrets] Loaded ${okCount} secret${okCount === 1 ? "" : "s"}`);
     }
   }
 
   private save(): void {
+    // Re-encrypt every live secret with the current master key.
+    const reencrypted: SecretsFileEntry[] = Array.from(this.secrets.values()).map((s) => ({
+      name: s.name,
+      service: s.service,
+      account: s.account,
+      url: s.url,
+      notes: s.notes,
+      origin: s.origin,
+      createdBySession: s.createdBySession,
+      approvedFills: s.approvedFills,
+      addedAt: s.addedAt,
+      updatedAt: s.updatedAt,
+      encrypted: encrypt(s.value, this.key),
+    }));
+    // Pass quarantined entries through unchanged. If a live entry shares
+    // a name with a quarantined one — e.g. user re-added a secret after
+    // losing the old key — the live entry wins; drop the quarantined
+    // duplicate so it doesn't shadow on the next load.
+    const liveNames = new Set(reencrypted.map(e => e.name));
+    const survivingQuarantine = this.quarantined.filter(q => !liveNames.has(q.name));
+    if (survivingQuarantine.length !== this.quarantined.length) {
+      this.quarantined = survivingQuarantine;
+    }
     const data: SecretsFile = {
       version: 1,
-      secrets: Array.from(this.secrets.values()).map((s) => ({
-        name: s.name,
-        service: s.service,
-        account: s.account,
-        url: s.url,
-        notes: s.notes,
-        origin: s.origin,
-        createdBySession: s.createdBySession,
-        approvedFills: s.approvedFills,
-        addedAt: s.addedAt,
-        updatedAt: s.updatedAt,
-        encrypted: encrypt(s.value, this.key),
-      })),
+      secrets: [...reencrypted, ...survivingQuarantine],
     };
     writeFileSync(this.filePath, JSON.stringify(data, null, 2), { encoding: "utf-8", mode: 0o600 });
+  }
+
+  /** Number of entries that failed to decrypt at load time and are being
+   *  preserved on disk for possible future recovery. Surfaced for status
+   *  UIs / health checks that want to warn the user "your secrets need
+   *  attention" instead of silently looking fine. */
+  quarantinedCount(): number {
+    return this.quarantined.length;
+  }
+
+  /** Names of the quarantined entries — values stay encrypted, never
+   *  exposed. Useful for surfacing "these specific secrets need to be
+   *  re-added" in the UI. */
+  quarantinedNames(): string[] {
+    return this.quarantined.map(e => e.name);
   }
 
   /** Get a decrypted secret value by name. Returns undefined if not found. */
@@ -195,9 +273,15 @@ export class SecretsStore {
     this.save();
   }
 
-  /** Delete a secret by name. Returns true if it existed. */
+  /** Delete a secret by name. Returns true if it existed (live OR quarantined).
+   *  Deleting a quarantined name is the user's explicit signal that the lost
+   *  value is unrecoverable and they want the dead entry gone for good. */
   delete(name: string): boolean {
-    const existed = this.secrets.delete(name);
+    const liveExisted = this.secrets.delete(name);
+    const quarantineBefore = this.quarantined.length;
+    this.quarantined = this.quarantined.filter(q => q.name !== name);
+    const quarantineRemoved = this.quarantined.length < quarantineBefore;
+    const existed = liveExisted || quarantineRemoved;
     if (existed) this.save();
     return existed;
   }
@@ -207,7 +291,11 @@ export class SecretsStore {
     return this.secrets.has(name);
   }
 
-  /** List all secret names and metadata (never exposes values). */
+  /** List all USABLE secret names and metadata (never exposes values).
+   *  Quarantined entries (failed to decrypt at load) are excluded — the
+   *  agent can't use them, so they shouldn't appear in agent-facing
+   *  surfaces. UIs that want to surface "you have dead entries to clean
+   *  up" should call `listQuarantined()` separately. */
   list(): SecretMetaView[] {
     return Array.from(this.secrets.values()).map(({ name, service, account, url, notes, origin, createdBySession, approvedFills, addedAt, updatedAt }) => ({
       name,
@@ -220,6 +308,18 @@ export class SecretsStore {
       approvedFills,
       addedAt,
       updatedAt,
+    }));
+  }
+
+  /** List metadata for entries that failed to decrypt at load. The
+   *  ciphertext is preserved on disk through save(), so a future boot
+   *  with the right master key may rehabilitate them. The UI should
+   *  show these in a distinct "needs attention" section so the user
+   *  knows which secrets to re-add or recover. */
+  listQuarantined(): SecretMetaView[] {
+    return this.quarantined.map(({ name, service, account, url, notes, origin, createdBySession, approvedFills, addedAt, updatedAt }) => ({
+      name, service, account, url, notes, origin,
+      createdBySession, approvedFills, addedAt, updatedAt,
     }));
   }
 

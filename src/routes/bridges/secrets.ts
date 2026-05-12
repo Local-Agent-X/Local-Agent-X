@@ -5,7 +5,22 @@ export const handleSecretsRoutes: RouteHandler = async (method, url, req, res, c
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
   if (method === "GET" && url.pathname === "/api/secrets") {
+    // Live entries returned at the array root for backward compatibility
+    // with the existing UI shape. Quarantined entries (failed to decrypt
+    // — see secrets.ts:load) are surfaced via response headers so newer
+    // UIs can render a "needs attention" banner without breaking older
+    // ones that expect a plain array.
+    const quarantined = ctx.secretsStore.listQuarantined();
+    if (quarantined.length > 0) {
+      res.setHeader("X-Lax-Secrets-Quarantined-Count", String(quarantined.length));
+      res.setHeader("X-Lax-Secrets-Quarantined-Names", quarantined.map(q => q.name).join(","));
+    }
     json(200, ctx.secretsStore.list()); return true;
+  }
+  // Dedicated read for the quarantine list — UI uses this to render the
+  // "these failed to decrypt" section with full metadata.
+  if (method === "GET" && url.pathname === "/api/secrets/quarantined") {
+    json(200, ctx.secretsStore.listQuarantined()); return true;
   }
   if (method === "POST" && url.pathname === "/api/secrets") {
     const body = await safeParseBody(req) as { name?: string; value?: string; service?: string; account?: string; url?: string; notes?: string };

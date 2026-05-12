@@ -1,12 +1,15 @@
 /**
  * Spawn one round of an autopilot operation.
  *
- * Uses runAgent() directly — NOT Handler.spawnAgent — to avoid colliding
- * with the agency delegated-agent worktree pattern in handler-events.ts:117.
- * The session is bound to the autopilot worktree via security.addAllowedPath.
+ * Routes through canonical-loop's `runAgentViaCanonical` so the round shares
+ * the same safety stack, observability, and cancel machinery as chat —
+ * NOT Handler.spawnAgent (that path collides with the agency delegated-
+ * agent worktree pattern in handler-events.ts:117). The session is bound
+ * to the autopilot worktree via security.addAllowedPath.
  */
 
-import { runAgent, type AgentOptions } from "../agent.js";
+import { type AgentOptions } from "../agent.js";
+import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import type { Operation, OperationPhase } from "../operations/types.js";
 import type { AutopilotConfig } from "./types.js";
 import type { ToolDefinition, LAXConfig } from "../types.js";
@@ -35,7 +38,9 @@ export interface RoundAgentOptions {
   roundsCompleted: number;
   selfEditUsed: number;
   lastRound?: NudgeContext["lastRound"];
-  signal?: AbortSignal;
+  /** Per-round wall-clock ceiling. Threaded into canonical's per-op
+   *  wallClockMs so the cancel routes through canonical's state machine. */
+  wallClockMs?: number;
 }
 
 export interface RoundAgentResult {
@@ -91,7 +96,7 @@ export async function runAutopilotRound(
     // everything it needs. Keep it short to avoid token bloat.
     const userMessage = `Begin round ${opts.round}.`;
 
-    const result = await runAgent(userMessage, [], {
+    const result = await runAgentViaCanonical(userMessage, [], {
       apiKey: deps.apiKey,
       model: deps.model,
       provider: deps.provider,
@@ -100,7 +105,9 @@ export async function runAutopilotRound(
       security,
       sessionId,
       maxIterations: deps.config.maxIterations,
-      signal: opts.signal,
+      wallClockMs: opts.wallClockMs,
+      opType: "autopilot_round",
+      lane: "background",
       // Live sidebar progress: forward each tool call as a bg_op_progress
       // line tagged with this autopilot's opId. Without this the sidebar
       // card sits silent for whole rounds (5-10 min) — looks like the

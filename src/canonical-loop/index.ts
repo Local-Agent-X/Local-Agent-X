@@ -227,6 +227,11 @@ export {
 } from "./chat-runner.js";
 
 export {
+  runAgentViaCanonical,
+  type CanonicalAgentOptions,
+} from "./agent-runner.js";
+
+export {
   makeChatToolDispatcher,
   type ChatToolDispatcherOptions,
 } from "./chat-tool-dispatcher.js";

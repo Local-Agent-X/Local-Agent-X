@@ -158,13 +158,10 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
       // a thrashing agent (e.g. tool retry loop) could run far past the
       // deadline because the deadline check only fires at top-of-loop.
       // Add a 30s buffer so the loop's own validation/commit gates don't
-      // get cut off when the agent hands back near-instant.
+      // get cut off when the agent hands back near-instant. Threaded into
+      // canonical's per-op wallClockMs — the runner issues opCancel on
+      // expiry so canonical's state machine stays consistent.
       const roundBudgetMs = Math.max(60_000, timeRemainingMs - 30_000);
-      const roundAbort = new AbortController();
-      const roundDeadlineTimer = setTimeout(() => {
-        logger.warn(`[autopilot.loop] round ${round} hit deadline (${Math.round(roundBudgetMs / 1000)}s) — aborting agent`);
-        roundAbort.abort();
-      }, roundBudgetMs);
 
       // Spawn the round agent
       let agentResult;
@@ -185,12 +182,10 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
             roundsCompleted: round - 1,
             selfEditUsed: totalSelfEditCalls,
             lastRound,
-            signal: roundAbort.signal,
+            wallClockMs: roundBudgetMs,
           },
         );
-        clearTimeout(roundDeadlineTimer);
       } catch (e) {
-        clearTimeout(roundDeadlineTimer);
         const errMsg = (e as Error).message;
         logger.error(`[autopilot.loop] round ${round} agent error: ${errMsg}`);
         const result: RoundResult = {

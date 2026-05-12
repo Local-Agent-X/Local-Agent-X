@@ -202,11 +202,62 @@ function saveChats() {
   }
 }
 
-function loadProjects() { try { return JSON.parse(localStorage.getItem('sax_projects_v1') || '[]'); } catch { return []; } }
-function saveProjects() { localStorage.setItem('sax_projects_v1', JSON.stringify(projects)); }
+// Projects are backed by the server (ProjectStore) post-L6 — same source
+// the agents page sees. Sidebar reads /api/projects on boot and keeps a
+// local snapshot for synchronous render. Mutations hit the backend then
+// refresh the snapshot.
+function loadProjects() {
+  // Synchronous bootstrap from localStorage cache so the first render
+  // isn't empty. Server sync replaces this within a few hundred ms.
+  try { return JSON.parse(localStorage.getItem('sax_projects_cache_v1') || '[]'); } catch { return []; }
+}
+function saveProjects() {
+  // Cache the latest server snapshot so first paint after reload is
+  // populated. Not the source of truth.
+  try { localStorage.setItem('sax_projects_cache_v1', JSON.stringify(projects)); } catch {}
+}
+
+async function syncProjectsFromServer() {
+  try {
+    const r = await fetch(`${API}/api/projects`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    if (!r.ok) return;
+    const list = await r.json();
+    if (!Array.isArray(list)) return;
+    // Server returns the full Project record; sidebar only needs id + name.
+    projects = list.map(p => ({ id: p.id, name: p.name, createdAt: p.createdAt }));
+    saveProjects();
+    renderSidebar();
+  } catch { /* leave cached snapshot */ }
+}
+
+// One-shot migration from the legacy sax_projects_v1 localStorage key.
+// Reads any frontend-only projects the user created before the backend
+// became the source of truth, posts them to the server, then clears the
+// legacy key. Runs once per install.
+async function migrateLegacyLocalStorageProjects() {
+  if (localStorage.getItem('sax_projects_migrated_v1') === 'done') return;
+  let legacy = [];
+  try { legacy = JSON.parse(localStorage.getItem('sax_projects_v1') || '[]'); } catch { legacy = []; }
+  if (Array.isArray(legacy) && legacy.length > 0) {
+    for (const p of legacy) {
+      if (!p?.name) continue;
+      try {
+        await fetch(`${API}/api/projects/from-starter`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+          body: JSON.stringify({ name: p.name, description: '', agentIds: [] }),
+        });
+      } catch { /* one project failing shouldn't block the rest */ }
+    }
+  }
+  try { localStorage.setItem('sax_projects_migrated_v1', 'done'); } catch {}
+  try { localStorage.removeItem('sax_projects_v1'); } catch {}
+  await syncProjectsFromServer();
+}
 
 // Sync from server on page load (after initial render from cache)
 setTimeout(() => syncChatsFromServer(), 500);
+setTimeout(() => { migrateLegacyLocalStorageProjects().then(() => syncProjectsFromServer()); }, 600);
 
 // ── Routing ──
 const ROUTES = ['chat', 'settings', 'secrets', 'protocols', 'missions', 'apps', 'agents'];
@@ -313,20 +364,33 @@ function renderSidebarPins() {
 document.addEventListener('DOMContentLoaded', loadSidebarPins);
 
 // ── Projects ──
-function newProject() {
+async function newProject() {
   const name = prompt('Project name:');
   if (!name) return;
-  projects.push({ id: uid(), name, createdAt: Date.now() });
-  saveProjects();
-  renderSidebar();
+  try {
+    await fetch(`${API}/api/projects/from-starter`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ name, description: '', agentIds: [] }),
+    });
+    await syncProjectsFromServer();
+  } catch (e) { alert('Failed to create project: ' + (e?.message || e)); }
 }
 
-function deleteProject(id, e) {
+async function deleteProject(id, e) {
   e.stopPropagation();
-  if (!confirm('Delete this project?')) return;
-  chats.forEach(c => { if (c.projectId === id) delete c.projectId; });
-  projects = projects.filter(p => p.id !== id);
-  saveProjects(); saveChats(); renderSidebar();
+  if (!confirm('Delete this project? Chats inside it will be detached but kept.')) return;
+  try {
+    await fetch(`${API}/api/projects/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+    });
+    // Detach any chats that were nested under this project. Chats stay
+    // in localStorage; deleting a server project doesn't delete chats.
+    chats.forEach(c => { if (c.projectId === id) delete c.projectId; });
+    saveChats();
+    await syncProjectsFromServer();
+  } catch (err) { alert('Failed to delete project: ' + (err?.message || err)); }
 }
 
 function toggleProject(id) {

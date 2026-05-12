@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "../types.js";
+import { resolveToolsForRequest } from "../tool-search.js";
 
 // ── Smart Tool Filtering ──
 // Always include core tools. Add extras if the user's message hints at them.
@@ -144,38 +145,45 @@ function detectLiteralToolCalls(message: string, allTools: ToolDefinition[]): Se
   return out;
 }
 
-export function filterToolsForMessage(allTools: ToolDefinition[], message: string): ToolDefinition[] {
-  // Literal tool-call syntax always wins — if the user typed e.g.
-  // `primal_run_build_plan({...})`, that tool MUST be in the schema
-  // regardless of build-intent strip-down or keyword routing.
-  const literalCalls = detectLiteralToolCalls(message, allTools);
-
-  // Build intent: ultra-minimal tool set (~11 tools vs 40+)
-  // This is critical for Codex which returns empty responses when context is bloated
-  if (BUILD_INTENT_REGEX.test(message) && literalCalls.size === 0) {
-    return allTools.filter(t => BUILD_INTENT_TOOLS.has(t.name));
-  }
-
-  const included = new Set<string>();
-
-  // Always include core tools
-  for (const name of CORE_TOOL_NAMES) included.add(name);
-
-  // Literal tool calls force-include those tools
-  for (const name of literalCalls) included.add(name);
-
-  // Add tools matching user message keywords
+/**
+ * Pure keyword router — given a user message + the full tool list,
+ * return the set of tool names matched by TOOL_KEYWORD_MAP. Extracted
+ * from filterToolsForMessage so resolveToolsForRequest can inject it
+ * as a dependency without circular imports.
+ */
+function keywordRouter(message: string, allTools: ToolDefinition[]): Set<string> {
+  const out = new Set<string>();
   for (const { keywords, toolPrefixes } of TOOL_KEYWORD_MAP) {
     if (keywords.test(message)) {
       for (const tool of allTools) {
         for (const prefix of toolPrefixes) {
           if (tool.name.startsWith(prefix) || tool.name === prefix) {
-            included.add(tool.name);
+            out.add(tool.name);
           }
         }
       }
     }
   }
+  return out;
+}
 
-  return allTools.filter(t => included.has(t.name));
+/**
+ * Back-compat shim. Delegates to resolveToolsForRequest with
+ * audience="main-chat" and the keyword/literal/build-intent helpers
+ * wired in. Keeps existing callers working during P1.C3/C4 migration.
+ *
+ * Verified byte-identical to the pre-migration implementation for the
+ * 10 representative messages in test/tool-filter-parity.test.ts.
+ */
+export function filterToolsForMessage(allTools: ToolDefinition[], message: string): ToolDefinition[] {
+  return resolveToolsForRequest(
+    {
+      audience: "main-chat",
+      message,
+      keywordRouter,
+      literalCallDetector: detectLiteralToolCalls,
+      buildIntentTest: (m) => BUILD_INTENT_REGEX.test(m),
+    },
+    allTools,
+  );
 }

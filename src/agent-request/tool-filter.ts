@@ -107,7 +107,7 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
 // Build intent = minimal tool set. When the user asks to build/create an app,
 // the agent only needs file operations. Fewer tools = smaller context = Codex
 // stops returning empty responses on complex prompts.
-const BUILD_INTENT_TOOLS = new Set([
+export const BUILD_INTENT_TOOLS = new Set([
   // build_app is the primary tool for new apps — spawns CLI subprocess for reliability
   "build_app",
   // Direct file tools for edits and simple tasks

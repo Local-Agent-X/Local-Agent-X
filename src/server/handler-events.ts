@@ -72,35 +72,30 @@ export function registerHandlerEvents(deps: {
       const { resolveProvider } = await import("../agent-request.js");
       const { provider, apiKey, model } = await resolveProvider(config, secretsStore, dataDir);
 
-      // Role-specific narrow tool sets. Operations phase workers ("operator"
-      // role) don't need team coordination / identity / issue tools — those
-      // cause attention-drift loops (agent_whoami + issue_list spam). Keep
-      // them focused on web + file + shell + memory.
-      const OPERATOR_TOOLS = new Set([
-        "browser", "bash", "read", "write", "edit", "http_request",
-        "web_search", "web_fetch", "view_image", "ocr",
-        "memory_search", "memory_save", "memory_recall",
-        "document_create", "document_edit", "spreadsheet_read", "spreadsheet_write", "pdf_create",
-        "email_send", "ask_user",
-      ]);
+      // Canonical resolver: read each tool's `audiences` field. Spawned
+      // agents default to the "spawned-agent" audience; ops-phase workers
+      // (role === "operator") use the narrower "operator" audience.
+      // Per-template restrictions apply via templateAllowedTools, with
+      // identity helpers always preserved (see resolveToolsForRequest).
+      const { resolveToolsForRequest } = await import("../tool-search.js");
+      const audience = role === "operator" ? "operator" : "spawned-agent";
+      const spawnedTools = resolveToolsForRequest(
+        {
+          audience,
+          templateAllowedTools: template?.allowedTools && template.allowedTools.length > 0
+            ? template.allowedTools
+            : undefined,
+        },
+        allAgentTools,
+      );
 
-      // Single code path for all spawned agents. A worktree is created only
-      // when the role explicitly indicates code-editing work. Everything else
-      // (operator, researcher, browser, analyst, writer, or default) runs in
-      // the main workspace and uses the web-friendly execution rules.
-      const isCodeRole = /\b(developer|engineer|coder|programmer|refactorer|code-?editor)\b/i.test(role);
-
-      // All spawned agents get the operator toolset (browser, bash, web tools,
-      // memory, office docs, email, ask_user) — it's the superset that handles
-      // web + file + shell work. Templates may restrict further.
-      let spawnedTools = allAgentTools.filter(t => OPERATOR_TOOLS.has(t.name));
-      if (template?.allowedTools && template.allowedTools.length > 0) {
-        const allowed = new Set([...template.allowedTools, "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval", "agent_whoami", "agent_team_list", "agent_wakeup"]);
-        spawnedTools = spawnedTools.filter(t => allowed.has(t.name));
-      }
-
+      // Worktree decision is now explicit per AgentDefinition. Legacy
+      // role-string regex (`isCodeRole`) deleted per AUDIT Cluster 11.
+      // Default false = run in main workspace; true = isolated LAX-repo
+      // worktree for src/ edits only.
+      const requiresWorktree = template?.requiresWorktree ?? false;
       let worktreeBlock = "";
-      if (isCodeRole) {
+      if (requiresWorktree) {
         try {
           const { createWorktree } = await import("../agency/worktree.js");
           worktreeInfo = createWorktree(agentId);
@@ -126,7 +121,7 @@ export function registerHandlerEvents(deps: {
         `- Browser work: navigate → snapshot → click/fill by ref. Use new_tab + switch_tab for multi-site goals. Never start at sso./auth./login. subdomains — go to the main domain.\n` +
         `- Login safety: if Sign In doesn't advance on FIRST try, pause — don't retry (lockouts). Never read or output password field values.\n` +
         `- Forms: emit multiple fill calls in one turn, then snapshot once. Don't re-observe between independent field fills.\n` +
-        (isCodeRole ? `- Save results to workspace/ as you go. For large files use python -c one-liners, not read.\n` : `- Save exports/screenshots/notes to workspace/. Don't edit repo source.\n`);
+        (requiresWorktree ? `- Save results to workspace/ as you go. For large files use python -c one-liners, not read.\n` : `- Save exports/screenshots/notes to workspace/. Don't edit repo source.\n`);
       const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); logger.warn(`[handler] Agent ${agentId} timed out`); }, config.agentTimeoutMs);
       const agentResult = await enqueue("agent", () => runAgent(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + worktreeBlock,

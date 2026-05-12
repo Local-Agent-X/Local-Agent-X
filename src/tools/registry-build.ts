@@ -104,32 +104,18 @@ export const allTools: ToolDefinition[] = applyPrompts([
   } satisfies ToolDefinition,
 ]);
 
-const EAGER_TOOLS = new Set([
-  "read", "write", "edit", "bash", "web_fetch", "glob", "grep",
-  "web_search", "ask_user", "view_image", "build_app", "create_page",
-  "task_create", "task_update", "task_list", "task_get",
-  "enter_plan_mode", "exit_plan_mode", "tool_search",
-  "youtube_analyze",
-  // Auto-build entrypoints. These must be in Primal's eager set —
-  // without them, calling primal_run_build_plan(...) directly forces
-  // a tool_search detour where the wrong tool can win on substring
-  // noise (e.g. memory_recall outranked primal_run_build_plan because
-  // "recall" contains "call"). Eager-loading makes the literal call
-  // syntax just work.
-  "primal_run_build_plan", "primal_build_status", "primal_build_resume",
-  "start_app_build", "finalize_app_build",
-]);
-
 export function buildToolRegistry(): { registry: ToolRegistry; eagerTools: ToolDefinition[]; toolSearchTool: ToolDefinition; promptSection: string } {
   // Tag every tool's `audiences` field from the legacy Sets BEFORE
   // registry insertion so the canonical resolver (tool-search.ts:
   // resolveToolsForRequest) has accurate audience info. Transitional —
-  // tagToolsByAudience deletes in P1.C4 when tools self-declare.
+  // tagToolsByAudience folds into ToolDefinition declarations later.
   tagToolsByAudience(allTools);
 
   for (const tool of allTools) {
     if (_registry.get(tool.name)) continue;
-    const defer = !EAGER_TOOLS.has(tool.name);
+    // Deferred = no audiences (not visible in any per-request schema).
+    // Eager = at least one audience. tool_search still indexes both.
+    const defer = !tool.audiences || tool.audiences.length === 0;
     _registry.register(tool, { defer, tags: [], searchHint: tool.description.slice(0, 80) });
   }
 

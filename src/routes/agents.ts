@@ -115,34 +115,88 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     json(ctx.agentTemplateStore.delete(id) ? 200 : 404, { ok: true }); return true;
   }
 
-  // Hire agent
+  // Hire agent — always into a project. projectId required.
   if (method === "POST" && url.pathname.match(/^\/api\/agents\/templates\/[^/]+\/hire$/)) {
     const id = url.pathname.split("/")[4];
     const body = await safeParseBody(req);
-    const result = ctx.agentTemplateStore.hire(id, { reportsTo: body?.reportsTo as string | undefined, heartbeatSchedule: body?.heartbeatSchedule as string | undefined });
-    if (!result) { json(404, { error: "Template not found" }); return true; }
-    // Set up heartbeat cron job if schedule provided
-    if (result.heartbeatSchedule && result.heartbeatEnabled) {
-      const isManager = result.role === "ceo" || ctx.agentTemplateStore.listHired().some(a => a.reportsTo === result.id);
+    const projectId = body?.projectId as string | undefined;
+    if (!projectId) { json(400, { error: "projectId is required — hire is always a Project action (canonical-agent-design Q4)" }); return true; }
+    const tpl = ctx.agentTemplateStore.get(id);
+    if (!tpl) { json(404, { error: "Template not found" }); return true; }
+    const project = ctx.projectStore.get(projectId);
+    if (!project) { json(404, { error: "Project not found" }); return true; }
+
+    const { ProjectRosterStore } = await import("../project-rosters.js");
+    const rosterStore = ProjectRosterStore.getInstance();
+    const entry = rosterStore.upsert(projectId, id, {
+      reportsTo: body?.reportsTo as string | undefined,
+      heartbeatSchedule: body?.heartbeatSchedule as string | undefined,
+    });
+    ctx.projectStore.addAgent(projectId, id);
+
+    // Project-scoped heartbeat cron — same agent can have different
+    // schedules in different projects, so the cron id encodes both.
+    if (entry.heartbeatSchedule && entry.heartbeatEnabled) {
+      const projectRoster = rosterStore.listByProject(projectId);
+      const isManager = tpl.role === "ceo" || projectRoster.some((r) => r.reportsTo === id);
       const managerProcedure = `THEN follow this MANAGER procedure:\n1. Call agent_team_list to see your team\n2. Call issue_list to see ALL open issues\n3. Review completed tasks: leave feedback\n4. Review blocked tasks: help unblock\n5. Assign unassigned work\n6. Create brief status update\n7. If report hasn't made progress, use agent_wakeup\n`;
       const workerProcedure = `THEN follow this procedure:\n1. Review assigned issues — pick highest priority\n2. Call issue_checkout to lock it\n3. Read new comments\n4. Do the work\n5. Call issue_update to report\n6. If done, set status to "done"\n7. If blocked, set to "blocked" with comment\n8. Call issue_release when finished\n`;
-      const heartbeatPrompt = `You are ${result.name} (${result.role}), agent ID: ${result.id}. You are waking up for your scheduled check-in.\n\nFIRST: Call agent_whoami with agentId="${result.id}".\n\n` + (isManager ? managerProcedure : workerProcedure) + `\nYour instructions: ${result.systemPrompt}`;
+      const heartbeatPrompt = `You are ${tpl.name} (${tpl.role}), agent ID: ${id}. You are waking up for your scheduled check-in in project ${project.name}.\n\nFIRST: Call agent_whoami with agentId="${id}".\n\n` + (isManager ? managerProcedure : workerProcedure) + `\nYour instructions: ${tpl.systemPrompt}`;
       try {
-        ctx.cronService.create(`heartbeat:${result.id}`, result.heartbeatSchedule, heartbeatPrompt, true);
-        logger.info(`[heartbeat] Created heartbeat for ${result.name}: ${result.heartbeatSchedule}`);
+        ctx.cronService.create(`heartbeat:${projectId}:${id}`, entry.heartbeatSchedule, heartbeatPrompt, true);
+        logger.info(`[heartbeat] Created heartbeat for ${tpl.name} in ${project.name}: ${entry.heartbeatSchedule}`);
       } catch (e) { logger.warn(`[heartbeat] Failed to create: ${(e as Error).message}`); }
     }
-    json(200, result); return true;
+    json(200, { template: tpl, roster: entry }); return true;
   }
 
-  // Fire agent
+  // Fire agent — projectId required for the same reason hire takes one.
   if (method === "POST" && url.pathname.match(/^\/api\/agents\/templates\/[^/]+\/fire$/)) {
     const id = url.pathname.split("/")[4];
-    try { ctx.cronService.delete(`heartbeat:${id}`); } catch {}
-    json(ctx.agentTemplateStore.fire(id) ? 200 : 404, { ok: true }); return true;
+    const body = await safeParseBody(req);
+    const projectId = body?.projectId as string | undefined;
+    if (!projectId) { json(400, { error: "projectId is required — fire is always a Project action" }); return true; }
+    const { ProjectRosterStore } = await import("../project-rosters.js");
+    try { ctx.cronService.delete(`heartbeat:${projectId}:${id}`); } catch { /* might not exist */ }
+    const removed = ProjectRosterStore.getInstance().remove(projectId, id);
+    ctx.projectStore.removeAgent(projectId, id);
+    json(removed ? 200 : 404, { ok: removed }); return true;
   }
 
+  // Patch a roster entry — reportsTo / heartbeatSchedule live here now,
+  // per project. The old PUT /api/agents/templates/:id can't carry
+  // these anymore because they're not on the template.
+  if (method === "PATCH" && url.pathname.match(/^\/api\/projects\/[^/]+\/rosters\/[^/]+$/)) {
+    const parts = url.pathname.split("/");
+    const projectId = parts[3];
+    const agentId = parts[5];
+    const body = await safeParseBody(req);
+    if (!body) { json(400, { error: "Invalid JSON" }); return true; }
+    const { ProjectRosterStore } = await import("../project-rosters.js");
+    const updated = ProjectRosterStore.getInstance().patch(projectId, agentId, {
+      reportsTo: body.reportsTo as string | undefined,
+      heartbeatSchedule: body.heartbeatSchedule as string | undefined,
+      heartbeatEnabled: body.heartbeatEnabled as boolean | undefined,
+    });
+    if (!updated) { json(404, { error: "Roster entry not found" }); return true; }
+    json(200, updated); return true;
+  }
+
+  // Backward-compat: returns templates that are rostered somewhere.
+  // When ?projectId=X is provided, response is the project's roster
+  // entries merged with their template (per-project heartbeat / reportsTo
+  // visible). Without it, returns templates only (definition-level data).
   if (method === "GET" && url.pathname === "/api/agents/hired") {
+    const projectId = url.searchParams.get("projectId");
+    if (projectId) {
+      const { ProjectRosterStore } = await import("../project-rosters.js");
+      const rosters = ProjectRosterStore.getInstance().listByProject(projectId);
+      const merged = rosters.map((r) => {
+        const tpl = ctx.agentTemplateStore.get(r.agentId);
+        return tpl ? { ...tpl, reportsTo: r.reportsTo, heartbeatSchedule: r.heartbeatSchedule, heartbeatEnabled: r.heartbeatEnabled, budget: r.budget, projectId: r.projectId } : null;
+      }).filter((x): x is NonNullable<typeof x> => x !== null);
+      json(200, merged); return true;
+    }
     json(200, ctx.agentTemplateStore.listHired()); return true;
   }
 
@@ -287,8 +341,12 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     const project = ctx.projectStore.create({ name: body.name as string, description: (body.description as string) || "", agentIds: (body.agentIds as string[]) || [], workspace: body.workspace as string | undefined });
     const agentIds: string[] = (body.agentIds as string[]) || [];
     const hasCeo = agentIds.includes("builtin-ceo");
+    const { ProjectRosterStore } = await import("../project-rosters.js");
+    const rosterStore = ProjectRosterStore.getInstance();
     for (const agentId of agentIds) {
-      ctx.agentTemplateStore.hire(agentId, { reportsTo: (hasCeo && agentId !== "builtin-ceo") ? "builtin-ceo" : undefined });
+      rosterStore.upsert(project.id, agentId, {
+        reportsTo: (hasCeo && agentId !== "builtin-ceo") ? "builtin-ceo" : undefined,
+      });
       ctx.projectStore.addAgent(project.id, agentId);
     }
     json(200, project); return true;

@@ -11,7 +11,17 @@
 
 import type { ToolDefinition, ToolResult } from "./types.js";
 import { IssueStore, AgentTemplateStore, ProjectStore, type IssueStatus, type IssuePriority } from "./agent-store.js";
+import { ProjectRosterStore } from "./project-rosters.js";
 import { EventBus } from "./event-bus.js";
+
+/** Return the roster entry for an (agent, issue) pair when the issue is
+ *  scoped to a project. reportsTo / heartbeat live on the roster, not
+ *  the template, so consumers that care about hierarchy must read
+ *  through this. */
+function rosterForIssue(agentId: string, projectId?: string) {
+  if (!projectId) return undefined;
+  return ProjectRosterStore.getInstance().get(projectId, agentId);
+}
 
 /** Check if an agent can access an issue (same project or no project scoping) */
 function canAccessIssue(agentId: string, issue: { projectId?: string }): boolean {
@@ -145,13 +155,18 @@ const issueUpdate: ToolDefinition = {
       updates.push(`comment added`);
     }
 
-    // HIERARCHY: auto-notify manager when status changes to done or blocked
+    // HIERARCHY: auto-notify manager when status changes to done or blocked.
+    // Hierarchy is project-scoped post-L3, so resolve reportsTo via the
+    // roster entry for (issue.projectId, assignee), not the template.
     const newStatus = String(args.status || prevStatus);
     if (args.status && (newStatus === "done" || newStatus === "blocked") && issue.assignee) {
-      const assignedAgent = templateStore.get(issue.assignee);
-      if (assignedAgent?.reportsTo) {
-        const manager = templateStore.get(assignedAgent.reportsTo);
-        if (manager && manager.hired) {
+      const roster = rosterForIssue(issue.assignee, issue.projectId);
+      if (roster?.reportsTo) {
+        const manager = templateStore.get(roster.reportsTo);
+        const managerRostered = manager
+          ? ProjectRosterStore.getInstance().listByAgent(manager.id).length > 0
+          : false;
+        if (manager && managerRostered) {
           const statusMsg = newStatus === "done"
             ? `Task completed: ${issue.title}`
             : `Task blocked: ${issue.title} — needs help`;
@@ -167,16 +182,37 @@ const issueUpdate: ToolDefinition = {
 
 const agentList: ToolDefinition = {
   name: "agent_team_list",
-  description: "List all hired agents on the team. Shows their roles, heartbeat status, and what they're working on.",
-  parameters: { type: "object", properties: {} },
-  async execute() {
+  description:
+    "List agents on the team. Without projectId, lists every rostered " +
+    "agent across all projects (no heartbeat/reportsTo info — those " +
+    "are per-project). With projectId, lists that project's roster " +
+    "with the project-scoped hierarchy and heartbeat info.",
+  parameters: {
+    type: "object",
+    properties: {
+      projectId: { type: "string", description: "Optional — scope listing + render reportsTo / heartbeat for this project's roster" },
+    },
+  },
+  async execute(args) {
     const store = AgentTemplateStore.getInstance();
+    const rosterStore = ProjectRosterStore.getInstance();
+    const projectId = args.projectId ? String(args.projectId) : undefined;
+
+    if (projectId) {
+      const rosters = rosterStore.listByProject(projectId);
+      if (rosters.length === 0) return ok(`No agents on the roster for project ${projectId}.`);
+      const lines = rosters.map((r) => {
+        const tpl = store.get(r.agentId);
+        if (!tpl) return null;
+        return `${tpl.icon || "•"} ${tpl.name} (${tpl.role})${r.heartbeatEnabled ? ` | Heartbeat: ${r.heartbeatSchedule}` : ""}${r.reportsTo ? ` | Reports to: ${r.reportsTo}` : ""}`;
+      }).filter((x): x is string => x !== null);
+      return ok(`${lines.length} agent(s) on project ${projectId}:\n\n${lines.join("\n")}`);
+    }
+
     const hired = store.listHired();
-    if (hired.length === 0) return ok("No agents currently hired. Use the Agents page to hire from templates.");
-    const lines = hired.map(a =>
-      `${a.icon || "•"} ${a.name} (${a.role}) — ${a.hired ? "Active" : "Inactive"}${a.heartbeatEnabled ? ` | Heartbeat: ${a.heartbeatSchedule}` : ""}${a.reportsTo ? ` | Reports to: ${a.reportsTo}` : ""}`
-    );
-    return ok(`${hired.length} agent(s) on the team:\n\n${lines.join("\n")}`);
+    if (hired.length === 0) return ok("No agents currently rostered. Hire an agent into a project via the Agents page.");
+    const lines = hired.map((a) => `${a.icon || "•"} ${a.name} (${a.role})`);
+    return ok(`${hired.length} agent(s) rostered across all projects:\n\n${lines.join("\n")}\n\nPass projectId to see per-project heartbeat / reportsTo.`);
   },
 };
 
@@ -293,12 +329,28 @@ const agentWhoAmI: ToolDefinition = {
       }
     }
 
-    // Check if this agent is a manager (has direct reports)
-    const allHired = templateStore.listHired();
-    const directReports = allHired.filter(a => a.reportsTo === agentId);
+    // Manager / heartbeat info is project-scoped post-L3. Aggregate
+    // across every project the agent is on so agent_whoami stays
+    // useful even when the caller didn't pass a project context.
+    const rosterStore = ProjectRosterStore.getInstance();
+    const myRosters = rosterStore.listByAgent(agentId);
+    const directReports: Array<{ id: string; role: string; icon?: string; name: string; projectId: string }> = [];
+    const hierarchyLines: string[] = [];
+    const heartbeatLines: string[] = [];
+    for (const r of myRosters) {
+      if (r.reportsTo) hierarchyLines.push(`  [${r.projectId}] Reports to: ${r.reportsTo}`);
+      else hierarchyLines.push(`  [${r.projectId}] Reports to: Board (user)`);
+      if (r.heartbeatEnabled) heartbeatLines.push(`  [${r.projectId}] ${r.heartbeatSchedule}`);
+      // Collect direct reports project-by-project.
+      const projectRosters = rosterStore.listByProject(r.projectId);
+      for (const pr of projectRosters) {
+        if (pr.reportsTo !== agentId) continue;
+        const tpl = templateStore.get(pr.agentId);
+        if (tpl) directReports.push({ id: tpl.id, role: tpl.role, icon: tpl.icon, name: tpl.name, projectId: r.projectId });
+      }
+    }
     const isManager = directReports.length > 0;
 
-    // If manager, get subordinates' issue status
     const subordinateInfo: string[] = [];
     if (isManager) {
       for (const report of directReports) {
@@ -306,14 +358,16 @@ const agentWhoAmI: ToolDefinition = {
         const active = reportIssues.filter(i => i.status === "in-progress").length;
         const blocked = reportIssues.filter(i => i.status === "blocked").length;
         const done = reportIssues.filter(i => i.status === "done").length;
-        subordinateInfo.push(`  ${report.icon || "•"} ${report.name} (${report.role}): ${active} active, ${blocked} blocked, ${done} done`);
+        subordinateInfo.push(`  ${report.icon || "•"} ${report.name} (${report.role}) [${report.projectId}]: ${active} active, ${blocked} blocked, ${done} done`);
       }
     }
 
     const parts = [
       `You are: ${agent.icon || ""} ${agent.name} (${agent.role})`,
-      agent.reportsTo ? `Reports to: ${agent.reportsTo}` : `Reports to: Board (user)`,
-      `Heartbeat: ${agent.heartbeatEnabled ? agent.heartbeatSchedule : "Off"}`,
+      myRosters.length === 0 ? `Not currently on any project's roster.` : `On ${myRosters.length} project(s):`,
+      ...hierarchyLines,
+      heartbeatLines.length > 0 ? `Heartbeat schedules:` : null,
+      ...heartbeatLines,
       isManager ? `\nYou manage ${directReports.length} agent(s):` : null,
       ...subordinateInfo,
       `\nYour assigned issues (${openIssues.length} active):`,
@@ -357,7 +411,10 @@ const agentWakeup: ToolDefinition = {
     if (!issue) return err(`Issue ${issueId} not found`);
 
     const target = templateStore.get(targetId);
-    if (!target || !target.hired) return err(`Agent ${targetId} not found or not hired`);
+    if (!target) return err(`Agent ${targetId} not found`);
+    if (ProjectRosterStore.getInstance().listByAgent(targetId).length === 0) {
+      return err(`Agent ${targetId} is not on any project's roster — hire them into a project first`);
+    }
 
     // Cross-project messaging is not allowed. Acting agent must be in
     // the same project as the target.

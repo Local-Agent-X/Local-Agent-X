@@ -10,6 +10,8 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 
+import { ProjectRosterStore } from "./project-rosters.js";
+
 import { createLogger } from "./logger.js";
 const logger = createLogger("agent-store");
 
@@ -238,12 +240,11 @@ export interface AgentTemplate {
   allowedTools: string[];
   description: string;
   icon?: string;
-  // Persistent agent fields (template becomes "hired" employee)
-  hired?: boolean;           // true = this is an active employee, not just a template
-  reportsTo?: string;        // ID of the agent this one reports to (hierarchy)
-  heartbeatSchedule?: string; // cron expression for wake-up schedule (e.g. "every 4h")
-  heartbeatEnabled?: boolean;
-  budget?: { maxPerMonth: number; spent: number; resetAt: number };
+  // Note: hired / reportsTo / heartbeatSchedule / heartbeatEnabled /
+  // budget moved to ProjectRoster (src/project-rosters.ts) in the L3
+  // persistence split — those are per-project membership facts, not
+  // definition facts. Same agent in two projects has independent
+  // metadata in each.
   createdAt: number;
   updatedAt: number;
 }
@@ -459,33 +460,18 @@ Decision framework:
     }
   }
 
-  /** Get only hired (persistent) agents */
+  /**
+   * Backward-compat shim — "agents that are rostered in any project."
+   * Pre-L3 this was templates with `hired: true`; post-L3 hire is
+   * per-project so the equivalent question is "is this template on
+   * any project's roster?" Use ProjectRosterStore.listByProject when
+   * the caller knows which project; this method is for legacy global
+   * views that haven't migrated yet (Team tab, agent_team_list,
+   * agent_whoami).
+   */
   listHired(): AgentTemplate[] {
-    return this.templates.filter(t => t.hired);
-  }
-
-  /** Hire an agent (activate a template as a persistent employee) */
-  hire(id: string, opts?: { reportsTo?: string; heartbeatSchedule?: string }): AgentTemplate | null {
-    const tpl = this.get(id);
-    if (!tpl) return null;
-    tpl.hired = true;
-    tpl.reportsTo = opts?.reportsTo;
-    tpl.heartbeatSchedule = opts?.heartbeatSchedule;
-    tpl.heartbeatEnabled = !!opts?.heartbeatSchedule;
-    tpl.updatedAt = Date.now();
-    this.persist();
-    return tpl;
-  }
-
-  /** Fire an agent (deactivate) */
-  fire(id: string): boolean {
-    const tpl = this.get(id);
-    if (!tpl) return false;
-    tpl.hired = false;
-    tpl.heartbeatEnabled = false;
-    tpl.updatedAt = Date.now();
-    this.persist();
-    return true;
+    const rosteredIds = new Set(ProjectRosterStore.getInstance().listRosteredAgentIds());
+    return this.templates.filter((t) => rosteredIds.has(t.id));
   }
 }
 

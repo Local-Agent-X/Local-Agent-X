@@ -230,7 +230,7 @@ async function executeOp(op: Op, signal: AbortSignal): Promise<OpResult> {
     onEvent: (event) => {
       // Forward the agent's stream/tool/done events as worker op events
       try {
-        if (event.type === "stream") {
+        if (event.type === "stream" && "delta" in event) {
           emit({ opId: op.id, type: "agent_text", ts: new Date().toISOString(), payload: { delta: event.delta } });
         } else if (event.type === "tool_start") {
           // payload uses `toolName` (not `tool`) so the session-bridge's

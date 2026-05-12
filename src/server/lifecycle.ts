@@ -172,7 +172,7 @@ export async function setupVoiceWs(deps: {
       // history slot carries the information.
       const toolCalls: Array<{ name: string; args: unknown; result?: string }> = [];
       const onEvent = (event: ServerEvent) => {
-        if (event.type === "stream" && event.delta) {
+        if (event.type === "stream" && "delta" in event && event.delta) {
           assistantText += event.delta;
           onDelta(event.delta);
         } else if (event.type === "visual" && onVisual) {

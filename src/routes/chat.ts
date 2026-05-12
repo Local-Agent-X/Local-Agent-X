@@ -209,7 +209,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       let fullResponseText = "";
 
       const wrappedOnEvent = (event: ServerEvent) => {
-        if (event.type === "stream" && event.delta) {
+        if (event.type === "stream" && "delta" in event && event.delta) {
           canaryBuffer += event.delta; fullResponseText += event.delta;
           if (canaryBuffer.length > 200) canaryBuffer = canaryBuffer.slice(-200);
           const canaryTrip = threatEngine.checkOutput(canaryBuffer) || (fullResponseText.length % 500 < 10 ? threatEngine.checkOutput(fullResponseText) : null);

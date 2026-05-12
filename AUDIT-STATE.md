@@ -2,7 +2,7 @@
 
 **Purpose.** Single source of truth for where the audit refactor stands. Read this file (after `git pull`) on any machine, in any Claude Code session, to know exactly what's done, what's next, and the rules I'm operating under. Update after every chunk lands on remote.
 
-**Last updated:** 2026-05-12, after P4.C3.
+**Last updated:** 2026-05-12, after P4.C4 + P4.C5 + pre-P4.C6 cleanup landed from another machine.
 **Branch:** `main`. Always work directly on `main` — no branches. Each chunk = one commit.
 **Repo:** github.com/petermanrique101-sys/Local-Agent-X
 
@@ -26,37 +26,55 @@
 | P4.C2 | `5617e30` | Ported 10 legacy safety middlewares to canonical-loop (459-line test file, 26 new tests) |
 | UI redact | `b8c1e42` | Server emits `stream_redact` event; client swaps bubble text after extraction |
 | P4.C3 | `e339a1c` | Migrated cron + autopilot callers to canonical-loop via new `runAgentViaCanonical`. Hard-timer threading complete |
+| docs | `c8886df` | AUDIT-STATE.md (this file) + cross-machine self-prompt |
+| P4.C1 update | `6f77ebb` | Inventory rewrite (other machine) |
+| **P4.C4** | `b181693` | Sub-agent (handler-events.ts) + worker-pool app-builder + workers/worker-entry.ts subprocess migrated to canonical. EventBus.handler:* stream bridging added so spawned-agent text reaches the AGENTS sidebar |
+| **P4.C5** | `90f1446` | Voice + delegation-handoff migrated. Voice overhead bench: 18-26ms structural, well inside +/-100ms budget |
+| test fix | `c876052` | Supervisor-surface test fixtures rewired through tagToolsByAudience (consequence of P1's audience filter) |
+| **pre-P4.C6** | `bc91139` | Deleted chat legacy-fallback callers (routes/chat.ts:433, :555) + canonical-chat feature flag. -283 LOC |
+| cleanup | `15ebfe5` | Deleted Calenbella-specific test file |
 
-**Net so far:** ~3000 LOC removed, ~2700 LOC added (mostly canonical middlewares + tests + design docs). The canonical-loop now runs the same safety stack legacy did. One canonical resolver replaced five drifting filter sets. One adapter-agnostic non-chat runner exists.
+**Net so far:** ~3,500 LOC removed, ~2,900 LOC added. Every non-chat caller migrated to canonical. Only the legacy loop files themselves remain (untouched but unused).
 
 ---
 
 ## Up next
 
-### P4.C4 — Migrate sub-agent + worker-pool callers (HIGH RISK)
-**Why high risk:** sub-agent path = hot path for `agent_spawn`, `primal_run_build_plan`, chunk-runner workers. A regression breaks the whole multi-agent surface and won't surface until someone spawns an agent.
+### P4.C6 — Delete legacy loops (mechanical, low risk now)
 
-**Specific call sites still using `runAgent` (verified by P4.C3 report):**
-- `src/server/handler-events.ts:127` (`Handler.spawnAgent` → `runAgent`)
-- `src/server/background-jobs.ts:249` (worker-pool app-builder callback)
+Every non-chat caller is migrated. Every chat fallback caller is deleted. The legacy loop files are dead code. This chunk deletes them and the `LAX_UNIFIED_LOOP` env flag.
 
-**Parent-review required** before push. Skim the report's NOTE for: EventBus `handler:*` streaming preservation, worktree creation (requiresWorktree path), result aggregation, abort semantics. Smoke test MUST spawn a chunk-runner end-to-end via `primal_run_build_plan({project_dir: "mygroomtime", starting_chunk: <next>, max_chunks: 1})`.
+**Verification before deletion:**
+```
+git grep -nE "\brunAgent\(" src/
+```
+Expected: zero matches (or only inside `src/agent.ts` itself + comments).
 
-The full fresh-session briefing is in **AUDIT-HANDOFF-P4.md** under "P4.C4." Paste verbatim into a fresh Claude Code session.
+**Files to delete:**
+- `src/agent.ts` (the `runAgent` wrapper)
+- `src/providers/run-anthropic.ts`
+- `src/providers/run-standard.ts`
+- `src/agent-codex/run-http.ts`
+- `src/agent-loop/run.ts` (gated unified loop)
+- Any helper files imported only by those (e.g. `run-anthropic-helpers.ts`, `run-standard-helpers.ts`, `run-http-helpers.ts`) — verify via grep before deletion
+- Remove `LAX_UNIFIED_LOOP` env check wherever it lives
+- Update `src/providers/index.ts` to remove T1 (`getAdapter`) exports — completes AUDIT P2 in the same commit
 
-### P4.C5 — Migrate voice + delegation-handoff callers
-Lower risk than C4 but needs voice latency benchmark (warm-path must stay within +/- 100ms of pre-migration). Can run in parallel with C4 (different files: voice/* + routes/chat/delegation-handoff.ts vs handler-events.ts + workers/*).
+**Smoke after deletion:** server boots, /api/health 200, real chat turn produces a response, spawn a researcher via agent_spawn, run primal_run_build_plan one chunk. All three must complete.
 
-### P4.C6 — Delete legacy loops
-Sequential — depends on C4 + C5 both green. Verify `git grep -nE "\\brunAgent\\(" src/` returns zero. Delete: `src/agent.ts`, `src/providers/run-anthropic.ts`, `src/providers/run-standard.ts`, `src/agent-codex/run-http.ts`, `src/agent-loop/run.ts`, and the `LAX_UNIFIED_LOOP` env flag.
+**Briefing:** in `AUDIT-HANDOFF-P4.md` under "P4.C6." Paste verbatim into a fresh executor session.
 
 ### After P4 — mop-up chunks
-- **P2.C2+C3** — Delete dead T1 adapter registry (collapses to one chunk post-P4)
-- **P3.C2** — Wire `RetryContext` into L1/L5/L6 retry layers
-- **P5.C1** — Fix two-writer drift on `session.messages` (AUDIT Critical #3)
+- **P2.C2+C3** — Delete dead T1 adapter registry (now folded into P4.C6's `providers/index.ts` cleanup if executed together; otherwise small standalone chunk)
+- **P3.C2** — Wire `RetryContext` into L1/L5/L6 retry layers (L2/L3/L4 die with the legacy loops in P4.C6)
+- **P5.C1** — Fix two-writer drift on `session.messages` (AUDIT Critical #3 — but note: routes/chat.ts dropped ~530 lines in `bc91139`; verify Critical #3 is still live before scoping)
 - **P5.C2** — Scope `_localNoToolModels` per-adapter-instance (Critical #4)
 - **P5.C3** — Anthropic CLI prompt-build dedup — merge warm-pool + cold-spawn paths (Critical #7)
 - **P5.C4** — WS chat HTTP self-loop → direct canonical-op subscription (Critical #10)
+- **NEW GAPS surfaced during P4.C4/C5** (consider as P5 candidates):
+  - `pauseCallback` ("please log in / needs 2FA" detector) didn't port to canonical — spawned/voice/delegation agents that hit a login mid-task now run to wall-clock instead of pausing for human handoff
+  - query-pipeline pre/post middleware (was in `agent.ts:50`) doesn't run on canonical; no callers register today but the surface is gone
+  - delegation-handoff doesn't project user images into the seeded canonical user message (chat has the same gap)
 
 P5 chunks are mostly independent and can fan out aggressively.
 

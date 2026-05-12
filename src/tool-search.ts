@@ -51,10 +51,8 @@ const IDENTITY_TOOLS: ReadonlySet<string> = new Set([
 
 export function resolveToolsForRequest(
   req: ResolveRequest,
-  registry: ToolRegistry,
+  all: ToolDefinition[],
 ): ToolDefinition[] {
-  const all = registry.getAll();
-
   // Main-chat is the only audience that inspects the message.
   if (req.audience === "main-chat") {
     return resolveMainChat(req, all);

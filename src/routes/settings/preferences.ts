@@ -134,6 +134,7 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       const { homedir } = await import("node:os");
       clearPinTombstone(pinTombstonePaths(ctx.dataDir, pjoin(homedir(), ".lax", "sync-repo")), String(name));
     } catch {}
+    try { ctx.agentSync.notifyChange(`pin-add:${name}`); } catch {}
     try { const { broadcastAll } = await import("../../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
     json(200, { ok: true, pins }); return true;
   }
@@ -155,6 +156,7 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       const { homedir } = await import("node:os");
       tombstonePin(pinTombstonePaths(ctx.dataDir, pjoin(homedir(), ".lax", "sync-repo")), pinName);
     } catch {}
+    try { ctx.agentSync.notifyChange(`pin-remove:${pinName}`); } catch {}
     try { const { broadcastAll } = await import("../../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
     json(200, { ok: true, pins }); return true;
   }

@@ -413,7 +413,24 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
   }
   if (method === "DELETE" && url.pathname.match(/^\/api\/projects\/proj-[^/]+$/)) {
     const id = url.pathname.split("/").pop()!;
-    json(ctx.projectStore.delete(id) ? 200 : 404, { ok: true }); return true;
+    // Write a tombstone BEFORE the local delete so the intent survives
+    // a sync pull from a machine that still has this project. Without
+    // the tombstone, a remote agent-projects.json overwrites local
+    // and the project comes back on next pull.
+    try {
+      const proj = ctx.projectStore.get(id);
+      const { homedir } = await import("node:os");
+      const { join } = await import("node:path");
+      const { projectTombstonePaths, tombstoneProject } = await import("../sync/project-tombstones.js");
+      const dataDir = join(homedir(), ".lax");
+      const syncDir = join(dataDir, "sync-repo");
+      tombstoneProject(projectTombstonePaths(dataDir, syncDir), id, proj?.name);
+    } catch (e) {
+      logger.warn(`[sync] project tombstone write failed for ${id}: ${(e as Error).message}`);
+    }
+    const deleted = ctx.projectStore.delete(id);
+    if (deleted) { try { ctx.agentSync.notifyChange(`project-delete:${id}`); } catch {} }
+    json(deleted ? 200 : 404, { ok: true }); return true;
   }
   if (method === "POST" && url.pathname.match(/^\/api\/projects\/proj-[^/]+\/agents$/)) {
     const id = url.pathname.split("/")[3];

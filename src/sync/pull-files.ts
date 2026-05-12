@@ -145,7 +145,12 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
   // pull when the remote file exists; never delete a local-only
   // file just because it's missing from the remote (a fresh sync
   // repo wouldn't have these yet).
+  //
+  // agent-projects.json is handled separately below — it's filtered
+  // through project tombstones before persist so a remote that still
+  // has a project we deleted locally can't bring it back.
   for (const file of BRAIN_JSON_FILES) {
+    if (file === "agent-projects.json") continue;
     if (!config.syncMissions && MISSION_FILES.has(file)) continue;
     if (!config.syncProtocols && PROTOCOL_FILES.has(file)) continue;
     const remote = join(syncDir, file);
@@ -154,6 +159,29 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
       writeFileSync(join(dataDir, file), readFileSync(remote, "utf-8"), "utf-8");
     } catch (e) {
       logger.warn(`[sync] brain pull skipped ${file}: ${(e as Error).message}`);
+    }
+  }
+
+  // agent-projects.json: filter the remote project list through the
+  // tombstone set before persist. Same shape as the sidebar-pins
+  // filter — the goal is "deletes propagate, undeletes don't ressurect."
+  {
+    const remoteProj = join(syncDir, "agent-projects.json");
+    if (existsSync(remoteProj)) {
+      try {
+        const remote = JSON.parse(readFileSync(remoteProj, "utf-8"));
+        if (Array.isArray(remote)) {
+          const { projectTombstonePaths, listTombstonedProjectIds, applyProjectTombstones } = await import("./project-tombstones.js");
+          const tombstoned = listTombstonedProjectIds(projectTombstonePaths(dataDir, syncDir));
+          const filtered = applyProjectTombstones(remote as Array<{ id: string }>, tombstoned);
+          if (filtered.length < remote.length) {
+            logger.info(`[sync] project tombstones filtered ${remote.length - filtered.length} remote project(s)`);
+          }
+          writeFileSync(join(dataDir, "agent-projects.json"), JSON.stringify(filtered, null, 2), "utf-8");
+        }
+      } catch (e) {
+        logger.warn(`[sync] agent-projects pull skipped: ${(e as Error).message}`);
+      }
     }
   }
 

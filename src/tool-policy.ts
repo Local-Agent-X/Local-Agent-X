@@ -183,7 +183,6 @@ export class ToolPolicy {
  */
 export class LiveToolPolicy extends ToolPolicy {
   private policyPath: string;
-  private watcher: ReturnType<typeof import("node:fs").watch> | null = null;
   private currentInner: ToolPolicy;
 
   constructor(policy: ToolPolicy, policyPath: string) {
@@ -205,7 +204,7 @@ export class LiveToolPolicy extends ToolPolicy {
   private startWatching(): void {
     try {
       let debounce: ReturnType<typeof setTimeout> | null = null;
-      this.watcher = watch(this.policyPath, () => {
+      watch(this.policyPath, () => {
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(() => this.reload(), 500);
       });

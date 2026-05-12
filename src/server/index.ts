@@ -1,7 +1,7 @@
 import { AppRegistry } from "../app-runtime.js";
 import { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore } from "../agent-store.js";
 import { broadcastAll } from "../chat-ws.js";
-import type { LAXConfig, ServerEvent } from "../types.js";
+import type { LAXConfig } from "../types.js";
 import type { ServerContext } from "../server-context.js";
 import { bootstrapServices } from "./bootstrap-services.js";
 import { bootstrapTools } from "./bootstrap-tools.js";

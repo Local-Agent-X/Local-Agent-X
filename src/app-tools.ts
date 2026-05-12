@@ -18,11 +18,9 @@ import {
   type AppDefinition,
   type ComponentDefinition,
   type LayoutDefinition,
-  type AppPermissions,
   type AppVisibility,
   type AccessLevel,
   validateAppId,
-  validateAppDefinition,
 } from "./app-runtime.js";
 import { renderApp } from "./app-renderer.js";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";

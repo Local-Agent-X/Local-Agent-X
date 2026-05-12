@@ -11,7 +11,7 @@
  */
 
 import { watch, type FSWatcher } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { EventBus } from "./event-bus.js";
 
 import { createLogger } from "./logger.js";

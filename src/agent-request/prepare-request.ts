@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import type { ChatCompletionMessageParam as ChatCompletionMessageParamLike } from "openai/resources/chat/completions.js";
 import { sanitizeHistory, truncateHistory } from "../agent-providers.js";
 import { loadSystemPrompt } from "../config-loader.js";
 import type { AgentRequestInput, PreparedAgentRequest } from "./types.js";

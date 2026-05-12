@@ -9,7 +9,7 @@
  */
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import type { AgentTurn, ServerEvent } from "./types.js";
+import type { AgentTurn } from "./types.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("query-pipeline");

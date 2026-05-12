@@ -3,8 +3,8 @@
  * Uses ffmpeg to grab frames from the default video device.
  */
 
-import { execSync, execFileSync, spawn } from "node:child_process";
-import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { execSync, execFileSync } from "node:child_process";
+import { readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";

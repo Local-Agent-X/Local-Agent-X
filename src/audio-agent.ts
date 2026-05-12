@@ -3,7 +3,7 @@
  * Listens for speech, transcribes, sends to agent, speaks response, repeat.
  */
 
-import { spawn, execSync, ChildProcess } from "node:child_process";
+import { spawn, ChildProcess } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";

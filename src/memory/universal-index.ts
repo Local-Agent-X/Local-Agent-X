@@ -10,7 +10,7 @@
  * Repeated backfill passes only embed genuinely new chunks.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { createHash } from "node:crypto";
 import type { MemoryIndex } from "../memory.js";

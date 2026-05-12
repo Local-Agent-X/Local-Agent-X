@@ -2,9 +2,9 @@ import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage, readBody } from "../server-utils.js";
 import { getLaneStatus, setLaneConcurrency, type LaneName } from "../execution-lanes.js";
 import { getProviderHealthStatus, resetProviderHealth, type ProviderId } from "../model-fallback.js";
-import { resolveSession, linkIdentities, unlinkIdentity, getIdentityGroups, type ChannelType } from "../session-router.js";
+import { linkIdentities, unlinkIdentity, getIdentityGroups, type ChannelType } from "../session-router.js";
 import type { IssueStatus, AgentTemplate, Issue, Project } from "../agent-store.js";
-import { AgentTemplateSchema, CreateIssueSchema, IssueCommentSchema, CreateProjectSchema, LinkIdentitiesSchema, validateBody } from "../route-schemas.js";
+import { AgentTemplateSchema, CreateIssueSchema, IssueCommentSchema, LinkIdentitiesSchema, validateBody } from "../route-schemas.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.agents");

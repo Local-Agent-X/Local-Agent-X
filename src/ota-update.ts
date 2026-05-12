@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile, readFile, rename, rm, copyFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile, rm, copyFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -252,7 +252,7 @@ export class OTAManager {
   }
 
   private async copyDirectory(src: string, dest: string): Promise<void> {
-    const { readdir, stat } = await import("node:fs/promises");
+    const { readdir } = await import("node:fs/promises");
     await mkdir(dest, { recursive: true });
     const entries = await readdir(src, { withFileTypes: true });
     for (const entry of entries) {

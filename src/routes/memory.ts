@@ -1,5 +1,5 @@
 import type { RouteHandler } from "../server-context.js";
-import { jsonResponse, readBody, safeParseBody } from "../server-utils.js";
+import { jsonResponse, readBody } from "../server-utils.js";
 import type { FactKind } from "../memory.js";
 
 import { createLogger } from "../logger.js";

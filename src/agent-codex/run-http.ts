@@ -8,7 +8,7 @@ import { requireAdapter } from "../providers/adapter/registry.js";
 import "../providers/adapters/index.js";
 import { executeToolCalls, checkAndCompactAsync } from "../tool-executor.js";
 import { stripEphemeralMessages } from "../agent-providers.js";
-import { checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState, checkTaskAnchor, createTaskAnchorState, checkActedAndAsked, checkPostCommit } from "../agent-guards.js";
+import { checkToolLoops, createLoopState, checkDeadEnd, createDeadEndState, checkTaskAnchor, createTaskAnchorState, checkPostCommit } from "../agent-guards.js";
 import { stripSystemInjectionTags } from "../sanitize.js";
 import type { AgentOptions } from "./shared.js";
 import {
@@ -78,10 +78,6 @@ export async function runCodexAgentHttp(
 
   // Detect build/action intent — force tool use on iteration 0 to prevent
   // the model from responding with text instead of calling a tool.
-  const BUILD_INTENT_RE = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script|file|document|spreadsheet)/i;
-  const ACTION_INTENT_RE = /\b(schedule|save|remember|send|post|delete|update|run|execute|launch|open|close|deploy|install)\b/i;
-  const shouldForceTools = BUILD_INTENT_RE.test(userMessage) || ACTION_INTENT_RE.test(userMessage);
-
   // Per-turn safety ceilings:
   //  - Token ceiling (expensive-runaway protection)
   //  - Wall-clock ceiling (time-runaway protection for long stuck turns)

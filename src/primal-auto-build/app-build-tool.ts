@@ -27,7 +27,7 @@
  * memory system without us doing anything here.
  */
 
-import { existsSync, mkdirSync, writeFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, dirname } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { isFeatureEnabled, FEATURE_FLAG_ENV } from "./tool.js";

@@ -81,11 +81,6 @@ export async function runStandardAgent(
     promptLayers.websiteBuilder = WEBSITE_BUILDER_INSTRUCTION;
   }
 
-  // Force tool use on first iteration for build/action intents
-  const BUILD_INTENT_RE = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script|file|document|spreadsheet)/i;
-  const ACTION_INTENT_RE = /\b(schedule|save|remember|send|post|delete|update|run|execute|launch|open|close|deploy|install)\b/i;
-  const shouldForceTools = BUILD_INTENT_RE.test(userMessage) || ACTION_INTENT_RE.test(userMessage);
-
   // Per-turn safety ceilings (see agent-codex.ts for rationale)
   const TURN_TOKEN_CEILING = 500_000;
   const TURN_WALL_CLOCK_MS = 180_000;

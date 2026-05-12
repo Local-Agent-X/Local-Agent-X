@@ -199,7 +199,6 @@ export class SharedHistory {
     for (const m of this.store.moments) {
       dayCounts[new Date(m.timestamp).getDay()]++;
     }
-    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     const bestDayIdx = dayCounts.indexOf(Math.max(...dayCounts));
 
     // favorite work hours

@@ -8,8 +8,6 @@ import type {
   AgencyConfig,
   AgencyStatus,
   AgencyResult,
-  AgentStatus,
-  PlanStatus,
 } from "./types.js";
 import { AgencyPlanner } from "./planner.js";
 import { AgencyMessageBus } from "./message-bus.js";
@@ -87,7 +85,6 @@ export class AgencyOrchestrator {
     await EventBus.emit("agency:start", { planId: plan.id, goal: plan.goal });
     this.emitProgress();
 
-    const graph = this.planner.buildDependencyGraph(plan.tasks);
     const results = new Map<string, string>();
     const completed = new Set<string>();
 
@@ -168,9 +165,6 @@ export class AgencyOrchestrator {
         }
       }
 
-      const allDone = plan.tasks.every(
-        (t) => t.status === "completed" || t.status === "skipped"
-      );
       const anyFailed = plan.tasks.some((t) => t.status === "failed");
       plan.status = this.cancelled
         ? "failed"

@@ -2,9 +2,6 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSy
 import { resolve, join, relative } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 
-import { createLogger } from "../logger.js";
-const logger = createLogger("tools.builder-tools");
-
 // Build-prompt fragment that bakes visual-first rules into the spawned
 // codex/claude CLI subprocess. The subprocess can't see SAX's prompt-layer
 // system, so the rules have to ride inside the prompt itself.

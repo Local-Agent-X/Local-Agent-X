@@ -17,7 +17,7 @@
 import { join } from "node:path";
 import type { ToolDefinition } from "../types.js";
 import {
-  createOperation, loadOperation, writeOperation, listOperations,
+  createOperation, loadOperation, listOperations,
   nextPhase, buildPhasePrompt, markPhaseStarted, markPhaseCompleted,
   markPhaseFailed, pauseOperation, cancelOperation, appendPhaseLog,
   statusSummary,

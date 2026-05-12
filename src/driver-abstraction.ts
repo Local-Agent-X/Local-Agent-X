@@ -218,7 +218,6 @@ export class SystemSpeakerDriver implements SpeakerDriver {
     if (!/^[a-z0-9]{1,10}$/.test(format)) throw new Error(`Invalid audio format: ${format}`);
     const os = await import("node:os");
     const path = await import("node:path");
-    const crypto = await import("node:crypto");
     const tmpDir = await import("node:fs/promises").then(f => f.mkdtemp(path.join(os.tmpdir(), "lax-play-")));
     const tmpFile = path.join(tmpDir, `playback.${format}`);
     const fs = await import("node:fs/promises");

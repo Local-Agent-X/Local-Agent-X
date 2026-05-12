@@ -7,7 +7,7 @@
  * - All API keys/tokens stored in the encrypted secrets vault (never in this file)
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 // ── Types ──

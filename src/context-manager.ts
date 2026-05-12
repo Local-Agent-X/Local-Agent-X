@@ -243,12 +243,6 @@ export function buildCompactionPrompt(
   const taskState = extractTaskState(messages);
   const keyFacts = extractKeyFacts(oldMessages);
 
-  // Build summary of what we're compacting
-  const oldContent = oldMessages.map(m => {
-    const role = m.role;
-    const content = typeof m.content === "string" ? m.content : "[non-text]";
-    return `[${role}]: ${content.slice(0, 300)}`;
-  }).join("\n");
 
   const summary =
     `[CONVERSATION SUMMARY — auto-compacted to save context]\n` +

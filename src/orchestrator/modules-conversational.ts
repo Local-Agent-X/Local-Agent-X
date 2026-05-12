@@ -61,7 +61,6 @@ export function runConversationalModule(name: string, input: OrchestratorInput, 
 
     case "trust-engine": {
       const trust = TrustEngine.getInstance();
-      const level = trust.calculateTrustLevel();
       const stage = trust.getRelationshipStage();
       const adjustments = trust.getBehaviorAdjustments();
       signals.push({

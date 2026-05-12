@@ -57,10 +57,7 @@ export interface PersistTurnInput {
 export type RecallBy = "entity" | "kind" | "time";
 
 export class MemoryManager {
-  constructor(
-    private readonly index: MemoryIndex,
-    private readonly dataDir: string,
-  ) {}
+  constructor(private readonly index: MemoryIndex) {}
 
   /**
    * Build everything memory contributes to a single agent turn.

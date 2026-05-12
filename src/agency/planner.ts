@@ -7,7 +7,7 @@ import type {
   TaskStatus,
 } from "./types.js";
 import type { AgentRole } from "./agent-roles.js";
-import { getRole, listRoles } from "./agent-roles.js";
+import { listRoles } from "./agent-roles.js";
 import { AgentCatalog } from "../agents/catalog.js";
 import { EventBus } from "../event-bus.js";
 

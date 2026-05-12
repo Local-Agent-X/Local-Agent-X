@@ -312,7 +312,21 @@ function updateStatusBar() {
     voiceOpts += `</optgroup>`;
   }
 
+  // Project selector — drives the active chat's projectId. Left of the
+  // provider picker because "what scope am I in" is the most upstream
+  // decision (it gates which agents Primal can spawn). Reads the live
+  // window.projects list (populated by app.js from /api/projects).
+  const liveProjects = Array.isArray(window.projects) ? window.projects : [];
+  const activeProjectId = (window.activeChat && window.activeChat.projectId) || '';
+  let projectOpts = `<option value="">No project</option>`;
+  for (const p of liveProjects) {
+    const sel = p.id === activeProjectId ? ' selected' : '';
+    projectOpts += `<option value="${esc(p.id)}"${sel}>${esc(p.name)}</option>`;
+  }
+
   bar.innerHTML = `
+    <select id="project-quick-select" class="status-select" onchange="quickSwitchProject(this.value)" title="Project scope for this chat — controls which agents Primal can spawn">${projectOpts}</select>
+    <span style="color:var(--border)">|</span>
     <select id="provider-quick-select" class="status-select" onchange="quickSwitchProvider(this.value)" title="Switch provider">${providerOpts}</select>
     <span style="color:var(--border)">&#9654;</span>
     <select id="model-quick-select" class="status-select" onchange="quickSwitchModel(this.value)" title="Switch model">${modelOpts}</select>
@@ -326,6 +340,18 @@ function updateStatusBar() {
   `;
 }
 
+
+async function quickSwitchProject(projectId) {
+  // Persist the project assignment on the active chat. The chat-send
+  // path picks up streamChat.projectId on the next message, so the
+  // selection takes effect from the user's next turn forward.
+  if (!window.activeChat) return;
+  if (projectId) window.activeChat.projectId = projectId;
+  else delete window.activeChat.projectId;
+  window.activeChat.updatedAt = Date.now();
+  try { if (typeof window.saveChats === 'function') window.saveChats(); } catch {}
+  try { if (typeof window.renderSidebar === 'function') window.renderSidebar(); } catch {}
+}
 
 async function quickSwitchProvider(providerId) {
   const data = _providersCache;

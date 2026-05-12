@@ -2,7 +2,7 @@
 //
 // Layout:
 //   - handler.ts          — Handler singleton class + lifecycle
-//   - handler-types.ts    — FieldAgent / FieldAgentStatus / DelegationResult / SpawnConfig
+//   - handler-types.ts    — FieldAgent / FieldAgentStatus / SpawnConfig
 //   - handler-tools.ts    — createHandlerTools() — public ToolDefinition factory
 
 import { EventBus } from "../event-bus.js";
@@ -10,7 +10,6 @@ import type { ToolResult } from "../types.js";
 import { AgencyMessageBus } from "./message-bus.js";
 import type {
   AgentUpdateCallback,
-  DelegationResult,
   FieldAgent,
   FieldAgentStatus,
   SpawnConfig,
@@ -18,7 +17,6 @@ import type {
 
 export type {
   AgentUpdateCallback,
-  DelegationResult,
   FieldAgent,
   FieldAgentStatus,
 } from "./handler-types.js";
@@ -262,30 +260,6 @@ export class Handler {
     this.notifyUpdate(agentId, { type: "output", data: message });
   }
 
-  // -- Delegation -----------------------------------------------------------
-
-  delegateTask(goal: string): DelegationResult {
-    const planId = uid("plan");
-    const segments = this.decompose(goal);
-    const spawned: FieldAgentStatus[] = [];
-    const taskList: string[] = [];
-
-    for (const seg of segments) {
-      const agentId = this.spawnAgent({
-        name: seg.name,
-        role: seg.role,
-        task: seg.task,
-      });
-      const agent = this.agents.get(agentId)!;
-      spawned.push(this.buildStatus(agent));
-      taskList.push(seg.task);
-    }
-
-    EventBus.emit("handler:delegation", { planId, goal, agentCount: spawned.length });
-
-    return { planId, agents: spawned, tasks: taskList };
-  }
-
   // -- Private --------------------------------------------------------------
 
   private buildStatus(agent: FieldAgent): FieldAgentStatus {
@@ -483,37 +457,4 @@ export class Handler {
     run();
   }
 
-  private decompose(goal: string): { name: string; role: string; task: string }[] {
-    const lower = goal.toLowerCase();
-    const segments: { name: string; role: string; task: string }[] = [];
-
-    // Keyword-based heuristic decomposition
-    const hasResearch = /research|find|look up|search|investigate|analyze/.test(lower);
-    const hasBuild = /build|create|write|code|implement|develop|generate/.test(lower);
-    const hasReview = /review|check|test|verify|validate|audit/.test(lower);
-    const hasPlan = /plan|design|architect|outline|strategy/.test(lower);
-
-    if (hasPlan) {
-      segments.push({ name: "planner", role: "planner", task: `Plan the approach: ${goal}` });
-    }
-
-    if (hasResearch) {
-      segments.push({ name: "researcher", role: "researcher", task: `Research: ${goal}` });
-    }
-
-    if (hasBuild) {
-      segments.push({ name: "builder", role: "coder", task: `Build: ${goal}` });
-    }
-
-    if (hasReview) {
-      segments.push({ name: "reviewer", role: "reviewer", task: `Review: ${goal}` });
-    }
-
-    // Fallback: single general agent
-    if (segments.length === 0) {
-      segments.push({ name: "worker", role: "generalist", task: goal });
-    }
-
-    return segments;
-  }
 }

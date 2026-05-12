@@ -36,8 +36,8 @@ let __callCount = 0;
 let __projectDirForMock = "";
 function __setProjectDirForMock(dir: string) { __projectDirForMock = dir; __callCount = 0; }
 
-vi.mock("../src/primal-auto-build/subprocess.js", () => ({
-  spawnClaudeChunkSubprocess: vi.fn(async () => {
+vi.mock("../src/primal-auto-build/agents/chunk-runner.js", () => ({
+  runChunkAgent: vi.fn(async () => {
     const next = __queue.shift() || "STATUS: unknown\nDONE_WHEN: unknown\nCHANGED: none\nTESTS: n/a\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: queue empty";
     if (__projectDirForMock) {
       const { writeFileSync, mkdirSync } = await import("node:fs");
@@ -45,14 +45,12 @@ vi.mock("../src/primal-auto-build/subprocess.js", () => ({
       __callCount++;
       try {
         mkdirSync(join(__projectDirForMock, "src"), { recursive: true });
-        writeFileSync(join(__projectDirForMock, "src", `mock-${__callCount}.ts`), `// mock subprocess call ${__callCount}\n`);
+        writeFileSync(join(__projectDirForMock, "src", `mock-${__callCount}.ts`), `// mock agent call ${__callCount}\n`);
       } catch { /* test may have already cleaned up */ }
     }
     return {
       stdout: next,
-      stderr: "",
       exitCode: 0,
-      timedOut: false,
       durationMs: 50,
     };
   }),

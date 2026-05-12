@@ -56,6 +56,7 @@ vi.mock("../src/primal-auto-build/agents/chunk-runner.js", () => ({
   }),
 }));
 
+
 // Imports must come AFTER vi.mock so the loop module picks up the stub.
 const { runBuildLoop } = await import("../src/primal-auto-build/loop.js");
 const { parsePlanText } = await import("../src/primal-auto-build/plan-parser.js");

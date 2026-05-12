@@ -308,6 +308,17 @@ async function executeSingleTool(
   if (SESSION_SCOPED_TOOLS.has(tc.name)) {
     args._sessionId = sessionId || "default";
   }
+  // Inject the chat's current project into agent_* tool calls so the
+  // canonical scope (catalog filter + tool gate) flows from chat → spawn
+  // automatically. The LLM doesn't have to remember; the runtime stamps
+  // it in. If the LLM passes an explicit project_id, that wins.
+  if ((tc.name === "agent_spawn" || tc.name === "agent_list" || tc.name === "agent_create") && sessionId) {
+    if (!args.project_id) {
+      const { getSessionProject } = await import("./session-project.js");
+      const pid = getSessionProject(sessionId);
+      if (pid) args.project_id = pid;
+    }
+  }
   // Inject conversational context for tools that need to sanity-check their
   // task against user intent (currently self_edit's intent gate). Last user
   // message + most recent assistant text are extracted from priorMessages

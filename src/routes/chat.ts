@@ -35,6 +35,16 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
     const _attachments = parsed.data.attachments;
     const sessionId = parsed.data.sessionId!;
     const attachments = _attachments!;
+    // Stamp the chat's current project onto the session so agent_* tool
+    // calls auto-scope. Frontend includes projectId on each request when
+    // the chat is nested under a project; absent = global catalog.
+    try {
+      const projectId = (raw as Record<string, unknown>).projectId;
+      const { setSessionProject } = await import("../session-project.js");
+      setSessionProject(sessionId, typeof projectId === "string" ? projectId : null);
+    } catch (e) {
+      logger.warn(`[chat] failed to set session project: ${(e as Error).message}`);
+    }
 
     // Slash-command interceptor. Runs BEFORE memory recall, history truncation,
     // or anything else that reads `message`. When the user typed `/<known-skill>`

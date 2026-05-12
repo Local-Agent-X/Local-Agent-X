@@ -6,10 +6,23 @@
  * test for later. Chunk 2+ tests cover plan-parser, classifier, review.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// Stub the global active-orchestrators registry. The tool's execute()
+// calls startOrchestration → registry.register which writes to
+// ~/.lax/active-orchestrators.json. Without this mock, every test run
+// leaks a stale entry into a file shared by real builds — the
+// auto-resume scanner cleans them up on the next boot, but it's noisy
+// and crosses the test/prod isolation boundary.
+vi.mock("../src/primal-auto-build/orchestrator/registry.js", () => ({
+  register: vi.fn(),
+  unregister: vi.fn(),
+  listAll: vi.fn(() => []),
+}));
+
 import {
   primalRunBuildPlanTool,
   isFeatureEnabled,

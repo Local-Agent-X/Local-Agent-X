@@ -3,7 +3,7 @@
  * Uses pre-warmed processes, smaller models, and parallel execution.
  */
 
-import { spawn, execFileSync, ChildProcess } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";

@@ -20,8 +20,7 @@
  * user can see what happened.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
 import type { ParsedPlan } from "../plan-parser.js";
 import { listAll, unregister } from "./registry.js";
 import * as state from "./state.js";

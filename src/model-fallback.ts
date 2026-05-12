@@ -59,7 +59,6 @@ export interface FallbackChain {
 
 const CIRCUIT_OPEN_DURATION_MS = 60_000;    // Skip provider for 1 min after repeated failures
 const MAX_CONSECUTIVE_FAILURES = 3;          // Open circuit after 3 consecutive failures
-const CIRCUIT_HALF_OPEN_RETRY = 30_000;      // Try a failed provider after 30s
 const MAX_RETRIES_PER_PROVIDER = 2;
 const BACKOFF_BASE_MS = 1000;
 const BACKOFF_MAX_MS = 30_000;

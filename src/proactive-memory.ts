@@ -142,14 +142,6 @@ function extractTopics(text: string): string[] {
   return topics.slice(0, 10); // cap at 10 topics per message
 }
 
-// ── Time helpers ────────────────────────────────────────────
-
-function getTimeGreeting(hour: number): string {
-  if (hour >= 5 && hour < 12) return "Good morning";
-  if (hour >= 12 && hour < 17) return "Good afternoon";
-  if (hour >= 17 && hour < 21) return "Good evening";
-  return "Working late";
-}
 
 function isLateNight(hour: number): boolean {
   return hour >= 23 || hour < 5;
@@ -205,7 +197,6 @@ class ProactiveMemoryImpl {
 
     // 3) Behavioral patterns: repeated questions
     const recentTexts = recentMessages.map((m) => m.content.toLowerCase());
-    const currentLower = currentMessage.toLowerCase();
     const thisWeek = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const recentInteractions = this.data.interactions.filter((i) => i.timestamp > thisWeek);
 

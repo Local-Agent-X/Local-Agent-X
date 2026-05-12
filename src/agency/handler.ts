@@ -6,7 +6,6 @@
 //   - handler-tools.ts    — createHandlerTools() — public ToolDefinition factory
 
 import { EventBus } from "../event-bus.js";
-import type { ToolResult } from "../types.js";
 import { AgencyMessageBus } from "./message-bus.js";
 import type {
   AgentUpdateCallback,
@@ -27,14 +26,6 @@ export { createHandlerTools } from "./handler-tools.js";
 let idCounter = 0;
 function uid(prefix: string): string {
   return `${prefix}-${++idCounter}-${Date.now().toString(36)}`;
-}
-
-function ok(content: string): ToolResult {
-  return { content };
-}
-
-function err(content: string): ToolResult {
-  return { content, isError: true };
 }
 
 // -- Handler (singleton) --------------------------------------------------

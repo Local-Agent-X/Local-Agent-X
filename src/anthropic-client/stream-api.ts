@@ -3,7 +3,7 @@ import { API_BASE, convertMessages } from "./request.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  const { token, model, messages, systemPrompt, tools, temperature = 1, maxTokens = 8192, toolChoice } = options;
+  const { token, model, messages, systemPrompt, tools, maxTokens = 8192, toolChoice } = options;
   const resolvedModel = normalizeAnthropicModel(model, "api");
 
   const headers: Record<string, string> = {

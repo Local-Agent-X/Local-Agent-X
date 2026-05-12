@@ -15,7 +15,6 @@ import {
   mkdirSync,
   readFileSync,
   writeFileSync,
-  readdirSync,
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";

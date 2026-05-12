@@ -20,9 +20,7 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-import { createLogger } from "./logger.js";
 import { tokenizeBasic, jaccardSimilarity as jaccardSim } from "./memory/text-utils.js";
-const logger = createLogger("memory-consolidation");
 
 // ══════════════════════════════════════════════════════════
 //  Types

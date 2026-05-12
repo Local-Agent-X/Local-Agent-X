@@ -96,8 +96,6 @@ class EventBusImpl {
 let instance: EventBusImpl | null = null;
 
 export class EventBus {
-  private static instance: EventBusImpl;
-
   static getInstance(): EventBusImpl {
     if (!instance) {
       instance = new EventBusImpl();

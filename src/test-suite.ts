@@ -197,7 +197,7 @@ async function testToolRegistration(): Promise<void> {
     "browser tools": async () => { const m = await import("./browser-tools.js"); return m.createBrowserTools(() => "default").map((t: any) => t.name); },
   };
   const allToolNames: string[] = [];
-  for (const [src, loader] of Object.entries(toolSources)) {
+  for (const [, loader] of Object.entries(toolSources)) {
     try { allToolNames.push(...await loader()); } catch { /* skip */ }
   }
 

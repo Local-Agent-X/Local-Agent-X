@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
-import { join, basename } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 export type ExportFormat = "json" | "markdown";
 

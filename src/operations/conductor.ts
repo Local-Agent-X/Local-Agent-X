@@ -15,7 +15,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import type { Operation, OperationEvent, OperationPhase, OperationStatus } from "./types.js";
+import type { Operation, OperationEvent, OperationPhase } from "./types.js";
 import { decomposeGoal } from "./decomposer.js";
 
 export interface ConductorOptions {

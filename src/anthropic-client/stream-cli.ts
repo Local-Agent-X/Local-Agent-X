@@ -61,7 +61,7 @@ function extractTextFromContent(content: unknown): string {
  * back through the agent loop's executeToolCalls.
  */
 export async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  const { model, messages, systemPrompt, tools, maxTokens = 16000 } = options;
+  const { model, messages, systemPrompt, tools } = options;
   const prompt = extractUserPrompt(messages);
 
   // Warm-pool fast path: long-lived CLI process per (model, permissionMode,

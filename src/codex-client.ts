@@ -8,8 +8,6 @@
  * Format: OpenAI Responses API (not Chat Completions)
  */
 
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import {
   convertMessagesToInput,
@@ -17,7 +15,6 @@ import {
   parseReasoningItem,
   type ReasoningItem,
 } from "./codex-message-convert.js";
-import { getRuntimeConfig } from "./config.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("codex-client");

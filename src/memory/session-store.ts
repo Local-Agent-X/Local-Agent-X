@@ -12,7 +12,7 @@
  * `{id}.json.pre-migration`. Idempotent — re-running on an already-migrated
  * dir is a no-op.
  */
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Session } from "../types.js";
 import { atomicWriteFileSync } from "./utils.js";

@@ -1,4 +1,4 @@
-import { writeFile, readFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -13,7 +13,7 @@ function resolvePath(p: string): string {
   return resolve(p);
 }
 
-const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = docx;
+const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docx;
 
 function ok(content: string, metadata?: Record<string, unknown>): ToolResult {
   return { content, metadata };

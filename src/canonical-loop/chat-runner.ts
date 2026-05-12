@@ -421,7 +421,16 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   };
 
   const offStream = subscribeOpStream(op.id, (chunk) => {
-    const c = chunk as { delta?: string } | null;
+    const c = chunk as { delta?: string; replace?: boolean; text?: string } | null;
+    // Adapter-initiated text replacement (e.g. tool-call-from-text
+    // extractor stripping JSON that was already streamed). Forward to
+    // the client as a stream event with replace:true so it swaps the
+    // bubble's text rather than appending.
+    if (c?.replace === true) {
+      eventQueue.push({ type: "stream", replace: true, text: c.text ?? "" });
+      wake();
+      return;
+    }
     const delta = c?.delta;
     if (typeof delta !== "string" || delta.length === 0) return;
     eventQueue.push({ type: "stream", delta });

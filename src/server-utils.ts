@@ -149,7 +149,7 @@ export function sseWrite(res: ServerResponse, event: ServerEvent) {
   if (event.type === "tool_end" && event.result) {
     event = { ...event, result: redactCredentials(event.result) };
   }
-  if (event.type === "stream" && event.delta) {
+  if (event.type === "stream" && "delta" in event && event.delta) {
     event = { ...event, delta: redactCredentials(event.delta) };
   }
   res.write(`data: ${JSON.stringify(event)}\n\n`);

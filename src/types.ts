@@ -189,6 +189,10 @@ export interface ToolChip {
 
 export type ServerEvent =
   | { type: "stream"; delta: string }
+  /** Adapter-initiated stream replacement (tool-call-from-text extraction
+   *  in openai-compat). Client swaps the bubble's text with `text` instead
+   *  of appending. `delta` is omitted on this variant. */
+  | { type: "stream"; replace: true; text: string }
   | { type: "tool_start"; toolName: string; toolCallId?: string; args: unknown; riskLevel?: "low" | "medium" | "high"; context?: string; requiresApproval?: boolean }
   | { type: "tool_progress"; toolName: string; toolCallId?: string; message: string }
   | { type: "tool_end"; toolName: string; toolCallId?: string; result: string; allowed: boolean }

@@ -58,6 +58,18 @@ export interface TurnInput {
 
 export type AdapterReport =
   | { kind: "stream_chunk"; body: unknown }
+  /**
+   * Emitted when an adapter post-processes its already-streamed text and
+   * needs the UI to retract part of it. Used by openai-compat after the
+   * tool-call-text-extractor synthesizes a tool call from JSON the model
+   * emitted as content — the JSON was already streamed to the client; the
+   * client should remove it from the rendered bubble.
+   *
+   * `replacementText` is the cleaned text the bubble should display
+   * instead of whatever it currently shows. Clients that don't handle
+   * this event leave the dirty stream rendered (graceful degradation).
+   */
+  | { kind: "stream_redact"; replacementText: string }
   | { kind: "tool_call_requested"; call: ToolCall }
   | { kind: "message_finalized"; message: CanonicalMessage }
   | { kind: "error"; code: string; message: string; retryable: boolean };

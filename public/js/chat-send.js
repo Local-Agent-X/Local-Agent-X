@@ -156,6 +156,15 @@ async function sendMessage() {
         if (viewing) getBodyEl();
         switch (event.type) {
           case 'stream':
+            // stream_redact: adapter post-processed (extracted a tool call
+            // from text the model emitted as JSON). Replace bubble content
+            // with the cleaned text instead of appending — server already
+            // computed what the bubble SHOULD have said.
+            if (event.replace === true) {
+              content = event.text || '';
+              if (viewing) renderStreamContent(bodyEl, content);
+              break;
+            }
             content += event.delta;
             if (viewing) {
               renderStreamContent(bodyEl, content);
@@ -350,6 +359,11 @@ async function sendMessage() {
           if (viewing) getBodyEl();
           switch (event.type) {
             case 'stream':
+              if (event.replace === true) {
+                content = event.text || '';
+                if (viewing) renderStreamContent(bodyEl, content);
+                break;
+              }
               content += event.delta;
               if (viewing) {
                 renderStreamContent(bodyEl, content);

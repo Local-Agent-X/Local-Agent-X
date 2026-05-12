@@ -342,6 +342,15 @@ export function setupChatWebSocket(server: Server, authToken: string) {
         } else {
           const _imgCount = _atts.filter(a => a?.isImage).length;
           logger.info(`[ws-chat] recv sess=${sessionId} msg_len=${_msgText.length} atts=${_atts.length} imgs=${_imgCount} handler=${chatHandler ? "set" : "null"}`);
+          // Stamp the chat's current project onto the session so agent_*
+          // tool calls auto-scope. The frontend includes projectId on
+          // each chat message when the chat is nested under a project.
+          try {
+            const { setSessionProject } = await import("./session-project.js");
+            setSessionProject(sessionId, typeof msg.projectId === "string" ? msg.projectId : null);
+          } catch (e) {
+            logger.warn(`[ws-chat] failed to set session project: ${(e as Error).message}`);
+          }
           subscriptions.add(sessionId);
           if (chatHandler) {
             chatHandler(sessionId, _msgText, _atts);

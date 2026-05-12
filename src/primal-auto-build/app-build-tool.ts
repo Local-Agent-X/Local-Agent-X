@@ -28,10 +28,11 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync, statSync } from "node:fs";
-import { isAbsolute, resolve, join, dirname } from "node:path";
+import { isAbsolute, join, dirname } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { isFeatureEnabled, FEATURE_FLAG_ENV } from "./tool.js";
 import { loadSkillBody } from "./skill-bodies.js";
+import { resolveProjectDir } from "./project-paths.js";
 
 const FEATURE_FLAG_BLOCK_MESSAGE =
   `BLOCKED — gated behind the ${FEATURE_FLAG_ENV} env flag, which is currently OFF. ` +
@@ -141,7 +142,10 @@ export const finalizeAppBuildTool: ToolDefinition = {
     properties: {
       project_dir: {
         type: "string",
-        description: "Absolute path to the NEW project directory. Must not already exist.",
+        description: "Either a bare project name (e.g. 'mygroomtime') — resolved to " +
+          "`<lax-root>/workspace/apps/<name>` automatically — OR an absolute path to a NEW " +
+          "project directory. Must not already exist. **Default convention: bare name.** " +
+          "Absolute paths only when the project lives outside LAX's workspace.",
       },
       project_name: {
         type: "string",
@@ -195,9 +199,8 @@ export const finalizeAppBuildTool: ToolDefinition = {
       return { content: FEATURE_FLAG_BLOCK_MESSAGE, isError: true, status: "blocked" };
     }
 
-    const projectDirRaw = String(args.project_dir || "").trim();
-    if (!projectDirRaw) return { content: "finalize_app_build requires 'project_dir'.", isError: true };
-    const projectDir = isAbsolute(projectDirRaw) ? projectDirRaw : resolve(process.cwd(), projectDirRaw);
+    const projectDir = resolveProjectDir(args.project_dir);
+    if (!projectDir) return { content: "finalize_app_build requires 'project_dir' (bare name resolves to workspace/apps/<name>, or absolute path).", isError: true };
 
     if (existsSync(projectDir)) {
       // Refuse to overwrite an existing dir. Forces user to choose a fresh path.

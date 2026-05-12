@@ -3,7 +3,6 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { AgencyConfig, AgencyResult, AgencyStatus } from "./types.js";
 import { AgencyOrchestrator } from "./agency-orchestrator.js";
-import { listRoles } from "./agent-roles.js";
 import { AgentCatalog } from "../agents/catalog.js";
 import { EventBus } from "../event-bus.js";
 

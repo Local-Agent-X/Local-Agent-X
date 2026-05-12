@@ -92,35 +92,21 @@ const BUILT_IN_ROLES: Record<string, AgentRole> = {
   },
 };
 
-const customRoles = new Map<string, AgentRole>();
-
 export function getRole(name: string): AgentRole | undefined {
-  return BUILT_IN_ROLES[name] ?? customRoles.get(name);
+  return BUILT_IN_ROLES[name];
 }
 
 export function listRoles(): AgentRole[] {
-  return [
-    ...Object.values(BUILT_IN_ROLES),
-    ...customRoles.values(),
-  ];
+  return Object.values(BUILT_IN_ROLES);
 }
 
 /**
  * Seed accessor used by the canonical catalog (src/agents/catalog.ts)
  * to fold this module's built-in roles into the unified definition
- * list. Distinct from listRoles() so the catalog can read the raw seed
- * without going through any view-layer that itself reads the catalog
- * (avoids the cycle once listRoles migrates to a view).
+ * list. Identical to listRoles() today; kept as a distinct export so
+ * the catalog's intent ("read the raw seed") stays explicit in the
+ * import graph.
  */
 export function _seedBuiltinRoles(): AgentRole[] {
   return Object.values(BUILT_IN_ROLES);
-}
-
-export function createCustomRole(config: AgentRole): AgentRole {
-  customRoles.set(config.name, config);
-  return config;
-}
-
-export function deleteCustomRole(name: string): boolean {
-  return customRoles.delete(name);
 }

@@ -126,6 +126,14 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       settings.sidebarPins = pins;
       writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
     }
+    // Re-pinning is the "I changed my mind" signal — clear any tombstone
+    // so a remote-pulled unpin doesn't immediately re-remove this pin.
+    try {
+      const { pinTombstonePaths, clearPinTombstone } = await import("../../sync/pin-tombstones.js");
+      const { join: pjoin } = await import("node:path");
+      const { homedir } = await import("node:os");
+      clearPinTombstone(pinTombstonePaths(ctx.dataDir, pjoin(homedir(), ".lax", "sync-repo")), String(name));
+    } catch {}
     try { const { broadcastAll } = await import("../../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
     json(200, { ok: true, pins }); return true;
   }
@@ -138,6 +146,15 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     const pins = ((settings.sidebarPins || []) as Array<{ name: string }>).filter(p => p.name !== pinName);
     settings.sidebarPins = pins;
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
+    // Write tombstone so a future pull from another machine that still
+    // has this pin doesn't restore it. Tombstone also propagates via
+    // sync-repo so other machines see the unpin on next pull.
+    try {
+      const { pinTombstonePaths, tombstonePin } = await import("../../sync/pin-tombstones.js");
+      const { join: pjoin } = await import("node:path");
+      const { homedir } = await import("node:os");
+      tombstonePin(pinTombstonePaths(ctx.dataDir, pjoin(homedir(), ".lax", "sync-repo")), pinName);
+    } catch {}
     try { const { broadcastAll } = await import("../../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
     json(200, { ok: true, pins }); return true;
   }

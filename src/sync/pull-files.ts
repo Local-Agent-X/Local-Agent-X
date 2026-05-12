@@ -6,6 +6,9 @@ import {
   BRAIN_BINARY_FILES,
   BRAIN_DIRS,
   BRAIN_JSON_FILES,
+  MISSION_FILES,
+  PROTOCOL_FILES,
+  PROTOCOL_DIRS,
   type SyncConfig,
 } from "./constants.js";
 import { pullDir, unionMerge } from "./mirror.js";
@@ -15,7 +18,7 @@ const logger = createLogger("sync.pull-files");
 
 // ── Pull direction: sync repo → local (with deletion propagation) ──
 
-export function copyFromSync(dataDir: string, syncDir: string, config: SyncConfig): void {
+export async function copyFromSync(dataDir: string, syncDir: string, config: SyncConfig): Promise<void> {
   const syncMemDir = join(syncDir, "memory");
   const memDir = join(dataDir, "memory");
   if (!existsSync(memDir)) mkdirSync(memDir, { recursive: true });
@@ -69,22 +72,29 @@ export function copyFromSync(dataDir: string, syncDir: string, config: SyncConfi
   }
 
   // Sidebar pins: replace the local sidebarPins array with the remote
-  // one. Other settings.json keys (port, voiceTier4Device, etc.) are
-  // preserved — only the pins array is overwritten so this machine
-  // gets the same sidebar layout as whichever workstation pushed
-  // last. If remote file is missing or unreadable, leave local pins
-  // alone.
+  // one, MINUS anything tombstoned. Tombstones come from two stores:
+  // the local per-machine "I unpinned this here" list, and the synced
+  // store in sync-repo/.tombstones/pins/ where other machines record
+  // their unpins. Without this filter, a remote that still has Mario
+  // pinned would re-pin Mario on this machine every pull, undoing the
+  // user's unpin.
   const syncPins = join(syncDir, "sidebar-pins.json");
   if (existsSync(syncPins)) {
     try {
       const remotePins = JSON.parse(readFileSync(syncPins, "utf-8"));
       if (Array.isArray(remotePins)) {
+        const { pinTombstonePaths, listTombstonedPinNames, applyPinTombstones } = await import("./pin-tombstones.js");
+        const tombstoned = listTombstonedPinNames(pinTombstonePaths(dataDir, syncDir));
+        const filteredPins = applyPinTombstones(remotePins as Array<{ name: string }>, tombstoned);
+        if (filteredPins.length < remotePins.length) {
+          logger.info(`[sync] pin tombstones filtered ${remotePins.length - filteredPins.length} remote pin(s)`);
+        }
         const localSettingsPath = join(dataDir, "settings.json");
         let localSettings: Record<string, unknown> = {};
         if (existsSync(localSettingsPath)) {
           try { localSettings = JSON.parse(readFileSync(localSettingsPath, "utf-8")); } catch { /* swallow */ }
         }
-        localSettings.sidebarPins = remotePins;
+        localSettings.sidebarPins = filteredPins;
         writeFileSync(localSettingsPath, JSON.stringify(localSettings, null, 2), "utf-8");
       }
     } catch (e) {
@@ -136,6 +146,8 @@ export function copyFromSync(dataDir: string, syncDir: string, config: SyncConfi
   // file just because it's missing from the remote (a fresh sync
   // repo wouldn't have these yet).
   for (const file of BRAIN_JSON_FILES) {
+    if (!config.syncMissions && MISSION_FILES.has(file)) continue;
+    if (!config.syncProtocols && PROTOCOL_FILES.has(file)) continue;
     const remote = join(syncDir, file);
     if (!existsSync(remote)) continue;
     try {
@@ -148,6 +160,7 @@ export function copyFromSync(dataDir: string, syncDir: string, config: SyncConfi
   // Brain backup — directory trees. Destructive mirror so the
   // destination matches the remote tree exactly.
   for (const dir of BRAIN_DIRS) {
+    if (!config.syncProtocols && PROTOCOL_DIRS.has(dir)) continue;
     const remote = join(syncDir, dir);
     if (!existsSync(remote)) continue;
     const local = join(dataDir, dir);

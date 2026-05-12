@@ -192,7 +192,7 @@ export class AgentSync {
       let hasChanges = true;
       try { if (!await this.git("diff", "HEAD", "origin/main", "--stat")) hasChanges = false; } catch {}
       if (hasChanges) { try { await this.git("pull", "--no-rebase", "origin", "main"); } catch { await resolveConflicts(this.syncDir, this.git); } }
-      copyFromSync(this.dataDir, this.syncDir, this.config);
+      await copyFromSync(this.dataDir, this.syncDir, this.config);
       this.lastSyncTime = Date.now();
       return { success: true, message: hasChanges ? "Downloaded latest" : "Synced local files" };
     } catch (e) {
@@ -230,6 +230,7 @@ export class AgentSync {
       repoUrl: this.config.repoUrl, interval: this.config.interval,
       autoDownload: this.config.autoDownload, syncSessions: this.config.syncSessions,
       syncWorkspace: this.config.syncWorkspace, syncCronJobs: this.config.syncCronJobs,
+      syncMissions: this.config.syncMissions, syncProtocols: this.config.syncProtocols,
     };
   }
 }

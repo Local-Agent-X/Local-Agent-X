@@ -4,7 +4,7 @@
  * and streams WAV data as chunks become ready.
  */
 
-import { spawn, execSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";

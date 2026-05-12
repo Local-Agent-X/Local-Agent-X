@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, readBody, safeErrorMessage } from "../../server-utils.js";

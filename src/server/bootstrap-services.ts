@@ -57,7 +57,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   const agentSync = new AgentSync(dataDir, () => secretsStoreRef.value?.get("GITHUB_SYNC_TOKEN"));
   const sessionStore = new SessionStore(dataDir);
   const memoryIndex = new MemoryIndex(dataDir);
-  const memoryManager = new MemoryManager(memoryIndex, dataDir);
+  const memoryManager = new MemoryManager(memoryIndex);
   ensurePersonalityFiles(join(dataDir, "memory"));
   const secretsStore = new SecretsStore(dataDir);
   secretsStoreRef.value = secretsStore;

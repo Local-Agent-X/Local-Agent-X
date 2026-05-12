@@ -38,17 +38,14 @@ export class BatteryScheduler extends EventEmitter {
     pluggedIn: true,
     available: false,
   };
-  private running = false;
   private taskCounter = 0;
 
   async start(pollMs = 30000): Promise<void> {
-    this.running = true;
     await this.refreshBattery();
     this.pollInterval = setInterval(() => this.tick(), pollMs);
   }
 
   stop(): void {
-    this.running = false;
     if (this.pollInterval) {
       clearInterval(this.pollInterval);
       this.pollInterval = null;

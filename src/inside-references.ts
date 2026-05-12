@@ -222,7 +222,6 @@ export class InsideReferences {
 
     // Partial match: check if the phrase contains a known reference
     if (!ref) {
-      const words = normalized.split(/\s+/);
       for (const r of store.references) {
         const refNorm = normalize(r.phrase);
         if (normalized.includes(refNorm) || refNorm.includes(normalized)) {

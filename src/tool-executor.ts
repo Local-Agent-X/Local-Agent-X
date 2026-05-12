@@ -57,28 +57,6 @@ interface ToolResultWithImage extends ToolResult {
   _image?: { path: string; question: string; mime: string; b64: string };
 }
 
-/** ChatCompletionMessageParam with tool_calls visible (OpenAI types hide this on some message subtypes) */
-interface AssistantMessageWithToolCalls {
-  role: "assistant";
-  content: string | null;
-  tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
-}
-
-/** Tool message with tool_call_id */
-interface ToolMessageParam {
-  role: "tool";
-  tool_call_id: string;
-  content: string;
-}
-
-/** User message with vision content parts */
-interface VisionUserMessage {
-  role: "user";
-  content: Array<
-    | { type: "text"; text: string }
-    | { type: "image_url"; image_url: { url: string; detail?: string } }
-  >;
-}
 
 // ── Result budgeting ──
 // Large tool results get saved to disk with a preview returned to context.

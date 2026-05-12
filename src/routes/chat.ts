@@ -1,11 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { RouteHandler } from "../server-context.js";
 import type { ServerEvent } from "../types.js";
-import { isValidSessionId, safeErrorMessage, sseWrite, corsHeaders, jsonResponse, safeParseBody } from "../server-utils.js";
+import { safeErrorMessage, sseWrite, corsHeaders, jsonResponse, safeParseBody } from "../server-utils.js";
 import { runAgent } from "../agent.js";
-import { detectInjection } from "../sanitize.js";
 import { ChatRequestSchema, validateBody } from "../route-schemas.js";
 import { ThreatEngine } from "../threat-engine.js";
 import { enqueue } from "../execution-lanes.js";
@@ -126,7 +124,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // worker subprocess; everything else runs inline. Regex rules +
       // LLM-as-classifier veto live entirely in src/routing/, no routing
       // logic should leak back into this file.
-      const { routeMessage, delegateMessageToWorker, hasDiscussPrefix, stripDiscussPrefix, linkDecisionToOpId } = await import("../routing/index.js");
+      const { routeMessage, hasDiscussPrefix, stripDiscussPrefix } = await import("../routing/index.js");
       // /discuss prefix is the user's explicit "stay inline this turn"
       // escape hatch. Strip it before passing to the agent so the model
       // doesn't see a literal "/discuss" in the message. routeMessage

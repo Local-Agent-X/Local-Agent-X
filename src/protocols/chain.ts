@@ -3,7 +3,6 @@
  */
 
 import { randomBytes } from "node:crypto";
-import type { Protocol } from "../protocols.js";
 import type { ToolDefinition } from "../types.js";
 
 export interface ChainLink {

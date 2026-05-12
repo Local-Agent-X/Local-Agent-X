@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes } from "node:crypto";
 
 const verifyAttempts = new Map<string, number[]>();
 const VERIFY_MAX_ATTEMPTS = 5;

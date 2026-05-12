@@ -6,7 +6,6 @@
  */
 
 import { SecurityLayer } from "./security.js";
-import { classifyData } from "./threat-engine.js";
 import { detectInjection } from "./sanitize.js";
 import { scanForSecrets } from "./secret-scanner.js";
 

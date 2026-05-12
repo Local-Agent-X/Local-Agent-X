@@ -36,7 +36,6 @@ import {
   ensureWhisperModelDownloaded,
   getWhisperModelPaths,
   VALID_WHISPER_VARIANTS,
-  DEFAULT_WHISPER_VARIANT,
   type WhisperVariant,
 } from "./whisper-model-fetch.js";
 import { createGpuSession } from "./gpu-session.js";

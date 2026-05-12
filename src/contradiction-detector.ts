@@ -270,7 +270,6 @@ export class ContradictionDetector {
         break;
 
       case "keep-both": {
-        const field = contradiction.field || "info";
         const combined = `Previously: ${contradiction.oldFact}. Now: ${contradiction.newFact}`;
         resolution = {
           action: "merged-timeline",

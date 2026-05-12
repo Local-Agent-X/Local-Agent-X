@@ -82,10 +82,6 @@ function generateId(): string {
   return randomBytes(8).toString("hex");
 }
 
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 function parseDate(dateStr: string): number {
   return new Date(dateStr).getTime();
 }

@@ -14,7 +14,6 @@ import {
   readdirSync,
   statSync,
   renameSync,
-  unlinkSync,
 } from "node:fs";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
@@ -217,7 +216,6 @@ export class MemoryImportance {
   }
 
   autoArchive(dryRun?: boolean): ArchiveResult {
-    const candidates = this.getArchiveCandidates();
     const archived: string[] = [];
     const kept: string[] = [];
 
@@ -333,7 +331,7 @@ export class MemoryImportance {
     if (daysSinceDecay < 1) return;
 
     const decayDays = Math.floor(daysSinceDecay);
-    for (const [id, rec] of Object.entries(this.scores.records)) {
+    for (const [, rec] of Object.entries(this.scores.records)) {
       const daysSinceAccess = (now - rec.lastAccessed) / MS_PER_DAY;
       if (daysSinceAccess > 1) {
         const decay = Math.min(decayDays, Math.floor(daysSinceAccess)) * DECAY_PER_DAY;

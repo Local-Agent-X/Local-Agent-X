@@ -267,12 +267,6 @@ function topologicalSort(
   const inDegree = new Map<string, number>();
   for (const n of nodes) inDegree.set(n, 0);
 
-  for (const [, deps] of edges) {
-    for (const dep of deps) {
-      // dep -> node means node depends on dep; dep has outgoing edge to node
-    }
-  }
-
   // Count incoming edges per node
   for (const [node, deps] of edges) {
     inDegree.set(node, deps.length);

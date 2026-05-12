@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { RouteHandler } from "../server-context.js";
-import { jsonResponse, readBody, safeParseBody, safeErrorMessage } from "../server-utils.js";
+import { jsonResponse, readBody, safeParseBody } from "../server-utils.js";
 import { getThreatDashboard } from "../threat-dashboard.js";
 import { listPolicies, createPolicy, deletePolicy } from "../ari-policy-editor.js";
 import { listEgressRules, addEgressRule } from "../egress-policy.js";
@@ -149,7 +149,7 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
   if (method === "GET" && url.pathname === "/api/audit/verify") {
     const date = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { json(400, { error: "Invalid date format" }); return true; }
-    const [y, m, d] = date.split("-").map(Number);
+    const [, m, d] = date.split("-").map(Number);
     if (m < 1 || m > 12 || d < 1 || d > 31) { json(400, { error: "Invalid date values" }); return true; }
     const auditPath = join(ctx.dataDir, "audit", `${date}.jsonl`);
     const { CryptoAuditTrail } = await import("../threat-engine.js");

@@ -3,7 +3,7 @@
  * Uses ffmpeg for frame extraction, optionally sends to vision model for descriptions.
  */
 
-import { execSync, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";

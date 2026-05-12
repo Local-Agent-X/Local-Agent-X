@@ -3,7 +3,7 @@
  * Provides a searchable, persistent record of voice activity.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, appendFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 

@@ -72,22 +72,6 @@ export function registerHandlerEvents(deps: {
       const { resolveProvider } = await import("../agent-request.js");
       const { provider, apiKey, model } = await resolveProvider(config, secretsStore, dataDir);
 
-      // Build tool list: respect template.allowedTools if set, otherwise give role-appropriate tools
-      // Agents now GET issue_* and agent_* tools (they're real employees, not disposable workers)
-      const CORE_AGENT_TOOLS = new Set(["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image", "ask_user",
-        "http_request", "ocr", "memory_search", "memory_save", "memory_recall", "memory_update_profile",
-        "document_create", "document_edit", "spreadsheet_write", "spreadsheet_read", "pdf_create",
-        "mission_schedule_list", "mission_schedule_reports",
-        "issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "issue_request_approval",
-        "agent_whoami", "agent_team_list", "agent_wakeup", "task_create", "task_update", "task_list", "task_get",
-        // Web + action tools sub-agents need for Operation phases (DNS setup,
-        // form-fills, deployments). Previously omitted, which made every
-        // web-requiring sub-agent falsely report "browser tool unavailable."
-        "browser", "email_send", "screen_capture",
-        // Operations — a sub-agent may kick off a nested operation if a phase
-        // needs further decomposition
-        "operation_start", "operation_status"]);
-
       // Role-specific narrow tool sets. Operations phase workers ("operator"
       // role) don't need team coordination / identity / issue tools — those
       // cause attention-drift loops (agent_whoami + issue_list spam). Keep

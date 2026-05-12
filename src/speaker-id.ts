@@ -3,7 +3,7 @@
  * Extracts MFCC-based embeddings from audio and compares against enrolled speakers.
  */
 
-import { execSync, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";

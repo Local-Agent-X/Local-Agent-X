@@ -57,6 +57,15 @@ export const CORE_TOOL_NAMES = new Set([
   "browser",
   // Apps
   "build_app", "app_create", "app_list",
+  // Auto-build orchestrator — entrypoints for /app-build → spec → plan →
+  // chunk-runner loop. These MUST be in the per-turn tool schema, not
+  // gated by keyword, because the user often pastes a literal tool call
+  // (e.g. primal_run_build_plan({...})) which doesn't match any keyword
+  // regex. Without these, Codex says "tool isn't in my loaded schema"
+  // even though tool_search returns the def — burning a turn and looking
+  // broken. (Live failure: 2026-05-12.)
+  "primal_run_build_plan", "primal_build_status", "primal_build_resume",
+  "start_app_build", "finalize_app_build",
   // Secrets
   "request_secret", "request_secrets", "list_secrets",
   // HTTP
@@ -116,10 +125,34 @@ const BUILD_INTENT_TOOLS = new Set([
 ]);
 const BUILD_INTENT_REGEX = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script)/i;
 
+/**
+ * Detect literal tool-call syntax in the user message and return any
+ * exact tool names referenced. Catches the pattern `tool_name({...})` —
+ * when the user pastes a tool call directly, we MUST include that tool
+ * regardless of keyword filters or build-intent strip-down. Otherwise
+ * the model sees "tool not in my schema" and routes to self_edit /
+ * tool_search to try to "investigate."
+ */
+function detectLiteralToolCalls(message: string, allTools: ToolDefinition[]): Set<string> {
+  const out = new Set<string>();
+  const re = /\b([a-z_][a-z0-9_]+)\s*\(\s*\{/gi;
+  const known = new Set(allTools.map(t => t.name));
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(message)) !== null) {
+    if (known.has(m[1])) out.add(m[1]);
+  }
+  return out;
+}
+
 export function filterToolsForMessage(allTools: ToolDefinition[], message: string): ToolDefinition[] {
+  // Literal tool-call syntax always wins — if the user typed e.g.
+  // `primal_run_build_plan({...})`, that tool MUST be in the schema
+  // regardless of build-intent strip-down or keyword routing.
+  const literalCalls = detectLiteralToolCalls(message, allTools);
+
   // Build intent: ultra-minimal tool set (~11 tools vs 40+)
   // This is critical for Codex which returns empty responses when context is bloated
-  if (BUILD_INTENT_REGEX.test(message)) {
+  if (BUILD_INTENT_REGEX.test(message) && literalCalls.size === 0) {
     return allTools.filter(t => BUILD_INTENT_TOOLS.has(t.name));
   }
 
@@ -127,6 +160,9 @@ export function filterToolsForMessage(allTools: ToolDefinition[], message: strin
 
   // Always include core tools
   for (const name of CORE_TOOL_NAMES) included.add(name);
+
+  // Literal tool calls force-include those tools
+  for (const name of literalCalls) included.add(name);
 
   // Add tools matching user message keywords
   for (const { keywords, toolPrefixes } of TOOL_KEYWORD_MAP) {

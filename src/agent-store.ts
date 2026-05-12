@@ -240,6 +240,10 @@ export interface AgentTemplate {
   allowedTools: string[];
   description: string;
   icon?: string;
+  /** True = spawn this agent inside an isolated git worktree of the LAX
+   *  repo. Default false. See AgentDefinition.requiresWorktree for the
+   *  canonical doc and AUDIT Cluster 11 for the migration. */
+  requiresWorktree?: boolean;
   // Note: hired / reportsTo / heartbeatSchedule / heartbeatEnabled /
   // budget moved to ProjectRoster (src/project-rosters.ts) in the L3
   // persistence split — those are per-project membership facts, not

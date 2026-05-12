@@ -146,13 +146,15 @@ export const primalRunBuildPlanTool: ToolDefinition = {
       : plan.chunks[0].number;
     const maxChunks = Number.isFinite(maxChunksArg) && maxChunksArg > 0 ? Math.floor(maxChunksArg) : undefined;
 
-    const sessionId = typeof args._sessionId === "string" ? args._sessionId : "";
-    if (!sessionId) {
-      return {
-        content: "primal_run_build_plan needs a chat session context to surface live progress in the sidebar. Internal: _sessionId was not injected.",
-        isError: true,
-      };
-    }
+    // _sessionId is injected by the tool-executor when this fires inside
+    // a chat turn. When it's missing (direct API call, scheduled trigger,
+    // test harness), generate a synthetic id so bg_op events still route
+    // through the session-bridge — the AGENTS sidebar just won't bind to
+    // a specific chat. Hard-failing on missing _sessionId broke every
+    // non-chat caller.
+    const sessionId = typeof args._sessionId === "string" && args._sessionId.trim()
+      ? args._sessionId
+      : `orchestrator-${Date.now().toString(36)}`;
 
     // Async kick-off: register the orchestrator op, return immediately.
     // Loop runs in background; bg_op_progress / bg_op_completed events

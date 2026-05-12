@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { editTool } from "../src/tools/file-tools.js";
+import { editTool, writeTool } from "../src/tools/file-tools.js";
 
 let dir: string;
 
@@ -100,5 +100,56 @@ describe("edit tool — line-ending tolerance", () => {
 
     // The result must be pure LF — no \r\n introduced
     expect(readFileSync(path, "utf-8")).toBe("a\nX\nY\nc\n");
+  });
+});
+
+describe("write tool — line-ending preservation on overwrite", () => {
+  it("preserves CRLF when overwriting an existing CRLF file with LF content", async () => {
+    const path = join(dir, "f.html");
+    writeFileSync(path, "line1\r\nline2\r\nline3\r\n", "utf-8");
+
+    await writeTool.execute({
+      path,
+      content: "new1\nnew2\nnew3\n",
+    });
+
+    expect(readFileSync(path, "utf-8")).toBe("new1\r\nnew2\r\nnew3\r\n");
+  });
+
+  it("preserves LF when overwriting an existing LF file", async () => {
+    const path = join(dir, "f.html");
+    writeFileSync(path, "line1\nline2\n", "utf-8");
+
+    await writeTool.execute({
+      path,
+      content: "new1\nnew2\n",
+    });
+
+    expect(readFileSync(path, "utf-8")).toBe("new1\nnew2\n");
+  });
+
+  it("writes LF for a brand-new file (no existing style to preserve)", async () => {
+    const path = join(dir, "new.html");
+
+    await writeTool.execute({
+      path,
+      content: "fresh1\nfresh2\n",
+    });
+
+    expect(readFileSync(path, "utf-8")).toBe("fresh1\nfresh2\n");
+  });
+
+  it("treats a file with already-CRLF content as CRLF (no double-promotion)", async () => {
+    const path = join(dir, "f.html");
+    writeFileSync(path, "a\r\nb\r\n", "utf-8");
+
+    // Model passes content that already has \r\n in it
+    await writeTool.execute({
+      path,
+      content: "x\r\ny\r\n",
+    });
+
+    // Should NOT become "x\r\r\ny\r\r\n" — the replace step is \r?\n → \r\n
+    expect(readFileSync(path, "utf-8")).toBe("x\r\ny\r\n");
   });
 });

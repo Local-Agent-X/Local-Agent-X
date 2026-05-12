@@ -27,7 +27,6 @@ import type { CanonicalLane, StateChangedBody } from "./types.js";
 
 export {
   isCanonicalLoopEnabled,
-  isCanonicalChatEnabled,
   envVarForLane,
 } from "./feature-flag.js";
 

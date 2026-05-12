@@ -12,7 +12,6 @@
 import type { ToolDefinition, ToolResult } from "./types.js";
 import { IssueStore, AgentTemplateStore, ProjectStore, type IssueStatus, type IssuePriority } from "./agent-store.js";
 import { ProjectRosterStore } from "./project-rosters.js";
-import { EventBus } from "./event-bus.js";
 
 /** Return the roster entry for an (agent, issue) pair when the issue is
  *  scoped to a project. reportsTo / heartbeat live on the roster, not
@@ -428,21 +427,22 @@ const agentWakeup: ToolDefinition = {
     // Leave the comment with @-mention
     issueStore.comment(issueId, "agent", `@${target.name}: ${message}`);
 
-    // ACTUALLY wake the agent — trigger a real run via EventBus
+    // Wake the target through the canonical invoke layer. Same runtime
+    // path agent_spawn uses — single entry-point for spawning, single
+    // source of truth for the agent definition. Scope to the issue's
+    // project so the spawned run has the right tool gating.
     const wakeupTask = `You were woken up by a message on issue ${issueId}.\n\n` +
       `Message: "${message}"\n\n` +
       `First call agent_whoami with agentId="${targetId}" to see your full context, then check issue ${issueId} and respond appropriately.`;
 
-    EventBus.emit("handler:agent-run", {
-      agentId: `wake-${targetId}-${Date.now().toString(36)}`,
-      name: target.name,
-      role: target.role,
-      systemPrompt: target.systemPrompt,
-      tools: target.allowedTools,
-      task: wakeupTask,
-      parentSessionId: null,
-      templateId: target.id,
-    });
+    const { invokeAgent } = await import("./agents/invoke.js");
+    try {
+      invokeAgent(targetId, wakeupTask, {
+        scope: issue.projectId ? { projectId: issue.projectId } : undefined,
+      });
+    } catch (e) {
+      return err(`Failed to wake ${target.name}: ${(e as Error).message}`);
+    }
 
     return ok(`Woke up ${target.name}. They will check issue ${issueId} and see your message.`);
   },

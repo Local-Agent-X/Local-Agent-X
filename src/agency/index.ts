@@ -4,6 +4,7 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import type { AgencyConfig, AgencyResult, AgencyStatus } from "./types.js";
 import { AgencyOrchestrator } from "./agency-orchestrator.js";
 import { listRoles } from "./agent-roles.js";
+import { AgentCatalog } from "../agents/catalog.js";
 import { EventBus } from "../event-bus.js";
 
 // Re-export all modules
@@ -177,9 +178,12 @@ export function createAgencyTools(): ToolDefinition[] {
         required: [],
       },
       async execute() {
-        const roles = listRoles();
-        const lines = roles.map(
-          (r) => `${r.name}: ${r.description}\n  Tools: ${r.suggestedTools.join(", ")}`
+        // Route through the canonical catalog so this tool sees the
+        // same agents the chat-side agent_spawn sees — including
+        // user-created templates, not just BUILT_IN_ROLES.
+        const defs = AgentCatalog.getInstance().list();
+        const lines = defs.map(
+          (d) => `${d.role}: ${d.description}\n  Tools: ${d.allowedTools.join(", ")}`,
         );
         return ok(lines.join("\n\n"));
       },

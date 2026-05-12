@@ -210,35 +210,5 @@ export function createHandlerTools(): ToolDefinition[] {
         }
       },
     },
-    {
-      name: "delegate",
-      description:
-        "Analyze a complex goal and automatically spawn the right agents to accomplish it. " +
-        "Returns a plan with the spawned agents and their assigned tasks.",
-      parameters: {
-        type: "object",
-        properties: {
-          goal: { type: "string", description: "The high-level goal to accomplish" },
-        },
-        required: ["goal"],
-      },
-      async execute(args) {
-        try {
-          const handler = Handler.getInstance();
-          const result = handler.delegateTask(String(args.goal));
-          const agentLines = result.agents.map(
-            (a) => `  ${a.id} [${a.role}] "${a.name}" -> ${a.currentTask}`,
-          );
-          return ok(
-            `Plan ${result.planId} created with ${result.agents.length} agent(s):\n` +
-            agentLines.join("\n") +
-            "\n\nTasks:\n" +
-            result.tasks.map((t, i) => `  ${i + 1}. ${t}`).join("\n"),
-          );
-        } catch (e) {
-          return err(`Failed to delegate: ${String(e)}`);
-        }
-      },
-    },
   ];
 }

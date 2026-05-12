@@ -8,6 +8,7 @@
 
 import type {
   Fixture,
+  ParityResult,
   RunResult,
 } from "./types.js";
 import type {
@@ -17,6 +18,7 @@ import type {
 import type {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions.js";
+import type { AgentOptions } from "../../providers/types.js";
 import type { ServerEvent, ToolDefinition, ToolResult } from "../../types.js";
 import { SecurityLayer } from "../../security.js";
 import { setRegistryOverride } from "../../providers/adapter/registry.js";
@@ -28,6 +30,7 @@ import {
   getReplayIteration,
 } from "./replay-adapter.js";
 import { runAgentTurn } from "../run.js";
+import { runStandardAgent } from "../../providers/run-standard.js";
 
 /**
  * Build stub ToolDefinitions whose `execute` returns the canned result
@@ -196,4 +199,113 @@ function lastAssistantText(messages: ChatCompletionMessageParam[]): string {
 export function _setFixtureMiddlewareOverride(_overrides: LoopMiddleware[]): void {
   // Stub. Will plumb through agent-loop/run.ts when Phase 2 adds per-run
   // middleware overrides as a first-class param.
+}
+
+/**
+ * Run one fixture against the LEGACY loop (runStandardAgent — the
+ * OpenAI-compat path that the inline chat flow currently calls when
+ * LAX_UNIFIED_LOOP is not set). Returns a RunResult with `variant:"legacy"`.
+ *
+ * Uses the same replay adapter as runFixture(); both loops resolve
+ * adapters through requireAdapter() and respect setRegistryOverride().
+ * That's the parity hook the registry was designed for — see the
+ * comment on setRegistryOverride in providers/adapter/registry.ts.
+ */
+export async function runLegacyFixture(fixture: Fixture): Promise<RunResult> {
+  ensureReplayAdapterRegistered();
+  setRegistryOverride(replayAdapter);
+  setReplayResponses(fixture.responses);
+
+  const observed = { events: [] as ServerEvent[] };
+  const { tools, observed: toolObserved } = buildStubTools(fixture);
+  const req = buildRequest(fixture, observed);
+  req.tools = tools;
+
+  const history: ChatCompletionMessageParam[] = (fixture.input.history || []).map(h => {
+    if (h.role === "tool") {
+      return { role: "tool", content: h.content, tool_call_id: h.toolCallId || "" } as ChatCompletionMessageParam;
+    }
+    return { role: h.role, content: h.content } as ChatCompletionMessageParam;
+  });
+
+  // Legacy AgentOptions shape mirrors runAgentTurn's request shape, but
+  // userMessage/history are passed positionally — keep this thin.
+  const options: AgentOptions = {
+    apiKey: req.apiKey,
+    model: req.model,
+    provider: "openai",
+    systemPrompt: req.systemPrompt,
+    tools,
+    security: req.security,
+    maxIterations: req.maxIterations,
+    temperature: req.temperature,
+    onEvent: req.onEvent,
+    sessionId: req.sessionId,
+  };
+
+  const startedAt = Date.now();
+  let turn;
+  let iterations = 0;
+  try {
+    turn = await runStandardAgent(fixture.input.userMessage, history, options);
+  } finally {
+    iterations = getReplayIteration();
+    setRegistryOverride(null);
+    resetReplayState();
+  }
+  const durationMs = Date.now() - startedAt;
+
+  return {
+    variant: "legacy",
+    turn,
+    toolCallsObserved: toolObserved,
+    events: observed.events,
+    durationMs,
+    iterations,
+    assertionFailure: null,
+  };
+}
+
+/**
+ * Run one fixture through BOTH the legacy and unified loops, diff the
+ * outputs, return a ParityResult.
+ *
+ * The diff is intentionally narrow: we compare the stable contract
+ * (stopReason, tool calls invoked, final assistant text) — not every
+ * SSE event, since the two loops emit slightly different telemetry
+ * shapes (timing, progress events) that don't affect chat correctness.
+ * Add more dimensions as real parity gaps surface.
+ */
+export async function runParityFixture(fixture: Fixture): Promise<ParityResult> {
+  const legacy = await runLegacyFixture(fixture);
+  const unified = await runFixture(fixture);
+
+  const diffs: string[] = [];
+
+  if (legacy.turn.stopReason !== unified.turn.stopReason) {
+    diffs.push(`stopReason: legacy="${legacy.turn.stopReason}" unified="${unified.turn.stopReason}"`);
+  }
+
+  if (legacy.toolCallsObserved.length !== unified.toolCallsObserved.length) {
+    diffs.push(`toolCallsCount: legacy=${legacy.toolCallsObserved.length} unified=${unified.toolCallsObserved.length}`);
+  }
+
+  const legacyToolNames = legacy.toolCallsObserved.map(t => t.name).sort();
+  const unifiedToolNames = unified.toolCallsObserved.map(t => t.name).sort();
+  if (legacyToolNames.join("|") !== unifiedToolNames.join("|")) {
+    diffs.push(`toolNames: legacy=[${legacyToolNames.join(",")}] unified=[${unifiedToolNames.join(",")}]`);
+  }
+
+  const legacyText = lastAssistantText(legacy.turn.messages);
+  const unifiedText = lastAssistantText(unified.turn.messages);
+  if (legacyText !== unifiedText) {
+    diffs.push(`assistantText: legacy="${legacyText.slice(0, 120)}" unified="${unifiedText.slice(0, 120)}"`);
+  }
+
+  const pass =
+    diffs.length === 0 &&
+    legacy.assertionFailure === null &&
+    unified.assertionFailure === null;
+
+  return { fixtureName: fixture.name, legacy, unified, diffs, pass };
 }

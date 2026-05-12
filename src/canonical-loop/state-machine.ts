@@ -14,6 +14,8 @@
  */
 import { emit } from "./event-emitter.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
+import { clearMiddlewareStateForOp } from "./middlewares/state.js";
+import { clearEvidenceHistory } from "./middlewares/evidence-history.js";
 import type { Op, OpStatus } from "../workers/types.js";
 import type { CanonicalEvent, CanonicalState } from "./types.js";
 
@@ -88,6 +90,14 @@ export function transitionOp(
   op.status = LEGACY_STATUS[to];
   if (to === "running" && !op.startedAt) op.startedAt = new Date().toISOString();
   if (TERMINAL.has(to) && !op.completedAt) op.completedAt = new Date().toISOString();
+  if (TERMINAL.has(to)) {
+    // Drop per-op middleware state + evidence history on terminal so the
+    // canonical-loop registries don't grow unbounded across the process
+    // lifetime. Safe to call repeatedly (no-op if state was never set for
+    // this op).
+    clearMiddlewareStateForOp(op.id);
+    clearEvidenceHistory(op.id);
+  }
   // Loop-side write — preserve control-API signal columns from disk so a
   // concurrent opPause/opCancel/etc. is not clobbered. `clearLeaseFromOp`
   // (recovery-only) inverts the default lease preservation so the

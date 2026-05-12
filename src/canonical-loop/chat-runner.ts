@@ -46,6 +46,7 @@ import {
   registerToolsForOp,
   unregisterToolsForOp,
 } from "./runtime.js";
+import { enableDefaultMiddlewareStack, getActiveMiddlewareStack } from "./middlewares/host.js";
 import { createAnthropicAdapter } from "./adapters/anthropic.js";
 import { subscribeOpStream, subscribeOpEvents } from "./control-api.js";
 import { appendOpMessage } from "./store.js";
@@ -275,6 +276,14 @@ function seedOpMessages(opId: string, prepared: PreparedAgentRequest, currentMes
  * `done` event with usage. Caller forwards these to SSE/WS.
  */
 export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGenerator<ServerEvent> {
+  // Install the legacy safety stack once per process. The stack is opt-in
+  // by default; chat is the first caller and turns it on. P4.C3-C5 will
+  // wire the same opt-in into cron / sub-agent / voice / worker-pool
+  // entry points as those non-chat callers migrate to canonical.
+  if (getActiveMiddlewareStack().length === 0) {
+    enableDefaultMiddlewareStack();
+  }
+
   // 1. Build the op skeleton. Tools list is recorded on the contextPack so
   //    the adapter sees them via TurnInput.tools (passed by turn-loop from
   //    op state). lane=interactive so soak telemetry classifies it correctly.

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { runAgent, type AgentOptions } from "../agent.js";
+import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import { stripEphemeralMessages } from "../agent-providers.js";
 import { extractAgentOutput } from "../server-utils.js";
 import { SecurityLayer } from "../security.js";
@@ -50,9 +51,11 @@ export function startBackgroundJobs(deps: {
   // Hard ceiling on a single mission run. Without this a hung adapter (network
   // blackhole, stuck CLI subprocess) holds a concurrency slot forever; after
   // 3 such hangs every cron tick gets skipped. 10 min buffers normal research
-  // missions (~1-3 min observed) without letting bad runs leak. On hit the
-  // AbortSignal flips the agent loop to stopReason="abort" — content already
-  // streamed gets salvaged through the same path as transient stream errors.
+  // missions (~1-3 min observed) without letting bad runs leak. Threaded into
+  // canonical's per-op wallClockMs — when it fires, the runner issues opCancel
+  // so the state machine transitions running → cancelling → cancelled cleanly
+  // (stopReason="abort"), and partial content is salvaged through the same
+  // validation gate as transient stream errors.
   const MISSION_HARD_TIMEOUT_MS = Number(process.env.LAX_MISSION_TIMEOUT_MS) || 10 * 60_000;
   const SUB_AGENT_WAIT_MS = Number(process.env.LAX_SUB_AGENT_WAIT_MS) || 5 * 60_000;
   const stripCronPreamble = (p: string): string => {
@@ -107,17 +110,30 @@ Use the read-only research tools (web_search, browser, http_request, web_fetch, 
     const wrappedPrompt = `<scheduled_task>\n${cleanedPrompt}\n</scheduled_task>`;
     // no recursive scheduling, no file writes — agent's returned text IS the report
     const cronTools = prepared.tools.filter(t => !t.name.startsWith("mission_schedule_") && t.name !== "write" && t.name !== "edit");
-    const abortController = new AbortController();
-    const timeoutHandle = setTimeout(() => {
-      logger.error(`[cron] Job ${jobId}: hard timeout ${MISSION_HARD_TIMEOUT_MS}ms reached — aborting agent loop`);
-      abortController.abort();
-    }, MISSION_HARD_TIMEOUT_MS);
-    cronService.registerRunAbort(jobId, abortController);
+    // External cancel hook: cron API "stop this running mission" endpoint
+    // calls .abort() on the registered controller. The runner wires the
+    // signal into opCancel — no caller-side timer; the wall-clock ceiling
+    // is threaded into canonical via wallClockMs below.
+    const externalCancelController = new AbortController();
+    cronService.registerRunAbort(jobId, externalCancelController);
     let result;
     try {
-      result = await runAgent(wrappedPrompt, [], { apiKey: prepared.apiKey, model: cronModel, provider: prepared.provider as AgentOptions["provider"], systemPrompt: cronSystemPrompt, tools: cronTools, security: cronSecurity, toolPolicy, sessionId, maxIterations: config.maxIterations, signal: abortController.signal });
+      result = await runAgentViaCanonical(wrappedPrompt, [], {
+        apiKey: prepared.apiKey,
+        model: cronModel,
+        provider: prepared.provider as AgentOptions["provider"],
+        systemPrompt: cronSystemPrompt,
+        tools: cronTools,
+        security: cronSecurity,
+        toolPolicy,
+        sessionId,
+        maxIterations: config.maxIterations,
+        signal: externalCancelController.signal,
+        wallClockMs: MISSION_HARD_TIMEOUT_MS,
+        opType: "scheduled_mission",
+        lane: "background",
+      });
     } finally {
-      clearTimeout(timeoutHandle);
       cronService.unregisterRunAbort(jobId);
     }
     const session = getOrCreateSession(sessionId);
@@ -346,19 +362,21 @@ Rules:
       const batches = transcripts.length > 0 ? buildDreamBatches(transcripts) : [];
 
       if (batches.length === 0) {
-        const result = await runAgent(buildDreamPrompt(), [], {
+        const result = await runAgentViaCanonical(buildDreamPrompt(), [], {
           apiKey, model: dreamModel, provider: provider as AgentOptions["provider"],
           systemPrompt: sysPrompt, tools: dreamTools, security, toolPolicy,
           sessionId: dreamSession.id, maxIterations: 10, temperature: 0.3,
+          opType: "memory_consolidation", lane: "background",
         });
         dreamSession.messages.push(...result.messages.filter(m => m.role !== "system"));
       } else {
         for (let i = 0; i < batches.length; i++) {
           const prompt = buildDreamPromptForBatch(batches[i], i, batches.length);
-          const result = await runAgent(prompt, [], {
+          const result = await runAgentViaCanonical(prompt, [], {
             apiKey, model: dreamModel, provider: provider as AgentOptions["provider"],
             systemPrompt: sysPrompt, tools: dreamTools, security, toolPolicy,
             sessionId: `${dreamSession.id}-b${i}`, maxIterations: 15, temperature: 0.3,
+            opType: "memory_consolidation", lane: "background",
           });
           dreamSession.messages.push(...result.messages.filter(m => m.role !== "system"));
         }

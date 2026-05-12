@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { runAgent, type AgentOptions } from "../agent.js";
+import { type AgentOptions } from "../agent.js";
+import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import { extractAgentOutput, safeErrorMessage } from "../server-utils.js";
 import { enqueue } from "../execution-lanes.js";
 import { EventBus } from "../event-bus.js";
@@ -21,7 +22,6 @@ interface AgentSpawnEvent { agentId: string; name: string; role: string; task: s
 interface AgentOutputEvent { agentId: string; output: string }
 interface AgentBlockedEvent { agentId: string; reason: string; role: string }
 interface AgentResultEvent { agentId: string; result: string; success: boolean; tokens?: number }
-interface AgentUserInputEvent { agentId: string; message: string }
 interface AgentRedirectEvent { agentId: string; [key: string]: unknown }
 
 export function registerHandlerEvents(deps: {
@@ -122,14 +122,20 @@ export function registerHandlerEvents(deps: {
         `- Login safety: if Sign In doesn't advance on FIRST try, pause — don't retry (lockouts). Never read or output password field values.\n` +
         `- Forms: emit multiple fill calls in one turn, then snapshot once. Don't re-observe between independent field fills.\n` +
         (requiresWorktree ? `- Save results to workspace/ as you go. For large files use python -c one-liners, not read.\n` : `- Save exports/screenshots/notes to workspace/. Don't edit repo source.\n`);
-      const ac = new AbortController(); const to = setTimeout(() => { ac.abort(); logger.warn(`[handler] Agent ${agentId} timed out`); }, config.agentTimeoutMs);
-      const agentResult = await enqueue("agent", () => runAgent(task, agentSession.messages, {
+      // Wall-clock ceiling threaded into canonical via wallClockMs — the
+      // runner issues opCancel on expiry so the state machine transitions
+      // running → cancelling → cancelled cleanly. Replaces the caller-side
+      // setTimeout + AbortController pair the legacy path used (which
+      // aborted via signal — out-of-band from the loop).
+      const agentResult = await enqueue("agent", () => runAgentViaCanonical(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + worktreeBlock,
-        tools: spawnedTools, security, toolPolicy, sessionId: `agent-${agentId}`, maxIterations: config.maxIterations, temperature: config.temperature, signal: ac.signal,
-        pauseCallback: async (reason: string) => { eventBus.emit("handler:agent-output", { agentId, output: `[BLOCKER] ${reason}` }); eventBus.emit("handler:agent-blocked", { agentId, reason, role }); return new Promise<string>(r => { const h = (d: unknown) => { const evt = d as AgentUserInputEvent; if (evt.agentId === agentId) { eventBus.off("handler:agent-user-input", h); r(evt.message); } }; eventBus.on("handler:agent-user-input", h); setTimeout(() => { eventBus.off("handler:agent-user-input", h); r("User did not respond."); }, config.agentTimeoutMs); }); },
+        tools: spawnedTools, security, toolPolicy, sessionId: `agent-${agentId}`, maxIterations: config.maxIterations, temperature: config.temperature,
+        wallClockMs: config.agentTimeoutMs,
+        opType: "agent_spawn",
+        lane: "background",
         onEvent: (event) => { if (event.type === "stream" && "delta" in event && event.delta) eventBus.emit("handler:agent-output", { agentId, output: event.delta }); if (event.type === "tool_start") { logger.info(`[handler] Agent ${agentId} tool: ${event.toolName}`); eventBus.emit("handler:agent-output", { agentId, output: `[tool] ${event.toolName}...` }); } if (event.type === "tool_progress") { eventBus.emit("handler:agent-output", { agentId, output: `[progress] ${event.message}` }); } if (event.type === "tool_start" && event.requiresApproval) event.requiresApproval = false; },
       }), { label: `agent:${agentId}`, timeout: config.agentTimeoutMs });
-      clearTimeout(to); if (agentResult?.messages) agentSession.messages.push(...agentResult.messages);
+      if (agentResult?.messages) agentSession.messages.push(...agentResult.messages);
 
       let mergeSuccess = true;
       if (worktreeInfo) {

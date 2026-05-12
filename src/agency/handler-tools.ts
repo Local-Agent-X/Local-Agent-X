@@ -97,20 +97,39 @@ export function createHandlerTools(): ToolDefinition[] {
     {
       name: "agent_status",
       description:
-        "Get the status of all active agents, or a specific agent by ID.",
+        "Check the runtime status of a SPAWNED agent run by its run_id " +
+        "(the value agent_spawn returned). Omit run_id to list every " +
+        "currently-running agent run. NOT for checking whether an agent " +
+        "role exists in the catalog (use agent_list for that). NOT for " +
+        "discovering available roles (also agent_list). If you haven't " +
+        "called agent_spawn yet, there's nothing for this tool to report.",
       parameters: {
         type: "object",
         properties: {
-          agent_id: { type: "string", description: "Optional agent ID. Omit to list all." },
+          agent_id: {
+            type: "string",
+            description: "Run id returned by agent_spawn (looks like 'field-agent-...'). NOT a role slug like 'researcher' and NOT a catalog id like 'builtin-researcher'. Omit to list every active run.",
+          },
         },
         required: [],
       },
       async execute(args) {
         try {
           const handler = Handler.getInstance();
-          const result = handler.getAgentStatus(
-            args.agent_id ? String(args.agent_id) : undefined,
-          );
+          const requestedId = args.agent_id ? String(args.agent_id) : undefined;
+          // Catch the most common LLM mistake: passing a role slug or
+          // catalog id where a run id was expected. Both look nothing
+          // like the handler's spawn ids ("field-agent-..."). Loudly
+          // redirect instead of returning a generic "not found."
+          if (requestedId && !requestedId.startsWith("field-agent-") && !requestedId.startsWith("primal-agent-")) {
+            return err(
+              `"${requestedId}" doesn't look like a run id. agent_status takes the run_id ` +
+              `that agent_spawn returned (starts with "field-agent-" or "primal-agent-"). ` +
+              `If you wanted to see what AGENTS are available, call agent_list. ` +
+              `If you haven't spawned anything yet, call agent_spawn first.`,
+            );
+          }
+          const result = handler.getAgentStatus(requestedId);
 
           if (Array.isArray(result)) {
             if (result.length === 0) return ok("No active agents.");

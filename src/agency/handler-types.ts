@@ -26,12 +26,6 @@ export interface FieldAgentStatus {
   tokensUsed: number;
 }
 
-export interface DelegationResult {
-  planId: string;
-  agents: FieldAgentStatus[];
-  tasks: string[];
-}
-
 export interface SpawnConfig {
   name: string;
   role: string;

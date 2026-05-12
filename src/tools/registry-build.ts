@@ -126,28 +126,6 @@ export function buildToolRegistry(): { registry: ToolRegistry; eagerTools: ToolD
     _registry.register(tool, { defer, tags: [], searchHint: tool.description.slice(0, 80) });
   }
 
-  // Skill-bundle discovery (opt-in via env LAX_SKILL_BUNDLES=1, off by
-  // default until at least one real skill migrates from src/tools/ to
-  // src/skills/). The discoverer walks src/skills/ at boot, loads each
-  // bundle's tool.js, and registers them alongside the legacy tools.
-  // Discovery is async — fire-and-forget on import, registered tools
-  // become available on subsequent buildToolRegistry calls.
-  if (process.env.LAX_SKILL_BUNDLES === "1") {
-    void (async () => {
-      try {
-        const { discoverSkills } = await import("../skills/discover.js");
-        const skills = await discoverSkills();
-        for (const s of skills) {
-          if (_registry.get(s.tool.name)) continue;
-          _registry.register(s.tool, { defer: !EAGER_TOOLS.has(s.tool.name), tags: ["skill-bundle"], searchHint: s.description.slice(0, 80) });
-        }
-      } catch (e) {
-        // Discovery failure is non-fatal — legacy tools still register.
-        console.warn(`[registry] skill-bundle discovery failed: ${(e as Error).message}`);
-      }
-    })();
-  }
-
   const eagerTools = _registry.getEagerTools();
   const promptSection = buildToolPromptSection(allTools);
 

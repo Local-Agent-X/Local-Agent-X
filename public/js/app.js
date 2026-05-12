@@ -388,10 +388,19 @@ async function deleteProject(id, e) {
   e.stopPropagation();
   if (!confirm('Delete this project? Chats inside it will be detached but kept.')) return;
   try {
-    await fetch(`${API}/api/projects/${id}`, {
+    const res = await fetch(`${API}/api/projects/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
     });
+    if (!res.ok) {
+      // Without this check the delete looked like it succeeded — the
+      // fetch resolved fine on 404/403/500 — then syncProjectsFromServer
+      // brought the project back from the backend and the user thought
+      // "it keeps coming back." Surface the real failure instead.
+      alert(`Failed to delete project (HTTP ${res.status}). The project is still on the server.`);
+      await syncProjectsFromServer();
+      return;
+    }
     // Detach any chats that were nested under this project. Chats stay
     // in localStorage; deleting a server project doesn't delete chats.
     chats.forEach(c => { if (c.projectId === id) delete c.projectId; });

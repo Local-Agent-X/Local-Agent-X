@@ -3,8 +3,8 @@
  *
  * From the design memo's "Internal loop" section. For each chunk:
  *
- *   prompt   = buildChunkPrompt(chunk, sharpenedContext, retryReason?)
- *   result   = spawnClaudeChunkSubprocess(prompt, cwd: project_dir)
+ *   task     = buildChunkTask(chunk, sharpenedContext, retryReason?)
+ *   result   = runChunkAgent({ role, task, … })   // canonical agent path
  *   specDiff = git diff <pre-sha> -- spec/
  *   review   = runChunkReview(chunk, plan, result.stdout, specDiff)
  *
@@ -22,8 +22,8 @@
  */
 
 import type { ParsedPlan, ParsedChunk } from "./plan-parser.js";
-import { buildChunkPrompt } from "./skill-mapper.js";
-import { spawnClaudeChunkSubprocess } from "./subprocess.js";
+import { buildChunkTask, chunkAgentRole } from "./skill-mapper.js";
+import { runChunkAgent } from "./agents/chunk-runner.js";
 import { runChunkReviewWithJudgment, type ChunkReviewOutcome, type ReviewAction } from "./chunk-review/index.js";
 import type { JudgmentHook } from "./chunk-review/judgment-hook.js";
 import { getHeadSha, gitDiffPath } from "./git-helpers.js";
@@ -70,6 +70,9 @@ export interface LoopOptions {
   onEvent?: (event: LoopEvent) => void;
   /** Optional override for subprocess timeout per chunk. */
   subprocessTimeoutMs?: number;
+  /** Chat session that owns this orchestration — propagated to chunk-worker
+   *  agents so the UI can thread their activity back to the right chat. */
+  parentSessionId?: string;
   /**
    * Optional LLM judgment hook. When set, fires after the mechanical
    * gates return "proceed" to catch chunk-12-style implicit-spec
@@ -139,6 +142,7 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
       emit,
       retryReason: undefined,
       judgmentHook: opts.judgmentHook,
+      parentSessionId: opts.parentSessionId,
     });
 
     let finalOutcome = outcome;
@@ -325,35 +329,38 @@ interface RunChunkOnceOptions {
   emit: (e: Omit<LoopEvent, "elapsedMs">) => void;
   retryReason?: string;
   judgmentHook?: JudgmentHook;
+  parentSessionId?: string;
 }
 
 async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkReviewOutcome> {
-  const prompt = buildChunkPrompt({
+  const task = buildChunkTask({
     chunk: opts.chunk,
     totalChunks: opts.totalChunks,
     planPath: opts.planPath,
     retryReason: opts.retryReason,
   });
+  const role = chunkAgentRole(opts.chunk.klass);
 
   opts.emit({
     type: "subprocess-spawned",
     chunkNumber: opts.chunk.number,
     totalChunks: opts.totalChunks,
-    message: `Spawned Claude Code subprocess (skill: /${opts.chunk.klass === "leaf" ? "vibe-code" : "senior-engineer"})${opts.retryReason ? " — retry" : ""}`,
+    message: `Invoked agent ${role}${opts.retryReason ? " — retry" : ""}`,
   });
 
-  const subResult = await spawnClaudeChunkSubprocess({
-    cwd: opts.projectDir,
-    prompt,
+  const subResult = await runChunkAgent({
+    role,
+    task,
     timeoutMs: opts.subprocessTimeoutMs,
     signal: opts.signal,
+    parentSessionId: opts.parentSessionId,
   });
 
   opts.emit({
     type: "subprocess-returned",
     chunkNumber: opts.chunk.number,
     totalChunks: opts.totalChunks,
-    message: `Subprocess returned (exit=${subResult.exitCode ?? "killed"}, ${subResult.durationMs}ms, ${subResult.stdout.length} chars)`,
+    message: `Agent returned (exit=${subResult.exitCode}, ${subResult.durationMs}ms, ${subResult.stdout.length} chars)`,
   });
 
   // Capture spec/ diff since chunk start. The agent SHOULDN'T have

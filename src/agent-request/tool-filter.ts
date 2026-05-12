@@ -19,10 +19,13 @@ export const CORE_TOOL_NAMES = new Set([
   "memory_consolidate", "memory_ingest",
   // Operations — long-horizon goal orchestration
   "operation_start", "operation_list", "operation_status", "operation_next", "operation_advance",
-  // Worker pool — delegate heavy work to isolated subprocess (chat stays responsive)
-  // op_submit_async is the PRIMARY verb (non-blocking); op_wait is the explicit
-  // blocker; op_submit is sugar (= async + immediate wait) for short ops only.
-  "op_submit", "op_submit_async", "op_wait", "op_status", "op_kill", "op_redirect",
+  // Worker-pool observation tools — kept so the supervisor can monitor
+  // and cancel ops spawned by autopilot, scheduled tasks, or other
+  // internal callers. The submission tools (op_submit / op_submit_async /
+  // op_wait) are intentionally NOT exposed: per docs/canonical-agent-design.md
+  // Q1, delegation goes through agent_spawn (canonical layer). Internal
+  // code paths that need worker-pool dispatch can call submitOp directly.
+  "op_status", "op_kill", "op_redirect",
   // Autopilot — bounded autonomous work in isolated worktree
   "autopilot_start", "autopilot_stop", "autopilot_status",
   // Self-edit (sandboxed code repair via subprocess)
@@ -34,12 +37,13 @@ export const CORE_TOOL_NAMES = new Set([
   "protocol_list", "protocol_get",
   "mission_schedule_create", "mission_schedule_list", "mission_schedule_update",
   "mission_schedule_delete", "mission_schedule_toggle",
-  // Agents — agent_spawn / delegate / agent_message are deliberately
-  // EXCLUDED from the supervisor's tool surface. They were the old "spawn
-  // a sub-agent" path; supervisor now uses op_submit_async (worker pool)
-  // for ALL delegation. Keeping the read-only/control tools so the
-  // supervisor can still observe + cancel sub-agents that were spawned
-  // by other code paths (autopilot, mission jobs, etc).
+  // Agents — canonical delegation surface. agent_spawn is the ONE way
+  // the supervisor delegates work to a specialist; agent_list discovers
+  // the catalog before spawning; agent_create extends it when no role
+  // fits. agent_status / agent_cancel / agent_output observe and control
+  // running spawns. Anything matching a named role (or the generic
+  // "worker") goes through this path — never op_submit_async.
+  "agent_list", "agent_spawn", "agent_create",
   "agent_status", "agent_cancel", "agent_output",
   // Browser
   "browser",
@@ -96,9 +100,11 @@ const BUILD_INTENT_TOOLS = new Set([
   // self_edit lets Primal route around protected-files for src/ edits inside a
   // sandboxed worktree with build/server-bind/agent-smoke gates before merge.
   "self_edit",
-  // Worker pool — so build-intent messages can still delegate long-running
-  // research/build work without falling back to plain blocking calls.
-  "op_submit_async", "op_status", "op_kill",
+  // Canonical delegation surface — build-intent messages can still
+  // delegate long-running research/build work to a named specialist
+  // (e.g. a coder agent) without falling back to blocking calls.
+  "agent_list", "agent_spawn", "agent_create",
+  "agent_status", "agent_kill",
 ]);
 const BUILD_INTENT_REGEX = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script)/i;
 

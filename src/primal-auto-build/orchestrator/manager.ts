@@ -134,6 +134,7 @@ async function runOrchestrationLoop(orch: ActiveOrchestration, opts: StartOrches
       signal: orch.abortController.signal,
       judgmentHook: opts.judgmentHook,
       subprocessTimeoutMs: opts.subprocessTimeoutMs,
+      parentSessionId: opts.sessionId,
       onEvent: (event) => onLoopEvent(orch, event),
     });
 

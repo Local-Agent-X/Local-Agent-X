@@ -42,7 +42,7 @@ import {
 } from "./runtime.js";
 import { enableDefaultMiddlewareStack, getActiveMiddlewareStack } from "./middlewares/host.js";
 import { createAnthropicAdapter } from "./adapters/anthropic.js";
-import { opCancel, subscribeOpEvents } from "./control-api.js";
+import { opCancel, subscribeOpEvents, subscribeOpStream } from "./control-api.js";
 import { appendOpMessage, readOpMessages } from "./store.js";
 import { makeChatToolDispatcher } from "./chat-tool-dispatcher.js";
 import { opMessageRowToChatParam } from "./chat-runner.js";
@@ -156,6 +156,26 @@ export async function runAgentViaCanonical(
     }
   });
 
+  // Adapter-emitted text deltas live on a separate bus channel (chat-runner
+  // drains them with subscribeOpStream and yields `{ type: "stream", delta }`
+  // SSE events). Tool start/end/progress events already reach options.onEvent
+  // through the chat-tool-dispatcher → executeToolCalls bridge, but stream
+  // chunks have no equivalent path on this runner. Without this bridge the
+  // sub-agent's live text doesn't reach handler:agent-output and the AGENTS
+  // sidebar sits silent during a spawned agent's reply (P4.C4 finding).
+  const offStream = options.onEvent
+    ? subscribeOpStream(op.id, (chunk) => {
+        const c = chunk as { delta?: string; replace?: boolean; text?: string } | null;
+        if (c?.replace === true) {
+          options.onEvent!({ type: "stream", replace: true, text: c.text ?? "" });
+          return;
+        }
+        const delta = c?.delta;
+        if (typeof delta !== "string" || delta.length === 0) return;
+        options.onEvent!({ type: "stream", delta });
+      })
+    : () => {};
+
   // Wall-clock-ceiling timer: kicks opCancel after wallClockMs. Routes
   // through canonical's signal path so the op transitions running →
   // cancelling → cancelled. No outside-the-loop AbortController.
@@ -200,6 +220,7 @@ export async function runAgentViaCanonical(
     clearTimeout(wallClockTimer);
     if (options.signal) options.signal.removeEventListener("abort", onSignalAbort);
     offEvents();
+    offStream();
     unregisterToolDispatcherForOp(op.id);
     unregisterToolsForOp(op.id);
   }

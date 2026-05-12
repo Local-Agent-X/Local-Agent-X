@@ -6,10 +6,10 @@
  * alive across multiple ops (warm worker), exits when parent closes stdin
  * or sends a kill.
  *
- * Step 1 scope: handles ONE op at a time, runs it via runAgent (the same
- * provider abstraction main agent uses), streams events back. Doesn't yet
- * implement: heartbeats (Step 3), pause/redirect cooperative semantics
- * (Step 7), DAG dep resolution (Step 5).
+ * Step 1 scope: handles ONE op at a time, runs it via canonical-loop
+ * (runAgentViaCanonical — same safety stack as chat turns), streams
+ * events back. Doesn't yet implement: heartbeats (Step 3), pause/redirect
+ * cooperative semantics (Step 7), DAG dep resolution (Step 5).
  *
  * Lifecycle:
  *   spawn -> emit 'ready' -> idle -> assign-op -> running -> emit 'result'
@@ -153,14 +153,24 @@ async function handleAssignOp(op: Op): Promise<void> {
 }
 
 /**
- * Execute one op end-to-end. Routes through runAgent like a normal chat
- * turn, but with the context pack pre-baked into the system prompt and
- * the user message. Streams agent output as events. Returns the final
- * OpResult.
+ * Execute one op end-to-end. Routes through canonical-loop's
+ * runAgentViaCanonical so the inner agent turn shares the same safety
+ * stack and observability as chat — the context pack is pre-baked into
+ * the system prompt and the user message. Streams agent output as
+ * worker events. Returns the final OpResult.
+ *
+ * Note on subprocess context: this file is the entry point for the
+ * worker subprocess (spawn'd by pool.ts). canonical-loop initialises
+ * fresh inside the subprocess — its bus, scheduler, and middleware
+ * stack are per-process singletons. The outer Op id (from assign-op)
+ * is the parent-facing identity; runAgentViaCanonical mints a separate
+ * inner op id for its own execution scaffold (queued → running →
+ * terminal). Both write to ~/.lax/operations/<opId> on disk but only
+ * the parent reads the outer op's directory.
  */
 async function executeOp(op: Op, signal: AbortSignal): Promise<OpResult> {
   const startMs = Date.now();
-  const { runAgent } = await import("../agent.js");
+  const { runAgentViaCanonical } = await import("../canonical-loop/agent-runner.js");
   const { resolveProvider } = await import("../agent-request.js");
   const { SecurityLayer } = await import("../security.js");
   const { getRuntimeConfig } = await import("../config.js");
@@ -217,7 +227,7 @@ async function executeOp(op: Op, signal: AbortSignal): Promise<OpResult> {
 
   emit({ opId: op.id, type: "phase", ts: new Date().toISOString(), payload: { phase: "running-agent", provider: resolved.provider, model: resolved.model } });
 
-  const result = await runAgent(userMessage, op.contextPack.context.recentTurns, {
+  const result = await runAgentViaCanonical(userMessage, op.contextPack.context.recentTurns, {
     apiKey: resolved.apiKey,
     model: resolved.model,
     provider: resolved.provider as "anthropic" | "codex" | "openai" | "xai" | "gemini" | "local" | "custom",
@@ -227,6 +237,8 @@ async function executeOp(op: Op, signal: AbortSignal): Promise<OpResult> {
     sessionId: `worker-${op.id}`,
     maxIterations: op.contextPack.budget.maxIterations,
     signal,
+    opType: "worker_op",
+    lane: "background",
     onEvent: (event) => {
       // Forward the agent's stream/tool/done events as worker op events
       try {

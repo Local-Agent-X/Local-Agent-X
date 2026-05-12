@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { runAgent, type AgentOptions } from "../agent.js";
+import { type AgentOptions } from "../agent.js";
 import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import { stripEphemeralMessages } from "../agent-providers.js";
 import { extractAgentOutput } from "../server-utils.js";
@@ -246,12 +246,14 @@ Rules:
       const session = getOrCreateSession(sessionId);
       const hasExistingApp = existsSync(join(workerSession.workingDir, "index.html"));
       const history = hasExistingApp ? session.messages.slice(-10) : [];
-      const result = await runAgent(message, history, {
+      const result = await runAgentViaCanonical(message, history, {
         apiKey, model,
         provider: provider as AgentOptions["provider"],
         systemPrompt: workerPrompt, tools: workerTools,
         security, toolPolicy, sessionId,
         maxIterations: 15,
+        opType: "app_builder",
+        lane: "background",
       });
       session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system");
       session.updatedAt = Date.now(); saveSession(session);

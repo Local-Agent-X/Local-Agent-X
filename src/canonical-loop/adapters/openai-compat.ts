@@ -32,6 +32,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { ProviderRequest } from "../../providers/adapter/types.js";
 import { _localNoToolModels } from "../../providers/types.js";
 import { createLogger } from "../../logger.js";
+import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
 
 const logger = createLogger("canonical-loop.adapters.openai-compat");
 
@@ -89,6 +90,28 @@ export class OpenAICompatAdapter implements Adapter {
 
     this.inflight = this.streamOnce(req, report);
     let result = await this.inflight;
+
+    // Tool-call-in-text fallback. Some models (qwen3-next, gpt-oss, llama
+    // variants on Ollama) sporadically emit tool calls as raw JSON inside
+    // `content` instead of populating the structured tool_calls field.
+    // Detect and rewrite. Fires ONLY when tool_calls is empty AND the text
+    // matches a known pattern — no-op for Claude/GPT-5/healthy providers.
+    // Live failure 2026-05-12: qwen3-next:80b on Ollama Turbo emitted
+    // `{"action":"click","ref":49}` and `{"name":"browser","arguments":{...}}`
+    // as plain text mid-conversation, leaking tool calls to the chat UI
+    // and stalling the agent because no click dispatched.
+    if (result.pendingToolCalls.length === 0 && result.assembledText.length > 0) {
+      const validNames = new Set(req.tools.map(t => t.name));
+      const extracted = extractToolCallsFromText(result.assembledText, validNames);
+      if (extracted.toolCalls.length > 0) {
+        logger.info(`${model} emitted ${extracted.toolCalls.length} tool call(s) as text — extracted`);
+        for (const tc of extracted.toolCalls) {
+          result.pendingToolCalls.push(tc);
+          report({ kind: "tool_call_requested", call: { toolCallId: tc.id, tool: tc.name, args: parseArgs(tc.arguments) } });
+        }
+        result.assembledText = extracted.remainingText;
+      }
+    }
 
     // Empty-response retry. Some models (qwen2:7b is the canonical
     // offender) accept the `tools` field, run for several seconds, then

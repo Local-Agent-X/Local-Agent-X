@@ -37,6 +37,13 @@ async function loadSyncConfig() {
     if (d.autoDownload) { const el = document.getElementById('tog-sync-autodownload'); if (el) el.classList.add('on'); }
     if (d.syncSessions) { const el = document.getElementById('tog-sync-sessions'); if (el) el.classList.add('on'); }
     if (d.syncWorkspace) { const el = document.getElementById('tog-sync-workspace'); if (el) el.classList.add('on'); }
+    // syncMissions / syncProtocols default to true server-side. Reflect that
+    // in the UI when the API returns the value as truthy OR undefined (older
+    // servers that don't return these fields).
+    const missionsOn = d.syncMissions !== false;
+    const protocolsOn = d.syncProtocols !== false;
+    if (missionsOn) { const el = document.getElementById('tog-sync-missions'); if (el) el.classList.add('on'); }
+    if (protocolsOn) { const el = document.getElementById('tog-sync-protocols'); if (el) el.classList.add('on'); }
   } catch {}
 }
 
@@ -48,6 +55,8 @@ async function saveSyncConfig() {
   const autoDownload = document.getElementById('tog-sync-autodownload')?.classList.contains('on');
   const syncSessions = document.getElementById('tog-sync-sessions')?.classList.contains('on');
   const syncWorkspace = document.getElementById('tog-sync-workspace')?.classList.contains('on');
+  const syncMissions = document.getElementById('tog-sync-missions')?.classList.contains('on');
+  const syncProtocols = document.getElementById('tog-sync-protocols')?.classList.contains('on');
 
   // Save token to secrets vault if provided
   if (token) {
@@ -55,7 +64,7 @@ async function saveSyncConfig() {
     document.getElementById('cfg-sync-token').value = ''; // Clear from UI
   }
 
-  await apiPost('/api/sync/configure', { enabled, repoUrl: repo, interval, autoDownload, syncSessions, syncWorkspace });
+  await apiPost('/api/sync/configure', { enabled, repoUrl: repo, interval, autoDownload, syncSessions, syncWorkspace, syncMissions, syncProtocols });
   checkSyncStatus();
 }
 

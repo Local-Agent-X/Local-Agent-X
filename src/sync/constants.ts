@@ -8,13 +8,47 @@ export interface SyncConfig {
   syncSessions: boolean;
   syncWorkspace: boolean;
   syncCronJobs: boolean;
+  /** When true (default), sync the mission catalog + schedules across machines.
+   *  Files: custom-missions.json, mission-schedules.json. */
+  syncMissions: boolean;
+  /** When true (default), sync user-imported protocol packs + custom typed
+   *  protocols across machines. Files: custom-protocols.json + the
+   *  ~/.lax/protocols/imported/ tree. */
+  syncProtocols: boolean;
   autoDownload: boolean;
 }
 
 export const DEFAULT_CONFIG: SyncConfig = {
   enabled: false, repoUrl: "", tokenSecretName: "GITHUB_SYNC_TOKEN",
-  interval: "after_chat", syncSessions: true, syncWorkspace: false, syncCronJobs: false, autoDownload: true,
+  interval: "after_chat", syncSessions: true, syncWorkspace: false, syncCronJobs: false,
+  syncMissions: true, syncProtocols: true, autoDownload: true,
 };
+
+/**
+ * BRAIN_JSON_FILES entries governed by the syncMissions toggle. Push/pull
+ * skip these files when syncMissions is false. Listed by exact filename
+ * so a renamed file forces an explicit decision rather than silently
+ * carrying old behavior.
+ */
+export const MISSION_FILES: ReadonlySet<string> = new Set([
+  "custom-missions.json",
+  "mission-schedules.json",
+]);
+
+/**
+ * BRAIN_JSON_FILES entries governed by the syncProtocols toggle. The
+ * `~/.lax/protocols/` tree (imported packs) is also gated by this toggle
+ * on the dir-mirror side. Bundled protocols live in `protocols/bundled/`
+ * inside the LAX repo and are shipped via git, not user sync — those
+ * are NOT gated by syncProtocols.
+ */
+export const PROTOCOL_FILES: ReadonlySet<string> = new Set([
+  "custom-protocols.json",
+]);
+
+export const PROTOCOL_DIRS: ReadonlySet<string> = new Set([
+  "protocols",
+]);
 
 export const SYNC_EXTENSIONS = new Set([
   ".html", ".css", ".js", ".ts", ".tsx", ".jsx", ".json", ".jsonl", ".md", ".txt",
@@ -78,6 +112,7 @@ export const BRAIN_DIRS: readonly string[] = [
   "agent-runs",
   "dashboards",
   "skills",
+  "protocols",
 ] as const;
 
 // `memory.db` is intentionally NOT in this list. The SQLite memory

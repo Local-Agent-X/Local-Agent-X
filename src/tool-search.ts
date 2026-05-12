@@ -50,7 +50,8 @@ export class ToolRegistry {
   }
 
   search(query: string, maxResults = 5): ToolDefinition[] {
-    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const queryLower = query.toLowerCase().trim();
+    const words = queryLower.split(/\s+/).filter(Boolean);
     if (words.length === 0) return [];
 
     const scored: { tool: ToolDefinition; score: number }[] = [];
@@ -62,9 +63,16 @@ export class ToolRegistry {
       const tagsLower = entry.tags.map((t) => t.toLowerCase());
       const hintLower = entry.searchHint.toLowerCase();
 
+      // Exact name match dominates. Without this, a query like
+      // "primal_run_build_plan exact call" lost to memory_recall because
+      // "recall" contains "call" — substring matches were stacking up
+      // higher than a direct name hit on the target tool.
+      if (queryLower === nameLower) score += 100;
       for (const word of words) {
-        if (nameLower.includes(word)) score += 3;
-        if (tagsLower.some((t) => t.includes(word))) score += 2;
+        if (word === nameLower) score += 50;     // exact-word == full tool name
+        else if (nameLower.includes(word)) score += 3;
+        if (tagsLower.some((t) => t === word)) score += 5;
+        else if (tagsLower.some((t) => t.includes(word))) score += 2;
         if (hintLower.includes(word)) score += 2;
         if (descLower.includes(word)) score += 1;
       }

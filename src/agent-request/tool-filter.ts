@@ -43,6 +43,14 @@ export const CORE_TOOL_NAMES = new Set([
   // fits. agent_status / agent_cancel / agent_output observe and control
   // running spawns. Anything matching a named role (or the generic
   // "worker") goes through this path — never op_submit_async.
+  //
+  // 🔄 REVERSE UNO — this line is the lever. For five layers of
+  // canonical-agent work we built the tool surface, taught the prompt
+  // to use it, wrote the tests — and Primal still routed through
+  // op_submit_async because THIS gate was stripping agent_spawn out of
+  // the request payload. Flipping the include/exclude here is what
+  // finally made the canonical path load-bearing. The actual fix was
+  // one file. (Alex's call, 2026-05-11.)
   "agent_list", "agent_spawn", "agent_create",
   "agent_status", "agent_cancel", "agent_output",
   // Browser

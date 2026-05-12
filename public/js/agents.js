@@ -138,17 +138,15 @@ async function loadTeam() {
   if (!list) return;
   list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:.78rem">Loading team...</div>';
   try {
-    const r = await fetch(`${API}/api/agents/hired`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    // Project-scoped fetch gets the response merged with roster
+    // metadata (heartbeat / reportsTo); without a project we get the
+    // template-only shape (no per-agent heartbeat to render).
+    const url = _currentProject
+      ? `${API}/api/agents/hired?projectId=${encodeURIComponent(_currentProject)}`
+      : `${API}/api/agents/hired`;
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     let agents = await r.json();
-    // Filter by selected project
-    if (_currentProject && Array.isArray(agents)) {
-      const pr = await fetch(`${API}/api/projects/${_currentProject}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-      const proj = await pr.json();
-      if (proj && Array.isArray(proj.agentIds)) {
-        const orgSet = new Set(proj.agentIds);
-        agents = agents.filter(a => orgSet.has(a.id));
-      }
-    }
+    if (!Array.isArray(agents)) agents = [];
     if (!Array.isArray(agents) || agents.length === 0) {
       list.innerHTML = `<div style="text-align:center;padding:30px;color:var(--muted)">
         <div style="font-size:2rem;margin-bottom:8px">&#129302;</div>
@@ -223,9 +221,16 @@ async function showHiredAgent(id) {
 }
 
 async function fireAgent(id) {
-  if (!confirm('Fire this agent? Their heartbeat will stop.')) return;
+  if (!_currentProject) {
+    alert('Select a project first — fire is always a Project action.');
+    return;
+  }
+  if (!confirm('Fire this agent from the current project? Their heartbeat will stop.')) return;
   try {
-    await fetch(`${API}/api/agents/templates/${id}/fire`, { method: 'POST', headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    await fetch(`${API}/api/agents/templates/${id}/fire`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ projectId: _currentProject })
+    });
     loadTeam();
     closeAgentDetail();
   } catch {}
@@ -397,12 +402,16 @@ let _orgDragId = null;
 async function loadOrgChart() {
   const container = document.getElementById('orgchart-container');
   if (!container) return;
+  if (!_currentProject) {
+    container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:1.5rem;margin-bottom:8px">&#127760;</div><div style="font-size:.85rem">Select a project to see its org chart</div><div style="font-size:.7rem;margin-top:8px;max-width:320px;margin-left:auto;margin-right:auto;line-height:1.4">Org hierarchy (reportsTo) is per-project — same agent can have different managers in different projects.</div></div>';
+    return;
+  }
   container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div>';
   try {
-    const r = await fetch(`${API}/api/agents/hired`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const r = await fetch(`${API}/api/agents/hired?projectId=${encodeURIComponent(_currentProject)}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     _orgAgents = await r.json();
     if (!Array.isArray(_orgAgents) || _orgAgents.length === 0) {
-      container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:2rem;margin-bottom:8px">&#129302;</div><div>No agents hired. Go to Templates to hire your team.</div></div>';
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted)"><div style="font-size:2rem;margin-bottom:8px">&#129302;</div><div>No agents on this project. Hire from Templates.</div></div>';
       return;
     }
     renderOrgChart(container);
@@ -503,16 +512,21 @@ function orgDrop(e) {
 }
 
 async function updateAgentHierarchy(agentId, reportsTo) {
-  // Show immediate feedback
+  // reportsTo is project-scoped post-L3 — it lives on the project's
+  // roster entry, not the template. Org chart hierarchy can only be
+  // edited within a project context.
+  if (!_currentProject) {
+    alert('Select a project first — org hierarchy is project-scoped.');
+    return;
+  }
   var container = document.getElementById('orgchart-container');
   if (container) container.style.opacity = '0.5';
   try {
-    await fetch(API + '/api/agents/templates/' + agentId, {
-      method: 'PUT',
+    await fetch(API + '/api/projects/' + _currentProject + '/rosters/' + agentId, {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + AUTH_TOKEN },
       body: JSON.stringify({ reportsTo: reportsTo || '' })
     });
-    // Reload the chart with fresh data
     await loadOrgChart();
   } catch (err) {
     console.error('Failed to update hierarchy:', err);
@@ -685,13 +699,17 @@ async function saveTemplate(existingId) {
 }
 
 async function hireAgent(id) {
+  if (!_currentProject) {
+    alert('Select a project first — hire is always a Project action.');
+    return;
+  }
   const schedule = prompt('Heartbeat schedule (e.g. "every 4h", "daily 9am", or leave empty for no heartbeat):');
   try {
     await fetch(`${API}/api/agents/templates/${id}/hire`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ heartbeatSchedule: schedule || undefined })
+      body: JSON.stringify({ projectId: _currentProject, heartbeatSchedule: schedule || undefined })
     });
-    alert('Agent hired!');
+    alert('Agent hired into project!');
     loadTeam();
     loadAgentTemplates();
     cancelTemplateForm();

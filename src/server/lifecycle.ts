@@ -2,7 +2,8 @@ import { createServer, type Server } from "node:http";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { runAgent, type AgentOptions } from "../agent.js";
+import type { AgentOptions } from "../agent.js";
+import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import { setupChatWebSocket } from "../chat-ws.js";
 import { runSecurityAudit, printAuditReport } from "../security-audit.js";
 import { startAriKernel } from "../ari-kernel.js";
@@ -200,9 +201,21 @@ export async function setupVoiceWs(deps: {
       // signal triggers if the user barges in or stops mid-reply; without
       // catching it here, voice-session's catch swallows the whole turn
       // and the model has no record of what it just said.
+      // Canonical-loop path (P4.C5): voice turn now shares chat's safety
+      // stack + cancel machinery. tools=[] (or [voice_visual]) + maxIter=1-2
+      // means the iteration-loop middlewares short-circuit; observable agent
+      // behavior matches the legacy 1-shot voice path.
+      //
+      // Barge-in: the existing AbortController signal flows in as
+      // options.signal. agent-runner wires it to opCancel — canonical
+      // transitions running → cancelling → cancelled cleanly and the
+      // returned AgentTurn carries stopReason="abort" instead of throwing.
+      // The aborted flag below reads stopReason OR signal.aborted so we
+      // build the same "[interrupted by user]" history marker the legacy
+      // throw-and-catch path produced.
       let aborted = false;
       try {
-        await runAgent(text, prepared.cleanHistory, {
+        const result = await runAgentViaCanonical(text, prepared.cleanHistory, {
           apiKey: prepared.apiKey,
           model: prepared.model,
           provider: prepared.provider as AgentOptions["provider"],
@@ -218,7 +231,10 @@ export async function setupVoiceWs(deps: {
           temperature: prepared.temperature,
           signal,
           onEvent,
+          opType: "voice_turn",
+          lane: "interactive",
         });
+        if (signal.aborted || result.stopReason === "abort") aborted = true;
       } catch (e) {
         if (signal.aborted) {
           aborted = true;

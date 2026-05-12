@@ -57,8 +57,26 @@ export function createAgentTools(): ToolDefinition[] {
             ? `No agents on the roster for project ${scope.projectId}. Use agent_create to add one, or hire from the global catalog via the Agents page.`
             : `Catalog is empty.`);
         }
-        const lines = defs.map((d) => `${d.icon || "•"} ${d.name} (role: ${d.role}, id: ${d.id}) — ${d.description}`);
-        return ok(`${defs.length} agent(s) available:\n\n${lines.join("\n")}`);
+        // Display order: managers first (CEO and managerial roles drive
+        // delegation hierarchies), specialists next (alphabetical by role),
+        // generic Worker last. The catalog's underlying order is by
+        // recency of update — that's wrong for a discovery list because
+        // the most-recently-added agent (often the generic Worker or a
+        // user-created template) gets surfaced ahead of every specialist
+        // a human or LLM is actually looking for.
+        const orderBucket = (role: string): number => {
+          if (role === "ceo") return 0;
+          if (role === "worker") return 2;
+          return 1;
+        };
+        const sorted = [...defs].sort((a, b) => {
+          const ab = orderBucket(a.role);
+          const bb = orderBucket(b.role);
+          if (ab !== bb) return ab - bb;
+          return a.role.localeCompare(b.role);
+        });
+        const lines = sorted.map((d) => `${d.icon || "•"} ${d.name} (role: ${d.role}, id: ${d.id}) — ${d.description}`);
+        return ok(`${sorted.length} agent(s) available:\n\n${lines.join("\n")}`);
       },
     },
 

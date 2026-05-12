@@ -219,6 +219,26 @@ describe("createAgentTools — three primitives for delegating agents", () => {
     expect(res.content).toContain("role: researcher");
   });
 
+  it("agent_list orders CEO first, specialists in the middle, Worker last", async () => {
+    // The catalog's underlying order is by updatedAt — wrong for a
+    // discovery list. The tool imposes a stable display order so the
+    // generic Worker doesn't outrank specialists. Verifies the contract
+    // user-facing: CEO row appears before Researcher row, which appears
+    // before Worker row, when all three are present.
+    const tool = createAgentTools().find((t) => t.name === "agent_list");
+    const res = await tool!.execute({}, new AbortController().signal);
+    expect(res.isError).toBeFalsy();
+    const content = res.content as string;
+    const ceoIdx = content.indexOf("role: ceo");
+    const researcherIdx = content.indexOf("role: researcher");
+    const workerIdx = content.indexOf("role: worker");
+    expect(ceoIdx).toBeGreaterThan(-1);
+    expect(researcherIdx).toBeGreaterThan(-1);
+    expect(workerIdx).toBeGreaterThan(-1);
+    expect(ceoIdx).toBeLessThan(researcherIdx);
+    expect(researcherIdx).toBeLessThan(workerIdx);
+  });
+
   it("agent_spawn rejects unknown agents with AgentNotFoundError text", async () => {
     const tool = createAgentTools().find((t) => t.name === "agent_spawn");
     expect(tool).toBeDefined();

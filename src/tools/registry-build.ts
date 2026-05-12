@@ -109,6 +109,14 @@ const EAGER_TOOLS = new Set([
   "task_create", "task_update", "task_list", "task_get",
   "enter_plan_mode", "exit_plan_mode", "tool_search",
   "youtube_analyze",
+  // Auto-build entrypoints. These must be in Primal's eager set —
+  // without them, calling primal_run_build_plan(...) directly forces
+  // a tool_search detour where the wrong tool can win on substring
+  // noise (e.g. memory_recall outranked primal_run_build_plan because
+  // "recall" contains "call"). Eager-loading makes the literal call
+  // syntax just work.
+  "primal_run_build_plan", "primal_build_status", "primal_build_resume",
+  "start_app_build", "finalize_app_build",
 ]);
 
 export function buildToolRegistry(): { registry: ToolRegistry; eagerTools: ToolDefinition[]; toolSearchTool: ToolDefinition; promptSection: string } {

@@ -187,7 +187,7 @@ export function createBridgeHandler(deps: {
       callerRole: "operator" as const,
     });
     for await (const ev of eventStream) {
-      if (ev.type === "stream" && typeof ev.delta === "string") {
+      if (ev.type === "stream" && "delta" in ev && typeof ev.delta === "string") {
         assistantText += ev.delta;
       } else if (ev.type === "chat_op_started" && typeof ev.opId === "string") {
         canonicalOpId = ev.opId;

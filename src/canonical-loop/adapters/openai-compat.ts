@@ -110,6 +110,13 @@ export class OpenAICompatAdapter implements Adapter {
           report({ kind: "tool_call_requested", call: { toolCallId: tc.id, tool: tc.name, args: parseArgs(tc.arguments) } });
         }
         result.assembledText = extracted.remainingText;
+        // Tell the UI to retract the JSON it already streamed into the
+        // bubble and replace with the cleaned text. Without this, the
+        // user sees JSON soup left over from the original stream chunks
+        // even though the persisted message is clean. Clients that don't
+        // handle stream_redact leave the dirty stream rendered (no
+        // regression for older UIs).
+        report({ kind: "stream_redact", replacementText: extracted.remainingText });
       }
     }
 

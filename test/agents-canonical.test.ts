@@ -79,6 +79,21 @@ describe("AgentCatalog — superset merge of legacy sources", () => {
     expect(ceo!.icon).toBe("👔");
   });
 
+  it("ships the generic Worker role for one-off tasks that don't fit a specialist", () => {
+    // Worker is the escape hatch for delegations where no named
+    // specialist applies (per canonical-agent-design.md Q1). It MUST
+    // be in the catalog so agent_spawn(agent: "worker", ...) always
+    // resolves — otherwise the supervisor has to pick a wrong fit.
+    const worker = AgentCatalog.getInstance().get("worker");
+    expect(worker).toBeDefined();
+    expect(worker!.id).toBe("builtin-worker");
+    expect(worker!.role).toBe("worker");
+    // Broad-ish tool surface so it can actually do generic work.
+    expect(worker!.allowedTools).toContain("read");
+    expect(worker!.allowedTools).toContain("write");
+    expect(worker!.allowedTools).toContain("bash");
+  });
+
   it("strips org metadata from templates (hired/reportsTo/budget)", () => {
     const list = AgentCatalog.getInstance().list();
     const researcher = list.find((d) => d.role === "researcher");

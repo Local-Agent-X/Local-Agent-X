@@ -351,6 +351,7 @@ async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkReviewOutco
   const subResult = await runChunkAgent({
     role,
     task,
+    projectDir: opts.projectDir,
     timeoutMs: opts.subprocessTimeoutMs,
     signal: opts.signal,
     parentSessionId: opts.parentSessionId,

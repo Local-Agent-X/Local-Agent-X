@@ -33,6 +33,12 @@ export interface ChunkAgentInvocation {
   /** The chunk-specific task body (slice, done-when, retry framing, etc).
    *  System prompt + discipline lives in the AgentDefinition. */
   task: string;
+  /** Absolute path to the PROJECT directory the agent works in.
+   *  Without this, the agent runs from the LAX repo root and can't
+   *  find the project's app/ tree. (Live failure 2026-05-12: chunk
+   *  blocked with "apps/ missing" because the worker looked for
+   *  monorepo structure inside the LAX repo, not the project.) */
+  projectDir?: string;
   /** Originating chat session — propagated for sidebar attribution. */
   parentSessionId?: string;
   /** Wall-clock kill deadline. Default: 30 min per chunk. */
@@ -121,7 +127,7 @@ function getDefinition(role: ChunkAgentRole): AgentDefinition {
     name: role === "scenario-fix" ? "Scenario fix worker" :
           role === "chunk-runner-leaf" ? "Chunk runner (leaf)" :
           "Chunk runner (trunk/mixed)",
-    role: "coder",
+    role: "implementer",
     systemPrompt,
     allowedTools: ["read", "write", "edit", "glob", "grep", "bash"],
     description:
@@ -149,7 +155,20 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
   const startedAt = Date.now();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
-  const ref = invokeDefinition(def, opts.task, {
+  // Prepend a working-directory anchor so the agent doesn't look for
+  // the project tree inside the LAX repo root. This is load-bearing —
+  // without it, the agent's `bash`/`read`/`glob` calls run from wherever
+  // the server was started (LAX repo) and it can't find the project.
+  const taskWithCwd = opts.projectDir
+    ? `## Working directory\n\n` +
+      `Your project root is: \`${opts.projectDir}\`\n\n` +
+      `**ALL file paths in this chunk are relative to that directory.** Before reading, ` +
+      `globbing, or running bash, \`cd\` there. The plan file, spec/, scenarios/, source ` +
+      `files, and tests all live under that root. Don't look for them in the LAX repo.\n\n` +
+      `---\n\n${opts.task}`
+    : opts.task;
+
+  const ref = invokeDefinition(def, taskWithCwd, {
     parentSessionId: opts.parentSessionId,
   });
   const agentId = ref.fieldAgentId;

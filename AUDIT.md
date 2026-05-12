@@ -454,6 +454,29 @@ Suspected duplication worth a deeper look (not confirmed): `src/memory/auto-extr
 
 [src/llm-dispatch.ts:75](src/llm-dispatch.ts#L75) `dispatch` is a single-shot text completion helper for memory subsystems. It re-implements provider detection and direct fetches (`:118-123` Anthropic, `:134` OpenAI). Use case (non-streaming, single-shot, fail-silent) genuinely justifies a separate code path, but the *implementation* duplication with `anthropic-client/stream-api.ts` is real — would benefit from a shared `anthropic-http-base.ts`.
 
+#### Cluster 11 — Tool filtering (five sources of truth, no shared owner)
+
+Surfaced live 2026-05-12 chasing a `primal_run_build_plan` mis-route: five distinct tool-filter sets exist, drift independently, and none knows about the others. Adding a new tool requires hunting through all five. The bug: `primal_run_build_plan` was in `allTools` and `tool-policy` but missing from the per-turn chat filter, so the provider's schema didn't contain it; the agent saw `tool_search` return the def, then said "tool isn't in my loaded schema" and routed to `self_edit`.
+
+| Filter | Location | Audience | Honored by | Status |
+|---|---|---|---|---|
+| `EAGER_TOOLS` Set | [src/tools/registry-build.ts:106-120](src/tools/registry-build.ts#L106) | Whichever code reads `eagerTools` from `buildToolRegistry()` return | **No live caller** (returned, never destructured) | **Orphan** — same shape as §2.6.D orphans |
+| `CORE_TOOL_NAMES` Set | [src/agent-request/tool-filter.ts:7-64](src/agent-request/tool-filter.ts#L7) | Main-chat turn (canonical + legacy) | `filterToolsForMessage` in chat path | Live — actual gate |
+| `BUILD_INTENT_TOOLS` Set | [src/agent-request/tool-filter.ts:101-116](src/agent-request/tool-filter.ts#L101) | Chat when message matches `BUILD_INTENT_REGEX` | Same caller, branch B | Live — strip-down path |
+| `CORE_AGENT_TOOLS` Set | [src/server/handler-events.ts:77-89](src/server/handler-events.ts#L77) | Spawned `FieldAgent` (default role) | `runAgentAsync` per spawn | Live |
+| `OPERATOR_TOOLS` Set | [src/server/handler-events.ts:95-101](src/server/handler-events.ts#L95) | Spawned `FieldAgent` (operator role) | Same caller, branch B | Live |
+| `defer` flag | `ToolRegistry.register(opts)` in [src/tool-search.ts:18](src/tool-search.ts#L18) | tool_search visibility (NOT provider schema) | `getDeferredTools` only | Live but **does not gate model-visible surface** |
+
+**Drift evidence:**
+1. `primal_run_build_plan` added to `EAGER_TOOLS` 2026-05-12 — had **zero effect** because no caller reads `eagerTools`. The fix needed was in `CORE_TOOL_NAMES`. Same shape as §2.6.C and §2.6.D — additions to orphan sets.
+2. Five filters, five different conceptual models of "what should the model see right now." No single source of truth for `audience → tool list`.
+3. Behavior-keying on substring of metadata: [handler-events.ts:107](src/server/handler-events.ts#L107) decides "create isolated worktree?" via `/\b(developer|engineer|coder|programmer|refactorer|code-?editor)\b/i.test(role)`. A chunk-runner with role `"coder"` got an isolated LAX-repo worktree it didn't need; renaming the role to `"implementer"` was the workaround. Same drift trap shape as `R10` (parallel layouts inviting future drift).
+4. **No verification path catches a missing entry.** A tool added to `allTools` but forgotten in `CORE_TOOL_NAMES` is indistinguishable at compile time from a tool intentionally hidden from the chat surface. The bug only surfaces at runtime as "tool not in my loaded schema."
+
+**Recommended canonical:** tools declare `audiences: Audience[]` + `requiresWorktree: boolean` at registration in `ToolRegistry`. One `resolveToolsForRequest({ audience, message }): ToolDefinition[]` replaces all five sets. `OPERATOR_TOOLS` / `CORE_AGENT_TOOLS` become `audience: "spawned-agent" | "operator"` tags. `BUILD_INTENT_TOOLS` becomes a build-intent **filter** on top of the `main-chat` audience. The `isCodeRole` regex in handler-events dies — `spawnAgent` reads `requiresWorktree` from the resolved tool list / agent definition instead of regex-matching a role string. The `defer` flag stays in `ToolRegistry` but ALSO becomes the gate for what's in the per-turn schema (eager = always in schema for that audience; deferred = only in schema after tool_search loads it).
+
+**Risk:** Medium. Five callers to migrate, but they're all in two files (`tool-filter.ts` + `handler-events.ts`). No external API change. Tests covering chat-tool-list-passed-to-provider would catch regressions. Strong candidate for **first non-trivial refactor chunk** after the dead-code warmup — small, contained, proves the pattern before tackling Loops/Adapters/Retry.
+
 ### 2.6 Dead code
 
 > Methodology: static import-graph scan (basename → `.js` resolution) cross-checked against dynamic `await import("...")`; `tsc --noEmit --noUnusedLocals` for unused imports/locals. The only dynamic-loader in `src/` is `plugin-system.ts` and it loads from `~/.lax/plugins`, NOT from `src/`. Routes/tools/agents/hooks/protocols are explicit registries, not auto-discovery directories. Filename-based scanning is therefore safe.

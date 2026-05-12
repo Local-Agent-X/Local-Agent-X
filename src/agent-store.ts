@@ -415,6 +415,15 @@ export class AgentTemplateStore {
         icon: "🖥️",
       },
       {
+        id: "builtin-worker",
+        name: "Worker",
+        role: "worker",
+        description: "Generic worker for one-off tasks that don't fit a specialist role. Broad tool surface, neutral persona. Use when no named role (researcher, coder, writer, etc.) matches and the task is a one-off — recurring needs should get their own agent_create entry instead.",
+        systemPrompt: "You are a generic worker agent. The supervisor delegated this task to you because no specialist role fit. Approach the work directly: read what's needed, do it, report the result. Use the right tool for each step (read/write/edit/bash for files, web_fetch/web_search for the web, ask_user only when you genuinely need clarification). Keep the output focused on what the supervisor asked for — no extra commentary, no padding.",
+        allowedTools: ["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image"],
+        icon: "🛠️",
+      },
+      {
         id: "builtin-ceo",
         name: "CEO",
         role: "ceo",

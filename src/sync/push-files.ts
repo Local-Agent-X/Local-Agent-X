@@ -6,6 +6,9 @@ import {
   BRAIN_BINARY_FILES,
   BRAIN_DIRS,
   BRAIN_JSON_FILES,
+  MISSION_FILES,
+  PROTOCOL_FILES,
+  PROTOCOL_DIRS,
   type SyncConfig,
   canonicalizeHomePaths,
 } from "./constants.js";
@@ -104,6 +107,8 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
   // paths (C:/Users/manri/Documents) become portable ${HOME} placeholders
   // for every other machine that pulls.
   for (const file of BRAIN_JSON_FILES) {
+    if (!config.syncMissions && MISSION_FILES.has(file)) continue;
+    if (!config.syncProtocols && PROTOCOL_FILES.has(file)) continue;
     const src = join(dataDir, file);
     if (!existsSync(src)) continue;
     try {
@@ -120,6 +125,7 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
   // workstation should match this push," so destructive mirror is
   // correct.
   for (const dir of BRAIN_DIRS) {
+    if (!config.syncProtocols && PROTOCOL_DIRS.has(dir)) continue;
     const src = join(dataDir, dir);
     if (!existsSync(src)) continue;
     try {

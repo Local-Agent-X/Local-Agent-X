@@ -5,6 +5,7 @@ import { extractAgentOutput, safeErrorMessage } from "../server-utils.js";
 import { enqueue } from "../execution-lanes.js";
 import { EventBus } from "../event-bus.js";
 import { ProjectStore, type AgentRun } from "../agent-store.js";
+import { looksLikeClarificationRequest } from "../agents/result-guard.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore } from "../memory.js";
 import type { SecretsStore } from "../secrets.js";
@@ -187,7 +188,23 @@ export function registerHandlerEvents(deps: {
     broadcastAll({ type: "agent-complete", ...evt });
     const m = pendingMeta.get(evt.agentId);
     if (m) {
-      agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status: evt.success === false ? "error" : "done", output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: evt.success === false ? evt.result : undefined } as AgentRun);
+      // Result-shape guard: catch agents that finished by asking the
+      // user to resend the task instead of doing it. Without this, a
+      // 300-char clarification request quietly persists as status:
+      // "done" and inflates the success rate in History. See
+      // src/agents/result-guard.ts for the heuristic and rationale.
+      const explicitFailure = evt.success === false;
+      let guardError: string | undefined;
+      if (!explicitFailure && typeof evt.result === "string") {
+        const verdict = looksLikeClarificationRequest(evt.result);
+        if (verdict.isClarificationRequest) {
+          guardError = `Agent bailed without completing the task (clarification-request shape: "${verdict.matchedPhrase}"). Spawned agents do NOT have a conversation channel — they must complete or report a structured blocker.`;
+          logger.warn(`[handler] Agent ${evt.agentId} (${m.role}) bailed with clarification request — re-classified as error`);
+        }
+      }
+      const status: AgentRun["status"] = explicitFailure || guardError ? "error" : "done";
+      const errorField = explicitFailure ? evt.result : guardError;
+      agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status, output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: errorField } as AgentRun);
       if (m.sessionId && evt.result) {
         try {
           const parentSession = sessionStore.load(m.sessionId);

@@ -50,6 +50,13 @@ export interface AgentDefinition {
    *  separated from the role-level prompt so org-specific personas can
    *  layer on without forking the base role. */
   persona?: string;
+  /** True = spawn this agent inside an isolated git worktree of the LAX
+   *  repo (for source-code edits). Default false. Replaces the legacy
+   *  role-string regex (`isCodeRole`) in handler-events.ts. Set true
+   *  ONLY when the agent edits LAX itself; leave false for everything
+   *  that edits user projects (chunk-runner workers, etc) or operates
+   *  in the web/file/shell surface (operator, researcher, browser). */
+  requiresWorktree?: boolean;
 }
 
 /** Org-level metadata about an agent definition. Lives separately from

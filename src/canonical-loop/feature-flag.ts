@@ -12,7 +12,6 @@
  *   LAX_CANONICAL_LOOP_IDE
  *   LAX_CANONICAL_LOOP_BACKGROUND
  *   LAX_CANONICAL_LOOP_ALL          (catch-all override; ON forces every lane ON)
- *   LAX_CANONICAL_LOOP_CHAT         (opt-in: route chat WS turns through canonical)
  */
 import type { CanonicalLane } from "./types.js";
 
@@ -36,30 +35,6 @@ export function isCanonicalLoopEnabled(lane: CanonicalLane): boolean {
   const envName = LANE_ENV[lane];
   if (!envName) return false;
   return readBoolEnv(envName);
-}
-
-/**
- * Default-ON: the chat WS forward layer creates an `op_chat_turn`
- * canonical op (interactive lane) instead of POSTing to /api/chat. The
- * Anthropic / Codex adapter drives the turn end-to-end; chunks stream
- * back via the bus to the WS session.
- *
- * Set LAX_CANONICAL_LOOP_CHAT=0 to fall back to legacy for emergency
- * rollback.
- */
-export function isCanonicalChatEnabled(): boolean {
-  const raw = (process.env.LAX_CANONICAL_LOOP_CHAT ?? "").trim().toLowerCase();
-  if (raw === "0" || raw === "false" || raw === "no" || raw === "off") return false;
-  return true;
-}
-
-/** Same default-ON treatment for the interactive lane gate that chat ALSO
- *  checks. Other interactive ops keep their existing opt-in semantics. */
-export function isCanonicalChatLaneEnabled(): boolean {
-  if (readBoolEnv("LAX_CANONICAL_LOOP_ALL")) return true;
-  const raw = (process.env.LAX_CANONICAL_LOOP_INTERACTIVE ?? "").trim().toLowerCase();
-  if (raw === "0" || raw === "false" || raw === "no" || raw === "off") return false;
-  return true;
 }
 
 /** Test helper — read the env var name for a lane. Not for production logic. */

@@ -12,13 +12,50 @@ const logger = createLogger("routes.agents");
 export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
-  // Agent run history
+  // Agent run history — completed runs from AgentRunStore PLUS any
+  // currently-in-flight FieldAgents from the Handler. Without the live
+  // merge, the History tab is empty while a run is mid-flight (the
+  // AgentRun record is only written on completion).
   if (method === "GET" && url.pathname === "/api/agents/history") {
     const limit = parseInt(url.searchParams.get("limit") || "50", 10);
     const offset = parseInt(url.searchParams.get("offset") || "0", 10);
     const sessionId = url.searchParams.get("sessionId") || undefined;
     const status = url.searchParams.get("status") || undefined;
-    json(200, ctx.agentRunStore.list({ limit, offset, sessionId, status }));
+    const historical = ctx.agentRunStore.list({ limit, offset, sessionId, status });
+    let live: typeof historical.runs = [];
+    if (!status || status === "working") {
+      try {
+        const handler = (await import("../agency/handler.js")).Handler.getInstance();
+        const active = handler.getAgentStatus();
+        const liveList = Array.isArray(active) ? active : [active];
+        // Shape FieldAgentStatus to the AgentRun-compatible record the
+        // History UI expects. completedAt absent → frontend renders
+        // "running Xs" instead of a finished duration.
+        live = liveList.map((s) => ({
+          id: s.id,
+          parentAgentId: null,
+          sessionId: "",
+          name: s.name,
+          role: s.role,
+          task: s.currentTask ?? "",
+          systemPrompt: "",
+          status: "working" as const,
+          output: [],
+          result: "",
+          toolsUsed: [],
+          tokensUsed: s.tokensUsed ?? 0,
+          startedAt: s.startedAt,
+          completedAt: 0,
+        }));
+      } catch { /* no live agents available */ }
+    }
+    // Dedup by id (a run could theoretically appear in both if a stale
+    // AgentRun got written while the Handler entry is still active —
+    // not expected today, but the dedup keeps it safe). Live wins so
+    // the UI sees the current in-flight state.
+    const seen = new Set(live.map((r) => r.id));
+    const merged = [...live, ...historical.runs.filter((r) => !seen.has(r.id))];
+    json(200, { runs: merged, total: historical.total + live.length });
     return true;
   }
 

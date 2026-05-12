@@ -548,21 +548,32 @@ async function loadAgentHistory() {
       list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted);font-size:.78rem">No agent runs yet</div>';
       return;
     }
-    list.innerHTML = runs.map(r => `
+    list.innerHTML = runs.map(r => {
+      const live = r.status === 'working';
+      const elapsed = live ? Date.now() - r.startedAt : (r.completedAt - r.startedAt);
+      const durationLabel = live ? `running ${formatDuration(elapsed)}` : formatDuration(elapsed);
+      return `
       <div class="agent-history-item ${r.status}" onclick="showAgentDetail('${r.id}')">
         <div class="agent-history-header">
           <span class="agent-role-badge">${esc(r.role)}</span>
           <span class="agent-status-dot ${r.status}"></span>
         </div>
-        <div class="agent-history-name">${esc(r.name)}</div>
-        <div class="agent-history-task">${esc(r.task.slice(0, 80))}</div>
+        <div class="agent-history-name">${esc(r.name)}${live ? ' <span style="font-size:.6rem;color:var(--accent);margin-left:6px">LIVE</span>' : ''}</div>
+        <div class="agent-history-task">${esc((r.task || '').slice(0, 80))}</div>
         <div class="agent-history-meta">
           <span>${timeAgo(r.startedAt)}</span>
           <span>${r.toolsUsed?.length || 0} tools</span>
-          <span>${formatDuration(r.completedAt - r.startedAt)}</span>
+          <span>${durationLabel}</span>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
+    // Auto-refresh while any run is live so the elapsed counter ticks
+    // and completed runs swap from "running Xs" to a finalized duration.
+    if (runs.some(r => r.status === 'working')) {
+      clearTimeout(window._agentHistoryRefreshTimer);
+      window._agentHistoryRefreshTimer = setTimeout(() => loadAgentHistory(), 3000);
+    }
   } catch { list.innerHTML = '<div style="color:var(--muted);padding:20px;text-align:center">Failed to load</div>'; }
 }
 

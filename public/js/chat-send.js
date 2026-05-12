@@ -141,7 +141,7 @@ async function sendMessage() {
 
   // Try WebSocket first (bidirectional, no SSE buffering issues)
   if (chatWs && chatWs.readyState === WebSocket.OPEN) {
-    chatWs.send(JSON.stringify({ type: 'chat', sessionId: streamSessionId, message: finalText, attachments: msgAttachments || [] }));
+    chatWs.send(JSON.stringify({ type: 'chat', sessionId: streamSessionId, message: finalText, attachments: msgAttachments || [], projectId: streamChat.projectId || null }));
     // Events arrive via the WS onmessage handler (lines above) which calls broadcastToSession
     // Set up a WS event listener for this session's stream events
     const wsHandler = function(e) {
@@ -320,7 +320,7 @@ async function sendMessage() {
     const res = await fetch(`${API}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ message: finalText, sessionId: streamSessionId, attachments: msgAttachments || [] }),
+      body: JSON.stringify({ message: finalText, sessionId: streamSessionId, attachments: msgAttachments || [], projectId: streamChat.projectId || null }),
     });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -453,7 +453,7 @@ async function sendMessage() {
           const res2 = await fetch(`${API}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-            body: JSON.stringify({ message: finalText, sessionId: streamSessionId, attachments: msgAttachments || [] }),
+            body: JSON.stringify({ message: finalText, sessionId: streamSessionId, attachments: msgAttachments || [], projectId: streamChat.projectId || null }),
           });
           const reader2 = res2.body.getReader();
           const decoder2 = new TextDecoder();

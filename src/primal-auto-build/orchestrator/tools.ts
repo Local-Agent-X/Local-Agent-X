@@ -5,7 +5,6 @@
  */
 
 import { existsSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { parsePlanFile } from "../plan-parser.js";
 import { isFeatureEnabled, FEATURE_FLAG_ENV } from "../tool.js";
@@ -13,16 +12,11 @@ import { defaultJudgmentHook } from "../chunk-review/judgment-hook.js";
 import { startOrchestration, listActive } from "./manager.js";
 import { readProjectState } from "./resume.js";
 import { listAll as listRegistry } from "./registry.js";
+import { resolveProjectDir } from "../project-paths.js";
 
 const FEATURE_FLAG_BLOCK_MESSAGE =
   `BLOCKED — gated behind the ${FEATURE_FLAG_ENV} env flag, which is currently OFF. ` +
   `To re-enable: unset ${FEATURE_FLAG_ENV} (or set to any non-disabling value) and restart.`;
-
-function resolveProjectDir(raw: unknown): string | null {
-  const s = String(raw || "").trim();
-  if (!s) return null;
-  return isAbsolute(s) ? s : resolve(process.cwd(), s);
-}
 
 // ── primal_build_status ───────────────────────────────────────────────────
 

@@ -25,6 +25,7 @@ import { parsePlanFile } from "./plan-parser.js";
 import { readBuildState, checkSystemic } from "./failure-recovery.js";
 import { defaultJudgmentHook } from "./chunk-review/judgment-hook.js";
 import { startOrchestration } from "./orchestrator/manager.js";
+import { resolveProjectDir } from "./project-paths.js";
 
 export const FEATURE_FLAG_ENV = "PRIMAL_AUTO_BUILD_ENABLED";
 
@@ -82,11 +83,10 @@ export const primalRunBuildPlanTool: ToolDefinition = {
       };
     }
 
-    const projectDirRaw = String(args.project_dir || "").trim();
-    if (!projectDirRaw) {
-      return { content: "primal_run_build_plan requires 'project_dir'.", isError: true };
+    const projectDir = resolveProjectDir(args.project_dir);
+    if (!projectDir) {
+      return { content: "primal_run_build_plan requires 'project_dir' (bare project name like 'mygroomtime', or an absolute path).", isError: true };
     }
-    const projectDir = isAbsolute(projectDirRaw) ? projectDirRaw : resolve(process.cwd(), projectDirRaw);
     if (!existsSync(projectDir)) {
       return { content: `project_dir does not exist: ${projectDir}`, isError: true };
     }

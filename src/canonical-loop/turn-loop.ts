@@ -33,6 +33,14 @@ import { readOp } from "../workers/op-store.js";
 import type { Op } from "../workers/types.js";
 import { drainInjects } from "../agent-loop/inject-queue.js";
 import { getSessionForOp } from "../workers/session-bridge.js";
+import {
+  buildCanonicalLoopContext,
+  getActiveMiddlewareStack,
+  runMiddlewarePhase,
+  type FiredMiddlewareResult,
+} from "./middlewares/host.js";
+import type { CanonicalToolResultView } from "./middlewares/types.js";
+import { getEvidenceHistory } from "./middlewares/evidence-history.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.turn-loop");
@@ -43,6 +51,19 @@ export interface DriveTurnResult {
   messageCount: number;
   /** True if the turn was aborted mid-flight via cancel; commit was skipped. */
   cancelled: boolean;
+  /**
+   * Set when a middleware in the canonical safety stack returned a non-
+   * "continue" verdict. The worker uses this to override the natural
+   * "break on terminal" logic — a `nudge` keeps the worker looping
+   * (synthetic user message has been appended to op_messages), an `abort`
+   * forces the worker to exit and transition the op to failed.
+   */
+  middlewareDirective?: {
+    kind: "nudge" | "abort";
+    reason: string;
+    firedBy: string;
+    message?: string;
+  };
 }
 
 export interface DriveTurnOptions {
@@ -79,11 +100,44 @@ export async function driveTurn(
   // user's chat-bound injects.
   if (op.type === "chat_turn") drainInjectsIntoTurn(op, turnIdx);
 
+  // ── Phase 1: beforeTurn middlewares ──
+  // Snapshot a fresh CanonicalLoopContext from disk + op state. A `nudge`
+  // here appends a synthetic user message at the CURRENT turnIdx so this
+  // turn's adapter sees it (mirrors agent-loop's beforeIteration→push-then-
+  // restart-iteration). An `abort` short-circuits the whole turn — no
+  // adapter call, no tool dispatch — and the worker exits.
+  const evidenceHistory = getEvidenceHistory(op.id);
+  const middlewareStack = getActiveMiddlewareStack();
+  const beforeCtx = buildCanonicalLoopContext({
+    op, turnIdx,
+    tools: getToolsForOp(op.id),
+    evidenceHistory,
+  });
+  const beforeRes = await runMiddlewarePhase(beforeCtx, "beforeTurn", middlewareStack);
+  if (beforeRes.kind === "abort") {
+    return middlewareAbortResult(op, turnIdx, beforeRes);
+  }
+  if (beforeRes.kind === "nudge") {
+    appendNudgeAsUserMessage(op.id, turnIdx, beforeRes.message);
+    // Fall through — next read of op_messages (buildTurnInput, below) picks
+    // the nudge up and ships it to the adapter on this turn.
+  }
+
   const input = buildTurnInput(op, turnIdx, pendingRedirect);
 
   const finalized: CanonicalMessage[] = [];
   const toolCalls: ToolCall[] = [];
   let adapterError: { code: string; message: string } | null = null;
+  /** Sticky middleware directive across the turn's phases. The first
+   *  non-`continue` verdict (from any phase) wins — same short-circuit
+   *  semantics as agent-loop's runPhase per-phase short-circuit, lifted
+   *  to a per-turn bubble so the worker can apply the verdict after
+   *  commit. beforeTurn nudges are already consumed (synthetic message
+   *  injected into THIS turn); we don't bubble them up. */
+  let middlewareDirective:
+    | { kind: "nudge"; reason: string; firedBy: string; message: string }
+    | { kind: "abort"; reason: string; firedBy: string; message?: string }
+    | null = null;
 
   // Idle-event detection — provider-agnostic. Watches the report stream
   // for ANY activity (stream chunks, tool calls, finalized messages,
@@ -132,6 +186,15 @@ export async function driveTurn(
       publishStreamChunk(op.id, r.body);
       return;
     }
+    if (r.kind === "stream_redact") {
+      // The adapter post-processed its already-streamed text (e.g.
+      // tool-call extraction) and wants the UI to retract part of it.
+      // Re-uses the stream-chunk publish path with a `replace: true`
+      // marker so the client can swap the bubble's text rather than
+      // append.
+      publishStreamChunk(op.id, { replace: true, text: r.replacementText });
+      return;
+    }
     if (r.kind === "message_finalized") {
       finalized.push(r.message);
       return;
@@ -157,12 +220,90 @@ export async function driveTurn(
     return { terminalReason: null, toolCount: 0, messageCount: 0, cancelled: true };
   }
 
+  // ── Phase 2: afterModelCall middlewares ──
+  // Build a fresh context view from this turn's emitted assistant text +
+  // tool calls. Middlewares may MUTATE ctx.toolCalls (auto-build-app
+  // appends a synthetic build_app call) — we use the same array reference
+  // turn-loop will dispatch from, so any synthetic call lands in the
+  // toolCalls list before dispatchTools fires.
+  const assistantText = finalized
+    .filter(m => m.role === "assistant")
+    .map(m => extractText(m.content))
+    .join("");
+  const afterModelCtx = buildCanonicalLoopContext({
+    op, turnIdx,
+    tools: getToolsForOp(op.id),
+    toolCalls,
+    assistantContent: assistantText,
+    evidenceHistory,
+  });
+  // Wire the live toolCalls array so auto-build-app's push mutates the
+  // dispatcher's input. buildCanonicalLoopContext already passes it; this
+  // is documentation for the next reader.
+  afterModelCtx.toolCalls = toolCalls;
+  const afterModelRes = await runMiddlewarePhase(afterModelCtx, "afterModelCall", middlewareStack);
+  if (afterModelRes.kind === "abort") {
+    middlewareDirective = {
+      kind: "abort",
+      reason: afterModelRes.reason,
+      firedBy: afterModelRes.firedBy ?? "unknown",
+      message: afterModelRes.message,
+    };
+  } else if (afterModelRes.kind === "nudge") {
+    middlewareDirective = {
+      kind: "nudge",
+      reason: afterModelRes.reason,
+      firedBy: afterModelRes.firedBy ?? "unknown",
+      message: afterModelRes.message,
+    };
+  }
+
   const toolDispatchStart = Date.now();
-  const { toolMessages, toolSummary } = await dispatchTools(op.id, turnIdx, toolCalls);
+  // If a middleware aborted, skip tool dispatch — same effect as agent-
+  // loop's runPhase short-circuit before tool execution.
+  const { toolMessages, toolSummary } = middlewareDirective?.kind === "abort"
+    ? { toolMessages: [] as CommitTurnMessage[], toolSummary: [] as ToolCallSummary[] }
+    : await dispatchTools(op.id, turnIdx, toolCalls);
   const toolDispatchMs = Date.now() - toolDispatchStart;
 
   if (opts.isCancelled?.()) {
     return { terminalReason: null, toolCount: toolSummary.length, messageCount: 0, cancelled: true };
+  }
+
+  // ── Phase 3: afterToolExecution middlewares ──
+  // Only run when an abort hasn't already short-circuited the turn. The
+  // first non-continue verdict from afterModelCall wins; afterToolExecution
+  // only refines (not overrides) — matches agent-loop's per-phase ordering.
+  if (middlewareDirective === null) {
+    const toolResultsView: CanonicalToolResultView[] = toolMessages.map((tm, i) => ({
+      toolName: toolSummary[i]?.tool ?? "unknown",
+      toolCallId: (tm.content as { toolCallId?: string })?.toolCallId ?? "",
+      content: extractToolResultText(tm.content),
+    }));
+    const afterToolCtx = buildCanonicalLoopContext({
+      op, turnIdx,
+      tools: getToolsForOp(op.id),
+      toolCalls,
+      toolResults: toolResultsView,
+      assistantContent: assistantText,
+      evidenceHistory,
+    });
+    const afterToolRes = await runMiddlewarePhase(afterToolCtx, "afterToolExecution", middlewareStack);
+    if (afterToolRes.kind === "abort") {
+      middlewareDirective = {
+        kind: "abort",
+        reason: afterToolRes.reason,
+        firedBy: afterToolRes.firedBy ?? "unknown",
+        message: afterToolRes.message,
+      };
+    } else if (afterToolRes.kind === "nudge") {
+      middlewareDirective = {
+        kind: "nudge",
+        reason: afterToolRes.reason,
+        firedBy: afterToolRes.firedBy ?? "unknown",
+        message: afterToolRes.message,
+      };
+    }
   }
 
   const allMessages: CommitTurnMessage[] = [];
@@ -172,8 +313,15 @@ export async function driveTurn(
   for (const tm of toolMessages) allMessages.push(tm);
 
   const providerState: ProviderStateEnvelope = result.providerState;
-  const terminalReason: "done" | "error" | null =
-    result.terminalReason ?? (adapterError ? "error" : null);
+  // A middleware abort forces the turn to terminal=error so the worker
+  // breaks the drive loop. A nudge does NOT force terminal — the
+  // adapter's natural terminalReason still applies (so a turn that
+  // ended with tool calls just continues into the next turn where the
+  // nudge user-message is visible).
+  const middlewareAborted = middlewareDirective?.kind === "abort";
+  const terminalReason: "done" | "error" | null = middlewareAborted
+    ? "error"
+    : (result.terminalReason ?? (adapterError ? "error" : null));
 
   commitTurn({
     op,
@@ -188,7 +336,114 @@ export async function driveTurn(
     toolDispatchMs,
   });
 
-  return { terminalReason, toolCount: toolSummary.length, messageCount: allMessages.length, cancelled: false };
+  // For nudges, append the synthetic user message at turnIdx+1 so the next
+  // driveTurn sees it via buildTurnInput's op_messages read. For aborts,
+  // emit a stopped event so chat UI surfaces a one-line reason instead of a
+  // frozen cursor. Mirrors agent-loop/run.ts:surfaceMiddlewareAbort.
+  if (middlewareDirective?.kind === "nudge") {
+    appendNudgeAsUserMessage(op.id, turnIdx + 1, middlewareDirective.message);
+  }
+  if (middlewareAborted) {
+    emit(op.id, "error", {
+      code: "middleware-abort",
+      message: middlewareDirective!.message ?? `Turn aborted by ${middlewareDirective!.firedBy}.`,
+      retryable: false,
+    });
+  }
+
+  return {
+    terminalReason,
+    toolCount: toolSummary.length,
+    messageCount: allMessages.length,
+    cancelled: false,
+    middlewareDirective: middlewareDirective
+      ? {
+          kind: middlewareDirective.kind,
+          reason: middlewareDirective.reason,
+          firedBy: middlewareDirective.firedBy,
+          message: middlewareDirective.kind === "nudge"
+            ? middlewareDirective.message
+            : middlewareDirective.message,
+        }
+      : undefined,
+  };
+}
+
+// ── Middleware helpers ────────────────────────────────────────────────────
+
+function extractText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (content && typeof content === "object") {
+    const c = content as { text?: unknown; result?: unknown };
+    if (typeof c.text === "string") return c.text;
+    if (typeof c.result === "string") return c.result;
+  }
+  return "";
+}
+
+function extractToolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (content && typeof content === "object") {
+    const c = content as { text?: unknown; result?: unknown };
+    if (typeof c.text === "string") return c.text;
+    const r = c.result;
+    if (typeof r === "string") return r;
+    if (r && typeof r === "object" && typeof (r as { text?: unknown }).text === "string") {
+      return (r as { text: string }).text;
+    }
+    if (r != null) {
+      try { return JSON.stringify(r); } catch { return ""; }
+    }
+  }
+  return "";
+}
+
+/** Append a synthetic user-role op_message carrying a middleware nudge.
+ *  Sits in op_messages at (turnIdx, seqInTurn=N) where N is one past any
+ *  existing row in that turn. The next driveTurn(turnIdx) — or this turn,
+ *  for a beforeTurn nudge — sees it via the standard buildTurnInput
+ *  history read. */
+function appendNudgeAsUserMessage(opId: string, turnIdx: number, message: string): void {
+  const existing = readOpMessages(opId).filter(m => m.turnIdx === turnIdx).length;
+  const row: OpMessageRow = {
+    messageId: `nudge-${opId}-${turnIdx}-${existing}-${randomUUID().slice(0, 6)}`,
+    opId,
+    turnIdx,
+    seqInTurn: existing,
+    role: "user",
+    content: { text: message },
+    createdAt: new Date().toISOString(),
+  };
+  appendOpMessage(row);
+  emit(opId, "message_appended", { turnIdx, role: row.role, messageId: row.messageId });
+}
+
+function middlewareAbortResult(
+  op: Op,
+  turnIdx: number,
+  fired: FiredMiddlewareResult,
+): DriveTurnResult {
+  if (fired.kind !== "abort") throw new Error("middlewareAbortResult requires abort verdict");
+  emit(op.id, "error", {
+    code: "middleware-abort",
+    message: fired.message ?? `Turn aborted by ${fired.firedBy ?? "middleware"}.`,
+    retryable: false,
+  });
+  // Reserved for future per-turn telemetry; the abort emit above already
+  // surfaces the turn's stop reason.
+  void turnIdx;
+  return {
+    terminalReason: "error",
+    toolCount: 0,
+    messageCount: 0,
+    cancelled: false,
+    middlewareDirective: {
+      kind: "abort",
+      reason: fired.reason ?? "unknown",
+      firedBy: fired.firedBy ?? "unknown",
+      message: fired.message,
+    },
+  };
 }
 
 function buildTurnInput(

@@ -168,19 +168,31 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       // stranded forever — the agent finishes, the chat ends, the queue
       // sits populated until the user types again, and even then their
       // earlier inject mixes confusingly into a fresh request.
+      //
+      // Middleware resume-gate (P4.C2): a middleware that returned a
+      // `nudge` from afterModelCall/afterToolExecution appended a
+      // synthetic user message at turnIdx+1. Even when the adapter said
+      // terminal=done, the agent isn't done — the nudge must be visible
+      // on a next-turn model call. Override the break for any op type.
+      const middlewareNudged = r.middlewareDirective?.kind === "nudge";
       if (r.terminalReason !== null && op.type === "chat_turn") {
         const sessionId = getSessionForOp(op.id);
-        if (sessionId && hasInjects(sessionId)) {
+        if ((sessionId && hasInjects(sessionId)) || middlewareNudged) {
           // fall through to next iteration so drainInjectsIntoTurn at
           // the top of driveTurn pulls the user's queued message into
           // op_messages and the adapter sees it.
-          // (No event emitted — telemetry hook can be added later when
-          // CanonicalEventType is extended.)
         } else {
           break;
         }
       } else if (r.terminalReason !== null) {
-        break;
+        if (middlewareNudged) {
+          // Non-chat op with a middleware-injected nudge: keep looping
+          // so the adapter sees the synthetic user message on the next
+          // turn (mirrors legacy `continue` after pushing a nudge user
+          // message in agent-loop/run.ts).
+        } else {
+          break;
+        }
       }
 
       // Turn-boundary signal check (PRD §13 precedence: cancel > pause >

@@ -1,6 +1,8 @@
 import type { ServerResponse } from "node:http";
 
-import { runAgent } from "../../agent.js";
+import type { AgentOptions } from "../../agent.js";
+import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { createLogger } from "../../logger.js";
 import type { ServerContext } from "../../server-context.js";
 import { sseWrite } from "../../server-utils.js";
@@ -95,19 +97,30 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
   ctx.setActiveOnEvent(sessionId, onEvent);
   const threatEngineDel = new ThreatEngine(ctx.dataDir, sessionId);
   const turnStart = Date.now();
-  const result = await runAgent(message, prepared.cleanHistory as Parameters<typeof runAgent>[1], {
+  // Canonical-loop path (P4.C5): ack turn routes through `runAgentViaCanonical`
+  // so it shares the same safety stack + cancel machinery as chat. tools=[]
+  // + maxIterations=1 means the iteration-loop middlewares short-circuit
+  // anyway — observable behavior is identical to the legacy 1-shot path.
+  // images is preserved on the options envelope; agent-runner does not yet
+  // project them into the seeded user message (it's a known gap shared with
+  // the canonical chat path), but a tools=[] ack speaks 1-2 sentences and
+  // does not need image input to do its job — the worker subprocess is the
+  // one that actually consumes the attachment.
+  const result = await runAgentViaCanonical(message, prepared.cleanHistory as ChatCompletionMessageParam[], {
     apiKey: prepared.apiKey, model: prepared.model,
-    provider: prepared.provider as Parameters<typeof runAgent>[2]["provider"],
+    provider: prepared.provider as AgentOptions["provider"],
     baseURL: prepared.customBaseURL,
     systemPrompt: delegationSystemPrompt,
     tools: [],                                      // force text-only — no tool calls
     security: ctx.security, toolPolicy: ctx.toolPolicy,
     threatEngine: threatEngineDel, rbac: ctx.rbac, callerRole: requestRole, sessionId,
-    images: prepared.images as Parameters<typeof runAgent>[2]["images"],
+    images: prepared.images as AgentOptions["images"],
     maxIterations: 1,                               // 1-shot — agent says its piece, ends turn
     temperature: prepared.temperature,
     signal: wsChat.abort.signal,
     onEvent,
+    opType: "delegation_ack",
+    lane: "interactive",
   });
 
   const { stripEphemeralMessages } = await import("../../agent-providers.js");

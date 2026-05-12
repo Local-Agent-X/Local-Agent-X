@@ -145,13 +145,16 @@ describe("primal_run_build_plan — arg validation", () => {
     expect(res.metadata?.op_id).toBeTruthy();
   }, 60_000);
 
-  it("rejects calls missing a _sessionId (internal contract)", async () => {
+  it("runs without _sessionId by generating a synthetic id (non-chat callers)", async () => {
     mkdirSync(join(tmp, "spec"));
     writeFileSync(join(tmp, "spec", "plan.md"), MIN_PLAN);
     const res = await primalRunBuildPlanTool.execute({ project_dir: tmp });
-    expect(res.isError).toBe(true);
-    expect(res.content).toContain("_sessionId");
-  });
+    // No _sessionId injected (direct API call, scheduled trigger, test). Tool
+    // should still kick off — bg_op events route through a synthetic session.
+    expect(res.isError).toBeFalsy();
+    expect(res.status).toBe("running");
+    expect(res.metadata?.op_id).toBeTruthy();
+  }, 60_000);
 });
 
 describe("primal_run_build_plan — tool definition", () => {

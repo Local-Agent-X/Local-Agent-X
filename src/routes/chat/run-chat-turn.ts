@@ -8,6 +8,7 @@ import { ThreatEngine } from "../../threat-engine.js";
 import { createLogger } from "../../logger.js";
 import { runDelegationHandoff } from "./delegation-handoff.js";
 import { tryWorkerRedirect } from "./jarvis-redirect.js";
+import { createRetryContext, attachRetryContext, detachRetryContext } from "../../retry-context.js";
 
 const logger = createLogger("routes.chat.run-turn");
 
@@ -102,6 +103,14 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   let doneEmitted = false;
   let lockHeld = false;
   let onEventInstalled = false;
+  let retryCtxAttached = false;
+  // One RetryContext per chat turn. Today only L1 (tool-executor's withRetry
+  // for transient-network tools) reads it; the correlationId stitches its
+  // log lines for this turn. See src/retry-context.ts for history.
+  const retryCtx = createRetryContext();
+  attachRetryContext(sessionId, retryCtx);
+  retryCtxAttached = true;
+  logger.info(`[retry] correlationId=${retryCtx.correlationId} sess=${sessionId.slice(0, 16)}`);
   const { tryAcquireOrReplace, releaseTurn: releaseTurnLock } = await import("../../session-turn-lock.js");
   try {
     const { prepareAgentRequest } = await import("../../agent-request.js");
@@ -343,6 +352,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   } finally {
     if (lockHeld) releaseTurnLock(sessionId);
     if (onEventInstalled) ctx.setActiveOnEvent(sessionId, undefined);
+    if (retryCtxAttached) detachRetryContext(sessionId);
     ctx.setActiveBrowserSessionId("default");
     try {
       const { clearSessionAllowedTools } = await import("../../session-policy.js");

@@ -40,6 +40,9 @@ const TOOLS_OF_INTEREST = [
   "agent_status", "agent_cancel", "agent_output",
   "op_submit", "op_submit_async", "op_wait",
   "op_status", "op_kill", "op_redirect",
+  // agency_* is the legacy heavyweight delegation path that overlaps
+  // with agent_spawn. SUPERVISOR_EXCLUDED keeps it out of Primal's surface.
+  "agency_create", "agency_status", "agency_cancel",
   // Carry a few core tools so the filter has signal to work with.
   "read", "write", "bash", "web_fetch", "tool_search",
 ];
@@ -93,5 +96,27 @@ describe("supervisor tool surface — canonical delegation included, op-submit e
     expect(names.has("agent_list")).toBe(true);
     expect(names.has("op_submit_async")).toBe(false);
     expect(names.has("op_submit")).toBe(false);
+  });
+
+  it("excludes agency_create / agency_status / agency_cancel on a spawn-style message", () => {
+    // The canonical delegation surface is agent_list / agent_spawn / agent_create.
+    // agency_create overlaps semantically and Claude (Anthropic) tends to pick
+    // the heavier path when both are visible. Stay off Primal's surface.
+    const filtered = filterToolsForMessage(SAMPLE_TOOLS, "spawn a researcher agent to find the capital of France");
+    const names = new Set(filtered.map(t => t.name));
+    expect(names.has("agency_create")).toBe(false);
+    expect(names.has("agency_status")).toBe(false);
+    expect(names.has("agency_cancel")).toBe(false);
+    // And the canonical path is still present so delegation still works.
+    expect(names.has("agent_spawn")).toBe(true);
+  });
+
+  it("excludes agency_* even on messages with `agency`/`team`/`hire` keywords", () => {
+    // The keyword router has /agency|team|hire/i → agency_ prefix as a legacy
+    // shortcut. SUPERVISOR_EXCLUDED filters those back out regardless.
+    const filtered = filterToolsForMessage(SAMPLE_TOOLS, "set up an agency to hire a team");
+    const names = new Set(filtered.map(t => t.name));
+    expect(names.has("agency_create")).toBe(false);
+    expect(names.has("agency_status")).toBe(false);
   });
 });

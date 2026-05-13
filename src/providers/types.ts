@@ -29,7 +29,6 @@ export interface AgentOptions {
   images?: ImageAttachment[];
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
-  pauseCallback?: (reason: string) => Promise<string>;
 }
 
 /**

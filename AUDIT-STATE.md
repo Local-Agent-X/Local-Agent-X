@@ -2,7 +2,7 @@
 
 **Purpose.** Single source of truth for where the audit refactor stands. Read this file (after `git pull`) on any machine, in any Claude Code session, to know exactly what's done, what's next, and the rules I'm operating under. Update after every chunk lands on remote.
 
-**Last updated:** 2026-05-12, after P4.C4 + P4.C5 + pre-P4.C6 cleanup landed from another machine.
+**Last updated:** 2026-05-12, **AUDIT REFACTOR COMPLETE.** Laptop landed P4.C6 + every P5 chunk + P3.C2 + multiple regression fixes in one push.
 **Branch:** `main`. Always work directly on `main` — no branches. Each chunk = one commit.
 **Repo:** github.com/petermanrique101-sys/Local-Agent-X
 
@@ -33,14 +33,39 @@
 | test fix | `c876052` | Supervisor-surface test fixtures rewired through tagToolsByAudience (consequence of P1's audience filter) |
 | **pre-P4.C6** | `bc91139` | Deleted chat legacy-fallback callers (routes/chat.ts:433, :555) + canonical-chat feature flag. -283 LOC |
 | cleanup | `15ebfe5` | Deleted Calenbella-specific test file |
+| **P4.C6** | `0780a8b` | Deleted legacy agent-turn loops (agent.ts, run-anthropic, run-standard, agent-codex/run-http, agent-loop/run). Only canonical-loop remains |
+| regression | `19dabc6` | Anthropic CLI native-shape tool-call extractor — catches Claude opus emitting `{"name":"X","input":{...}}` as text |
+| regression | `f1f5dd4` | Hid agency_* tools from supervisor surface (SUPERVISOR_EXCLUDED) — Claude routed `agency_create` instead of `agent_spawn` due to description similarity, hung 135s |
+| tidy | `9fd970d` | MCP_HIDDEN_TOOLS aligned with canonical 3-tool delegation |
+| UX | `a584748` | Suppressed canonical bg_op_* sidebar cards for agent_spawn ops |
+| **P5.C3** | `e064bc0` | Anthropic CLI warm-pool + cold-spawn prompt builders unified (Critical #7) |
+| **P5.C2** | `a64f22f` | No-tool-support cache keyed by (baseURL, model) instead of model alone (Critical #4) |
+| **P5.C1** | `fe40604` | Removed session.messages two-writer drift (Critical #3) |
+| **P5.C4** | `5e0207b` | WS chat dispatches directly into chat-turn (no HTTP self-loop, Critical #10) |
+| **P3.C2** | `169b652` | RetryContext with correlationId + shared budget wired into L1 retries (Critical #5) |
 
-**Net so far:** ~3,500 LOC removed, ~2,900 LOC added. Every non-chat caller migrated to canonical. Only the legacy loop files themselves remain (untouched but unused).
+**FINAL NET:** ~4,500 LOC removed (legacy loops + dead retry + tool-filter drift + dead files). Every AUDIT.md Critical addressed. One canonical loop. One canonical resolver. One canonical adapter registry path. Shared retry budget with correlationId. The whole audit is shipped.
 
 ---
 
 ## Up next
 
-### P4.C6 — Delete legacy loops (mechanical, low risk now)
+### Nothing required. The refactor is done.
+
+What lands here next is OPTIONAL polish or NEW PRODUCT WORK. Some leftover items worth considering:
+
+- **pauseCallback port** (login/2FA detector) — spawned/voice/delegation agents that hit a login mid-task currently run to wall-clock instead of pausing. Flagged in P4.C4 + C5 reports.
+- **query-pipeline middleware** — was at `agent.ts:50` (now deleted), no callers register today but the surface is gone.
+- **delegation-handoff image projection** — chat has same gap.
+- **Smoke verification** on this machine — re-run `agent_spawn researcher` and `primal_run_build_plan one chunk` to confirm regression fixes (`19dabc6` + `f1f5dd4`) work end-to-end here. My earlier smokes ran on the buggy pre-fix code.
+
+**Per memory `project_top_10_gaps_2026_04`, the NEXT product move is full-duplex voice (gap #1).** That was the declared next spike before the audit interlude. The architecture refactor unblocks it because canonical-loop's cancel/replay/reconnect semantics + correlationId tracing make voice's barge-in + interruption flows tractable.
+
+---
+
+## Archive of completed chunks (was "Up next" before everything shipped)
+
+### P4.C6 — Delete legacy loops (mechanical, low risk now) ✅ DONE in commit `0780a8b`
 
 Every non-chat caller is migrated. Every chat fallback caller is deleted. The legacy loop files are dead code. This chunk deletes them and the `LAX_UNIFIED_LOOP` env flag.
 

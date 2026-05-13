@@ -9,6 +9,45 @@ function ok(content: string): ToolResult {
 }
 
 /**
+ * Append a fresh post-action snapshot to a base result string. Mirrors what
+ * the snapshot case does (auth-wall prefix + external-content wrap) so the
+ * agent sees the same thing it would after manually calling snapshot.
+ *
+ * Used by state-changing actions (fill, select, scroll, dialog, switch_tab)
+ * that previously returned just the action's status line without any visibility
+ * into what the page looks like afterward. Without this the agent had to
+ * remember to chase every fill/select with a manual snapshot — and routinely
+ * forgot, then guessed selectors from a stale DOM. Navigate/new_tab/click
+ * already do this at the manager level; this brings the others in line.
+ */
+async function appendPostActionSnapshot(
+  manager: { snapshot: () => Promise<string> },
+  base: string,
+): Promise<string> {
+  try {
+    const raw = await manager.snapshot();
+    const prefix = computeAuthWallPrefix(raw);
+    return `${base}\n\n--- Page snapshot ---\n${wrapExternalContent(prefix + raw, "browser.snapshot")}`;
+  } catch {
+    return base;
+  }
+}
+
+/**
+ * Extract input-like refs from a formatted snapshot for fill-failure
+ * diagnostics. The snapshot lines look like `[N]<role type=X>name</role>`;
+ * we pull rows whose role suggests text-entry so the agent can pick the
+ * right ref for a retry. Returns the first 8 matches, capped to keep the
+ * error payload bounded.
+ */
+function listInputRefs(snap: string): string {
+  const inputRoles = /^\[\d+\]<(input|textbox|textarea|combobox|searchbox|spinbutton)\b/i;
+  const matches = snap.split("\n").filter(l => inputRoles.test(l));
+  if (matches.length === 0) return "(no input-like elements visible — call 'snapshot' to refresh)";
+  return matches.slice(0, 8).join("\n");
+}
+
+/**
  * Smarter auth-wall detection. Old heuristic flagged ANY page with a
  * `type=password` field, which fired false positives all over —
  * many sites have hidden / collapsed login forms that aren't actually
@@ -224,26 +263,26 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             if (args.ref !== undefined && args.ref !== null) {
               const ref = Number(args.ref);
               if (isNaN(ref)) return err("'ref' must be a number from the snapshot.");
-              return ok(await manager.fillByRef(ref, value));
+              const base = await manager.fillByRef(ref, value);
+              return ok(await appendPostActionSnapshot(manager, base));
             }
             const selector = String(args.selector || "");
             if (!selector) return err("Provide 'ref' (from snapshot) or 'selector' (CSS) for fill.");
             try {
-              return ok(await manager.fill(selector, value));
-            } catch {
-              // Auto-recovery fallbacks
-              const alternatives = [
-                "input[type='text']:first-of-type",
-                "input[type='email']:first-of-type",
-                "input:first-of-type",
-              ];
-              for (const alt of alternatives) {
-                try {
-                  const result = await manager.fill(alt, value);
-                  return ok(result + `\n(used fallback "${alt}")`);
-                } catch { continue; }
-              }
-              return err(`Could not fill "${selector}". Use 'snapshot' action to find the right ref.`);
+              const base = await manager.fill(selector, value);
+              return ok(await appendPostActionSnapshot(manager, base));
+            } catch (e) {
+              // Don't blind-guess with hardcoded selectors — that silently
+              // fills the wrong input when the page happens to have a matching
+              // generic shape. List the actual inputs on the page so the agent
+              // can retry with a real ref.
+              const snap = await manager.snapshot().catch(() => "");
+              const inputs = listInputRefs(snap);
+              const reason = (e as Error).message?.split("\n")[0] || "fill failed";
+              return err(
+                `fill failed for "${selector}": ${reason}\n` +
+                `Inputs currently on the page (retry with 'ref' from this list):\n${inputs}`,
+              );
             }
           }
 
@@ -251,7 +290,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             const selector = String(args.selector || "");
             const value = String(args.value || "");
             if (!selector || !value) return err("'selector' and 'value' are required for select action.");
-            return ok(await manager.select(selector, value));
+            const base = await manager.select(selector, value);
+            return ok(await appendPostActionSnapshot(manager, base));
           }
 
           case "extract": {
@@ -282,7 +322,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             // OR ref = number to scroll that element into view
             const refVal = args.ref !== undefined && args.ref !== null ? Number(args.ref) : undefined;
             const direction = args.value ? String(args.value) as "up" | "down" | "top" | "bottom" : "down";
-            return ok(await manager.scroll({ direction, refId: refVal }));
+            const base = await manager.scroll({ direction, refId: refVal });
+            return ok(await appendPostActionSnapshot(manager, base));
           }
 
           case "tabs": {
@@ -292,7 +333,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           case "switch_tab": {
             const tabIndex = parseInt(String(args.value || "0"), 10);
             if (isNaN(tabIndex)) return err("'value' must be a tab index number. Use 'tabs' action to list tabs.");
-            return ok(await manager.switchTab(tabIndex));
+            const base = await manager.switchTab(tabIndex);
+            return ok(await appendPostActionSnapshot(manager, base));
           }
 
           case "info": {
@@ -301,11 +343,13 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
 
           case "dialog_accept": {
             const promptText = args.value !== undefined ? String(args.value) : undefined;
-            return ok(await manager.dialogAccept(promptText));
+            const base = await manager.dialogAccept(promptText);
+            return ok(await appendPostActionSnapshot(manager, base));
           }
 
           case "dialog_dismiss": {
-            return ok(await manager.dialogDismiss());
+            const base = await manager.dialogDismiss();
+            return ok(await appendPostActionSnapshot(manager, base));
           }
 
           case "close": {

@@ -34,6 +34,7 @@ import { markNoToolSupport } from "../../providers/types.js";
 import { createLogger } from "../../logger.js";
 import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
 import { sanitizeAssistantTextForRebuild } from "../../anthropic-client/parse.js";
+import { hasInjects } from "../../agent-loop/inject-queue.js";
 
 const logger = createLogger("canonical-loop.adapters.openai-compat");
 
@@ -230,6 +231,14 @@ export class OpenAICompatAdapter implements Adapter {
       const { ollamaHttpAdapter } = await import("../../providers/adapters/ollama-http.js");
       for await (const ev of ollamaHttpAdapter.stream(req)) {
         if (this.aborted) break;
+        // Mid-stream user interrupt — same shape as anthropic.ts and
+        // codex.ts. Abort the stream when the user types so the next
+        // driveTurn drains the inject and the model sees the message
+        // on its next API call.
+        if (this.opts.sessionId && hasInjects(this.opts.sessionId)) {
+          this.aborted = true;
+          break;
+        }
         if (ev.type === "text") {
           if (!ev.delta) continue;
           out.assembledText += ev.delta;

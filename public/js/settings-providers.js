@@ -120,10 +120,8 @@ const PROVIDER_MODELS = {
     { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
   ],
   cerebras: [
-    { value: 'llama-3.3-70b', label: 'Llama 3.3 70B (default, ~1800 tok/s)' },
-    { value: 'qwen-3-32b', label: 'Qwen 3 32B' },
-    { value: 'qwen-3-coder-480b', label: 'Qwen 3 Coder 480B (coding)' },
-    { value: 'gpt-oss-120b', label: 'GPT-OSS 120B' },
+    { value: 'gpt-oss-120b', label: 'OpenAI GPT-OSS 120B (default, production)' },
+    { value: 'zai-glm-4.7', label: 'Z.ai GLM 4.7 355B (preview)' },
   ],
 };
 

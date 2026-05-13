@@ -11,7 +11,7 @@
  * finds nothing, we scroll down a viewport at a time and retry — saves the
  * agent from giving up on virtualized/long lists.
  */
-import type { Page } from "playwright";
+import type { Frame, Page } from "playwright";
 import type { DurableRef, ObservationRegistry } from "./observation.js";
 import { waitForStability } from "./stability.js";
 
@@ -23,6 +23,30 @@ export interface ActionResult {
 
 const CLICK_TIMEOUT = 8_000;
 const SCROLL_TIMEOUT = 2_000;
+
+/**
+ * Pick the right Playwright Frame for a ref. Main-frame refs (no
+ * frameUrl) resolve against `page`. Same-origin iframe refs (`frameUrl`
+ * is set) resolve against the matching child Frame.
+ *
+ * Matching strategy: prefer URL equality, fall back to the first non-
+ * main frame if URL didn't match (covers about:blank / srcdoc iframes
+ * whose URL we couldn't capture). If still no match, fall back to the
+ * main page — the coords-based click can still hit the right pixel
+ * because extract.ts now records iframe-offset rects.
+ */
+function resolveFrame(page: Page, ref: DurableRef): Frame | Page {
+  if (!ref.frameUrl && ref.frameUrl !== "") return page;
+  const frames = page.frames();
+  if (ref.frameUrl) {
+    const byUrl = frames.find(f => f.url() === ref.frameUrl);
+    if (byUrl) return byUrl;
+  }
+  // Empty-string frameUrl (srcdoc/about:blank iframes) or src that
+  // didn't survive — pick the first non-main frame as a last resort.
+  const nonMain = frames.find(f => f !== page.mainFrame());
+  return nonMain ?? page;
+}
 
 export async function clickRef(
   page: Page,
@@ -63,7 +87,8 @@ export async function fillRef(
 async function scrollRefIntoView(page: Page, ref: DurableRef): Promise<void> {
   if (ref.inViewport || !ref.xpath) return;
   try {
-    await page.locator(`xpath=${ref.xpath}`).first().scrollIntoViewIfNeeded({ timeout: SCROLL_TIMEOUT });
+    const root = resolveFrame(page, ref);
+    await root.locator(`xpath=${ref.xpath}`).first().scrollIntoViewIfNeeded({ timeout: SCROLL_TIMEOUT });
   } catch {
     // Element may have moved — resolution chain handles the rest.
   }
@@ -75,49 +100,64 @@ async function tryResolutionChain(
   op: "click" | "fill",
   value = ""
 ): Promise<ActionResult> {
+  // Pick the right frame up front — main page or same-origin iframe.
+  // The role/text/xpath locators all need to be scoped to the frame that
+  // actually contains the element; otherwise Playwright queries the main
+  // frame's accessibility tree and finds nothing (the regression that
+  // broke Thriveventory PO entry).
+  const root = resolveFrame(page, ref);
+  const inIframe = root !== page;
+  const viaSuffix = inIframe ? " (iframe)" : "";
+
   if (ref.role && ref.name) {
     try {
-      const loc = page.getByRole(ref.role as Parameters<Page["getByRole"]>[0], { name: ref.name, exact: false });
+      const loc = root.getByRole(ref.role as Parameters<Page["getByRole"]>[0], { name: ref.name, exact: false });
       if ((await loc.count()) > 0) {
         if (op === "click") await loc.first().click({ timeout: CLICK_TIMEOUT });
         else await loc.first().fill(value, { timeout: CLICK_TIMEOUT });
-        return { ok: true, via: "role", message: `[${ref.id}] ${op} via role/name (${ref.role} "${ref.name}")` };
+        return { ok: true, via: "role", message: `[${ref.id}] ${op} via role/name (${ref.role} "${ref.name}")${viaSuffix}` };
       }
     } catch { /* fall through */ }
   }
 
   if (op === "click" && ref.name) {
     try {
-      const loc = page.getByText(ref.name, { exact: false });
+      const loc = root.getByText(ref.name, { exact: false });
       if ((await loc.count()) > 0) {
         await loc.first().click({ timeout: CLICK_TIMEOUT });
-        return { ok: true, via: "text", message: `[${ref.id}] click via visible text "${ref.name}"` };
+        return { ok: true, via: "text", message: `[${ref.id}] click via visible text "${ref.name}"${viaSuffix}` };
       }
     } catch { /* fall through */ }
   }
 
   if (ref.xpath) {
     try {
-      const loc = page.locator(`xpath=${ref.xpath}`);
+      const loc = root.locator(`xpath=${ref.xpath}`);
       if ((await loc.count()) > 0) {
         if (op === "click") await loc.first().click({ timeout: CLICK_TIMEOUT });
         else await loc.first().fill(value, { timeout: CLICK_TIMEOUT });
-        return { ok: true, via: "xpath", message: `[${ref.id}] ${op} via XPath` };
+        return { ok: true, via: "xpath", message: `[${ref.id}] ${op} via XPath${viaSuffix}` };
       }
     } catch { /* fall through */ }
   }
 
+  // Coords fallback uses the page-level mouse — extract.ts now records
+  // iframe-offset coordinates in ref.rect, so clicking at those coords
+  // hits the iframe pixel correctly regardless of which frame owns the
+  // element. `fill` has no coords path because there's no "type at this
+  // pixel" — keep the limitation; agents that need iframe-fill use the
+  // role/xpath paths above which now route via root.
   if (op === "click" && ref.rect.width > 0 && ref.rect.height > 0) {
     try {
       await page.mouse.click(ref.rect.x, ref.rect.y);
-      return { ok: true, via: "coords", message: `[${ref.id}] click via coords (${ref.rect.x},${ref.rect.y}) — layout-dependent, verify result` };
+      return { ok: true, via: "coords", message: `[${ref.id}] click via coords (${ref.rect.x},${ref.rect.y})${viaSuffix} — layout-dependent, verify result` };
     } catch { /* fall through */ }
   }
 
   return {
     ok: false,
     via: "none",
-    message: `[${ref.id}] ${ref.role} "${ref.name}" — all resolution strategies failed. Re-observe the page.`,
+    message: `[${ref.id}] ${ref.role} "${ref.name}"${viaSuffix} — all resolution strategies failed. Re-observe the page.`,
   };
 }
 

@@ -20,6 +20,13 @@ export interface RawElement {
   signature: string;
   inViewport: boolean;
   rect: { x: number; y: number; width: number; height: number };
+  /** When the element lives inside a same-origin iframe, this is the
+   *  iframe's `src` URL (or empty string for srcdoc/about:blank frames
+   *  with no src). undefined for main-frame elements. Used by actions.ts
+   *  to pick the right Playwright Frame for fill/click resolution; if
+   *  resolution still fails, the rect (which we recompute in main-page
+   *  coordinates below) lets the coords fallback hit the right pixel. */
+  frameUrl?: string;
 }
 
 /**
@@ -145,23 +152,54 @@ const EXTRACTOR_SCRIPT = `(function(args) {
     return true;
   }
 
-  // Collect interactive elements from main document AND all same-origin iframes.
-  // Cross-origin iframes can't be queried (security); we skip them silently.
+  // Collect interactive elements from main document AND all same-origin
+  // iframes. Cross-origin iframes can't be queried (security); we skip them.
+  //
+  // For iframe elements we record two things the action layer needs:
+  //   - frameUrl: iframe src — used to pick the right Playwright Frame
+  //   - offsetX/Y: the iframe's position in the MAIN page viewport — added
+  //     to each child element's rect so the coords-based click fallback
+  //     hits the right pixel. Without this offset, an element at iframe-
+  //     local (200,300) gets clicked at main-page (200,300), which is
+  //     wherever the iframe IS NOT.
+  //
+  // Live failure shape (2026-05-13, Thriveventory PO entry on both
+  // providers): React-Select dropdowns rendered inside an iframe were
+  // unreachable. Snapshot saw them (extract iterated iframe content) but
+  // every fill/click strategy queried the main frame's xpath/role/text,
+  // and the coords fallback clicked iframe-local coords on the main
+  // page. Result: "all resolution strategies failed."
   const collectRoots = () => {
-    const roots = [document];
+    const roots = [{ doc: document, frameUrl: undefined, offsetX: 0, offsetY: 0 }];
     const frames = document.querySelectorAll('iframe, frame');
     for (const f of frames) {
       try {
         const doc = f.contentDocument;
-        if (doc) roots.push(doc);
+        if (!doc) continue;
+        const fr = f.getBoundingClientRect();
+        roots.push({
+          doc,
+          frameUrl: f.getAttribute('src') || '',
+          offsetX: fr.x,
+          offsetY: fr.y,
+        });
       } catch { /* cross-origin, skip */ }
     }
     return roots;
   };
 
+  // Track each element's source root so we can stamp frameUrl and offset
+  // the rect later. Parallel arrays beat decorating DOM elements with
+  // ad-hoc properties (which can break sites' own mutation observers).
   const all = [];
+  const rootByEl = new Map();
   for (const root of collectRoots()) {
-    for (const el of root.querySelectorAll(interactiveSelector)) all.push(el);
+    for (const el of root.doc.querySelectorAll(interactiveSelector)) {
+      if (!rootByEl.has(el)) {
+        rootByEl.set(el, root);
+        all.push(el);
+      }
+    }
   }
   const seen = new Set();
   const out = [];
@@ -186,11 +224,22 @@ const EXTRACTOR_SCRIPT = `(function(args) {
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) continue;
 
-    const inViewport =
-      rect.bottom > 0 && rect.right > 0 &&
-      rect.top < vpHeight && rect.left < vpWidth;
+    // For iframe elements, getBoundingClientRect() returns coords in the
+    // iframe document's viewport. Add the iframe's main-page offset so
+    // the coords-based click fallback in actions.ts hits the right pixel.
+    const root = rootByEl.get(el);
+    const offsetX = root ? root.offsetX : 0;
+    const offsetY = root ? root.offsetY : 0;
+    const absX = rect.x + offsetX;
+    const absY = rect.y + offsetY;
+    const absBottom = rect.bottom + offsetY;
+    const absRight = rect.right + offsetX;
 
-    out.push({
+    const inViewport =
+      absBottom > 0 && absRight > 0 &&
+      absY < vpHeight && absX < vpWidth;
+
+    const entry = {
       role,
       name: name.replace(/\\s+/g, ' ').trim().slice(0, 120),
       tag: el.tagName,
@@ -199,12 +248,14 @@ const EXTRACTOR_SCRIPT = `(function(args) {
       signature: computeSignature(el, role, name),
       inViewport,
       rect: {
-        x: Math.round(rect.x + rect.width / 2),
-        y: Math.round(rect.y + rect.height / 2),
+        x: Math.round(absX + rect.width / 2),
+        y: Math.round(absY + rect.height / 2),
         width: Math.round(rect.width),
         height: Math.round(rect.height),
       },
-    });
+    };
+    if (root && root.frameUrl !== undefined) entry.frameUrl = root.frameUrl;
+    out.push(entry);
   }
 
   // Dedup by signature (keeps first occurrence — usually the topmost, most-visible).

@@ -33,13 +33,14 @@ export async function resolveProvider(
   // Resolve provider. If a saved provider exists but has no usable credentials,
   // fall through to auto-detection so a stale "codex" default from a previous
   // run doesn't block a freshly-signed-in Anthropic user.
-  const VALID = ["codex", "xai", "openai", "anthropic", "local", "ollama-cloud", "gemini", "custom"];
+  const VALID = ["codex", "xai", "openai", "anthropic", "local", "ollama-cloud", "gemini", "cerebras", "custom"];
   const hasCredsFor = (p: string): boolean => {
     if (p === "anthropic") return !!loadAnthropicTokens();
     if (p === "codex") return !!loadTokens();
     if (p === "openai") return !!(config.openaiApiKey || secretsStore.get("OPENAI_API_KEY"));
     if (p === "xai") return !!secretsStore.get("XAI_API_KEY");
     if (p === "gemini") return !!secretsStore.get("GEMINI_API_KEY");
+    if (p === "cerebras") return !!secretsStore.get("CEREBRAS_API_KEY");
     if (p === "custom") return !!secretsStore.get("CUSTOM_API_KEY");
     if (p === "ollama-cloud") return !!secretsStore.get("OLLAMA_CLOUD_API_KEY");
     if (p === "local") return true;
@@ -91,6 +92,8 @@ export async function resolveProvider(
     apiKey = secretsStore.get("XAI_API_KEY") || "";
   } else if (provider === "gemini") {
     apiKey = secretsStore.get("GEMINI_API_KEY") || "";
+  } else if (provider === "cerebras") {
+    apiKey = secretsStore.get("CEREBRAS_API_KEY") || "";
   } else if (provider === "custom") {
     apiKey = secretsStore.get("CUSTOM_API_KEY") || "";
     try {
@@ -110,6 +113,7 @@ export async function resolveProvider(
     (provider === "codex" ? "gpt-5.4-mini" :
      provider === "anthropic" ? "claude-sonnet-4-6" :
      provider === "gemini" ? "gemini-2.0-flash" :
+     provider === "cerebras" ? "llama-3.3-70b" :
      config.model);
 
   const temperature = typeof saved.temperature === "number" ? saved.temperature : config.temperature;

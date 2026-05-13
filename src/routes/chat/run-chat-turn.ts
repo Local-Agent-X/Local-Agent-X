@@ -87,6 +87,23 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   // inlined as load-bearing methodology and the agent sees a rewritten
   // message. Unknown commands pass through unchanged so we don't swallow
   // legitimate slash-prefixed input. See src/slash-commands.ts.
+  // `/approve <reason>` short-circuit. Grants threat-engine consent for
+  // this session so the model's NEXT retry of a blocked tool succeeds.
+  // Returns inline to the chat, doesn't call the model. Layer B of the
+  // threat-engine consent flow. See src/threat/consent-store.ts.
+  if (/^\s*\/approve\b/i.test(message)) {
+    const reason = (message.replace(/^\s*\/approve\s*/i, "").trim() || "user-typed-/approve").slice(0, 160);
+    const { grantConsent } = await import("../../threat/consent-store.js");
+    grantConsent(sessionId, 30 * 60_000, reason);
+    logger.info(`[threat] /approve granted for sess=${sessionId.slice(0, 16)}: ${reason.slice(0, 80)}`);
+    if (sseSink) sseSink({
+      type: "stream",
+      delta: `✓ Consent granted for 30 minutes. Reason: ${reason}\n\nThe agent's next retry of the blocked tool will succeed. Type the original request again or ask the agent to retry.`,
+    });
+    if (sseSink) sseSink({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+    return;
+  }
+
   try {
     const { expandSlashCommand } = await import("../../slash-commands.js");
     const expanded = expandSlashCommand(message);
@@ -195,21 +212,19 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     ctx.setActiveBrowserSessionId(sessionId);
 
     const threatEngine = new ThreatEngine(ctx.dataDir, sessionId);
-    // Mark the threat-engine in user-consent flow when the user message
-    // gives directive language alongside attachments. Live failure
-    // 2026-05-13: user attached an invoice PDF and asked "enter in
-    // thriventory" — the model read the PDF (classified PII), then
-    // tried to navigate the browser to thrivemetrics.com — exfil rule
-    // fired, dispatch blocked, model collapsed into narration. The user
-    // explicitly consented to that flow by attaching and asking; the
-    // engine just had no way to read that signal. See
-    // src/threat/tool-chain.ts:markUserConsent for the bypass semantics
-    // (audited, not silent).
+    // Threat-engine consent gating. Two paths can grant consent:
+    //  1) Layer A — this turn's message has attachments + directive verbs
+    //  2) Layer B — a prior turn granted consent via /approve, still in window
+    // Either way we seed the per-turn analyzer so exfil patterns audit-but-
+    // don't-block. Live failure 2026-05-13 (invoice PDF → Thrivemetrics)
+    // motivates Layer A; the /approve flow handles cases Layer A misses.
+    const { grantConsent, getActiveConsent } = await import("../../threat/consent-store.js");
     if (attachments.length > 0 && DIRECTIVE_VERB_RE.test(message)) {
-      threatEngine.markUserConsentFlow(
-        30 * 60_000, // 30 min — covers a multi-turn workflow comfortably
-        `chat-attachment-with-directive (attachments=${attachments.length}, verb-match)`,
-      );
+      grantConsent(sessionId, 30 * 60_000, `chat-attachment-with-directive (attachments=${attachments.length})`);
+    }
+    const activeConsent = getActiveConsent(sessionId);
+    if (activeConsent) {
+      threatEngine.markUserConsentFlow(activeConsent.remainingMs, activeConsent.reason);
     }
     const { augmentSystemPrompt } = await import("./system-prompt-augmentations.js");
     await augmentSystemPrompt(prepared, threatEngine, sessionId);

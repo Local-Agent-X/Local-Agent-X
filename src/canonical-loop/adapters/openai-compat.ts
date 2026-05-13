@@ -19,8 +19,8 @@
  * and usage.
  *
  * Empty-response retry: if a turn produces zero text + zero tool calls
- * after sending tools, we retry once without tools and add the model
- * to `_localNoToolModels` so subsequent turns skip the dead first leg.
+ * after sending tools, we retry once without tools and call
+ * markNoToolSupport so subsequent turns skip the dead first leg.
  * Catches qwen2's silent-fail pattern (cf. the explicit-error fallback
  * already inside OllamaHttpAdapter). For models that don't have this
  * failure mode (gpt-5, grok, etc.), the condition just never fires.
@@ -30,7 +30,7 @@ import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-c
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ProviderRequest } from "../../providers/adapter/types.js";
-import { _localNoToolModels } from "../../providers/types.js";
+import { markNoToolSupport } from "../../providers/types.js";
 import { createLogger } from "../../logger.js";
 import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
 
@@ -137,7 +137,7 @@ export class OpenAICompatAdapter implements Adapter {
     const hadTools = req.tools.length > 0;
     if (noOutput && hadTools) {
       logger.info(`${model} returned empty with tools — retrying without tools`);
-      _localNoToolModels.add(model);
+      markNoToolSupport(baseURL, model);
       const retryReq: ProviderRequest = { ...req, tools: [] as unknown as ProviderRequest["tools"] };
       this.inflight = this.streamOnce(retryReq, report);
       result = await this.inflight;

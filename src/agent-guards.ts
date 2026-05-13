@@ -355,13 +355,56 @@ const DISCOVERY_LOOP_THRESHOLD_WEAK = 4;
 // a normal "verify the commit" wrap-up does. Anything beyond is spinning.
 const NO_PROGRESS_LIMIT = 12;
 const NO_PROGRESS_LIMIT_WEAK = 6;
-// A mutation is a tool that committed work. Note `bash` is NOT here despite
-// being in PROGRESS_TOOLS for the spiralable-reset logic — bash can spin
-// without producing changes (git status loops, grep loops). Only count tools
-// that demonstrably changed disk or repo state.
+// A mutation is a tool that committed *real-world* work — disk write, page
+// click, HTTP POST, message sent. Note `bash` is NOT here despite being in
+// PROGRESS_TOOLS for the spiralable-reset logic — bash can spin without
+// producing changes (git status loops, grep loops). The other read-only
+// tools (`read`, `grep`, `glob`, `web_search`, `snapshot`-style ops) are
+// also excluded — those genuinely don't change anything.
+//
+// Live failure (2026-05-13, Thriveventory PO entry on codex): agent drove
+// the browser through 6 form-fill / click iterations without writing a
+// single file. Each `browser` call was real progress (PO number set,
+// vendor field populated, line items being added) but the no-progress
+// guard saw "zero file mutations" and aborted the turn with
+// "No-progress abort: 6+ iterations of tool calls with zero file
+// mutations." That's a false positive — browser-driven tasks don't
+// mutate files, they mutate external systems.
+//
+// Fix shape: anything that produces a side effect outside the agent's
+// process counts. `browser` covers UI automation (clicks, fills,
+// navigations). `http_request` covers API calls. The communication tools
+// cover messaging. Membership here means "this tool just did something
+// observable; the counter resets."
 const MUTATION_TOOLS = new Set([
+  // File changes
   "write", "edit", "self_edit", "build_app",
   "mcp_filesystem_write_file", "mcp_filesystem_edit_file",
+  // Browser-driven UI work (every browser action is potentially side-
+  // effecting; reading args to filter would over-fit, just count all)
+  "browser",
+  // HTTP — non-GET methods are committing per committing-tool-check.ts.
+  // We don't have args here to filter by method; counting all http_request
+  // calls is the right tradeoff (GETs are also progress in the sense that
+  // they ARE happening — model isn't spinning if it's hitting endpoints).
+  "http_request",
+  // Communication / external sends
+  "email_send", "whatsapp_send", "telegram_send", "sms_send",
+  // Calendar / contacts mutations
+  "calendar_create", "calendar_update", "calendar_delete",
+  "contacts_create", "contacts_update", "contacts_delete",
+  // Vault / secrets writes
+  "secret_save", "secret_delete",
+  "browser_capture_to_secret", "browser_fill_from_secret",
+  // Sidebar / UI state
+  "sidebar_pin", "sidebar_unpin",
+  // Memory writes
+  "memory_save", "memory_update_profile",
+  // Cron / scheduling mutations
+  "cron_create", "cron_delete", "cron_update",
+  // Delegation (spawning a worker IS the action)
+  "agent_spawn", "delegate", "op_submit", "op_submit_async",
+  "operation_start",
 ]);
 
 /**

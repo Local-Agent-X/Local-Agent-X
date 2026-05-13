@@ -29,6 +29,10 @@ export interface DurableRef {
   inViewport: boolean;
   lastSeen: number;
   rect: { x: number; y: number; width: number; height: number };
+  /** Set when the element lives inside a same-origin iframe. Carries the
+   *  iframe's `src` URL (or "" for srcdoc / about:blank). actions.ts
+   *  uses this to scope locators into the right Playwright Frame. */
+  frameUrl?: string;
 }
 
 export interface BrowserObservation {
@@ -108,6 +112,7 @@ export class ObservationRegistry {
           rect: el.rect,
           xpath: el.xpath,
           lastSeen: this.observationCount,
+          ...(el.frameUrl !== undefined ? { frameUrl: el.frameUrl } : {}),
         };
         if (prev.name !== el.name || prev.role !== el.role) {
           changed.push({ before: prev, after: ref });
@@ -124,6 +129,7 @@ export class ObservationRegistry {
           inViewport: el.inViewport,
           rect: el.rect,
           lastSeen: this.observationCount,
+          ...(el.frameUrl !== undefined ? { frameUrl: el.frameUrl } : {}),
         };
         this.signatureToRef.set(el.signature, ref.id);
         added.push(ref);

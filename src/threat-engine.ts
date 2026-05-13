@@ -141,6 +141,14 @@ export class ThreatEngine {
         threatScore: this.scorer.getStatus().score,
         threatLevel: this.scorer.getStatus().level,
       });
+      // Layer C: stash the fingerprint on the session so /approve can find
+      // it and record into the trust ledger. Lazy-imported to keep the
+      // threat-engine module's import surface lean.
+      if (chainResult.blockedFingerprint) {
+        void import("./threat/consent-store.js").then(({ recordLastBlockedFingerprint }) => {
+          recordLastBlockedFingerprint(this.sessionId, chainResult.blockedFingerprint!);
+        }).catch(() => {});
+      }
       const status = this.scorer.getStatus();
       return {
         blocked: true,

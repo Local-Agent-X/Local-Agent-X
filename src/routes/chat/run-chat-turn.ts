@@ -93,12 +93,21 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   // threat-engine consent flow. See src/threat/consent-store.ts.
   if (/^\s*\/approve\b/i.test(message)) {
     const reason = (message.replace(/^\s*\/approve\s*/i, "").trim() || "user-typed-/approve").slice(0, 160);
-    const { grantConsent } = await import("../../threat/consent-store.js");
+    const { grantConsent, getLastBlockedFingerprint } = await import("../../threat/consent-store.js");
     grantConsent(sessionId, 30 * 60_000, reason);
-    logger.info(`[threat] /approve granted for sess=${sessionId.slice(0, 16)}: ${reason.slice(0, 80)}`);
+    // Layer C: record the last blocked pattern's fingerprint into the
+    // trust ledger so future sessions auto-allow without /approve.
+    let ledgerNote = "";
+    const fp = getLastBlockedFingerprint(sessionId);
+    if (fp) {
+      const { recordApproval } = await import("../../threat/trust-ledger.js");
+      recordApproval(fp, reason);
+      ledgerNote = `\n\nLearned pattern: \`${fp}\` — future sessions hitting this pattern will auto-allow without /approve.`;
+    }
+    logger.info(`[threat] /approve granted for sess=${sessionId.slice(0, 16)}: ${reason.slice(0, 80)}${fp ? ` (ledger fingerprint=${fp})` : ""}`);
     if (sseSink) sseSink({
       type: "stream",
-      delta: `✓ Consent granted for 30 minutes. Reason: ${reason}\n\nThe agent's next retry of the blocked tool will succeed. Type the original request again or ask the agent to retry.`,
+      delta: `✓ Consent granted for 30 minutes. Reason: ${reason}\n\nThe agent's next retry of the blocked tool will succeed. Type the original request again or ask the agent to retry.${ledgerNote}`,
     });
     if (sseSink) sseSink({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
     return;

@@ -8,7 +8,7 @@
  * to the autopilot worktree via security.addAllowedPath.
  */
 
-import { type AgentOptions } from "../agent.js";
+import { type AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import type { Operation, OperationPhase } from "../operations/types.js";
 import type { AutopilotConfig } from "./types.js";

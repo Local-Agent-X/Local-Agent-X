@@ -1,6 +1,6 @@
 import type { ServerResponse } from "node:http";
 
-import type { AgentOptions } from "../../agent.js";
+import type { AgentOptions } from "../../providers/types.js";
 import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { createLogger } from "../../logger.js";
@@ -123,7 +123,7 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
     lane: "interactive",
   });
 
-  const { stripEphemeralMessages } = await import("../../agent-providers.js");
+  const { stripEphemeralMessages } = await import("../../providers/sanitize.js");
   const { COMPACTION_PREFIX } = await import("../../types.js");
   type MsgRecord = Record<string, unknown>;
   session.messages = stripEphemeralMessages(result.messages).filter((m) => {

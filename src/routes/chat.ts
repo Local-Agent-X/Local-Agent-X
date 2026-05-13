@@ -320,7 +320,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         // errored, or pure tool-only). Memory indexing still requires
         // assistant text since an empty turn isn't a meaningful Q/A pair.
         const assistantText = fullResponseText.trim();
-        const { stripEphemeralMessages: stripCanonical } = await import("../agent-providers.js");
+        const { stripEphemeralMessages: stripCanonical } = await import("../providers/sanitize.js");
         type MsgRecordC = Record<string, unknown>;
 
         const newChatMessages: ChatCompletionMessageParam[] = [];

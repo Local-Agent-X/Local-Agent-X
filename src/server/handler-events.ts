@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { type AgentOptions } from "../agent.js";
+import { type AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import { extractAgentOutput, safeErrorMessage } from "../server-utils.js";
 import { enqueue } from "../execution-lanes.js";

@@ -9,7 +9,7 @@
 
 import type { ToolDefinition } from "../types.js";
 import type { LAXConfig } from "../types.js";
-import type { AgentOptions } from "../agent.js";
+import type { AgentOptions } from "../providers/types.js";
 import { startAutopilot } from "./start.js";
 import { requestStop, getActiveAutopilotOp, listActiveAutopilotOps } from "./loop.js";
 import { readLock } from "./lock.js";

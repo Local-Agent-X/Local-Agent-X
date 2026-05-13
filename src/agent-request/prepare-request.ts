@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { sanitizeHistory, truncateHistory } from "../agent-providers.js";
+import { sanitizeHistory, truncateHistory } from "../providers/sanitize.js";
 import { loadSystemPrompt } from "../config-loader.js";
 import type { AgentRequestInput, PreparedAgentRequest } from "./types.js";
 import { resolveProvider } from "./resolve-provider.js";

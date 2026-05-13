@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { AgentOptions } from "../agent.js";
+import type { AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import { setupChatWebSocket } from "../chat-ws.js";
 import { runSecurityAudit, printAuditReport } from "../security-audit.js";

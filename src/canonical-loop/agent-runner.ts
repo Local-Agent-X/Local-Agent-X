@@ -29,7 +29,7 @@ import { buildContextPack } from "../workers/context-pack-builder.js";
 import { getRetryPolicy } from "../workers/heartbeat.js";
 import { trackOpForSession } from "../workers/session-bridge.js";
 import type { Op, OpLane, OpVisibility } from "../workers/types.js";
-import type { AgentOptions } from "../providers/types.js";
+import type { AgentOptions, ImageAttachment } from "../providers/types.js";
 import type { AgentTurn } from "../types.js";
 
 import { canonicalLoopEntry } from "./index.js";
@@ -111,7 +111,7 @@ export async function runAgentViaCanonical(
   trackOpForSession(op.id, sessionId, userMessage);
   writeOp(op);
 
-  seedOpMessages(op.id, history, userMessage);
+  seedOpMessages(op.id, history, userMessage, options.images);
   await registerProviderAdapter(op.id, options, sessionId);
 
   registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
@@ -275,6 +275,7 @@ function seedOpMessages(
   opId: string,
   history: ChatCompletionMessageParam[],
   userMessage: string,
+  images: ImageAttachment[] | undefined,
 ): void {
   let seqInTurn = 0;
   const turnIdx = 0;
@@ -322,13 +323,20 @@ function seedOpMessages(
     seqInTurn += 1;
   }
 
+  // Mirror chat-runner.ts: image attachments ride on the seeded user-message
+  // content payload. Adapters extract `images` and convert to the provider's
+  // wire format (OpenAI multi-part / Anthropic image content blocks). Without
+  // this, a vision-capable spawned agent (autopilot, delegation ack, etc.)
+  // never sees the user's image — only the text describing it.
+  const userContent: { text: string; images?: ImageAttachment[] } = { text: userMessage };
+  if (images && images.length > 0) userContent.images = images;
   appendOpMessage({
     messageId: `um-${opId}-${turnIdx}-${seqInTurn}-${randomUUID().slice(0, 6)}`,
     opId,
     turnIdx,
     seqInTurn,
     role: "user",
-    content: { text: userMessage },
+    content: userContent,
     createdAt: new Date().toISOString(),
   });
 }

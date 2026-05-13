@@ -12,6 +12,14 @@ import { createRetryContext, attachRetryContext, detachRetryContext } from "../.
 
 const logger = createLogger("routes.chat.run-turn");
 
+// Directive verbs that signal "the user is explicitly directing this
+// attachment to a destination" — when paired with attachments, this is
+// the consent signal for the threat-engine's user-consent bypass. The
+// list is conservative on purpose: a vague "look at this" doesn't fire;
+// "enter / submit / send / post / upload / paste / fill / add this in/to/into
+// <somewhere>" does.
+const DIRECTIVE_VERB_RE = /\b(enter|submit|send|post|upload|paste|fill|add|put|record|log|register|copy)\b[^.!?]{0,80}\b(in|to|into|via|onto|inside|under|using|through)\b/i;
+
 /**
  * Transport-agnostic sink for outbound chat events. The HTTP route handler
  * passes one that writes SSE frames to its `res`; the WS forward layer passes
@@ -187,6 +195,22 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     ctx.setActiveBrowserSessionId(sessionId);
 
     const threatEngine = new ThreatEngine(ctx.dataDir, sessionId);
+    // Mark the threat-engine in user-consent flow when the user message
+    // gives directive language alongside attachments. Live failure
+    // 2026-05-13: user attached an invoice PDF and asked "enter in
+    // thriventory" — the model read the PDF (classified PII), then
+    // tried to navigate the browser to thrivemetrics.com — exfil rule
+    // fired, dispatch blocked, model collapsed into narration. The user
+    // explicitly consented to that flow by attaching and asking; the
+    // engine just had no way to read that signal. See
+    // src/threat/tool-chain.ts:markUserConsent for the bypass semantics
+    // (audited, not silent).
+    if (attachments.length > 0 && DIRECTIVE_VERB_RE.test(message)) {
+      threatEngine.markUserConsentFlow(
+        30 * 60_000, // 30 min — covers a multi-turn workflow comfortably
+        `chat-attachment-with-directive (attachments=${attachments.length}, verb-match)`,
+      );
+    }
     const { augmentSystemPrompt } = await import("./system-prompt-augmentations.js");
     await augmentSystemPrompt(prepared, threatEngine, sessionId);
 

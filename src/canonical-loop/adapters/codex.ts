@@ -14,6 +14,7 @@ import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.
 import type { CodexTransport } from "./codex-transport.js";
 import type { AnthropicTransportRequest } from "./anthropic.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
+import { hasInjects } from "../../agent-loop/inject-queue.js";
 
 export const CODEX_ADAPTER_NAME = "codex";
 export const CODEX_ADAPTER_VERSION = "1.0.0";
@@ -86,6 +87,15 @@ export class CodexAdapter implements Adapter {
       try {
         for await (const ev of transport.stream(req as Parameters<typeof transport.stream>[0])) {
           if (this.aborted) break;
+          // Mid-stream user interrupt — same shape as anthropic.ts. When
+          // the user types during a long in-stream tool-loop, abort the
+          // stream so the next driveTurn drains the inject and the model
+          // sees the user's message on its next API call.
+          if (this.opts.sessionId && hasInjects(this.opts.sessionId)) {
+            this.aborted = true;
+            try { this.aborter?.abort(); } catch { /* already aborted */ }
+            break;
+          }
           if (ev.type === "text") {
             if ((ev as { delta?: string }).delta?.length === 0) continue;
             assembledText += (ev as { delta: string }).delta;

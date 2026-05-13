@@ -1,14 +1,12 @@
-import type { ServerResponse } from "node:http";
-
 import type { AgentOptions } from "../../providers/types.js";
 import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { createLogger } from "../../logger.js";
 import type { ServerContext } from "../../server-context.js";
-import { sseWrite } from "../../server-utils.js";
 import { ThreatEngine } from "../../threat-engine.js";
 import type { ServerEvent } from "../../types.js";
 import type { Role } from "../../rbac.js";
+import type { SseSink } from "./run-chat-turn.js";
 
 const logger = createLogger("routes.chat.delegation");
 
@@ -35,7 +33,9 @@ interface DelegationHandoffArgs {
   ctx: ServerContext;
   session: SessionLike;
   requestRole: Role;
-  res: ServerResponse;
+  /** SSE side-channel sink — null for WS-only callers. WS clients still
+   *  receive events via chat-ws's own pub/sub (wsChat.onEvent below). */
+  sseSink: SseSink;
 }
 
 interface DelegationHandoffResult {
@@ -53,7 +53,7 @@ interface DelegationHandoffResult {
  * event. Caller is expected to short-circuit (`return true`) afterwards.
  */
 export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise<DelegationHandoffResult> {
-  const { message, sessionId, prepared, ctx, session, requestRole, res } = args;
+  const { message, sessionId, prepared, ctx, session, requestRole, sseSink } = args;
 
   const { delegateMessageToWorker, linkDecisionToOpId } = await import("../../routing/index.js");
 
@@ -93,7 +93,7 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
   // Continue with the normal chat flow: set up onEvent + threat engine,
   // run runAgent with the delegation context + tools=[] (force text-only).
   const wsChat = ctx.chatWs.startChat(sessionId);
-  const onEvent = (event: ServerEvent) => { sseWrite(res, event); wsChat.onEvent(event); };
+  const onEvent = (event: ServerEvent) => { if (sseSink) sseSink(event); wsChat.onEvent(event); };
   ctx.setActiveOnEvent(sessionId, onEvent);
   const threatEngineDel = new ThreatEngine(ctx.dataDir, sessionId);
   const turnStart = Date.now();

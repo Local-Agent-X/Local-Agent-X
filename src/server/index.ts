@@ -150,7 +150,30 @@ export async function startServer(config: LAXConfig) {
   chatWsHolder.value = chatWs;
 
   await setupVoiceWs({ server, config, dataDir, memoryIndex, memoryManager, integrations, secretsStore, allAgentTools, bridgeTools, security, toolPolicy, rbac, activeOnEventBySession });
-  wireWsChat({ chatWs, config });
+
+  // The WS forward layer calls into the same chat-turn helper the HTTP
+  // /api/chat route uses (no more localhost HTTP self-loop). It needs a
+  // ServerContext to do so; build one on demand from the same dependencies
+  // request-handler.ts assembles per-request. WS auth happens at handshake
+  // time, so a fixed `operator` role is correct for WS-initiated chats.
+  const buildWsCtx = (): ServerContext => ({
+    config, security, toolPolicy, rbac, dataDir, publicDir,
+    sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations,
+    whatsappBridge, telegramBridge, agentSync,
+    appRegistry: AppRegistry.getInstance(),
+    agentRunStore, agentTemplateStore, issueStore, projectStore,
+    allAgentTools, toolRegistry, bridgeTools,
+    getOrCreateSession, saveSession, flushSession,
+    chatWs, broadcastAll,
+    getActiveOnEvent: (sid) => activeOnEventBySession.get(sid),
+    setActiveOnEvent: (sid, fn) => {
+      if (fn) activeOnEventBySession.set(sid, fn);
+      else activeOnEventBySession.delete(sid);
+    },
+    activeBrowserSessionId: activeBrowserSessionIdRef.value,
+    setActiveBrowserSessionId: (id) => { activeBrowserSessionIdRef.value = id; },
+  });
+  wireWsChat({ chatWs, buildCtx: buildWsCtx });
 
   registerHandlerEvents({
     config, dataDir, sessions, sessionStore, secretsStore, security, toolPolicy,

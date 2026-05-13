@@ -279,47 +279,41 @@ export async function setupVoiceWs(deps: {
 
 export function wireWsChat(deps: {
   chatWs: ReturnType<typeof setupChatWebSocket>;
-  config: LAXConfig;
+  buildCtx: () => import("../server-context.js").ServerContext;
 }): void {
-  const { chatWs, config } = deps;
+  const { chatWs, buildCtx } = deps;
   chatWs.onChat(async (sessionId, message, attachments) => {
     const _imgCount = (attachments || []).filter((a: any) => a?.isImage).length;
-    logger.info(`[ws-chat] onChat sess=${sessionId} msg_len=${message.length} atts=${(attachments || []).length} imgs=${_imgCount}`);
-    // Canonical-chat decision lives inside /api/chat now (after
-    // prepareAgentRequest, where the prepared payload is available). The WS
-    // forward layer just transports — it doesn't route.
+    logger.info(`[ws-chat] onChat sess=${sessionId} msg_len=${message.length} atts=${(attachments || []).length} imgs=${_imgCount} → direct (no HTTP self-loop)`);
+    // Direct call into the same chat-turn logic the /api/chat route uses.
+    // The previous implementation here did `fetch http://127.0.0.1:<port>/api/chat`
+    // and drained the SSE body, paying the HTTP entry cost twice (TCP localhost,
+    // headers, auth parse, lock acquire) on every WS chat. Events flow to the
+    // browser via chat-ws's pub/sub (broadcastToSession), so the SSE side-channel
+    // is unnecessary for WS callers — `sseSink: null` below. /api/chat remains
+    // wired for non-WS callers (Telegram, WhatsApp, curl).
     try {
-      const body = JSON.stringify({ message, sessionId, attachments: attachments || [] });
-      logger.info(`[ws-chat] body_bytes=${body.length} → fetch /api/chat`);
-      // 30 min cap on the WS-forward HTTP self-loop. Earlier 10 min was
-      // truncating productive Opus + tool turns mid-flight (the model
-      // would still be making real tool calls, but the UI's SSE stream
-      // got cut). 30 min covers realistic agentic chat without becoming
-      // an infinite-hang risk — true stalls are caught by the per-adapter
-      // idle-event detector (LAX_CANONICAL_IDLE_TIMEOUT_MS, 120s default).
-      // Long-term, this whole fetch hop should be replaced by direct
-      // canonical-op subscription so connection drops become invisible
-      // (UI calls reconnectOp on the opId after disconnect).
-      const res = await fetch(`http://127.0.0.1:${config.port}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.authToken}` },
-        body,
-        signal: AbortSignal.timeout(1_800_000),
+      const { runChatTurn } = await import("../routes/chat/run-chat-turn.js");
+      const ctx = buildCtx();
+      await runChatTurn({
+        sessionId,
+        message,
+        // WS frame passes attachments through unverified (the WS handshake
+        // already auth'd the client). The shape matches the HTTP schema —
+        // [{name, url, isImage}] — but is typed `any[]` upstream in chat-ws.
+        attachments: (attachments || []) as Array<{ name: string; url: string; isImage: boolean }>,
+        projectId: null,
+        ctx,
+        requestRole: "operator",
+        sseSink: null,
       });
-      logger.info(`[ws-chat] /api/chat status=${res.status} hasBody=${!!res.body}`);
-      if (res.body) { for await (const _ of res.body) { /* drain */ } }
-      logger.info(`[ws-chat] /api/chat drain complete sess=${sessionId}`);
     } catch (e) {
       const msg = (e as Error).message;
       logger.warn(`[ws-chat] Error:`, msg);
       // Tell the WS client the turn failed. Without this, the client's
       // activeChats entry stays {done:false} until the 5-minute cleanup
       // sweep — UI shows a spinner and accepts no new input until then.
-      const isTimeout = msg.includes("timeout") || msg.includes("aborted");
-      const reason = isTimeout
-        ? "Chat timed out (no response after 10 minutes)."
-        : `Chat transport error: ${msg}`;
-      chatWs.failChat(sessionId, reason);
+      chatWs.failChat(sessionId, `Chat error: ${msg}`);
     }
   });
 }

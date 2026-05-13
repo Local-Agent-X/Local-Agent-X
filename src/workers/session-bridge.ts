@@ -320,9 +320,26 @@ function onOpResult(result: OpResult): void {
   const sessionId = opSession.get(result.opId);
   if (!sessionId) return; // op wasn't submitted by a chat session (e.g. cron, autopilot, internal)
 
-  // Drop the mapping now that the op is terminal
+  // Drop the mapping now that the op is terminal.
   opSession.delete(result.opId);
-  // Don't drop from sessionOps — keep the history for op_status listing
+  // Also drop from sessionOps so listOpsForSession returns ONLY currently-
+  // running ops. The old comment claimed we kept history "for op_status
+  // listing" but op_status reads canonical state via readOp(id), not from
+  // this map, and the workers/tools.ts callers already filter by
+  // status === "running" || "pending". Leaving terminal opIds here was the
+  // root cause of 2026-05-12's "JARVIS standby" hallucination: the chat
+  // system-prompt-augmentation in routes/chat/system-prompt-augmentations.ts
+  // appends a "[PARALLEL CONTEXT — N background workers active]" block
+  // whenever this list is non-empty, so every completed op poisoned every
+  // subsequent turn in the same chat session — claude opus responded with
+  // "V4 is already spinning up in a parallel worker — Standing by" instead
+  // of doing the work.
+  const set = sessionOps.get(sessionId);
+  if (set) {
+    set.delete(result.opId);
+    if (set.size === 0) sessionOps.delete(sessionId);
+  }
+  opTask.delete(result.opId);
 
   if (!broadcaster) {
     logger.warn(`[session-bridge] op ${result.opId} completed but no broadcaster registered — event dropped`);

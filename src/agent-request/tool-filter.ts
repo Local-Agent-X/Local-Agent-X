@@ -5,6 +5,27 @@ import { resolveToolsForRequest } from "../tool-search.js";
 // Always include core tools. Add extras if the user's message hints at them.
 // tool_search is always included so the agent can discover anything else.
 
+/**
+ * Tools that must NEVER be surfaced to the main-chat supervisor (Primal),
+ * regardless of keyword match, literal call detection, or tool-RAG
+ * semantic retrieval. Enforced at the END of filterToolsForMessage and
+ * mirrored in prepare-request.ts where the tool-RAG union is computed.
+ *
+ * `agency_*` predates the canonical agent design (docs/canonical-agent-design.md)
+ * which locked in agent_list / agent_spawn / agent_create as the THREE
+ * delegation primitives. `agency_create` overlaps with `agent_spawn` —
+ * description-similarity high enough that Claude (more than Codex) often
+ * picks the heavier agency path for one-off tasks. The agency layer is
+ * still programmatically callable; it just doesn't appear in Primal's
+ * tool schema. (Live failure: 2026-05-12 — "spawn a researcher to find
+ * the capital of France" routed via Anthropic CLI hung 135s on
+ * agency_create when agent_spawn would have answered in seconds.)
+ */
+export const SUPERVISOR_EXCLUDED: ReadonlySet<string> = new Set([
+  "agency_create", "agency_status", "agency_cancel",
+  "agency_list_roles", "agency_result",
+]);
+
 export const CORE_TOOL_NAMES = new Set([
   // Filesystem & code
   "read", "write", "edit", "bash", "glob", "grep",
@@ -176,7 +197,7 @@ function keywordRouter(message: string, allTools: ToolDefinition[]): Set<string>
  * 10 representative messages in test/tool-filter-parity.test.ts.
  */
 export function filterToolsForMessage(allTools: ToolDefinition[], message: string): ToolDefinition[] {
-  return resolveToolsForRequest(
+  const resolved = resolveToolsForRequest(
     {
       audience: "main-chat",
       message,
@@ -186,4 +207,5 @@ export function filterToolsForMessage(allTools: ToolDefinition[], message: strin
     },
     allTools,
   );
+  return resolved.filter(t => !SUPERVISOR_EXCLUDED.has(t.name));
 }

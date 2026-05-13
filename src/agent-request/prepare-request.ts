@@ -3,7 +3,7 @@ import { sanitizeHistory, truncateHistory } from "../providers/sanitize.js";
 import { loadSystemPrompt } from "../config-loader.js";
 import type { AgentRequestInput, PreparedAgentRequest } from "./types.js";
 import { resolveProvider } from "./resolve-provider.js";
-import { CORE_TOOL_NAMES, filterToolsForMessage } from "./tool-filter.js";
+import { CORE_TOOL_NAMES, SUPERVISOR_EXCLUDED, filterToolsForMessage } from "./tool-filter.js";
 import { buildTurnContextCached } from "./turn-context-cache.js";
 
 import { createLogger } from "../logger.js";
@@ -163,7 +163,9 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
           includeMCP: true,
         });
         const union = new Set(tools.map(t => t.name));
-        for (const t of semantic) union.add(t.name);
+        for (const t of semantic) {
+          if (!SUPERVISOR_EXCLUDED.has(t.name)) union.add(t.name);
+        }
         tools = allAgentTools.filter(t => union.has(t.name));
       } else {
         logger.info(`[tool-rag] not ready yet — shipping all tools this turn (pre-warm in flight)`);

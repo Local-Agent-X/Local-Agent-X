@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { isPlanMode, READ_ONLY_TOOLS } from "./plan-tools.js";
 import { getHookEngine } from "./hooks/hook-engine.js";
 import { withRetry } from "./auto-retry.js";
+import { getRetryContext } from "./retry-context.js";
 import { checkCircuit, recordCircuitFailure, recordCircuitSuccess } from "./circuit-breaker.js";
 import { recordToolCall as recordToolStat } from "./tool-tracker.js";
 import { checkToolRateLimit, recordToolCall as recordRateLimit } from "./tool-rate-limiter.js";
@@ -596,6 +597,8 @@ async function executeSingleTool(
             baseDelayMs: 500,
             maxDelayMs: 4000,
             shouldRetry: (err) => isTransientError(err),
+            ctx: getRetryContext(sessionId),
+            layer: "L1-tool",
           });
         } else {
           result = await tool.execute(args, signal);

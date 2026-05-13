@@ -33,6 +33,9 @@ interface RetryEvent {
   ts: string;                    // ISO
   kind: RetryKind;
   sessionId?: string;
+  /** Per-request id (see src/retry-context.ts). Stitches retry events
+   *  across layers/processes for a single chat turn. */
+  correlationId?: string;
   provider?: string;
   model?: string;
   tool?: string;

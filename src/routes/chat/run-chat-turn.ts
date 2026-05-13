@@ -128,18 +128,26 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     logger.info(`[timing] prepareAgentRequest ${Date.now() - prepStart}ms (sess=${sessionId.slice(0, 16)})`);
 
     // Emit a context_status event so the chat-bar gauge reflects actual
-    // prompt size BEFORE the agent runs.
+    // prompt size BEFORE the agent runs. Fan out to BOTH transports —
+    // SSE clients (Telegram/WhatsApp/curl) get `emitSse`, WS clients (the
+    // chat UI, which uses sseSink=null) get `ctx.chatWs.emit`. Until this
+    // dual-emit was added, WS clients never saw a fresh context_status
+    // unless compaction fired, so the bottom-of-chat gauge stayed at the
+    // 0K/128K fallback for every normal turn. (chat-status-bar.js falls
+    // back to that placeholder when window.lastContextStatus is null.)
     try {
       const { getContextStatus } = await import("../../context-manager.js");
       const status = getContextStatus(prepared.cleanHistory, prepared.model);
-      emitSse({
-        type: "context_status",
+      const ev = {
+        type: "context_status" as const,
         percentage: status.percentage,
         level: status.level,
         usedTokens: status.usedTokens,
         maxTokens: status.maxTokens,
         compacted: false,
-      });
+      };
+      emitSse(ev);
+      ctx.chatWs.emit(sessionId, ev);
     } catch { /* best-effort telemetry */ }
 
     // Abort early if no API key — let finally emit done.

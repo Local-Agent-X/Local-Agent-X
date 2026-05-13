@@ -17,11 +17,20 @@
 //                                         onclick attributes / pollTrainingStatus)
 
 // ── Context usage indicator ──
-let lastContextStatus = null;
-
+//
+// Two places read the latest status:
+//   - this file's `updateContextBar` (the progress bar above the composer)
+//   - `updateStatusBar` further down (the ✏️ token chip in the bottom bar)
+//
+// They MUST read the same source of truth. Until this fix they didn't:
+// updateContextBar mutated a module-local `lastContextStatus`, while the
+// status-bar chip read `window.lastContextStatus` (initialized null in
+// chat-uploads.js and never written). Result: the bar was driven only by
+// transient updates and the chip was always blank/zero. Mirror to window
+// so both paths see fresh data.
 function updateContextBar(event) {
-  if (event) lastContextStatus = event;
-  let data = lastContextStatus;
+  if (event) window.lastContextStatus = event;
+  const data = window.lastContextStatus;
 
   let bar = document.getElementById('context-bar');
   if (!bar) {
@@ -32,19 +41,21 @@ function updateContextBar(event) {
     if (inputArea) inputArea.insertBefore(bar, inputArea.firstChild);
   }
 
+  // No data yet → hide the bar instead of showing a fake "0K / 128K" reading
+  // that users (correctly) interpret as "context is empty." A blank bar is
+  // honest about "no measurement yet"; a zeroed bar lies.
   if (!data) {
-    // Show empty bar at 0% until first status comes in
-    data = { percentage: 0, level: 'ok', usedTokens: 0, maxTokens: 128000, compacted: false };
+    bar.style.display = 'none';
+    return;
   }
 
   bar.style.display = 'block';
 
   // Color based on level
   let color = 'var(--accent)';      // green
-  let bgColor = 'rgba(64,240,240,.1)';
-  if (data.percentage >= 95) { color = 'var(--danger)'; bgColor = 'rgba(255,51,51,.1)'; }
-  else if (data.percentage >= 85) { color = 'var(--warn)'; bgColor = 'rgba(255,170,0,.1)'; }
-  else if (data.percentage >= 70) { color = '#88aaff'; bgColor = 'rgba(136,170,255,.08)'; }
+  if (data.percentage >= 95) color = 'var(--danger)';
+  else if (data.percentage >= 85) color = 'var(--warn)';
+  else if (data.percentage >= 70) color = '#88aaff';
 
   const compactedNote = data.compacted ? ' <span style="color:var(--accent)">(compacted)</span>' : '';
   const tokensK = (data.usedTokens / 1000).toFixed(0);

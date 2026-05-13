@@ -41,7 +41,7 @@ export interface ServerContext {
   getOrCreateSession: (id: string) => Session;
   saveSession: (session: Session) => Promise<void>;
   flushSession: (id: string) => Promise<void>;
-  chatWs: { startChat: (sessionId: string) => { onEvent: (event: ServerEvent) => void; abort: AbortController }; getActiveChats: () => string[]; stopChat: (sessionId: string) => boolean; getAbortSignal: (sessionId: string) => AbortSignal | undefined; failChat: (sessionId: string, errorMessage: string) => void };
+  chatWs: { startChat: (sessionId: string) => { onEvent: (event: ServerEvent) => void; abort: AbortController }; getActiveChats: () => string[]; stopChat: (sessionId: string) => boolean; getAbortSignal: (sessionId: string) => AbortSignal | undefined; failChat: (sessionId: string, errorMessage: string) => void; emit: (sessionId: string, event: ServerEvent) => void };
   broadcastAll: (event: Record<string, unknown>) => void;
   /**
    * Per-session active event callback registry. Tools that emit progress events

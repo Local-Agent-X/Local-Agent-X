@@ -493,7 +493,8 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
           if (result.length > prevText.length) {
             fullText = result;
             const remaining = result.slice(prevText.length);
-            const clean = stripToolCallBlocks(remaining);
+            const validToolNames = new Set((tools ?? []).map(t => t.name));
+            const clean = stripToolCallBlocks(remaining, validToolNames);
             // Don't trim — preserves whitespace at chunk boundaries (was eating leading spaces between sentences)
             if (clean) yield { type: "text", delta: clean };
             prevText = result;
@@ -513,7 +514,8 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
           // emission when Opus uses native tool_use (which my text parser would
           // also match against the textual representation).
           if (!emittedNativeTools) {
-            const toolCalls = parseToolCalls(fullText);
+            const validToolNames = new Set((tools ?? []).map(t => t.name));
+            const toolCalls = parseToolCalls(fullText, validToolNames);
             for (const tc of toolCalls) {
               const redactedArgs = JSON.stringify(tc.arguments).slice(0, 100).replace(/(?:password|secret|token|key|api_key|apiKey|authorization|bearer)["']?\s*[:=]\s*["']?[^"',}\s]{3}[^"',}]*/gi, (m) => m.slice(0, m.indexOf(":") + 4) + "***REDACTED***");
               logger.info(`[claude] Tool call: ${tc.name}(${redactedArgs})`);
@@ -545,8 +547,9 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
         if (event.type === "result") {
           fullText = typeof event.result === "string" ? event.result : fullText;
           usage = event.usage || {};
-          const toolCalls = parseToolCalls(fullText);
-          const clean = stripToolCallBlocks(fullText);
+          const validToolNames = new Set((tools ?? []).map(t => t.name));
+          const toolCalls = parseToolCalls(fullText, validToolNames);
+          const clean = stripToolCallBlocks(fullText, validToolNames);
           if (clean.trim() && clean.length > prevText.length) yield { type: "text", delta: clean.trim() };
           for (const tc of toolCalls) {
             yield { type: "tool_call", id: newToolCallId(tc.name), name: tc.name, arguments: JSON.stringify(tc.arguments) };

@@ -43,10 +43,34 @@ export async function screenshotAsBase64(page: Page, engine: string): Promise<st
  */
 export async function evaluateScript(page: Page, script: string): Promise<string> {
   const trimmed = script.trim().replace(/;\s*$/, "");
-  const hasReturn = /(^|[\s;{}])return\b/.test(trimmed);
-  // IIFE wrap if return appears at any statement-context position.
-  // Otherwise treat the whole thing as an expression and parenthesize.
-  const wrapped = hasReturn
+  // Playwright's page.evaluate(string) treats the input as an EXPRESSION
+  // position. That means top-level `const`/`let`/`var`, multi-statement
+  // scripts, and `return` statements all fail with a SyntaxError unless
+  // we wrap them in a function. Live failure (2026-05-13, Thriveventory
+  // PO entry): agent wrote `const els = ...; els.forEach(...)`, every
+  // call surfaced as "Unexpected token 'const'", agent then pivoted to
+  // `new Function("...")` to defeat the syntax error and hit the anti-
+  // dynamic-eval guard. Both symptoms vanish if we wrap proactively.
+  //
+  // Detection: wrap in IIFE when ANY of these are present (= it's not a
+  // single-expression script):
+  //   - explicit `return` statement
+  //   - statement separator (`;` or newline) — multi-statement form
+  //   - declaration keyword at any boundary (`const`/`let`/`var`/`function`)
+  //   - control-flow keyword (`if`/`for`/`while`/`switch`/`try`)
+  // Else: single expression — parenthesize so the evaluator returns its
+  // value (e.g. `document.title` → `(document.title)` → page title).
+  //
+  // The IIFE path is conservative — it returns whatever the body returns.
+  // If the agent's script has side effects but no `return`, the result is
+  // `undefined`, which serializes to "(no return value)" below. That's the
+  // correct semantic; the agent should add `return X` if it wants a value.
+  const needsIife =
+    /(^|[\s;{}])return\b/.test(trimmed) ||
+    /[;\n]/.test(trimmed) ||
+    /(^|[\s;{}])(const|let|var|function|async\s+function)\b/.test(trimmed) ||
+    /(^|[\s;{}])(if|for|while|switch|try)\s*[({]/.test(trimmed);
+  const wrapped = needsIife
     ? `(() => { ${trimmed} })()`
     : `(${trimmed})`;
   const result = await page.evaluate(wrapped);

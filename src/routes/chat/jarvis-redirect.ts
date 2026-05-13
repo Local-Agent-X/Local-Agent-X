@@ -1,8 +1,6 @@
-import type { ServerResponse } from "node:http";
-
 import { createLogger } from "../../logger.js";
-import { sseWrite } from "../../server-utils.js";
 import type { ServerEvent } from "../../types.js";
+import type { SseSink } from "./run-chat-turn.js";
 
 const logger = createLogger("routes.chat.jarvis-redirect");
 
@@ -10,7 +8,10 @@ interface JarvisRedirectArgs {
   sessionId: string;
   message: string;
   recentSessionMessages: Array<{ role: string; content?: unknown }>;
-  res: ServerResponse;
+  /** SSE side-channel sink — null for WS-only callers. The redirect ack
+   *  delta goes here when present; WS subscribers receive it via the
+   *  normal chat-ws pub/sub on subsequent worker_stream events. */
+  sseSink: SseSink;
 }
 
 /**
@@ -24,7 +25,7 @@ interface JarvisRedirectArgs {
  * normal chat flow).
  */
 export async function tryWorkerRedirect(args: JarvisRedirectArgs): Promise<boolean> {
-  const { sessionId, message, recentSessionMessages, res } = args;
+  const { sessionId, message, recentSessionMessages, sseSink } = args;
   try {
     const { listOpsForSession, getOpTask } = await import("../../workers/session-bridge.js");
     const activeOps = listOpsForSession(sessionId);
@@ -59,12 +60,18 @@ export async function tryWorkerRedirect(args: JarvisRedirectArgs): Promise<boole
 
     // Emit an inline ack so the user sees their message landed.
     // Worker will narrate its acknowledgement via the worker_stream channel
-    // (Step 1) on its next iteration.
-    sseWrite(res, {
-      type: "stream",
-      delta: `*→ telling the worker:* "${message.slice(0, 200)}"\n\n`,
-    });
-    sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } } as ServerEvent);
+    // (Step 1) on its next iteration. WS-only callers get no ack here
+    // (sseSink === null) — they still see the worker_stream events that
+    // follow, which is the same observable behavior as the previous
+    // HTTP-self-loop implementation (WS clients didn't subscribe to the
+    // drained SSE body either).
+    if (sseSink) {
+      sseSink({
+        type: "stream",
+        delta: `*→ telling the worker:* "${message.slice(0, 200)}"\n\n`,
+      });
+      sseSink({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } } as ServerEvent);
+    }
     return true;
   } catch (e) {
     logger.warn(`[router] worker-redirect check failed (falling through): ${(e as Error).message}`);

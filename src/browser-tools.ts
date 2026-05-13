@@ -259,18 +259,25 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
 
           case "fill": {
             const value = String(args.value ?? "");
-            // Prefer ref over CSS selector
+            // No auto-snapshot here. Filling an input writes characters into
+            // a box — the page's structural DOM almost never changes, so
+            // appending a fresh snapshot after every fill (a) costs a full
+            // extract+iframe-traversal per call and (b) bloats the conversation
+            // with redundant ref lists that match what the agent already saw.
+            // For a 16-line PO that's 16×(name+qty+price)=48+ wasted snapshots.
+            // The agent can call 'snapshot' explicitly when it expects a typing
+            // response (autocomplete dropdown, type-ahead suggestions, etc.).
+            // Live regression: Thriveventory PO entry that took <10min before
+            // commit 0d4df8f ran 30+min after auto-snapshot was added to fill.
             if (args.ref !== undefined && args.ref !== null) {
               const ref = Number(args.ref);
               if (isNaN(ref)) return err("'ref' must be a number from the snapshot.");
-              const base = await manager.fillByRef(ref, value);
-              return ok(await appendPostActionSnapshot(manager, base));
+              return ok(await manager.fillByRef(ref, value));
             }
             const selector = String(args.selector || "");
             if (!selector) return err("Provide 'ref' (from snapshot) or 'selector' (CSS) for fill.");
             try {
-              const base = await manager.fill(selector, value);
-              return ok(await appendPostActionSnapshot(manager, base));
+              return ok(await manager.fill(selector, value));
             } catch (e) {
               // Don't blind-guess with hardcoded selectors — that silently
               // fills the wrong input when the page happens to have a matching

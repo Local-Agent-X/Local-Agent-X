@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { type AgentOptions } from "../agent.js";
+import { type AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
-import { stripEphemeralMessages } from "../agent-providers.js";
+import { stripEphemeralMessages } from "../providers/sanitize.js";
 import { extractAgentOutput } from "../server-utils.js";
 import { SecurityLayer } from "../security.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";

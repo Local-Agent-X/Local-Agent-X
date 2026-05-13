@@ -19,7 +19,7 @@ import { runAutopilotLoop } from "./loop.js";
 import type { AutopilotConfig, StartAutopilotRequest } from "./types.js";
 import type { Operation } from "../operations/types.js";
 import type { LAXConfig, ToolDefinition } from "../types.js";
-import type { AgentOptions } from "../agent.js";
+import type { AgentOptions } from "../providers/types.js";
 import { loadAnthropicTokens, isAnthropicTokenExpired } from "../auth-anthropic.js";
 
 import { createLogger } from "../logger.js";

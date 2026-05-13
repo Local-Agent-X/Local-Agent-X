@@ -46,7 +46,33 @@ export function clearConsent(sessionId: string): void {
   consents.delete(sessionId);
 }
 
+// ── Last-blocked fingerprint per session ─────────────────────────────────
+//
+// When the threat engine blocks a tool, it stashes the pattern's
+// fingerprint here (per-session). When the user types /approve on a
+// later turn, we read this and record into the trust ledger (Layer C),
+// so the same pattern auto-allows next time without /approve.
+
+const lastBlockedFingerprints = new Map<string, { fingerprint: string; at: number }>();
+
+export function recordLastBlockedFingerprint(sessionId: string, fingerprint: string): void {
+  lastBlockedFingerprints.set(sessionId, { fingerprint, at: Date.now() });
+}
+
+export function getLastBlockedFingerprint(sessionId: string): string | null {
+  const e = lastBlockedFingerprints.get(sessionId);
+  if (!e) return null;
+  // Stale entries older than 10 min are ignored — /approve on a block
+  // that fired hours ago is suspicious, not a normal recovery flow.
+  if (Date.now() - e.at > 10 * 60_000) {
+    lastBlockedFingerprints.delete(sessionId);
+    return null;
+  }
+  return e.fingerprint;
+}
+
 /** Test-only — drains the entire store. Never call in production code. */
 export function _resetAllConsentForTests(): void {
   consents.clear();
+  lastBlockedFingerprints.clear();
 }

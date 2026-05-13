@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { DataClassification } from "./classification.js";
+import { fingerprintOf, isLearned } from "./trust-ledger.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // TOOL CHAIN ANALYSIS — Track tool sequences, block exfiltration
@@ -40,13 +41,26 @@ export class ToolChainAnalyzer {
   // hits the exfil block (live failure 2026-05-13: invoice PDF → Thrivemetrics).
   private userConsentActiveUntil = 0;
   private userConsentReason = "";
+  // Last fingerprint we blocked, so the /approve handler can find it
+  // and record into the trust ledger. Per-turn (per ThreatEngine instance).
+  // Layer B carries the fingerprint across turns via session-bridge.
+  private lastBlockedFingerprint: string | null = null;
 
   /** Record a tool call and check for dangerous patterns */
   recordAndAnalyze(
     toolName: string,
     args: Record<string, unknown>,
     resultClassification: DataClassification
-  ): { blocked: boolean; reason?: string; exfil?: ExfilPattern; loopDetected?: string; allowedByConsent?: string } {
+  ): {
+    blocked: boolean;
+    reason?: string;
+    exfil?: ExfilPattern;
+    loopDetected?: string;
+    allowedByConsent?: string;
+    /** Fingerprint of the blocked pattern, when blocked. Layer B reads
+     *  this so /approve can record into the trust ledger. */
+    blockedFingerprint?: string;
+  } {
     const access = this.classifyAccess(toolName, args, resultClassification);
     if (access) {
       this.history.push(access);
@@ -82,16 +96,21 @@ export class ToolChainAnalyzer {
     if (access && this.isExternalSink(access)) {
       const exfil = this.checkExfiltration(access);
       if (exfil) {
-        // User-consent bypass. If the user message that started this turn
-        // had attachments + directive language, the entrypoint marked
-        // consent active. The exfil pattern still gets *audited* (audit
-        // record is the responsibility of threat-engine.ts), but not
-        // blocked. The block path silently allowing is intentional — the
-        // audit trail preserves security state.
+        const fp = fingerprintOf(exfil.source.type, exfil.sink.target);
+        // Layer C: trust ledger. If the user has approved this exact
+        // pattern (sourceType:sinkHostname) before via /approve, allow
+        // without prompting. Persistent across server restarts.
+        if (fp && isLearned(fp)) {
+          return { blocked: false, allowedByConsent: `learned-pattern:${fp}`, exfil };
+        }
+        // Layer A: per-turn consent (chat attachments + directive verbs).
         if (this.isUserConsentActive()) {
           return { blocked: false, allowedByConsent: this.userConsentReason || "user-consent-active", exfil };
         }
-        return { blocked: true, reason: exfil.description, exfil };
+        // Stash the fingerprint so the /approve handler can find it and
+        // record into the trust ledger for future auto-allows.
+        if (fp) this.lastBlockedFingerprint = fp;
+        return { blocked: true, reason: exfil.description, exfil, blockedFingerprint: fp ?? undefined };
       }
     }
 
@@ -108,6 +127,13 @@ export class ToolChainAnalyzer {
   /** True when the current moment is inside an active user-consent window. */
   isUserConsentActive(): boolean {
     return Date.now() < this.userConsentActiveUntil;
+  }
+
+  /** Fingerprint of the most recent block this analyzer issued, if any.
+   *  Layer B uses this to record into the trust ledger when the user
+   *  types /approve. */
+  getLastBlockedFingerprint(): string | null {
+    return this.lastBlockedFingerprint;
   }
 
   /** Check if a file path is inherently sensitive (regardless of content) */

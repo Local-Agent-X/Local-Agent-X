@@ -2,17 +2,26 @@ import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody, safeErrorMessage } from "../server-utils.js";
 
 // Tools deliberately NOT exposed to the MCP bridge (= the chat supervisor
-// running as claude CLI). These either block the supervisor's chat turn
-// (preventing the user from replying while a worker runs) or duplicate a
-// non-blocking variant the supervisor should use instead. Autopilot and
-// scripted flows use these tools through the inline tool path; only the
-// user-facing supervisor needs them hidden.
+// running as claude CLI). These either block the supervisor's chat turn,
+// or duplicate a canonical primitive the supervisor should use instead.
+// Autopilot and scripted flows still reach these via the inline tool path;
+// only the user-facing supervisor needs them hidden.
+//
+// As of the canonical agent design (docs/canonical-agent-design.md) and
+// the Reverse Uno fix (2026-05-11), `agent_spawn` IS the canonical
+// delegation primitive — it must be exposed via MCP so Claude picks it
+// naturally. `agency_*` (the legacy heavyweight CEO-bootstrap path)
+// overlaps with agent_spawn and confuses Claude into hanging on
+// agency_create for one-off tasks. Hide all of agency from MCP; the
+// agency layer stays programmatically callable for non-chat consumers.
 const MCP_HIDDEN_TOOLS = new Set<string>([
   "op_wait",      // blocks the chat turn — supervisor should let auto-notify surface results
   "op_submit",    // sugar = op_submit_async + op_wait, same blocking problem
-  "agent_spawn",  // alternate delegation door — supervisor was using it to bypass op_submit_async dedup
-  "delegate",     // generic delegate primitive — same bypass risk
+  "delegate",     // generic delegate primitive — superseded by agent_spawn
   "agent_message",// reply-to-agent primitive used inside agency, not by user-facing supervisor
+  // Legacy agency layer — overlaps with agent_spawn, off the canonical surface.
+  "agency_create", "agency_status", "agency_cancel",
+  "agency_list_roles", "agency_result",
 ]);
 
 function serializeMcpContent(results: Array<{ role: string; content: unknown }>): Array<Record<string, unknown>> {

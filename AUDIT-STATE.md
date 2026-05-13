@@ -2,7 +2,7 @@
 
 **Purpose.** Single source of truth for where the audit refactor stands. Read this file (after `git pull`) on any machine, in any Claude Code session, to know exactly what's done, what's next, and the rules I'm operating under. Update after every chunk lands on remote.
 
-**Last updated:** 2026-05-12, **AUDIT REFACTOR COMPLETE.** Laptop landed P4.C6 + every P5 chunk + P3.C2 + multiple regression fixes in one push.
+**Last updated:** 2026-05-12, **AUDIT REFACTOR COMPLETE.** P4.C6 + every P5 chunk + P3.C2 + the post-P5 cleanup pass have landed.
 **Branch:** `main`. Always work directly on `main` — no branches. Each chunk = one commit.
 **Repo:** github.com/petermanrique101-sys/Local-Agent-X
 
@@ -33,75 +33,56 @@
 | test fix | `c876052` | Supervisor-surface test fixtures rewired through tagToolsByAudience (consequence of P1's audience filter) |
 | **pre-P4.C6** | `bc91139` | Deleted chat legacy-fallback callers (routes/chat.ts:433, :555) + canonical-chat feature flag. -283 LOC |
 | cleanup | `15ebfe5` | Deleted Calenbella-specific test file |
-| **P4.C6** | `0780a8b` | Deleted legacy agent-turn loops (agent.ts, run-anthropic, run-standard, agent-codex/run-http, agent-loop/run). Only canonical-loop remains |
-| regression | `19dabc6` | Anthropic CLI native-shape tool-call extractor — catches Claude opus emitting `{"name":"X","input":{...}}` as text |
-| regression | `f1f5dd4` | Hid agency_* tools from supervisor surface (SUPERVISOR_EXCLUDED) — Claude routed `agency_create` instead of `agent_spawn` due to description similarity, hung 135s |
-| tidy | `9fd970d` | MCP_HIDDEN_TOOLS aligned with canonical 3-tool delegation |
-| UX | `a584748` | Suppressed canonical bg_op_* sidebar cards for agent_spawn ops |
-| **P5.C3** | `e064bc0` | Anthropic CLI warm-pool + cold-spawn prompt builders unified (Critical #7) |
-| **P5.C2** | `a64f22f` | No-tool-support cache keyed by (baseURL, model) instead of model alone (Critical #4) |
-| **P5.C1** | `fe40604` | Removed session.messages two-writer drift (Critical #3) |
-| **P5.C4** | `5e0207b` | WS chat dispatches directly into chat-turn (no HTTP self-loop, Critical #10) |
-| **P3.C2** | `169b652` | RetryContext with correlationId + shared budget wired into L1 retries (Critical #5) |
+| **P4.C6** | `0780a8b` | Deleted legacy agent-turn loops (AUDIT Critical #1). Canonical is the only path. |
+| anthropic-cli fix | `19dabc6` | Extract tool calls emitted as bare Anthropic native shape |
+| tool-filter fix | `f1f5dd4` | Hide agency_* from supervisor surface (canonical 3-tool delegation) |
+| mcp fix | `9fd970d` | Align MCP_HIDDEN_TOOLS with canonical agent design |
+| sidebar fix | `a584748` | Suppress canonical bg_op_* cards for agent_spawn ops |
+| **P5.C3** | `e064bc0` | Anthropic CLI prompt-build dedup — merged warm-pool + cold-spawn builders (Critical #7) |
+| **P5.C2** | `a64f22f` | Scoped `_localNoToolModels` per (baseURL, model) (Critical #4) |
+| **P5.C1** | `fe40604` | Removed `session.messages` two-writer drift (Critical #3) |
+| **P5.C4** | `5e0207b` | WS chat HTTP self-loop → direct call into chat-turn (Critical #10) |
+| **P3.C2** | `169b652` | RetryContext correlationId + shared budget on L1 (Critical #5) |
+| cleanup | `298be22` | Rewired jarvis-redirect integration test for sseSink API (post-P5.C4) |
+| cleanup | `7f1824a` | Threaded threat-engine canary + parallel-worker context into canonical prompt (closes a security false-negative) |
+| cleanup | `7d27471` | Forward user image attachments to seeded canonical message in delegation-handoff |
+| cleanup | `e16e01c` | Removed dead `pauseCallback` from `AgentOptions` (zero canonical callers) |
+| cleanup | `4646edc` | Deleted dead `query-pipeline` middleware surface (no callers) |
 
-**FINAL NET:** ~4,500 LOC removed (legacy loops + dead retry + tool-filter drift + dead files). Every AUDIT.md Critical addressed. One canonical loop. One canonical resolver. One canonical adapter registry path. Shared retry budget with correlationId. The whole audit is shipped.
+**FINAL NET:** ~4,500 LOC removed (legacy loops + dead retry + tool-filter drift + dead files + dead middleware surfaces). Every AUDIT.md Critical addressed. One canonical loop. One canonical resolver. One canonical adapter registry path. Shared retry budget with correlationId. The security canary actually reaches the model now. The whole audit is shipped.
 
 ---
 
 ## Up next
 
-### Nothing required. The refactor is done.
+The audit refactor is closed. Every chunk listed in the original AUDIT-PLAN has landed, and the post-P5 cleanup pass closed the gaps that surfaced during P4.C4/C5 (`pauseCallback`, query-pipeline middleware, delegation-handoff image projection). See "After P4 — mop-up chunks" below for the full disposition.
 
-What lands here next is OPTIONAL polish or NEW PRODUCT WORK. Some leftover items worth considering:
+**Per memory `project_top_10_gaps_2026_04`, the NEXT product move is full-duplex voice (gap #1).** The canonical-loop refactor unblocks it — cancel/replay/reconnect semantics + correlationId tracing make voice's barge-in + interruption flows tractable.
 
-- **pauseCallback port** (login/2FA detector) — spawned/voice/delegation agents that hit a login mid-task currently run to wall-clock instead of pausing. Flagged in P4.C4 + C5 reports.
-- **query-pipeline middleware** — was at `agent.ts:50` (now deleted), no callers register today but the surface is gone.
-- **delegation-handoff image projection** — chat has same gap.
-- **Smoke verification** on this machine — re-run `agent_spawn researcher` and `primal_run_build_plan one chunk` to confirm regression fixes (`19dabc6` + `f1f5dd4`) work end-to-end here. My earlier smokes ran on the buggy pre-fix code.
+**What remains is the open-source repo-prep pass** — its own initiative, not
+part of this audit:
+- Rewrite git authorship across the history to a public-safe identity
+- Final scrub of personal paths / hostnames / API key shapes in committed files
+- README polish, LICENSE, CONTRIBUTING for the public face
+- Decide what (if anything) under `workspace/apps/*` ships with the public repo
 
-**Per memory `project_top_10_gaps_2026_04`, the NEXT product move is full-duplex voice (gap #1).** That was the declared next spike before the audit interlude. The architecture refactor unblocks it because canonical-loop's cancel/replay/reconnect semantics + correlationId tracing make voice's barge-in + interruption flows tractable.
+That work belongs in its own plan. AUDIT-STATE.md will be archived once the
+public repo pass is scoped — until then, leave it as-is for historical state.
 
----
-
-## Archive of completed chunks (was "Up next" before everything shipped)
-
-### P4.C6 — Delete legacy loops (mechanical, low risk now) ✅ DONE in commit `0780a8b`
-
-Every non-chat caller is migrated. Every chat fallback caller is deleted. The legacy loop files are dead code. This chunk deletes them and the `LAX_UNIFIED_LOOP` env flag.
-
-**Verification before deletion:**
-```
-git grep -nE "\brunAgent\(" src/
-```
-Expected: zero matches (or only inside `src/agent.ts` itself + comments).
-
-**Files to delete:**
-- `src/agent.ts` (the `runAgent` wrapper)
-- `src/providers/run-anthropic.ts`
-- `src/providers/run-standard.ts`
-- `src/agent-codex/run-http.ts`
-- `src/agent-loop/run.ts` (gated unified loop)
-- Any helper files imported only by those (e.g. `run-anthropic-helpers.ts`, `run-standard-helpers.ts`, `run-http-helpers.ts`) — verify via grep before deletion
-- Remove `LAX_UNIFIED_LOOP` env check wherever it lives
-- Update `src/providers/index.ts` to remove T1 (`getAdapter`) exports — completes AUDIT P2 in the same commit
-
-**Smoke after deletion:** server boots, /api/health 200, real chat turn produces a response, spawn a researcher via agent_spawn, run primal_run_build_plan one chunk. All three must complete.
-
-**Briefing:** in `AUDIT-HANDOFF-P4.md` under "P4.C6." Paste verbatim into a fresh executor session.
+### ~~P4.C6 — Delete legacy loops~~ — done (`0780a8b`)
+The legacy loop files are gone. Canonical is the only path.
 
 ### After P4 — mop-up chunks
-- **P2.C2+C3** — Delete dead T1 adapter registry (now folded into P4.C6's `providers/index.ts` cleanup if executed together; otherwise small standalone chunk)
-- **P3.C2** — Wire `RetryContext` into L1/L5/L6 retry layers (L2/L3/L4 die with the legacy loops in P4.C6)
-- **P5.C1** — Fix two-writer drift on `session.messages` (AUDIT Critical #3 — but note: routes/chat.ts dropped ~530 lines in `bc91139`; verify Critical #3 is still live before scoping)
-- **P5.C2** — Scope `_localNoToolModels` per-adapter-instance (Critical #4)
-- **P5.C3** — Anthropic CLI prompt-build dedup — merge warm-pool + cold-spawn paths (Critical #7)
-- **P5.C4** — WS chat HTTP self-loop → direct canonical-op subscription (Critical #10)
-- **NEW GAPS surfaced during P4.C4/C5** (consider as P5 candidates):
-  - `pauseCallback` ("please log in / needs 2FA" detector) didn't port to canonical — spawned/voice/delegation agents that hit a login mid-task now run to wall-clock instead of pausing for human handoff
-  - query-pipeline pre/post middleware (was in `agent.ts:50`) doesn't run on canonical; no callers register today but the surface is gone
-  - delegation-handoff doesn't project user images into the seeded canonical user message (chat has the same gap)
-
-P5 chunks are mostly independent and can fan out aggressively.
+- ~~**P2.C2+C3**~~ — Folded into P4.C6's `providers/index.ts` cleanup (`0780a8b`).
+- ~~**P3.C2**~~ — `169b652` (RetryContext correlationId + shared budget on L1).
+- ~~**P5.C1**~~ — `fe40604` (session.messages two-writer drift removed).
+- ~~**P5.C2**~~ — `a64f22f` (`_localNoToolModels` scoped by baseURL+model).
+- ~~**P5.C3**~~ — `e064bc0` (Anthropic CLI prompt-build dedup).
+- ~~**P5.C4**~~ — `5e0207b` (WS chat → direct canonical-op subscription).
+- ~~**NEW GAPS surfaced during P4.C4/C5**~~ — addressed in the cleanup pass:
+  - ~~`pauseCallback` port-or-delete~~ → deleted as dead surface (`e16e01c`); no canonical callers existed. If a real product need surfaces, wire via canonical's `opPause` middleware.
+  - ~~query-pipeline pre/post middleware~~ → deleted (`4646edc`); zero importers anywhere in the repo.
+  - ~~delegation-handoff user-image projection~~ → fixed (`7d27471`); `agent-runner.seedOpMessages` now projects `options.images` into the seeded user-message content, mirroring chat-runner.
 
 ---
 

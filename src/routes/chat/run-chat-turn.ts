@@ -236,7 +236,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
       threatEngine.markUserConsentFlow(activeConsent.remainingMs, activeConsent.reason);
     }
     const { augmentSystemPrompt } = await import("./system-prompt-augmentations.js");
-    await augmentSystemPrompt(prepared, threatEngine, sessionId);
+    await augmentSystemPrompt(prepared, threatEngine, sessionId, message);
 
     let canaryBuffer = "";
     let fullResponseText = "";

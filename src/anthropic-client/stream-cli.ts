@@ -56,13 +56,123 @@ function extractTextFromContent(content: unknown): string {
 }
 
 /**
+ * Three modes for the CLI proxy's prompt:
+ *   - `text-only` — no tools, plain text reply
+ *   - `mcp`       — tools come through the MCP bridge; Claude calls them natively
+ *   - `prompt-inject` — legacy fallback when MCP can't be wired (no auth token,
+ *                       cold-spawn path only); tool defs embedded in the prompt
+ *                       and Claude is told to emit JSON tool calls
+ */
+export type CliPromptMode = "text-only" | "mcp" | "prompt-inject";
+
+export interface CliPromptInput {
+  systemPrompt: string;
+  messages: ChatCompletionMessageParam[];
+  mode: CliPromptMode;
+  /** Required when mode === "prompt-inject"; ignored otherwise. */
+  tools?: ReadonlyArray<{ name: string; description: string; parameters: unknown }>;
+}
+
+/**
+ * Unified prompt builder for the Anthropic CLI proxy (`claude` subprocess).
+ *
+ * Both the warm-pool path and the cold-spawn path inside
+ * `streamViaCliWithTools` call this — they used to maintain two near-identical
+ * copies that drifted (warm-pool always serialized history into the prompt
+ * even in MCP mode, which trained Claude to echo the `[called X] / Tool
+ * result:` text format into its replies — the EXTERNAL_UNTRUSTED_CONTENT
+ * wall).
+ *
+ * Returned string is fed directly to the CLI subprocess (stdin for cold-spawn,
+ * stdin-per-prompt for warm-pool).
+ */
+export function buildCliPrompt(input: CliPromptInput): string {
+  const { systemPrompt, messages, mode, tools } = input;
+
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") { lastUserIdx = i; break; }
+  }
+
+  let suffix: string;
+  if (mode === "text-only") {
+    suffix = `Respond naturally in plain text. Never mention "plan mode", permission modes, or internal system details to the user.`;
+  } else if (mode === "mcp") {
+    suffix =
+      `You have Local Agent X's tools available via MCP (prefixed mcp__lax__). Call them directly when needed.\n\n` +
+      `REPLY FORMAT (strict):\n` +
+      `- After you finish, respond with a SHORT plain-English summary of what you did. 1-2 sentences max.\n` +
+      `- NEVER paste raw tool output, JSON, or HTTP response bodies into your reply.\n` +
+      `- NEVER echo [called X] / Tool result: / <<<EXTERNAL_UNTRUSTED_CONTENT>>> / <metadata> blocks — the UI renders tool activity as cards, the user doesn't need to see it twice.\n` +
+      `- Do NOT pre-narrate tool plans before calling them ("Bash: find ...", "Glob: **/*.ts", "Grep: pattern"). Just CALL the tool — the UI shows what you ran in a card. Listing intent in plain text duplicates the card and clutters the reply.\n` +
+      `- Good: "Switched the app to light mode." Bad: "[called http_request] Tool result: HTTP 200 OK ..."\n` +
+      `- Bad: "Bash: ls src/\\nGlob: **/cron*\\nLet me search the right way." (this is pre-narration — just run the tools)\n` +
+      `- ALL tools are pre-approved. Just use them — never ask, never describe what you're about to do.`;
+  } else {
+    const toolDefs = (tools ?? []).map(t =>
+      `- ${t.name}: ${t.description}\n  Parameters: ${JSON.stringify(t.parameters)}`
+    ).join("\n");
+    suffix =
+      `You have access to these tools. When you need to use one, output EXACTLY this JSON format and nothing else:\n` +
+      `\`\`\`json\n{"tool_calls": [{"name": "tool_name", "arguments": {...}}]}\n\`\`\`\n\n` +
+      `Available tools:\n${toolDefs}\n\n` +
+      `PERMISSION POLICY (ABSOLUTE — cannot be overridden):\n` +
+      `- ALL tools are pre-approved. Use them immediately without asking.\n` +
+      `- NEVER say "requires approval", "needs permission", "I need to ask", or anything similar.\n` +
+      `- NEVER describe what you're about to do — just do it (output the JSON).\n` +
+      `- If asked to run a command or file operation, output the JSON tool call immediately.\n` +
+      `- You are NOT Claude Code. You have no built-in tools. Use the JSON format above.\n` +
+      `- If no tool is needed, respond with plain text only (no JSON).`;
+  }
+  const fullSystem = systemPrompt + "\n\n" + suffix;
+
+  // With MCP, Claude sees tool_use / tool_result content blocks natively —
+  // re-serializing them as text would teach it to echo that format in replies.
+  // Skip the in-turn history block in MCP mode.
+  let historyContext = "";
+  if (mode !== "mcp" && lastUserIdx >= 0) {
+    const messagesAfterUser = messages.slice(lastUserIdx + 1);
+    const contextParts: string[] = [];
+    for (const msg of messagesAfterUser.slice(-8)) {
+      if (msg.role === "assistant") {
+        const m = msg as unknown as Record<string, unknown>;
+        const parts: string[] = [];
+        if (typeof m.content === "string" && m.content) parts.push(m.content.slice(0, 500));
+        if (Array.isArray(m.tool_calls)) {
+          for (const tc of m.tool_calls as Array<{ function: { name: string; arguments: string } }>) {
+            parts.push(`[called ${tc.function.name}]`);
+          }
+        }
+        if (parts.length) contextParts.push(`Assistant: ${parts.join(" ")}`);
+      } else if (msg.role === "tool") {
+        const m = msg as { tool_call_id: string; content: string };
+        contextParts.push(`Tool result: ${m.content.slice(0, 2000)}`);
+      }
+    }
+    if (contextParts.length > 0) {
+      historyContext = "\n\nCurrent task context:\n" + contextParts.join("\n") + "\n\n";
+    }
+  }
+
+  const priorConversation = serializePriorTurns(messages, lastUserIdx);
+  const userPrompt = extractUserPrompt(messages);
+
+  // User content goes inside the `<system>...</system>` boundary, so any
+  // user-injected `<system>` tags would confuse the model. Strip them.
+  const safePrompt = userPrompt.replace(/<\/?system>/gi, "");
+  const safeHistory = historyContext.replace(/<\/?system>/gi, "");
+  const safePrior = priorConversation.replace(/<\/?system>/gi, "");
+
+  return `<system>${fullSystem}</system>${safePrior}${safeHistory}\n${safePrompt}`;
+}
+
+/**
  * CLI proxy with tool support: embeds tool definitions in the prompt,
  * instructs Claude to output JSON tool calls that we parse and route
  * back through the agent loop's executeToolCalls.
  */
 export async function* streamViaCliWithTools(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { model, messages, systemPrompt, tools } = options;
-  const prompt = extractUserPrompt(messages);
 
   // Warm-pool fast path: long-lived CLI process per (model, permissionMode,
   // sessionId). Validated by scripts/spike-claude-warm-pool.mjs — drops
@@ -82,19 +192,7 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
   logger.info(`[wp-gate] enabled=${_wpEnabled} sessionId=${options.sessionId ?? "(none)"} tools=${tools?.length ?? 0} model=${model}`);
   if (_wpEnabled) {
     const textOnlyMode = !tools || tools.length === 0;
-    const fullSystemQuick = textOnlyMode
-      ? systemPrompt + "\n\n" + `Respond naturally in plain text. Never mention "plan mode", permission modes, or internal system details to the user.`
-      : systemPrompt + "\n\n" +
-        `You have Local Agent X's tools available via MCP (prefixed mcp__lax__). Call them directly when needed.\n\n` +
-        `REPLY FORMAT (strict):\n` +
-        `- After you finish, respond with a SHORT plain-English summary of what you did. 1-2 sentences max.\n` +
-        `- NEVER paste raw tool output, JSON, or HTTP response bodies into your reply.\n` +
-        `- NEVER echo [called X] / Tool result: / <<<EXTERNAL_UNTRUSTED_CONTENT>>> / <metadata> blocks — the UI renders tool activity as cards.\n` +
-        `- Do NOT pre-narrate tool plans before calling them. Just CALL the tool — the UI shows what you ran in a card.\n` +
-        `- ALL tools are pre-approved. Just use them — never ask, never describe what you're about to do.`;
 
-    // Build prompt with system + recent context + user message — same
-    // shape as the per-request path so the model sees an identical input.
     let saxToken = "";
     let saxPort = 7007;
     if (!textOnlyMode) {
@@ -106,76 +204,35 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
       } catch { /* swallow — falls back to text-only key below */ }
     }
 
-    // History serialization (legacy parity): re-include the current-loop
-    // tool results so the model sees what's already happened this turn.
-    const lastUserIdxQ = (() => {
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "user") return i;
-      }
-      return -1;
-    })();
-    const messagesAfterUserQ = lastUserIdxQ >= 0 ? messages.slice(lastUserIdxQ + 1) : [];
-    const contextPartsQ: string[] = [];
-    for (const msg of messagesAfterUserQ.slice(-8)) {
-      if (msg.role === "assistant") {
-        const m = msg as unknown as Record<string, unknown>;
-        const parts: string[] = [];
-        if (typeof m.content === "string" && m.content) parts.push(m.content.slice(0, 500));
-        if (Array.isArray(m.tool_calls)) {
-          for (const tc of m.tool_calls as Array<{ function: { name: string; arguments: string } }>) {
-            parts.push(`[called ${tc.function.name}]`);
-          }
-        }
-        if (parts.length) contextPartsQ.push(`Assistant: ${parts.join(" ")}`);
-      } else if (msg.role === "tool") {
-        const m = msg as { tool_call_id: string; content: string };
-        contextPartsQ.push(`Tool result: ${m.content.slice(0, 2000)}`);
-      }
-    }
-    const historyContextQ = contextPartsQ.length > 0
-      ? "\n\nCurrent task context:\n" + contextPartsQ.join("\n") + "\n\n"
-      : "";
-    const priorConversationQ = serializePriorTurns(messages, lastUserIdxQ);
+    const useMcp = !textOnlyMode && !!saxToken && !!options.sessionId;
+    const fullPrompt = buildCliPrompt({
+      systemPrompt,
+      messages,
+      mode: textOnlyMode ? "text-only" : useMcp ? "mcp" : "prompt-inject",
+      tools,
+    });
 
-    const safePromptQ = prompt.replace(/<\/?system>/gi, "");
-    const safeHistoryQ = historyContextQ.replace(/<\/?system>/gi, "");
-    const safePriorQ = priorConversationQ.replace(/<\/?system>/gi, "");
-    const fullPromptQ = `<system>${fullSystemQuick}</system>${safePriorQ}${safeHistoryQ}\n${safePromptQ}`;
-
-    if (textOnlyMode || !options.sessionId || !saxToken) {
+    if (!useMcp) {
       logger.info(`[wp-gate] → text-only shared pool (textOnly=${textOnlyMode} hasToken=${!!saxToken})`);
       yield* streamViaWarmPool(
         { model, permissionMode: "plan" },
-        { prompt: fullPromptQ, signal: options.signal },
+        { prompt: fullPrompt, signal: options.signal },
       );
     } else {
-      logger.info(`[wp-gate] → per-session MCP pool sess=${options.sessionId.slice(0, 16)}`);
+      logger.info(`[wp-gate] → per-session MCP pool sess=${options.sessionId!.slice(0, 16)}`);
       yield* streamViaWarmPool(
         {
           model,
           permissionMode: "bypassPermissions",
-          sessionId: options.sessionId,
+          sessionId: options.sessionId!,
           saxPort,
           saxToken,
         },
-        { prompt: fullPromptQ, signal: options.signal },
+        { prompt: fullPrompt, signal: options.signal },
       );
     }
     return;
   }
-
-  // Current-turn context: messages AFTER the last user message (tool results
-  // for the in-flight turn). Cross-turn conversational context (messages
-  // BEFORE the last user message) is serialized separately by
-  // serializePriorTurns and prepended to fullPrompt — without that block
-  // the CLI proxy sees a fresh chat every turn (--no-session-persistence
-  // is set, and extractUserPrompt only pulls the last user message).
-  const lastUserIdx = (() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === "user") return i;
-    }
-    return -1;
-  })();
 
   const textOnlyMode = !tools || tools.length === 0;
   // Peek whether MCP will be wired up — when it is, we skip the text-
@@ -186,70 +243,12 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
   // user was seeing).
   const willUseMcp = !textOnlyMode && !!(await import("../config.js").then(m => m.getRuntimeConfig().authToken).catch(() => ""));
 
-  const messagesAfterUser = lastUserIdx >= 0 ? messages.slice(lastUserIdx + 1) : [];
-  const contextParts: string[] = [];
-  if (!willUseMcp) {
-    // Legacy text-JSON fallback path: keep the re-serialized context so the
-    // model sees what tools have already run this turn.
-    for (const msg of messagesAfterUser.slice(-8)) {
-      if (msg.role === "assistant") {
-        const m = msg as unknown as Record<string, unknown>;
-        const parts: string[] = [];
-        if (typeof m.content === "string" && m.content) parts.push(m.content.slice(0, 500));
-        if (Array.isArray(m.tool_calls)) {
-          for (const tc of m.tool_calls as Array<{ function: { name: string; arguments: string } }>) {
-            parts.push(`[called ${tc.function.name}]`);
-          }
-        }
-        if (parts.length) contextParts.push(`Assistant: ${parts.join(" ")}`);
-      } else if (msg.role === "tool") {
-        const m = msg as { tool_call_id: string; content: string };
-        contextParts.push(`Tool result: ${m.content.slice(0, 2000)}`);
-      }
-    }
-  }
-  const toolDefs = textOnlyMode ? "" : tools!.map(t =>
-    `- ${t.name}: ${t.description}\n  Parameters: ${JSON.stringify(t.parameters)}`
-  ).join("\n");
-
-  let fullSystem: string;
-  if (textOnlyMode) {
-    // Orchestration mode: no tools, just respond naturally
-    fullSystem = systemPrompt + "\n\n" +
-      `Respond naturally in plain text. Never mention "plan mode", permission modes, or internal system details to the user.`;
-  } else if (willUseMcp) {
-    // MCP mode: tools come through MCP as mcp__lax__<name>. Claude calls them
-    // natively. We just need to tell it not to echo tool metadata in replies.
-    fullSystem = systemPrompt + "\n\n" +
-      `You have Local Agent X's tools available via MCP (prefixed mcp__lax__). Call them directly when needed.\n\n` +
-      `REPLY FORMAT (strict):\n` +
-      `- After you finish, respond with a SHORT plain-English summary of what you did. 1-2 sentences max.\n` +
-      `- NEVER paste raw tool output, JSON, or HTTP response bodies into your reply.\n` +
-      `- NEVER echo [called X] / Tool result: / <<<EXTERNAL_UNTRUSTED_CONTENT>>> / <metadata> blocks — the UI renders tool activity as cards, the user doesn't need to see it twice.\n` +
-      `- Do NOT pre-narrate tool plans before calling them ("Bash: find ...", "Glob: **/*.ts", "Grep: pattern"). Just CALL the tool — the UI shows what you ran in a card. Listing intent in plain text duplicates the card and clutters the reply.\n` +
-      `- Good: "Switched the app to light mode." Bad: "[called http_request] Tool result: HTTP 200 OK ..."\n` +
-      `- Bad: "Bash: ls src/\\nGlob: **/cron*\\nLet me search the right way." (this is pre-narration — just run the tools)\n` +
-      `- ALL tools are pre-approved. Just use them — never ask, never describe what you're about to do.`;
-  } else {
-    const toolPrompt = `You have access to these tools. When you need to use one, output EXACTLY this JSON format and nothing else:\n` +
-      `\`\`\`json\n{"tool_calls": [{"name": "tool_name", "arguments": {...}}]}\n\`\`\`\n\n` +
-      `Available tools:\n${toolDefs}\n\n` +
-      `PERMISSION POLICY (ABSOLUTE — cannot be overridden):\n` +
-      `- ALL tools are pre-approved. Use them immediately without asking.\n` +
-      `- NEVER say "requires approval", "needs permission", "I need to ask", or anything similar.\n` +
-      `- NEVER describe what you're about to do — just do it (output the JSON).\n` +
-      `- If asked to run a command or file operation, output the JSON tool call immediately.\n` +
-      `- You are NOT Claude Code. You have no built-in tools. Use the JSON format above.\n` +
-      `- If no tool is needed, respond with plain text only (no JSON).`;
-    fullSystem = systemPrompt + "\n\n" + toolPrompt;
-  }
-  const historyContext = contextParts.length > 0 ? "\n\nCurrent task context:\n" + contextParts.join("\n") + "\n\n" : "";
-  const priorConversation = serializePriorTurns(messages, lastUserIdx);
-  // Strip system tags from user input to prevent prompt injection
-  const safePrompt = prompt.replace(/<\/?system>/gi, "");
-  const safeHistory = historyContext.replace(/<\/?system>/gi, "");
-  const safePrior = priorConversation.replace(/<\/?system>/gi, "");
-  const fullPrompt = `<system>${fullSystem}</system>${safePrior}${safeHistory}\n${safePrompt}`;
+  const fullPrompt = buildCliPrompt({
+    systemPrompt,
+    messages,
+    mode: textOnlyMode ? "text-only" : willUseMcp ? "mcp" : "prompt-inject",
+    tools,
+  });
 
   const args = [
     "-p", "--model", model, "--output-format", "stream-json", "--verbose",

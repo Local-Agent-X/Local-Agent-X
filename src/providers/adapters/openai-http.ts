@@ -13,7 +13,7 @@ import OpenAI from "openai";
 import { BaseAdapter } from "../adapter/base-adapter.js";
 import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 import { toOpenAITools } from "../shared/tool-shape.js";
-import { _localNoToolModels } from "../types.js";
+import { hasNoToolSupport, markNoToolSupport } from "../types.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("providers.adapters.openai-http");
@@ -25,7 +25,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
 
   async *stream(req: ProviderRequest): AsyncIterable<StreamChunk> {
     const client = new OpenAI({ apiKey: req.apiKey, baseURL: req.baseURL });
-    const useTools = !_localNoToolModels.has(req.model);
+    const useTools = !hasNoToolSupport(req.baseURL, req.model);
     const reasoningCapable = REASONING_CAPABLE.test(req.model);
 
     let stream;
@@ -51,7 +51,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
         // same constraint all benefit. Harmless for providers that DO
         // support tools — they never emit this error.
         if (err.message?.includes("does not support tools")) {
-          _localNoToolModels.add(req.model);
+          markNoToolSupport(req.baseURL, req.model);
           logger.info(`model ${req.model} doesn't support tools — switching to chat-only`);
           return client.chat.completions.create({
             model: req.model,

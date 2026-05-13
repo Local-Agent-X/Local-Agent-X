@@ -72,7 +72,7 @@ export class CodexAdapter implements Adapter {
     const req: AnthropicTransportRequest & { previousResponseId?: string } = {
       model: this.opts.model ?? "gpt-5.4-mini",
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
-      messages: canonicalToTransport(input.messages, input.pendingRedirect),
+      messages: canonicalToTransport(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
       tools: convertTools(input.tools),
       signal: this.aborter.signal,
       maxTokens: this.opts.maxTokens,

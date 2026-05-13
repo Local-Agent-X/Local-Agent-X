@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { mockResponse } from "./helpers/http-mocks.js";
+import type { ServerEvent } from "../src/types.js";
 
 // Mocks for the three modules tryWorkerRedirect imports dynamically.
 const activeOpsBySession = new Map<string, string[]>();
@@ -28,6 +28,11 @@ vi.mock("../src/routing/worker-redirect-classifier.js", () => ({
 
 import { tryWorkerRedirect } from "../src/routes/chat/jarvis-redirect.js";
 
+function captureSink(): { events: ServerEvent[]; sink: (e: ServerEvent) => void } {
+  const events: ServerEvent[] = [];
+  return { events, sink: (e: ServerEvent) => { events.push(e); } };
+}
+
 beforeEach(() => {
   activeOpsBySession.clear();
   tasksByOpId.clear();
@@ -39,15 +44,15 @@ beforeEach(() => {
 
 describe("tryWorkerRedirect — no active workers", () => {
   it("returns false when there are no active ops for the session", async () => {
-    const cap = mockResponse();
+    const { events, sink } = captureSink();
     const result = await tryWorkerRedirect({
       sessionId: "s1",
       message: "make it blue",
       recentSessionMessages: [],
-      res: cap.res,
+      sseSink: sink,
     });
     expect(result).toBe(false);
-    expect(cap.status).toBeNull();
+    expect(events).toEqual([]);
   });
 });
 
@@ -57,20 +62,21 @@ describe("tryWorkerRedirect — classifier says redirect", () => {
     tasksByOpId.set("op-new", "build a landing page");
     classifierResult = { redirect: true, reason: "feedback" };
 
-    const cap = mockResponse();
+    const { events, sink } = captureSink();
     const result = await tryWorkerRedirect({
       sessionId: "s1",
       message: "make the header blue",
       recentSessionMessages: [],
-      res: cap.res,
+      sseSink: sink,
     });
     expect(result).toBe(true);
     // most recent (last) op gets the redirect, not the older one
     expect(redirectedCalls).toEqual([{ opId: "op-new", instruction: "make the header blue" }]);
-    // Two SSE events were written to res: stream + done
-    expect(cap.body).toContain(`"type":"stream"`);
-    expect(cap.body).toContain(`"type":"done"`);
-    expect(cap.body).toContain("telling the worker");
+    // Two SSE events were emitted to the sink: stream + done
+    expect(events).toHaveLength(2);
+    expect(events[0].type).toBe("stream");
+    expect((events[0] as { type: "stream"; delta: string }).delta).toContain("telling the worker");
+    expect(events[1].type).toBe("done");
   });
 
   it("falls through (returns false) when redirectOp itself returns false", async () => {
@@ -78,15 +84,29 @@ describe("tryWorkerRedirect — classifier says redirect", () => {
     redirectOpReturn = false;
     classifierResult = { redirect: true, reason: "feedback" };
 
-    const cap = mockResponse();
+    const { events, sink } = captureSink();
     const result = await tryWorkerRedirect({
       sessionId: "s1",
       message: "x",
       recentSessionMessages: [],
-      res: cap.res,
+      sseSink: sink,
     });
     expect(result).toBe(false);
-    expect(cap.body).toBe("");
+    expect(events).toEqual([]);
+  });
+
+  it("returns true but emits no events when sseSink is null (WS-only caller)", async () => {
+    activeOpsBySession.set("s1", ["op-x"]);
+    classifierResult = { redirect: true, reason: "feedback" };
+
+    const result = await tryWorkerRedirect({
+      sessionId: "s1",
+      message: "x",
+      recentSessionMessages: [],
+      sseSink: null,
+    });
+    expect(result).toBe(true);
+    expect(redirectedCalls).toEqual([{ opId: "op-x", instruction: "x" }]);
   });
 });
 
@@ -95,28 +115,28 @@ describe("tryWorkerRedirect — classifier says no", () => {
     activeOpsBySession.set("s1", ["op-x"]);
     classifierResult = { redirect: false, reason: "main agent should answer" };
 
-    const cap = mockResponse();
+    const { events, sink } = captureSink();
     const result = await tryWorkerRedirect({
       sessionId: "s1",
       message: "yes",
       recentSessionMessages: [],
-      res: cap.res,
+      sseSink: sink,
     });
     expect(result).toBe(false);
     expect(redirectedCalls).toEqual([]);
-    expect(cap.body).toBe("");
+    expect(events).toEqual([]);
   });
 
   it("returns false when classifier returns null", async () => {
     activeOpsBySession.set("s1", ["op-x"]);
     classifierResult = null;
 
-    const cap = mockResponse();
+    const { sink } = captureSink();
     const result = await tryWorkerRedirect({
       sessionId: "s1",
       message: "x",
       recentSessionMessages: [],
-      res: cap.res,
+      sseSink: sink,
     });
     expect(result).toBe(false);
   });
@@ -137,12 +157,12 @@ describe("tryWorkerRedirect — recentSessionMessages plumbing", () => {
       { role: "user", content: "u3" },
       { role: "assistant", content: "a3" },
     ];
-    const cap = mockResponse();
+    const { sink } = captureSink();
     await tryWorkerRedirect({
       sessionId: "s1",
       message: "current",
       recentSessionMessages: messages,
-      res: cap.res,
+      sseSink: sink,
     });
 
     const { classifyWorkerRedirect } = await import("../src/routing/worker-redirect-classifier.js");
@@ -163,14 +183,14 @@ describe("tryWorkerRedirect — error handling", () => {
     (classifyWorkerRedirect as unknown as { mockImplementationOnce: (fn: () => Promise<never>) => void })
       .mockImplementationOnce(() => Promise.reject(new Error("classifier blew up")));
 
-    const cap = mockResponse();
+    const { events, sink } = captureSink();
     const result = await tryWorkerRedirect({
       sessionId: "s1",
       message: "x",
       recentSessionMessages: [],
-      res: cap.res,
+      sseSink: sink,
     });
     expect(result).toBe(false);
-    expect(cap.body).toBe("");
+    expect(events).toEqual([]);
   });
 });

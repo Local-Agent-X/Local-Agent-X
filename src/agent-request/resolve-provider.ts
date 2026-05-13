@@ -113,7 +113,7 @@ export async function resolveProvider(
     (provider === "codex" ? "gpt-5.4-mini" :
      provider === "anthropic" ? "claude-sonnet-4-6" :
      provider === "gemini" ? "gemini-2.0-flash" :
-     provider === "cerebras" ? "llama-3.3-70b" :
+     provider === "cerebras" ? "gpt-oss-120b" :
      config.model);
 
   const temperature = typeof saved.temperature === "number" ? saved.temperature : config.temperature;

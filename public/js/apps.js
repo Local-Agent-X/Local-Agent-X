@@ -4,6 +4,7 @@
 const APPS_PROVIDERS = [
   { value: 'xai', label: 'xAI Grok' },
   { value: 'gemini', label: 'Google Gemini' },
+  { value: 'cerebras', label: 'Cerebras' },
   { value: 'codex', label: 'OpenAI Codex' },
   { value: 'anthropic', label: 'Anthropic Claude' },
   { value: 'openai', label: 'OpenAI API' },
@@ -17,6 +18,7 @@ const APPS_MODELS = {
   xai: ['grok-4','grok-3-mini','grok-3'],
   openai: ['gpt-5.5-pro','gpt-5.5','gpt-4o','gpt-4o-mini','gpt-4.1','gpt-4.1-mini','o3','o4-mini'],
   gemini: ['gemini-2.0-flash','gemini-2.5-pro-preview-05-06','gemini-2.5-flash-preview-05-20','gemini-1.5-pro'],
+  cerebras: ['gpt-oss-120b','zai-glm-4.7'],
 };
 
 async function init_apps() {

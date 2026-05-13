@@ -43,6 +43,7 @@
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
+import { hasInjects } from "../../agent-loop/inject-queue.js";
 
 export const ANTHROPIC_ADAPTER_NAME = "anthropic";
 export const ANTHROPIC_ADAPTER_VERSION = "1.0.0";
@@ -215,6 +216,28 @@ export class AnthropicAdapter implements Adapter {
       try {
         for await (const ev of transport.stream(req)) {
           if (this.aborted) break;
+          // Mid-stream user interrupt. Anthropic's streaming model does
+          // in-stream tool execution: one runTurn can include many model
+          // iterations + tool calls without returning. If the user types
+          // a course-correction during that, the inject queue receives
+          // the message but driveTurn doesn't re-fire (and drainInjects
+          // doesn't run) until this runTurn returns. Result: the user's
+          // "don't ever use AI Import" sits unseen for minutes while the
+          // agent keeps doing the thing they're trying to stop.
+          //
+          // Fix: poll the inject queue at the top of each stream event.
+          // When the user types, we abort our own stream — the runTurn
+          // returns cleanly, the worker's `hasInjects` check (worker.ts)
+          // fires the next driveTurn, drainInjectsIntoTurn pulls the
+          // inject into op_messages, and the model sees the user's text
+          // on its very next API call. Whatever the model was about to
+          // say next gets discarded; that's the right tradeoff — the
+          // user explicitly intervened.
+          if (this.opts.sessionId && hasInjects(this.opts.sessionId)) {
+            this.aborted = true;
+            try { this.aborter?.abort(); } catch { /* already aborted */ }
+            break;
+          }
           if (ev.type === "text") {
             if (ev.delta.length === 0) continue;
             assembledText += ev.delta;

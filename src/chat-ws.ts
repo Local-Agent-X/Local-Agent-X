@@ -593,6 +593,18 @@ export function setupChatWebSocket(server: Server, authToken: string) {
       broadcastActiveChats();
     },
 
+    /**
+     * Push a one-off event to WS subscribers of `sessionId` outside the
+     * per-chat onEvent channel (which only exists between startChat and
+     * `done`). Used for pre-turn telemetry like `context_status` that the
+     * old code path emitted via `emitSse` only — WS clients never saw it
+     * because emitSse is null on the WS transport (see run-chat-turn.ts).
+     * Returns false if no WS clients are subscribed; caller falls back.
+     */
+    emit(sessionId: string, event: ServerEvent): void {
+      broadcastToSession(sessionId, event);
+    },
+
     /** Register the handler for WS-initiated chat messages */
     onChat(handler: ChatHandler) {
       chatHandler = handler;

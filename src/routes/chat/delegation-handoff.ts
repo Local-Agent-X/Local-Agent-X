@@ -101,11 +101,9 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
   // so it shares the same safety stack + cancel machinery as chat. tools=[]
   // + maxIterations=1 means the iteration-loop middlewares short-circuit
   // anyway — observable behavior is identical to the legacy 1-shot path.
-  // images is preserved on the options envelope; agent-runner does not yet
-  // project them into the seeded user message (it's a known gap shared with
-  // the canonical chat path), but a tools=[] ack speaks 1-2 sentences and
-  // does not need image input to do its job — the worker subprocess is the
-  // one that actually consumes the attachment.
+  // images is passed on the options envelope; agent-runner now projects them
+  // into the seeded user message (matches chat-runner) so a vision-capable
+  // ack model can reason about what was attached when phrasing the ack.
   const result = await runAgentViaCanonical(message, prepared.cleanHistory as ChatCompletionMessageParam[], {
     apiKey: prepared.apiKey, model: prepared.model,
     provider: prepared.provider as AgentOptions["provider"],

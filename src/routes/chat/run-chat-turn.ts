@@ -179,33 +179,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     ctx.setActiveBrowserSessionId(sessionId);
 
     const threatEngine = new ThreatEngine(ctx.dataDir, sessionId);
-    let systemPrompt = prepared.systemPrompt + threatEngine.getCanaryBlock();
-
-    // Parallel-worker awareness — see chat.ts history. Skip with degraded
-    // operation if the bridge module fails to load.
-    try {
-      const { listOpsForSession: listOpsAware } = await import("../../workers/session-bridge.js");
-      const { getOpTask: getOpTaskAware } = await import("../../workers/session-bridge.js");
-      const activeOpIds = listOpsAware(sessionId);
-      if (activeOpIds.length > 0) {
-        const taskLines = activeOpIds.map(id => {
-          const t = getOpTaskAware(id) || "(unknown task)";
-          return `  - ${t.slice(0, 160)}`;
-        }).join("\n");
-        systemPrompt += `\n\n[PARALLEL CONTEXT — ${activeOpIds.length} background worker${activeOpIds.length === 1 ? "" : "s"} active]\n` +
-          `These workers are already running in separate processes for the user. You can SEE their progress streaming into the same chat. Do NOT try to do their work — they're already on it.\n\n` +
-          `Active:\n${taskLines}\n\n` +
-          `Respond to the user's CURRENT message normally. If they're asking something unrelated to the worker(s), answer it. If they're asking about a worker's status, you can refer to what you've seen in its progress stream. If they're giving feedback for a worker, that's already auto-routed via the redirect classifier — you don't need to handle it here. Speak naturally about the parallel context — like JARVIS would when Tony talks to him while a build is in progress.`;
-      }
-    } catch (e) {
-      logger.warn(`[chat] parallel-worker awareness failed (proceeding without): ${(e as Error).message}`);
-    }
-    // systemPrompt is currently built but not yet read by the canonical
-    // path below (it uses prepared.systemPrompt directly via runChatViaCanonical).
-    // Preserved here for parity with the prior inline implementation in case
-    // future wiring threads it through; intentionally not pruned to keep
-    // this refactor a pure extraction.
-    void systemPrompt;
+    const { augmentSystemPrompt } = await import("./system-prompt-augmentations.js");
+    await augmentSystemPrompt(prepared, threatEngine, sessionId);
 
     let canaryBuffer = "";
     let fullResponseText = "";

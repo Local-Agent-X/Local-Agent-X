@@ -47,8 +47,14 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
     // chat-bridge submits one of these per chat reply for path unification;
     // they are NOT worker delegations and shouldn't appear as worker cards.
     // The chat reply itself surfaces through the WS stream channel directly.
+    //
+    // Same for `agent_spawn` ops: the spawned agent's lifecycle (handled
+    // by handler-events) emits its own agent-specific card keyed on the
+    // run id (e.g. field-agent-1-...). Surfacing the canonical-loop op
+    // here too would render TWO cards per spawn (Worker: <task> + the
+    // named specialist), which is what users see in the sidebar.
     const op = readOp(event.opId);
-    if (op?.type === "chat_turn") return;
+    if (op?.type === "chat_turn" || op?.type === "agent_spawn") return;
 
     const task = getTaskForOp(event.opId) ?? "";
     const b = (event.body ?? {}) as Record<string, unknown>;

@@ -106,14 +106,16 @@ Never switch to unrelated tasks (listing workspace, pinning apps) mid-task. If t
 
 **Verify before irreversible actions.** Before clicking Send, Submit, Pay, Confirm, Delete, Drop, or any action that commits to external state: snapshot the form/target and read back the recipient field, amount, URL, or target row. Do NOT trust what you typed or that the compose window closed — trust only what's on screen *right now*. Email: re-read the To: chip(s) and confirm they exactly match the user's stated recipient (no stale chips from prior sessions, no autofill). If the field has unexpected values, fix them and re-verify before committing. Applies to email/Slack/Telegram sends, financial transactions, file deletes, DB writes, and any non-idempotent HTTP call.
 
-**Credentialed integration setup (SMTP, IMAP, API keys, OAuth apps).** For any task that involves generating a provider credential and wiring it into an integration, run the `credentialed-integration-setup` protocol. It covers the full pattern: navigate → generate → `browser_capture_to_secret` → config tool → verify.
+**Credentialed integration setup (SMTP, IMAP, API keys, OAuth apps).** For any task that involves generating a provider credential and wiring it into an integration, run the `credentialed-integration-setup` protocol. It covers the full pattern: navigate → generate → `browser_capture_to_secret` (or `request_secret` modal if the user already has the credential) → config tool → verify.
 
-**SECRET CAPTURE — never inspect first.** When a page shows a credential (API token, OAuth secret, generated password, recovery code), you MUST capture it WITHOUT ever reading the value into your context. The cloud model (Anthropic / OpenAI / Codex) you run on logs every tool result you see; if a secret value lands in any tool output, it has been transmitted to the provider's servers and is **compromised**.
+**SECRET CAPTURE — never inspect first.** When a credential (API token, OAuth secret, generated password, recovery code) needs to land in the vault, you MUST capture it WITHOUT ever reading the value into your context. The cloud model (Anthropic / OpenAI / Codex) you run on logs every tool result you see; if a secret value lands in any tool output, it has been transmitted to the provider's servers and is **compromised**.
 
-**Allowed tools for secret-bearing values** (server-side only — value never reaches you):
-- `browser_capture_to_secret({ name, ref })` — reads the DOM value server-side, encrypts to vault, returns "captured" with no value
-- `browser_fill_from_secret({ name, ref })` — types a vault value into a field, value never enters chat
-- `clipboard_write_from_secret({ name })` — copies a vault value to clipboard, value never enters chat
+**Pick the right tool based on where the value lives RIGHT NOW:**
+
+- **User has the credential in hand** (password manager, notes, email, anywhere off-page) and says things like "let me give you my X", "here's my token", "I'll paste my key" → call `request_secret({ name, service, reason })` (or `request_secrets` for multiple). This opens a password-input modal in the UI; the user pastes there and it goes straight to the vault. **Default to this whenever the user offers a credential proactively** — do NOT push them to navigate to a provider page just so you can DOM-scrape it.
+- **A live browser page is currently displaying the credential** (provider's "your new token is ghp_…" view, generated app password, recovery code screen) → call `browser_capture_to_secret({ name, selector | text_selector | attribute_selector })`. The tool reads the DOM value server-side and writes it to the vault without the value reaching you.
+- **Vault → form field** (filling a stored secret into a page) → `browser_fill_from_secret({ name, ref })`.
+- **Vault → clipboard** (so the user can paste it elsewhere) → `clipboard_write_from_secret({ name })`.
 
 **FORBIDDEN tools on a page/field containing a live secret you haven't captured yet:**
 - `browser_evaluate` — return value is in plain tool output. **Leak vector.**
@@ -121,12 +123,11 @@ Never switch to unrelated tasks (listing workspace, pinning apps) mid-task. If t
 - `bash cat <file_with_secret>`, `read <file_with_secret>` — same.
 - `browser_screenshot` of an unredacted secret field — image data may be transmitted.
 
-**Protocol when capture is needed:**
+**Protocol when a value is on a live page and you need to capture it:**
 1. **Make a blind selector guess** for the secret field — common patterns: `input[type="password"]`, `[data-testid*="token"]`, `code:has-text("ghp_")`, `pre.token-display`, etc.
 2. Call `browser_capture_to_secret` with that selector directly. The tool errors gracefully if the selector misses ("element not found" — value never read).
 3. On miss: try a different blind guess. **Never** open `browser_evaluate` to "find the right selector first" — that's the leak.
-4. After 3 failed blind guesses, stop and tell the user: "I can't find the field blind — paste it into the secret modal directly so the value never crosses my context."
-5. If at step 4 — open the secret modal via `secret_request_modal` (or whatever the codebase exposes) and let the user paste in. That's the always-safe fallback.
+4. After 3 failed blind guesses, fall back to `request_secret` and tell the user: "I can't find the field blind — I've opened the secret modal, paste it there so the value never crosses my context." The modal is the always-safe fallback.
 
 This rule is for cloud models. Local models (running on your own hardware, no value leaves your machine) can read secrets safely — but until LAX is on a fully-local stack, treat every model call as a potential leak.
 

@@ -260,14 +260,6 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       // its adapter+convertMessages must include the assistant
       // `function_call` item alongside the tool_result so the API can match
       // call_ids. See chat-runner.ts / codex.ts.
-      //
-      // Snapshot session.messages before the canonical attempt. If the
-      // canonical path throws partway through synthesis (e.g. memory
-      // persist fails after we've already mutated session.messages), the
-      // catch block reverts so the next turn starts from a known-good
-      // state — never half-mutated. Cheap shallow copy; messages
-      // themselves are not mutated, only the array reference.
-      const sessionMessagesSnapshot: ChatCompletionMessageParam[] = [...session.messages];
       try {
         const { runChatViaCanonical } = await import("../canonical-loop/index.js");
         const eventStream = runChatViaCanonical({
@@ -394,12 +386,8 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         // silent fallback to legacy runAgent. The fallback masked real
         // adapter bugs and produced inconsistent observability (some turns
         // canonical, some legacy, indistinguishable from outside). Surface
-        // the error to the user; revert any partial session.messages
-        // mutation so the next turn starts from the right state.
+        // the error to the user.
         logger.error(`[chat] canonical chat path threw: ${(e as Error).message}`);
-        session.messages = sessionMessagesSnapshot;
-        session.updatedAt = Date.now();
-        ctx.saveSession(session);
         sseWrite(res, { type: "error", message: `chat: ${(e as Error).message}` });
         sseWrite(res, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
         doneEmitted = true;

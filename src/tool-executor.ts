@@ -627,7 +627,22 @@ async function executeSingleTool(
   if (threatEngine) {
     const threat = threatEngine.evaluateToolResult(tc.name, args, result.content, allowed);
     if (threat.blocked) {
-      result = { content: `BLOCKED by threat engine: ${threat.reason}`, isError: true };
+      // Enriched block message tells the model how the USER can grant
+      // consent if this is a legitimate workflow. Without this, the model
+      // sees "BLOCKED" and has no recovery channel — observed live as the
+      // model collapsing into "Tool call: ..." narration (2026-05-13).
+      // The /approve handler lives in routes/chat/run-chat-turn.ts and
+      // grants 30-min session-level consent via consent-store.ts.
+      result = {
+        content:
+          `BLOCKED by threat engine: ${threat.reason}\n\n` +
+          `If this is a legitimate workflow (user explicitly shared data with you and named the destination), ` +
+          `tell the user to type:\n` +
+          `  /approve <one-line description>\n` +
+          `That grants 30 minutes of consent for this session. Retry the tool after they approve.\n` +
+          `Do NOT retry without /approve — you will hit the same block.`,
+        isError: true,
+      };
     }
     if (threatEngine.isRestricted() && ["http_request", "web_fetch", "browser"].includes(tc.name)) {
       let isOwnApp = false;

@@ -217,6 +217,7 @@ export class OpenAICompatAdapter implements Adapter {
   private async streamOnce(req: ProviderRequest, report: (r: AdapterReport) => void): Promise<StreamOnceResult> {
     const out: StreamOnceResult = {
       assembledText: "",
+      assembledThinking: "",
       pendingToolCalls: [],
       firstError: null,
       providerStop: undefined,
@@ -245,6 +246,16 @@ export class OpenAICompatAdapter implements Adapter {
           report({ kind: "stream_chunk", body: { delta: ev.delta } });
           continue;
         }
+        if (ev.type === "thinking") {
+          // Reasoning-model chain-of-thought (Cerebras `delta.reasoning`,
+          // DeepSeek-style `reasoning_content`). Accumulate silently so
+          // we have something to show if the model burns its budget on
+          // reasoning and never emits a final `content` answer. Streaming
+          // this live to chat would dump raw thoughts into the bubble,
+          // which is bad UX — surface only as a final fallback below.
+          if (ev.delta) out.assembledThinking += ev.delta;
+          continue;
+        }
         if (ev.type === "tool_call") {
           out.pendingToolCalls.push({ id: ev.id, name: ev.name, arguments: ev.arguments });
           report({ kind: "tool_call_requested", call: { toolCallId: ev.id, tool: ev.name, args: parseArgs(ev.arguments) } });
@@ -271,12 +282,28 @@ export class OpenAICompatAdapter implements Adapter {
       if (!out.firstError) out.firstError = { code: "transport_exception", message };
       report({ kind: "error", code: "transport_exception", message, retryable: false });
     }
+    // Reasoning-only fallback. The model reasoned the entire output
+    // budget away and never emitted `content` — without this, the user
+    // sees an empty bubble. Surface the reasoning as the assistant text
+    // so the turn is at least visible. Skip when the turn produced tool
+    // calls (then text is optional) or had a transport error (the error
+    // event already surfaced).
+    if (
+      out.assembledText.length === 0 &&
+      out.assembledThinking.length > 0 &&
+      out.pendingToolCalls.length === 0 &&
+      !out.firstError
+    ) {
+      out.assembledText = out.assembledThinking;
+      report({ kind: "stream_chunk", body: { delta: out.assembledThinking } });
+    }
     return out;
   }
 }
 
 interface StreamOnceResult {
   assembledText: string;
+  assembledThinking: string;
   pendingToolCalls: Array<{ id: string; name: string; arguments: string }>;
   firstError: { code: string; message: string } | null;
   providerStop: string | undefined;

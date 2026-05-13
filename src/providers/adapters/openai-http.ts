@@ -91,6 +91,18 @@ export class OpenAIHttpAdapter extends BaseAdapter {
           yield { type: "text", delta: delta.content };
         }
 
+        // Reasoning models (Cerebras gpt-oss/glm/qwen, DeepSeek R1, etc.)
+        // stream their chain-of-thought in a separate delta field —
+        // `reasoning` on Cerebras, `reasoning_content` on DeepSeek-style.
+        // Surface as `thinking` so callers can render it distinct from
+        // the final answer (or fall back to showing it as content when
+        // no final answer ever lands).
+        const deltaExt = delta as { reasoning?: string; reasoning_content?: string };
+        const reasoningDelta = deltaExt.reasoning ?? deltaExt.reasoning_content;
+        if (typeof reasoningDelta === "string" && reasoningDelta.length > 0) {
+          yield { type: "thinking", delta: reasoningDelta };
+        }
+
         if (delta.tool_calls) {
           for (const tc of delta.tool_calls) {
             if (tc.index === undefined) continue;

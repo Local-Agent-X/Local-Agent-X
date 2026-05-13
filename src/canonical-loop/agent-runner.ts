@@ -29,7 +29,7 @@ import { buildContextPack } from "../workers/context-pack-builder.js";
 import { getRetryPolicy } from "../workers/heartbeat.js";
 import { trackOpForSession } from "../workers/session-bridge.js";
 import type { Op, OpLane, OpVisibility } from "../workers/types.js";
-import type { AgentOptions } from "../agent.js";
+import type { AgentOptions } from "../providers/types.js";
 import type { AgentTurn } from "../types.js";
 
 import { canonicalLoopEntry } from "./index.js";

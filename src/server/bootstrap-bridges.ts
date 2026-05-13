@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { stripEphemeralMessages } from "../agent-providers.js";
+import { stripEphemeralMessages } from "../providers/sanitize.js";
 import { WhatsAppBridge } from "../whatsapp-bridge.js";
 import { TelegramBridge } from "../telegram-bridge.js";
 import { formatForChannel, getChannelConfig } from "../channel-formatter.js";

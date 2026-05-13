@@ -33,6 +33,7 @@ import type { ProviderRequest } from "../../providers/adapter/types.js";
 import { markNoToolSupport } from "../../providers/types.js";
 import { createLogger } from "../../logger.js";
 import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
+import { sanitizeAssistantTextForRebuild } from "../../anthropic-client/parse.js";
 
 const logger = createLogger("canonical-loop.adapters.openai-compat");
 
@@ -77,7 +78,7 @@ export class OpenAICompatAdapter implements Adapter {
       baseURL,
       model,
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
-      messages: canonicalToChatParam(input.messages, input.pendingRedirect),
+      messages: canonicalToChatParam(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
       tools: input.tools.map(t => ({
         name: t.name,
         description: t.description ?? "",
@@ -286,6 +287,7 @@ interface StreamOnceResult {
 function canonicalToChatParam(
   messages: CanonicalMessage[],
   pendingRedirect: TurnInput["pendingRedirect"],
+  validToolNames?: ReadonlySet<string>,
 ): ChatCompletionMessageParam[] {
   const out: ChatCompletionMessageParam[] = [];
   for (const m of messages) {
@@ -314,7 +316,17 @@ function canonicalToChatParam(
       const tc = Array.isArray(obj.toolCalls)
         ? (obj.toolCalls as Array<{ id: string; name: string; arguments: string }>)
         : undefined;
-      const text = extractText(c);
+      // Layer-3 history-rebuild sanitization — see parse.ts. Strips
+      // tool-call-shaped JSON / XML / tree-style notation from prior
+      // assistant text so the model doesn't mimic its own bad output.
+      const rawText = extractText(c);
+      const { cleaned: text, leaks } = sanitizeAssistantTextForRebuild(rawText, validToolNames);
+      if (leaks.length > 0) {
+        logger.info(
+          `stripped ${leaks.length} leak(s) from assistant history: ` +
+          leaks.map(l => `${l.shape}${l.toolName ? `(${l.toolName})` : ""}`).join(", "),
+        );
+      }
       if (tc && tc.length > 0) {
         out.push({
           role: "assistant",

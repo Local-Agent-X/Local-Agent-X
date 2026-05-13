@@ -42,10 +42,15 @@
 import type { CanonicalMessage } from "../contract-types.js";
 import type { TurnInput } from "../adapter-contract.js";
 import type { TransportMessage } from "./anthropic.js";
+import { sanitizeAssistantTextForRebuild } from "../../anthropic-client/parse.js";
+import { createLogger } from "../../logger.js";
+
+const sanitizerLogger = createLogger("canonical-loop.rebuild-sanitizer");
 
 export function canonicalToTransport(
   messages: CanonicalMessage[],
   pendingRedirect: TurnInput["pendingRedirect"],
+  validToolNames?: ReadonlySet<string>,
 ): TransportMessage[] {
   const out: TransportMessage[] = [];
   for (const m of messages) {
@@ -69,9 +74,21 @@ export function canonicalToTransport(
       const tc = Array.isArray(obj.toolCalls)
         ? (obj.toolCalls as Array<{ id: string; name: string; arguments: string }>)
         : undefined;
+      // Layer-3 history-rebuild sanitization. Strip any tool-call shapes
+      // that leaked into content text on a prior turn and replace with a
+      // corrective marker — breaks the feedback loop where claude sees its
+      // own bad output and learns to repeat the pattern.
+      const rawText = extractText(c);
+      const { cleaned, leaks } = sanitizeAssistantTextForRebuild(rawText, validToolNames);
+      if (leaks.length > 0) {
+        sanitizerLogger.info(
+          `stripped ${leaks.length} leak(s) from assistant history: ` +
+          leaks.map(l => `${l.shape}${l.toolName ? `(${l.toolName})` : ""}`).join(", "),
+        );
+      }
       out.push({
         role: "assistant",
-        content: extractText(c),
+        content: cleaned,
         ...(tc && tc.length > 0 ? { toolCalls: tc } : {}),
       });
       continue;

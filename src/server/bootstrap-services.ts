@@ -130,6 +130,22 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
     const provider = createEmbeddingProvider({ provider: embProvider, apiKey, model: embModel });
     memoryIndex.setEmbeddingProvider(provider);
     logger.info(`[memory] Embedding provider: ${provider.name}/${provider.model} (${provider.dimensions}d)`);
+
+    // Pre-warm the embedding provider so the first user request doesn't
+    // pay the model-load cost. Ollama's mxbai-embed-large is 1.3GB and
+    // takes 30-60s to load into RAM/GPU on first call. Without this,
+    // prepareAgentRequest's memory-recall serializes through that load
+    // (we observed 269s prepareAgentRequest on a cold start).
+    // Fire-and-forget — don't block server boot; the provider handles
+    // its own timeouts internally. Local TF-IDF skips the warmup (it's
+    // already cheap), but the call is harmless if it runs.
+    if (provider.name !== "local") {
+      void provider.embed("warmup").catch(() => {
+        // Provider unavailable at boot is non-fatal — first user request
+        // pays the price like before. We just don't make it worse.
+      });
+      logger.info(`[memory] Embedding pre-warm fired (${provider.name})`);
+    }
   } catch (e) { logger.warn(`[memory] Embedding provider not available: ${(e as Error).message} — keyword search only`); }
 
   import("../image-tools.js").then(m => m.initImageTools?.(secretsStore)).catch(() => {});

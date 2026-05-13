@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentOptions } from "../providers/types.js";
@@ -332,6 +333,22 @@ export function logStartup(deps: { config: LAXConfig; dataDir: string }): void {
   printAuditReport(runSecurityAudit({ authToken: config.authToken, workspace: config.workspace }));
   startAriKernel(join(dataDir, "ari-audit.db"), undefined, config.ariRequired).then(a => { if (a) logger.info(`  [ari] Audit active`); else if (config.ariRequired) logger.error(`  [ari] CRITICAL: ARI failed`); });
   try { import("../auth-refresh.js").then(({ startAuthRefreshTimer }) => startAuthRefreshTimer()).catch(() => {}); } catch {}
+
+  // Kill orphan Chrome processes from a previous server lifetime that still
+  // hold the agent's user-data-dir (~/.lax/chrome-profile). Without this,
+  // the next launchViaCDP call silently joins the dead process and the user
+  // sees no browser window — observed today during the Mario session
+  // (14 Chrome processes with no MainWindowTitle). Fire-and-forget; only
+  // kills processes whose --user-data-dir matches the agent profile
+  // exactly. Never touches the user's regular Chrome.
+  try {
+    const agentProfile = join(homedir(), ".lax", "chrome-profile");
+    void import("../browser/cleanup-stale.js").then(({ cleanupStaleAgentChrome }) =>
+      cleanupStaleAgentChrome(agentProfile),
+    ).catch((e) => logger.warn(`[browser-cleanup] failed: ${(e as Error).message}`));
+  } catch (e) {
+    logger.warn(`[browser-cleanup] init failed: ${(e as Error).message}`);
+  }
 }
 
 export function registerShutdown(deps: {

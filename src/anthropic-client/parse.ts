@@ -113,6 +113,161 @@ export function cleanUrls(text: string): string {
   return text.replace(/(https?:\/\/[^\s)>\]]+)[.,;:!?]+(\s|$)/g, "$1$2");
 }
 
+// ── Layer 3: History-rebuild sanitization ─────────────────────────────────
+//
+// When loading prior assistant messages for the next turn, any tool-call
+// JSON / XML / tree-style notation that leaked into content is REPLACED
+// with a corrective annotation. This breaks the feedback loop where claude
+// sees its own bad output in history and learns "this is how I respond
+// here," degrading subsequent turns. Layered on top of stream-time + persist-
+// time stripping — defense in depth.
+//
+// See docs/tool-resolver-design.md and AUDIT.md for the broader pattern.
+
+export type LeakShape =
+  | "openai-envelope-fenced"   // ```json {"tool_calls":[...]}```
+  | "openai-envelope-raw"      // {"tool_calls":[...]}
+  | "anthropic-native"         // {"name":"X","input":{...}}
+  | "anthropic-native-array"   // [{"name":"X","input":{...}}]
+  | "anthropic-xml-tool-use"   // <tool_use>...</tool_use>
+  | "anthropic-xml-fcalls"     // <function_calls>...</function_calls>
+  | "tree-style-call"          // Bash(...) / Edit(...) / etc on its own line
+  | "placeholder-narration";   // [Calling] / [Tool] / [Going] etc
+
+export interface LeakInfo {
+  shape: LeakShape;
+  /** Tool name when recoverable from the leak; null for placeholders. */
+  toolName: string | null;
+  /** First 80 chars of the leak, for log diagnostics. */
+  preview: string;
+}
+
+/**
+ * Sanitize assistant text for the NEXT turn's request. Returns the cleaned
+ * text with each leak replaced by a corrective marker, plus a list of
+ * detections for telemetry.
+ *
+ * The corrective marker is deliberately model-readable:
+ *   <wire-format-error: prior attempt to call <tool> emitted as text — not delivered. retry using proper tool_use.>
+ *
+ * Without the marker, silently stripping leaves the model confused ("I
+ * thought I called that tool"). The marker tells it explicitly what went
+ * wrong so the next attempt is clean.
+ */
+export function sanitizeAssistantTextForRebuild(
+  text: string,
+  validToolNames?: ReadonlySet<string>,
+): { cleaned: string; leaks: LeakInfo[] } {
+  if (!text) return { cleaned: text, leaks: [] };
+  const leaks: LeakInfo[] = [];
+  let cleaned = text;
+
+  // 1. OpenAI envelope (fenced)
+  cleaned = cleaned.replace(/```(?:json)?\s*\n?(\{[\s\S]*?"tool_calls"[\s\S]*?\})\s*\n?```/g, (_m, body) => {
+    leaks.push({ shape: "openai-envelope-fenced", toolName: extractFirstName(body), preview: previewOf(body) });
+    return correctiveMarker(extractFirstName(body));
+  });
+
+  // 2. OpenAI envelope (raw)
+  cleaned = cleaned.replace(/\{"tool_calls"\s*:\s*\[[\s\S]*?\]\s*\}/g, (m) => {
+    leaks.push({ shape: "openai-envelope-raw", toolName: extractFirstName(m), preview: previewOf(m) });
+    return correctiveMarker(extractFirstName(m));
+  });
+
+  // 3. Anthropic XML (<tool_use> / <function_calls>)
+  cleaned = cleaned.replace(/<tool_use>[\s\S]*?<\/tool_use>/g, (m) => {
+    leaks.push({ shape: "anthropic-xml-tool-use", toolName: extractXmlToolName(m), preview: previewOf(m) });
+    return correctiveMarker(extractXmlToolName(m));
+  });
+  cleaned = cleaned.replace(/<function_calls>[\s\S]*?<\/function_calls>/g, (m) => {
+    leaks.push({ shape: "anthropic-xml-fcalls", toolName: extractXmlToolName(m), preview: previewOf(m) });
+    return correctiveMarker(extractXmlToolName(m));
+  });
+
+  // 4. Anthropic native + array-wrapped — uses brace-balanced scan. Array
+  //    wrappers are handled implicitly because the regex finds the inner
+  //    `{`, the matched range is the object, and we splice that out;
+  //    leftover `[]` brackets are removed via post-pass cleanup below.
+  if (validToolNames && validToolNames.size > 0) {
+    const matches = findAnthropicShapeCalls(cleaned, validToolNames);
+    if (matches.length > 0) {
+      let out = "";
+      let cursor = 0;
+      for (const m of matches) {
+        // Detect array-wrapping by looking at chars immediately surrounding the match.
+        const before = cleaned.slice(Math.max(0, m.startIdx - 4), m.startIdx);
+        const after = cleaned.slice(m.endIdx, m.endIdx + 4);
+        const inArray = before.trimEnd().endsWith("[") && after.trimStart().startsWith("]");
+        out += cleaned.slice(cursor, m.startIdx);
+        leaks.push({
+          shape: inArray ? "anthropic-native-array" : "anthropic-native",
+          toolName: m.name,
+          preview: previewOf(cleaned.slice(m.startIdx, m.endIdx)),
+        });
+        out += correctiveMarker(m.name);
+        cursor = m.endIdx;
+      }
+      out += cleaned.slice(cursor);
+      cleaned = out;
+      // Remove empty `[]` brackets left over from array-wrapped extractions.
+      cleaned = cleaned.replace(/\[\s*\]/g, "");
+    }
+  }
+
+  // 5. Tree-style notation: lines that ARE just `ToolName(...)` with no
+  //    surrounding prose. Conservative — only fires when the toolName
+  //    matches a valid tool. Catches Claude Code's rendering style leaking
+  //    in: `Bash(ls -la ...)` / `└ Bash(...)` etc.
+  if (validToolNames && validToolNames.size > 0) {
+    const treeRe = /^[\s└|│├─]*([A-Z][a-zA-Z_]+)\s*\(([\s\S]*?)\)\s*$/gm;
+    cleaned = cleaned.replace(treeRe, (m, name: string) => {
+      const camelToSnake = name.replace(/([A-Z])/g, (_x, c, i) => i === 0 ? c.toLowerCase() : "_" + c.toLowerCase());
+      if (validToolNames.has(name) || validToolNames.has(camelToSnake) || validToolNames.has(name.toLowerCase())) {
+        leaks.push({ shape: "tree-style-call", toolName: name, preview: previewOf(m) });
+        return correctiveMarker(name);
+      }
+      return m;
+    });
+  }
+
+  // 6. Placeholder narration: lines that ARE just `[Calling]` / `[Tool]` /
+  //    `[Going]` etc — generated when the model loses its thread and
+  //    narrates intent without dispatching. Very conservative: only the
+  //    exact words below, only when alone on a line.
+  cleaned = cleaned.replace(/^[\s>]*\[(Calling|Tool|Going|Run|Bash|Edit|Read|Write|Doing|Executing|Now)[^\]]{0,30}\]\s*$/gm, (m) => {
+    leaks.push({ shape: "placeholder-narration", toolName: null, preview: previewOf(m) });
+    return correctiveMarker(null);
+  });
+
+  // Collapse 3+ consecutive newlines that excisions may have produced.
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+
+  return { cleaned, leaks };
+}
+
+function correctiveMarker(toolName: string | null): string {
+  if (toolName) {
+    return `<wire-format-error: prior attempt to call ${toolName} emitted as text — not delivered. retry using proper tool_use.>`;
+  }
+  return `<wire-format-error: prior assistant narrated tool-call intent without dispatching — retry using proper tool_use.>`;
+}
+
+function previewOf(s: string): string {
+  return s.replace(/\s+/g, " ").slice(0, 80);
+}
+
+function extractFirstName(jsonBody: string): string | null {
+  const m = /"name"\s*:\s*"([^"\\]+)"/.exec(jsonBody);
+  return m ? m[1] : null;
+}
+
+function extractXmlToolName(xml: string): string | null {
+  const m = /<(?:tool_name|n)>\s*([^<\s]+)\s*<\/(?:tool_name|n)>/.exec(xml);
+  if (m) return m[1];
+  const m2 = /name="([^"]+)"/.exec(xml);
+  return m2 ? m2[1] : null;
+}
+
 /**
  * Filter streaming deltas — suppress JSON tool call blocks AND Claude's
  * native XML tool-use blocks in real-time.

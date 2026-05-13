@@ -200,7 +200,7 @@ export class AnthropicAdapter implements Adapter {
     const req: AnthropicTransportRequest = {
       model: this.opts.model ?? "claude-opus-4-7",
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
-      messages: canonicalToTransport(input.messages, input.pendingRedirect),
+      messages: canonicalToTransport(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
       tools: convertTools(input.tools),
       signal: this.aborter.signal,
       maxTokens: this.opts.maxTokens,

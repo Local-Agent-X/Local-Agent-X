@@ -42,20 +42,18 @@ export async function withRetry<T>(
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= opts.maxRetries; attempt++) {
-    // Budget check BEFORE the attempt: a shared context may have already
-    // burned its attempts on a prior withRetry call in the same request.
-    if (opts.ctx) {
-      const b = opts.ctx.budget;
-      if (b.attemptsUsed >= b.maxAttempts) {
-        if (lastError) throw lastError;
-        throw new Error(`retry budget exhausted (${b.attemptsUsed}/${b.maxAttempts})`);
-      }
-      if (Date.now() >= b.deadlineMs) {
-        if (lastError) throw lastError;
-        throw new Error("retry deadline exceeded");
-      }
-      b.attemptsUsed++;
-    }
+    // Telemetry-only budget bookkeeping — count attempts so callers can
+    // inspect ctx.budget.attemptsUsed if they want to. The gating that
+    // used to live here (throw "retry budget exhausted" / "retry deadline
+    // exceeded") was a regression bait: when a turn spent its budget on
+    // early prep work (PDF lookups, protocol loads, etc.) before slow-
+    // start tools like `browser` ran, the gate killed those tools BEFORE
+    // their first real attempt. The shared-budget machinery is reserved
+    // for a future multi-layer retry strategy; only L1 (this function)
+    // exists today, and each withRetry call's local `maxRetries` is the
+    // correct per-call cap. Counter still increments so a future second
+    // layer can read it; nothing throws on it.
+    if (opts.ctx) opts.ctx.budget.attemptsUsed++;
 
     try {
       return await fn();

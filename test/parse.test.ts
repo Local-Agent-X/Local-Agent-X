@@ -339,3 +339,73 @@ describe("cleanUrls", () => {
     expect(out).toBe("just normal sentence with a period.");
   });
 });
+
+// ── parseToolCalls — Anthropic native shape (the smoke regression) ─────
+
+describe("parseToolCalls — Anthropic native shape {\"name\":..,\"input\":..}", () => {
+  it("extracts a known tool call emitted as bare Anthropic native shape", () => {
+    const text = `{"name":"agent_spawn","input":{"agent":"researcher","task":"what is the capital of France"}}`;
+    const out = parseToolCalls(text, new Set(["agent_spawn"]));
+    expect(out).toEqual([
+      { name: "agent_spawn", arguments: { agent: "researcher", task: "what is the capital of France" } },
+    ]);
+  });
+
+  it("ignores Anthropic-shape JSON for an unknown tool name", () => {
+    const text = `{"name":"made_up_tool","input":{"x":1}}`;
+    const out = parseToolCalls(text, new Set(["agent_spawn", "browser"]));
+    expect(out).toEqual([]);
+  });
+
+  it("returns nothing when no validToolNames are passed", () => {
+    const text = `{"name":"agent_spawn","input":{"agent":"researcher"}}`;
+    const out = parseToolCalls(text);
+    expect(out).toEqual([]);
+  });
+
+  it("handles nested input objects via brace-balanced scan", () => {
+    const text = `{"name":"web_fetch","input":{"url":"https://x.com","headers":{"X-Foo":"bar"}}}`;
+    const out = parseToolCalls(text, new Set(["web_fetch"]));
+    expect(out).toEqual([{ name: "web_fetch", arguments: { url: "https://x.com", headers: { "X-Foo": "bar" } } }]);
+  });
+
+  it("extracts the call when wrapped in prose (model self-correction case)", () => {
+    const text = `{"name":"agent_spawn","input":{"agent":"researcher","task":"x"}}\n\nWait — I need to actually call the tool properly.`;
+    const out = parseToolCalls(text, new Set(["agent_spawn"]));
+    expect(out).toEqual([{ name: "agent_spawn", arguments: { agent: "researcher", task: "x" } }]);
+  });
+
+  it("prefers OpenAI envelope when both shapes appear (envelope wins via early return)", () => {
+    const text = `{"tool_calls":[{"name":"first","arguments":{"x":1}}]}\nAlso: {"name":"second","input":{"y":2}}`;
+    const out = parseToolCalls(text, new Set(["first", "second"]));
+    expect(out).toEqual([{ name: "first", arguments: { x: 1 } }]);
+  });
+
+  it("does not synthesize calls from quoted JSON inside string values", () => {
+    // The whole string is one big quoted value — nothing should match because
+    // the scanner sees an outer `"` first.
+    const text = `Example payload: "{\\"name\\":\\"agent_spawn\\",\\"input\\":{}}"`;
+    const out = parseToolCalls(text, new Set(["agent_spawn"]));
+    expect(out).toEqual([]);
+  });
+});
+
+describe("stripToolCallBlocks — Anthropic native shape", () => {
+  it("strips the bare envelope when validToolNames are provided", () => {
+    const text = `Hello{"name":"agent_spawn","input":{"agent":"researcher"}}World`;
+    const out = stripToolCallBlocks(text, new Set(["agent_spawn"]));
+    expect(out).toBe("HelloWorld");
+  });
+
+  it("leaves the JSON alone if no validToolNames are provided (back-compat)", () => {
+    const text = `Hello{"name":"agent_spawn","input":{"agent":"researcher"}}World`;
+    const out = stripToolCallBlocks(text);
+    expect(out).toBe(text.trim());
+  });
+
+  it("leaves the JSON alone for unknown tool names", () => {
+    const text = `Hello{"name":"made_up","input":{"x":1}}World`;
+    const out = stripToolCallBlocks(text, new Set(["agent_spawn"]));
+    expect(out).toBe(text.trim());
+  });
+});

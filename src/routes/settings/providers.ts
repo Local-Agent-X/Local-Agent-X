@@ -16,6 +16,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     const hasOpenAIOAuth = !!loadTokens();
     const hasAnthropicOAuth = !!loadAnthropicTokens();
     const hasXaiKey = ctx.secretsStore.has("XAI_API_KEY");
+    const hasCerebrasKey = ctx.secretsStore.has("CEREBRAS_API_KEY");
     const hasOpenAIKey = !!ctx.config.openaiApiKey || ctx.secretsStore.has("OPENAI_API_KEY");
     let hasOllama = false;
     const ollamaUrl = getRuntimeConfig().ollamaUrl;
@@ -26,6 +27,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     const hasCustomKey = ctx.secretsStore.has("CUSTOM_API_KEY");
     if (hasXaiKey) providers.push({ id: "xai", name: "xAI Grok", models: ["grok-4", "grok-3", "grok-3-mini"], active: currentProvider === "xai" });
     if (hasGeminiKey) providers.push({ id: "gemini", name: "Google Gemini", models: ["gemini-2.0-flash", "gemini-2.5-pro-preview-05-06", "gemini-2.5-flash-preview-05-20"], active: currentProvider === "gemini" });
+    if (hasCerebrasKey) providers.push({ id: "cerebras", name: "Cerebras", models: ["llama-3.3-70b", "qwen-3-32b", "qwen-3-coder-480b", "gpt-oss-120b"], active: currentProvider === "cerebras" });
     if (hasOpenAIOAuth) providers.push({ id: "codex", name: "OpenAI Codex", models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"], active: currentProvider === "codex" });
     if (hasAnthropicOAuth) providers.push({ id: "anthropic", name: "Anthropic", models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-5"], active: currentProvider === "anthropic" });
     if (hasOpenAIKey) providers.push({ id: "openai", name: "OpenAI API", models: ["gpt-4o", "gpt-4o-mini", "o3-pro"], active: currentProvider === "openai" });
@@ -105,6 +107,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
         codex: "gpt-5.4",
         anthropic: "claude-opus-4-7",
         gemini: "gemini-2.5-pro-preview-05-06",
+        cerebras: "llama-3.3-70b",
         local: "qwen2:7b",
         "ollama-cloud": "",  // user picks from cloud catalog; no sane default
       };

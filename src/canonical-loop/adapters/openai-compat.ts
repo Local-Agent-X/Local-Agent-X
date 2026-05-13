@@ -518,6 +518,7 @@ export async function resolveOpenAICompatTarget(
   if (provider === "xai") return { baseURL: "https://api.x.ai/v1", apiKey: prepared.apiKey };
   if (provider === "openai") return { baseURL: "https://api.openai.com/v1", apiKey: prepared.apiKey };
   if (provider === "gemini") return { baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", apiKey: prepared.apiKey };
+  if (provider === "cerebras") return { baseURL: "https://api.cerebras.ai/v1", apiKey: prepared.apiKey };
   if (provider === "custom") {
     const baseURL = prepared.customBaseURL || "";
     if (!baseURL) return null;

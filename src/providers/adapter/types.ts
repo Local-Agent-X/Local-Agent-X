@@ -26,8 +26,10 @@ export interface ProviderRequest {
   tools: ToolDefinition[];
   temperature?: number;
   maxTokens?: number;
-  /** Force tool use on this request ("required" = model MUST call a tool). */
-  toolChoice?: "auto" | "required";
+  /** Force tool use on this request. "required" = model MUST call a
+   *  tool of its choosing. `{ type: "tool", name }` = pin to the named
+   *  tool (intent-classifier path). */
+  toolChoice?: "auto" | "required" | { type: "tool"; name: string };
   /** Session id for downstream tracking (MCP bridge, telemetry). */
   sessionId?: string;
   /** Abort signal — adapters MUST honor this (kill subprocess, abort fetch). */

@@ -334,8 +334,16 @@ async function executeSingleTool(
   }
   // Inject onEvent for tools that need to stream events (e.g. request_secret,
   // browser emits browser_queued when waiting on the per-process mutex,
-  // voice_visual emits a `visual` ServerEvent the browser morphs particles to).
-  if (tc.name === "request_secret" || tc.name === "request_secrets" || tc.name === "browser" || tc.name === "voice_visual") {
+  // voice_visual emits a `visual` ServerEvent the browser morphs particles to,
+  // build_app emits tool_progress lines from the spawned CLI's stdout so the
+  // chat UI doesn't sit silent for 1-5 minutes during the subprocess run).
+  if (
+    tc.name === "request_secret" ||
+    tc.name === "request_secrets" ||
+    tc.name === "browser" ||
+    tc.name === "voice_visual" ||
+    tc.name === "build_app"
+  ) {
     args._onEvent = onEvent;
   }
 

@@ -24,6 +24,7 @@ import { recordToolCall as recordToolStat } from "./tool-tracker.js";
 import { checkToolRateLimit, recordToolCall as recordRateLimit } from "./tool-rate-limiter.js";
 import { getApprovalManager, toolNeedsApproval } from "./approval-manager.js";
 import { logRetry } from "./retry-telemetry.js";
+import { assertToolCallAllowed, ToolBlocked } from "./tools/pre-dispatch.js";
 
 // Tools whose failures are usually transient (network, rate limit) and worth retrying.
 const RETRYABLE_TOOLS = new Set([
@@ -401,46 +402,47 @@ async function executeSingleTool(
     } catch { /* worktree module not available */ }
   }
 
-  // Layer 1: SecurityLayer (now sees rewritten worktree paths)
-  const secDecision = security.evaluate({ toolName: tc.name, args, sessionId: sessionId || "default", callContext: callContext as "local" | "api" | "delegated" | "cron" });
-
-  // Layer 2: RBAC
-  let rbacBlocked = false, rbacReason = "";
-  if (rbac && callerRole) {
-    const d = rbac.checkTool(callerRole, tc.name);
-    if (!d.allowed) { rbacBlocked = true; rbacReason = d.reason; }
-  }
-
-  // Layer 3: ToolPolicy
-  let policyBlocked = false, policyReason = "";
-  if (secDecision.allowed && !rbacBlocked && toolPolicy) {
-    const d = toolPolicy.evaluate(tc.name, args, sessionId || "default");
-    if (!d.allowed) { policyBlocked = true; policyReason = d.reason; }
-  }
-
-  const allowed = secDecision.allowed && !rbacBlocked && !policyBlocked;
+  // Layers 1–3: Security → RBAC → ToolPolicy via the shared pre-dispatch chain
+  // (session policy already ran inline above; approval gate fires later, after
+  // circuit-breaker + rate-limit + hooks, to preserve original order).
+  let allowed = true;
   let result: ToolResult;
+  let preBlock: ToolBlocked | null = null;
+  try {
+    await assertToolCallAllowed(
+      { id: tc.id, name: tc.name, args },
+      {
+        sessionId: sessionId || "default",
+        callContext: callContext as "local" | "api" | "delegated" | "cron",
+        skipSessionPolicy: true,
+        security,
+        rbac: rbac && callerRole ? { manager: rbac, role: callerRole } : undefined,
+        toolPolicy,
+      },
+    );
+  } catch (e) {
+    if (e instanceof ToolBlocked) {
+      preBlock = e;
+      allowed = false;
+    } else {
+      throw e;
+    }
+  }
 
-  if (!secDecision.allowed) {
-    result = {
-      content: `BLOCKED by security: ${secDecision.reason}`,
-      isError: true,
-      status: "blocked",
-      metadata: { layer: "security", recovery: "Adjust the call to stay within the workspace and security boundaries — retrying the same args will be denied again." },
+  if (preBlock) {
+    const layerMap: Record<typeof preBlock.stage, string> = {
+      "session-policy": "session-policy",
+      "security": "security",
+      "rbac": "rbac",
+      "tool-policy": "tool-policy",
+      "threat": "threat",
+      "approval": "approval",
     };
-  } else if (rbacBlocked) {
     result = {
-      content: `BLOCKED by RBAC: ${rbacReason}`,
+      content: preBlock.message,
       isError: true,
       status: "blocked",
-      metadata: { layer: "rbac", recovery: "This role lacks the permission to call this tool. Use a different tool or ask the user to elevate." },
-    };
-  } else if (policyBlocked) {
-    result = {
-      content: `BLOCKED by policy: ${policyReason}`,
-      isError: true,
-      status: "blocked",
-      metadata: { layer: "tool-policy", recovery: "Retrying the same call will be denied again. Read the reason — it usually points to the right alternative tool (e.g. http_request instead of bash curl)." },
+      metadata: { layer: layerMap[preBlock.stage], recovery: preBlock.recovery },
     };
   } else {
     // Data lineage egress check

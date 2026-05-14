@@ -47,10 +47,10 @@ import { appendOpMessage, readOpMessages } from "./store.js";
 import { makeChatToolDispatcher } from "./chat-tool-dispatcher.js";
 import { opMessageRowToChatParam } from "./chat-runner.js";
 import type { CanonicalEvent, CanonicalMessageRole, StateChangedBody } from "./types.js";
+import { isTerminalState, type TerminalState } from "./terminal-states.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.agent-runner");
-const TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled"]);
 const DEFAULT_WALL_CLOCK_MS = 15 * 60 * 1000;
 
 export interface CanonicalAgentOptions extends AgentOptions {
@@ -132,7 +132,7 @@ export async function runAgentViaCanonical(
     inputSchema: t.parameters,
   })));
 
-  let terminal: "succeeded" | "failed" | "cancelled" | null = null;
+  let terminal: TerminalState | null = null;
   let errorMessage: string | undefined;
   let errorCode: string | undefined;
   let waiter: (() => void) | null = null;
@@ -142,8 +142,8 @@ export async function runAgentViaCanonical(
     if (event.type === "state_changed") {
       const body = event.body as StateChangedBody | undefined;
       const to = body?.to;
-      if (to && TERMINAL_STATES.has(to)) {
-        terminal = to as "succeeded" | "failed" | "cancelled";
+      if (isTerminalState(to)) {
+        terminal = to;
         wake();
       }
       return;
@@ -388,7 +388,7 @@ function collectMessages(
 }
 
 function mapStopReason(
-  terminal: "succeeded" | "failed" | "cancelled",
+  terminal: TerminalState,
   errorCode: string | undefined,
 ): AgentTurn["stopReason"] {
   if (terminal === "succeeded") return "end_turn";

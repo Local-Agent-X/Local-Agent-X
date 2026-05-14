@@ -52,11 +52,10 @@ import { subscribeOpStream, subscribeOpEvents } from "./control-api.js";
 import { appendOpMessage } from "./store.js";
 import { makeChatToolDispatcher } from "./chat-tool-dispatcher.js";
 import type { OpMessageRow, CanonicalEvent, StateChangedBody } from "./types.js";
+import { isTerminalState, type TerminalState } from "./terminal-states.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.chat-runner");
-
-const TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled"]);
 
 export interface CanonicalChatContext {
   message: string;
@@ -408,7 +407,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   //    `state_changed: queued` event that canonicalLoopEntry emits.
   const eventQueue: ServerEvent[] = [];
   let waiter: (() => void) | null = null;
-  let terminal: "succeeded" | "failed" | "cancelled" | null = null;
+  let terminal: TerminalState | null = null;
   let usageInputTokens = 0;
   let usageOutputTokens = 0;
 
@@ -441,8 +440,8 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     if (event.type === "state_changed") {
       const body = event.body as StateChangedBody | undefined;
       const to = body?.to;
-      if (to && TERMINAL_STATES.has(to)) {
-        terminal = to as "succeeded" | "failed" | "cancelled";
+      if (isTerminalState(to)) {
+        terminal = to;
         wake();
       }
       return;

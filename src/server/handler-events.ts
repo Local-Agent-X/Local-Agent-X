@@ -187,7 +187,7 @@ export function registerHandlerEvents(deps: {
           logger.warn(`[handler] Agent ${evt.agentId} (${m.role}) bailed with clarification request — re-classified as error`);
         }
       }
-      const status: AgentRun["status"] = explicitFailure || guardError ? "error" : "done";
+      const status: AgentRun["status"] = explicitFailure || guardError ? "failed" : "succeeded";
       const errorField = explicitFailure ? evt.result : guardError;
       agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status, output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: errorField } as AgentRun);
       if (m.sessionId && evt.result) {

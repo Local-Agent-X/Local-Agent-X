@@ -177,7 +177,7 @@ export class Handler {
       if (agent.pauseSignal.resume) agent.pauseSignal.resume();
     }
 
-    agent.status = "error";
+    agent.status = "failed";
     agent.output.push("[cancelled]");
     this.messageBus.unsubscribe(agentId);
 
@@ -219,7 +219,7 @@ export class Handler {
         await new Promise(r => setTimeout(r, 2000));
         continue;
       }
-      const allDone = children.every(a => a.status === "done" || a.status === "error");
+      const allDone = children.every(a => a.status === "succeeded" || a.status === "failed");
       if (allDone) {
         for (const child of children) {
           if (child.result) results.push(child.result);
@@ -255,7 +255,7 @@ export class Handler {
 
   private buildStatus(agent: FieldAgent): FieldAgentStatus {
     const total = agent.output.length;
-    const done = agent.status === "done" || agent.status === "error";
+    const done = agent.status === "succeeded" || agent.status === "failed";
     return {
       id: agent.id,
       name: agent.name,
@@ -283,7 +283,7 @@ export class Handler {
    * agent loop sees it on the next iteration without needing to poll. */
   private pushCompletionToParent(
     agent: FieldAgent,
-    status: "done" | "error",
+    status: "succeeded" | "failed",
     result: string,
   ): void {
     const parent = agent.parentSessionId;
@@ -412,33 +412,33 @@ export class Handler {
 
         agent.result = result;
         if (isEmptyResponseSentinel) {
-          agent.status = "error";
+          agent.status = "failed";
           agent.output.push(`[blocked] ${result}`);
           this.notifyUpdate(agentId, { type: "error", data: result });
           EventBus.emit("handler:agent-error", { agentId, error: result });
-          this.pushCompletionToParent(agent, "error", result);
+          this.pushCompletionToParent(agent, "failed", result);
         } else {
-          agent.status = "done";
+          agent.status = "succeeded";
           agent.output.push(result);
           this.notifyUpdate(agentId, { type: "complete", data: result });
           EventBus.emit("handler:agent-done", { agentId, result });
-          this.pushCompletionToParent(agent, "done", result);
+          this.pushCompletionToParent(agent, "succeeded", result);
         }
       } catch (e) {
         const msg = String(e);
         if (!agent.abortController?.signal.aborted) {
-          agent.status = "error";
+          agent.status = "failed";
           agent.result = msg;
           agent.output.push(`[error] ${msg}`);
           this.notifyUpdate(agentId, { type: "error", data: msg });
           EventBus.emit("handler:agent-error", { agentId, error: msg });
-          this.pushCompletionToParent(agent, "error", msg);
+          this.pushCompletionToParent(agent, "failed", msg);
         }
       }
       // Clean up completed/errored agents after 5 minutes to prevent unbounded growth
       setTimeout(() => {
         const a = this.agents.get(agentId);
-        if (a && (a.status === "done" || a.status === "error")) {
+        if (a && (a.status === "succeeded" || a.status === "failed")) {
           this.messageBus.unsubscribe(agentId);
           this.agents.delete(agentId);
         }

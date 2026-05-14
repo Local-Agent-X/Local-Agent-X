@@ -1,6 +1,10 @@
 // Agency System Types
 
-export type AgentStatus = "idle" | "working" | "waiting" | "done" | "error";
+// Vocabulary aligned with the canonical-loop's TerminalState (F13). Handler
+// has no separate "cancelled" — cancelAgent sets `failed` with a "[cancelled]"
+// output marker (see handler.ts). When F1 retires the Handler this collapses
+// into TerminalState directly.
+export type AgentStatus = "idle" | "working" | "waiting" | "succeeded" | "failed";
 export type PlanStatus = "planning" | "running" | "completed" | "failed";
 export type TaskStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 export type MessageType = "task-result" | "request-info" | "share-context" | "status-update";

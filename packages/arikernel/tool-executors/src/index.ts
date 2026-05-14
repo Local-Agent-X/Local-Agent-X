@@ -1,5 +1,10 @@
 export type { ToolExecutor } from "./base.js";
-export { DEFAULT_TIMEOUT_MS, DEFAULT_MAX_RESPONSE_SIZE } from "./base.js";
+export {
+	DEFAULT_TIMEOUT_MS,
+	DEFAULT_MAX_RESPONSE_SIZE,
+	setPreDispatchGate,
+	runPreDispatchGate,
+} from "./base.js";
 export {
 	HttpExecutor,
 	isPrivateIP,

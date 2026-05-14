@@ -23,3 +23,27 @@ export function makeResult(
 		durationMs: Date.now() - startTime,
 	};
 }
+
+/**
+ * Pre-dispatch gate hook — injected by the host (SAX). When set, every
+ * concrete executor calls this at the top of `execute()` before doing any
+ * work. The host implements it as an adapter over its shared
+ * `assertToolCallAllowed` chain (security → policy → threat → approval),
+ * which used to live only on the chat-path. Closes F3 in DRY-AUDIT.md.
+ *
+ * Host responsibilities:
+ *   - Throw on deny (the caller treats throws as denied tool calls).
+ *   - No-op or return when not configured (default behavior preserves the
+ *     standalone package's "policy already enforced upstream" semantics).
+ */
+type PreDispatchGate = (toolCall: ToolCall) => Promise<void>;
+
+let preDispatchGate: PreDispatchGate | null = null;
+
+export function setPreDispatchGate(fn: PreDispatchGate | null): void {
+	preDispatchGate = fn;
+}
+
+export async function runPreDispatchGate(toolCall: ToolCall): Promise<void> {
+	if (preDispatchGate) await preDispatchGate(toolCall);
+}

@@ -24,7 +24,7 @@
 
 import type { ToolCall, ToolResult } from "@arikernel/core";
 import type { ToolExecutor } from "./base.js";
-import { makeResult } from "./base.js";
+import { makeResult, runPreDispatchGate } from "./base.js";
 
 // ── Identifier validation ────────────────────────────────────────
 
@@ -87,6 +87,7 @@ export class SqliteDatabaseExecutor implements ToolExecutor {
 	constructor(private readonly db: SqliteDatabase) {}
 
 	async execute(toolCall: ToolCall): Promise<ToolResult> {
+		await runPreDispatchGate(toolCall);
 		const start = Date.now();
 		const { action, parameters } = toolCall;
 

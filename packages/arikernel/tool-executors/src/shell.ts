@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { resolve, relative } from "node:path";
 import type { ToolCall, ToolResult } from "@arikernel/core";
 import type { ToolExecutor } from "./base.js";
-import { DEFAULT_TIMEOUT_MS, makeResult } from "./base.js";
+import { DEFAULT_TIMEOUT_MS, makeResult, runPreDispatchGate } from "./base.js";
 
 /** Allowed root for cwd — defaults to process.cwd(), overridden by FILE_EXECUTOR_ROOT */
 function getAllowedCwd(): string {
@@ -149,6 +149,7 @@ export class ShellExecutor implements ToolExecutor {
 	readonly toolClass = "shell";
 
 	async execute(toolCall: ToolCall): Promise<ToolResult> {
+		await runPreDispatchGate(toolCall);
 		const start = Date.now();
 		const params = toolCall.parameters as {
 			command?: string;

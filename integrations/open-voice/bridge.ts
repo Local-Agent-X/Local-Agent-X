@@ -8,11 +8,13 @@
 // open-voice and keep using SAX's existing model fetchers, GPU paths, and
 // LLM glue without porting any of that into the library.
 //
-// Default-on as of stage 1 of the F9 collapse — open-voice is selected
-// unless LAX_VOICE_OPEN=0 is set explicitly. The =0 escape hatch is the
-// revert button during the latency soak. Stage 2 deletes the inline
-// clause-chunker/preroll/playback logic from voice-session.ts once soak
-// confirms parity with the ~0.9–3s warm-path target on 3060.
+// Behind a feature flag (LAX_VOICE_OPEN=1) — the legacy in-tree orchestrator
+// in src/voice/voice-session.ts stays the default for one release while we
+// A/B the p50/p95 latency on real input.
+//
+// Once the bridge is the default, src/voice/voice-session.ts drops ~250 LOC
+// of orchestration and we delete the duplicate clause-chunker/preroll/playback
+// logic — open-voice owns it.
 
 import type {
   OfflineTranscriber,
@@ -126,5 +128,5 @@ export function createOpenVoiceBridge(opts: OpenVoiceBridgeOptions): (ctx: SaxBr
 }
 
 export function isOpenVoiceBridgeEnabled(): boolean {
-  return process.env.LAX_VOICE_OPEN !== "0";
+  return process.env.LAX_VOICE_OPEN === "1";
 }

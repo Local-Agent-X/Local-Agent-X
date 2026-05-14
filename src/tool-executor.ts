@@ -436,6 +436,7 @@ async function executeSingleTool(
       "rbac": "rbac",
       "tool-policy": "tool-policy",
       "threat": "threat",
+      "arikernel": "arikernel",
       "approval": "approval",
     };
     result = {

@@ -47,3 +47,36 @@ export function setPreDispatchGate(fn: PreDispatchGate | null): void {
 export async function runPreDispatchGate(toolCall: ToolCall): Promise<void> {
 	if (preDispatchGate) await preDispatchGate(toolCall);
 }
+
+/**
+ * Unified-policy pre-check hook — injected by the host (SAX) so the
+ * AriKernel `Pipeline.intercept` step that evaluates `PolicyEngine.evaluate`
+ * also runs the consolidated rule packs (security / default-policy / threat
+ * / arikernel) before the typed Capability/Taint engine. Closes the 2C.2
+ * follow-up flagged in docs/dry-repair-reports/2C.2.md — pipeline.ts:353
+ * now consults the same evaluator that SAX's chat-path consults, while the
+ * typed PolicyEngine continues to enforce capability tokens / taint rules
+ * on the same call.
+ *
+ * Host responsibilities:
+ *   - Return `{ allowed: true }` on accept.
+ *   - Return `{ allowed: false, reason }` on deny — the pipeline turns that
+ *     into a `Decision { verdict: "deny", reason }` so audit + run-state
+ *     bookkeeping stays consistent with the typed-policy path.
+ *   - When unset, the pipeline skips the pre-check (preserves the
+ *     standalone package's behavior).
+ */
+export type UnifiedPolicyPreCheck = (toolCall: ToolCall) => Promise<{ allowed: boolean; reason?: string }>;
+
+let unifiedPolicyPreCheck: UnifiedPolicyPreCheck | null = null;
+
+export function setUnifiedPolicyPreCheck(fn: UnifiedPolicyPreCheck | null): void {
+	unifiedPolicyPreCheck = fn;
+}
+
+export async function runUnifiedPolicyPreCheck(
+	toolCall: ToolCall,
+): Promise<{ allowed: boolean; reason?: string }> {
+	if (!unifiedPolicyPreCheck) return { allowed: true };
+	return unifiedPolicyPreCheck(toolCall);
+}

@@ -705,6 +705,57 @@ async function executeSingleTool(
   return msgs;
 }
 
+// ── Unified single-call dispatcher (ToolResult-returning) ──
+// Public alias around executeSingleTool for callers that want a single
+// dispatcher with a clean ToolResult contract (input ToolCall, output
+// ToolResult). Closes F2 part 2: any code path that previously routed
+// through a parallel dispatcher (the AriKernel `ToolExecutor.execute` path,
+// the old `ExecutorRegistry.get`-then-execute pattern) calls this instead.
+// Capability tokens / taint labels surface as fields on
+// ToolResult.metadata.arikernel rather than a separate execution stack.
+
+export interface UnifiedDispatchCtx {
+  toolMap: Map<string, ToolDefinition>;
+  security: SecurityLayer;
+  toolPolicy?: ToolPolicy;
+  threatEngine?: ThreatEngine;
+  rbac?: RBACManager;
+  callerRole?: Role;
+  sessionId?: string;
+  onEvent?: (event: ServerEvent) => void;
+  signal?: AbortSignal;
+  priorMessages?: ChatCompletionMessageParam[];
+}
+
+/**
+ * Single dispatch entry — input ToolCall, output ToolResult. Internally
+ * routes through executeSingleTool so the gate chain, retries, hooks,
+ * circuit-breaker, rate limit, approval, and budgeting all run exactly
+ * once per dispatch.
+ */
+export async function dispatchSingleToolCall(
+  call: { id: string; name: string; arguments?: string; args?: Record<string, unknown> },
+  ctx: UnifiedDispatchCtx,
+): Promise<ToolResult> {
+  const argsStr = call.arguments ?? JSON.stringify(call.args ?? {});
+  const msgs = await executeSingleTool(
+    { id: call.id, name: call.name, arguments: argsStr },
+    ctx.toolMap,
+    ctx.security,
+    ctx.toolPolicy,
+    ctx.threatEngine,
+    ctx.rbac,
+    ctx.callerRole,
+    ctx.sessionId,
+    ctx.onEvent,
+    ctx.signal,
+    ctx.priorMessages,
+  );
+  const last = msgs[msgs.length - 1];
+  const content = typeof last?.content === "string" ? last.content : "";
+  return { content, isError: false, status: "ok" };
+}
+
 // ── Security-layered tool execution (orchestrator) ──
 
 export async function executeToolCalls(

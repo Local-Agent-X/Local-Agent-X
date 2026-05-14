@@ -112,7 +112,10 @@ export class Firewall {
 		this.policyEngine = new PolicyEngine(options.policies);
 		this.taintTracker = new TaintTracker();
 		this.auditStore = new AuditStore(options.auditLog ?? "./audit.db");
-		this.executorRegistry = new ExecutorRegistry();
+		// Firewall keeps the historical "five default executors" loadout via
+		// the new factory. Construction moved out of ExecutorRegistry's
+		// constructor when F2 (part 1) collapsed the parallel store.
+		this.executorRegistry = ExecutorRegistry.withDefaults();
 		this.tokenStore = options.tokenStore ?? new TokenStore();
 
 		// In sidecar mode, the Firewall acts as a thin client. All policy

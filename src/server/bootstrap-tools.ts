@@ -10,6 +10,7 @@ import { createAgencyTools } from "../agency/index.js";
 import { createHandlerTools } from "../agency/handler.js";
 import { createAgentTools } from "../agents/tools.js";
 import { createMemoryTools } from "../memory.js";
+import { createArikernelBridgeTools } from "../tools/arikernel-bridge.js";
 import type { SecretsStore } from "../secrets.js";
 import type { ServerEvent, ToolDefinition } from "../types.js";
 import type { UnifiedToolRegistry } from "../tools/registry.js";
@@ -138,6 +139,29 @@ export async function bootstrapTools(deps: {
     seenTools.add(tool.name);
     if (toolRegistry.get(tool.name)) continue;
     toolRegistry.register(tool, { defer: true, tags: [], searchHint: tool.description.slice(0, 80) });
+  }
+
+  // Register the AriKernel executor bridge — file / http / shell / database /
+  // retrieval surface as deferred SAX tools so the unified dispatcher can
+  // route to them. `toolClass` is set so `getByToolClass()` (the AriKernel-
+  // side view from 2C.1) returns the matching adapter. Closes F2 part 2:
+  // the kernel-side execution path is no longer a parallel SAX dispatcher.
+  const ARI_BRIDGE_CLASS: Record<string, "file" | "http" | "shell" | "database" | "retrieval"> = {
+    ari_file: "file",
+    ari_http: "http",
+    ari_shell: "shell",
+    ari_database: "database",
+    ari_retrieval: "retrieval",
+  };
+  for (const bridge of createArikernelBridgeTools()) {
+    const cls = ARI_BRIDGE_CLASS[bridge.name];
+    toolRegistry.register(bridge, {
+      defer: true,
+      tags: ["arikernel", "kernel-bridge", ...(cls ? [cls] : [])],
+      searchHint: bridge.description.slice(0, 80),
+      toolClass: cls,
+    });
+    allAgentTools.push(bridge);
   }
 
   return { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef };

@@ -39,6 +39,14 @@ export const DEFAULT_POLICY: ToolPolicyConfig = {
     // inside the tool itself (1 call/turn + 2.5s cooldown). No external I/O.
     { id: "allow-voice-visual", tool: "voice_visual", decision: "allow", reason: "Particle visualizer (UI-only side effect, rate-limited)", priority: 50 },
 
+    // AriKernel executor bridge — kernel-side file/http/shell/database/retrieval
+    // adapters registered by createArikernelBridgeTools. They carry the kernel's
+    // own sandboxing (path-tainting, SSRF, shell metachar rejection); the SAX
+    // security layer + pre-dispatch gate also fire on top. Bridge tools are
+    // deferred (model has to discover them via tool_search), so this allow is
+    // the explicit policy nod that lets the unified evaluator dispatch to them.
+    { id: "allow-ari-bridge", tool: "ari_*", decision: "allow", reason: "AriKernel executor bridge (kernel-side I/O with native sandboxing)", priority: 50 },
+
     // ── ARGUMENT-MATCHED rules (deny dangerous patterns before general allow) ──
 
     // Block destructive bash commands

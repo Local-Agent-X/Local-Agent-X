@@ -1,9 +1,11 @@
-export type { ToolExecutor } from "./base.js";
+export type { ToolExecutor, UnifiedPolicyPreCheck } from "./base.js";
 export {
 	DEFAULT_TIMEOUT_MS,
 	DEFAULT_MAX_RESPONSE_SIZE,
 	setPreDispatchGate,
 	runPreDispatchGate,
+	setUnifiedPolicyPreCheck,
+	runUnifiedPolicyPreCheck,
 } from "./base.js";
 export {
 	HttpExecutor,

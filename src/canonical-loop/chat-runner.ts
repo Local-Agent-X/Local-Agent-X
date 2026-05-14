@@ -325,12 +325,14 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   //    is the static system context only). Provider follows the prepared
   //    request, so when the user picks Codex in settings the chat goes
   //    through CodexAdapter end-to-end (pure-canonical, no random canary).
+  const forcedToolChoice = ctx.prepared.toolChoice;
   if (ctx.prepared.provider === "anthropic") {
     registerAdapterForOp(op.id, () =>
       createAnthropicAdapter({
         systemPrompt: ctx.prepared.systemPrompt,
         model: ctx.prepared.model,
         sessionId: ctx.sessionId,
+        forcedToolChoice,
       }),
     );
   } else if (ctx.prepared.provider === "codex") {
@@ -340,6 +342,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
         systemPrompt: ctx.prepared.systemPrompt,
         model: ctx.prepared.model,
         sessionId: ctx.sessionId,
+        forcedToolChoice,
       }),
     );
   } else {
@@ -372,6 +375,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
         apiKey: finalTarget.apiKey,
         temperature: ctx.prepared.temperature,
         sessionId: ctx.sessionId,
+        forcedToolChoice,
       }),
     );
   }

@@ -52,6 +52,17 @@ export function defaultCodexTransport(): CodexTransport {
         parameters: t.parameters as Record<string, unknown>,
       }));
 
+      // Forced single-tool selection from the intent classifier. Pass
+      // the canonical `{type:"tool", name}` shape; the codex-cli adapter
+      // forwards it through ProviderRequest, and streamCodexResponse
+      // converts to the API's `{type:"function", function:{name}}` shape.
+      // Verify the named tool is in this turn's tools list before
+      // forcing — otherwise the API would 400.
+      const forced = req.forcedToolChoice;
+      const canonicalToolChoice = forced && tools.some(t => t.name === forced.name)
+        ? forced
+        : "auto" as const;
+
       try {
         const stream = adapter.stream({
           apiKey,
@@ -61,7 +72,7 @@ export function defaultCodexTransport(): CodexTransport {
           tools: tools as Parameters<typeof adapter.stream>[0]["tools"],
           previousResponseId: req.previousResponseId,
           sessionId: req.sessionId,
-          toolChoice: "auto",
+          toolChoice: canonicalToolChoice,
           signal: req.signal,
         });
 

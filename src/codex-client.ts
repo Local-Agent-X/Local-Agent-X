@@ -90,7 +90,7 @@ export async function* streamCodexResponse(params: {
   temperature?: number;
   previousResponseId?: string;
   sessionId?: string;
-  toolChoice?: "auto" | "required";
+  toolChoice?: "auto" | "required" | { type: "tool"; name: string } | { type: "function"; function: { name: string } };
 }): AsyncGenerator<
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
@@ -133,7 +133,16 @@ export async function* streamCodexResponse(params: {
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;
-    body.tool_choice = params.toolChoice || "auto";
+    // tool_choice on Responses API matches OpenAI Chat Completions:
+    //   "auto" | "required" | { type: "function", function: { name } }
+    // Convert the canonical {type:"tool", name} shape into the function
+    // form so callers can pass either.
+    const tc = params.toolChoice;
+    if (tc && typeof tc === "object" && tc.type === "tool") {
+      body.tool_choice = { type: "function", function: { name: tc.name } };
+    } else {
+      body.tool_choice = tc || "auto";
+    }
     body.parallel_tool_calls = true;
   }
 

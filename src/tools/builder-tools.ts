@@ -152,11 +152,14 @@ export async function buildWithCodex(prompt: string, appDir: string, appUrl: str
     const stdout = await new Promise<string>((resolve, reject) => {
       const proc = spawnChild("codex", [
         "--full-auto",
-        "--no-color",
       ], {
         cwd: appDir,
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
+        // codex-cli 0.120.0 doesn't accept a `--no-color` flag (errors
+        // out at argparse). Use the POSIX-standard NO_COLOR env var
+        // instead — most modern CLIs honor it for the same effect.
+        env: { ...process.env, NO_COLOR: "1" },
       });
       proc.stdin?.write(prompt);
       proc.stdin?.end();

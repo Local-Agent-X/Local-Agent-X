@@ -166,9 +166,25 @@ export function spawnClaude(cwd: string, prompt: string, signal?: AbortSignal): 
       shell: process.platform === "win32",
       env: npmAugmentedEnv(),
     });
-    const abortListener = () => { try { proc.kill("SIGTERM"); } catch {} };
+    // On Windows we spawn through a shell wrapper (shell:true above), so
+    // proc.kill kills the shell — claude.exe stays orphaned as a detached
+    // child. Use the same taskkill /F /T tree-kill pattern killProbe uses
+    // (below) so the actual claude subprocess dies on cancel/timeout.
+    // Without this, hitting Stop during self_edit leaves claude running
+    // for minutes; the worker never releases; the next chat turn never
+    // gets leased.
+    const killTree = () => {
+      try { proc.kill("SIGTERM"); } catch {}
+      if (process.platform === "win32" && proc.pid) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          require("node:child_process").execSync(`taskkill /PID ${proc.pid} /F /T`, { stdio: "ignore", windowsHide: true });
+        } catch {}
+      }
+    };
+    const abortListener = killTree;
     signal?.addEventListener("abort", abortListener);
-    const timer = setTimeout(() => { try { proc.kill("SIGTERM"); } catch {} }, CLAUDE_TIMEOUT_MS);
+    const timer = setTimeout(killTree, CLAUDE_TIMEOUT_MS);
     proc.stdout?.on("data", (c: Buffer) => { stdout += c.toString(); if (stdout.length > MAX_OUTPUT_CHARS * 3) stdout = stdout.slice(-MAX_OUTPUT_CHARS * 3); });
     proc.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
     proc.on("close", (code) => {

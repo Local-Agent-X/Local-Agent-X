@@ -3,7 +3,7 @@ import { join, resolve, relative } from "node:path";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
-import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleAutopilotRoutes, handleKrakenProxyRoutes, handleHealthRoutes } from "../routes/index.js";
+import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleAutopilotRoutes, handleKrakenProxyRoutes, handleFastmailProxyRoutes, handleHealthRoutes } from "../routes/index.js";
 import type { ServerContext } from "../server-context.js";
 import type { Role } from "../rbac.js";
 import type { LAXConfig, ServerEvent, Session, ToolDefinition } from "../types.js";
@@ -75,7 +75,7 @@ export function createRequestHandler(deps: {
     if (url.pathname.startsWith("/api/") && !checkRateLimit(getRateLimitKey(req))) { json(429, { error: "Rate limit exceeded." }); return; }
     let requestRole: Role = "operator";
     const authExempt = new Set(["/api/auth/login", "/api/auth/logout", "/api/auth/status", "/api/auth/anthropic/login", "/api/auth/anthropic/logout", "/api/auth/anthropic/status", "/api/health"]);
-    const authExemptPrefixes = ["/api/kraken/public/", "/api/kraken/private/", "/api/health/"];
+    const authExemptPrefixes = ["/api/kraken/public/", "/api/kraken/private/", "/api/fastmail/", "/api/health/"];
     const clientIpRaw = req.socket.remoteAddress || "";
     const isLoopback = clientIpRaw === "127.0.0.1" || clientIpRaw === "::1" || clientIpRaw === "::ffff:127.0.0.1";
     const ua = req.headers["user-agent"] || "";
@@ -105,7 +105,7 @@ export function createRequestHandler(deps: {
       activeBrowserSessionId: activeBrowserSessionIdRef.value,
       setActiveBrowserSessionId: (id) => { activeBrowserSessionIdRef.value = id; },
     };
-    for (const h of [handleHealthRoutes, handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes, handleAutopilotRoutes, handleKrakenProxyRoutes]) {
+    for (const h of [handleHealthRoutes, handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes, handleAutopilotRoutes, handleKrakenProxyRoutes, handleFastmailProxyRoutes]) {
       if (await h(method, url, req, res, ctx, requestRole)) return;
     }
     if (method === "POST" && url.pathname === "/api/upload") {

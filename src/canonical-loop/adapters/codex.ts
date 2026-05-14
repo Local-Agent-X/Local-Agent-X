@@ -15,6 +15,10 @@ import type { CodexTransport } from "./codex-transport.js";
 import type { AnthropicTransportRequest } from "./anthropic.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
+import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
+import { createLogger } from "../../logger.js";
+
+const logger = createLogger("canonical-loop.codex");
 
 export const CODEX_ADAPTER_NAME = "codex";
 export const CODEX_ADAPTER_VERSION = "1.0.0";
@@ -135,6 +139,34 @@ export class CodexAdapter implements Adapter {
 
     this.inflight = consume();
     try { await this.inflight; } finally { this.inflight = null; }
+
+    // Tool-call-in-text fallback. Mirror of the rescue path in
+    // openai-compat.ts and anthropic.ts. After a few rounds Codex models
+    // (gpt-5 / o-series) sometimes drift to emitting the next tool call
+    // as raw JSON in the text channel — `{"name": "browser", "arguments":
+    // {...}}` — instead of as a structured function_call. Without this,
+    // the JSON shows up in chat, no tool dispatches, the loop stalls.
+    // Live failure: user-reported "codex takes 6 turns and stops with
+    // JSON in chat" — that's this regression: the model holds wire shape
+    // for several turns, then text-flips. Fires ONLY when no structured
+    // tool_call arrived this turn AND the text matches a clear pattern.
+    if (toolCallIds.length === 0 && assembledText.length > 0) {
+      const validNames = new Set(input.tools.map(t => t.name));
+      const extracted = extractToolCallsFromText(assembledText, validNames);
+      if (extracted.toolCalls.length > 0) {
+        logger.info(`${req.model} emitted ${extracted.toolCalls.length} tool call(s) as text — extracted`);
+        for (const tc of extracted.toolCalls) {
+          toolCallIds.push(tc.id);
+          pendingToolCalls.push({ id: tc.id, name: tc.name, arguments: tc.arguments });
+          report({
+            kind: "tool_call_requested",
+            call: { toolCallId: tc.id, tool: tc.name, args: parseArgs(tc.arguments) },
+          });
+        }
+        assembledText = extracted.remainingText;
+        report({ kind: "stream_redact", replacementText: extracted.remainingText });
+      }
+    }
 
     // Finalize an assistant message whenever there is EITHER text OR tool
     // calls. Earlier this only fired on text, dropping tool-only turns —

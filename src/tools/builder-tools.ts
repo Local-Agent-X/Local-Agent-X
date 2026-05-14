@@ -136,29 +136,103 @@ ${websiteRules}`;
       //      provider was working when it wasn't.
       // The model gets a clear error and can decide to retry, simplify the
       // build, or ask the user to switch providers.
+      // Per-call onEvent (when present) lets the tool stream progress
+      // updates to the chat UI. Without it, the user stares at "executing..."
+      // for 1-5 minutes while the CLI subprocess runs silently. With it, the
+      // codex/claude CLI's own status lines surface as live progress chips
+      // ("Reading project structure...", "Writing index.html...", etc.).
+      const onEvent = (args._onEvent && typeof args._onEvent === "function")
+        ? args._onEvent as (e: { type: string; [k: string]: unknown }) => void
+        : undefined;
       if (backend === "codex") {
-        return await buildWithCodex(builderPrompt, appDir, appUrl);
+        return await buildWithCodex(builderPrompt, appDir, appUrl, onEvent);
       }
-      return await buildWithClaude(builderPrompt, appDir, appUrl);
+      return await buildWithClaude(builderPrompt, appDir, appUrl, onEvent);
     } catch (e) {
       return { content: `Build failed: ${(e as Error).message}`, isError: true };
     }
   },
 };
 
-export async function buildWithCodex(prompt: string, appDir: string, appUrl: string): Promise<ToolResult> {
+/** Pipe a child process's stdout/stderr into `tool_progress` events on
+ *  `onEvent`, throttled so we don't spam the chat UI. The progress message
+ *  is the most recent non-empty line, emitted at most once per `minIntervalMs`.
+ *  Returns a cleanup function that flushes any pending message. */
+function streamProgress(
+  proc: { stdout?: NodeJS.ReadableStream | null; stderr?: NodeJS.ReadableStream | null },
+  toolName: string,
+  onEvent: ((e: { type: string; [k: string]: unknown }) => void) | undefined,
+  minIntervalMs = 750,
+): () => void {
+  if (!onEvent) return () => { /* no-op */ };
+  let lastLine = "";
+  let lastEmit = 0;
+  let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+  const tryEmit = (force: boolean): void => {
+    if (!lastLine) return;
+    const now = Date.now();
+    const gap = now - lastEmit;
+    if (force || gap >= minIntervalMs) {
+      if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
+      lastEmit = now;
+      try { onEvent({ type: "tool_progress", toolName, message: lastLine.slice(0, 160) }); } catch { /* swallow */ }
+    } else if (!pendingTimer) {
+      pendingTimer = setTimeout(() => { pendingTimer = null; tryEmit(true); }, minIntervalMs - gap);
+    }
+  };
+  const onChunk = (d: Buffer): void => {
+    const text = d.toString();
+    // Split into lines, keep the most recent non-empty one as our progress
+    // signal. CLIs often interleave header/decoration lines with progress;
+    // the last non-trivial line is usually the latest action.
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim();
+      if (line.length === 0) continue;
+      if (line.length < 3) continue; // skip single-char decoration
+      lastLine = line;
+    }
+    tryEmit(false);
+  };
+  proc.stdout?.on("data", onChunk);
+  proc.stderr?.on("data", onChunk);
+  return () => {
+    if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
+    tryEmit(true);
+  };
+}
+
+export async function buildWithCodex(
+  prompt: string,
+  appDir: string,
+  appUrl: string,
+  onEvent?: (e: { type: string; [k: string]: unknown }) => void,
+): Promise<ToolResult> {
   try {
     const { spawn: spawnChild } = await import("node:child_process");
     const stdout = await new Promise<string>((resolve, reject) => {
+      // Modern @openai/codex CLI rewrote its argument surface — it now
+      // requires the `exec` subcommand for non-interactive use, rejects
+      // the old `--full-auto` flag, and uses `--color <mode>` instead of
+      // `--no-color`. Live failure 2026-05-14 after the user installed a
+      // recent codex CLI: "error: unexpected argument '--full-auto'".
+      // Equivalents on the new CLI:
+      //   --full-auto                    → --dangerously-bypass-approvals-and-sandbox
+      //   --no-color                     → --color never
+      //   (run outside a git repo)        → --skip-git-repo-check
+      // The "dangerously" flag is acceptable here: build_app runs the
+      // agent inside workspace/apps/<name>/, which is already scoped to
+      // the user's own machine and explicitly invoked by them. The flag
+      // disables codex's internal confirmation prompts, not LAX's own
+      // safety layer (ari-kernel etc).
       const proc = spawnChild("codex", [
-        "--full-auto",
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+        "--color", "never",
       ], {
         cwd: appDir,
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
-        // codex-cli 0.120.0 doesn't accept a `--no-color` flag (errors
-        // out at argparse). Use the POSIX-standard NO_COLOR env var
-        // instead — most modern CLIs honor it for the same effect.
         env: { ...process.env, NO_COLOR: "1" },
       });
       proc.stdin?.write(prompt);
@@ -166,14 +240,17 @@ export async function buildWithCodex(prompt: string, appDir: string, appUrl: str
       let out = "", errOut = "";
       proc.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
       proc.stderr?.on("data", (d: Buffer) => { errOut += d.toString(); });
+      const stopProgress = streamProgress(proc, "build_app", onEvent);
       const timer = setTimeout(() => { proc.kill(); reject(new Error("Codex CLI build timed out after 5 minutes")); }, 300_000);
       proc.on("close", (code) => {
         clearTimeout(timer);
+        stopProgress();
         if (code === 0) resolve(out);
         else reject(new Error(errOut || out || `Codex CLI exit code ${code}`));
       });
       proc.on("error", (err) => {
         clearTimeout(timer);
+        stopProgress();
         reject(new Error(`Codex CLI not available: ${err.message}. Install with: npm install -g @openai/codex`));
       });
     });
@@ -209,7 +286,12 @@ export async function buildWithCodex(prompt: string, appDir: string, appUrl: str
   }
 }
 
-export async function buildWithClaude(prompt: string, appDir: string, appUrl: string): Promise<ToolResult> {
+export async function buildWithClaude(
+  prompt: string,
+  appDir: string,
+  appUrl: string,
+  onEvent?: (e: { type: string; [k: string]: unknown }) => void,
+): Promise<ToolResult> {
   try {
     const { spawn: spawnChild } = await import("node:child_process");
     const stdout = await new Promise<string>((resolve, reject) => {
@@ -231,14 +313,17 @@ export async function buildWithClaude(prompt: string, appDir: string, appUrl: st
       let out = "", errOut = "";
       proc.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
       proc.stderr?.on("data", (d: Buffer) => { errOut += d.toString(); });
+      const stopProgress = streamProgress(proc, "build_app", onEvent);
       const timer = setTimeout(() => { proc.kill(); reject(new Error("Claude CLI build timed out after 5 minutes")); }, 300_000);
       proc.on("close", (code) => {
         clearTimeout(timer);
+        stopProgress();
         if (code === 0) resolve(out);
         else reject(new Error(errOut || `Claude CLI exit code ${code}`));
       });
       proc.on("error", (err) => {
         clearTimeout(timer);
+        stopProgress();
         reject(new Error(`Claude CLI not available: ${err.message}. Install with: npm install -g @anthropic-ai/claude-code`));
       });
     });

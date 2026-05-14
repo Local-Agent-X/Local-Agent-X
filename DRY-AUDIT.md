@@ -10,7 +10,9 @@
 
 ## Summary
 
-15 findings. **6 high**, **6 medium**, **3 low**, plus a tolerable/intentional/false-positive shelf at the bottom.
+15 findings as originally written. **F9 was reclassified to "intentional divergence" on 2026-05-13** after discovering that the `open-voice` library was a shelved alternative — see the tolerable shelf below. Effective active findings: **14**. **6 high**, **5 medium**, **3 low**, plus the tolerable/intentional/false-positive shelf at the bottom.
+
+> **Correction (2026-05-13):** F9 ("Voice-session and gpu-session reinvent clause-chunker/preroll/playback") was a false positive. The Explore agent trusted the `integrations/open-voice/README.md` framing that open-voice was the canonical successor — that framing was stale. In reality the open-voice library was an alternative implementation that got shelved when the three-tier sidecar approach (tier4 ONNX Kokoro / gpu-session / realtime) proved adequate, and the library was never installed as a project dependency. What the audit called "duplication" is deliberate divergence from a parked alt-path. F9 is moved to the tolerable shelf; the related Phase 3B sections of the repair plan are dropped.
 
 Top concerns (the ones that bite first):
 
@@ -38,8 +40,8 @@ Top concerns (the ones that bite first):
 | Terminal-state vocabulary | canonical: `{succeeded, failed, cancelled}` in [`chat-runner.ts:59`](src/canonical-loop/chat-runner.ts#L59), [`agent-runner.ts:53`](src/canonical-loop/agent-runner.ts#L53), [`control-api.ts:184`](src/canonical-loop/control-api.ts#L184); handler-side: `{done, error, cancelled, timeout}` in [`agents/run.ts:47`](src/agents/run.ts#L47) | **No — different sets** |
 | Memory write entry points | [`memory/tools/save.ts`](src/memory/tools/save.ts), [`memory/end-of-turn-write.ts`](src/memory/end-of-turn-write.ts), [`memory/auto-extract.ts`](src/memory/auto-extract.ts), [`memory/personality.ts`](src/memory/personality.ts) (direct `readFileSync`/`atomicWriteFileSync`) | **No — 3 write paths + 1 direct-file path** |
 | Credential read | `secrets.ts` (vault), `auth.ts`/`auth-anthropic.ts` (files), `process.env` via config, `hooks/hook-engine.ts` (`scrubEnv` regex), `security/credentials.ts` (`redactCredentials` regex) | **No — 5 paths, scrubber lists diverge** |
-| Voice session orchestration | [`voice-session.ts`](src/voice/voice-session.ts), [`gpu-session.ts`](src/voice/gpu-session.ts), [`realtime/realtime-session.ts`](src/voice/realtime/realtime-session.ts), [`integrations/open-voice/bridge.ts`](integrations/open-voice/bridge.ts) (dormant behind `LAX_VOICE_OPEN=1`) | Migration in flight; legacy still default |
-| Clause-chunker / preroll / playback tracker | inline in `voice-session.ts:204-640` AND `gpu-session.ts:20-210`; canonical modules live in `open-voice/lib/` | **No — 2 inline reinventions of a shipped module** |
+| Voice session orchestration | [`voice-session.ts`](src/voice/voice-session.ts), [`gpu-session.ts`](src/voice/gpu-session.ts), [`realtime/realtime-session.ts`](src/voice/realtime/realtime-session.ts). The `integrations/open-voice/bridge.ts` file is dead code from a shelved migration; do not treat as a current path. | Yes — three-tier sidecar (tier4/gpu/realtime) is the canonical voice architecture |
+| Clause-chunker / preroll / playback tracker | inline in `voice-session.ts:204-640` AND `gpu-session.ts:20-210` | Intentional — see F9 on the tolerable shelf (open-voice was a shelved alt, not a migration target) |
 | STT dispatch | [`stt-providers/index.ts:36-79`](src/voice/stt-providers/index.ts#L36-L79) | Yes |
 | TTS variant registry | [`tier4/tier4-factory.ts`](src/voice/tier4/tier4-factory.ts) | Yes |
 | Kokoro/Edge voice lists | [`tier4/kokoro-voices.ts`](src/voice/tier4/kokoro-voices.ts), [`tier4/edge-voices.ts`](src/voice/tier4/edge-voices.ts) | Yes |
@@ -161,17 +163,9 @@ Top concerns (the ones that bite first):
 - **Why not leave it**: Adding the next provider will be the same 5-file dance with the same drift risk.
 
 ### F9 — Voice-session and gpu-session reinvent clause-chunker/preroll/playback
-- **Category**: Harmful
-- **Risk**: Medium
-- **Confidence**: High
-- **Locations**:
-  - [`src/voice/voice-session.ts:204-640`](src/voice/voice-session.ts#L204-L640) — local SENTENCE_TERMINATOR regex, flushCompletedSentences, expectedPlaybackEndMs, PLAYBACK_TAIL_MS=250
-  - [`src/voice/gpu-session.ts:20-210`](src/voice/gpu-session.ts#L20-L210) — same regex + an extra clause-level early-flush (CLAUSE_MIN_CHARS=30)
-  - Canonical modular version already exists in `C:\Users\manri\open-voice\lib\` (clause-chunker, preroll-buffer, playback-tracker)
-- **What's duplicated**: Streaming-text-to-speech sentence/clause segmentation + playback-end estimation.
-- **Drift evidence**: gpu-session is more aggressive on early-flush than voice-session — already diverged in behavior. The "real" implementation in open-voice is feature-modular and unused.
-- **Recommendation**: Rung 4 — finish the migration. `integrations/open-voice/bridge.ts` is the intended shim; flip `LAX_VOICE_OPEN=1` to default once latency parity is verified, then voice-session and gpu-session become thin dispatchers like `realtime-session.ts` already is.
-- **Why not leave it**: Behavior is already drifting between two copies that should be identical. The shipped module that solves this is sitting one feature-flag flip away.
+- **Category**: ~~Harmful~~ → **Intentional** (reclassified 2026-05-13)
+- **See**: tolerable/intentional shelf below for the corrected entry.
+- **Note**: Original finding assumed open-voice was the canonical migration target. It was a shelved alternative — three-tier sidecar (tier4 / gpu-session / realtime) is canonical. The two "duplicated" implementations are deliberate divergence from a parked alt-path, not knowledge that must stay in sync.
 
 ### F10 — Provider baseURL routing as hardcoded if-branch
 - **Category**: Harmful
@@ -248,7 +242,8 @@ Considered, deliberately left.
 
 - **Anthropic CLI subprocess vs OpenAI-compatible HTTP adapters.** Different transports by design — direct HTTP fails for Sonnet/Opus on the Max plan, so Anthropic OAuth has to ride through the Claude CLI. Don't treat this as drift or flatten it into the HTTP if-chain. The repair plan's provider registry discriminates on `transport: "http" | "cli"` to make the divergence first-class.
 - **`src/providers/adapter/` (singular) vs `src/providers/adapters/` (plural)** — Not duplication. `adapter/` holds the abstract interface + types; `adapters/` holds implementations. Naming hazard only — a future contributor might create `adapter/foo.ts` by mistake. Rename to `provider-types/` or merge into `adapters/index.ts` if you want to remove the foot-gun.
-- **`integrations/open-voice/`** — Not a duplicate, it's the intended successor adapter to `voice-session.ts` (see F9). Behind `LAX_VOICE_OPEN=1`, 12 days stale relative to the legacy path. The duplication is in the legacy code, not the bridge.
+- **F9 — `voice-session.ts` / `gpu-session.ts` clause-chunker/preroll/playback** (reclassified 2026-05-13). Not duplication. The `open-voice` library at `C:\Users\manri\open-voice` was an alternative voice toolkit that got shelved when the three-tier sidecar approach (tier4 ONNX Kokoro / gpu-session / realtime) proved adequate. The library was never installed as a project dependency; `package.json` does not list it and `node_modules` does not contain it. What looked like "two inline reinventions of a shipped module" is canonical inline code plus a parked alt-implementation. Leave it.
+- **`integrations/open-voice/` bridge file** — Dead code from when the open-voice migration was still planned. The bridge file (`bridge.ts`, ~130 LOC) imports from a `"open-voice"` npm package that isn't installed and is outside `tsconfig.rootDir` (never type-checked). Safe to delete in a future cleanup pass; flagged here so future audits don't re-treat it as a current path.
 - **`src/agent-loop/`** — Just `inject-queue.ts` (40 LOC). Misleadingly named — sounds like a turn driver, only manages a FIFO. Not duplicating canonical-loop. Rename to `src/inject-queue/` if you want.
 - **`src/orchestrator/` (`MemoryOrchestrator`)** — Memory pre-processing, not a turn driver. Orthogonal to canonical-loop. Name collision with primal-auto-build's orchestrator only — different jobs.
 - **`src/primal-auto-build/orchestrator/`** — Build-loop supervisor, different lifecycle from canonical-loop. Specialized — not a shadow general loop. Its sub-agent invocation does ride F1's Handler path, which is where the issue actually lives.
@@ -278,15 +273,15 @@ Considered, deliberately left.
 - **F1** — Route `invokeAgent` and primal-auto-build through `runAgentViaCanonical`. Retire `agency/handler.ts` once nothing references it.
 - **F2 + F4** — Consolidate to one tool registry and one policy evaluator. These pair naturally with F3.
 - **F8 + F10** — Introduce `src/providers/registry.ts` with full per-provider metadata; remove the baseURL `if`-chain and the 5-file dance.
-- **F9** — Flip `LAX_VOICE_OPEN=1` to default after a latency A/B; let `voice-session.ts` and `gpu-session.ts` shed their inline orchestrators.
 - **F11** — Single `CREDENTIAL_PATTERNS` constant; both scrubbers consume it.
 - **F12** — Split SECURITY.md and THREAT-MODEL.md cleanly; cross-link instead of co-stating defense layers.
 - **F13** — One `TERMINAL_STATES` constant + type, imported everywhere.
 
 **Leave alone** (documented above):
 
+- **F9** — Voice clause-chunker/preroll/playback duplication is intentional divergence from a shelved alt-library. Re-classified 2026-05-13.
 - **F14** — Retry layers are coincidentally similar, not duplicated knowledge. Don't collapse.
-- The provider `adapter/`-vs-`adapters/` directory pair, `src/agent-loop/` naming, `integrations/open-voice/` (in-flight migration, not a duplicate), embedding-provider wiring, the orthogonal root-level docs.
+- The provider `adapter/`-vs-`adapters/` directory pair, `src/agent-loop/` naming, the `integrations/open-voice/` bridge (dead code from shelved migration), embedding-provider wiring, the orthogonal root-level docs.
 
 ---
 

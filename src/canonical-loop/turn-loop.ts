@@ -410,8 +410,15 @@ function appendNudgeAsUserMessage(opId: string, turnIdx: number, message: string
     opId,
     turnIdx,
     seqInTurn: existing,
+    // role MUST stay "user" — providers need this as input so the model
+    // treats the nudge as a user instruction on the next turn. The UI
+    // distinguishes nudges from real user messages via `content.kind`
+    // below, so it can render them as small italic system notes (or hide
+    // them entirely) without ever surfacing the synthetic message as if
+    // the user typed it. Adapters' canonicalToTransport only emits
+    // `content.text` so the `kind` marker stays on our side of the wire.
     role: "user",
-    content: { text: message },
+    content: { text: message, kind: "nudge" },
     createdAt: new Date().toISOString(),
   };
   appendOpMessage(row);

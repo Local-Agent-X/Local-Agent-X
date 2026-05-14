@@ -109,10 +109,22 @@ export function opMessageRowToChatParam(row: OpMessageRow): ChatCompletionMessag
     text?: string;
     toolCalls?: Array<{ id: string; name: string; arguments: string }>;
     toolCallId?: string;
+    kind?: string;
   };
   const text = typeof content.text === "string" ? content.text : "";
 
   if (row.role === "user") {
+    // Drop synthetic nudges (auto-recovery instructions appended by the
+    // post-turn detector / dead-end / loop-detection middlewares). They
+    // MUST stay as role:"user" in op_messages because the model needs to
+    // see them as input on the next turn — but they should never reach
+    // session.messages, otherwise the chat-history hydration endpoint
+    // (/api/sessions/:id → projectSessionForUI) ships them to the
+    // frontend, where the user sees the synthetic instruction rendered
+    // as if they typed it. Live failure 2026-05-14: user saw "Your
+    // previous attempt produced no visible reply..." and "You called
+    // tools but none committed..." as user bubbles in chat.
+    if (content.kind === "nudge") return null;
     // Strip the engine-side temporal marker that turn-loop wraps mid-turn
     // injects with — the chat UI / future turns should see what the user
     // actually typed, not the wrapped form.

@@ -47,23 +47,28 @@ export function defaultAnthropicTransport(): AnthropicTransport {
 
       const messages = req.messages.map(toOpenAiMessage);
 
-      // Forced single-tool selection from the intent classifier. Direct
+      // Forced single-tool selection from the intent classifier. The
       // HTTP path consumes `forcedToolName` natively (Anthropic accepts
-      // `tool_choice: { type: "tool", name }`). CLI/OAuth path can't pass
-      // tool_choice via subprocess flags, so we append a system-prompt
-      // directive instructing the model to call the named tool first.
+      // `tool_choice: { type: "tool", name }` in the request body). The
+      // CLI/OAuth path can't pass tool_choice via subprocess flags, and
+      // the soft system-prompt directive we used to inject here triggered
+      // the model into "Claude-Code-internal-format" mode — it would
+      // emit its native tool-call markdown (or worse, a hallucinated
+      // routing token like `//gpu_dispatch:builder`) as plain text
+      // instead of using the API's structured tool_use channel. The
+      // tool list narrowing in `tool-filter.ts:BUILD_INTENT_REGEX`
+      // already biases the model toward build_app on build requests, so
+      // we drop the directive and let the model pick naturally. The
+      // forcedToolName is still passed through; HTTP-path consumers use
+      // it, the CLI path ignores it.
       const forced = req.forcedToolChoice;
-      const cliAugmentedSystem = forced
-        ? req.systemPrompt +
-          `\n\n[INTENT-FORCED TOOL]\nFor this turn, call the tool \`${forced.name}\` BEFORE writing any prose. The user's request unambiguously maps to this tool; do not narrate, do not describe, do not summarize — emit a structured tool call to \`${forced.name}\` now.`
-        : req.systemPrompt;
 
       try {
         const stream = streamAnthropicResponse({
           token,
           model: req.model,
           messages,
-          systemPrompt: cliAugmentedSystem,
+          systemPrompt: req.systemPrompt,
           tools: req.tools.length > 0 ? req.tools : undefined,
           maxTokens: req.maxTokens,
           signal: req.signal,

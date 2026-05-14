@@ -3,6 +3,10 @@ import { join } from "node:path";
 import type { LAXConfig } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 import { getApiKey } from "../auth.js";
+import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
+
+const isProviderId = (s: string): s is ProviderId =>
+  (PROVIDER_IDS as readonly string[]).includes(s);
 
 export async function resolveProvider(
   config: LAXConfig,
@@ -33,8 +37,7 @@ export async function resolveProvider(
   // Resolve provider. If a saved provider exists but has no usable credentials,
   // fall through to auto-detection so a stale "codex" default from a previous
   // run doesn't block a freshly-signed-in Anthropic user.
-  const VALID = ["codex", "xai", "openai", "anthropic", "local", "ollama-cloud", "gemini", "cerebras", "custom"];
-  const hasCredsFor = (p: string): boolean => {
+  const hasCredsFor = (p: ProviderId): boolean => {
     if (p === "anthropic") return !!loadAnthropicTokens();
     if (p === "codex") return !!loadTokens();
     if (p === "openai") return !!(config.openaiApiKey || secretsStore.get("OPENAI_API_KEY"));
@@ -49,10 +52,10 @@ export async function resolveProvider(
   // Caller-supplied override takes precedence if creds are available.
   // Lets a worker honor op.contextPack.routing.preferredProvider without
   // having to mutate settings.json.
-  let provider = "";
+  let provider: ProviderId | "" = "";
   let providerWasOverridden = false;
   const savedProvider = String(saved.provider || "");
-  if (providerOverride && VALID.includes(providerOverride) && hasCredsFor(providerOverride)) {
+  if (providerOverride && isProviderId(providerOverride) && hasCredsFor(providerOverride)) {
     provider = providerOverride;
     // If the caller-supplied override differs from the saved provider, the
     // saved model belongs to the old provider (e.g. settings.json says
@@ -60,10 +63,10 @@ export async function resolveProvider(
     // gpt-5.5 — Claude has no idea what that is). Blank it so the
     // downstream default picker chooses a valid model for the new provider.
     if (providerOverride !== savedProvider) providerWasOverridden = true;
-  } else {
+  } else if (isProviderId(savedProvider)) {
     provider = savedProvider;
   }
-  if (!VALID.includes(provider) || !hasCredsFor(provider)) {
+  if (!provider || !hasCredsFor(provider)) {
     provider = loadAnthropicTokens() ? "anthropic" : (loadTokens() && !config.openaiApiKey) ? "codex" : "xai";
     providerWasOverridden = true;
   }

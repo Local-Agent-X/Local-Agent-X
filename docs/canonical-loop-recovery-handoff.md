@@ -2,6 +2,89 @@
 
 Status: active work as of 2026-05-14. Continue from this doc on any machine after `git pull`.
 
+## ⚠ MUST READ FIRST — state of the world right now
+
+We tried to push our work-in-progress fixes to origin/main and discovered **44 commits had landed on origin/main from another machine while we were working**. Those 44 commits ARE the unified-canonical refactor the user has been describing as "supposed to clean up the diverged paths but broke everything."
+
+The strategy is NOT "preserve this machine's state forever." The strategy IS:
+
+> **The canonical refactor on origin/main is the architecture we converge on. Our 6 local commits are the WORKING BEHAVIOR FIXES we want to ride on top of that refactored architecture. Rebase ours onto theirs, resolve conflicts file-by-file, ship the integrated result.**
+
+Our 6 commits are safe — pushed as branch `working-state-2026-05-14` on origin. They will NOT be lost no matter what.
+
+### Status snapshot at handoff
+
+- `origin/main` = canonical refactor (44 commits ahead of our local main)
+- `origin/working-state-2026-05-14` = our 6 fixes pushed as backup
+- Local `main` = same as `origin/working-state-2026-05-14` (6 commits ahead of where origin/main USED to be, but DIVERGED from current origin/main)
+- Local working tree = clean (everything committed)
+- Tag `pre-canonical-fixes-2026-05-14` exists on origin
+
+### What to do on the OTHER machine
+
+```bash
+cd "<path-to-LAX>"
+
+# 1. Get all the refs
+git fetch --all --tags
+
+# 2. Pull canonical refactor — accept that the working-tree-state may regress
+#    (this is the "broken everything" state per user description)
+git checkout main
+git reset --hard origin/main
+npm install   # arikernel re-link if needed
+
+# 3. Spawn a fresh Claude Code session and hand it this exact doc to read.
+#    Ask it to perform the integration:
+
+#    "Read docs/canonical-loop-recovery-handoff.md end-to-end.
+#     Then attempt to integrate the 6 fixes from
+#     origin/working-state-2026-05-14 into the current main using
+#     cherry-pick (NOT a full rebase — cherry-pick lets us skip
+#     fixes that origin/main already covers and keep ones it doesn't)."
+
+# 4. Per-commit decision matrix is below. Use it to decide cherry-pick vs skip.
+```
+
+### Per-commit integration plan (decide per commit)
+
+Our 6 commits, oldest to newest:
+
+| Commit | Subject | Decision logic |
+|---|---|---|
+| `d82eb4e` | drop auto-snapshot from browser fill (Thriveventory PO slowdown) | Cherry-pick if origin/main doesn't already remove that auto-snapshot. Origin probably doesn't — this was a recent live fix. |
+| `12c8449` | context_status reaches WS chat UI | Cherry-pick if origin/main UI counter still shows 0K when it shouldn't. Check `src/routes/chat/run-chat-turn.ts` and `src/chat-ws.ts` for `ctx.chatWs.emit`. |
+| `6bb36d2` | wire tool-call text-extractor into anthropic + codex adapters | **HIGH OVERLAP** with origin's `8dc04e4 fix(anthropic-http): honor external AbortSignal mid-stream` and `df760b0 fix(codex): honor external AbortSignal mid-stream`. Read both adapters on origin/main first; if they already extract tool-text-from-JSON, skip. If not, cherry-pick (resolve conflicts by keeping origin's AbortSignal handling AND our extractor block — they're orthogonal). |
+| `d277421` | codex empty-response retry + hide synthetic nudges | The retry portion likely doesn't exist on origin/main (separate concern from AbortSignal). The nudge filter in `chat-runner.ts:opMessageRowToChatParam` definitely doesn't exist there. Cherry-pick. |
+| `5f3b99a` | codex CLI 0.130 invocation + live build_app progress | **HIGH OVERLAP** with origin's `11fdcc5 fix(self-edit, build_app): kill subprocess trees on Windows + drop --no-color codex flag`. Read origin's `src/tools/builder-tools.ts` to see if it already uses the `exec` subcommand. If yes → skip our CLI portion, cherry-pick only the streamProgress helper. If no → cherry-pick whole thing, resolve overlap manually. |
+| `e552396` | temp [stream-debug] WS instrumentation + handoff doc | Cherry-pick the doc, SKIP the stream-debug logging unless bug C is still being chased on the new machine. |
+
+### Files to inspect on origin/main BEFORE picking
+
+```bash
+# Read these on origin/main to know what to keep vs skip:
+git show origin/main:src/tools/builder-tools.ts           # check codex CLI invocation
+git show origin/main:src/canonical-loop/adapters/codex.ts # check for empty-response retry, text-extractor
+git show origin/main:src/canonical-loop/adapters/anthropic.ts # check for text-extractor
+git show origin/main:src/canonical-loop/chat-runner.ts    # check for nudge filter in opMessageRowToChatParam
+git show origin/main:src/canonical-loop/turn-loop.ts      # check appendNudgeAsUserMessage for kind:"nudge"
+git show origin/main:src/routes/chat/run-chat-turn.ts     # check for ctx.chatWs.emit context_status dual-fan-out
+git show origin/main:src/tool-executor.ts                 # check _onEvent allowlist for build_app
+```
+
+### The "rebase vs cherry-pick" call
+
+**Cherry-pick is correct here**, not rebase. Reasons:
+- Rebase would replay ALL 6 commits and fight conflicts on each one even when origin/main already has equivalent fixes
+- Cherry-pick is per-commit, so you can SKIP commits origin/main already covers
+- Cherry-pick records each fix individually, so it's easier to revert one if it turns out to break the canonical path
+
+### Safety nets if integration goes sideways
+
+- `git reset --hard origin/main` → back to pristine canonical
+- `git fetch origin working-state-2026-05-14 && git reset --hard origin/working-state-2026-05-14` → back to this machine's working state
+- Tag `pre-canonical-fixes-2026-05-14` on origin → back to pre-today state
+
 ## The situation
 
 LAX has two parallel git histories that share no common ancestor:

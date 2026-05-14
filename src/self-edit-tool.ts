@@ -26,6 +26,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { npmAugmentedEnv } from "./anthropic-client/cli-path.js";
+import { killProcessTree } from "./process-tree-kill.js";
 import type { ToolDefinition } from "./types.js";
 
 const LAX_REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -372,19 +373,10 @@ export const selfEditTool: ToolDefinition = {
           env: npmAugmentedEnv(),
         });
 
-        // On Windows shell:true wraps spawn in cmd.exe; proc.kill only
-        // kills the wrapper. Use taskkill /F /T to nuke the tree so the
-        // real claude.exe child dies on cancel/timeout. Mirrors the same
-        // fix in self-edit-sandbox-gates.ts:spawnClaude.
-        const killTree = () => {
-          try { proc.kill("SIGTERM"); } catch {}
-          if (process.platform === "win32" && proc.pid) {
-            try {
-              // eslint-disable-next-line @typescript-eslint/no-require-imports
-              require("node:child_process").execSync(`taskkill /PID ${proc.pid} /F /T`, { stdio: "ignore", windowsHide: true });
-            } catch {}
-          }
-        };
+        // Windows shell:true → cmd.exe wrapper → proc.kill only signals
+        // the wrapper. killProcessTree handles both: SIGTERM the wrapper
+        // AND taskkill /F /T the descendant tree so claude.exe dies too.
+        const killTree = () => killProcessTree(proc);
         const abortListener = killTree;
         signal?.addEventListener("abort", abortListener);
 

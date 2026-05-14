@@ -24,6 +24,7 @@ import {
 	type ExecutorRegistry,
 	SAFE_GET_HEADERS,
 	VALUE_INSPECTED_HEADERS,
+	runUnifiedPolicyPreCheck,
 } from "@arikernel/tool-executors";
 import { applyBehavioralRule, evaluateBehavioralRules } from "./behavioral-rules.js";
 import { validateCommand } from "./command-security.js";
@@ -349,7 +350,28 @@ export class Pipeline {
 			}
 		}
 
-		// Step 3: Evaluate policy
+		// Step 3a: Unified policy pre-check (rule packs from the host's
+		// consolidated evaluator). Closes the 2C.2 follow-up — when SAX is
+		// hosting this pipeline, the same `evaluator.evaluate(...)` that the
+		// chat-path runs at pre-dispatch also runs here. Deny propagates
+		// through the standard pipeline deny path (audit log + run-state
+		// bookkeeping). Standalone callers leave the hook unset and the
+		// pre-check is a no-op.
+		const unified = await runUnifiedPolicyPreCheck(toolCall);
+		if (!unified.allowed) {
+			const unifiedDecision: Decision = {
+				verdict: "deny",
+				matchedRule: null,
+				reason: unified.reason ?? "Denied by unified policy evaluator",
+				taintLabels: toolCall.taintLabels,
+				timestamp: now(),
+			};
+			this.runState?.recordDeniedAction();
+			this.logEvent(toolCall, unifiedDecision);
+			throw new ToolCallDeniedError(toolCall, unifiedDecision);
+		}
+
+		// Step 3b: Evaluate typed policy (Capability/TaintLabel-aware).
 		const decision = this.policyEngine.evaluate(toolCall, inputTaints, this.principal.capabilities);
 
 		this.hooks.onDecision?.(toolCall, decision);

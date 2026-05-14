@@ -4,6 +4,7 @@ import type { SecurityLayer } from "../security.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { ThreatEngine } from "../threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
+import type { ProviderId } from "./provider-ids.js";
 
 export interface ImageAttachment {
   url: string;
@@ -15,7 +16,7 @@ export interface AgentOptions {
   apiKey: string;
   model: string;
   baseURL?: string;
-  provider: "xai" | "openai" | "codex" | "anthropic" | "local" | "gemini" | "custom";
+  provider: ProviderId;
   systemPrompt: string;
   tools: ToolDefinition[];
   security: SecurityLayer;

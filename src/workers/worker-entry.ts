@@ -21,6 +21,7 @@ import { ipcEnvelope, type IpcMessage, type Op, type OpEvent, type OpResult } fr
 import { appendEvent } from "./event-log.js";
 import { writeCheckpoint, newCheckpoint } from "./checkpoint.js";
 import type { AgentTurn } from "../types.js";
+import type { ProviderId } from "../providers/provider-ids.js";
 import { randomUUID } from "node:crypto";
 import { looksLikeAgentRefusal } from "../errors/index.js";
 
@@ -230,7 +231,7 @@ async function executeOp(op: Op, signal: AbortSignal): Promise<OpResult> {
   const result = await runAgentViaCanonical(userMessage, op.contextPack.context.recentTurns, {
     apiKey: resolved.apiKey,
     model: resolved.model,
-    provider: resolved.provider as "anthropic" | "codex" | "openai" | "xai" | "gemini" | "local" | "custom",
+    provider: resolved.provider as ProviderId,
     systemPrompt,
     tools: allTools,
     security,

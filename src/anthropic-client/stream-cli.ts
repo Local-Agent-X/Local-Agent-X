@@ -303,9 +303,33 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
       const bridgePath = fs.existsSync(jsPath) ? jsPath : tsPath;
       // Use tsx for .ts files, plain node for compiled .js
       const needsTsx = bridgePath.endsWith(".ts");
+      // MCP spec replaces (not merges) the parent env. Without PATH the
+      // spawned `node` binary itself isn't resolvable — the bridge dies
+      // silently before printing anything, and Claude CLI's init event
+      // shows `mcp_servers: []` even though our config was passed. Carry
+      // forward the host vars needed for `node --import=tsx mcp-bridge.ts`
+      // (or `node mcp-bridge.js`) to actually launch. Live failure
+      // 2026-05-14 on a fresh machine with no compiled .js — model saw
+      // zero MCP tools and improvised tool calls as decorated text
+      // (`<tool_use>...`, `//gpu_dispatch:builder`, `Tool use: X`).
       const bridgeEnv: Record<string, string> = {
         LAX_MCP_URL: `http://127.0.0.1:${saxPort}`,
         LAX_MCP_TOKEN: saxToken,
+        // Required for the subprocess to find `node` (and tsx via npm
+        // resolution).
+        ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
+        // Windows path resolution needs both PATH and PATHEXT (.exe / .cmd
+        // suffix lookup). Posix systems ignore PATHEXT harmlessly.
+        ...(process.env.PATHEXT ? { PATHEXT: process.env.PATHEXT } : {}),
+        // Windows-specific essentials that some Node builds rely on
+        // (USERPROFILE for home dir resolution, SYSTEMROOT for system DLLs,
+        // APPDATA/LOCALAPPDATA for npm-global lookup).
+        ...(process.env.USERPROFILE ? { USERPROFILE: process.env.USERPROFILE } : {}),
+        ...(process.env.SYSTEMROOT ? { SYSTEMROOT: process.env.SYSTEMROOT } : {}),
+        ...(process.env.APPDATA ? { APPDATA: process.env.APPDATA } : {}),
+        ...(process.env.LOCALAPPDATA ? { LOCALAPPDATA: process.env.LOCALAPPDATA } : {}),
+        // Posix systems use HOME for similar purposes.
+        ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
       };
       if (options.sessionId) bridgeEnv.LAX_MCP_SESSION_ID = options.sessionId;
       // MCP server registered as "lax:" so Claude CLI namespaces tools as

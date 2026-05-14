@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "../types.js";
-import { ToolRegistry, createToolSearchTool } from "../tool-search.js";
+import { createToolSearchTool } from "../tool-search.js";
+import { type UnifiedToolRegistry, unifiedRegistry } from "./registry.js";
 import { buildToolPromptSection } from "../tool-prompt-builder.js";
 import { applyPrompts } from "./result-helpers.js";
 import { tagToolsByAudience } from "../agent-request/audience-tagger.js";
@@ -36,8 +37,7 @@ import { opTools } from "../workers/tools.js";
 // Legacy skill_list/skill_run tools removed — protocol_list / protocol_get cover the same surface.
 // SKILL.md files are still recognized as an import format via src/protocols/skill-md-parser.ts.
 
-const _registry = new ToolRegistry();
-const _toolSearchTool = createToolSearchTool(_registry);
+const _toolSearchTool = createToolSearchTool(unifiedRegistry);
 
 export const allTools: ToolDefinition[] = applyPrompts([
   readTool, writeTool, editTool, bashTool, webFetchTool,
@@ -104,7 +104,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   } satisfies ToolDefinition,
 ]);
 
-export function buildToolRegistry(): { registry: ToolRegistry; eagerTools: ToolDefinition[]; toolSearchTool: ToolDefinition; promptSection: string } {
+export function buildToolRegistry(): { registry: UnifiedToolRegistry; eagerTools: ToolDefinition[]; toolSearchTool: ToolDefinition; promptSection: string } {
   // Tag every tool's `audiences` field from the legacy Sets BEFORE
   // registry insertion so the canonical resolver (tool-search.ts:
   // resolveToolsForRequest) has accurate audience info. Transitional —
@@ -112,17 +112,17 @@ export function buildToolRegistry(): { registry: ToolRegistry; eagerTools: ToolD
   tagToolsByAudience(allTools);
 
   for (const tool of allTools) {
-    if (_registry.get(tool.name)) continue;
+    if (unifiedRegistry.get(tool.name)) continue;
     // Deferred = no audiences (not visible in any per-request schema).
     // Eager = at least one audience. tool_search still indexes both.
     const defer = !tool.audiences || tool.audiences.length === 0;
-    _registry.register(tool, { defer, tags: [], searchHint: tool.description.slice(0, 80) });
+    unifiedRegistry.register(tool, { defer, tags: [], searchHint: tool.description.slice(0, 80) });
   }
 
-  const eagerTools = _registry.getEagerTools();
+  const eagerTools = unifiedRegistry.getEagerTools();
   const promptSection = buildToolPromptSection(allTools);
 
-  return { registry: _registry, eagerTools, toolSearchTool: _toolSearchTool, promptSection };
+  return { registry: unifiedRegistry, eagerTools, toolSearchTool: _toolSearchTool, promptSection };
 }
 
 export function getAllTools(): ToolDefinition[] {

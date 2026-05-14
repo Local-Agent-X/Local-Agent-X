@@ -38,6 +38,7 @@ export class CodexCliAdapter extends BaseAdapter {
         previousResponseId: req.previousResponseId,
         sessionId: req.sessionId,
         toolChoice: req.toolChoice,
+        signal: req.signal,
       });
     } catch (e) {
       yield { type: "error", message: (e as Error).message || "Codex stream error" };

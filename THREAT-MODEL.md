@@ -1,8 +1,15 @@
 # Threat Model — Local Agent X
 
+This is the design-internal threat model. For vulnerability reporting procedure, SLAs, and the secure deployment checklist, see [SECURITY.md](SECURITY.md).
+
 ## Trust Model
 
 Local Agent X operates as a **single-user personal AI agent** on a local workstation. The system is NOT designed for multi-tenant or adversarial multi-user deployments.
+
+Key properties:
+- The HTTP server binds to `127.0.0.1` only (not exposed to network).
+- Authentication is a shared bearer token (single-user).
+- Tools execute with the host user's privileges.
 
 ### Trust Domains
 
@@ -72,24 +79,26 @@ Local Agent X operates as a **single-user personal AI agent** on a local worksta
 
 ## Defense Layers
 
+Single canonical numbering. This is the source of truth — no parallel numbering elsewhere.
+
 ```
 Layer -1: ARI Kernel         — Capability tokens, taint propagation, behavioral rules, quarantine
-Layer 0:  Session Policy     — Per-session modes (default/high-security/dev-mode/read-only)
-Layer 1:  SecurityLayer      — SSRF, shell injection, path traversal, obfuscation, egress allowlist
+Layer 0:  Session Policy     — Per-session modes (default / high-security / dev-mode / read-only)
+Layer 1:  SecurityLayer      — SSRF with DNS pinning (anti-rebinding), shell metacharacter rejection + blocked-command list, network-client blocking, path normalization + symlink detection, obfuscation, egress allowlist
 Layer 2:  Data Lineage       — Tracks sensitive reads → blocks egress when tainted
 Layer 3:  RBAC               — Role-based tool permissions enforced at execution time
-Layer 4:  ToolPolicy         — Configurable allow/deny (default-deny)
-Layer 5:  ThreatEngine       — Canary tokens, chain analysis, encoding detection, adaptive scoring
-Layer 6:  Content Sanitizer  — 54+ injection patterns, homoglyphs, external content wrapping
+Layer 4:  ToolPolicy         — Configurable allow/deny (default-deny), per-tool rate limits, host allowlists/denylists, configured via `~/.sax/tool-policy.json`
+Layer 5:  ThreatEngine       — Canary tokens, chain analysis (exfil patterns: read-sensitive → send-external), loop detection (generic repeat, ping-pong, circuit breaker), data classification (auto-tags credentials / PII / secrets / financial), encoding detection, adaptive scoring
+Layer 6:  Content Sanitizer  — 54+ injection patterns, Unicode homoglyph normalization, external-content wrapping with unique boundary markers
 Layer 7:  Memory Taint       — Blocks untrusted content from persisting to memory
 Layer 8:  Container Sandbox  — Docker auto-detected (SAX_SANDBOX=host to disable)
-Layer 9:  Crypto Audit Trail — Tamper-evident SHA-256 hash chain + ARI Kernel audit DB
+Layer 9:  Crypto Audit Trail — Tamper-evident SHA-256 hash chain + ARI Kernel audit DB, per-session threat scoring, daily JSONL files at `~/.sax/audit/`
 Layer 10: Output Redaction   — Credential masking before AI sees tool results
 ```
 
 ## Known Limitations
 
-1. **Single-user model** — RBAC adds roles but not true multi-tenancy. Don't share a single instance between mutually untrusted users.
+1. **Single-user model** — RBAC adds roles (operator / user / readonly) but not full enterprise IAM (OIDC/SAML planned). Don't share a single instance between mutually untrusted users.
 2. **Docker sandbox auto-detects** — If Docker is available, bash runs in containers by default. Set `SAX_SANDBOX=host` to disable.
 3. **Secrets encryption** — Uses OS keychain (DPAPI/Keychain) when available, falls back to scrypt N=131072 (~500ms/attempt).
 4. **Memory taint is heuristic** — Pattern-based detection + Unicode normalization can be evaded by sufficiently creative injection. ARI Kernel taint tracking adds formal enforcement.

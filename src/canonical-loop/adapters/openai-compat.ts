@@ -53,6 +53,12 @@ export interface OpenAICompatAdapterOptions {
   systemPrompt?: string;
   temperature?: number;
   sessionId?: string;
+  /**
+   * Forced single-tool selection from the intent classifier. Applied on
+   * turn 0 only — subsequent turns release the pin so the model can
+   * narrate or chain. Undefined = "auto" (no force).
+   */
+  forcedToolChoice?: { type: "tool"; name: string };
 }
 
 export class OpenAICompatAdapter implements Adapter {
@@ -74,6 +80,12 @@ export class OpenAICompatAdapter implements Adapter {
     this.aborter = new AbortController();
     const { model, baseURL, apiKey } = this.opts;
 
+    // First-turn-only forcing — same posture as the legacy force-tool-use
+    // middleware. After the model has called the forced tool once, the
+    // pin releases so the agent can narrate / chain.
+    const forced = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
+    const forcedInList = forced && input.tools.some(t => t.name === forced.name);
+
     const req: ProviderRequest = {
       apiKey,
       baseURL,
@@ -88,6 +100,7 @@ export class OpenAICompatAdapter implements Adapter {
       temperature: this.opts.temperature ?? 0.7,
       sessionId: this.opts.sessionId,
       signal: this.aborter.signal,
+      ...(forcedInList && forced ? { toolChoice: forced } : {}),
     };
 
     this.inflight = this.streamOnce(req, report);

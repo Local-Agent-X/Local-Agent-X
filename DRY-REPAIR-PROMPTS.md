@@ -564,11 +564,9 @@ Report to: docs/dry-repair-reports/4A.md
 
 # Group B prompts (start after the named dep lands)
 
-**Branch isolation rule for every Group B session** (read before dispatching): each session's FIRST action is `git checkout -b dry-repair/<task-id>` off `main`. All work happens on that branch. The session's LAST action is a single `git commit` on that branch using the commit message named in the prompt. Do NOT push. Do NOT merge to main. Do NOT commit to main. Alex rebases / merges each branch into main at his cadence after reviewing.
+**Branch protocol** (revised 2026-05-13 after the Group A worktree collision and Alex's "everything to main" directive): each session commits directly to `main`. Only fan out branches/worktrees when multiple sessions are running concurrently and would otherwise share an uncommitted worktree. For solo or sequential dispatches, work and commit on `main`. Do NOT push (Alex pushes).
 
-This rule exists because two sessions earlier shared `main`'s working tree without intermediate commits and the changes had to be untangled by hand. Each Group B session owning a branch prevents that.
-
-Every prompt below repeats this directive in its Constraints block — leaving it here at the top too for visibility when scanning the doc.
+Historical note: an earlier version of this doc required `dry-repair/<task-id>` branches because two sessions in Group A collided in a shared worktree. The branch ceremony was retired once dispatches went sequential.
 
 ---
 
@@ -645,11 +643,7 @@ Acceptance check:
   zero hits OR every remaining call site has a documented reason in
   the report.
 
-Branch protocol (REQUIRED):
-- First action this session: git checkout -b dry-repair/2B (off main).
-- Do ALL work on that branch.
-- Last action: ONE git commit on that branch with the message below.
-- Do NOT push. Do NOT merge to main. Do NOT commit to main.
+Commit on main. Do NOT push.
 
 Commit message: "refactor(agents): route invokeAgent + primal through canonical (closes F1)"
 
@@ -726,11 +720,7 @@ Acceptance check:
 - grep for `new ToolRegistry`, `new ExecutorRegistry` outside the
   unified registry module → zero hits.
 
-Branch protocol (REQUIRED):
-- First action this session: git checkout -b dry-repair/2C.1 (off main).
-- Do ALL work on that branch.
-- Last action: ONE git commit on that branch with the message below.
-- Do NOT push. Do NOT merge to main. Do NOT commit to main.
+Commit on main. Do NOT push.
 
 Commit message: "refactor(tools): unify registries into src/tools/registry.ts (closes F2)"
 
@@ -805,11 +795,7 @@ Acceptance check:
   `threatEngine.preCheck`, `policyEngine.evaluate` outside the evaluator
   and the rule-pack files → zero hits.
 
-Branch protocol (REQUIRED):
-- First action this session: git checkout -b dry-repair/2C.2 (off main, or off the merged 2C.1 commit).
-- Do ALL work on that branch.
-- Last action: ONE git commit on that branch with the message below.
-- Do NOT push. Do NOT merge to main. Do NOT commit to main.
+Commit on main (sequence after 2C.1 lands). Do NOT push.
 
 Commit message: "refactor(policy): unify into evaluator with rule packs (closes F4)"
 
@@ -885,11 +871,7 @@ Acceptance check:
 - Soak: 24h on Alex's machine, watching agent logs for unexpected
   blocks or behavioral surprises.
 
-Branch protocol (REQUIRED):
-- First action this session: git checkout -b dry-repair/2C.3 (off main, or off the merged 2C.2 commit).
-- Do ALL work on that branch.
-- Last action: ONE git commit on that branch with the message below.
-- Do NOT push. Do NOT merge to main. Do NOT commit to main.
+Commit on main (sequence after 2C.2 lands; soak ~24h before pushing). Do NOT push.
 
 Commit message: "refactor(tools): collapse to single dispatcher (closes F2 final)"
 
@@ -1004,11 +986,7 @@ Acceptance check:
 - The TypeScript discriminated union prevents code from accessing
   `PROVIDERS["anthropic"].baseURL` without a transport check.
 
-Branch protocol (REQUIRED):
-- First action this session: git checkout -b dry-repair/3A (off main).
-- Do ALL work on that branch.
-- Last action: ONE git commit on that branch with the message below.
-- Do NOT push. Do NOT merge to main. Do NOT commit to main.
+Commit on main. Do NOT push.
 
 Commit message: "refactor(providers): transport-discriminated registry (closes F8, F10)"
 
@@ -1081,11 +1059,7 @@ Acceptance check:
 - gpu-session.ts substantially smaller than before.
 - Manual voice session still works end to end.
 
-Branch protocol (REQUIRED):
-- First action this session: git checkout -b dry-repair/3B.2 (off main, after Alex confirms 3B.1 soak passed).
-- Do ALL work on that branch.
-- Last action: ONE git commit on that branch with the message below.
-- Do NOT push. Do NOT merge to main. Do NOT commit to main.
+Commit on main (only after Alex confirms 3B.1 soak passed). Do NOT push.
 
 Commit message: "refactor(voice): delete inline orchestration; open-voice is canonical (closes F9 final)"
 
@@ -1150,11 +1124,7 @@ Acceptance check:
 - A reader following the links from SECURITY.md → THREAT-MODEL.md
   doesn't re-encounter the same content.
 
-Branch protocol (REQUIRED):
-- First action this session: git checkout -b dry-repair/4B (off main).
-- Do ALL work on that branch.
-- Last action: ONE git commit on that branch with the message below.
-- Do NOT push. Do NOT merge to main. Do NOT commit to main.
+Commit on main. Do NOT push.
 
 Commit message: "docs(security): split SECURITY (user-facing) from THREAT-MODEL (design) (closes F12)"
 
@@ -1222,11 +1192,7 @@ Acceptance check:
   the three OS wrappers are each ≤30 LOC.
 - Changing an install step requires editing one file.
 
-Branch protocol (REQUIRED):
-- First action this session: git checkout -b dry-repair/4C (off main).
-- Do ALL work on that branch.
-- Last action: ONE git commit on that branch with the message below.
-- Do NOT push. Do NOT merge to main. Do NOT commit to main.
+Commit on main. Do NOT push.
 
 Commit message: "docs+scripts: full README + shared install core (closes F15)"
 

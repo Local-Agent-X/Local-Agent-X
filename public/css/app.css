@@ -266,6 +266,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .tool-progress-bar{position:relative;height:22px;background:var(--bg);border-radius:6px;overflow:hidden;margin:4px 0}
 .tool-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent-dim),var(--accent));border-radius:6px;transition:width .3s ease;min-width:2px}
 .tool-progress-label{position:absolute;top:0;left:0;right:0;height:100%;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:.65rem;color:var(--text)}
+.tool-progress-text{white-space:pre-wrap;word-break:break-word;max-height:120px;overflow-y:auto;font-family:var(--mono);font-size:.7rem;line-height:1.4;color:var(--text);background:var(--bg);border-radius:6px;padding:6px 8px;margin:4px 0}
 .thinking{color:var(--muted);font-size:.85rem;padding:8px 0;font-family:var(--mono)}
 .thinking span{animation:blink 1.2s infinite}
 .thinking span:nth-child(2){animation-delay:.2s}

@@ -8,7 +8,7 @@ If you discover a security vulnerability in Local Agent X, please report it resp
 
 ### How to Report
 
-1. Email: [TBD - add security contact email]
+1. Email: petermanrique101@gmail.com
 2. GitHub: Use [GitHub Security Advisories](https://github.com/petermanrique101-sys/Local-Agent-X/security/advisories/new) to privately report vulnerabilities.
 
 ### What to Include

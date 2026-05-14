@@ -11,7 +11,7 @@
 export interface CompletionNotice {
   agentId: string;
   agentName: string;
-  status: "done" | "error";
+  status: "succeeded" | "failed";
   result: string;
   timestamp: number;
 }

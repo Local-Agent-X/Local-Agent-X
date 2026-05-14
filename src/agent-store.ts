@@ -136,6 +136,9 @@ export class ProjectStore {
 
 // ── Agent Run History ──────────────────────────────────────
 
+// Run-status vocabulary aligned with the canonical-loop's TerminalState (F13).
+// Pre-F13 records on disk used {done, error, timeout}; `migrateRunStatus`
+// below normalises them on read so callers always see the new vocabulary.
 export interface AgentRun {
   id: string;
   parentAgentId: string | null;
@@ -144,7 +147,7 @@ export interface AgentRun {
   role: string;
   task: string;
   systemPrompt: string;
-  status: "working" | "done" | "error" | "cancelled" | "timeout";
+  status: "working" | "succeeded" | "failed" | "cancelled";
   output: string[];
   result: string;
   toolsUsed: string[];
@@ -152,6 +155,28 @@ export interface AgentRun {
   startedAt: number;
   completedAt: number;
   error?: string;
+  /** Sub-classification for terminal `failed` — currently only "timeout"
+   *  is meaningful (wall-clock ceiling vs in-task error). */
+  reason?: "timeout";
+}
+
+/**
+ * Normalise persisted records written under the pre-F13 vocabulary.
+ * Old strings → new strings; "timeout" becomes `failed + reason="timeout"`.
+ * Idempotent: applying twice is a no-op.
+ */
+function migrateRunStatus(run: AgentRun): AgentRun {
+  const legacy = run.status as unknown as string;
+  if (legacy === "done") return { ...run, status: "succeeded" };
+  if (legacy === "error") return { ...run, status: "failed" };
+  if (legacy === "timeout") return { ...run, status: "failed", reason: "timeout" };
+  return run;
+}
+
+function migrateStatusFilter(s: string): string {
+  if (s === "done") return "succeeded";
+  if (s === "error" || s === "timeout") return "failed";
+  return s;
 }
 
 export class AgentRunStore {
@@ -172,7 +197,7 @@ export class AgentRunStore {
   get(id: string): AgentRun | null {
     const p = join(RUNS_DIR, `${id}.json`);
     if (!existsSync(p)) return null;
-    try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; }
+    try { return migrateRunStatus(JSON.parse(readFileSync(p, "utf-8")) as AgentRun); } catch { return null; }
   }
 
   list(opts?: { limit?: number; offset?: number; sessionId?: string; status?: string }): { runs: AgentRun[]; total: number } {
@@ -184,14 +209,18 @@ export class AgentRunStore {
     for (const f of files) {
       try {
         const run = JSON.parse(readFileSync(join(RUNS_DIR, f), "utf-8")) as AgentRun;
-        runs.push(run);
+        runs.push(migrateRunStatus(run));
       } catch {}
     }
     runs.sort((a, b) => b.startedAt - a.startedAt);
 
-    // Filter
+    // Filter — accept legacy vocabulary on the `status` query string so a UI
+    // request for `?status=done` still matches migrated records.
     if (opts?.sessionId) runs = runs.filter(r => r.sessionId === opts.sessionId);
-    if (opts?.status) runs = runs.filter(r => r.status === opts.status);
+    if (opts?.status) {
+      const want = migrateStatusFilter(opts.status);
+      runs = runs.filter(r => r.status === want);
+    }
 
     const total = runs.length;
     const offset = opts?.offset || 0;

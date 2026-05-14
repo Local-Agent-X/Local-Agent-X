@@ -12,7 +12,7 @@ import { createAgentTools } from "../agents/tools.js";
 import { createMemoryTools } from "../memory.js";
 import type { SecretsStore } from "../secrets.js";
 import type { ServerEvent, ToolDefinition } from "../types.js";
-import type { ToolRegistry } from "../tool-search.js";
+import type { UnifiedToolRegistry } from "../tools/registry.js";
 import type { MemoryIndex } from "../memory.js";
 
 import { createLogger } from "../logger.js";
@@ -23,7 +23,7 @@ export type EventCallback = (event: ServerEvent) => void;
 export interface ToolBundle {
   allAgentTools: ToolDefinition[];
   bridgeTools: ToolDefinition[];
-  toolRegistry: ToolRegistry;
+  toolRegistry: UnifiedToolRegistry;
   activeOnEventBySession: Map<string, EventCallback>;
   activeBrowserSessionIdRef: { value: string };
 }
@@ -101,6 +101,19 @@ export async function bootstrapTools(deps: {
     const filteredCount = mcpTools.length - nonRedundantMcpTools.length;
     if (nonRedundantMcpTools.length > 0) {
       allAgentTools.push(...nonRedundantMcpTools);
+      // Register MCP tools directly into the unified registry, tagged with
+      // their originating server. The previous "register here, then catch
+      // up later via a dedup loop" sequence was the F2 anti-pattern — the
+      // registry is now the single point of MCP tool insertion.
+      for (const tool of nonRedundantMcpTools) {
+        const serverName = tool.name.replace(/^mcp_/, "").split("_")[0] ?? "unknown";
+        toolRegistry.register(tool, {
+          defer: true,
+          tags: ["mcp", serverName],
+          searchHint: tool.description.slice(0, 80),
+          mcpSource: serverName,
+        });
+      }
       logger.info(`[mcp] Added ${nonRedundantMcpTools.length} tools from MCP servers${filteredCount > 0 ? ` (filtered ${filteredCount} redundant filesystem duplicates)` : ""}`);
     } else if (filteredCount > 0) {
       logger.info(`[mcp] Filtered ${filteredCount} redundant filesystem MCP tools (native covers these)`);
@@ -110,15 +123,21 @@ export async function bootstrapTools(deps: {
     logger.warn(`[mcp] MCP client init failed: ${(e as Error).message}`);
   }
 
+  // Index every other runtime-built tool (memory, secret, browser, image,
+  // protocols, cron, agents, agency, app, issue, operations) into the
+  // unified registry as deferred — they're surfaced via tool_search rather
+  // than the eager schema. allTools[] is already in via buildToolRegistry();
+  // MCP tools are already in via the loop above. Anything left over here is
+  // a runtime-built non-MCP tool. The `seenTools` warn is the duplicate-
+  // name canary that was always part of this loop.
   const seenTools = new Set<string>();
   for (const tool of allAgentTools) {
     if (seenTools.has(tool.name)) {
       logger.warn(`[tools] Duplicate tool name: "${tool.name}" — later definition wins`);
     }
     seenTools.add(tool.name);
-    if (!toolRegistry.get(tool.name)) {
-      toolRegistry.register(tool, { defer: true, tags: [], searchHint: tool.description.slice(0, 80) });
-    }
+    if (toolRegistry.get(tool.name)) continue;
+    toolRegistry.register(tool, { defer: true, tags: [], searchHint: tool.description.slice(0, 80) });
   }
 
   return { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef };

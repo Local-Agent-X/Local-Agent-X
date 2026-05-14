@@ -150,6 +150,17 @@ async function sendMessage() {
         if (msg.type !== 'event' || msg.sessionId !== streamSessionId) return;
         const event = msg.event;
         const viewing = isViewingThis();
+        // [stream-debug] TEMP — diagnosing bug C (events arrive but DOM
+        // doesn't update until reload, or massive lag). Logs every event
+        // arrival with timing + viewing/bodyEl state so we can tell whether
+        // events are arriving slowly (server/upstream cadence) or being
+        // dropped at the renderer (chat-layer bug). Filter the console
+        // with `[stream-debug]` to see only these lines. Remove after diagnosis.
+        if (event.type === 'stream' || event.type === 'tool_start' || event.type === 'tool_end' || event.type === 'done') {
+          const bodyConnected = bodyEl ? document.contains(bodyEl) : 'no-bodyEl';
+          const deltaLen = event.type === 'stream' ? (event.delta || '').length : '';
+          console.log(`[stream-debug] t=${Date.now()} evt=${event.type} viewing=${viewing} bodyConnected=${bodyConnected} deltaLen=${deltaLen} sess=${streamSessionId.slice(-8)}`);
+        }
         // If we're viewing, make sure bodyEl points to a connected DOM node.
         // After a chat-switch-and-back, the originally-captured bodyEl is
         // detached and renderMessages has rendered a fresh one.

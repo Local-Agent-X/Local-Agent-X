@@ -148,6 +148,29 @@ export class CodexAdapter implements Adapter {
     this.inflight = consume();
     try { await this.inflight; } finally { this.inflight = null; }
 
+    // Empty-response retry. Codex/ChatGPT subscription occasionally returns
+    // zero text + zero tool calls + zero error after a 1-2 minute wait —
+    // typically a dropped stream from the subscription endpoint or a
+    // truncated response that arrived with no usable content. Without a
+    // retry the user sees a 2-minute blank turn followed by a no-progress
+    // nudge. One in-place retry recovers cleanly in the common case.
+    // Fires ONLY on the silent-fail signature; healthy turns are untouched.
+    // Mirror of the post-stream retry in openai-compat.ts (added there for
+    // qwen2:7b's silent-fail-on-tools pattern). Live failure 2026-05-14:
+    // chat-mp5psjdd-ersqf on gpt-5.5 — 120s turn, 0 output, 0 tools, no error.
+    const noOutput =
+      !this.aborted &&
+      !firstError &&
+      assembledText.length === 0 &&
+      pendingToolCalls.length === 0;
+    if (noOutput) {
+      logger.info(`${req.model} returned empty turn — retrying once`);
+      this.aborter = new AbortController();
+      req.signal = this.aborter.signal;
+      this.inflight = consume();
+      try { await this.inflight; } finally { this.inflight = null; }
+    }
+
     // Tool-call-in-text fallback. Mirror of the rescue path in
     // openai-compat.ts and anthropic.ts. After a few rounds Codex models
     // (gpt-5 / o-series) sometimes drift to emitting the next tool call

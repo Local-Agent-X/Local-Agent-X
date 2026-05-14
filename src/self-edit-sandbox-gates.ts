@@ -8,6 +8,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { runCommandInWorktree, getWorktreePath } from "./agency/worktree.js";
 import { npmAugmentedEnv } from "./anthropic-client/cli-path.js";
+import { killProcessTree } from "./process-tree-kill.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("self-edit.sandbox-gates");
@@ -166,22 +167,12 @@ export function spawnClaude(cwd: string, prompt: string, signal?: AbortSignal): 
       shell: process.platform === "win32",
       env: npmAugmentedEnv(),
     });
-    // On Windows we spawn through a shell wrapper (shell:true above), so
-    // proc.kill kills the shell — claude.exe stays orphaned as a detached
-    // child. Use the same taskkill /F /T tree-kill pattern killProbe uses
-    // (below) so the actual claude subprocess dies on cancel/timeout.
-    // Without this, hitting Stop during self_edit leaves claude running
-    // for minutes; the worker never releases; the next chat turn never
-    // gets leased.
-    const killTree = () => {
-      try { proc.kill("SIGTERM"); } catch {}
-      if (process.platform === "win32" && proc.pid) {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          require("node:child_process").execSync(`taskkill /PID ${proc.pid} /F /T`, { stdio: "ignore", windowsHide: true });
-        } catch {}
-      }
-    };
+    // Windows shell:true spawn wraps the binary in cmd.exe; proc.kill only
+    // signals the wrapper. `killProcessTree` does the proper SIGTERM +
+    // taskkill /F /T so claude.exe (the actual descendant) dies on
+    // cancel/timeout. Without it, Stop leaves claude running for minutes
+    // and the worker's lease never releases.
+    const killTree = () => killProcessTree(proc);
     const abortListener = killTree;
     signal?.addEventListener("abort", abortListener);
     const timer = setTimeout(killTree, CLAUDE_TIMEOUT_MS);
@@ -209,13 +200,6 @@ export function spawnClaude(cwd: string, prompt: string, signal?: AbortSignal): 
 // ── Probe process cleanup helper ───────────────────────────────────────────
 
 export function killProbe(proc: ChildProcess | null): void {
-  if (!proc) return;
-  try { proc.kill("SIGKILL"); } catch {}
-  if (process.platform === "win32" && proc.pid) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require("node:child_process").execSync(`taskkill /PID ${proc.pid} /F /T`, { stdio: "ignore", windowsHide: true });
-    } catch {}
-  }
+  killProcessTree(proc, "SIGKILL");
   void logger; // silence unused-import lint
 }

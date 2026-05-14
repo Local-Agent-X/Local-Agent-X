@@ -28,6 +28,18 @@ export class OpenAIHttpAdapter extends BaseAdapter {
     const useTools = !hasNoToolSupport(req.baseURL, req.model);
     const reasoningCapable = REASONING_CAPABLE.test(req.model);
 
+    // Translate canonical toolChoice → OpenAI Chat Completions tool_choice
+    // shape. Only meaningful when we're shipping tools this turn.
+    const openaiToolChoice = (() => {
+      if (!useTools || !req.toolChoice) return undefined;
+      if (req.toolChoice === "auto" || req.toolChoice === "required") return req.toolChoice;
+      // { type: "tool", name } → OpenAI wants { type: "function", function: { name } }
+      if (req.toolChoice.type === "tool" && req.toolChoice.name) {
+        return { type: "function" as const, function: { name: req.toolChoice.name } };
+      }
+      return undefined;
+    })();
+
     let stream;
     try {
       stream = await client.chat.completions.create(
@@ -38,6 +50,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             ...req.messages,
           ],
           ...(useTools ? { tools: toOpenAITools(req.tools) } : {}),
+          ...(openaiToolChoice ? { tool_choice: openaiToolChoice } : {}),
           temperature: req.temperature ?? 0.7,
           stream: true,
           ...(reasoningCapable ? { reasoning_effort: "medium" as const } : {}),

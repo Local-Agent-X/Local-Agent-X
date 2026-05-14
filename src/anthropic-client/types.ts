@@ -33,6 +33,13 @@ export interface StreamOptions {
   skipCliFallback?: boolean;
   /** Force tool use: "required" makes the model call a tool. "auto" (default) lets it decide. */
   toolChoice?: "auto" | "required";
+  /**
+   * Force a SPECIFIC tool by name (intent-classifier path). On the direct
+   * HTTP path this becomes `tool_choice: { type: "tool", name }`. On the
+   * CLI path the caller is expected to have already nudged the system
+   * prompt — this field is informational there.
+   */
+  forcedToolName?: string;
   /** Session id passed to the MCP bridge subprocess as LAX_MCP_SESSION_ID
    *  so it can stamp every /api/mcp/call POST with the right session. The
    *  server uses that to look up the session's onEvent (so tool side-effects

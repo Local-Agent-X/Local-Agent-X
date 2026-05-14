@@ -188,21 +188,13 @@ Each phase below names which class(es) collapse on completion:
 - **Symptoms collapsed**: **B** (N-file dance dies for providers), **E**.
 - **Reversibility**: trivial. The registry shape is additive.
 
-### 3B. Flip `LAX_VOICE_OPEN=1` to default; delete inline voice orchestration — closes **F9**
-- **Touch**: feature-flag flip, then code deletion.
-- **Files**:
-  - Update: `integrations/open-voice/bridge.ts` (or wherever the default is read) — `LAX_VOICE_OPEN` defaults to `1` if unset. Keep the `=0` escape hatch for one release.
-  - Soak: 24h on Peter's machine with the flag flipped, watching p50/p95 latency on the warm path (target: parity with current ~0.9–3s on 3060 — per the existing memory, this is the gate).
-  - Delete: the inline clause-chunker, preroll buffer, and playback tracker logic from [`src/voice/voice-session.ts:204-640`](src/voice/voice-session.ts#L204-L640) and [`src/voice/gpu-session.ts:20-210`](src/voice/gpu-session.ts#L20-L210). Replace with calls into open-voice modules.
-- **Done when**: voice-session.ts is under ~300 LOC; gpu-session.ts shrinks proportionally; SENTENCE_TERMINATOR regex no longer exists inline in either file.
-- **Symptoms collapsed**: **D** (one chunker behavior across sessions), **F** (inline duplication deleted).
-- **Reversibility**: the escape hatch (`LAX_VOICE_OPEN=0`) covers a fast revert during soak. After deletion, revert via git.
+### 3B. ~~Flip `LAX_VOICE_OPEN=1` and migrate to open-voice library — closes F9~~
+**DROPPED 2026-05-13.** F9 was reclassified to "intentional divergence" after discovering the `open-voice` library was a shelved alternative, not a migration target. The library was never installed as a project dependency and the three-tier sidecar (tier4 / gpu-session / realtime) is the canonical voice path. The 3B.1 commit that landed this morning was reverted (6793aed); the 3B.1b wiring branch was dropped without merging. See the audit's tolerable shelf for the corrected F9 entry. Phase 3 now contains only 3A.
 
 ---
 
 **End-of-Phase-3 state**:
 - One provider registry. Adding a provider = one file. (B, E)
-- Voice has one chunker behavior, sourced from the shipped open-voice modules. (D, F)
 
 ---
 
@@ -254,6 +246,7 @@ Each phase below names which class(es) collapse on completion:
 Per the audit's tolerable/intentional/false-positive shelf:
 
 - **Anthropic CLI proxy path vs OpenAI-compatible HTTP adapters.** Different transports by design. Direct HTTP fails for Sonnet/Opus on the Max plan, so Anthropic rides through the Claude CLI subprocess. Not drift, not a refactor target. The new `providers/registry.ts` discriminates on `transport: "http" | "cli"` so this divergence is named in code, not buried in an `if (provider === "anthropic")` branch.
+- **Voice clause-chunker / preroll / playback-tracker (F9, reclassified 2026-05-13).** The `open-voice` library at `C:\Users\manri\open-voice` was an alternative voice toolkit that got shelved when the three-tier sidecar approach (tier4 ONNX Kokoro / gpu-session / realtime) proved adequate. The library is not installed as a project dependency. The "duplication" between `voice-session.ts`/`gpu-session.ts` and the open-voice modules is deliberate divergence from a parked alt-path — leave it. The `integrations/open-voice/bridge.ts` file is dead code from when the migration was still planned; safe to delete in a future cleanup pass.
 - Retry/backoff across `auto-retry`, `tool-executor`, `workers/heartbeat`, `canonical-loop/worker`, `circuit-breaker` — different layers, different decisions. Don't collapse.
 - `src/providers/adapter/` (interface) vs `src/providers/adapters/` (impls) — not duplication. Optional cosmetic rename if the singular-vs-plural footgun bothers you; otherwise leave.
 - `src/agent-loop/inject-queue.ts` — micro-module; only the *directory name* is misleading. Optional rename to `src/inject-queue/`.
@@ -276,7 +269,7 @@ Per the audit's tolerable/intentional/false-positive shelf:
 | 2C | F2, F4 | A, B, E, F | High (biggest collapse) | Yes per-sub-commit |
 | 2D | F11 | B, D | Low | Yes |
 | 3A | F8, F10 | B, E | Low | Yes |
-| 3B | F9 | D, F | Medium (latency soak required) | Yes via flag |
+| ~~3B~~ | ~~F9~~ | — | **Dropped 2026-05-13 — F9 reclassified as intentional** | — |
 | 4A | F7 | E | None | Yes |
 | 4B | F12 | E | None | Yes |
 | 4C | F15 main | B, E, F | None | Yes |
@@ -294,4 +287,4 @@ You can declare DRY victory when:
 3. Any agent run — chat, `invokeAgent`, primal-auto-build chunk worker, cron mission — is recoverable from `op_events.jsonl` and uses the same terminal-state vocabulary.
 4. A prompt-injection string fails to land in memory regardless of whether it arrived via the tool, EOT classifier, auto-extract, or sync pull.
 5. A fresh contributor reading the root-level docs can name the project, install it, find the threat model, and find the audit status from one starting point each.
-6. `git grep` for the symbols `ExecutorRegistry`, `runAgentAsync`, the inline `SENTENCE_TERMINATOR` regex (in voice files), and `[TBD` returns zero hits.
+6. `git grep` for the symbols `ExecutorRegistry`, `runAgentAsync`, and `[TBD` returns zero hits. (The `SENTENCE_TERMINATOR` regex stays in voice files — see F9 on the audit's tolerable shelf.)

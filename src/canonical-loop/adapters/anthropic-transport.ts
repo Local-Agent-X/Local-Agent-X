@@ -47,16 +47,28 @@ export function defaultAnthropicTransport(): AnthropicTransport {
 
       const messages = req.messages.map(toOpenAiMessage);
 
+      // Forced single-tool selection from the intent classifier. Direct
+      // HTTP path consumes `forcedToolName` natively (Anthropic accepts
+      // `tool_choice: { type: "tool", name }`). CLI/OAuth path can't pass
+      // tool_choice via subprocess flags, so we append a system-prompt
+      // directive instructing the model to call the named tool first.
+      const forced = req.forcedToolChoice;
+      const cliAugmentedSystem = forced
+        ? req.systemPrompt +
+          `\n\n[INTENT-FORCED TOOL]\nFor this turn, call the tool \`${forced.name}\` BEFORE writing any prose. The user's request unambiguously maps to this tool; do not narrate, do not describe, do not summarize — emit a structured tool call to \`${forced.name}\` now.`
+        : req.systemPrompt;
+
       try {
         const stream = streamAnthropicResponse({
           token,
           model: req.model,
           messages,
-          systemPrompt: req.systemPrompt,
+          systemPrompt: cliAugmentedSystem,
           tools: req.tools.length > 0 ? req.tools : undefined,
           maxTokens: req.maxTokens,
           signal: req.signal,
           sessionId: req.sessionId,
+          forcedToolName: forced?.name,
         });
 
         for await (const ev of stream) {

@@ -1,11 +1,5 @@
 import type { Audience, ToolDefinition, ToolResult } from "./types.js";
-
-interface RegistryEntry {
-  tool: ToolDefinition;
-  defer: boolean;
-  tags: string[];
-  searchHint: string;
-}
+import { UnifiedToolRegistry } from "./tools/registry.js";
 
 /**
  * Canonical per-request tool resolver (AUDIT Cluster 11).
@@ -104,85 +98,16 @@ export const toolSearchEnhancements = {
   defer: false,
 };
 
-export class ToolRegistry {
-  private tools = new Map<string, RegistryEntry>();
+/**
+ * Backwards-compatible alias. Real implementation lives in
+ * src/tools/registry.ts as UnifiedToolRegistry. Existing call sites that
+ * import { ToolRegistry } from "./tool-search.js" continue to work and
+ * delegate to the same store.
+ */
+export { UnifiedToolRegistry as ToolRegistry } from "./tools/registry.js";
+export { unifiedRegistry } from "./tools/registry.js";
 
-  register(
-    tool: ToolDefinition,
-    opts?: { defer?: boolean; tags?: string[]; searchHint?: string },
-  ): void {
-    this.tools.set(tool.name, {
-      tool,
-      defer: opts?.defer ?? false,
-      tags: opts?.tags ?? [],
-      searchHint: opts?.searchHint ?? "",
-    });
-  }
-
-  getEagerTools(): ToolDefinition[] {
-    const result: ToolDefinition[] = [];
-    for (const entry of this.tools.values()) {
-      if (!entry.defer) result.push(entry.tool);
-    }
-    return result;
-  }
-
-  getDeferredTools(): { name: string; description: string; tags: string[]; searchHint: string }[] {
-    const out: { name: string; description: string; tags: string[]; searchHint: string }[] = [];
-    for (const e of this.tools.values()) {
-      if (e.defer) out.push({
-        name: e.tool.name, description: e.tool.description,
-        tags: e.tags, searchHint: e.searchHint,
-      });
-    }
-    return out;
-  }
-
-  search(query: string, maxResults = 5): ToolDefinition[] {
-    const queryLower = query.toLowerCase().trim();
-    const words = queryLower.split(/\s+/).filter(Boolean);
-    if (words.length === 0) return [];
-
-    const scored: { tool: ToolDefinition; score: number }[] = [];
-
-    for (const entry of this.tools.values()) {
-      let score = 0;
-      const nameLower = entry.tool.name.toLowerCase();
-      const descLower = entry.tool.description.toLowerCase();
-      const tagsLower = entry.tags.map((t) => t.toLowerCase());
-      const hintLower = entry.searchHint.toLowerCase();
-
-      // Exact name match dominates. Without this, a query like
-      // "primal_run_build_plan exact call" lost to memory_recall because
-      // "recall" contains "call" — substring matches were stacking up
-      // higher than a direct name hit on the target tool.
-      if (queryLower === nameLower) score += 100;
-      for (const word of words) {
-        if (word === nameLower) score += 50;     // exact-word == full tool name
-        else if (nameLower.includes(word)) score += 3;
-        if (tagsLower.some((t) => t === word)) score += 5;
-        else if (tagsLower.some((t) => t.includes(word))) score += 2;
-        if (hintLower.includes(word)) score += 2;
-        if (descLower.includes(word)) score += 1;
-      }
-
-      if (score > 0) scored.push({ tool: entry.tool, score });
-    }
-
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, maxResults).map((s) => s.tool);
-  }
-
-  get(name: string): ToolDefinition | undefined {
-    return this.tools.get(name)?.tool;
-  }
-
-  getAll(): ToolDefinition[] {
-    return Array.from(this.tools.values()).map((e) => e.tool);
-  }
-}
-
-export function createToolSearchTool(registry: ToolRegistry): ToolDefinition {
+export function createToolSearchTool(registry: UnifiedToolRegistry): ToolDefinition {
   return {
     name: "tool_search",
     description:

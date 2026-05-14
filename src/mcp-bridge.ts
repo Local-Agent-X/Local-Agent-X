@@ -12,7 +12,11 @@
 
 const BASE = process.env.LAX_MCP_URL ?? process.env.SAX_MCP_URL;
 const TOKEN = process.env.LAX_MCP_TOKEN ?? process.env.SAX_MCP_TOKEN;
-const PROTOCOL_VERSION = "2025-11-25";
+// Use the latest released MCP spec version. Claude CLI 2.1.116 rejects
+// servers that announce an unknown protocolVersion with a silent `status:
+// "failed"` in the init event. Stick to spec releases (2024-11-05,
+// 2025-03-26, 2025-06-18); newer "future-dated" strings get dropped.
+const PROTOCOL_VERSION = "2025-06-18";
 
 if (!BASE || !TOKEN) {
   process.stderr.write("[mcp-bridge] LAX_MCP_URL / LAX_MCP_TOKEN not set\n");

@@ -93,8 +93,15 @@ function renderStreamContent(bodyEl, content) {
   }
   pending.latest = content;
   if (pending.raf) return;
+  // [stream-debug] TEMP — capture queue→flush latency. If this gap is small
+  // (<100ms) but the user perceives lag, the bottleneck is upstream (events
+  // arriving in bursts). If it's large, the renderer is the bottleneck.
+  const queuedAt = Date.now();
   pending.raf = requestAnimationFrame(() => {
     pending.raf = 0;
+    const flushedAt = Date.now();
+    const bodyConnected = bodyEl ? document.contains(bodyEl) : 'no-bodyEl';
+    console.log(`[stream-debug] rAF-flush gap=${flushedAt - queuedAt}ms bodyConnected=${bodyConnected} latestLen=${(pending.latest||'').length}`);
     // Preserve activity-groups + top-level tool-cards/approval-cards across
     // the markdown re-render. Without preserving the groups, every stream
     // delta would wipe the consolidated activity container.

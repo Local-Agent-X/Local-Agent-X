@@ -216,6 +216,11 @@ export type SecretLookup = (name: string) => string;
 
 export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: SecretLookup = () => "") {
   return (ctx: VoiceSessionContext): VoiceSession => {
+    if (process.env.LAX_VOICE_OPEN !== "0") {
+      logger.info(`voice-session: routing via open-voice (LAX_VOICE_OPEN=1)`);
+    } else {
+      logger.info(`voice-session: routing via legacy in-tree (LAX_VOICE_OPEN=0)`);
+    }
     // Per-session settings resolution — settings.json is the source of truth
     // so a UI dropdown change picks up on the next voice session without restart.
     const voiceSettings = resolveVoiceSettings();

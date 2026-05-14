@@ -1,8 +1,14 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryIndex } from "../../memory.js";
-import { atomicWriteFileSync } from "../utils.js";
 import { PERSONALITY_FILES } from "../personality.js";
+import {
+  writeMemorySafely,
+  writeMindFileSafely,
+  appendToDailyLogSafely,
+  runMemoryGate,
+  MemoryWriteBlocked,
+} from "../write-safely.js";
 
 export function createSaveTools(memory: MemoryIndex) {
   return [
@@ -24,59 +30,56 @@ export function createSaveTools(memory: MemoryIndex) {
         required: ["content"],
       },
       async execute(args: Record<string, unknown>) {
-        let content = String(args.content || "");
+        const rawContent = String(args.content || "");
         const target = String(args.target || "daily");
         const sessionId = args._sessionId ? String(args._sessionId) : undefined;
 
-        if (!content.trim()) {
+        if (!rawContent.trim()) {
           return { content: "Nothing to save.", isError: true };
         }
 
-        // Memory taint protection: block external/injected content from persisting
-        // This prevents the attack chain: malicious webpage → memory_save → permanent instruction hijack
         try {
-          const { checkMemoryTaint, sanitizeForMemory, stripControlChars, normalizeHomoglyphs } = await import("../../sanitize.js");
-          // Step 1: Cryptographic normalization — strip ALL unicode tricks before checking
-          content = normalizeHomoglyphs(stripControlChars(content));
-          // Step 2: Taint check on normalized content
-          const taint = checkMemoryTaint(content);
-          if (!taint.safe) {
+          if (target === "memory") {
+            const existing = memory.readMemoryFile();
+            writeMindFileSafely({
+              memory,
+              source: "tool",
+              content: existing + (existing ? "\n\n" : "") + rawContent,
+            });
+            return { content: "Saved to MIND.md" };
+          } else if (target === "retain") {
+            // Retain stores facts in the DB. Gate-only — no file write.
+            const gated = runMemoryGate({
+              content: rawContent,
+              source: "tool",
+              target: "memory:retain",
+            });
+            const facts = memory.retain(gated, "agent-tool");
+            if (facts.length === 0) {
+              const facts2 = memory.retain(`- S ${gated}`, "agent-tool");
+              return {
+                content: `Retained ${facts2.length} fact(s) as observation`,
+              };
+            }
             return {
-              content: `BLOCKED: ${taint.reason}`,
-              isError: true,
+              content: `Retained ${facts.length} fact(s): ${facts.map((f) => `[${f.kind}] ${f.content.slice(0, 60)}`).join("; ")}`,
+            };
+          } else {
+            appendToDailyLogSafely({
+              memory,
+              source: "tool",
+              content: rawContent,
+              sessionId,
+            });
+            return {
+              content: `Saved to daily log (${new Date().toISOString().split("T")[0]})`,
             };
           }
-          // Step 3: Final sanitization pass (strip any remaining markers)
-          content = sanitizeForMemory(content);
-        } catch {
-          // Sanitize module not available — allow (fail-open for backwards compat)
-        }
-
-        if (target === "memory") {
-          const existing = memory.readMemoryFile();
-          memory.writeMemoryFile(existing + (existing ? "\n\n" : "") + content);
-          return { content: "Saved to MIND.md" };
-        } else if (target === "retain") {
-          // Parse structured fact line(s)
-          const facts = memory.retain(content, "agent-tool");
-          if (facts.length === 0) {
-            // If not in structured format, save as observation
-            const facts2 = memory.retain(
-              `- S ${content}`,
-              "agent-tool"
-            );
-            return {
-              content: `Retained ${facts2.length} fact(s) as observation`,
-            };
+        } catch (e) {
+          if (e instanceof MemoryWriteBlocked) {
+            return { content: `BLOCKED: ${e.reason}`, isError: true };
           }
-          return {
-            content: `Retained ${facts.length} fact(s): ${facts.map((f) => `[${f.kind}] ${f.content.slice(0, 60)}`).join("; ")}`,
-          };
-        } else {
-          memory.appendDailyLog(content, sessionId);
-          return {
-            content: `Saved to daily log (${new Date().toISOString().split("T")[0]})`,
-          };
+          throw e;
         }
       },
     },
@@ -153,11 +156,18 @@ export function createSaveTools(memory: MemoryIndex) {
               isError: true,
             };
           }
-          // Backup the existing file before full replace
+          // Backup the existing file before full replace. Existing content was
+          // already gated on its way in, but treat .bak like every other
+          // memory write so the funnel has no exceptions.
           if (existing.trim()) {
             const backupPath = filePath + ".bak";
             try {
-              atomicWriteFileSync(backupPath, existing);
+              writeMemorySafely({
+                content: existing,
+                source: "tool",
+                target: backupPath,
+                mode: "overwrite",
+              });
             } catch {}
           }
           updated = newContent;
@@ -231,7 +241,19 @@ export function createSaveTools(memory: MemoryIndex) {
           };
         }
 
-        atomicWriteFileSync(filePath, updated);
+        try {
+          writeMemorySafely({
+            content: updated,
+            source: "tool",
+            target: filePath,
+            mode: "overwrite",
+          });
+        } catch (e) {
+          if (e instanceof MemoryWriteBlocked) {
+            return { content: `BLOCKED: ${e.reason}`, isError: true };
+          }
+          throw e;
+        }
         memory.markDirty();
 
         return {

@@ -245,13 +245,26 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     const body = await safeParseBody(req);
     const task = (body?.task as string) || "Execute your role";
     try {
-      const handler = (await import("../agency/handler.js")).Handler.getInstance();
-      json(200, { ok: true, agentId: handler.spawnAgent({
-        name: tpl.name, role: tpl.role, task,
-        systemPrompt: tpl.systemPrompt,
-        tools: tpl.allowedTools.length > 0 ? tpl.allowedTools : undefined,
-        templateId: tpl.id,
-      }) });
+      // Route template spawns through the canonical invoke surface so the
+      // run is persisted to ~/.lax/operations/<opId>/events.jsonl and the
+      // FieldAgent registry stays consistent with the rest of the spawn
+      // doors. Closes F1: this used to bypass invokeDefinition and go
+      // directly through Handler.spawnAgent's shadow state machine.
+      const { invokeDefinition } = await import("../agents/invoke.js");
+      const ref = invokeDefinition(
+        {
+          id: tpl.id,
+          name: tpl.name,
+          role: tpl.role,
+          systemPrompt: tpl.systemPrompt,
+          allowedTools: tpl.allowedTools,
+          description: tpl.description ?? "",
+          icon: tpl.icon,
+          requiresWorktree: tpl.requiresWorktree,
+        },
+        task,
+      );
+      json(200, { ok: true, agentId: ref.fieldAgentId });
     } catch (e) { json(500, { error: (e as Error).message }); }
     return true;
   }

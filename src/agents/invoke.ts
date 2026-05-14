@@ -1,26 +1,38 @@
 /**
- * Canonical invocation entrypoint.
+ * Canonical invocation entrypoint — single door for "start an agent run."
  *
- * Today, code that wants to start an agent reaches for one of several
- * doors: Handler.spawnAgent directly, the agency orchestrator, the
- * agent_spawn tool, the delegate tool, the CEO heartbeat... Each
- * resolves "what is this agent" differently — by role string, by
- * template id, by ad-hoc systemPrompt + tools.
+ * Today every other spawn door has either been retired (operations/executor,
+ * routes/agents template spawn) or routed through here (agent_spawn tool,
+ * delegate tool, primal-auto-build chunk worker). After F1 closes, this
+ * function is also where canonical-loop persistence kicks in: every run
+ * lands in `~/.lax/operations/<opId>/events.jsonl` and is recoverable, not
+ * just chat turns.
  *
- * invokeAgent() is the ONE function callers should use going forward.
- * It accepts a canonical id (template id or "builtin-<role>") or a
- * role slug, resolves it via AgentCatalog, and dispatches to
- * Handler.spawnAgent with the resolved definition.
+ * Flow:
+ *   1. Resolve the AgentDefinition (catalog lookup; org/project scoping).
+ *   2. Cap tools through the project gate + caller's override.
+ *   3. Attach a FieldAgent record in Handler's registry so the legacy
+ *      status / cancel / message tools still find the run by id.
+ *   4. Emit `handler:agent-spawn` so `server/handler-events.ts`'s UI
+ *      broadcaster + pendingMeta capture for AgentRunStore fire.
+ *   5. Hand the request to the registered canonical-loop driver
+ *      (`agents/runtime.ts`). The driver runs `runAgentViaCanonical`,
+ *      producing the persisted op record.
+ *   6. When the driver resolves, emit `handler:agent-result` (+ done /
+ *      error) so chunk-runner.ts, the AgentRunStore subscriber, and other
+ *      legacy EventBus listeners observe the terminal state unchanged.
  *
- * Returning a RunRef rather than a bare string keeps the door open
- * for queued/deferred invocations later (e.g. "I want to invoke this
- * agent, but block on a budget check first") without an API break.
+ * Returning a RunRef rather than a bare string keeps the door open for
+ * queued/deferred invocations later (e.g. budget-checked dispatch) without
+ * an API break.
  */
 
 import type { AgentDefinition, InvokeOpts, RunRef } from "./types.js";
 import { AgentCatalog } from "./catalog.js";
 import { Handler } from "../agency/handler.js";
 import { ProjectStore } from "../agent-store.js";
+import { EventBus } from "../event-bus.js";
+import { dispatchAgentRun, type AgentRunDriverRequest } from "./runtime.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("agents.invoke");
@@ -53,12 +65,13 @@ export function invokeAgent(
 }
 
 /**
- * Spawn an agent run from an already-resolved definition. Use this
- * when the caller is passing through an AgentDefinition it built
- * inline (e.g. a one-off ad-hoc agent with no catalog entry).
+ * Spawn an agent run from an already-resolved definition. Use this when
+ * the caller is passing through an AgentDefinition it built inline (e.g.
+ * a one-off ad-hoc agent with no catalog entry — operations/executor's
+ * phase agents do this).
  *
- * Prefer invokeAgent(id, ...) over this when the agent IS in the
- * catalog — keeps the catalog the source of truth.
+ * Prefer `invokeAgent(id, ...)` when the agent IS in the catalog — keeps
+ * the catalog the source of truth.
  */
 export function invokeDefinition(
   def: AgentDefinition,
@@ -69,32 +82,109 @@ export function invokeDefinition(
   const systemPrompt = def.persona
     ? `${def.systemPrompt}\n\n## Persona\n\n${def.persona}`
     : def.systemPrompt;
+  const name = opts.nameOverride ?? def.name;
+  const templateId = def.id.startsWith("tpl-") ? def.id : undefined;
 
-  const fieldAgentId = Handler.getInstance().spawnAgent({
-    name: opts.nameOverride ?? def.name,
+  const { agentId, abortController } = Handler.getInstance().attachExternalRun({
+    name,
     role: def.role,
     task,
     systemPrompt,
     tools,
     parentSessionId: opts.parentSessionId,
     parentAgentId: opts.parentAgentId,
-    templateId: def.id.startsWith("tpl-") ? def.id : undefined,
+    templateId,
   });
 
-  logger.info(`[invoke] ${def.role} "${def.name}" id=${def.id} run=${fieldAgentId}`);
+  EventBus.emit("handler:agent-spawn", {
+    agentId,
+    name,
+    role: def.role,
+    task,
+    systemPrompt: systemPrompt || "",
+    parentSessionId: opts.parentSessionId || "",
+    parentAgentId: opts.parentAgentId || null,
+    templateId: templateId || null,
+  });
+
+  logger.info(`[invoke] ${def.role} "${def.name}" id=${def.id} run=${agentId}`);
+
+  void runAgentViaDriver(
+    {
+      agentId,
+      name,
+      role: def.role,
+      task,
+      systemPrompt,
+      tools,
+      parentSessionId: opts.parentSessionId,
+      parentAgentId: opts.parentAgentId,
+      templateId,
+    },
+    abortController.signal,
+  );
 
   return {
-    runId: fieldAgentId,
-    fieldAgentId,
+    runId: agentId,
+    fieldAgentId: agentId,
     definition: def,
   };
 }
 
 /**
- * Apply a tool override. Override must be a SUBSET of the allowed
- * surface (already project-gated) — broader requests are silently
- * capped so a caller can't escalate privileges by asking for tools
- * the role wasn't designed to use.
+ * Event-bridge — translates the canonical-loop driver's terminal outcome
+ * into the legacy EventBus signals subscribers expect.
+ *
+ * `handler:agent-result` is the durable signal — AgentRunStore.save fires
+ * on it in `server/handler-events.ts`. `handler:agent-done` and
+ * `handler:agent-error` are the chunk-runner / primal-auto-build hooks
+ * (see `src/primal-auto-build/agents/chunk-runner.ts`). All three must
+ * fire on terminal so existing consumers don't need to learn the new shape.
+ *
+ * Errors that escape the driver (e.g. no driver registered, infrastructure
+ * failure) are converted into a failed result here — the FieldAgent
+ * transitions cleanly to `failed` and the AgentRunStore record gets
+ * written with an error field, instead of silently hanging.
+ */
+async function runAgentViaDriver(req: AgentRunDriverRequest, signal: AbortSignal): Promise<void> {
+  const handler = Handler.getInstance();
+  let outcome: { result: string; success: boolean; tokens?: number };
+  try {
+    outcome = await dispatchAgentRun(req, signal);
+  } catch (e) {
+    outcome = { result: (e as Error).message || String(e), success: false };
+  }
+  handler.finalizeExternalRun(req.agentId, outcome);
+
+  if (outcome.success) {
+    EventBus.emit("handler:agent-done", {
+      agentId: req.agentId,
+      result: outcome.result,
+    });
+    EventBus.emit("handler:agent-result", {
+      agentId: req.agentId,
+      result: outcome.result,
+      success: true,
+      tokens: outcome.tokens,
+    });
+  } else {
+    EventBus.emit("handler:agent-error", {
+      agentId: req.agentId,
+      error: outcome.result,
+    });
+    EventBus.emit("handler:agent-result", {
+      agentId: req.agentId,
+      result: outcome.result,
+      success: false,
+    });
+  }
+}
+
+/**
+ * Apply a tool override. Override must be a SUBSET of the allowed surface
+ * (already project-gated) — broader requests are silently capped so a
+ * caller can't escalate privileges by asking for tools the role wasn't
+ * designed to use.
  */
 function capTools(allowed: string[], override: string[] | undefined): string[] {
   if (!override) return [...allowed];
@@ -108,13 +198,12 @@ function capTools(allowed: string[], override: string[] | undefined): string[] {
 }
 
 /**
- * Intersect the definition's allowedTools with the project's
- * allowedTools when an org scope is set. A project with no
- * allowedTools (undefined or empty array) means "no project-level
- * restriction" — the definition's full surface stands. This keeps
- * org membership opt-in for tool gating; just being in a project
- * doesn't shrink your tools unless the project owner declared an
- * allowlist.
+ * Intersect the definition's allowedTools with the project's allowedTools
+ * when an org scope is set. A project with no allowedTools (undefined or
+ * empty array) means "no project-level restriction" — the definition's
+ * full surface stands. This keeps org membership opt-in for tool gating;
+ * just being in a project doesn't shrink your tools unless the project
+ * owner declared an allowlist.
  */
 export function applyProjectToolGate(allowed: string[], opts: InvokeOpts): string[] {
   if (!opts.scope) return [...allowed];

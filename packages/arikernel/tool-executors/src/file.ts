@@ -3,7 +3,7 @@ import { open, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { ToolCall, ToolResult } from "@arikernel/core";
 import type { ToolExecutor } from "./base.js";
-import { makeResult } from "./base.js";
+import { makeResult, runPreDispatchGate } from "./base.js";
 
 let rootWarningEmitted = false;
 
@@ -97,6 +97,7 @@ export class FileExecutor implements ToolExecutor {
 	readonly toolClass = "file";
 
 	async execute(toolCall: ToolCall): Promise<ToolResult> {
+		await runPreDispatchGate(toolCall);
 		const start = Date.now();
 		const {
 			path: filePath,

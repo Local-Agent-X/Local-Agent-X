@@ -1,10 +1,11 @@
 import { join } from "node:path";
 import { sanitizeHistory, truncateHistory } from "../providers/sanitize.js";
 import { loadSystemPrompt } from "../config-loader.js";
-import type { AgentRequestInput, PreparedAgentRequest } from "./types.js";
+import type { AgentRequestInput, ForcedToolChoice, PreparedAgentRequest } from "./types.js";
 import { resolveProvider } from "./resolve-provider.js";
 import { CORE_TOOL_NAMES, SUPERVISOR_EXCLUDED, filterToolsForMessage } from "./tool-filter.js";
 import { buildTurnContextCached } from "./turn-context-cache.js";
+import { classifyIntent, hasLiteralToolCall, NO_SPAWN_OVERRIDE_RE } from "../classifiers/intent-classifier.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("agent-request.prepare-request");
@@ -391,6 +392,38 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     }
   }
 
+  // 7. Intent-classifier tool_choice forcing. When the user's ask
+  //    unambiguously maps to build_app / agent_spawn / self_edit, pin
+  //    tool_choice so the LLM emits a real tool_use block instead of
+  //    narrating its plan in prose ([Reading routes/] etc.). The LLM
+  //    classifier rides on the user's selected provider — same client
+  //    the chat is using. Skip the classifier for bridges, for explicit
+  //    user overrides ("don't delegate"), and when the user pasted a
+  //    literal tool call — in those cases the user's intent already
+  //    won, forcing on top would be wrong.
+  let toolChoice: ForcedToolChoice | undefined;
+  const skipClassifier =
+    isBridge ||
+    NO_SPAWN_OVERRIDE_RE.test(message) ||
+    hasLiteralToolCall(message);
+  if (!skipClassifier) {
+    try {
+      const verdict = await classifyIntent(message);
+      if (verdict && verdict.kind !== "free") {
+        const forcedName = verdict.kind;
+        const inToolList = tools.some(t => t.name === forcedName);
+        if (inToolList) {
+          toolChoice = { type: "tool", name: forcedName };
+          logger.info(`[intent] forcing ${forcedName} (reason="${verdict.reason}")`);
+        } else {
+          logger.warn(`[intent] classifier picked ${forcedName} but it's not in this turn's tool list — skipping force`);
+        }
+      }
+    } catch (e) {
+      logger.info(`[intent] classifier threw — skipping force: ${(e as Error).message}`);
+    }
+  }
+
   return {
     provider: resolved.provider,
     apiKey: resolved.apiKey,
@@ -403,5 +436,6 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     images,
     temperature: resolved.temperature,
     maxIterations: resolved.maxIterations,
+    toolChoice,
   };
 }

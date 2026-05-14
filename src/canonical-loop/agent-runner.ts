@@ -114,6 +114,21 @@ export async function runAgentViaCanonical(
   seedOpMessages(op.id, history, userMessage, options.images);
   await registerProviderAdapter(op.id, options, sessionId);
 
+  // Bridge canonical-cancel → tool-execution AbortSignal (mirrors the
+  // chat-runner fix). Without this, opCancel fires adapter.abort but
+  // in-flight tool subprocesses (notably self_edit's `claude -p`) never
+  // see the signal and the worker stays blocked on dispatcher.dispatch.
+  const { subscribeOpSignals } = await import("./signals.js");
+  const toolCancelController = new AbortController();
+  const offCancelSignal = subscribeOpSignals(op.id, (s) => {
+    if (s.kind === "cancel") {
+      try { toolCancelController.abort(new Error("op cancelled")); } catch { /* idempotent */ }
+    }
+  });
+  const dispatcherSignal: AbortSignal = options.signal
+    ? AbortSignal.any([toolCancelController.signal, options.signal])
+    : toolCancelController.signal;
+
   registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
     tools: options.tools,
     security: options.security,
@@ -123,7 +138,7 @@ export async function runAgentViaCanonical(
     callerRole: options.callerRole,
     sessionId,
     onEvent: options.onEvent,
-    signal: options.signal,
+    signal: dispatcherSignal,
   }));
 
   registerToolsForOp(op.id, options.tools.map(t => ({
@@ -221,6 +236,7 @@ export async function runAgentViaCanonical(
     if (options.signal) options.signal.removeEventListener("abort", onSignalAbort);
     offEvents();
     offStream();
+    offCancelSignal();
     unregisterToolDispatcherForOp(op.id);
     unregisterToolsForOp(op.id);
   }

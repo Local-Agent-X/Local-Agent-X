@@ -534,22 +534,32 @@ export async function resolveOpenAICompatTarget(
   provider: string,
   prepared: { apiKey: string; customBaseURL?: string },
 ): Promise<OpenAICompatTarget | null> {
-  if (provider === "local") {
-    const { getRuntimeConfig } = await import("../../config.js");
-    return { baseURL: `${getRuntimeConfig().ollamaUrl}/v1`, apiKey: prepared.apiKey || "ollama" };
-  }
+  const { PROVIDERS, isHttpProvider } = await import("../../providers/registry.js");
+  const { PROVIDER_IDS } = await import("../../providers/provider-ids.js");
+
+  if (!(PROVIDER_IDS as readonly string[]).includes(provider)) return null;
+  const meta = PROVIDERS[provider as typeof PROVIDER_IDS[number]];
+
+  // The transport discriminator is the safety belt: anthropic (cli)
+  // cannot accidentally fall through to openai-compat routing.
+  if (!isHttpProvider(meta)) return null;
+
+  // Ollama Cloud keeps its own resolver because the baseURL pairs with
+  // a cache-warmed apiKey (the registry returns null for it on purpose).
   if (provider === "ollama-cloud") {
     const { getCloudOllamaCallTarget } = await import("../../ollama-cloud.js");
-    return getCloudOllamaCallTarget();  // null when cache cold; caller handles
+    return getCloudOllamaCallTarget();
   }
-  if (provider === "xai") return { baseURL: "https://api.x.ai/v1", apiKey: prepared.apiKey };
-  if (provider === "openai") return { baseURL: "https://api.openai.com/v1", apiKey: prepared.apiKey };
-  if (provider === "gemini") return { baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", apiKey: prepared.apiKey };
-  if (provider === "cerebras") return { baseURL: "https://api.cerebras.ai/v1", apiKey: prepared.apiKey };
-  if (provider === "custom") {
-    const baseURL = prepared.customBaseURL || "";
-    if (!baseURL) return null;
-    return { baseURL, apiKey: prepared.apiKey };
-  }
-  return null;
+
+  const { getRuntimeConfig } = await import("../../config.js");
+  const baseURL = typeof meta.baseURL === "function"
+    ? meta.baseURL({ ollamaUrl: getRuntimeConfig().ollamaUrl, customBaseURL: prepared.customBaseURL })
+    : meta.baseURL;
+  if (!baseURL) return null;
+
+  // Local Ollama doesn't require an API key — fall back to the literal
+  // string "ollama" the old branch used so downstream auth headers stay
+  // identical to pre-registry behavior.
+  const apiKey = provider === "local" ? (prepared.apiKey || "ollama") : prepared.apiKey;
+  return { baseURL, apiKey };
 }

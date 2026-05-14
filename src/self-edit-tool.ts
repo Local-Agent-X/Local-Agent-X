@@ -372,12 +372,23 @@ export const selfEditTool: ToolDefinition = {
           env: npmAugmentedEnv(),
         });
 
-        const abortListener = () => { try { proc.kill("SIGTERM"); } catch {} };
+        // On Windows shell:true wraps spawn in cmd.exe; proc.kill only
+        // kills the wrapper. Use taskkill /F /T to nuke the tree so the
+        // real claude.exe child dies on cancel/timeout. Mirrors the same
+        // fix in self-edit-sandbox-gates.ts:spawnClaude.
+        const killTree = () => {
+          try { proc.kill("SIGTERM"); } catch {}
+          if (process.platform === "win32" && proc.pid) {
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-require-imports
+              require("node:child_process").execSync(`taskkill /PID ${proc.pid} /F /T`, { stdio: "ignore", windowsHide: true });
+            } catch {}
+          }
+        };
+        const abortListener = killTree;
         signal?.addEventListener("abort", abortListener);
 
-        const timer = setTimeout(() => {
-          try { proc.kill("SIGTERM"); } catch {}
-        }, TIMEOUT_MS);
+        const timer = setTimeout(killTree, TIMEOUT_MS);
 
         proc.stdout?.on("data", (c: Buffer) => { stdout += c.toString(); if (stdout.length > MAX_OUTPUT_CHARS * 3) stdout = stdout.slice(-MAX_OUTPUT_CHARS * 3); });
         proc.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });

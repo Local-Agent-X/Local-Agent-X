@@ -114,20 +114,12 @@ export async function runAgentViaCanonical(
   seedOpMessages(op.id, history, userMessage, options.images);
   await registerProviderAdapter(op.id, options, sessionId);
 
-  // Bridge canonical-cancel → tool-execution AbortSignal (mirrors the
-  // chat-runner fix). Without this, opCancel fires adapter.abort but
-  // in-flight tool subprocesses (notably self_edit's `claude -p`) never
-  // see the signal and the worker stays blocked on dispatcher.dispatch.
-  const { subscribeOpSignals } = await import("./signals.js");
-  const toolCancelController = new AbortController();
-  const offCancelSignal = subscribeOpSignals(op.id, (s) => {
-    if (s.kind === "cancel") {
-      try { toolCancelController.abort(new Error("op cancelled")); } catch { /* idempotent */ }
-    }
-  });
-  const dispatcherSignal: AbortSignal = options.signal
-    ? AbortSignal.any([toolCancelController.signal, options.signal])
-    : toolCancelController.signal;
+  // Bridge canonical opCancel → tool-execution AbortSignal so subprocesses
+  // (self_edit's claude -p, build_app's codex --full-auto) actually die on
+  // Stop instead of running to natural completion while the op hangs in
+  // `cancelling`. Composes with the caller's optional external signal.
+  const { bridgeOpCancelToToolSignal } = await import("./cancel-handler.js");
+  const cancelBridge = bridgeOpCancelToToolSignal(op.id, options.signal);
 
   registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
     tools: options.tools,
@@ -138,7 +130,7 @@ export async function runAgentViaCanonical(
     callerRole: options.callerRole,
     sessionId,
     onEvent: options.onEvent,
-    signal: dispatcherSignal,
+    signal: cancelBridge.signal,
   }));
 
   registerToolsForOp(op.id, options.tools.map(t => ({
@@ -236,7 +228,7 @@ export async function runAgentViaCanonical(
     if (options.signal) options.signal.removeEventListener("abort", onSignalAbort);
     offEvents();
     offStream();
-    offCancelSignal();
+    cancelBridge.dispose();
     unregisterToolDispatcherForOp(op.id);
     unregisterToolsForOp(op.id);
   }

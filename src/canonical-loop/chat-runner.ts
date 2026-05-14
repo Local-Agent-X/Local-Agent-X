@@ -49,7 +49,7 @@ import {
 import { enableDefaultMiddlewareStack, getActiveMiddlewareStack } from "./middlewares/host.js";
 import { createAnthropicAdapter } from "./adapters/anthropic.js";
 import { subscribeOpStream, subscribeOpEvents } from "./control-api.js";
-import { subscribeOpSignals } from "./signals.js";
+import { bridgeOpCancelToToolSignal } from "./cancel-handler.js";
 import { appendOpMessage } from "./store.js";
 import { makeChatToolDispatcher } from "./chat-tool-dispatcher.js";
 import type { OpMessageRow, CanonicalEvent, StateChangedBody } from "./types.js";
@@ -394,25 +394,11 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   }
 
   // 4. Per-op tool dispatcher — wraps tool-executor with this turn's
-  //    security context. Cleaned up in `finally` below.
-  //
-  // Bridge canonical-cancel → tool-execution AbortSignal. Without this,
-  // hitting Stop transitions the op to `cancelling` and aborts the LLM
-  // stream, but in-flight tools (especially self_edit's `claude -p`
-  // subprocess) never see the abort and the worker stays locked on
-  // dispatcher.dispatch until the tool finishes naturally. The
-  // controller's signal is combined with the caller-provided ctx.signal
-  // so both cancel paths (websocket disconnect + canonical opCancel)
-  // reach the tool layer.
-  const toolCancelController = new AbortController();
-  const offCancelSignal = subscribeOpSignals(op.id, (s) => {
-    if (s.kind === "cancel") {
-      try { toolCancelController.abort(new Error("op cancelled")); } catch { /* idempotent */ }
-    }
-  });
-  const dispatcherSignal: AbortSignal = ctx.signal
-    ? AbortSignal.any([toolCancelController.signal, ctx.signal])
-    : toolCancelController.signal;
+  //    security context. Cleaned up in `finally` below. The bridge wires
+  //    canonical opCancel into the tool layer so Stop kills subprocesses
+  //    (self_edit's claude -p, build_app's codex --full-auto) instead of
+  //    leaving them running while the op state hangs in `cancelling`.
+  const cancelBridge = bridgeOpCancelToToolSignal(op.id, ctx.signal);
 
   registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
     tools: ctx.tools,
@@ -423,7 +409,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     callerRole: ctx.callerRole,
     sessionId: ctx.sessionId,
     onEvent: ctx.onToolEvent,
-    signal: dispatcherSignal,
+    signal: cancelBridge.signal,
   }));
 
   // 4b. Tool descriptors for the adapter — turn-loop reads these into
@@ -509,7 +495,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     yield { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } };
     offStream();
     offEvents();
-    offCancelSignal();
+    cancelBridge.dispose();
     unregisterToolDispatcherForOp(op.id);
     unregisterToolsForOp(op.id);
     return;
@@ -537,7 +523,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   } finally {
     offStream();
     offEvents();
-    offCancelSignal();
+    cancelBridge.dispose();
     unregisterToolDispatcherForOp(op.id);
     unregisterToolsForOp(op.id);
   }

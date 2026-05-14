@@ -44,6 +44,10 @@ import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-c
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
+import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
+import { createLogger } from "../../logger.js";
+
+const logger = createLogger("canonical-loop.anthropic");
 
 export const ANTHROPIC_ADAPTER_NAME = "anthropic";
 export const ANTHROPIC_ADAPTER_VERSION = "1.0.0";
@@ -296,6 +300,34 @@ export class AnthropicAdapter implements Adapter {
       await this.inflight;
     } finally {
       this.inflight = null;
+    }
+
+    // Tool-call-in-text fallback. Mirror of the rescue path in
+    // openai-compat.ts. Anthropic models occasionally emit a tool call as
+    // raw JSON inside the text channel instead of as a structured tool_use
+    // block — typically after long sessions or when the model "explains"
+    // a call before making it. Without this, the JSON shows up in chat,
+    // the loop sees zero tool calls, and the turn stalls.
+    // Fires ONLY when no structured tool_use arrived AND the text contains
+    // a clear pattern. Healthy turns are untouched.
+    if (toolCallIds.length === 0 && assembledText.length > 0) {
+      const validNames = new Set(input.tools.map(t => t.name));
+      const extracted = extractToolCallsFromText(assembledText, validNames);
+      if (extracted.toolCalls.length > 0) {
+        logger.info(`${req.model} emitted ${extracted.toolCalls.length} tool call(s) as text — extracted`);
+        for (const tc of extracted.toolCalls) {
+          toolCallIds.push(tc.id);
+          report({
+            kind: "tool_call_requested",
+            call: { toolCallId: tc.id, tool: tc.name, args: parseArgs(tc.arguments) },
+          });
+        }
+        assembledText = extracted.remainingText;
+        // Retract the JSON the UI already streamed into the bubble; the
+        // persisted message will use the cleaned text. Clients without
+        // stream_redact handling are no worse off than before.
+        report({ kind: "stream_redact", replacementText: extracted.remainingText });
+      }
     }
 
     // Finalize the assistant message if any text was produced. A turn that

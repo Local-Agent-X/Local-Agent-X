@@ -7,6 +7,7 @@ import { enqueue } from "../execution-lanes.js";
 import { EventBus } from "../event-bus.js";
 import { ProjectStore, type AgentRun } from "../agent-store.js";
 import { looksLikeClarificationRequest } from "../agents/result-guard.js";
+import { registerAgentRunDriver, type AgentRunDriver } from "../agents/runtime.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore } from "../memory.js";
 import type { SecretsStore } from "../secrets.js";
@@ -17,7 +18,6 @@ import type { AgentRunStore, AgentTemplateStore } from "../agent-store.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.handler-events");
 
-interface AgentRunEvent { agentId: string; task: string; systemPrompt: string; role: string; parentSessionId?: string; templateId?: string }
 interface AgentSpawnEvent { agentId: string; name: string; role: string; task: string; systemPrompt?: string; parentAgentId?: string; parentSessionId?: string }
 interface AgentOutputEvent { agentId: string; output: string }
 interface AgentBlockedEvent { agentId: string; reason: string; role: string }
@@ -45,9 +45,16 @@ export function registerHandlerEvents(deps: {
   const eventBus = EventBus.getInstance();
   const pendingMeta = new Map<string, { name: string; role: string; task: string; systemPrompt: string; parentAgentId: string | null; sessionId: string; startedAt: number; toolsUsed: string[] }>();
 
-  eventBus.on("handler:agent-run", async (data: unknown) => {
-    const { agentId, task, systemPrompt, role, parentSessionId } = data as AgentRunEvent;
-    const templateId = (data as AgentRunEvent).templateId;
+  // Canonical-loop driver — registered with agents/runtime so invokeAgent
+  // dispatches here instead of going through Handler's shadow state
+  // machine. Reads the same closure deps the previous on("handler:agent-run")
+  // subscriber did; the body is otherwise identical except it RETURNS the
+  // terminal outcome instead of emitting handler:agent-result itself.
+  // invokeDefinition fans the outcome out to subscribers
+  // (chunk-runner, AgentRunStore persistence, UI broadcast) via the legacy
+  // EventBus signals — preserved for migration safety.
+  const agentRunDriver: AgentRunDriver = async (req, signal) => {
+    const { agentId, task, systemPrompt, role, parentSessionId, templateId, tools: invocationTools } = req;
     logger.info(`[handler] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
 
     const template = templateId ? agentTemplateStore.get(templateId) : null;
@@ -77,6 +84,9 @@ export function registerHandlerEvents(deps: {
       // (role === "operator") use the narrower "operator" audience.
       // Per-template restrictions apply via templateAllowedTools, with
       // identity helpers always preserved (see resolveToolsForRequest).
+      // Falls back to the invocation's resolved tool list when no template
+      // was provided (ad-hoc agents like operations/executor's phase agents
+      // pass their tools through the invokeDefinition surface).
       const { resolveToolsForRequest } = await import("../tool-search.js");
       const audience = role === "operator" ? "operator" : "spawned-agent";
       const spawnedTools = resolveToolsForRequest(
@@ -84,7 +94,7 @@ export function registerHandlerEvents(deps: {
           audience,
           templateAllowedTools: template?.allowedTools && template.allowedTools.length > 0
             ? template.allowedTools
-            : undefined,
+            : (invocationTools && invocationTools.length > 0 ? invocationTools : undefined),
         },
         allAgentTools,
       );
@@ -126,13 +136,16 @@ export function registerHandlerEvents(deps: {
       // runner issues opCancel on expiry so the state machine transitions
       // running → cancelling → cancelled cleanly. Replaces the caller-side
       // setTimeout + AbortController pair the legacy path used (which
-      // aborted via signal — out-of-band from the loop).
+      // aborted via signal — out-of-band from the loop). The
+      // invokeDefinition-supplied AbortSignal also routes through canonical
+      // via this options.signal, so Handler.cancelAgent → opCancel works.
       const agentResult = await enqueue("agent", () => runAgentViaCanonical(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + worktreeBlock,
         tools: spawnedTools, security, toolPolicy, sessionId: `agent-${agentId}`, maxIterations: config.maxIterations, temperature: config.temperature,
         wallClockMs: config.agentTimeoutMs,
         opType: "agent_spawn",
         lane: "background",
+        signal,
         onEvent: (event) => { if (event.type === "stream" && "delta" in event && event.delta) eventBus.emit("handler:agent-output", { agentId, output: event.delta }); if (event.type === "tool_start") { logger.info(`[handler] Agent ${agentId} tool: ${event.toolName}`); eventBus.emit("handler:agent-output", { agentId, output: `[tool] ${event.toolName}...` }); } if (event.type === "tool_progress") { eventBus.emit("handler:agent-output", { agentId, output: `[progress] ${event.message}` }); } if (event.type === "tool_start" && event.requiresApproval) event.requiresApproval = false; },
       }), { label: `agent:${agentId}`, timeout: config.agentTimeoutMs });
       if (agentResult?.messages) agentSession.messages.push(...agentResult.messages);
@@ -153,17 +166,19 @@ export function registerHandlerEvents(deps: {
 
       const agentOutput = extractAgentOutput(agentSession.messages);
       if (mergeSuccess) {
-        eventBus.emit("handler:agent-result", { agentId, result: agentOutput, success: true });
-      } else {
-        const branchHint = worktreeInfo ? `Changes preserved on branch agent/${agentId}. Run: git merge agent/${agentId}` : "File changes may be lost";
-        eventBus.emit("handler:agent-result", { agentId, result: `[Agent completed but merge had conflicts — ${branchHint}]\n\n${agentOutput}`, success: false });
+        return { result: agentOutput, success: true };
       }
+      const branchHint = worktreeInfo ? `Changes preserved on branch agent/${agentId}. Run: git merge agent/${agentId}` : "File changes may be lost";
+      return { result: `[Agent completed but merge had conflicts — ${branchHint}]\n\n${agentOutput}`, success: false };
     } catch (e) {
       if (worktreeInfo) security.removeAllowedPath(worktreeInfo.path, `agent-${agentId}`);
       try { const { cleanupWorktree } = await import("../agency/worktree.js"); cleanupWorktree(agentId); } catch {}
-      const p = extractAgentOutput(agentSession.messages), msg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e); eventBus.emit("handler:agent-result", { agentId, result: p ? `[${msg}]\n\n${p}` : msg, success: false });
+      const p = extractAgentOutput(agentSession.messages);
+      const msg = (e as Error).name === "AbortError" ? "Agent timed out" : safeErrorMessage(e);
+      return { result: p ? `[${msg}]\n\n${p}` : msg, success: false };
     }
-  });
+  };
+  registerAgentRunDriver(agentRunDriver);
 
   eventBus.on("handler:agent-spawn", (d: unknown) => { const evt = d as AgentSpawnEvent; broadcastAll({ type: "agent-spawn", ...evt }); pendingMeta.set(evt.agentId, { name: evt.name, role: evt.role, task: evt.task, systemPrompt: evt.systemPrompt || "", parentAgentId: evt.parentAgentId || null, sessionId: evt.parentSessionId || "", startedAt: Date.now(), toolsUsed: [] }); });
   eventBus.on("handler:agent-output", (d: unknown) => { const evt = d as AgentOutputEvent; broadcastAll({ type: "agent-output", ...evt }); const m = pendingMeta.get(evt.agentId); if (m && typeof evt.output === "string" && evt.output.startsWith("[tool]")) { const t = evt.output.replace("[tool] ", "").replace("...", "").trim(); if (t && !m.toolsUsed.includes(t)) m.toolsUsed.push(t); } });

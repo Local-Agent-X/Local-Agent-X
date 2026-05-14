@@ -52,14 +52,19 @@ export const buildAppTool: ToolDefinition = {
     type: "object",
     properties: {
       name: { type: "string", description: "App directory name (e.g. 'trading-bot', 'todo-app')" },
-      prompt: { type: "string", description: "Detailed description of what to build. Be specific about features, styling, behavior." },
+      prompt: { type: "string", description: "Build brief — what to make, target features, styling notes, behavior. Be specific." },
       backend: { type: "string", enum: ["codex", "claude", "auto"], description: "Which CLI to use. 'auto' (default) matches your active provider. 'codex' = codex CLI. 'claude' = claude CLI." },
     },
     required: ["name", "prompt"],
   },
   async execute(args) {
     const appName = String(args.name || "app").replace(/[^a-zA-Z0-9_-]/g, "-");
-    const prompt = String(args.prompt || "");
+    // Some models occasionally emit `description` instead of `prompt` because
+    // the schema's parameter description used to contain the word
+    // "description"; fixed in the schema above, but still accept the alias
+    // for back-compat with model-version variance. Live failure 2026-05-14
+    // on Anthropic Opus 4.7 — prompt missing, description present.
+    const prompt = String(args.prompt || args.description || "");
     let backend = String(args.backend || "auto");
 
     if (backend === "auto") {

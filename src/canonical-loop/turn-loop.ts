@@ -263,7 +263,7 @@ export async function driveTurn(
   // loop's runPhase short-circuit before tool execution.
   const { toolMessages, toolSummary } = middlewareDirective?.kind === "abort"
     ? { toolMessages: [] as CommitTurnMessage[], toolSummary: [] as ToolCallSummary[] }
-    : await dispatchTools(op.id, turnIdx, toolCalls);
+    : await dispatchTools(op.id, turnIdx, toolCalls, opts.isCancelled);
   const toolDispatchMs = Date.now() - toolDispatchStart;
 
   if (opts.isCancelled?.()) {
@@ -530,13 +530,27 @@ interface DispatchedTools {
   toolSummary: ToolCallSummary[];
 }
 
-async function dispatchTools(opId: string, turnIdx: number, calls: ToolCall[]): Promise<DispatchedTools> {
+async function dispatchTools(
+  opId: string,
+  turnIdx: number,
+  calls: ToolCall[],
+  isCancelled?: () => boolean,
+): Promise<DispatchedTools> {
   if (calls.length === 0) return { toolMessages: [], toolSummary: [] };
   const dispatcher = getToolDispatcher(opId);
   const toolMessages: CommitTurnMessage[] = [];
   const toolSummary: ToolCallSummary[] = [];
 
   for (const call of calls) {
+    // Bail before dispatching the next tool if the op was cancelled while a
+    // previous tool in this batch was running. Without this, a parallel call
+    // group like [self_edit, web_search, web_search, ...] keeps marching after
+    // cancel — every subsequent tool fires its own abort error and the worker
+    // never reaches the post-dispatch isCancelled check in driveTurn because
+    // the for-loop never breaks. Empty toolMessages/toolSummary returned here
+    // is fine: driveTurn sees the cancellation at the post-dispatch check
+    // and returns cancelled=true without committing the partial turn.
+    if (isCancelled?.()) break;
     const argsHash = hashArgs(call.args);
     emit(opId, "tool_started", { turnIdx, tool: call.tool, argsHash });
     const out = await dispatcher.dispatch(call);

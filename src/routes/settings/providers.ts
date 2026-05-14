@@ -4,6 +4,7 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, readBody } from "../../server-utils.js";
 import { getRuntimeConfig } from "../../config.js";
 import { isEmbeddingModel } from "../../canonical-loop/model-capabilities.js";
+import type { ProviderId } from "../../providers/provider-ids.js";
 
 export const handleProvidersRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -101,7 +102,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       // Pick the BEST available model for each provider — when the agent
       // switches providers without specifying a model, it should go flagship,
       // not cheap/fast.
-      const DEFAULT_MODEL: Record<string, string> = {
+      const DEFAULT_MODEL: Record<ProviderId, string> = {
         xai: "grok-4",
         openai: "o3-pro",
         codex: "gpt-5.4",
@@ -110,8 +111,9 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
         cerebras: "gpt-oss-120b",
         local: "qwen2:7b",
         "ollama-cloud": "",  // user picks from cloud catalog; no sane default
+        custom: "custom-model",
       };
-      model = DEFAULT_MODEL[provider] || String(settings.model || "");
+      model = DEFAULT_MODEL[provider as ProviderId] || String(settings.model || "");
     }
     settings.provider = provider;
     if (model) settings.model = model;

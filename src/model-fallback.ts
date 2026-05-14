@@ -20,12 +20,12 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 import { createLogger } from "./logger.js";
+import type { ProviderId } from "./providers/provider-ids.js";
+export type { ProviderId };
 const logger = createLogger("model-fallback");
 
 const LAX_DIR = join(homedir(), ".lax");
 const HEALTH_FILE = join(LAX_DIR, "provider-health.json");
-
-export type ProviderId = "xai" | "openai" | "codex" | "anthropic" | "local" | "gemini" | "custom";
 
 export interface ProviderHealth {
   id: ProviderId;

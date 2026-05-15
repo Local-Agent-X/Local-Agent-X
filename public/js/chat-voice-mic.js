@@ -113,6 +113,23 @@ async function startVoiceMode() {
       voiceSR.interimResults = true;
       voiceSR.lang = navigator.language || 'en-US';
       voiceSR.maxAlternatives = 1;
+      // Lifecycle diagnostics — narrow down where voice gets stuck. Each event
+      // tells us a different stage:
+      //   onstart       SR connected to its audio source (Google cloud STT)
+      //   onaudiostart  user agent began capturing audio
+      //   onsoundstart  audio above noise threshold detected
+      //   onspeechstart speech (intelligible) detected
+      //   onresult      transcript chunk delivered (final or interim)
+      // Missing onstart → SR can't reach its STT backend (offline, blocked).
+      // onstart fires but onaudiostart doesn't → SR can't get the mic.
+      // onaudiostart fires but onsoundstart doesn't → mic is silent.
+      // onsoundstart fires but onspeechstart doesn't → noise but not speech.
+      // onspeechstart fires but onresult doesn't → STT backend silent.
+      voiceSR.onstart = () => console.log('[voice-sr] onstart — SR backend connected, listening');
+      voiceSR.onaudiostart = () => console.log('[voice-sr] onaudiostart — capturing audio');
+      voiceSR.onsoundstart = () => console.log('[voice-sr] onsoundstart — audio detected');
+      voiceSR.onspeechstart = () => console.log('[voice-sr] onspeechstart — speech detected');
+      voiceSR.onspeechend = () => console.log('[voice-sr] onspeechend');
       voiceSR.onresult = (event) => {
         if (window.PushToTalk && window.PushToTalk.getState() === 'closed') return;
         for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -120,26 +137,62 @@ async function startVoiceMode() {
           const transcript = (result[0].transcript || '').trim();
           if (!transcript) continue;
           const isFinal = !!result.isFinal;
+          console.log(`[voice-sr] onresult ${isFinal ? 'FINAL' : 'interim'}: "${transcript.slice(0, 60)}${transcript.length > 60 ? '…' : ''}"`);
           if (voiceWS && voiceWS.readyState === WebSocket.OPEN) {
             voiceWS.send(JSON.stringify({ type: 'transcript', text: transcript, isFinal }));
+          } else {
+            console.warn('[voice-sr] WS not open — transcript dropped');
           }
         }
       };
+      // Track consecutive audio-capture errors so we can back off when the
+      // mic enters a sticky bad state instead of tight-looping.
+      let _voiceSrAudioCaptureCount = 0;
       voiceSR.onerror = (event) => {
-        // 'no-speech' and 'aborted' are routine — ignore. Other errors
-        // surface to console; we attempt to restart unless we already are.
+        // Classification matches chat-dictate.js so voice has the same
+        // resilience dictation has had:
+        //   - no-speech / aborted: routine, no log
+        //   - audio-capture: transient mic glitch — let onend auto-restart
+        //   - not-allowed / service-not-allowed: fatal, needs user action
+        //   - other: surface for diagnosis
         if (event.error === 'no-speech' || event.error === 'aborted') return;
+        if (event.error === 'audio-capture') {
+          _voiceSrAudioCaptureCount += 1;
+          console.warn(`[voice-sr] audio-capture (transient #${_voiceSrAudioCaptureCount}) — onend will auto-restart`);
+          return;
+        }
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          console.error('[voice-sr] mic permission denied for SpeechRecognition — voice can\'t hear you. Grant mic permission and try again.');
+          return;
+        }
         console.warn('[voice-sr] error:', event.error);
       };
       voiceSR.onend = () => {
-        // SR stops itself after periods of silence; auto-restart while voice
-        // mode is on. Guard against tight loops if start() throws.
+        // SR stops itself after periods of silence OR after transient errors.
+        // Auto-restart while voice mode is on. Back off when audio-capture
+        // is firing repeatedly (sticky mic state) so we don't tight-loop a
+        // failing mic acquisition.
         if (!voiceMode || voiceSRRestartGuard) return;
         voiceSRRestartGuard = true;
-        try { voiceSR && voiceSR.start(); } catch (e) {
-          console.warn('[voice-sr] restart failed:', e && e.message);
-        }
-        setTimeout(() => { voiceSRRestartGuard = false; }, 250);
+        const delay = _voiceSrAudioCaptureCount > 0
+          ? Math.min(2000, 250 * Math.pow(2, _voiceSrAudioCaptureCount - 1))  // 250 → 500 → 1000 → 2000ms
+          : 250;
+        setTimeout(() => {
+          voiceSRRestartGuard = false;
+          if (!voiceMode || !voiceSR) return;
+          try {
+            voiceSR.start();
+            // Successful start clears the audio-capture streak. If start
+            // threw or the mic is still bad, onerror fires again and we
+            // back off further on the next round.
+            if (_voiceSrAudioCaptureCount > 0) {
+              console.log(`[voice-sr] restart succeeded after ${_voiceSrAudioCaptureCount} audio-capture error(s)`);
+              _voiceSrAudioCaptureCount = 0;
+            }
+          } catch (e) {
+            console.warn('[voice-sr] restart failed:', e && e.message);
+          }
+        }, delay);
       };
       try { voiceSR.start(); } catch (e) {
         console.warn('[voice-sr] initial start failed:', e && e.message);
@@ -167,6 +220,10 @@ async function startVoiceMode() {
           voicePlaybackNode.connect(ttsAna);
           VoiceSphere.attachTtsAnalyser(ttsAna);
         }
+        // Stay 'idle' so the inner particles keep their loose cloud form
+        // (the prominent "dust"). voice-sphere.js's idle breath was patched
+        // to also react to smoothedAmp, so the mic-driven pulse works in
+        // idle now too — no need to morph to the tight dyson shell.
         VoiceSphere.setState('idle');
       } catch (sphereErr) { console.warn('[voice-sphere] init failed:', sphereErr); }
     }

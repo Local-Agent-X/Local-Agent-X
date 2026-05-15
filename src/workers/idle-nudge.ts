@@ -28,7 +28,7 @@ const EXPLICIT_NOTIFY_MS = 1000;
 // User intent: "tell me / let me know / notify me / ping me when this is
 // done." When detected we fire near-immediately on completion instead of
 // waiting the full idle window — the user explicitly asked to be told.
-const EXPLICIT_NOTIFY_RE = /\b(tell|let|notify|ping|alert|message|update)\s+(me|us)\s+(when|once|after|as\s+soon\s+as|the\s+moment|right\s+when)\b/i;
+const EXPLICIT_NOTIFY_RE = /\b(tell|let|notify|ping|alert|message|update)\s+(me|us)(\s+know)?\s+(when|once|after|as\s+soon\s+as|the\s+moment|right\s+when)\b/i;
 
 const timers = new Map<string, NodeJS.Timeout>();
 

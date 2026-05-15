@@ -48,7 +48,7 @@ import {
 } from "./runtime.js";
 import { enableDefaultMiddlewareStack, getActiveMiddlewareStack } from "./middlewares/host.js";
 import { createAnthropicAdapter } from "./adapters/anthropic.js";
-import { subscribeOpStream, subscribeOpEvents } from "./control-api.js";
+import { subscribeOpStream, subscribeOpEvents, opCancel } from "./control-api.js";
 import { bridgeOpCancelToToolSignal } from "./cancel-handler.js";
 import { appendOpMessage } from "./store.js";
 import { makeChatToolDispatcher } from "./chat-tool-dispatcher.js";
@@ -400,6 +400,22 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   //    leaving them running while the op state hangs in `cancelling`.
   const cancelBridge = bridgeOpCancelToToolSignal(op.id, ctx.signal);
 
+  // External abort → opCancel. Mirrors agent-runner.ts. Without this the
+  // tool-layer bridge above kills subprocesses but the LLM stream itself
+  // keeps reading until the provider client's own backstop (Codex's 90s
+  // silence timeout) fires. opCancel routes through cancel-handler.ts
+  // which calls adapter.abort() — that aborts the in-flight stream
+  // immediately. Idempotent if opCancel was already issued.
+  let externalAbortListener: (() => void) | null = null;
+  if (ctx.signal) {
+    externalAbortListener = () => {
+      logger.info(`[chat-runner] op ${op.id} received external abort signal — issuing opCancel`);
+      opCancel(op.id, "external-signal");
+    };
+    if (ctx.signal.aborted) externalAbortListener();
+    else ctx.signal.addEventListener("abort", externalAbortListener, { once: true });
+  }
+
   registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
     tools: ctx.tools,
     security: ctx.security,
@@ -496,6 +512,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     offStream();
     offEvents();
     cancelBridge.dispose();
+    if (externalAbortListener && ctx.signal) ctx.signal.removeEventListener("abort", externalAbortListener);
     unregisterToolDispatcherForOp(op.id);
     unregisterToolsForOp(op.id);
     return;
@@ -524,6 +541,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     offStream();
     offEvents();
     cancelBridge.dispose();
+    if (externalAbortListener && ctx.signal) ctx.signal.removeEventListener("abort", externalAbortListener);
     unregisterToolDispatcherForOp(op.id);
     unregisterToolsForOp(op.id);
   }

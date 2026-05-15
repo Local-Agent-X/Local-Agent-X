@@ -506,8 +506,15 @@ import * as THREE from 'three';
         breath = 1.0 + smoothedAmp * 0.03;
         ringAlphaBoost = 0;
       } else {
+        // Idle: subtle mic-driven breath if a mic analyser is attached
+        // (smoothedAmp will be 0 when no analyser is attached, so no
+        // change in that case). Keeps the cloud-form dust visibly alive
+        // when the user is in voice mode but the state hasn't switched
+        // to listening yet (or the picker keeps it in idle for the
+        // looser cloud aesthetic). Was hardcoded breath=1.0 — the dust
+        // looked frozen even though mic data was flowing.
         pulse = 0;
-        breath = 1.0;
+        breath = 1.0 + smoothedAmp * 0.025;
         ringAlphaBoost = 0;
       }
       dotMat.uniforms.uPulse.value = pulse;

@@ -439,16 +439,24 @@ export function setupChatWebSocket(server: Server, authToken: string) {
               ws.send(JSON.stringify({ type: "error", message: `Autopilot stop failed: ${(e as Error).message}` }));
             }
           } else if (agentId.startsWith("op_")) {
-            // Worker-pool op — route to pool
+            // op_* IDs span two lifecycle systems sharing the same prefix:
+            //   - canonical-loop ops (op_chat_turn, op_voice_turn,
+            //     op_research, etc.) — driven by control-api.opCancel
+            //   - worker-pool ops (delegations from delegate-worker.ts /
+            //     op_submit_async) — driven by pool.killOp IPC
+            // Fire both. Each is a no-op on ops the other owns. Without the
+            // canonical opCancel call, canonical agent-runner ops surfaced
+            // in the Agents panel could not be cancelled from there.
             const { killOp, cancelQueuedOp } = await import("./workers/pool.js");
+            const { opCancel } = await import("./canonical-loop/index.js");
             switch (msg.action) {
               case "cancel": {
-                // Try running-op kill first; if the op is still in the queue
-                // (worker hasn't picked it up yet) fall back to cancelQueuedOp
-                // so the user can cancel before any compute is spent.
-                let ok = killOp(agentId);
-                if (!ok) ok = cancelQueuedOp(agentId);
-                if (!ok) ws.send(JSON.stringify({ type: "error", message: `Op ${agentId} not found (already finished)` }));
+                const canonicalRes = opCancel(agentId, "user-stop");
+                let poolHit = killOp(agentId);
+                if (!poolHit) poolHit = cancelQueuedOp(agentId);
+                if (!canonicalRes.ok && !poolHit) {
+                  ws.send(JSON.stringify({ type: "error", message: `Op ${agentId} not found (already finished)` }));
+                }
                 break;
               }
               case "pause":

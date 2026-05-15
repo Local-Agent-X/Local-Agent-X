@@ -36,7 +36,13 @@ import { homedir } from "node:os";
 // gives up gracefully." On Codex the underlying streamCodexResponse may
 // have a longer cold-start; abortion via AbortController unblocks the
 // caller even if the upstream stream eventually completes in background.
-const DEFAULT_TIMEOUT_MS = 1500;
+// 8s budget. The Anthropic CLI/OAuth subprocess on Windows is the long
+// pole — cold spawn 2-3s + Opus first-byte 1-2s + body 1-2s easily
+// crosses 5s. The race is non-blocking on success (resolves on
+// first-finish), so this ceiling only adds latency on calls that would
+// have failed anyway. With 5s the intent classifier hit wallclock on
+// every Anthropic chat turn — observed in soak logs 2026-05-14.
+const DEFAULT_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_RESPONSE_CHARS = 800;
 
 export interface ClassifyOptions<T> {
@@ -92,8 +98,17 @@ async function resolveActiveProvider(): Promise<{
       if (!tokens || isAnthropicTokenExpired(tokens)) return null;
       apiKey = tokens.accessToken || "";
       if (!model) model = "claude-sonnet-4-6";
-    } else if (provider === "codex" || provider === "openai") {
-      // Codex subscription bearer or OpenAI API key — try secrets store first
+    } else if (provider === "codex") {
+      // Subscription bearer via the canonical loader the chat path uses
+      // (auth.ts → loadTokens → ChatGPT OAuth). Returns the JWT
+      // streamCodexResponse expects. Reading just OPENAI_API_KEY broke
+      // every classifier for Codex CLI subscribers (no API key exists).
+      try {
+        const { getApiKey } = await import("../auth.js");
+        apiKey = await getApiKey();
+      } catch { /* no subscription tokens — fall through to null below */ }
+      if (!model) model = "gpt-5.5";
+    } else if (provider === "openai") {
       try {
         const { getSecretsStoreSingleton } = await import("../secrets.js");
         apiKey = getSecretsStoreSingleton()?.get("OPENAI_API_KEY") || "";
@@ -101,8 +116,7 @@ async function resolveActiveProvider(): Promise<{
       if (!apiKey) {
         try { apiKey = process.env.OPENAI_API_KEY || ""; } catch {}
       }
-      if (provider === "codex" && !model) model = "gpt-5.5";
-      if (provider === "openai" && !model) model = "gpt-4o-mini";
+      if (!model) model = "gpt-4o-mini";
     } else if (provider === "ollama" || provider === "local") {
       apiKey = "ollama";
       if (!model) model = "llama3:8b";

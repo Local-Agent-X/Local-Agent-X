@@ -86,9 +86,13 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     const tokens = loadAnthropicTokens();
     let cliInstalled = false;
     let cliAuthenticated = false;
+    let cliVersion: string | null = null;
     try {
-      _execSync("claude --version", { timeout: 5000, stdio: "pipe", env: npmAugmentedEnv() });
+      const out = _execSync("claude --version", { timeout: 5000, stdio: "pipe", env: npmAugmentedEnv() }).toString().trim();
       cliInstalled = true;
+      // Output looks like "2.1.116 (Claude Code)" — keep just the semver head.
+      const m = out.match(/(\d+\.\d+\.\d+)/);
+      cliVersion = m ? m[1] : out;
       // Check if claude CLI has its own auth session by reading its config file.
       // If the CLI is logged in (oauthAccount present or API key set), builds/chat work
       // without us holding OAuth tokens.
@@ -123,7 +127,31 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     // - If our tokens are still valid, the app uses them
     // - Otherwise we spawn the CLI which uses its own login
     const method = hasValidTokens ? (tokens?.method || "oauth") : cliAuthenticated ? "cli-session" : "none";
-    json(200, { authenticated, method, expired: isAnthropicTokenExpired(tokens), cliInstalled, cliAuthenticated }); return true;
+    json(200, { authenticated, method, expired: isAnthropicTokenExpired(tokens), cliInstalled, cliAuthenticated, cliVersion }); return true;
+  }
+  if (method === "POST" && url.pathname === "/api/auth/anthropic/update-cli") {
+    // Reinstall at @latest. Same shell command as install-cli except pinned to
+    // @latest so npm always reaches out for the newest release rather than
+    // short-circuiting on a cached version. UI exposes this separately so
+    // users can refresh without removing the package first.
+    try {
+      const before = (() => {
+        try {
+          return _execSync("claude --version", { timeout: 5000, stdio: "pipe", env: npmAugmentedEnv() }).toString().trim().match(/(\d+\.\d+\.\d+)/)?.[1] ?? null;
+        } catch { return null; }
+      })();
+      const { exec } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const { stdout, stderr } = await promisify(exec)("npm install -g @anthropic-ai/claude-code@latest", { timeout: 180_000 });
+      resetNpmAugmentedEnvCache();
+      let after = "unknown";
+      try {
+        const out = _execSync("claude --version", { timeout: 5000, stdio: "pipe", env: npmAugmentedEnv() }).toString().trim();
+        after = out.match(/(\d+\.\d+\.\d+)/)?.[1] ?? out;
+      } catch {}
+      json(200, { ok: true, before, after, changed: before !== after, output: (stdout + stderr).slice(-500) });
+    } catch (e) { json(500, { error: `Update failed: ${safeErrorMessage(e)}` }); }
+    return true;
   }
   if (method === "POST" && url.pathname === "/api/auth/anthropic/install-cli") {
     try {

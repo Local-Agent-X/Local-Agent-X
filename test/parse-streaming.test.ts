@@ -3,9 +3,9 @@ import { filterStreamDelta, stripToolCallBlocks } from "../src/anthropic-client/
 
 // Simulate the streaming pipeline. The shape mirrors stream-cli.ts:253-254 —
 // the consumer only flips `suppress` when the result EXPLICITLY carries a
-// suppress field. The close-marker branch in parse.ts returns `{ text: "" }`
-// with NO suppress field, so suppress stays latched ON. That's BUG #2 in
-// BUGS-FOUND.md and the assertions below capture the actual current behavior.
+// suppress field. The close-marker branch in parse.ts now returns
+// `{ text: "", suppress: false }` so the consumer's flag resets and prose
+// after the tool block survives.
 function runStream(deltas: string[]): { visible: string; suppressedAtEnd: boolean } {
   let suppress = false;
   const out: string[] = [];
@@ -64,31 +64,29 @@ describe("filterStreamDelta — open-marker detection (XML forms)", () => {
   });
 });
 
-describe("filterStreamDelta — close-marker behavior (documents BUG #2)", () => {
-  it("close fence ``` returns text:'' but does NOT reset suppress", () => {
+describe("filterStreamDelta — close-marker behavior resets suppression", () => {
+  it("close fence ``` returns text:'' and resets suppress to false", () => {
     const r = filterStreamDelta("```", true);
     expect(r.text).toBe("");
-    // BUG #2: ideal behavior would be { text: "", suppress: false }.
-    // Current code omits suppress, leaving the consumer's flag stuck ON.
-    expect(r.suppress).toBeUndefined();
+    expect(r.suppress).toBe(false);
   });
 
-  it("close brace }\\n returns text:'' but does NOT reset suppress", () => {
+  it("close brace }\\n returns text:'' and resets suppress to false", () => {
     const r = filterStreamDelta("}\n", true);
     expect(r.text).toBe("");
-    expect(r.suppress).toBeUndefined();
+    expect(r.suppress).toBe(false);
   });
 
-  it("</tool_use> returns text:'' but does NOT reset suppress", () => {
+  it("</tool_use> returns text:'' and resets suppress to false", () => {
     const r = filterStreamDelta("</tool_use>", true);
     expect(r.text).toBe("");
-    expect(r.suppress).toBeUndefined();
+    expect(r.suppress).toBe(false);
   });
 
-  it("</function_calls> returns text:'' but does NOT reset suppress", () => {
+  it("</function_calls> returns text:'' and resets suppress to false", () => {
     const r = filterStreamDelta("</function_calls>", true);
     expect(r.text).toBe("");
-    expect(r.suppress).toBeUndefined();
+    expect(r.suppress).toBe(false);
   });
 
   it("any chunk while alreadySuppressing without a close marker stays suppressed", () => {
@@ -98,8 +96,8 @@ describe("filterStreamDelta — close-marker behavior (documents BUG #2)", () =>
   });
 });
 
-describe("filterStreamDelta — full streaming flow (documents BUG #2 — text after close is dropped)", () => {
-  it("a fenced ```json call: prose before survives, prose after is silently dropped", () => {
+describe("filterStreamDelta — full streaming flow (prose after close resumes)", () => {
+  it("a fenced ```json call: prose before and after survive, tool call is stripped", () => {
     const { visible, suppressedAtEnd } = runStream([
       "Sure thing. ",
       "```json\n",
@@ -107,13 +105,13 @@ describe("filterStreamDelta — full streaming flow (documents BUG #2 — text a
       "\n```",
       " more text",
     ]);
-    expect(visible).toBe("Sure thing. ");
+    expect(visible).toContain("Sure thing. ");
+    expect(visible).toContain(" more text");
     expect(visible).not.toContain("tool_calls");
-    expect(visible).not.toContain(" more text");
-    expect(suppressedAtEnd).toBe(true);
+    expect(suppressedAtEnd).toBe(false);
   });
 
-  it("XML tool_use block: prose before survives, prose after is silently dropped", () => {
+  it("XML tool_use block: prose before and after survive, tool block is stripped", () => {
     const { visible, suppressedAtEnd } = runStream([
       "Reply text. ",
       "<tool_use>",
@@ -121,22 +119,26 @@ describe("filterStreamDelta — full streaming flow (documents BUG #2 — text a
       "</tool_use>",
       " trailing",
     ]);
-    expect(visible).toBe("Reply text. ");
+    expect(visible).toContain("Reply text. ");
+    expect(visible).toContain(" trailing");
     expect(visible).not.toContain("<tool_use>");
-    expect(visible).not.toContain(" trailing");
-    expect(suppressedAtEnd).toBe(true);
+    expect(suppressedAtEnd).toBe(false);
   });
 
-  it('inline {"tool_calls":...}\\n: prose before survives, prose after is silently dropped', () => {
+  it('inline {"tool_calls":...} streamed across deltas: prose before and after both survive', () => {
+    // Realistic streaming — the open marker is in its own delta, body chunks
+    // follow, and the close "}\n" arrives in a later delta. This is how the
+    // streamer actually emits inline JSON tool calls.
     const { visible } = runStream([
       "let me ",
-      '{"tool_calls":[{"name":"y","arguments":{}}]}',
-      "\n",
+      '{"tool_calls":[',
+      '{"name":"y","arguments":{}}',
+      "]}\n",
       " done.",
     ]);
-    expect(visible).toBe("let me ");
+    expect(visible).toContain("let me ");
+    expect(visible).toContain(" done.");
     expect(visible).not.toContain("tool_calls");
-    expect(visible).not.toContain(" done.");
   });
 });
 
@@ -157,9 +159,9 @@ describe("filterStreamDelta — suppression staying open across many filler chun
       expect(trace[i].text).toBeUndefined();
       expect(trace[i].suppress).toBe(true);
     }
-    // Close chunk emits text:"" but does NOT reset suppress (BUG #2)
+    // Close chunk emits text:"" and resets suppress to false
     expect(trace[trace.length - 1].text).toBe("");
-    expect(trace[trace.length - 1].suppress).toBeUndefined();
+    expect(trace[trace.length - 1].suppress).toBe(false);
   });
 });
 
@@ -205,11 +207,12 @@ describe("filterStreamDelta — self-contained chunk (open + close in one delta)
   it("a chunk arriving while suppressing that ALSO contains an open marker hits close-marker branch first", () => {
     // alreadySuppressing=true → close-marker check runs first. If the chunk
     // contains '```' (which any open marker like ```json also contains), it
-    // matches the close branch and emits {text:""}. Documents the
-    // string-match-not-state-machine semantics.
+    // matches the close branch and emits {text:"", suppress:false}.
+    // Documents the string-match-not-state-machine semantics — back-to-back
+    // tool calls re-arm suppression on their inner content marker.
     const r = filterStreamDelta("```json", true);
     expect(r.text).toBe("");
-    expect(r.suppress).toBeUndefined();
+    expect(r.suppress).toBe(false);
   });
 });
 

@@ -51,8 +51,9 @@ export function listOps(): Op[] {
     const op = readOp(d);
     if (op) out.push(op);
   }
-  // Newest first
-  return out.sort((a, b) => (b.startedAt || b.createdAt).localeCompare(a.startedAt || a.createdAt));
+  // Newest first. Coerce because at least one writer persists createdAt as a
+  // number (autopilot op_ap_*); .localeCompare on a number throws.
+  return out.sort((a, b) => String(b.startedAt || b.createdAt).localeCompare(String(a.startedAt || a.createdAt)));
 }
 
 /** Convenience: update just the status field + a few common transition fields. */

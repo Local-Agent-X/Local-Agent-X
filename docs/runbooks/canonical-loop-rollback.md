@@ -5,8 +5,10 @@
 flags `LAX_CANONICAL_LOOP_*`.
 **Source of truth:** [PRD §17 / §22](../canonical-loop-prd.md).
 
-The canonical loop is a per-lane feature flag. Rollback is a flag flip,
-not a code change.
+The canonical loop is the default execution path for every lane.
+Rollback is a flag flip — explicitly set the flag to a falsy value
+(`0`, `false`, `no`, `off`). **Unsetting the flag does NOT roll back**
+— absent flag now means canonical.
 
 ---
 
@@ -14,12 +16,9 @@ not a code change.
 
 ```bash
 # Roll back a specific lane (example: interactive):
-unset LAX_CANONICAL_LOOP_INTERACTIVE
-# Or set explicitly to a falsy value:
 export LAX_CANONICAL_LOOP_INTERACTIVE=0
 
 # Roll back ALL lanes at once (overrides per-lane flags):
-unset LAX_CANONICAL_LOOP_ALL
 export LAX_CANONICAL_LOOP_ALL=0
 ```
 
@@ -34,14 +33,15 @@ immutable for the op's lifetime** (PRD §17).
 
 | Env var | Effect |
 |---|---|
-| `LAX_CANONICAL_LOOP_INTERACTIVE` | Routes the `interactive` lane through canonical-loop when truthy. |
+| `LAX_CANONICAL_LOOP_INTERACTIVE` | Per-lane override for `interactive`. Falsy → legacy; truthy or unset → canonical (default). |
 | `LAX_CANONICAL_LOOP_BUILD` | Same for the `build` lane. |
 | `LAX_CANONICAL_LOOP_IDE` | Same for the `ide` lane. |
 | `LAX_CANONICAL_LOOP_BACKGROUND` | Same for the `background` lane. |
-| `LAX_CANONICAL_LOOP_ALL` | Catch-all override. When truthy, every lane routes canonical regardless of per-lane flags. |
+| `LAX_CANONICAL_LOOP_ALL` | Catch-all override. When explicitly set (either direction), wins over every per-lane flag. |
 
-Truthy values: `1`, `true`, `yes`, `on` (case-insensitive). Anything
-else — including absent — is OFF.
+Truthy values: `1`, `true`, `yes`, `on`. Falsy values: `0`, `false`,
+`no`, `off`. Case-insensitive. Unset / blank / unparseable values fall
+back to the default — which is **ON** for every lane.
 
 The flag is read once per `op_submit_async` call by `decideSubmitRouting`.
 The result is stamped onto `ops.canonical_flag_value` and never re-read.
@@ -83,9 +83,8 @@ In whatever environment-variable surface your host uses
 (systemd unit, supervisor config, container env, shell rc, etc.):
 
 ```bash
-# Per-lane:
-unset LAX_CANONICAL_LOOP_INTERACTIVE
-# Or:
+# Per-lane (must be an explicit falsy value — unsetting does NOT roll back
+# under the inverted default):
 export LAX_CANONICAL_LOOP_INTERACTIVE=0
 
 # Global kill switch (overrides everything):

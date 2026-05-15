@@ -498,6 +498,10 @@ describe("Issue 09 — adapter sandbox audit (PRD §15 item I)", () => {
 
 describe("flag OFF: Anthropic adapter does not affect legacy submit path", () => {
   beforeEach(() => {
+    // Under the inverted default, OFF must be explicit.
+    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
+  });
+  afterEach(() => {
     delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
   });
 

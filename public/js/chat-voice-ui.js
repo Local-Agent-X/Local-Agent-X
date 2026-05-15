@@ -5,35 +5,13 @@
 // updateVoiceUI(state) — flips the mic icon class + listening indicator
 // based on idle / listening / speaking / error.
 
-function renderVoiceEngineBadge(rt) {
+function renderVoiceEngineBadge(_rt) {
+  // Engine badge intentionally hidden — the underlying-engine name (e.g.
+  // "Tier 4") doesn't match the user-facing picker tier (Browser / Edge /
+  // Studio / Realtime) and was confusing in the chat-bar. The picker UI
+  // already shows the active tier; no need to repeat a different label here.
   const el = document.getElementById('voice-engine-badge');
-  if (!el) return;
-  if (!rt || !rt.engine) { el.style.display = 'none'; el.textContent = ''; el.classList.remove('fellback'); return; }
-  const engineLabel = rt.engine === 'tier4' ? 'Tier 4'
-    : rt.engine === 'python' ? 'Python sidecar'
-    : rt.engine === 'cpu_fallback' ? 'CPU fallback'
-    : String(rt.engine);
-  const parts = [engineLabel];
-  if (rt.tts && rt.tts.device) {
-    const dev = String(rt.tts.device).toUpperCase();
-    parts.push(dev);
-    if (rt.tts.dtype) parts.push(String(rt.tts.dtype));
-  }
-  if (rt.tts && rt.tts.voice) parts.push('voice: ' + String(rt.tts.voice));
-  if (rt.tts && typeof rt.tts.speed === 'number') parts.push(rt.tts.speed + 'x');
-  if (rt.stt && rt.stt.model) {
-    let whisper = 'whisper ' + String(rt.stt.model);
-    if (rt.stt.provider && rt.stt.provider !== 'cpu') whisper += '/' + String(rt.stt.provider);
-    parts.push(whisper);
-  }
-  let fellBack = false;
-  if (rt.tts && rt.tts.fellBack) fellBack = true;
-  if (rt.stt && rt.stt.fellBack) fellBack = true;
-  let label = parts.join(' · ');
-  if (fellBack) label += ' (cpu fallback)';
-  el.textContent = label;
-  el.style.display = 'block';
-  el.classList.toggle('fellback', fellBack);
+  if (el) { el.style.display = 'none'; el.textContent = ''; el.classList.remove('fellback'); }
 }
 
 function updateVoiceUI(state) {

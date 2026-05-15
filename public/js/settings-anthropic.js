@@ -50,7 +50,8 @@ async function checkAnthropicAuth() {
     if (cliEl) {
       if (d.cliInstalled) {
         cliEl.className = 'status-badge ok';
-        cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI installed — required for all Anthropic auth paths';
+        const v = d.cliVersion ? ` (v${esc(d.cliVersion)})` : '';
+        cliEl.innerHTML = '<span class="status-dot"></span> Claude CLI installed' + v + ' — required for all Anthropic auth paths';
         if (cliBtn) cliBtn.style.display = 'none';
       } else {
         cliEl.className = 'status-badge err';
@@ -58,6 +59,9 @@ async function checkAnthropicAuth() {
         if (cliBtn) cliBtn.style.display = '';
       }
     }
+    // Hide the Update CLI button when CLI isn't installed; the Install button covers that path.
+    const updBtn = document.getElementById('btn-update-claude-cli');
+    if (updBtn) updBtn.style.display = d.cliInstalled ? '' : 'none';
   } catch {}
 }
 
@@ -141,6 +145,33 @@ async function cancelClaudeCliLogin() {
   if (cancelBtn) cancelBtn.style.display = 'none';
   if (btn) { btn.style.display = ''; btn.disabled = false; btn.textContent = 'Sign in via Claude CLI'; }
   if (status) status.innerHTML = 'Cancelled. Click to try again.';
+}
+
+async function updateClaudeCli() {
+  const btn = document.getElementById('btn-update-claude-cli');
+  const status = document.getElementById('claude-cli-update-status');
+  if (!btn) return;
+  btn.disabled = true;
+  const prev = btn.textContent;
+  btn.textContent = 'Updating...';
+  if (status) { status.style.display = ''; status.style.color = ''; status.innerHTML = 'Running <code>npm install -g @anthropic-ai/claude-code@latest</code>... (up to 3 min)'; }
+  try {
+    const d = await apiPost('/api/auth/anthropic/update-cli', {});
+    if (!d.ok) throw new Error(d.error || 'Update failed');
+    if (status) {
+      if (d.changed) {
+        status.innerHTML = '<span style="color:var(--accent)">✓ Updated ' + esc(d.before || 'unknown') + ' → ' + esc(d.after) + '. Restart any active Claude turn to pick up the new binary.</span>';
+      } else {
+        status.innerHTML = '<span style="color:var(--muted)">Already on the latest release (' + esc(d.after) + ').</span>';
+      }
+    }
+    await checkAnthropicAuth();
+  } catch (e) {
+    if (status) { status.style.color = 'var(--err,#c33)'; status.innerHTML = esc(e.message || 'Update failed'); }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prev || 'Update CLI';
+  }
 }
 
 async function installClaudeCli() {

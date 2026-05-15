@@ -242,8 +242,10 @@
               <label class="field-label">Option 1 — Claude CLI login (easiest)</label>
               <div class="btn-row">
                 <button id="btn-anthropic-cli-login" class="action-btn primary" onclick="doClaudeCliLogin()">Sign in via Claude CLI</button>
+                <button id="btn-update-claude-cli" class="action-btn" onclick="updateClaudeCli()" title="Reinstall Claude CLI at the latest npm release">Update CLI</button>
                 <button id="btn-anthropic-cli-login-cancel" class="action-btn" onclick="cancelClaudeCliLogin()" style="display:none">Cancel</button>
               </div>
+              <div id="claude-cli-update-status" class="field-hint" style="margin-top:6px;display:none"></div>
               <div id="anthropic-cli-login-status" class="field-hint" style="margin-top:8px">Click to start. We'll launch <code>claude login</code> and surface the OAuth link here — no terminal needed. No tokens stored in this app; the CLI manages them.</div>
             </div>
             <div class="field" style="margin-top:14px">

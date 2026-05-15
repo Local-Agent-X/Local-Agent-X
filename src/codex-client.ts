@@ -90,7 +90,14 @@ export async function* streamCodexResponse(params: {
   temperature?: number;
   previousResponseId?: string;
   sessionId?: string;
-  toolChoice?: "auto" | "required";
+  toolChoice?: "auto" | "required" | { type: "tool"; name: string } | { type: "function"; function: { name: string } };
+  /**
+   * External cancel signal. When the caller's op is cancelled (barge-in,
+   * user pressed stop, lease lost) firing this signal cancels the in-flight
+   * fetch AND cancels the body reader so the worker releases immediately
+   * instead of waiting for the 90s silence timeout to trip.
+   */
+  signal?: AbortSignal;
 }): AsyncGenerator<
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
@@ -133,7 +140,16 @@ export async function* streamCodexResponse(params: {
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;
-    body.tool_choice = params.toolChoice || "auto";
+    // tool_choice on Responses API matches OpenAI Chat Completions:
+    //   "auto" | "required" | { type: "function", function: { name } }
+    // Convert the canonical {type:"tool", name} shape into the function
+    // form so callers can pass either.
+    const tc = params.toolChoice;
+    if (tc && typeof tc === "object" && tc.type === "tool") {
+      body.tool_choice = { type: "function", function: { name: tc.name } };
+    } else {
+      body.tool_choice = tc || "auto";
+    }
     body.parallel_tool_calls = true;
   }
 
@@ -145,17 +161,27 @@ export async function* streamCodexResponse(params: {
 
   // Codex endpoint does not support temperature
 
+  // Fail fast if the caller already cancelled before we even started.
+  if (params.signal?.aborted) {
+    throw new Error("Codex request aborted before dispatch");
+  }
+
   // Retry logic for transient failures (503, 429, network errors)
   let res: Response;
   const maxRetries = 3;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      // 120s connect timeout — once streaming starts, silence detection (90s) takes over.
+      // Compose connect-timeout (120s) and the caller's external cancel
+      // signal into one fetch signal. If either fires we abort the
+      // outgoing request immediately — the worker doesn't wait the full
+      // 120s connect window when the user cancels mid-request.
+      const fetchSignals: AbortSignal[] = [AbortSignal.timeout(120_000)];
+      if (params.signal) fetchSignals.push(params.signal);
       res = await fetch(CODEX_URL, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(120_000),
+        signal: fetchSignals.length > 1 ? AbortSignal.any(fetchSignals) : fetchSignals[0],
       });
 
       if (res.ok) break;
@@ -202,17 +228,34 @@ export async function* streamCodexResponse(params: {
   let responseId: string | undefined;
   const reasoningItems: ReasoningItem[] = [];
 
-  // Silence-based timeout: abort if no data arrives for 90 seconds
-  // Resets every time data flows — so long builds stay alive as long as output is streaming
+  // Stream-phase cancellation. Two sources can stop the read loop:
+  //   (a) caller's external signal — barge-in, op cancel, lease lost.
+  //       Wired here so reader.cancel() fires the moment the caller
+  //       aborts. Previously the in-flight read would block until
+  //       Codex's own TCP/keep-alive timed out, parking the worker.
+  //   (b) silence timer — 90s without bytes from upstream. Resets on
+  //       every chunk so long builds stay alive while output streams.
+  // Both call reader.cancel(), which rejects the pending read() and
+  // unwinds the loop via the catch at the read site below.
   const SILENCE_TIMEOUT_MS = 90_000;
   let silenceTimer: ReturnType<typeof setTimeout> | null = null;
-  const abortController = new AbortController();
+  const cancelReader = () => { void reader.cancel().catch(() => {}); };
+
+  let externalAbortHandler: (() => void) | null = null;
+  if (params.signal) {
+    if (params.signal.aborted) {
+      cancelReader();
+    } else {
+      externalAbortHandler = () => cancelReader();
+      params.signal.addEventListener("abort", externalAbortHandler, { once: true });
+    }
+  }
 
   function resetSilenceTimer() {
     if (silenceTimer) clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
       logger.warn("[codex] No data for 90s — aborting (silence timeout)");
-      abortController.abort();
+      cancelReader();
     }, SILENCE_TIMEOUT_MS);
   }
   resetSilenceTimer();
@@ -413,8 +456,12 @@ export async function* streamCodexResponse(params: {
     }
   }
 
-  // Clean up silence timer
+  // Clean up silence timer + external-signal listener so we don't leak
+  // a per-stream subscription on the caller's AbortSignal.
   if (silenceTimer) clearTimeout(silenceTimer);
+  if (externalAbortHandler && params.signal) {
+    params.signal.removeEventListener("abort", externalAbortHandler);
+  }
 
   // Fallback: if the stream ended without a response.completed event,
   // yield any tool calls that were collected but never finalized.

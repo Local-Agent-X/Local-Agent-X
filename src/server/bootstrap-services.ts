@@ -52,6 +52,10 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   const toolPolicy = loadToolPolicy(dataDir);
   const rbac = new RBACManager(dataDir, config.authToken);
   setBrowserAuthContext(config.authToken, String(config.port));
+  // Wire SAX's shared pre-dispatch chain into AriKernel's tool executors so
+  // any direct executor invocation (outside the chat-path's no-op observer
+  // setup) still hits security + tool-policy. Closes F3 in DRY-AUDIT.md.
+  import("./bootstrap-ari-gate.js").then(({ wireAriPreDispatch }) => wireAriPreDispatch(security, toolPolicy)).catch((e) => logger.warn(`[ari-gate] wire failed: ${(e as Error).message}`));
 
   const secretsStoreRef: { value: SecretsStore | null } = { value: null };
   const agentSync = new AgentSync(dataDir, () => secretsStoreRef.value?.get("GITHUB_SYNC_TOKEN"));

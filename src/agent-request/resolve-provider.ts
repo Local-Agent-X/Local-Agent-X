@@ -3,6 +3,11 @@ import { join } from "node:path";
 import type { LAXConfig } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 import { getApiKey } from "../auth.js";
+import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
+import { PROVIDERS, isHttpProvider } from "../providers/registry.js";
+
+const isProviderId = (s: string): s is ProviderId =>
+  (PROVIDER_IDS as readonly string[]).includes(s);
 
 export async function resolveProvider(
   config: LAXConfig,
@@ -33,25 +38,25 @@ export async function resolveProvider(
   // Resolve provider. If a saved provider exists but has no usable credentials,
   // fall through to auto-detection so a stale "codex" default from a previous
   // run doesn't block a freshly-signed-in Anthropic user.
-  const VALID = ["codex", "xai", "openai", "anthropic", "local", "ollama-cloud", "gemini", "custom"];
-  const hasCredsFor = (p: string): boolean => {
-    if (p === "anthropic") return !!loadAnthropicTokens();
+  const hasCredsFor = (p: ProviderId): boolean => {
+    const meta = PROVIDERS[p];
+    // CLI transport (anthropic): trust the auth-anthropic token check.
+    if (!isHttpProvider(meta)) return !!loadAnthropicTokens();
+    // Codex uses ChatGPT OAuth, not a SecretsStore key.
     if (p === "codex") return !!loadTokens();
-    if (p === "openai") return !!(config.openaiApiKey || secretsStore.get("OPENAI_API_KEY"));
-    if (p === "xai") return !!secretsStore.get("XAI_API_KEY");
-    if (p === "gemini") return !!secretsStore.get("GEMINI_API_KEY");
-    if (p === "custom") return !!secretsStore.get("CUSTOM_API_KEY");
-    if (p === "ollama-cloud") return !!secretsStore.get("OLLAMA_CLOUD_API_KEY");
-    if (p === "local") return true;
-    return false;
+    // OpenAI accepts either a config-level key or the SecretsStore.
+    if (p === "openai") return !!(config.openaiApiKey || secretsStore.get(meta.envKey));
+    // Local Ollama needs no key.
+    if (meta.envKey === "") return true;
+    return !!secretsStore.get(meta.envKey);
   };
   // Caller-supplied override takes precedence if creds are available.
   // Lets a worker honor op.contextPack.routing.preferredProvider without
   // having to mutate settings.json.
-  let provider = "";
+  let provider: ProviderId | "" = "";
   let providerWasOverridden = false;
   const savedProvider = String(saved.provider || "");
-  if (providerOverride && VALID.includes(providerOverride) && hasCredsFor(providerOverride)) {
+  if (providerOverride && isProviderId(providerOverride) && hasCredsFor(providerOverride)) {
     provider = providerOverride;
     // If the caller-supplied override differs from the saved provider, the
     // saved model belongs to the old provider (e.g. settings.json says
@@ -59,10 +64,10 @@ export async function resolveProvider(
     // gpt-5.5 — Claude has no idea what that is). Blank it so the
     // downstream default picker chooses a valid model for the new provider.
     if (providerOverride !== savedProvider) providerWasOverridden = true;
-  } else {
+  } else if (isProviderId(savedProvider)) {
     provider = savedProvider;
   }
-  if (!VALID.includes(provider) || !hasCredsFor(provider)) {
+  if (!provider || !hasCredsFor(provider)) {
     provider = loadAnthropicTokens() ? "anthropic" : (loadTokens() && !config.openaiApiKey) ? "codex" : "xai";
     providerWasOverridden = true;
   }
@@ -76,23 +81,21 @@ export async function resolveProvider(
   let codexApiKey: string | undefined;
   let customBaseURL: string | undefined;
 
-  if (provider === "local") {
-    apiKey = "ollama";
-  } else if (provider === "ollama-cloud") {
-    // Ollama Turbo (cloud) uses the same canonical adapter as local; the
-    // chat-runner detects this provider and routes to the cloud baseURL
-    // with the cloud API key. resolveProvider just surfaces the key.
-    apiKey = secretsStore.get("OLLAMA_CLOUD_API_KEY") || "";
-  } else if (provider === "anthropic") {
+  const meta = PROVIDERS[provider];
+  if (!isHttpProvider(meta)) {
+    // CLI transport: anthropic via Claude CLI subprocess.
     apiKey = await getAnthropicApiKey();
     try { codexApiKey = await getApiKey(config.openaiApiKey); } catch {}
     if (!codexApiKey) codexApiKey = secretsStore.get("OPENAI_API_KEY") || undefined;
-  } else if (provider === "xai") {
-    apiKey = secretsStore.get("XAI_API_KEY") || "";
-  } else if (provider === "gemini") {
-    apiKey = secretsStore.get("GEMINI_API_KEY") || "";
+  } else if (provider === "local") {
+    apiKey = "ollama";
+  } else if (provider === "codex") {
+    // Codex uses ChatGPT OAuth, not the openai envKey.
+    apiKey = await getApiKey(config.openaiApiKey);
+  } else if (provider === "openai") {
+    apiKey = config.openaiApiKey || secretsStore.get(meta.envKey) || await getApiKey(config.openaiApiKey);
   } else if (provider === "custom") {
-    apiKey = secretsStore.get("CUSTOM_API_KEY") || "";
+    apiKey = secretsStore.get(meta.envKey) || "";
     try {
       const sp = join(dataDir, "settings.json");
       if (existsSync(sp)) {
@@ -100,17 +103,15 @@ export async function resolveProvider(
         customBaseURL = ss.customBaseUrl || undefined;
       }
     } catch {}
-  } else if (provider === "openai" && !config.openaiApiKey) {
-    apiKey = secretsStore.get("OPENAI_API_KEY") || await getApiKey(config.openaiApiKey);
   } else {
-    apiKey = await getApiKey(config.openaiApiKey);
+    // Generic http provider — xai, gemini, cerebras, ollama-cloud.
+    apiKey = secretsStore.get(meta.envKey) || "";
   }
 
-  const model = String(saved.model || "") ||
-    (provider === "codex" ? "gpt-5.4-mini" :
-     provider === "anthropic" ? "claude-sonnet-4-6" :
-     provider === "gemini" ? "gemini-2.0-flash" :
-     config.model);
+  // Default model — registry is SoT. Falls back to config.model when
+  // the registry leaves defaultModel empty (e.g., ollama-cloud where
+  // the user picks from the cloud catalog).
+  const model = String(saved.model || "") || meta.defaultModel || config.model;
 
   const temperature = typeof saved.temperature === "number" ? saved.temperature : config.temperature;
   const maxIterations = typeof saved.maxIterations === "number" ? saved.maxIterations : config.maxIterations;

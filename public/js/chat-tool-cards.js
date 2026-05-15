@@ -210,27 +210,51 @@ function updateToolProgress(container, toolName, message) {
   if (!card) { const all = container.querySelectorAll('.tool-card'); card = all.length > 0 ? all[all.length - 1] : null; }
   if (!card) return;
 
-  // Parse message format: "45%|237/1102 conversations, 500 chunks|conversations-003.json"
-  const parts = message.split('|');
-  const pctStr = parts[0] || '';
-  const detail = parts[1] || message;
-  const file = parts[2] || '';
-  const pct = parseInt(pctStr) || 0;
-
+  const detailEl = card.querySelector('.tool-detail');
+  if (!detailEl) return;
   const summary = card.querySelector('.tool-summary');
-  if (summary) summary.textContent = detail;
 
-  let bar = card.querySelector('.tool-progress-bar');
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.className = 'tool-progress-bar';
-    bar.innerHTML = '<div class="tool-progress-fill"></div><span class="tool-progress-label"></span>';
-    const detailEl = card.querySelector('.tool-detail');
-    if (detailEl) { detailEl.textContent = ''; detailEl.appendChild(bar); }
-    card.classList.add('open');
+  // Two message shapes:
+  //   structured: "45%|237/1102 conversations, 500 chunks|conversations-003.json"
+  //               → fills the existing progress bar
+  //   free-form:  "Calling Write…" / a sentence from a CLI subprocess
+  //               → wraps multi-line in a scrollable text panel (build_app's
+  //                 codex/claude streams emit free-form, sometimes long)
+  const parts = message.split('|');
+  const pctMaybe = parts.length >= 2 ? parseInt(parts[0], 10) : NaN;
+  const isStructured = !isNaN(pctMaybe) && pctMaybe >= 0 && pctMaybe <= 100;
+
+  if (isStructured) {
+    const detail = parts[1] || '';
+    const file = parts[2] || '';
+    if (summary) summary.textContent = detail;
+    const oldText = detailEl.querySelector('.tool-progress-text');
+    if (oldText) oldText.remove();
+    let bar = detailEl.querySelector('.tool-progress-bar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.className = 'tool-progress-bar';
+      bar.innerHTML = '<div class="tool-progress-fill"></div><span class="tool-progress-label"></span>';
+      detailEl.textContent = '';
+      detailEl.appendChild(bar);
+      card.classList.add('open');
+    }
+    const fill = bar.querySelector('.tool-progress-fill');
+    const label = bar.querySelector('.tool-progress-label');
+    if (fill) fill.style.width = pctMaybe + '%';
+    if (label) label.textContent = pctMaybe + '% — ' + detail + (file ? ' (' + file + ')' : '');
+  } else {
+    if (summary) summary.textContent = message;
+    const oldBar = detailEl.querySelector('.tool-progress-bar');
+    if (oldBar) oldBar.remove();
+    let textEl = detailEl.querySelector('.tool-progress-text');
+    if (!textEl) {
+      textEl = document.createElement('div');
+      textEl.className = 'tool-progress-text';
+      detailEl.textContent = '';
+      detailEl.appendChild(textEl);
+      card.classList.add('open');
+    }
+    textEl.textContent = message;
   }
-  const fill = bar.querySelector('.tool-progress-fill');
-  const label = bar.querySelector('.tool-progress-label');
-  if (fill) fill.style.width = pct + '%';
-  if (label) label.textContent = pct + '% — ' + detail + (file ? ' (' + file + ')' : '');
 }

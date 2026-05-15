@@ -20,35 +20,34 @@
  *
  * State machine (documented contract — not enforced in code):
  *
- *      idle  ─→ working ─→ done
- *                       ─→ error
+ *      idle  ─→ working ─→ succeeded
+ *                       ─→ failed     (timeouts ride here with reason="timeout")
  *                       ─→ cancelled
- *                       ─→ timeout
  *
  *      working ⇄ waiting   (waiting = paused awaiting input; resumes to working)
  *
- * Terminal states: done, error, cancelled, timeout. No transitions out.
- * `idle` is a momentary state between spawn and the first work tick;
- * persisted runs almost never have it.
+ * Terminal states match the canonical-loop's TERMINAL_STATES exactly
+ * (src/canonical-loop/terminal-states.ts). Timeouts fold into `failed`
+ * with `reason: "timeout"` on the run record; "error" and "timeout" as
+ * distinct top-level statuses are gone.
  */
 
-/** All possible run statuses. The legacy AgentRun adds nothing beyond
- *  this; FieldAgent in the runtime uses the same set minus the
- *  terminal-only ones during early lifecycle. */
+import type { TerminalState } from "../canonical-loop/terminal-states.js";
+export type { TerminalState } from "../canonical-loop/terminal-states.js";
+
+/** All possible run statuses. The terminal subset matches TerminalState
+ *  exactly — anything that watches the canonical-loop bus and anything
+ *  that reads/writes a persisted AgentRun agrees on the same vocabulary. */
 export type RunStatus =
   | "idle"
   | "working"
   | "waiting"
-  | "done"
-  | "error"
-  | "cancelled"
-  | "timeout";
+  | TerminalState;
 
-export const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set([
-  "done",
-  "error",
+export const TERMINAL_STATUSES: ReadonlySet<RunStatus> = new Set<RunStatus>([
+  "succeeded",
+  "failed",
   "cancelled",
-  "timeout",
 ]);
 
 export function isTerminalStatus(s: RunStatus): boolean {
@@ -112,8 +111,13 @@ export interface Run {
   /** Wall-clock completion. ms since epoch. Set when status reaches a
    *  terminal state. */
   completedAt?: number;
-  /** Failure detail when status is "error" or "timeout." */
+  /** Failure detail when status is "failed". */
   error?: string;
+  /** Sub-classification for the terminal state. Today only "timeout"
+   *  is meaningful — it tags a `failed` run that hit a wall-clock
+   *  ceiling rather than an in-task error. Distinct from `error` so
+   *  consumers can filter on it without parsing strings. */
+  reason?: "timeout";
 }
 
 /**
@@ -122,7 +126,7 @@ export interface Run {
  * wants TypeScript to enforce their presence.
  */
 export type ActiveRun = Run & {
-  status: Exclude<RunStatus, "done" | "error" | "cancelled" | "timeout">;
+  status: Exclude<RunStatus, TerminalState>;
   currentTask?: string;
 };
 
@@ -132,7 +136,7 @@ export type ActiveRun = Run & {
  * history (UI run viewer, AgentRunStore.list consumers).
  */
 export type PersistedRun = Run & {
-  status: "done" | "error" | "cancelled" | "timeout";
+  status: TerminalState;
   result: string;
   toolsUsed: string[];
   completedAt: number;

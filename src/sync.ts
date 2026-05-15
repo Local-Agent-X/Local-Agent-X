@@ -46,20 +46,30 @@ export class AgentSync {
 
   getConfig(): SyncConfig { return { ...this.config }; }
 
-  private getAuthUrl(): string {
+  // Returns the auth URL with the vault token embedded, or null if the
+  // vault has no GITHUB_SYNC_TOKEN. Callers MUST treat null as "refuse to
+  // sync" — never fall back to the bare URL. Falling back lets Git
+  // Credential Manager (Windows) or osxkeychain (macOS) serve cached creds
+  // that the vault never authorized, breaking the "encrypted vault is
+  // source of truth" promise shown in the settings UI.
+  private getAuthUrl(): string | null {
     const token = this.getToken();
-    if (!token || !this.config.repoUrl) return this.config.repoUrl;
+    if (!token || !this.config.repoUrl) return null;
     try {
       const url = new URL(this.config.repoUrl);
       url.username = "x-access-token";
       url.password = token;
       return url.toString();
-    } catch { return this.config.repoUrl; }
+    } catch { return null; }
   }
 
+  // `-c credential.helper=` (empty value) disables any host-configured
+  // credential helper for this invocation only. Without it, GCM on
+  // Windows / osxkeychain on macOS silently supply cached GitHub creds
+  // when the URL has no token, defeating the vault.
   private git = async (...args: string[]): Promise<string> => {
     try {
-      const { stdout } = await execFileAsync("git", args, {
+      const { stdout } = await execFileAsync("git", ["-c", "credential.helper=", ...args], {
         cwd: this.syncDir, timeout: 30_000, windowsHide: true,
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "" },
       });
@@ -71,17 +81,22 @@ export class AgentSync {
 
   async init(): Promise<boolean> {
     if (!this.config.enabled || !this.config.repoUrl) return false;
+    const authUrl = this.getAuthUrl();
+    if (!authUrl) {
+      logger.warn("[sync] no GITHUB_SYNC_TOKEN in vault — sync disabled until token is restored");
+      return false;
+    }
     if (!existsSync(this.syncDir)) {
       mkdirSync(this.syncDir, { recursive: true });
       try {
         const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "" };
-        await execFileAsync("git", ["clone", this.getAuthUrl(), this.syncDir], { timeout: 60_000, windowsHide: true, env: gitEnv });
+        await execFileAsync("git", ["-c", "credential.helper=", "clone", authUrl, this.syncDir], { timeout: 60_000, windowsHide: true, env: gitEnv });
       } catch {
-        await execFileAsync("git", ["init"], { cwd: this.syncDir, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
-        await this.git("remote", "add", "origin", this.getAuthUrl());
+        await execFileAsync("git", ["-c", "credential.helper=", "init"], { cwd: this.syncDir, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+        await this.git("remote", "add", "origin", authUrl);
       }
     }
-    try { await this.git("remote", "set-url", "origin", this.getAuthUrl()); } catch {}
+    try { await this.git("remote", "set-url", "origin", authUrl); } catch {}
     return true;
   }
 
@@ -89,7 +104,7 @@ export class AgentSync {
     if (!this.config.enabled || this.isSyncing) return { success: false, message: "Sync disabled or already running" };
     this.isSyncing = true;
     try {
-      await this.init();
+      if (!await this.init()) { this.isSyncing = false; return { success: false, message: "Sync token missing from vault — add GITHUB_SYNC_TOKEN in Secrets, or re-paste your token in Settings → Sync." }; }
       copyToSync(this.dataDir, this.syncDir, this.config);
       await this.git("add", "-A");
       let porcelain = "";
@@ -187,7 +202,7 @@ export class AgentSync {
     if (!this.config.enabled || this.isSyncing) return { success: false, message: "Sync disabled or already running" };
     this.isSyncing = true;
     try {
-      await this.init();
+      if (!await this.init()) { this.isSyncing = false; return { success: false, message: "Sync token missing from vault — add GITHUB_SYNC_TOKEN in Secrets, or re-paste your token in Settings → Sync." }; }
       try { await this.git("fetch", "origin", "main"); } catch { this.isSyncing = false; return { success: false, message: "Could not reach remote" }; }
       let hasChanges = true;
       try { if (!await this.git("diff", "HEAD", "origin/main", "--stat")) hasChanges = false; } catch {}

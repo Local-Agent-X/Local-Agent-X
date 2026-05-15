@@ -4,6 +4,18 @@ import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
 
+/** When write/edit touches a file under workspace/apps/<name>/, append a
+ *  hint with the app's served URL. Without this, models routinely answer
+ *  "Built it at workspace/apps/foo/index.html" — a workspace path the
+ *  user can't click. The hint nudges the model to surface a real URL. */
+function appUrlHint(absoluteFilePath: string): string {
+  const m = absoluteFilePath.replace(/\\/g, "/").match(/\/workspace\/apps\/([^/]+)\//);
+  if (!m) return "";
+  const port = process.env.LAX_PORT ?? process.env.SAX_PORT ?? "7007";
+  const appUrl = `http://127.0.0.1:${port}/apps/${m[1]}/index.html`;
+  return ` — App URL: ${appUrl} (include this URL verbatim in your reply to the user so it renders as a clickable link).`;
+}
+
 export const readTool: ToolDefinition = {
   name: "read",
   description:
@@ -113,7 +125,7 @@ export const writeTool: ToolDefinition = {
         } catch { /* read failed — fall back to writing as-is */ }
       }
       writeFileSync(filePath, toWrite, "utf-8");
-      return ok(`Wrote ${filePath}`);
+      return ok(`Wrote ${filePath}${appUrlHint(filePath)}`);
     } catch (e) {
       return err(`Failed to write ${filePath}: ${(e as Error).message}`);
     }
@@ -181,7 +193,7 @@ export const editTool: ToolDefinition = {
 
       const updated = content.replace(effOld, effNew);
       writeFileSync(filePath, updated, "utf-8");
-      return ok(`Edited ${filePath}`);
+      return ok(`Edited ${filePath}${appUrlHint(filePath)}`);
     } catch (e) {
       return err(`Failed to edit ${filePath}: ${(e as Error).message}`);
     }

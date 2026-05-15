@@ -1,8 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryIndex } from "./index-core.js";
-import { atomicWriteFileSync } from "./utils.js";
 import { extractIdentityFactsWithLLM, type IdentityFacts } from "../classifiers/identity-extract.js";
+import {
+  writeMemorySafely,
+  appendToDailyLogSafely,
+  MemoryWriteBlocked,
+} from "./write-safely.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.auto-extract");
@@ -24,14 +28,18 @@ export async function autoExtractAndSave(
   assistantResponse: string,
   sessionId?: string,
 ): Promise<void> {
+  // Pre-flight skip on tainted inputs — keeps the LLM classifier from
+  // even seeing obvious injection material. The per-write gate inside
+  // writeMemorySafely / appendToDailyLogSafely is the load-bearing
+  // safety: it blocks on threshold instead of just warning.
   try {
-    const sanitize = await import("../sanitize.js");
-    const taint = sanitize.checkMemoryTaint(userMessage);
+    const { checkMemoryTaint } = await import("../sanitize.js");
+    const taint = checkMemoryTaint(userMessage);
     if (!taint.safe) {
       logger.info(`[memory] Auto-extract skipped: ${taint.reason}`);
       return;
     }
-    const taintReply = sanitize.checkMemoryTaint(assistantResponse);
+    const taintReply = checkMemoryTaint(assistantResponse);
     if (!taintReply.safe) {
       logger.info(`[memory] Auto-extract skipped (assistant): ${taintReply.reason}`);
       return;
@@ -53,11 +61,24 @@ export async function autoExtractAndSave(
     if (existsSync(identityPath)) {
       let content = readFileSync(identityPath, "utf-8");
       content = content.replace(/^- Name:.*$/m, `- Name: ${facts.agent_name}`);
-      atomicWriteFileSync(identityPath, content);
-      memory.markDirty();
-      logger.info(`[memory] Auto-updated agent name to: ${facts.agent_name}`);
+      try {
+        writeMemorySafely({
+          content,
+          source: "auto-extract",
+          target: identityPath,
+          mode: "overwrite",
+        });
+        memory.markDirty();
+        logger.info(`[memory] Auto-updated agent name to: ${facts.agent_name}`);
+      } catch (e) {
+        if (e instanceof MemoryWriteBlocked) {
+          logger.warn(`[memory] Auto-extract IDENTITY write blocked: ${e.reason}`);
+          return;
+        }
+        throw e;
+      }
     }
-    memory.appendDailyLog(`Agent renamed to "${facts.agent_name}" by user`, sessionId);
+    safeAppendDaily(memory, `Agent renamed to "${facts.agent_name}" by user`, sessionId);
   }
 
   if (facts.user_name) {
@@ -69,11 +90,24 @@ export async function autoExtractAndSave(
       } else {
         content += `\n- Name: ${facts.user_name}`;
       }
-      atomicWriteFileSync(userPath, content);
-      memory.markDirty();
-      logger.info(`[memory] Auto-saved user name: ${facts.user_name}`);
+      try {
+        writeMemorySafely({
+          content,
+          source: "auto-extract",
+          target: userPath,
+          mode: "overwrite",
+        });
+        memory.markDirty();
+        logger.info(`[memory] Auto-saved user name: ${facts.user_name}`);
+      } catch (e) {
+        if (e instanceof MemoryWriteBlocked) {
+          logger.warn(`[memory] Auto-extract USER write blocked: ${e.reason}`);
+          return;
+        }
+        throw e;
+      }
     }
-    memory.appendDailyLog(`User introduced themselves as "${facts.user_name}"`, sessionId);
+    safeAppendDaily(memory, `User introduced themselves as "${facts.user_name}"`, sessionId);
   }
 
   if (facts.user_location || facts.user_employer || facts.user_role || facts.family_count) {
@@ -82,6 +116,18 @@ export async function autoExtractAndSave(
     if (facts.user_employer) summary.push(`employer: ${facts.user_employer}`);
     if (facts.user_location) summary.push(`location: ${facts.user_location}`);
     if (facts.family_count) summary.push(`family: ${facts.family_count.n} ${facts.family_count.relation}`);
-    memory.appendDailyLog(`User shared identity facts — ${summary.join(", ")}`, sessionId);
+    safeAppendDaily(memory, `User shared identity facts — ${summary.join(", ")}`, sessionId);
+  }
+}
+
+function safeAppendDaily(memory: MemoryIndex, content: string, sessionId?: string): void {
+  try {
+    appendToDailyLogSafely({ memory, source: "auto-extract", content, sessionId });
+  } catch (e) {
+    if (e instanceof MemoryWriteBlocked) {
+      logger.warn(`[memory] Auto-extract daily-log entry blocked: ${e.reason}`);
+      return;
+    }
+    throw e;
   }
 }

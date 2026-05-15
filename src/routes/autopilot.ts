@@ -13,6 +13,7 @@ import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../server-utils.js";
 import { startAutopilot } from "../autopilot/start.js";
 import { requestStop, getActiveAutopilotOp, listActiveAutopilotOps } from "../autopilot/loop.js";
+import type { ProviderId } from "../providers/provider-ids.js";
 import { readLock } from "../autopilot/lock.js";
 import { resolveProvider } from "../agent-request.js";
 import type { StartAutopilotRequest } from "../autopilot/types.js";
@@ -41,7 +42,7 @@ export const handleAutopilotRoutes: RouteHandler = async (method, url, req, res,
         config: ctx.config,
         apiKey,
         model,
-        provider: provider as "anthropic" | "codex" | "openai" | "xai" | "gemini" | "local" | "custom",
+        provider: provider as ProviderId,
         allTools: ctx.allAgentTools,
         workspaceDir,
       });

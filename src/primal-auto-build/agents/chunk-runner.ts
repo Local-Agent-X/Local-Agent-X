@@ -3,8 +3,12 @@
  *
  * Builds an ad-hoc AgentDefinition with the relevant skill methodology +
  * chunk-runner discipline baked into systemPrompt, dispatches it through
- * invokeDefinition (Handler → adapter), awaits completion via the
- * "handler:agent-result" EventBus event.
+ * invokeDefinition (canonical-loop driver — see src/agents/runtime.ts +
+ * src/server/handler-events.ts), awaits completion via the
+ * "handler:agent-result" EventBus event. The result fires after the
+ * underlying canonical op reaches a terminal state — same shape as the
+ * legacy Handler.spawnAgent path emitted, so this subscriber is the
+ * migration safety belt for F1 closure.
  *
  * Two roles exposed:
  *   - "chunk-runner-trunk" — /senior-engineer methodology, for trunk + mixed

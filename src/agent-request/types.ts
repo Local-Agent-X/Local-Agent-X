@@ -50,6 +50,14 @@ export interface AgentRequestInput {
    */
 }
 
+/**
+ * Forced tool selection for this turn. When set, the LLM adapter pins
+ * tool_choice to the named tool — used by the intent classifier to
+ * collapse build_app / agent_spawn / self_edit prose-leaks into real
+ * tool calls. Undefined means "auto" (LLM picks freely).
+ */
+export type ForcedToolChoice = { type: "tool"; name: string };
+
 export interface PreparedAgentRequest {
   provider: string;
   apiKey: string;
@@ -62,4 +70,6 @@ export interface PreparedAgentRequest {
   images: Array<{ url: string; filePath?: string; name: string }>;
   temperature: number;
   maxIterations: number;
+  /** Force a single tool for this turn — see intent-classifier.ts. */
+  toolChoice?: ForcedToolChoice;
 }

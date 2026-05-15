@@ -197,9 +197,9 @@ export class AgencyOrchestrator {
         elapsed: result.elapsed,
       });
 
-      // Set all agents to done
+      // Set all agents to succeeded
       for (const agent of plan.agents) {
-        agent.status = "done";
+        agent.status = "succeeded";
       }
 
       this.emitProgress();
@@ -316,7 +316,7 @@ export class AgencyOrchestrator {
       this.activePlan.status = "failed";
       for (const agent of this.activePlan.agents) {
         if (agent.status === "working" || agent.status === "waiting") {
-          agent.status = "error";
+          agent.status = "failed";
         }
       }
       for (const task of this.activePlan.tasks) {
@@ -395,7 +395,7 @@ export class AgencyOrchestrator {
       );
 
       if (agent) {
-        agent.status = "done";
+        agent.status = "succeeded";
         agent.currentTask = undefined;
         agent.result = result;
       }
@@ -404,7 +404,7 @@ export class AgencyOrchestrator {
       return result;
     } catch (err) {
       if (agent) {
-        agent.status = "error";
+        agent.status = "failed";
       }
       this.runningCount--;
       throw err;

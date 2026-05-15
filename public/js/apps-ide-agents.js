@@ -36,8 +36,8 @@ function ideUpdateAgentCard(agentId, update) {
 
   const card = document.getElementById('ide-agent-' + agentId);
   if (!card) return;
-  const isDone = agent.status === 'done' || agent.status === 'completed';
-  const isError = agent.status === 'error' || agent.status === 'failed';
+  const isDone = agent.status === 'succeeded' || agent.status === 'completed';
+  const isError = agent.status === 'failed';
   card.className = 'ide-agent-card ' + (isDone ? 'done' : isError ? 'error' : 'working');
 
   // Replace spinner with status dot when finished

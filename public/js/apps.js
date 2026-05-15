@@ -1,23 +1,11 @@
 // ── Apps Gallery ──
 // Enterprise app management UI with status indicators, permissions, and inline controls
 
-const APPS_PROVIDERS = [
-  { value: 'xai', label: 'xAI Grok' },
-  { value: 'gemini', label: 'Google Gemini' },
-  { value: 'codex', label: 'OpenAI Codex' },
-  { value: 'anthropic', label: 'Anthropic Claude' },
-  { value: 'openai', label: 'OpenAI API' },
-  { value: 'local', label: 'Local (Ollama)' },
-  { value: 'custom', label: 'Custom' },
-];
-
-const APPS_MODELS = {
-  codex: ['gpt-5.5','gpt-5.4','gpt-5.4-mini','gpt-5.3-codex'],
-  anthropic: ['claude-opus-4-7','claude-sonnet-4-6','claude-opus-4-6','claude-haiku-4-5','claude-sonnet-4-5','claude-opus-4-5'],
-  xai: ['grok-4','grok-3-mini','grok-3'],
-  openai: ['gpt-5.5-pro','gpt-5.5','gpt-4o','gpt-4o-mini','gpt-4.1','gpt-4.1-mini','o3','o4-mini'],
-  gemini: ['gemini-2.0-flash','gemini-2.5-pro-preview-05-06','gemini-2.5-flash-preview-05-20','gemini-1.5-pro'],
-};
+// Provider + model data is fetched from /api/providers/registry on init.
+// Server is the single source of truth (src/providers/registry.ts);
+// adding a provider there shows up here without a UI edit.
+let APPS_PROVIDERS = [];
+let APPS_MODELS = {};
 
 async function init_apps() {
   initAppsModelSelector();
@@ -29,6 +17,12 @@ async function initAppsModelSelector() {
   const provSel = document.getElementById('apps-provider-select');
   const modelSel = document.getElementById('apps-model-select');
   if (!provSel || !modelSel) return;
+
+  try {
+    const reg = await apiFetch('/api/providers/registry').then(r => r.json());
+    APPS_PROVIDERS = (reg.providers || []).map(p => ({ value: p.id, label: p.label }));
+    APPS_MODELS = Object.fromEntries((reg.providers || []).map(p => [p.id, p.models]));
+  } catch { /* fall back to whatever stale data we have */ }
 
   // Populate providers
   provSel.innerHTML = APPS_PROVIDERS.map(p => `<option value="${p.value}">${p.label}</option>`).join('');

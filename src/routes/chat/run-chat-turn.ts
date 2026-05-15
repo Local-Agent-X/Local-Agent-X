@@ -12,6 +12,14 @@ import { createRetryContext, attachRetryContext, detachRetryContext } from "../.
 
 const logger = createLogger("routes.chat.run-turn");
 
+// Directive verbs that signal "the user is explicitly directing this
+// attachment to a destination" — when paired with attachments, this is
+// the consent signal for the threat-engine's user-consent bypass. The
+// list is conservative on purpose: a vague "look at this" doesn't fire;
+// "enter / submit / send / post / upload / paste / fill / add this in/to/into
+// <somewhere>" does.
+const DIRECTIVE_VERB_RE = /\b(enter|submit|send|post|upload|paste|fill|add|put|record|log|register|copy)\b[^.!?]{0,80}\b(in|to|into|via|onto|inside|under|using|through)\b/i;
+
 /**
  * Transport-agnostic sink for outbound chat events. The HTTP route handler
  * passes one that writes SSE frames to its `res`; the WS forward layer passes
@@ -79,6 +87,32 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   // inlined as load-bearing methodology and the agent sees a rewritten
   // message. Unknown commands pass through unchanged so we don't swallow
   // legitimate slash-prefixed input. See src/slash-commands.ts.
+  // `/approve <reason>` short-circuit. Grants threat-engine consent for
+  // this session so the model's NEXT retry of a blocked tool succeeds.
+  // Returns inline to the chat, doesn't call the model. Layer B of the
+  // threat-engine consent flow. See src/threat/consent-store.ts.
+  if (/^\s*\/approve\b/i.test(message)) {
+    const reason = (message.replace(/^\s*\/approve\s*/i, "").trim() || "user-typed-/approve").slice(0, 160);
+    const { grantConsent, getLastBlockedFingerprint } = await import("../../threat/consent-store.js");
+    grantConsent(sessionId, 30 * 60_000, reason);
+    // Layer C: record the last blocked pattern's fingerprint into the
+    // trust ledger so future sessions auto-allow without /approve.
+    let ledgerNote = "";
+    const fp = getLastBlockedFingerprint(sessionId);
+    if (fp) {
+      const { recordApproval } = await import("../../threat/trust-ledger.js");
+      recordApproval(fp, reason);
+      ledgerNote = `\n\nLearned pattern: \`${fp}\` — future sessions hitting this pattern will auto-allow without /approve.`;
+    }
+    logger.info(`[threat] /approve granted for sess=${sessionId.slice(0, 16)}: ${reason.slice(0, 80)}${fp ? ` (ledger fingerprint=${fp})` : ""}`);
+    if (sseSink) sseSink({
+      type: "stream",
+      delta: `✓ Consent granted for 30 minutes. Reason: ${reason}\n\nThe agent's next retry of the blocked tool will succeed. Type the original request again or ask the agent to retry.${ledgerNote}`,
+    });
+    if (sseSink) sseSink({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+    return;
+  }
+
   try {
     const { expandSlashCommand } = await import("../../slash-commands.js");
     const expanded = expandSlashCommand(message);
@@ -187,8 +221,22 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     ctx.setActiveBrowserSessionId(sessionId);
 
     const threatEngine = new ThreatEngine(ctx.dataDir, sessionId);
+    // Threat-engine consent gating. Two paths can grant consent:
+    //  1) Layer A — this turn's message has attachments + directive verbs
+    //  2) Layer B — a prior turn granted consent via /approve, still in window
+    // Either way we seed the per-turn analyzer so exfil patterns audit-but-
+    // don't-block. Live failure 2026-05-13 (invoice PDF → Thrivemetrics)
+    // motivates Layer A; the /approve flow handles cases Layer A misses.
+    const { grantConsent, getActiveConsent } = await import("../../threat/consent-store.js");
+    if (attachments.length > 0 && DIRECTIVE_VERB_RE.test(message)) {
+      grantConsent(sessionId, 30 * 60_000, `chat-attachment-with-directive (attachments=${attachments.length})`);
+    }
+    const activeConsent = getActiveConsent(sessionId);
+    if (activeConsent) {
+      threatEngine.markUserConsentFlow(activeConsent.remainingMs, activeConsent.reason);
+    }
     const { augmentSystemPrompt } = await import("./system-prompt-augmentations.js");
-    await augmentSystemPrompt(prepared, threatEngine, sessionId);
+    await augmentSystemPrompt(prepared, threatEngine, sessionId, message);
 
     let canaryBuffer = "";
     let fullResponseText = "";

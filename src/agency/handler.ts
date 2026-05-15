@@ -61,6 +61,18 @@ export class Handler {
 
   // -- Spawn ----------------------------------------------------------------
 
+  /**
+   * @deprecated Replaced by `invokeDefinition` in `src/agents/invoke.ts`,
+   * which routes through the canonical-loop driver (`agents/runtime.ts`) so
+   * runs are persisted to `~/.lax/operations/<opId>/events.jsonl` and
+   * recoverable across crashes. Scheduled for deletion one release after
+   * 2026-05-13. Closes audit finding F1; this method's shadow state machine
+   * is the duplication the audit flagged.
+   *
+   * For external callers that need a FieldAgent registry entry without
+   * driving the run themselves, use `attachExternalRun` — invokeDefinition
+   * is the canonical example.
+   */
   spawnAgent(config: SpawnConfig): string {
     const agentId = uid("field-agent");
     // parentSessionId is plumbed via SpawnConfig.parentSessionId by callers
@@ -106,6 +118,85 @@ export class Handler {
     this.runAgentAsync(agentId);
 
     return agentId;
+  }
+
+  // -- Attach externally-driven run ----------------------------------------
+
+  /**
+   * Register a FieldAgent record for a run that's executed by a driver
+   * outside the Handler (today: canonical-loop via `agents/runtime.ts`).
+   *
+   * Mints the agent id, populates the in-memory registry, subscribes to the
+   * agency message bus, and hands the caller the AbortController so the
+   * legacy `cancelAgent` path keeps working. The caller owns the run
+   * itself and must call `finalizeExternalRun` when terminal.
+   *
+   * Unlike `spawnAgent`, this does NOT emit `handler:agent-spawn` (the
+   * caller emits it after attaching, so the broadcast ordering stays
+   * predictable: spawn → run → result) and does NOT kick off
+   * `runAgentAsync` (the caller drives the canonical op).
+   */
+  attachExternalRun(config: SpawnConfig): { agentId: string; abortController: AbortController } {
+    const agentId = uid("field-agent");
+    const ac = new AbortController();
+    const agent: FieldAgent = {
+      id: agentId,
+      name: config.name,
+      role: config.role,
+      status: "working",
+      systemPrompt: config.systemPrompt ?? "",
+      tools: config.tools ?? [],
+      currentTask: config.task,
+      output: [],
+      startedAt: Date.now(),
+      tokensUsed: 0,
+      messageQueue: [],
+      templateId: config.templateId,
+      parentSessionId: config.parentSessionId || "",
+      abortController: ac,
+    };
+    this.agents.set(agentId, agent);
+    this.messageBus.subscribe(agentId, (msg) => {
+      if (msg.type === "request-info" || msg.type === "share-context") {
+        agent.messageQueue.push(String(msg.payload));
+      }
+    });
+    return { agentId, abortController: ac };
+  }
+
+  /**
+   * Mark an externally-driven run terminal. Caller (invokeDefinition's
+   * driver callback) supplies the outcome; we update FieldAgent status,
+   * append the result to output, notify subscribers, and schedule the
+   * map entry for cleanup after 5 minutes — matching the legacy
+   * `runAgentAsync` end-of-run lifecycle.
+   */
+  finalizeExternalRun(
+    agentId: string,
+    outcome: { result: string; success: boolean; tokens?: number },
+  ): void {
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+    agent.result = outcome.result;
+    agent.tokensUsed += outcome.tokens ?? 0;
+    if (outcome.success) {
+      agent.status = "succeeded";
+      agent.output.push(outcome.result);
+      this.notifyUpdate(agentId, { type: "complete", data: outcome.result });
+      this.pushCompletionToParent(agent, "succeeded", outcome.result);
+    } else {
+      agent.status = "failed";
+      agent.output.push(`[error] ${outcome.result}`);
+      this.notifyUpdate(agentId, { type: "error", data: outcome.result });
+      this.pushCompletionToParent(agent, "failed", outcome.result);
+    }
+    setTimeout(() => {
+      const a = this.agents.get(agentId);
+      if (a && (a.status === "succeeded" || a.status === "failed")) {
+        this.messageBus.unsubscribe(agentId);
+        this.agents.delete(agentId);
+      }
+    }, 5 * 60 * 1000);
   }
 
   // -- Redirect -------------------------------------------------------------
@@ -177,7 +268,7 @@ export class Handler {
       if (agent.pauseSignal.resume) agent.pauseSignal.resume();
     }
 
-    agent.status = "error";
+    agent.status = "failed";
     agent.output.push("[cancelled]");
     this.messageBus.unsubscribe(agentId);
 
@@ -219,7 +310,7 @@ export class Handler {
         await new Promise(r => setTimeout(r, 2000));
         continue;
       }
-      const allDone = children.every(a => a.status === "done" || a.status === "error");
+      const allDone = children.every(a => a.status === "succeeded" || a.status === "failed");
       if (allDone) {
         for (const child of children) {
           if (child.result) results.push(child.result);
@@ -255,7 +346,7 @@ export class Handler {
 
   private buildStatus(agent: FieldAgent): FieldAgentStatus {
     const total = agent.output.length;
-    const done = agent.status === "done" || agent.status === "error";
+    const done = agent.status === "succeeded" || agent.status === "failed";
     return {
       id: agent.id,
       name: agent.name,
@@ -283,7 +374,7 @@ export class Handler {
    * agent loop sees it on the next iteration without needing to poll. */
   private pushCompletionToParent(
     agent: FieldAgent,
-    status: "done" | "error",
+    status: "succeeded" | "failed",
     result: string,
   ): void {
     const parent = agent.parentSessionId;
@@ -301,6 +392,16 @@ export class Handler {
     } catch {}
   }
 
+  /**
+   * @deprecated Replaced by `runAgentViaCanonical` driven through
+   * `agents/runtime.ts`. The shadow state machine here is what F1 flagged:
+   * Handler emits a `handler:agent-run` request and reconstructs terminal
+   * state from an EventBus round-trip, while canonical-loop already owns
+   * persistence, recovery, and the same lifecycle on disk. Scheduled for
+   * deletion one release after 2026-05-13; until then it remains for the
+   * legacy `spawnAgent` path used by tests and any direct caller we
+   * haven't routed yet.
+   */
   private runAgentAsync(agentId: string): void {
     const agent = this.agents.get(agentId);
     if (!agent) return;
@@ -412,33 +513,33 @@ export class Handler {
 
         agent.result = result;
         if (isEmptyResponseSentinel) {
-          agent.status = "error";
+          agent.status = "failed";
           agent.output.push(`[blocked] ${result}`);
           this.notifyUpdate(agentId, { type: "error", data: result });
           EventBus.emit("handler:agent-error", { agentId, error: result });
-          this.pushCompletionToParent(agent, "error", result);
+          this.pushCompletionToParent(agent, "failed", result);
         } else {
-          agent.status = "done";
+          agent.status = "succeeded";
           agent.output.push(result);
           this.notifyUpdate(agentId, { type: "complete", data: result });
           EventBus.emit("handler:agent-done", { agentId, result });
-          this.pushCompletionToParent(agent, "done", result);
+          this.pushCompletionToParent(agent, "succeeded", result);
         }
       } catch (e) {
         const msg = String(e);
         if (!agent.abortController?.signal.aborted) {
-          agent.status = "error";
+          agent.status = "failed";
           agent.result = msg;
           agent.output.push(`[error] ${msg}`);
           this.notifyUpdate(agentId, { type: "error", data: msg });
           EventBus.emit("handler:agent-error", { agentId, error: msg });
-          this.pushCompletionToParent(agent, "error", msg);
+          this.pushCompletionToParent(agent, "failed", msg);
         }
       }
       // Clean up completed/errored agents after 5 minutes to prevent unbounded growth
       setTimeout(() => {
         const a = this.agents.get(agentId);
-        if (a && (a.status === "done" || a.status === "error")) {
+        if (a && (a.status === "succeeded" || a.status === "failed")) {
           this.messageBus.unsubscribe(agentId);
           this.agents.delete(agentId);
         }

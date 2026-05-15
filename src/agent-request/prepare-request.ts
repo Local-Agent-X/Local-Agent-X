@@ -111,7 +111,28 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // ~50-70% of the toolPromptSection bytes were nudges for tools that weren't
   // even in the call set, just consuming input tokens.
   const isBridge = channel === "telegram" || channel === "whatsapp";
-  let tools = isBridge ? bridgeTools : filterToolsForMessage(allAgentTools, message);
+
+  // Run the intent classifier UP FRONT so its verdict drives both the
+  // tool-filter strip-down (here) AND the tool_choice forcing later in
+  // step 7. Regex alone misses phrasings like "build a log counting app"
+  // where modifiers sit between the article and the noun — the LLM
+  // classifier catches those and lets us narrow tools accordingly.
+  // Failure mode w/o this: full 39-tool set ships, model bypasses
+  // build_app and improvises with raw write/bash/http_request.
+  let intentVerdict: Awaited<ReturnType<typeof classifyIntent>> = null;
+  const skipClassifier =
+    isBridge ||
+    NO_SPAWN_OVERRIDE_RE.test(message) ||
+    hasLiteralToolCall(message);
+  if (!skipClassifier) {
+    try { intentVerdict = await classifyIntent(message); }
+    catch (e) { logger.info(`[intent] classifier threw — skipping: ${(e as Error).message}`); }
+  }
+  const forceBuildIntent = intentVerdict?.kind === "build_app";
+
+  let tools = isBridge
+    ? bridgeTools
+    : filterToolsForMessage(allAgentTools, message, { forceBuildIntent });
 
   // Shrink for weaker models. 100+ tool catalogs paralyze Grok / small local
   // models (0-token responses). Cap aggressively while keeping essentials
@@ -392,35 +413,22 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     }
   }
 
-  // 7. Intent-classifier tool_choice forcing. When the user's ask
-  //    unambiguously maps to build_app / agent_spawn / self_edit, pin
-  //    tool_choice so the LLM emits a real tool_use block instead of
-  //    narrating its plan in prose ([Reading routes/] etc.). The LLM
-  //    classifier rides on the user's selected provider — same client
-  //    the chat is using. Skip the classifier for bridges, for explicit
-  //    user overrides ("don't delegate"), and when the user pasted a
-  //    literal tool call — in those cases the user's intent already
-  //    won, forcing on top would be wrong.
+  // 7. Intent-classifier tool_choice forcing. Verdict was computed up
+  //    front (step 1-ish above) so it could drive tool-filter narrowing;
+  //    here we reuse it to pin tool_choice. Forces the LLM to emit a
+  //    real tool_use block instead of narrating its plan in prose
+  //    ([Reading routes/] etc.). HTTP-path providers consume this
+  //    natively; CLI/OAuth ignores it but the tool-filter strip-down
+  //    already biased the model toward the right choice.
   let toolChoice: ForcedToolChoice | undefined;
-  const skipClassifier =
-    isBridge ||
-    NO_SPAWN_OVERRIDE_RE.test(message) ||
-    hasLiteralToolCall(message);
-  if (!skipClassifier) {
-    try {
-      const verdict = await classifyIntent(message);
-      if (verdict && verdict.kind !== "free") {
-        const forcedName = verdict.kind;
-        const inToolList = tools.some(t => t.name === forcedName);
-        if (inToolList) {
-          toolChoice = { type: "tool", name: forcedName };
-          logger.info(`[intent] forcing ${forcedName} (reason="${verdict.reason}")`);
-        } else {
-          logger.warn(`[intent] classifier picked ${forcedName} but it's not in this turn's tool list — skipping force`);
-        }
-      }
-    } catch (e) {
-      logger.info(`[intent] classifier threw — skipping force: ${(e as Error).message}`);
+  if (intentVerdict && intentVerdict.kind !== "free") {
+    const forcedName = intentVerdict.kind;
+    const inToolList = tools.some(t => t.name === forcedName);
+    if (inToolList) {
+      toolChoice = { type: "tool", name: forcedName };
+      logger.info(`[intent] forcing ${forcedName} (reason="${intentVerdict.reason}")`);
+    } else {
+      logger.warn(`[intent] classifier picked ${forcedName} but it's not in this turn's tool list — skipping force`);
     }
   }
 

@@ -281,13 +281,15 @@ function extractXmlToolName(xml: string): string | null {
  */
 export function filterStreamDelta(delta: string, alreadySuppressing: boolean): { text?: string; suppress?: boolean } {
   if (alreadySuppressing) {
-    // Block ended — JSON close OR XML close tag for tool_use / function_calls
+    // Block ended — JSON close OR XML close tag for tool_use / function_calls.
+    // Must explicitly return suppress:false so the consumer resets state;
+    // empty text is falsy and won't reset on its own.
     if (
       delta.includes("```") ||
       delta.includes("}\n") ||
       delta.includes("</tool_use>") ||
       delta.includes("</function_calls>")
-    ) return { text: "" };
+    ) return { text: "", suppress: false };
     return { suppress: true };
   }
   // Tool-call block starting — JSON form OR XML form

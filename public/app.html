@@ -181,6 +181,7 @@
       <div class="agent-feeds-header">
         <span class="agent-feeds-title">AGENTS</span>
         <span id="agent-count" class="agent-count">0</span>
+        <button id="agent-feeds-autoopen-toggle" class="agent-feeds-autoopen on" onclick="toggleAgentFeedsAutoOpen()" title="Auto-open this panel when an agent spawns. Click to toggle.">AUTO</button>
         <button class="agent-feeds-toggle" onclick="toggleAgentFeeds()" title="Toggle agent panel">&#9664;</button>
       </div>
       <div id="agent-feeds-list" class="agent-feeds-list"></div>
@@ -241,8 +242,10 @@
               <label class="field-label">Option 1 — Claude CLI login (easiest)</label>
               <div class="btn-row">
                 <button id="btn-anthropic-cli-login" class="action-btn primary" onclick="doClaudeCliLogin()">Sign in via Claude CLI</button>
+                <button id="btn-update-claude-cli" class="action-btn" onclick="updateClaudeCli()" title="Reinstall Claude CLI at the latest npm release">Update CLI</button>
                 <button id="btn-anthropic-cli-login-cancel" class="action-btn" onclick="cancelClaudeCliLogin()" style="display:none">Cancel</button>
               </div>
+              <div id="claude-cli-update-status" class="field-hint" style="margin-top:6px;display:none"></div>
               <div id="anthropic-cli-login-status" class="field-hint" style="margin-top:8px">Click to start. We'll launch <code>claude login</code> and surface the OAuth link here — no terminal needed. No tokens stored in this app; the CLI manages them.</div>
             </div>
             <div class="field" style="margin-top:14px">

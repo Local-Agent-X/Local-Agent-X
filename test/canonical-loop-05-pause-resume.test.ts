@@ -455,6 +455,10 @@ describe("concurrent ops: pausing A does not disturb B", () => {
 
 describe("flag OFF: legacy submit path is unaffected", () => {
   beforeEach(() => {
+    // Under the inverted default, OFF must be explicit.
+    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
+  });
+  afterEach(() => {
     delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
   });
 

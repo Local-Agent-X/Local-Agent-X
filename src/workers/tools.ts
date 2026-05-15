@@ -28,7 +28,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ToolDefinition } from "../types.js";
-import { submitOp, killOp, redirectOp, getPoolStatus, awaitOpResult } from "./pool.js";
+import { submitOp, killOp, cancelQueuedOp, redirectOp, getPoolStatus, awaitOpResult } from "./pool.js";
+import { opCancel } from "../canonical-loop/control-api.js";
 import { readOp, listOps, newOpId } from "./op-store.js";
 import { readEvents } from "./event-log.js";
 import { readCheckpoint } from "./checkpoint.js";
@@ -483,7 +484,13 @@ export const opKillTool: ToolDefinition = {
       if (live.length === 0) return { content: "no live op to kill for this session.", isError: true };
       opId = live[live.length - 1].id;
     }
-    const ok = killOp(opId);
+    // op_* IDs span two lifecycle systems sharing the same prefix —
+    // canonical-loop (opCancel) and legacy worker-pool (killOp / cancelQueuedOp).
+    // Fire both; each is a no-op on ops the other owns. Mirrors chat-ws.ts:454-456.
+    const canonicalRes = opCancel(opId, "op_kill");
+    let poolHit = killOp(opId);
+    if (!poolHit) poolHit = cancelQueuedOp(opId);
+    const ok = canonicalRes.ok || poolHit;
     return { content: ok ? `op killed.` : `op was not running.`, isError: !ok };
   },
 };

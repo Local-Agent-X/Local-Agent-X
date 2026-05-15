@@ -82,20 +82,20 @@ afterEach(() => {
 
 // ── Feature-flag reader ───────────────────────────────────────────────────
 
-describe("isCanonicalLoopEnabled — env-driven, lane-keyed, default OFF", () => {
-  it("defaults OFF for every lane when no env is set", () => {
-    expect(isCanonicalLoopEnabled("interactive")).toBe(false);
-    expect(isCanonicalLoopEnabled("build")).toBe(false);
-    expect(isCanonicalLoopEnabled("ide")).toBe(false);
-    expect(isCanonicalLoopEnabled("background")).toBe(false);
+describe("isCanonicalLoopEnabled — env-driven, lane-keyed, default ON", () => {
+  it("defaults ON for every lane when no env is set", () => {
+    expect(isCanonicalLoopEnabled("interactive")).toBe(true);
+    expect(isCanonicalLoopEnabled("build")).toBe(true);
+    expect(isCanonicalLoopEnabled("ide")).toBe(true);
+    expect(isCanonicalLoopEnabled("background")).toBe(true);
   });
 
-  it("turns ON only the lane whose env var is truthy", () => {
+  it("explicit truthy on one lane is redundant; other lanes stay ON by default", () => {
     process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
     expect(isCanonicalLoopEnabled("interactive")).toBe(true);
-    expect(isCanonicalLoopEnabled("build")).toBe(false);
-    expect(isCanonicalLoopEnabled("ide")).toBe(false);
-    expect(isCanonicalLoopEnabled("background")).toBe(false);
+    expect(isCanonicalLoopEnabled("build")).toBe(true);
+    expect(isCanonicalLoopEnabled("ide")).toBe(true);
+    expect(isCanonicalLoopEnabled("background")).toBe(true);
   });
 
   it("accepts canonical truthy values: 1, true, yes, on (case-insensitive)", () => {
@@ -105,19 +105,38 @@ describe("isCanonicalLoopEnabled — env-driven, lane-keyed, default OFF", () =>
     }
   });
 
-  it("treats any non-truthy value as OFF", () => {
-    for (const v of ["0", "false", "no", "off", "", " ", "maybe"]) {
+  it("treats explicit falsy values (0, false, no, off) as OFF", () => {
+    for (const v of ["0", "false", "FALSE", "no", "NO", "off", "OFF"]) {
       process.env.LAX_CANONICAL_LOOP_BUILD = v;
       expect(isCanonicalLoopEnabled("build")).toBe(false);
     }
   });
 
-  it("LAX_CANONICAL_LOOP_ALL flips every lane ON regardless of per-lane env", () => {
+  it("treats unparseable/blank per-lane values as default ON (absent-like)", () => {
+    for (const v of ["", " ", "maybe"]) {
+      process.env.LAX_CANONICAL_LOOP_BUILD = v;
+      expect(isCanonicalLoopEnabled("build")).toBe(true);
+    }
+  });
+
+  it("LAX_CANONICAL_LOOP_ALL=1 keeps every lane ON regardless of per-lane env", () => {
     process.env.LAX_CANONICAL_LOOP_ALL = "1";
+    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
+    process.env.LAX_CANONICAL_LOOP_BUILD = "0";
     expect(isCanonicalLoopEnabled("interactive")).toBe(true);
     expect(isCanonicalLoopEnabled("build")).toBe(true);
     expect(isCanonicalLoopEnabled("ide")).toBe(true);
     expect(isCanonicalLoopEnabled("background")).toBe(true);
+  });
+
+  it("LAX_CANONICAL_LOOP_ALL=0 forces every lane OFF regardless of per-lane env", () => {
+    process.env.LAX_CANONICAL_LOOP_ALL = "0";
+    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
+    process.env.LAX_CANONICAL_LOOP_BUILD = "1";
+    expect(isCanonicalLoopEnabled("interactive")).toBe(false);
+    expect(isCanonicalLoopEnabled("build")).toBe(false);
+    expect(isCanonicalLoopEnabled("ide")).toBe(false);
+    expect(isCanonicalLoopEnabled("background")).toBe(false);
   });
 
   it("envVarForLane maps each lane to its documented env name", () => {
@@ -131,10 +150,10 @@ describe("isCanonicalLoopEnabled — env-driven, lane-keyed, default OFF", () =>
 // ── Routing decision ──────────────────────────────────────────────────────
 
 describe("decideSubmitRouting — pure routing decision at submit time", () => {
-  it("flag OFF → legacy route, flagValue=false", () => {
+  it("flag absent → canonical route (default ON), flagValue=true", () => {
     const r = decideSubmitRouting({ lane: "interactive" });
-    expect(r.route).toBe("legacy");
-    expect(r.flagValue).toBe(false);
+    expect(r.route).toBe("canonical");
+    expect(r.flagValue).toBe(true);
     expect(r.lane).toBe("interactive");
   });
 
@@ -145,10 +164,10 @@ describe("decideSubmitRouting — pure routing decision at submit time", () => {
     expect(r.flagValue).toBe(true);
   });
 
-  it("per-lane isolation — interactive ON does not affect build", () => {
-    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-    expect(decideSubmitRouting({ lane: "interactive" }).route).toBe("canonical");
-    expect(decideSubmitRouting({ lane: "build" }).route).toBe("legacy");
+  it("per-lane isolation — interactive=0 forces legacy on interactive only, build stays canonical (default)", () => {
+    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
+    expect(decideSubmitRouting({ lane: "interactive" }).route).toBe("legacy");
+    expect(decideSubmitRouting({ lane: "build" }).route).toBe("canonical");
   });
 
   // Anthropic-only gate: when LAX_CANONICAL_LOOP_ANTHROPIC_ONLY=1 is set,
@@ -396,7 +415,8 @@ describe("legacy Op storage with new optional fields present", () => {
 // op shape on disk except for the additive `canonical` sub-object.
 
 describe("op_submit_async — flag OFF vs ON shape parity (Issue 01 acceptance #11 partial)", () => {
-  it("flag OFF: op persisted has no `canonical` field — byte-additive only", () => {
+  it("flag OFF (explicit 0): op persisted has no `canonical` field — byte-additive only", () => {
+    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
     const id = track(opId("off-shape"));
     const op = mkOp(id, { lane: "interactive" });
     const r = decideSubmitRouting(op);

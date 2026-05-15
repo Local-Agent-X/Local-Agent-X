@@ -664,7 +664,7 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .agent-feeds-toggle{background:none;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:.85rem;padding:4px 8px;border-radius:6px;transition:all .15s;line-height:1}
 .agent-feeds-toggle:hover{border-color:var(--accent);color:var(--accent)}
 .agent-feeds-list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;scrollbar-color:#222 transparent}
-.agent-feed-card{background:rgba(15,15,24,.7);backdrop-filter:blur(8px);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:8px;padding:10px 12px;transition:all .2s}
+.agent-feed-card{background:var(--surface-2);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:8px;padding:10px 12px;transition:all .2s}
 .agent-feed-card.working{border-left-color:var(--accent);box-shadow:0 0 12px rgba(64,240,240,.06)}
 .agent-feed-card.waiting{border-left-color:var(--warn)}
 .agent-feed-card.done,.agent-feed-card.completed,.agent-feed-card.succeeded{border-left-color:var(--muted);opacity:.7}

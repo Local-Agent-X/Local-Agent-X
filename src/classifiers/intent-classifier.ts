@@ -101,7 +101,7 @@ export async function classifyIntent(
     category: "intent",
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
-    timeoutMs: opts?.timeoutMs ?? 1500,
+    timeoutMs: opts?.timeoutMs ?? 8000,
     model: opts?.model,
     envDisableVar: "LAX_INTENT_CLASSIFIER",
     signal: opts?.signal,

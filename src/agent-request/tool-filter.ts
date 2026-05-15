@@ -196,14 +196,22 @@ function keywordRouter(message: string, allTools: ToolDefinition[]): Set<string>
  * Verified byte-identical to the pre-migration implementation for the
  * 10 representative messages in test/tool-filter-parity.test.ts.
  */
-export function filterToolsForMessage(allTools: ToolDefinition[], message: string): ToolDefinition[] {
+export function filterToolsForMessage(
+  allTools: ToolDefinition[],
+  message: string,
+  opts?: { forceBuildIntent?: boolean },
+): ToolDefinition[] {
   const resolved = resolveToolsForRequest(
     {
       audience: "main-chat",
       message,
       keywordRouter,
       literalCallDetector: detectLiteralToolCalls,
-      buildIntentTest: (m) => BUILD_INTENT_REGEX.test(m),
+      // forceBuildIntent comes from the LLM classifier verdict in
+      // prepare-request.ts. Regex alone misses phrasings like
+      // "build a log counting app" (modifiers between article and noun)
+      // — the classifier handles those, then short-circuits the regex.
+      buildIntentTest: (m) => opts?.forceBuildIntent === true || BUILD_INTENT_REGEX.test(m),
     },
     allTools,
   );

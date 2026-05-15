@@ -451,6 +451,10 @@ describe("per-op seq is independent and gap-free under concurrent ops", () => {
 
 describe("flag OFF legacy path is not disturbed by Issue 04", () => {
   beforeEach(() => {
+    // Under the inverted default, OFF must be explicit.
+    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
+  });
+  afterEach(() => {
     delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
   });
 

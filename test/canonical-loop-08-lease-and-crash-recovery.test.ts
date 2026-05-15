@@ -745,6 +745,10 @@ describe("scheduler lane caps after recovery", () => {
 
 describe("flag OFF: lease/recovery do not affect legacy submit path", () => {
   beforeEach(() => {
+    // Under the inverted default, OFF must be explicit.
+    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
+  });
+  afterEach(() => {
     delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
   });
 

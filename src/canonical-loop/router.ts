@@ -6,6 +6,11 @@
  * immutable for the op's lifetime (captured on `op.canonical.flagValue` by
  * the caller).
  *
+ * Default routing is **canonical** for every lane. Legacy is selected only
+ * when (a) the feature flag is explicitly set to a falsy value, or (b) the
+ * effective provider has no canonical adapter (see below). Rollback path is
+ * `LAX_CANONICAL_LOOP_ALL=0` — see docs/runbooks/canonical-loop-rollback.md.
+ *
  * Provider gating: when `LAX_CANONICAL_LOOP_ANTHROPIC_ONLY=1` is set, the
  * canonical route is only taken when the op's effective provider resolves
  * to Anthropic. With the Codex adapter shipped (v1.1), Codex now has

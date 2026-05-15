@@ -174,9 +174,10 @@ describe.each(HAPPY_FIXTURES)("Issue 10 — fixture replay: %s", (name) => {
   it("flag OFF response + artifacts match the fixture's flagOff snapshot", () => {
     const fixture = loadFixture(name);
     const args = buildArgs(fixture);
-    if (fixture.expected.flagEnvVar) {
-      delete process.env[fixture.expected.flagEnvVar];
-    }
+    // Under the inverted default, OFF must be explicit. Per-lane env if the
+    // fixture specifies one; otherwise interactive is the harness default.
+    const offEnvVar = fixture.expected.flagEnvVar ?? "LAX_CANONICAL_LOOP_INTERACTIVE";
+    process.env[offEnvVar] = "0";
 
     const result = harnessSubmit(args);
     trackOpId(result.opId);
@@ -245,7 +246,7 @@ describe.each(HAPPY_FIXTURES)("Issue 10 — fixture replay: %s", (name) => {
 
 describe("Issue 10 — cross-flag invariants", () => {
   it("response content is byte-identical after normalization between flag OFF and flag ON", () => {
-    delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
+    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
     const off = harnessSubmit({ task: "Reply with: ok.", type: "freeform", lane: "interactive" });
     trackOpId(off.opId);
     process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
@@ -262,7 +263,7 @@ describe("Issue 10 — cross-flag invariants", () => {
   });
 
   it("flag OFF never writes canonical artifacts; flag ON never writes legacy events.jsonl at submit time", () => {
-    delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
+    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
     const off = harnessSubmit({ task: "off-only", type: "freeform", lane: "interactive" });
     trackOpId(off.opId);
     expect(off.artifacts.canonicalEventsExists).toBe(false);
@@ -323,7 +324,7 @@ describe("Issue 10 — cross-flag invariants", () => {
 
 describe("Issue 10 — decideSubmitRouting shape preserved", () => {
   it("returns { route, flagValue, lane } with route ∈ {legacy, canonical}", () => {
-    delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
+    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
     const off = decideSubmitRouting({ lane: "interactive" });
     expect(off).toMatchObject({ route: "legacy", flagValue: false, lane: "interactive" });
 

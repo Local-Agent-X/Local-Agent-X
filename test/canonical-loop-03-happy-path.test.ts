@@ -541,6 +541,10 @@ describe("Issue 03 — flag ON + no adapter registered fails cleanly", () => {
 
 describe("Issue 03 — legacy path untouched when flag OFF", () => {
   beforeEach(() => {
+    // Under the inverted default, OFF must be explicit (PRD §17).
+    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
+  });
+  afterEach(() => {
     delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
   });
 

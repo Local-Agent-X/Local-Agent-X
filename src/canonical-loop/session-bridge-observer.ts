@@ -53,8 +53,15 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
     // run id (e.g. field-agent-1-...). Surfacing the canonical-loop op
     // here too would render TWO cards per spawn (Worker: <task> + the
     // named specialist), which is what users see in the sidebar.
+    //
+    // Same for `voice_turn` ops: each voice utterance submits one of these
+    // through voiceTurnRunner. They are conversation turns, not background
+    // delegations — the spoken reply already surfaces through the voice WS
+    // (assistant_delta + TTS). Without this filter, every voice utterance
+    // stacks a "Worker: op_voice_..." card in the AGENTS sidebar — exactly
+    // the original triage symptom "Voice spawns an agent per sentence".
     const op = readOp(event.opId);
-    if (op?.type === "chat_turn" || op?.type === "agent_spawn") return;
+    if (op?.type === "chat_turn" || op?.type === "agent_spawn" || op?.type === "voice_turn") return;
 
     const task = getTaskForOp(event.opId) ?? "";
     const b = (event.body ?? {}) as Record<string, unknown>;

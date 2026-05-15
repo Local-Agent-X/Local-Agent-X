@@ -25,6 +25,32 @@ const AGENT_ROLE_ICONS = {
 };
 let agentFeedsOpen = false;
 let agentFeedsData = {};
+// Auto-open the AGENTS panel whenever an agent spawns. User-toggleable
+// via the AUTO pill in the panel header. Persisted in localStorage so
+// the choice survives reloads. Default ON to match prior behavior.
+let agentFeedsAutoOpen = (function() {
+  try { var raw = localStorage.getItem('lax_agent_feeds_autoopen'); return raw === null ? true : raw === '1'; }
+  catch { return true; }
+})();
+
+function toggleAgentFeedsAutoOpen() {
+  agentFeedsAutoOpen = !agentFeedsAutoOpen;
+  try { localStorage.setItem('lax_agent_feeds_autoopen', agentFeedsAutoOpen ? '1' : '0'); } catch {}
+  _updateAutoOpenButton();
+}
+
+function _updateAutoOpenButton() {
+  var btn = document.getElementById('agent-feeds-autoopen-toggle');
+  if (!btn) return;
+  if (agentFeedsAutoOpen) { btn.classList.add('on'); btn.classList.remove('off'); btn.title = 'Auto-open ON — panel opens whenever an agent spawns. Click to disable.'; }
+  else { btn.classList.add('off'); btn.classList.remove('on'); btn.title = 'Auto-open OFF — panel stays closed when agents spawn. Click to enable.'; }
+}
+
+// Sync the button visual to the persisted state once the DOM is ready.
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _updateAutoOpenButton);
+  else _updateAutoOpenButton();
+}
 
 function toggleAgentFeeds() {
   var panel = document.getElementById('agent-feeds');
@@ -57,7 +83,10 @@ function updateAgentFeeds(agents) {
 function addAgentFeed(agent) {
   if (!agent || !agent.id) return;
   agentFeedsData[agent.id] = agent;
-  if (!agentFeedsOpen) toggleAgentFeeds();
+  // Honor the user's auto-open preference. Card is still added to the
+  // panel either way; just the open animation is suppressed when AUTO
+  // is off, so nothing surprises the user mid-task.
+  if (agentFeedsAutoOpen && !agentFeedsOpen) toggleAgentFeeds();
   _renderAgentFeedsList();
 }
 

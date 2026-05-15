@@ -657,7 +657,11 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .agent-feeds-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0}
 .agent-feeds-title{font-family:var(--mono);font-size:.72rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase}
 .agent-count{font-family:var(--mono);font-size:.65rem;background:var(--accent);color:var(--bg);border-radius:10px;padding:1px 7px;min-width:18px;text-align:center}
-.agent-feeds-toggle{background:none;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:.85rem;padding:4px 8px;border-radius:6px;margin-left:auto;transition:all .15s;line-height:1}
+.agent-feeds-autoopen{background:none;border:1px solid var(--border);cursor:pointer;font-family:var(--mono);font-size:.6rem;padding:3px 8px;border-radius:6px;margin-left:auto;transition:all .15s;line-height:1;letter-spacing:1px}
+.agent-feeds-autoopen.on{border-color:var(--accent);color:var(--accent);background:rgba(64,240,240,.08)}
+.agent-feeds-autoopen.off{border-color:var(--border);color:var(--muted);background:transparent;text-decoration:line-through;opacity:.6}
+.agent-feeds-autoopen:hover{filter:brightness(1.2)}
+.agent-feeds-toggle{background:none;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:.85rem;padding:4px 8px;border-radius:6px;transition:all .15s;line-height:1}
 .agent-feeds-toggle:hover{border-color:var(--accent);color:var(--accent)}
 .agent-feeds-list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;scrollbar-color:#222 transparent}
 .agent-feed-card{background:rgba(15,15,24,.7);backdrop-filter:blur(8px);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:8px;padding:10px 12px;transition:all .2s}

@@ -1,5 +1,5 @@
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -264,8 +264,5 @@ export function initiateAnthropicLogin(): { authUrl: string; promise: Promise<vo
 
 export function deleteAnthropicTokens(): void {
   const authPath = getAuthPath();
-  if (existsSync(authPath)) {
-    const { unlinkSync } = require("node:fs");
-    unlinkSync(authPath);
-  }
+  if (existsSync(authPath)) unlinkSync(authPath);
 }

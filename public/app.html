@@ -229,7 +229,7 @@
         </div>
         <div class="section-card">
           <div class="section-title">Anthropic Authentication</div>
-          <div class="section-desc">Connect to Claude (Sonnet, Opus, Haiku). Anthropic blocked third-party direct OAuth in April 2026 — all subscription auth now routes through the official Claude CLI subprocess.</div>
+          <div class="section-desc">Connect to Claude (Sonnet, Opus, Haiku) via the Claude CLI subprocess. Two supported options: Claude CLI login (easiest) or setup-token from <code>claude setup-token</code>. Starting 2026-06-15 LAX usage draws from your subscription's <strong>Agent SDK credit pool</strong> (Max 20x = $200/mo), separate from interactive Claude.ai. Direct OAuth tokens are NOT permitted for third-party tools per Anthropic's TOS.</div>
           <div id="anthropic-auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
           <div id="claude-cli-status" class="status-badge warn" style="margin-top:6px"><span class="status-dot"></span> Checking Claude CLI...</div>
           <div id="anthropic-already-connected" style="margin-top:8px;display:none">
@@ -256,9 +256,9 @@
               </div>
               <div class="field-hint">Run <code>claude setup-token</code> in terminal, paste here. Stored encrypted; routes through CLI subprocess.</div>
             </div>
-            <div class="field" style="margin-top:14px;display:none" data-anthropic-legacy-oauth>
-              <label class="field-label">Option 3 — Legacy OAuth (browser flow)</label>
-              <div class="field-hint" style="color:var(--muted);margin-bottom:6px">Anthropic blocked third-party direct OAuth in April 2026 — this path no longer authorizes inference. Hidden by default; remove the <code>display:none</code> on this block to re-expose if Anthropic restores third-party OAuth.</div>
+            <div class="field" style="margin-top:14px;display:none" data-anthropic-direct-oauth>
+              <label class="field-label">Option 3 — Direct OAuth (DISABLED)</label>
+              <div class="field-hint" style="color:var(--muted);margin-bottom:6px">Anthropic's TOS prohibits using Pro/Max OAuth tokens in third-party tools (incl. Local Agent X). Tokens obtained via this flow return "Not logged in" on inference. Use Option 1 or 2 instead — both route through the CLI subprocess, which IS permitted and now bills against the Agent SDK credit pool. Hidden by default; only re-expose if Anthropic publishes a third-party OAuth scope.</div>
               <div class="btn-row">
                 <button id="btn-anthropic-login" class="action-btn" onclick="doAnthropicLogin()">Sign in with Anthropic OAuth</button>
                 <button id="btn-anthropic-disconnect" class="action-btn danger" onclick="doAnthropicDisconnect()" style="display:none">Disconnect</button>

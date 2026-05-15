@@ -71,6 +71,18 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }
+  if (method === "POST" && url.pathname === "/api/auth/anthropic/cli-logout") {
+    try {
+      const { exec } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const { stdout, stderr } = await promisify(exec)("claude auth logout", {
+        timeout: 15_000,
+        env: npmAugmentedEnv(),
+      });
+      json(200, { ok: true, output: (stdout + stderr).slice(-300) });
+    } catch (e) { json(500, { error: `CLI logout failed: ${safeErrorMessage(e)}` }); }
+    return true;
+  }
   if (method === "POST" && url.pathname === "/api/auth/anthropic/setup-token") {
     try {
       const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }

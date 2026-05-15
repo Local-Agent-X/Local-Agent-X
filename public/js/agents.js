@@ -584,7 +584,7 @@ async function showAgentDetail(id) {
     const r = await fetch(`${API}/api/agents/history/${id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     const run = await r.json();
     if (!detail) return;
-    const statusColor = run.status === 'done' ? 'var(--accent)' : run.status === 'error' ? 'var(--danger)' : 'var(--warn)';
+    const statusColor = run.status === 'succeeded' ? 'var(--accent)' : run.status === 'failed' ? 'var(--danger)' : 'var(--warn)';
     detail.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <h2 style="font-family:var(--mono);font-size:1rem;color:var(--accent)">${esc(run.name)}</h2>

@@ -8,6 +8,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { runCommandInWorktree, getWorktreePath } from "./agency/worktree.js";
 import { npmAugmentedEnv } from "./anthropic-client/cli-path.js";
+import { killProcessTree } from "./process-tree-kill.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("self-edit.sandbox-gates");
@@ -166,9 +167,15 @@ export function spawnClaude(cwd: string, prompt: string, signal?: AbortSignal): 
       shell: process.platform === "win32",
       env: npmAugmentedEnv(),
     });
-    const abortListener = () => { try { proc.kill("SIGTERM"); } catch {} };
+    // Windows shell:true spawn wraps the binary in cmd.exe; proc.kill only
+    // signals the wrapper. `killProcessTree` does the proper SIGTERM +
+    // taskkill /F /T so claude.exe (the actual descendant) dies on
+    // cancel/timeout. Without it, Stop leaves claude running for minutes
+    // and the worker's lease never releases.
+    const killTree = () => killProcessTree(proc);
+    const abortListener = killTree;
     signal?.addEventListener("abort", abortListener);
-    const timer = setTimeout(() => { try { proc.kill("SIGTERM"); } catch {} }, CLAUDE_TIMEOUT_MS);
+    const timer = setTimeout(killTree, CLAUDE_TIMEOUT_MS);
     proc.stdout?.on("data", (c: Buffer) => { stdout += c.toString(); if (stdout.length > MAX_OUTPUT_CHARS * 3) stdout = stdout.slice(-MAX_OUTPUT_CHARS * 3); });
     proc.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });
     proc.on("close", (code) => {
@@ -193,13 +200,6 @@ export function spawnClaude(cwd: string, prompt: string, signal?: AbortSignal): 
 // ── Probe process cleanup helper ───────────────────────────────────────────
 
 export function killProbe(proc: ChildProcess | null): void {
-  if (!proc) return;
-  try { proc.kill("SIGKILL"); } catch {}
-  if (process.platform === "win32" && proc.pid) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require("node:child_process").execSync(`taskkill /PID ${proc.pid} /F /T`, { stdio: "ignore", windowsHide: true });
-    } catch {}
-  }
+  killProcessTree(proc, "SIGKILL");
   void logger; // silence unused-import lint
 }

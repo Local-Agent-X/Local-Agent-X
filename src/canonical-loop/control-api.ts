@@ -24,6 +24,7 @@ import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { enqueueOp, pumpScheduler } from "./scheduler.js";
 import { publishSignal } from "./signals.js";
+import { isTerminalState } from "./terminal-states.js";
 
 /** Sentinel for `seq` arg of `opEventsSince`: replay from the beginning. */
 export const OP_EVENTS_FROM_BEGINNING = -1;
@@ -181,8 +182,6 @@ export interface ControlErr {
 }
 export type ControlResult = ControlOk | ControlErr;
 
-const TERMINAL_STATES = new Set<string>(["succeeded", "failed", "cancelled"]);
-
 /**
  * Soft-pause an op (PRD §13).
  *
@@ -206,7 +205,7 @@ export function opPause(opId: string, actor: string): ControlResult {
   const op = readOp(opId);
   if (!op) return { ok: false, code: "unknown_op", message: `no op with id ${opId}` };
   const state = op.canonical?.state;
-  if (state && TERMINAL_STATES.has(state)) {
+  if (isTerminalState(state)) {
     return { ok: false, code: "terminal", message: `op ${opId} is already ${state}` };
   }
   // Idempotent: already paused, or pause already pending — no double event.
@@ -280,7 +279,7 @@ export function opCancel(opId: string, actor: string): ControlResult {
   const op = readOp(opId);
   if (!op) return { ok: false, code: "unknown_op", message: `no op with id ${opId}` };
   const state = op.canonical?.state;
-  if (state && TERMINAL_STATES.has(state)) {
+  if (isTerminalState(state)) {
     return { ok: false, code: "terminal", message: `op ${opId} is already ${state}` };
   }
   // Idempotent: cancel already in flight or already pending.
@@ -345,7 +344,7 @@ export function opRedirect(opId: string, instruction: string, actor: string): Re
   const op = readOp(opId);
   if (!op) return { ok: false, code: "unknown_op", message: `no op with id ${opId}` };
   const state = op.canonical?.state;
-  if (state && TERMINAL_STATES.has(state)) {
+  if (isTerminalState(state)) {
     return { ok: false, code: "terminal", message: `op ${opId} is already ${state}` };
   }
   // Cancelling/cancelled paths: PRD §13 cancel > pause > redirect. We do

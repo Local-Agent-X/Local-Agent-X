@@ -91,6 +91,14 @@ export function bootstrapProviderMatrix(): void {
     resourceLocks: [],
   });
   registerProvider({
+    id: "httpKeyCerebras", label: "Cerebras (HTTP)",
+    transport: "httpKey",
+    supportsTools: true, supportsVision: false, supportsLongContext: false,
+    supportsStreaming: true, supportsJsonMode: true, supportsLocalFiles: false,
+    maxConcurrent: 4, costTier: "cheap", latencyTier: "fast",
+    resourceLocks: [],
+  });
+  registerProvider({
     id: "localHttpOllama", label: "Local model (Ollama)",
     transport: "localHttp",
     supportsTools: false, supportsVision: false, supportsLongContext: false,

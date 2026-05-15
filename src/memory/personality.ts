@@ -5,9 +5,10 @@
  * system prompt by buildContextBlock. Defaults are written on first run
  * so the agent has something to work from before the user customizes.
  */
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { safeReadTextFile } from "./utils.js";
+import { writeMemorySafely } from "./write-safely.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.personality");
@@ -86,7 +87,12 @@ export function ensurePersonalityFiles(memDir: string): void {
   for (const [filename, content] of Object.entries(defaults)) {
     const filePath = join(memDir, filename);
     if (!existsSync(filePath)) {
-      writeFileSync(filePath, content, "utf-8");
+      writeMemorySafely({
+        content,
+        source: "personality",
+        target: filePath,
+        mode: "overwrite",
+      });
     }
   }
 }

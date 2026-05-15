@@ -8,7 +8,7 @@ If you discover a security vulnerability in Local Agent X, please report it resp
 
 ### How to Report
 
-1. Email: [TBD - add security contact email]
+1. Email: petermanrique101@gmail.com
 2. GitHub: Use [GitHub Security Advisories](https://github.com/petermanrique101-sys/Local-Agent-X/security/advisories/new) to privately report vulnerabilities.
 
 ### What to Include
@@ -26,57 +26,9 @@ If you discover a security vulnerability in Local Agent X, please report it resp
 - **Fix**: Critical issues within 14 days; others within 30 days
 - **Disclosure**: Coordinated disclosure after fix is released
 
-## Security Architecture
+## Threat Model
 
-Local Agent X uses a multi-layered security model:
-
-### Layer 1: SecurityLayer (Static Rules)
-- SSRF protection with DNS pinning (prevents DNS rebinding)
-- Shell command validation (metacharacter rejection + blocked patterns)
-- File access control (symlink detection + path normalization)
-- Network exfiltration prevention (shell network clients blocked)
-- Credential redaction in tool output
-
-### Layer 2: Tool Policy (Configurable)
-- Default-deny policy: only explicitly allowed tools can execute
-- Per-tool rate limits
-- Host allowlists/denylists
-- Configurable via `~/.sax/tool-policy.json`
-
-### Layer 3: Threat Engine (Behavioral)
-- Tool chain analysis: detects exfiltration patterns (read sensitive → send external)
-- Loop detection: generic repeat, ping-pong, circuit breaker
-- Canary tokens: detects prompt injection by monitoring for leaked system prompt content
-- Data classification: auto-tags tool results (credentials, PII, secrets, financial)
-- Adaptive threat scoring: restricts external tools when session risk is high
-
-### Layer 4: Content Sanitization
-- External content wrapping with unique boundary markers
-- Prompt injection pattern detection with scoring
-- Unicode homoglyph normalization
-- Memory taint protection: blocks untrusted content from persisting to memory files
-
-### Layer 5: Cryptographic Audit Trail
-- Hash-chained audit logs (SHA-256, tamper-evident)
-- Per-session threat scoring and decision tracking
-- Daily JSONL files at `~/.sax/audit/`
-
-## Trust Model
-
-Local Agent X is designed as a **single-user personal agent** running on a local workstation. Key assumptions:
-
-- The server binds to `127.0.0.1` only (not exposed to network)
-- Authentication is via a shared bearer token (single-user model)
-- Tools execute with the host user's privileges
-- The system is NOT designed for multi-user or multi-tenant deployment
-
-### Known Limitations
-
-- Docker sandbox auto-detects — if Docker unavailable, tools run on host (set `SAX_SANDBOX=docker` to require it)
-- RBAC has 3 roles (operator/user/readonly) — not full enterprise IAM (OIDC/SAML planned)
-- Secrets encryption uses OS keychain (DPAPI/Keychain) with scrypt fallback (N=131072)
-- Memory taint checking is heuristic + ARI Kernel formal taint — defense-in-depth, not proof
-- Egress allowlist is opt-in — create `~/.sax/egress-allowlist.json` for lockdown
+Local Agent X is a single-user personal agent designed for a local workstation. For the full trust model, threat actors, attack surfaces, defense-layer architecture, and incident response, see [THREAT-MODEL.md](THREAT-MODEL.md).
 
 ## Secure Deployment Checklist
 
@@ -93,15 +45,6 @@ Local Agent X is designed as a **single-user personal agent** running on a local
 - [ ] Do NOT share the bearer token across users
 - [ ] Rotate auth token periodically via `POST /api/auth/rotate`
 
-## Security Advisory Process
-
-We use GitHub Security Advisories for responsible disclosure. Published advisories include:
-- CVE ID (when applicable)
-- Affected versions
-- Impact assessment
-- Remediation steps
-- Timeline
-
 ## Data Retention
 
 - Chat sessions: stored in `~/.sax/sessions/` as JSON (can be deleted per-session)
@@ -111,6 +54,15 @@ We use GitHub Security Advisories for responsible disclosure. Published advisori
 - Secrets: encrypted at rest in `~/.sax/secrets.enc` (AES-256-GCM)
 - No data is sent to external services except the configured LLM API (OpenAI/xAI)
 - PI (Personal Information) in chat is not automatically redacted from storage — use high-security session mode for sensitive conversations
+
+## Security Advisory Process
+
+We use GitHub Security Advisories for responsible disclosure. Published advisories include:
+- CVE ID (when applicable)
+- Affected versions
+- Impact assessment
+- Remediation steps
+- Timeline
 
 ## Supported Versions
 

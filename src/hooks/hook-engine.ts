@@ -16,6 +16,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { HookDefinition, HookEvent, HookEventContext, HookResult, HooksConfig } from "./hook-types.js";
+import { CREDENTIAL_ENV_PREFIXES } from "../security/credential-patterns.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("hooks.hook-engine");
@@ -27,13 +28,10 @@ interface SecurityEvaluator {
 const HOOKS_PATH = join(homedir(), ".lax", "hooks.json");
 const IS_WINDOWS = process.platform === "win32";
 
-// Env vars that must NOT leak to hook commands
-const SCRUB_KEYS = /^(ANTHROPIC_|OPENAI_|XAI_|SMTP_|IMAP_|GITHUB_|SLACK_|DISCORD_|BRAVE_|GEMINI_|CUSTOM_|DEEPSEEK_|MOONSHOT_|DASHSCOPE_).*|.*_(KEY|TOKEN|SECRET|PASS|PASSWORD)$/i;
-
 function scrubEnv(): Record<string, string> {
   const clean: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v !== undefined && !SCRUB_KEYS.test(k)) clean[k] = v;
+    if (v !== undefined && !CREDENTIAL_ENV_PREFIXES.test(k)) clean[k] = v;
   }
   return clean;
 }

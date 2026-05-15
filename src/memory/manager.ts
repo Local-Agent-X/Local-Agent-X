@@ -16,6 +16,7 @@ import type { SearchOptions } from "./index-search.js";
 import { buildContextBlock, autoSearchContext } from "./context.js";
 import { autoExtractAndSave } from "./auto-extract.js";
 import { findKnownProjectsInMessage, buildKnownProjectsNudge } from "./known-projects.js";
+import { appendToDailyLogSafely } from "./write-safely.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("memory.manager");
@@ -182,7 +183,14 @@ export class MemoryManager {
     }
     try {
       const userSnippet = input.userMessage.slice(0, 300).replace(/\n/g, " ");
-      if (userSnippet.length > 10) this.index.appendDailyLog(`User: ${userSnippet}`, input.sessionId);
+      if (userSnippet.length > 10) {
+        appendToDailyLogSafely({
+          memory: this.index,
+          source: "auto-extract",
+          content: `User: ${userSnippet}`,
+          sessionId: input.sessionId,
+        });
+      }
     } catch (e) {
       logger.warn("appendDailyLog failed:", (e as Error).message);
     }

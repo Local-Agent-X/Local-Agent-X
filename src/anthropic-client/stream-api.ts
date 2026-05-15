@@ -3,8 +3,14 @@ import { API_BASE, convertMessages } from "./request.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  const { token, model, messages, systemPrompt, tools, maxTokens = 8192, toolChoice } = options;
+  const { token, model, messages, systemPrompt, tools, maxTokens = 8192, toolChoice, forcedToolName, signal } = options;
   const resolvedModel = normalizeAnthropicModel(model, "api");
+
+  // Fail fast if the caller already cancelled before we started.
+  if (signal?.aborted) {
+    yield { type: "error", error: "Anthropic request aborted before dispatch" };
+    return;
+  }
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -32,13 +38,25 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
   }));
   if (anthropicTools?.length) {
     body.tools = anthropicTools;
-    if (toolChoice === "required") body.tool_choice = { type: "any" };
+    if (forcedToolName && anthropicTools.some(t => t.name === forcedToolName)) {
+      body.tool_choice = { type: "tool", name: forcedToolName };
+    } else if (toolChoice === "required") {
+      body.tool_choice = { type: "any" };
+    }
   }
 
+  // Compose connect timeout (60s) with the caller's external cancel
+  // signal — same shape as the codex client fix. Request-phase aborts
+  // when either fires.
+  const fetchSignals: AbortSignal[] = [AbortSignal.timeout(60_000)];
+  if (signal) fetchSignals.push(signal);
+  const fetchSignal = fetchSignals.length > 1 ? AbortSignal.any(fetchSignals) : fetchSignals[0];
+
+  let externalAbortHandler: (() => void) | null = null;
   try {
     const response = await fetch(`${API_BASE}/v1/messages`, {
       method: "POST", headers, body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60_000),
+      signal: fetchSignal,
     });
 
     if (!response.ok) {
@@ -54,6 +72,17 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     }
 
     const reader = response.body.getReader();
+    // Wire the caller's signal to cancel the body reader so mid-stream
+    // aborts (barge-in, op cancel) release the worker immediately
+    // instead of blocking until the stream closes naturally.
+    if (signal) {
+      if (signal.aborted) {
+        void reader.cancel().catch(() => {});
+      } else {
+        externalAbortHandler = () => { void reader.cancel().catch(() => {}); };
+        signal.addEventListener("abort", externalAbortHandler, { once: true });
+      }
+    }
     const decoder = new TextDecoder();
     let buffer = "";
     let currentToolId = "";
@@ -121,5 +150,9 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     yield { type: "done", usage: { inputTokens, outputTokens }, stopReason, classification };
   } catch (e) {
     yield { type: "error", error: `Anthropic error: ${(e as Error).message?.slice(0, 300)}` };
+  } finally {
+    if (externalAbortHandler && signal) {
+      signal.removeEventListener("abort", externalAbortHandler);
+    }
   }
 }

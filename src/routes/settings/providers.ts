@@ -4,6 +4,8 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, readBody } from "../../server-utils.js";
 import { getRuntimeConfig } from "../../config.js";
 import { isEmbeddingModel } from "../../canonical-loop/model-capabilities.js";
+import type { ProviderId } from "../../providers/provider-ids.js";
+import { PROVIDERS } from "../../providers/registry.js";
 
 export const handleProvidersRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -16,6 +18,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     const hasOpenAIOAuth = !!loadTokens();
     const hasAnthropicOAuth = !!loadAnthropicTokens();
     const hasXaiKey = ctx.secretsStore.has("XAI_API_KEY");
+    const hasCerebrasKey = ctx.secretsStore.has("CEREBRAS_API_KEY");
     const hasOpenAIKey = !!ctx.config.openaiApiKey || ctx.secretsStore.has("OPENAI_API_KEY");
     let hasOllama = false;
     const ollamaUrl = getRuntimeConfig().ollamaUrl;
@@ -24,11 +27,16 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     try { const sp = join(ctx.dataDir, "settings.json"); if (existsSync(sp)) { const s = JSON.parse(readFileSync(sp, "utf-8")); currentProvider = s.provider || "xai"; currentModel = s.model || ""; } } catch {}
     const hasGeminiKey = ctx.secretsStore.has("GEMINI_API_KEY");
     const hasCustomKey = ctx.secretsStore.has("CUSTOM_API_KEY");
-    if (hasXaiKey) providers.push({ id: "xai", name: "xAI Grok", models: ["grok-4", "grok-3", "grok-3-mini"], active: currentProvider === "xai" });
-    if (hasGeminiKey) providers.push({ id: "gemini", name: "Google Gemini", models: ["gemini-2.0-flash", "gemini-2.5-pro-preview-05-06", "gemini-2.5-flash-preview-05-20"], active: currentProvider === "gemini" });
-    if (hasOpenAIOAuth) providers.push({ id: "codex", name: "OpenAI Codex", models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"], active: currentProvider === "codex" });
-    if (hasAnthropicOAuth) providers.push({ id: "anthropic", name: "Anthropic", models: ["claude-opus-4-7", "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-5"], active: currentProvider === "anthropic" });
-    if (hasOpenAIKey) providers.push({ id: "openai", name: "OpenAI API", models: ["gpt-4o", "gpt-4o-mini", "o3-pro"], active: currentProvider === "openai" });
+    // Provider list, labels, and model arrays derived from PROVIDERS so
+    // adding a provider only requires editing registry.ts.
+    const pushFromRegistry = (id: ProviderId) =>
+      providers.push({ id, name: PROVIDERS[id].label, models: [...PROVIDERS[id].models], active: currentProvider === id });
+    if (hasXaiKey) pushFromRegistry("xai");
+    if (hasGeminiKey) pushFromRegistry("gemini");
+    if (hasCerebrasKey) pushFromRegistry("cerebras");
+    if (hasOpenAIOAuth) pushFromRegistry("codex");
+    if (hasAnthropicOAuth) pushFromRegistry("anthropic");
+    if (hasOpenAIKey) pushFromRegistry("openai");
     if (hasOllama) {
       let ollamaModels: string[] = [];
       try {
@@ -58,12 +66,12 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       }
       providers.push({
         id: "ollama-cloud",
-        name: "Ollama Turbo (cloud)",
+        name: PROVIDERS["ollama-cloud"].label,
         models: cloudModels,
         active: currentProvider === "ollama-cloud",
       });
     }
-    if (hasCustomKey) providers.push({ id: "custom", name: "Custom Provider", models: ["custom-model"], active: currentProvider === "custom" });
+    if (hasCustomKey) pushFromRegistry("custom");
     json(200, { providers, current: { provider: currentProvider, model: currentModel } }); return true;
   }
 
@@ -96,19 +104,11 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     // paired with a different provider (anthropic) and every next turn would
     // 404 on "model doesn't exist".
     if (!model) {
-      // Pick the BEST available model for each provider — when the agent
-      // switches providers without specifying a model, it should go flagship,
-      // not cheap/fast.
-      const DEFAULT_MODEL: Record<string, string> = {
-        xai: "grok-4",
-        openai: "o3-pro",
-        codex: "gpt-5.4",
-        anthropic: "claude-opus-4-7",
-        gemini: "gemini-2.5-pro-preview-05-06",
-        local: "qwen2:7b",
-        "ollama-cloud": "",  // user picks from cloud catalog; no sane default
-      };
-      model = DEFAULT_MODEL[provider] || String(settings.model || "");
+      // Auto-pick the flagship model from the registry. When PROVIDERS
+      // gains a new entry, the dropdown picks up its defaultModel
+      // without needing to edit this file.
+      const reg = PROVIDERS[provider as ProviderId];
+      model = (reg?.defaultModel) || String(settings.model || "");
     }
     settings.provider = provider;
     if (model) settings.model = model;
@@ -120,6 +120,21 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       broadcastAll({ type: "settings_changed", settings: { provider, model } });
     } catch {}
     json(200, { ok: true, provider, model: model || settings.model }); return true;
+  }
+
+  // Static provider registry — labels + model lists, no creds gating.
+  // Lets the Apps gallery dropdown render every provider without
+  // re-hardcoding the metadata client-side.
+  if (method === "GET" && url.pathname === "/api/providers/registry") {
+    const out = (Object.keys(PROVIDERS) as ProviderId[]).map(id => ({
+      id,
+      label: PROVIDERS[id].label,
+      models: PROVIDERS[id].models,
+      defaultModel: PROVIDERS[id].defaultModel,
+      transport: PROVIDERS[id].transport,
+    }));
+    json(200, { providers: out });
+    return true;
   }
 
   // Local models — chat-capable only (embedding models filtered out).

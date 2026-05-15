@@ -21,10 +21,15 @@
  * worthy. For an active 50-turn-day user, fewer than 10 fire — < $0.01/day.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { createLogger } from "../logger.js";
 import { redactKnownSecrets } from "../sanitize.js";
 import { resetSession as resetCurateNudge } from "./curate-nudge.js";
 import { dispatch } from "../llm-dispatch.js";
+import { PERSONALITY_FILES } from "./personality.js";
+import { writeMemorySafely, MemoryWriteBlocked } from "./write-safely.js";
 
 const logger = createLogger("memory.end-of-turn-write");
 
@@ -211,16 +216,7 @@ export function parseWriteDecision(raw: string): WriteDecision | null {
 }
 
 async function applyWrite(d: WriteDecision): Promise<void> {
-  // Reuse the same MemoryIndex path the memory_update_profile tool uses.
-  // We call the underlying file write directly with our own char-limit
-  // check (mirroring tools/save.ts) so a server-initiated write respects
-  // the same caps as a model-initiated one.
-  const { join } = await import("node:path");
-  const { existsSync, readFileSync } = await import("node:fs");
-  const { homedir } = await import("node:os");
-  const { atomicWriteFileSync } = await import("./utils.js");
-  const { PERSONALITY_FILES } = await import("./personality.js");
-
+  // Mirrors memory_update_profile's write path with the same char caps.
   const filename = PERSONALITY_FILES[d.file];
   if (!filename) throw new Error(`unknown profile file key: ${d.file}`);
   const filePath = join(homedir(), ".lax", "memory", filename);
@@ -249,13 +245,24 @@ async function applyWrite(d: WriteDecision): Promise<void> {
   const LIMITS: Record<string, number> = { "USER.md": 2000, "MIND.md": 5000 };
   const limit = LIMITS[filename];
   if (limit !== undefined && updated.length > limit) {
-    // Don't silently overwrite — log and skip. The model's next end-of-turn
-    // pass will see the overflow and (with luck) write a compressed entry.
     logger.warn(`[end-of-turn] skipped write — ${filename} would be ${updated.length}/${limit}`);
     return;
   }
 
-  atomicWriteFileSync(filePath, updated);
+  try {
+    writeMemorySafely({
+      content: updated,
+      source: "eot",
+      target: filePath,
+      mode: "overwrite",
+    });
+  } catch (e) {
+    if (e instanceof MemoryWriteBlocked) {
+      logger.warn(`[end-of-turn] write blocked by taint gate: ${e.reason}`);
+      return;
+    }
+    throw e;
+  }
 }
 
 /** @internal — exported for tests */

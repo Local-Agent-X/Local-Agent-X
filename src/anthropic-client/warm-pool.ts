@@ -29,10 +29,9 @@
  * per-request `streamViaCliWithTools` path unchanged.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { unlinkSync } from "node:fs";
 import { npmAugmentedEnv } from "./cli-path.js";
+import { writeMcpConfig } from "./mcp-config.js";
 import type { StreamEvent } from "./types.js";
 import { createLogger } from "../logger.js";
 
@@ -89,33 +88,6 @@ const DISALLOWED_TOOLS = [
   "Monitor", "TaskOutput", "TaskStop",
   "ScheduleWakeup", "PushNotification", "RemoteTrigger",
 ].join(",");
-
-function writeMcpConfig(sessionId: string, port: number, token: string): string {
-  const tmpDir = join(homedir(), ".lax", "tmp");
-  if (!existsSync(tmpDir)) mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
-  const configPath = join(tmpDir, `mcp-warmpool-${sessionId}.json`);
-  // Bridge is TypeScript — try compiled .js first, fall back to .ts via tsx.
-  const here = (import.meta.dirname || ".");
-  const tsPath = resolve(join(here, "..", "mcp-bridge.ts"));
-  const jsPath = resolve(join(here, "..", "mcp-bridge.js"));
-  const bridgePath = existsSync(jsPath) ? jsPath : tsPath;
-  const needsTsx = bridgePath.endsWith(".ts");
-  const mcpConfig = {
-    mcpServers: {
-      lax: {
-        command: "node",
-        args: needsTsx ? ["--import=tsx", bridgePath] : [bridgePath],
-        env: {
-          LAX_MCP_URL: `http://127.0.0.1:${port}`,
-          LAX_MCP_TOKEN: token,
-          LAX_MCP_SESSION_ID: sessionId,
-        },
-      },
-    },
-  };
-  writeFileSync(configPath, JSON.stringify(mcpConfig, null, 2), { mode: 0o600 });
-  return configPath;
-}
 
 const pool = new Map<string, WarmProcess[]>();
 const waiters = new Map<string, Array<() => void>>();
@@ -179,7 +151,12 @@ function spawnWarmProcess(key: WarmPoolKey): WarmProcess {
   let mcpConfigPath: string | null = null;
   if (key.sessionId && key.saxPort && key.saxToken) {
     try {
-      mcpConfigPath = writeMcpConfig(key.sessionId, key.saxPort, key.saxToken);
+      mcpConfigPath = writeMcpConfig({
+        port: key.saxPort,
+        token: key.saxToken,
+        sessionId: key.sessionId,
+        tag: `warmpool-${key.sessionId}`,
+      });
       args.push("--mcp-config", mcpConfigPath);
     } catch (e) {
       logger.warn(`[warm-pool] MCP config setup failed for sess=${key.sessionId}: ${(e as Error).message}`);

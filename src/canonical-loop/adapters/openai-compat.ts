@@ -53,6 +53,12 @@ export interface OpenAICompatAdapterOptions {
   systemPrompt?: string;
   temperature?: number;
   sessionId?: string;
+  /**
+   * Forced single-tool selection from the intent classifier. Applied on
+   * turn 0 only — subsequent turns release the pin so the model can
+   * narrate or chain. Undefined = "auto" (no force).
+   */
+  forcedToolChoice?: { type: "tool"; name: string };
 }
 
 export class OpenAICompatAdapter implements Adapter {
@@ -74,6 +80,12 @@ export class OpenAICompatAdapter implements Adapter {
     this.aborter = new AbortController();
     const { model, baseURL, apiKey } = this.opts;
 
+    // First-turn-only forcing — same posture as the legacy force-tool-use
+    // middleware. After the model has called the forced tool once, the
+    // pin releases so the agent can narrate / chain.
+    const forced = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
+    const forcedInList = forced && input.tools.some(t => t.name === forced.name);
+
     const req: ProviderRequest = {
       apiKey,
       baseURL,
@@ -88,6 +100,7 @@ export class OpenAICompatAdapter implements Adapter {
       temperature: this.opts.temperature ?? 0.7,
       sessionId: this.opts.sessionId,
       signal: this.aborter.signal,
+      ...(forcedInList && forced ? { toolChoice: forced } : {}),
     };
 
     this.inflight = this.streamOnce(req, report);
@@ -217,6 +230,7 @@ export class OpenAICompatAdapter implements Adapter {
   private async streamOnce(req: ProviderRequest, report: (r: AdapterReport) => void): Promise<StreamOnceResult> {
     const out: StreamOnceResult = {
       assembledText: "",
+      assembledThinking: "",
       pendingToolCalls: [],
       firstError: null,
       providerStop: undefined,
@@ -245,6 +259,16 @@ export class OpenAICompatAdapter implements Adapter {
           report({ kind: "stream_chunk", body: { delta: ev.delta } });
           continue;
         }
+        if (ev.type === "thinking") {
+          // Reasoning-model chain-of-thought (Cerebras `delta.reasoning`,
+          // DeepSeek-style `reasoning_content`). Accumulate silently so
+          // we have something to show if the model burns its budget on
+          // reasoning and never emits a final `content` answer. Streaming
+          // this live to chat would dump raw thoughts into the bubble,
+          // which is bad UX — surface only as a final fallback below.
+          if (ev.delta) out.assembledThinking += ev.delta;
+          continue;
+        }
         if (ev.type === "tool_call") {
           out.pendingToolCalls.push({ id: ev.id, name: ev.name, arguments: ev.arguments });
           report({ kind: "tool_call_requested", call: { toolCallId: ev.id, tool: ev.name, args: parseArgs(ev.arguments) } });
@@ -271,12 +295,28 @@ export class OpenAICompatAdapter implements Adapter {
       if (!out.firstError) out.firstError = { code: "transport_exception", message };
       report({ kind: "error", code: "transport_exception", message, retryable: false });
     }
+    // Reasoning-only fallback. The model reasoned the entire output
+    // budget away and never emitted `content` — without this, the user
+    // sees an empty bubble. Surface the reasoning as the assistant text
+    // so the turn is at least visible. Skip when the turn produced tool
+    // calls (then text is optional) or had a transport error (the error
+    // event already surfaced).
+    if (
+      out.assembledText.length === 0 &&
+      out.assembledThinking.length > 0 &&
+      out.pendingToolCalls.length === 0 &&
+      !out.firstError
+    ) {
+      out.assembledText = out.assembledThinking;
+      report({ kind: "stream_chunk", body: { delta: out.assembledThinking } });
+    }
     return out;
   }
 }
 
 interface StreamOnceResult {
   assembledText: string;
+  assembledThinking: string;
   pendingToolCalls: Array<{ id: string; name: string; arguments: string }>;
   firstError: { code: string; message: string } | null;
   providerStop: string | undefined;
@@ -507,21 +547,32 @@ export async function resolveOpenAICompatTarget(
   provider: string,
   prepared: { apiKey: string; customBaseURL?: string },
 ): Promise<OpenAICompatTarget | null> {
-  if (provider === "local") {
-    const { getRuntimeConfig } = await import("../../config.js");
-    return { baseURL: `${getRuntimeConfig().ollamaUrl}/v1`, apiKey: prepared.apiKey || "ollama" };
-  }
+  const { PROVIDERS, isHttpProvider } = await import("../../providers/registry.js");
+  const { PROVIDER_IDS } = await import("../../providers/provider-ids.js");
+
+  if (!(PROVIDER_IDS as readonly string[]).includes(provider)) return null;
+  const meta = PROVIDERS[provider as typeof PROVIDER_IDS[number]];
+
+  // The transport discriminator is the safety belt: anthropic (cli)
+  // cannot accidentally fall through to openai-compat routing.
+  if (!isHttpProvider(meta)) return null;
+
+  // Ollama Cloud keeps its own resolver because the baseURL pairs with
+  // a cache-warmed apiKey (the registry returns null for it on purpose).
   if (provider === "ollama-cloud") {
     const { getCloudOllamaCallTarget } = await import("../../ollama-cloud.js");
-    return getCloudOllamaCallTarget();  // null when cache cold; caller handles
+    return getCloudOllamaCallTarget();
   }
-  if (provider === "xai") return { baseURL: "https://api.x.ai/v1", apiKey: prepared.apiKey };
-  if (provider === "openai") return { baseURL: "https://api.openai.com/v1", apiKey: prepared.apiKey };
-  if (provider === "gemini") return { baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/", apiKey: prepared.apiKey };
-  if (provider === "custom") {
-    const baseURL = prepared.customBaseURL || "";
-    if (!baseURL) return null;
-    return { baseURL, apiKey: prepared.apiKey };
-  }
-  return null;
+
+  const { getRuntimeConfig } = await import("../../config.js");
+  const baseURL = typeof meta.baseURL === "function"
+    ? meta.baseURL({ ollamaUrl: getRuntimeConfig().ollamaUrl, customBaseURL: prepared.customBaseURL })
+    : meta.baseURL;
+  if (!baseURL) return null;
+
+  // Local Ollama doesn't require an API key — fall back to the literal
+  // string "ollama" the old branch used so downstream auth headers stay
+  // identical to pre-registry behavior.
+  const apiKey = provider === "local" ? (prepared.apiKey || "ollama") : prepared.apiKey;
+  return { baseURL, apiKey };
 }

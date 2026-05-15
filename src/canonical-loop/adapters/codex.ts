@@ -31,6 +31,11 @@ export interface CodexAdapterOptions {
   maxTokens?: number;
   providerStateMaxBytes?: number;
   sessionId?: string;
+  /**
+   * Forced single-tool selection from the intent classifier. Applied on
+   * turn 0 only — releases on later turns so the model can chain.
+   */
+  forcedToolChoice?: { type: "tool"; name: string };
 }
 
 export class CodexAdapter implements Adapter {
@@ -74,6 +79,8 @@ export class CodexAdapter implements Adapter {
     let usageInputTokens: number | undefined;
     let usageOutputTokens: number | undefined;
 
+    const forcedToolChoice = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
+
     const req: AnthropicTransportRequest & { previousResponseId?: string } = {
       model: this.opts.model ?? "gpt-5.4-mini",
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
@@ -83,6 +90,7 @@ export class CodexAdapter implements Adapter {
       maxTokens: this.opts.maxTokens,
       sessionId: this.opts.sessionId,
       previousResponseId: prevResponseId,
+      forcedToolChoice,
     };
 
     // Idle-event detection lives in turn-loop now (provider-agnostic).

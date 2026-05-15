@@ -12,6 +12,7 @@ import { createHttpServer, setupVoiceWs, wireWsChat, startConfigWatcher, logStar
 import { registerHandlerEvents } from "./handler-events.js";
 import { startBackgroundJobs } from "./background-jobs.js";
 import { createLogger } from "../logger.js";
+import type { ProviderId } from "../providers/provider-ids.js";
 
 const bootLogger = createLogger("server.index");
 
@@ -106,7 +107,7 @@ export async function startServer(config: LAXConfig) {
       if (!apiKey) return null;
       return {
         config, apiKey, model,
-        provider: provider as "anthropic" | "codex" | "openai" | "xai" | "gemini" | "local" | "custom",
+        provider: provider as ProviderId,
         allTools: allAgentTools,
         workspaceDir: pathJoin(dataDir, "operations"),
       };

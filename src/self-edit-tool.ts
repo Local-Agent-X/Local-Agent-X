@@ -26,6 +26,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { npmAugmentedEnv } from "./anthropic-client/cli-path.js";
+import { killProcessTree } from "./process-tree-kill.js";
 import type { ToolDefinition } from "./types.js";
 
 const LAX_REPO_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -372,12 +373,14 @@ export const selfEditTool: ToolDefinition = {
           env: npmAugmentedEnv(),
         });
 
-        const abortListener = () => { try { proc.kill("SIGTERM"); } catch {} };
+        // Windows shell:true → cmd.exe wrapper → proc.kill only signals
+        // the wrapper. killProcessTree handles both: SIGTERM the wrapper
+        // AND taskkill /F /T the descendant tree so claude.exe dies too.
+        const killTree = () => killProcessTree(proc);
+        const abortListener = killTree;
         signal?.addEventListener("abort", abortListener);
 
-        const timer = setTimeout(() => {
-          try { proc.kill("SIGTERM"); } catch {}
-        }, TIMEOUT_MS);
+        const timer = setTimeout(killTree, TIMEOUT_MS);
 
         proc.stdout?.on("data", (c: Buffer) => { stdout += c.toString(); if (stdout.length > MAX_OUTPUT_CHARS * 3) stdout = stdout.slice(-MAX_OUTPUT_CHARS * 3); });
         proc.stderr?.on("data", (c: Buffer) => { stderr += c.toString(); });

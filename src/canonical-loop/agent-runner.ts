@@ -47,10 +47,10 @@ import { appendOpMessage, readOpMessages } from "./store.js";
 import { makeChatToolDispatcher } from "./chat-tool-dispatcher.js";
 import { opMessageRowToChatParam } from "./chat-runner.js";
 import type { CanonicalEvent, CanonicalMessageRole, StateChangedBody } from "./types.js";
+import { isTerminalState, type TerminalState } from "./terminal-states.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.agent-runner");
-const TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled"]);
 const DEFAULT_WALL_CLOCK_MS = 15 * 60 * 1000;
 
 export interface CanonicalAgentOptions extends AgentOptions {
@@ -114,6 +114,13 @@ export async function runAgentViaCanonical(
   seedOpMessages(op.id, history, userMessage, options.images);
   await registerProviderAdapter(op.id, options, sessionId);
 
+  // Bridge canonical opCancel → tool-execution AbortSignal so subprocesses
+  // (self_edit's claude -p, build_app's codex --full-auto) actually die on
+  // Stop instead of running to natural completion while the op hangs in
+  // `cancelling`. Composes with the caller's optional external signal.
+  const { bridgeOpCancelToToolSignal } = await import("./cancel-handler.js");
+  const cancelBridge = bridgeOpCancelToToolSignal(op.id, options.signal);
+
   registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
     tools: options.tools,
     security: options.security,
@@ -123,7 +130,7 @@ export async function runAgentViaCanonical(
     callerRole: options.callerRole,
     sessionId,
     onEvent: options.onEvent,
-    signal: options.signal,
+    signal: cancelBridge.signal,
   }));
 
   registerToolsForOp(op.id, options.tools.map(t => ({
@@ -132,7 +139,7 @@ export async function runAgentViaCanonical(
     inputSchema: t.parameters,
   })));
 
-  let terminal: "succeeded" | "failed" | "cancelled" | null = null;
+  let terminal: TerminalState | null = null;
   let errorMessage: string | undefined;
   let errorCode: string | undefined;
   let waiter: (() => void) | null = null;
@@ -142,8 +149,8 @@ export async function runAgentViaCanonical(
     if (event.type === "state_changed") {
       const body = event.body as StateChangedBody | undefined;
       const to = body?.to;
-      if (to && TERMINAL_STATES.has(to)) {
-        terminal = to as "succeeded" | "failed" | "cancelled";
+      if (isTerminalState(to)) {
+        terminal = to;
         wake();
       }
       return;
@@ -221,6 +228,7 @@ export async function runAgentViaCanonical(
     if (options.signal) options.signal.removeEventListener("abort", onSignalAbort);
     offEvents();
     offStream();
+    cancelBridge.dispose();
     unregisterToolDispatcherForOp(op.id);
     unregisterToolsForOp(op.id);
   }
@@ -388,7 +396,7 @@ function collectMessages(
 }
 
 function mapStopReason(
-  terminal: "succeeded" | "failed" | "cancelled",
+  terminal: TerminalState,
   errorCode: string | undefined,
 ): AgentTurn["stopReason"] {
   if (terminal === "succeeded") return "end_turn";

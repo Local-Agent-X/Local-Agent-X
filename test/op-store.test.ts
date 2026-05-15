@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { rmSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { writeOp, readOp, setOpStatus, newOpId } from "../src/workers/op-store.js";
+import { writeOp, readOp, setOpStatus, newOpId, listOps } from "../src/workers/op-store.js";
 import type { Op } from "../src/workers/types.js";
 
 let counter = 0;
@@ -182,6 +182,27 @@ describe("setOpStatus", () => {
   });
 });
 
-// listOps() coverage is intentionally minimal — see BUGS-FOUND.md item #1
-// (numeric createdAt on real op files crashes the comparator). Once that's
-// fixed, the previous describe block can be restored.
+describe("listOps", () => {
+  it("returns ops we just wrote, newest first by startedAt|createdAt", () => {
+    const oldId = track(opId("old"));
+    const newId = track(opId("new"));
+    writeOp(mkOp(oldId, { createdAt: new Date("2026-01-01T00:00:00Z").toISOString() }));
+    writeOp(mkOp(newId, { createdAt: new Date("2026-05-01T00:00:00Z").toISOString() }));
+    const all = listOps();
+    const idx = (id: string) => all.findIndex(o => o.id === id);
+    expect(idx(newId)).toBeGreaterThanOrEqual(0);
+    expect(idx(oldId)).toBeGreaterThanOrEqual(0);
+    expect(idx(newId)).toBeLessThan(idx(oldId));
+  });
+
+  it("does not crash when an op on disk persisted createdAt as a number (epoch-ms)", () => {
+    // Real-world: autopilot writers persist createdAt as a number (op_ap_*).
+    // The comparator must coerce to String before localeCompare.
+    const numericId = track(opId("numeric"));
+    const dir = join(OPS_BASE, numericId);
+    mkdirSync(dir, { recursive: true });
+    const raw = { ...mkOp(numericId), createdAt: Date.now() as unknown as string };
+    writeFileSync(join(dir, "operation.json"), JSON.stringify(raw), "utf-8");
+    expect(() => listOps()).not.toThrow();
+  });
+});

@@ -97,20 +97,16 @@ describe("markSessionExplicitNotify — pattern detection", () => {
     expect(scheduledImmediate(s, "task")).toBe(false);
   });
 
-  // Documented gap (see BUGS-FOUND.md item #2): the regex requires the
-  // notify-verb to be IMMEDIATELY followed by me/us then when/once/after/etc,
-  // so the very common English phrasing "let me know when X" does NOT match.
-  // Captured here as a regression guard until the regex is widened.
-  it("does NOT match 'let me know when' (regex gap)", () => {
+  it("matches 'let me know when' (optional 'know' between me/us and the temporal)", () => {
     const s = sid("let-know-when");
     markSessionExplicitNotify(s, "Build the new endpoint and let me know when it ships to prod");
-    expect(scheduledImmediate(s, "task")).toBe(false);
+    expect(scheduledImmediate(s, "task")).toBe(true);
   });
 
-  it("does NOT match 'let me know once' (regex gap)", () => {
+  it("matches 'let me know once'", () => {
     const s = sid("let-know-once");
     markSessionExplicitNotify(s, "Run the audit and let me know once it has finished running");
-    expect(scheduledImmediate(s, "task")).toBe(false);
+    expect(scheduledImmediate(s, "task")).toBe(true);
   });
 
   it("ignores empty session and message", () => {

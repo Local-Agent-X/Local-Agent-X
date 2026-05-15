@@ -47,6 +47,23 @@ export class ThreatEngine {
   private canaries: string[];
   private sessionId: string;
 
+  /** Mark the next `durationMs` window as user-consented. Chat entrypoint
+   *  calls this when the user message has attachments + directive language
+   *  ("enter this in X", "submit to X"). Exfil patterns during the window
+   *  are audited but not blocked. See ToolChainAnalyzer.markUserConsent. */
+  markUserConsentFlow(durationMs: number, reason: string): void {
+    this.chain.markUserConsent(durationMs, reason);
+    this.audit.record({
+      sessionId: this.sessionId,
+      event: "user_consent_flow_started",
+      toolName: "(none)",
+      decision: "allow",
+      reason,
+      threatScore: this.scorer.getStatus().score,
+      threatLevel: this.scorer.getStatus().level,
+    });
+  }
+
   constructor(dataDir: string, sessionId: string = "default") {
     this.chain = new ToolChainAnalyzer();
     this.scorer = new ThreatScorer();
@@ -96,6 +113,22 @@ export class ThreatEngine {
       });
     }
 
+    // An exfil pattern fired but was let through by user-consent. Audit
+    // it as an "allowed exfiltration" event so the security record is
+    // preserved — we ALLOWED it because the user consented, not because
+    // the threat didn't exist.
+    if (chainResult.allowedByConsent && chainResult.exfil) {
+      this.audit.record({
+        sessionId: this.sessionId,
+        event: "exfiltration_allowed_by_consent",
+        toolName,
+        decision: "allow",
+        reason: `${chainResult.exfil.description} — allowed by ${chainResult.allowedByConsent}`,
+        threatScore: this.scorer.getStatus().score,
+        threatLevel: this.scorer.getStatus().level,
+      });
+    }
+
     if (chainResult.blocked) {
       const score = chainResult.exfil ? THREAT_SCORES.exfiltration_pattern : THREAT_SCORES.loop_detected;
       this.scorer.record(chainResult.exfil ? "exfiltration" : "loop", score, chainResult.reason!);
@@ -108,6 +141,14 @@ export class ThreatEngine {
         threatScore: this.scorer.getStatus().score,
         threatLevel: this.scorer.getStatus().level,
       });
+      // Layer C: stash the fingerprint on the session so /approve can find
+      // it and record into the trust ledger. Lazy-imported to keep the
+      // threat-engine module's import surface lean.
+      if (chainResult.blockedFingerprint) {
+        void import("./threat/consent-store.js").then(({ recordLastBlockedFingerprint }) => {
+          recordLastBlockedFingerprint(this.sessionId, chainResult.blockedFingerprint!);
+        }).catch(() => {});
+      }
       const status = this.scorer.getStatus();
       return {
         blocked: true,

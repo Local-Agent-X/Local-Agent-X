@@ -180,9 +180,8 @@ async function runExecutorLoop(
 // ── Sub-agent spawning ──────────────────────────────────────────────────
 
 async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string; suggestedTools: string[] }, opts: ExecutorOptions): Promise<string> {
-  const { Handler } = await import("../agency/handler.js");
+  const { invokeDefinition } = await import("../agents/invoke.js");
   const { EventBus } = await import("../event-bus.js");
-  const handler = Handler.getInstance();
 
   const phaseObj = op.phases.find((p) => p.id === phase.id)!;
   let prompt = buildPhasePrompt(op, phaseObj);
@@ -229,16 +228,24 @@ async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string;
     `  PHASE_RESULT: paused | {} | need user to enter 2FA code from authenticator\n`;
 
   return new Promise<string>((resolve, reject) => {
-    // spawnAgent is wired to EventBus — when the run completes, it emits
-    // "handler:agent-result" with { agentId, result, error }.
-    const agentId = handler.spawnAgent({
-      name: `op-phase-${phaseObj.name.slice(0, 30)}`,
-      role: "operator",
-      task: prompt,
-      systemPrompt: scopedSystemPrompt,
-      tools: phaseObj.suggestedTools,
-      parentSessionId: opts.parentSessionId,
-    });
+    // invokeDefinition routes the run through the canonical-loop driver and
+    // emits handler:agent-result on terminal — same EventBus contract as
+    // the legacy Handler.spawnAgent path, but the run is persisted to
+    // ~/.lax/operations/<opId>/events.jsonl so a crash here is recoverable.
+    const phaseName = phaseObj.name.slice(0, 30);
+    const ref = invokeDefinition(
+      {
+        id: `inline-operator-${op.id}-${phaseObj.id}`,
+        name: `op-phase-${phaseName}`,
+        role: "operator",
+        systemPrompt: scopedSystemPrompt,
+        allowedTools: phaseObj.suggestedTools,
+        description: "Inline operations executor phase agent.",
+      },
+      prompt,
+      { parentSessionId: opts.parentSessionId },
+    );
+    const agentId = ref.fieldAgentId;
 
     const timeout = setTimeout(() => {
       EventBus.off("handler:agent-result", resultHandler);

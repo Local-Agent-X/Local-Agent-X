@@ -15,10 +15,30 @@ import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 import { toOpenAITools } from "../shared/tool-shape.js";
 import { hasNoToolSupport, markNoToolSupport } from "../types.js";
 import { createLogger } from "../../logger.js";
+import { PROVIDERS, isHttpProvider } from "../registry.js";
+import { PROVIDER_IDS, type ProviderId } from "../provider-ids.js";
 
 const logger = createLogger("providers.adapters.openai-http");
 
-const REASONING_CAPABLE = /grok-3-mini-reasoning|^o[134]|gpt-5|gemini-(2\.5|3)|deepseek-r1|qwen.*reasoning/i;
+// Reasoning capability now lives per-provider on PROVIDERS[id].capabilities.reasoning
+// (see src/providers/registry.ts). This adapter doesn't know which provider
+// it's running for at call time — req.baseURL is the only hint — so we
+// match by scanning the registry for any http provider whose baseURL
+// matches and whose reasoning regex matches the model.
+function isReasoningCapable(baseURL: string | undefined, model: string): boolean {
+  if (!baseURL) return false;
+  for (const id of PROVIDER_IDS) {
+    const meta = PROVIDERS[id as ProviderId];
+    if (!isHttpProvider(meta)) continue;
+    const metaURL = typeof meta.baseURL === "string" ? meta.baseURL : null;
+    if (metaURL && baseURL.startsWith(metaURL)) {
+      return meta.capabilities.reasoning ? meta.capabilities.reasoning.test(model) : false;
+    }
+  }
+  // Unknown baseURL (local ollama, custom, ollama-cloud) — fall back to
+  // OSS-style reasoning models so deepseek-r1/qwen/gpt-oss still opt in.
+  return /deepseek-r1|qwen.*reasoning|gpt-oss|glm-4\.7/i.test(model);
+}
 
 export class OpenAIHttpAdapter extends BaseAdapter {
   readonly name: string = "openai-http";
@@ -26,7 +46,19 @@ export class OpenAIHttpAdapter extends BaseAdapter {
   async *stream(req: ProviderRequest): AsyncIterable<StreamChunk> {
     const client = new OpenAI({ apiKey: req.apiKey, baseURL: req.baseURL });
     const useTools = !hasNoToolSupport(req.baseURL, req.model);
-    const reasoningCapable = REASONING_CAPABLE.test(req.model);
+    const reasoningCapable = isReasoningCapable(req.baseURL, req.model);
+
+    // Translate canonical toolChoice → OpenAI Chat Completions tool_choice
+    // shape. Only meaningful when we're shipping tools this turn.
+    const openaiToolChoice = (() => {
+      if (!useTools || !req.toolChoice) return undefined;
+      if (req.toolChoice === "auto" || req.toolChoice === "required") return req.toolChoice;
+      // { type: "tool", name } → OpenAI wants { type: "function", function: { name } }
+      if (req.toolChoice.type === "tool" && req.toolChoice.name) {
+        return { type: "function" as const, function: { name: req.toolChoice.name } };
+      }
+      return undefined;
+    })();
 
     let stream;
     try {
@@ -38,6 +70,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
             ...req.messages,
           ],
           ...(useTools ? { tools: toOpenAITools(req.tools) } : {}),
+          ...(openaiToolChoice ? { tool_choice: openaiToolChoice } : {}),
           temperature: req.temperature ?? 0.7,
           stream: true,
           ...(reasoningCapable ? { reasoning_effort: "medium" as const } : {}),
@@ -89,6 +122,18 @@ export class OpenAIHttpAdapter extends BaseAdapter {
 
         if (delta.content) {
           yield { type: "text", delta: delta.content };
+        }
+
+        // Reasoning models (Cerebras gpt-oss/glm/qwen, DeepSeek R1, etc.)
+        // stream their chain-of-thought in a separate delta field —
+        // `reasoning` on Cerebras, `reasoning_content` on DeepSeek-style.
+        // Surface as `thinking` so callers can render it distinct from
+        // the final answer (or fall back to showing it as content when
+        // no final answer ever lands).
+        const deltaExt = delta as { reasoning?: string; reasoning_content?: string };
+        const reasoningDelta = deltaExt.reasoning ?? deltaExt.reasoning_content;
+        if (typeof reasoningDelta === "string" && reasoningDelta.length > 0) {
+          yield { type: "thinking", delta: reasoningDelta };
         }
 
         if (delta.tool_calls) {

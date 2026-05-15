@@ -1,8 +1,31 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
+import { delimiter, join } from "node:path";
 import type { ServerEvent, ToolDefinition } from "../types.js";
 import { getSandboxMode, execInSandbox } from "../sandbox.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
+
+// Prefer PowerShell 7+ (pwsh.exe) over the built-in PS 5.1 (powershell.exe)
+// when it's on PATH. PS 5.1 treats `&&`/`||` as parser errors; pwsh 7+
+// accepts them as pipeline chain operators. Without this detection every
+// bash call that chains commands fails on PS 5.1 even when pwsh is
+// installed. Live failure 2026-05-14 from another machine: the model
+// emitted `ls ... && echo ---EXISTS---` and PS 5.1 rejected it; this
+// machine dodged the bug only because the model never happened to chain
+// in any of that session's bash calls.
+let _winShellCache: string | null = null;
+function getWindowsShell(): string {
+  if (_winShellCache) return _winShellCache;
+  const pathDirs = (process.env.PATH || "").split(delimiter);
+  for (const d of pathDirs) {
+    if (!d) continue;
+    const candidate = join(d, "pwsh.exe");
+    if (existsSync(candidate)) { _winShellCache = candidate; return _winShellCache; }
+  }
+  _winShellCache = "powershell.exe";
+  return _winShellCache;
+}
 
 // ── Antivirus interference detector ──────────────────────────────────────
 //
@@ -170,7 +193,7 @@ export const bashTool: ToolDefinition = {
         };
 
         const isWin = process.platform === "win32";
-        const shell = isWin ? "powershell.exe" : "/bin/bash";
+        const shell = isWin ? getWindowsShell() : "/bin/bash";
         const shellArgs = isWin ? ["-NoProfile", "-Command", cmd] : ["-c", cmd];
 
         const child = spawn(shell, shellArgs, {

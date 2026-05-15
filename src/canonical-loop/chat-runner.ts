@@ -49,14 +49,14 @@ import {
 import { enableDefaultMiddlewareStack, getActiveMiddlewareStack } from "./middlewares/host.js";
 import { createAnthropicAdapter } from "./adapters/anthropic.js";
 import { subscribeOpStream, subscribeOpEvents } from "./control-api.js";
+import { bridgeOpCancelToToolSignal } from "./cancel-handler.js";
 import { appendOpMessage } from "./store.js";
 import { makeChatToolDispatcher } from "./chat-tool-dispatcher.js";
 import type { OpMessageRow, CanonicalEvent, StateChangedBody } from "./types.js";
+import { isTerminalState, type TerminalState } from "./terminal-states.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.chat-runner");
-
-const TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled"]);
 
 export interface CanonicalChatContext {
   message: string;
@@ -338,12 +338,14 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   //    is the static system context only). Provider follows the prepared
   //    request, so when the user picks Codex in settings the chat goes
   //    through CodexAdapter end-to-end (pure-canonical, no random canary).
+  const forcedToolChoice = ctx.prepared.toolChoice;
   if (ctx.prepared.provider === "anthropic") {
     registerAdapterForOp(op.id, () =>
       createAnthropicAdapter({
         systemPrompt: ctx.prepared.systemPrompt,
         model: ctx.prepared.model,
         sessionId: ctx.sessionId,
+        forcedToolChoice,
       }),
     );
   } else if (ctx.prepared.provider === "codex") {
@@ -353,6 +355,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
         systemPrompt: ctx.prepared.systemPrompt,
         model: ctx.prepared.model,
         sessionId: ctx.sessionId,
+        forcedToolChoice,
       }),
     );
   } else {
@@ -385,12 +388,18 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
         apiKey: finalTarget.apiKey,
         temperature: ctx.prepared.temperature,
         sessionId: ctx.sessionId,
+        forcedToolChoice,
       }),
     );
   }
 
   // 4. Per-op tool dispatcher — wraps tool-executor with this turn's
-  //    security context. Cleaned up in `finally` below.
+  //    security context. Cleaned up in `finally` below. The bridge wires
+  //    canonical opCancel into the tool layer so Stop kills subprocesses
+  //    (self_edit's claude -p, build_app's codex --full-auto) instead of
+  //    leaving them running while the op state hangs in `cancelling`.
+  const cancelBridge = bridgeOpCancelToToolSignal(op.id, ctx.signal);
+
   registerToolDispatcherForOp(op.id, makeChatToolDispatcher({
     tools: ctx.tools,
     security: ctx.security,
@@ -400,7 +409,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     callerRole: ctx.callerRole,
     sessionId: ctx.sessionId,
     onEvent: ctx.onToolEvent,
-    signal: ctx.signal,
+    signal: cancelBridge.signal,
   }));
 
   // 4b. Tool descriptors for the adapter — turn-loop reads these into
@@ -420,7 +429,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   //    `state_changed: queued` event that canonicalLoopEntry emits.
   const eventQueue: ServerEvent[] = [];
   let waiter: (() => void) | null = null;
-  let terminal: "succeeded" | "failed" | "cancelled" | null = null;
+  let terminal: TerminalState | null = null;
   let usageInputTokens = 0;
   let usageOutputTokens = 0;
 
@@ -453,8 +462,8 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     if (event.type === "state_changed") {
       const body = event.body as StateChangedBody | undefined;
       const to = body?.to;
-      if (to && TERMINAL_STATES.has(to)) {
-        terminal = to as "succeeded" | "failed" | "cancelled";
+      if (isTerminalState(to)) {
+        terminal = to;
         wake();
       }
       return;
@@ -486,6 +495,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     yield { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } };
     offStream();
     offEvents();
+    cancelBridge.dispose();
     unregisterToolDispatcherForOp(op.id);
     unregisterToolsForOp(op.id);
     return;
@@ -513,6 +523,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
   } finally {
     offStream();
     offEvents();
+    cancelBridge.dispose();
     unregisterToolDispatcherForOp(op.id);
     unregisterToolsForOp(op.id);
   }

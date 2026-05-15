@@ -68,6 +68,13 @@ export interface AnthropicTransportRequest {
    * turns instead of cold-spawning per request.
    */
   sessionId?: string;
+  /**
+   * Force a single tool for this request. The transport translates
+   * `{type:"tool", name}` into Anthropic's wire-shape tool_choice on the
+   * direct-HTTP path; on the CLI path it appends a system-prompt
+   * directive because the subprocess doesn't accept tool_choice flags.
+   */
+  forcedToolChoice?: { type: "tool"; name: string };
 }
 
 export interface TransportMessage {
@@ -150,6 +157,14 @@ export interface AnthropicAdapterOptions {
    * for the session.
    */
   sessionId?: string;
+  /**
+   * Forced single tool for this op's first turn — surfaced from the
+   * intent classifier in prepare-request.ts. Anthropic's API accepts
+   * `tool_choice: { type: "tool", name: "..." }`; the CLI subprocess
+   * doesn't expose tool_choice as a flag, so the transport pivots that
+   * into a system-prompt directive when the auth path is OAuth/CLI.
+   */
+  forcedToolChoice?: { type: "tool"; name: string };
 }
 
 export class AnthropicAdapter implements Adapter {
@@ -202,6 +217,12 @@ export class AnthropicAdapter implements Adapter {
     let cacheReadTokens: number | undefined;
     let cacheCreateTokens: number | undefined;
 
+    // Only force on the first turn — after the model has called the
+    // forced tool once, subsequent turns should free up so it can finish
+    // narrating / chaining follow-up calls. Same posture as the legacy
+    // force-tool-use middleware.
+    const forcedToolChoice = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
+
     const req: AnthropicTransportRequest = {
       model: this.opts.model ?? "claude-opus-4-7",
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
@@ -210,6 +231,7 @@ export class AnthropicAdapter implements Adapter {
       signal: this.aborter.signal,
       maxTokens: this.opts.maxTokens,
       sessionId: this.opts.sessionId,
+      forcedToolChoice,
     };
 
     // Idle-event detection lives in turn-loop now (provider-agnostic).

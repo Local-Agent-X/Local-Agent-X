@@ -35,6 +35,7 @@ function loadToolsList() {
 const PROVIDER_KEY_CONFIG = {
   xai: { label: 'xAI API Key', placeholder: 'xai-...', hint: 'Get your key at console.x.ai', secretName: 'XAI_API_KEY' },
   gemini: { label: 'Google API Key', placeholder: 'AIza...', hint: 'Get your key at ai.google.dev', secretName: 'GEMINI_API_KEY' },
+  cerebras: { label: 'Cerebras API Key', placeholder: 'csk-...', hint: 'Get your key at cloud.cerebras.ai — free tier includes 1M tokens/day', secretName: 'CEREBRAS_API_KEY' },
   openai: { label: 'OpenAI API Key', placeholder: 'sk-...', hint: 'Get your key at platform.openai.com/api-keys', secretName: 'OPENAI_API_KEY' },
   custom: { label: 'API Key', placeholder: 'Enter API key...', hint: 'Key for your custom OpenAI-compatible provider', secretName: 'CUSTOM_API_KEY' },
   'ollama-cloud': { label: 'Ollama Cloud API Key', placeholder: 'ollama-...', hint: 'Get your key at ollama.com — Turbo grants access to large hosted models', secretName: 'OLLAMA_CLOUD_API_KEY' },
@@ -117,6 +118,10 @@ const PROVIDER_MODELS = {
     { value: 'gemini-2.5-pro-preview-05-06', label: 'Gemini 2.5 Pro' },
     { value: 'gemini-2.5-flash-preview-05-20', label: 'Gemini 2.5 Flash' },
     { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro' },
+  ],
+  cerebras: [
+    { value: 'gpt-oss-120b', label: 'OpenAI GPT-OSS 120B (default, production)' },
+    { value: 'zai-glm-4.7', label: 'Z.ai GLM 4.7 355B (preview)' },
   ],
 };
 

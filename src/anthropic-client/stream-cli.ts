@@ -279,53 +279,28 @@ export async function* streamViaCliWithTools(options: StreamOptions): AsyncGener
   ];
 
   // MCP bridge: lets Claude CLI call Local Agent X tools natively via MCP.
-  // The bridge subprocess is TypeScript, so we spawn it with tsx (not plain node).
+  // Config writer (incl. host-env carry-forward) lives in mcp-config.ts —
+  // shared with warm-pool.ts.
   let mcpConfigPath: string | null = null;
   let saxToken = "";
-  let saxPort = "7007";
+  let saxPort = 7007;
   try {
     const { getRuntimeConfig } = await import("../config.js");
     const rc = getRuntimeConfig();
     saxToken = rc.authToken;
-    saxPort = String(rc.port);
+    saxPort = rc.port;
   } catch {}
   if (!textOnlyMode && saxToken) {
     try {
-      const os = await import("node:os");
-      const fs = await import("node:fs");
-      const path = await import("node:path");
-      const tmpDir = path.join(os.homedir(), ".lax", "tmp");
-      if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
-      mcpConfigPath = path.join(tmpDir, `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
-      // Bridge is TypeScript — use tsx to run it. Fall back to compiled .js if available.
-      const tsPath = path.resolve(path.join(import.meta.dirname || ".", "..", "mcp-bridge.ts"));
-      const jsPath = path.resolve(path.join(import.meta.dirname || ".", "..", "mcp-bridge.js"));
-      const bridgePath = fs.existsSync(jsPath) ? jsPath : tsPath;
-      // Use tsx for .ts files, plain node for compiled .js
-      const needsTsx = bridgePath.endsWith(".ts");
-      const bridgeEnv: Record<string, string> = {
-        LAX_MCP_URL: `http://127.0.0.1:${saxPort}`,
-        LAX_MCP_TOKEN: saxToken,
-      };
-      if (options.sessionId) bridgeEnv.LAX_MCP_SESSION_ID = options.sessionId;
-      // MCP server registered as "lax:" so Claude CLI namespaces tools as
-      // mcp__lax__<name>. The matcher in providers/run-anthropic.ts strips
-      // any mcp__X__ prefix, so existing handler code works unchanged. Old
-      // sessions / cached prompts that still reference mcp__sax__ are a
-      // one-turn confusion at most.
-      const mcpConfig = {
-        mcpServers: {
-          lax: {
-            command: "node",
-            args: needsTsx ? ["--import=tsx", bridgePath] : [bridgePath],
-            env: bridgeEnv,
-          },
-        },
-      };
-      fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), { mode: 0o600 });
+      const { writeMcpConfig } = await import("./mcp-config.js");
+      const tag = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      mcpConfigPath = writeMcpConfig({
+        port: saxPort,
+        token: saxToken,
+        sessionId: options.sessionId,
+        tag,
+      });
       args.push("--mcp-config", mcpConfigPath);
-      // (--disallowed-tools is always added at args construction above —
-      // applies to both text-only plan mode and MCP bypassPermissions mode.)
     } catch (e) {
       logger.warn(`[anthropic-cli] MCP config setup failed, falling back to text-mode: ${(e as Error).message}`);
       mcpConfigPath = null;

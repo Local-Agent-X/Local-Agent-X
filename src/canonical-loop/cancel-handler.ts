@@ -86,6 +86,49 @@ export function applyPreLeaseCancel(op: Op): boolean {
   return true;
 }
 
+/**
+ * Bridge canonical op-cancel into an AbortSignal for tool execution.
+ *
+ * The cancel-handler (above) handles the LLM stream side — adapter.abort
+ * unwinds the in-flight provider call. But tools spawned via the
+ * dispatcher (self_edit's `claude -p`, build_app's `codex --full-auto`,
+ * etc.) run as separate subprocesses; they need their own AbortSignal.
+ *
+ * This helper produces a signal that fires when EITHER the canonical op
+ * gets cancelled OR the caller's optional external signal aborts
+ * (typically the websocket-disconnect signal). The runner passes the
+ * returned signal as the dispatcher's `signal` option.
+ *
+ * Without this bridge, opCancel transitions state to `cancelling` but
+ * tool subprocesses keep running until their natural completion (5-min
+ * claude -p, full build_app, etc.), holding the worker's lease the
+ * entire time and blocking subsequent chat turns from being leased.
+ */
+export interface ToolCancelBridge {
+  /** Pass to `makeChatToolDispatcher({ signal })`. Aborts on op-cancel or
+   *  external-signal abort. */
+  signal: AbortSignal;
+  /** Call in the runner's finally to unsubscribe from the op-signals bus.
+   *  Idempotent. */
+  dispose: () => void;
+}
+
+export function bridgeOpCancelToToolSignal(
+  opId: string,
+  ctxSignal?: AbortSignal,
+): ToolCancelBridge {
+  const controller = new AbortController();
+  const off = subscribeOpSignals(opId, (s) => {
+    if (s.kind === "cancel") {
+      try { controller.abort(new Error("op cancelled")); } catch { /* idempotent */ }
+    }
+  });
+  const signal: AbortSignal = ctxSignal
+    ? AbortSignal.any([controller.signal, ctxSignal])
+    : controller.signal;
+  return { signal, dispose: off };
+}
+
 export async function applyBoundaryCancel(op: Op, adapter: Adapter): Promise<void> {
   const fresh = readOp(op.id);
   if (fresh?.canonical) op.canonical = fresh.canonical;

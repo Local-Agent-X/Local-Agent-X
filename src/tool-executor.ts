@@ -24,6 +24,7 @@ import { recordToolCall as recordToolStat } from "./tool-tracker.js";
 import { checkToolRateLimit, recordToolCall as recordRateLimit } from "./tool-rate-limiter.js";
 import { getApprovalManager, toolNeedsApproval } from "./approval-manager.js";
 import { logRetry } from "./retry-telemetry.js";
+import { assertToolCallAllowed, ToolBlocked } from "./tools/pre-dispatch.js";
 
 // Tools whose failures are usually transient (network, rate limit) and worth retrying.
 const RETRYABLE_TOOLS = new Set([
@@ -409,46 +410,48 @@ async function executeSingleTool(
     } catch { /* worktree module not available */ }
   }
 
-  // Layer 1: SecurityLayer (now sees rewritten worktree paths)
-  const secDecision = security.evaluate({ toolName: tc.name, args, sessionId: sessionId || "default", callContext: callContext as "local" | "api" | "delegated" | "cron" });
-
-  // Layer 2: RBAC
-  let rbacBlocked = false, rbacReason = "";
-  if (rbac && callerRole) {
-    const d = rbac.checkTool(callerRole, tc.name);
-    if (!d.allowed) { rbacBlocked = true; rbacReason = d.reason; }
-  }
-
-  // Layer 3: ToolPolicy
-  let policyBlocked = false, policyReason = "";
-  if (secDecision.allowed && !rbacBlocked && toolPolicy) {
-    const d = toolPolicy.evaluate(tc.name, args, sessionId || "default");
-    if (!d.allowed) { policyBlocked = true; policyReason = d.reason; }
-  }
-
-  const allowed = secDecision.allowed && !rbacBlocked && !policyBlocked;
+  // Layers 1–3: Security → RBAC → ToolPolicy via the shared pre-dispatch chain
+  // (session policy already ran inline above; approval gate fires later, after
+  // circuit-breaker + rate-limit + hooks, to preserve original order).
+  let allowed = true;
   let result: ToolResult;
+  let preBlock: ToolBlocked | null = null;
+  try {
+    await assertToolCallAllowed(
+      { id: tc.id, name: tc.name, args },
+      {
+        sessionId: sessionId || "default",
+        callContext: callContext as "local" | "api" | "delegated" | "cron",
+        skipSessionPolicy: true,
+        security,
+        rbac: rbac && callerRole ? { manager: rbac, role: callerRole } : undefined,
+        toolPolicy,
+      },
+    );
+  } catch (e) {
+    if (e instanceof ToolBlocked) {
+      preBlock = e;
+      allowed = false;
+    } else {
+      throw e;
+    }
+  }
 
-  if (!secDecision.allowed) {
-    result = {
-      content: `BLOCKED by security: ${secDecision.reason}`,
-      isError: true,
-      status: "blocked",
-      metadata: { layer: "security", recovery: "Adjust the call to stay within the workspace and security boundaries — retrying the same args will be denied again." },
+  if (preBlock) {
+    const layerMap: Record<typeof preBlock.stage, string> = {
+      "session-policy": "session-policy",
+      "security": "security",
+      "rbac": "rbac",
+      "tool-policy": "tool-policy",
+      "threat": "threat",
+      "arikernel": "arikernel",
+      "approval": "approval",
     };
-  } else if (rbacBlocked) {
     result = {
-      content: `BLOCKED by RBAC: ${rbacReason}`,
+      content: preBlock.message,
       isError: true,
       status: "blocked",
-      metadata: { layer: "rbac", recovery: "This role lacks the permission to call this tool. Use a different tool or ask the user to elevate." },
-    };
-  } else if (policyBlocked) {
-    result = {
-      content: `BLOCKED by policy: ${policyReason}`,
-      isError: true,
-      status: "blocked",
-      metadata: { layer: "tool-policy", recovery: "Retrying the same call will be denied again. Read the reason — it usually points to the right alternative tool (e.g. http_request instead of bash curl)." },
+      metadata: { layer: layerMap[preBlock.stage], recovery: preBlock.recovery },
     };
   } else {
     // Data lineage egress check
@@ -635,7 +638,22 @@ async function executeSingleTool(
   if (threatEngine) {
     const threat = threatEngine.evaluateToolResult(tc.name, args, result.content, allowed);
     if (threat.blocked) {
-      result = { content: `BLOCKED by threat engine: ${threat.reason}`, isError: true };
+      // Enriched block message tells the model how the USER can grant
+      // consent if this is a legitimate workflow. Without this, the model
+      // sees "BLOCKED" and has no recovery channel — observed live as the
+      // model collapsing into "Tool call: ..." narration (2026-05-13).
+      // The /approve handler lives in routes/chat/run-chat-turn.ts and
+      // grants 30-min session-level consent via consent-store.ts.
+      result = {
+        content:
+          `BLOCKED by threat engine: ${threat.reason}\n\n` +
+          `If this is a legitimate workflow (user explicitly shared data with you and named the destination), ` +
+          `tell the user to type:\n` +
+          `  /approve <one-line description>\n` +
+          `That grants 30 minutes of consent for this session. Retry the tool after they approve.\n` +
+          `Do NOT retry without /approve — you will hit the same block.`,
+        isError: true,
+      };
     }
     if (threatEngine.isRestricted() && ["http_request", "web_fetch", "browser"].includes(tc.name)) {
       let isOwnApp = false;
@@ -693,6 +711,57 @@ async function executeSingleTool(
   }
 
   return msgs;
+}
+
+// ── Unified single-call dispatcher (ToolResult-returning) ──
+// Public alias around executeSingleTool for callers that want a single
+// dispatcher with a clean ToolResult contract (input ToolCall, output
+// ToolResult). Closes F2 part 2: any code path that previously routed
+// through a parallel dispatcher (the AriKernel `ToolExecutor.execute` path,
+// the old `ExecutorRegistry.get`-then-execute pattern) calls this instead.
+// Capability tokens / taint labels surface as fields on
+// ToolResult.metadata.arikernel rather than a separate execution stack.
+
+export interface UnifiedDispatchCtx {
+  toolMap: Map<string, ToolDefinition>;
+  security: SecurityLayer;
+  toolPolicy?: ToolPolicy;
+  threatEngine?: ThreatEngine;
+  rbac?: RBACManager;
+  callerRole?: Role;
+  sessionId?: string;
+  onEvent?: (event: ServerEvent) => void;
+  signal?: AbortSignal;
+  priorMessages?: ChatCompletionMessageParam[];
+}
+
+/**
+ * Single dispatch entry — input ToolCall, output ToolResult. Internally
+ * routes through executeSingleTool so the gate chain, retries, hooks,
+ * circuit-breaker, rate limit, approval, and budgeting all run exactly
+ * once per dispatch.
+ */
+export async function dispatchSingleToolCall(
+  call: { id: string; name: string; arguments?: string; args?: Record<string, unknown> },
+  ctx: UnifiedDispatchCtx,
+): Promise<ToolResult> {
+  const argsStr = call.arguments ?? JSON.stringify(call.args ?? {});
+  const msgs = await executeSingleTool(
+    { id: call.id, name: call.name, arguments: argsStr },
+    ctx.toolMap,
+    ctx.security,
+    ctx.toolPolicy,
+    ctx.threatEngine,
+    ctx.rbac,
+    ctx.callerRole,
+    ctx.sessionId,
+    ctx.onEvent,
+    ctx.signal,
+    ctx.priorMessages,
+  );
+  const last = msgs[msgs.length - 1];
+  const content = typeof last?.content === "string" ? last.content : "";
+  return { content, isError: false, status: "ok" };
 }
 
 // ── Security-layered tool execution (orchestrator) ──

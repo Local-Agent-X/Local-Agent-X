@@ -347,7 +347,7 @@ function handleChatWsMessage(e) {
       if (typeof updateAgentFeed === 'function') updateAgentFeed(msg.agentId, { output: msg.output });
     } else if (msg.type === 'agent-complete' && msg.agentId) {
       if (typeof updateAgentFeed === 'function') {
-        updateAgentFeed(msg.agentId, { status: msg.success ? 'done' : 'error', output: msg.result ? '[Result] ' + msg.result.slice(0, 500) : '' });
+        updateAgentFeed(msg.agentId, { status: msg.success ? 'succeeded' : 'failed', output: msg.result ? '[Result] ' + msg.result.slice(0, 500) : '' });
         // Build a concise one-liner for chat — full details on Agents page
         var statusIcon = msg.success ? '\u2705' : '\u274C';
         var fullResult = msg.result || '';

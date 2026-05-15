@@ -47,19 +47,24 @@ const WEBSITE_RULES_FRAGMENT = [
 
 export const buildAppTool: ToolDefinition = {
   name: "build_app",
-  description: "Build a complete web app in workspace/apps/ using a dedicated CLI subprocess. Use this for NEW apps and LARGE rewrites. For small edits to existing apps, use read + edit directly instead. Returns the app URL when done.",
+  description: "Build a complete web app in workspace/apps/ using a dedicated CLI subprocess. Use this for NEW apps and LARGE rewrites. For small edits to existing apps, use read + edit directly instead. Returns the app URL when done. When reporting success to the user, include the full URL verbatim on its own line (e.g. `http://127.0.0.1:7007/apps/<name>/index.html`) so it renders as a clickable link — do NOT paraphrase to a relative path like `/apps/<name>/`.",
   parameters: {
     type: "object",
     properties: {
       name: { type: "string", description: "App directory name (e.g. 'trading-bot', 'todo-app')" },
-      prompt: { type: "string", description: "Detailed description of what to build. Be specific about features, styling, behavior." },
+      prompt: { type: "string", description: "Build brief — what to make, target features, styling notes, behavior. Be specific." },
       backend: { type: "string", enum: ["codex", "claude", "auto"], description: "Which CLI to use. 'auto' (default) matches your active provider. 'codex' = codex CLI. 'claude' = claude CLI." },
     },
     required: ["name", "prompt"],
   },
   async execute(args) {
     const appName = String(args.name || "app").replace(/[^a-zA-Z0-9_-]/g, "-");
-    const prompt = String(args.prompt || "");
+    // Some models occasionally emit `description` instead of `prompt` because
+    // the schema's parameter description used to contain the word
+    // "description"; fixed in the schema above, but still accept the alias
+    // for back-compat with model-version variance. Live failure 2026-05-14
+    // on Anthropic Opus 4.7 — prompt missing, description present.
+    const prompt = String(args.prompt || args.description || "");
     let backend = String(args.backend || "auto");
 
     if (backend === "auto") {
@@ -157,12 +162,16 @@ ${websiteRules}`;
 /** Pipe a child process's stdout/stderr into `tool_progress` events on
  *  `onEvent`, throttled so we don't spam the chat UI. The progress message
  *  is the most recent non-empty line, emitted at most once per `minIntervalMs`.
+ *  Pass `parseLine` to transform each raw line into a human-readable string
+ *  (return null to skip the line entirely) — used by the Claude CLI path
+ *  whose stream-json output is JSONL, not free-form text.
  *  Returns a cleanup function that flushes any pending message. */
 function streamProgress(
   proc: { stdout?: NodeJS.ReadableStream | null; stderr?: NodeJS.ReadableStream | null },
   toolName: string,
   onEvent: ((e: { type: string; [k: string]: unknown }) => void) | undefined,
   minIntervalMs = 750,
+  parseLine?: (line: string) => string | null,
 ): () => void {
   if (!onEvent) return () => { /* no-op */ };
   let lastLine = "";
@@ -184,12 +193,17 @@ function streamProgress(
     const text = d.toString();
     // Split into lines, keep the most recent non-empty one as our progress
     // signal. CLIs often interleave header/decoration lines with progress;
-    // the last non-trivial line is usually the latest action.
+    // the last non-trivial line is usually the latest action. When a
+    // parseLine is supplied (Claude CLI emits JSONL via --output-format
+    // stream-json), it transforms each raw line into a human-readable
+    // string OR returns null to skip the line entirely.
     for (const raw of text.split(/\r?\n/)) {
-      const line = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim();
-      if (line.length === 0) continue;
-      if (line.length < 3) continue; // skip single-char decoration
-      lastLine = line;
+      const stripped = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "").trim();
+      if (stripped.length === 0) continue;
+      const transformed = parseLine ? parseLine(stripped) : stripped;
+      if (transformed === null) continue;
+      if (transformed.length < 3) continue; // skip single-char decoration
+      lastLine = transformed;
     }
     tryEmit(false);
   };
@@ -199,6 +213,31 @@ function streamProgress(
     if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
     tryEmit(true);
   };
+}
+
+/** Parse a single line of `claude --output-format stream-json --verbose`
+ *  into a human-readable progress string. Returns null to skip the line. */
+function parseClaudeStreamLine(line: string, finalTextRef: { value: string }): string | null {
+  let evt: { type?: string; subtype?: string; message?: { content?: Array<{ type?: string; text?: string; name?: string }> }; result?: string };
+  try { evt = JSON.parse(line); } catch { return line.slice(0, 200); }
+  if (evt.type === "system" && evt.subtype === "init") return "Claude CLI starting…";
+  if (evt.type === "assistant" && Array.isArray(evt.message?.content)) {
+    for (const block of evt.message.content) {
+      if (block.type === "text" && typeof block.text === "string" && block.text.trim()) {
+        const t = block.text.trim();
+        finalTextRef.value = t;
+        return t.slice(0, 200);
+      }
+      if (block.type === "tool_use" && typeof block.name === "string") {
+        return `Calling ${block.name}…`;
+      }
+    }
+  }
+  if (evt.type === "result" && typeof evt.result === "string") {
+    finalTextRef.value = evt.result;
+    return null; // build is done — the close handler emits the final summary
+  }
+  return null;
 }
 
 export async function buildWithCodex(
@@ -233,6 +272,7 @@ export async function buildWithCodex(
         cwd: appDir,
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
+        env: { ...process.env, NO_COLOR: "1" },
       });
       proc.stdin?.write(prompt);
       proc.stdin?.end();
@@ -293,10 +333,17 @@ export async function buildWithClaude(
 ): Promise<ToolResult> {
   try {
     const { spawn: spawnChild } = await import("node:child_process");
+    // stream-json + --verbose makes the CLI emit JSONL of every event during
+    // the run instead of buffering the final text. Without it, build_app on
+    // the Claude path is silent for 1-5 min — streamProgress has nothing to
+    // throttle and the chat UI stays on "executing…" the entire time.
+    const finalText = { value: "" };
+    const claudeParser = (line: string): string | null => parseClaudeStreamLine(line, finalText);
     const stdout = await new Promise<string>((resolve, reject) => {
       const proc = spawnChild("claude", [
         "-p",
-        "--output-format", "text",
+        "--output-format", "stream-json",
+        "--verbose",
         "--no-session-persistence",
         "--max-turns", "25",
         "--model", "claude-opus-4-7",
@@ -312,7 +359,7 @@ export async function buildWithClaude(
       let out = "", errOut = "";
       proc.stdout?.on("data", (d: Buffer) => { out += d.toString(); });
       proc.stderr?.on("data", (d: Buffer) => { errOut += d.toString(); });
-      const stopProgress = streamProgress(proc, "build_app", onEvent);
+      const stopProgress = streamProgress(proc, "build_app", onEvent, 750, claudeParser);
       const timer = setTimeout(() => { proc.kill(); reject(new Error("Claude CLI build timed out after 5 minutes")); }, 300_000);
       proc.on("close", (code) => {
         clearTimeout(timer);
@@ -327,11 +374,13 @@ export async function buildWithClaude(
       });
     });
 
-    const output = stdout.trim();
-    if (output.includes("APP_READY") || existsSync(resolve(appDir, "index.html"))) {
-      return { content: `App built with Claude CLI!\n\nOpen: ${appUrl}\n\n${output.slice(-500)}` };
+    // Prefer the parsed final text from the stream-json `result` event; fall
+    // back to the raw stdout tail if the result event was missing (older CLI).
+    const summary = finalText.value || stdout.trim();
+    if (summary.includes("APP_READY") || existsSync(resolve(appDir, "index.html"))) {
+      return { content: `App built with Claude CLI!\n\nOpen: ${appUrl}\n\n${summary.slice(-500)}` };
     }
-    return { content: `Claude CLI finished but index.html not found.\n${output.slice(-1000)}`, isError: true };
+    return { content: `Claude CLI finished but index.html not found.\n${summary.slice(-1000)}`, isError: true };
   } catch (e) {
     const errMsg = (e as Error).message || "unknown";
     if (existsSync(resolve(appDir, "index.html"))) {

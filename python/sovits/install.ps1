@@ -28,7 +28,16 @@ $UpstreamReqs  = Join-Path $RepoDir "requirements.txt"
 # This is the "verify" pass — pip says "Successfully installed" even when
 # Windows Defender deletes a wheel mid-extract; only an actual import
 # can prove the install completed.
-$VerifyImports = @("torch", "torchaudio", "fastapi", "uvicorn", "httpx", "soundfile", "numpy")
+#
+# Keep this list aligned with what api_v2.py + GPT_SoVITS walks into on
+# import. A short list of "just torch + fastapi" lies: pip can roll back
+# an entire `-r requirements.txt` batch (e.g. when one source-build dep
+# fails on a box without MSVC build tools) and leave the venv missing
+# tqdm/librosa/transformers while these few still import.
+$VerifyImports = @(
+    "torch", "torchaudio", "fastapi", "uvicorn", "httpx", "soundfile", "numpy",
+    "tqdm", "librosa", "transformers", "pydantic", "gradio", "funasr"
+)
 
 function Write-Step($msg) { Write-Host "[install] $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "[install] $msg" -ForegroundColor Green }
@@ -190,10 +199,43 @@ if (Test-Path $LockFile) {
     if ($LASTEXITCODE -ne 0) { Write-Err "torch install failed."; exit 1 }
 
     if (Test-Path $UpstreamReqs) {
-        Write-Step "Installing upstream requirements.txt..."
-        & $VenvPython -m pip install -r $UpstreamReqs
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warn "Some upstream requirements failed (continuing — verify pass will catch fatal issues)."
+        # Upstream requirements.txt has two Windows-hostile entries:
+        #   1. `pyopenjtalk>=0.4.1` — Japanese G2P, no Win wheel, builds from
+        #      source via CMake + MSVC. Most LAX users don't have MSVC build
+        #      tools installed, so the build fails. When ONE entry fails to
+        #      build, pip rolls back the ENTIRE batch — tqdm/librosa/transformers
+        #      end up missing and the server crashes on first start. Skip it
+        #      here (EN/ZH/KO synthesis still works). Users who need Japanese
+        #      can manually `pip install pyopenjtalk` with MSVC installed.
+        #   2. `--no-binary=opencc` + `opencc` — forces source build of opencc,
+        #      which also needs MSVC. Swap to opencc-python-reimplemented
+        #      (pure Python, drop-in API).
+        $FilteredReqs = Join-Path $env:TEMP "sovits-reqs-filtered-$(Get-Random).txt"
+        Get-Content $UpstreamReqs | Where-Object {
+            $_ -notmatch '^\s*pyopenjtalk\b' -and
+            $_ -notmatch '^\s*--no-binary=opencc' -and
+            $_ -notmatch '^\s*opencc\s*$'
+        } | Set-Content $FilteredReqs -Encoding UTF8
+        Add-Content $FilteredReqs "opencc-python-reimplemented" -Encoding UTF8
+
+        Write-Step "Installing upstream requirements.txt (pyopenjtalk + source-opencc filtered out)..."
+        & $VenvPython -m pip install -r $FilteredReqs
+        $reqsExit = $LASTEXITCODE
+        Remove-Item $FilteredReqs -ErrorAction SilentlyContinue
+        if ($reqsExit -ne 0) {
+            Write-Err "Upstream requirements install failed."
+            Write-Host ""
+            Write-Host "This is fatal — pip rolls back the whole batch on any failure,"
+            Write-Host "so the venv would boot half-installed and the server would crash."
+            Write-Host ""
+            Write-Host "Most common causes on Windows:"
+            Write-Host "  1. Windows Defender ate a wheel mid-stream. Fix:"
+            Write-Host "     - Windows Security -> Virus & threat protection -> Manage settings"
+            Write-Host "     - Add or remove exclusions -> Add folder -> $env:USERPROFILE\.lax"
+            Write-Host "     - Re-run this installer."
+            Write-Host "  2. A new upstream dep needs MSVC C++ build tools. Re-run with the"
+            Write-Host "     last failing package name and we'll add it to the filter list."
+            exit 1
         }
     }
 

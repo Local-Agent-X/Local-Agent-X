@@ -146,10 +146,27 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   if (isBridge) {
     tools = bridgeTools;
   } else if (tier === "strong") {
-    // Full inventory. The forceBuildIntent classifier above still runs so
-    // tool_choice can be forced later in step 7 — it just doesn't gate the
-    // tool list anymore.
-    tools = allAgentTools;
+    // Full inventory for strong models — eliminates "I don't have that
+    // tool" misses entirely. PROVIDER CAP: OpenAI's function-calling
+    // API hard-rejects requests with >128 tools ("tools must contain at
+    // most 128 elements"). Anthropic accepts hundreds. So we ship the
+    // full set on Anthropic and apply a 128 cap on OpenAI-compatible
+    // providers (codex / openai / custom / local/Ollama). When capping,
+    // use the keyword filter as a relevance ranker, then top up with
+    // the rest of the catalogue so the LLM still sees most tools.
+    const OPENAI_TOOL_CAP = 128;
+    const isAnthropicProvider = resolved.provider === "anthropic";
+    if (isAnthropicProvider || allAgentTools.length <= OPENAI_TOOL_CAP) {
+      tools = allAgentTools;
+    } else {
+      const filtered = filterToolsForMessage(allAgentTools, message, { forceBuildIntent });
+      const seen = new Set<string>();
+      const ranked: typeof allAgentTools = [];
+      for (const t of filtered) { if (!seen.has(t.name)) { seen.add(t.name); ranked.push(t); } }
+      for (const t of allAgentTools) { if (!seen.has(t.name)) { seen.add(t.name); ranked.push(t); } }
+      tools = ranked.slice(0, OPENAI_TOOL_CAP);
+      logger.info(`[tools] OpenAI 128-cap: ${allAgentTools.length}→${tools.length} (relevance-ranked) for ${resolved.provider} ${resolved.model}`);
+    }
   } else {
     tools = filterToolsForMessage(allAgentTools, message, { forceBuildIntent });
     const before = tools.length;

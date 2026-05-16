@@ -14,7 +14,7 @@ interface VoiceTier {
   label: string;
   port: number;
   venvDir: string;        // installation marker
-  installerPath: string;  // PS1 installer (Windows) — null if no installer
+  installerPath: string;  // install.ps1 on Windows / install.sh on Mac/Linux — "" if no installer
   startCmd: () => { command: string; args: string[]; cwd?: string; env?: NodeJS.ProcessEnv };
   healthUrl: string;
   description: string;
@@ -29,6 +29,7 @@ const REPO_ROOT = resolve(process.cwd());
 const HOME = homedir();
 const IS_WIN = platform() === "win32";
 const PYTHON_EXE = IS_WIN ? "Scripts/python.exe" : "bin/python";
+const INSTALLER_EXT = IS_WIN ? "install.ps1" : "install.sh";
 
 const TIERS: VoiceTier[] = [
   {
@@ -36,7 +37,7 @@ const TIERS: VoiceTier[] = [
     label: "Lite (GPU sidecar)",
     port: Number(process.env.LAX_VOICE_PORT) || 7008,
     venvDir: join(HOME, ".lax", "python-voice", "venv"),
-    installerPath: join(REPO_ROOT, "python", "voice", "install.ps1"),
+    installerPath: join(REPO_ROOT, "python", "voice", INSTALLER_EXT),
     startCmd: () => ({
       command: join(HOME, ".lax", "python-voice", "venv", PYTHON_EXE),
       args: [join(REPO_ROOT, "python", "voice", "server.py")],
@@ -51,7 +52,7 @@ const TIERS: VoiceTier[] = [
     label: "Studio (Chatterbox)",
     port: Number(process.env.LAX_CHATTERBOX_PORT) || 7010,
     venvDir: join(HOME, ".lax", "python-chatterbox", "venv"),
-    installerPath: join(REPO_ROOT, "python", "chatterbox", "install.ps1"),
+    installerPath: join(REPO_ROOT, "python", "chatterbox", INSTALLER_EXT),
     // Note: invoked as `server:app` with --app-dir pointing at our local
     // chatterbox/ directory, NOT as `chatterbox.server:app`. The venv has
     // the upstream `chatterbox-tts` pip package which exposes `chatterbox.
@@ -78,7 +79,7 @@ const TIERS: VoiceTier[] = [
     // wipe but the picker said "Not installed" with no recovery path —
     // this is the recovery path. If the repo isn't present, the installer
     // exits cleanly with instructions to run the training pipeline first.
-    installerPath: join(REPO_ROOT, "python", "sovits", "install.ps1"),
+    installerPath: join(REPO_ROOT, "python", "sovits", INSTALLER_EXT),
     startCmd: () => ({
       command: join(HOME, ".lax", "sovits", "venv", PYTHON_EXE),
       args: [join(REPO_ROOT, "python", "sovits", "server.py")],
@@ -374,10 +375,12 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
       if (!tier.installerPath || !existsSync(tier.installerPath)) {
         json(400, { error: `No installer for ${tier.label}. See docs.` }); return true;
       }
-      if (!IS_WIN) { json(400, { error: "Installer is PowerShell; non-Windows not yet supported." }); return true; }
 
       logger.info(`[voice-setup] Installing ${tier.id} via ${tier.installerPath}`);
-      const proc = spawn("powershell", ["-ExecutionPolicy", "Bypass", "-File", tier.installerPath], {
+      const installerCmd = IS_WIN
+        ? { command: "powershell", args: ["-ExecutionPolicy", "Bypass", "-File", tier.installerPath] }
+        : { command: "bash", args: [tier.installerPath] };
+      const proc = spawn(installerCmd.command, installerCmd.args, {
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });

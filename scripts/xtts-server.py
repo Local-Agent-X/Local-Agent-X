@@ -16,7 +16,7 @@ from urllib.parse import urlparse, parse_qs, unquote as _url_unquote
 
 # Configurable
 PORT = int(os.environ.get("XTTS_PORT", "7862"))
-VOICES_DIR = Path(os.environ.get("XTTS_VOICES_DIR", os.path.expanduser("~/.sax/voices")))
+VOICES_DIR = Path(os.environ.get("XTTS_VOICES_DIR", os.path.expanduser("~/.lax/voices")))
 VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
 # Lazy-load model (heavy, only load on first request)

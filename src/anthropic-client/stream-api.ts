@@ -35,8 +35,15 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
 
   const anthropicTools = tools?.map(t => ({
     name: t.name, description: t.description, input_schema: t.parameters,
-  }));
+  })) as Array<{ name: string; description: string; input_schema: unknown; cache_control?: { type: "ephemeral" } }> | undefined;
   if (anthropicTools?.length) {
+    // Anthropic prompt caching: mark the LAST tool with cache_control to
+    // cache the entire tools array (everything above the marker). First
+    // turn pays 1.25× base for cache-write; subsequent turns within the
+    // 5-min TTL pay 0.1× base for cache-read. With the full-inventory
+    // change in prepare-request.ts (strong models ship every tool every
+    // turn), this is what keeps the per-turn marginal cost bounded.
+    anthropicTools[anthropicTools.length - 1].cache_control = { type: "ephemeral" };
     body.tools = anthropicTools;
     if (forcedToolName && anthropicTools.some(t => t.name === forcedToolName)) {
       body.tool_choice = { type: "tool", name: forcedToolName };

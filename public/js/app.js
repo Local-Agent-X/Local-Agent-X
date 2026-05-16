@@ -453,6 +453,12 @@ function moveChat(chatId, projectId, e) {
   saveChats(); renderSidebar();
 }
 
+// First-install agent intro. Fires exactly once on the very first chat ever
+// (no prior history, no `sax_greeted` flag), so a fresh install starts with
+// the agent introducing itself in-character. Call sign + handler name flow
+// back through the existing identity-extract pipeline on the user's reply.
+const FIRST_BOOT_GREETING = "Agent X reporting for duty. What's my call sign, and who's my handler?";
+
 // ── Chats ──
 function newChat(projectId) {
   activeChat = { id: 'chat-' + uid(), title: 'New Chat', messages: [], createdAt: Date.now(), updatedAt: Date.now() };
@@ -461,6 +467,10 @@ function newChat(projectId) {
   chats.unshift(activeChat);
   // Expand the project the new chat lives under so the user can see it.
   if (projectId && typeof expandedProjects !== 'undefined') expandedProjects.add(projectId);
+  if (chats.length === 1 && !localStorage.getItem('sax_greeted')) {
+    activeChat.messages.push({ role: 'assistant', content: FIRST_BOOT_GREETING, timestamp: Date.now() });
+    try { localStorage.setItem('sax_greeted', '1'); } catch {}
+  }
   saveChats(); renderSidebar();
   navigate('chat');
   if (window.renderMessages) renderMessages();

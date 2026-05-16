@@ -169,8 +169,8 @@ function startServer(): void {
   const srcIndex = join(PROJECT_ROOT, "src", "index.ts");
   const useCompiled = existsSync(distIndex);
   const nodeArgs = useCompiled
-    ? ["--max-old-space-size=512", distIndex]
-    : ["--max-old-space-size=512", "--import=tsx", srcIndex];
+    ? ["--max-old-space-size=4096", distIndex]
+    : ["--max-old-space-size=4096", "--import=tsx", srcIndex];
 
   if (!useCompiled && !existsSync(srcIndex)) {
     console.error("[desktop] Neither dist/index.js nor src/index.ts found in PROJECT_ROOT — refusing to start");
@@ -206,9 +206,23 @@ function startServer(): void {
     if (line) console.error("[server]", line);
   });
 
-  serverProcess.on("exit", (code) => {
-    console.log(`[desktop] Server exited with code ${code}`);
+  serverProcess.on("exit", (code, signal) => {
+    // Crash classification — exit codes / signals worth surfacing:
+    //   code === 0          : clean shutdown (rare except via tray Quit)
+    //   code !== 0          : server threw, hit OOM, or process.exit(1)
+    //   signal === "SIGKILL": OS killed it (often OOM via macOS jetsam)
+    const wasUnclean = code !== 0 || signal != null;
+    console.log(`[desktop] Server exited code=${code} signal=${signal}`);
     serverProcess = null;
+    if (wasUnclean && mainWindow && !isQuitting && !isRestarting) {
+      // Tell the renderer so the chat UI can clear any frozen "typing"
+      // indicator and surface a banner. Without this, an OOM crash mid-
+      // stream leaves the UI showing "..." forever because the SSE
+      // stream just goes silent — no error event the UI knows to catch.
+      try {
+        mainWindow.webContents.send("server-crashed", { code, signal });
+      } catch { /* renderer may already be gone */ }
+    }
     if (!isQuitting && !isRestarting) {
       setTimeout(() => {
         if (!isQuitting && !isRestarting && !serverProcess) startServer();

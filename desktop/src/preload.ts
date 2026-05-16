@@ -26,6 +26,15 @@ contextBridge.exposeInMainWorld("desktop", {
   // File operations
   openFile: (relativePath: string) => ipcRenderer.invoke("open-file", relativePath),
 
+  // Server-crash signal: main fires "server-crashed" when the spawned
+  // node server exits uncleanly (OOM / SIGKILL / nonzero code). The
+  // renderer can subscribe to clear stuck "typing…" state and show a
+  // banner while main auto-restarts. Without this, a mid-stream crash
+  // leaves the chat UI silently frozen.
+  onServerCrash: (cb: (info: { code: number | null; signal: string | null }) => void) => {
+    ipcRenderer.on("server-crashed", (_e, info) => cb(info));
+  },
+
   // Check if running inside desktop app
   isDesktop: true,
 });

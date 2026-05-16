@@ -1,0 +1,17 @@
+# Local Agent X voice sidecar — macOS/Linux dependencies (no CUDA).
+#
+# Installed into ~/.lax/python-voice/venv/ by python/voice/install.sh.
+# Mirrors requirements.txt but swaps onnxruntime-gpu → onnxruntime (CPU /
+# CoreML on Mac), drops the nvidia-* CUDA wheels (Windows-only).
+
+faster-whisper==1.1.0
+kokoro-onnx==0.4.9
+onnxruntime==1.20.1
+silero-vad==5.1.2
+soundfile==0.12.1
+numpy>=1.26,<2.0
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+websockets==14.1
+torch==2.5.1
+torchaudio==2.5.1

@@ -87,6 +87,7 @@ export class SqliteDatabaseExecutor implements ToolExecutor {
 	constructor(private readonly db: SqliteDatabase) {}
 
 	async execute(toolCall: ToolCall): Promise<ToolResult> {
+		await runPreDispatchGate(toolCall);
 		const start = Date.now();
 		const { action, parameters } = toolCall;
 

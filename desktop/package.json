@@ -30,7 +30,7 @@
         "to": "icon.ico"
       },
       {
-        "from": "../public/favicon.png",
+        "from": "../public/icon.png",
         "to": "icon.png"
       }
     ],
@@ -45,7 +45,7 @@
     },
     "mac": {
       "target": ["dmg", "zip"],
-      "icon": "../public/favicon.png",
+      "icon": "../public/icon.png",
       "category": "public.app-category.developer-tools",
       "identity": null,
       "gatekeeperAssess": false,

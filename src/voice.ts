@@ -19,10 +19,17 @@ const logger = createLogger("voice");
 
 // ── Paths ──
 
+const IS_WIN = process.platform === "win32";
 const VOICE_DIR = join(homedir(), ".lax", "workspace", "voice-chat");
-const WHISPER_EXE = join(VOICE_DIR, "whisper-bin", "Release", "whisper-cli.exe");
+// Windows whisper.cpp builds put the binary under Release/ (MSVC layout)
+// and use .exe; Mac/Linux builds drop a plain binary alongside the build dir.
+const WHISPER_EXE = IS_WIN
+  ? join(VOICE_DIR, "whisper-bin", "Release", "whisper-cli.exe")
+  : join(VOICE_DIR, "whisper-bin", "whisper-cli");
 const WHISPER_MODEL = join(VOICE_DIR, "whisper-bin", "models", "ggml-base.en.bin");
-const PIPER_EXE = join(VOICE_DIR, "piper", "piper", "piper.exe");
+const PIPER_EXE = IS_WIN
+  ? join(VOICE_DIR, "piper", "piper", "piper.exe")
+  : join(VOICE_DIR, "piper", "piper", "piper");
 const PIPER_VOICE = join(VOICE_DIR, "piper", "voices", "en_US-ryan-medium.onnx");
 const KOKORO_MODEL = join(VOICE_DIR, "kokoro", "kokoro-v1.0.onnx");
 const KOKORO_VOICES = join(VOICE_DIR, "kokoro", "voices-v1.0.bin");
@@ -243,20 +250,13 @@ export function synthesizePiper(text: string): Buffer {
   const outPath = tmpPath("wav");
 
   try {
-    const proc = spawn(PIPER_EXE, [
+    execFileSync(PIPER_EXE, [
       "--model", PIPER_VOICE,
       "--output_file", outPath,
-    ], { stdio: ["pipe", "ignore", "ignore"] });
-
-    proc.stdin.write(clean);
-    proc.stdin.end();
-
-    // Wait synchronously (Piper is fast)
-    const safePid = Number(proc.pid);
-    if (!Number.isInteger(safePid) || safePid <= 0) throw new Error("Invalid process ID");
-    execSync(`powershell -Command "Wait-Process -Id ${safePid} -Timeout 15"`, {
-      timeout: 16_000,
-      stdio: "ignore",
+    ], {
+      input: clean,
+      timeout: 15_000,
+      stdio: ["pipe", "ignore", "ignore"],
     });
 
     if (existsSync(outPath)) {
@@ -512,9 +512,15 @@ export function continuousListen(options: ContinuousListenOptions = {}): { stop:
     while (running) {
       const segPath = tmpPath("wav");
       try {
-        // Record with silence detection via ffmpeg
+        // ffmpeg audio input format is per-platform: dshow on Windows,
+        // avfoundation on macOS (`:0` = default mic), alsa on Linux.
+        const audioInput: [string, string] = process.platform === "win32"
+          ? ["dshow", "audio=default"]
+          : process.platform === "darwin"
+            ? ["avfoundation", ":0"]
+            : ["alsa", "default"];
         currentProc = spawn("ffmpeg", [
-          "-f", "dshow", "-i", "audio=default",
+          "-f", audioInput[0], "-i", audioInput[1],
           "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
           "-af", `silencedetect=noise=-30dB:d=${silenceThreshold}`,
           "-t", String(maxSeg),

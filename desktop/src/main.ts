@@ -564,6 +564,100 @@ function createWindow(): void {
   });
 }
 
+// Native macOS application menu. The custom JS-injected titlebar is skipped
+// on darwin (Mac uses the native top-of-screen menu bar), so every
+// app-specific action that used to live in that titlebar — New Session,
+// Restart Server, Show/Hide Agents, Toggle DevTools, etc. — has to be
+// surfaced here or it's lost. Renderer-targeted items dispatch via
+// webContents.executeJavaScript, same as the old in-window menu's handlers.
+function setupApplicationMenu(): void {
+  if (process.platform !== "darwin") return; // Windows/Linux keep the in-window titlebar
+  const triggerRenderer = (js: string) => {
+    mainWindow?.webContents.executeJavaScript(js).catch(() => { /* renderer not ready */ });
+  };
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: app.name,
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "New Session",
+          accelerator: "CmdOrCtrl+N",
+          click: () => triggerRenderer("window.startNewSession?.()"),
+        },
+        { type: "separator" },
+        {
+          label: "Restart Server",
+          accelerator: "CmdOrCtrl+Shift+R",
+          click: async () => { await stopServer(); startServer(); },
+        },
+        { type: "separator" },
+        // close-to-tray is wired up on mainWindow's close handler, so this
+        // hides the window instead of quitting the app
+        { role: "close", label: "Close to Tray" },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        {
+          label: "Show / Hide Agents",
+          accelerator: "CmdOrCtrl+Shift+A",
+          click: () => triggerRenderer("document.getElementById('agents-toggle')?.click()"),
+        },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "toggleDevTools" },
+      ],
+    },
+    {
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "front" },
+      ],
+    },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "About Local Agent X",
+          click: () => app.showAboutPanel(),
+        },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function showWindow(): void {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -682,6 +776,12 @@ function setupIPC(): void {
 
 app.on("ready", async () => {
   saxConfig = loadSAXConfig();
+
+  // Native macOS menu — gated to darwin internally. Sets the app-wide
+  // application menu containing New Session, Restart Server, Show/Hide
+  // Agents, etc. — the actions that used to live in the JS-injected
+  // in-window titlebar (which we skip on Mac).
+  setupApplicationMenu();
 
   // Grant only the permissions the app actually needs — not a blanket allow
   const { session } = require("electron");

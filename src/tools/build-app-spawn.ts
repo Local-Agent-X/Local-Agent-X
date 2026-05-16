@@ -94,6 +94,13 @@ async function buildWithClaude(input: BuildSpawnInput): Promise<ToolResult> {
         "--no-session-persistence",
         "--max-turns", "25",
         "--model", "claude-opus-4-7",
+        // claude CLI prompts interactively for Write approval by default.
+        // The pipe-stdin invocation has no UI to surface the prompt, so the
+        // CLI returns without writing and the build fails with "I need
+        // write permission" in the assistant output. bypassPermissions
+        // disables the interactive gate — safe here because the subprocess
+        // is sandboxed to the appDir cwd and only has Write/Edit/Read/Bash.
+        "--permission-mode", "bypassPermissions",
         "--tools", "Write,Edit,Read,Bash",
         "--disallowedTools", "WebFetch,WebSearch",
       ],

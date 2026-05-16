@@ -10,6 +10,8 @@ import {
   app,
   BrowserWindow,
   globalShortcut,
+  Menu,
+  MenuItem,
   Notification,
   ipcMain,
   nativeImage,
@@ -425,6 +427,44 @@ function createWindow(): void {
   mainWindow.webContents.on("before-input-event", (_e, input) => {
     if (input.key === "F5" || (input.control && input.key.toLowerCase() === "r")) {
       _e.preventDefault();
+    }
+  });
+
+  // Right-click context menu. Electron's `spellcheck: true` gives the red
+  // underline for free, but the menu (suggestions, Add to Dictionary,
+  // cut/copy/paste/select-all) has to be built manually — without this,
+  // right-click on a misspelled word does nothing. Mac users especially
+  // expect a native-feeling context menu here.
+  mainWindow.webContents.on("context-menu", (_event, params) => {
+    if (!mainWindow) return;
+    const menu = new Menu();
+
+    if (params.misspelledWord) {
+      if (params.dictionarySuggestions.length > 0) {
+        for (const suggestion of params.dictionarySuggestions) {
+          menu.append(new MenuItem({
+            label: suggestion,
+            click: () => mainWindow?.webContents.replaceMisspelling(suggestion),
+          }));
+        }
+      } else {
+        menu.append(new MenuItem({ label: "No suggestions", enabled: false }));
+      }
+      menu.append(new MenuItem({
+        label: "Add to Dictionary",
+        click: () => mainWindow?.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+      }));
+      menu.append(new MenuItem({ type: "separator" }));
+    }
+
+    const { canCut, canCopy, canPaste, canSelectAll } = params.editFlags;
+    if (canCut)       menu.append(new MenuItem({ role: "cut" }));
+    if (canCopy)      menu.append(new MenuItem({ role: "copy" }));
+    if (canPaste)     menu.append(new MenuItem({ role: "paste" }));
+    if (canSelectAll) menu.append(new MenuItem({ role: "selectAll" }));
+
+    if (menu.items.length > 0) {
+      menu.popup({ window: mainWindow });
     }
   });
 

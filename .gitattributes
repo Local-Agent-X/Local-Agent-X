@@ -1,0 +1,7 @@
+# Shell scripts must be LF — bash on Mac/Linux chokes on CRLF, even when
+# invoked as `bash script.sh`. Same for any other Unix-side executable text.
+*.sh   text eol=lf
+*.bash text eol=lf
+
+# Keep Python files LF for cross-platform consistency.
+*.py   text eol=lf

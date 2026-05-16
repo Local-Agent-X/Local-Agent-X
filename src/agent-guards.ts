@@ -351,10 +351,15 @@ export function createLoopState(): LoopState {
 const DISCOVERY_LOOP_THRESHOLD = 8;
 const DISCOVERY_LOOP_THRESHOLD_WEAK = 4;
 // No-progress abort: iterations of consecutive non-mutating tool calls allowed
-// before the agent is forced to end its turn. 12 = ~3x the bash/git/read calls
-// a normal "verify the commit" wrap-up does. Anything beyond is spinning.
-const NO_PROGRESS_LIMIT = 12;
-const NO_PROGRESS_LIMIT_WEAK = 6;
+// before the agent is forced to end its turn. Raised from 12/6 → 25/15 after
+// "research the latest tech in X and make a powerpoint" aborted at 6 web_search
+// calls — research-then-build workflows legitimately need many read-only steps
+// (web_search, web_fetch, snapshot, page extract, image search) before the
+// first file write. The discovery-loop detector at DISCOVERY_LOOP_THRESHOLD
+// still catches true spirals (8x identical tool); this guard is the backup
+// for an agent that's genuinely stuck across many different tools.
+const NO_PROGRESS_LIMIT = 25;
+const NO_PROGRESS_LIMIT_WEAK = 15;
 // A mutation is a tool that committed *real-world* work — disk write, page
 // click, HTTP POST, message sent. Note `bash` is NOT here despite being in
 // PROGRESS_TOOLS for the spiralable-reset logic — bash can spin without

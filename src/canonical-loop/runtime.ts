@@ -10,7 +10,7 @@
  * scheduler/worker pull from when driving an op. Test cleanup calls
  * resetCanonicalRuntime() to drop registrations between tests.
  */
-import type { Op } from "../workers/types.js";
+import type { Op } from "../ops/types.js";
 import type { Adapter, ToolDescriptor } from "./adapter-contract.js";
 import { NotConfiguredToolDispatcher, type ToolDispatcher } from "./tool-dispatch.js";
 import type { CanonicalLane } from "./types.js";

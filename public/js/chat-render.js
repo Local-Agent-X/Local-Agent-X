@@ -141,7 +141,7 @@ function renderMessages() {
   const el = document.getElementById('messages');
   if (!el) return;
   if (!activeChat || activeChat.messages.length === 0) {
-    el.innerHTML = `<div id="empty"><img src="/hero.jpg" alt="Local Agent X" class="hero-img" /><h2>LOCAL AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
+    el.innerHTML = `<div id="empty"><img src="/hero.jpg" alt="Local Agent X" class="hero-img hero-dark" /><img src="/hero-light.png" alt="Local Agent X" class="hero-img hero-light" /><h2>LOCAL AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
     return;
   }
   // Sync the live stream into activeChat.messages BEFORE rebuilding DOM.

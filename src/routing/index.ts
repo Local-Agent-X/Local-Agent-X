@@ -8,7 +8,6 @@
 
 export { routeMessage } from "./router.js";
 export { hasDiscussPrefix, stripDiscussPrefix } from "./regex-rules.js";
-export { delegateMessageToWorker } from "./delegate-worker.js";
 export {
   recordDecision,
   getRecentAutoDelegateDecisions,

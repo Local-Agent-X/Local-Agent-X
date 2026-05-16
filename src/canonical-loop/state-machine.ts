@@ -16,7 +16,7 @@ import { emit } from "./event-emitter.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
 import { clearMiddlewareStateForOp } from "./middlewares/state.js";
 import { clearEvidenceHistory } from "./middlewares/evidence-history.js";
-import type { Op, OpStatus } from "../workers/types.js";
+import type { Op, OpStatus } from "../ops/types.js";
 import type { CanonicalEvent, CanonicalState } from "./types.js";
 
 const TRANSITIONS: Record<CanonicalState, ReadonlySet<CanonicalState>> = {

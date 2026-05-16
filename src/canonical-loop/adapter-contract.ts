@@ -91,12 +91,10 @@ export interface TurnResult {
 export const FORBIDDEN_ADAPTER_IMPORTS: readonly string[] = [
   "canonical-loop/store",
   "canonical-loop/store.js",
-  "workers/op-store",
-  "workers/op-store.js",
-  "workers/event-log",
-  "workers/event-log.js",
-  "workers/pool",
-  "workers/pool.js",
+  "ops/op-store",
+  "ops/op-store.js",
+  "ops/event-log",
+  "ops/event-log.js",
   "node:child_process",
   "child_process",
 ] as const;

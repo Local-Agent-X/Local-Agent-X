@@ -1,8 +1,8 @@
 /**
  * Canonical-loop on-disk paths (Issue 01).
  *
- * This codebase persists ops on the filesystem (see workers/event-log.ts and
- * workers/op-store.ts). The PRD §9 "tables" map onto the per-op dir like so:
+ * This codebase persists ops on the filesystem (see ops/event-log.ts and
+ * ops/op-store.ts). The PRD §9 "tables" map onto the per-op dir like so:
  *
  *   ~/.lax/operations/<opId>/
  *     operation.json           ← legacy Op (existing)
@@ -26,7 +26,7 @@
  *   state                  → canonical.state
  */
 import { join } from "node:path";
-import { opDir } from "../workers/event-log.js";
+import { opDir } from "../ops/event-log.js";
 
 export const CANONICAL_EVENTS_FILE = "canonical-events.jsonl";
 export const OP_TURNS_DIR = "op-turns";

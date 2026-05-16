@@ -35,9 +35,9 @@ import {
   type CanonicalEvent,
 } from "../src/canonical-loop/index.js";
 import { readOpMessages } from "../src/canonical-loop/store.js";
-import { readOp, newOpId } from "../src/workers/op-store.js";
-import type { Op } from "../src/workers/types.js";
-import { trackOpForSession } from "../src/workers/session-bridge.js";
+import { readOp, newOpId } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
+import { trackOpForSession } from "../src/ops/session-bridge.js";
 import {
   pushInject,
   hasInjects,

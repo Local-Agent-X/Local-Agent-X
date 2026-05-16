@@ -6,14 +6,13 @@
  *   - regex-rules.ts     : three obvious INLINE shortcuts (slash, no-spawn, ack)
  *   - llm-classifier.ts  : primary decider for everything else (tools = workers)
  *   - decision-log.ts    : persistent + in-memory log for telemetry
- *   - delegate-worker.ts : actually submits the op when delegating
  *   - router.ts (this)   : orchestrates them, single public entry point
  *
  * Caller uses:
  *   const decision = await routeMessage(provider, message, channel);
  *   if (decision.destination === "delegate") {
- *     const { opId, replyText } = await delegateMessageToWorker(...);
- *     linkDecisionToOpId(opId, message);
+ *     // chat/delegation-handoff.ts submits the canonical op and runs the
+ *     // ack turn; routing/index.ts re-exports linkDecisionToOpId.
  *   }
  *
  * Adding a regex shortcut = edit regex-rules.ts (only).

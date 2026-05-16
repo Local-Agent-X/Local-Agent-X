@@ -20,15 +20,13 @@ export async function startServer(config: LAXConfig) {
   const services = await bootstrapServices(config);
   const { security, publicDir, dataDir, toolPolicy, rbac, agentSync, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations } = services;
 
-  // Worker pool (Step 1 foundation): boot the pool + register provider matrix
-  // so op_submit can route work into isolated worker processes. This keeps
-  // the main agent's heap small — heavy work crashes the worker, not us.
-  const { startWorkerPool } = await import("../workers/pool.js");
-  const { bootstrapProviderMatrix } = await import("../workers/provider-matrix.js");
-  const { initSessionBridge, setSessionPersister } = await import("../workers/session-bridge.js");
-  const { setIdleNudgePersister } = await import("../workers/idle-nudge.js");
+  // Provider matrix + session bridge bootstrap. Canonical-loop ops run
+  // in-process and don't need a worker pool; the session bridge owns the
+  // session-to-op binding used by op_status / sidebar wiring.
+  const { bootstrapProviderMatrix } = await import("../ops/provider-matrix.js");
+  const { initSessionBridge, setSessionPersister } = await import("../ops/session-bridge.js");
+  const { setIdleNudgePersister } = await import("../ops/idle-nudge.js");
   bootstrapProviderMatrix();
-  startWorkerPool();
   initSessionBridge();
   // Persist worker completion acks (session-bridge worker-completed path)
   // AND idle-nudge proactive narrations ("Quick heads up — that op just

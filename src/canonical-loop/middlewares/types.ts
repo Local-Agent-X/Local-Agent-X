@@ -23,7 +23,7 @@
  * (loop-detection, post-commit, action-claim FIRED flag, etc.) lives in the
  * registry in `state.ts` keyed by opId. Cleared on op-terminal.
  */
-import type { Op } from "../../workers/types.js";
+import type { Op } from "../../ops/types.js";
 import type { ServerEvent } from "../../types.js";
 import type { CanonicalMessage, ToolCall, ToolDescriptor } from "../contract-types.js";
 

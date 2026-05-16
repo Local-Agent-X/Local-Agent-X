@@ -43,7 +43,7 @@ export const handleHealthRoutes: RouteHandler = async (method, url, req, res) =>
 
   if (url.pathname === "/api/health/providers") {
     try {
-      const { getProviderHealth } = await import("../workers/provider-matrix.js");
+      const { getProviderHealth } = await import("../ops/provider-matrix.js");
       jsonResponse(res, 200, { providers: getProviderHealth() }, req);
     } catch (e) {
       jsonResponse(res, 500, { error: (e as Error).message }, req);
@@ -53,14 +53,10 @@ export const handleHealthRoutes: RouteHandler = async (method, url, req, res) =>
 
   if (url.pathname === "/api/health/workers") {
     try {
-      const { getPoolStatus } = await import("../workers/pool.js");
-      const { listActiveCanonicalOps } = await import("../canonical-loop/index.js");
-      const pool = getPoolStatus();
-      // Canonical-loop ops run in-process and are NOT registered in the
-      // legacy worker-pool table. Surface them in the same payload so the
-      // Agent activity sidebar / status views can render both paths.
+      const { schedulerSnapshot, listActiveCanonicalOps } = await import("../canonical-loop/index.js");
+      const snap = schedulerSnapshot();
       const canonical = listActiveCanonicalOps();
-      jsonResponse(res, 200, { ...pool, canonical }, req);
+      jsonResponse(res, 200, { queueDepth: snap.queueDepth, activeCount: snap.activeCount, canonical }, req);
     } catch (e) {
       jsonResponse(res, 500, { error: (e as Error).message }, req);
     }

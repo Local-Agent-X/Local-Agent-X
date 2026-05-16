@@ -50,10 +50,22 @@ export const STEALTH_ARGS = [
  * so attach mode requires the user's regular Chrome to be closed.
  */
 export function findUserChromeProfile(): string | null {
-  const candidates = [
-    join(process.env.LOCALAPPDATA || "", "Google", "Chrome", "User Data"),
-    join(process.env.LOCALAPPDATA || "", "Microsoft", "Edge", "User Data"),
-  ];
+  const home = homedir();
+  const candidates = process.platform === "win32"
+    ? [
+        join(process.env.LOCALAPPDATA || "", "Google", "Chrome", "User Data"),
+        join(process.env.LOCALAPPDATA || "", "Microsoft", "Edge", "User Data"),
+      ]
+    : process.platform === "darwin"
+      ? [
+          join(home, "Library", "Application Support", "Google", "Chrome"),
+          join(home, "Library", "Application Support", "Microsoft Edge"),
+        ]
+      : [
+          join(home, ".config", "google-chrome"),
+          join(home, ".config", "chromium"),
+          join(home, ".config", "microsoft-edge"),
+        ];
   for (const path of candidates) {
     if (path && existsSync(path)) return path;
   }
@@ -88,13 +100,28 @@ export async function isChromeRunningOnProfile(userDataDir: string): Promise<boo
 }
 
 export function findChromeExecutable(): string | null {
-  const candidates = [
-    join(process.env.PROGRAMFILES || "", "Google", "Chrome", "Application", "chrome.exe"),
-    join(process.env["PROGRAMFILES(X86)"] || "", "Google", "Chrome", "Application", "chrome.exe"),
-    join(process.env.LOCALAPPDATA || "", "Google", "Chrome", "Application", "chrome.exe"),
-    join(process.env.PROGRAMFILES || "", "Microsoft", "Edge", "Application", "msedge.exe"),
-    join(process.env["PROGRAMFILES(X86)"] || "", "Microsoft", "Edge", "Application", "msedge.exe"),
-  ];
+  const candidates = process.platform === "win32"
+    ? [
+        join(process.env.PROGRAMFILES || "", "Google", "Chrome", "Application", "chrome.exe"),
+        join(process.env["PROGRAMFILES(X86)"] || "", "Google", "Chrome", "Application", "chrome.exe"),
+        join(process.env.LOCALAPPDATA || "", "Google", "Chrome", "Application", "chrome.exe"),
+        join(process.env.PROGRAMFILES || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+        join(process.env["PROGRAMFILES(X86)"] || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+      ]
+    : process.platform === "darwin"
+      ? [
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+          "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+      : [
+          "/usr/bin/google-chrome",
+          "/usr/bin/google-chrome-stable",
+          "/usr/bin/chromium",
+          "/usr/bin/chromium-browser",
+          "/usr/bin/microsoft-edge",
+          "/snap/bin/chromium",
+        ];
   for (const path of candidates) {
     if (existsSync(path)) return path;
   }

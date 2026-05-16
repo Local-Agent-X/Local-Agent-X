@@ -7,6 +7,46 @@ import { ThreatEngine } from "../../threat-engine.js";
 import type { ServerEvent } from "../../types.js";
 import type { Role } from "../../rbac.js";
 import type { SseSink } from "./run-chat-turn.js";
+import { newOpId } from "../../ops/op-store.js";
+import { buildContextPack } from "../../ops/context-pack-builder.js";
+import { getRetryPolicy } from "../../ops/heartbeat.js";
+import { trackOpForSession } from "../../ops/session-bridge.js";
+import { canonicalLoopEntry } from "../../canonical-loop/index.js";
+import type { Op, OpVisibility } from "../../ops/types.js";
+
+async function submitDelegationOp(message: string, sessionId: string): Promise<{ opId: string }> {
+  const lane = "build" as const;
+  const contextPack = await buildContextPack({
+    description: message,
+    successCriteria: [
+      "Address every concrete sub-task in the user's message",
+      "Apply real edits to files when the task calls for it (don't just describe what could be done)",
+      "End with a brief summary of what was changed",
+    ],
+    constraints: [
+      "Don't ask the user clarifying questions — make the best reasonable interpretation and proceed",
+      "If a step is ambiguous, document the assumption in your final summary",
+    ],
+    lane,
+    budget: { maxIterations: 30, maxWallTimeMs: 15 * 60 * 1000 },
+  });
+  const op: Op = {
+    id: newOpId("op_freeform"),
+    type: "freeform",
+    task: message,
+    contextPack,
+    lane,
+    retryPolicy: getRetryPolicy("freeform"),
+    ownerId: "local-user",
+    visibility: "private" as OpVisibility,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    attemptCount: 0,
+  };
+  trackOpForSession(op.id, sessionId, message);
+  canonicalLoopEntry(op, { sessionId });
+  return { opId: op.id };
+}
 
 const logger = createLogger("routes.chat.delegation");
 
@@ -55,9 +95,9 @@ interface DelegationHandoffResult {
 export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise<DelegationHandoffResult> {
   const { message, sessionId, prepared, ctx, session, requestRole, sseSink } = args;
 
-  const { delegateMessageToWorker, linkDecisionToOpId } = await import("../../routing/index.js");
+  const { linkDecisionToOpId } = await import("../../routing/index.js");
 
-  const { opId } = await delegateMessageToWorker(message, sessionId, prepared.provider);
+  const { opId } = await submitDelegationOp(message, sessionId);
   // Link the decision entry to this opId so the UI's "Stay inline"
   // button can find + override it later. Saves the full message too
   // so we can re-submit on override.

@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import { rmSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { writeOp, readOp, setOpStatus, newOpId, listOps } from "../src/workers/op-store.js";
-import type { Op } from "../src/workers/types.js";
+import { writeOp, readOp, setOpStatus, newOpId, listOps } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
 
 let counter = 0;
 const opId = (label: string) => `optest_${Date.now().toString(36)}_${++counter}_${label}`;

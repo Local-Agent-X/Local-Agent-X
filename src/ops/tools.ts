@@ -1,5 +1,5 @@
 /**
- * Op tools — let the chat agent delegate work to the worker pool.
+ * Op tools — let the chat agent delegate work to the canonical-loop.
  *
  *   op_submit_async — PRIMARY: fire-and-forget. Returns opId immediately so
  *                     the chat agent can keep responding. The session bridge
@@ -13,29 +13,34 @@
  *                     op_submit_async so the user isn't stuck waiting.
  *   op_status       — Inspect any op (active or persisted). With no opId,
  *                     lists ops the current session has submitted plus the
- *                     pool/queue summary.
- *   op_kill         — SIGKILL the worker for an op (immediate, per spec §7).
- *   op_redirect     — Inject an instruction into a running op (cooperative).
+ *                     scheduler summary.
+ *   op_kill         — Cancel an op (cooperative; transitions running →
+ *                     cancelling, aborts the adapter mid-stream).
+ *   op_redirect     — Inject an instruction into a running op (latest-wins).
  *
  * Why async-first: a blocking op_submit holds the chat agent's turn open
- * until the worker finishes. Even if the work itself runs in an isolated
- * subprocess, the user can't chat about anything else until it ends. The
- * async variant is the actual UX unblock that makes the "supervisor + pool"
- * shape feel like a parallel system instead of a sync RPC.
+ * until the op finishes. The async variant is the actual UX unblock that
+ * makes the delegation feel like a parallel system instead of a sync RPC.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ToolDefinition } from "../types.js";
-import { submitOp, killOp, redirectOp, getPoolStatus, awaitOpResult } from "./pool.js";
+import {
+  opCancel,
+  opRedirect,
+  canonicalLoopEntry,
+  registerAdapterForOp,
+  schedulerSnapshot,
+  awaitCanonicalOp,
+} from "../canonical-loop/index.js";
 import { readOp, listOps, newOpId } from "./op-store.js";
 import { readEvents } from "./event-log.js";
 import { readCheckpoint } from "./checkpoint.js";
 import { buildContextPack } from "./context-pack-builder.js";
 import { getRetryPolicy } from "./heartbeat.js";
 import { trackOpForSession, listOpsForSession } from "./session-bridge.js";
-import { decideSubmitRouting, canonicalLoopEntry, registerAdapterForOp } from "../canonical-loop/index.js";
 
 /**
  * Read the user's currently-selected provider from ~/.lax/settings.json.
@@ -173,7 +178,7 @@ export const opSubmitAsyncTool: ToolDefinition = {
       // guard self-block — the host op blocks its own delegations and the
       // returned BLOCKED message references the host's id. Models then
       // copy-paste the id back, narrating a fake delegation. See repro at
-      // tests/workers/op-submit-async-self-block.test.ts.
+      // tests/ops/op-submit-async-self-block.test.ts.
       const liveOps = listOpsForSession(sessionId)
         .map(id => readOp(id))
         .filter((o): o is NonNullable<typeof o> => !!o)
@@ -272,31 +277,18 @@ export const opSubmitAsyncTool: ToolDefinition = {
       RECENT_SUBMITS.set(sessionId, { opId: op.id, ts: Date.now(), task });
     }
 
-    // Canonical-loop feature-flag routing (PRD §17, Issue 01). Flag default
-    // OFF — legacy path unchanged. Flag ON captures canonical_flag_value on
-    // the op, persists the skeleton state_changed event, and SKIPS the
-    // legacy worker-pool dispatch (Issue 03 lights up the real loop).
-    const routing = decideSubmitRouting(op);
-    if (routing.route === "canonical") {
-      // Per-op adapter selection by the op's effective provider. Earlier
-      // there was a 20% random-Codex canary on top of an Anthropic-only
-      // gate — too noisy ("which provider answered THIS turn?") and
-      // blocked pure Codex testing. Now: provider follows the op's
-      // explicit hint, falling back to settings.json. The user picks
-      // codex in settings → ops register CodexAdapter → soak file shows
-      // adapter=codex; switch back → adapter=anthropic.
-      const opProvider = op.contextPack?.routing?.preferredProvider;
-      const effectiveProvider = opProvider ?? (await readSettingsProvider());
-      if (effectiveProvider === "codex") {
-        const { createCodexAdapter } = await import("../canonical-loop/index.js");
-        registerAdapterForOp(op.id, () => createCodexAdapter({ sessionId: sessionId || undefined }));
-      }
-      // anthropic / unset / other → fall through to lane-default
-      // AnthropicAdapter from canonical-loop-bootstrap.ts.
-      canonicalLoopEntry(op, sessionId ? { sessionId } : {});
-    } else {
-      void submitOp(op).catch(() => { /* result already routed via bridge */ });
+    // Per-op adapter selection by the op's effective provider. Provider
+    // follows the op's explicit hint, falling back to settings.json. User
+    // picks codex in settings → ops register CodexAdapter; otherwise the
+    // lane-default AnthropicAdapter from canonical-loop-bootstrap.ts
+    // serves the op.
+    const opProvider = op.contextPack?.routing?.preferredProvider;
+    const effectiveProvider = opProvider ?? (await readSettingsProvider());
+    if (effectiveProvider === "codex") {
+      const { createCodexAdapter } = await import("../canonical-loop/index.js");
+      registerAdapterForOp(op.id, () => createCodexAdapter({ sessionId: sessionId || undefined }));
     }
+    canonicalLoopEntry(op, sessionId ? { sessionId } : {});
 
     return {
       content:
@@ -328,7 +320,7 @@ export const opWaitTool: ToolDefinition = {
 
     const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 30 * 60 * 1000;
     const startMs = Date.now();
-    const result = await awaitOpResult(opId, timeoutMs);
+    const result = await awaitCanonicalOp(opId, timeoutMs);
     const wallMs = Date.now() - startMs;
 
     if (!result) {
@@ -363,9 +355,23 @@ export const opSubmitTool: ToolDefinition = {
     const op = await buildOpFromArgs(args);
     if (sessionId) trackOpForSession(op.id, sessionId, task);
 
+    const opProvider = op.contextPack?.routing?.preferredProvider;
+    const effectiveProvider = opProvider ?? (await readSettingsProvider());
+    if (effectiveProvider === "codex") {
+      const { createCodexAdapter } = await import("../canonical-loop/index.js");
+      registerAdapterForOp(op.id, () => createCodexAdapter({ sessionId: sessionId || undefined }));
+    }
     const startMs = Date.now();
-    const result = await submitOp(op);
+    canonicalLoopEntry(op, sessionId ? { sessionId } : {});
+    const result = await awaitCanonicalOp(op.id, 30 * 60 * 1000);
     const wallMs = Date.now() - startMs;
+
+    if (!result) {
+      return {
+        content: `op ${op.id} did not complete within 30 min. Call op_status(op_id="${op.id}") to check.`,
+        isError: true,
+      };
+    }
 
     const summary =
       `op ${op.id} ${result.status} in ${Math.round(wallMs / 1000)}s` +
@@ -377,7 +383,7 @@ export const opSubmitTool: ToolDefinition = {
   },
 };
 
-// ── op_status, op_kill, op_redirect (unchanged behavior) ──────────────────
+// ── op_status, op_kill, op_redirect ────────────────────────────────────────
 
 export const opStatusTool: ToolDefinition = {
   name: "op_status",
@@ -393,7 +399,7 @@ export const opStatusTool: ToolDefinition = {
     const sessionId = String(args._sessionId || "");
 
     if (!args.op_id) {
-      const status = getPoolStatus();
+      const snap = schedulerSnapshot();
       const { listActiveCanonicalOps } = await import("../canonical-loop/index.js");
       const canonicalActive = listActiveCanonicalOps();
       const sessionOpIds = sessionId ? listOpsForSession(sessionId) : [];
@@ -411,7 +417,7 @@ export const opStatusTool: ToolDefinition = {
           ).join("\n") + "\n\n";
       return {
         content:
-          `Pool: ${status.workers.length} workers (${status.workers.filter(w => w.busyWith).length} busy), ${status.queueLength} queued.\n\n` +
+          `Scheduler: ${snap.activeCount} active, ${snap.queueDepth} queued.\n\n` +
           canonicalLine +
           (sessionOpIds.length > 0 ? `Your ops (this session):\n${recent}` : `Recent ops (all sessions):\n${recent}`),
       };
@@ -463,7 +469,7 @@ export const opStatusTool: ToolDefinition = {
 
 export const opKillTool: ToolDefinition = {
   name: "op_kill",
-  description: "Terminate a running op immediately. Use when the op is going off the rails. The worker is SIGKILL'd; partial side-effects may persist (per spec §7 'Kill is the only immediate control'). For graceful stop, use op_pause (Step 7). If `op_id` is omitted, kills the most recently submitted live op for the current chat session — saves the model from having to know op ids it never received cleanly.",
+  description: "Cancel a running op. The op transitions to cancelling and the adapter is aborted at the next safe boundary (sub-second for in-flight turns). Partial side-effects may persist (per spec §7). If `op_id` is omitted, kills the most recently submitted live op for the current chat session — saves the model from having to know op ids it never received cleanly.",
   parameters: {
     type: "object",
     properties: { op_id: { type: "string", description: "The opId returned from op_submit_async / op_submit. Omit to kill the most-recent live op for this session." } },
@@ -471,8 +477,6 @@ export const opKillTool: ToolDefinition = {
   async execute(args) {
     let opId = typeof args.op_id === "string" ? args.op_id.trim() : "";
     if (!opId) {
-      // Resolve "most recent live op" for this session. Excludes chat_turn
-      // wrappers (those are the host, not killable peer ops).
       const sessionId = String(args._sessionId || "");
       if (!sessionId) return { content: "op_kill needs an op_id when called outside a chat session.", isError: true };
       const liveIds = listOpsForSession(sessionId);
@@ -483,14 +487,14 @@ export const opKillTool: ToolDefinition = {
       if (live.length === 0) return { content: "no live op to kill for this session.", isError: true };
       opId = live[live.length - 1].id;
     }
-    const ok = killOp(opId);
-    return { content: ok ? `op killed.` : `op was not running.`, isError: !ok };
+    const res = opCancel(opId, "op_kill");
+    return { content: res.ok ? `op cancelling.` : `op was not running.`, isError: !res.ok };
   },
 };
 
 export const opRedirectTool: ToolDefinition = {
   name: "op_redirect",
-  description: "Inject a new instruction into a running op. Cooperative — the worker reads it at the next safe boundary, doesn't interrupt the current step. Use to steer a long-running build mid-flight (e.g., 'also add a stop-loss strategy').",
+  description: "Inject a new instruction into a running op. Cooperative — the worker reads it at the next safe boundary, doesn't interrupt the current step. Latest-wins: a second redirect overwrites the first if applied before the worker picks it up.",
   parameters: {
     type: "object",
     properties: {
@@ -503,12 +507,12 @@ export const opRedirectTool: ToolDefinition = {
     const opId = String(args.op_id);
     const instruction = String(args.instruction || "").trim();
     if (!instruction) return { content: "op_redirect requires an 'instruction'", isError: true };
-    const ok = redirectOp(opId, instruction);
+    const res = opRedirect(opId, instruction, "op_redirect");
     return {
-      content: ok
+      content: res.ok
         ? `Instruction injected into ${opId}. Worker will pick it up at next safe boundary.`
         : `op ${opId} not running`,
-      isError: !ok,
+      isError: !res.ok,
     };
   },
 };

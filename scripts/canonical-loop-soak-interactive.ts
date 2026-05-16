@@ -4,7 +4,7 @@
  * Drives N small, real Anthropic ops through the SAME submit + routing
  * path that `op_submit_async` uses in production:
  *   1. Build an Op via `buildContextPack` + `getRetryPolicy` (mirrors
- *      `buildOpFromArgs` in src/workers/tools.ts byte-for-byte for the
+ *      `buildOpFromArgs` in src/ops/tools.ts byte-for-byte for the
  *      `interactive` lane shape).
  *   2. `decideSubmitRouting(op)` to pick legacy vs canonical (flag-driven).
  *   3. `canonicalLoopEntry(op)` if canonical — i.e., the exact line
@@ -45,10 +45,10 @@ import {
   PROVIDER_STATE_MAX_BYTES_DEFAULT,
 } from "../src/canonical-loop/index.js";
 import { bootstrapCanonicalLoop } from "../src/server/canonical-loop-bootstrap.js";
-import { readOp, newOpId } from "../src/workers/op-store.js";
-import { buildContextPack } from "../src/workers/context-pack-builder.js";
-import { getRetryPolicy } from "../src/workers/heartbeat.js";
-import type { Op, OpVisibility } from "../src/workers/types.js";
+import { readOp, newOpId } from "../src/ops/op-store.js";
+import { buildContextPack } from "../src/ops/context-pack-builder.js";
+import { getRetryPolicy } from "../src/ops/heartbeat.js";
+import type { Op, OpVisibility } from "../src/ops/types.js";
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 

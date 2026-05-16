@@ -41,16 +41,17 @@ interface ConfigFileEntry { path: string; description: string; agentEditable: bo
 // ── Scanners ──
 
 function scanPages(): PageEntry[] {
+  // The SPA in public/app.html serves at "/" and has built-in sections for
+  // chat, settings, secrets, etc. — those aren't separate URLs. Only list
+  // truly standalone HTML files that the SPA doesn't internalize.
   const pages: PageEntry[] = [
-    { name: "Chat", path: "/", description: "Main chat interface — send messages, use voice, attach files" },
-    { name: "Settings", path: "/settings.html", description: "Configuration dashboard — AI providers, memory, security, bridges, integrations" },
+    { name: "Chat", path: "/", description: "Main app SPA — chat, settings, secrets, apps panel all live inside" },
   ];
-  // Scan for additional HTML pages
   const publicDir = join(ROOT, "public");
   try {
     for (const file of readdirSync(publicDir)) {
-      if (file.endsWith(".html") && !["index.html", "app.html", "settings.html"].includes(file)) {
-        pages.push({ name: file.replace(".html", ""), path: `/${file}`, description: `Static page: ${file}` });
+      if (file.endsWith(".html") && file !== "app.html") {
+        pages.push({ name: file.replace(".html", ""), path: `/${file}`, description: `Standalone page: ${file}` });
       }
     }
   } catch {}

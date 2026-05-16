@@ -9,7 +9,7 @@
  * Returns the firing middleware's name in `firedBy` so the caller can
  * surface a friendly stop reason in chat.
  */
-import type { Op } from "../../workers/types.js";
+import type { Op } from "../../ops/types.js";
 import type { ToolCall, ToolDescriptor } from "../contract-types.js";
 import type { ServerEvent } from "../../types.js";
 import type {

@@ -2,9 +2,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { newCheckpoint, readCheckpoint, writeCheckpoint } from "../src/workers/checkpoint.js";
-import { opDir } from "../src/workers/event-log.js";
-import type { OpCheckpoint } from "../src/workers/types.js";
+import { newCheckpoint, readCheckpoint, writeCheckpoint } from "../src/ops/checkpoint.js";
+import { opDir } from "../src/ops/event-log.js";
+import type { OpCheckpoint } from "../src/ops/types.js";
 
 let counter = 0;
 const opId = (tag: string): string => `op-ckpt-test-${tag}-${Date.now()}-${counter++}`;

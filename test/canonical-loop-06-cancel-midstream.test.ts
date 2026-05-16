@@ -30,8 +30,8 @@ import {
   readOpMessages,
   type CanonicalEvent,
 } from "../src/canonical-loop/index.js";
-import { readOp, newOpId } from "../src/workers/op-store.js";
-import type { Op } from "../src/workers/types.js";
+import { readOp, newOpId } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
 
 import { FakeAdapter, scriptTurn, scriptLongStreamingTurn } from "./canonical-loop/fake-adapter.js";
 

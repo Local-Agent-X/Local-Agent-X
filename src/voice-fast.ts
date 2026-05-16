@@ -3,13 +3,14 @@
  * Uses pre-warmed processes, smaller models, and parallel execution.
  */
 
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 
+const IS_WIN = process.platform === "win32";
 const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
 const VOICE_DIR = join(homedir(), ".lax", "workspace", "voice-chat");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
@@ -56,7 +57,9 @@ export class FastVoicePipeline extends EventEmitter {
       processMessage: options.processMessage ?? (async (t) => t),
     };
 
-    this.whisperExe = join(VOICE_DIR, "whisper-bin", "Release", "whisper-cli.exe");
+    this.whisperExe = IS_WIN
+      ? join(VOICE_DIR, "whisper-bin", "Release", "whisper-cli.exe")
+      : join(VOICE_DIR, "whisper-bin", "whisper-cli");
     this.whisperModelPath = join(
       VOICE_DIR, "whisper-bin", "models",
       `ggml-${this.opts.whisperModel}.bin`,
@@ -104,7 +107,9 @@ export class FastVoicePipeline extends EventEmitter {
   /** Fast TTS — uses Piper (lower quality but much faster than Kokoro) */
   synthesizeFast(text: string): { wav: Buffer; ms: number } {
     const start = Date.now();
-    const piperExe = join(VOICE_DIR, "piper", "piper", "piper.exe");
+    const piperExe = IS_WIN
+      ? join(VOICE_DIR, "piper", "piper", "piper.exe")
+      : join(VOICE_DIR, "piper", "piper", "piper");
     const piperVoice = join(VOICE_DIR, "piper", "voices", "en_US-ryan-medium.onnx");
 
     if (!existsSync(piperExe) || !existsSync(piperVoice)) {
@@ -113,23 +118,16 @@ export class FastVoicePipeline extends EventEmitter {
 
     const outPath = tmpPath("wav");
     try {
-      const proc = spawn(piperExe, [
+      // Truncate to first 200 chars for speed
+      execFileSync(piperExe, [
         "--model", piperVoice,
         "--output_file", outPath,
         "--length_scale", String(1 / this.opts.ttsSpeed),
-      ], { stdio: ["pipe", "ignore", "ignore"] });
-
-      // Truncate to first 200 chars for speed
-      const short = text.slice(0, 200);
-      proc.stdin.write(short);
-      proc.stdin.end();
-
-      // Sync wait
-      try {
-        execFileSync("powershell", ["-Command", `Wait-Process -Id ${proc.pid} -Timeout 5`], {
-          timeout: 6000, stdio: "ignore",
-        });
-      } catch {}
+      ], {
+        input: text.slice(0, 200),
+        timeout: 5000,
+        stdio: ["pipe", "ignore", "ignore"],
+      });
 
       if (existsSync(outPath)) {
         const wav = readFileSync(outPath);

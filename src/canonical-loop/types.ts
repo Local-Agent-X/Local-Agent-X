@@ -5,7 +5,7 @@
  * the equivalent snake_case "column" names from the PRD are listed in
  * schema.ts. Everything in this file is additive — no legacy types change.
  */
-import type { OpLane } from "../workers/types.js";
+import type { OpLane } from "../ops/types.js";
 
 // ── Canonical state machine (PRD §10) ─────────────────────────────────────
 
@@ -25,7 +25,7 @@ export const TERMINAL_CANONICAL_STATES: readonly CanonicalState[] = [
 ] as const;
 
 // ── Canonical lane (PRD §14) ──────────────────────────────────────────────
-// `OpLane` from workers/types.ts is the legacy 3-value enum. Issue 14 adds
+// `OpLane` from ops/types.ts is the legacy 3-value enum. Issue 14 adds
 // `"ide"` to OpLane proper. For Issue 01 we accept the legacy values; the
 // `"ide"` lane lands when issue 14 wires it through the submission API.
 export type CanonicalLane = OpLane | "ide";

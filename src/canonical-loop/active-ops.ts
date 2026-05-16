@@ -5,7 +5,7 @@
  * `queued | running | paused | cancelling`. Terminal states (`succeeded`,
  * `failed`, `cancelled`) are excluded.
  *
- * Used by the workers/health JSON endpoint and by `op_status` (no-opId
+ * Used by the ops/health JSON endpoint and by `op_status` (no-opId
  * branch) so both legacy worker-pool ops AND canonical-loop ops are
  * visible in the agent activity surface. UI-only addition — does not
  * change loop behavior, signals, or events.
@@ -13,7 +13,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readOp } from "../workers/op-store.js";
+import { readOp } from "../ops/op-store.js";
 import { readLatestOpTurn } from "./store.js";
 
 const ACTIVE_STATES = new Set(["queued", "running", "paused", "cancelling"]);

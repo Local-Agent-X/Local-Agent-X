@@ -24,7 +24,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { newOpId } from "../src/workers/op-store.js";
+import { newOpId } from "../src/ops/op-store.js";
 import { readOpMessages } from "../src/canonical-loop/store.js";
 import {
   resetCanonicalRuntime,

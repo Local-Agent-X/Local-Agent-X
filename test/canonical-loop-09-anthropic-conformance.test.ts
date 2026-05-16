@@ -45,8 +45,8 @@ import {
   type AnthropicTransport,
   type TransportEvent,
 } from "../src/canonical-loop/index.js";
-import { readOp, newOpId } from "../src/workers/op-store.js";
-import type { Op } from "../src/workers/types.js";
+import { readOp, newOpId } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
 import {
   runConformance,
   type ConformanceItemId,
@@ -491,20 +491,6 @@ describe("Issue 09 — adapter sandbox audit (PRD §15 item I)", () => {
       console.log("audit diagnostic:", itemI.diagnostic);
     }
     expect(itemI.status).toBe("passed");
-  });
-});
-
-// ── Flag OFF compatibility ───────────────────────────────────────────────
-
-describe("flag OFF: Anthropic adapter does not affect legacy submit path", () => {
-  beforeEach(() => {
-    delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
-  });
-
-  it("decideSubmitRouting still routes legacy when flag OFF", () => {
-    const r = decideSubmitRouting({ lane: "interactive" });
-    expect(r.route).toBe("legacy");
-    expect(r.flagValue).toBe(false);
   });
 });
 

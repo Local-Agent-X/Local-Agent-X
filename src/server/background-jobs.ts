@@ -176,7 +176,7 @@ Use the read-only research tools (web_search, browser, http_request, web_fetch, 
     if (!existsSync(jobDir)) mkdirSync(jobDir, { recursive: true });
     const job = cronService.get(jobId);
     const validation = validateMissionOutput(cleanedPrompt, trimmed, stopReason);
-    // Salvage rule (mirrors src/workers/worker-entry.ts classifyOpResult):
+    // Salvage rule (mirrors src/ops/worker-entry.ts classifyOpResult):
     // judge by evidence — if the agent produced substantive content that
     // passes refusal/topic/length/truncation checks, ship it to canonical
     // even when the terminal stopReason is "error". Provider streams often

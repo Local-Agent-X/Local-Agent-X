@@ -13,10 +13,10 @@
  * `active` map is the single source of who is driving an op. Issue 08
  * promotes leasing to the DB (heartbeat-driven re-leasing).
  */
-import type { Op } from "../workers/types.js";
+import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 import type { CanonicalLane } from "./types.js";
-import { readOp } from "../workers/op-store.js";
+import { readOp } from "../ops/op-store.js";
 import { resolveAdapterFactory } from "./runtime.js";
 import { runWorker, type WorkerHandle } from "./worker.js";
 

@@ -28,6 +28,10 @@
       {
         "from": "../public/icon.ico",
         "to": "icon.ico"
+      },
+      {
+        "from": "../public/icon.png",
+        "to": "icon.png"
       }
     ],
     "win": {
@@ -38,6 +42,22 @@
     "nsis": {
       "oneClick": true,
       "allowToChangeInstallationDirectory": false
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "../public/icon.png",
+      "category": "public.app-category.developer-tools",
+      "identity": null,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Local Agent X uses the microphone for voice mode and speech-to-text.",
+        "NSCameraUsageDescription": "Local Agent X uses the camera for the camera_capture tool when you request it.",
+        "NSAppleEventsUsageDescription": "Local Agent X may control other apps when you ask it to.",
+        "LSMinimumSystemVersion": "11.0"
+      }
+    },
+    "dmg": {
+      "writeUpdateInfo": false
     }
   }
 }

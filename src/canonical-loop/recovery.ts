@@ -30,7 +30,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { readOp } from "../workers/op-store.js";
+import { readOp } from "../ops/op-store.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp, IllegalTransitionError } from "./state-machine.js";
 import { isLeaseExpired } from "./lease.js";

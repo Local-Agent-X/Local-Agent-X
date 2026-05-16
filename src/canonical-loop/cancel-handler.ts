@@ -31,10 +31,10 @@
  * Cancel beats pause beats redirect (PRD §13). Callers enforce the
  * precedence; this module just performs cancel work.
  */
-import { readOp, writeOp } from "../workers/op-store.js";
+import { readOp, writeOp } from "../ops/op-store.js";
 import { transitionOp, IllegalTransitionError } from "./state-machine.js";
 import { subscribeOpSignals } from "./signals.js";
-import type { Op } from "../workers/types.js";
+import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 
 const ABORT_TIMEOUT_MS = 1_000;

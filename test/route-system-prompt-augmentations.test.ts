@@ -6,7 +6,7 @@ import { join } from "node:path";
 const opsBySession = new Map<string, string[]>();
 const tasksByOpId = new Map<string, string>();
 
-vi.mock("../src/workers/session-bridge.js", () => ({
+vi.mock("../src/ops/session-bridge.js", () => ({
   listOpsForSession: vi.fn((sessionId: string) => opsBySession.get(sessionId) ?? []),
   getOpTask: vi.fn((opId: string) => tasksByOpId.get(opId) ?? ""),
 }));

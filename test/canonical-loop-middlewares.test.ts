@@ -16,10 +16,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import type { Op } from "../src/workers/types.js";
+import type { Op } from "../src/ops/types.js";
 import type { CanonicalLoopContext, CanonicalToolResultView } from "../src/canonical-loop/middlewares/types.js";
 import type { ToolCall, ToolDescriptor } from "../src/canonical-loop/contract-types.js";
-import { newOpId } from "../src/workers/op-store.js";
+import { newOpId } from "../src/ops/op-store.js";
 import { appendOpMessage } from "../src/canonical-loop/store.js";
 import { _resetMiddlewareStates } from "../src/canonical-loop/middlewares/state.js";
 import { _resetEvidenceHistories } from "../src/canonical-loop/middlewares/evidence-history.js";

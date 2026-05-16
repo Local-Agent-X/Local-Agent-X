@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 
 import { ProjectRosterStore } from "./project-rosters.js";
+import { renderPersonaPrompt } from "./tools/render-builder-prompt.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("agent-store");
@@ -261,6 +262,19 @@ export class AgentRunStore {
 
 // ── Agent Templates ────────────────────────────────────────
 
+/**
+ * Per-provider execution strategy for an agent template. Phase 1 groundwork
+ * for docs/migration/build-app-to-canonical-op.md — the canonical-op
+ * dispatcher reads this to decide whether to spawn a CLI subprocess or run
+ * in-process as a canonical sub-agent. Optional; templates without it use
+ * the lane-default adapter.
+ */
+export type AgentExecStrategy = "cli-subprocess" | "in-canonical-sub-agent";
+export interface AgentProviderStrategy {
+  [providerId: string]: AgentExecStrategy | undefined;
+  default?: AgentExecStrategy;
+}
+
 export interface AgentTemplate {
   id: string;
   name: string;
@@ -273,6 +287,7 @@ export interface AgentTemplate {
    *  repo. Default false. See AgentDefinition.requiresWorktree for the
    *  canonical doc and AUDIT Cluster 11 for the migration. */
   requiresWorktree?: boolean;
+  providerStrategy?: AgentProviderStrategy;
   // Note: hired / reportsTo / heartbeatSchedule / heartbeatEnabled /
   // budget moved to ProjectRoster (src/project-rosters.ts) in the L3
   // persistence split — those are per-project membership facts, not
@@ -317,7 +332,29 @@ export class AgentTemplateStore {
   private static instance: AgentTemplateStore;
   private templates: AgentTemplate[] = [];
 
-  private constructor() { this.load(); this.seedDefaults(); }
+  private constructor() { this.load(); this.migrateAppBuilderTools(); this.seedDefaults(); }
+
+  /**
+   * Phase-3 migration (docs/migration/build-app-to-canonical-op.md):
+   * Phase 2 seeded the `app-builder` template with `list_directory` in
+   * allowedTools — that tool isn't registered. The adapter substituted
+   * `glob` at runtime as a workaround; Phase 3 fixes the template in place.
+   * Idempotent: a template already using `glob` is left alone.
+   */
+  private migrateAppBuilderTools(): void {
+    const t = this.templates.find(x => x.id === "app-builder");
+    if (!t) return;
+    const idx = t.allowedTools.indexOf("list_directory");
+    if (idx < 0) return;
+    if (t.allowedTools.includes("glob")) {
+      t.allowedTools.splice(idx, 1);
+    } else {
+      t.allowedTools[idx] = "glob";
+    }
+    t.updatedAt = Date.now();
+    this.persist();
+    logger.info("[agents] migrated app-builder template: list_directory → glob");
+  }
 
   static getInstance(): AgentTemplateStore {
     if (!AgentTemplateStore.instance) AgentTemplateStore.instance = new AgentTemplateStore();
@@ -455,6 +492,21 @@ export class AgentTemplateStore {
         systemPrompt: "You are a generic worker agent. The supervisor delegated this task to you because no specialist role fit. Approach the work directly: read what's needed, do it, report the result. Use the right tool for each step (read/write/edit/bash for files, web_fetch/web_search for the web). Keep the output focused on what the supervisor asked for — no extra commentary, no padding.\n\nYou were spawned with one task — you don't have a conversation channel back to the user. NEVER ask the user to clarify or confirm. If the task is genuinely ambiguous, make a reasonable interpretation, do the work, and note the assumption in your result. If a tool fails repeatedly, try alternatives before bailing.",
         allowedTools: ["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image"],
         icon: "🛠️",
+      },
+      {
+        id: "app-builder",
+        name: "App Builder",
+        role: "App Builder",
+        description: "Builds web apps in workspace/apps/. Strategy varies per provider.",
+        systemPrompt: renderPersonaPrompt(),
+        allowedTools: ["write", "read", "edit", "bash", "glob"],
+        icon: "🛠",
+        providerStrategy: {
+          codex: "cli-subprocess",
+          anthropic: "cli-subprocess",
+          default: "in-canonical-sub-agent",
+        },
+        requiresWorktree: false,
       },
       {
         id: "builtin-ceo",

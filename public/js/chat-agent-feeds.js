@@ -26,8 +26,13 @@ const AGENT_ROLE_ICONS = {
 let agentFeedsOpen = false;
 let agentFeedsData = {};
 // Auto-open the AGENTS panel whenever an agent spawns. User-toggleable
-// via the AUTO pill in the panel header. Persisted in localStorage so
-// the choice survives reloads. Default ON to match prior behavior.
+// via the AUTO pill in the panel header. Persisted two ways so a wiped
+// webview localStorage can't lose the user's choice:
+//   1. localStorage (fast, in-memory at boot)
+//   2. server settings.json via /api/settings (durable, source of truth)
+// Boot reads localStorage first for instant correct paint, then hits the
+// server async — if the server has a different value, it wins and the
+// button re-renders. Default ON to match prior behavior.
 let agentFeedsAutoOpen = (function() {
   try { var raw = localStorage.getItem('lax_agent_feeds_autoopen'); return raw === null ? true : raw === '1'; }
   catch { return true; }
@@ -36,6 +41,14 @@ let agentFeedsAutoOpen = (function() {
 function toggleAgentFeedsAutoOpen() {
   agentFeedsAutoOpen = !agentFeedsAutoOpen;
   try { localStorage.setItem('lax_agent_feeds_autoopen', agentFeedsAutoOpen ? '1' : '0'); } catch {}
+  // Best-effort server-side persist. Don't block the UI on it — localStorage
+  // already covered the fast path. apiPost is defined in shared.js and
+  // tolerates the server being down (the toggle still works locally).
+  try {
+    if (typeof apiPost === 'function') {
+      apiPost('/api/settings', { agentFeedsAutoOpen: agentFeedsAutoOpen }).catch(function() {});
+    }
+  } catch {}
   _updateAutoOpenButton();
 }
 
@@ -46,15 +59,40 @@ function _updateAutoOpenButton() {
   else { btn.classList.add('off'); btn.classList.remove('on'); btn.title = 'Auto-open OFF — panel stays closed when agents spawn. Click to enable.'; }
 }
 
+// Pull the server-side value once on boot. If it disagrees with what we
+// loaded from localStorage (because localStorage got wiped by a webview
+// session reset, but settings.json on disk is still intact), the server
+// value wins — that's the durable source of truth.
+function _hydrateAutoOpenFromServer() {
+  try {
+    if (typeof fetch !== 'function') return;
+    var headers = {};
+    if (typeof AUTH_TOKEN !== 'undefined' && AUTH_TOKEN) headers.Authorization = 'Bearer ' + AUTH_TOKEN;
+    fetch((typeof API !== 'undefined' ? API : '') + '/api/settings', { headers: headers })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data || typeof data.agentFeedsAutoOpen !== 'boolean') return;
+        if (data.agentFeedsAutoOpen === agentFeedsAutoOpen) return;
+        agentFeedsAutoOpen = data.agentFeedsAutoOpen;
+        try { localStorage.setItem('lax_agent_feeds_autoopen', agentFeedsAutoOpen ? '1' : '0'); } catch {}
+        _updateAutoOpenButton();
+      })
+      .catch(function() {});
+  } catch {}
+}
+
 // Sync the button visual to the persisted state once the DOM is ready.
 if (typeof document !== 'undefined') {
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _updateAutoOpenButton);
-  else _updateAutoOpenButton();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { _updateAutoOpenButton(); _hydrateAutoOpenFromServer(); });
+  } else {
+    _updateAutoOpenButton();
+    _hydrateAutoOpenFromServer();
+  }
 }
 
 function toggleAgentFeeds() {
   var panel = document.getElementById('agent-feeds');
-  var toggleBtn = document.getElementById('agents-toggle');
   if (!panel) return;
   agentFeedsOpen = !agentFeedsOpen;
   panel.style.transition = 'none';
@@ -62,12 +100,17 @@ function toggleAgentFeeds() {
     panel.classList.remove('collapsed');
     panel.classList.add('active');
     panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9654;';
-    if (toggleBtn) toggleBtn.style.display = 'none';
+    // Toggle visibility is driven from a body class, not inline style on
+    // the button. Inline style was getting clobbered by navigate('chat')
+    // in app.js (fires on hashchange, file drop, new chat, select chat),
+    // which unconditionally sets agents-toggle display=''. The body-class
+    // + CSS !important is immune to that.
+    document.body.classList.add('agents-panel-open');
     panel.style.overflow = 'hidden';
     Spring.animate(panel, 'width', 320, { from: 0, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.style.overflow = 'visible'; panel.style.transition = ''; } });
   } else {
     panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9664;';
-    Spring.animate(panel, 'width', 0, { from: 320, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.classList.remove('active'); panel.classList.add('collapsed'); if (toggleBtn) toggleBtn.style.display = ''; panel.style.transition = ''; } });
+    Spring.animate(panel, 'width', 0, { from: 320, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.classList.remove('active'); panel.classList.add('collapsed'); document.body.classList.remove('agents-panel-open'); panel.style.transition = ''; } });
   }
 }
 
@@ -106,6 +149,7 @@ function updateAgentFeed(agentId, update) {
     if (update.output)     existing.output     = (existing.output     || '') + update.output;
     if (update.name) existing.name = update.name;
     if (update.role) existing.role = update.role;
+    if (update.resultUrl) existing.resultUrl = update.resultUrl;
   }
   var card = document.getElementById('agent-card-' + agentId);
   if (card) {
@@ -140,6 +184,17 @@ function updateAgentFeed(agentId, update) {
     var statusEl = card.querySelector('.agent-feed-status');
     if (statusEl) {
       statusEl.innerHTML = '<span class="agent-status-dot"></span> ' + esc(existing.status || 'working');
+    }
+    // Build_app and other URL-producing ops set resultUrl on completion.
+    // Render as a clickable "Open" link below the worker activity. esc()
+    // on the href guards against any agent-controlled string reaching href.
+    if (update.resultUrl) {
+      var linkEl = card.querySelector('.agent-feed-result-link');
+      if (linkEl) {
+        var safeUrl = esc(update.resultUrl);
+        linkEl.innerHTML = '<a href="' + safeUrl + '" target="_blank" rel="noopener" style="color:var(--accent,#3a7);text-decoration:none">↗ Open: ' + safeUrl + '</a>';
+        linkEl.style.display = 'block';
+      }
     }
     // Re-render the control buttons. Without this, hitting Pause flipped the
     // status text to "paused" but the button stayed as "Pause" forever.
@@ -201,6 +256,7 @@ function renderAgentCard(agent) {
       '</div>' +
       '<div class="worker-tools-body" style="display:none;font-family:var(--mono,monospace);font-size:.68rem;color:var(--muted,#888);padding:.3rem .55rem .45rem;max-height:200px;overflow-y:auto;white-space:pre-wrap">' + esc(output) + '</div>' +
     '</div>' +
+    '<div class="agent-feed-result-link" style="display:none;padding:.4rem .55rem;font-size:.75rem;border-top:1px solid var(--border,#333)"></div>' +
     '<div class="agent-feed-controls">' +
       (isPaused
         ? '<button class="agent-ctrl-btn" onclick="onAgentResume(\'' + safeId + '\')">Resume</button>'

@@ -25,11 +25,11 @@
  * from the canonical-loop's perspective.
  */
 import { randomUUID } from "node:crypto";
-import { newOpId, writeOp } from "../workers/op-store.js";
-import { buildContextPack } from "../workers/context-pack-builder.js";
-import { getRetryPolicy } from "../workers/heartbeat.js";
-import { trackOpForSession } from "../workers/session-bridge.js";
-import type { Op, OpVisibility } from "../workers/types.js";
+import { newOpId, writeOp } from "../ops/op-store.js";
+import { buildContextPack } from "../ops/context-pack-builder.js";
+import { getRetryPolicy } from "../ops/heartbeat.js";
+import { trackOpForSession } from "../ops/session-bridge.js";
+import type { Op, OpVisibility } from "../ops/types.js";
 import type { PreparedAgentRequest } from "../agent-request/types.js";
 import type { ServerEvent } from "../types.js";
 import type { SecurityLayer } from "../security.js";

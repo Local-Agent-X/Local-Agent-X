@@ -140,13 +140,13 @@ export async function* streamCodexResponse(params: {
 
   if (params.tools && params.tools.length > 0) {
     body.tools = params.tools;
-    // tool_choice on Responses API matches OpenAI Chat Completions:
-    //   "auto" | "required" | { type: "function", function: { name } }
-    // Convert the canonical {type:"tool", name} shape into the function
-    // form so callers can pass either.
+    // Responses API tool_choice shape: name lives at the top level, not
+    // nested under a `function` object. The Chat Completions shape
+    // ({type:"function", function:{name}}) is rejected with 400
+    // "Unknown parameter: tool_choice.function".
     const tc = params.toolChoice;
     if (tc && typeof tc === "object" && tc.type === "tool") {
-      body.tool_choice = { type: "function", function: { name: tc.name } };
+      body.tool_choice = { type: "function", name: tc.name };
     } else {
       body.tool_choice = tc || "auto";
     }

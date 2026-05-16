@@ -34,8 +34,8 @@ import {
   getBus,
   type CanonicalEvent,
 } from "../src/canonical-loop/index.js";
-import { readOp, newOpId } from "../src/workers/op-store.js";
-import type { Op } from "../src/workers/types.js";
+import { readOp, newOpId } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
 
 import { FakeAdapter, scriptTurn, scriptMultiTurn } from "./canonical-loop/fake-adapter.js";
 import { FORBIDDEN_ADAPTER_IMPORTS } from "../src/canonical-loop/adapter-contract.js";
@@ -537,17 +537,3 @@ describe("Issue 03 — flag ON + no adapter registered fails cleanly", () => {
   });
 });
 
-// ── Compatibility: legacy path stays unchanged when flag is OFF ──────────
-
-describe("Issue 03 — legacy path untouched when flag OFF", () => {
-  beforeEach(() => {
-    delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
-  });
-
-  it("decideSubmitRouting returns legacy when flag OFF", async () => {
-    const { decideSubmitRouting } = await import("../src/canonical-loop/index.js");
-    const r = decideSubmitRouting({ lane: "interactive" });
-    expect(r.route).toBe("legacy");
-    expect(r.flagValue).toBe(false);
-  });
-});

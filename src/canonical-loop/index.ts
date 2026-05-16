@@ -16,8 +16,8 @@
  *   - Adapters / public control APIs / workers from outside this module
  *     never write canonical state directly.
  */
-import type { Op } from "../workers/types.js";
-import { writeOp } from "../workers/op-store.js";
+import type { Op } from "../ops/types.js";
+import { writeOp } from "../ops/op-store.js";
 import { emit } from "./event-emitter.js";
 import { resolveAdapterFactory } from "./runtime.js";
 import { enqueueOp, pumpScheduler } from "./scheduler.js";
@@ -75,6 +75,8 @@ export {
   getToolDispatcher,
   registerToolDispatcherForOp,
   unregisterToolDispatcherForOp,
+  registerToolsForOp,
+  unregisterToolsForOp,
   resolveAdapterFactory,
   resetCanonicalRuntime,
   type AdapterFactory,
@@ -219,6 +221,8 @@ export {
 } from "./adapters/codex.js";
 
 export { listActiveCanonicalOps, type ActiveCanonicalOp } from "./active-ops.js";
+
+export { awaitCanonicalOp } from "./await-op.js";
 
 export {
   runChatViaCanonical,

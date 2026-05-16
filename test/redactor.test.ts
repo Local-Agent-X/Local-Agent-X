@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { redactEventForDisk, redactString } from "../src/workers/redactor.js";
-import type { OpEvent } from "../src/workers/types.js";
+import { redactEventForDisk, redactString } from "../src/ops/redactor.js";
+import type { OpEvent } from "../src/ops/types.js";
 
 const mkEvent = (overrides: Partial<OpEvent> = {}): OpEvent => ({
   opId: "op-test",

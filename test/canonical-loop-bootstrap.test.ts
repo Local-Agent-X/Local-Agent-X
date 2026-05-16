@@ -49,33 +49,13 @@ afterEach(() => {
 });
 
 describe("bootstrapCanonicalLoop", () => {
-  it("flag OFF: registers nothing (legacy behavior unchanged)", () => {
+  it("registers the AnthropicAdapter for every lane", async () => {
     bootstrapCanonicalLoop();
-    expect(resolveAdapterFactory(mkOp("interactive"))).toBeNull();
-  });
-
-  it("LAX_CANONICAL_LOOP_INTERACTIVE=1: registers AnthropicAdapter for interactive lane", async () => {
-    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-    bootstrapCanonicalLoop();
-    const factory = resolveAdapterFactory(mkOp("interactive"));
-    expect(factory).not.toBeNull();
-    const adapter = await factory!();
-    expect(adapter.name).toBe(ANTHROPIC_ADAPTER_NAME);
-  });
-
-  it("LAX_CANONICAL_LOOP_ALL=1: also registers interactive lane", async () => {
-    process.env.LAX_CANONICAL_LOOP_ALL = "1";
-    bootstrapCanonicalLoop();
-    const factory = resolveAdapterFactory(mkOp("interactive"));
-    expect(factory).not.toBeNull();
-    const adapter = await factory!();
-    expect(adapter.name).toBe(ANTHROPIC_ADAPTER_NAME);
-  });
-
-  it("interactive flag does NOT auto-register other lanes", () => {
-    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-    bootstrapCanonicalLoop();
-    expect(resolveAdapterFactory(mkOp("build"))).toBeNull();
-    expect(resolveAdapterFactory(mkOp("background"))).toBeNull();
+    for (const lane of ["interactive", "build", "ide", "background"] as const) {
+      const factory = resolveAdapterFactory(mkOp(lane));
+      expect(factory, lane).not.toBeNull();
+      const adapter = await factory!();
+      expect(adapter.name).toBe(ANTHROPIC_ADAPTER_NAME);
+    }
   });
 });

@@ -15,10 +15,10 @@ vi.mock("../src/workers/session-bridge.js", () => ({
   getOpTask: vi.fn((opId: string) => tasksByOpId.get(opId) ?? "(unknown)"),
 }));
 
-vi.mock("../src/workers/pool.js", () => ({
-  redirectOp: vi.fn((opId: string, instruction: string) => {
+vi.mock("../src/canonical-loop/index.js", () => ({
+  opRedirect: vi.fn((opId: string, instruction: string) => {
     redirectedCalls.push({ opId, instruction });
-    return redirectOpReturn;
+    return { ok: redirectOpReturn };
   }),
 }));
 

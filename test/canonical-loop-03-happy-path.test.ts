@@ -537,21 +537,3 @@ describe("Issue 03 — flag ON + no adapter registered fails cleanly", () => {
   });
 });
 
-// ── Compatibility: legacy path stays unchanged when flag is OFF ──────────
-
-describe("Issue 03 — legacy path untouched when flag OFF", () => {
-  beforeEach(() => {
-    // Under the inverted default, OFF must be explicit (PRD §17).
-    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
-  });
-  afterEach(() => {
-    delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
-  });
-
-  it("decideSubmitRouting returns legacy when flag OFF", async () => {
-    const { decideSubmitRouting } = await import("../src/canonical-loop/index.js");
-    const r = decideSubmitRouting({ lane: "interactive" });
-    expect(r.route).toBe("legacy");
-    expect(r.flagValue).toBe(false);
-  });
-});

@@ -453,26 +453,11 @@ describe("concurrent ops: pausing A does not disturb B", () => {
 
 // ── Flag OFF compatibility ───────────────────────────────────────────────
 
-describe("flag OFF: legacy submit path is unaffected", () => {
-  beforeEach(() => {
-    // Under the inverted default, OFF must be explicit.
-    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
-  });
-  afterEach(() => {
-    delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
-  });
-
-  it("opPause on a non-canonical op id returns unknown_op (no canonical state created)", () => {
-    const r = opPause("legacy_op_xyz_never_submitted", "actor");
+describe("opPause is safe against unknown op ids", () => {
+  it("opPause on an op id never submitted returns unknown_op", () => {
+    const r = opPause("op_xyz_never_submitted", "actor");
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.code).toBe("unknown_op");
-  });
-
-  it("decideSubmitRouting still routes legacy when flag OFF", async () => {
-    const { decideSubmitRouting } = await import("../src/canonical-loop/index.js");
-    const r = decideSubmitRouting({ lane: "interactive" });
-    expect(r.route).toBe("legacy");
-    expect(r.flagValue).toBe(false);
   });
 });

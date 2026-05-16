@@ -494,24 +494,6 @@ describe("Issue 09 — adapter sandbox audit (PRD §15 item I)", () => {
   });
 });
 
-// ── Flag OFF compatibility ───────────────────────────────────────────────
-
-describe("flag OFF: Anthropic adapter does not affect legacy submit path", () => {
-  beforeEach(() => {
-    // Under the inverted default, OFF must be explicit.
-    process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "0";
-  });
-  afterEach(() => {
-    delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
-  });
-
-  it("decideSubmitRouting still routes legacy when flag OFF", () => {
-    const r = decideSubmitRouting({ lane: "interactive" });
-    expect(r.route).toBe("legacy");
-    expect(r.flagValue).toBe(false);
-  });
-});
-
 // ── runTurn must never throw on transport-level exceptions (item H) ─────
 
 describe("Issue 09 — runTurn never throws (PRD §15 item H)", () => {

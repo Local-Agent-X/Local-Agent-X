@@ -220,6 +220,8 @@ export {
 
 export { listActiveCanonicalOps, type ActiveCanonicalOp } from "./active-ops.js";
 
+export { awaitCanonicalOp } from "./await-op.js";
+
 export {
   runChatViaCanonical,
   type CanonicalChatContext,

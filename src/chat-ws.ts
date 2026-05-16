@@ -375,9 +375,9 @@ export function setupChatWebSocket(server: Server, authToken: string) {
           const agentId = String(msg.agentId);
           const instruction = String(msg.instruction);
           if (agentId.startsWith("op_")) {
-            const { redirectOp } = await import("./workers/pool.js");
-            const ok = redirectOp(agentId, instruction);
-            if (!ok) ws.send(JSON.stringify({ type: "error", message: `Op ${agentId} not running (cannot redirect)` }));
+            const { opRedirect } = await import("./canonical-loop/index.js");
+            const res = opRedirect(agentId, instruction, "user");
+            if (!res.ok) ws.send(JSON.stringify({ type: "error", message: `Op ${agentId} not running (cannot redirect)` }));
           } else {
             const { Handler } = await import("./agency/handler.js");
             const handler = Handler.getInstance();
@@ -405,24 +405,21 @@ export function setupChatWebSocket(server: Server, authToken: string) {
       }
 
       // Agent control: pause/resume/cancel
-      // The AGENTS sidebar shows TWO kinds of cards:
+      // The AGENTS sidebar shows three kinds of cards:
+      //   - Autopilot ops — id like "op_ap_XXX"  (separate lifecycle, stop only)
+      //   - Canonical-loop ops — id like "op_freeform_XXX" (control-api)
       //   - Legacy sub-agents (Handler/agency system) — id like "agent-XXX"
-      //   - Worker-pool ops (Step 5+) — id like "op_freeform_XXX"
-      // Cancel was routed to Handler unconditionally, which silently no-ops
-      // for op_* ids. Worker kept running, kept firing bg_op_progress
-      // events, frontend kept respawning the card. Route by id prefix:
-      // op_* → killOp (worker pool), agent-* / fallthrough → Handler.
       if (type === "agent-control" && msg.agentId && msg.action) {
         try {
           const agentId = String(msg.agentId);
           // Route by id prefix. Three id shapes coexist in the AGENTS sidebar:
           //   - op_ap_*  → autopilot ops (separate lifecycle, has stop endpoint)
-          //   - op_*     → worker-pool ops (killOp via pool)
+          //   - op_*     → canonical-loop ops (opCancel / opPause / opResume)
           //   - agent-*  → legacy Handler sub-agents
           // Earlier bug: op_ap_* matched the op_* branch and silently no-opped
-          // because pool.killOp doesn't know about autopilot ops. User hit
-          // pause on autopilot, sidebar flipped to Resume, but autopilot
-          // kept running — there's no pause hook in the autopilot loop yet.
+          // because pool.killOp didn't know about autopilot ops; the comment
+          // is preserved here as a guardrail — the prefix check still matters
+          // even with the unified canonical surface.
           if (agentId.startsWith("op_ap_")) {
             // Autopilot — only "stop" is supported (v1 scope per spec).
             // Pause/cancel/resume all map to stop because autopilot doesn't
@@ -439,33 +436,29 @@ export function setupChatWebSocket(server: Server, authToken: string) {
               ws.send(JSON.stringify({ type: "error", message: `Autopilot stop failed: ${(e as Error).message}` }));
             }
           } else if (agentId.startsWith("op_")) {
-            // op_* IDs span two lifecycle systems sharing the same prefix:
-            //   - canonical-loop ops (op_chat_turn, op_voice_turn,
-            //     op_research, etc.) — driven by control-api.opCancel
-            //   - worker-pool ops (delegations from delegate-worker.ts /
-            //     op_submit_async) — driven by pool.killOp IPC
-            // Fire both. Each is a no-op on ops the other owns. Without the
-            // canonical opCancel call, canonical agent-runner ops surfaced
-            // in the Agents panel could not be cancelled from there.
-            const { killOp, cancelQueuedOp } = await import("./workers/pool.js");
-            const { opCancel } = await import("./canonical-loop/index.js");
+            // op_* IDs are all canonical-loop ops (op_chat_turn,
+            // op_voice_turn, op_research, delegations from
+            // op_submit_async, etc.). Cancel routes through the canonical
+            // control API.
+            const { opCancel, opPause, opResume } = await import("./canonical-loop/index.js");
             switch (msg.action) {
               case "cancel": {
-                const canonicalRes = opCancel(agentId, "user-stop");
-                let poolHit = killOp(agentId);
-                if (!poolHit) poolHit = cancelQueuedOp(agentId);
-                if (!canonicalRes.ok && !poolHit) {
+                const res = opCancel(agentId, "user-stop");
+                if (!res.ok) {
                   ws.send(JSON.stringify({ type: "error", message: `Op ${agentId} not found (already finished)` }));
                 }
                 break;
               }
-              case "pause":
-              case "resume":
-                // Worker pool doesn't yet have cooperative pause/resume
-                // (Step 7 polish). Until then, surface the limitation
-                // honestly instead of silently no-opping.
-                ws.send(JSON.stringify({ type: "error", message: `pause/resume not supported for worker-pool ops yet — use cancel + re-submit` }));
+              case "pause": {
+                const res = opPause(agentId, "user");
+                if (!res.ok) ws.send(JSON.stringify({ type: "error", message: `pause failed: ${res.code}` }));
                 break;
+              }
+              case "resume": {
+                const res = opResume(agentId, "user");
+                if (!res.ok) ws.send(JSON.stringify({ type: "error", message: `resume failed: ${res.code}` }));
+                break;
+              }
             }
           } else {
             // Legacy sub-agent — route to Handler

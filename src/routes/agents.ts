@@ -86,17 +86,16 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
 
   // Agent redirect (HTTP fallback for when WS is unavailable). Routes by id
   // prefix — same split as the agent-control / agent-redirect WS handlers
-  // in chat-ws.ts. Without the prefix split, op_* worker-pool ops silently
-  // no-op'd because Handler doesn't track them.
+  // in chat-ws.ts. op_* → canonical opRedirect, agent-* → Handler.
   if (method === "POST" && url.pathname.match(/^\/api\/agents\/[^/]+\/redirect$/)) {
     const agentId = url.pathname.split("/")[3];
     const body = await safeParseBody(req);
     if (!body || typeof body.instruction !== "string") { json(400, { error: "instruction (string) required" }); return true; }
     try {
       if (agentId.startsWith("op_")) {
-        const { redirectOp } = await import("../workers/pool.js");
-        const ok = redirectOp(agentId, body.instruction);
-        if (!ok) { json(404, { error: `op ${agentId} not running` }); return true; }
+        const { opRedirect } = await import("../canonical-loop/index.js");
+        const res = opRedirect(agentId, body.instruction, "user");
+        if (!res.ok) { json(404, { error: `op ${agentId} not running` }); return true; }
       } else {
         const handler = (await import("../agency/handler.js")).Handler.getInstance();
         handler.redirectAgent(agentId, body.instruction);

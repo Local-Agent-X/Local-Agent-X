@@ -9,8 +9,8 @@ import { bashTool } from "./shell-tools.js";
 import { processTools } from "./process-tools.js";
 import { webFetchTool } from "./web-tools.js";
 import { viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool } from "./vision-tools.js";
-import { buildAppTool, createPageTool } from "./builder-tools.js";
-import { buildAppCanonicalTool } from "./build-app-canonical.js";
+import { buildAppTool } from "./build-app.js";
+import { createPageTool } from "./create-page-tool.js";
 import { extractSiteAssetsTool } from "./asset-tools.js";
 import { youtubeAnalyzeTool } from "../youtube-tool.js";
 import { globTool } from "../glob-tool.js";
@@ -47,10 +47,6 @@ export const allTools: ToolDefinition[] = applyPrompts([
   primalBuildStatusTool, primalBuildResumeTool,
   viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool,
   buildAppTool,
-  // Phase-2 flag-gated tool. Hidden from the model's eager surface unless the
-  // canonical-loop flag is on; doing this at allTools assembly keeps the
-  // unified registry's deferred indexing consistent.
-  ...((process.env.LAX_BUILD_APP_CANONICAL === "1" || process.env.LAX_BUILD_APP_CANONICAL === "true") ? [buildAppCanonicalTool] : []),
   youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool,
   ...processTools,
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools,

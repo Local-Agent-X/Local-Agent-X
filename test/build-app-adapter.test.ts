@@ -1,19 +1,21 @@
 /**
- * Phase 2 adapter tests for createAppBuildAdapter.
+ * Adapter tests for createAppBuildAdapter (Phase 3 — abort signal owned by
+ * the adapter, cli-subprocess kill propagation verified).
  *
  * Covers:
- *   - cli-subprocess strategy spawns the right subprocess function per
- *     provider (mock cliRunner, assert provider passed).
+ *   - cli-subprocess strategy passes provider + prompt + signal to the runner.
  *   - cli-subprocess strategy emits stream chunks from `tool_progress`
  *     events and surfaces a `message_finalized` with APP_READY: <url>.
  *   - cli-subprocess strategy's APP_READY: <url> parsing pulls the URL
  *     into providerState so soak metrics / op-result inspection see it.
  *   - in-canonical-sub-agent strategy returns the user's provider
- *     adapter (no subprocess spawn) — we inject providerAdapterFactory
- *     and assert it's invoked with the persona system prompt.
- *   - abort() flips the adapter's `aborted` flag and a runTurn that
- *     started post-abort returns a clean error report rather than
- *     spawning the subprocess.
+ *     adapter (no subprocess spawn) — injected providerAdapterFactory
+ *     receives the persona system prompt.
+ *   - abort() before runTurn → clean error report without invoking runner.
+ *   - abort() DURING runTurn → controller's AbortSignal fires; runner sees
+ *     it; adapter surfaces "aborted" error report (the gap-A regression
+ *     guard — closes the Phase-2 bug where abort flipped a flag but the
+ *     subprocess kept running).
  */
 import { describe, it, expect } from "vitest";
 import type { Adapter, AdapterReport, TurnInput } from "../src/canonical-loop/adapter-contract.js";
@@ -42,9 +44,9 @@ function collectReports(): {
 
 describe("createAppBuildAdapter — cli-subprocess strategy", () => {
   it("codex provider routes to the codex subprocess branch of the runner", async () => {
-    const calls: Array<{ provider: string; prompt: string }> = [];
+    const calls: Array<{ provider: string; prompt: string; hasSignal: boolean }> = [];
     const cliRunner: CliBuildRunner = async (input) => {
-      calls.push({ provider: input.provider, prompt: input.prompt });
+      calls.push({ provider: input.provider, prompt: input.prompt, hasSignal: !!input.signal });
       return { content: `APP_READY: ${input.appUrl}` };
     };
     const adapter = await createAppBuildAdapter({
@@ -62,6 +64,7 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].provider).toBe("codex");
     expect(calls[0].prompt).toBe("PROMPT-CODEX");
+    expect(calls[0].hasSignal).toBe(true);
     expect(result.terminalReason).toBe("done");
   });
 
@@ -197,6 +200,49 @@ describe("createAppBuildAdapter — cli-subprocess strategy", () => {
     const { reports, report } = collectReports();
     const result = await adapter.runTurn(emptyTurnInput(), report);
     expect(runnerCalls).toBe(0);
+    expect(result.terminalReason).toBe("error");
+    expect(reports.some(r => r.kind === "error" && r.code === "aborted")).toBe(true);
+  });
+
+  it("abort() DURING runTurn fires the controller's AbortSignal — the runner sees it and the adapter surfaces 'aborted'", async () => {
+    // Long-running runner that resolves only when its signal aborts. This
+    // models a real CLI subprocess that runs until killProcessTree fires.
+    // Closes Phase-2 gap A: previously abort() flipped a flag but didn't
+    // propagate to the runner, so the subprocess kept running.
+    let signalSeen = false;
+    let signalAborted = false;
+    const cliRunner: CliBuildRunner = (input) => new Promise((resolveP, rejectP) => {
+      signalSeen = !!input.signal;
+      const onAbort = (): void => {
+        signalAborted = true;
+        rejectP(new Error("aborted by canonical-op cancel"));
+      };
+      if (input.signal?.aborted) onAbort();
+      else input.signal?.addEventListener("abort", onAbort);
+      // Stall forever — must be aborted to resolve.
+      setTimeout(() => resolveP({ content: "should-never-reach" }), 60_000).unref();
+    });
+
+    const adapter = await createAppBuildAdapter({
+      strategy: "cli-subprocess",
+      provider: "codex",
+      appName: "cancel",
+      appDir: "/tmp/cancel",
+      appUrl: "http://localhost/cancel",
+      prompt: "P",
+      systemPrompt: "P",
+      cliRunner,
+    });
+
+    const { reports, report } = collectReports();
+    const turnPromise = adapter.runTurn(emptyTurnInput(), report);
+    // Yield a tick so runTurn enters the runner before we abort.
+    await new Promise(r => setTimeout(r, 10));
+    await adapter.abort();
+    const result = await turnPromise;
+
+    expect(signalSeen).toBe(true);
+    expect(signalAborted).toBe(true);
     expect(result.terminalReason).toBe("error");
     expect(reports.some(r => r.kind === "error" && r.code === "aborted")).toBe(true);
   });

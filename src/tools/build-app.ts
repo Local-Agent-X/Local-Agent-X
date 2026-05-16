@@ -1,17 +1,19 @@
 /**
- * build_app_canonical — Phase 2 of docs/migration/build-app-to-canonical-op.md.
+ * build_app — the canonical-loop app builder.
  *
- * Spawns an app_build canonical-loop op instead of blocking the chat turn on
- * a CLI subprocess. Behind the feature flag LAX_BUILD_APP_CANONICAL so the
- * legacy `build_app` tool can route here without changing its public shape.
+ * Spawns an `app_build` canonical op rather than blocking the chat turn on
+ * a CLI subprocess. Returns immediately with an op-submitted chip; progress
+ * streams in the AGENTS sidebar; APP_READY: <url> emits when done.
  *
  * Strategy split (from the app-builder agent template's providerStrategy):
  *   - codex / anthropic → cli-subprocess (preserves the subscription-endpoint
- *     truncation workaround that the legacy path relies on)
+ *     truncation workaround the CLI path relies on; cancel kills the
+ *     subprocess tree via the adapter's AbortController).
  *   - everyone else      → in-canonical-sub-agent (provider's HTTP adapter
- *     drives the turn_loop with write/read/edit/bash tools)
+ *     drives the turn_loop with write/read/edit/bash/glob tools).
  *
- * Phase 3 renames the tool back to `build_app` and deletes the legacy path.
+ * See docs/migration/build-app-to-canonical-op.md for the migration history
+ * (this tool is the Phase-3 collapse of build_app + build_app_canonical).
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -45,14 +47,13 @@ import { readTool, writeTool, editTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";
 import { globTool } from "../glob-tool.js";
 
-/** Tools the in-canonical-sub-agent build strategy gives the agent. Mirrors
- *  the app-builder template's allowedTools — `list_directory` isn't a real
- *  registered tool, so we map it to `glob` which serves the same purpose. */
+/** Tool defs the in-canonical-sub-agent strategy hands to the agent. Mirrors
+ *  the app-builder template's allowedTools verbatim. */
 const BUILDER_AGENT_TOOLS = [writeTool, readTool, editTool, bashTool, globTool];
 
 export const APP_BUILD_OP_TYPE = "app_build";
 
-export interface BuildAppCanonicalResolveOptions {
+export interface BuildAppResolveOptions {
   /** ~/.lax/settings.json lookup path — override for tests. */
   settingsPath?: string;
   /** Override the effective provider, bypassing settings.json. */
@@ -61,7 +62,7 @@ export interface BuildAppCanonicalResolveOptions {
 
 export function resolveBuildProvider(
   backendArg: string,
-  opts: BuildAppCanonicalResolveOptions = {},
+  opts: BuildAppResolveOptions = {},
 ): string {
   if (opts.forcedProvider) return opts.forcedProvider;
   if (backendArg === "codex") return "codex";
@@ -84,10 +85,10 @@ export function resolveBuildStrategy(provider: string): AgentExecStrategy {
   return (strategy[provider] ?? strategy.default ?? "in-canonical-sub-agent");
 }
 
-export const buildAppCanonicalTool: ToolDefinition = {
-  name: "build_app_canonical",
+export const buildAppTool: ToolDefinition = {
+  name: "build_app",
   description:
-    "Phase-2 canonical-loop version of build_app — spawns an app_build op instead of blocking the chat turn. Flag-gated under LAX_BUILD_APP_CANONICAL. Returns an op ID immediately; progress streams in the AGENTS sidebar; APP_READY: <url> emits when done.",
+    "Build a complete web app in workspace/apps/. Returns an op id immediately; the build runs as an app_build canonical op (sidebar streams progress; APP_READY: <url> emits on completion). Use this for NEW apps and LARGE rewrites. For small edits to existing apps, prefer read + edit directly.",
   parameters: {
     type: "object",
     properties: {
@@ -99,6 +100,9 @@ export const buildAppCanonicalTool: ToolDefinition = {
   },
   async execute(args) {
     const appName = String(args.name || "app").replace(/[^a-zA-Z0-9_-]/g, "-");
+    // Some models occasionally emit `description` instead of `prompt`. Live
+    // failure 2026-05-14 on Anthropic Opus 4.7 — prompt missing, description
+    // present. Schema docs the right key; alias keeps back-compat.
     const prompt = String(args.prompt || args.description || "");
     const backend = String(args.backend || "auto");
     const sessionId = String(args._sessionId || "");
@@ -118,9 +122,9 @@ export const buildAppCanonicalTool: ToolDefinition = {
     const perBuildContext = renderPerBuildContext({
       appName, prompt, appDir, appUrl, isUpdate, contextFiles, assetFiles,
     });
-    // The cli-subprocess path expects the full legacy prompt (per-build context
-    // + WEBSITE_RULES_FRAGMENT when applicable). Composed via the legacy renderer
-    // so the subprocess gets a byte-identical prompt to the pre-migration flow.
+    // cli-subprocess path expects the full legacy prompt (per-build context
+    // + WEBSITE_RULES_FRAGMENT when applicable). Composed via the legacy
+    // renderer so the subprocess gets a byte-identical prompt to pre-migration.
     const cliPrompt = renderBuilderPrompt({
       appName, prompt, appDir, appUrl, isUpdate, contextFiles, assetFiles,
     });

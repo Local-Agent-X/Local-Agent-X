@@ -93,7 +93,6 @@ if (typeof document !== 'undefined') {
 
 function toggleAgentFeeds() {
   var panel = document.getElementById('agent-feeds');
-  var toggleBtn = document.getElementById('agents-toggle');
   if (!panel) return;
   agentFeedsOpen = !agentFeedsOpen;
   panel.style.transition = 'none';
@@ -101,12 +100,17 @@ function toggleAgentFeeds() {
     panel.classList.remove('collapsed');
     panel.classList.add('active');
     panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9654;';
-    if (toggleBtn) toggleBtn.style.display = 'none';
+    // Toggle visibility is driven from a body class, not inline style on
+    // the button. Inline style was getting clobbered by navigate('chat')
+    // in app.js (fires on hashchange, file drop, new chat, select chat),
+    // which unconditionally sets agents-toggle display=''. The body-class
+    // + CSS !important is immune to that.
+    document.body.classList.add('agents-panel-open');
     panel.style.overflow = 'hidden';
     Spring.animate(panel, 'width', 320, { from: 0, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.style.overflow = 'visible'; panel.style.transition = ''; } });
   } else {
     panel.querySelector('.agent-feeds-toggle').innerHTML = '&#9664;';
-    Spring.animate(panel, 'width', 0, { from: 320, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.classList.remove('active'); panel.classList.add('collapsed'); if (toggleBtn) toggleBtn.style.display = ''; panel.style.transition = ''; } });
+    Spring.animate(panel, 'width', 0, { from: 320, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.classList.remove('active'); panel.classList.add('collapsed'); document.body.classList.remove('agents-panel-open'); panel.style.transition = ''; } });
   }
 }
 

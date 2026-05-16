@@ -49,8 +49,20 @@ console.warn = (...args: unknown[]) => {
 // EADDRINUSE is fatal: server can't function without a port, so exit
 // instead of letting background services (Telegram, cron) keep the process alive as a zombie
 process.on("uncaughtException", (err) => {
-  logger.error("[CRASH GUARD] Uncaught exception:", err.message);
-  logger.error(err.stack ?? "");
+  // Do NOT access err.stack synchronously here. The .stack getter triggers
+  // V8's bytecode-source-position formatting for every frame, which can
+  // pin the event loop at 100% CPU for minutes on deeply async errors
+  // (we saw a real freeze where the original error message never even
+  // got logged because the stack formatter starved everything else).
+  // Capture a bounded slice via setImmediate so the formatter doesn't
+  // run on the main thread.
+  logger.error(`[CRASH GUARD] Uncaught exception: ${err.name}: ${err.message}`);
+  setImmediate(() => {
+    try {
+      const stack = (err.stack ?? "").split("\n").slice(0, 25).join("\n");
+      logger.error(stack);
+    } catch { /* stack formatting itself can throw */ }
+  });
   const fatal = (err as NodeJS.ErrnoException).code;
   if (fatal === "EADDRINUSE" || fatal === "EACCES") {
     logger.error("[CRASH GUARD] Fatal: cannot bind port — exiting");
@@ -58,7 +70,19 @@ process.on("uncaughtException", (err) => {
   }
 });
 process.on("unhandledRejection", (reason) => {
-  logger.error("[CRASH GUARD] Unhandled rejection:", reason);
+  // Same defensive treatment as uncaughtException — if `reason` is an
+  // Error, don't access .stack on the main thread.
+  const msg = reason instanceof Error
+    ? `${reason.name}: ${reason.message}`
+    : String(reason);
+  logger.error(`[CRASH GUARD] Unhandled rejection: ${msg}`);
+  if (reason instanceof Error) {
+    setImmediate(() => {
+      try {
+        logger.error((reason.stack ?? "").split("\n").slice(0, 25).join("\n"));
+      } catch { /* */ }
+    });
+  }
 });
 
 import { loadConfig, setRuntimeConfig } from "./config.js";

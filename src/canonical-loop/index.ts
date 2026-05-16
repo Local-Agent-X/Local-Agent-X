@@ -75,6 +75,8 @@ export {
   getToolDispatcher,
   registerToolDispatcherForOp,
   unregisterToolDispatcherForOp,
+  registerToolsForOp,
+  unregisterToolsForOp,
   resolveAdapterFactory,
   resetCanonicalRuntime,
   type AdapterFactory,

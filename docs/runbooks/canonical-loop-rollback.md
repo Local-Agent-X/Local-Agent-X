@@ -1,148 +1,107 @@
 # Canonical-loop rollback runbook
 
 **Audience:** on-call / shipper.
-**Scope:** v1.0 of the LAX Canonical Operation Loop, behind feature
-flags `LAX_CANONICAL_LOOP_*`.
+**Scope:** the LAX canonical op loop after the worker-pool retirement
+(Phase 2 of [worker-pool-retirement.md](../migration/worker-pool-retirement.md)).
 **Source of truth:** [PRD §17 / §22](../canonical-loop-prd.md).
 
-The canonical loop is the default execution path for every lane.
-Rollback is a flag flip — explicitly set the flag to a falsy value
-(`0`, `false`, `no`, `off`). **Unsetting the flag does NOT roll back**
-— absent flag now means canonical.
+The canonical loop is the **only** execution path for ops. There is no
+legacy fork path to roll back to. **The `LAX_CANONICAL_LOOP_*` flags no
+longer route anything** — they exist only so legacy callers and soak
+scripts that still read them keep compiling. Setting any of them does
+not change runtime behavior.
 
 ---
 
 ## TL;DR
 
-```bash
-# Roll back a specific lane (example: interactive):
-export LAX_CANONICAL_LOOP_INTERACTIVE=0
+**Rollback now means `git revert` the commit that deleted the worker
+pool, then redeploy.** It is not a flag flip.
 
-# Roll back ALL lanes at once (overrides per-lane flags):
-export LAX_CANONICAL_LOOP_ALL=0
-```
+1. Identify the offending commit (Phase 2 deletion or a regression that
+   landed on top of canonical-loop).
+2. `git revert <sha>` on a branch.
+3. Build, smoke, deploy.
+4. Capture the incident.
 
-Restart the host process. New `op_submit_async` calls route to legacy.
-Already-submitted canonical ops keep running on canonical-loop until
-they complete — **the flag is captured per-op at submission time and is
-immutable for the op's lifetime** (PRD §17).
-
----
-
-## What the flags control
-
-| Env var | Effect |
-|---|---|
-| `LAX_CANONICAL_LOOP_INTERACTIVE` | Per-lane override for `interactive`. Falsy → legacy; truthy or unset → canonical (default). |
-| `LAX_CANONICAL_LOOP_BUILD` | Same for the `build` lane. |
-| `LAX_CANONICAL_LOOP_IDE` | Same for the `ide` lane. |
-| `LAX_CANONICAL_LOOP_BACKGROUND` | Same for the `background` lane. |
-| `LAX_CANONICAL_LOOP_ALL` | Catch-all override. When explicitly set (either direction), wins over every per-lane flag. |
-
-Truthy values: `1`, `true`, `yes`, `on`. Falsy values: `0`, `false`,
-`no`, `off`. Case-insensitive. Unset / blank / unparseable values fall
-back to the default — which is **ON** for every lane.
-
-The flag is read once per `op_submit_async` call by `decideSubmitRouting`.
-The result is stamped onto `ops.canonical_flag_value` and never re-read.
+There is no in-process knob that can restore the fork lifecycle without
+a code release.
 
 ---
 
 ## When to roll back
 
-Roll back if any of these are observed on canary:
+Roll back if any of these are observed:
 
 - A canonical op gets stuck in `running` past its lease window AND
   `recoverStaleOp` doesn't restore it.
 - `op_events` seq gaps appear for any op (per-op monotonic invariant
-  broken — Issue 11 invariants test would catch this on the canary
-  path before prod).
-- `op_submit_async` response shape diverges from the legacy fixture
-  (Issue 10 compat test would catch this).
+  broken — Issue 11 invariants test would catch this).
+- `op_submit_async` response shape regresses (Issue 10 compat test
+  would catch this).
 - Adapter conformance fails on a real-CLI smoke (Issue 09 gated suite).
-- A worker crash leaves the lease unrecovered AND a replacement
-  worker can't take over.
-- A user-visible regression vs the legacy path (terminal events
-  missing, status response missing fields, etc.).
+- A user-visible regression: terminal events missing, sidebar cards
+  stuck, cancel button no-ops, etc.
 
-If symptoms are **adapter-specific** (Anthropic-only / Codex-only),
-prefer disabling that lane only — leave other lanes on canonical.
+If symptoms are **adapter-specific** (e.g., the Anthropic adapter is
+crashing but the Codex adapter is fine), prefer narrowing to the
+adapter rather than reverting the whole worker-pool retirement.
 
 ---
 
 ## Rollback procedure
 
-### 1. Identify the lane(s) to disable
+### 1. Pick the revert target
 
-If the bug is reproducible against `interactive` only, only disable
-`interactive`. Other lanes can stay on canary.
+Most likely candidates:
 
-### 2. Flip the flag
+- The Phase 2 deletion commit (`refactor(ops): delete worker-pool fork
+  lifecycle`) — restores fork-based execution outright.
+- A specific canonical-loop change that landed on top — narrower revert.
 
-In whatever environment-variable surface your host uses
-(systemd unit, supervisor config, container env, shell rc, etc.):
+`git log --oneline -- src/canonical-loop/ src/workers/` is the fastest
+way to find what shipped recently.
+
+### 2. Revert + build + smoke
 
 ```bash
-# Per-lane (must be an explicit falsy value — unsetting does NOT roll back
-# under the inverted default):
-export LAX_CANONICAL_LOOP_INTERACTIVE=0
-
-# Global kill switch (overrides everything):
-export LAX_CANONICAL_LOOP_ALL=0
+git revert <sha>          # may need --no-edit on a chain
+npm run build
+npm test
 ```
 
-Bring the host process down and back up. **New** `op_submit_async`
-calls will route to legacy.
+The revert may conflict with unrelated edits to the same files; resolve
+to the pre-revert behavior and re-run the smoke suite.
 
-### 3. Drain in-flight canonical ops
+### 3. Drain in-flight canonical ops before deploy
 
-Already-submitted canonical ops have their `canonical_flag_value=true`
-captured on the op row. They keep running on canonical-loop until they
-hit a terminal state. **Do not force-flip them to legacy** — the loop's
-state machine and adapter contract own those ops; mid-flight rerouting
-is forbidden by PRD §17.
+In-flight canonical ops are in-process — restarting the host process
+cancels them. Either:
 
-Two drain strategies:
-
-- **Wait it out.** Canonical interactive ops typically finish in
-  seconds. `op_status(op_id)` reports their state.
-- **Cancel them.** `opCancel(op_id, actor)` runs through the canonical
-  cancel path (PRD §13, Issue 06). The op transitions to `cancelled`
-  cleanly with `adapter.abort()` invoked.
-
-Verify drain:
+- **Wait it out.** Interactive ops typically finish in seconds.
+  `op_status(op_id)` reports state.
+- **Cancel them.** `opCancel(op_id, actor)` runs the canonical cancel
+  path (PRD §13, Issue 06).
 
 ```bash
-# Walk the operations directory; canonical state is on op.canonical.state.
 # Anything in {queued, running, paused, cancelling} is still active.
 grep -l '"state": "running"' ~/.lax/operations/*/operation.json
 ```
 
-### 4. Confirm legacy is serving new ops
+### 4. Deploy
 
-Submit a probe op via the chat UI (or `op_submit_async` directly).
-Inspect the on-disk op:
-
-```bash
-cat ~/.lax/operations/<probe-op-id>/operation.json | jq '.canonical'
-```
-
-For a legacy-routed op the `canonical` field should be **absent** (or
-`{ "flagValue": false }` if you wrote it that way during the canary).
-For a canonical-routed op `canonical.flagValue` is `true`.
+Bring the host process down and back up on the reverted build.
 
 ### 5. Capture the incident
 
 Record:
 
-- The flag flip (which lane, who flipped, when).
+- The revert (commit SHA, who shipped it, when).
 - The triggering symptom and ticket / log link.
-- The list of canonical ops in flight at the moment of flip and how
+- The list of canonical ops in flight at the moment of restart and how
   they drained (succeeded / failed / cancelled).
 - A pointer to the failing test or invariant if any (Issue 10 compat
   fixtures, Issue 11 invariants).
-
-This captures the rollback in the audit trail and feeds the post-mortem.
 
 ---
 
@@ -154,15 +113,11 @@ This captures the rollback in the audit trail and feeds the post-mortem.
 - It does **not** modify any in-flight op's routing. Per-op flag is
   immutable (PRD §17).
 - It does **not** undo schema changes. Schema additions (PRD §9) are
-  additive; legacy callers ignore them. No migration needed to roll
-  back.
-- It does **not** clear in-process scheduler state. A clean restart
-  resets the scheduler; just bouncing the env var without restart
-  leaves any active workers running.
+  additive; pre-canonical callers ignore them.
 
 ---
 
-## Re-enabling after fix
+## Re-shipping after fix
 
 1. Land the fix on a separate commit. Add a regression test to the
    relevant Issue suite (`canonical-loop-NN-*.test.ts`).
@@ -172,11 +127,10 @@ This captures the rollback in the audit trail and feeds the post-mortem.
    npx tsc --noEmit -p tsconfig.json
    ```
 3. Verify:
-   - Issue 10 old-path compat fixtures green for both flag values.
    - Issue 11 invariants + boundary audits green.
    - Issue 09 adapter conformance green.
-4. Re-flip the flag on canary. Watch the same metrics that triggered
-   the original rollback.
+4. Re-roll the fix on canary. Watch the same metrics that triggered the
+   original rollback.
 
 ---
 
@@ -185,19 +139,19 @@ This captures the rollback in the audit trail and feeds the post-mortem.
 `canonical-loop-v1.0` (the ship marker) was corrected on 2026-05-05 to
 point at the post-seeding-fix commit `c2fa178`. The earlier `v1.0`
 location (`613edad`) preceded the seeding fix and so marked a version
-that did not actually execute user tasks. The corrected marker
-includes Primal's production bootstrap wiring, the seeding parity
-fix, the extended soak probes, and the Issue 16 follow-up doc.
+that did not actually execute user tasks. The corrected marker includes
+Primal's production bootstrap wiring, the seeding parity fix, the
+extended soak probes, and the Issue 16 follow-up doc.
 
 `canonical-loop-v1.0-rc1` is intentionally left at `613edad` as the
 audit marker for "what the pre-seeding-fix RC looked like." Anyone
 inspecting the history can compare `rc1` (lifecycle-only) against
 `v1.0` (full task execution) to see exactly what changed.
 
-When in doubt, prefer `canonical-loop-v1.0` (= `c2fa178`) for canary
-or rollback baselines. Do NOT pull from `rc1` for production —
-canonical-routed ops there will succeed in lifecycle but the model
-will not see the user's prompt.
+When in doubt, prefer `canonical-loop-v1.0` (= `c2fa178`) for canary or
+rollback baselines. Do NOT pull from `rc1` for production —
+canonical-routed ops there will succeed in lifecycle but the model will
+not see the user's prompt.
 
 ---
 
@@ -207,8 +161,8 @@ will not see the user's prompt.
 
 Between the v1.0 tag (`canonical-loop-v1.0`, `2026-05-04`) and commit
 `32a29b8` (`2026-05-05`), every canonical-routed op shipped to the
-Anthropic adapter with `messages: []` because the canonical loop had
-no path to seed the user's task as the initial op_message. The model
+Anthropic adapter with `messages: []` because the canonical loop had no
+path to seed the user's task as the initial op_message. The model
 received only the default system prompt ("You are a helpful
 assistant.") and answered its empty context — typically with "What
 would you like to work on?" — instead of the actual task. Every "PASS"
@@ -240,11 +194,10 @@ adapter was producing real responses. It wasn't.
 
 ## Related
 
+- [docs/migration/worker-pool-retirement.md](../migration/worker-pool-retirement.md)
+  — the three-phase plan; Phase 2 deletes the fork lifecycle this
+  runbook used to roll back to.
 - [docs/canonical-loop-prd.md](../canonical-loop-prd.md) — PRD,
   including §17 flag semantics and §22 Definition of Done.
-- [docs/issues/canonical-loop/README.md](../issues/canonical-loop/README.md)
-  — issue board.
-- [test/canonical-loop/fixtures/README.md](../../test/canonical-loop/fixtures/README.md)
-  — Issue 10 compat-fixture refresh procedure.
 - [src/canonical-loop/README.md](../../src/canonical-loop/README.md)
   — module map / boundary contract.

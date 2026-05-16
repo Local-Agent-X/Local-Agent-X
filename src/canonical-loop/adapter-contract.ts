@@ -95,8 +95,6 @@ export const FORBIDDEN_ADAPTER_IMPORTS: readonly string[] = [
   "workers/op-store.js",
   "workers/event-log",
   "workers/event-log.js",
-  "workers/pool",
-  "workers/pool.js",
   "node:child_process",
   "child_process",
 ] as const;

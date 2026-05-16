@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ToolCall, ToolResult } from "@arikernel/core";
 import type { ToolExecutor } from "./base.js";
 import { makeResult } from "./base.js";
+import { runPreDispatchGate } from "./pre-dispatch-gate.js";
 
 let rootWarningEmitted = false;
 
@@ -97,6 +98,7 @@ export class FileExecutor implements ToolExecutor {
 	readonly toolClass = "file";
 
 	async execute(toolCall: ToolCall): Promise<ToolResult> {
+		await runPreDispatchGate(toolCall);
 		const start = Date.now();
 		const {
 			path: filePath,

@@ -1,7 +1,6 @@
 # build_app → canonical op migration plan
 
-**Status:** Draft
-**Target start:** TBD
+**Status:** COMPLETE (2026-05-15)
 **Depends on:** Worker-pool retirement (complete 2026-05-15, commits f14a44b → c14fde5)
 
 ---
@@ -304,14 +303,82 @@ remain. The strangler-fig continues.
 
 ## Done criteria
 
-- [ ] `build_app` tool returns op ID, not synchronous result
-- [ ] `op_app_build_*` cards visible in AGENTS sidebar with streaming progress
-- [ ] Cancel via sidebar actually stops the underlying subprocess
-- [ ] Codex provider builds work end-to-end via canonical op
-- [ ] Anthropic provider builds work end-to-end via canonical op
-- [ ] No regressions in app output quality vs the current path
-- [ ] `buildWithCodex` / `buildWithClaude` deleted from builder-tools.ts
-- [ ] `~/.lax/agent-templates.json` contains the `app-builder` template
+- [x] `build_app` tool returns op ID, not synchronous result
+- [x] `op_app_build_*` cards visible in AGENTS sidebar with streaming progress
+- [x] Cancel via sidebar actually stops the underlying subprocess
+- [x] Codex provider builds work end-to-end via canonical op
+- [x] Anthropic provider builds work end-to-end via canonical op
+- [x] No regressions in app output quality vs the current path
+- [x] `buildWithCodex` / `buildWithClaude` deleted from builder-tools.ts
+- [x] `~/.lax/agent-templates.json` contains the `app-builder` template
   on a fresh install
-- [ ] All existing builder-tools tests pass; new tests added for the
+- [x] All existing builder-tools tests pass; new tests added for the
   canonical path
+
+---
+
+## Result
+
+Three-commit migration on `main`:
+
+| Commit | Phase | Summary |
+|---|---|---|
+| `84ba423` | Phase 1 | Seed `app-builder` agent template, extract `render-builder-prompt` shared renderer |
+| `11426e7` | Phase 2 | Canonical `app_build` op path behind `LAX_BUILD_APP_CANONICAL` flag |
+| this commit | Phase 3 | Default flip + legacy delete + cancel-kill propagation |
+
+### What Phase 3 changed
+
+- Subprocess spawn ownership moved out of the chat-turn-blocking tool body.
+  New util at `src/tools/build-app-spawn.ts` owns codex / claude CLI lifecycle
+  and accepts an `AbortSignal`; on abort it calls `killProcessTree(proc)`
+  (process-tree-kill.ts handles Windows `shell: true` wrappers correctly).
+  Closes gap A from Phase 2 — abort actually kills the subprocess now.
+- The cli-subprocess adapter strategy (`app-build-adapter.ts`) creates a fresh
+  `AbortController` per turn and propagates its signal to the spawn util.
+  `adapter.abort()` fires the controller → spawn util sees the signal →
+  subprocess tree dies. Verified by `test/build-app-spawn-cancel.test.ts`
+  (spawns a real node subprocess, fires abort, asserts exit within 3s).
+- Adapter sandbox boundary preserved: `app-build-adapter.ts` still imports
+  zero subprocess primitives. `runCliBuild` lives in `src/tools/`, called
+  by function-call boundary. `test/canonical-loop-11-boundary-audit.test.ts`
+  passes without changes.
+- `build_app_canonical` collapsed back to `build_app`. Tool renamed; file
+  `git mv`'d `build-app-canonical.ts → build-app.ts` to preserve history.
+- Legacy bodies deleted from the old `builder-tools.ts` (now down to just
+  `createPageTool` — file `git mv`'d to `create-page-tool.ts` since the
+  "builder" plural was load-bearing only for the now-deleted `build_app`).
+- App-builder template fixed: `allowedTools` swap `list_directory → glob`.
+  One-shot migration in `AgentTemplateStore` constructor patches any
+  existing on-disk template; idempotent.
+- `LAX_BUILD_APP_CANONICAL` env var deleted from src + tests.
+
+### LOC delta
+
+| File | Before | After | Δ |
+|---|---:|---:|---:|
+| `src/tools/builder-tools.ts` (→ `create-page-tool.ts`) | 400 | 80 | -320 |
+| `src/tools/build-app-canonical.ts` (→ `build-app.ts`) | 217 | 220 | +3 |
+| `src/tools/build-app-spawn.ts` (new) | 0 | 248 | +248 |
+| `src/canonical-loop/adapters/app-build-adapter.ts` | 252 | 271 | +19 |
+| `src/tools/registry-build.ts` | 137 | 132 | -5 |
+| `src/agent-store.ts` | 686 | 706 | +20 (migration) |
+| `test/build-app-canonical-routing.test.ts` (→ `build-app-routing.test.ts`) | 196 | 115 | -81 |
+| `test/build-app-adapter.test.ts` | 266 | 281 | +15 |
+| `test/build-app-spawn-cancel.test.ts` (new) | 0 | 49 | +49 |
+
+Net src/ LOC after Phase 3: **−35** (legacy deletion outpaces new util +
+migration); the larger structural win is single-spine ownership of
+subprocess lifecycle and verifiable cancel propagation.
+
+### What this does NOT close
+
+Three shadow runtimes outside canonical-loop remain:
+
+| Shadow runtime | Next migration |
+|---|---|
+| Autopilot (`op_ap_*`) | Future work |
+| Voice sidecars (RVC, Chatterbox) | Future work |
+| `self_edit` CLI subprocess | Future work |
+
+The strangler-fig continues.

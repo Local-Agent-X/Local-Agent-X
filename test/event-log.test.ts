@@ -2,8 +2,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { appendEvent, opDir, readEvents } from "../src/workers/event-log.js";
-import type { OpEvent } from "../src/workers/types.js";
+import { appendEvent, opDir, readEvents } from "../src/ops/event-log.js";
+import type { OpEvent } from "../src/ops/types.js";
 
 let counter = 0;
 const opId = (tag: string): string => `op-evlog-test-${tag}-${Date.now()}-${counter++}`;

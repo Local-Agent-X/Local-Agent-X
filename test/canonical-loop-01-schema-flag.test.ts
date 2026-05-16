@@ -15,9 +15,9 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-import { writeOp, readOp, newOpId } from "../src/workers/op-store.js";
-import { readEvents } from "../src/workers/event-log.js";
-import type { Op } from "../src/workers/types.js";
+import { writeOp, readOp, newOpId } from "../src/ops/op-store.js";
+import { readEvents } from "../src/ops/event-log.js";
+import type { Op } from "../src/ops/types.js";
 import {
   isCanonicalLoopEnabled,
   envVarForLane,

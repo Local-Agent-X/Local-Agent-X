@@ -1,7 +1,7 @@
 /**
  * Surface canonical-loop ops in the AGENTS sidebar by translating
  * canonical events into the same `bg_op_*` chat-WS events that the
- * legacy worker pool emits via workers/session-bridge.ts.
+ * legacy worker pool emits via ops/session-bridge.ts.
  *
  * Hooked into the canonical event seam (see event-emitter.ts) — this
  * module is a passive observer. Never throws, never blocks, never
@@ -22,10 +22,10 @@
  *     sidebar; would flood updateAgentFeed at token rates.
  *   - lease_acquired / lease_lost — internal lifecycle, not user-visible.
  */
-import { broadcastToSession, getSessionForOp, getTaskForOp, releaseOpFromSession } from "../workers/session-bridge.js";
-import { pushPendingNotification } from "../workers/pending-notifications.js";
-import { scheduleIdleNudge } from "../workers/idle-nudge.js";
-import { readOp } from "../workers/op-store.js";
+import { broadcastToSession, getSessionForOp, getTaskForOp, releaseOpFromSession } from "../ops/session-bridge.js";
+import { pushPendingNotification } from "../ops/pending-notifications.js";
+import { scheduleIdleNudge } from "../ops/idle-nudge.js";
+import { readOp } from "../ops/op-store.js";
 import type { ServerEvent } from "../types.js";
 import type { CanonicalEvent } from "./types.js";
 

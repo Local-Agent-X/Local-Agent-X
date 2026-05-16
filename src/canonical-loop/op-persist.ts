@@ -24,8 +24,8 @@
  * currentCheckpointId, completedAt, startedAt) are written from `op`
  * as-is — they are owned by the loop, never the control API.
  */
-import { readOp, writeOp } from "../workers/op-store.js";
-import type { Op } from "../workers/types.js";
+import { readOp, writeOp } from "../ops/op-store.js";
+import type { Op } from "../ops/types.js";
 
 export interface PersistOpOptions {
   /**

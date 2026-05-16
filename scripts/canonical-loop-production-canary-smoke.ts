@@ -31,8 +31,8 @@ import {
   ANTHROPIC_ADAPTER_NAME,
 } from "../src/canonical-loop/index.js";
 import { bootstrapCanonicalLoop } from "../src/server/canonical-loop-bootstrap.js";
-import { readOp, newOpId } from "../src/workers/op-store.js";
-import type { Op } from "../src/workers/types.js";
+import { readOp, newOpId } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));

@@ -477,8 +477,8 @@ audits on the canonical-loop source tree:
   `child_process` or `node:child_process`. Subprocess primitives live
   behind the adapter contract — the loop never spawns processes.
 - Adapter source files (`src/canonical-loop/adapters/*.ts`) import
-  nothing on `FORBIDDEN_ADAPTER_IMPORTS` (`workers/op-store`,
-  `workers/event-log`, `workers/pool`, `canonical-loop/store`,
+  nothing on `FORBIDDEN_ADAPTER_IMPORTS` (`ops/op-store`,
+  `ops/event-log`, `ops/pool`, `canonical-loop/store`,
   `child_process`).
 - Exception: `adapters/anthropic-transport.ts` is the bounded
   transport-boundary file. The audit allow-lists this exact path

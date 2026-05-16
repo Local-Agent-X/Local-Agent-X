@@ -29,10 +29,10 @@ import { appendOpMessage, readLatestOpTurn, readOpMessages } from "./store.js";
 import { emit, publishStreamChunk } from "./event-emitter.js";
 import { commitTurn, type CommitTurnMessage } from "./checkpoint.js";
 import { getToolDispatcher, getToolsForOp } from "./runtime.js";
-import { readOp } from "../workers/op-store.js";
-import type { Op } from "../workers/types.js";
+import { readOp } from "../ops/op-store.js";
+import type { Op } from "../ops/types.js";
 import { drainInjects } from "../agent-loop/inject-queue.js";
-import { getSessionForOp } from "../workers/session-bridge.js";
+import { getSessionForOp } from "../ops/session-bridge.js";
 import {
   buildCanonicalLoopContext,
   getActiveMiddlewareStack,

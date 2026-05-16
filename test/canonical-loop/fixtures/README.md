@@ -108,7 +108,7 @@ updating the fixture.
 
 ## Source-drift guard
 
-A separate test reads `src/workers/tools.ts` and asserts the literal
+A separate test reads `src/ops/tools.ts` and asserts the literal
 fragments of the response template still appear verbatim. If the tool
 source moves to a different formatter (template literal moves into a
 helper, wording changes, etc.), that test fails first — the fixture

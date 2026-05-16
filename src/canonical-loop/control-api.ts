@@ -18,7 +18,7 @@
 import { randomUUID } from "node:crypto";
 import type { CanonicalEvent, CanonicalLane, RedirectInstruction } from "./types.js";
 import { readCanonicalEvents } from "./store.js";
-import { readOp, writeOp } from "../workers/op-store.js";
+import { readOp, writeOp } from "../ops/op-store.js";
 import { getBus, eventsChannel, streamChannel, type BusListener } from "./bus.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";

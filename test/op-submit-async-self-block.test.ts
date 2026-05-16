@@ -26,10 +26,10 @@ import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-import { opSubmitAsyncTool } from "../src/workers/tools.js";
-import { writeOp, newOpId } from "../src/workers/op-store.js";
-import { trackOpForSession } from "../src/workers/session-bridge.js";
-import type { Op } from "../src/workers/types.js";
+import { opSubmitAsyncTool } from "../src/ops/tools.js";
+import { writeOp, newOpId } from "../src/ops/op-store.js";
+import { trackOpForSession } from "../src/ops/session-bridge.js";
+import type { Op } from "../src/ops/types.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
 const createdIds: string[] = [];

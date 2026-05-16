@@ -227,11 +227,11 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
 
   // Drain pending background-op completions for this session so the agent
   // can narrate them naturally on this turn (per the agent-narrates pattern
-  // — see workers/pending-notifications.ts for rationale).
+  // — see ops/pending-notifications.ts for rationale).
   let backgroundCompletionsBlock = "";
   try {
-    const { drainPendingNotifications, formatNotificationsForSystemPrompt } = await import("../workers/pending-notifications.js");
-    const { cancelIdleNudge, markSessionExplicitNotify, recordSessionLastMessage } = await import("../workers/idle-nudge.js");
+    const { drainPendingNotifications, formatNotificationsForSystemPrompt } = await import("../ops/pending-notifications.js");
+    const { cancelIdleNudge, markSessionExplicitNotify, recordSessionLastMessage } = await import("../ops/idle-nudge.js");
     cancelIdleNudge(sessionId);
     markSessionExplicitNotify(sessionId, message);
     recordSessionLastMessage(sessionId, message);

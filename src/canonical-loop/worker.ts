@@ -17,7 +17,7 @@
  *     post-commit op write landed).
  */
 import { randomUUID } from "node:crypto";
-import { readOp, writeOp } from "../workers/op-store.js";
+import { readOp, writeOp } from "../ops/op-store.js";
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { driveTurn } from "./turn-loop.js";
@@ -36,9 +36,9 @@ import {
   getLeaseConfig,
 } from "./lease.js";
 import { readLatestOpTurn } from "./store.js";
-import { getSessionForOp } from "../workers/session-bridge.js";
+import { getSessionForOp } from "../ops/session-bridge.js";
 import { hasInjects } from "../agent-loop/inject-queue.js";
-import type { Op } from "../workers/types.js";
+import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 
 const MAX_TURNS = 64; // Guard against runaway scripts. Real cap is op budget.

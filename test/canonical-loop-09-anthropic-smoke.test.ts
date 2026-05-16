@@ -32,8 +32,8 @@ import {
   readOpTurn,
   subscribeOpStream,
 } from "../src/canonical-loop/index.js";
-import { readOp, newOpId } from "../src/workers/op-store.js";
-import type { Op } from "../src/workers/types.js";
+import { readOp, newOpId } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
 
 const SMOKE_ENABLED = process.env.LAX_RUN_ANTHROPIC_SMOKE === "1";
 const describeSmoke = SMOKE_ENABLED ? describe : describe.skip;

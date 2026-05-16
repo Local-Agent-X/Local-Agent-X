@@ -54,8 +54,8 @@ import {
   type CanonicalEvent,
   type ProviderStateEnvelope,
 } from "../src/canonical-loop/index.js";
-import { readOp, writeOp, newOpId } from "../src/workers/op-store.js";
-import type { Op } from "../src/workers/types.js";
+import { readOp, writeOp, newOpId } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../src/canonical-loop/adapter-contract.js";
 
 import { FakeAdapter, scriptTurn, scriptMultiTurn } from "./canonical-loop/fake-adapter.js";
@@ -741,21 +741,9 @@ describe("scheduler lane caps after recovery", () => {
   });
 });
 
-// ── Flag OFF compatibility ───────────────────────────────────────────────
-
-describe("flag OFF: lease/recovery do not affect legacy submit path", () => {
-  beforeEach(() => {
-    delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
-  });
-
-  it("decideSubmitRouting still routes legacy when flag OFF", () => {
-    const r = decideSubmitRouting({ lane: "interactive" });
-    expect(r.route).toBe("legacy");
-    expect(r.flagValue).toBe(false);
-  });
-
-  it("recoverStaleOp on a legacy-only op id returns unknown_op", () => {
-    const r = recoverStaleOp("legacy_op_never_canonical");
+describe("recoverStaleOp is safe against unknown op ids", () => {
+  it("returns unknown_op for an op id that was never persisted", () => {
+    const r = recoverStaleOp("op_never_persisted");
     expect(r.ok).toBe(false);
     expect(r.kind).toBe("unknown_op");
   });

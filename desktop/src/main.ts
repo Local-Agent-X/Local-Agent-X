@@ -51,7 +51,10 @@ const PROJECT_ROOT = (() => {
   } catch {}
   return devRoot;
 })();
-const ICON_PATH = join(PROJECT_ROOT, "public", "icon.ico");
+// PNG works for both BrowserWindow + Tray on Windows/Mac/Linux at runtime.
+// The platform-specific .ico/.icns are used by electron-builder for the
+// packaged installer art, not at runtime.
+const ICON_PATH = join(PROJECT_ROOT, "public", "icon.png");
 
 interface SAXConfig {
   port: number;

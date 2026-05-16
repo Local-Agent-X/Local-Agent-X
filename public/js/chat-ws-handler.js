@@ -254,7 +254,12 @@ function handleChatWsMessage(e) {
             });
           }
           if (typeof updateAgentFeed === 'function') {
-            updateAgentFeed(msg.event.opId, { status: statusLabel, output });
+            var feedUpdate = { status: statusLabel, output: output };
+            // Build_app and any future op type that emits a resultUrl get
+            // a clickable "Open" link in the card. updateAgentFeed renders
+            // the URL into the .agent-feed-result-link element.
+            if (msg.event.resultUrl) feedUpdate.resultUrl = msg.event.resultUrl;
+            updateAgentFeed(msg.event.opId, feedUpdate);
           }
           if (window.desktop) window.desktop.showNotification('Worker finished', (msg.event.summary || '').slice(0, 100));
           // Keep completed cards visible for 30 min so user has plenty of
@@ -267,7 +272,7 @@ function handleChatWsMessage(e) {
 
           // Note: no synthetic chat message anymore. The agent narrates the
           // completion naturally on the user's NEXT turn via the pending-
-          // notifications queue (workers/pending-notifications.ts). Sidebar
+          // notifications queue (ops/pending-notifications.ts). Sidebar
           // shows the live state + full result; chat narration happens
           // organically when the user replies.
         } catch(e) { console.warn('[bg_op_completed] update failed', e); }

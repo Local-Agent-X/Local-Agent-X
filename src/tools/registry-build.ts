@@ -9,7 +9,8 @@ import { bashTool } from "./shell-tools.js";
 import { processTools } from "./process-tools.js";
 import { webFetchTool } from "./web-tools.js";
 import { viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool } from "./vision-tools.js";
-import { buildAppTool, createPageTool } from "./builder-tools.js";
+import { buildAppTool } from "./build-app.js";
+import { createPageTool } from "./create-page-tool.js";
 import { extractSiteAssetsTool } from "./asset-tools.js";
 import { youtubeAnalyzeTool } from "../youtube-tool.js";
 import { globTool } from "../glob-tool.js";
@@ -33,7 +34,7 @@ import { primalRunBuildPlanTool } from "../primal-auto-build/tool.js";
 import { startAppBuildTool, finalizeAppBuildTool } from "../primal-auto-build/app-build-tool.js";
 import { primalBuildStatusTool, primalBuildResumeTool } from "../primal-auto-build/orchestrator/tools.js";
 import { autopilotTools } from "../autopilot/tools.js";
-import { opTools } from "../workers/tools.js";
+import { opTools } from "../ops/tools.js";
 // Legacy skill_list/skill_run tools removed — protocol_list / protocol_get cover the same surface.
 // SKILL.md files are still recognized as an import format via src/protocols/skill-md-parser.ts.
 
@@ -45,7 +46,8 @@ export const allTools: ToolDefinition[] = applyPrompts([
   selfEditTool, primalRunBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   primalBuildStatusTool, primalBuildResumeTool,
   viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool,
-  buildAppTool, youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool,
+  buildAppTool,
+  youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool,
   ...processTools,
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools,
   ...emailTools, ...calendarTools, ...clipboardTools, ...sqlTools,

@@ -36,8 +36,8 @@ import {
   readCanonicalEvents,
   type CanonicalEvent,
 } from "../src/canonical-loop/index.js";
-import { newOpId } from "../src/workers/op-store.js";
-import type { Op } from "../src/workers/types.js";
+import { newOpId } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
 
 import { FakeAdapter, scriptTurn, scriptMultiTurn } from "./canonical-loop/fake-adapter.js";
 
@@ -447,27 +447,11 @@ describe("per-op seq is independent and gap-free under concurrent ops", () => {
   });
 });
 
-// ── Flag OFF legacy compatibility ────────────────────────────────────────
-
-describe("flag OFF legacy path is not disturbed by Issue 04", () => {
-  beforeEach(() => {
-    delete process.env.LAX_CANONICAL_LOOP_INTERACTIVE;
-  });
-
-  it("opEventsSince on a legacy op (no canonical-loop entry) returns unknown_op", () => {
-    // No canonicalLoopEntry, no writeOp — just a fictitious id that legacy
-    // wouldn't have created either. The point: opEventsSince does not
-    // hallucinate state for ops that never went through canonical-loop.
-    const r = opEventsSince("legacy_op_never_created", OP_EVENTS_FROM_BEGINNING);
+describe("opEventsSince returns unknown_op for ops never submitted via canonical-loop", () => {
+  it("hallucinates no state for ids that never went through canonicalLoopEntry", () => {
+    const r = opEventsSince("never_created_op", OP_EVENTS_FROM_BEGINNING);
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.code).toBe("unknown_op");
-  });
-
-  it("decideSubmitRouting still returns legacy when flag OFF", async () => {
-    const { decideSubmitRouting } = await import("../src/canonical-loop/index.js");
-    const r = decideSubmitRouting({ lane: "interactive" });
-    expect(r.route).toBe("legacy");
-    expect(r.flagValue).toBe(false);
   });
 });

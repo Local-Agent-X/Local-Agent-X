@@ -19,10 +19,10 @@ import {
   readOpMessages,
 } from "../src/canonical-loop/index.js";
 import { bootstrapCanonicalLoop } from "../src/server/canonical-loop-bootstrap.js";
-import { readOp, newOpId } from "../src/workers/op-store.js";
-import { buildContextPack } from "../src/workers/context-pack-builder.js";
-import { getRetryPolicy } from "../src/workers/heartbeat.js";
-import type { Op, OpVisibility } from "../src/workers/types.js";
+import { readOp, newOpId } from "../src/ops/op-store.js";
+import { buildContextPack } from "../src/ops/context-pack-builder.js";
+import { getRetryPolicy } from "../src/ops/heartbeat.js";
+import type { Op, OpVisibility } from "../src/ops/types.js";
 
 const UNIQUE_PHRASE = "CANONICAL_SEED_OK_123";
 const TASK = `Reply with exactly: ${UNIQUE_PHRASE}.`;

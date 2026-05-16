@@ -27,7 +27,7 @@ import * as state from "./state.js";
 import { startOrchestration } from "./manager.js";
 import { parsePlanFile } from "../plan-parser.js";
 import { defaultJudgmentHook } from "../chunk-review/judgment-hook.js";
-import { broadcastToSession } from "../../workers/session-bridge.js";
+import { broadcastToSession } from "../../ops/session-bridge.js";
 import { isFeatureEnabled } from "../tool.js";
 import { createLogger } from "../../logger.js";
 

@@ -25,15 +25,14 @@ export async function handleAutoDelegateRoutes(
   }
 
   // POST /api/op/kill — UI kill button (e.g. tool_chip "blocked-by-op"
-  // chip). Direct call to pool.killOp by op_id; no auto-delegate side
-  // effects.
+  // chip). Routes through canonical opCancel.
   if (method === "POST" && url.pathname === "/api/op/kill") {
     const body = await safeParseBody(req);
     const opId = typeof body?.op_id === "string" ? body.op_id : "";
     if (!opId) { json(400, { ok: false, error: "op_id required" }); return true; }
-    const { killOp } = await import("../../workers/pool.js");
-    const ok = killOp(opId);
-    json(200, { ok });
+    const { opCancel } = await import("../../canonical-loop/index.js");
+    const res = opCancel(opId, "user-kill");
+    json(200, { ok: res.ok });
     return true;
   }
 
@@ -47,9 +46,9 @@ export async function handleAutoDelegateRoutes(
     const opId = typeof body?.opId === "string" ? body.opId : "";
     if (!opId) { json(400, { error: "opId required" }); return true; }
     const { markDecisionAsUserOverride } = await import("../../routing/index.js");
-    const { killOp } = await import("../../workers/pool.js");
+    const { opCancel } = await import("../../canonical-loop/index.js");
     const result = markDecisionAsUserOverride(opId);
-    const killed = killOp(opId);
+    const killed = opCancel(opId, "user-override").ok;
     json(200, {
       ok: true,
       opId,

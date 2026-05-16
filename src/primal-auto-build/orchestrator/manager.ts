@@ -29,7 +29,7 @@ import * as state from "./state.js";
 import type { OrchestratorState } from "./state.js";
 import * as registry from "./registry.js";
 import { createLogger } from "../../logger.js";
-import { broadcastToSession } from "../../workers/session-bridge.js";
+import { broadcastToSession } from "../../ops/session-bridge.js";
 
 const logger = createLogger("primal-auto-build.orchestrator");
 

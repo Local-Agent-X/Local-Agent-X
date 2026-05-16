@@ -39,7 +39,7 @@ export async function augmentSystemPrompt(
   prepared.systemPrompt += threatEngine.getCanaryBlock();
 
   try {
-    const { listOpsForSession, getOpTask } = await import("../../workers/session-bridge.js");
+    const { listOpsForSession, getOpTask } = await import("../../ops/session-bridge.js");
     const activeOpIds = listOpsForSession(sessionId);
     if (activeOpIds.length > 0) {
       const taskLines = activeOpIds.map(id => {

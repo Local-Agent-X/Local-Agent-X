@@ -13,6 +13,7 @@ import {
   Notification,
   ipcMain,
   nativeImage,
+  nativeTheme,
   shell,
 } from "electron";
 import { join, resolve } from "path";
@@ -26,7 +27,7 @@ import { registerAutostart, unregisterAutostart, isAutostartEnabled } from "./au
 // Only mark our own server origin as secure — not every loopback port.
 // The port is read from config at runtime, but Chromium flags must be set
 // before app.ready, so we read the config file early here.
-const _earlyPort = (() => { try { const p = require("path"); const f = require("fs"); const c = p.join(require("os").homedir(), ".sax", "config.json"); if (f.existsSync(c)) { return JSON.parse(f.readFileSync(c, "utf-8")).port || 7007; } } catch {} return 7007; })();
+const _earlyPort = (() => { try { const p = require("path"); const f = require("fs"); const c = p.join(require("os").homedir(), ".lax", "config.json"); if (f.existsSync(c)) { return JSON.parse(f.readFileSync(c, "utf-8")).port || 7007; } } catch {} return 7007; })();
 app.commandLine.appendSwitch("unsafely-treat-insecure-origin-as-secure", `http://127.0.0.1:${_earlyPort}`);
 app.commandLine.appendSwitch("enable-features", "WebRTCPipeWireCapturer");
 app.commandLine.appendSwitch("enable-media-stream");
@@ -35,16 +36,16 @@ app.commandLine.appendSwitch("enable-media-stream");
 
 // ── Config ────────────────────────────────────────────────
 
-const SAX_DIR = join(homedir(), ".sax");
+const SAX_DIR = join(homedir(), ".lax");
 const CONFIG_PATH = join(SAX_DIR, "config.json");
 const DESKTOP_SETTINGS_PATH = join(SAX_DIR, "desktop-settings.json");
 // In packaged mode __dirname is inside app.asar — use config to find the live repo
 const PROJECT_ROOT = (() => {
   const devRoot = resolve(__dirname, "..", "..");
   if (!app.isPackaged) return devRoot;
-  // Packaged: read projectRoot from ~/.sax/config.json so we always run latest code
+  // Packaged: read projectRoot from ~/.lax/config.json so we always run latest code
   try {
-    const cfg = JSON.parse(readFileSync(join(homedir(), ".sax", "config.json"), "utf-8"));
+    const cfg = JSON.parse(readFileSync(join(homedir(), ".lax", "config.json"), "utf-8"));
     if (cfg.projectRoot && existsSync(join(cfg.projectRoot, "dist", "index.js"))) {
       return resolve(cfg.projectRoot);
     }
@@ -82,6 +83,9 @@ interface DesktopSettings {
   closeToTray: boolean;
   globalHotkey: string;
   windowBounds: { width: number; height: number };
+  // Mirrors the renderer's sax_theme so the BrowserWindow paint colour matches
+  // the web UI's theme. Renderer toggles push the new value here via IPC.
+  theme: "dark" | "light" | "system";
 }
 
 const DEFAULT_SETTINGS: DesktopSettings = {
@@ -89,7 +93,18 @@ const DEFAULT_SETTINGS: DesktopSettings = {
   closeToTray: true,
   globalHotkey: "CommandOrControl+Shift+Space",
   windowBounds: { width: 1200, height: 800 },
+  theme: "dark",
 };
+
+// Paint colour for the BrowserWindow underneath the HTML. Visible behind
+// the macOS traffic-light strip when the title bar is hidden, and as the
+// initial fill before HTML loads. Must follow the renderer theme so a
+// light-mode UI doesn't show a dark border at the top of the window.
+function bgForTheme(theme: DesktopSettings["theme"]): string {
+  if (theme === "light") return "#ffffff";
+  if (theme === "system") return nativeTheme.shouldUseDarkColors ? "#0a0a0f" : "#ffffff";
+  return "#0a0a0f";
+}
 
 function loadSettings(): DesktopSettings {
   try {
@@ -160,11 +175,22 @@ function startServer(): void {
     return;
   }
 
+  // GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal PATH
+  // that excludes Homebrew, nvm, and asdf. Augment so `node` resolves whether
+  // the user installed it via brew (arm64 or intel), nvm, or system pkg.
+  const PATH_AUGMENTS = [
+    "/opt/homebrew/bin", "/opt/homebrew/sbin",  // Apple Silicon Homebrew
+    "/usr/local/bin", "/usr/local/sbin",         // Intel Homebrew / system-wide installs
+    join(homedir(), ".nvm/versions/node/current/bin"),  // nvm "current" symlink (if set)
+  ];
+  const existingPath = (process.env.PATH || "").split(":");
+  const augmentedPath = [...PATH_AUGMENTS, ...existingPath].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
+
   console.log(`[desktop] Starting SAX server (${useCompiled ? "compiled" : "tsx"} mode)...`);
   serverProcess = spawn("node", nodeArgs, {
     cwd: PROJECT_ROOT,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env },
+    env: { ...process.env, PATH: augmentedPath },
     windowsHide: true,
   });
 
@@ -242,7 +268,7 @@ function createWindow(): void {
       symbolColor: "#40f0f0",
       height: 32,
     },
-    backgroundColor: "#0a0a0f",
+    backgroundColor: bgForTheme(getSetting("theme")),
     show: false,
     webPreferences: {
       preload: join(__dirname, "preload.js"),
@@ -256,8 +282,14 @@ function createWindow(): void {
   const url = `http://127.0.0.1:${saxConfig.port}/?token=${saxConfig.authToken}`;
   mainWindow.loadURL(url);
 
-  // Inject custom title bar menu into the page
+  // Inject custom title bar menu into the page.
+  // SKIP on macOS — Mac uses the native menu bar at the top of the screen
+  // (Local Agent X | File | Edit | View | Window | Help) and the native
+  // window chrome already supplies traffic lights. The custom HTML titlebar
+  // was designed for Windows/Linux where the in-window menu is the norm;
+  // on Mac it duplicates chrome and clashes with system conventions.
   mainWindow.webContents.on("did-finish-load", () => {
+    if (process.platform === "darwin") return;
     mainWindow?.webContents.executeJavaScript(`
       (function() {
         if (document.getElementById('desktop-titlebar')) return;
@@ -376,7 +408,12 @@ function createWindow(): void {
         const relativePath = pathname.startsWith("/files/")
           ? join("workspace", decodeURIComponent(pathname.slice(7)))
           : decodeURIComponent(pathname.slice(1));
-        const filePath = join(process.cwd(), relativePath);
+        // Resolve against PROJECT_ROOT (the live repo), not process.cwd() —
+        // a Finder/Launchpad-launched .app has cwd `/`; a Windows
+        // desktop-launch.bat has cwd `<repo>/desktop`. Neither resolves the
+        // workspace/ path correctly. PROJECT_ROOT is the single source of
+        // truth (computed once at boot from ~/.lax/config.json or dev path).
+        const filePath = join(PROJECT_ROOT, relativePath);
         shell.openPath(filePath).then((err) => {
           if (err) console.warn(`[desktop] Failed to open ${filePath}: ${err}`);
         });
@@ -424,11 +461,12 @@ function createWindow(): void {
       // Document file extensions → open with system default app (Word, Excel, etc.)
       const DOC_EXTENSIONS = /\.(docx?|xlsx?|pptx?|pdf|csv)$/i;
       if (DOC_EXTENSIONS.test(pathname)) {
-        // /files/foo.docx → workspace/foo.docx on disk
+        // /files/foo.docx → workspace/foo.docx on disk, resolved against
+        // PROJECT_ROOT (see note in the will-navigate handler above).
         const relativePath = pathname.startsWith("/files/")
           ? join("workspace", decodeURIComponent(pathname.slice(7)))
           : decodeURIComponent(pathname.slice(1));
-        const filePath = join(process.cwd(), relativePath);
+        const filePath = join(PROJECT_ROOT, relativePath);
         shell.openPath(filePath).then((err) => {
           if (err) console.warn(`[desktop] Failed to open ${filePath}: ${err}`);
         });
@@ -449,7 +487,7 @@ function createWindow(): void {
         width: 1000,
         height: 700,
         icon: ICON_PATH,
-        backgroundColor: "#0a0a0f",
+        backgroundColor: bgForTheme(getSetting("theme")),
         frame: false,
         titleBarStyle: "hidden",
         titleBarOverlay: {
@@ -557,6 +595,11 @@ function setupIPC(): void {
       globalShortcut.unregisterAll();
       registerHotkey();
     }
+    if (key === "theme") {
+      // Live-update the window paint colour so the top strip flips with the
+      // rest of the UI instead of staying dark until the next launch.
+      mainWindow?.setBackgroundColor(bgForTheme(value as DesktopSettings["theme"]));
+    }
   });
 
   ipcMain.handle("show-notification", (_e, title: string, body: string) => {
@@ -568,8 +611,10 @@ function setupIPC(): void {
     if (mainWindow) mainWindow.webContents.toggleDevTools();
   });
   ipcMain.handle("open-file", (_e: any, relativePath: string) => {
-    // Go up one level from desktop/ to project root where workspace/ lives
-    const filePath = join(process.cwd(), "..", relativePath);
+    // Resolve against PROJECT_ROOT, not process.cwd() — the old `..` hack
+    // happened to work on Windows when cwd was `<repo>/desktop`, but breaks
+    // on a Finder-launched Mac .app (cwd is `/`).
+    const filePath = join(PROJECT_ROOT, relativePath);
     console.log(`[desktop] Opening file: ${filePath}`);
     return shell.openPath(filePath);
   });

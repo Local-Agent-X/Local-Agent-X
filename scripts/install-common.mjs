@@ -51,11 +51,11 @@ if (has("ollama")) {
   warn(`Ollama not on PATH — semantic memory will be unavailable until you install Ollama and run: ollama pull ${EMBED_MODEL}`);
 }
 
-// 4. Default settings scaffold (~/.sax/settings.json)
-const saxDir = join(homedir(), ".sax");
-const settingsFile = join(saxDir, "settings.json");
+// 4. Default settings scaffold (~/.lax/settings.json).
+const laxDir = join(homedir(), ".lax");
+const settingsFile = join(laxDir, "settings.json");
 if (!existsSync(settingsFile)) {
-  mkdirSync(saxDir, { recursive: true });
+  mkdirSync(laxDir, { recursive: true });
   const defaults = {
     provider: "anthropic",
     model: "claude-sonnet-4-6",
@@ -81,10 +81,10 @@ res = run("npm", ["run", "build"]);
 if (res.status !== 0) fail("npm run build failed. Fix the build errors above before re-running install — the runtime refuses to boot when its security layer (AriKernel pre-dispatch gate) can't wire.");
 ok("Server build complete");
 
-// 6. ~/.sax/config.json — packaged Electron reads projectRoot from here so
+// 6. ~/.lax/config.json — packaged Electron reads projectRoot from here so
 //    it always runs the live repo's dist/index.js, not a copy baked into
 //    the .asar bundle. Merge so we don't clobber port/authToken if set.
-const cfgPath = join(saxDir, "config.json");
+const cfgPath = join(laxDir, "config.json");
 let cfg = {};
 if (existsSync(cfgPath)) {
   try { cfg = JSON.parse(readFileSync(cfgPath, "utf-8")); } catch {}

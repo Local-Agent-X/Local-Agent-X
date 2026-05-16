@@ -5,21 +5,21 @@
  *
  * Usage: node scripts/run-prompt-fixtures.mjs
  * Env:
- *   SAX_URL   — default http://127.0.0.1:7007
- *   SAX_TOKEN — default read from ~/.sax/config.json
+ *   LAX_URL   — default http://127.0.0.1:7007
+ *   LAX_TOKEN — default read from ~/.lax/config.json
  */
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 
-const URL_BASE = process.env.SAX_URL || "http://127.0.0.1:7007";
-const TOKEN = process.env.SAX_TOKEN || (() => {
+const URL_BASE = process.env.LAX_URL || "http://127.0.0.1:7007";
+const TOKEN = process.env.LAX_TOKEN || (() => {
   try {
-    const cfg = JSON.parse(readFileSync(join(homedir(), ".sax", "config.json"), "utf-8"));
+    const cfg = JSON.parse(readFileSync(join(homedir(), ".lax", "config.json"), "utf-8"));
     return cfg.authToken || "";
   } catch { return ""; }
 })();
-if (!TOKEN) { console.error("[fixtures] No auth token found (SAX_TOKEN or ~/.sax/config.json)"); process.exit(2); }
+if (!TOKEN) { console.error("[fixtures] No auth token found (LAX_TOKEN or ~/.lax/config.json)"); process.exit(2); }
 
 const FIXTURES_DIR = resolve("tests", "prompt-fixtures");
 if (!existsSync(FIXTURES_DIR)) { console.error(`[fixtures] ${FIXTURES_DIR} does not exist`); process.exit(2); }

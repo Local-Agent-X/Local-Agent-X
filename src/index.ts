@@ -7,33 +7,6 @@ import { homedir } from "node:os";
 import { createLogger } from "./logger.js";
 const logger = createLogger("index");
 
-function migrateLegacyDataDir(): void {
-  const newDir = join(homedir(), ".lax");
-  const oldDir = join(homedir(), ".sax");
-  if (existsSync(newDir) && existsSync(oldDir)) {
-    process.stderr.write(
-      `[migrate] FATAL: both ~/.sax and ~/.lax exist — refusing to start.\n` +
-      `[migrate] A previous migration attempt likely failed mid-rename.\n` +
-      `[migrate] Inspect both dirs and remove the empty/stale one before restarting.\n`
-    );
-    process.exit(1);
-  }
-  if (!existsSync(newDir) && existsSync(oldDir)) {
-    try {
-      renameSync(oldDir, newDir);
-      process.stdout.write("[migrate] Renamed ~/.sax → ~/.lax\n");
-    } catch (e) {
-      process.stderr.write(
-        `[migrate] FATAL: could not rename ~/.sax → ~/.lax: ${(e as Error).message}\n` +
-        `[migrate] Likely cause: another process holds files in ~/.sax open.\n` +
-        `[migrate] Stop any running agent process, then restart.\n`
-      );
-      process.exit(1);
-    }
-  }
-}
-migrateLegacyDataDir();
-
 const logDir = join(homedir(), ".lax", "logs");
 if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true, mode: 0o700 });
 

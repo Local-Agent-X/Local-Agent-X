@@ -144,14 +144,24 @@ async function isServerRunning(): Promise<boolean> {
 function startServer(): void {
   if (serverProcess) return;
 
+  // Prefer the compiled build (faster startup, lower memory). Fall back to
+  // tsx so the .app still works when `npm run build` is broken or skipped —
+  // matches what `npm run dev` does and survives mid-refactor states where
+  // dist/ won't compile.
   const distIndex = join(PROJECT_ROOT, "dist", "index.js");
-  if (!existsSync(distIndex)) {
-    console.error("[desktop] Server not built — run 'npm run build' in project root first");
+  const srcIndex = join(PROJECT_ROOT, "src", "index.ts");
+  const useCompiled = existsSync(distIndex);
+  const nodeArgs = useCompiled
+    ? ["--max-old-space-size=512", distIndex]
+    : ["--max-old-space-size=512", "--import=tsx", srcIndex];
+
+  if (!useCompiled && !existsSync(srcIndex)) {
+    console.error("[desktop] Neither dist/index.js nor src/index.ts found in PROJECT_ROOT — refusing to start");
     return;
   }
 
-  console.log("[desktop] Starting SAX server...");
-  serverProcess = spawn("node", ["--max-old-space-size=512", distIndex], {
+  console.log(`[desktop] Starting SAX server (${useCompiled ? "compiled" : "tsx"} mode)...`);
+  serverProcess = spawn("node", nodeArgs, {
     cwd: PROJECT_ROOT,
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env },

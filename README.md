@@ -17,20 +17,24 @@ It's research-grade software, not a polished product. Active development — see
 
 Clone or download the repository first, then run the installer for your OS from inside the repo directory:
 
-| OS | Command |
+| OS | How to run |
 |---|---|
-| Windows (cmd) | `install.bat` |
-| Windows (PowerShell) | `.\install.ps1` |
-| macOS / Linux | `./install.sh` |
+| macOS | Double-click `install.command` in Finder (or run `./install.sh` from Terminal) |
+| Windows | Double-click `install.bat` (or run `.\install.ps1` in PowerShell) |
+| Linux | `./install.sh` from a terminal |
 
-Each is a thin wrapper that bootstraps Node + Ollama (if missing) and then runs the shared core at [scripts/install-common.mjs](scripts/install-common.mjs). Changing an install step means editing one file.
+> **First-time macOS users:** if you downloaded the repo as a ZIP, the first double-click may be blocked with "cannot be opened because it is from an unidentified developer." Right-click `install.command` → **Open** → **Open** to clear it; subsequent runs go through normally. (`.sh` files are not double-clickable on Mac — they open in a text editor instead of running. The `.command` extension is the macOS convention that tells Finder "run this in Terminal." You do not need Xcode.)
+
+Each script is a thin wrapper that bootstraps Node + Ollama (if missing) and then runs the shared core at [scripts/install-common.mjs](scripts/install-common.mjs); `install.command` itself just hands off to `install.sh` so there's one source of truth.
+
+**What you end up with on macOS:** a real `Local Agent X.app` in `/Applications`, Spotlight- and Launchpad-launchable. Clicking the red X **hides** the window — the server stays alive in the **menu bar** (top-right, next to the clock) so scheduled missions and background jobs keep running. To actually stop the server, use the menu-bar icon's **Quit** item. Headless mode (`npm run dev`) still works for development and is what install.command uses to seed `dist/` for the packaged app. Set `SAX_SKIP_APP=1` to skip the .app build during install if you only want the headless server.
+
+**First-time install on macOS is slow (~3–5 min, ~500 MB)** because it builds the Electron bundle and produces the .app. Subsequent runs are fast (electron-builder caches its downloads).
 
 ## Quick start
 
-1. Start the server:
-   - Dev mode (no build needed): `npm run dev`
-   - Production: `npm run build && npm start`
-2. Open the UI: <http://127.0.0.1:7007>. The server prints an auth URL on startup that already contains the token; the bare URL works once you've signed in once.
+1. Run `install.command` (double-click in Finder) — wait for "Install complete."
+2. Open **Launchpad**, click **Local Agent X**. (First launch only: right-click → **Open** → **Open** to clear macOS Gatekeeper, since the build isn't code-signed.)
 3. Sign in a provider. Open **Settings → Model Provider**:
    - **Anthropic** — paste a `claude setup-token` from the Claude CLI (the Anthropic auth on Max plans routes through the CLI subprocess; see [AGENTS.md](AGENTS.md)).
    - **OpenAI / Codex / Cerebras / Ollama** — paste an API key or point at a local endpoint.

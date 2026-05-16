@@ -55,7 +55,17 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   // Wire SAX's shared pre-dispatch chain into AriKernel's tool executors so
   // any direct executor invocation (outside the chat-path's no-op observer
   // setup) still hits security + tool-policy. Closes F3 in DRY-AUDIT.md.
-  import("./bootstrap-ari-gate.js").then(({ wireAriPreDispatch }) => wireAriPreDispatch(security, toolPolicy)).catch((e) => logger.warn(`[ari-gate] wire failed: ${(e as Error).message}`));
+  //
+  // FAIL-CLOSED: AriKernel is a defense layer. If the gate can't wire, tool
+  // calls would bypass security + policy silently — exactly the failure mode
+  // a defense layer must not have. Halt boot instead so the operator notices.
+  try {
+    const { wireAriPreDispatch } = await import("./bootstrap-ari-gate.js");
+    wireAriPreDispatch(security, toolPolicy);
+  } catch (e) {
+    logger.error(`[ari-gate] wire failed — refusing to boot without security gate: ${(e as Error).message}`);
+    throw new Error(`AriKernel pre-dispatch gate failed to wire: ${(e as Error).message}`);
+  }
 
   const secretsStoreRef: { value: SecretsStore | null } = { value: null };
   const agentSync = new AgentSync(dataDir, () => secretsStoreRef.value?.get("GITHUB_SYNC_TOKEN"));

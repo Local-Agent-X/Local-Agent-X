@@ -41,9 +41,9 @@ import {
   readCanonicalEvents,
   readLatestOpTurn,
 } from "../src/canonical-loop/index.js";
-import { readOp, newOpId } from "../src/workers/op-store.js";
-import { opDir } from "../src/workers/event-log.js";
-import type { Op } from "../src/workers/types.js";
+import { readOp, newOpId } from "../src/ops/op-store.js";
+import { opDir } from "../src/ops/event-log.js";
+import type { Op } from "../src/ops/types.js";
 
 import { FakeAdapter, scriptTurn, scriptLongStreamingTurn } from "./canonical-loop/fake-adapter.js";
 

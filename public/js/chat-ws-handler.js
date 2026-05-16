@@ -267,7 +267,7 @@ function handleChatWsMessage(e) {
 
           // Note: no synthetic chat message anymore. The agent narrates the
           // completion naturally on the user's NEXT turn via the pending-
-          // notifications queue (workers/pending-notifications.ts). Sidebar
+          // notifications queue (ops/pending-notifications.ts). Sidebar
           // shows the live state + full result; chat narration happens
           // organically when the user replies.
         } catch(e) { console.warn('[bg_op_completed] update failed', e); }

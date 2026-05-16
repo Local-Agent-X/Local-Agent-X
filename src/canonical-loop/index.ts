@@ -16,8 +16,8 @@
  *   - Adapters / public control APIs / workers from outside this module
  *     never write canonical state directly.
  */
-import type { Op } from "../workers/types.js";
-import { writeOp } from "../workers/op-store.js";
+import type { Op } from "../ops/types.js";
+import { writeOp } from "../ops/op-store.js";
 import { emit } from "./event-emitter.js";
 import { resolveAdapterFactory } from "./runtime.js";
 import { enqueueOp, pumpScheduler } from "./scheduler.js";

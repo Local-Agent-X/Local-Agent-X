@@ -8,8 +8,8 @@
  *   3. Op not found → null.
  *   4. Timeout → null (the op keeps running).
  */
-import type { OpResult } from "../workers/types.js";
-import { readOp } from "../workers/op-store.js";
+import type { OpResult } from "../ops/types.js";
+import { readOp } from "../ops/op-store.js";
 import { subscribeOpEvents } from "./control-api.js";
 import type { CanonicalEvent, StateChangedBody } from "./types.js";
 

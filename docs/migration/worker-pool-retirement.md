@@ -1,7 +1,7 @@
 # Worker-pool retirement — migration plan
 
-**Status:** Draft
-**Target deletion date:** TBD (set when phase 1 lands)
+**Status:** COMPLETE
+**Completion date:** 2026-05-15
 **Owner:** Peter
 
 ---
@@ -185,6 +185,26 @@ Run after Phase 2:
 
 ## Deletion date
 
-Set after Phase 1 lands. Target: 2 weeks from Phase 1 merge if soak is clean.
-Without a date this becomes drift again — same failure mode that produced
-the current state.
+Completed 2026-05-15. Phase 1 → Phase 3 ran inside three days against the
+original "two weeks from Phase 1 if soak is clean" target, because no
+canonical-attributable regressions surfaced during the soak.
+
+---
+
+## Result
+
+Three commits landed on `main`:
+
+| Phase | Commit | What landed | LOC delta |
+|---|---|---|---|
+| 1 | `f14a44b` | `decideSubmitRouting` default flipped to canonical for all lanes; `LAX_CANONICAL_LOOP_ALL` treated as ON when absent | +120 / −53 |
+| 2 | `d1703ea` | Fork lifecycle deleted: `pool.ts`, `worker-entry.ts`, `ipc.ts`, `routing/delegate-worker.ts`, legacy-path tests, `killOp` plumbing | +430 / −3720 |
+| 3 | this commit (subject `refactor(ops): rename workers/ to ops/ post-fork-retirement`) | `src/workers/` renamed to `src/ops/`; consumer imports swept; PRD §17 marked retired | +245 / −206 |
+
+Net: **+795 / −3979** across the three phases (≈3.2k lines net deletion).
+
+After Phase 3, `src/ops/` contains only canonical lifecycle helpers
+(op-store, event-log, heartbeat, session-bridge, idle-nudge,
+pending-notifications, context-pack-builder, checkpoint, redactor,
+provider-matrix, tools, types). No fork code, no IPC envelope helpers, no
+flag routing. The directory name now matches the contents.

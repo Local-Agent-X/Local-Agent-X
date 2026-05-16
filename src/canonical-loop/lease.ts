@@ -20,9 +20,9 @@
  *
  * v1 single-process semantics. Multi-process replication is out of scope.
  */
-import { readOp } from "../workers/op-store.js";
+import { readOp } from "../ops/op-store.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
-import type { Op } from "../workers/types.js";
+import type { Op } from "../ops/types.js";
 
 export interface LeaseConfig {
   leaseDurationMs: number;

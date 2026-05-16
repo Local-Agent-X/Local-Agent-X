@@ -24,9 +24,9 @@ import {
   recoverStaleOp,
   _pauseHeartbeat,
 } from "../src/canonical-loop/index.js";
-import { readOp, newOpId } from "../src/workers/op-store.js";
+import { readOp, newOpId } from "../src/ops/op-store.js";
 import { FakeAdapter, scriptTurn, scriptLongStreamingTurn } from "../test/canonical-loop/fake-adapter.js";
-import type { Op } from "../src/workers/types.js";
+import type { Op } from "../src/ops/types.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
 

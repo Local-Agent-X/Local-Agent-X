@@ -36,8 +36,8 @@ import {
   readCanonicalEvents,
   type CanonicalEvent,
 } from "../src/canonical-loop/index.js";
-import { newOpId } from "../src/workers/op-store.js";
-import type { Op } from "../src/workers/types.js";
+import { newOpId } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
 
 import { FakeAdapter, scriptTurn, scriptMultiTurn } from "./canonical-loop/fake-adapter.js";
 

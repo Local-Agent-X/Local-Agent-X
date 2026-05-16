@@ -7,12 +7,12 @@ import { ThreatEngine } from "../../threat-engine.js";
 import type { ServerEvent } from "../../types.js";
 import type { Role } from "../../rbac.js";
 import type { SseSink } from "./run-chat-turn.js";
-import { newOpId } from "../../workers/op-store.js";
-import { buildContextPack } from "../../workers/context-pack-builder.js";
-import { getRetryPolicy } from "../../workers/heartbeat.js";
-import { trackOpForSession } from "../../workers/session-bridge.js";
+import { newOpId } from "../../ops/op-store.js";
+import { buildContextPack } from "../../ops/context-pack-builder.js";
+import { getRetryPolicy } from "../../ops/heartbeat.js";
+import { trackOpForSession } from "../../ops/session-bridge.js";
 import { canonicalLoopEntry } from "../../canonical-loop/index.js";
-import type { Op, OpVisibility } from "../../workers/types.js";
+import type { Op, OpVisibility } from "../../ops/types.js";
 
 async function submitDelegationOp(message: string, sessionId: string): Promise<{ opId: string }> {
   const lane = "build" as const;

@@ -23,9 +23,9 @@ export async function startServer(config: LAXConfig) {
   // Provider matrix + session bridge bootstrap. Canonical-loop ops run
   // in-process and don't need a worker pool; the session bridge owns the
   // session-to-op binding used by op_status / sidebar wiring.
-  const { bootstrapProviderMatrix } = await import("../workers/provider-matrix.js");
-  const { initSessionBridge, setSessionPersister } = await import("../workers/session-bridge.js");
-  const { setIdleNudgePersister } = await import("../workers/idle-nudge.js");
+  const { bootstrapProviderMatrix } = await import("../ops/provider-matrix.js");
+  const { initSessionBridge, setSessionPersister } = await import("../ops/session-bridge.js");
+  const { setIdleNudgePersister } = await import("../ops/idle-nudge.js");
   bootstrapProviderMatrix();
   initSessionBridge();
   // Persist worker completion acks (session-bridge worker-completed path)

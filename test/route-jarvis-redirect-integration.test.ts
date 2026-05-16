@@ -10,7 +10,7 @@ let redirectOpReturn = true;
 type ClassifyResult = { redirect: boolean; reason: string } | null;
 let classifierResult: ClassifyResult = { redirect: true, reason: "feedback for worker" };
 
-vi.mock("../src/workers/session-bridge.js", () => ({
+vi.mock("../src/ops/session-bridge.js", () => ({
   listOpsForSession: vi.fn((sessionId: string) => activeOpsBySession.get(sessionId) ?? []),
   getOpTask: vi.fn((opId: string) => tasksByOpId.get(opId) ?? "(unknown)"),
 }));

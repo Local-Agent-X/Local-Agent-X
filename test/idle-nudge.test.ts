@@ -7,8 +7,8 @@ import {
   scheduleIdleNudge,
   setIdleNudgeBroadcaster,
   setIdleNudgePersister,
-} from "../src/workers/idle-nudge.js";
-import { drainPendingNotifications, pushPendingNotification } from "../src/workers/pending-notifications.js";
+} from "../src/ops/idle-nudge.js";
+import { drainPendingNotifications, pushPendingNotification } from "../src/ops/pending-notifications.js";
 
 let counter = 0;
 const sid = (tag: string): string => `nudge-test-${tag}-${Date.now()}-${counter++}`;

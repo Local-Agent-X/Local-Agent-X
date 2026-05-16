@@ -10,13 +10,13 @@
  * legacy branch invokes `void submitOp(op).catch(...)`, which fires the
  * worker pool subprocess machinery. Tests that bypass that produce a
  * stable, time-bounded snapshot. The harness's response template is
- * matched against `src/workers/tools.ts` source via a guard test, so
+ * matched against `src/ops/tools.ts` source via a guard test, so
  * any drift in the actual tool's format string fails the suite.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Op, OpLane } from "../../src/workers/types.js";
-import { writeOp, newOpId } from "../../src/workers/op-store.js";
+import type { Op, OpLane } from "../../src/ops/types.js";
+import { writeOp, newOpId } from "../../src/ops/op-store.js";
 import {
   canonicalLoopEntry,
   decideSubmitRouting,
@@ -26,7 +26,7 @@ import {
   readCanonicalEvents,
   type CanonicalEvent,
 } from "../../src/canonical-loop/index.js";
-import { opDir } from "../../src/workers/event-log.js";
+import { opDir } from "../../src/ops/event-log.js";
 
 export interface HarnessSubmitArgs {
   task: string;
@@ -138,7 +138,7 @@ export function harnessSubmit(args: HarnessSubmitArgs): HarnessSubmitResult {
 
 /**
  * Mirror of `op_submit_async`'s tool response template. KEEP IN SYNC with
- * `src/workers/tools.ts`; the source-drift guard test (see
+ * `src/ops/tools.ts`; the source-drift guard test (see
  * `canonical-loop-10-old-path-compat.test.ts`) asserts the literal
  * fragments of this template appear verbatim in the tool source.
  */
@@ -153,7 +153,7 @@ export function formatSubmitResponse(op: Pick<Op, "id" | "type" | "lane">): stri
 
 /**
  * Distinct fragments from the tool's response template that MUST exist
- * verbatim in `src/workers/tools.ts`. The drift guard scans the tool
+ * verbatim in `src/ops/tools.ts`. The drift guard scans the tool
  * source for each — any wording change requires a fixture refresh.
  */
 export const RESPONSE_TEMPLATE_FRAGMENTS: readonly string[] = [

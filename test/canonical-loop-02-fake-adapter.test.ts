@@ -198,7 +198,7 @@ describe("FakeAdapter — items H and I", () => {
     const tmpDir = join(process.cwd(), "test", "canonical-loop", ".tmp-conformance");
     if (!existsSync(tmpDir)) mkdirSync(tmpDir, { recursive: true });
     const bad = join(tmpDir, "bad-adapter.ts");
-    writeFileSync(bad, `import { writeOp } from "../../../src/workers/op-store.js";\nexport class X {}\n`);
+    writeFileSync(bad, `import { writeOp } from "../../../src/ops/op-store.js";\nexport class X {}\n`);
     try {
       const results = await runConformance(() => new FakeAdapter(), {
         items: ["I"],

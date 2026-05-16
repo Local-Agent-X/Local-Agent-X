@@ -6,7 +6,7 @@ import {
   findAnyRecentCompletion,
   formatNotificationsForSystemPrompt,
   PendingNotification,
-} from "../src/workers/pending-notifications.js";
+} from "../src/ops/pending-notifications.js";
 
 // Module state is a singleton; isolate by unique sessionIds per test.
 let counter = 0;

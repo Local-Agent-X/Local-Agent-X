@@ -24,11 +24,11 @@
  */
 import { randomUUID } from "node:crypto";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { newOpId, writeOp } from "../workers/op-store.js";
-import { buildContextPack } from "../workers/context-pack-builder.js";
-import { getRetryPolicy } from "../workers/heartbeat.js";
-import { trackOpForSession } from "../workers/session-bridge.js";
-import type { Op, OpLane, OpVisibility } from "../workers/types.js";
+import { newOpId, writeOp } from "../ops/op-store.js";
+import { buildContextPack } from "../ops/context-pack-builder.js";
+import { getRetryPolicy } from "../ops/heartbeat.js";
+import { trackOpForSession } from "../ops/session-bridge.js";
+import type { Op, OpLane, OpVisibility } from "../ops/types.js";
 import type { AgentOptions, ImageAttachment } from "../providers/types.js";
 import type { AgentTurn } from "../types.js";
 

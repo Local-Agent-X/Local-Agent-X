@@ -24,8 +24,8 @@ import { insertOpTurn, appendOpMessage, readOpMessages, readOpTurn } from "./sto
 import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
-import { readOp } from "../workers/op-store.js";
-import type { Op } from "../workers/types.js";
+import { readOp } from "../ops/op-store.js";
+import type { Op } from "../ops/types.js";
 import type {
   CanonicalMessageRole,
   OpMessageRow,

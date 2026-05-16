@@ -27,7 +27,7 @@ interface JarvisRedirectArgs {
 export async function tryWorkerRedirect(args: JarvisRedirectArgs): Promise<boolean> {
   const { sessionId, message, recentSessionMessages, sseSink } = args;
   try {
-    const { listOpsForSession, getOpTask } = await import("../../workers/session-bridge.js");
+    const { listOpsForSession, getOpTask } = await import("../../ops/session-bridge.js");
     const activeOps = listOpsForSession(sessionId);
     if (activeOps.length === 0) return false;
 

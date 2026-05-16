@@ -14,7 +14,7 @@ import {
   ANTHROPIC_ADAPTER_NAME,
 } from "../src/canonical-loop/index.js";
 import { bootstrapCanonicalLoop } from "../src/server/canonical-loop-bootstrap.js";
-import type { Op } from "../src/workers/types.js";
+import type { Op } from "../src/ops/types.js";
 
 const LANE_ENVS = [
   "LAX_CANONICAL_LOOP_INTERACTIVE",

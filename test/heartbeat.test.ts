@@ -5,8 +5,8 @@ import {
   resetCircuit,
   decideRecovery,
   getRetryPolicy,
-} from "../src/workers/heartbeat.js";
-import type { Op, OpRetryPolicy } from "../src/workers/types.js";
+} from "../src/ops/heartbeat.js";
+import type { Op, OpRetryPolicy } from "../src/ops/types.js";
 
 let counter = 0;
 const opType = (label: string) => `t-${Date.now()}-${++counter}-${label}`;

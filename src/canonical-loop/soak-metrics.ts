@@ -17,7 +17,7 @@
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { readOp } from "../workers/op-store.js";
+import { readOp } from "../ops/op-store.js";
 import { readLatestOpTurn, readOpTurns } from "./store.js";
 import { schedulerSnapshot } from "./scheduler.js";
 import { getPricing } from "../cost-tracker.js";

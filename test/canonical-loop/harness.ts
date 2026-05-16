@@ -30,8 +30,8 @@ import {
   insertOpTurn,
   appendOpMessage,
 } from "../../src/canonical-loop/index.js";
-import { writeOp, newOpId } from "../../src/workers/op-store.js";
-import type { Op, OpLane } from "../../src/workers/types.js";
+import { writeOp, newOpId } from "../../src/ops/op-store.js";
+import type { Op, OpLane } from "../../src/ops/types.js";
 import type {
   CanonicalEvent,
   CanonicalEventType,

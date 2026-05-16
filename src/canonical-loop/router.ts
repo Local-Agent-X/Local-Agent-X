@@ -8,7 +8,7 @@
  *
  * See docs/migration/worker-pool-retirement.md.
  */
-import type { Op } from "../workers/types.js";
+import type { Op } from "../ops/types.js";
 import type { CanonicalLane } from "./types.js";
 
 export interface SubmitRouting {

@@ -57,8 +57,8 @@ import {
   subscribeOpEvents,
   type ProviderStateEnvelope,
 } from "../src/canonical-loop/index.js";
-import { readOp, writeOp, newOpId } from "../src/workers/op-store.js";
-import type { Op } from "../src/workers/types.js";
+import { readOp, writeOp, newOpId } from "../src/ops/op-store.js";
+import type { Op } from "../src/ops/types.js";
 
 import { FakeAdapter, scriptTurn, scriptMultiTurn, scriptLongStreamingTurn } from "./canonical-loop/fake-adapter.js";
 

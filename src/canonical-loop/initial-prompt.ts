@@ -1,7 +1,7 @@
 /**
  * Initial-prompt seeding for canonical-routed ops.
  *
- * The legacy worker (workers/worker-entry.ts) builds an initial user message
+ * The legacy worker (ops/worker-entry.ts) builds an initial user message
  * from `op.task` and a system prompt from `op.contextPack` before the first
  * model call. The canonical loop replays history from `op_messages` on every
  * turn — so without a seeded initial user message the first turn ships an
@@ -17,12 +17,12 @@
 import { randomUUID } from "node:crypto";
 import { appendOpMessage, readOpMessages } from "./store.js";
 import { emit } from "./event-emitter.js";
-import type { Op } from "../workers/types.js";
+import type { Op } from "../ops/types.js";
 import type { OpMessageRow } from "./types.js";
 
 /**
  * Render the initial user message content for `op`. Mirrors the legacy
- * worker's prompt construction (workers/worker-entry.ts:buildSystemPromptFromPack)
+ * worker's prompt construction (ops/worker-entry.ts:buildSystemPromptFromPack)
  * by including every contextPack field the legacy path renders into the
  * system prompt — task, success criteria, constraints, do-not-redo,
  * pre-loaded referenced files (truncated), memory hits, AGENTS.md
@@ -74,7 +74,7 @@ export function buildInitialUserContent(op: Op): { text: string } {
   }
 
   // Pre-loaded referenced files — content is truncated to 3000 chars per
-  // file, same cap legacy uses (workers/worker-entry.ts:427).
+  // file, same cap legacy uses (ops/worker-entry.ts:427).
   const referencedFiles = ctx?.referencedFiles ?? [];
   if (referencedFiles.length > 0) {
     lines.push("");

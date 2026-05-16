@@ -22,8 +22,8 @@ import type { Server } from "node:http";
 import type { ServerEvent } from "./types.js";
 import { timingSafeEqual } from "node:crypto";
 import { getApprovalManager } from "./approval-manager.js";
-import { setSessionBroadcaster } from "./workers/session-bridge.js";
-import { setIdleNudgeBroadcaster } from "./workers/idle-nudge.js";
+import { setSessionBroadcaster } from "./ops/session-bridge.js";
+import { setIdleNudgeBroadcaster } from "./ops/idle-nudge.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("chat-ws");
@@ -47,7 +47,7 @@ type ChatHandler = (sessionId: string, message: string, attachments: any[]) => v
 let chatHandler: ChatHandler | null = null;
 
 export function setupChatWebSocket(server: Server, authToken: string) {
-  // Register the broadcaster the workers/session-bridge uses to push op
+  // Register the broadcaster the ops/session-bridge uses to push op
   // completion notifications back into the chat session. Done here (not
   // in setup callers) so the bridge wiring is a single line tied to chat
   // WS lifetime.

@@ -9,11 +9,11 @@
  * Atomicity in v1 is best-effort filesystem semantics: per-op `seq` is
  * derived from the current line count of canonical-events.jsonl, and
  * `appendCanonicalEvent` is synchronous to preserve ordering — same
- * approach as workers/event-log.ts.
+ * approach as ops/event-log.ts.
  */
 import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync, renameSync, readdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { opDir } from "../workers/event-log.js";
+import { opDir } from "../ops/event-log.js";
 import {
   canonicalEventsPath,
   opMessagesPath,

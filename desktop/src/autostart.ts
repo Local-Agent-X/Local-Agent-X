@@ -1,47 +1,21 @@
 /**
- * Autostart — register/unregister the app to start on Windows boot.
- * Uses the Windows Registry via reg.exe (no native module needed).
+ * Autostart — register/unregister the app to launch on user login.
+ * Uses Electron's setLoginItemSettings which handles Windows (Run key),
+ * macOS (Login Items), and Linux (autostart .desktop entry) natively.
  */
 
-import { execSync } from "child_process";
 import { app } from "electron";
 
-const REG_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-const APP_NAME = "OpenAgentX";
-
 export function registerAutostart(): void {
-  try {
-    const exePath = app.getPath("exe");
-    execSync(
-      `reg add "${REG_KEY}" /v "${APP_NAME}" /t REG_SZ /d "${exePath}" /f`,
-      { stdio: "ignore", windowsHide: true }
-    );
-    console.log("[desktop] Autostart registered");
-  } catch (err) {
-    console.error("[desktop] Failed to register autostart:", err);
-  }
+  app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true });
+  console.log("[desktop] Autostart registered");
 }
 
 export function unregisterAutostart(): void {
-  try {
-    execSync(`reg delete "${REG_KEY}" /v "${APP_NAME}" /f`, {
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    console.log("[desktop] Autostart unregistered");
-  } catch {
-    // Key might not exist — that's fine
-  }
+  app.setLoginItemSettings({ openAtLogin: false });
+  console.log("[desktop] Autostart unregistered");
 }
 
 export function isAutostartEnabled(): boolean {
-  try {
-    const result = execSync(`reg query "${REG_KEY}" /v "${APP_NAME}"`, {
-      encoding: "utf-8",
-      windowsHide: true,
-    });
-    return result.includes(APP_NAME);
-  } catch {
-    return false;
-  }
+  return app.getLoginItemSettings().openAtLogin;
 }

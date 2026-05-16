@@ -130,20 +130,57 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   }
   const forceBuildIntent = intentVerdict?.kind === "build_app";
 
-  let tools = isBridge
-    ? bridgeTools
-    : filterToolsForMessage(allAgentTools, message, { forceBuildIntent });
-
-  // Shrink for weaker models. 100+ tool catalogs paralyze Grok / small local
-  // models (0-token responses). Cap aggressively while keeping essentials
-  // ordered first.
+  // Tier first — strong models get the full inventory (no filter, no shrink,
+  // no RAG re-rank), so the LLM cannot fail-discover a tool that exists.
+  // The previous slice → filter → shrink → RAG pipeline ate cycles to keep
+  // the catalogue small for token-cost reasons; with Anthropic prompt
+  // caching (cache_control added in the stream-api adapter), the tool
+  // schemas hit cache after the first turn and the per-turn marginal cost
+  // collapses to ~10% of base. OpenAI/Codex providers cache automatically.
+  // Weak/medium models still need shrinking — 100+ tool catalogs paralyze
+  // them into 0-token responses.
   const { classifyModel, shrinkToolsForTier } = await import("../model-tiers.js");
   const tier = classifyModel(resolved.model);
-  if (tier !== "strong") {
+
+  let tools: typeof allAgentTools;
+  if (isBridge) {
+    tools = bridgeTools;
+  } else if (tier === "strong") {
+    // Full inventory. The forceBuildIntent classifier above still runs so
+    // tool_choice can be forced later in step 7 — it just doesn't gate the
+    // tool list anymore.
+    tools = allAgentTools;
+  } else {
+    tools = filterToolsForMessage(allAgentTools, message, { forceBuildIntent });
     const before = tools.length;
     tools = shrinkToolsForTier(tools, tier, allAgentTools);
     if (tools.length !== before) {
       logger.info(`[tools] Shrunk ${before}→${tools.length} for ${tier} model ${resolved.model} (${tools.map(t=>t.name).join(",")})`);
+    }
+    try {
+      const { getToolRAG } = await import("../tool-rag.js");
+      const rag = getToolRAG();
+      // Do NOT call rag.build() from the chat path — embedding 167 tools
+      // serially on CPU-only Ollama is 50-100s. Pre-warm at server boot
+      // (src/server/index.ts) is the only builder. If a chat beats the
+      // pre-warm we just ship without RAG re-rank this turn.
+      if (rag.isReady) {
+        const semantic = await rag.select(message, allAgentTools, {
+          topK: 22,
+          minScore: 0.25,
+          corePinned: [...CORE_TOOL_NAMES],
+          includeMCP: true,
+        });
+        const union = new Set(tools.map(t => t.name));
+        for (const t of semantic) {
+          if (!SUPERVISOR_EXCLUDED.has(t.name)) union.add(t.name);
+        }
+        tools = allAgentTools.filter(t => union.has(t.name));
+      } else {
+        logger.info(`[tool-rag] not ready yet — shipping shrunk set without RAG re-rank`);
+      }
+    } catch (e) {
+      logger.warn(`[tool-rag] Skipped: ${(e as Error).message}`);
     }
   }
 
@@ -163,38 +200,6 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     smartContext = "";
     memoryContext = "";
     logger.info(`[chat] weak tier ${resolved.model} — stripped memory/profile context to prevent roleplay drift`);
-  }
-  if (!isBridge) {
-    try {
-      const { getToolRAG } = await import("../tool-rag.js");
-      const rag = getToolRAG();
-      // IMPORTANT: do NOT call rag.build() from the chat path. Building
-      // requires embedding all 167 tools serially on Ollama; on CPU-only
-      // boxes that's 50-100s. The pre-warm at server boot
-      // (src/server/index.ts) is the ONLY caller that builds. If a chat
-      // arrives before pre-warm finishes, we just don't filter tools this
-      // turn — the chat ships with the full tool list (after the model-
-      // tier shrink above) and RAG kicks in on later turns once warm.
-      // Logged once per cold-start chat to surface the rare "first chat
-      // beat the pre-warm" case for telemetry.
-      if (rag.isReady) {
-        const semantic = await rag.select(message, allAgentTools, {
-          topK: 22,
-          minScore: 0.25,
-          corePinned: [...CORE_TOOL_NAMES],
-          includeMCP: true,
-        });
-        const union = new Set(tools.map(t => t.name));
-        for (const t of semantic) {
-          if (!SUPERVISOR_EXCLUDED.has(t.name)) union.add(t.name);
-        }
-        tools = allAgentTools.filter(t => union.has(t.name));
-      } else {
-        logger.info(`[tool-rag] not ready yet — shipping all tools this turn (pre-warm in flight)`);
-      }
-    } catch (e) {
-      logger.warn(`[tool-rag] Skipped: ${(e as Error).message}`);
-    }
   }
 
   let toolPromptSection = "";

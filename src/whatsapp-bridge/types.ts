@@ -13,7 +13,7 @@ export interface BridgeReply {
 }
 
 export interface WhatsAppBridgeConfig {
-  dataDir: string;  // ~/.sax — session auth persisted here
+  dataDir: string;  // ~/.lax — session auth persisted here
   onMessage: (params: {
     from: string;
     name: string;

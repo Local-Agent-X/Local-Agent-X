@@ -332,7 +332,29 @@ export class AgentTemplateStore {
   private static instance: AgentTemplateStore;
   private templates: AgentTemplate[] = [];
 
-  private constructor() { this.load(); this.seedDefaults(); }
+  private constructor() { this.load(); this.migrateAppBuilderTools(); this.seedDefaults(); }
+
+  /**
+   * Phase-3 migration (docs/migration/build-app-to-canonical-op.md):
+   * Phase 2 seeded the `app-builder` template with `list_directory` in
+   * allowedTools — that tool isn't registered. The adapter substituted
+   * `glob` at runtime as a workaround; Phase 3 fixes the template in place.
+   * Idempotent: a template already using `glob` is left alone.
+   */
+  private migrateAppBuilderTools(): void {
+    const t = this.templates.find(x => x.id === "app-builder");
+    if (!t) return;
+    const idx = t.allowedTools.indexOf("list_directory");
+    if (idx < 0) return;
+    if (t.allowedTools.includes("glob")) {
+      t.allowedTools.splice(idx, 1);
+    } else {
+      t.allowedTools[idx] = "glob";
+    }
+    t.updatedAt = Date.now();
+    this.persist();
+    logger.info("[agents] migrated app-builder template: list_directory → glob");
+  }
 
   static getInstance(): AgentTemplateStore {
     if (!AgentTemplateStore.instance) AgentTemplateStore.instance = new AgentTemplateStore();
@@ -477,7 +499,7 @@ export class AgentTemplateStore {
         role: "App Builder",
         description: "Builds web apps in workspace/apps/. Strategy varies per provider.",
         systemPrompt: renderPersonaPrompt(),
-        allowedTools: ["write", "read", "edit", "bash", "list_directory"],
+        allowedTools: ["write", "read", "edit", "bash", "glob"],
         icon: "🛠",
         providerStrategy: {
           codex: "cli-subprocess",

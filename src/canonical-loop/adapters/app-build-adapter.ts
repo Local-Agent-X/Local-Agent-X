@@ -1,28 +1,28 @@
 /**
- * App-build adapter — canonical-loop entrypoint for the app_build op type
- * (Phase 2 of docs/migration/build-app-to-canonical-op.md).
+ * App-build adapter — canonical-loop entrypoint for the app_build op type.
  *
  * The factory routes per the app-builder saved-agent template's
  * `providerStrategy`:
  *
- *   - cli-subprocess (codex, anthropic): wraps the legacy
- *     buildWithCodex / buildWithClaude subprocess flow in a one-turn
- *     adapter. Progress lines from the CLI's onEvent callback become
- *     stream chunks; APP_READY emission terminates the turn with
- *     terminalReason="done".
+ *   - cli-subprocess (codex, anthropic): adapter owns an AbortController per
+ *     turn and hands its signal to `runCliBuild` (src/tools/build-app-spawn.ts).
+ *     Progress lines from the CLI's onEvent callback become stream chunks;
+ *     APP_READY emission terminates the turn with terminalReason="done".
+ *     On `adapter.abort()` the controller fires, build-app-spawn kills the
+ *     subprocess tree (Windows shell:true wraps the binary in cmd.exe so a
+ *     plain proc.kill leaks the descendant), and the runner promise rejects.
  *
  *   - in-canonical-sub-agent (qwen, cerebras, grok, gemini, local, …):
  *     delegates to the user's selected provider's HTTP adapter so the
- *     loop drives a real turn_loop with the write/read/edit/bash tools.
+ *     loop drives a real turn_loop with the write/read/edit/bash/glob tools.
  *     The persona prompt is the app-builder template's systemPrompt; the
  *     per-build context is pre-seeded as turn-0 op_messages by the
- *     build_app_canonical tool before the worker leases the op.
+ *     build_app tool before the worker leases the op.
  *
  * Sandbox boundary (PRD §15): this file is audited by the boundary test
- * in test/canonical-loop-11-boundary-audit.test.ts. It does NOT import
- * `node:child_process` directly — the legacy `buildWithCodex` /
- * `buildWithClaude` functions in `src/tools/builder-tools.ts` own the
- * subprocess primitives behind a regular function call.
+ * in test/canonical-loop-11-boundary-audit.test.ts. Subprocess primitives
+ * live behind a function-call boundary in src/tools/build-app-spawn.ts —
+ * this adapter never imports `node:child_process` directly.
  */
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { ProviderStateEnvelope } from "../contract-types.js";
@@ -53,7 +53,7 @@ export interface AppBuildAdapterOptions {
   model?: string;
   /** Test seam: override the CLI runner so unit tests don't spawn real
    *  subprocesses. Production passes nothing — the default runner calls
-   *  through to builder-tools.ts. */
+   *  through to src/tools/build-app-spawn.ts. */
   cliRunner?: CliBuildRunner;
   /** Test seam: override provider-adapter construction for in-canonical
    *  strategy tests. Production passes nothing. */
@@ -71,6 +71,10 @@ export interface CliBuildRunnerInput {
   prompt: string;
   appDir: string;
   appUrl: string;
+  /** Per-turn abort signal. When this fires the runner MUST kill the
+   *  subprocess tree and reject — that's how `adapter.abort()` cancels
+   *  in-flight builds (closes Phase 2 gap A). */
+  signal?: AbortSignal;
   onEvent?: (e: { type: string; [k: string]: unknown }) => void;
 }
 
@@ -98,6 +102,10 @@ class CliBuildAdapter implements Adapter {
   readonly version = APP_BUILD_ADAPTER_VERSION;
 
   private aborted = false;
+  /** Fresh per turn so the adapter can be reused across turns. The cancel
+   *  path on `abort()` fires this controller's signal, which the runner
+   *  watches via `addEventListener("abort", killProcessTree)`. */
+  private controller: AbortController | null = null;
 
   constructor(private readonly opts: AppBuildAdapterOptions) {}
 
@@ -119,6 +127,7 @@ class CliBuildAdapter implements Adapter {
     };
 
     const runner = this.opts.cliRunner ?? defaultCliRunner;
+    this.controller = new AbortController();
 
     let result: CliBuildRunnerResult;
     try {
@@ -127,10 +136,15 @@ class CliBuildAdapter implements Adapter {
         prompt: this.opts.prompt,
         appDir: this.opts.appDir,
         appUrl: this.opts.appUrl,
+        signal: this.controller.signal,
         onEvent,
       });
     } catch (e) {
       const message = (e as Error).message ?? String(e);
+      if (this.aborted) {
+        report({ kind: "error", code: "aborted", message: "adapter aborted mid-build", retryable: false });
+        return { providerState: this.buildProviderState({ aborted: true }), terminalReason: "error" };
+      }
       report({ kind: "error", code: "build_failed", message, retryable: false });
       return { providerState: this.buildProviderState({ error: message }), terminalReason: "error" };
     }
@@ -172,6 +186,7 @@ class CliBuildAdapter implements Adapter {
 
   async abort(): Promise<void> {
     this.aborted = true;
+    this.controller?.abort();
   }
 
   private buildProviderState(payload: Record<string, unknown>): ProviderStateEnvelope {
@@ -189,10 +204,15 @@ class CliBuildAdapter implements Adapter {
 }
 
 const defaultCliRunner: CliBuildRunner = async (input) => {
-  const { buildWithCodex, buildWithClaude } = await import("../../tools/builder-tools.js");
-  const out = input.provider === "codex"
-    ? await buildWithCodex(input.prompt, input.appDir, input.appUrl, input.onEvent)
-    : await buildWithClaude(input.prompt, input.appDir, input.appUrl, input.onEvent);
+  const { runCliBuild } = await import("../../tools/build-app-spawn.js");
+  const out = await runCliBuild({
+    provider: input.provider,
+    prompt: input.prompt,
+    appDir: input.appDir,
+    appUrl: input.appUrl,
+    signal: input.signal,
+    onEvent: input.onEvent,
+  });
   return { content: out.content, isError: out.isError };
 };
 

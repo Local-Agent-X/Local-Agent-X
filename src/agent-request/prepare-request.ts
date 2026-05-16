@@ -432,6 +432,25 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     }
   }
 
+  // 7b. CLI/OAuth nudge for build_app. The Anthropic CLI path ignores
+  // the tool_choice we set above. Without an inline directive, Opus
+  // will sometimes call write/edit/glob to create app files directly
+  // instead of going through build_app — which means no canonical op,
+  // no AGENTS sidebar card, no streaming progress, no cancel button.
+  // Append a strong directive to the system prompt for this turn only
+  // so the model picks build_app even when tool_choice is dropped.
+  if (forceBuildIntent && resolved.provider === "anthropic") {
+    systemPrompt +=
+      `\n\n--- TURN DIRECTIVE ---\n` +
+      `Intent classifier identified this turn as a build_app request: ${intentVerdict?.reason ?? "(no reason)"}.\n` +
+      `You MUST call the build_app tool for this. Do NOT call write, edit, or glob to create the app files inline — ` +
+      `that path skips canonical-loop tracking and the user will see no progress card. ` +
+      `build_app spawns a background op that streams in the AGENTS sidebar and can be cancelled. ` +
+      `If the user's request is small enough that you could write it inline, you should STILL use build_app — ` +
+      `the user explicitly asked for an app.\n` +
+      `--- END TURN DIRECTIVE ---\n`;
+  }
+
   return {
     provider: resolved.provider,
     apiKey: resolved.apiKey,

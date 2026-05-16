@@ -284,6 +284,11 @@ async function executeSingleTool(
     // self_edit needs sessionId for the per-session live-call lock AND for
     // the intent/approval gates added in the safety pass — see self-edit-tool.ts.
     "self_edit",
+    // build_app spawns a canonical op_app_build_*. Without sessionId the
+    // op is created but never bound to the chat — session-bridge-observer
+    // suppresses its bg_op_* events because getSessionForOp returns null,
+    // so the AGENTS sidebar never sees the worker card.
+    "build_app",
   ]);
   if (SESSION_SCOPED_TOOLS.has(tc.name)) {
     args._sessionId = sessionId || "default";

@@ -49,6 +49,7 @@ const RETRY_POLICIES: Record<string, OpRetryPolicy> = {
   "research_query":       { maxRecoveryAttempts: 5, backoffMs: [5_000, 30_000, 60_000, 120_000, 300_000] },
   "autopilot_round":      { maxRecoveryAttempts: 2, backoffMs: [30_000, 120_000] },
   "build_app":            { maxRecoveryAttempts: 3, backoffMs: [30_000, 60_000, 180_000] },
+  "app_build":            { maxRecoveryAttempts: 3, backoffMs: [30_000, 60_000, 180_000] },
   "memory_consolidation": { maxRecoveryAttempts: 5, backoffMs: [60_000, 300_000, 600_000, 1_800_000, 3_600_000] },
   "self_edit":            { maxRecoveryAttempts: 2, backoffMs: [10_000, 60_000] },
   "smoke-test":           { maxRecoveryAttempts: 1, backoffMs: [5_000] },

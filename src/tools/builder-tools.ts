@@ -16,6 +16,10 @@ export const buildAppTool: ToolDefinition = {
     required: ["name", "prompt"],
   },
   async execute(args) {
+    if (process.env.LAX_BUILD_APP_CANONICAL === "1" || process.env.LAX_BUILD_APP_CANONICAL === "true") {
+      const { buildAppCanonicalTool } = await import("./build-app-canonical.js");
+      return buildAppCanonicalTool.execute(args);
+    }
     const appName = String(args.name || "app").replace(/[^a-zA-Z0-9_-]/g, "-");
     // Some models occasionally emit `description` instead of `prompt` because
     // the schema's parameter description used to contain the word

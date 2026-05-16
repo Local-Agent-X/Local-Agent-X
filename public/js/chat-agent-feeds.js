@@ -149,6 +149,7 @@ function updateAgentFeed(agentId, update) {
     if (update.output)     existing.output     = (existing.output     || '') + update.output;
     if (update.name) existing.name = update.name;
     if (update.role) existing.role = update.role;
+    if (update.resultUrl) existing.resultUrl = update.resultUrl;
   }
   var card = document.getElementById('agent-card-' + agentId);
   if (card) {
@@ -183,6 +184,17 @@ function updateAgentFeed(agentId, update) {
     var statusEl = card.querySelector('.agent-feed-status');
     if (statusEl) {
       statusEl.innerHTML = '<span class="agent-status-dot"></span> ' + esc(existing.status || 'working');
+    }
+    // Build_app and other URL-producing ops set resultUrl on completion.
+    // Render as a clickable "Open" link below the worker activity. esc()
+    // on the href guards against any agent-controlled string reaching href.
+    if (update.resultUrl) {
+      var linkEl = card.querySelector('.agent-feed-result-link');
+      if (linkEl) {
+        var safeUrl = esc(update.resultUrl);
+        linkEl.innerHTML = '<a href="' + safeUrl + '" target="_blank" rel="noopener" style="color:var(--accent,#3a7);text-decoration:none">↗ Open: ' + safeUrl + '</a>';
+        linkEl.style.display = 'block';
+      }
     }
     // Re-render the control buttons. Without this, hitting Pause flipped the
     // status text to "paused" but the button stayed as "Pause" forever.
@@ -244,6 +256,7 @@ function renderAgentCard(agent) {
       '</div>' +
       '<div class="worker-tools-body" style="display:none;font-family:var(--mono,monospace);font-size:.68rem;color:var(--muted,#888);padding:.3rem .55rem .45rem;max-height:200px;overflow-y:auto;white-space:pre-wrap">' + esc(output) + '</div>' +
     '</div>' +
+    '<div class="agent-feed-result-link" style="display:none;padding:.4rem .55rem;font-size:.75rem;border-top:1px solid var(--border,#333)"></div>' +
     '<div class="agent-feed-controls">' +
       (isPaused
         ? '<button class="agent-ctrl-btn" onclick="onAgentResume(\'' + safeId + '\')">Resume</button>'

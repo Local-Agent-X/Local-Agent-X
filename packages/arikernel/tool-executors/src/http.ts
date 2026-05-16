@@ -3,6 +3,7 @@ import { now } from "@arikernel/core";
 import type { ToolExecutor } from "./base.js";
 import { DEFAULT_TIMEOUT_MS, makeResult } from "./base.js";
 import { ssrfSafeRequest } from "./ssrf.js";
+import { runPreDispatchGate } from "./pre-dispatch-gate.js";
 
 // Re-export SSRF utilities for backward compatibility
 export { isPrivateIP, resolveHost, validateHostSSRF } from "./ssrf.js";
@@ -67,6 +68,7 @@ export class HttpExecutor implements ToolExecutor {
 	readonly toolClass = "http";
 
 	async execute(toolCall: ToolCall): Promise<ToolResult> {
+		await runPreDispatchGate(toolCall);
 		const start = Date.now();
 		const { url, method, headers, body } = toolCall.parameters as {
 			url: string;

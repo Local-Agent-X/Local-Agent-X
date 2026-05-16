@@ -1,270 +1,36 @@
 /**
- * Session bridge — routes op completion notifications back to the chat
- * session that originally submitted the op via op_submit_async.
+ * Session bridge — session-to-op binding for canonical-loop ops.
  *
- * Flow:
- *   1. Chat agent calls op_submit_async → tool injects sessionId from
- *      args._sessionId, calls trackOpForSession(opId, sessionId), then
- *      submits the op (fire-and-forget) and returns immediately.
- *   2. Worker eventually finishes; pool.ts emits "op-result" on its bus.
- *   3. This bridge subscribes to op-result; on each event it looks up the
- *      submitting session and pushes a tool_progress-style ServerEvent
- *      back into that session's chat WS stream so the user sees the
- *      completion notification live (or on next subscribe via the
- *      ActiveChat event buffer).
- *
- * Why a separate module instead of doing this in tools.ts:
- *   - tools.ts callbacks scope to a single tool invocation. Once the
- *     agent's turn ends, the per-call _onEvent closure goes out of
- *     scope. We need a session-scoped, persistent subscription owned
- *     by the server, not the tool invocation.
- *   - Keeps chat-ws.ts decoupled from worker internals — the bridge is
- *     the single integration point.
+ * Tracks which chat session submitted which op so completion events and
+ * progress updates can route back to the originating session. Lifecycle
+ * events themselves are translated by
+ * src/canonical-loop/session-bridge-observer.ts — this module owns the
+ * map plumbing only.
  */
 
 import type { ServerEvent } from "../types.js";
-import type { OpEvent, OpResult } from "./types.js";
-import { subscribeAllOpResults, subscribeAllOps, subscribeAllOpQueued, subscribeAllOpDispatched, subscribeAllOpQueueReordered } from "./pool.js";
-import { pushPendingNotification } from "./pending-notifications.js";
-import { scheduleIdleNudge } from "./idle-nudge.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.session-bridge");
 
-// opId -> sessionId of the chat that submitted it
 const opSession = new Map<string, string>();
-
-// sessionId -> set of opIds it has submitted (for cleanup + listing)
 const sessionOps = new Map<string, Set<string>>();
-
-// opId -> original task text (so the pending-notification carries the
-// original user prompt for the agent to reference on next turn)
 const opTask = new Map<string, string>();
 
-// The broadcaster the chat-ws layer registers. Lets us push events back
-// without importing chat-ws here (would create a circular dep with
-// server/index.ts startup ordering).
 let broadcaster: ((sessionId: string, event: ServerEvent) => void) | null = null;
-
-// Persistence callback — appends a completion notice as an assistant
-// message to the session, so the user sees it on reload even if the live
-// WS event was missed. Registered by the server during bootstrap.
 let persister: ((sessionId: string, content: string) => void) | null = null;
-
 let initialized = false;
 
-/** Initialize the bridge. Idempotent — call once at server startup. */
 export function initSessionBridge(): void {
   if (initialized) return;
   initialized = true;
-  subscribeAllOpResults((result) => onOpResult(result));
-  subscribeAllOps((event) => onOpEvent(event));
-  subscribeAllOpQueued((info) => onOpQueued(info));
-  subscribeAllOpDispatched((info) => onOpDispatched(info));
-  subscribeAllOpQueueReordered((info) => onOpQueueReordered(info));
   logger.info("[session-bridge] initialized");
 }
 
-/** Forward op-queue-reordered → per-session bg_op_queue_reordered. */
-function onOpQueueReordered(info: { entries: { opId: string; queuePosition: number }[] }): void {
-  if (!broadcaster) return;
-  for (const entry of info.entries) {
-    const sessionId = opSession.get(entry.opId);
-    if (!sessionId) continue;
-    try {
-      broadcaster(sessionId, {
-        type: "bg_op_queue_reordered",
-        opId: entry.opId,
-        queuePosition: entry.queuePosition,
-      });
-    } catch (e) {
-      logger.warn(`[session-bridge] queue-reordered broadcast threw: ${(e as Error).message}`);
-    }
-  }
-}
-
-/** Forward op-queued → bg_op_queued (sidebar card with status: queued + queue position). */
-function onOpQueued(info: { opId: string; task: string; lane: string; queuePosition: number }): void {
-  const sessionId = opSession.get(info.opId);
-  if (!sessionId || !broadcaster) return;
-  try {
-    broadcaster(sessionId, {
-      type: "bg_op_queued",
-      opId: info.opId,
-      task: info.task,
-      provider: "",                       // resolved per-op inside worker; not known here
-      lane: info.lane,
-      queuePosition: info.queuePosition,
-    });
-  } catch (e) {
-    logger.warn(`[session-bridge] queued broadcast threw: ${(e as Error).message}`);
-  }
-}
-
-/** Forward op-dispatched → bg_op_started (sidebar card flips queued → working). */
-function onOpDispatched(info: { opId: string; task: string; lane: string }): void {
-  const sessionId = opSession.get(info.opId);
-  if (!sessionId || !broadcaster) return;
-  try {
-    broadcaster(sessionId, {
-      type: "bg_op_started",
-      opId: info.opId,
-      task: info.task,
-      provider: "",                       // see note above
-    });
-  } catch (e) {
-    logger.warn(`[session-bridge] dispatched broadcast threw: ${(e as Error).message}`);
-  }
-}
-
-/**
- * Pull the most informative single arg from a tool call — the path being
- * written, the bash command, the search query — so the sidebar shows
- * "→ write src/voice/voice-session.ts" instead of bare "→ write".
- *
- * Truncated to ~80 chars so the card stays readable.
- */
-function summarizeToolArgs(toolName: string, args: Record<string, unknown> | undefined): string {
-  if (!args) return "";
-  const pick = (k: string): string => {
-    const v = args[k];
-    return typeof v === "string" ? v : "";
-  };
-  const shorten = (s: string, max = 80): string => {
-    const cleaned = s.replace(/\s+/g, " ").trim();
-    return cleaned.length > max ? cleaned.slice(0, max - 1) + "…" : cleaned;
-  };
-  // File paths — collapse the LAX repo prefix to keep the card tight.
-  // Anchored to process.cwd() so it follows any project-folder rename
-  // instead of hardcoding the slug.
-  const projectCwd = process.cwd().replace(/[/\\]+$/, "");
-  const escapedCwd = projectCwd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const cwdRe = new RegExp(`^${escapedCwd}[/\\\\]`, "i");
-  const cleanPath = (p: string): string => p.replace(cwdRe, "");
-  switch (toolName) {
-    case "write":
-    case "edit":
-    case "read":
-    case "view_image":
-      return shorten(cleanPath(pick("path") || pick("file_path")));
-    case "bash":
-    case "shell":
-      return shorten(pick("command") || pick("cmd"));
-    case "grep":
-      return shorten(`'${pick("pattern")}'${pick("path") ? " in " + cleanPath(pick("path")) : ""}`);
-    case "glob":
-      return shorten(pick("pattern"));
-    case "web_fetch":
-    case "http_request":
-      return shorten(pick("url"));
-    case "web_search":
-      return shorten(`'${pick("query")}'`);
-    case "self_edit":
-      return shorten(pick("task") || pick("description"));
-    case "op_submit_async":
-    case "op_submit":
-      return shorten(pick("task"));
-    case "op_status":
-    case "op_kill":
-    case "op_wait":
-      return shorten(pick("op_id"));
-    case "ask_user":
-      return shorten(pick("question") || pick("prompt"));
-    default:
-      // Generic fallback: surface the first scalar string arg. Better than blank.
-      for (const k of Object.keys(args)) {
-        const v = args[k];
-        if (typeof v === "string" && v.length > 0) return shorten(v);
-      }
-      return "";
-  }
-}
-
-/**
- * Forward worker events as bg_op_progress lines so the AGENTS sidebar
- * card shows live progress instead of sitting blank until completion.
- */
-function onOpEvent(event: OpEvent): void {
-  const sessionId = opSession.get(event.opId);
-  if (!sessionId || !broadcaster) return;
-
-  // Render only the events that map to user-visible activity. Drop noisy
-  // internal types (heartbeat-ish events). Keep tool calls + agent text +
-  // status transitions — those are the bits a human glancing at the
-  // sidebar card actually wants to see.
-  let line: string | null = null;
-  switch (event.type) {
-    case "tool_call": {
-      const p = event.payload as { toolName?: string; args?: Record<string, unknown> };
-      const tn = p?.toolName || "tool";
-      const detail = summarizeToolArgs(tn, p?.args);
-      line = detail ? `→ ${tn} ${detail}` : `→ ${tn}`;
-      break;
-    }
-    case "tool_result": {
-      const p = event.payload as { toolName?: string; ok?: boolean };
-      const tn = p?.toolName || "tool";
-      const ok = p?.ok;
-      line = `  ${ok === false ? "✗" : "✓"} ${tn}`;
-      break;
-    }
-    case "agent_text": {
-      // Worker LLM text deltas → worker_stream ONLY. Earlier this also
-      // emitted a bg_op_progress line (same delta, sliced to 200 chars)
-      // which fed the sidebar's "Worker activity" area. With per-token
-      // streaming that meant a long worker reasoning produced thousands
-      // of one-token "activity" lines (3364 in one observed case),
-      // burying the actual tool-call lines and turning the activity
-      // area into a duplicate of the worker text bubble. Activity area
-      // is for tool calls + lifecycle markers; text deltas live in the
-      // worker_stream channel that feeds the worker text bubble.
-      const p = event.payload as { delta?: string; text?: string };
-      const raw = (p?.delta ?? p?.text ?? "");
-      if (!raw) return;
-      try {
-        broadcaster(sessionId, { type: "worker_stream", opId: event.opId, delta: raw });
-      } catch (e) {
-        logger.warn(`[session-bridge] worker_stream broadcast threw: ${(e as Error).message}`);
-      }
-      return;
-    }
-    case "started":
-      line = "▶ started";
-      break;
-    case "phase": {
-      const name = (event.payload as { name?: string })?.name || "phase";
-      line = `phase: ${name}`;
-      break;
-    }
-    case "needs_input":
-      line = "⏸ needs input";
-      break;
-    default:
-      return;
-  }
-
-  if (!line) return;
-  try {
-    broadcaster(sessionId, { type: "bg_op_progress", opId: event.opId, line });
-  } catch (e) {
-    logger.warn(`[session-bridge] progress broadcast threw: ${(e as Error).message}`);
-  }
-}
-
-/**
- * Register the function that pushes a ServerEvent into a chat session's
- * WS stream. Called once by chat-ws.ts during setupChatWebSocket.
- */
 export function setSessionBroadcaster(fn: (sessionId: string, event: ServerEvent) => void): void {
   broadcaster = fn;
 }
 
-/**
- * Push a ServerEvent into a session's chat WS stream. Used by the
- * canonical-loop bridge to surface canonical ops in the AGENTS sidebar
- * the same way legacy worker-pool ops surface today. No-op if no
- * broadcaster is registered yet (e.g. during bootstrap).
- */
 export function broadcastToSession(sessionId: string, event: ServerEvent): void {
   if (!broadcaster || !sessionId) return;
   try {
@@ -274,26 +40,22 @@ export function broadcastToSession(sessionId: string, event: ServerEvent): void 
   }
 }
 
-/** Look up the session that submitted an op (read-only accessor). */
 export function getSessionForOp(opId: string): string | undefined {
   return opSession.get(opId);
 }
 
-/** Look up the original task text for an op (used by canonical bridge). */
 export function getTaskForOp(opId: string): string | undefined {
   return opTask.get(opId);
 }
 
-/** Register the persistence callback (server bootstrap). */
 export function setSessionPersister(fn: (sessionId: string, content: string) => void): void {
   persister = fn;
 }
 
-/**
- * Tell the bridge that opId was submitted by sessionId. Optional task text
- * is captured so the agent's pending-notification on the next turn includes
- * the original user prompt for natural narration.
- */
+export function getSessionPersister(): ((sessionId: string, content: string) => void) | null {
+  return persister;
+}
+
 export function trackOpForSession(opId: string, sessionId: string, task?: string): void {
   if (!sessionId) return;
   opSession.set(opId, sessionId);
@@ -303,98 +65,30 @@ export function trackOpForSession(opId: string, sessionId: string, task?: string
   set.add(opId);
 }
 
-/** List opIds a session has submitted. Used by op_status when no opId given. */
 export function listOpsForSession(sessionId: string): string[] {
   const set = sessionOps.get(sessionId);
   return set ? [...set] : [];
 }
 
-/** Get the original task text submitted with this op, if known.
- *  Used by the worker-redirect classifier to give the model context
- *  about what the worker is currently doing. */
 export function getOpTask(opId: string): string | undefined {
   return opTask.get(opId);
 }
 
-function onOpResult(result: OpResult): void {
-  const sessionId = opSession.get(result.opId);
-  if (!sessionId) return; // op wasn't submitted by a chat session (e.g. cron, autopilot, internal)
-
-  // Drop the mapping now that the op is terminal.
-  opSession.delete(result.opId);
-  // Also drop from sessionOps so listOpsForSession returns ONLY currently-
-  // running ops. The old comment claimed we kept history "for op_status
-  // listing" but op_status reads canonical state via readOp(id), not from
-  // this map, and the workers/tools.ts callers already filter by
-  // status === "running" || "pending". Leaving terminal opIds here was the
-  // root cause of 2026-05-12's "JARVIS standby" hallucination: the chat
-  // system-prompt-augmentation in routes/chat/system-prompt-augmentations.ts
-  // appends a "[PARALLEL CONTEXT — N background workers active]" block
-  // whenever this list is non-empty, so every completed op poisoned every
-  // subsequent turn in the same chat session — claude opus responded with
-  // "V4 is already spinning up in a parallel worker — Standing by" instead
-  // of doing the work.
+/**
+ * Drop an op from the session map. Called by the canonical-loop
+ * session-bridge-observer once an op reaches a terminal state so
+ * `listOpsForSession` returns only currently-live ops. Without the drop,
+ * completed ops bleed into the system-prompt augmentation that detects
+ * "active background workers" and poisons every subsequent turn.
+ */
+export function releaseOpFromSession(opId: string): void {
+  const sessionId = opSession.get(opId);
+  if (!sessionId) return;
+  opSession.delete(opId);
   const set = sessionOps.get(sessionId);
   if (set) {
-    set.delete(result.opId);
+    set.delete(opId);
     if (set.size === 0) sessionOps.delete(sessionId);
   }
-  opTask.delete(result.opId);
-
-  if (!broadcaster) {
-    logger.warn(`[session-bridge] op ${result.opId} completed but no broadcaster registered — event dropped`);
-    return;
-  }
-
-  // Use a dedicated bg_op_completed ServerEvent variant. tool_progress was
-  // the wrong shape — the frontend's tool_progress handler updates an
-  // EXISTING tool card; orphan events (no prior tool_start) drop silently.
-  // Worse, the per-turn message handler that processes chat-body events
-  // gets DETACHED on `done`, so events arriving after the chat-route
-  // emitted its synthetic done would never render even with a card to
-  // attach to. bg_op_completed is handled by the persistent global
-  // chatWs.onmessage handler in chat.js, which works regardless of turn
-  // boundaries and renders as a fresh assistant message.
-  const summary = result.finalSummary?.slice(0, 400) || "(no summary)";
-  const status = (result.status === "completed" || result.status === "failed" || result.status === "cancelled")
-    ? result.status
-    : "failed";
-
-  // Push to pending-notifications queue so the agent narrates this on the
-  // user's next turn (instead of injecting a synthetic "1-line ack" message
-  // that the user knows isn't from the agent). The sidebar shows live
-  // status; the chat narration happens naturally when the user replies.
-  const taskText = opTask.get(result.opId);
-  pushPendingNotification(sessionId, {
-    opId: result.opId,
-    status,
-    summary: result.finalSummary || "(no summary)",
-    filesChanged: result.filesChanged,
-    task: taskText || "(unknown)",
-    completedAt: Date.now(),
-  });
-  opTask.delete(result.opId);
-  scheduleIdleNudge(sessionId, taskText);
-  void persister; // kept for future callers that legitimately want disk persistence
-
-  try {
-    broadcaster(sessionId, {
-      type: "bg_op_completed",
-      opId: result.opId,
-      status,
-      summary,
-      filesChanged: result.filesChanged.slice(0, 10),
-    });
-    // Also close out the worker's chat bubble (stops the streaming
-    // indicator, finalizes the message). Companion to worker_stream.
-    broadcaster(sessionId, {
-      type: "worker_done",
-      opId: result.opId,
-      status,
-      summary,
-    });
-    logger.info(`[session-bridge] notified session=${sessionId} op=${result.opId} status=${result.status}`);
-  } catch (e) {
-    logger.warn(`[session-bridge] broadcaster threw: ${(e as Error).message}`);
-  }
+  opTask.delete(opId);
 }

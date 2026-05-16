@@ -22,7 +22,9 @@
  *     sidebar; would flood updateAgentFeed at token rates.
  *   - lease_acquired / lease_lost — internal lifecycle, not user-visible.
  */
-import { broadcastToSession, getSessionForOp, getTaskForOp } from "../workers/session-bridge.js";
+import { broadcastToSession, getSessionForOp, getTaskForOp, releaseOpFromSession } from "../workers/session-bridge.js";
+import { pushPendingNotification } from "../workers/pending-notifications.js";
+import { scheduleIdleNudge } from "../workers/idle-nudge.js";
 import { readOp } from "../workers/op-store.js";
 import type { ServerEvent } from "../types.js";
 import type { CanonicalEvent } from "./types.js";
@@ -91,15 +93,34 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
             provider: "",
           } as ServerEvent);
         } else if (to === "succeeded" || to === "failed" || to === "cancelled") {
+          const status: "completed" | "failed" | "cancelled" = to === "succeeded" ? "completed" : to;
+          const persistedSummary = op?.lastFailureReason ?? (status === "completed" ? "task completed" : status);
+          const summary = persistedSummary.slice(0, 400);
+
           broadcastToSession(sessionId, {
             type: "bg_op_completed",
             opId: event.opId,
-            status: to === "succeeded" ? "completed" : to,
-            summary: to === "succeeded"
-              ? "(canonical) task completed"
-              : `(canonical) ${to}`,
+            status,
+            summary,
             filesChanged: [],
           } as ServerEvent);
+          broadcastToSession(sessionId, {
+            type: "worker_done",
+            opId: event.opId,
+            status,
+            summary,
+          } as ServerEvent);
+
+          pushPendingNotification(sessionId, {
+            opId: event.opId,
+            status,
+            summary: persistedSummary,
+            filesChanged: [],
+            task: task || "(unknown)",
+            completedAt: Date.now(),
+          });
+          scheduleIdleNudge(sessionId, task);
+          releaseOpFromSession(event.opId);
         }
         return;
       }

@@ -1,12 +1,10 @@
 /**
- * Worker pool types — Op model + IPC message envelopes.
+ * Op model — Op, ContextPack, OpEvent, OpResult, OpCheckpoint.
  *
- * Step 1 (foundation) of the supervisor architecture. Some fields from the
- * full spec are deferred to later steps:
- *   - dependsOn / outputContract / inputBindings → Step 5 (DAG scheduler)
- *   - resourceLocks → Step 10 (GPU semaphore + general locks)
- *   - retryPolicy registry → Step 3 (heartbeat + lease + recovery)
- * The shape leaves room for them; current code just doesn't use them yet.
+ * The Op shape is the lingua franca between submitters (op_submit_async,
+ * delegation-handoff) and the canonical-loop runtime. Some optional fields
+ * (dependsOn, outputContract, inputBindings, resourceLocks) are reserved
+ * for future DAG / locking work and currently unused.
  */
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
@@ -182,59 +180,3 @@ export interface PlanStep {
   status: "pending" | "running" | "completed" | "skipped" | "failed";
 }
 
-// ── IPC envelope (supervisor ↔ worker over stdio) ────────────────────────
-
-export const IPC_PROTOCOL_VERSION = 1 as const;
-
-export type IpcMessage =
-  | IpcAssignOp
-  | IpcRedirect
-  | IpcPause
-  | IpcKill
-  | IpcPing
-  | IpcEvent
-  | IpcCheckpoint
-  | IpcResult
-  | IpcPong
-  | IpcReady
-  | IpcLogLine;
-
-interface IpcEnvelope<T extends string, P> {
-  protocolVersion: typeof IPC_PROTOCOL_VERSION;
-  messageId: string;
-  type: T;
-  ts: string;
-  payload: P;
-}
-
-// supervisor → worker
-export type IpcAssignOp   = IpcEnvelope<"assign-op",  { op: Op }>;
-export type IpcRedirect   = IpcEnvelope<"redirect",   { opId: string; instruction: string }>;
-export type IpcPause      = IpcEnvelope<"pause",      { opId: string; tier: "reasoning" | "tool" | "phase" }>;
-export type IpcKill       = IpcEnvelope<"kill",       { opId?: string }>;     // opId optional = kill worker
-export type IpcPing       = IpcEnvelope<"ping",       { fromTs: string }>;
-
-// worker → supervisor
-export type IpcReady      = IpcEnvelope<"ready",      { workerId: string; pid: number; capabilities: string[] }>;
-export type IpcEvent      = IpcEnvelope<"event",      { event: OpEvent }>;
-export type IpcCheckpoint = IpcEnvelope<"checkpoint", { checkpoint: OpCheckpoint }>;
-export type IpcResult     = IpcEnvelope<"result",     { result: OpResult }>;
-export type IpcPong       = IpcEnvelope<"pong",       {
-  workerId: string;
-  currentOpId: string | null;
-  currentPhase: string | null;
-  lastEventTs: string | null;
-  heapMb: number;
-  uptimeS: number;
-}>;
-export type IpcLogLine    = IpcEnvelope<"log",        { level: "debug"|"info"|"warn"|"error"; line: string }>;
-
-export function ipcEnvelope<T extends string, P>(type: T, payload: P): IpcEnvelope<T, P> {
-  return {
-    protocolVersion: IPC_PROTOCOL_VERSION,
-    messageId: `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    type,
-    ts: new Date().toISOString(),
-    payload,
-  };
-}

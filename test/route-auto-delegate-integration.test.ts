@@ -16,8 +16,8 @@ vi.mock("../src/routing/index.js", () => ({
   markDecisionAsUserOverride: vi.fn((opId: string) => overrideResults.get(opId) ?? { message: "(none)" }),
 }));
 
-vi.mock("../src/workers/pool.js", () => ({
-  killOp: vi.fn((opId: string) => killedOps.has(opId)),
+vi.mock("../src/canonical-loop/index.js", () => ({
+  opCancel: vi.fn((opId: string) => ({ ok: killedOps.has(opId) })),
 }));
 
 import { handleAutoDelegateRoutes } from "../src/routes/chat/auto-delegate-routes.js";
@@ -63,7 +63,7 @@ describe("GET /api/auto-delegate/recent", () => {
 });
 
 describe("POST /api/op/kill", () => {
-  it("returns ok=true when killOp succeeds", async () => {
+  it("returns ok=true when opCancel succeeds", async () => {
     killedOps.add("op-123");
     const url = new URL("http://test/api/op/kill");
     const req = mockJsonRequest({ op_id: "op-123" });
@@ -74,7 +74,7 @@ describe("POST /api/op/kill", () => {
     expect(JSON.parse(cap.body)).toEqual({ ok: true });
   });
 
-  it("returns ok=false when killOp returns false (op not found)", async () => {
+  it("returns ok=false when opCancel returns ok=false (op not found)", async () => {
     const url = new URL("http://test/api/op/kill");
     const req = mockJsonRequest({ op_id: "missing-op" });
     const cap = mockResponse();

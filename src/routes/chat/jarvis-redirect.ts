@@ -31,7 +31,7 @@ export async function tryWorkerRedirect(args: JarvisRedirectArgs): Promise<boole
     const activeOps = listOpsForSession(sessionId);
     if (activeOps.length === 0) return false;
 
-    const { redirectOp } = await import("../../workers/pool.js");
+    const { opRedirect } = await import("../../canonical-loop/index.js");
     const { classifyWorkerRedirect } = await import("../../routing/worker-redirect-classifier.js");
 
     // Pick the most recently submitted op as the redirect target
@@ -54,9 +54,9 @@ export async function tryWorkerRedirect(args: JarvisRedirectArgs): Promise<boole
     const cls = await classifyWorkerRedirect(message, taskHint, recentTurns);
     if (!cls?.redirect) return false;
 
-    const ok = redirectOp(targetOpId, message);
-    logger.info(`[router] worker-redirect → op=${targetOpId} ok=${ok} reason="${cls.reason}"`);
-    if (!ok) return false;
+    const res = opRedirect(targetOpId, message, "jarvis-redirect");
+    logger.info(`[router] worker-redirect → op=${targetOpId} ok=${res.ok} reason="${cls.reason}"`);
+    if (!res.ok) return false;
 
     // Emit an inline ack so the user sees their message landed.
     // Worker will narrate its acknowledgement via the worker_stream channel

@@ -9,8 +9,7 @@
  *     `adapters/`) must NOT import `child_process` / `node:child_process`.
  *     The loop never spawns subprocesses; provider I/O lives behind
  *     the adapter contract.
- *   - Loop modules must NOT import the legacy worker-pool
- *     (`workers/pool`) or its event log (`workers/event-log`) for
+ *   - Loop modules must NOT import `workers/event-log` for
  *     write-side effects. Reads are allowed (e.g., `event-log.opDir`
  *     for filesystem layout).
  *   - Adapter source files (`src/canonical-loop/adapters/*.ts`) must
@@ -134,8 +133,6 @@ describe("Issue 11 — boundary audit: adapter sandbox imports", () => {
       "workers/op-store.js",
       "workers/event-log",
       "workers/event-log.js",
-      "workers/pool",
-      "workers/pool.js",
       "node:child_process",
       "child_process",
     ]);

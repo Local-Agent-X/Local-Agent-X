@@ -324,6 +324,7 @@ export async function* runChatViaCanonical(ctx: CanonicalChatContext): AsyncGene
     status: "pending",
     createdAt: new Date().toISOString(),
     attemptCount: 0,
+    model: ctx.prepared.model,
   };
 
   trackOpForSession(op.id, ctx.sessionId, ctx.message);

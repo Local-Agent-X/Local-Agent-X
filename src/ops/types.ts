@@ -99,6 +99,14 @@ export interface Op {
   completedAt?: string;
   workerId?: string;
   attemptCount: number;
+  /**
+   * Model identifier the op should run against. Set at op creation from the
+   * resolved provider+model (see resolve-provider.ts) so canonical-loop's
+   * host middleware (host.ts) can read op.model directly instead of
+   * re-resolving from settings.json — which doesn't seed model on fresh
+   * installs after commit 4c9e5c4.
+   */
+  model?: string;
   lastFailureReason?: string;
   lastFailureAt?: string;
   // Reserved for later steps:

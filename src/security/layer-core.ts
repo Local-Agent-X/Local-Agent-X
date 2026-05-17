@@ -53,6 +53,29 @@ export class SecurityLayer {
     return check(sessionId || "_global") || check("_global");
   }
 
+  /**
+   * Returns true if the target path is "user content" — either inside the
+   * workspace/ subdir, or outside the repo entirely (e.g., ~/Documents,
+   * ~/Desktop, /tmp, anywhere). Returns false if it's inside the repo but
+   * outside workspace/ (= source code).
+   *
+   * Used by the worktree-isolation gate to allow content-creation workers
+   * to write user artifacts (a powerpoint to workspace/, a doc to
+   * ~/Documents) without requiring a sandbox — while still requiring one
+   * for any write that would touch the agent's own running source.
+   */
+  private isUserContentPath(targetPath: string): boolean {
+    if (!targetPath) return false;
+    const abs = resolve(targetPath);
+    // Inside workspace/ → user content
+    if (abs === this.workspace || abs.startsWith(this.workspace + "/")) return true;
+    // Outside the repo root entirely → user content (Documents, Desktop, /tmp, etc.)
+    const repoRoot = resolve(this.workspace, "..");
+    if (abs !== repoRoot && !abs.startsWith(repoRoot + "/")) return true;
+    // Inside repo but not workspace/ → source code (src/, packages/, scripts/, ...)
+    return false;
+  }
+
   constructor(workspace: string, fileAccessMode?: FileAccessMode) {
     this.workspace = resolve(workspace);
     this.fileAccessMode = fileAccessMode || this.loadFileAccessMode();
@@ -109,17 +132,33 @@ export class SecurityLayer {
       };
     }
 
-    // Delegated agents using write/edit/bash must have worktree isolation.
-    // Agents with worktrees have an entry in sessionAllowedPaths (added by server.ts).
-    // Codex agents are skipped for worktree creation, so they won't have one.
+    // Delegated agents using write/edit/bash must have worktree isolation
+    // IF they're modifying repo SOURCE code. Writes to user-content
+    // territory (workspace/, ~/Documents, ~/Desktop, anywhere outside the
+    // repo) don't need isolation — the sandbox's purpose is to protect
+    // the agent's own running code from mid-task mutation, NOT to prevent
+    // workers from producing user-facing artifacts. The old blanket
+    // "delegated + write/edit/bash → require worktree" rule killed every
+    // content-creation worker on machines where worktree provisioning
+    // wasn't wired up (e.g., the polish-the-pptx case).
+    //
+    // For bash we keep the blanket requirement: arbitrary shell can write
+    // anywhere unpredictably, no static analysis can tell us where. If a
+    // worker needs bash, it needs a worktree. write/edit are the tools
+    // we can reason about via their explicit `path` arg.
     if (callCtx === "delegated" && WORKTREE_REQUIRED_TOOLS.has(toolName)) {
       const sessionKey = ctx.sessionId;
       const hasWorktree = this.sessionAllowedPaths.has(sessionKey) && this.sessionAllowedPaths.get(sessionKey)!.size > 0;
       if (!hasWorktree) {
-        return {
-          allowed: false,
-          reason: `Blocked: delegated agent "${toolName}" requires worktree isolation (not available for this provider)`,
-        };
+        const isContentWrite =
+          (toolName === "write" || toolName === "edit") &&
+          this.isUserContentPath(String(args.path || ""));
+        if (!isContentWrite) {
+          return {
+            allowed: false,
+            reason: `Blocked: delegated agent "${toolName}" requires worktree isolation for source-code paths (writes to workspace/, ~/Documents, or anywhere outside the repo don't need it)`,
+          };
+        }
       }
     }
 

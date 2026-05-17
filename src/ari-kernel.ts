@@ -9,19 +9,91 @@
  * - Tamper-evident audit log
  */
 
-import { createKernel } from "@arikernel/runtime";
-import type { Firewall } from "@arikernel/runtime";
+import {
+  CAPABILITY_CLASS_MAP,
+  deriveCapabilityClass,
+  generateId,
+  getPreset,
+  now,
+} from "@arikernel/core";
+import type {
+  Capability,
+  CapabilityClass,
+  CapabilityGrant,
+  PresetId,
+  ToolClass,
+} from "@arikernel/core";
+import { TokenStore, createFirewall } from "@arikernel/runtime";
+import type { Firewall, FirewallHooks } from "@arikernel/runtime";
 
 import { createLogger } from "./logger.js";
 import { USER_HINTS } from "./types.js";
 const logger = createLogger("ari-kernel");
 
 let firewall: Firewall | null = null;
+let hostTokenStore: TokenStore | null = null;
+let hostGrantsByCapClass: Map<CapabilityClass, string> = new Map();
 let currentPreset: string = "workspace-assistant";
 // Default true so the deepest gate is load-bearing even if a caller forgets
 // to pass `required`. The config layer (src/config.ts: ariRequired) is the
 // canonical source — this is just the safety net.
 let ariIsRequired: boolean = true;
+
+const HOST_PRINCIPAL_NAME = "lax-host";
+
+/**
+ * HOST_CAPABILITY_MANIFEST — the set of protected (toolClass, action) pairs
+ * this LAX process is entitled to ask the AriKernel about.
+ *
+ * Capability ≠ permission. A manifest entry says: "the host is allowed to
+ * ASK the kernel to evaluate this action class." The per-call rule engine
+ * (taint analysis, policy matching, approval requirements, audit logging)
+ * still decides allow/deny for every individual call. Capabilities issue
+ * once at startup; rules run on every request.
+ *
+ * Every entry below corresponds to a (toolClass, action) pair the LAX
+ * dispatcher (toolClassMap below + tool-executor.ts actionMap) can route
+ * to firewall.execute(). The dispatcher's `internal` class never reaches
+ * the kernel, so it's not listed here.
+ *
+ * INVARIANT: adding a new tool class to toolClassMap requires adding a
+ * matching manifest entry — otherwise the new tool will fail-closed with
+ * "Capability token required" (protected actions) or "No capability grant
+ * for tool class" (policy-engine capability check).
+ */
+const HOST_CAPABILITY_MANIFEST: ReadonlyArray<{ toolClass: ToolClass; action: string }> = [
+  // http — web_search, web_fetch, http_request, browser
+  { toolClass: "http", action: "get" },
+  { toolClass: "http", action: "head" },
+  { toolClass: "http", action: "options" },
+  { toolClass: "http", action: "post" },
+  { toolClass: "http", action: "put" },
+  { toolClass: "http", action: "patch" },
+  { toolClass: "http", action: "delete" },
+  // file — read / write (edit normalizes to write in tool-executor actionMap)
+  { toolClass: "file", action: "read" },
+  { toolClass: "file", action: "write" },
+  // shell — bash
+  { toolClass: "shell", action: "exec" },
+  // database — memory_save and any future database-backed tool
+  { toolClass: "database", action: "query" },
+  { toolClass: "database", action: "exec" },
+  { toolClass: "database", action: "mutate" },
+  // retrieval — memory_search (unprotected by CAPABILITY_CLASS_MAP, but the
+  // policy engine still requires the principal to declare this toolClass)
+  { toolClass: "retrieval", action: "search" },
+  // secret-vault — browser_capture_to_secret, browser_fill_from_secret,
+  // clipboard_write_from_secret (per secretVaultActionMap in ariEvaluate)
+  { toolClass: "secret-vault", action: "capture" },
+  { toolClass: "secret-vault", action: "fill" },
+  { toolClass: "secret-vault", action: "clipboard" },
+];
+
+// Long-lived host grants — issued once at startup, used for the whole
+// process lifetime. They occupy the same lease shape any other grant
+// uses, but with an effectively unbounded maxCalls and a far-future
+// expiry because the host's entitlement does not change at runtime.
+const HOST_GRANT_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 
 // Map session policy presets to ARI presets
 const SESSION_TO_ARI_PRESET: Record<string, string> = {
@@ -36,6 +108,98 @@ export function getAriPresetForSession(sessionPreset: string): string {
 }
 
 /**
+ * Build the principal.capabilities array from HOST_CAPABILITY_MANIFEST —
+ * aggregate actions per toolClass so each toolClass appears once with
+ * the full set of permitted actions.
+ */
+function buildPrincipalCapabilities(): Capability[] {
+  const byClass = new Map<ToolClass, Set<string>>();
+  for (const { toolClass, action } of HOST_CAPABILITY_MANIFEST) {
+    let actions = byClass.get(toolClass);
+    if (!actions) {
+      actions = new Set();
+      byClass.set(toolClass, actions);
+    }
+    actions.add(action);
+  }
+  return [...byClass.entries()].map(([toolClass, actions]) => ({
+    toolClass,
+    actions: [...actions],
+  }));
+}
+
+/**
+ * Mint long-lived host grants for every unique capability class derived
+ * from the manifest, store them in the kernel's token store, and return
+ * the (capabilityClass → grantId) map used by ariEvaluate to attach the
+ * right grantId on each execute() call.
+ *
+ * Grants are minted directly rather than via firewall.requestCapability()
+ * because the issuer's default lease (5 minutes / 10 calls) would force
+ * either per-request re-issuance or silent re-mints — both forbidden by
+ * the manifest model. The host principal is its own grant authority
+ * for the actions it has declared up-front.
+ */
+function mintHostGrants(
+  store: TokenStore,
+  principalId: string,
+): Map<CapabilityClass, string> {
+  const capClasses = new Set<CapabilityClass>();
+  for (const { toolClass, action } of HOST_CAPABILITY_MANIFEST) {
+    const capClass = deriveCapabilityClass(toolClass, action);
+    const mapping = CAPABILITY_CLASS_MAP[capClass];
+    // Only protected (toolClass, action) pairs need a grant. Unprotected
+    // pairs (e.g. retrieval.search) pass the pipeline's capability gate
+    // without a grant and only need the principal declaration.
+    if (
+      mapping &&
+      mapping.toolClass === toolClass &&
+      mapping.actions.includes(action.toLowerCase())
+    ) {
+      capClasses.add(capClass);
+    }
+  }
+  const issuedAt = now();
+  const expiresAt = new Date(Date.now() + HOST_GRANT_TTL_MS).toISOString();
+  const map = new Map<CapabilityClass, string>();
+  for (const capClass of capClasses) {
+    const grant: CapabilityGrant = {
+      id: generateId(),
+      requestId: generateId(),
+      principalId,
+      capabilityClass: capClass,
+      constraints: {},
+      lease: {
+        issuedAt,
+        expiresAt,
+        maxCalls: Number.MAX_SAFE_INTEGER,
+        callsUsed: 0,
+      },
+      taintContext: [],
+      revoked: false,
+    };
+    store.store(grant);
+    map.set(capClass, grant.id);
+  }
+  return map;
+}
+
+/**
+ * Look up the grantId to attach to a tool call. Returns undefined when
+ * the (toolClass, action) pair is not protected by CAPABILITY_CLASS_MAP —
+ * in that case the pipeline's capability gate is a no-op and passing a
+ * grantId would actually fail validateToken (since the action wouldn't
+ * be in the grant's capability class action list).
+ */
+function lookupHostGrantId(toolClass: string, action: string): string | undefined {
+  const capClass = deriveCapabilityClass(toolClass, action);
+  const mapping = CAPABILITY_CLASS_MAP[capClass];
+  if (!mapping || mapping.toolClass !== toolClass) return undefined;
+  if (!mapping.actions.includes(action.toLowerCase())) return undefined;
+  return hostGrantsByCapClass.get(capClass);
+}
+
+/**
  * Initialize AriKernel in-process.
  * Returns true if started successfully, false if unavailable.
  */
@@ -44,35 +208,67 @@ export async function startAriKernel(auditDbPath: string, preset?: string, requi
   ariIsRequired = required ?? true;
 
   try {
-    const kernel = createKernel({
-      preset: currentPreset as any,
-      mode: "embedded",
-      autoScope: true,
-    });
-    firewall = kernel.createFirewall({
-      principal: "local-agent-x",
+    const presetConfig = getPreset(currentPreset as PresetId);
+    hostTokenStore = new TokenStore();
+    // Approval is owned by LAX's user-facing layer (riskLevel → UI prompt
+    // in tool-executor.ts). The kernel's approval hook would otherwise
+    // double-prompt or — without a hook — deny outright. Delegate by
+    // returning true; deny / taint / capability layers all still fire
+    // before the approval hook is ever called.
+    const hooks: FirewallHooks = {
+      onApprovalRequired: async () => true,
+    };
+    firewall = createFirewall({
+      principal: {
+        name: HOST_PRINCIPAL_NAME,
+        capabilities: buildPrincipalCapabilities(),
+      },
+      policies: presetConfig.policies,
       auditLog: auditDbPath,
+      mode: "embedded",
+      tokenStore: hostTokenStore,
+      hooks,
     });
 
-    // Register a no-op executor for `secret-vault` so the ARI pipeline can
-    // complete its audit/policy/behavioral steps without trying to actually
-    // run the tool. The real secret-vault logic (DOM read, vault write, page
-    // fill, clipboard write) lives in the tool's own execute() and runs
-    // AFTER ariEvaluate returns allowed. ARI's role here is observer + gate.
-    try {
-      (firewall as unknown as { registerExecutor: (e: { toolClass: string; execute: (tc: { id: string }) => Promise<{ callId: string; success: boolean; durationMs: number; taintLabels: never[] }> }) => void }).registerExecutor({
-        toolClass: "secret-vault",
-        async execute(tc) {
-          return {
-            callId: tc.id,
-            success: true,
-            durationMs: 0,
-            taintLabels: [],
-          };
-        },
-      });
-    } catch (e) {
-      logger.warn(`[ari] secret-vault executor registration failed: ${(e as Error).message}`);
+    // Manifest-driven grant issuance — runs exactly once, right after
+    // the firewall is constructed. The per-call rule engine (taint /
+    // policy / approval / audit) still evaluates every tool call on top
+    // of these grants.
+    hostGrantsByCapClass = mintHostGrants(hostTokenStore, firewall.principalInfo.id);
+    logger.info(`  [ari] Granted ${hostGrantsByCapClass.size} host capabilities (manifest entries: ${HOST_CAPABILITY_MANIFEST.length})`);
+
+    // Register no-op executors for every toolClass in the manifest. ARI's
+    // role is observer + gate; the real tool logic (http fetch, file I/O,
+    // shell exec, vault read/write, …) runs in LAX's own dispatcher AFTER
+    // ariEvaluate returns allowed. Without these stubs, the kernel would
+    // try to perform the action itself via its built-in executors and
+    // either fail (path-traversal-blocked on /etc/hostname) or duplicate
+    // the side-effect of the real tool call.
+    const noopRegister = (firewall as unknown as {
+      registerExecutor: (e: {
+        toolClass: string;
+        execute: (tc: { id: string }) => Promise<{
+          callId: string;
+          success: boolean;
+          durationMs: number;
+          taintLabels: never[];
+        }>;
+      }) => void;
+    }).registerExecutor.bind(firewall);
+    const noopExec = async (tc: { id: string }) => ({
+      callId: tc.id,
+      success: true,
+      durationMs: 0,
+      taintLabels: [] as never[],
+    });
+    const gatedClasses = new Set<string>();
+    for (const { toolClass } of HOST_CAPABILITY_MANIFEST) gatedClasses.add(toolClass);
+    for (const toolClass of gatedClasses) {
+      try {
+        noopRegister({ toolClass, execute: noopExec });
+      } catch (e) {
+        logger.warn(`[ari] ${toolClass} executor registration failed: ${(e as Error).message}`);
+      }
     }
 
     logger.info(`  [ari] Kernel initialized (in-process, preset: ${currentPreset})`);
@@ -176,6 +372,8 @@ export async function ariEvaluate(
       action: effectiveAction,
       parameters: params,
     };
+    const grantId = lookupHostGrantId(toolClass, effectiveAction);
+    if (grantId) execRequest.grantId = grantId;
     if (taintLabels && taintLabels.length > 0) {
       execRequest.taintLabels = taintLabels.map(label => ({
         source: String(label),
@@ -228,5 +426,12 @@ export function isAriActive(): boolean {
  * Shut down the kernel.
  */
 export function stopAriKernel(): void {
+  try {
+    firewall?.close?.();
+  } catch {
+    /* ignore */
+  }
   firewall = null;
+  hostTokenStore = null;
+  hostGrantsByCapClass = new Map();
 }

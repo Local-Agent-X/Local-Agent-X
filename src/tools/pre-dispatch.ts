@@ -16,6 +16,7 @@ import type { ThreatEngine } from "../threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 import { getApprovalManager, toolNeedsApproval } from "../approval-manager.js";
 import type { ServerEvent } from "../types.js";
+import { USER_HINTS } from "../types.js";
 import { evaluate as evaluatePolicy, type RulePack } from "../tool-policy/evaluator.js";
 import { makeSecurityLayerPack } from "../tool-policy/packs/security-layer-pack.js";
 import { makeDefaultPolicyPack } from "../tool-policy/packs/default-policy-pack.js";
@@ -35,12 +36,15 @@ export class ToolBlocked extends Error {
   readonly stage: ToolBlockedStage;
   readonly reason: string;
   readonly recovery?: string;
-  constructor(details: { stage: ToolBlockedStage; reason: string; recovery?: string }) {
+  /** Plain-English user-facing summary; see SecurityDecision.userHint. */
+  readonly userHint?: string;
+  constructor(details: { stage: ToolBlockedStage; reason: string; recovery?: string; userHint?: string }) {
     super(`BLOCKED by ${details.stage}: ${details.reason}`);
     this.name = "ToolBlocked";
     this.stage = details.stage;
     this.reason = details.reason;
     this.recovery = details.recovery;
+    this.userHint = details.userHint;
   }
 }
 
@@ -89,6 +93,7 @@ export async function assertToolCallAllowed(
         reason: d.reason,
         recovery:
           "This role lacks the permission to call this tool. Use a different tool or ask the user to elevate.",
+        userHint: d.userHint ?? USER_HINTS.policy,
       });
     }
   }
@@ -110,6 +115,7 @@ export async function assertToolCallAllowed(
       stage: PACK_TO_STAGE[decision.deniedBy.packId] ?? "tool-policy",
       reason: decision.reason,
       recovery: decision.recovery,
+      userHint: decision.userHint,
     });
   }
 
@@ -127,6 +133,7 @@ export async function assertToolCallAllowed(
       throw new ToolBlocked({
         stage: "approval",
         reason: `declined approval for ${call.name}`,
+        userHint: USER_HINTS.policy,
       });
     }
   }

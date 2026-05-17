@@ -2,6 +2,7 @@ import type {
   ChatCompletionMessageParam,
 } from "openai/resources/chat/completions.js";
 import type { ToolDefinition, ToolResult, ServerEvent } from "./types.js";
+import { USER_HINTS } from "./types.js";
 import { SecurityLayer } from "./security.js";
 import type { ToolPolicy } from "./tool-policy.js";
 import type { ThreatEngine } from "./threat-engine.js";
@@ -245,7 +246,7 @@ async function executeSingleTool(
 
   // Plan mode: block non-read-only tools (session-scoped)
   if (isPlanMode(sessionId) && !READ_ONLY_TOOLS.has(tc.name)) {
-    const result = `BLOCKED: Plan mode is active. Only read-only tools are allowed. Use exit_plan_mode to restore full access.`;
+    const result = `User hint: ${USER_HINTS.planMode}\nBLOCKED: Plan mode is active. Only read-only tools are allowed. Use exit_plan_mode to restore full access.`;
     onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result, allowed: false });
     msgs.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
     return msgs;
@@ -256,7 +257,7 @@ async function executeSingleTool(
       const { isProtectedFile } = await import("./config-loader.js");
       const check = isProtectedFile(String(args.path));
       if (check.protected) {
-        const result = `BLOCKED: ${check.reason}. This file is part of the protected core — modifying it could break the agent engine. Edit config/ files instead to customize behavior.`;
+        const result = `User hint: ${USER_HINTS.secrets}\nBLOCKED: ${check.reason}. This file is part of the protected core — modifying it could break the agent engine. Edit config/ files instead to customize behavior.`;
         onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result, allowed: false });
         msgs.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
         return msgs;
@@ -329,7 +330,7 @@ async function executeSingleTool(
         if (tc.name === "self_edit") {
           const gate = trackSelfEditCall(sessionId);
           if (!gate.allowed) {
-            const result = `BLOCKED: self_edit ceiling reached for this autopilot run (${gate.count}/${gate.max}). Use direct edit/write/bash tools instead.`;
+            const result = `User hint: ${USER_HINTS.retryExhausted}\nBLOCKED: self_edit ceiling reached for this autopilot run (${gate.count}/${gate.max}). Use direct edit/write/bash tools instead.`;
             onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result, allowed: false });
             msgs.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
             return msgs;
@@ -366,8 +367,10 @@ async function executeSingleTool(
     const actionMap: Record<string, string> = { read: "read", write: "write", edit: "write", bash: "exec" };
     const ariResult = await ariEvaluate(tc.name, actionMap[tc.name] || "exec", args);
     if (!ariResult.allowed && !isInternalTool) {
-      onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: ariResult.reason, allowed: false });
-      msgs.push({ role: "tool", tool_call_id: tc.id, content: ariResult.reason } as ChatCompletionMessageParam);
+      const hint = ariResult.userHint ?? USER_HINTS.policy;
+      const result = `User hint: ${hint}\n${ariResult.reason}`;
+      onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result, allowed: false });
+      msgs.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
       return msgs;
     }
   }
@@ -375,8 +378,9 @@ async function executeSingleTool(
   // Layer 0: Session policy
   const policyBlock = checkSessionPolicy(sessionId || "default", tc.name);
   if (policyBlock) {
-    onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: policyBlock, allowed: false });
-    msgs.push({ role: "tool", tool_call_id: tc.id, content: policyBlock } as ChatCompletionMessageParam);
+    const result = `User hint: ${USER_HINTS.policy}\n${policyBlock}`;
+    onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result, allowed: false });
+    msgs.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
     return msgs;
   }
 
@@ -456,7 +460,7 @@ async function executeSingleTool(
       content: preBlock.message,
       isError: true,
       status: "blocked",
-      metadata: { layer: layerMap[preBlock.stage], recovery: preBlock.recovery },
+      metadata: { layer: layerMap[preBlock.stage], recovery: preBlock.recovery, userHint: preBlock.userHint },
     };
   } else {
     // Data lineage egress check
@@ -467,7 +471,7 @@ async function executeSingleTool(
           content: `BLOCKED by data lineage: ${egressCheck.reason}`,
           isError: true,
           status: "blocked",
-          metadata: { layer: "data-lineage", recovery: "Sensitive data was tainted earlier this session and may not egress. Either don't include the tainted data or end the session." },
+          metadata: { layer: "data-lineage", recovery: "Sensitive data was tainted earlier this session and may not egress. Either don't include the tainted data or end the session.", userHint: USER_HINTS.network },
         };
         onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
         msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
@@ -540,7 +544,7 @@ async function executeSingleTool(
             content: `BLOCKED by hook: ${preHook.reason || "PreToolUse hook returned false"}`,
             isError: true,
             status: "blocked",
-            metadata: { layer: "hook", recovery: "A user-configured hook blocked this call. Check ~/.lax/hooks.json or proceed without the gated action." },
+            metadata: { layer: "hook", recovery: "A user-configured hook blocked this call. Check ~/.lax/hooks.json or proceed without the gated action.", userHint: USER_HINTS.policy },
           };
           onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
           msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
@@ -555,7 +559,7 @@ async function executeSingleTool(
           content: `BLOCKED by circuit breaker: ${circuit.reason}`,
           isError: true,
           status: "blocked",
-          metadata: { layer: "circuit-breaker", recovery: "This tool has failed repeatedly in this session. Stop calling it and use an alternative — the breaker will reset after several successful unrelated calls." },
+          metadata: { layer: "circuit-breaker", recovery: "This tool has failed repeatedly in this session. Stop calling it and use an alternative — the breaker will reset after several successful unrelated calls.", userHint: circuit.userHint ?? USER_HINTS.retryExhausted },
         };
         onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
         msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
@@ -569,7 +573,7 @@ async function executeSingleTool(
           content: `BLOCKED by rate limit: ${rate.reason}`,
           isError: true,
           status: "blocked",
-          metadata: { layer: "rate-limit", recovery: "Per-tool rate limit hit. Wait or batch fewer calls; immediate retries will keep being denied." },
+          metadata: { layer: "rate-limit", recovery: "Per-tool rate limit hit. Wait or batch fewer calls; immediate retries will keep being denied.", userHint: rate.userHint ?? USER_HINTS.retryExhausted },
         };
         onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
         msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
@@ -594,7 +598,12 @@ async function executeSingleTool(
           emit: onEvent,
         });
         if (!approved) {
-          result = { content: `BLOCKED by user: declined approval for ${tc.name}`, isError: true };
+          result = {
+            content: `BLOCKED by user: declined approval for ${tc.name}`,
+            isError: true,
+            status: "blocked",
+            metadata: { layer: "approval", userHint: USER_HINTS.policy },
+          };
           onEvent({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: result.content, allowed: false });
           msgs.push({ role: "tool", tool_call_id: tc.id, content: renderToolResultForModel(result) } as ChatCompletionMessageParam);
           return msgs;
@@ -658,6 +667,8 @@ async function executeSingleTool(
           `That grants 30 minutes of consent for this session. Retry the tool after they approve.\n` +
           `Do NOT retry without /approve — you will hit the same block.`,
         isError: true,
+        status: "blocked",
+        metadata: { layer: "threat", userHint: USER_HINTS.threatConsent },
       };
     }
     if (threatEngine.isRestricted() && ["http_request", "web_fetch", "browser"].includes(tc.name)) {
@@ -670,7 +681,12 @@ async function executeSingleTool(
         }
       }
       if (!isOwnApp) {
-        result = { content: `BLOCKED: Session threat level elevated. External tool calls restricted.`, isError: true };
+        result = {
+          content: `BLOCKED: Session threat level elevated. External tool calls restricted.`,
+          isError: true,
+          status: "blocked",
+          metadata: { layer: "threat", userHint: USER_HINTS.network },
+        };
       }
     }
   }

@@ -2,6 +2,7 @@ import { resolve, relative, join } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { SecurityDecision } from "../types.js";
+import { USER_HINTS } from "../types.js";
 import {
   CONTEXT_RESTRICTED_TOOLS,
   WORKTREE_REQUIRED_TOOLS,
@@ -129,6 +130,7 @@ export class SecurityLayer {
       return {
         allowed: false,
         reason: `Blocked: tool "${toolName}" is not allowed in ${callCtx} context`,
+        userHint: USER_HINTS.policy,
       };
     }
 
@@ -157,6 +159,7 @@ export class SecurityLayer {
           return {
             allowed: false,
             reason: `Blocked: delegated agent "${toolName}" requires worktree isolation for source-code paths (writes to workspace/, ~/Documents, or anywhere outside the repo don't need it)`,
+            userHint: USER_HINTS.worktreeIsolation,
           };
         }
       }
@@ -196,7 +199,7 @@ export class SecurityLayer {
               decision = evaluateWebFetch(this.egressAllowlist, String(SecurityLayer._selfPort || "7007"), browserUrl);
             }
           } catch {
-            decision = { allowed: false, reason: "Blocked: invalid URL" };
+            decision = { allowed: false, reason: "Blocked: invalid URL", userHint: USER_HINTS.network };
           }
         } else {
           decision = { allowed: true, reason: "Browser action allowed" };

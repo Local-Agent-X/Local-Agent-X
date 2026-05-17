@@ -3,6 +3,7 @@
  *
  * Configurable per-tool rate limits using a sliding window.
  */
+import { USER_HINTS } from "./types.js";
 
 export interface RateLimitConfig {
   /** Tool name or "*" for global */
@@ -25,6 +26,8 @@ interface RateLimitResult {
   remaining: number;
   resetInMs: number;
   reason?: string;
+  /** Plain-English user-facing summary; see SecurityDecision.userHint. */
+  userHint?: string;
 }
 
 const DEFAULT_LIMITS: RateLimitConfig[] = [
@@ -89,12 +92,14 @@ export class ToolRateLimiter {
     const resetInMs = recent.length > 0 ? (recent[0] + config.windowMs) - now : 0;
 
     if (remaining <= 0) {
+      const allowed = config.action !== "block";
       return {
-        allowed: config.action !== "block",
+        allowed,
         action: config.action,
         remaining: 0,
         resetInMs: Math.max(0, resetInMs),
         reason: `Rate limit exceeded for ${tool}: ${config.maxCalls} calls per ${config.windowMs / 1000}s`,
+        ...(allowed ? {} : { userHint: USER_HINTS.retryExhausted }),
       };
     }
 

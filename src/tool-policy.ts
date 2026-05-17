@@ -6,6 +6,7 @@ import { checkRegexSafety } from "./safe-regex.js";
 import { DEFAULT_POLICY } from "./tool-policy/default-rules.js";
 import { matchArgPattern, matchGlob, matchHost } from "./tool-policy/matchers.js";
 import type { PolicyDecision, ToolPolicyConfig, ToolPolicyRule } from "./tool-policy/types.js";
+import { USER_HINTS } from "./types.js";
 
 const logger = createLogger("tool-policy");
 
@@ -93,7 +94,7 @@ export class ToolPolicy {
 
       // Rule matched — apply decision
       if (rule.decision === "deny") {
-        return { allowed: false, reason: rule.reason, ruleId: rule.id };
+        return { allowed: false, reason: rule.reason, ruleId: rule.id, userHint: USER_HINTS.policy };
       }
       if (rule.decision === "confirm") {
         return { allowed: true, reason: rule.reason, ruleId: rule.id, confirm: true };
@@ -102,11 +103,13 @@ export class ToolPolicy {
     }
 
     // No rule matched — use default
+    const allowed = this.config.defaultDecision === "allow";
     return {
-      allowed: this.config.defaultDecision === "allow",
-      reason: this.config.defaultDecision === "allow"
+      allowed,
+      reason: allowed
         ? "Allowed by default policy"
         : "Denied by default policy (no matching rule)",
+      ...(allowed ? {} : { userHint: USER_HINTS.policy }),
     };
   }
 
@@ -124,10 +127,10 @@ export class ToolPolicy {
       try {
         const host = new URL(url).hostname;
         if (c.allowedHosts && !matchHost(c.allowedHosts, host)) {
-          return { allowed: false, reason: `Host "${host}" not in allowlist for ${toolName}`, ruleId: rule.id };
+          return { allowed: false, reason: `Host "${host}" not in allowlist for ${toolName}`, ruleId: rule.id, userHint: USER_HINTS.policy };
         }
         if (c.blockedHosts && matchHost(c.blockedHosts, host)) {
-          return { allowed: false, reason: `Host "${host}" is blocked by policy`, ruleId: rule.id };
+          return { allowed: false, reason: `Host "${host}" is blocked by policy`, ruleId: rule.id, userHint: USER_HINTS.policy };
         }
       } catch {
         // Invalid URL — let SSRF checks handle it
@@ -139,7 +142,7 @@ export class ToolPolicy {
       const cmd = String(args.command || "").trim();
       const firstWord = cmd.split(/\s/)[0];
       if (!c.allowedCommands.some((ac) => firstWord === ac || cmd.startsWith(ac))) {
-        return { allowed: false, reason: `Command "${firstWord}" not in allowlist`, ruleId: rule.id };
+        return { allowed: false, reason: `Command "${firstWord}" not in allowlist`, ruleId: rule.id, userHint: USER_HINTS.commandShell };
       }
     }
 
@@ -148,7 +151,7 @@ export class ToolPolicy {
       const argStr = JSON.stringify(args);
       for (const blocked of c.blockedArgs) {
         if (argStr.includes(blocked)) {
-          return { allowed: false, reason: `Arguments contain blocked pattern "${blocked}"`, ruleId: rule.id };
+          return { allowed: false, reason: `Arguments contain blocked pattern "${blocked}"`, ruleId: rule.id, userHint: USER_HINTS.policy };
         }
       }
     }
@@ -163,7 +166,7 @@ export class ToolPolicy {
       const count = (sessionMap.get(toolName) || 0) + 1;
       sessionMap.set(toolName, count);
       if (count > c.maxCallsPerSession) {
-        return { allowed: false, reason: `Tool "${toolName}" exceeded max ${c.maxCallsPerSession} calls per session`, ruleId: rule.id };
+        return { allowed: false, reason: `Tool "${toolName}" exceeded max ${c.maxCallsPerSession} calls per session`, ruleId: rule.id, userHint: USER_HINTS.retryExhausted };
       }
     }
 

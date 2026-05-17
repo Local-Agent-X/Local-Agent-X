@@ -67,6 +67,16 @@ const configSchema = z.object({
   autoUpdate: z.boolean().default(true),
   logLevel: z.enum(["basic", "detailed", "full-audit"]).default("basic"),
 
+  // AriKernel kill-switch posture. true = if the kernel fails to start
+  // or evaluate, BLOCK the tool call (and refuse to boot the server on
+  // a hard wiring failure). false = fail-open through the kernel layer
+  // (other defense layers — session policy, SecurityLayer, default
+  // rules, threat engine — still defend). Defaults to true everywhere
+  // so the deepest gate is load-bearing on fresh installs. Override
+  // with LAX_ARI_REQUIRED=false ONLY for emergency debugging when the
+  // kernel is wedged.
+  ariRequired: z.boolean().default(true),
+
   // Service URLs
   ollamaUrl: z.string().default("http://127.0.0.1:11434"),
   /** Ollama Cloud (Turbo) endpoint. When set + OLLAMA_CLOUD_API_KEY secret
@@ -165,6 +175,13 @@ export function loadConfig(): LAXConfig {
   // Environment variable for profile override
   const profileEnv = process.env.LAX_PROFILE ?? process.env.SAX_PROFILE;
   if (profileEnv) raw.profile = profileEnv;
+
+  // AriKernel kill-switch override. Default-true via schema; this is the
+  // emergency escape hatch for debugging a wedged kernel. Treat "false"
+  // and "0" as off; anything else (including "true", "1", empty) keeps
+  // the schema default.
+  const ariReqEnv = process.env.LAX_ARI_REQUIRED ?? process.env.SAX_ARI_REQUIRED;
+  if (ariReqEnv !== undefined) raw.ariRequired = ariReqEnv !== "false" && ariReqEnv !== "0";
 
   const config = configSchema.parse(raw);
 

@@ -92,12 +92,20 @@ export const CORE_TOOL_NAMES = new Set([
   "request_secret", "request_secrets", "list_secrets",
   // HTTP
   "http_request",
+  // File creation primitives. Promoted out of the keyword router because
+  // these are first-class capabilities — bare phrasings like "write a
+  // doc that says hello" used to miss the /document|docx|word/ regex on
+  // "doc" and Codex would then claim no tool existed instead of falling
+  // back to `write`. (Live failure on Mac 2026-05-16.) Anthropic strong
+  // models get the full inventory anyway; this matters for Codex/OpenAI
+  // 128-cap and for medium/weak tier shrink+RAG.
+  "document_create", "document_edit", "document_read",
 ]);
 
 // Keywords that trigger including specific tool groups
 const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
   { keywords: /spreadsheet|excel|xlsx|csv|sheet/i, toolPrefixes: ["spreadsheet_"] },
-  { keywords: /document|docx|word/i, toolPrefixes: ["document_"] },
+  { keywords: /\bdocs?\b|document|docx|\bword\b/i, toolPrefixes: ["document_"] },
   { keywords: /presentation|slide|pptx|powerpoint/i, toolPrefixes: ["presentation_"] },
   { keywords: /pdf/i, toolPrefixes: ["pdf_"] },
   { keywords: /email|mail|inbox|send.*email/i, toolPrefixes: ["email_"] },

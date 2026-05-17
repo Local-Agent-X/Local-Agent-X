@@ -625,6 +625,19 @@ function setupApplicationMenu(): void {
     {
       label: "View",
       submenu: [
+        // Reload the renderer. Without this, a stale frontend (UI state
+        // baked in pre-OAuth, cached model list, or any code update in
+        // dev) had no first-class way to refresh — Cmd-R is bound by
+        // Electron only when DevTools is focused, which non-technical
+        // users won't discover. Surfaced here with the standard mac
+        // shortcut.
+        { role: "reload", accelerator: "CmdOrCtrl+R" },
+        // Note: forceReload is intentionally not bound — Cmd+Shift+R is
+        // already the accelerator for File → Restart Server. Reload
+        // (Cmd+R) is enough for refreshing the renderer; force-reload
+        // is a niche dev-cache-busting need accessible from the menu.
+        { role: "forceReload" },
+        { type: "separator" },
         {
           label: "Show / Hide Agents",
           accelerator: "CmdOrCtrl+Shift+A",

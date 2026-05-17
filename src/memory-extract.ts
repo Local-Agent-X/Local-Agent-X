@@ -198,7 +198,7 @@ KIND is one of:
 Examples:
 - W @user switched crypto exchanges from Coinbase to Kraken
 - O @user prefers bash over Python for scripting
-- S @user plans to ship ScanProgress v2 by end of April
+- S @user plans to ship a side project v2 by end of month
 - B @user writes commit messages in past tense
 
 Skip:

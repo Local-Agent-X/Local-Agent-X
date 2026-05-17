@@ -104,7 +104,7 @@ async function tryResolutionChain(
   // The role/text/xpath locators all need to be scoped to the frame that
   // actually contains the element; otherwise Playwright queries the main
   // frame's accessibility tree and finds nothing (the regression that
-  // broke Thriveventory PO entry).
+  // broke the customer PO-entry workflow).
   const root = resolveFrame(page, ref);
   const inIframe = root !== page;
   const viaSuffix = inIframe ? " (iframe)" : "";

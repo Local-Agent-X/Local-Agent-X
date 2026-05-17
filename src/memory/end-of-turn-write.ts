@@ -52,9 +52,9 @@ DECISION RULES:
 
 Examples (input → output):
 - "user: always sort my reports by date / agent: got it, sorting now" → {"write": true, "file": "user", "action": "append", "section_heading": null, "content": "Reports default to sort-by-date (most recent first) — applies to any report request unless user overrides."}
-- "user: that's facebook stats, I want instagram, switch the dropdown / agent: switched, here are the IG numbers" → {"write": true, "file": "user", "action": "replace_section", "section_heading": "Analytics workflow", "content": "Analytics workflow: For Instagram analytics, use Meta Business Suite (business.facebook.com/latest/insights) and toggle the asset dropdown to Instagram — Peter prefers it over the IG app for richer aggregate data."}
-- "user: what's my IG follower count / agent: you have 727 followers" → {"write": false}
-- "user: my dad's name is Robert / agent: noted" → {"write": true, "file": "mind", "action": "append", "section_heading": null, "content": "Peter's father: Robert."}`;
+- "user: that's facebook stats, I want instagram, switch the dropdown / agent: switched, here are the IG numbers" → {"write": true, "file": "user", "action": "replace_section", "section_heading": "Analytics workflow", "content": "Analytics workflow: For Instagram analytics, use Meta Business Suite (business.facebook.com/latest/insights) and toggle the asset dropdown to Instagram — user prefers it over the IG app for richer aggregate data."}
+- "user: what's my follower count / agent: you have N followers" → {"write": false}
+- "user: my sister's name is Alex / agent: noted" → {"write": true, "file": "mind", "action": "append", "section_heading": null, "content": "User's sister: Alex."}`;
 
 export interface EndOfTurnContext {
   sessionId: string;

@@ -208,7 +208,7 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
 
     // Phase-gate scoring + auto-fix push-back. Fires only when the
     // halt is from the phase-gate gate AND the project carries a
-    // .primal-launch.json. Per Peter's spec: score >= 7 → proceed;
+    // .primal-launch.json. Per spec: score >= 7 → proceed;
     // score < 7 → spawn one fix-worker, re-score, halt if still < 7.
     if (finalAction === "halt" && finalOutcome.findings.some(f => f.gate === "phase-gate")) {
       const recovery = await attemptPhaseGateScoring(opts, chunk, emit, totalChunks);

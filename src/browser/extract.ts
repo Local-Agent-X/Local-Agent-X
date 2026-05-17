@@ -163,7 +163,7 @@ const EXTRACTOR_SCRIPT = `(function(args) {
   //     local (200,300) gets clicked at main-page (200,300), which is
   //     wherever the iframe IS NOT.
   //
-  // Live failure shape (2026-05-13, Thriveventory PO entry on both
+  // Live failure shape (2026-05-13, the customer PO-entry workflow on both
   // providers): React-Select dropdowns rendered inside an iframe were
   // unreachable. Snapshot saw them (extract iterated iframe content) but
   // every fill/click strategy queried the main frame's xpath/role/text,

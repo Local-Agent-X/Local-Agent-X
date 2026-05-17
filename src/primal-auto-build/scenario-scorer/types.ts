@@ -75,7 +75,7 @@ export interface ScoreOptions {
   scenario: ParsedScenario;
   projectDir: string;
   launch: ProjectLaunchSpec;
-  /** 0-10 threshold for pass. Default 7 (per Peter's spec). */
+  /** 0-10 threshold for pass. Default 7 (per spec). */
   threshold?: number;
   /** Wall-clock cap for the whole score run. Default 5 min. */
   timeoutMs?: number;

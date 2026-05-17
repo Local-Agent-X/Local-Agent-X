@@ -69,7 +69,7 @@ export function createSearchTools(memory: MemoryIndex) {
           },
           entity: {
             type: "string",
-            description: "Filter results to a specific entity (e.g. 'Peter')",
+            description: "Filter results to a specific entity (e.g. a person's name).",
           },
           since: {
             type: "string",

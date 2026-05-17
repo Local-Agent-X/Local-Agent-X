@@ -89,8 +89,8 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     if (!name || !pageUrl) { json(400, { error: "name and url required" }); return true; }
 
     // Validate /apps/<id>/ URLs match a real workspace folder. Agents have
-    // slugified display names ('Mario To Do' -> 'mario-to-do') and ended
-    // up with a pin that 404s because the actual folder is 'mario-todo-app'.
+    // slugified display names ('Sample To Do' -> 'sample-to-do') and ended
+    // up with a pin that 404s because the actual folder is 'sample-todo-app'.
     // Fail fast with a helpful hint so the agent can retry with the right URL.
     const appUrlMatch = String(pageUrl).match(/^\/apps\/([a-zA-Z0-9_-]+)\/?$/);
     if (appUrlMatch) {

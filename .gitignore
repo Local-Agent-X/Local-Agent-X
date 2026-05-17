@@ -5,7 +5,8 @@ voice-models/
 *.log
 
 # Auth tokens & databases
-.sax/
+.lax/
+.sax/  # legacy path, pre-rename; keep blocked so any stale dir on disk isn't accidentally staged
 *.db
 *.db-shm
 *.db-wal

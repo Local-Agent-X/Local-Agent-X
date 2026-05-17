@@ -13,7 +13,7 @@ export const instagramPost: Protocol = {
     "default_hashtags",
     "caption_style",         // e.g. "emoji-heavy", "clean", "professional"
     "preferred_crop",        // e.g. "4:5", "1:1", "original"
-    "signature_line",        // e.g. "📍 NutriShop McKinney"
+    "signature_line",        // e.g. "📍 Your Store Name" or "🌎 yoursite.com"
     "always_include_cta",    // e.g. true (always end with call-to-action)
   ],
   rules: [

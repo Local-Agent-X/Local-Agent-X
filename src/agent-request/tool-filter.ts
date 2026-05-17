@@ -72,7 +72,7 @@ export const CORE_TOOL_NAMES = new Set([
   // op_submit_async because THIS gate was stripping agent_spawn out of
   // the request payload. Flipping the include/exclude here is what
   // finally made the canonical path load-bearing. The actual fix was
-  // one file. (Peter's call, 2026-05-11.)
+  // one file. (Owner's call, 2026-05-11.)
   "agent_list", "agent_spawn", "agent_create",
   "agent_status", "agent_cancel", "agent_output",
   // Browser

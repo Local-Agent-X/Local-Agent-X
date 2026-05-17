@@ -56,6 +56,14 @@ function handleChatWsMessage(e) {
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
 
+    // Heartbeat pong — server echoed our JSON ping. Bump the
+    // lastPong timestamp so the heartbeat loop in chat-ws.js doesn't
+    // misclassify the connection as stale and force-reconnect.
+    if (msg.type === 'pong') {
+      window.chatWsLastPong = Date.now();
+      return;
+    }
+
     if (msg.type === 'active_chats') {
       activeChatsSet = new Set(msg.sessionIds || []);
       renderSidebar(); // Update indicators

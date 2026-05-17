@@ -156,9 +156,18 @@ async function sendMessage() {
   // Register so renderMessages can pull live state when re-entering this chat
   _liveStreams.set(streamSessionId, { get content() { return content; }, get toolEvents() { return toolEvents; } });
 
-  // Try WebSocket first (bidirectional, no SSE buffering issues)
-  if (chatWs && chatWs.readyState === WebSocket.OPEN) {
-    _chatDiag('sendMessage dispatching via WS sess=' + streamSessionId.slice(-8) + ' len=' + finalText.length);
+  // Try WebSocket first (bidirectional, no SSE buffering issues).
+  // The pong-staleness check below is the front-line defense against
+  // half-open WS: even with readyState=OPEN, if we haven't seen a
+  // {type:"pong"} reply within 40s the connection is dead — demote to
+  // HTTP fallback this turn and let the heartbeat loop force-reconnect
+  // separately. Without this gate, the first send after a half-open
+  // window goes into the WS buffer and disappears (the fresh-install
+  // 2026-05-17 chat-doesnt-work-until-restart bug).
+  const wsLastPong = typeof window.chatWsLastPong === 'number' ? window.chatWsLastPong : 0;
+  const wsHealthy = chatWs && chatWs.readyState === WebSocket.OPEN && (Date.now() - wsLastPong < 40_000);
+  if (wsHealthy) {
+    _chatDiag('sendMessage dispatching via WS sess=' + streamSessionId.slice(-8) + ' len=' + finalText.length + ' pongAge=' + (Date.now() - wsLastPong) + 'ms');
     chatWs.send(JSON.stringify({ type: 'chat', sessionId: streamSessionId, message: finalText, attachments: msgAttachments || [], projectId: streamChat.projectId || null }));
     // Events arrive via the WS onmessage handler (lines above) which calls broadcastToSession
     // Set up a WS event listener for this session's stream events

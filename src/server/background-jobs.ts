@@ -64,7 +64,18 @@ export function startBackgroundJobs(deps: {
   // raw tool results → off-topic detector flagged → report failed.
   // Override via LAX_MISSION_TIMEOUT_MS env var.
   const MISSION_HARD_TIMEOUT_MS = Number(process.env.LAX_MISSION_TIMEOUT_MS) || 20 * 60_000;
-  const SUB_AGENT_WAIT_MS = Number(process.env.LAX_SUB_AGENT_WAIT_MS) || 5 * 60_000;
+  // Buffer reserved at the END of the mission window for the post-wait
+  // synthesis (build the report, write to disk, classify, return). The
+  // sub-agent wait gets the rest of the mission budget — see the
+  // budget-aware calculation at the call site. Old hardcoded 5min
+  // dropped legitimate sub-agent output when missions had time to spare.
+  const POST_SUB_AGENT_BUFFER_MS = 60_000;
+  // Floor on how long we'll wait, even when budget is tight. Below this,
+  // give up early and surface a clear timeout rather than waiting a few
+  // seconds that won't help any real sub-agent finish.
+  const SUB_AGENT_WAIT_MIN_MS = 30_000;
+  // Override via env for ops who want a hard cap regardless of budget.
+  const SUB_AGENT_WAIT_HARD_CAP_MS = Number(process.env.LAX_SUB_AGENT_WAIT_MS) || 0;
   const stripCronPreamble = (p: string): string => {
     const patterns = [
       /^every day at \d{1,2}(:\d{2})?\s*(am|pm)?,?\s*/i,
@@ -90,6 +101,7 @@ export function startBackgroundJobs(deps: {
     return out.trim();
   };
   cronService.onExecute(async (jobId, prompt, _ctx) => {
+    const missionStartMs = Date.now();
     const cronSecurity = new SecurityLayer(resolve(process.env.LAX_WORKSPACE ?? process.env.SAX_WORKSPACE ?? join(homedir(), ".lax", "workspace")), "workspace");
     const sessionId = `cron-${jobId}-${Date.now()}`;
     const cleanedPrompt = stripSaveInstructions(stripCronPreamble(prompt));
@@ -157,14 +169,24 @@ Use the read-only research tools (web_search, browser, http_request, web_fetch, 
         const { Handler } = await import("../agency/handler.js");
         const handler = Handler.getInstance();
         const subWaitStart = Date.now();
-        const subResults = await handler.waitForSessionAgents(sessionId, SUB_AGENT_WAIT_MS);
+        // Budget-aware wait. The sub-agents have until the mission's
+        // overall budget runs out (minus the synthesis buffer), not an
+        // arbitrary 5min ceiling — which used to drop sub-agent output
+        // when the mission had 10+ minutes still in the budget. If the
+        // operator set LAX_SUB_AGENT_WAIT_MS as a hard cap, respect it.
+        const elapsed = subWaitStart - missionStartMs;
+        const remaining = MISSION_HARD_TIMEOUT_MS - elapsed - POST_SUB_AGENT_BUFFER_MS;
+        let waitMs = Math.max(SUB_AGENT_WAIT_MIN_MS, remaining);
+        if (SUB_AGENT_WAIT_HARD_CAP_MS > 0) waitMs = Math.min(waitMs, SUB_AGENT_WAIT_HARD_CAP_MS);
+        logger.info(`[cron] Job ${jobId}: waiting up to ${(waitMs/1000).toFixed(0)}s for ${1}+ sub-agent(s) to finish (mission elapsed ${(elapsed/1000).toFixed(0)}s of ${(MISSION_HARD_TIMEOUT_MS/1000).toFixed(0)}s budget)`);
+        const subResults = await handler.waitForSessionAgents(sessionId, waitMs);
         const subWaitMs = Date.now() - subWaitStart;
         if (subResults.length > 0) {
           const subOutput = subResults.join("\n\n---\n\n");
           output = subOutput.length > output.length ? subOutput : output + "\n\n---\n\n" + subOutput;
           logger.info(`[cron] Job ${jobId}: collected ${subResults.length} sub-agent result(s) in ${subWaitMs}ms`);
-        } else if (subWaitMs >= SUB_AGENT_WAIT_MS - 500) {
-          logger.warn(`[cron] Job ${jobId}: sub-agent wait timed out after ${subWaitMs}ms — any in-flight sub-agent output is dropped`);
+        } else if (subWaitMs >= waitMs - 500) {
+          logger.warn(`[cron] Job ${jobId}: sub-agent wait timed out after ${subWaitMs}ms (budget exhausted) — any in-flight sub-agent output is dropped`);
         }
       } catch (e) { logger.warn(`[cron] Sub-agent wait error:`, (e as Error).message); }
     }

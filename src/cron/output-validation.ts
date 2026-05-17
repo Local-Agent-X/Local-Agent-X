@@ -73,6 +73,35 @@ export function scoreTopicMatch(prompt: string, output: string): TopicMatch {
   return { matched, total: kw.length, score: matched / kw.length };
 }
 
+/**
+ * Detect whether the output looks like a real, organized report — even if
+ * keyword overlap with the prompt is low (synonyms, paraphrase, structured
+ * data instead of prose, etc.). Returns true when at least 2 structural
+ * signals are present AND the output is substantive length.
+ *
+ * Added 2026-05-17 as a fallback for the off-topic detector's substring
+ * keyword match, which false-rejected legitimate reports that used
+ * synonyms — e.g. a prompt asking for "Q3 pricing" and a report using
+ * "cost per call" throughout. The cheap keyword check stays as the
+ * fast-path for catching obvious refusals/dumps; this is the
+ * second-chance signal so a real report with synonym mismatch isn't
+ * discarded.
+ */
+export function looksLikeStructuredReport(text: string): boolean {
+  if (text.length < 800) return false;
+  let signals = 0;
+  // Markdown headers — agent organized into sections
+  if (/^#{1,6}\s+\S/m.test(text)) signals++;
+  // Multiple paragraphs — separated by blank lines
+  if ((text.match(/\n\s*\n/g) || []).length >= 3) signals++;
+  // List items — bullets or numbered
+  if ((text.match(/^[\s]*([-*+]|\d+\.)\s+\S/gm) || []).length >= 4) signals++;
+  // Sentence density — many sentence-terminating punctuation marks suggests prose
+  const sentenceTerminators = (text.match(/[.!?](?=\s|$)/g) || []).length;
+  if (sentenceTerminators >= 10) signals++;
+  return signals >= 2;
+}
+
 export function looksTruncated(text: string): boolean {
   const t = text.trimEnd();
   if (!t) return true;
@@ -111,7 +140,15 @@ export function validateMissionOutput(prompt: string, output: string, stopReason
   const matchedBad = META_BAD_PATTERNS.find(re => re.test(trimmed));
   const tooShort = trimmed.length < MIN_OUTPUT_LENGTH;
   const topic = scoreTopicMatch(prompt, trimmed);
-  const offTopic = topic.total >= TOPIC_MIN_KEYWORDS && topic.score < TOPIC_MIN_SCORE;
+  // Off-topic = keyword score too low AND output doesn't look like a real
+  // structured report. The second check is the synonym-rescue: if the
+  // agent produced a long, structured response with headers/paragraphs/
+  // sentence density, trust it even when keyword overlap is low. Refusals
+  // and tool-result dumps are already caught by detectRefusalOrError and
+  // META_BAD_PATTERNS upstream; this fallback won't smuggle them through.
+  const offTopic = topic.total >= TOPIC_MIN_KEYWORDS
+    && topic.score < TOPIC_MIN_SCORE
+    && !looksLikeStructuredReport(trimmed);
   const truncated = looksTruncated(trimmed);
   const contentValid = !refusal.refused && !matchedBad && !tooShort && !offTopic && !truncated;
 

@@ -20,6 +20,15 @@ export type ModelTier = "strong" | "medium" | "weak";
  * Medium: Everything else — Grok 3/4, Gemini 2.0, 32B+ local.
  */
 export function classifyModel(model: string): ModelTier {
+  // Empty / missing model identifier should NOT silently fall through to
+  // the "medium" catch-all below — that buckets unknowns into the
+  // restrictive 15-iteration / shrink-tools pipeline that's only correct
+  // for known weak-tool-RLHF models like grok-4. A canonical-loop call
+  // that arrives with ctx.model === "" (plumbing bug) was killing strong-
+  // model turns at 15 iterations even though the user's actual model
+  // would budget 25. Treat unknown-because-empty as strong — when we
+  // truly don't know, default to giving the agent room to work.
+  if (!model) return "strong";
   const m = model.toLowerCase();
 
   // Weak: small local models + known flaky tiers

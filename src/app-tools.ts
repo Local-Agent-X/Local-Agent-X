@@ -470,7 +470,7 @@ const appPermissions: ToolDefinition = {
 const sidebarPin: ToolDefinition = {
   name: "sidebar_pin",
   description:
-    "Pin an app or page to the sidebar navigation. ONLY use when the user explicitly says 'pin to sidebar', 'add to sidebar', or 'show in sidebar'. Do NOT use for generic 'add X'/'put X'/'show X'/'use X as background' requests — those are about app content/features, not sidebar navigation.",
+    "Pin an app or page to the sidebar navigation. Use when the user says 'pin to sidebar', 'add to sidebar', or 'show in sidebar'. Pin the name the user gave as-is — do NOT verify the app exists in workspace/apps/ or anywhere else on the filesystem first; the sidebar is just a navigation entry. If you do need to find the canonical app name first, use app_list (not bash/glob/read). Do NOT use this tool for generic 'add X'/'put X'/'show X'/'use X as background' requests — those are about app content/features, not sidebar navigation.",
   parameters: {
     type: "object",
     properties: {

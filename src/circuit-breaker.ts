@@ -14,6 +14,7 @@
  */
 
 import { createLogger } from "./logger.js";
+import { USER_HINTS } from "./types.js";
 const logger = createLogger("circuit-breaker");
 
 type BreakerState = "closed" | "open" | "half_open";
@@ -49,6 +50,8 @@ export interface CircuitDecision {
   allowed: boolean;
   state: BreakerState;
   reason?: string;
+  /** Plain-English user-facing summary; see SecurityDecision.userHint. */
+  userHint?: string;
   consecutiveFailures: number;
 }
 
@@ -68,6 +71,7 @@ export function checkCircuit(sessionId: string | undefined, toolName: string): C
       allowed: false,
       state: "open",
       reason: `Circuit OPEN for ${toolName}: ${entry.consecutiveFailures} consecutive failures. Try a different approach or wait ${remainingS}s. Calling the same tool with the same args will not work.`,
+      userHint: USER_HINTS.retryExhausted,
       consecutiveFailures: entry.consecutiveFailures,
     };
   }

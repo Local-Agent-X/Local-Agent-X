@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { USER_HINTS } from "./types.js";
 
 /**
  * Basic RBAC (Role-Based Access Control)
@@ -33,6 +34,8 @@ export interface RBACDecision {
   allowed: boolean;
   role: Role;
   reason: string;
+  /** Plain-English user-facing summary; see SecurityDecision.userHint. */
+  userHint?: string;
 }
 
 // Permissions per role
@@ -165,13 +168,13 @@ export class RBACManager {
     // Check denied endpoints — exact match or path prefix (with / boundary)
     for (const denied of perms.deniedEndpoints) {
       if (pathname === denied || pathname.startsWith(denied + "/")) {
-        return { allowed: false, role, reason: `Role "${role}" cannot access ${pathname}` };
+        return { allowed: false, role, reason: `Role "${role}" cannot access ${pathname}`, userHint: USER_HINTS.policy };
       }
     }
 
     // Check chat permission for POST /api/chat
     if (pathname === "/api/chat" && method === "POST" && !perms.canChat) {
-      return { allowed: false, role, reason: `Role "${role}" cannot send chat messages` };
+      return { allowed: false, role, reason: `Role "${role}" cannot send chat messages`, userHint: USER_HINTS.policy };
     }
 
     return { allowed: true, role, reason: "Endpoint allowed" };
@@ -186,7 +189,7 @@ export class RBACManager {
     if (perms.allowedTools.includes(toolName)) {
       return { allowed: true, role, reason: `Tool "${toolName}" allowed for role "${role}"` };
     }
-    return { allowed: false, role, reason: `Role "${role}" cannot use tool "${toolName}"` };
+    return { allowed: false, role, reason: `Role "${role}" cannot use tool "${toolName}"`, userHint: USER_HINTS.policy };
   }
 
   /** Create a new scoped token. Returns the raw token (show once). */

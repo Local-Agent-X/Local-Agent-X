@@ -1,4 +1,5 @@
 import type { SecurityDecision } from "../types.js";
+import { USER_HINTS } from "../types.js";
 
 // Commands that should never be executed, even without metacharacters
 const BLOCKED_COMMANDS = [
@@ -185,7 +186,7 @@ export function evaluateShellCommand(command: string): SecurityDecision {
   try {
     const obfuscationResult = detectObfuscation(command);
     if (obfuscationResult) {
-      return { allowed: false, reason: obfuscationResult };
+      return { allowed: false, reason: obfuscationResult, userHint: USER_HINTS.commandShell };
     }
   } catch {
     // Don't crash on obfuscation check failure — allow the command through
@@ -194,7 +195,7 @@ export function evaluateShellCommand(command: string): SecurityDecision {
   // Block heredoc + inline-script writes (forces use of write/edit tools)
   const scriptWriteResult = detectScriptWrite(command);
   if (scriptWriteResult) {
-    return { allowed: false, reason: scriptWriteResult };
+    return { allowed: false, reason: scriptWriteResult, userHint: USER_HINTS.commandShell };
   }
 
   // Block dangerous shell metacharacters (command chaining, subshells, command substitution)
@@ -204,16 +205,16 @@ export function evaluateShellCommand(command: string): SecurityDecision {
     // PowerShell: backtick is the escape char, ${} is variable syntax, {} is script blocks — all normal
     // Only block actual dangerous patterns: Invoke-Expression, iex, & (call operator at start)
     if (/\r\n/.test(command)) {
-      return { allowed: false, reason: "Blocked: multi-line commands not allowed." };
+      return { allowed: false, reason: "Blocked: multi-line commands not allowed.", userHint: USER_HINTS.commandShell };
     }
   } else {
     // Bash: block backtick, $(), ${} (command substitution)
     if (/[`\r\n]/.test(command) || /\$\(/.test(command) || /\$\{/.test(command)) {
-      return { allowed: false, reason: "Blocked: shell metacharacters detected (backtick or command substitution)." };
+      return { allowed: false, reason: "Blocked: shell metacharacters detected (backtick or command substitution).", userHint: USER_HINTS.commandShell };
     }
     // Block ; (sequential chaining) and single & (background) but allow && and ||
     if (/;/.test(command) || /(?<![&|])&(?![&|])/.test(command)) {
-      return { allowed: false, reason: "Blocked: use && instead of ; for chaining, and don't background processes with &." };
+      return { allowed: false, reason: "Blocked: use && instead of ; for chaining, and don't background processes with &.", userHint: USER_HINTS.commandShell };
     }
   }
 
@@ -223,6 +224,7 @@ export function evaluateShellCommand(command: string): SecurityDecision {
     return {
       allowed: false,
       reason: `Blocked: too many pipes (${pipeCount}). Maximum 5 pipes allowed per command.`,
+      userHint: USER_HINTS.commandShell,
     };
   }
 
@@ -234,6 +236,7 @@ export function evaluateShellCommand(command: string): SecurityDecision {
         return {
           allowed: false,
           reason: `Blocked: pipe segment matches dangerous pattern.`,
+          userHint: USER_HINTS.commandShell,
         };
       }
     }
@@ -245,6 +248,7 @@ export function evaluateShellCommand(command: string): SecurityDecision {
       return {
         allowed: false,
         reason: `Blocked: command matches dangerous pattern.`,
+        userHint: USER_HINTS.commandShell,
       };
     }
   }

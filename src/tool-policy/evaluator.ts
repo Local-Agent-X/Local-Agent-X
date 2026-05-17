@@ -59,6 +59,8 @@ export interface PackDeny {
   ruleId?: string;
   reason: string;
   recovery?: string;
+  /** Plain-English user-facing summary; see SecurityDecision.userHint. */
+  userHint?: string;
 }
 
 export interface PackAllow {
@@ -86,6 +88,8 @@ export interface EvaluatorDeny {
   deniedBy: { packId: string; ruleId?: string };
   reason: string;
   recovery?: string;
+  /** Plain-English user-facing summary; see SecurityDecision.userHint. */
+  userHint?: string;
 }
 
 export interface EvaluatorAllow {
@@ -118,6 +122,7 @@ export async function evaluate(
         deniedBy: { packId: pack.id, ruleId: decision.ruleId },
         reason: decision.reason,
         recovery: decision.recovery,
+        userHint: decision.userHint,
       };
     }
   }

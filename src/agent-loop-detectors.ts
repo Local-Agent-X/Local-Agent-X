@@ -377,6 +377,7 @@ export function runPostTurnDetectors(
 const EVIDENCE_TOOLS = new Set([
   "read", "bash", "list_files", "ls", "search", "find", "grep", "glob",
   "web_fetch", "web_search", "write", "edit", "http_request",
+  "browser",
 ]);
 
 /**

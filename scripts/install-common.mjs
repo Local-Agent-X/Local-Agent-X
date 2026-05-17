@@ -42,22 +42,41 @@ if (res.status !== 0) {
 ok("npm dependencies installed");
 
 // 3. Ollama embedding model pull (idempotent — Ollama skips if already present).
-// Daemon-readiness check first: `brew install ollama` puts the binary on
-// PATH but doesn't launch the service, so `ollama pull` invoked seconds
-// later races the daemon and exits non-zero. Probe the API, start serve in
-// the background if needed, then pull. Silent pull-failure was the visible
-// failure on 2026-05-17 fresh install — empty `ollama list` post-install
-// because pull ran before any daemon existed to receive it.
+// Two-stage readiness check before pulling. `brew install ollama` puts the
+// binary on PATH but doesn't launch the service, AND when something does
+// start the daemon it can serve /api/tags BEFORE its client keypair
+// (~/.ollama/id_ed25519) is written. Pulling in that gap returns
+// `pull model manifest: open id_ed25519: no such file or directory` —
+// the visible failure on 2026-05-17 fresh install. Probe both signals:
+// 1. /api/tags responds (daemon listening)
+// 2. id_ed25519 keypair exists (registry auth ready)
+// Only then call `ollama pull`. On pull failure, retry once after
+// restarting the daemon — covers the rare case where a stale daemon
+// process started before ~/.ollama was created.
 const OLLAMA_URL = process.env.LAX_OLLAMA_URL || process.env.SAX_OLLAMA_URL || "http://127.0.0.1:11434";
-async function ollamaReady() {
+const KEYPAIR_PATH = join(homedir(), ".ollama", "id_ed25519");
+async function tagsResponding() {
   try {
     const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(2000) });
     return res.ok;
   } catch { return false; }
 }
+async function ollamaReady() {
+  if (!(await tagsResponding())) return false;
+  return existsSync(KEYPAIR_PATH);
+}
 async function ensureOllamaUp() {
   if (await ollamaReady()) return true;
-  log("Starting Ollama daemon…");
+  // If /api/tags responds but keypair is missing, the daemon is in a stuck
+  // half-init state (seen when daemon started before ~/.ollama existed).
+  // Restart by killing any current ollama serve so the next one inits clean.
+  if (await tagsResponding()) {
+    log("Ollama daemon up but keypair missing — restarting to reinitialize…");
+    spawnSync("pkill", ["-f", "ollama serve"]);
+    await new Promise(r => setTimeout(r, 1500));
+  } else {
+    log("Starting Ollama daemon…");
+  }
   const { spawn } = await import("node:child_process");
   const daemon = spawn("ollama", ["serve"], { detached: true, stdio: "ignore" });
   daemon.unref();
@@ -74,9 +93,26 @@ if (has("ollama")) {
     warn(`Ollama daemon didn't come up at ${OLLAMA_URL} — skipping model pull. Re-run later: ollama pull ${EMBED_MODEL}`);
   } else {
     log(`Pulling ${EMBED_MODEL} (~670MB, one-time)…`);
-    const pull = run("ollama", ["pull", EMBED_MODEL]);
+    let pull = run("ollama", ["pull", EMBED_MODEL]);
+    // One retry on transient registry/keypair errors. spawn returns the
+    // child's exit code; ollama exits non-zero on any pull failure, so
+    // restart-then-retry is safe even when the first try succeeded
+    // partially (pulls are resumable + content-addressed).
+    if (pull.status !== 0) {
+      warn("Pull failed on first attempt — restarting daemon and retrying once…");
+      spawnSync("pkill", ["-f", "ollama serve"]);
+      await new Promise(r => setTimeout(r, 2000));
+      const { spawn } = await import("node:child_process");
+      spawn("ollama", ["serve"], { detached: true, stdio: "ignore" }).unref();
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 1000));
+        if (await ollamaReady()) break;
+      }
+      pull = run("ollama", ["pull", EMBED_MODEL]);
+    }
     if (pull.status === 0) ok("Memory engine ready");
-    else warn(`Pull failed — re-run later: ollama pull ${EMBED_MODEL}`);
+    else warn(`Pull failed twice — semantic memory unavailable. Re-run later: ollama pull ${EMBED_MODEL}`);
   }
 } else {
   warn(`Ollama not on PATH — semantic memory will be unavailable until you install Ollama and run: ollama pull ${EMBED_MODEL}`);

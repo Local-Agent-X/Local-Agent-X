@@ -159,13 +159,18 @@ async function sendMessage() {
   // Try WebSocket first (bidirectional, no SSE buffering issues).
   // The pong-staleness check below is the front-line defense against
   // half-open WS: even with readyState=OPEN, if we haven't seen a
-  // {type:"pong"} reply within 40s the connection is dead — demote to
-  // HTTP fallback this turn and let the heartbeat loop force-reconnect
-  // separately. Without this gate, the first send after a half-open
-  // window goes into the WS buffer and disappears (the fresh-install
-  // 2026-05-17 chat-doesnt-work-until-restart bug).
+  // {type:"pong"} reply since the connection opened the WS may be
+  // dead — demote to HTTP fallback this turn.
+  //
+  // Require chatWsLastPong > 0 (sentinel for "no pong yet"). Without this
+  // the first send after page-load went via WS even when the connection
+  // was half-open from the start — that was the 2026-05-17 fresh-install
+  // chat-doesnt-work-until-Cmd-R bug. The heartbeat sends an immediate
+  // ping on open, so a healthy connection has lastPong > 0 within a few
+  // ms of connection-up — HTTP fallback only triggers when the
+  // connection genuinely can't round-trip.
   const wsLastPong = typeof window.chatWsLastPong === 'number' ? window.chatWsLastPong : 0;
-  const wsHealthy = chatWs && chatWs.readyState === WebSocket.OPEN && (Date.now() - wsLastPong < 40_000);
+  const wsHealthy = chatWs && chatWs.readyState === WebSocket.OPEN && wsLastPong > 0 && (Date.now() - wsLastPong < 40_000);
   if (wsHealthy) {
     _chatDiag('sendMessage dispatching via WS sess=' + streamSessionId.slice(-8) + ' len=' + finalText.length + ' pongAge=' + (Date.now() - wsLastPong) + 'ms');
     chatWs.send(JSON.stringify({ type: 'chat', sessionId: streamSessionId, message: finalText, attachments: msgAttachments || [], projectId: streamChat.projectId || null }));

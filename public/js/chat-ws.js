@@ -52,14 +52,37 @@ let activeChatsSet = new Set();
 // reached the half-open frontend. window.chatWsLastPong is read by
 // chat-send.js to demote to HTTP fallback when WS health is stale.
 let chatWsPingTimer = null;
-window.chatWsLastPong = Date.now();
+// Sentinel = 0 ("no pong yet"). DO NOT initialize to Date.now() on load —
+// that creates a 40s window where wsHealthy() returns true based on a
+// pong that never arrived, and the first chat-send goes into a half-open
+// WS buffer that the server never sees. The fresh-install
+// chat-doesnt-work bug was exactly this: heartbeat correct, gate wrong.
+// chat-send.js requires this to be a real timestamp (> 0) before trusting WS.
+window.chatWsLastPong = 0;
 const WS_PING_INTERVAL_MS = 25_000;
 const WS_PONG_TIMEOUT_MS = 35_000;
 function startChatWsHeartbeat() {
   stopChatWsHeartbeat();
-  window.chatWsLastPong = Date.now();
+  window.chatWsLastPong = 0;
+  // Immediate ping on connection-up. Without this, the very first
+  // send after page-load can race the 25s ping interval — chat-send.js
+  // checks `chatWsLastPong > 0` and falls back to HTTP if no pong has
+  // landed yet. The fire-and-validate-now approach lets a healthy WS
+  // serve the first send instead of unnecessarily demoting to HTTP.
+  try {
+    if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+      chatWs.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
+    }
+  } catch {}
   chatWsPingTimer = setInterval(() => {
     if (!chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+    // First-tick check: if we've never received a pong since open, the
+    // connection is half-open from the start — close + reconnect.
+    if (window.chatWsLastPong === 0) {
+      console.warn('[ws] No pong since connection open — half-open from start, forcing reconnect');
+      try { chatWs.close(); } catch {}
+      return;
+    }
     if (Date.now() - window.chatWsLastPong > WS_PONG_TIMEOUT_MS) {
       console.warn('[ws] No pong within ' + WS_PONG_TIMEOUT_MS + 'ms — connection half-open, forcing reconnect');
       try { chatWs.close(); } catch {}

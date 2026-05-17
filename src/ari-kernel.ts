@@ -18,7 +18,10 @@ const logger = createLogger("ari-kernel");
 
 let firewall: Firewall | null = null;
 let currentPreset: string = "workspace-assistant";
-let ariIsRequired: boolean = false;
+// Default true so the deepest gate is load-bearing even if a caller forgets
+// to pass `required`. The config layer (src/config.ts: ariRequired) is the
+// canonical source — this is just the safety net.
+let ariIsRequired: boolean = true;
 
 // Map session policy presets to ARI presets
 const SESSION_TO_ARI_PRESET: Record<string, string> = {
@@ -38,7 +41,7 @@ export function getAriPresetForSession(sessionPreset: string): string {
  */
 export async function startAriKernel(auditDbPath: string, preset?: string, required?: boolean): Promise<boolean> {
   currentPreset = preset || "workspace-assistant";
-  ariIsRequired = required ?? false;
+  ariIsRequired = required ?? true;
 
   try {
     const kernel = createKernel({

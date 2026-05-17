@@ -30,7 +30,12 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     let existing: Record<string, unknown> = {};
     try { if (existsSync(settingsPath)) existing = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}
     const merged = { ...existing, ...body };
-    writeFileSync(settingsPath, JSON.stringify(merged, null, 2), { encoding: "utf-8", mode: 0o600 });
+    // Atomic write — same race as cron-service.saveJobs() pre-9ec343f.
+    // Concurrent POST /api/settings from two clients was overwriting
+    // each other's merges in a non-atomic read-modify-write sequence,
+    // and a hot-reloader reading the file mid-write could JSON.parse-crash.
+    const { atomicWriteFileSync } = await import("../../server-utils.js");
+    atomicWriteFileSync(settingsPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
     // Broadcast setting changes to all connected browsers via WebSocket
     if (body.theme || body.provider || body.model) {
       try {
@@ -43,7 +48,8 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       let cfg: Record<string, unknown> = {};
       try { if (existsSync(configPath)) cfg = JSON.parse(readFileSync(configPath, "utf-8")); } catch {}
       cfg.port = parseInt(String(body.port), 10);
-      writeFileSync(configPath, JSON.stringify(cfg, null, 2), { encoding: "utf-8", mode: 0o600 });
+      const { atomicWriteFileSync } = await import("../../server-utils.js");
+      atomicWriteFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
     }
     // Browser mode persists to main config (read by the browser launcher via
     // getRuntimeConfig), not just settings.json. Update in-memory too so the

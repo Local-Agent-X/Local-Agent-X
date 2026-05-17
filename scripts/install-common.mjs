@@ -41,12 +41,43 @@ if (res.status !== 0) {
 }
 ok("npm dependencies installed");
 
-// 3. Ollama embedding model pull (idempotent — Ollama skips if already present)
+// 3. Ollama embedding model pull (idempotent — Ollama skips if already present).
+// Daemon-readiness check first: `brew install ollama` puts the binary on
+// PATH but doesn't launch the service, so `ollama pull` invoked seconds
+// later races the daemon and exits non-zero. Probe the API, start serve in
+// the background if needed, then pull. Silent pull-failure was the visible
+// failure on 2026-05-17 fresh install — empty `ollama list` post-install
+// because pull ran before any daemon existed to receive it.
+const OLLAMA_URL = process.env.LAX_OLLAMA_URL || process.env.SAX_OLLAMA_URL || "http://127.0.0.1:11434";
+async function ollamaReady() {
+  try {
+    const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(2000) });
+    return res.ok;
+  } catch { return false; }
+}
+async function ensureOllamaUp() {
+  if (await ollamaReady()) return true;
+  log("Starting Ollama daemon…");
+  const { spawn } = await import("node:child_process");
+  const daemon = spawn("ollama", ["serve"], { detached: true, stdio: "ignore" });
+  daemon.unref();
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 1000));
+    if (await ollamaReady()) return true;
+  }
+  return false;
+}
 if (has("ollama")) {
-  log(`Pulling ${EMBED_MODEL} (~670MB, one-time)…`);
-  const pull = run("ollama", ["pull", EMBED_MODEL]);
-  if (pull.status === 0) ok("Memory engine ready");
-  else warn(`Pull failed — re-run later: ollama pull ${EMBED_MODEL}`);
+  const ready = await ensureOllamaUp();
+  if (!ready) {
+    warn(`Ollama daemon didn't come up at ${OLLAMA_URL} — skipping model pull. Re-run later: ollama pull ${EMBED_MODEL}`);
+  } else {
+    log(`Pulling ${EMBED_MODEL} (~670MB, one-time)…`);
+    const pull = run("ollama", ["pull", EMBED_MODEL]);
+    if (pull.status === 0) ok("Memory engine ready");
+    else warn(`Pull failed — re-run later: ollama pull ${EMBED_MODEL}`);
+  }
 } else {
   warn(`Ollama not on PATH — semantic memory will be unavailable until you install Ollama and run: ollama pull ${EMBED_MODEL}`);
 }

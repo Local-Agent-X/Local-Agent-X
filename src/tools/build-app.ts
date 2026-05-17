@@ -60,6 +60,21 @@ export interface BuildAppResolveOptions {
   forcedProvider?: string;
 }
 
+/**
+ * Decide whether the chat's runtime provider should be forced over the
+ * settings.json fallback. Explicit `backend` arguments (codex/claude) take
+ * precedence over the chat's runtime, so we only forward `runtimeProvider`
+ * when the caller asked for "auto" (or didn't pass one). Pure helper so the
+ * precedence logic is unit-testable without queuing a real op.
+ */
+export function pickForcedProviderFromRuntime(
+  backendArg: string,
+  runtimeProvider: string | undefined,
+): string | undefined {
+  if (backendArg && backendArg !== "auto") return undefined;
+  return runtimeProvider || undefined;
+}
+
 export function resolveBuildProvider(
   backendArg: string,
   opts: BuildAppResolveOptions = {},
@@ -106,8 +121,14 @@ export const buildAppTool: ToolDefinition = {
     const prompt = String(args.prompt || args.description || "");
     const backend = String(args.backend || "auto");
     const sessionId = String(args._sessionId || "");
+    // The chat turn handler stamps args._runtimeProvider/_runtimeModel via
+    // the bootstrap-tools wrapper around build_app. When the LLM didn't
+    // pin an explicit backend, prefer the chat's active provider so the
+    // dropdown selection wins over whatever's stale in ~/.lax/settings.json.
+    const runtimeProvider = args._runtimeProvider ? String(args._runtimeProvider) : undefined;
+    const forcedProvider = pickForcedProviderFromRuntime(backend, runtimeProvider);
 
-    const provider = resolveBuildProvider(backend);
+    const provider = resolveBuildProvider(backend, forcedProvider ? { forcedProvider } : {});
     const strategy = resolveBuildStrategy(provider);
 
     const appDir = resolve("workspace", "apps", appName);

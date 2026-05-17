@@ -364,7 +364,24 @@ async function executeSingleTool(
     ["delegate", "generate_image", "generate_video", "camera_capture", "screen_capture", "ocr",
      "memory_search", "memory_save", "playbook_list", "playbook_get"].includes(tc.name);
   if (isAriActive()) {
-    const actionMap: Record<string, string> = { read: "read", write: "write", edit: "write", bash: "exec" };
+    // Action names must match the ARI capability manifest in ari-kernel.ts
+    // (HOST_CAPABILITY_MANIFEST). Falling through to a default like "exec"
+    // when a tool's class doesn't accept that action means lookupHostGrantId
+    // returns undefined → firewall.execute throws "Capability token required"
+    // → ariRequired turns the throw into a block. Map every routable tool
+    // to a manifest-valid action explicitly.
+    const actionMap: Record<string, string> = {
+      // file class
+      read: "read", write: "write", edit: "write",
+      // http class — every web/network tool that goes through firewall.execute
+      web_search: "get", web_fetch: "get", http_request: "get", browser: "get",
+      // shell class
+      bash: "exec",
+      // retrieval class
+      memory_search: "search",
+      // database class
+      memory_save: "write",
+    };
     const ariResult = await ariEvaluate(tc.name, actionMap[tc.name] || "exec", args);
     if (!ariResult.allowed && !isInternalTool) {
       const hint = ariResult.userHint ?? USER_HINTS.policy;

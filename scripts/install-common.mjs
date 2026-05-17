@@ -170,8 +170,21 @@ if (existsSync(cfgPath)) {
   try { cfg = JSON.parse(readFileSync(cfgPath, "utf-8")); } catch {}
 }
 cfg.projectRoot = process.cwd();
-writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
-ok(`Wired ${cfgPath} → projectRoot=${cfg.projectRoot}`);
+// Generate authToken upfront if missing. Without this, the first launch
+// of the .app hit a race: Electron read config.json with no authToken,
+// loaded the renderer with `?token=` (empty), then the server boot
+// generated and wrote the authToken — but the frontend already had
+// AUTH_TOKEN="" baked into shared.js. Every API call 401'd, WS
+// handshake failed, chat didn't work until the user pressed Cmd-R
+// (which reloaded with the now-present token in URL). Generating here
+// closes the race: when Electron reads the config the authToken is
+// already there and the URL is correct on first load.
+if (!cfg.authToken) {
+  const { randomBytes } = await import("node:crypto");
+  cfg.authToken = randomBytes(32).toString("hex");
+}
+writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+ok(`Wired ${cfgPath} → projectRoot=${cfg.projectRoot}, authToken=${cfg.authToken.slice(0,4)}...${cfg.authToken.slice(-4)}`);
 
 // 7. macOS: build the Mac .app and install it to /Applications.
 //    Set SAX_SKIP_APP=1 to skip (useful for headless dev iteration).

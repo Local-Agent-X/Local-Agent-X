@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import * as docx from "docx";
 import mammoth from "mammoth";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { acquireImages, IMAGES_PARAM_SCHEMA, type AcquiredImage, type ImageSpec } from "./tools/shared/image-acquire.js";
 
 /** Resolve ~ and relative paths to absolute Windows paths */
 function resolvePath(p: string): string {
@@ -13,7 +14,46 @@ function resolvePath(p: string): string {
   return resolve(p);
 }
 
-const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docx;
+const { Document, Packer, Paragraph, TextRun, HeadingLevel, ImageRun } = docx;
+
+/**
+ * Scale an image to fit a default-ish max width (~600 px) while
+ * preserving aspect ratio. docx wants pixel dimensions; SVG has no
+ * intrinsic pixel size so we fall back to 600x400.
+ */
+function imageRunFor(img: AcquiredImage): docx.ImageRun {
+  const MAX_W = 600;
+  let w = img.width || MAX_W;
+  let h = img.height || Math.round(MAX_W * 0.66);
+  if (w > MAX_W) { h = Math.round((h * MAX_W) / w); w = MAX_W; }
+  const type: "png" | "jpg" | "gif" | "bmp" =
+    img.mimeType === "image/jpeg" ? "jpg" :
+    img.mimeType === "image/gif" ? "gif" :
+    "png";
+  return new ImageRun({
+    type,
+    data: img.buffer,
+    transformation: { width: w, height: h },
+  } as docx.IImageOptions);
+}
+
+function imageParagraphs(images: AcquiredImage[]): docx.Paragraph[] {
+  const paras: docx.Paragraph[] = [];
+  for (const img of images) {
+    if (img.mimeType === "image/svg+xml" || img.mimeType === "image/webp") {
+      // docx ImageRun does not accept svg/webp directly — fall back to a
+      // bracketed text marker rather than corrupting the .docx. We still
+      // surface that the image was acquired.
+      paras.push(new Paragraph({ children: [new TextRun({ text: `[Image: ${img.source}]`, italics: true })] }));
+    } else {
+      paras.push(new Paragraph({ children: [imageRunFor(img)] }));
+    }
+    if (img.caption) {
+      paras.push(new Paragraph({ children: [new TextRun({ text: img.caption, italics: true })] }));
+    }
+  }
+  return paras;
+}
 
 function ok(content: string, metadata?: Record<string, unknown>): ToolResult {
   return { content, metadata };
@@ -69,14 +109,15 @@ function parseInline(text: string): docx.TextRun[] {
   return runs;
 }
 
-function buildDocument(text: string, title?: string): docx.Document {
+function buildDocument(text: string, title?: string, images: AcquiredImage[] = []): docx.Document {
   const lines = text.split("\n");
   const paragraphs = lines.map(parseLine);
+  const children = [...paragraphs, ...imageParagraphs(images)];
 
   return new Document({
     creator: "Secret Agent X",
     title: title ?? "Document",
-    sections: [{ properties: {}, children: paragraphs }],
+    sections: [{ properties: {}, children }],
   });
 }
 
@@ -96,6 +137,7 @@ const documentCreate: ToolDefinition = {
       file_path: { type: "string", description: "Output .docx file path" },
       title: { type: "string", description: "Document title metadata (optional)" },
       content: { type: "string", description: "Formatted text with \\n newlines. Use # for headings, - for bullets, **bold** for emphasis. Separate sections with blank lines (\\n\\n)." },
+      images: IMAGES_PARAM_SCHEMA,
     },
     required: ["file_path", "content"],
   },
@@ -104,14 +146,16 @@ const documentCreate: ToolDefinition = {
       const filePath = resolvePath(String(args.file_path));
       const content = String(args.content);
       const title = args.title ? String(args.title) : undefined;
+      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
 
       await mkdir(dirname(filePath), { recursive: true });
-      const doc = buildDocument(content, title);
+      const doc = buildDocument(content, title, acquired);
       const buffer = await Packer.toBuffer(doc);
       await writeFile(filePath, buffer);
 
       const lineCount = content.split("\n").filter((l) => l.trim()).length;
-      return ok(`Created ${filePath} (${lineCount} content lines, ${buffer.length} bytes)`);
+      const imgSuffix = acquired.length ? `, ${acquired.length} image(s)` : "";
+      return ok(`Created ${filePath} (${lineCount} content lines${imgSuffix}, ${buffer.length} bytes)`);
     } catch (e: unknown) {
       return err(`Failed to create document: ${(e as Error).message}`);
     }
@@ -198,6 +242,7 @@ const documentTemplate: ToolDefinition = {
         type: "string",
         description: 'JSON string of key:value pairs. Keys must match {{placeholders}} in template. Example: \'{"name":"Alice","date":"2026-01-01"}\'',
       },
+      images: IMAGES_PARAM_SCHEMA,
     },
     required: ["template_path", "output_path", "variables"],
   },
@@ -213,6 +258,7 @@ const documentTemplate: ToolDefinition = {
         return err("variables must be a valid JSON object string");
       }
 
+      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       const result = await mammoth.extractRawText({ path: templatePath });
       let text = result.value;
       let totalReplacements = 0;
@@ -227,14 +273,15 @@ const documentTemplate: ToolDefinition = {
       }
 
       await mkdir(dirname(outputPath), { recursive: true });
-      const doc = buildDocument(text);
+      const doc = buildDocument(text, undefined, acquired);
       const buffer = await Packer.toBuffer(doc);
       await writeFile(outputPath, buffer);
 
       const keys = Object.keys(vars).join(", ");
+      const imgSuffix = acquired.length ? ` Embedded ${acquired.length} image(s).` : "";
       return ok(
         `Created ${outputPath} from template ${templatePath}. ` +
-          `Replaced ${totalReplacements} placeholder(s) for keys: ${keys}.`,
+          `Replaced ${totalReplacements} placeholder(s) for keys: ${keys}.${imgSuffix}`,
       );
     } catch (e: unknown) {
       return err(`Failed to apply template: ${(e as Error).message}`);

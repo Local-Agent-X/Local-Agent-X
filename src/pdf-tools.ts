@@ -6,6 +6,7 @@ import { PDFParse } from "pdf-parse";
 import PDFDocument from "pdfkit";
 import { PDFDocument as PDFLibDocument } from "pdf-lib";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./tools/shared/image-acquire.js";
 
 // ── Path helper ──
 
@@ -95,12 +96,14 @@ const pdfCreate: ToolDefinition = {
       content: { type: "string", description: "Formatted text with \\n newlines. Use # for headings, ## for subheadings. Separate paragraphs with \\n\\n." },
       title: { type: "string", description: "PDF title metadata" },
       font_size: { type: "number", description: "Base font size (default 12)" },
+      images: IMAGES_PARAM_SCHEMA,
     },
     required: ["file_path", "content"],
   },
   async execute(args) {
     try {
       const fontSize = (args.font_size as number) ?? 12;
+      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       const doc = new PDFDocument({ info: { Title: (args.title as string) ?? "" } });
       const chunks: Buffer[] = [];
 
@@ -124,13 +127,28 @@ const pdfCreate: ToolDefinition = {
           doc.fontSize(fontSize).font("Helvetica").text(line);
         }
       }
+      // Embed each image on its own page; pdfkit only supports png/jpeg natively.
+      for (const img of acquired) {
+        doc.addPage();
+        if (img.mimeType === "image/png" || img.mimeType === "image/jpeg") {
+          doc.image(img.buffer, { fit: [500, 600], align: "center", valign: "center" });
+        } else {
+          // Best-effort marker — gif/webp/svg aren't accepted by pdfkit.image().
+          doc.fontSize(fontSize).font("Helvetica-Oblique").text(`[Image: ${img.source}]`);
+        }
+        if (img.caption) {
+          doc.moveDown();
+          doc.fontSize(fontSize).font("Helvetica-Oblique").text(img.caption, { align: "center" });
+        }
+      }
       doc.end();
 
       const buf = await done;
       const filePath = resolvePath(args.file_path as string);
       await mkdir(dirname(filePath), { recursive: true });
       await writeFile(filePath, buf);
-      return ok(`PDF created at ${filePath} (${buf.length} bytes)`);
+      const imgSuffix = acquired.length ? `, ${acquired.length} image(s)` : "";
+      return ok(`PDF created at ${filePath} (${buf.length} bytes${imgSuffix})`);
     } catch (e: unknown) {
       return fail(`Failed to create PDF: ${(e as Error).message}`);
     }

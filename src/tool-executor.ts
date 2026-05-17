@@ -8,7 +8,7 @@ import type { ToolPolicy } from "./tool-policy.js";
 import type { ThreatEngine } from "./threat-engine.js";
 import type { RBACManager, Role } from "./rbac.js";
 import { checkSessionPolicy } from "./session-policy.js";
-import { ariEvaluate, isAriActive } from "./ari-kernel.js";
+import { ariEvaluate, isAriActive, shouldGateInKernel } from "./ari-kernel.js";
 import { recordSensitiveRead, checkEgressTaint, isSensitivePath } from "./data-lineage.js";
 import { compactIfNeeded, compactIfNeededWithLLM } from "./context-manager.js";
 import { renderToolResultForModel } from "./tools/result-helpers.js";
@@ -358,32 +358,33 @@ async function executeSingleTool(
   const approvalContext = buildApprovalContext(tc.name, args);
   onEvent?.({ type: "tool_start", toolName: tc.name, toolCallId: tc.id, args, riskLevel, context: approvalContext, requiresApproval: riskLevel === "high" });
 
-  // Layer -1: AriKernel
-  const isInternalTool = tc.name.startsWith("agent_") || tc.name.startsWith("swarm_") ||
-    tc.name.startsWith("mission_") ||
-    ["delegate", "generate_image", "generate_video", "camera_capture", "screen_capture", "ocr",
-     "memory_search", "memory_save", "playbook_list", "playbook_get"].includes(tc.name);
-  if (isAriActive()) {
-    // Action names must match the ARI capability manifest in ari-kernel.ts
-    // (HOST_CAPABILITY_MANIFEST). Falling through to a default like "exec"
-    // when a tool's class doesn't accept that action means lookupHostGrantId
-    // returns undefined → firewall.execute throws "Capability token required"
-    // → ariRequired turns the throw into a block. Map every routable tool
-    // to a manifest-valid action explicitly.
+  // Layer -1: AriKernel. Only gated I/O tools (file/http/shell/database/
+  // retrieval/secret-vault per TOOL_CLASS_MAP in ari-kernel.ts) hit the
+  // kernel at this layer. Internal-class tools (orchestration, scheduled
+  // missions, ari_* bridges that wrap kernel executors themselves) skip
+  // the kernel here — their own routing already handles enforcement.
+  // shouldGateInKernel is the single source of truth.
+  if (isAriActive() && shouldGateInKernel(tc.name)) {
+    // Action names must match HOST_CAPABILITY_MANIFEST in ari-kernel.ts.
+    // Falling through to a default like "exec" for a non-shell tool means
+    // lookupHostGrantId returns undefined → firewall.execute throws
+    // "Capability token required" → ariRequired turns the throw into a
+    // block. Map every gated tool to a manifest-valid action explicitly.
     const actionMap: Record<string, string> = {
-      // file class
       read: "read", write: "write", edit: "write",
-      // http class — every web/network tool that goes through firewall.execute
       web_search: "get", web_fetch: "get", http_request: "get", browser: "get",
-      // shell class
       bash: "exec",
-      // retrieval class
       memory_search: "search",
-      // database class
       memory_save: "write",
+      // secret-vault actions are overridden inside ariEvaluate by
+      // secretVaultActionMap regardless of what we pass here; "capture"
+      // is just a valid no-op default for the lookup.
+      browser_capture_to_secret: "capture",
+      browser_fill_from_secret: "fill",
+      clipboard_write_from_secret: "clipboard",
     };
     const ariResult = await ariEvaluate(tc.name, actionMap[tc.name] || "exec", args);
-    if (!ariResult.allowed && !isInternalTool) {
+    if (!ariResult.allowed) {
       const hint = ariResult.userHint ?? USER_HINTS.policy;
       const result = `User hint: ${hint}\n${ariResult.reason}`;
       onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result, allowed: false });

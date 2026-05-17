@@ -337,6 +337,11 @@ export function setupChatWebSocket(server: Server, authToken: string) {
         // msg.message === "" and would silently drop without this guard.
         const _atts = (msg.attachments || []) as any[];
         const _msgText = typeof msg.message === "string" ? msg.message : "";
+        // [chat-diag] grep-able trace for the fresh-install chat-doesnt-work
+        // bug. Routes through console.log so it lands in ~/.lax/logs/server.log
+        // (logger.* writes direct to process.stdout, bypassing the file
+        // override in index.ts). Remove after the bug is rooted out.
+        console.log(`[chat-diag] ws-chat recv sess=${sessionId.slice(-8)} len=${_msgText.length} atts=${_atts.length} handler=${chatHandler ? "set" : "null"}`);
         if (!_msgText && _atts.length === 0) {
           logger.warn(`[ws-chat] dropping empty chat from sess=${sessionId} (no text and no attachments)`);
         } else {

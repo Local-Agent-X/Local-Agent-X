@@ -161,6 +161,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
       attachments, uploadsDir: join(ctx.dataDir, "uploads"),
     });
     logger.info(`[timing] prepareAgentRequest ${Date.now() - prepStart}ms (sess=${sessionId.slice(0, 16)})`);
+    console.log(`[chat-diag] prepared sess=${sessionId.slice(-8)} provider=${prepared.provider} model=${prepared.model || "EMPTY"} hasKey=${!!prepared.apiKey}`);
 
     // Emit a context_status event so the chat-bar gauge reflects actual
     // prompt size BEFORE the agent runs. Fan out to BOTH transports —

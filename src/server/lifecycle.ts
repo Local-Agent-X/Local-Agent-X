@@ -285,6 +285,7 @@ export function wireWsChat(deps: {
   const { chatWs, buildCtx } = deps;
   chatWs.onChat(async (sessionId, message, attachments) => {
     const _imgCount = (attachments || []).filter((a: any) => a?.isImage).length;
+    console.log(`[chat-diag] lifecycle onChat sess=${sessionId.slice(-8)} len=${message.length}`);
     logger.info(`[ws-chat] onChat sess=${sessionId} msg_len=${message.length} atts=${(attachments || []).length} imgs=${_imgCount} → direct (no HTTP self-loop)`);
     // Direct call into the same chat-turn logic the /api/chat route uses.
     // The previous implementation here did `fetch http://127.0.0.1:<port>/api/chat`

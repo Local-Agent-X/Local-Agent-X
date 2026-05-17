@@ -26,12 +26,18 @@
 //   - updateContextBar, updateSmartContextIndicator (chat-status-bar.js / chat-extras.js)
 
 async function sendMessage() {
+  // [chat-diag] grep-able trace for fresh-install chat-doesnt-work bug.
+  // Logs the early-return branches + the WS-vs-HTTP dispatch decision so
+  // we can tell whether the message left the browser or got eaten in JS.
+  // Remove after the bug is rooted out.
+  console.log('[chat-diag] sendMessage entry streamingSessionId=', streamingSessionId, 'activeChat?', !!activeChat, 'chatWs?', !!window.chatWs, 'wsReadyState=', window.chatWs ? window.chatWs.readyState : 'no-ws');
   // Step 4 — interject during own-turn:
   // If the active chat is currently streaming (main agent mid-tool-loop),
   // the user's new message gets injected into the running turn instead of
   // starting a new one. Backend's interjectDrainMiddleware drains the
   // queue at the start of the next iteration so the agent sees it.
   if (streamingSessionId && activeChat && streamingSessionId === activeChat.id) {
+    console.log('[chat-diag] sendMessage taking inject path');
     const input = document.getElementById('msg-input');
     const text = input.value.trim();
     if (!text) return;
@@ -46,7 +52,7 @@ async function sendMessage() {
     saveChats();
     return;
   }
-  if (streamingSessionId) return;
+  if (streamingSessionId) { console.log('[chat-diag] sendMessage early-return: streamingSessionId set =', streamingSessionId); return; }
   userScrolledUp = false; // Reset scroll lock when user sends
   const input = document.getElementById('msg-input');
   const text = input.value.trim();
@@ -141,6 +147,7 @@ async function sendMessage() {
 
   // Try WebSocket first (bidirectional, no SSE buffering issues)
   if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+    console.log('[chat-diag] sendMessage dispatching via WS sess=' + streamSessionId.slice(-8) + ' len=' + finalText.length);
     chatWs.send(JSON.stringify({ type: 'chat', sessionId: streamSessionId, message: finalText, attachments: msgAttachments || [], projectId: streamChat.projectId || null }));
     // Events arrive via the WS onmessage handler (lines above) which calls broadcastToSession
     // Set up a WS event listener for this session's stream events
@@ -336,6 +343,7 @@ async function sendMessage() {
   }
 
   // Fallback: HTTP SSE (if WebSocket not connected)
+  console.log('[chat-diag] sendMessage dispatching via HTTP fallback sess=' + streamSessionId.slice(-8) + ' wsReadyState=' + (chatWs ? chatWs.readyState : 'no-ws'));
   try {
     const res = await fetch(`${API}/api/chat`, {
       method: 'POST',

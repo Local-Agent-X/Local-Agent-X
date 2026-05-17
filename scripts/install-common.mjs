@@ -56,9 +56,17 @@ const laxDir = join(homedir(), ".lax");
 const settingsFile = join(laxDir, "settings.json");
 if (!existsSync(settingsFile)) {
   mkdirSync(laxDir, { recursive: true });
+  // Do NOT seed provider/model — historically we hardcoded anthropic +
+  // claude-sonnet-4-6, which created a hidden bug: any user without
+  // working Anthropic auth still had settings.provider === "anthropic"
+  // on disk, so downstream tools (build_app especially) would resolve
+  // "auto" to anthropic and try to spawn Claude CLI even when the user
+  // had picked OpenAI/Codex/Grok in the chat dropdown. The onboarding
+  // flow ("Connect an AI provider" in the Getting Started panel) forces
+  // the first chat into the provider-switcher, which writes settings
+  // via /api/providers/switch — so by the time anything actually needs
+  // provider+model, they reflect a real working choice the user made.
   const defaults = {
-    provider: "anthropic",
-    model: "claude-sonnet-4-6",
     temperature: 0.7,
     maxIterations: 25,
     embeddingProvider: "ollama",

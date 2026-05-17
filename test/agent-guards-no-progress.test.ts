@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { checkToolLoops, createLoopState } from "../src/agent-guards.js";
+import { checkToolLoops, createLoopState, NO_PROGRESS_LIMIT_WEAK } from "../src/agent-guards.js";
 
 // The no-progress guard used to fire on browser-driven tasks because
 // MUTATION_TOOLS was file-only. Live failure 2026-05-13 (Thriveventory PO
@@ -54,15 +54,16 @@ describe("no-progress abort — browser calls count as mutation", () => {
 describe("no-progress abort — fires on genuine read-only loops", () => {
   // Note: `read` and `glob` are SPIRALABLE_TOOLS and have their own
   // discovery-loop detection that fires at a lower threshold. To exercise
-  // the no-progress guard specifically (which only fires on >=12 strong /
-  // >=6 weak), we use a tool that's neither a mutation NOR spiralable —
-  // `web_fetch` qualifies (read-only, but not in the SPIRALABLE_TOOLS set
-  // that would trip discovery-loop first).
+  // the no-progress guard specifically, we use a tool that's neither a
+  // mutation NOR spiralable — `web_fetch` qualifies (read-only, but not
+  // in the SPIRALABLE_TOOLS set that would trip discovery-loop first).
+  // Threshold is imported from agent-guards.ts so this test stays in sync
+  // when the production limit is retuned.
 
-  it("triggers after 6 web_fetch calls with no mutations (weak model)", () => {
+  it("triggers past the weak threshold of non-mutation calls", () => {
     const state = createLoopState();
     let aborted = false;
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < NO_PROGRESS_LIMIT_WEAK + 2; i++) {
       const r = checkToolLoops([callOf("web_fetch", i)], state, { modelTier: "weak" });
       if (r.abort) { aborted = true; break; }
     }

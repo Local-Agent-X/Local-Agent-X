@@ -11,14 +11,41 @@
  * blocked, model collapsed into narration, user stuck.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ToolChainAnalyzer } from "../src/threat/tool-chain.js";
 
 const SENSITIVE_PDF_CONTENT = { labels: ["pii" as const, "financial" as const], confidence: 0.85 };
 const NEUTRAL = { labels: [], confidence: 0 };
 
+// Redirect ~/.lax to a temp dir so the analyzer's internal isLearned()
+// check against the trust ledger reads an empty store, not the user's
+// production trust state. Without this, hosts the user has approved via
+// /approve in real chats (e.g. cloud.thrivemetrics.com → 30+ approvals)
+// bypass the exfil block and the test asserts the wrong thing.
 let analyzer: ToolChainAnalyzer;
-beforeEach(() => { analyzer = new ToolChainAnalyzer(); });
+let tempHome: string;
+let origHome: string | undefined;
+let origUserprofile: string | undefined;
+
+beforeEach(async () => {
+  tempHome = mkdtempSync(join(tmpdir(), "tool-chain-test-"));
+  origHome = process.env.HOME;
+  origUserprofile = process.env.USERPROFILE;
+  process.env.HOME = tempHome;
+  process.env.USERPROFILE = tempHome;
+  const ledger = await import("../src/threat/trust-ledger.js");
+  ledger._resetLedgerCacheForTests();
+  analyzer = new ToolChainAnalyzer();
+});
+
+afterEach(() => {
+  if (origHome !== undefined) process.env.HOME = origHome; else delete process.env.HOME;
+  if (origUserprofile !== undefined) process.env.USERPROFILE = origUserprofile; else delete process.env.USERPROFILE;
+  try { rmSync(tempHome, { recursive: true, force: true }); } catch { /* best-effort */ }
+});
 
 describe("ToolChainAnalyzer — exfil block default", () => {
   it("blocks sensitive shell → browser when no consent", () => {

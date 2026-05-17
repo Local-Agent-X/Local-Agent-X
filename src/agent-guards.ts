@@ -358,8 +358,8 @@ const DISCOVERY_LOOP_THRESHOLD_WEAK = 4;
 // first file write. The discovery-loop detector at DISCOVERY_LOOP_THRESHOLD
 // still catches true spirals (8x identical tool); this guard is the backup
 // for an agent that's genuinely stuck across many different tools.
-const NO_PROGRESS_LIMIT = 25;
-const NO_PROGRESS_LIMIT_WEAK = 15;
+export const NO_PROGRESS_LIMIT = 25;
+export const NO_PROGRESS_LIMIT_WEAK = 15;
 // A mutation is a tool that committed *real-world* work — disk write, page
 // click, HTTP POST, message sent. Note `bash` is NOT here despite being in
 // PROGRESS_TOOLS for the spiralable-reset logic — bash can spin without

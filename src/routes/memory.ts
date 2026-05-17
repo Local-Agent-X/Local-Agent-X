@@ -20,6 +20,24 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
     return true;
   }
 
+  // [chat-diag] frontend → server log sink. Browser console.logs don't
+  // persist to disk and asking non-technical users to open DevTools is a
+  // non-starter. Frontend diag breadcrumbs POST here and the message is
+  // routed through console.log so it lands in ~/.lax/logs/server.log
+  // (via the global console override in src/index.ts). Remove after the
+  // fresh-install chat bug is rooted out. Path is namespaced under
+  // /api/diag so future temporary instrumentation can colocate.
+  if (method === "POST" && url.pathname === "/api/diag/log") {
+    try {
+      const body = JSON.parse(await readBody(req)) as { tag?: string; message?: string };
+      const tag = typeof body.tag === "string" ? body.tag : "diag";
+      const message = typeof body.message === "string" ? body.message : "";
+      console.log(`[${tag}] frontend ${message}`);
+      json(200, { ok: true });
+    } catch { json(400, { error: "Invalid body" }); }
+    return true;
+  }
+
   // Re-run the embedding-provider init. Idempotent — call after the Ollama
   // model lands post-boot (fresh install race: server boots before Ollama
   // pull finishes, so the cached provider is degraded). Returns the new

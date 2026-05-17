@@ -28,7 +28,7 @@ Reject signals that share only generic vocabulary (e.g. both messages contain "p
 
 Examples:
 - User: "let's audit the kraken bot fees" + Signal: "auditing the open-memory project chunks" → NOT relevant (different projects, only generic word "audit" overlaps)
-- User: "monetization plan for ScanProgress" + Signal: "revenue strategy for ScanProgress" → relevant (same project, synonym words)
+- User: "monetization plan for project-x" + Signal: "revenue strategy for project-x" → relevant (same project, synonym words)
 - User: "what's in src/index.ts" + Signal: "user prefers light mode" → NOT relevant (entirely different topics)
 - User: "API keys for woocommerce" + Signal: "API token issue with the github integration" → NOT relevant (different services, both mention API)
 

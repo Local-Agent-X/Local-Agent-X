@@ -22,7 +22,7 @@
  * Re-prompting on every restart of the same flow is exactly the friction
  * we're trying to remove.
  *
- * Decay: none for now. Alex's call if we want a 90-day TTL later.
+ * Decay: none for now. Revisit if we want a 90-day TTL later.
  * Adding now would be premature complexity.
  */
 

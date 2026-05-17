@@ -11,8 +11,8 @@
  * λ = 0.7 → default, leans toward relevance but rejects near-duplicates
  *
  * Why this matters: autoSearchContext was returning the top-3 memory
- * snippets by score. If a session had 10 highly-scored Mario-pin
- * chunks, all three slots got Mario-pin text and the model was biased
+ * snippets by score. If a session had 10 highly-scored Sample-pin
+ * chunks, all three slots got Sample-pin text and the model was biased
  * toward pin-related actions on unrelated queries.
  *
  * MMR over text similarity (Jaccard on token bags — the results don't

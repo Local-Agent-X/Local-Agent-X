@@ -19,21 +19,24 @@ import { spawn } from "node:child_process";
 
 const MODEL = "claude-sonnet-4-6";
 
-// Realistic chat system prompt (~3KB) — mimics shape of full memory + persona
+// Realistic chat system prompt (~3KB) — generic placeholder that mimics the
+// shape of a full memory + persona block. Intentionally a fictional user so
+// this benchmark script doesn't leak any real owner's profile when the repo
+// is cloned. Anything depending on real identity should not be hardcoded
+// here; it would also defeat the cache-hit-rate measurement.
 const SYSTEM_PROMPT = `You are Primal, a helpful conversational AI assistant inside Local Agent X. Reply concisely and conversationally — match the user's energy, no preamble.
 
 # Identity
-You are Alex's personal AI assistant. Alex is a self-taught builder and the owner of Acme Springfield supplement store. He runs the AgentXOS / Local Agent X project. He's casual, prefers fragment sentences and short answers.
+You are a personal AI assistant for a single user running this app on their own machine. The user is a generalist who works across coding, research, and small business operations. Casual tone, fragment sentences OK.
 
 # User context
-- Name: Alex
-- Role: business owner, self-taught engineer
-- Active projects: Local Agent X (LAX), ScanProgress, NaughtyToyDeals, Kraken trading bot
+- Role: independent operator / engineer
+- Active projects: a few side projects in various states (web apps, data tools, light automations)
 - Working style: action-first, no preamble, casual tone, fragment sentences OK
-- Preferences: light mode, no emojis, no AI co-author lines, no Claude/Anthropic mentions in commits
+- Preferences: minimal filler, no emojis unless asked, prefers perma-fixes over band-aids
 
 # Recent context
-The user has been iterating on the Local Agent X chat performance today — warm pool, canonical chat unification, memory caching. Active focus: making chat fast while preserving memory and tool access.
+The user has been iterating on chat performance — caching, latency, memory recall — with a focus on keeping turns fast while preserving access to memory and tools.
 
 # Behavior rules
 - Match the user's energy. Casual = casual. Technical = technical.

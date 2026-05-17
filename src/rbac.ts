@@ -21,7 +21,7 @@ export type Role = "operator" | "user" | "readonly";
 
 export interface TokenEntry {
   id: string;          // Short identifier
-  name: string;        // Human label (e.g., "Alex's token", "CI token")
+  name: string;        // Human label (e.g., "Laptop token", "CI token")
   role: Role;
   tokenHash: string;   // SHA-256 hash of the actual token (never store plaintext)
   createdAt: number;

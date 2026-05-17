@@ -70,7 +70,12 @@ if (!existsSync(settingsFile)) {
     temperature: 0.7,
     maxIterations: 25,
     embeddingProvider: "ollama",
-    embeddingModel: "nomic-embed-text:latest",
+    // Derive from EMBED_MODEL so the seeded value always matches what the
+    // install actually pulled. Previously hardcoded to "nomic-embed-text",
+    // which silently mismatched after the move to mxbai-embed-large (1024d,
+    // benchmark winner for our memory system) — fresh users had the right
+    // model on disk but settings.json pointing at a different one.
+    embeddingModel: EMBED_MODEL,
   };
   writeFileSync(settingsFile, JSON.stringify(defaults, null, 2));
   ok(`Seeded ${settingsFile}`);

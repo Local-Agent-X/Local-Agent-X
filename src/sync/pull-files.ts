@@ -75,8 +75,8 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
   // one, MINUS anything tombstoned. Tombstones come from two stores:
   // the local per-machine "I unpinned this here" list, and the synced
   // store in sync-repo/.tombstones/pins/ where other machines record
-  // their unpins. Without this filter, a remote that still has Mario
-  // pinned would re-pin Mario on this machine every pull, undoing the
+  // their unpins. Without this filter, a remote that still has Sample
+  // pinned would re-pin Sample on this machine every pull, undoing the
   // user's unpin.
   const syncPins = join(syncDir, "sidebar-pins.json");
   if (existsSync(syncPins)) {

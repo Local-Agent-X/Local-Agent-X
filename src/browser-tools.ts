@@ -267,7 +267,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             // For a 16-line PO that's 16×(name+qty+price)=48+ wasted snapshots.
             // The agent can call 'snapshot' explicitly when it expects a typing
             // response (autocomplete dropdown, type-ahead suggestions, etc.).
-            // Live regression: Thriveventory PO entry that took <10min before
+            // Live regression: the customer PO-entry workflow that took <10min before
             // commit 0d4df8f ran 30+min after auto-snapshot was added to fill.
             if (args.ref !== undefined && args.ref !== null) {
               const ref = Number(args.ref);

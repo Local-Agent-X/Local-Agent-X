@@ -257,6 +257,42 @@ export const DEFAULT_POLICY: ToolPolicyConfig = {
     // Cron — backing schedule layer for missions and any other recurring jobs.
     { id: "allow-cron", tool: "cron_*", decision: "allow", reason: "Cron job management (mission/reminder backing)", priority: 50 },
 
+    // ── Tool-policy coverage backfill 2026-05-17 ──
+    // These are real registered tools (ToolDefinition with execute()) that
+    // weren't covered by any existing pattern, so the deny-by-default
+    // posture silently blocked them at runtime. Same class as the
+    // mission_schedule_* miss earlier: missed when first written, only
+    // visible in production. Verified each is a real user-facing tool,
+    // not a protocol/playbook name or a startup-test result.
+
+    // Sidebar pin/unpin — agent manages the user's app sidebar.
+    { id: "allow-sidebar", tool: "sidebar_*", decision: "allow", reason: "Sidebar pin/unpin (user's left rail)", priority: 50 },
+
+    // Primal auto-build — multi-step app construction pipeline.
+    { id: "allow-primal", tool: "primal_*", decision: "allow", reason: "Primal auto-build pipeline (run_build_plan, build_status, build_resume)", priority: 50 },
+
+    // Sub-pieces of the app-build flow that don't share the build_app prefix.
+    { id: "allow-start-app-build", tool: "start_app_build", decision: "allow", reason: "App-build kickoff handle", priority: 50 },
+    { id: "allow-finalize-app-build", tool: "finalize_app_build", decision: "allow", reason: "App-build finalize handle", priority: 50 },
+
+    // Web asset extraction — scrape images/css/assets from a page.
+    { id: "allow-extract-site-assets", tool: "extract_site_assets", decision: "allow", reason: "Web asset extraction (read-only)", priority: 50 },
+
+    // Secrets metadata — list-secrets is allowed, this is its companion
+    // (names + capture origin, no values).
+    { id: "allow-get-secret-meta", tool: "get_secret_meta", decision: "allow", reason: "Secret metadata (no values exposed)", priority: 50 },
+
+    // Session introspection — current session info + search past sessions.
+    { id: "allow-session-status", tool: "session_status", decision: "allow", reason: "Current session info", priority: 50 },
+    { id: "allow-search-past-sessions", tool: "search_past_sessions", decision: "allow", reason: "Search prior chat sessions", priority: 50 },
+
+    // Vision — list_monitors complements the already-allowed screen_*/camera_*.
+    { id: "allow-list-monitors", tool: "list_monitors", decision: "allow", reason: "Enumerate available display monitors", priority: 50 },
+
+    // Diagnostics + cost reporting.
+    { id: "allow-doctor", tool: "doctor", decision: "allow", reason: "System self-diagnostics (read-only)", priority: 50 },
+    { id: "allow-usage-report", tool: "usage_report", decision: "allow", reason: "Token usage / cost report (read-only)", priority: 50 },
+
     // Plan mode
     { id: "allow-enter-plan", tool: "enter_plan_mode", decision: "allow", reason: "Enter read-only plan mode", priority: 50 },
     { id: "allow-exit-plan", tool: "exit_plan_mode", decision: "allow", reason: "Exit plan mode", priority: 50 },

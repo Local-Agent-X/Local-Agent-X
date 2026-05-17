@@ -72,50 +72,11 @@ function timeAgo(ts) {
 // Init
 updateNotifBadge();
 
-// ── Getting Started Checklist ──
-
-function checkGettingStarted() {
-  if (localStorage.getItem('sax_getting_started_dismissed')) return;
-  const checks = [
-    { id: 'provider', label: 'Connect an AI provider', done: !!localStorage.getItem('sax_onboarded') },
-    { id: 'chat', label: 'Send your first message', done: (typeof chats !== 'undefined' && chats.length > 1) },
-    { id: 'agent', label: 'Hire your first agent', done: false },
-    { id: 'protocol', label: 'Try a protocol', done: false },
-  ];
-  // Check agent hire via API
-  apiFetch('/api/agents/hired').then(r => r.json()).then(agents => {
-    if (Array.isArray(agents) && agents.length > 0) checks[2].done = true;
-    showChecklist(checks);
-  }).catch(() => showChecklist(checks));
-}
-
-function showChecklist(checks) {
-  const allDone = checks.every(c => c.done);
-  if (allDone) { localStorage.setItem('sax_getting_started_dismissed', '1'); return; }
-
-  const existing = document.getElementById('getting-started');
-  if (existing) existing.remove();
-
-  const el = document.createElement('div');
-  el.id = 'getting-started';
-  el.style.cssText = 'padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface-2)';
-  el.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <span style="font-family:var(--mono);font-size:.7rem;color:var(--accent);letter-spacing:.5px">GETTING STARTED</span>
-      <button onclick="this.closest('#getting-started').remove();localStorage.setItem('sax_getting_started_dismissed','1')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:.8rem">&times;</button>
-    </div>
-    ${checks.map(c => `
-      <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:.72rem;color:${c.done ? 'var(--accent)' : 'var(--muted)'}">
-        <span>${c.done ? '&#10003;' : '&#9675;'}</span>
-        <span style="${c.done ? 'text-decoration:line-through' : ''}">${c.label}</span>
-      </div>
-    `).join('')}
-  `;
-
-  const sidebar = document.getElementById('sidebar');
-  const chatsSection = document.getElementById('chats-section');
-  if (sidebar && chatsSection) sidebar.insertBefore(el, chatsSection);
-}
-
-// Run on load
-setTimeout(checkGettingStarted, 1000);
+// Getting Started checklist removed 2026-05-17. Took sidebar real estate
+// without earning it: "Hire your first agent" / "Try a protocol" boxes
+// were filler that didn't help anyone discover features, and the
+// "provider" check pre-checked based on stale localStorage signals
+// that misled fresh users about their actual state. Users learn the
+// app by clicking around — the onboarding wizard at first launch
+// already handles the only step that actually matters (connect a
+// provider). Anything else is discoverable in-product.

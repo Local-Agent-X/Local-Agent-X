@@ -64,16 +64,17 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
   const provider = contextPack?.preferredProvider
     ?? (opAny as { provider?: string }).provider
     ?? "unknown";
-  // Op-level model takes precedence (worker contexts that set it explicitly).
-  // Then canonical.model from the op's resolved request. Then — and this is
-  // the upstream guard for the no-progress-fires-at-15 bug — fall back to
-  // the user's configured settings.json model. Anything is better than
-  // returning `""` here, which classifies as "medium" downstream and
-  // shrinks the agent's no-progress budget to the weak-tier 15 even when
-  // the user's actual model would budget 25.
+  // Resolve the op's model in order of authority:
+  //   1. op.model explicitly set on the op (worker contexts, etc.)
+  //   2. op.canonical.model from the resolved request
+  //   3. user's configured model in ~/.lax/settings.json (same model the
+  //      chat is actually running — not a substitute, just looking it up
+  //      from a different place when it didn't propagate onto the op)
+  // If NONE of those resolve, throw — that's a real upstream plumbing bug
+  // and silently substituting a hardcoded default would mask it. Same
+  // fail-closed posture we use for the AriKernel wire elsewhere.
   let model = (opAny.model as string | undefined)
-    ?? ((op as { canonical?: { model?: string } }).canonical?.model)
-    ?? "";
+    ?? ((op as { canonical?: { model?: string } }).canonical?.model);
   if (!model) {
     try {
       const settingsPath = join(homedir(), ".lax", "settings.json");
@@ -81,11 +82,16 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
         const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as { model?: string };
         if (typeof raw.model === "string" && raw.model.length > 0) model = raw.model;
       }
-    } catch { /* fall through */ }
+    } catch { /* fall through to throw */ }
   }
-  // Last-resort default — pick a strong-tier model so an unknown op still
-  // gets the larger iteration budget. Anything is better than empty.
-  if (!model) model = "claude-opus-4-7";
+  if (!model) {
+    throw new Error(
+      `[canonical-loop] No model resolvable for op ${op.id}. ` +
+      `Neither op.model nor op.canonical.model is set, and ~/.lax/settings.json has no .model field. ` +
+      `This is an upstream plumbing bug — fix the op-creation site or settings.json. ` +
+      `Refusing to silently default; that masks the real failure.`
+    );
+  }
 
   const toolsCalledThisOp = new Set<string>();
   const committingToolsThisOp = new Set<string>();

@@ -3,6 +3,7 @@
  * via the ToolPolicy evaluator. Rule semantics are unchanged.
  */
 import type { ToolPolicy } from "../../tool-policy.js";
+import { USER_HINTS } from "../../types.js";
 import { DEFAULT_POLICY } from "../default-rules.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 
@@ -35,6 +36,7 @@ export function makeDefaultPolicyPack(toolPolicy: ToolPolicy | undefined): RuleP
           reason: d.reason,
           recovery:
             "Retrying the same call will be denied again. Read the reason — it usually points to the right alternative tool (e.g. http_request instead of bash curl).",
+          userHint: d.userHint ?? USER_HINTS.policy,
         };
       }
       return { allowed: true, ruleId: d.ruleId, reason: d.reason };

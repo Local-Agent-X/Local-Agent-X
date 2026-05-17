@@ -1,6 +1,7 @@
 import { resolve, relative } from "node:path";
 import { realpathSync, lstatSync } from "node:fs";
 import type { SecurityDecision } from "../types.js";
+import { USER_HINTS } from "../types.js";
 import type { FileAccessMode } from "./types.js";
 
 // ── Sensitive path patterns (always blocked for read/write/edit) ──
@@ -46,7 +47,7 @@ export function evaluateFileAccess(
   sessionId?: string,
 ): SecurityDecision {
   if (rawPath.includes("\x00")) {
-    return { allowed: false, reason: "Blocked: null byte in file path" };
+    return { allowed: false, reason: "Blocked: null byte in file path", userHint: USER_HINTS.fileSystem };
   }
 
   // Normalize the path
@@ -67,7 +68,7 @@ export function evaluateFileAccess(
     const code = (e as NodeJS.ErrnoException).code;
     // ELOOP = too many symlinks (attack), ENOENT = file doesn't exist yet (ok for write)
     if (code === "ELOOP") {
-      return { allowed: false, reason: "Blocked: symlink loop detected (possible attack)" };
+      return { allowed: false, reason: "Blocked: symlink loop detected (possible attack)", userHint: USER_HINTS.fileSystem };
     }
     // File doesn't exist yet — for writes, use the resolved path
     realPath = resolved;
@@ -87,7 +88,7 @@ export function evaluateFileAccess(
           : [/^\/etc\//, /^\/sys\//, /^\/proc\//, /^\/boot\//, /^\/usr\/(?:bin|sbin|lib)\//, /^\/sbin\//, /^\/bin\//, /^\/dev\//];
         for (const sysDir of SYSTEM_DIRS) {
           if (sysDir.test(realPath)) {
-            return { allowed: false, reason: `Blocked: cannot write to system directory even in unrestricted mode` };
+            return { allowed: false, reason: `Blocked: cannot write to system directory even in unrestricted mode`, userHint: USER_HINTS.fileSystem };
           }
         }
         const projectRoot = resolve(workspace, "..");
@@ -95,7 +96,7 @@ export function evaluateFileAccess(
         const inHome = !relative(homeDir, realPath).startsWith("..");
         const inAllowed = allowedPathCheck(realPath, sessionId);
         if (!inProject && !inHome && !inAllowed) {
-          return { allowed: false, reason: "Blocked: cannot write outside home directory even in unrestricted mode" };
+          return { allowed: false, reason: "Blocked: cannot write outside home directory even in unrestricted mode", userHint: USER_HINTS.fileSystem };
         }
       }
       // Reads: allowed everywhere
@@ -103,7 +104,7 @@ export function evaluateFileAccess(
       // Workspace + Common modes: block writes outside workspace (allow worktree paths)
       if (action === "write" || action === "edit") {
         const inWt = allowedPathCheck(realPath, sessionId);
-        if (!inWt) return { allowed: false, reason: "Blocked: cannot write files outside workspace directory" };
+        if (!inWt) return { allowed: false, reason: "Blocked: cannot write files outside workspace directory", userHint: USER_HINTS.fileSystem };
       }
 
       // Reads: check based on mode
@@ -115,7 +116,7 @@ export function evaluateFileAccess(
 
       if (fileAccessMode === "workspace") {
         if (!inProject && !inSax && !inExtraAllowed) {
-          return { allowed: false, reason: "Blocked: workspace mode — reads restricted to project directory only. Change to 'common' mode in Settings to access Downloads, Documents, etc." };
+          return { allowed: false, reason: "Blocked: workspace mode — reads restricted to project directory only. Change to 'common' mode in Settings to access Downloads, Documents, etc.", userHint: USER_HINTS.fileSystem };
         }
       } else {
         const userDirs = ["Downloads", "Documents", "Desktop", "Pictures", "Videos", "Music"].map(
@@ -123,7 +124,7 @@ export function evaluateFileAccess(
         );
         const inUserDir = userDirs.some((d) => !relative(d, realPath).startsWith(".."));
         if (!inProject && !inSax && !inUserDir && !inExtraAllowed) {
-          return { allowed: false, reason: "Blocked: cannot read files outside project and user directories. Change to 'unrestricted' mode in Settings for full access." };
+          return { allowed: false, reason: "Blocked: cannot read files outside project and user directories. Change to 'unrestricted' mode in Settings for full access.", userHint: USER_HINTS.fileSystem };
         }
       }
     }
@@ -155,6 +156,7 @@ export function evaluateFileAccess(
         return {
           allowed: false,
           reason: `Blocked: protected platform file. Use the apps system to build custom interfaces.`,
+          userHint: USER_HINTS.secrets,
         };
       }
     }
@@ -166,6 +168,7 @@ export function evaluateFileAccess(
       return {
         allowed: false,
         reason: `Blocked: cannot modify platform files (src/ or public/). Use app_create to build custom apps instead.`,
+        userHint: USER_HINTS.secrets,
       };
     }
   }
@@ -178,6 +181,7 @@ export function evaluateFileAccess(
       return {
         allowed: false,
         reason: `Blocked: matches sensitive path pattern ${pattern.source}`,
+        userHint: USER_HINTS.secrets,
       };
     }
   }

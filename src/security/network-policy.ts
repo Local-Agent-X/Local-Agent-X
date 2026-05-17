@@ -1,5 +1,6 @@
 import { promises as dns } from "node:dns";
 import type { SecurityDecision } from "../types.js";
+import { USER_HINTS } from "../types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("security.network-policy");
@@ -116,12 +117,12 @@ export function evaluateWebFetch(
   try {
     parsed = new URL(url);
   } catch {
-    return { allowed: false, reason: "Blocked: invalid URL" };
+    return { allowed: false, reason: "Blocked: invalid URL", userHint: USER_HINTS.network };
   }
 
   // Only allow http and https
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return { allowed: false, reason: `Blocked: protocol ${parsed.protocol} not allowed (only http/https)` };
+    return { allowed: false, reason: `Blocked: protocol ${parsed.protocol} not allowed (only http/https)`, userHint: USER_HINTS.network };
   }
 
   const host = parsed.hostname.toLowerCase();
@@ -137,39 +138,39 @@ export function evaluateWebFetch(
 
   // Check blocked hostnames
   if (BLOCKED_HOSTNAMES.has(host)) {
-    return { allowed: false, reason: `Blocked: ${host} is a blocked hostname (SSRF protection)` };
+    return { allowed: false, reason: `Blocked: ${host} is a blocked hostname (SSRF protection)`, userHint: USER_HINTS.network };
   }
 
   // Check if it's a literal IP address
   // IPv4 — strict decimal only; octal (0177.0.0.1) and hex (0x7f.0.0.1) are blocked
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || /^0x[0-9a-f]/i.test(host) || /^0[0-7]+\./.test(host)) {
     if (isPrivateIPv4(host)) {
-      return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv4 address` };
+      return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv4 address`, userHint: USER_HINTS.network };
     }
   }
   // Block hex integer IPs (e.g., 0x7f000001 = 127.0.0.1)
   if (/^0x[0-9a-f]+$/i.test(host)) {
-    return { allowed: false, reason: `Blocked: hex-encoded IP address "${host}" (SSRF protection)` };
+    return { allowed: false, reason: `Blocked: hex-encoded IP address "${host}" (SSRF protection)`, userHint: USER_HINTS.network };
   }
   // Block long-form decimal IPs (e.g., 2130706433 = 127.0.0.1)
   if (/^\d{8,}$/.test(host)) {
-    return { allowed: false, reason: `Blocked: decimal-encoded IP address "${host}" (SSRF protection)` };
+    return { allowed: false, reason: `Blocked: decimal-encoded IP address "${host}" (SSRF protection)`, userHint: USER_HINTS.network };
   }
 
   // IPv6 (in URL, appears as [::1])
   if (host.startsWith("[") || host.includes(":")) {
     const cleanHost = host.replace(/^\[/, "").replace(/\]$/, "");
     if (host.startsWith("[") && !host.includes("]")) {
-      return { allowed: false, reason: `Blocked: malformed IPv6 address brackets in ${host}` };
+      return { allowed: false, reason: `Blocked: malformed IPv6 address brackets in ${host}`, userHint: USER_HINTS.network };
     }
     if (isPrivateIPv6(cleanHost)) {
-      return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv6 address` };
+      return { allowed: false, reason: `Blocked: ${host} is a private/reserved IPv6 address`, userHint: USER_HINTS.network };
     }
   }
 
   // Cloud metadata endpoints (various formats)
   if (host === "169.254.169.254" || host.endsWith(".internal") || host.endsWith(".metadata")) {
-    return { allowed: false, reason: `Blocked: ${host} is a cloud metadata endpoint` };
+    return { allowed: false, reason: `Blocked: ${host} is a cloud metadata endpoint`, userHint: USER_HINTS.network };
   }
 
   // ── Egress domain allowlist ──
@@ -187,7 +188,7 @@ export function evaluateWebFetch(
         return host === baseDomain || host.endsWith("." + baseDomain);
       });
     if (!allowed) {
-      return { allowed: false, reason: `Blocked: ${host} is not in the egress allowlist. Add it to ~/.lax/egress-allowlist.json to permit.` };
+      return { allowed: false, reason: `Blocked: ${host} is not in the egress allowlist. Add it to ~/.lax/egress-allowlist.json to permit.`, userHint: USER_HINTS.network };
     }
   }
 
@@ -226,6 +227,7 @@ export async function validateUrlWithDns(
         return {
           allowed: false,
           reason: `Blocked: ${host} resolves to private IP ${ip} (DNS rebinding protection)`,
+          userHint: USER_HINTS.network,
         };
       }
     }
@@ -235,6 +237,7 @@ export async function validateUrlWithDns(
         return {
           allowed: false,
           reason: `Blocked: ${host} resolves to private IPv6 ${ip} (DNS rebinding protection)`,
+          userHint: USER_HINTS.network,
         };
       }
     }
@@ -244,6 +247,7 @@ export async function validateUrlWithDns(
     return {
       allowed: false,
       reason: `Blocked: DNS resolution failed for ${host} (fail-closed SSRF protection)`,
+      userHint: USER_HINTS.network,
     };
   }
 

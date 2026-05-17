@@ -29,4 +29,6 @@ export interface PolicyDecision {
   reason: string;
   ruleId?: string;
   confirm?: boolean; // true = allowed but flagged for attention
+  /** Plain-English user-facing summary; see SecurityDecision.userHint. */
+  userHint?: string;
 }

@@ -13,6 +13,7 @@ import { createKernel } from "@arikernel/runtime";
 import type { Firewall } from "@arikernel/runtime";
 
 import { createLogger } from "./logger.js";
+import { USER_HINTS } from "./types.js";
 const logger = createLogger("ari-kernel");
 
 let firewall: Firewall | null = null;
@@ -91,10 +92,10 @@ export async function ariEvaluate(
   action: string,
   params: Record<string, unknown>,
   taintLabels?: string[]
-): Promise<{ allowed: boolean; reason: string; quarantined?: boolean }> {
+): Promise<{ allowed: boolean; reason: string; quarantined?: boolean; userHint?: string }> {
   if (!firewall) {
     if (ariIsRequired) {
-      return { allowed: false, reason: "AriKernel required but not active — tool call blocked" };
+      return { allowed: false, reason: "AriKernel required but not active — tool call blocked", userHint: USER_HINTS.policy };
     }
     return { allowed: true, reason: "AriKernel not active" };
   }
@@ -186,6 +187,7 @@ export async function ariEvaluate(
       return {
         allowed: false,
         reason: `[ARI] ${result.error || "Denied by kernel policy"}`,
+        userHint: USER_HINTS.policy,
       };
     }
 
@@ -193,7 +195,7 @@ export async function ariEvaluate(
   } catch (e) {
     if (ariIsRequired) {
       logger.warn(`[ari] Tool call blocked due to ARI error (ariRequired=true): ${(e as Error).message}`);
-      return { allowed: false, reason: "ARI error — tool call blocked (ariRequired mode)" };
+      return { allowed: false, reason: "ARI error — tool call blocked (ariRequired mode)", userHint: USER_HINTS.policy };
     }
     return { allowed: true, reason: "ARI error (fail-open, built-in security active)" };
   }

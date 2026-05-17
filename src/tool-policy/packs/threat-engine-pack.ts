@@ -6,6 +6,7 @@
  * not a rule.
  */
 import type { ThreatEngine } from "../../threat-engine.js";
+import { USER_HINTS } from "../../types.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 
 const PACK_ID = "threat-engine";
@@ -43,6 +44,7 @@ export function makeThreatEnginePack(threatEngine: ThreatEngine | undefined): Ru
         allowed: false,
         ruleId: `threat.restricted.${call.name}`,
         reason: "Session threat level elevated. External tool calls restricted.",
+        userHint: USER_HINTS.network,
       };
     },
   };

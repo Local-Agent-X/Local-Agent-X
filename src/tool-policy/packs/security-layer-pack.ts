@@ -56,6 +56,7 @@ export function makeSecurityLayerPack(security: SecurityLayer | undefined): Rule
           reason: d.reason,
           recovery:
             "Adjust the call to stay within the workspace and security boundaries — retrying the same args will be denied again.",
+          userHint: d.userHint,
         };
       }
       return { allowed: true, reason: d.reason };

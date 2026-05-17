@@ -119,9 +119,57 @@ export interface AgentTurn {
 
 export interface SecurityDecision {
   allowed: boolean;
+  /** Technical reason — for logs, audit, and developer debug. */
   reason: string;
+  /**
+   * Plain-English summary the model surfaces to the user. Optional so legacy
+   * block sites still compile; the formatter falls back to `reason` when
+   * absent. Convention: one line, no jargon, names what was attempted in user
+   * terms, offers 1-2 next steps the user can take. Use the canonical
+   * templates in `USER_HINTS` instead of writing per-site sentences — pair
+   * with the "translate tool failures, never parrot" prompt rule.
+   */
+  userHint?: string;
   quarantined?: boolean;
 }
+
+/**
+ * Static, English-only user-facing hints for blocked-tool responses. Each
+ * category collapses many block sites into one sentence so the model surfaces
+ * a consistent message regardless of which underlying rule fired. Block sites
+ * import the matching key — they MUST NOT invent per-site prose.
+ */
+export const USER_HINTS = {
+  /** SSRF, egress allowlist, invalid URL, threat-elevated external, data lineage taint. */
+  network:
+    "I can't reach that URL or network address right now — want me to skip it, use a local file, or try a different address?",
+  /** Path traversal, workspace boundary, file-access-mode restrictions. */
+  fileSystem:
+    "I can't access that file path — try a path inside the project or your usual user folders, or broaden file access in Settings.",
+  /** Sensitive credential files AND protected platform/engine sources. */
+  secrets:
+    "I can't touch credential files or platform internals — give me a different path, or you'll need to edit that file yourself.",
+  /** Delegated agent + source-code write/edit/bash without a sandbox. */
+  worktreeIsolation:
+    "I can't safely change source code from a delegated agent without an isolated sandbox — let me run this directly instead.",
+  /** Tool-policy default-deny, rate cap by policy, blocked args, host allowlist, hook, RBAC, declined approval, context-restricted tool. */
+  policy:
+    "That action isn't permitted by the current policy — tell me what you'd like instead, or relax the rule in ~/.lax/tool-policy.json.",
+  /** Shell metacharacters, heredoc + script writes, dangerous patterns, obfuscation. */
+  commandShell:
+    "I can't run that shell command — tell me what you're trying to do and I'll find a safer way (often a dedicated tool exists).",
+  /** Plan mode is on — only read-only tools allowed. */
+  planMode:
+    "I'm in plan mode and can only read right now — say \"exit plan mode\" when you want me to start making changes.",
+  /** Threat engine fired on tool result — needs `/approve` to continue. */
+  threatConsent:
+    "Something tripped a safety check — type `/approve <one-line reason>` if this is a legitimate request, or tell me a different approach.",
+  /** Circuit breaker, per-tool rate limit, autopilot self-edit ceiling. */
+  retryExhausted:
+    "I've tried this several times and it keeps being denied — let's switch approaches; what should we do instead?",
+} as const;
+
+export type UserHintKey = keyof typeof USER_HINTS;
 
 // ── Session Types ──
 

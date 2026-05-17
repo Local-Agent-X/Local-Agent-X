@@ -7,6 +7,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { USER_HINTS } from "./types.js";
 
 export interface EgressRule {
   domain: string;
@@ -87,7 +88,7 @@ export function removeEgressRule(domain: string): boolean {
 }
 
 /** Check if a domain is allowed by the egress policy */
-export function checkEgress(hostname: string): { allowed: boolean; reason: string } {
+export function checkEgress(hostname: string): { allowed: boolean; reason: string; userHint?: string } {
   const policy = loadPolicy();
   const host = hostname.toLowerCase();
 
@@ -95,7 +96,7 @@ export function checkEgress(hostname: string): { allowed: boolean; reason: strin
     // In permissive mode, only explicit blocks apply
     const blockRule = policy.rules.find(r => r.action === "block" && matchesDomain(host, r.domain));
     if (blockRule) {
-      return { allowed: false, reason: `Blocked by egress policy: ${blockRule.reason || blockRule.domain}` };
+      return { allowed: false, reason: `Blocked by egress policy: ${blockRule.reason || blockRule.domain}`, userHint: USER_HINTS.network };
     }
     return { allowed: true, reason: "Permissive mode — allowed" };
   }
@@ -106,14 +107,14 @@ export function checkEgress(hostname: string): { allowed: boolean; reason: strin
     if (allowRule) {
       return { allowed: true, reason: `Allowed by egress allowlist: ${allowRule.domain}` };
     }
-    return { allowed: false, reason: `Blocked: ${host} not in egress allowlist` };
+    return { allowed: false, reason: `Blocked: ${host} not in egress allowlist`, userHint: USER_HINTS.network };
   }
 
   if (policy.mode === "blocklist") {
     // Everything allowed except explicitly blocked
     const blockRule = policy.rules.find(r => r.action === "block" && matchesDomain(host, r.domain));
     if (blockRule) {
-      return { allowed: false, reason: `Blocked by egress blocklist: ${blockRule.reason || blockRule.domain}` };
+      return { allowed: false, reason: `Blocked by egress blocklist: ${blockRule.reason || blockRule.domain}`, userHint: USER_HINTS.network };
     }
     return { allowed: true, reason: "Not in blocklist — allowed" };
   }

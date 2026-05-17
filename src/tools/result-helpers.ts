@@ -88,11 +88,12 @@ export function renderToolResultForModel(r: ToolResult): string {
   const status = statusOf(r);
   const meta = r.metadata || {};
 
-  // Header: [status, exit_code=N, duration_ms=M, ...] — skip recovery and
-  // partial_output (those go on their own lines below) and skip nested objs.
+  // Header: [status, exit_code=N, duration_ms=M, ...] — skip recovery,
+  // userHint, partial_output (those go on their own lines below) and skip
+  // nested objs.
   const headerParts: string[] = [];
   for (const [k, v] of Object.entries(meta)) {
-    if (k === "recovery" || k === "partial_output") continue;
+    if (k === "recovery" || k === "partial_output" || k === "userHint") continue;
     if (v === undefined || v === null) continue;
     if (typeof v === "object") continue;
     const rendered = typeof v === "string" && v.length > 60 ? JSON.stringify(v.slice(0, 60) + "...") : (typeof v === "string" ? JSON.stringify(v) : String(v));
@@ -103,6 +104,13 @@ export function renderToolResultForModel(r: ToolResult): string {
   const header = `[${status}${headerParts.length > 0 ? ", " + headerParts.join(", ") : ""}]`;
 
   const lines: string[] = [header];
+  // userHint is the plain-English summary the model surfaces to the user.
+  // First after the header so the "translate tool failures, never parrot"
+  // prompt rule can pattern-match a single, consistent line — and so the
+  // technical `reason` (in content + recovery) stays available for debug.
+  if (typeof meta.userHint === "string" && meta.userHint) {
+    lines.push(`User hint: ${meta.userHint}`);
+  }
   if (typeof meta.recovery === "string" && meta.recovery) {
     lines.push(`Recovery: ${meta.recovery}`);
   }

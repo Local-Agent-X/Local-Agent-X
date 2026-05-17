@@ -246,6 +246,17 @@ export const DEFAULT_POLICY: ToolPolicyConfig = {
     // Task management — session-scoped tracking
     { id: "allow-task", tool: "task_*", decision: "allow", reason: "Task tracking (session-scoped)", priority: 50 },
 
+    // Missions — scheduled recurring agent runs. Core user-facing feature
+    // ("create a mission to do X every night"). Reports land under
+    // workspace/missions/. Was missing from the default policy on 2026-05-17
+    // so the agent's mission_schedule_create attempts were silently blocked,
+    // forcing a fallback to agent_spawn that produced text but not a real
+    // recurring schedule.
+    { id: "allow-mission-schedule", tool: "mission_schedule_*", decision: "allow", reason: "Mission scheduling (recurring agent runs, reports under workspace/missions/)", priority: 50 },
+
+    // Cron — backing schedule layer for missions and any other recurring jobs.
+    { id: "allow-cron", tool: "cron_*", decision: "allow", reason: "Cron job management (mission/reminder backing)", priority: 50 },
+
     // Plan mode
     { id: "allow-enter-plan", tool: "enter_plan_mode", decision: "allow", reason: "Enter read-only plan mode", priority: 50 },
     { id: "allow-exit-plan", tool: "exit_plan_mode", decision: "allow", reason: "Exit plan mode", priority: 50 },

@@ -53,6 +53,18 @@ export interface ServerContext {
   setActiveOnEvent: (sessionId: string, fn: ((event: ServerEvent) => void) | undefined) => void;
   activeBrowserSessionId: string;
   setActiveBrowserSessionId: (id: string) => void;
+  /**
+   * Per-session runtime provider+model, set by the chat turn handler from
+   * the resolved `PreparedAgentRequest`. Tools spawned during the turn read
+   * this to honor the chat's active provider (e.g. build_app subprocess CLI
+   * choice) rather than the on-disk default in ~/.lax/settings.json.
+   * Undefined when the tool is invoked outside a chat turn (cron, bridges,
+   * headless ops); downstream then falls back to settings.json — same as
+   * before this field existed. Stored in a session-keyed map so concurrent
+   * chats don't clobber each other (same shape as activeOnEventBySession).
+   */
+  getActiveRuntime: (sessionId: string) => { provider: string; model: string } | undefined;
+  setActiveRuntime: (sessionId: string, runtime: { provider: string; model: string } | undefined) => void;
 }
 
 /** Standard route handler signature — returns true if handled */

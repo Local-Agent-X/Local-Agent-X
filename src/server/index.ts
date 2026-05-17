@@ -64,7 +64,7 @@ export async function startServer(config: LAXConfig) {
   })();
 
   const tools = await bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir });
-  const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef } = tools;
+  const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef, activeRuntimeBySession } = tools;
 
   // Pre-warm the tool-RAG embedding index in the background. Without this,
   // the FIRST chat after every server restart paid 30-50s to embed all ~66
@@ -143,6 +143,7 @@ export async function startServer(config: LAXConfig) {
     getChatWs: () => chatWsHolder.value!, broadcastAll,
     activeOnEventBySession,
     activeBrowserSessionIdRef,
+    activeRuntimeBySession,
   });
 
   const { server, chatWs } = createHttpServer(requestHandler, { config, dataDir });
@@ -171,6 +172,11 @@ export async function startServer(config: LAXConfig) {
     },
     activeBrowserSessionId: activeBrowserSessionIdRef.value,
     setActiveBrowserSessionId: (id) => { activeBrowserSessionIdRef.value = id; },
+    getActiveRuntime: (sid) => activeRuntimeBySession.get(sid),
+    setActiveRuntime: (sid, runtime) => {
+      if (runtime) activeRuntimeBySession.set(sid, runtime);
+      else activeRuntimeBySession.delete(sid);
+    },
   });
   wireWsChat({ chatWs, buildCtx: buildWsCtx });
 

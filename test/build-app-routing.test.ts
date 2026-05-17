@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   buildAppTool,
+  pickForcedProviderFromRuntime,
   resolveBuildProvider,
   resolveBuildStrategy,
   APP_BUILD_OP_TYPE,
@@ -93,6 +94,59 @@ describe("resolveBuildStrategy — template-driven strategy split", () => {
 
   it("unknown providers fall back to the template's default", () => {
     expect(resolveBuildStrategy("future-provider-9000")).toBe("in-canonical-sub-agent");
+  });
+});
+
+describe("pickForcedProviderFromRuntime — chat-runtime vs. explicit backend", () => {
+  it("explicit backend (claude) suppresses the runtime hint — explicit arg wins", () => {
+    expect(pickForcedProviderFromRuntime("claude", "codex")).toBeUndefined();
+  });
+
+  it("explicit backend (codex) suppresses the runtime hint — even when they would agree", () => {
+    expect(pickForcedProviderFromRuntime("codex", "anthropic")).toBeUndefined();
+  });
+
+  it("auto backend + runtime set → runtime wins over settings.json", () => {
+    expect(pickForcedProviderFromRuntime("auto", "codex")).toBe("codex");
+  });
+
+  it("auto backend + no runtime → undefined, falls back to settings.json", () => {
+    expect(pickForcedProviderFromRuntime("auto", undefined)).toBeUndefined();
+  });
+
+  it("auto backend + empty-string runtime is treated as 'not set'", () => {
+    expect(pickForcedProviderFromRuntime("auto", "")).toBeUndefined();
+  });
+});
+
+describe("build_app — chat-runtime provider plumbing", () => {
+  // The full precedence chain assembled at the call-site: chat runtime
+  // beats settings.json, but an explicit backend arg beats both.
+  it("ctx.runtime wins over settings.json when backend=auto", () => {
+    const settingsFile = join(tmpdir(), `lax-runtime-test-${Date.now()}-a.json`);
+    writeFileSync(settingsFile, JSON.stringify({ provider: "anthropic" }), "utf-8");
+    try {
+      const forced = pickForcedProviderFromRuntime("auto", "codex");
+      expect(resolveBuildProvider("auto", { settingsPath: settingsFile, forcedProvider: forced })).toBe("codex");
+    } finally {
+      try { rmSync(settingsFile); } catch { /* swallow */ }
+    }
+  });
+
+  it("falls back to settings.json when no runtime is provided", () => {
+    const settingsFile = join(tmpdir(), `lax-runtime-test-${Date.now()}-b.json`);
+    writeFileSync(settingsFile, JSON.stringify({ provider: "anthropic" }), "utf-8");
+    try {
+      const forced = pickForcedProviderFromRuntime("auto", undefined);
+      expect(resolveBuildProvider("auto", { settingsPath: settingsFile, forcedProvider: forced })).toBe("anthropic");
+    } finally {
+      try { rmSync(settingsFile); } catch { /* swallow */ }
+    }
+  });
+
+  it("explicit backend=claude wins over ctx.runtime=codex", () => {
+    const forced = pickForcedProviderFromRuntime("claude", "codex");
+    expect(resolveBuildProvider("claude", forced ? { forcedProvider: forced } : {})).toBe("anthropic");
   });
 });
 

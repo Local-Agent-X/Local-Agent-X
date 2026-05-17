@@ -40,6 +40,38 @@ function _findStreamingBodyEl(sessionId) {
 let chatWs = null;
 let activeChatsSet = new Set();
 
+// Heartbeat state. Browser WebSocket API doesn't expose protocol-level
+// ping/pong, so we send {type:"ping"} every 25s and expect
+// {type:"pong"} back. If no pong arrives within ~35s the connection is
+// half-open (server-side dead, client's readyState lying as OPEN) — we
+// force-close so onclose fires and the reconnect loop runs.
+//
+// Without this, fresh-install repro showed chat sends going into the WS
+// buffer and never reaching the server. Restart-server "fixed it"
+// because the server kicking all clients was the only signal that
+// reached the half-open frontend. window.chatWsLastPong is read by
+// chat-send.js to demote to HTTP fallback when WS health is stale.
+let chatWsPingTimer = null;
+window.chatWsLastPong = Date.now();
+const WS_PING_INTERVAL_MS = 25_000;
+const WS_PONG_TIMEOUT_MS = 35_000;
+function startChatWsHeartbeat() {
+  stopChatWsHeartbeat();
+  window.chatWsLastPong = Date.now();
+  chatWsPingTimer = setInterval(() => {
+    if (!chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - window.chatWsLastPong > WS_PONG_TIMEOUT_MS) {
+      console.warn('[ws] No pong within ' + WS_PONG_TIMEOUT_MS + 'ms — connection half-open, forcing reconnect');
+      try { chatWs.close(); } catch {}
+      return;
+    }
+    try { chatWs.send(JSON.stringify({ type: 'ping', ts: Date.now() })); } catch {}
+  }, WS_PING_INTERVAL_MS);
+}
+function stopChatWsHeartbeat() {
+  if (chatWsPingTimer) { clearInterval(chatWsPingTimer); chatWsPingTimer = null; }
+}
+
 // Track in-flight canonical chat ops by opId. Populated when the server
 // emits `chat_op_started` and cleared on terminal events (`done` / `error`).
 // On WebSocket reconnect we replay missed canonical events for each one
@@ -55,6 +87,7 @@ function connectChatWs() {
 
   chatWs.onopen = () => {
     console.log('[ws] Chat WebSocket connected');
+    startChatWsHeartbeat();
     // Subscribe to active chat if we have one
     if (activeChat) chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: activeChat.id }));
     // Reconnect-resume: for any chat ops that were in flight when the
@@ -77,6 +110,7 @@ function connectChatWs() {
 
   chatWs.onclose = () => {
     console.log('[ws] Chat WebSocket closed, reconnecting in 3s...');
+    stopChatWsHeartbeat();
     setTimeout(connectChatWs, 3000);
   };
 

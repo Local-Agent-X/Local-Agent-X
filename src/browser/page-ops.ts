@@ -46,7 +46,7 @@ export async function evaluateScript(page: Page, script: string): Promise<string
   // Playwright's page.evaluate(string) treats the input as an EXPRESSION
   // position. That means top-level `const`/`let`/`var`, multi-statement
   // scripts, and `return` statements all fail with a SyntaxError unless
-  // we wrap them in a function. Live failure (2026-05-13, Thriveventory
+  // we wrap them in a function. Live failure (2026-05-13, customer PO-entry workflow
   // PO entry): agent wrote `const els = ...; els.forEach(...)`, every
   // call surfaced as "Unexpected token 'const'", agent then pivoted to
   // `new Function("...")` to defeat the syntax error and hit the anti-

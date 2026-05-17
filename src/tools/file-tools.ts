@@ -158,7 +158,7 @@ export const editTool: ToolDefinition = {
       // Files saved on Windows or from certain editors use CRLF (\r\n). Doing
       // strict substring match on those means every multi-line edit fails
       // with "old_string not found" even when the content is semantically
-      // identical. Live failure (2026-05-12, Mario todo question-blocks):
+      // identical. Live failure (2026-05-12, sample-app todo question-blocks):
       // ~90 tool-call loop because each edit failed → agent re-read →
       // tried another anchor → failed again. Root cause was CRLF in the file
       // vs LF in old_string. Strategy:

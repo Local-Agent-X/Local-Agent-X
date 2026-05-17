@@ -22,7 +22,7 @@ const MAX_CATALOG_ENTRIES = 30;
 const CACHE_TTL_MS = 60_000;
 
 const SYSTEM_ENTITIES = new Set([
-  "agent", "agentxos", "assistant", "claude", "example",
+  "agent", "assistant", "claude", "example",
   "always", "none", "memory-consolidate", "open",
 ]);
 

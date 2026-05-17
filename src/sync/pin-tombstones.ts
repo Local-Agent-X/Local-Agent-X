@@ -15,7 +15,7 @@
  *   - Synced: `sync-repo/.tombstones/pins/<name>.json` — names any
  *     machine has unpinned, propagated via the existing git push/pull.
  *     Pull also filters remote pins through THIS so a machine that
- *     unpinned Mario propagates the delete to every other machine.
+ *     unpinned Sample propagates the delete to every other machine.
  *
  * Resurrection: re-pinning a name removes its tombstone from BOTH
  * stores. That's the "I changed my mind, pin it again" signal that

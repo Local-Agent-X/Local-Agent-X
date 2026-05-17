@@ -367,7 +367,7 @@ const NO_PROGRESS_LIMIT_WEAK = 15;
 // tools (`read`, `grep`, `glob`, `web_search`, `snapshot`-style ops) are
 // also excluded — those genuinely don't change anything.
 //
-// Live failure (2026-05-13, Thriveventory PO entry on codex): agent drove
+// Live failure (2026-05-13, the customer PO-entry workflow on codex): agent drove
 // the browser through 6 form-fill / click iterations without writing a
 // single file. Each `browser` call was real progress (PO number set,
 // vendor field populated, line items being added) but the no-progress

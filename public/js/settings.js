@@ -103,7 +103,26 @@ async function doLogin() {
   try {
     const d = await apiPost('/api/auth/login', {});
     if (d.authUrl) window.open(d.authUrl, '_blank');
-    setTimeout(checkSettingsAuth, 5000);
+    // Poll auth status until OAuth completes in the browser tab. When
+    // detected, refresh BOTH the settings UI (checkSettingsAuth) AND the
+    // global sidebar indicator (checkAuth) — without the second call,
+    // bottom-left stays "not connected" after OAuth lands and the user
+    // has to reload the window to see the green dot. ~5min max.
+    let attempts = 0;
+    const poll = setInterval(async () => {
+      attempts++;
+      try {
+        const r = await apiFetch('/api/auth/status');
+        const s = await r.json();
+        if (s.authenticated) {
+          clearInterval(poll);
+          checkSettingsAuth();
+          if (typeof checkAuth === 'function') checkAuth();
+          return;
+        }
+      } catch {}
+      if (attempts > 150) clearInterval(poll); // ~5min @ 2s
+    }, 2000);
   } catch (e) { console.error('Login failed:', e); }
 }
 

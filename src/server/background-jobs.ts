@@ -210,11 +210,34 @@ Use the read-only research tools (web_search, browser, http_request, web_fetch, 
     const reportPath = join(jobDir, `${ts}.md`);
     const salvageBanner = salvaged ? `\n\n> Note: terminal stopReason was \`${stopReason}\` — content checks passed, salvaged to canonical.\n` : "";
     const reportContent = `# ${job?.name || jobId} — ${new Date().toLocaleDateString()}${salvageBanner}\n\n${output}`;
-    writeFileSync(reportPath, reportContent, "utf-8");
+    // Wrap the canonical report write so a disk error (full disk, perms,
+    // ENOSPC) surfaces as a real run failure instead of being silently
+    // swallowed by writeFileSync's default throw-into-the-void behavior
+    // — without this, the agent's work landed nowhere and the user saw
+    // an apparently-successful mission with no report on disk.
+    try {
+      writeFileSync(reportPath, reportContent, "utf-8");
+    } catch (e) {
+      const msg = `disk-write failed: ${(e as Error).message}`;
+      logger.error(`[cron] Job ${jobId} report save to ${reportPath} FAILED: ${msg}`);
+      return {
+        output: `ERROR: report write failed — ${msg}`,
+        status: "error",
+        errorMessage: msg,
+        provider: providerName, model: cronModel,
+      };
+    }
     const slug = (job?.name || jobId).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+$/, "");
     const missionDir = join(resolve(config.workspace), "missions", slug);
-    mkdirSync(missionDir, { recursive: true });
-    writeFileSync(join(missionDir, "latest.md"), reportContent, "utf-8");
+    // workspace/missions mirror write is best-effort — the canonical report
+    // at reportPath above is the source of truth. Failure here gets logged
+    // but doesn't fail the run.
+    try {
+      mkdirSync(missionDir, { recursive: true });
+      writeFileSync(join(missionDir, "latest.md"), reportContent, "utf-8");
+    } catch (e) {
+      logger.warn(`[cron] Job ${jobId} workspace mirror write to ${missionDir} failed (canonical at ${reportPath} OK): ${(e as Error).message}`);
+    }
     if (salvaged) {
       try { appendFileSync(join(cronReportsDir, "_failures.log"), `${new Date().toISOString()}\t${job?.name || ""}\t${jobId}\tstop=${stopReason}\tSALVAGED ${trimmed.length} chars to canonical\n`, "utf-8"); } catch {}
       logger.warn(`[cron] Job ${jobId} (${job?.name || "?"}) salvaged: stopReason=${stopReason} but ${trimmed.length} chars passed content checks — saved to ${reportPath}`);

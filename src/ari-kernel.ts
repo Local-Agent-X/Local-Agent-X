@@ -283,6 +283,126 @@ export async function startAriKernel(auditDbPath: string, preset?: string, requi
 }
 
 /**
+ * Tool → kernel-class mapping. The SINGLE source of truth for which tools
+ * route through firewall.execute and under what class. Two semantic kinds:
+ *
+ *   - GATED CLASS (file / http / shell / database / retrieval / secret-vault)
+ *     The kernel evaluates the call at the SAX dispatch layer (Layer -1 in
+ *     tool-executor.ts) — taint analysis, capability check, audit log.
+ *   - "internal"
+ *     The tool runs entirely inside LAX state (no raw I/O, or raw I/O that
+ *     already routes through a kernel-direct path like the arikernel-bridge).
+ *     Dispatch skips the kernel for these. Adding a tool here is a deliberate
+ *     statement that it does not need (or already does) kernel evaluation.
+ *
+ * Unmapped tools also skip the kernel — `shouldGateInKernel()` returns
+ * false and `ariEvaluate()` short-circuits to "not gated". The first time a
+ * given unmapped tool runs we log it once so coverage gaps surface in
+ * server logs without breaking production.
+ */
+const TOOL_CLASS_MAP: Record<string, string> = {
+  // ── Gated I/O — kernel runs at dispatch ──
+  bash: "shell",
+  read: "file",
+  write: "file",
+  edit: "file",
+  browser: "http",
+  http_request: "http",
+  web_fetch: "http",
+  web_search: "http",
+  memory_search: "retrieval",
+  memory_save: "database",
+  browser_capture_to_secret: "secret-vault",
+  browser_fill_from_secret: "secret-vault",
+  clipboard_write_from_secret: "secret-vault",
+
+  // ── Internal — kernel skipped at dispatch ──
+  // ari_*: arikernel-bridge wraps kernel executors directly; the kernel
+  // runs INSIDE the bridge for these. Dispatch-layer evaluation would be
+  // double-routing with a fake class/action. (Was the live cron breakage
+  // after ariRequired=true.)
+  ari_file: "internal",
+  ari_http: "internal",
+  ari_shell: "internal",
+  ari_database: "internal",
+  ari_retrieval: "internal",
+  ari_sqlite_database: "internal",
+  // self_edit runs sandboxed code repair through its own subprocess with
+  // its own build/server-bind/agent-smoke gates before merge — kernel
+  // gating here would block legitimate repair flows.
+  self_edit: "internal",
+  // Agent / swarm / mission orchestration — pure LAX state transitions.
+  agent_spawn: "internal",
+  agent_redirect: "internal",
+  agent_pause: "internal",
+  agent_resume: "internal",
+  agent_cancel: "internal",
+  agent_status: "internal",
+  agent_output: "internal",
+  agent_message: "internal",
+  delegate: "internal",
+  swarm_create: "internal",
+  swarm_status: "internal",
+  swarm_cancel: "internal",
+  swarm_list_roles: "internal",
+  swarm_result: "internal",
+  mission_list: "internal",
+  mission_get: "internal",
+  mission_save_preference: "internal",
+  mission_format_caption: "internal",
+  mission_build: "internal",
+  mission_edit: "internal",
+  mission_delete: "internal",
+  mission_schedule_create: "internal",
+  mission_schedule_delete: "internal",
+  mission_chain: "internal",
+  mission_variables_set: "internal",
+  mission_variables_get: "internal",
+  mission_schedule_list: "internal",
+  mission_schedule_update: "internal",
+  mission_schedule_toggle: "internal",
+  mission_schedule_reports: "internal",
+  playbook_list: "internal",
+  playbook_get: "internal",
+  // Media / vision — LAX-internal acquisition + cached files.
+  generate_image: "internal",
+  generate_video: "internal",
+  camera_capture: "internal",
+  screen_capture: "internal",
+  ocr: "internal",
+};
+
+const GATED_CLASSES: ReadonlySet<string> = new Set([
+  "file", "http", "shell", "database", "retrieval", "secret-vault",
+]);
+
+const _seenUnmappedTools = new Set<string>();
+
+/**
+ * Should this tool be evaluated by AriKernel at the SAX dispatch layer?
+ *
+ * Returns true ONLY for tools mapped to a gated I/O class. Internal-class
+ * tools and unmapped tools return false — dispatch skips ariEvaluate
+ * entirely so legitimate orchestration calls (agent spawning, scheduled
+ * missions, bridge wrappers) don't hit a fail-closed gate they don't need.
+ *
+ * Unmapped tools are logged once so coverage gaps surface, but they do
+ * NOT block. AriKernel's job is to defend I/O surfaces, not to break
+ * every newly-added internal tool until someone remembers to update a map.
+ */
+export function shouldGateInKernel(toolName: string): boolean {
+  const cls = TOOL_CLASS_MAP[toolName];
+  if (cls === undefined) {
+    if (!_seenUnmappedTools.has(toolName)) {
+      _seenUnmappedTools.add(toolName);
+      logger.info(`[ari] ${toolName} not in TOOL_CLASS_MAP — dispatch skips kernel (add to map if I/O gating is needed)`);
+    }
+    return false;
+  }
+  return GATED_CLASSES.has(cls);
+}
+
+/**
  * Evaluate a tool call through AriKernel.
  * Returns { allowed, reason } — same shape as SecurityLayer.evaluate().
  */
@@ -300,59 +420,7 @@ export async function ariEvaluate(
   }
 
   // Map our tool names to AriKernel tool classes
-  const toolClassMap: Record<string, string> = {
-    bash: "shell",
-    read: "file",
-    write: "file",
-    edit: "file",
-    browser: "http",
-    http_request: "http",
-    web_fetch: "http",
-    web_search: "http",
-    memory_search: "retrieval",
-    memory_save: "database",
-    // Internal tools — always allowed
-    agent_spawn: "internal",
-    agent_redirect: "internal",
-    agent_pause: "internal",
-    agent_resume: "internal",
-    agent_cancel: "internal",
-    agent_status: "internal",
-    agent_output: "internal",
-    agent_message: "internal",
-    delegate: "internal",
-    swarm_create: "internal",
-    swarm_status: "internal",
-    swarm_cancel: "internal",
-    swarm_list_roles: "internal",
-    swarm_result: "internal",
-    mission_list: "internal",
-    mission_get: "internal",
-    mission_save_preference: "internal",
-    mission_format_caption: "internal",
-    mission_build: "internal",
-    mission_edit: "internal",
-    mission_delete: "internal",
-    mission_schedule_create: "internal",
-    mission_schedule_delete: "internal",
-    mission_chain: "internal",
-    mission_variables_set: "internal",
-    mission_variables_get: "internal",
-    playbook_list: "internal",
-    playbook_get: "internal",
-    generate_image: "internal",
-    generate_video: "internal",
-    camera_capture: "internal",
-    screen_capture: "internal",
-    ocr: "internal",
-    mission_schedule_list: "internal",
-    mission_schedule_update: "internal",
-    mission_schedule_toggle: "internal",
-    mission_schedule_reports: "internal",
-    browser_capture_to_secret: "secret-vault",
-    browser_fill_from_secret: "secret-vault",
-    clipboard_write_from_secret: "secret-vault",
-  };
+  const toolClassMap: Record<string, string> = TOOL_CLASS_MAP;
 
   // Per-tool action override: secret-vault tools have a fixed action mapping
   // (capture / fill / clipboard) regardless of what the executor passes in.

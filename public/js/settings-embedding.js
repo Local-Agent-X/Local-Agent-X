@@ -23,7 +23,10 @@ async function onEmbProviderChange(provider) {
     if (modelInput) modelInput.style.display = 'none';
     modelSelect.innerHTML = '<option value="">Loading...</option>';
     try {
-      const data = await apiJson('/api/models/local');
+      // ?include=embeddings — the default endpoint filters embedding-only
+      // models out (they can't serve chat). This dropdown specifically
+      // wants embedding models, so opt in.
+      const data = await apiJson('/api/models/local?include=embeddings');
       const models = (data.models || []).map(function(m) { return m.name; });
       if (models.length === 0) {
         modelSelect.innerHTML = '<option value="">No models found — run ollama pull nomic-embed-text</option>';

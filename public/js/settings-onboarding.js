@@ -20,10 +20,18 @@ async function shouldShowOnboarding() {
     const r = await apiFetch('/api/settings');
     const s = await r.json();
     if (s.onboarded) { localStorage.setItem('sax_onboarded', '1'); return false; }
-    // If any provider is already configured, treat the user as onboarded.
+    // Only count as onboarded if a provider is ACTIVE (has working
+    // credentials), not just "registered" in the catalog. /api/providers
+    // returns local/ollama + ollama-cloud as registered entries even when
+    // the user has zero auth — counting registered-but-not-active here
+    // caused the 2026-05-17 bug: fresh install marked itself onboarded
+    // because Ollama was running, so the first-run wizard never appeared
+    // and Getting Started's "Connect an AI provider" was pre-checked
+    // while the user actually had no provider connected.
     const p = await apiFetch('/api/providers');
     const d = await p.json();
-    if (d.providers && d.providers.length > 0) {
+    const hasActive = (d.current && d.current.provider) || (Array.isArray(d.providers) && d.providers.some(pr => pr.active));
+    if (hasActive) {
       localStorage.setItem('sax_onboarded', '1');
       apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ onboarded: true }) }).catch(() => {});
       return false;

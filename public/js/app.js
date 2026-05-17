@@ -453,11 +453,11 @@ function moveChat(chatId, projectId, e) {
   saveChats(); renderSidebar();
 }
 
-// First-install agent intro. Fires exactly once on the very first chat ever
-// (no prior history, no `sax_greeted` flag), so a fresh install starts with
-// the agent introducing itself in-character. Call sign + handler name flow
-// back through the existing identity-extract pipeline on the user's reply.
-const FIRST_BOOT_GREETING = "Agent X reporting for duty. What's my call sign, and who's my handler?";
+// First-install greeting removed 2026-05-17. The canned bubble felt fake
+// (pre-written string injected into an empty chat before any real
+// interaction). The agent now greets the user as part of its FIRST real
+// LLM reply — see the "First-turn identity ask" rule in config/system-prompt.md.
+// Identity-extract pipeline on the user's reply is unchanged.
 
 // ── Chats ──
 function newChat(projectId) {
@@ -467,10 +467,8 @@ function newChat(projectId) {
   chats.unshift(activeChat);
   // Expand the project the new chat lives under so the user can see it.
   if (projectId && typeof expandedProjects !== 'undefined') expandedProjects.add(projectId);
-  if (chats.length === 1 && !localStorage.getItem('sax_greeted')) {
-    activeChat.messages.push({ role: 'assistant', content: FIRST_BOOT_GREETING, timestamp: Date.now() });
-    try { localStorage.setItem('sax_greeted', '1'); } catch {}
-  }
+  // No canned greeting — agent generates a real first reply when the user
+  // sends their first message (see system-prompt.md "First-turn identity ask").
   saveChats(); renderSidebar();
   navigate('chat');
   if (window.renderMessages) renderMessages();

@@ -131,6 +131,33 @@ export function setupChatWebSocket(server: Server, authToken: string) {
     }, WS_MAX_AGE_MS);
     ws.on("close", () => clearTimeout(maxAgeTimer));
 
+    // Heartbeat — detects half-open TCP/WebSocket connections that the
+    // protocol alone won't surface. Without this, the client's
+    // ws.readyState stays at OPEN long after the server-side socket is
+    // dead (TCP RST not delivered, OS-level half-close, etc.) — every
+    // chat-send via WS lands in a buffer that goes nowhere. Restarting
+    // the server "fixes" it because the client finally sees onclose.
+    //
+    // Two-channel design:
+    //   1. Native WS ping/pong (ws library handles binary frame) — server
+    //      pings the client every 25s. If no pong by next tick, terminate.
+    //      Forces onclose on the client, which triggers its reconnect loop.
+    //   2. JSON "ping" message handler below — the client can't send WS
+    //      pings (browser API doesn't expose them), so it sends
+    //      {type:"ping"} and we echo {type:"pong"} so it can detect
+    //      half-open from its end too.
+    let isAlive = true;
+    ws.on("pong", () => { isAlive = true; });
+    const heartbeatTimer = setInterval(() => {
+      if (!isAlive) {
+        try { ws.terminate(); } catch { /* already dead */ }
+        return;
+      }
+      isAlive = false;
+      try { ws.ping(); } catch { /* socket dying */ }
+    }, 25_000);
+    ws.on("close", () => clearInterval(heartbeatTimer));
+
     // Send list of currently active chats
     ws.send(JSON.stringify({
       type: "active_chats",
@@ -174,6 +201,16 @@ export function setupChatWebSocket(server: Server, authToken: string) {
 
       const type = msg.type as string;
       const sessionId = msg.sessionId as string;
+
+      // JSON ping/pong — the client side of the heartbeat. Browser
+      // WebSocket API doesn't expose protocol-level ping frames, so the
+      // client sends {type:"ping"} and we echo {type:"pong"} so the
+      // client can detect a half-open connection from its end and
+      // trigger its own reconnect.
+      if (type === "ping") {
+        try { ws.send(JSON.stringify({ type: "pong", ts: Date.now() })); } catch {}
+        return;
+      }
 
       if (type === "subscribe" && sessionId) {
         // Subscribe to a chat — replay buffered events

@@ -11,6 +11,7 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./tools/shared/image-acquire.js";
 
 // ── Path helper ──
 
@@ -134,6 +135,7 @@ const spreadsheetWrite: ToolDefinition = {
       data: { type: "string", description: 'JSON array of row objects. Example: \'[{"Name":"Alice","Score":95},{"Name":"Bob","Score":87}]\'' },
       sheet: { type: "string", description: 'Sheet name (default: "Sheet1")' },
       headers: { type: "array", items: { type: "string" }, description: "Column headers (auto-derived from data keys if omitted)" },
+      images: IMAGES_PARAM_SCHEMA,
     },
     required: ["file_path", "data"],
   },
@@ -143,6 +145,7 @@ const spreadsheetWrite: ToolDefinition = {
       const sheetName = (args.sheet as string) || "Sheet1";
       const parsed: Record<string, unknown>[] = JSON.parse(args.data as string);
       if (!Array.isArray(parsed)) return fail("data must be a JSON array");
+      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
 
       const wb = new ExcelJS.Workbook();
       try { await wb.xlsx.readFile(filePath); } catch { /* new file */ }
@@ -153,9 +156,32 @@ const spreadsheetWrite: ToolDefinition = {
       const hdrs = (args.headers as string[] | undefined) ?? Object.keys(parsed[0] ?? {});
       ws.addRow(hdrs);
       for (const obj of parsed) ws.addRow(hdrs.map((h) => obj[h] ?? ""));
+
+      // Place each image to the right of the data, stacked vertically.
+      // exceljs accepts png/jpeg/gif only — gif/webp/svg fall through.
+      const startCol = hdrs.length + 1;
+      let row = 0;
+      for (const img of acquired) {
+        const ext: "png" | "jpeg" | "gif" | null =
+          img.mimeType === "image/png" ? "png" :
+          img.mimeType === "image/jpeg" ? "jpeg" :
+          img.mimeType === "image/gif" ? "gif" :
+          null;
+        if (!ext) continue;
+        // exceljs's Image.buffer references an older Buffer interface; the
+        // runtime is the same Node Buffer, so cast through unknown.
+        const imageId = wb.addImage({ buffer: img.buffer as unknown as ExcelJSTypes.Image["buffer"], extension: ext });
+        ws.addImage(imageId, {
+          tl: { col: startCol, row },
+          ext: { width: Math.min(img.width || 400, 600), height: Math.min(img.height || 300, 400) },
+        });
+        row += 20;
+      }
+
       mkdirSync(dirname(filePath), { recursive: true });
       await wb.xlsx.writeFile(filePath);
-      return ok(`Wrote ${parsed.length} rows to "${sheetName}" in ${filePath}`);
+      const imgSuffix = acquired.length ? ` and ${acquired.length} image(s)` : "";
+      return ok(`Wrote ${parsed.length} rows${imgSuffix} to "${sheetName}" in ${filePath}`);
     } catch (e: unknown) {
       return fail(String((e as Error).message ?? e));
     }

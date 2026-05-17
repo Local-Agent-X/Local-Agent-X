@@ -2,6 +2,7 @@ import { dirname, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { acquireImages, IMAGES_PARAM_SCHEMA, type AcquiredImage, type ImageSpec } from "./tools/shared/image-acquire.js";
 
 function resolvePath(p: string): string {
   if (p.startsWith("~/") || p.startsWith("~\\")) return resolve(homedir(), p.slice(2));
@@ -68,6 +69,28 @@ function applySlide(pptx: any, spec: SlideSpec): void {
 
 function ensureDir(p: string): void { mkdirSync(dirname(p), { recursive: true }); }
 
+/** Add each acquired image to the deck on its own slide, centered with caption. */
+function appendImageSlides(pptx: any, images: AcquiredImage[]): void {
+  for (const img of images) {
+    const slide = pptx.addSlide();
+    const data = `data:${img.mimeType};base64,${img.buffer.toString("base64")}`;
+    const slideW = 13.333, slideH = 7.5; // LAYOUT_WIDE in inches
+    const ratio = img.width > 0 && img.height > 0 ? img.width / img.height : 4 / 3;
+    const maxW = slideW - 1, maxH = slideH - 2;
+    let w = maxW, h = maxW / ratio;
+    if (h > maxH) { h = maxH; w = maxH * ratio; }
+    const x = (slideW - w) / 2;
+    const y = (slideH - h) / 2 - 0.3;
+    slide.addImage({ data, x, y, w, h });
+    if (img.caption) {
+      slide.addText(img.caption, {
+        x: 0.5, y: y + h + 0.2, w: slideW - 1, h: 0.6,
+        fontSize: F.body, color: C.dark, align: "center", italic: true,
+      });
+    }
+  }
+}
+
 // ── presentation_create ──
 const presentationCreate: ToolDefinition = {
   name: "presentation_create",
@@ -79,6 +102,7 @@ const presentationCreate: ToolDefinition = {
       title: { type: "string", description: "Presentation title metadata" },
       author: { type: "string", description: "Author metadata" },
       slides: { type: "string", description: "JSON array of slide specs" },
+      images: IMAGES_PARAM_SCHEMA,
     },
   },
   async execute(args) {
@@ -86,15 +110,17 @@ const presentationCreate: ToolDefinition = {
       const fp = resolvePath(args.file_path as string);
       const slides = JSON.parse(args.slides as string) as SlideSpec[];
       if (!slides.length) return err("slides array is empty");
+      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       ensureDir(fp);
       const pptx = await makePptx();
       if (args.title) pptx.title = args.title as string;
       if (args.author) pptx.author = args.author as string;
       pptx.layout = "LAYOUT_WIDE";
       for (const s of slides) applySlide(pptx, s);
+      appendImageSlides(pptx, acquired);
       await pptx.writeFile({ fileName: fp });
-      return ok(`Created presentation with ${slides.length} slide(s): ${fp}`, {
-        file_path: fp, slide_count: slides.length,
+      return ok(`Created presentation with ${slides.length + acquired.length} slide(s): ${fp}`, {
+        file_path: fp, slide_count: slides.length + acquired.length, image_count: acquired.length,
       });
     } catch (e) { return err(`Failed to create presentation: ${(e as Error).message}`); }
   },
@@ -112,19 +138,22 @@ const presentationAddSlide: ToolDefinition = {
       file_path: { type: "string", description: "Original .pptx path (derives output name)" },
       slide: { type: "string", description: "JSON slide spec" },
       position: { type: "number", description: "Slide position number for filename suffix" },
+      images: IMAGES_PARAM_SCHEMA,
     },
   },
   async execute(args) {
     try {
       const spec = JSON.parse(args.slide as string) as SlideSpec;
       const pos = (args.position as number) ?? 2;
+      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       const outPath = resolvePath(args.file_path as string).replace(/\.pptx$/i, `_slide_${pos}.pptx`);
       ensureDir(outPath);
       const pptx = await makePptx();
       pptx.layout = "LAYOUT_WIDE";
       applySlide(pptx, spec);
+      appendImageSlides(pptx, acquired);
       await pptx.writeFile({ fileName: outPath });
-      return ok(`Created new slide file: ${outPath}`, { file_path: outPath, position: pos });
+      return ok(`Created new slide file: ${outPath}`, { file_path: outPath, position: pos, image_count: acquired.length });
     } catch (e) { return err(`Failed to add slide: ${(e as Error).message}`); }
   },
 };
@@ -180,6 +209,7 @@ const presentationFromOutline: ToolDefinition = {
       file_path: { type: "string", description: "Output .pptx file path" },
       outline: { type: "string", description: "Markdown outline with # for slide titles and - for bullets. Each # starts a new slide. Use \\n for line breaks." },
       title: { type: "string", description: "Presentation title metadata" },
+      images: IMAGES_PARAM_SCHEMA,
     },
   },
   async execute(args) {
@@ -187,14 +217,16 @@ const presentationFromOutline: ToolDefinition = {
       const fp = resolvePath(args.file_path as string);
       const slides = outlineToSlides(args.outline as string);
       if (!slides.length) return err("Outline produced no slides");
+      const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       ensureDir(fp);
       const pptx = await makePptx();
       if (args.title) pptx.title = args.title as string;
       pptx.layout = "LAYOUT_WIDE";
       for (const s of slides) applySlide(pptx, s);
+      appendImageSlides(pptx, acquired);
       await pptx.writeFile({ fileName: fp });
-      return ok(`Created presentation from outline with ${slides.length} slide(s): ${fp}`, {
-        file_path: fp, slide_count: slides.length,
+      return ok(`Created presentation from outline with ${slides.length + acquired.length} slide(s): ${fp}`, {
+        file_path: fp, slide_count: slides.length + acquired.length, image_count: acquired.length,
       });
     } catch (e) { return err(`Failed from outline: ${(e as Error).message}`); }
   },

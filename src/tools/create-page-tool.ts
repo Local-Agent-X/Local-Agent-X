@@ -1,6 +1,16 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, join } from "node:path";
 import type { ToolDefinition } from "../types.js";
+import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/image-acquire.js";
+
+function escapeHtmlAttr(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 export const createPageTool: ToolDefinition = {
   name: "create_page",
@@ -14,13 +24,23 @@ export const createPageTool: ToolDefinition = {
       name: { type: "string", description: "Page slug (e.g. 'my-dashboard'). Served at /<name>.html" },
       title: { type: "string", description: "Human-readable page title for the sidebar" },
       content: { type: "string", description: "Full HTML content. Can include inline <style> and <script> tags. The app's CSS variables (--bg, --fg, --accent, etc.) are available." },
+      images: IMAGES_PARAM_SCHEMA,
     },
     required: ["name", "title", "content"],
   },
   async execute(args) {
     const name = String(args.name || "page").replace(/[^a-zA-Z0-9_-]/g, "-");
     const title = String(args.title || name);
-    const content = String(args.content || "");
+    const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
+    const imgBlock = acquired.length
+      ? "\n<div class=\"acquired-images\">\n" + acquired.map(img => {
+          const b64 = img.buffer.toString("base64");
+          const alt = escapeHtmlAttr(img.caption || img.source);
+          const cap = img.caption ? `<figcaption>${escapeHtmlAttr(img.caption)}</figcaption>` : "";
+          return `<figure><img src="data:${img.mimeType};base64,${b64}" alt="${alt}" />${cap}</figure>`;
+        }).join("\n") + "\n</div>\n"
+      : "";
+    const content = String(args.content || "") + imgBlock;
 
     const html = `<!DOCTYPE html>
 <html lang="en">

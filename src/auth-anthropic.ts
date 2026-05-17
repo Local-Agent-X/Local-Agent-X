@@ -1,5 +1,5 @@
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync, renameSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -62,12 +62,27 @@ export function loadAnthropicTokens(): AnthropicTokens | null {
       const method = data.method || (data.refreshToken ? "oauth" : "token");
       return { ...data, provider: "anthropic", method } as AnthropicTokens;
     }
-  } catch {}
+    logger.error(`[auth-anthropic] ${authPath} parsed OK but missing accessToken — treating as no-auth`);
+  } catch (e) {
+    // Loud — previous silent catch hid corrupt-file failures from the user.
+    logger.error(`[auth-anthropic] FAILED to parse ${authPath}: ${(e as Error).message} — treating as no-auth. Re-login if this persists.`);
+  }
   return null;
 }
 
 function saveAnthropicTokens(tokens: AnthropicTokens): void {
-  writeFileSync(getAuthPath(), JSON.stringify(tokens, null, 2), { mode: 0o600 });
+  // Atomic write — same race protection as auth.ts saveTokens. Mid-write
+  // crash used to leave anthropic-auth.json half-written; next load
+  // logged corruption (since this commit) but the user lost their auth.
+  const authPath = getAuthPath();
+  const tmp = `${authPath}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+    renameSync(tmp, authPath);
+  } catch (e) {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
+    throw e;
+  }
 }
 
 // ── Token Refresh ──

@@ -1,10 +1,36 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { existsSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import type { ServerEvent } from "./types.js";
 import { redactCredentials } from "./security.js";
 import { getRuntimeConfig } from "./config.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("server-utils");
+
+/**
+ * Atomic file write: write to `<path>.tmp` then rename. Avoids the race
+ * where a concurrent reader picks up a half-written file (JSON.parse
+ * blows up mid-write). On POSIX, rename within the same filesystem is
+ * atomic. Throws the underlying fs error so callers can log meaningfully
+ * — does NOT silently swallow.
+ *
+ * Used for every credentials/config write — see saveTokens, saveConfig,
+ * /api/settings POST handler, cron-service.saveJobs (which has its own
+ * inline version pre-dating this helper; left untouched for blast-radius).
+ *
+ * If rename fails, the .tmp file is cleaned up best-effort so we don't
+ * leak stray .tmp files on disk.
+ */
+export function atomicWriteFileSync(path: string, data: string, opts?: { mode?: number; encoding?: BufferEncoding }): void {
+  const tmp = `${path}.tmp`;
+  try {
+    writeFileSync(tmp, data, { encoding: opts?.encoding ?? "utf-8", mode: opts?.mode });
+    renameSync(tmp, path);
+  } catch (e) {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
+    throw e;
+  }
+}
 
 // ── Multipart parser ──
 export interface MultipartPart { filename?: string; name?: string; data: Buffer; contentType?: string }

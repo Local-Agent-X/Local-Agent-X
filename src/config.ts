@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { readFileSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdirSync, existsSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { LAXConfig, DeploymentProfile, ProfileDefaults } from "./types.js";
@@ -208,7 +208,19 @@ export function loadConfig(): LAXConfig {
 
 export function saveConfig(config: LAXConfig): void {
   const configPath = getConfigPath();
-  writeFileSync(configPath, JSON.stringify(config, null, 2), { encoding: "utf-8", mode: 0o600 });
+  // Atomic write — write to .tmp then rename. Prevents a concurrent
+  // reader (server boot, settings POST handler, hot-reload) from
+  // seeing a half-written config.json and crashing on JSON.parse.
+  // Inline here (rather than the shared server-utils helper) because
+  // server-utils imports from config, so the dep would be circular.
+  const tmp = `${configPath}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(config, null, 2), { encoding: "utf-8", mode: 0o600 });
+    renameSync(tmp, configPath);
+  } catch (e) {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
+    throw e;
+  }
 }
 
 export function getAuthPath(): string {

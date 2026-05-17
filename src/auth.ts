@@ -1,5 +1,5 @@
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { getAuthPath } from "./config.js";
 import type { OAuthTokens } from "./types.js";
@@ -32,15 +32,33 @@ export function loadTokens(): OAuthTokens | null {
     if (data.accessToken && data.refreshToken && data.expiresAt) {
       return data as OAuthTokens;
     }
-  } catch {
-    // Corrupted file
+    // File exists, parsed, but missing required fields — treat as
+    // corrupted-by-shape. Loud-log so future "I signed in but chat says
+    // not authenticated" reports have a debuggable signal.
+    logger.error(`[auth] ${authPath} parsed OK but missing required fields (accessToken/refreshToken/expiresAt) — treating as no-auth`);
+  } catch (e) {
+    // Loud on parse failure — used to be silent "// Corrupted file"
+    // which hid a real failure mode (partial write, manual edit, disk
+    // I/O error mid-read). Returning null without logging meant the
+    // chat path saw "no token" and the user couldn't tell why.
+    logger.error(`[auth] FAILED to parse ${authPath}: ${(e as Error).message} — treating as no-auth. Re-login if this persists.`);
   }
   return null;
 }
 
 function saveTokens(tokens: OAuthTokens): void {
   const authPath = getAuthPath();
-  writeFileSync(authPath, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+  // Atomic write. Without this, a crash or kill-9 mid-write leaves
+  // auth.json half-written; next loadTokens parses partial JSON and
+  // logs corruption — user thinks their saved auth vanished.
+  const tmp = `${authPath}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+    renameSync(tmp, authPath);
+  } catch (e) {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
+    throw e;
+  }
 }
 
 // ── Token Refresh ──

@@ -21,6 +21,9 @@ import type {
 import { getDefaultMiddlewareStack } from "./registry.js";
 import { readOpMessages } from "../store.js";
 import { isCommittingTool } from "../../committing-tool-check.js";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 export type PhaseName = "beforeTurn" | "afterModelCall" | "afterToolExecution";
 
@@ -61,9 +64,28 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
   const provider = contextPack?.preferredProvider
     ?? (opAny as { provider?: string }).provider
     ?? "unknown";
-  const model = (opAny.model as string | undefined)
+  // Op-level model takes precedence (worker contexts that set it explicitly).
+  // Then canonical.model from the op's resolved request. Then — and this is
+  // the upstream guard for the no-progress-fires-at-15 bug — fall back to
+  // the user's configured settings.json model. Anything is better than
+  // returning `""` here, which classifies as "medium" downstream and
+  // shrinks the agent's no-progress budget to the weak-tier 15 even when
+  // the user's actual model would budget 25.
+  let model = (opAny.model as string | undefined)
     ?? ((op as { canonical?: { model?: string } }).canonical?.model)
     ?? "";
+  if (!model) {
+    try {
+      const settingsPath = join(homedir(), ".lax", "settings.json");
+      if (existsSync(settingsPath)) {
+        const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as { model?: string };
+        if (typeof raw.model === "string" && raw.model.length > 0) model = raw.model;
+      }
+    } catch { /* fall through */ }
+  }
+  // Last-resort default — pick a strong-tier model so an unknown op still
+  // gets the larger iteration budget. Anything is better than empty.
+  if (!model) model = "claude-opus-4-7";
 
   const toolsCalledThisOp = new Set<string>();
   const committingToolsThisOp = new Set<string>();

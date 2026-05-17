@@ -142,37 +142,28 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   const { classifyModel, shrinkToolsForTier } = await import("../model-tiers.js");
   const tier = classifyModel(resolved.model);
 
+  // Anthropic strong-tier gets the full inventory (cache_control anchor
+  // in stream-api.ts amortizes the token cost across turns). Everything
+  // else — including OpenAI/Codex strong — goes through filter + RAG so
+  // the build-intent narrowing in filterToolsForMessage actually narrows
+  // and the model isn't tempted to improvise with raw write/edit/bash
+  // when build_app is the right call. (Earlier "128-cap with top-up"
+  // path neutered the narrowing because it padded the filtered set back
+  // up to 128 with the rest of the catalogue.)
+  const isAnthropicProvider = resolved.provider === "anthropic";
   let tools: typeof allAgentTools;
   if (isBridge) {
     tools = bridgeTools;
-  } else if (tier === "strong") {
-    // Full inventory for strong models — eliminates "I don't have that
-    // tool" misses entirely. PROVIDER CAP: OpenAI's function-calling
-    // API hard-rejects requests with >128 tools ("tools must contain at
-    // most 128 elements"). Anthropic accepts hundreds. So we ship the
-    // full set on Anthropic and apply a 128 cap on OpenAI-compatible
-    // providers (codex / openai / custom / local/Ollama). When capping,
-    // use the keyword filter as a relevance ranker, then top up with
-    // the rest of the catalogue so the LLM still sees most tools.
-    const OPENAI_TOOL_CAP = 128;
-    const isAnthropicProvider = resolved.provider === "anthropic";
-    if (isAnthropicProvider || allAgentTools.length <= OPENAI_TOOL_CAP) {
-      tools = allAgentTools;
-    } else {
-      const filtered = filterToolsForMessage(allAgentTools, message, { forceBuildIntent });
-      const seen = new Set<string>();
-      const ranked: typeof allAgentTools = [];
-      for (const t of filtered) { if (!seen.has(t.name)) { seen.add(t.name); ranked.push(t); } }
-      for (const t of allAgentTools) { if (!seen.has(t.name)) { seen.add(t.name); ranked.push(t); } }
-      tools = ranked.slice(0, OPENAI_TOOL_CAP);
-      logger.info(`[tools] OpenAI 128-cap: ${allAgentTools.length}→${tools.length} (relevance-ranked) for ${resolved.provider} ${resolved.model}`);
-    }
+  } else if (tier === "strong" && isAnthropicProvider) {
+    tools = allAgentTools;
   } else {
     tools = filterToolsForMessage(allAgentTools, message, { forceBuildIntent });
-    const before = tools.length;
-    tools = shrinkToolsForTier(tools, tier, allAgentTools);
-    if (tools.length !== before) {
-      logger.info(`[tools] Shrunk ${before}→${tools.length} for ${tier} model ${resolved.model} (${tools.map(t=>t.name).join(",")})`);
+    if (tier !== "strong") {
+      const before = tools.length;
+      tools = shrinkToolsForTier(tools, tier, allAgentTools);
+      if (tools.length !== before) {
+        logger.info(`[tools] Shrunk ${before}→${tools.length} for ${tier} model ${resolved.model} (${tools.map(t=>t.name).join(",")})`);
+      }
     }
     try {
       const { getToolRAG } = await import("../tool-rag.js");
@@ -194,7 +185,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
         }
         tools = allAgentTools.filter(t => union.has(t.name));
       } else {
-        logger.info(`[tool-rag] not ready yet — shipping shrunk set without RAG re-rank`);
+        logger.info(`[tool-rag] not ready yet — shipping filtered set without RAG re-rank`);
       }
     } catch (e) {
       logger.warn(`[tool-rag] Skipped: ${(e as Error).message}`);

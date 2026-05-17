@@ -24,11 +24,54 @@
  * and re-exports the public types.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+
 import { canaryPromptBlock, checkCanaries, generateCanaries } from "./threat/canaries.js";
 import { classifyData, type DataLabel } from "./threat/classification.js";
 import { CryptoAuditTrail } from "./threat/audit-trail.js";
-import { THREAT_SCORES, ThreatScorer, type ThreatLevel } from "./threat/scoring.js";
+import { THREAT_SCORES, ThreatScorer, type ThreatLevel, type ThreatScorerOptions } from "./threat/scoring.js";
 import { ToolChainAnalyzer } from "./threat/tool-chain.js";
+
+// ── Tunable threat-calibration settings ──
+// Read from ~/.lax/settings.json:
+//   { "threat": { "startingBudget": 60, "decayPerHour": 5, "decayPerTurn": 1 } }
+// Defaults live in ThreatScorer; this just lets settings.json override them.
+// Cached 1s to avoid disk I/O on every session creation.
+let _cachedScorerOpts: ThreatScorerOptions | null = null;
+let _scorerOptsCachedAt = 0;
+function readThreatScorerOptions(): ThreatScorerOptions {
+  if (_cachedScorerOpts && Date.now() - _scorerOptsCachedAt < 1000) return _cachedScorerOpts;
+  const opts: ThreatScorerOptions = {};
+  try {
+    const home = process.env.HOME || process.env.USERPROFILE || homedir();
+    const settingsPath = join(home, ".lax", "settings.json");
+    if (existsSync(settingsPath)) {
+      const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as { threat?: Record<string, unknown> };
+      const t = raw.threat;
+      if (t && typeof t === "object") {
+        if (typeof t.startingBudget === "number" && t.startingBudget >= 0) opts.startingBudget = t.startingBudget;
+        if (typeof t.decayPerHour === "number" && t.decayPerHour >= 0) opts.decayPerHour = t.decayPerHour;
+        if (typeof t.decayPerTurn === "number" && t.decayPerTurn >= 0) opts.decayPerTurn = t.decayPerTurn;
+      }
+    }
+  } catch {
+    // Bad settings file → fall back to defaults silently. Threat calibration
+    // must keep working even if the settings file is malformed.
+  }
+  _cachedScorerOpts = opts;
+  _scorerOptsCachedAt = Date.now();
+  return opts;
+}
+
+/** Test-only — invalidate the cached settings so the next session re-reads
+ *  ~/.lax/settings.json. Exported so settings-override tests can change
+ *  the file at runtime and observe the effect on a fresh scorer. */
+export function _invalidateThreatSettingsCacheForTests(): void {
+  _cachedScorerOpts = null;
+  _scorerOptsCachedAt = 0;
+}
 
 export { classifyData, type DataClassification, type DataLabel } from "./threat/classification.js";
 export { generateCanaries, canaryPromptBlock, checkCanaries } from "./threat/canaries.js";
@@ -66,7 +109,7 @@ export class ThreatEngine {
 
   constructor(dataDir: string, sessionId: string = "default") {
     this.chain = new ToolChainAnalyzer();
-    this.scorer = new ThreatScorer();
+    this.scorer = new ThreatScorer(readThreatScorerOptions());
     this.audit = new CryptoAuditTrail(dataDir);
     this.canaries = generateCanaries();
     this.sessionId = sessionId;
@@ -165,6 +208,14 @@ export class ThreatEngine {
     }
     if (classification.labels.includes("secrets")) {
       this.scorer.record("secrets_in_output", THREAT_SCORES.sensitive_data_external, `Secrets detected in ${toolName} result`);
+    }
+
+    // Successful tool execution that produced no new threat event → trust
+    // regenerates. Drives the per-turn side of the decay-credit model so
+    // sessions that keep behaving don't carry old suspicion indefinitely.
+    const credentialFlag = classification.labels.includes("credentials") || classification.labels.includes("secrets");
+    if (allowed && !credentialFlag) {
+      this.scorer.recordSuccessfulTurn();
     }
 
     // Audit the call
@@ -296,7 +347,7 @@ export class SessionThreatManager {
   getScorer(sessionId: string): ThreatScorer {
     let scorer = this.sessions.get(sessionId);
     if (!scorer) {
-      scorer = new ThreatScorer();
+      scorer = new ThreatScorer(readThreatScorerOptions());
       this.sessions.set(sessionId, scorer);
     }
     return scorer;

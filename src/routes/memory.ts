@@ -20,6 +20,27 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
     return true;
   }
 
+  // Re-run the embedding-provider init. Idempotent — call after the Ollama
+  // model lands post-boot (fresh install race: server boots before Ollama
+  // pull finishes, so the cached provider is degraded). Returns the new
+  // provider name + model + whether it's still degraded so the caller can
+  // surface a clean "Memory engine: connected" status.
+  if (method === "POST" && url.pathname === "/api/memory/reinit") {
+    try {
+      const { initOrRefreshEmbeddingProvider } = await import("../server/bootstrap-services.js");
+      const result = await initOrRefreshEmbeddingProvider({
+        config: ctx.config,
+        dataDir: ctx.dataDir,
+        secretsStore: ctx.secretsStore,
+        memoryIndex: ctx.memoryIndex,
+      });
+      json(200, { ok: true, ...result });
+    } catch (e) {
+      json(500, { error: "Embedding re-init failed: " + (e as Error).message });
+    }
+    return true;
+  }
+
   if (method === "GET" && url.pathname === "/api/memory/health") {
     try {
       const { MemoryOrchestrator } = await import("../memory-orchestrator.js");

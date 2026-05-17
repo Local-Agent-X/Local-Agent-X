@@ -54,13 +54,14 @@ export function createRequestHandler(deps: {
   broadcastAll: (event: Record<string, unknown>) => void;
   activeOnEventBySession: Map<string, (event: ServerEvent) => void>;
   activeBrowserSessionIdRef: { value: string };
+  activeRuntimeBySession: Map<string, { provider: string; model: string }>;
 }): RequestHandler {
   const {
     config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, memoryManager,
     secretsStore, cronService, integrations, whatsappBridge, telegramBridge, agentSync,
     appRegistry, agentRunStore, agentTemplateStore, issueStore, projectStore,
     allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession, flushSession,
-    getChatWs, broadcastAll, activeOnEventBySession, activeBrowserSessionIdRef,
+    getChatWs, broadcastAll, activeOnEventBySession, activeBrowserSessionIdRef, activeRuntimeBySession,
   } = deps;
 
   return async (req, res) => {
@@ -104,6 +105,11 @@ export function createRequestHandler(deps: {
       },
       activeBrowserSessionId: activeBrowserSessionIdRef.value,
       setActiveBrowserSessionId: (id) => { activeBrowserSessionIdRef.value = id; },
+      getActiveRuntime: (sid) => activeRuntimeBySession.get(sid),
+      setActiveRuntime: (sid, runtime) => {
+        if (runtime) activeRuntimeBySession.set(sid, runtime);
+        else activeRuntimeBySession.delete(sid);
+      },
     };
     for (const h of [handleHealthRoutes, handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes, handleAutopilotRoutes, handleKrakenProxyRoutes, handleFastmailProxyRoutes]) {
       if (await h(method, url, req, res, ctx, requestRole)) return;

@@ -21,12 +21,23 @@ const logger = createLogger("server.bootstrap-tools");
 
 export type EventCallback = (event: ServerEvent) => void;
 
+export interface RuntimeInfo {
+  provider: string;
+  model: string;
+}
+
 export interface ToolBundle {
   allAgentTools: ToolDefinition[];
   bridgeTools: ToolDefinition[];
   toolRegistry: UnifiedToolRegistry;
   activeOnEventBySession: Map<string, EventCallback>;
   activeBrowserSessionIdRef: { value: string };
+  /** Per-session resolved provider+model from the chat's PreparedAgentRequest.
+   *  Same shape/lifetime as activeOnEventBySession — set by run-chat-turn
+   *  after prepareAgentRequest, cleared in the turn's finally. Read by tools
+   *  that decide subprocess provider (build_app) so they honor the chat's
+   *  active CLI choice instead of the on-disk default in ~/.lax/settings.json. */
+  activeRuntimeBySession: Map<string, RuntimeInfo>;
 }
 
 export async function bootstrapTools(deps: {
@@ -39,6 +50,7 @@ export async function bootstrapTools(deps: {
   const memoryTools = createMemoryTools(memoryIndex);
 
   const activeOnEventBySession = new Map<string, EventCallback>();
+  const activeRuntimeBySession = new Map<string, RuntimeInfo>();
   // request_secret / request_secrets need to emit events back to the calling
   // session. We look up the session callback at execute time using
   // args._sessionId (injected by the tool executor for SESSION_SCOPED_TOOLS).
@@ -164,5 +176,31 @@ export async function bootstrapTools(deps: {
     allAgentTools.push(bridge);
   }
 
-  return { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef };
+  // build_app picks its subprocess provider via resolveBuildProvider, which
+  // by default falls back to ~/.lax/settings.json. If the chat is running on
+  // a different provider than what's saved on disk, that's wrong — the
+  // dropdown selection is the source of truth for THIS turn. Wrap to inject
+  // _runtimeProvider/_runtimeModel from activeRuntimeBySession so the tool's
+  // executor can pass them as forcedProvider to resolveBuildProvider. Mirrors
+  // the secret-tools wrapping pattern above (activeOnEventBySession lookup).
+  {
+    const buildAppIdx = allAgentTools.findIndex(t => t.name === "build_app");
+    if (buildAppIdx >= 0) {
+      const original = allAgentTools[buildAppIdx];
+      allAgentTools[buildAppIdx] = {
+        ...original,
+        execute: async (args, signal) => {
+          const sessionId = args._sessionId ? String(args._sessionId) : "";
+          const runtime = sessionId ? activeRuntimeBySession.get(sessionId) : undefined;
+          if (runtime && args._runtimeProvider === undefined) {
+            args._runtimeProvider = runtime.provider;
+            args._runtimeModel = runtime.model;
+          }
+          return original.execute(args, signal);
+        },
+      };
+    }
+  }
+
+  return { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef, activeRuntimeBySession };
 }

@@ -137,6 +137,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   let doneEmitted = false;
   let lockHeld = false;
   let onEventInstalled = false;
+  let runtimeInstalled = false;
   let retryCtxAttached = false;
   // One RetryContext per chat turn. Today only L1 (tool-executor's withRetry
   // for transient-network tools) reads it; the correlationId stitches its
@@ -219,6 +220,11 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     ctx.setActiveOnEvent(sessionId, onEvent);
     onEventInstalled = true;
     ctx.setActiveBrowserSessionId(sessionId);
+    // Pin this turn's resolved provider+model so tools that spawn subprocesses
+    // (build_app's CLI selection) honor the chat dropdown's active choice,
+    // not whatever's stale in ~/.lax/settings.json. Cleared in finally below.
+    ctx.setActiveRuntime(sessionId, { provider: prepared.provider, model: prepared.model });
+    runtimeInstalled = true;
 
     const threatEngine = new ThreatEngine(ctx.dataDir, sessionId);
     // Threat-engine consent gating. Two paths can grant consent:
@@ -383,6 +389,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   } finally {
     if (lockHeld) releaseTurnLock(sessionId);
     if (onEventInstalled) ctx.setActiveOnEvent(sessionId, undefined);
+    if (runtimeInstalled) ctx.setActiveRuntime(sessionId, undefined);
     if (retryCtxAttached) detachRetryContext(sessionId);
     ctx.setActiveBrowserSessionId("default");
     try {

@@ -33,7 +33,16 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("threat.trust-ledger");
 
-const LEDGER_PATH = join(homedir(), ".lax", "threat-trust-ledger.json");
+// Resolved on every load/save (not cached at import) so test isolation
+// via HOME / USERPROFILE redirects writes to a temp dir. Reads env vars
+// directly — Node's os.homedir() on Windows goes through
+// GetUserProfileDirectory() (Win32 API) and ignores process.env, so
+// env-based isolation only works if we read the env ourselves. Mirrors
+// the pattern in src/config.ts:getConfigDir.
+function ledgerPath(): string {
+  const home = process.env.HOME || process.env.USERPROFILE || homedir();
+  return join(home, ".lax", "threat-trust-ledger.json");
+}
 
 export interface LearnedPattern {
   fingerprint: string;
@@ -53,9 +62,10 @@ let cache: Map<string, LearnedPattern> | null = null;
 function load(): Map<string, LearnedPattern> {
   if (cache) return cache;
   cache = new Map();
-  if (!existsSync(LEDGER_PATH)) return cache;
+  const path = ledgerPath();
+  if (!existsSync(path)) return cache;
   try {
-    const raw = readFileSync(LEDGER_PATH, "utf-8");
+    const raw = readFileSync(path, "utf-8");
     const parsed = JSON.parse(raw) as LedgerFile;
     if (parsed.version === 1 && Array.isArray(parsed.patterns)) {
       for (const p of parsed.patterns) cache.set(p.fingerprint, p);
@@ -69,9 +79,10 @@ function load(): Map<string, LearnedPattern> {
 function save(): void {
   const map = load();
   const payload: LedgerFile = { version: 1, patterns: [...map.values()] };
+  const path = ledgerPath();
   try {
-    mkdirSync(dirname(LEDGER_PATH), { recursive: true });
-    writeFileSync(LEDGER_PATH, JSON.stringify(payload, null, 2), "utf-8");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(payload, null, 2), "utf-8");
   } catch (e) {
     logger.warn(`[trust-ledger] save failed: ${(e as Error).message}`);
   }

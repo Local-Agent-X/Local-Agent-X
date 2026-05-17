@@ -7,7 +7,7 @@
  * errored, or was skipped due to overlap with a still-running prior execution.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition } from "./types.js";
 
@@ -122,7 +122,11 @@ export class CronService {
       this.jobs.clear();
       for (const job of data) this.jobs.set(job.id, job);
       this.lastFileMtime = statSync(this.jobsFile).mtimeMs;
-    } catch { /* corrupt file — keep current state */ }
+    } catch (e) {
+      // Log loudly — silent corruption used to silently swallow jobs.json
+      // and leave the user wondering why scheduled missions never fired.
+      logger.error(`[cron] FAILED to load ${this.jobsFile}: ${(e as Error).message} — existing in-memory jobs preserved, new writes will overwrite the file`);
+    }
   }
 
   private reloadIfChanged(): void {
@@ -138,12 +142,29 @@ export class CronService {
           }
         }
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      logger.warn(`[cron] reloadIfChanged check failed: ${(e as Error).message}`);
+    }
   }
 
   private saveJobs(): void {
-    writeFileSync(this.jobsFile, JSON.stringify([...this.jobs.values()], null, 2), "utf-8");
-    try { this.lastFileMtime = statSync(this.jobsFile).mtimeMs; } catch { /* ignore */ }
+    // Atomic write: write to .tmp, fsync via close, then rename. Avoids
+    // half-written jobs.json being readable by a concurrent reloadIfChanged
+    // that would crash on JSON.parse mid-write. Mirrors POSIX-safe save
+    // patterns. The temp file is cleaned up if rename fails so we don't
+    // leak .tmp files on disk.
+    const tmpPath = `${this.jobsFile}.tmp`;
+    try {
+      writeFileSync(tmpPath, JSON.stringify([...this.jobs.values()], null, 2), "utf-8");
+      renameSync(tmpPath, this.jobsFile);
+    } catch (e) {
+      try { if (existsSync(tmpPath)) unlinkSync(tmpPath); } catch { /* tmp cleanup is best-effort */ }
+      logger.error(`[cron] FAILED to persist ${this.jobsFile}: ${(e as Error).message} — in-memory state diverges from disk until next successful save`);
+      return;
+    }
+    try { this.lastFileMtime = statSync(this.jobsFile).mtimeMs; } catch (e) {
+      logger.warn(`[cron] stat after save failed: ${(e as Error).message}`);
+    }
   }
 
   private loadSettings(): void {
@@ -383,6 +404,14 @@ export class CronService {
   create(name: string, schedule: string, prompt: string, systemJob?: boolean): CronJob {
     if (prompt.length > 5000) throw new Error("Cron job prompt too long (max 5000 characters)");
     if (!schedule || schedule.trim().length === 0) throw new Error("Schedule is required");
+    // Validate the schedule by attempting to compute next-run time. Without
+    // this, malformed expressions (e.g. "* * * *" — only 4 fields) silently
+    // never schedule a timer and the user sees an enabled job that never
+    // fires. Either a fixed interval ("5m", "1h") OR a cron expression with
+    // a parseable next-run is acceptable.
+    if (getIntervalMs(schedule) === null && msUntilNextRun(schedule) === null) {
+      throw new Error(`Invalid schedule "${schedule}" — must be a cron expression (e.g. "0 22 * * *") or fixed interval (e.g. "5m", "1h")`);
+    }
     const existing = [...this.jobs.values()].find(j => j.name === name);
     if (existing) {
       logger.info(`[cron] Updated existing job ${name} instead of creating duplicate`);
@@ -418,6 +447,17 @@ export class CronService {
   delete(id: string): boolean {
     const timer = this.timers.get(id);
     if (timer) { clearInterval(timer); this.timers.delete(id); }
+    // Abort any in-flight run for this job. Without this, a delete while
+    // the mission is mid-execution leaves an orphaned 20-minute run
+    // writing a report to a deleted job's directory — confusing state.
+    const inFlight = this.runAborts.get(id);
+    if (inFlight) {
+      logger.info(`[cron] Aborting in-flight run for deleted job ${id}`);
+      try { inFlight.abort(); } catch (e) { logger.warn(`[cron] Abort error on delete: ${(e as Error).message}`); }
+      this.runAborts.delete(id);
+    }
+    this.running.delete(id);
+    this.concurrencyDeferCount.delete(id);
     const deleted = this.jobs.delete(id);
     if (deleted) {
       this.saveJobs();

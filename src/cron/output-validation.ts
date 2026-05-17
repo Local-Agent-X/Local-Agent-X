@@ -1,6 +1,8 @@
 const REFUSAL_AND_ERROR_PATTERNS: RegExp[] = [
   /^(?:I'?m sorry|I apologi[sz]e|Sorry,)\b[^.\n]{0,200}\b(?:can'?t|cannot|unable|won'?t)\b/i,
   /^I (?:can'?t|cannot|am unable to|am not able to)\s+(?:help|assist|complete|provide|do|perform|access|fulfill|generate|produce|continue|comply)/i,
+  // Soft refusals that don't lead with "I" — added 2026-05-17 audit.
+  /^(?:Unfortunately|Regrettably),?\s+I\s+(?:can'?t|cannot|am unable)/i,
   /^I (?:don'?t|do not) have (?:access|the ability|permission|enough)/i,
   /^(?:Unable|Failed|Error)\s+to\s+(?:complete|access|fetch|connect|reach|generate|produce|retrieve|load)/i,
   /^ERROR:\s/i,
@@ -26,7 +28,12 @@ const TOPIC_STOPWORDS = new Set([
 ]);
 
 const SENTENCE_END_CHARS = `.!?)]}"'\``;
-const MIN_OUTPUT_LENGTH = 200;
+// Lowered 200→100 on 2026-05-17. The 200-char floor rejected legitimate
+// short status reports (e.g. "API up: 200 OK in 145ms across 3 endpoints,
+// no errors in last 24h, queue depth 0/100, all systems nominal" is
+// ~120 chars). 100-char floor still rejects empty/garbage/single-word
+// outputs without false-positiving on terse-but-complete reports.
+const MIN_OUTPUT_LENGTH = 100;
 const TRUNCATION_CHECK_MAX_LENGTH = 1500;
 const TOPIC_MIN_KEYWORDS = 4;
 const TOPIC_MIN_SCORE = 0.3;

@@ -299,6 +299,13 @@ export const DEFAULT_POLICY: ToolPolicyConfig = {
     { id: "allow-doctor", tool: "doctor", decision: "allow", reason: "System self-diagnostics (read-only)", priority: 50 },
     { id: "allow-usage-report", tool: "usage_report", decision: "allow", reason: "Token usage / cost report (read-only)", priority: 50 },
 
+    // Protocol marketplace — search/install/list community protocols.
+    // Caught by the 2026-05-17 boot-time coverage audit (third backfill
+    // wave); the marketplace.ts module registers both protocol metadata
+    // AND backing tools, so the earlier "filter out protocols" pass
+    // missed these.
+    { id: "allow-marketplace", tool: "marketplace_*", decision: "allow", reason: "Protocol marketplace (search/install/list)", priority: 50 },
+
     // Plan mode
     { id: "allow-enter-plan", tool: "enter_plan_mode", decision: "allow", reason: "Enter read-only plan mode", priority: 50 },
     { id: "allow-exit-plan", tool: "exit_plan_mode", decision: "allow", reason: "Exit plan mode", priority: 50 },

@@ -1,6 +1,8 @@
 import { homedir } from "node:os";
 
 import type { MCPServerConfig } from "./types.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 /**
  * Secret lookup is INJECTABLE so unit tests can drive it without booting

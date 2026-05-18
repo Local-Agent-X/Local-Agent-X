@@ -17,6 +17,8 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { Operation, OperationEvent, OperationPhase } from "./types.js";
 import { decomposeGoal } from "./decomposer.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 export interface ConductorOptions {
   /** Root where operation dirs live. Defaults to workspace/operations */

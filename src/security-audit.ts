@@ -14,6 +14,8 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 import { createLogger } from "./logger.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 const logger = createLogger("security-audit");
 
 export type AuditSeverity = "info" | "warn" | "critical";

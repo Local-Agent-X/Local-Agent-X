@@ -8,6 +8,8 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 const SPEAKERS_DIR = join(homedir(), ".lax", "speakers");
 const TMP_DIR = join(homedir(), ".lax", "voice-tmp");

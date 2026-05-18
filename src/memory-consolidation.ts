@@ -21,6 +21,8 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 import { tokenizeBasic, jaccardSimilarity as jaccardSim } from "./memory/text-utils.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 // ══════════════════════════════════════════════════════════
 //  Types

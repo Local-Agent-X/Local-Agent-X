@@ -1,4 +1,7 @@
 import { checkRegexSafety } from "../safe-regex.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("tool-policy/matchers");
 
 /** Match an argument value against a glob pattern.
  *  Supports: "git *" matches "git status", "workspace/*" matches "workspace/foo.txt",
@@ -11,7 +14,14 @@ export function matchArgPattern(pattern: string, value: string): boolean {
   try {
     if (checkRegexSafety(escaped) !== null) return false; // unsafe pattern — reject
     return new RegExp(`^${escaped}$`, "i").test(value);
-  } catch { return false; }
+  } catch (e) {
+    // Returning false here silently fails a policy match, which can flip
+    // an allow-rule to deny (or vice versa) without any operator signal.
+    // Log so corrupted rules surface in server.log instead of producing
+    // confusing "tool blocked for no apparent reason" failures.
+    logger.warn(`pattern compile failed for "${pattern}": ${(e as Error).message}`);
+    return false;
+  }
 }
 
 /** Match a tool name against a glob pattern */

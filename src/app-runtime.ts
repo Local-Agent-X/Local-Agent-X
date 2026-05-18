@@ -46,6 +46,9 @@ import {
   type QueuedAction,
 } from "./app-runtime/types.js";
 import { meetsAccessLevel, validateAppDefinition } from "./app-runtime/validation.js";
+import { createLogger } from "./logger.js";
+
+const logger = createLogger("app-runtime");
 
 // Re-export public surface so existing imports (`import { ... } from "./app-runtime.js"`) keep working.
 export type {
@@ -279,7 +282,15 @@ export class AppRegistry {
   get(id: string): AppDefinition | null {
     const p = defPath(id);
     if (!existsSync(p)) return null;
-    try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; }
+    try { return JSON.parse(readFileSync(p, "utf-8")); }
+    catch (e) {
+      // Corrupted app definition surfaces to the caller as "not found",
+      // which then shows "App not found" / "Access denied" in the UI —
+      // very confusing when the file exists but is unreadable. Log so
+      // a corrupted JSON in ~/.lax/apps/<id>/def.json is debuggable.
+      logger.warn(`failed to parse app definition ${id}: ${(e as Error).message}`);
+      return null;
+    }
   }
 
   update(id: string, partial: Partial<AppDefinition>, actor = "user"): { app?: AppDefinition; error?: string } {
@@ -380,7 +391,11 @@ export class AppRegistry {
   getState(id: string): AppState | null {
     const p = statePath(id);
     if (!existsSync(p)) return null;
-    try { return JSON.parse(readFileSync(p, "utf-8")); } catch { return null; }
+    try { return JSON.parse(readFileSync(p, "utf-8")); }
+    catch (e) {
+      logger.warn(`failed to parse app state ${id}: ${(e as Error).message}`);
+      return null;
+    }
   }
 
   setState(id: string, state: AppState): void {

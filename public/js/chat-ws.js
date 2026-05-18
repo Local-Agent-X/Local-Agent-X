@@ -214,6 +214,36 @@ function connectChatWs() {
         sinceSeq: info.lastSeenSeq,
       }));
     }
+    // Also replay any non-terminal worker ops. The chat WS heartbeat
+    // force-closes half-open connections — during the close → reconnect
+    // window (~3s + handshake) bg_op_progress events are broadcast but
+    // not delivered, since the closed ws is no longer in the server's
+    // clients map. The chat-op replay above doesn't cover workers (they
+    // live in agentFeedsData, not inflightChatOps), so without this the
+    // sidebar card froze at whatever line was last received and only
+    // caught up minutes later when the watchdog tripped at 180s.
+    // Symptom from the field: "I do see it work then it freezes then I
+    // leave and come back and it jumps then I can see it live again
+    // until I cant and have to leave the page again and repeat". The
+    // workers were fine; the WS was dropping events during heartbeat
+    // recoveries and only the chat-op path knew how to catch up.
+    if (typeof agentFeedsData === 'object' && agentFeedsData) {
+      var wIds = Object.keys(agentFeedsData);
+      for (var wi = 0; wi < wIds.length; wi++) {
+        var w = agentFeedsData[wIds[wi]];
+        if (!w || !w.sessionId) continue;
+        var wStatus = (w.status || '').toLowerCase();
+        if (wStatus === 'completed' || wStatus === 'failed' || wStatus === 'cancelled') continue;
+        try {
+          chatWs.send(JSON.stringify({
+            type: 'reconnect_op',
+            sessionId: w.sessionId,
+            opId: wIds[wi],
+            sinceSeq: -1,
+          }));
+        } catch (e) { /* best-effort — watchdog will retry */ }
+      }
+    }
   };
 
   chatWs.onmessage = handleChatWsMessage;

@@ -1,6 +1,7 @@
 import { execSync, execFileSync } from "node:child_process";
 
 import { createLogger } from "./logger.js";
+import { getRuntimeConfig, saveConfig } from "./config.js";
 const logger = createLogger("sandbox");
 
 /**
@@ -127,9 +128,11 @@ export function getSandboxMode(): SandboxMode {
     }
     return runtimeMode;
   }
-  const envMode = process.env.LAX_SANDBOX ?? process.env.SAX_SANDBOX;
-  // Explicit override
-  if (envMode === "host") return "host";
+  const envMode = (process.env.LAX_SANDBOX ?? process.env.SAX_SANDBOX ?? "").toLowerCase();
+  // Aliases for host (no container).
+  if (envMode === "host" || envMode === "disabled" || envMode === "off" || envMode === "none" || envMode === "false") {
+    return "host";
+  }
   if (envMode === "docker") {
     if (!isDockerAvailable()) {
       logger.warn("[sandbox] LAX_SANDBOX=docker but Docker not available. Falling back to host.");
@@ -137,20 +140,38 @@ export function getSandboxMode(): SandboxMode {
     }
     return "docker";
   }
-  // Auto-detect: prefer Docker if available (secure by default)
-  if (isDockerAvailable()) {
-    logger.info("[sandbox] Docker detected — using container sandbox by default. Set LAX_SANDBOX=host to disable.");
-    return "docker";
-  }
+  // Persisted user setting from settings UI (~/.lax/config.json).
+  try {
+    const cfgMode = getRuntimeConfig().sandboxMode;
+    if (cfgMode === "docker") {
+      if (!isDockerAvailable()) {
+        logger.warn("[sandbox] config.sandboxMode=docker but Docker not available. Falling back to host.");
+        return "host";
+      }
+      return "docker";
+    }
+    if (cfgMode === "host") return "host";
+  } catch { /* config not initialized yet (early boot) — fall through */ }
+  // Default is host. Docker is opt-in via LAX_SANDBOX=docker or the settings UI.
+  // Auto-enabling when Docker is merely installed silently confines bash to a
+  // network-less Alpine container; the AI can't see it's caged and reports the
+  // wrong root cause when commands fail.
   return "host";
 }
 
-/** Set sandbox mode at runtime (from settings API) */
+/** Set sandbox mode at runtime (from settings API). Persists to ~/.lax/config.json. */
 export function setSandboxMode(mode: SandboxMode): { ok: boolean; actual: SandboxMode; error?: string } {
   if (mode === "docker" && !isDockerAvailable()) {
     return { ok: false, actual: "host", error: "Docker is not installed or not running. Install Docker Desktop first." };
   }
   runtimeMode = mode;
+  try {
+    const cfg = getRuntimeConfig();
+    cfg.sandboxMode = mode;
+    saveConfig(cfg);
+  } catch (e) {
+    logger.warn(`[sandbox] Failed to persist mode to config: ${(e as Error).message}`);
+  }
   logger.info(`[sandbox] Mode set to: ${mode}`);
   return { ok: true, actual: mode };
 }

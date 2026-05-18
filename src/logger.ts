@@ -24,16 +24,28 @@ function fmtArg(a: unknown): string {
 
 function emit(level: LogLevel, ns: string, msg: string, extra: unknown[]): void {
   if (PRIORITY[level] < MIN) return;
-  const stream = level === "error" || level === "warn" ? process.stderr : process.stdout;
+  // Route through console.log / console.warn / console.error so the
+  // file-mirror override installed in src/index.ts (which wraps all
+  // three to also write to ~/.lax/logs/server.log) picks up every
+  // logger call. Old direct `process.stdout.write` bypassed that
+  // override entirely — any logger.info / .warn / .error never landed
+  // on disk, only in the Electron-captured stdout of the child server
+  // process. Symptom: developer-side stress test couldn't grep
+  // server.log for boot audits, chat traces, or post-mortem logs.
+  // Stderr split preserved: warn + error → console.error (stderr-mirrored),
+  // info + debug → console.log (stdout-mirrored).
+  const useStderr = level === "error" || level === "warn";
   if (JSON_MODE) {
     const record: Record<string, unknown> = { ts: new Date().toISOString(), level, ns, msg };
     if (extra.length === 1) record.extra = extra[0] instanceof Error ? { message: extra[0].message, stack: extra[0].stack } : extra[0];
     else if (extra.length > 1) record.extra = extra;
-    try { stream.write(JSON.stringify(record) + "\n"); } catch { /* writes can't fail the agent */ }
+    const line = JSON.stringify(record);
+    try { useStderr ? console.error(line) : console.log(line); } catch { /* writes can't fail the agent */ }
     return;
   }
   const tail = extra.length > 0 ? " " + extra.map(fmtArg).join(" ") : "";
-  try { stream.write(`[${ns}] ${msg}${tail}\n`); } catch { /* writes can't fail the agent */ }
+  const line = `[${ns}] ${msg}${tail}`;
+  try { useStderr ? console.error(line) : console.log(line); } catch { /* writes can't fail the agent */ }
 }
 
 export interface Logger {

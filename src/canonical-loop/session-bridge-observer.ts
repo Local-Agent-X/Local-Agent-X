@@ -101,6 +101,62 @@ function extractAppReadyUrl(opId: string): string | undefined {
   return undefined;
 }
 
+/** Scan an op's persisted tool_result messages for "Created <path>" /
+ *  "Wrote ... to <path>" markers from the artifact-creating tools
+ *  (document_create, presentation_create, pdf_create, spreadsheet_create,
+ *  write, create_page, etc.). Returns the MOST RECENT openable artifact's
+ *  workspace-relative path, or undefined if none found. Strict
+ *  workspace-only filter — host paths outside the workspace are skipped
+ *  so the sidebar never offers a link the static handler can't serve.
+ *
+ *  Used by the generic completion path: any worker op (not just
+ *  app_build) gets the same "↗ Open" affordance in the AGENTS sidebar.
+ *  The user's framing: "any agent creation wired into that — apps,
+ *  landing pages, ppt, docs everything." This is the same wiring,
+ *  just with a broader marker set.
+ */
+function extractArtifactUrl(opId: string, workspaceDir: string): string | undefined {
+  try {
+    const messages = readOpMessages(opId);
+    // Walk newest-first; first hit wins. Tool outputs we recognize:
+    //   "Created /abs/path/foo.docx (...)"           → document_*, presentation_*, pdf_*, spreadsheet_*
+    //   "Wrote N bytes to /abs/path/foo.html"        → write
+    //   "Edited /abs/path/foo.css"                   → edit
+    //   "App built ... Open: http://127.0.0.1:.../" → build_app (separate APP_READY path also works)
+    // We deliberately don't try to extract from prose — only from
+    // structured tool_result strings, which are stable.
+    const wsAbs = workspaceDir.endsWith("/") ? workspaceDir : workspaceDir + "/";
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role !== "tool_result") continue;
+      const content = m.content as { text?: string; result?: string } | string | undefined;
+      const text = typeof content === "string"
+        ? content
+        : (content?.result ?? content?.text ?? "");
+      if (!text) continue;
+      // Most precise: a build_app-style explicit URL line.
+      const urlMatch = String(text).match(/Open:\s*(https?:\/\/\S+)/);
+      if (urlMatch) return urlMatch[1];
+      // Generic "Created <abs-path>" / "Wrote N bytes to <abs-path>" patterns.
+      const created = String(text).match(/(?:Created|Wrote (?:\d+ bytes? )?to|Edited)\s+(\/\S+)/);
+      if (!created) continue;
+      const absPath = created[1].replace(/[),:.]+$/, "");
+      // Workspace-bound only — sidebar links go through the static handler.
+      if (!absPath.startsWith(wsAbs)) continue;
+      const rel = absPath.slice(wsAbs.length);
+      // For HTML/index files we want the directory link, not the file.
+      if (rel.endsWith("/index.html")) return "/apps/" + rel.slice(0, -"/index.html".length) + "/";
+      // /apps/ static handler serves anything under workspace/apps/ — for
+      // standalone workspace files (workspace/foo.docx) link via a
+      // /workspace/ path. The handler may not serve all of these yet, but
+      // the link IS a stable user-readable hint at where the artifact
+      // landed; click-through works for HTML, downloads otherwise.
+      return rel.startsWith("apps/") ? "/" + rel : "/workspace/" + rel;
+    }
+  } catch { /* malformed op-messages — return undefined */ }
+  return undefined;
+}
+
 function extractStreamLine(msg: unknown): string {
   if (typeof msg === "string") return msg.replace(/\s+/g, " ").trim();
   if (msg && typeof msg === "object") {
@@ -173,12 +229,47 @@ export function recordCanonicalEvent(event: CanonicalEvent): void {
           const persistedSummary = op?.lastFailureReason ?? (status === "completed" ? "task completed" : status);
           const summary = persistedSummary.slice(0, 400);
 
-          // app_build emits "APP_READY: <url>" in its final assistant message.
-          // Surface that URL on the completion event so the sidebar can render
-          // a clickable "Open" link instead of just "task completed".
+          // Surface an "Open" link on the AGENTS sidebar card. Resolution
+          // order, most specific to most generic — so a tool that emits
+          // an explicit marker wins over a generic "Created <path>" scan.
+          //
+          //   1. app_build's "APP_READY: <url>" final-assistant marker.
+          //   2. scheduled_mission → /api/cron/<jobId>/reports/latest
+          //      (rendered HTML page; resolver picks newest .md by mtime).
+          //   3. Generic artifact scan — any tool_result with a
+          //      "Created /workspace/foo.docx" / "Wrote N bytes to ..."
+          //      / "App built ... Open: ..." line. Covers
+          //      document_create / presentation_create / pdf_create /
+          //      spreadsheet_create / write / create_page / etc.
+          //
+          // The generic scan is gated to `status === "completed"` so a
+          // failed run doesn't surface a half-written artifact as a link.
           let resultUrl: string | undefined;
-          if (op?.type === "app_build" && status === "completed") {
-            resultUrl = extractAppReadyUrl(event.opId);
+          if (status === "completed") {
+            if (op?.type === "app_build") {
+              resultUrl = extractAppReadyUrl(event.opId);
+            } else if (op?.type === "scheduled_mission") {
+              const sess = sessionId || "";
+              const cronMatch = sess.match(/^cron-(.+)-\d+$/);
+              if (cronMatch && cronMatch[1]) {
+                resultUrl = `/api/cron/${cronMatch[1]}/reports/latest`;
+              }
+            }
+            // Fallback: generic artifact extraction for any op type that
+            // didn't get a specific URL above. Catches the long tail —
+            // doc/ppt/pdf/sheet/page workers all land here. getRuntimeConfig
+            // is synchronous; using require() (not import) lets us stay
+            // inside the non-async observer callback the canonical-loop
+            // invokes us from.
+            if (!resultUrl) {
+              try {
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                const cfg = (require("../config.js") as typeof import("../config.js")).getRuntimeConfig();
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                const workspaceDir = (require("node:path") as typeof import("node:path")).resolve(cfg.workspace);
+                resultUrl = extractArtifactUrl(event.opId, workspaceDir);
+              } catch { /* config not ready / workspace unresolvable — skip */ }
+            }
           }
 
           broadcastToSession(sessionId, {

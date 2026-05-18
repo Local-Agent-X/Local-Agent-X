@@ -22,7 +22,18 @@ import { resolve } from "node:path";
 import { killProcessTree } from "../process-tree-kill.js";
 import type { ToolResult } from "../types.js";
 
-const BUILD_TIMEOUT_MS = 300_000;
+// 15min hard cap. Earlier value was 300s, which killed legitimate builds:
+// any app whose plan included `npm install` (Express bridge, persisted-store
+// SPAs, anything pulling more than a handful of packages) routinely needed
+// 4-8 minutes for the CLI to plan + write + install + verify, and the cap
+// fired right as the CLI was wrapping up. Symptom from the field:
+// "Codex CLI build failed: codex CLI build timed out after 300s" — partial
+// artifact on disk, user opens it to a blank page, mistakes timeout for a
+// silent provider failure. 15min is loose enough that real failures
+// (genuine hangs, auth loops) still terminate; well-formed builds finish
+// inside it. Capped here rather than per-call so misuse can't unbounded
+// the subprocess.
+const BUILD_TIMEOUT_MS = 900_000;
 
 export interface BuildSpawnInput {
   provider: "codex" | "anthropic";

@@ -121,6 +121,14 @@ const inflightChatOps = new Map(); // opId → { sessionId, lastSeenSeq, lastAct
 // real LLM stalls (slow provider, big context) clear well under 60s.
 const STUCK_STREAM_CHECK_INTERVAL_MS = 15_000;
 const STUCK_STREAM_REPLAY_THRESHOLD_MS = 60_000;
+// Worker ops use a longer threshold than chat-turn ops. A chat turn that
+// goes silent for 60s is almost certainly stuck; a worker mid-build can
+// legitimately stall that long during `npm install` or a Codex CLI's
+// plan-then-write phase. 180s = 3min keeps the watchdog meaningful for
+// genuinely hung workers (lost `bg_op_completed` event after the op
+// landed server-side) without spamming reconnect_op against healthy
+// long-running ops.
+var STUCK_WORKER_REPLAY_THRESHOLD_MS = 180_000;
 setInterval(function() {
   if (!chatWs || chatWs.readyState !== WebSocket.OPEN) return;
   var now = Date.now();
@@ -143,6 +151,41 @@ setInterval(function() {
       info.lastActivityMs = now;
     } catch (e) {
       console.warn('[ws] reconnect_op send failed:', e && e.message);
+    }
+  }
+  // Worker ops live in the AGENTS sidebar (agentFeedsData), not
+  // inflightChatOps — the chat-op watchdog above misses them. Symptom
+  // from the field: "worker activity moved from 8 to 15 but i had to
+  // leave to another page and come back and it jumped but nothing in
+  // the agent thinking changed" — the bg_op_progress events were
+  // landing server-side but the bubble wasn't repainting until route
+  // re-entry forced a render. With sessionId + lastActivityMs stamped
+  // on each card (from chat-ws-handler.js bg_op_started + worker_stream
+  // + bg_op_progress), reconnect_op replays the missed events on the
+  // same wire chat-turn replays already use. Skips terminal states
+  // (completed/failed/cancelled) so finished cards don't keep nagging.
+  if (typeof agentFeedsData === 'object' && agentFeedsData) {
+    var workerIds = Object.keys(agentFeedsData);
+    for (var i = 0; i < workerIds.length; i++) {
+      var wid = workerIds[i];
+      var w = agentFeedsData[wid];
+      if (!w || !w.sessionId) continue;
+      var ws = (w.status || '').toLowerCase();
+      if (ws === 'completed' || ws === 'failed' || ws === 'cancelled') continue;
+      var wLast = w.lastActivityMs || 0;
+      if (wLast === 0 || now - wLast < STUCK_WORKER_REPLAY_THRESHOLD_MS) continue;
+      console.warn('[ws] Stuck worker detected for opId=' + wid + ' (no events for ' + Math.round((now - wLast) / 1000) + 's) — replaying via reconnect_op');
+      try {
+        chatWs.send(JSON.stringify({
+          type: 'reconnect_op',
+          sessionId: w.sessionId,
+          opId: wid,
+          sinceSeq: -1,
+        }));
+        w.lastActivityMs = now;
+      } catch (e) {
+        console.warn('[ws] worker reconnect_op send failed:', e && e.message);
+      }
     }
   }
 }, STUCK_STREAM_CHECK_INTERVAL_MS);

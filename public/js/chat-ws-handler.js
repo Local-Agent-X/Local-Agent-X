@@ -135,7 +135,7 @@ function handleChatWsMessage(e) {
           // updateAgentFeed is no-op if the card doesn't exist; addAgentFeed
           // is idempotent on existing IDs. So calling both is safe.
           if (typeof updateAgentFeed === 'function') {
-            updateAgentFeed(msg.event.opId, { status: 'working', output: '▶ started\n' });
+            updateAgentFeed(msg.event.opId, { status: 'working', output: '▶ started\n', sessionId: msg.sessionId, lastActivityMs: Date.now() });
           }
           if (typeof addAgentFeed === 'function') {
             // Friendlier card name. Cron missions arrive with task =
@@ -156,6 +156,13 @@ function handleChatWsMessage(e) {
               status: 'working',
               currentTask: msg.event.task || '',
               output: '',
+              // Stamp sessionId + lastActivityMs so the stuck-stream
+              // watchdog (chat-ws.js) can replay missed events via
+              // reconnect_op the same way it does for chat-turn ops.
+              // Without these the watchdog has nowhere to send the
+              // replay and worker cards fell behind silently.
+              sessionId: msg.sessionId,
+              lastActivityMs: Date.now(),
             });
           }
         } catch(e) { console.warn('[bg_op_started] sidebar update failed', e); }
@@ -164,7 +171,7 @@ function handleChatWsMessage(e) {
       if (msg.event.type === 'bg_op_progress') {
         try {
           if (typeof updateAgentFeed === 'function') {
-            updateAgentFeed(msg.event.opId, { output: (msg.event.line || '') + '\n' });
+            updateAgentFeed(msg.event.opId, { output: (msg.event.line || '') + '\n', lastActivityMs: Date.now() });
           }
         } catch(e) { console.warn('[bg_op_progress] sidebar update failed', e); }
         return;
@@ -188,7 +195,7 @@ function handleChatWsMessage(e) {
           // Tool calls / lifecycle markers come in via `output:` from
           // bg_op_progress/queued/started/completed and land in the
           // collapsible worker-tools-group below.
-          updateAgentFeed(msg.event.opId, { streamText: (msg.event.delta || '') });
+          updateAgentFeed(msg.event.opId, { streamText: (msg.event.delta || ''), lastActivityMs: Date.now() });
         }
         return;
       }

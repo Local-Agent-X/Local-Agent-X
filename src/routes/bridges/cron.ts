@@ -122,6 +122,65 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     if (!exists(reportPath)) { json(404, { error: "Report not found" }); return true; }
     json(200, { content: readF(reportPath, "utf-8") }); return true;
   }
+  // Stable "latest report" alias — used by the AGENTS sidebar to link a
+  // completed mission's worker card to its most recent report. The
+  // specific filename embeds a timestamp the UI doesn't know yet at
+  // bg_op_completed time, so a server-side latest-resolver lets the
+  // observer emit a stable URL on the completion event. Falls through
+  // to 404 if no reports exist yet (e.g. first-run race where the
+  // canonical op terminated but the post-canonical report-write step
+  // hasn't fired yet — the UI's polling/retry will re-fetch).
+  //
+  // Returns rendered HTML (not the JSON wrapper the per-file route uses)
+  // so clicking the link from the AGENTS sidebar opens a readable view
+  // in the user's browser. The markdown is rendered server-side via a
+  // tiny safe converter — no script execution, no remote fetches.
+  if (method === "GET" && url.pathname.match(/^\/api\/cron\/[^/]+\/reports\/latest$/)) {
+    const id = url.pathname.split("/")[3];
+    const { existsSync: exists, readFileSync: readF, readdirSync, statSync } = await import("node:fs");
+    const path = await import("node:path");
+    const reportDir = path.join(ctx.dataDir, "cron", "reports", id);
+    const send404 = () => {
+      res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+      res.end("<!doctype html><meta charset=utf-8><title>Report not found</title><body style='font-family:system-ui;padding:2rem'><h2>No report yet</h2><p>The mission ran but its report file hasn't been written yet, or no runs have completed. Try refreshing in a moment.</p>");
+    };
+    if (!exists(reportDir)) { send404(); return true; }
+    const files = readdirSync(reportDir).filter(f => /^[\w-]+\.md$/.test(f));
+    if (files.length === 0) { send404(); return true; }
+    const newest = files
+      .map(f => ({ f, mtime: statSync(path.join(reportDir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime)[0];
+    const md = readF(path.join(reportDir, newest.f), "utf-8");
+    // Cheap & safe markdown→HTML: escape, then promote headings, bold,
+    // italic, inline code, code blocks, paragraph breaks. No remote
+    // includes, no script tags, no img src. Matches the conservative
+    // shape of public/js/shared.js md() but kept inline so this route
+    // doesn't import from public/.
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    let body = esc(md);
+    body = body.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _l, code) => `<pre><code>${code}</code></pre>`);
+    body = body.replace(/`([^`\n]+)`/g, (_m, code) => `<code>${code}</code>`);
+    body = body.replace(/^(######)\s*(.+)$/gm, "<h6>$2</h6>");
+    body = body.replace(/^(#####)\s*(.+)$/gm, "<h5>$2</h5>");
+    body = body.replace(/^(####)\s*(.+)$/gm, "<h4>$2</h4>");
+    body = body.replace(/^(###)\s*(.+)$/gm, "<h3>$2</h3>");
+    body = body.replace(/^(##)\s*(.+)$/gm, "<h2>$2</h2>");
+    body = body.replace(/^(#)\s*(.+)$/gm, "<h1>$2</h1>");
+    body = body.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+    body = body.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+    body = body.replace(/\n\n+/g, "</p><p>");
+    const html = `<!doctype html><meta charset=utf-8><title>${esc(newest.f)}</title>` +
+      `<style>body{font-family:-apple-system,system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;line-height:1.55;color:#1a1a1a}` +
+      `pre{background:#f4f4f6;padding:.75rem 1rem;border-radius:6px;overflow-x:auto;font-size:.9em}` +
+      `code{background:#f4f4f6;padding:.1em .35em;border-radius:3px;font-size:.92em}` +
+      `pre code{background:transparent;padding:0}` +
+      `h1,h2,h3,h4{line-height:1.25;margin-top:1.6rem}` +
+      `@media (prefers-color-scheme:dark){body{background:#16181d;color:#e6e6e6}pre,code{background:#23262c}}` +
+      `</style><body><p>${body}</p>`;
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
+    res.end(html);
+    return true;
+  }
   // Delete a single report (removes from both .lax/cron/reports and workspace/missions mirror)
   if (method === "DELETE" && url.pathname.match(/^\/api\/cron\/[^/]+\/reports\/[^/]+\.md$/)) {
     const parts = url.pathname.split("/");

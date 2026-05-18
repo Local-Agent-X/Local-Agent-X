@@ -210,10 +210,22 @@ function updateAgentFeed(agentId, update) {
         if (atBottomT) toolsBody.scrollTop = toolsBody.scrollHeight;
       }
       var countEl = card.querySelector('.worker-tools-count');
+      var lines = (existing.output || '').split('\n').filter(function(l) { return l.trim().length > 0; });
       if (countEl) {
         // Each non-empty newline-separated chunk = one tool/lifecycle entry.
-        var lines = (existing.output || '').split('\n').filter(function(l) { return l.trim().length > 0; });
         countEl.textContent = String(lines.length);
+      }
+      // Always-visible single-line preview of the most recent activity.
+      // Lives under the worker name so the user has continuous liveness
+      // feedback without having to expand the (potentially collapsed)
+      // worker-tools-body. Field report: count badge alone wasn't enough
+      // — a 1-line/10s tick rate is below the user's visual threshold,
+      // and clicking another chat and back was the only way to "see
+      // motion" (because chat-switch re-renders from agentFeedsData via
+      // init_chat → _renderAgentFeedsList).
+      var latestEl = card.querySelector('.worker-latest');
+      if (latestEl && lines.length > 0) {
+        latestEl.textContent = lines[lines.length - 1];
       }
     }
     var statusEl = card.querySelector('.agent-feed-status');
@@ -262,8 +274,11 @@ function renderAgentCard(agent) {
   var status = agent.status || 'working';
   var streamText = agent.streamText || '';
   var output = agent.output || '';
-  var initialToolCount = output.split('\n').filter(function(l) { return l.trim().length > 0; }).length;
+  var outputLines = output.split('\n').filter(function(l) { return l.trim().length > 0; });
+  var initialToolCount = outputLines.length;
+  var latestLine = outputLines.length > 0 ? outputLines[outputLines.length - 1] : '';
   var isPaused = status === 'paused';
+  var isActive = !(status === 'completed' || status === 'failed' || status === 'cancelled');
   var safeId = esc(agent.id);
   // Body shape mirrors the main chat layout, smaller, in the right rail:
   //   .worker-text         — worker's reasoning (worker_stream deltas), like
@@ -273,6 +288,23 @@ function renderAgentCard(agent) {
   //                          started/completed lines), default collapsed,
   //                          click to expand. Mirrors the "⚙ Agent activity
   //                          (N)" pattern on the main chat side.
+  // worker-latest = ALWAYS-visible most-recent bg_op_progress line.
+  // Without this, the only liveness cue on a collapsed card is the small
+  // tools-count badge — easy to miss between visual saccades. Field
+  // report: "I see it work then it freezes then I leave and come back
+  // and it jumps then I can see it live again". The badge was actually
+  // ticking the whole time; the user couldn't tell because the body was
+  // collapsed and 1 line/10s of count change is below their attention
+  // threshold. A real text preview right under the name updates on every
+  // event and is impossible to miss.
+  //
+  // Worker activity defaults to OPEN while the worker is active so
+  // users see the full stream without needing to expand. Auto-collapses
+  // on terminal state via updateAgentFeed so finished cards don't
+  // accumulate visual weight.
+  var bodyDisplay = isActive ? 'block' : 'none';
+  var bodyOpenClass = isActive ? ' open' : '';
+  var chevron = isActive ? '▼' : '▶';
   return '<div id="agent-card-' + safeId + '" class="agent-feed-card ' + status + '">' +
     '<div class="agent-feed-header">' +
       '<span class="agent-feed-icon">' + icon + '</span>' +
@@ -280,16 +312,17 @@ function renderAgentCard(agent) {
       '<span class="agent-feed-status"><span class="agent-status-dot"></span> ' + esc(status) + '</span>' +
       '<button class="agent-feed-dismiss" title="Dismiss card (does not cancel)" onclick="onAgentDismiss(\'' + safeId + '\')">×</button>' +
     '</div>' +
+    '<div class="worker-latest" style="padding:.25rem .55rem;font-family:var(--mono,monospace);font-size:.68rem;color:var(--muted,#888);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid var(--border,#333);min-height:1.2em">' + esc(latestLine) + '</div>' +
     '<div class="worker-text" style="white-space:pre-wrap;font-size:.78rem;line-height:1.35;color:var(--text,#ddd);padding:.4rem .55rem;max-height:240px;overflow-y:auto">' + esc(streamText) + '</div>' +
-    '<div class="worker-tools-group" style="border-top:1px solid var(--border,#333);background:rgba(0,0,0,0.18)">' +
+    '<div class="worker-tools-group' + bodyOpenClass + '" style="border-top:1px solid var(--border,#333);background:rgba(0,0,0,0.18)">' +
       '<div class="worker-tools-header" style="cursor:pointer;padding:.35rem .55rem;display:flex;align-items:center;gap:.4rem;font-size:.7rem;color:var(--muted,#888);user-select:none" ' +
         'onclick="var b=this.parentElement.querySelector(\'.worker-tools-body\');var open=this.parentElement.classList.toggle(\'open\');if(b)b.style.display=open?\'block\':\'none\';this.querySelector(\'.worker-tools-chevron\').textContent=open?\'\\u25BC\':\'\\u25B6\'">' +
         '<span style="opacity:.8">⚙</span>' +
         '<span style="flex:1">Worker activity</span>' +
         '<span class="worker-tools-count" style="font-variant-numeric:tabular-nums">' + initialToolCount + '</span>' +
-        '<span class="worker-tools-chevron">▶</span>' +
+        '<span class="worker-tools-chevron">' + chevron + '</span>' +
       '</div>' +
-      '<div class="worker-tools-body" style="display:none;font-family:var(--mono,monospace);font-size:.68rem;color:var(--muted,#888);padding:.3rem .55rem .45rem;max-height:200px;overflow-y:auto;white-space:pre-wrap">' + esc(output) + '</div>' +
+      '<div class="worker-tools-body" style="display:' + bodyDisplay + ';font-family:var(--mono,monospace);font-size:.68rem;color:var(--muted,#888);padding:.3rem .55rem .45rem;max-height:200px;overflow-y:auto;white-space:pre-wrap">' + esc(output) + '</div>' +
     '</div>' +
     '<div class="agent-feed-result-link" style="display:none;padding:.4rem .55rem;font-size:.75rem;border-top:1px solid var(--border,#333)"></div>' +
     '<div class="agent-feed-controls">' +
@@ -418,3 +451,53 @@ function _updateAgentCount() {
   var toggleBtn = document.getElementById('agents-toggle');
   if (toggleBtn) toggleBtn.style.borderColor = count > 0 ? 'var(--accent)' : 'var(--border)';
 }
+
+// 1s safety-net sync: re-applies the visible DOM of every non-terminal
+// worker card from agentFeedsData. updateAgentFeed already does this
+// per-event via direct textContent writes, but field reports show the
+// count and latest-line silently freezing until a chat-switch forces a
+// full re-render via init_chat → _renderAgentFeedsList. Suspected
+// cause: a compositing/paint hiccup during Spring staggerIn animations
+// where transforms isolate the card's layer and subsequent textContent
+// writes don't trigger a paint until the layer is invalidated by an
+// unrelated render. Without a reliable repro it's faster to ship a
+// belt-and-suspenders tick than chase the exact race. 1s cadence is
+// cheap (textContent writes only, no innerHTML rebuilds) and matches
+// the user's "I see motion every second or two" expectation.
+setInterval(function() {
+  var ids = Object.keys(agentFeedsData);
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i];
+    var d = agentFeedsData[id];
+    if (!d) continue;
+    var s = (d.status || '').toLowerCase();
+    if (s === 'completed' || s === 'failed' || s === 'cancelled') continue;
+    var card = document.getElementById('agent-card-' + id);
+    if (!card) continue;
+    var output = d.output || '';
+    var lines = output.split('\n').filter(function(l) { return l.trim().length > 0; });
+    var countEl = card.querySelector('.worker-tools-count');
+    if (countEl && countEl.textContent !== String(lines.length)) {
+      countEl.textContent = String(lines.length);
+    }
+    var latestEl = card.querySelector('.worker-latest');
+    if (latestEl && lines.length > 0) {
+      var latest = lines[lines.length - 1];
+      if (latestEl.textContent !== latest) latestEl.textContent = latest;
+    }
+    var toolsBody = card.querySelector('.worker-tools-body');
+    if (toolsBody && toolsBody.textContent !== output) {
+      var atBottomT = (toolsBody.scrollHeight - toolsBody.scrollTop - toolsBody.clientHeight) < 40;
+      toolsBody.textContent = output;
+      if (atBottomT) toolsBody.scrollTop = toolsBody.scrollHeight;
+    }
+    if (d.streamText) {
+      var textEl = card.querySelector('.worker-text');
+      if (textEl && textEl.textContent !== d.streamText) {
+        var atBottom = (textEl.scrollHeight - textEl.scrollTop - textEl.clientHeight) < 40;
+        textEl.textContent = d.streamText;
+        if (atBottom) textEl.scrollTop = textEl.scrollHeight;
+      }
+    }
+  }
+}, 1000);

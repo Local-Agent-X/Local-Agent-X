@@ -63,37 +63,52 @@ function saveTokens(tokens: OAuthTokens): void {
 
 // ── Token Refresh ──
 
+// Coalesce concurrent refresh attempts into a single in-flight promise.
+// Without this, two near-simultaneous getApiKey() callers (e.g. two chat
+// turns landing within the 5min refresh window, or the proactive timer
+// firing while a lazy call is also in progress) each call refresh —
+// the second call carries a now-rotated refresh_token and OpenAI rejects
+// it with 401. Symptom: one chat works, another fails with cryptic
+// "Token refresh failed (401)" — pure timing race, painful to debug.
+// All callers go through this public `refreshTokens`; coalescing is
+// internal so the call sites don't need to learn the pattern.
+let inflightRefresh: Promise<OAuthTokens> | null = null;
+
 export async function refreshTokens(tokens: OAuthTokens): Promise<OAuthTokens> {
-  const res = await fetch(TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: CLIENT_ID,
-      refresh_token: tokens.refreshToken,
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
+  if (inflightRefresh) return inflightRefresh;
+  inflightRefresh = (async () => {
+    const res = await fetch(TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: CLIENT_ID,
+        refresh_token: tokens.refreshToken,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
 
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Token refresh failed (${res.status}): ${body}`);
-  }
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Token refresh failed (${res.status}): ${body}`);
+    }
 
-  const data = (await res.json()) as {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-  };
+    const data = (await res.json()) as {
+      access_token: string;
+      refresh_token: string;
+      expires_in: number;
+    };
 
-  const newTokens: OAuthTokens = {
-    accessToken: data.access_token,
-    refreshToken: data.refresh_token,
-    expiresAt: Date.now() + data.expires_in * 1000,
-  };
+    const newTokens: OAuthTokens = {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt: Date.now() + data.expires_in * 1000,
+    };
 
-  saveTokens(newTokens);
-  return newTokens;
+    saveTokens(newTokens);
+    return newTokens;
+  })().finally(() => { inflightRefresh = null; });
+  return inflightRefresh;
 }
 
 // ── Get Valid API Key ──
@@ -110,7 +125,8 @@ export async function getApiKey(configApiKey?: string): Promise<string> {
     );
   }
 
-  // Refresh if expiring within 5 minutes
+  // Refresh if expiring within 5 minutes. Concurrent calls are coalesced
+  // inside refreshTokens — see the inflightRefresh promise cache there.
   const REFRESH_MARGIN_MS = 5 * 60 * 1000;
   if (Date.now() > tokens.expiresAt - REFRESH_MARGIN_MS) {
     logger.info("[auth] Refreshing OAuth tokens...");

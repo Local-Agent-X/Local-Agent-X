@@ -109,6 +109,25 @@ export function invokeDefinition(
 
   logger.info(`[invoke] ${def.role} "${def.name}" id=${def.id} run=${agentId}`);
 
+  // Wall-clock guard. Without this an agent can sit "working" forever if
+  // its driver hangs (provider HTTP stall, infinite tool-call loop with
+  // no progress, etc.) — the user sees the AGENTS sidebar card stuck on
+  // 0-95% with no way to recover except restarting the server. We
+  // abort() the same AbortController the driver already respects, so
+  // recovery is the existing terminal path (driver throws on signal →
+  // runAgentViaDriver converts to a clean failed outcome). Default 30
+  // min matches the order of magnitude of MISSION_HARD_TIMEOUT_MS for
+  // cron; ops can override via LAX_AGENT_TIMEOUT_MS for long jobs.
+  const agentTimeoutMs = Number(process.env.LAX_AGENT_TIMEOUT_MS) || 30 * 60_000;
+  const wallClockTimer = setTimeout(() => {
+    if (!abortController.signal.aborted) {
+      logger.warn(`[invoke] Agent ${agentId} hit ${(agentTimeoutMs / 60000).toFixed(0)}min wall-clock — aborting`);
+      try { abortController.abort(); } catch { /* abort is idempotent */ }
+    }
+  }, agentTimeoutMs);
+  // Don't keep the process alive just for this timer.
+  if (typeof wallClockTimer.unref === "function") wallClockTimer.unref();
+
   void runAgentViaDriver(
     {
       agentId,
@@ -122,7 +141,7 @@ export function invokeDefinition(
       templateId,
     },
     abortController.signal,
-  );
+  ).finally(() => clearTimeout(wallClockTimer));
 
   return {
     runId: agentId,

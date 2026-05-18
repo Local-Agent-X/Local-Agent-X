@@ -35,6 +35,32 @@ export const readTool: ToolDefinition = {
     const filePath = resolve(String(args.path));
     if (!existsSync(filePath)) return err(`File not found: ${filePath}`, { path: filePath });
 
+    // Binary-file guard. Without this, reading a .png/.pdf/.zip/etc with
+    // utf-8 decoded the bytes into U+FFFD replacement chars + raw control
+    // sequences, flooding the agent's context with garbage and (when the
+    // result was rendered in a terminal) actually corrupting the user's
+    // terminal display via escape codes. Cheap check: read first 8KB as
+    // a Buffer; binary files almost always contain a null byte in their
+    // header, text files almost never do. Surface a clear actionable
+    // error pointing at the right tool for binary content.
+    try {
+      const probe = readFileSync(filePath);
+      const sample = probe.subarray(0, Math.min(8192, probe.length));
+      let hasNull = false;
+      for (let i = 0; i < sample.length; i++) {
+        if (sample[i] === 0) { hasNull = true; break; }
+      }
+      if (hasNull) {
+        return err(
+          `File appears to be binary (${probe.length} bytes, null byte detected in header) — refusing to decode as utf-8. ` +
+          `For images use view_image. For other binaries use bash (e.g. \`file\`, \`xxd\`, \`unzip -l\`).`,
+          { path: filePath, bytes: probe.length, binary: true },
+        );
+      }
+    } catch (e) {
+      return err(`Failed to probe ${filePath}: ${(e as Error).message}`, { path: filePath });
+    }
+
     try {
       const content = readFileSync(filePath, "utf-8");
       const lines = content.split("\n");

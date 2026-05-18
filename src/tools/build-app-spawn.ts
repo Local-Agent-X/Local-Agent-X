@@ -38,8 +38,38 @@ export async function runCliBuild(input: BuildSpawnInput): Promise<ToolResult> {
   return buildWithClaude(input);
 }
 
+/**
+ * Validate that a build artifact at `path` is plausibly a complete HTML
+ * app, not a partial-write or empty stub. Used in BOTH the success path
+ * (exit 0 → make sure we actually built something) and the recovery path
+ * (non-zero exit → don't claim "built with warnings" if the file is
+ * truncated). Without this, a subprocess that crashed mid-write left a
+ * 200-byte half-file and the caller returned "App built (with warnings)"
+ * — user opened it to a blank page.
+ *
+ * Heuristics: file exists, size > minBytes, content contains a closing
+ * `</html>` or `</body>` OR the APP_READY marker.
+ */
+function artifactLooksComplete(indexPath: string, cliOutput: string): boolean {
+  if (!existsSync(indexPath)) return false;
+  try {
+    const { statSync, readFileSync } = require("node:fs");
+    const stat = statSync(indexPath);
+    if (stat.size < 300) return false; // empty/stub
+    // Cheap content check on a tail slice — full <html> docs end with </html>.
+    const tail = readFileSync(indexPath, "utf-8").slice(-2000).toLowerCase();
+    if (tail.includes("</html>") || tail.includes("</body>")) return true;
+    // Some valid-but-unusual outputs are React-ish single-element trees
+    // without explicit </body>; accept if the agent printed APP_READY AND
+    // the file is non-trivial.
+    if (cliOutput.includes("APP_READY") && stat.size > 1500) return true;
+    return false;
+  } catch { return false; }
+}
+
 async function buildWithCodex(input: BuildSpawnInput): Promise<ToolResult> {
   const { prompt, appDir, appUrl, signal, onEvent } = input;
+  const indexPath = resolve(appDir, "index.html");
   try {
     const stdout = await runSpawn({
       cmd: "codex",
@@ -56,12 +86,12 @@ async function buildWithCodex(input: BuildSpawnInput): Promise<ToolResult> {
       onEvent,
     });
     const output = stdout.trim();
-    if (output.includes("APP_READY") || existsSync(resolve(appDir, "index.html"))) {
+    if (artifactLooksComplete(indexPath, output)) {
       return { content: `App built with Codex CLI!\n\nOpen: ${appUrl}\n\n${output.slice(-500)}` };
     }
     return {
       content:
-        `Codex CLI exit code 0 but no index.html in ${appDir}. ` +
+        `Codex CLI exit code 0 but ${existsSync(indexPath) ? "index.html appears truncated/incomplete" : "no index.html written"} in ${appDir}. ` +
         `Most likely the ChatGPT subscription truncated the build mid-write ` +
         `(its tool-output limit is smaller than what build_app needs for a ` +
         `full single-file app). Options: (1) ask the user to switch the chat ` +
@@ -73,7 +103,12 @@ async function buildWithCodex(input: BuildSpawnInput): Promise<ToolResult> {
     };
   } catch (e) {
     const errMsg = (e as Error).message || "unknown";
-    if (existsSync(resolve(appDir, "index.html"))) {
+    // Subprocess failed (non-zero exit, timeout, signal, ENOENT). Only
+    // claim "built with warnings" if the artifact actually passes integrity
+    // checks — without this gate, a crash mid-write produced a half-file
+    // that the agent reported as a successful build, leading the user to
+    // a blank page.
+    if (artifactLooksComplete(indexPath, "")) {
       return { content: `App built (with warnings)!\n\nOpen: ${appUrl}\n\n${errMsg.slice(0, 300)}` };
     }
     return { content: `Codex CLI build failed: ${errMsg.slice(0, 500)}`, isError: true };
@@ -111,13 +146,14 @@ async function buildWithClaude(input: BuildSpawnInput): Promise<ToolResult> {
       parseLine: claudeParser,
     });
     const summary = finalText.value || stdout.trim();
-    if (summary.includes("APP_READY") || existsSync(resolve(appDir, "index.html"))) {
+    const indexPath = resolve(appDir, "index.html");
+    if (artifactLooksComplete(indexPath, summary)) {
       return { content: `App built with Claude CLI!\n\nOpen: ${appUrl}\n\n${summary.slice(-500)}` };
     }
-    return { content: `Claude CLI finished but index.html not found.\n${summary.slice(-1000)}`, isError: true };
+    return { content: `Claude CLI finished but index.html missing or appears truncated/incomplete.\n${summary.slice(-1000)}`, isError: true };
   } catch (e) {
     const errMsg = (e as Error).message || "unknown";
-    if (existsSync(resolve(appDir, "index.html"))) {
+    if (artifactLooksComplete(resolve(appDir, "index.html"), "")) {
       return { content: `App built (with warnings)!\n\nOpen: ${appUrl}\n\n${errMsg.slice(0, 300)}` };
     }
     return { content: `Claude CLI build failed: ${errMsg.slice(0, 500)}`, isError: true };

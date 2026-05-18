@@ -37,12 +37,31 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     const daysRemaining = expiresAt ? Math.max(0, Math.ceil((expiresAt - Date.now()) / (24 * 60 * 60 * 1000))) : null;
     let cliInstalled = false;
     try { _execSync("codex --version", { timeout: 5000, stdio: "pipe", env: npmAugmentedEnv() }); cliInstalled = true; } catch {}
+    // Codex CLI auth is SEPARATE from LAX's ~/.lax/auth.json. The CLI has
+    // its own credential store at ~/.codex/auth.json — written only by
+    // `codex login`, NOT by LAX's "Sign in with OpenAI" button. We were
+    // reporting cliInstalled and the UI rendered a green "ready" badge,
+    // but the CLI subprocess would 401 on every build_app call because
+    // ~/.codex/auth.json didn't exist. The user calls this "the UI lying"
+    // and they're right. Separate the two concepts in the response so
+    // the badge can show "installed but not signed in" as a distinct
+    // state with an actionable fix-button.
+    let cliAuthenticated = false;
+    if (cliInstalled) {
+      try {
+        const { existsSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const { homedir } = await import("node:os");
+        cliAuthenticated = existsSync(join(homedir(), ".codex", "auth.json"));
+      } catch { /* leave cliAuthenticated=false on any fs error */ }
+    }
     json(200, {
       authenticated: !!tokens || !!ctx.config.openaiApiKey,
       method: ctx.config.openaiApiKey ? "api_key" : tokens ? "oauth" : "none",
       tokenExpiresAt: expiresAt, tokenDaysRemaining: daysRemaining,
       tokenExpiringSoon: daysRemaining !== null && daysRemaining <= 7,
       cliInstalled,
+      cliAuthenticated,
     }); return true;
   }
   if (method === "POST" && url.pathname === "/api/auth/openai/install-cli") {

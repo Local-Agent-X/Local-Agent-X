@@ -108,6 +108,46 @@ async function installCodexCli() {
   }
 }
 
+// Codex CLI login flow — mirror of the Anthropic Sign-in-via-Claude-CLI
+// flow in settings-anthropic.js. Spawns `codex login` server-side,
+// captures the OAuth URL, opens it in a new tab, then polls
+// /api/auth/status until `cliAuthenticated` flips true. Acts as the
+// fallback path; the primary "Sign in with OpenAI" button should
+// already bridge both stores so users don't typically need this.
+let _codexCliLoginPoll = null;
+async function doCodexCliLogin() {
+  const btn = document.getElementById('btn-codex-cli-login');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Starting...'; }
+  try {
+    const d = await apiPost('/api/auth/openai/cli-login', {});
+    if (!d.authUrl) throw new Error(d.error || 'No auth URL returned');
+    window.open(d.authUrl, '_blank');
+    if (btn) btn.textContent = '⏳ Complete sign-in in browser tab...';
+    if (_codexCliLoginPoll) clearInterval(_codexCliLoginPoll);
+    let attempts = 0;
+    _codexCliLoginPoll = setInterval(async () => {
+      attempts++;
+      try {
+        const r = await apiFetch('/api/auth/status');
+        const s = await r.json();
+        if (s.cliAuthenticated) {
+          clearInterval(_codexCliLoginPoll); _codexCliLoginPoll = null;
+          if (btn) { btn.textContent = '✓ Signed in'; btn.disabled = true; }
+          checkSettingsAuth();
+        }
+      } catch {}
+      if (attempts > 150) { // ~5 min @ 2s
+        clearInterval(_codexCliLoginPoll); _codexCliLoginPoll = null;
+        if (btn) { btn.textContent = '⏱ Timed out — try again'; btn.disabled = false; }
+        try { await apiPost('/api/auth/openai/cli-login-cancel', {}); } catch {}
+      }
+    }, 2000);
+  } catch (e) {
+    if (btn) { btn.textContent = '✗ Failed — retry'; btn.disabled = false; }
+    console.error('Codex CLI login failed:', e);
+  }
+}
+
 async function doLogin() {
   try {
     const d = await apiPost('/api/auth/login', {});

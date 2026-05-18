@@ -441,11 +441,23 @@
           <div class="field">
             <label class="field-label">Approval Mode</label>
             <select class="field-select" id="cfg-approval-mode" onchange="setApprovalMode(this.value)">
-              <option value="auto">Off — auto-approve everything (fastest)</option>
-              <option value="confirm-risky" selected>Sensitive — confirm bash / write / edit / email / forget (recommended)</option>
+              <option value="auto" selected>Off — auto-approve everything (fastest, default)</option>
+              <option value="confirm-risky">Sensitive — confirm bash / write / edit / email / forget</option>
               <option value="confirm-all">Strict — confirm everything above + browser, http, cron</option>
             </select>
             <div class="field-hint">"Always for this session" checkbox on a card remembers your choice until the server restarts.</div>
+          </div>
+        </div>
+        <div class="section-card">
+          <div class="section-title">Bash Sandbox</div>
+          <div class="section-desc">Run shell commands inside a Docker container instead of directly on your host. Off by default — turning it on isolates bash but disables OS-native commands (ipconfig, Get-*, etc.) and all network access from bash.</div>
+          <div class="field">
+            <label class="field-label">Sandbox Mode</label>
+            <select class="field-select" id="cfg-sandbox-mode" onchange="setSandboxModeUI(this.value)">
+              <option value="host" selected>Off — Run on host (default)</option>
+              <option value="docker">On — Run in Docker container (network-isolated)</option>
+            </select>
+            <div class="field-hint" id="sandbox-hint">Bash commands run directly on your host OS.</div>
           </div>
         </div>
       </div>
@@ -972,6 +984,7 @@
 <script src="/js/settings-tts.js?v=v1"></script>
 <script src="/js/settings-agent-sync.js?v=v1"></script>
 <script src="/js/settings-file-access.js?v=v1"></script>
+<script src="/js/settings-sandbox.js?v=v1"></script>
 <script src="/js/settings-search.js?v=v1"></script>
 <script src="/js/settings-integrations.js?v=v1"></script>
 <script src="/js/settings-import-export.js?v=v1"></script>

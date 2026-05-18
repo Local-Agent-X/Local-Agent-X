@@ -1,6 +1,8 @@
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import { getAuthPath } from "./config.js";
 import type { OAuthTokens } from "./types.js";
 
@@ -59,6 +61,112 @@ function saveTokens(tokens: OAuthTokens): void {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
     throw e;
   }
+  // Bridge to the Codex CLI's own credential store. Without this,
+  // LAX's "Sign in with OpenAI" left ~/.codex/auth.json missing so
+  // build_app's subprocess 401'd at the WebSocket layer with no
+  // path back for the user except running `codex login` separately.
+  // The bridge fires on every successful saveTokens (initial login
+  // AND refresh), keeping the two stores in lockstep automatically.
+  mirrorToCodexCli(tokens);
+}
+
+/**
+ * Decode a JWT's payload without verifying the signature. We don't
+ * need verification — we got the token from a trusted endpoint over
+ * TLS and we're just reading a claim, not authenticating anyone with
+ * it. Returns null on any parse failure (malformed JWT, base64 error,
+ * non-JSON payload).
+ */
+function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
+  try {
+    const parts = jwt.split(".");
+    if (parts.length < 2) return null;
+    const payload = Buffer.from(parts[1], "base64url").toString("utf-8");
+    return JSON.parse(payload) as Record<string, unknown>;
+  } catch { return null; }
+}
+
+/**
+ * Pull the ChatGPT account_id claim out of the id_token. Tries the
+ * standard OpenAI claim shapes (we don't have a typed schema for this
+ * — discovered the field empirically from a real ~/.codex/auth.json).
+ * Returns null if no recognizable claim is present.
+ */
+function extractAccountId(idToken: string): string | null {
+  const payload = decodeJwtPayload(idToken);
+  if (!payload) return null;
+  // Direct top-level keys seen in OpenAI ID tokens
+  for (const k of ["chatgpt_account_id", "account_id", "https://api.openai.com/auth/chatgpt_account_id"]) {
+    const v = payload[k];
+    if (typeof v === "string" && v.length > 0) return v;
+  }
+  // Nested under https://api.openai.com/auth claim namespace
+  const auth = payload["https://api.openai.com/auth"];
+  if (auth && typeof auth === "object") {
+    const a = auth as Record<string, unknown>;
+    for (const k of ["chatgpt_account_id", "account_id"]) {
+      const v = a[k];
+      if (typeof v === "string" && v.length > 0) return v;
+    }
+  }
+  return null;
+}
+
+/**
+ * Write a mirror of LAX's OAuth tokens to ~/.codex/auth.json in the
+ * exact shape the Codex CLI expects. Format learned from a working
+ * ~/.codex/auth.json captured after the user signed in via the new
+ * "Sign in via Codex CLI" button (commit b25b632):
+ *
+ *   {
+ *     "auth_mode": "chatgpt",
+ *     "OPENAI_API_KEY": null,
+ *     "tokens": {
+ *       "id_token": "<jwt>",
+ *       "access_token": "<jwt>",
+ *       "refresh_token": "...",
+ *       "account_id": "<uuid>"
+ *     },
+ *     "last_refresh": "ISO 8601"
+ *   }
+ *
+ * Atomic write (tmp + rename). Logs and continues on any failure —
+ * the LAX-side auth.json is the source of truth; this mirror is a
+ * convenience for the CLI subprocess and shouldn't crash the chat
+ * path if the file write fails (e.g. permissions on ~/.codex/).
+ */
+function mirrorToCodexCli(tokens: OAuthTokens): void {
+  if (!tokens.idToken) {
+    // Pre-bridge installs / older saved tokens won't have id_token.
+    // We don't fail loudly here — the next refresh (triggered within
+    // 5min of the next chat that uses the token) will populate idToken
+    // and the bridge will fire then. Log once so the gap is visible.
+    logger.warn("[auth] saveTokens called without id_token — Codex CLI bridge skipped. The CLI will pick up tokens on the next refresh.");
+    return;
+  }
+  const codexPath = join(homedir(), ".codex", "auth.json");
+  const accountId = tokens.accountId ?? extractAccountId(tokens.idToken) ?? "";
+  const codexAuth = {
+    auth_mode: "chatgpt",
+    OPENAI_API_KEY: null,
+    tokens: {
+      id_token: tokens.idToken,
+      access_token: tokens.accessToken,
+      refresh_token: tokens.refreshToken,
+      account_id: accountId,
+    },
+    last_refresh: new Date().toISOString(),
+  };
+  const tmp = `${codexPath}.tmp`;
+  try {
+    mkdirSync(dirname(codexPath), { recursive: true });
+    writeFileSync(tmp, JSON.stringify(codexAuth, null, 2), { mode: 0o600 });
+    renameSync(tmp, codexPath);
+    logger.info(`[auth] mirrored tokens to ${codexPath} (Codex CLI bridge)`);
+  } catch (e) {
+    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
+    logger.warn(`[auth] Codex CLI bridge write failed: ${(e as Error).message}`);
+  }
 }
 
 // ── Token Refresh ──
@@ -97,12 +205,20 @@ export async function refreshTokens(tokens: OAuthTokens): Promise<OAuthTokens> {
       access_token: string;
       refresh_token: string;
       expires_in: number;
+      id_token?: string;
     };
 
+    // Preserve idToken/accountId across refreshes: prefer the value the
+    // refresh response just returned (fresh id_token), fall back to
+    // the previous in-disk values so a refresh that doesn't return
+    // id_token doesn't blank out the Codex bridge.
+    const newIdToken = data.id_token ?? tokens.idToken;
     const newTokens: OAuthTokens = {
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
       expiresAt: Date.now() + data.expires_in * 1000,
+      ...(newIdToken ? { idToken: newIdToken } : {}),
+      ...(tokens.accountId ? { accountId: tokens.accountId } : {}),
     };
 
     saveTokens(newTokens);
@@ -229,12 +345,14 @@ export function initiateOAuthLogin(): { authUrl: string; promise: Promise<OAuthT
           access_token: string;
           refresh_token: string;
           expires_in: number;
+          id_token?: string;
         };
 
         const tokens: OAuthTokens = {
           accessToken: data.access_token,
           refreshToken: data.refresh_token,
           expiresAt: Date.now() + data.expires_in * 1000,
+          ...(data.id_token ? { idToken: data.id_token } : {}),
         };
 
         saveTokens(tokens);

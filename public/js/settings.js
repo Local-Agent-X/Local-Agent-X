@@ -65,16 +65,25 @@ async function checkSettingsAuth() {
       if (loginBtn) loginBtn.disabled = false;
       if (discBtn) discBtn.style.display = 'none';
     }
-    // Codex CLI status — needed for reliable app building via Codex provider
+    // Codex CLI status — three states, not two. The CLI binary being
+    // present is separate from the CLI being signed in (~/.codex/auth.json).
+    // Previously we conflated them: green "installed" badge even when the
+    // CLI had no auth, so build_app would 401 in mysterious silence. The
+    // user called this "the UI lying" — fixed by surfacing the
+    // installed-but-not-signed-in state explicitly with a fix instruction.
     if (cliEl) {
-      if (d.cliInstalled) {
-        cliEl.className = 'status-badge ok';
-        cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI installed — app builder will use subprocess for reliable large file writes';
-        if (cliBtn) cliBtn.style.display = 'none';
-      } else {
+      if (!d.cliInstalled) {
         cliEl.className = 'status-badge err';
         cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI not found — install it for reliable app building via Codex (otherwise falls back to Claude CLI)';
         if (cliBtn) cliBtn.style.display = '';
+      } else if (d.cliAuthenticated === false) {
+        cliEl.className = 'status-badge warn';
+        cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI installed but NOT signed in — run <code>codex login</code> in Terminal to enable build_app. The LAX "Sign in with OpenAI" button only authenticates LAX itself; the CLI has its own credential store at ~/.codex/auth.json.';
+        if (cliBtn) cliBtn.style.display = 'none';
+      } else {
+        cliEl.className = 'status-badge ok';
+        cliEl.innerHTML = '<span class="status-dot"></span> Codex CLI installed and signed in — app builder will use subprocess for reliable large file writes';
+        if (cliBtn) cliBtn.style.display = 'none';
       }
     }
   } catch {}

@@ -66,6 +66,26 @@ export async function startServer(config: LAXConfig) {
   const tools = await bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir });
   const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef, activeRuntimeBySession } = tools;
 
+  // Boot-time coverage audit — catch newly-registered tools that don't
+  // have a matching policy rule (would hit deny-by-default at runtime).
+  // Same shape as runSecurityAudit + printAuditReport already wired in
+  // logStartup. We dedupe by name across allAgentTools + bridgeTools
+  // since some tools register on both surfaces. The report goes to the
+  // startup banner via the same logger.error path; if any tool is
+  // uncovered, it'll be visible immediately on server boot instead of
+  // surfacing as a "BLOCKED by tool-policy" failure to a real user.
+  {
+    const { auditPolicyCoverage, printPolicyCoverageReport } = await import("../tool-policy.js");
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const t of [...allAgentTools, ...bridgeTools]) {
+      if (seen.has(t.name)) continue;
+      seen.add(t.name);
+      names.push(t.name);
+    }
+    printPolicyCoverageReport(auditPolicyCoverage(names, toolPolicy));
+  }
+
   // Pre-warm the tool-RAG embedding index in the background. Without this,
   // the FIRST chat after every server restart paid 30-50s to embed all ~66
   // tool descriptions before the lazy `rag.size === 0` branch in

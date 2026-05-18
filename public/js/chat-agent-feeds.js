@@ -178,6 +178,13 @@ function updateAgentFeed(agentId, update) {
     if (update.name) existing.name = update.name;
     if (update.role) existing.role = update.role;
     if (update.resultUrl) existing.resultUrl = update.resultUrl;
+    // sessionId + lastActivityMs are read by the worker stuck-stream
+    // watchdog in chat-ws.js — bump them so a steadily-progressing
+    // worker is never flagged as stuck. Once set (on bg_op_started),
+    // sessionId never changes; lastActivityMs bumps on every signal
+    // event (worker_stream, bg_op_progress).
+    if (update.sessionId && !existing.sessionId) existing.sessionId = update.sessionId;
+    if (update.lastActivityMs) existing.lastActivityMs = update.lastActivityMs;
   }
   var card = document.getElementById('agent-card-' + agentId);
   if (card) {

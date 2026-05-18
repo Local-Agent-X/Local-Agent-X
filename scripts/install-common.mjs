@@ -223,16 +223,62 @@ if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
   } else {
     warn(`Could not copy to /Applications (permission denied?). Built app is at:\n  ${appBuildPath}`);
   }
+} else if (process.platform === "win32") {
+  // Create Desktop + Start Menu shortcuts pointing at desktop-launch.bat.
+  // desktop-launch.bat uses %~dp0 to resolve its repo location, so the
+  // shortcut Target stays pointed at the file in the repo — moving the
+  // .bat itself would break the cd. WorkingDirectory is the repo so any
+  // relative paths the launcher emits resolve there.
+  const repoRoot = process.cwd();
+  const batPath = join(repoRoot, "desktop-launch.bat");
+  const iconPath = join(repoRoot, "public", "icon.ico");
+  if (!existsSync(batPath)) {
+    warn(`desktop-launch.bat not found at ${batPath} — skipping shortcut creation`);
+  } else {
+    const desktopLnk = join(homedir(), "Desktop", "Local Agent X.lnk");
+    const startMenuDir = join(
+      process.env.APPDATA || join(homedir(), "AppData", "Roaming"),
+      "Microsoft", "Windows", "Start Menu", "Programs",
+    );
+    const startLnk = join(startMenuDir, "Local Agent X.lnk");
+    if (!existsSync(startMenuDir)) mkdirSync(startMenuDir, { recursive: true });
+
+    // Single-quoted PowerShell strings: backslashes are literal, no var
+    // interpolation. Safe for Windows paths absent apostrophes in usernames.
+    const mkShortcut = (lnk) =>
+      `$s=(New-Object -ComObject WScript.Shell).CreateShortcut('${lnk}');` +
+      `$s.TargetPath='${batPath}';` +
+      `$s.WorkingDirectory='${repoRoot}';` +
+      (existsSync(iconPath) ? `$s.IconLocation='${iconPath}';` : "") +
+      `$s.Description='Local Agent X';` +
+      `$s.Save()`;
+    const ps = `${mkShortcut(desktopLnk)}; ${mkShortcut(startLnk)}`;
+
+    const r = spawnSync(
+      "powershell",
+      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps],
+      { stdio: "inherit" },
+    );
+    if (r.status === 0) {
+      ok("Shortcuts created: Desktop + Start Menu");
+      appInstalled = true;
+    } else {
+      warn(`Shortcut creation failed (exit ${r.status}) — launch manually: ${batPath}`);
+    }
+  }
 } else if (process.platform === "linux") {
   log("(Linux: no native app target yet — use `npm run dev` to launch the server.)");
 }
 
 console.log("");
 log("Install complete.");
-if (appInstalled) {
+if (appInstalled && process.platform === "darwin") {
   log("  Launch:      open Launchpad, click \"Local Agent X\"");
   log("  First time:  right-click the icon → Open → Open (one-time Gatekeeper prompt)");
   log("  Close-X:     keeps server running in the menu bar; use the tray menu to Quit");
+} else if (appInstalled && process.platform === "win32") {
+  log("  Launch:      double-click \"Local Agent X\" on your Desktop or Start Menu");
+  log("  First time:  Windows may show SmartScreen — click \"More info\" → \"Run anyway\"");
 } else if (process.platform === "darwin" && appBuildPath) {
   log(`  App built at: ${appBuildPath} (drag to /Applications manually)`);
 }

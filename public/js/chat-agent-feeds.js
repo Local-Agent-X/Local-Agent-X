@@ -125,7 +125,35 @@ function updateAgentFeeds(agents) {
 
 function addAgentFeed(agent) {
   if (!agent || !agent.id) return;
-  agentFeedsData[agent.id] = agent;
+  var existing = agentFeedsData[agent.id];
+  if (existing) {
+    // Idempotent merge on the "ensure card exists" path. Old code
+    // unconditionally overwrote agentFeedsData[id], which wiped
+    // accumulated turn-by-turn progress when the bg_op_completed
+    // handler called addAgentFeed for defense-in-depth. Symptom: live
+    // worker card showed "turn 0 committed", "turn 1 committed", …,
+    // then on completion collapsed to a single "task completed" line —
+    // all prior thinking disappeared from the sidebar.
+    //
+    // Now: pick up new identity/status/result fields, but NEVER touch
+    // output / streamText (those are owned by the progress / stream
+    // event handlers and have appended history). Status is allowed to
+    // update — completion needs to flip the badge from "working" to
+    // "completed".
+    if (agent.status) existing.status = agent.status;
+    if (agent.name && existing.name !== agent.name) {
+      // Only upgrade the name if the new one looks more informative
+      // (e.g. server-side later learns the mission's friendly name
+      // and re-broadcasts). Don't downgrade a real name back to a
+      // generic "Worker: opId..." string.
+      if (!existing.name || /^Worker: op_/.test(existing.name)) existing.name = agent.name;
+    }
+    if (agent.role && !existing.role) existing.role = agent.role;
+    if (agent.resultUrl) existing.resultUrl = agent.resultUrl;
+    if (agent.reportPath && !existing.reportPath) existing.reportPath = agent.reportPath;
+  } else {
+    agentFeedsData[agent.id] = agent;
+  }
   // Honor the user's auto-open preference. Card is still added to the
   // panel either way; just the open animation is suppressed when AUTO
   // is off, so nothing surprises the user mid-task.

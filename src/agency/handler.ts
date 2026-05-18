@@ -7,6 +7,9 @@
 
 import { EventBus } from "../event-bus.js";
 import { AgencyMessageBus } from "./message-bus.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("agency.handler");
 import type {
   AgentUpdateCallback,
   FieldAgent,
@@ -379,17 +382,30 @@ export class Handler {
   ): void {
     const parent = agent.parentSessionId;
     if (!parent) return;
+    // Loud-log if completion-queue plumbing fails. Previously the empty
+    // catches swallowed import errors and enqueue errors — symptom was
+    // the parent's session never learning the sub-agent finished, and
+    // the AGENTS sidebar card stuck "running" until manual cleanup. With
+    // logging the failure becomes greppable in server.log.
     try {
       import("./completion-queue.js").then(({ enqueueCompletion }) => {
-        enqueueCompletion(parent, {
-          agentId: agent.id,
-          agentName: agent.name,
-          status,
-          result: typeof result === "string" ? result : String(result),
-          timestamp: Date.now(),
-        });
-      }).catch(() => {});
-    } catch {}
+        try {
+          enqueueCompletion(parent, {
+            agentId: agent.id,
+            agentName: agent.name,
+            status,
+            result: typeof result === "string" ? result : String(result),
+            timestamp: Date.now(),
+          });
+        } catch (e) {
+          logger.error(`[handler] enqueueCompletion failed for sub-agent ${agent.id} → parent ${parent}: ${(e as Error).message}`);
+        }
+      }).catch((e: Error) => {
+        logger.error(`[handler] completion-queue import failed for sub-agent ${agent.id} → parent ${parent}: ${e.message}`);
+      });
+    } catch (e) {
+      logger.error(`[handler] pushCompletionToParent threw for sub-agent ${agent.id} → parent ${parent}: ${(e as Error).message}`);
+    }
   }
 
   /**

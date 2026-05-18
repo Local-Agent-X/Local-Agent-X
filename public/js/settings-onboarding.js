@@ -15,7 +15,14 @@ let _onboardProvider = '';
 const ONBOARD_TOTAL = 5;
 
 async function shouldShowOnboarding() {
-  if (localStorage.getItem('sax_onboarded')) return false;
+  // Server is authoritative — localStorage is a fast-path cache for the
+  // positive case only, never a gate. Without this, wiping ~/.lax/ for a
+  // fresh-install test doesn't touch ~/Library/Application Support/
+  // local-agent-x-desktop/Local Storage/, so a previous install's
+  // `sax_onboarded=1` flag survives the wipe and the wizard never
+  // fires on the re-install. First-time users never hit this bug (no
+  // prior localStorage), only re-installers — which made it invisible
+  // until the fresh-install test today caught it.
   try {
     const r = await apiFetch('/api/settings');
     const s = await r.json();
@@ -36,8 +43,17 @@ async function shouldShowOnboarding() {
       apiFetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ onboarded: true }) }).catch(() => {});
       return false;
     }
-  } catch {}
-  return true;
+    // Server says not-onboarded and no active provider — clear any stale
+    // localStorage flag so the wizard fires on every subsequent page
+    // load until the user actually connects something.
+    localStorage.removeItem('sax_onboarded');
+    return true;
+  } catch {
+    // Server unreachable — last-resort fallback. Use localStorage so we
+    // don't re-prompt a user who's already onboarded if the network is
+    // briefly down.
+    return !localStorage.getItem('sax_onboarded');
+  }
 }
 
 function showOnboarding() {

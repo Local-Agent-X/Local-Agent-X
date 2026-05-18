@@ -28,7 +28,7 @@ export const SUPERVISOR_EXCLUDED: ReadonlySet<string> = new Set([
 
 export const CORE_TOOL_NAMES = new Set([
   // Filesystem & code
-  "read", "write", "edit", "bash", "glob", "grep",
+  "read", "write", "edit", "delete_file", "bash", "glob", "grep",
   // Web & search
   "web_fetch", "web_search",
   // Interaction

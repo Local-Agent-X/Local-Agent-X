@@ -133,9 +133,20 @@ function handleChatWsMessage(e) {
             updateAgentFeed(msg.event.opId, { status: 'working', output: '▶ started\n' });
           }
           if (typeof addAgentFeed === 'function') {
+            // Friendlier card name. Cron missions arrive with task =
+            // "<scheduled_task>\n<prompt>\n</scheduled_task>" — the raw
+            // XML wrapper truncates to "<scheduled_t..." in the sidebar
+            // which tells the user nothing. Extract the actual mission
+            // intent (first non-trivial line of the prompt) so the card
+            // shows what's actually happening.
+            var rawTask = msg.event.task || '';
+            var displayTask = rawTask;
+            var schedMatch = rawTask.match(/<scheduled_task>\s*([\s\S]*?)\s*<\/scheduled_task>/);
+            if (schedMatch && schedMatch[1]) displayTask = schedMatch[1];
+            displayTask = displayTask.split('\n').map(function(s){return s.trim();}).filter(function(s){return s.length > 0;})[0] || rawTask;
             addAgentFeed({
               id: msg.event.opId,
-              name: 'Worker: ' + (msg.event.task || '').slice(0, 60),
+              name: 'Worker: ' + displayTask.slice(0, 60),
               role: 'coder',
               status: 'working',
               currentTask: msg.event.task || '',

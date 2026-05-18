@@ -17,7 +17,7 @@
  *      `node:child_process` itself.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, statSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { killProcessTree } from "../process-tree-kill.js";
 import type { ToolResult } from "../types.js";
@@ -64,7 +64,6 @@ export async function runCliBuild(input: BuildSpawnInput): Promise<ToolResult> {
 function artifactLooksComplete(indexPath: string, cliOutput: string): boolean {
   if (!existsSync(indexPath)) return false;
   try {
-    const { statSync, readFileSync } = require("node:fs");
     const stat = statSync(indexPath);
     if (stat.size < 300) return false; // empty/stub
     // Cheap content check on a tail slice — full <html> docs end with </html>.

@@ -201,7 +201,7 @@ function runSpawn(args: SpawnArgs): Promise<string> {
       rejectP(new Error(`${args.cmd} CLI build timed out after ${Math.round(BUILD_TIMEOUT_MS / 1000)}s`));
     }, BUILD_TIMEOUT_MS);
 
-    proc.on("close", (code) => {
+    proc.on("close", (code, signal) => {
       clearTimeout(timer);
       stopProgress();
       args.signal?.removeEventListener("abort", abortListener);
@@ -210,7 +210,21 @@ function runSpawn(args: SpawnArgs): Promise<string> {
         return;
       }
       if (code === 0) resolveP(out);
-      else rejectP(new Error(errOut || out || `${args.cmd} CLI exit code ${code}`));
+      else {
+        // Capture BOTH streams in the error — `errOut || out` used to drop
+        // one or the other, which gave us "useless banner only" errors
+        // when stderr happened to be empty (race between buffer flush and
+        // close event) or "useless 401 stack" when stdout had the real
+        // context. exit code + signal are always present in modern
+        // failures; surfacing them lets the caller (and the LLM) diagnose
+        // auth-401-on-stderr vs prompt-truncated-on-stdin vs OOM-kill
+        // without having to reproduce locally.
+        const codePart = code != null ? `exit code ${code}` : (signal ? `signal ${signal}` : "no exit info");
+        const stderrPart = errOut.trim() ? `\n--- stderr ---\n${errOut.trim().slice(-1500)}` : "";
+        const stdoutPart = out.trim() ? `\n--- stdout ---\n${out.trim().slice(-1500)}` : "";
+        const detail = (stderrPart + stdoutPart) || " (no output on either stream)";
+        rejectP(new Error(`${args.cmd} CLI failed: ${codePart}.${detail}`));
+      }
     });
     proc.on("error", (err) => {
       clearTimeout(timer);

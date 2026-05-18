@@ -100,8 +100,52 @@ function stopChatWsHeartbeat() {
 // On WebSocket reconnect we replay missed canonical events for each one
 // via `reconnect_op` so a connection drop becomes a brief visual pause
 // rather than a lost response. Keyed by opId → sessionId so the replay
-// reaches the right chat.
-const inflightChatOps = new Map(); // opId → { sessionId, lastSeenSeq }
+// reaches the right chat. lastActivityMs is bumped by handleChatWsMessage
+// on every event for this op — the stuck-stream watchdog uses it to
+// decide when to force a replay.
+const inflightChatOps = new Map(); // opId → { sessionId, lastSeenSeq, lastActivityMs }
+
+// Stuck-stream watchdog. The agent's response may be fully committed
+// server-side but the client's `streamingSessionId` stays set because
+// the `done` event was lost (one dropped frame mid-stream — not enough
+// to trip the heartbeat, which checks pong roundtrip rather than
+// per-message delivery). Symptom: bubble stays at "thinking…" forever
+// even though the op is done. Manual workaround: navigate to another
+// chat and back, which forces renderMessages() to pull saved text from
+// activeChat.messages. This watchdog automates that recovery via the
+// same `reconnect_op` server replay mechanism connectChatWs already uses
+// on full WS reconnect.
+//
+// Cadence: check every 15s. Trigger threshold: 60s since the last
+// event for an inflight op. The threshold is conservative — most
+// real LLM stalls (slow provider, big context) clear well under 60s.
+const STUCK_STREAM_CHECK_INTERVAL_MS = 15_000;
+const STUCK_STREAM_REPLAY_THRESHOLD_MS = 60_000;
+setInterval(function() {
+  if (!chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+  var now = Date.now();
+  for (var entry of inflightChatOps.entries()) {
+    var opId = entry[0];
+    var info = entry[1];
+    var lastActivity = info.lastActivityMs || 0;
+    if (lastActivity === 0 || now - lastActivity < STUCK_STREAM_REPLAY_THRESHOLD_MS) continue;
+    console.warn('[ws] Stuck stream detected for opId=' + opId + ' (no events for ' + Math.round((now - lastActivity) / 1000) + 's) — replaying via reconnect_op');
+    try {
+      chatWs.send(JSON.stringify({
+        type: 'reconnect_op',
+        sessionId: info.sessionId,
+        opId: opId,
+        sinceSeq: info.lastSeenSeq,
+      }));
+      // Bump the timestamp so we don't spam reconnect_op every interval
+      // while a slow replay is in flight. Real activity from the replay
+      // will bump it again via handleChatWsMessage.
+      info.lastActivityMs = now;
+    } catch (e) {
+      console.warn('[ws] reconnect_op send failed:', e && e.message);
+    }
+  }
+}, STUCK_STREAM_CHECK_INTERVAL_MS);
 
 function connectChatWs() {
   if (chatWs && chatWs.readyState === WebSocket.OPEN) return;

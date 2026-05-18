@@ -11,6 +11,12 @@ export const DEFAULT_POLICY: ToolPolicyConfig = {
     { id: "allow-read", tool: "read", decision: "allow", reason: "File read (path-checked by SecurityLayer)", priority: 50 },
     { id: "allow-write", tool: "write", decision: "allow", reason: "File write (path-checked by SecurityLayer)", priority: 50 },
     { id: "allow-edit", tool: "edit", decision: "allow", reason: "File edit (path-checked by SecurityLayer)", priority: 50 },
+    // delete_file is the path-bounded alternative to `bash rm` — the
+    // shell-policy correctly blocks `rm -f`/`rm -r` to prevent
+    // catastrophic mistakes, and this tool is the scoped escape valve.
+    // SecurityLayer enforces workspace bounds the same way it does for
+    // read/write/edit. Single file per call, directories refused.
+    { id: "allow-delete-file", tool: "delete_file", decision: "allow", reason: "Single-file delete (path-checked by SecurityLayer, directories refused)", priority: 50 },
 
     // Memory tools — safe, internal only
     { id: "allow-memory", tool: "memory_*", decision: "allow", reason: "Memory operations (internal)", priority: 50 },

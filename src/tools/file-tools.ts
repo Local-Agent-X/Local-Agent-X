@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, statSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
@@ -222,6 +222,59 @@ export const editTool: ToolDefinition = {
       return ok(`Edited ${filePath}${appUrlHint(filePath)}`);
     } catch (e) {
       return err(`Failed to edit ${filePath}: ${(e as Error).message}`);
+    }
+  },
+};
+
+/**
+ * Dedicated file-deletion tool. Why this exists separately instead of
+ * leaving deletions to `bash rm`:
+ *   - The shell-policy regex `/\brm\s+.*(-[a-zA-Z]*f|-[a-zA-Z]*r)\b/i`
+ *     blocks every `rm -f` / `rm -r` to protect against `rm -rf /` or
+ *     `rm -rf *` — but it has no awareness of whether the paths are
+ *     scoped to workspace. Loosening the regex would lose the
+ *     destructive-bash protection.
+ *   - This tool routes through the same path-bounded pre-dispatch gate
+ *     as read/write/edit (SecurityLayer), so the LLM can't ask it to
+ *     delete /etc/passwd or arbitrary host files — only workspace
+ *     content. The blast radius of a mistake is bounded by the same
+ *     mechanism that protects every other file tool.
+ *   - Clean LLM semantics: "delete this file" doesn't need shell
+ *     parsing or wildcard expansion.
+ *
+ * Single-file at a time on purpose. If the LLM needs to delete multiple
+ * files it calls this tool multiple times — each call gets audited
+ * individually and a hallucinated path doesn't take a directory with it.
+ * Refuses to delete directories (use a different escalation path with
+ * explicit user confirmation if that's ever needed).
+ */
+export const deleteFileTool: ToolDefinition = {
+  name: "delete_file",
+  description:
+    "Delete a single file from the workspace. Preferred over `bash rm` for file deletion — the shell-policy correctly blocks `rm -f` / `rm -r` to prevent destructive mistakes, and this tool is the scoped alternative (path-checked by SecurityLayer, single file per call). " +
+    "Refuses to delete directories. To remove many files, call this once per file.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "File path to delete (path-checked against workspace bounds)" },
+    },
+    required: ["path"],
+  },
+  async execute(args) {
+    const filePath = resolve(String(args.path));
+    if (!existsSync(filePath)) return err(`File not found: ${filePath}`, { path: filePath });
+    try {
+      const st = statSync(filePath);
+      if (st.isDirectory()) {
+        return err(
+          `Refusing to delete a directory: ${filePath}. delete_file removes single files only — if you need to clear a directory, delete its contents one file at a time.`,
+          { path: filePath, isDirectory: true },
+        );
+      }
+      unlinkSync(filePath);
+      return ok(`Deleted ${filePath}`);
+    } catch (e) {
+      return err(`Failed to delete ${filePath}: ${(e as Error).message}`, { path: filePath });
     }
   },
 };

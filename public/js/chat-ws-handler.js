@@ -75,15 +75,20 @@ function handleChatWsMessage(e) {
       // every subsequent canonical-tagged event carries `_opId` + `_seq`
       // on the envelope so we know how far we've consumed. Terminal
       // events (done / error) clear the entry.
+      //
+      // lastActivityMs gets bumped on every per-op event — the
+      // stuck-stream watchdog in chat-ws.js reads this to detect when
+      // a stream has gone silent for > threshold and force a replay.
       if (msg._opId && inflightChatOps.has(msg._opId)) {
-        if (typeof msg._seq === 'number') {
-          inflightChatOps.get(msg._opId).lastSeenSeq = msg._seq;
-        }
+        var inflight = inflightChatOps.get(msg._opId);
+        if (typeof msg._seq === 'number') inflight.lastSeenSeq = msg._seq;
+        inflight.lastActivityMs = Date.now();
       }
       if (msg.event.type === 'chat_op_started' && msg.event.opId) {
         inflightChatOps.set(msg.event.opId, {
           sessionId: msg.sessionId,
           lastSeenSeq: -1,
+          lastActivityMs: Date.now(),
         });
         return;
       }

@@ -198,7 +198,15 @@ export class AgentRunStore {
   get(id: string): AgentRun | null {
     const p = join(RUNS_DIR, `${id}.json`);
     if (!existsSync(p)) return null;
-    try { return migrateRunStatus(JSON.parse(readFileSync(p, "utf-8")) as AgentRun); } catch { return null; }
+    try { return migrateRunStatus(JSON.parse(readFileSync(p, "utf-8")) as AgentRun); }
+    catch (e) {
+      // Corrupted run file surfaces as "not found", which then routes
+      // the agent through the same "no such run" path as a truly
+      // missing file — hides the corruption. Log so the operator can
+      // recover the JSON or delete the bad file.
+      logger.warn(`failed to read agent run ${id}: ${(e as Error).message}`);
+      return null;
+    }
   }
 
   list(opts?: { limit?: number; offset?: number; sessionId?: string; status?: string }): { runs: AgentRun[]; total: number } {

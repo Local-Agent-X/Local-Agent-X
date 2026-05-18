@@ -10,6 +10,8 @@
  * (Anthropic, OpenAI) can cache the stable prefix and only reprocess the suffix.
  */
 
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 export const CACHE_BOUNDARY = "\n<!-- CACHE_BOUNDARY -->\n";
 
 export interface PromptSection {

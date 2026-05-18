@@ -11,6 +11,8 @@
  * natural completion (user Stop, timeout, lease loss, abort signal).
  */
 import type { ChildProcess } from "node:child_process";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 export function killProcessTree(
   proc: ChildProcess | null | undefined,

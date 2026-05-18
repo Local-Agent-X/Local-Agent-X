@@ -25,6 +25,8 @@ import type { Protocol, ProtocolSource } from "../protocols.js";
 import { parseSkillMd } from "./skill-md-parser.js";
 
 import { createLogger } from "../logger.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 const logger = createLogger("protocols.loader");
 
 // ── Paths ──────────────────────────────────────────────────────────────────

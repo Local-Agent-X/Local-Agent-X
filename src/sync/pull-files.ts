@@ -13,6 +13,8 @@ import {
 } from "./constants.js";
 import { pullDir, unionMerge } from "./mirror.js";
 import { applyTombstones, tombstonePaths } from "./tombstones.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 const logger = createLogger("sync.pull-files");
 

@@ -8,6 +8,8 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
 const CACHE_DIR = join(homedir(), ".lax", "audio-cues");

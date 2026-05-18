@@ -5,6 +5,8 @@
 
 import { openSync, readSync, closeSync, statSync } from "node:fs";
 import { extname } from "node:path";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 export interface DetectionResult {
   format: string;

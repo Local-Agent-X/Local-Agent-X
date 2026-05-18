@@ -57,6 +57,24 @@ export class ToolPolicy {
   }
 
   /**
+   * Find the first rule whose `tool` pattern matches `toolName`, ignoring
+   * argMatch/action/constraint filters. Used by the boot-time coverage
+   * audit — "is this tool name reachable by any rule, regardless of args?"
+   * Returns the rule id, or null if no rule's pattern covers the name.
+   *
+   * Different from `evaluate()`: evaluate runs full argument checks,
+   * constraints, and rate limits, and falls through to defaultDecision
+   * if no rule matches. This just answers the structural question
+   * "does the policy mention this tool at all?"
+   */
+  findCoveringRule(toolName: string): string | null {
+    for (const rule of this.config.rules) {
+      if (matchGlob(rule.tool, toolName)) return rule.id;
+    }
+    return null;
+  }
+
+  /**
    * Evaluate whether a tool call is allowed.
    * @param toolName - The tool being called
    * @param args - The tool arguments
@@ -200,6 +218,10 @@ export class LiveToolPolicy extends ToolPolicy {
     return this.currentInner.evaluate(toolName, args, sessionId);
   }
 
+  override findCoveringRule(toolName: string): string | null {
+    return this.currentInner.findCoveringRule(toolName);
+  }
+
   override resetSession(sessionId: string): void {
     this.currentInner.resetSession(sessionId);
   }
@@ -277,4 +299,48 @@ export function loadToolPolicy(dataDir: string): LiveToolPolicy {
     logger.info(`[policy] Created default policy at ${policyPath}`);
   } catch {}
   return new LiveToolPolicy(new ToolPolicy(DEFAULT_POLICY), policyPath);
+}
+
+// ── Boot-time coverage audit ─────────────────────────────────────────────
+//
+// Twice in one day (mission_schedule_*, then 10 more user-facing tools) a
+// newly-registered ToolDefinition had no matching policy rule, hit
+// deny-by-default at runtime, and the user saw "BLOCKED by tool-policy:
+// Denied by default policy (no matching rule)" with no warning that the
+// gap existed. This audit catches the gap AT BOOT — same shape as the
+// existing security-audit pair.
+//
+// Different from runtime evaluate(): we ignore argMatch/action/constraints
+// and ask the structural question "does any rule's tool-pattern match
+// this tool name?" A tool can be "covered" by a deny rule and still be
+// unusable (e.g. bash deny-rm-rf would still report bash as covered
+// because of allow-bash-limited) — that's correct, the point is the
+// catalog mentions it.
+
+export interface PolicyCoverageReport {
+  totalTools: number;
+  covered: string[];
+  uncovered: string[];
+}
+
+export function auditPolicyCoverage(toolNames: string[], policy: ToolPolicy): PolicyCoverageReport {
+  const covered: string[] = [];
+  const uncovered: string[] = [];
+  for (const name of toolNames) {
+    if (policy.findCoveringRule(name)) covered.push(name);
+    else uncovered.push(name);
+  }
+  return { totalTools: toolNames.length, covered, uncovered };
+}
+
+export function printPolicyCoverageReport(report: PolicyCoverageReport): void {
+  // Match the security-audit visual idiom (printAuditReport in security-audit.ts).
+  logger.info(`\n  ── Tool-Policy Coverage ──`);
+  if (report.uncovered.length === 0) {
+    logger.info(`  \x1b[36mℹ\x1b[0m All ${report.totalTools} registered tools are covered by at least one rule\n`);
+    return;
+  }
+  logger.error(`  \x1b[31m✖\x1b[0m ${report.uncovered.length} of ${report.totalTools} tools have NO matching policy rule:`);
+  for (const name of report.uncovered) logger.error(`    - ${name}`);
+  logger.error(`  These will hit deny-by-default at runtime. Add allow rules to src/tool-policy/default-rules.ts.\n`);
 }

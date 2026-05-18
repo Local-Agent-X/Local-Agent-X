@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, basename } from "node:path";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 function resolvePath(p: string): string {
   if (p.startsWith("~/") || p.startsWith("~\\")) return resolve(homedir(), p.slice(2));

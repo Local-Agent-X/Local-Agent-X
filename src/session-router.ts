@@ -19,6 +19,8 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 const LAX_DIR = join(homedir(), ".lax");
 const LINKS_FILE = join(LAX_DIR, "identity-links.json");

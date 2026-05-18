@@ -21,6 +21,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { createLogger } from "./logger.js";
+
+const logger = createLogger("llm-dispatch");
 
 export type LLMProvider = "ollama" | "anthropic" | "openai";
 
@@ -96,10 +99,19 @@ async function callOllama(prompt: string, model: string, temperature: number, ma
       body: JSON.stringify({ model, prompt, stream: false, options: { temperature, num_predict: maxTokens } }),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      logger.warn(`ollama call failed: HTTP ${res.status}`);
+      return null;
+    }
     const data = await res.json() as { response?: string };
     return data.response || null;
-  } catch { return null; }
+  } catch (e) {
+    // Callers fall back to the next provider on null — without the warn
+    // the user sees "all providers returned null" with zero context on
+    // which one failed and why (timeout vs. network vs. JSON parse).
+    logger.warn(`ollama call threw: ${(e as Error).message}`);
+    return null;
+  }
 }
 
 async function callAnthropic(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, rejectOAuth: boolean): Promise<string | null> {
@@ -121,10 +133,16 @@ async function callAnthropic(prompt: string, model: string, temperature: number,
       body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages: [{ role: "user", content: prompt }] }),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      logger.warn(`anthropic call failed: HTTP ${res.status}`);
+      return null;
+    }
     const data = await res.json() as { content?: Array<{ text?: string }> };
     return data.content?.[0]?.text || null;
-  } catch { return null; }
+  } catch (e) {
+    logger.warn(`anthropic call threw: ${(e as Error).message}`);
+    return null;
+  }
 }
 
 async function callOpenAI(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number): Promise<string | null> {
@@ -137,8 +155,14 @@ async function callOpenAI(prompt: string, model: string, temperature: number, ma
       body: JSON.stringify({ model, temperature, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      logger.warn(`openai call failed: HTTP ${res.status}`);
+      return null;
+    }
     const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
     return data.choices?.[0]?.message?.content || null;
-  } catch { return null; }
+  } catch (e) {
+    logger.warn(`openai call threw: ${(e as Error).message}`);
+    return null;
+  }
 }

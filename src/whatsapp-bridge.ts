@@ -36,6 +36,8 @@ const _voiceFailHintSentByPhone = new Set<string>();
 
 import type { ConnectionState, WhatsAppBridgeConfig } from "./whatsapp-bridge/types.js";
 import { splitMessage, toJid } from "./whatsapp-bridge/text-utils.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 export type { BridgeReply, WhatsAppBridgeConfig } from "./whatsapp-bridge/types.js";
 

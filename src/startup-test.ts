@@ -1,6 +1,8 @@
 import { existsSync, accessSync, constants, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 export type TestStatus = "pass" | "fail" | "warn";
 

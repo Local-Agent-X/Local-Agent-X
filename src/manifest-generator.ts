@@ -12,6 +12,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, watch }
 import { join, resolve } from "node:path";
 
 import { createLogger } from "./logger.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 const logger = createLogger("manifest-generator");
 
 const ROOT = resolve(join(import.meta.dirname || ".", ".."));

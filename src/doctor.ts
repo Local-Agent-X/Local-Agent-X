@@ -8,6 +8,8 @@ import { existsSync, accessSync, constants } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 export interface DiagnosticResult {
   name: string;

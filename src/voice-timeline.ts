@@ -6,6 +6,8 @@
 import { existsSync, mkdirSync, readFileSync, appendFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 
 const TIMELINE_DIR = join(homedir(), ".lax", "voice-timeline");
 if (!existsSync(TIMELINE_DIR)) mkdirSync(TIMELINE_DIR, { recursive: true });

@@ -32,6 +32,8 @@ import type { ServerEvent } from "../types.js";
 import type { CanonicalEvent } from "./types.js";
 
 import { createLogger } from "../logger.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 const logger = createLogger("canonical-loop.session-bridge-observer");
 
 let warnedOnce = false;

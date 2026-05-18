@@ -23,6 +23,8 @@ import type { AgentOptions } from "../providers/types.js";
 import { loadAnthropicTokens, isAnthropicTokenExpired } from "../auth-anthropic.js";
 
 import { createLogger } from "../logger.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 const logger = createLogger("autopilot.start");
 
 /**

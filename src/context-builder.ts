@@ -98,6 +98,31 @@ export function createSystemPromptBuilder(opts: {
     build: () => opts.basePrompt,
   });
 
+  // Runtime context — tells the model WHICH OS / shell it's actually on so
+  // it stops reaching for PowerShell verbs on macOS (Remove-Item, Get-ChildItem)
+  // or bash verbs on Windows. The bash tool description lists negative examples
+  // from both worlds mixed together; without this section the model infers OS
+  // from prior tool output, which on a fresh install means it guesses wrong.
+  // Static (process-lifetime stable) so it caches with the base prompt.
+  builder.addSection({
+    id: "runtime-context", label: "Runtime", type: "static",
+    build: () => {
+      const plat = process.platform;
+      const friendly = plat === "darwin" ? "macOS" : plat === "win32" ? "Windows" : plat === "linux" ? "Linux" : plat;
+      const shell = plat === "win32" ? "PowerShell" : "bash (zsh on macOS)";
+      const fileVerbs = plat === "win32"
+        ? "Use PowerShell verbs: `Remove-Item`, `Get-ChildItem`, `New-Item -ItemType Directory`, `Set-Content`, `Copy-Item`."
+        : "Use POSIX verbs: `rm`, `ls`, `mkdir -p`, `cat`, `cp`, `mv`. NEVER `Remove-Item` / `Get-ChildItem` / `New-Item` — those are Windows-only and will fail with `command not found`.";
+      return `## Runtime
+- Platform: ${friendly} (\`process.platform === "${plat}"\`)
+- Default shell for the \`bash\` tool: ${shell}
+- Working directory: ${process.cwd()}
+- Shell commands: ${fileVerbs}
+
+Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete_file\`. Prefer those over shell commands. The shell-command guidance above is for the rare case where you actually need bash (process listing, git ops, build/test runs).`;
+    },
+  });
+
   // App manifest — the agent's map of its own body (auto-generated catalog)
   builder.addSection({
     id: "app-manifest", label: "App Map", type: "static",

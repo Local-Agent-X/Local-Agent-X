@@ -338,6 +338,7 @@ export interface LAXConfig {
   retentionDays: number;
   autoUpdate: boolean;
   logLevel: "basic" | "detailed" | "full-audit";
+  sandboxMode: "host" | "docker";
   ariRequired?: boolean;
 
   // ── Externalized service URLs ──

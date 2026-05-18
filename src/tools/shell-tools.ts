@@ -167,8 +167,15 @@ export const bashTool: ToolDefinition = {
           meta,
         );
       }
+      // Surface the constraint so the model reports it correctly to the user
+      // instead of concluding it lacks tools. Host-OS commands and network are
+      // unavailable inside the container.
+      const sandboxNotice =
+        "[sandbox: this command ran inside a Docker container (Alpine Linux, --network=none, workspace-only). " +
+        "Host-OS commands (ipconfig, Get-NetIPConfiguration, etc.) and network access are not available. " +
+        "If host access is required, tell the user to set LAX_SANDBOX=host or toggle Sandbox in Settings.]\n";
       return err(
-        result.stderr || result.stdout || `Exit code: ${result.exitCode}`,
+        `${sandboxNotice}${result.stderr || result.stdout || `Exit code: ${result.exitCode}`}`,
         { ...meta, stderr: result.stderr },
       );
     }

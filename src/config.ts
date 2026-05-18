@@ -16,7 +16,7 @@ const logger = createLogger("config");
 export const PROFILE_DEFAULTS: Record<DeploymentProfile, ProfileDefaults> = {
   home: {
     sandboxMode: "host",
-    toolApproval: "confirm-all",
+    toolApproval: "auto",
     retentionDays: 90,
     autoUpdate: true,
     networkExposure: "localhost",
@@ -62,10 +62,15 @@ const configSchema = z.object({
   temperature: z.number().min(0).max(2).default(0.7),
   systemPrompt: z.string().default(DEFAULT_SYSTEM_PROMPT),
   profile: z.enum(["home", "dev", "enterprise"]).default("home"),
-  toolApproval: z.enum(["auto", "confirm-risky", "confirm-all"]).default("confirm-risky"),
+  toolApproval: z.enum(["auto", "confirm-risky", "confirm-all"]).default("auto"),
   retentionDays: z.number().int().min(7).max(365).default(90),
   autoUpdate: z.boolean().default(true),
   logLevel: z.enum(["basic", "detailed", "full-audit"]).default("basic"),
+  /** Bash sandbox mode. "host" runs commands directly on the host OS (default,
+   *  full functionality). "docker" runs commands inside a network-isolated
+   *  Alpine container — opt-in for paranoid setups; breaks host-OS commands
+   *  and network access. Toggleable from Settings → Security. */
+  sandboxMode: z.enum(["host", "docker"]).default("host"),
 
   // AriKernel kill-switch posture. true = if the kernel fails to start
   // or evaluate, BLOCK the tool call (and refuse to boot the server on

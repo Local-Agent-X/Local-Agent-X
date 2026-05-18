@@ -213,14 +213,6 @@ interface DangerousFlag {
 
 const DANGEROUS_FLAGS: DangerousFlag[] = [
   {
-    flag: "LAX_SANDBOX=disabled",
-    description: "Sandbox mode is off — bash commands run directly on host",
-    check: () => {
-      const v = process.env.LAX_SANDBOX ?? process.env.SAX_SANDBOX;
-      return v === "disabled" || !v;
-    },
-  },
-  {
     flag: "LAX_ALLOW_NETWORK_TOOLS=true",
     description: "Direct network tools (curl, wget) allowed in bash",
     check: () => (process.env.LAX_ALLOW_NETWORK_TOOLS ?? process.env.SAX_ALLOW_NETWORK_TOOLS) === "true",

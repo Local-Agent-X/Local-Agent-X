@@ -258,11 +258,15 @@ if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
   if (dr.status !== 0) fail("desktop tsc build failed.");
   ok("Desktop bundle built");
 
-  // Create Desktop + Start Menu shortcuts pointing at desktop-launch.bat.
-  // desktop-launch.bat uses %~dp0 to resolve its repo location, so the
-  // shortcut Target stays pointed at the file in the repo — moving the
-  // .bat itself would break the cd. WorkingDirectory is the repo so any
-  // relative paths the launcher emits resolve there.
+  // Create Desktop + Start Menu shortcuts that launch electron.exe DIRECTLY,
+  // not via desktop-launch.bat. The .bat works but Windows always spawns a
+  // cmd console window for it that lives as long as the Electron process —
+  // closing the cmd window kills the server (and the app). Pointing the
+  // shortcut at electron.exe makes Windows treat the launch as a pure GUI
+  // process: no terminal, matches macOS where the .app launches headless.
+  // desktop-launch.bat is kept around for users who want to debug with logs
+  // visible (just run it from a terminal); the GUI flow goes through the
+  // shortcut.
   //
   // IMPORTANT: resolve Desktop + StartMenu via [Environment]::GetFolderPath
   // inside PowerShell, not via Node's homedir()+"Desktop". When OneDrive
@@ -271,25 +275,27 @@ if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
   // literal C:\Users\<user>\Desktop either doesn't exist or no longer shows
   // up in Explorer. GetFolderPath uses the Known Folders API and returns
   // the redirected location. Same logic applies to Start Menu under
-  // domain-policy folder redirection. Live failure 2026-05-18 on a Windows
-  // box with OneDrive Desktop sync: Start Menu shortcut created, Desktop
-  // shortcut silently went to the wrong directory.
+  // domain-policy folder redirection.
   const repoRoot = process.cwd();
-  const batPath = join(repoRoot, "desktop-launch.bat");
+  const electronExe = join(repoRoot, "desktop", "node_modules", "electron", "dist", "electron.exe");
+  const mainJs = join(repoRoot, "desktop", "dist", "main.js");
+  const workDir = join(repoRoot, "desktop");
   const iconPath = join(repoRoot, "public", "icon.ico");
-  if (!existsSync(batPath)) {
-    warn(`desktop-launch.bat not found at ${batPath} — skipping shortcut creation`);
+  if (!existsSync(electronExe) || !existsSync(mainJs)) {
+    warn(`Desktop build artifacts missing (${electronExe} or ${mainJs}) — skipping shortcut creation`);
   } else {
     // Single-quoted PowerShell strings: backslashes literal, no var
     // interpolation. Apostrophes in usernames would break this; PS doesn't
     // support a clean escape inside single-quoted literals other than ''
     // doubling — accept that as an unlikely edge case rather than complicate.
-    const psBat = batPath.replace(/'/g, "''");
-    const psRepo = repoRoot.replace(/'/g, "''");
+    const psElectron = electronExe.replace(/'/g, "''");
+    const psMain = mainJs.replace(/'/g, "''");
+    const psWork = workDir.replace(/'/g, "''");
     const psIcon = existsSync(iconPath) ? iconPath.replace(/'/g, "''") : "";
     const ps = [
-      `$batPath  = '${psBat}'`,
-      `$repoRoot = '${psRepo}'`,
+      `$electron = '${psElectron}'`,
+      `$mainJs   = '${psMain}'`,
+      `$workDir  = '${psWork}'`,
       `$iconPath = '${psIcon}'`,
       `$desktop  = [Environment]::GetFolderPath('Desktop')`,
       `$startMenu = Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'`,
@@ -298,8 +304,9 @@ if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
       `  if (-not (Test-Path $dir)) { Write-Output "[skip] $dir (not present)"; continue }`,
       `  $lnk = Join-Path $dir 'Local Agent X.lnk'`,
       `  $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)`,
-      `  $s.TargetPath = $batPath`,
-      `  $s.WorkingDirectory = $repoRoot`,
+      `  $s.TargetPath = $electron`,
+      `  $s.Arguments = '"' + $mainJs + '"'`,
+      `  $s.WorkingDirectory = $workDir`,
       `  if ($iconPath) { $s.IconLocation = $iconPath }`,
       `  $s.Description = 'Local Agent X'`,
       `  $s.Save()`,

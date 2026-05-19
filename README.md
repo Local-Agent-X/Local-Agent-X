@@ -6,12 +6,30 @@ Beyond chat, it ships voice (push-to-talk and full-duplex), scheduled missions o
 
 It's research-grade software, not a polished product. Active development — see [Status](#status) for the current refactor.
 
-## Prerequisites
+## System requirements
 
-- **Node.js 22+** (the install scripts will fetch this if missing).
-- **Ollama** for local embeddings (the install scripts will fetch this; the `mxbai-embed-large` model is pulled automatically, ~670MB one-time).
-- **OS support**: Windows 10/11, macOS (Apple Silicon or Intel), Debian/Ubuntu Linux.
-- **Disk**: ~3GB for Node modules + Playwright Chromium + the embedding model.
+- **OS**: Windows 10/11, macOS (Apple Silicon or Intel), Debian/Ubuntu Linux.
+- **RAM**: 8 GB minimum, 16 GB recommended (Ollama + Chromium + the runtime are each non-trivial).
+- **Network**: ~2.5–3.5 GB of one-time downloads during install (Node, Ollama, the embedding model, npm packages, plus Visual Studio Build Tools on Windows).
+
+The install scripts fetch everything below if it's missing — you don't have to install Node or Ollama yourself. The totals are what to expect end-to-end.
+
+| What gets installed | Windows | macOS |
+|---|---|---|
+| Local Agent X source (extracted) | 280 MB | 280 MB |
+| Node.js 22 LTS | ~150 MB | ~150 MB |
+| Python 3.12 | ~100 MB | (usually preinstalled) |
+| Ollama runtime | ~600 MB | ~500 MB |
+| Ollama embedding model (`mxbai-embed-large`) | 670 MB | 670 MB |
+| C++ toolchain: Visual Studio Build Tools (Win) / Xcode Command Line Tools (Mac) | ~3 GB | ~1 GB |
+| `npm install` deps (Playwright Chromium + sherpa-onnx dominate) | ~1.2 GB | ~1.2 GB |
+| Electron desktop build + `desktop/node_modules` | — | ~750 MB |
+| `Local Agent X.app` in `/Applications` | — | ~250 MB |
+| **Total installed footprint** | **~6 GB** | **~4.5 GB** (or ~3.5 GB if Xcode CLT is already present) |
+
+**Free at least 8 GB** before running the installer. npm extraction and Ollama's content-addressed model pull both need transient scratch space well above their final on-disk size.
+
+**The C++ toolchain is required, not optional** on both platforms — it's how native npm modules (`better-sqlite3`, `sherpa-onnx`, `sqlite-vec`, `@napi-rs/canvas`) compile from source when a prebuilt binary doesn't match your exact Node ABI. The installer bootstraps it for you: on Windows it pulls Visual Studio Build Tools via winget; on macOS, if `xcode-select -p` returns nothing it triggers `xcode-select --install` (a system dialog appears) and exits — you click **Install**, accept the license, then re-run the installer. Bundling the toolchain up-front avoids a half-finished install when a single dep fails to compile.
 
 ## Install
 

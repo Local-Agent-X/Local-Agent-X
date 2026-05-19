@@ -245,30 +245,49 @@ if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
   // shortcut Target stays pointed at the file in the repo — moving the
   // .bat itself would break the cd. WorkingDirectory is the repo so any
   // relative paths the launcher emits resolve there.
+  //
+  // IMPORTANT: resolve Desktop + StartMenu via [Environment]::GetFolderPath
+  // inside PowerShell, not via Node's homedir()+"Desktop". When OneDrive
+  // backs up the Desktop folder (default for many modern Windows installs),
+  // the user's real Desktop is C:\Users\<user>\OneDrive\Desktop — the
+  // literal C:\Users\<user>\Desktop either doesn't exist or no longer shows
+  // up in Explorer. GetFolderPath uses the Known Folders API and returns
+  // the redirected location. Same logic applies to Start Menu under
+  // domain-policy folder redirection. Live failure 2026-05-18 on a Windows
+  // box with OneDrive Desktop sync: Start Menu shortcut created, Desktop
+  // shortcut silently went to the wrong directory.
   const repoRoot = process.cwd();
   const batPath = join(repoRoot, "desktop-launch.bat");
   const iconPath = join(repoRoot, "public", "icon.ico");
   if (!existsSync(batPath)) {
     warn(`desktop-launch.bat not found at ${batPath} — skipping shortcut creation`);
   } else {
-    const desktopLnk = join(homedir(), "Desktop", "Local Agent X.lnk");
-    const startMenuDir = join(
-      process.env.APPDATA || join(homedir(), "AppData", "Roaming"),
-      "Microsoft", "Windows", "Start Menu", "Programs",
-    );
-    const startLnk = join(startMenuDir, "Local Agent X.lnk");
-    if (!existsSync(startMenuDir)) mkdirSync(startMenuDir, { recursive: true });
-
-    // Single-quoted PowerShell strings: backslashes are literal, no var
-    // interpolation. Safe for Windows paths absent apostrophes in usernames.
-    const mkShortcut = (lnk) =>
-      `$s=(New-Object -ComObject WScript.Shell).CreateShortcut('${lnk}');` +
-      `$s.TargetPath='${batPath}';` +
-      `$s.WorkingDirectory='${repoRoot}';` +
-      (existsSync(iconPath) ? `$s.IconLocation='${iconPath}';` : "") +
-      `$s.Description='Local Agent X';` +
-      `$s.Save()`;
-    const ps = `${mkShortcut(desktopLnk)}; ${mkShortcut(startLnk)}`;
+    // Single-quoted PowerShell strings: backslashes literal, no var
+    // interpolation. Apostrophes in usernames would break this; PS doesn't
+    // support a clean escape inside single-quoted literals other than ''
+    // doubling — accept that as an unlikely edge case rather than complicate.
+    const psBat = batPath.replace(/'/g, "''");
+    const psRepo = repoRoot.replace(/'/g, "''");
+    const psIcon = existsSync(iconPath) ? iconPath.replace(/'/g, "''") : "";
+    const ps = [
+      `$batPath  = '${psBat}'`,
+      `$repoRoot = '${psRepo}'`,
+      `$iconPath = '${psIcon}'`,
+      `$desktop  = [Environment]::GetFolderPath('Desktop')`,
+      `$startMenu = Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs'`,
+      `if (-not (Test-Path $startMenu)) { New-Item -ItemType Directory -Force -Path $startMenu | Out-Null }`,
+      `foreach ($dir in @($desktop, $startMenu)) {`,
+      `  if (-not (Test-Path $dir)) { Write-Output "[skip] $dir (not present)"; continue }`,
+      `  $lnk = Join-Path $dir 'Local Agent X.lnk'`,
+      `  $s = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)`,
+      `  $s.TargetPath = $batPath`,
+      `  $s.WorkingDirectory = $repoRoot`,
+      `  if ($iconPath) { $s.IconLocation = $iconPath }`,
+      `  $s.Description = 'Local Agent X'`,
+      `  $s.Save()`,
+      `  Write-Output "[ok]   $lnk"`,
+      `}`,
+    ].join("; ");
 
     const r = spawnSync(
       "powershell",
@@ -276,7 +295,7 @@ if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
       { stdio: "inherit" },
     );
     if (r.status === 0) {
-      ok("Shortcuts created: Desktop + Start Menu");
+      ok("Shortcuts created (Desktop + Start Menu, resolved via Known Folders API)");
       appInstalled = true;
     } else {
       warn(`Shortcut creation failed (exit ${r.status}) — launch manually: ${batPath}`);

@@ -41,6 +41,9 @@
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:#2a2a4e}
+[data-theme="light"] *{scrollbar-color:#d0d0d8 transparent}
+[data-theme="light"] ::-webkit-scrollbar-thumb{background:#d0d0d8}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover{background:#b0b0bc}
 body{font-family:var(--font);background:var(--bg);color:var(--text);height:100vh;display:flex;overflow:hidden}
 /* simple-mode removed — all features visible to all users */
 /* Electron desktop: title bar pushes entire app down */

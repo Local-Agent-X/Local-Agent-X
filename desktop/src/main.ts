@@ -569,11 +569,7 @@ function createWindow(): void {
         // failure for the TV Remote app: the app's "Input" button was
         // covered by the close button).
         titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
-        titleBarOverlay: process.platform === "darwin" ? undefined : {
-          color: "#0a0a0f",
-          symbolColor: "#40f0f0",
-          height: 32,
-        },
+        titleBarOverlay: process.platform === "darwin" ? undefined : overlayForTheme(getSetting("theme")),
         webPreferences: {
           preload: join(__dirname, "preload.js"),
           contextIsolation: true,
@@ -589,15 +585,26 @@ function createWindow(): void {
       // for min/max/X). Mac → 80px on the left (traffic-light bounds).
       // Runs on every navigation so SPA-internal route changes inside
       // an app keep the drag region.
+      //
+      // App pages are arbitrary user-built HTML — they don't share LAX's
+      // :root CSS variables. So the strip's background can't use var(--bg);
+      // we bake the theme-appropriate translucent fill in at injection
+      // time. New windows opened later pick up the current theme; an
+      // already-open app window keeps its strip color from when it
+      // opened (acceptable — apps tend to be short-lived popups).
       appWin.webContents.on("did-finish-load", () => {
         const reserveLeft = process.platform === "darwin" ? 80 : 0;
         const reserveRight = process.platform === "darwin" ? 0 : 138;
+        const theme = getSetting("theme");
+        const isDark = theme === "dark" || (theme === "system" && nativeTheme.shouldUseDarkColors);
+        const stripBg = isDark ? "rgba(10,10,15,0.85)" : "rgba(245,245,247,0.85)";
+        const stripBorder = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.08)";
         const js = `
           (() => {
             if (document.getElementById('__lax_drag_strip')) return;
             const bar = document.createElement('div');
             bar.id = '__lax_drag_strip';
-            bar.style.cssText = 'position:fixed;top:0;left:${reserveLeft}px;right:${reserveRight}px;height:32px;z-index:2147483647;background:rgba(10,10,15,0.85);backdrop-filter:blur(8px);-webkit-app-region:drag;border-bottom:1px solid rgba(255,255,255,0.06);pointer-events:auto;';
+            bar.style.cssText = 'position:fixed;top:0;left:${reserveLeft}px;right:${reserveRight}px;height:32px;z-index:2147483647;background:${stripBg};backdrop-filter:blur(8px);-webkit-app-region:drag;border-bottom:1px solid ${stripBorder};pointer-events:auto;';
             document.body.appendChild(bar);
             // Push page content down so the app's own UI doesn't sit
             // under the drag strip. Add to existing padding rather than

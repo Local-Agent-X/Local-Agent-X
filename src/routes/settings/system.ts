@@ -105,5 +105,45 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
     return true;
   }
 
+  // Apply update — git pull on the live repo, then let the caller trigger
+  // a server restart (the desktop wrapper has IPC for that; browser users
+  // restart manually). Server runs from src/ via tsx now (commit 260fd54),
+  // so there's no compile step in this flow — pull + respawn is enough.
+  if (method === "POST" && url.pathname === "/api/updates/apply") {
+    try {
+      const { execSync } = await import("node:child_process");
+      // cwd is the repo root for both Electron-spawned and npm-run-dev paths
+      // (per desktop/src/main.ts startServer which sets cwd: PROJECT_ROOT,
+      // and standard npm script execution). Avoids brittle ../../../ math.
+      const repoRoot = process.cwd();
+      // Pre-flight: make sure this looks like the repo and that the working
+      // tree is clean. Pulling onto uncommitted changes is the #1 way users
+      // brick their install — refuse it loudly instead of failing mid-pull.
+      let fromCommit = "";
+      try { fromCommit = execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }).trim(); }
+      catch { json(400, { ok: false, error: "Not a git repository — auto-update needs a git checkout. Reinstall from GitHub to enable updates." }); return true; }
+      const dirty = execSync("git status --porcelain", { cwd: repoRoot, encoding: "utf-8" }).trim();
+      if (dirty) {
+        json(409, { ok: false, error: "Local changes detected. Commit or stash before updating.", dirty: dirty.split("\n").slice(0, 10) });
+        return true;
+      }
+      // Pull. Use --ff-only so we never auto-merge — if remote diverges
+      // from local (impossible in normal usage, but guards against a
+      // user with a custom branch), bail with a clear message.
+      let pullOutput = "";
+      try { pullOutput = execSync("git pull --ff-only", { cwd: repoRoot, encoding: "utf-8" }); }
+      catch (e) {
+        const err = e as { stderr?: Buffer | string; message: string };
+        const stderr = typeof err.stderr === "string" ? err.stderr : err.stderr?.toString() || "";
+        json(500, { ok: false, error: `git pull failed: ${stderr || err.message}` });
+        return true;
+      }
+      const toCommit = execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }).trim();
+      _updateCache = null; // bust the check cache so next probe shows fresh state
+      json(200, { ok: true, fromCommit, toCommit, output: pullOutput.trim() });
+    } catch (e) { json(500, { ok: false, error: safeErrorMessage(e) }); }
+    return true;
+  }
+
   return false;
 };

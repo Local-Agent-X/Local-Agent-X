@@ -110,6 +110,17 @@ function bgForTheme(theme: DesktopSettings["theme"]): string {
   return "#0a0a0f";
 }
 
+// Windows titleBarOverlay control colors. Native widget, can't use CSS vars,
+// so we resolve to concrete hex per theme and call setTitleBarOverlay()
+// whenever the renderer's theme changes. Without this the min/max/X strip
+// stays dark even in light mode — visible black band across the top.
+function overlayForTheme(theme: DesktopSettings["theme"]): { color: string; symbolColor: string; height: number } {
+  const isDark = theme === "dark" || (theme === "system" && nativeTheme.shouldUseDarkColors);
+  return isDark
+    ? { color: "#0a0a0f", symbolColor: "#40f0f0", height: 32 }
+    : { color: "#ffffff", symbolColor: "#1a1a2e", height: 32 };
+}
+
 function loadSettings(): DesktopSettings {
   try {
     if (existsSync(DESKTOP_SETTINGS_PATH)) {
@@ -290,11 +301,7 @@ function createWindow(): void {
     // (see did-finish-load handler below) and use titleBarOverlay for
     // the min/max/X buttons.
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
-    titleBarOverlay: process.platform === "darwin" ? undefined : {
-      color: "#0a0a0f",
-      symbolColor: "#40f0f0",
-      height: 32,
-    },
+    titleBarOverlay: process.platform === "darwin" ? undefined : overlayForTheme(getSetting("theme")),
     backgroundColor: bgForTheme(getSetting("theme")),
     show: false,
     webPreferences: {
@@ -322,7 +329,7 @@ function createWindow(): void {
         if (document.getElementById('desktop-titlebar')) return;
         const bar = document.createElement('div');
         bar.id = 'desktop-titlebar';
-        bar.style.cssText = 'position:fixed;top:0;left:0;right:138px;height:32px;z-index:99999;display:flex;align-items:center;background:#0a0a0f;-webkit-app-region:drag;font-family:"Segoe UI",sans-serif;font-size:12px;user-select:none;';
+        bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:32px;z-index:99999;display:flex;align-items:center;background:var(--bg, #0a0a0f);-webkit-app-region:drag;font-family:"Segoe UI",sans-serif;font-size:12px;user-select:none;';
 
         const menus = [
           { label:'File', items:['New Session','Restart Server','—','Quit'] },
@@ -335,7 +342,7 @@ function createWindow(): void {
         let openMenu = null;
         function closeAllMenus() {
           document.querySelectorAll('.dtb-dd').forEach(d => d.style.display='none');
-          document.querySelectorAll('.dtb-btn').forEach(b => { b.style.color='#888'; b.style.background=''; });
+          document.querySelectorAll('.dtb-btn').forEach(b => { b.style.color='var(--muted, #888)'; b.style.background=''; });
           openMenu = null;
         }
         document.addEventListener('click', (e) => {
@@ -351,22 +358,22 @@ function createWindow(): void {
           const btn = document.createElement('div');
           btn.className = 'dtb-btn';
           btn.textContent = menu.label;
-          btn.style.cssText = 'padding:4px 8px;color:#888;cursor:pointer;-webkit-app-region:no-drag;position:relative;';
+          btn.style.cssText = 'padding:4px 8px;color:var(--muted, #888);cursor:pointer;-webkit-app-region:no-drag;position:relative;';
 
           const dd = document.createElement('div');
           dd.className = 'dtb-dd';
-          dd.style.cssText = 'display:none;position:absolute;top:100%;left:0;background:#0a0a0f;border:1px solid #1a1a2f;min-width:180px;box-shadow:0 4px 12px rgba(0,0,0,0.5);z-index:100000;padding:4px 0;';
+          dd.style.cssText = 'display:none;position:absolute;top:100%;left:0;background:var(--bg, #0a0a0f);border:1px solid var(--border, #1a1a2f);min-width:180px;box-shadow:0 4px 12px rgba(0,0,0,0.5);z-index:100000;padding:4px 0;';
 
           menu.items.forEach(item => {
             if (item === '—') {
               const sep = document.createElement('div');
-              sep.style.cssText = 'height:1px;background:#1a1a2f;margin:4px 0;';
+              sep.style.cssText = 'height:1px;background:var(--border, #1a1a2f);margin:4px 0;';
               dd.appendChild(sep);
             } else {
               const it = document.createElement('div');
               it.textContent = item;
-              it.style.cssText = 'padding:6px 12px;color:#ccc;cursor:pointer;';
-              it.onmouseenter = () => it.style.background='#1a1a2f';
+              it.style.cssText = 'padding:6px 12px;color:var(--text, #ccc);cursor:pointer;';
+              it.onmouseenter = () => it.style.background='var(--hover, #1a1a2f)';
               it.onmouseleave = () => it.style.background='';
               it.onclick = (e) => {
                 e.stopPropagation();
@@ -397,16 +404,16 @@ function createWindow(): void {
             if (openMenu === dd) { closeAllMenus(); return; }
             closeAllMenus();
             dd.style.display='block';
-            btn.style.color='#40f0f0';
-            btn.style.background='#1a1a2f';
+            btn.style.color='var(--accent, #40f0f0)';
+            btn.style.background='var(--hover, #1a1a2f)';
             openMenu = dd;
           };
           btn.onmouseenter = () => {
             if (openMenu && openMenu !== dd) {
               closeAllMenus();
               dd.style.display='block';
-              btn.style.color='#40f0f0';
-              btn.style.background='#1a1a2f';
+              btn.style.color='var(--accent, #40f0f0)';
+              btn.style.background='var(--hover, #1a1a2f)';
               openMenu = dd;
             }
           };
@@ -803,7 +810,11 @@ function setupIPC(): void {
     if (key === "theme") {
       // Live-update the window paint colour so the top strip flips with the
       // rest of the UI instead of staying dark until the next launch.
-      mainWindow?.setBackgroundColor(bgForTheme(value as DesktopSettings["theme"]));
+      const t = value as DesktopSettings["theme"];
+      mainWindow?.setBackgroundColor(bgForTheme(t));
+      if (process.platform !== "darwin") {
+        try { mainWindow?.setTitleBarOverlay(overlayForTheme(t)); } catch { /* not available pre-Electron 25 */ }
+      }
     }
   });
 

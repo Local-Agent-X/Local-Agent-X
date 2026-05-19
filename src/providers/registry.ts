@@ -99,7 +99,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     id: "codex",
     label: "OpenAI Codex",
     models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
-    defaultModel: "gpt-5.4",
+    defaultModel: "gpt-5.5",
     // Codex uses ChatGPT OAuth via getApiKey(); chat-runner routes it
     // through its own adapter, not openai-compat. baseURL here is the
     // direct OpenAI endpoint as a fallback for any HTTP path that does

@@ -121,6 +121,17 @@ function overlayForTheme(theme: DesktopSettings["theme"]): { color: string; symb
     : { color: "#ffffff", symbolColor: "#1a1a2e", height: 32 };
 }
 
+// Tells Windows itself which theme our app prefers. Without this set,
+// Windows paints the title bar overlay using the OS-level light/dark
+// setting on first frame — before Electron applies our titleBarOverlay
+// config. Symptom: LAX is in dark mode but the X/min/max strip paints
+// white briefly until a theme toggle "wakes up" the overlay. Setting
+// nativeTheme.themeSource forces Windows into our chosen palette at
+// the OS chrome level, so the first paint is already correct.
+function applyNativeTheme(theme: DesktopSettings["theme"]): void {
+  nativeTheme.themeSource = theme === "light" ? "light" : theme === "dark" ? "dark" : "system";
+}
+
 function loadSettings(): DesktopSettings {
   try {
     if (existsSync(DESKTOP_SETTINGS_PATH)) {
@@ -856,6 +867,7 @@ function setupIPC(): void {
       // Live-update the window paint colour so the top strip flips with the
       // rest of the UI instead of staying dark until the next launch.
       const t = value as DesktopSettings["theme"];
+      applyNativeTheme(t);
       mainWindow?.setBackgroundColor(bgForTheme(t));
       if (process.platform !== "darwin") {
         try { mainWindow?.setTitleBarOverlay(overlayForTheme(t)); } catch { /* not available pre-Electron 25 */ }
@@ -902,6 +914,14 @@ function setupIPC(): void {
 
 app.on("ready", async () => {
   saxConfig = loadSAXConfig();
+
+  // Sync Windows' own chrome theme to our renderer's theme BEFORE the
+  // window opens. Otherwise the OS paints the titleBarOverlay strip in
+  // the system theme on first frame, producing a brief wrong-color
+  // flash that some users see as a permanent mismatch until they
+  // toggle theme manually (which calls setTitleBarOverlay and forces
+  // a repaint).
+  applyNativeTheme(getSetting("theme"));
 
   // Native macOS menu — gated to darwin internally. Sets the app-wide
   // application menu containing New Session, Restart Server, Show/Hide

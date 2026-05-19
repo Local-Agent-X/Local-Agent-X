@@ -45,10 +45,12 @@ const DESKTOP_SETTINGS_PATH = join(SAX_DIR, "desktop-settings.json");
 const PROJECT_ROOT = (() => {
   const devRoot = resolve(__dirname, "..", "..");
   if (!app.isPackaged) return devRoot;
-  // Packaged: read projectRoot from ~/.lax/config.json so we always run latest code
+  // Packaged: read projectRoot from ~/.lax/config.json so we always run latest code.
+  // Sentinel is src/index.ts (not dist/index.js) — we run the server from src
+  // via tsx now, so dist may not exist on a fresh install or after a clean.
   try {
     const cfg = JSON.parse(readFileSync(join(homedir(), ".lax", "config.json"), "utf-8"));
-    if (cfg.projectRoot && existsSync(join(cfg.projectRoot, "dist", "index.js"))) {
+    if (cfg.projectRoot && existsSync(join(cfg.projectRoot, "src", "index.ts"))) {
       return resolve(cfg.projectRoot);
     }
   } catch {}
@@ -161,21 +163,23 @@ async function isServerRunning(): Promise<boolean> {
 function startServer(): void {
   if (serverProcess) return;
 
-  // Prefer the compiled build (faster startup, lower memory). Fall back to
-  // tsx so the .app still works when `npm run build` is broken or skipped —
-  // matches what `npm run dev` does and survives mid-refactor states where
-  // dist/ won't compile.
-  const distIndex = join(PROJECT_ROOT, "dist", "index.js");
+  // Always run the server from src/index.ts via tsx. We deliberately do NOT
+  // prefer a compiled dist/ even when present — that path created a recurring
+  // "I changed source but the running code is stale" class of bug: users (and
+  // the Restart Server menu) respawn the server expecting their src/ edits
+  // to take effect, but the spawn pointed at an older dist/index.js until
+  // someone remembered to `npm run build`. tsx adds ~2s to cold start
+  // (negligible against the full Electron + Ollama + memory-warm boot) in
+  // exchange for "what's on disk in src/ IS what runs" — structurally
+  // impossible for the two to drift. `npm run build` still exists for
+  // packaging a binary distribution without source; the runtime path
+  // doesn't depend on it.
   const srcIndex = join(PROJECT_ROOT, "src", "index.ts");
-  const useCompiled = existsSync(distIndex);
-  const nodeArgs = useCompiled
-    ? ["--max-old-space-size=4096", distIndex]
-    : ["--max-old-space-size=4096", "--import=tsx", srcIndex];
-
-  if (!useCompiled && !existsSync(srcIndex)) {
-    console.error("[desktop] Neither dist/index.js nor src/index.ts found in PROJECT_ROOT — refusing to start");
+  if (!existsSync(srcIndex)) {
+    console.error(`[desktop] src/index.ts not found at ${srcIndex} — refusing to start`);
     return;
   }
+  const nodeArgs = ["--max-old-space-size=4096", "--import=tsx", srcIndex];
 
   // GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal PATH
   // that excludes Homebrew, nvm, and asdf. Augment so `node` resolves whether
@@ -188,7 +192,7 @@ function startServer(): void {
   const existingPath = (process.env.PATH || "").split(":");
   const augmentedPath = [...PATH_AUGMENTS, ...existingPath].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
 
-  console.log(`[desktop] Starting SAX server (${useCompiled ? "compiled" : "tsx"} mode)...`);
+  console.log(`[desktop] Starting LAX server (tsx, ${srcIndex})...`);
   serverProcess = spawn("node", nodeArgs, {
     cwd: PROJECT_ROOT,
     stdio: ["ignore", "pipe", "pipe"],

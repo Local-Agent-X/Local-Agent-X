@@ -26,6 +26,13 @@ contextBridge.exposeInMainWorld("desktop", {
   // File operations
   openFile: (relativePath: string) => ipcRenderer.invoke("open-file", relativePath),
 
+  // App-window chrome tinting. App pages call this with their detected
+  // body background color and a contrasting symbol color; main repaints
+  // the native titleBarOverlay so the OS button strip blends with the
+  // app's content instead of clashing with LAX's theme.
+  reportChromeTint: (color: string, symbolColor: string) =>
+    ipcRenderer.invoke("report-chrome-tint", color, symbolColor),
+
   // Server-crash signal: main fires "server-crashed" when the spawned
   // node server exits uncleanly (OOM / SIGKILL / nonzero code). The
   // renderer can subscribe to clear stuck "typing…" state and show a

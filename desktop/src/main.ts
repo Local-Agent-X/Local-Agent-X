@@ -278,8 +278,15 @@ function createWindow(): void {
     minHeight: 400,
     icon: ICON_PATH,
     title: "",
-    titleBarStyle: "hidden",
-    titleBarOverlay: {
+    // macOS: "hiddenInset" hides the visual title bar but keeps a native
+    // drag region (the top ~28px) so the window stays draggable and the
+    // traffic-light buttons sit inside our content area. With plain
+    // "hidden" the user has no way to move the window short of toggling
+    // fullscreen. Windows/Linux keep the JS-injected branded titlebar
+    // (see did-finish-load handler below) and use titleBarOverlay for
+    // the min/max/X buttons.
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+    titleBarOverlay: process.platform === "darwin" ? undefined : {
       color: "#0a0a0f",
       symbolColor: "#40f0f0",
       height: 32,
@@ -543,8 +550,15 @@ function createWindow(): void {
         icon: ICON_PATH,
         backgroundColor: bgForTheme(getSetting("theme")),
         frame: false,
-        titleBarStyle: "hidden",
-        titleBarOverlay: {
+        // Mac: "hiddenInset" puts the traffic lights inside our content
+        // with a native drag region. Windows: keep titleBarOverlay for
+        // min/max/X buttons in the top-right; we inject a draggable
+        // strip below so users can move the window and the OS buttons
+        // don't sit on top of the app's own UI (which was the live
+        // failure for the TV Remote app: the app's "Input" button was
+        // covered by the close button).
+        titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+        titleBarOverlay: process.platform === "darwin" ? undefined : {
           color: "#0a0a0f",
           symbolColor: "#40f0f0",
           height: 32,
@@ -558,6 +572,32 @@ function createWindow(): void {
       });
       const separator = url.includes("?") ? "&" : "?";
       appWin.loadURL(`${url}${separator}token=${saxConfig.authToken}`);
+      // Inject a draggable strip on every page load. Reserve a slot on
+      // the platform-appropriate side so the OS controls stay clickable:
+      // Windows/Linux → 138px on the right (matches titleBarOverlay width
+      // for min/max/X). Mac → 80px on the left (traffic-light bounds).
+      // Runs on every navigation so SPA-internal route changes inside
+      // an app keep the drag region.
+      appWin.webContents.on("did-finish-load", () => {
+        const reserveLeft = process.platform === "darwin" ? 80 : 0;
+        const reserveRight = process.platform === "darwin" ? 0 : 138;
+        const js = `
+          (() => {
+            if (document.getElementById('__lax_drag_strip')) return;
+            const bar = document.createElement('div');
+            bar.id = '__lax_drag_strip';
+            bar.style.cssText = 'position:fixed;top:0;left:${reserveLeft}px;right:${reserveRight}px;height:32px;z-index:2147483647;background:rgba(10,10,15,0.85);backdrop-filter:blur(8px);-webkit-app-region:drag;border-bottom:1px solid rgba(255,255,255,0.06);pointer-events:auto;';
+            document.body.appendChild(bar);
+            // Push page content down so the app's own UI doesn't sit
+            // under the drag strip. Add to existing padding rather than
+            // overwriting in case the app set its own.
+            const cs = getComputedStyle(document.body);
+            const cur = parseInt(cs.paddingTop) || 0;
+            if (cur < 32) document.body.style.paddingTop = (cur + 32) + 'px';
+          })();
+        `;
+        appWin.webContents.executeJavaScript(js).catch(() => { /* page unloaded */ });
+      });
       return { action: "deny" };
     }
     return { action: "deny" };

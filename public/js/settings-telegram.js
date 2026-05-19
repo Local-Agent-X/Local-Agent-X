@@ -80,6 +80,7 @@ async function tgConnect() {
 
 async function tgDisconnect() {
   if (!confirm('Disconnect Telegram bot?')) return;
-  try { await apiPost('/api/telegram/disconnect', {}); } catch {}
+  try { await apiPost('/api/telegram/disconnect', {}); }
+  catch (e) { console.error('Telegram disconnect failed:', e); }
   await tgCheckStatus();
 }

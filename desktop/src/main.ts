@@ -597,14 +597,23 @@ function createWindow(): void {
         const reserveRight = process.platform === "darwin" ? 0 : 138;
         const theme = getSetting("theme");
         const isDark = theme === "dark" || (theme === "system" && nativeTheme.shouldUseDarkColors);
-        const stripBg = isDark ? "rgba(10,10,15,0.85)" : "rgba(245,245,247,0.85)";
+        // Match the native titleBarOverlay's color EXACTLY (fully opaque,
+        // same hex used in overlayForTheme above). Earlier this was
+        // rgba(...,0.85) with backdrop-filter:blur for a frosted-glass
+        // look, but the 15% transparency made the strip's luminance
+        // diverge from the OS overlay's solid fill on the right side —
+        // appeared as a faint horizontal seam between the two halves.
+        // Solid matches both sides and eliminates the gap entirely; we
+        // lose the glass effect (the user's stated requirement was
+        // "looks like one bar, no seam", not "preserve frosted look").
+        const stripBg = isDark ? "#0a0a0f" : "#ffffff";
         const stripBorder = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.08)";
         const js = `
           (() => {
             if (document.getElementById('__lax_drag_strip')) return;
             const bar = document.createElement('div');
             bar.id = '__lax_drag_strip';
-            bar.style.cssText = 'position:fixed;top:0;left:${reserveLeft}px;right:${reserveRight}px;height:32px;z-index:2147483647;background:${stripBg};backdrop-filter:blur(8px);-webkit-app-region:drag;border-bottom:1px solid ${stripBorder};pointer-events:auto;';
+            bar.style.cssText = 'position:fixed;top:0;left:${reserveLeft}px;right:${reserveRight}px;height:32px;z-index:2147483647;background:${stripBg};-webkit-app-region:drag;border-bottom:1px solid ${stripBorder};pointer-events:auto;';
             document.body.appendChild(bar);
             // Push page content down so the app's own UI doesn't sit
             // under the drag strip. Add to existing padding rather than

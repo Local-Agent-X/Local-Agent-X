@@ -7,6 +7,27 @@ import { homedir } from "node:os";
 import { createLogger } from "./logger.js";
 const logger = createLogger("index");
 
+// Broken-pipe guard. Must be installed BEFORE any code writes to stdout/
+// stderr. If the parent process (Electron, terminal, supervisor) closes
+// its read end of our stdio, every console.log/error here throws EPIPE.
+// Without these listeners, the EPIPE becomes an "uncaughtException", the
+// crash guard below tries to log it via console.error, which writes to
+// the same dead pipe and throws another EPIPE, which fires another
+// uncaughtException — runaway recursion that wrote 2.5M log lines in 30s
+// on 2026-05-19, ballooning server.log past 500MB and pinning CPU at 100%.
+// Silently swallow EPIPE here; any other stream error still gets a single
+// file-only log line so we don't hide real problems.
+process.stderr.on("error", (err) => {
+  const code = (err as NodeJS.ErrnoException).code;
+  if (code === "EPIPE") return;
+  try { logStream.write(`[${new Date().toISOString()}] WARN stderr error: ${err.message}\n`); } catch {}
+});
+process.stdout.on("error", (err) => {
+  const code = (err as NodeJS.ErrnoException).code;
+  if (code === "EPIPE") return;
+  try { logStream.write(`[${new Date().toISOString()}] WARN stdout error: ${err.message}\n`); } catch {}
+});
+
 const logDir = join(homedir(), ".lax", "logs");
 if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true, mode: 0o700 });
 
@@ -49,6 +70,16 @@ console.warn = (...args: unknown[]) => {
 // EADDRINUSE is fatal: server can't function without a port, so exit
 // instead of letting background services (Telegram, cron) keep the process alive as a zombie
 process.on("uncaughtException", (err) => {
+  // EPIPE on stdout/stderr — silently drop. logger.error would write to
+  // the same dead pipe, throw another EPIPE, fire this handler again,
+  // and loop forever. The stderr/stdout error listeners at the top of
+  // this file should catch most cases; this is the second-line guard
+  // for EPIPEs that surface from elsewhere (subprocess stdio, ws frame
+  // writes during socket teardown, etc.).
+  if ((err as NodeJS.ErrnoException).code === "EPIPE") {
+    try { logStream.write(`[${timestamp()}] WARN [CRASH GUARD] suppressed EPIPE\n`); } catch {}
+    return;
+  }
   // Do NOT access err.stack synchronously here. The .stack getter triggers
   // V8's bytecode-source-position formatting for every frame, which can
   // pin the event loop at 100% CPU for minutes on deeply async errors

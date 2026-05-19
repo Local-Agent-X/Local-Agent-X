@@ -311,31 +311,35 @@ async function sendMessage() {
               streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
             }
             // Final DOM sync — flush any pending rAF render so the last chunk
-            // of content is visible, but DO NOT call renderMessages() which
-            // blows away the entire message list and causes a visible blink.
-            // The streaming bodyEl already has the full content from
-            // renderStreamContent; we only need to ensure the final frame landed.
+            // of content is visible. Re-resolve the bubble FRESH here:
+            // closure-captured `bodyEl` can be detached after a DOM rebuild
+            // (chat-switch+back, or a layout re-render mid-stream). The
+            // per-event refresh at line 199 keeps bodyEl current during the
+            // stream, but if the user reads a different chat and comes back
+            // right before 'done', bodyEl may point at a now-orphaned node;
+            // both paint branches below would then silently no-op and the
+            // user sees a blank bubble until they navigate away+back (which
+            // triggers renderMessages from session storage — the message
+            // was always persisted at lines 299-312, just never painted).
+            // Live failure 2026-05-18: assistant replies completed cleanly
+            // (Stop button hidden) but bubble stayed empty until leave+return.
             if (isViewingThis()) {
-              const pending = _streamRenderers.get(bodyEl);
-              if (pending && pending.raf) {
-                // rAF is pending — force it to flush now synchronously
-                cancelAnimationFrame(pending.raf);
-                pending.raf = 0;
-                const existingGroups = bodyEl.querySelectorAll('.activity-group');
-                const orphanCards = bodyEl.querySelectorAll(':scope > .tool-card, :scope > .approval-card');
-                bodyEl.innerHTML = pending.latest ? md(pending.latest) : '';
-                existingGroups.forEach(g => bodyEl.appendChild(g));
-                orphanCards.forEach(c => bodyEl.appendChild(c));
-              } else if (content && bodyEl) {
-                // No pending rAF — ensure DOM has latest content (in case last
-                // delta arrived on the same tick as 'done')
-                const existingGroups = bodyEl.querySelectorAll('.activity-group');
-                const orphanCards = bodyEl.querySelectorAll(':scope > .tool-card, :scope > .approval-card');
-                const currentMd = md(content);
-                if (bodyEl.innerHTML !== currentMd || existingGroups.length > 0 || orphanCards.length > 0) {
-                  bodyEl.innerHTML = currentMd;
-                  existingGroups.forEach(g => bodyEl.appendChild(g));
-                  orphanCards.forEach(c => bodyEl.appendChild(c));
+              const liveBubble = getBodyEl();
+              if (liveBubble) {
+                const pending = _streamRenderers.get(liveBubble);
+                if (pending && pending.raf) { cancelAnimationFrame(pending.raf); pending.raf = 0; }
+                // Prefer pending.latest (post-stream dedup/replace state)
+                // when present, else the accumulated `content` buffer.
+                const finalText = (pending && pending.latest) || content;
+                if (finalText) {
+                  const existingGroups = liveBubble.querySelectorAll('.activity-group');
+                  const orphanCards = liveBubble.querySelectorAll(':scope > .tool-card, :scope > .approval-card');
+                  const currentMd = md(finalText);
+                  if (liveBubble.innerHTML !== currentMd || existingGroups.length > 0 || orphanCards.length > 0) {
+                    liveBubble.innerHTML = currentMd;
+                    existingGroups.forEach(g => liveBubble.appendChild(g));
+                    orphanCards.forEach(c => liveBubble.appendChild(c));
+                  }
                 }
               }
             }

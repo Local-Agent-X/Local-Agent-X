@@ -10,7 +10,8 @@ async function settingsCheckUpdate() {
     const data = await res.json();
     if (data.updateAvailable) {
       status.style.color = 'var(--accent)';
-      status.innerHTML = `Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''} <a href="https://github.com/petermanrique101-sys/Local-Agent-X" target="_blank" style="color:var(--accent);margin-left:8px">View on GitHub</a>`;
+      const summary = `Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''}`;
+      status.innerHTML = `${summary} <button onclick="settingsApplyUpdate()" style="margin-left:10px;padding:4px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-weight:600">Update Now</button> <a href="https://github.com/petermanrique101-sys/Local-Agent-X" target="_blank" style="color:var(--muted);margin-left:8px;font-size:.8em">View on GitHub</a>`;
     } else {
       status.style.color = 'var(--accent)';
       status.textContent = 'You are up to date! (v' + (data.localVersion || '0.1.0') + ')';
@@ -18,6 +19,60 @@ async function settingsCheckUpdate() {
   } catch (e) {
     status.style.color = 'var(--error, red)';
     status.textContent = 'Could not check for updates.';
+  }
+}
+
+// Pull the latest source from GitHub and restart the server. Server runs
+// from src/ via tsx (no compile step), so a successful pull + respawn is
+// all that's needed for new code to take effect. Polls /api/health until
+// the new server is reachable, then reloads the page so the renderer
+// also picks up any changed public/ assets.
+async function settingsApplyUpdate() {
+  const status = document.getElementById('settings-update-status');
+  if (!status) return;
+  if (!confirm('Pull the latest version from GitHub and restart the server?')) return;
+  status.style.color = 'var(--muted)';
+  status.innerHTML = 'Pulling latest from GitHub...';
+  try {
+    const res = await apiFetch('/api/updates/apply', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      status.style.color = 'var(--error, red)';
+      status.textContent = data.error || 'Update failed. See server log for details.';
+      if (Array.isArray(data.dirty) && data.dirty.length) {
+        status.textContent += ' (Local changes: ' + data.dirty.slice(0, 3).join(', ') + (data.dirty.length > 3 ? '…' : '') + ')';
+      }
+      return;
+    }
+    status.innerHTML = `Pulled <code>${esc(data.fromCommit)}</code> → <code>${esc(data.toCommit)}</code>. Restarting server...`;
+    // Desktop wrapper has an IPC to restart the server child cleanly. In
+    // browser mode there's no equivalent — surface the manual step.
+    if (window.desktop && window.desktop.restartServer) {
+      try { await window.desktop.restartServer(); } catch (e) { console.warn('[update] restartServer IPC failed', e); }
+    } else {
+      status.innerHTML += ' <strong>Restart the server manually to load the new code.</strong>';
+      return;
+    }
+    // Poll /api/health until the new server is back. ~3s typical for tsx
+    // cold start; give it 30s before giving up.
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 750));
+      try {
+        const h = await fetch('/api/health', { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+        if (h.ok) {
+          status.style.color = 'var(--accent)';
+          status.innerHTML = 'Update applied. Reloading...';
+          setTimeout(() => location.reload(), 500);
+          return;
+        }
+      } catch { /* server still respawning */ }
+    }
+    status.style.color = 'var(--error, red)';
+    status.textContent = 'Update applied but server did not come back within 30s. Reload manually.';
+  } catch (e) {
+    status.style.color = 'var(--error, red)';
+    status.textContent = 'Update failed: ' + (e && e.message ? e.message : String(e));
   }
 }
 

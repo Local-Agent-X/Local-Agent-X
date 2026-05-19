@@ -597,24 +597,53 @@ function createWindow(): void {
         const reserveRight = process.platform === "darwin" ? 0 : 138;
         const theme = getSetting("theme");
         const isDark = theme === "dark" || (theme === "system" && nativeTheme.shouldUseDarkColors);
-        // Match the native titleBarOverlay's color EXACTLY (fully opaque,
-        // same hex used in overlayForTheme above). Earlier this was
-        // rgba(...,0.85) with backdrop-filter:blur for a frosted-glass
-        // look, but the 15% transparency made the strip's luminance
-        // diverge from the OS overlay's solid fill on the right side —
-        // appeared as a faint horizontal seam between the two halves.
-        // Solid matches both sides and eliminates the gap entirely; we
-        // lose the glass effect (the user's stated requirement was
-        // "looks like one bar, no seam", not "preserve frosted look").
-        const stripBg = isDark ? "#0a0a0f" : "#ffffff";
-        const stripBorder = isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.08)";
+        // Fallback used only when the app page has no detectable bg color
+        // (transparent body + transparent html). Matches LAX theme.
+        const fallbackBg = isDark ? "#0a0a0f" : "#ffffff";
         const js = `
           (() => {
             if (document.getElementById('__lax_drag_strip')) return;
+
+            // Sample the app's effective background so the top bar
+            // matches the page instead of LAX's theme. body bg first;
+            // fall back to html bg; fall back to LAX theme. App pages
+            // are arbitrary user-built HTML — they can be dark, light,
+            // or anything the agent painted them, independent of LAX's
+            // own theme. Reading the computed background here, painting
+            // the strip with it, and reporting it back to main for the
+            // OS overlay = both halves of the top 32px get the SAME
+            // exact color, no visible seam.
+            function readBg(el) {
+              const c = getComputedStyle(el).backgroundColor;
+              return (c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent') ? c : null;
+            }
+            const tint = readBg(document.body) || readBg(document.documentElement) || '${fallbackBg}';
+            // Parse rgb/rgba to compute luminance — pick a symbol color
+            // (the OS button icons) that contrasts against the tint.
+            const m = String(tint).match(/rgba?\\((\\d+)[,\\s]+(\\d+)[,\\s]+(\\d+)/);
+            let isDarkTint = false;
+            let hexTint = tint;
+            if (m) {
+              const r = +m[1], g = +m[2], b = +m[3];
+              isDarkTint = (0.299*r + 0.587*g + 0.114*b) / 255 < 0.5;
+              const toHex = (v) => ('0' + (+v).toString(16)).slice(-2);
+              hexTint = '#' + toHex(r) + toHex(g) + toHex(b);
+            } else {
+              isDarkTint = ${isDark ? "true" : "false"};
+            }
+            const symbolColor = isDarkTint ? '#e0e0e8' : '#1a1a2e';
+
             const bar = document.createElement('div');
             bar.id = '__lax_drag_strip';
-            bar.style.cssText = 'position:fixed;top:0;left:${reserveLeft}px;right:${reserveRight}px;height:32px;z-index:2147483647;background:${stripBg};-webkit-app-region:drag;border-bottom:1px solid ${stripBorder};pointer-events:auto;';
+            bar.style.cssText = 'position:fixed;top:0;left:${reserveLeft}px;right:${reserveRight}px;height:32px;z-index:2147483647;background:' + tint + ';-webkit-app-region:drag;pointer-events:auto;';
             document.body.appendChild(bar);
+
+            // Tell main to repaint the native OS button strip with the
+            // same color we used for our drag region. After this fires
+            // there's no visible boundary between strip and overlay.
+            if (window.desktop && window.desktop.reportChromeTint) {
+              try { window.desktop.reportChromeTint(hexTint, symbolColor); } catch (e) {}
+            }
             // Push page content down so the app's own UI doesn't sit
             // under the drag strip. Add to existing padding rather than
             // overwriting in case the app set its own.
@@ -853,6 +882,19 @@ function setupIPC(): void {
   ipcMain.handle("quit-app", () => {
     isQuitting = true;
     app.quit();
+  });
+
+  // App child windows ping us with their sampled body bg + a contrasting
+  // symbol color so the native min/max/X overlay can be repainted to
+  // match. Eliminates the "LAX-theme top bar over differently-themed
+  // app content" seam — strip and overlay share whatever color the app
+  // chose for itself. No-op on macOS (no titleBarOverlay) and for the
+  // main window (its overlay is theme-driven, not content-driven).
+  ipcMain.handle("report-chrome-tint", (event, color: string, symbolColor: string) => {
+    if (process.platform === "darwin") return;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win === mainWindow) return;
+    try { win.setTitleBarOverlay({ color, symbolColor, height: 32 }); } catch { /* not available */ }
   });
 }
 

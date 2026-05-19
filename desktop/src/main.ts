@@ -604,8 +604,16 @@ function createWindow(): void {
       // already-open app window keeps its strip color from when it
       // opened (acceptable — apps tend to be short-lived popups).
       appWin.webContents.on("did-finish-load", () => {
+        // On Mac, reserve 80px on the left for traffic lights (they paint
+        // on top, strip is invisible underneath). On Windows/Linux, extend
+        // the strip ALL the way to right:0 — the native titleBarOverlay
+        // paints over the strip's right edge with its own color, and any
+        // tiny system-painted gap between strip and overlay (visible as a
+        // dark sliver before the min button when themeSource is dark)
+        // gets covered. Previous version stopped at right:138px and left
+        // that gap exposed.
         const reserveLeft = process.platform === "darwin" ? 80 : 0;
-        const reserveRight = process.platform === "darwin" ? 0 : 138;
+        const reserveRight = 0;
         const theme = getSetting("theme");
         const isDark = theme === "dark" || (theme === "system" && nativeTheme.shouldUseDarkColors);
         // Fallback used only when the app page has no detectable bg color

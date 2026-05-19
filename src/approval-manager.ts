@@ -13,6 +13,7 @@
  * within one session. Still re-prompts across sessions (or after server restart).
  */
 import { existsSync, readFileSync } from "node:fs";
+import { getRuntimeConfig } from "./config.js";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { ServerEvent } from "./types.js";
@@ -47,30 +48,43 @@ const STRICT_EXTRA: ReadonlySet<string> = new Set([
 /** Back-compat export — the combined strict list. */
 export const DANGEROUS_TOOLS: ReadonlySet<string> = new Set([...SENSITIVE_TOOLS, ...STRICT_EXTRA]);
 
-/** Read approval mode from settings.json. Cached 1s to avoid disk I/O per call.
- *  Supports both new `approvalMode` key and the existing settings UI dropdown
- *  `toolApproval` (values: auto / confirm-risky / confirm-all).
+/** Read approval mode from runtime config (~/.lax/config.json). Cached 1s
+ *  to avoid disk I/O per call. The settings UI dropdown's POST handler at
+ *  routes/settings/preferences.ts persists toolApproval to config.json
+ *  (and updates ctx.config in-memory) — reading from getRuntimeConfig keeps
+ *  the gate in sync with what the UI saved. Previously this read settings.json
+ *  but the UI's POST writes config.json (mirroring how browserMode +
+ *  bridgeVoicePreference work), so the enforcement read and the persist
+ *  write were on different files and toggling the UI never moved the gate.
+ *  Live failure 2026-05-19: user set approval to Off in Settings; UI
+ *  showed Off; approval-manager kept reading settings.json (no value
+ *  there) and fell back to "sensitive", still prompted on edit/write.
  */
 let _cachedMode: ApprovalMode | null = null;
 let _modeCachedAt = 0;
 function loadApprovalMode(): ApprovalMode {
   if (_cachedMode && Date.now() - _modeCachedAt < 1000) return _cachedMode;
-  let mode: ApprovalMode = "sensitive";
+  let mode: ApprovalMode = "off";
   try {
-    const settingsPath = join(homedir(), ".lax", "settings.json");
-    if (existsSync(settingsPath)) {
-      const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as { approvalMode?: string; toolApproval?: string };
-      if (s.approvalMode === "off" || s.approvalMode === "sensitive" || s.approvalMode === "strict") {
-        mode = s.approvalMode;
-      } else if (s.toolApproval === "auto") {
-        mode = "off";
-      } else if (s.toolApproval === "confirm-all") {
-        mode = "strict";
-      } else if (s.toolApproval === "confirm-risky") {
-        mode = "sensitive";
+    const cfg = getRuntimeConfig();
+    if (cfg.toolApproval === "auto") mode = "off";
+    else if (cfg.toolApproval === "confirm-all") mode = "strict";
+    else if (cfg.toolApproval === "confirm-risky") mode = "sensitive";
+  } catch {
+    // config not initialized yet (very early boot) — also tolerate the
+    // legacy settings.json path so we never block tools just because
+    // config hasn't loaded yet.
+    try {
+      const settingsPath = join(homedir(), ".lax", "settings.json");
+      if (existsSync(settingsPath)) {
+        const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as { approvalMode?: string; toolApproval?: string };
+        if (s.approvalMode === "off" || s.approvalMode === "sensitive" || s.approvalMode === "strict") mode = s.approvalMode;
+        else if (s.toolApproval === "auto") mode = "off";
+        else if (s.toolApproval === "confirm-all") mode = "strict";
+        else if (s.toolApproval === "confirm-risky") mode = "sensitive";
       }
-    }
-  } catch {}
+    } catch {}
+  }
   _cachedMode = mode;
   _modeCachedAt = Date.now();
   return mode;

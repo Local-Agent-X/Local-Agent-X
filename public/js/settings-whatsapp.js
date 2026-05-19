@@ -94,7 +94,8 @@ async function waConnect() {
 
 async function waDisconnect() {
   if (!confirm('Disconnect WhatsApp?')) return;
-  try { await apiPost('/api/whatsapp/disconnect', {}); } catch {}
+  try { await apiPost('/api/whatsapp/disconnect', {}); }
+  catch (e) { console.error('WhatsApp disconnect failed:', e); }
   await waCheckStatus();
 }
 

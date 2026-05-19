@@ -239,7 +239,25 @@ if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
   } else {
     warn(`Could not copy to /Applications (permission denied?). Built app is at:\n  ${appBuildPath}`);
   }
-} else if (process.platform === "win32") {
+} else if (process.platform === "win32" && !process.env.SAX_SKIP_APP) {
+  // Build the Electron desktop subproject so desktop-launch.bat actually
+  // launches something. The .bat invokes desktop/node_modules/.bin/electron.cmd
+  // with desktop/dist/main.js — both produced here. We skip electron-builder
+  // (npm run dist) since the .bat invokes electron directly from the repo
+  // checkout, no packaged .exe needed. Live failure 2026-05-18: install
+  // completed and created shortcuts, but double-clicking either shortcut
+  // exited in milliseconds because dist/main.js + electron.cmd didn't exist.
+  log("Building Electron desktop bundle…");
+  let dr = run(
+    "npm",
+    ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`],
+    { cwd: "desktop" },
+  );
+  if (dr.status !== 0) fail("desktop npm install failed.");
+  dr = run("npm", ["run", "build"], { cwd: "desktop" });
+  if (dr.status !== 0) fail("desktop tsc build failed.");
+  ok("Desktop bundle built");
+
   // Create Desktop + Start Menu shortcuts pointing at desktop-launch.bat.
   // desktop-launch.bat uses %~dp0 to resolve its repo location, so the
   // shortcut Target stays pointed at the file in the repo — moving the

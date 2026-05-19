@@ -1,6 +1,7 @@
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, mkdirSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { spawn, spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { getAuthPath } from "./config.js";
@@ -8,6 +9,42 @@ import type { OAuthTokens } from "./types.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("auth");
+
+// ── Codex CLI auto-install on first OAuth success ──
+// Yesterday's bridge (commit 718c13d) writes tokens to ~/.codex/auth.json so
+// the CLI is *authenticated* once installed. But the bridge assumed CLI was
+// already on PATH — fresh users who only ran the LAX installer don't have
+// the global @openai/codex package. build_app then fails with "codex CLI
+// not available". This closes the gap: after the bridge writes auth.json,
+// check for the codex binary; if missing, install it (async, non-blocking).
+// One install per process via the in-flight Promise gate so we don't race.
+let _codexCliInstallInFlight: Promise<void> | null = null;
+function ensureCodexCliInstalled(): void {
+  if (_codexCliInstallInFlight) return;
+  // Fast check: is `codex --version` on PATH?
+  try {
+    const check = spawnSync("codex", ["--version"], { stdio: "ignore", shell: process.platform === "win32", timeout: 3000 });
+    if (check.status === 0) return; // already installed
+  } catch { /* fall through to install */ }
+  logger.info("[auth] Codex CLI not on PATH — installing @openai/codex globally (background)…");
+  _codexCliInstallInFlight = new Promise<void>((resolve) => {
+    const proc = spawn("npm", ["install", "-g", "@openai/codex"], {
+      stdio: "ignore",
+      shell: process.platform === "win32",
+    });
+    proc.on("exit", (code) => {
+      if (code === 0) logger.info("[auth] Codex CLI installed — build_app is now available");
+      else logger.warn(`[auth] Codex CLI install exited with ${code}. Install manually if needed: npm install -g @openai/codex`);
+      _codexCliInstallInFlight = null;
+      resolve();
+    });
+    proc.on("error", (e) => {
+      logger.warn(`[auth] Codex CLI install spawn failed: ${e.message}. Install manually: npm install -g @openai/codex`);
+      _codexCliInstallInFlight = null;
+      resolve();
+    });
+  });
+}
 
 // OpenAI Codex OAuth endpoints (shared public client ID for CLI tools)
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
@@ -163,6 +200,10 @@ function mirrorToCodexCli(tokens: OAuthTokens): void {
     writeFileSync(tmp, JSON.stringify(codexAuth, null, 2), { mode: 0o600 });
     renameSync(tmp, codexPath);
     logger.info(`[auth] mirrored tokens to ${codexPath} (Codex CLI bridge)`);
+    // Fire-and-forget: if codex binary isn't on PATH, install it. Bridge
+    // write succeeded means we have valid tokens — useless without the
+    // CLI to consume them. Non-blocking so token-save stays fast.
+    ensureCodexCliInstalled();
   } catch (e) {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
     logger.warn(`[auth] Codex CLI bridge write failed: ${(e as Error).message}`);

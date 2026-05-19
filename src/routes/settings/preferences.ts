@@ -68,14 +68,33 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       const { saveConfig } = await import("../../config.js");
       saveConfig(ctx.config);
     }
+    // Tool-approval mode is read from runtime config by approval-manager on
+    // every tool call. Without persisting to config.json + ctx.config, the
+    // UI dropdown can be set to "auto" while the gate continues to use the
+    // old value — user sees "Off" in Settings but still gets approval
+    // prompts on bash/build_app/etc. Live failure 2026-05-19. Mirrors the
+    // browserMode / bridgeVoicePreference handling above.
+    if (body.toolApproval === "auto" || body.toolApproval === "confirm-risky" || body.toolApproval === "confirm-all") {
+      ctx.config.toolApproval = body.toolApproval;
+      const { saveConfig } = await import("../../config.js");
+      saveConfig(ctx.config);
+    }
     json(200, { ok: true }); return true;
   }
   if (method === "GET" && url.pathname === "/api/settings") {
     const settingsPath = join(ctx.dataDir, "settings.json");
+    let merged: Record<string, unknown> = {};
     try {
-      if (existsSync(settingsPath)) { json(200, JSON.parse(readFileSync(settingsPath, "utf-8"))); }
-      else { json(200, {}); }
-    } catch { json(200, {}); }
+      if (existsSync(settingsPath)) merged = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    } catch {}
+    // Merge in config-backed fields the UI also reads through this endpoint,
+    // so the dropdowns reflect what the runtime actually uses (not just what
+    // was saved last via /api/settings). Without this, fresh installs and
+    // any prior change made via PROFILE_DEFAULTS / config.json directly are
+    // invisible to the UI — it looks like a default when the runtime is on
+    // a different value.
+    merged.toolApproval = ctx.config.toolApproval;
+    json(200, merged);
     return true;
   }
 

@@ -31,12 +31,24 @@ if (nodeMajor < NODE_MAJOR_MIN) {
 }
 ok(`Node v${process.versions.node}`);
 
-// 2. npm install — retry with legacy peer deps on first failure
+// 2. npm install — retry with legacy peer deps on first failure.
+// --loglevel=error hides the transitive-dep deprecation warnings (inflight,
+// lodash.isequal, rimraf@2, glob@7, etc.) that come from sub-deps we don't
+// directly control. Real errors still surface (npm prints those at error
+// level regardless of --loglevel). If a user needs the full output for
+// debugging, they can rerun with LAX_NPM_LOGLEVEL=warn.
+const npmLogLevel = process.env.LAX_NPM_LOGLEVEL || "error";
 log("Installing npm dependencies…");
-let res = run("npm", ["install", "--no-audit", "--no-fund"]);
+let res = run("npm", ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`]);
 if (res.status !== 0) {
   warn("First attempt failed. Retrying with --legacy-peer-deps…");
-  res = run("npm", ["install", "--no-audit", "--no-fund", "--legacy-peer-deps"]);
+  res = run("npm", [
+    "install",
+    "--no-audit",
+    "--no-fund",
+    `--loglevel=${npmLogLevel}`,
+    "--legacy-peer-deps",
+  ]);
   if (res.status !== 0) fail("npm install failed. See errors above.");
 }
 ok("npm dependencies installed");
@@ -193,7 +205,11 @@ let appBuildPath = null;
 if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
   log("Building Local Agent X.app — this is the slow step the first time (~3–5 min, ~500MB).");
 
-  let r = run("npm", ["install", "--no-audit", "--no-fund"], { cwd: "desktop" });
+  let r = run(
+    "npm",
+    ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`],
+    { cwd: "desktop" },
+  );
   if (r.status !== 0) fail("desktop npm install failed.");
 
   r = run("npm", ["run", "build"], { cwd: "desktop" });

@@ -274,7 +274,15 @@ export function setupChatWebSocket(server: Server, authToken: string) {
           });
           // Send the assistant's finalized text from op_messages (the
           // stream chunks are gone but the persisted assistant message
-          // contains the full reply).
+          // contains the full reply). MUST use `replace: true` with
+          // `text` (not `delta`) — the client's stream handler does
+          // `content += event.delta` for non-replace events, so a
+          // delta-shaped replay would CONCATENATE the full text onto
+          // already-streamed content and the bubble would visibly
+          // duplicate the response. Live failure 2026-05-19: same
+          // sentence appearing 2-3× stacked inside one bubble; fixed
+          // on chat-leave+return because renderMessages rebuilds from
+          // op_messages (single copy) rather than the doubled live state.
           if (result.ok) {
             try {
               const messages = readOpMessages(opId);
@@ -286,7 +294,7 @@ export function setupChatWebSocket(server: Server, authToken: string) {
                   ws.send(JSON.stringify({
                     type: "event",
                     sessionId,
-                    event: { type: "stream", delta: text },
+                    event: { type: "stream", text, replace: true },
                     _opId: opId,
                     _replay: true,
                   }));

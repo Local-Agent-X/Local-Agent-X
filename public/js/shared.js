@@ -75,6 +75,14 @@ function toggleTheme() {
   });
   // Re-read localStorage on DOMContentLoaded so a server-side theme fetched async still wins
   document.addEventListener('DOMContentLoaded', () => applyTheme(localStorage.getItem('sax_theme') || 'dark'));
+  // Sync the renderer's effective theme to the Electron wrapper on every
+  // page load. The wrapper's stored theme drives nativeTheme.themeSource +
+  // the native titleBarOverlay color at first frame on next launch. Without
+  // this, a user who toggled theme via a path other than toggleTheme()
+  // (e.g. early browser-only render, settings imported from another
+  // machine, defaults) ends up with renderer=dark, wrapper=system, and the
+  // OS chrome paints light because the wrapper still defers to OS. Idempotent.
+  try { window.desktop?.setSetting?.('theme', localStorage.getItem('sax_theme') || 'dark'); } catch {}
 })();
 
 // Settings change listener is in chat.js onmessage handler (more reliable — survives WS reconnects)

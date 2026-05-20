@@ -301,6 +301,44 @@ async function waitForServer(maxWaitMs = 60000): Promise<boolean> {
   return false;
 }
 
+// Branded loading screen shown INSTANTLY on window creation so a slow
+// server boot doesn't look like a frozen / broken app. Theme-aware so
+// the transition into the real app doesn't flash. Progressive hints
+// after 15s / 45s explain what's actually happening (first-run model
+// pulls, etc.) so the user doesn't keep clicking the dock icon.
+function buildSplashDataUrl(theme: string): string {
+  const isLight = theme === "light";
+  const bg = isLight ? "#f6f7fa" : "#0a0a0f";
+  const fg = isLight ? "#1a1a2e" : "#dddde8";
+  const dim = isLight ? "rgba(26,26,46,0.55)" : "rgba(221,221,232,0.55)";
+  const dimmer = isLight ? "rgba(26,26,46,0.35)" : "rgba(221,221,232,0.35)";
+  const ringTrack = isLight ? "rgba(26,26,46,0.10)" : "rgba(221,221,232,0.10)";
+  const accent = "#3a7";
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Local Agent X</title><style>
+html,body{margin:0;height:100%;background:${bg};color:${fg};font-family:"Segoe UI",-apple-system,system-ui,sans-serif;-webkit-app-region:drag;overflow:hidden;}
+.wrap{height:100%;display:flex;align-items:center;justify-content:center;}
+.card{text-align:center;-webkit-app-region:no-drag;}
+.brand{font-size:1.05rem;letter-spacing:0.22em;font-weight:600;opacity:0.92;margin-bottom:1.8rem;}
+.ring{width:34px;height:34px;border:3px solid ${ringTrack};border-top-color:${accent};border-radius:50%;animation:spin 0.9s linear infinite;margin:0 auto 1.1rem;}
+.status{font-size:0.82rem;color:${dim};}
+.hint{font-size:0.72rem;color:${dimmer};margin-top:0.6rem;min-height:1rem;transition:opacity 0.3s;opacity:0;}
+.hint.show{opacity:1;}
+@keyframes spin{to{transform:rotate(360deg);}}
+</style></head><body><div class="wrap"><div class="card">
+<div class="brand">LOCAL AGENT X</div>
+<div class="ring"></div>
+<div class="status">Starting…</div>
+<div class="hint" id="h"></div>
+</div></div><script>
+let s=0;const h=document.getElementById('h');
+setInterval(()=>{s++;
+if(s===15){h.textContent='First-time setup pulls models — this can take a minute.';h.classList.add('show');}
+else if(s===45){h.textContent='Still loading. Check ~/.lax/sax-server.log if this hangs.';}
+},1000);
+</script></body></html>`;
+  return "data:text/html;charset=utf-8," + encodeURIComponent(html);
+}
+
 // ── Window Management ─────────────────────────────────────
 
 function createWindow(): void {
@@ -336,29 +374,52 @@ function createWindow(): void {
   const url = `http://127.0.0.1:${saxConfig.port}/?token=${saxConfig.authToken}`;
   const serverOrigin = `http://127.0.0.1:${saxConfig.port}`;
 
-  // Renderer-side retry: if the server isn't responding yet (cold boot,
-  // restart, sleep wake), did-fail-load fires with chrome's "this site
-  // can't be reached" page. Without a retry the renderer sticks on
-  // chrome-error://chromewebdata/ forever and the user sees a blank
-  // window until they manually refresh — exact symptom on slower / fresh-
-  // install machines where waitForServer hit its ceiling before the
-  // server finished booting. We retry the load every 1s for up to 90s,
-  // which covers any realistic cold-start window without blocking
-  // forever on a truly dead server.
+  // Show the branded splash IMMEDIATELY so the user sees something the
+  // moment the window appears. Then poll the server's /api/health in
+  // the background and navigate to the real app the moment it answers.
+  // Replaces the previous "blank window for 30+ seconds while the
+  // server boots" failure mode that made new users think the app was
+  // broken and bail.
+  mainWindow.loadURL(buildSplashDataUrl(getSetting("theme")));
+
+  let navigatedToApp = false;
+  const HEALTH_POLL_DEADLINE_MS = 120_000;
+  const HEALTH_POLL_DELAY_MS = 500;
+  const navStartedAt = Date.now();
+
+  const pollAndNavigate = async (): Promise<void> => {
+    while (!navigatedToApp && Date.now() - navStartedAt < HEALTH_POLL_DEADLINE_MS) {
+      if (mainWindow == null || mainWindow.isDestroyed()) return;
+      if (await isServerRunning()) {
+        navigatedToApp = true;
+        mainWindow.loadURL(url);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, HEALTH_POLL_DELAY_MS));
+    }
+    // Reached deadline without the server coming up. Leave the splash
+    // visible — its 45-second hint already nudges the user toward the
+    // server log. Better than a stuck spinner with no explanation.
+    if (!navigatedToApp) {
+      console.error(`[desktop] Server didn't respond within ${HEALTH_POLL_DEADLINE_MS}ms — splash stays.`);
+    }
+  };
+  pollAndNavigate();
+
+  // Belt-and-suspenders: did-fail-load retry. If the real-app loadURL
+  // ever fails (server hiccup mid-session, sleep/wake, restart), retry
+  // up to 90s instead of leaving the renderer on chrome-error.
   const LOAD_RETRY_DEADLINE_MS = 90_000;
   const LOAD_RETRY_DELAY_MS = 1_000;
-  const loadStartedAt = Date.now();
   let retryPending = false;
+  let retryStartedAt = 0;
 
   mainWindow.webContents.on("did-fail-load", (_e, errorCode, _desc, validatedURL) => {
-    // errorCode -3 (ABORTED) fires whenever we navigate away mid-load
-    // (including our own retry); ignore.
     if (errorCode === -3) return;
-    // Only retry our own origin — sub-resources or external URLs we
-    // intentionally navigated to are not our concern.
     if (validatedURL && !validatedURL.startsWith(serverOrigin)) return;
     if (retryPending) return;
-    if (Date.now() - loadStartedAt > LOAD_RETRY_DEADLINE_MS) {
+    if (retryStartedAt === 0) retryStartedAt = Date.now();
+    if (Date.now() - retryStartedAt > LOAD_RETRY_DEADLINE_MS) {
       console.error(`[desktop] Gave up loading ${url} after ${LOAD_RETRY_DEADLINE_MS}ms — server not responding`);
       return;
     }
@@ -369,8 +430,6 @@ function createWindow(): void {
     }, LOAD_RETRY_DELAY_MS);
   });
 
-  mainWindow.loadURL(url);
-
   // Inject custom title bar menu into the page.
   // SKIP on macOS — Mac uses the native menu bar at the top of the screen
   // (Local Agent X | File | Edit | View | Window | Help) and the native
@@ -379,6 +438,12 @@ function createWindow(): void {
   // on Mac it duplicates chrome and clashes with system conventions.
   mainWindow.webContents.on("did-finish-load", () => {
     if (process.platform === "darwin") return;
+    // Don't inject the titlebar over the splash — it'd flash a menu
+    // bar across the loading screen and look broken on the
+    // splash→app transition. Skip anything that isn't the real LAX
+    // origin (splash is a data: URI; chrome-error is its own scheme).
+    const currentUrl = mainWindow?.webContents.getURL() ?? "";
+    if (!currentUrl.startsWith(serverOrigin)) return;
     mainWindow?.webContents.executeJavaScript(`
       (function() {
         if (document.getElementById('desktop-titlebar')) return;

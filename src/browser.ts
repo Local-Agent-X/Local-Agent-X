@@ -1,7 +1,7 @@
 import type { Browser, Page, BrowserContext, Download } from "playwright";
 import type { ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import { ObservationRegistry, type BrowserObservation } from "./browser/observation.js";
 import { clickRef, fillRef, clickByText as clickByTextAction } from "./browser/actions.js";
 import { waitForStability } from "./browser/stability.js";
@@ -26,7 +26,6 @@ function getDownloadsDir(): string {
 
 /** Filename collision: if "image.png" exists, save as "image-2.png", etc. */
 function uniqueDownloadPath(dir: string, suggested: string): string {
-  const { join } = require("node:path") as typeof import("node:path");
   const safe = suggested.replace(/[<>:"|?*\x00-\x1f]/g, "_") || "download.bin";
   let candidate = join(dir, safe);
   if (!existsSync(candidate)) return candidate;

@@ -1,0 +1,51 @@
+{
+  "description": "Tool-discovery eval. Each case is a single user message; the agent passes if the FIRST tool it calls is in `expected` (and none of `mustNotCall`). Measures whether the agent reaches for the right tool on the first try.",
+  "cases": [
+    { "id": "settings.shell-off",      "message": "turn off shell access",                                            "expected": ["setting"], "mustNotCall": ["bash", "edit", "write"] },
+    { "id": "settings.theme-dark",     "message": "switch to dark mode",                                              "expected": ["setting"], "mustNotCall": ["bash", "edit"] },
+    { "id": "settings.theme-light",    "message": "make it light mode",                                               "expected": ["setting"], "mustNotCall": ["bash", "edit"] },
+    { "id": "settings.http-off",       "message": "disable http requests",                                            "expected": ["setting"], "mustNotCall": ["bash", "edit", "write"] },
+    { "id": "settings.browser-off",    "message": "turn off the browser tool",                                        "expected": ["setting"], "mustNotCall": ["bash", "edit"] },
+    { "id": "settings.max-iter",       "message": "set max iterations to 50",                                         "expected": ["setting"], "mustNotCall": ["bash", "edit", "write"] },
+    { "id": "settings.tool-approval",  "message": "make every tool ask for approval first",                           "expected": ["setting"], "mustNotCall": ["bash", "edit"] },
+
+    { "id": "memory.save-pref",        "message": "remember that I prefer terse responses",                           "expected": ["memory_update_profile", "memory_save"], "mustNotCall": ["bash", "write"] },
+    { "id": "memory.recall",           "message": "what do you remember about my preferences?",                      "expected": ["memory_recall", "memory_search", "__text_ok__"], "mustNotCall": ["bash", "read"], "note": "Text reply from auto-loaded memory context is ALSO correct — eval scoring should accept that." },
+    { "id": "memory.forget",           "message": "forget what I said about the gym membership",                      "expected": ["memory_forget"], "mustNotCall": ["bash", "edit"] },
+
+    { "id": "files.read-readme",       "message": "what's in the readme?",                                            "expected": ["read"], "mustNotCall": ["bash"] },
+    { "id": "files.find-config",       "message": "find every package.json under the repo",                          "expected": ["glob"], "mustNotCall": ["bash"] },
+    { "id": "files.grep-todos",        "message": "search the codebase for TODO comments",                            "expected": ["grep"], "mustNotCall": ["bash"] },
+    { "id": "files.delete",            "message": "delete workspace/scratch.txt",                                     "expected": ["delete_file"], "mustNotCall": ["bash"] },
+
+    { "id": "web.search",              "message": "search the web for the latest claude model release",               "expected": ["web_search", "agent_spawn"], "mustNotCall": ["bash", "browser"], "note": "agent_spawn is acceptable — Alex's design intent is to delegate research-style work to a worker so main chat stays free." },
+    { "id": "web.fetch-url",           "message": "fetch the contents of https://example.com",                        "expected": ["web_fetch", "browser"], "mustNotCall": ["bash"] },
+
+    { "id": "browser.navigate",        "message": "open google.com in a browser",                                     "expected": ["browser"], "mustNotCall": ["bash", "http_request"] },
+
+    { "id": "delegate.research",       "message": "spawn an agent to research electric trucks",                       "expected": ["agent_spawn"], "mustNotCall": ["bash", "edit"] },
+    { "id": "delegate.list",           "message": "what agents do I have available?",                                 "expected": ["agent_list"], "mustNotCall": ["bash"] },
+
+    { "id": "cron.create",             "message": "remind me every monday at 9am to review the dashboard",            "expected": ["mission_schedule_create", "cron_create"], "mustNotCall": ["bash", "memory_save"] },
+
+    { "id": "sidebar.pin",             "message": "pin the calendar app to the sidebar",                              "expected": ["sidebar_pin", "http_request"], "mustNotCall": ["bash"] },
+
+    { "id": "secrets.request",         "message": "I have a github token I want to give you",                         "expected": ["request_secret"], "mustNotCall": ["bash", "memory_save"] },
+
+    { "id": "image.view",              "message": "look at workspace/screenshot.png and tell me what's in it",        "expected": ["view_image"], "mustNotCall": ["read", "bash"] },
+
+    { "id": "build.app",               "message": "build me a pomodoro timer app",                                    "expected": ["build_app"], "mustNotCall": ["write", "edit"] },
+
+    { "id": "protocol.find",           "message": "is there a saved playbook for posting to twitter?",                "expected": ["protocol_search", "protocol_list"], "mustNotCall": ["bash", "memory_search"] },
+
+    { "id": "self-edit.fix-bug",       "message": "self_edit a fix for the broken settings save",                     "expected": ["self_edit"], "mustNotCall": ["edit", "write"] },
+
+    { "id": "task.create",             "message": "add a task: ship the eval framework by friday",                    "expected": ["task_create"], "mustNotCall": ["memory_save", "bash"] },
+
+    { "id": "ask.clarify",             "message": "ask me what color scheme I want",                                  "expected": ["ask_user"], "mustNotCall": ["bash"] },
+
+    { "id": "ops.start",               "message": "start a long-horizon operation to migrate dns and verify mailboxes", "expected": ["operation_start", "agent_spawn"], "mustNotCall": ["bash"], "note": "agent_spawn is acceptable per delegation-design intent — both are valid for long-horizon work." },
+
+    { "id": "tool-search.unknown",     "message": "use the tool that fetches stock prices",                           "expected": ["tool_search"], "mustNotCall": ["bash", "http_request"] }
+  ]
+}

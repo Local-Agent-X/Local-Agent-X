@@ -11,9 +11,10 @@ export interface SyncConfig {
   /** When true (default), sync the mission catalog + schedules across machines.
    *  Files: custom-missions.json, mission-schedules.json. */
   syncMissions: boolean;
-  /** When true (default), sync user-imported protocol packs + custom typed
-   *  protocols across machines. Files: custom-protocols.json + the
-   *  ~/.lax/protocols/imported/ tree. */
+  /** When true (default), sync user-built protocols + imported SKILL.md packs
+   *  across machines. Protocols live under workspace/protocols/; this toggle
+   *  force-syncs that subtree even when syncWorkspace is OFF, so users who
+   *  don't want their full workspace propagated can still ship protocols. */
   syncProtocols: boolean;
   autoDownload: boolean;
 }
@@ -35,20 +36,11 @@ export const MISSION_FILES: ReadonlySet<string> = new Set([
   "mission-schedules.json",
 ]);
 
-/**
- * BRAIN_JSON_FILES entries governed by the syncProtocols toggle. The
- * `~/.lax/protocols/` tree (imported packs) is also gated by this toggle
- * on the dir-mirror side. Bundled protocols live in `protocols/bundled/`
- * inside the LAX repo and are shipped via git, not user sync — those
- * are NOT gated by syncProtocols.
- */
-export const PROTOCOL_FILES: ReadonlySet<string> = new Set([
-  "custom-protocols.json",
-]);
-
-export const PROTOCOL_DIRS: ReadonlySet<string> = new Set([
-  "protocols",
-]);
+// syncProtocols no longer gates any file under ~/.lax — protocols live
+// under workspace/protocols/ now, and the toggle force-syncs that subtree
+// in push-files.ts / pull-files.ts. The old PROTOCOL_FILES / PROTOCOL_DIRS
+// sets (covering ~/.lax/custom-protocols.json and ~/.lax/protocols/) were
+// retired 2026-05-19 along with the workspace migration.
 
 export const SYNC_EXTENSIONS = new Set([
   ".html", ".css", ".js", ".ts", ".tsx", ".jsx", ".json", ".jsonl", ".md", ".txt",
@@ -108,11 +100,12 @@ export const BRAIN_JSON_FILES: readonly string[] = [
   "vulnerable-shares.json",
 ] as const;
 
+// "skills" and "protocols" (under dataDir / ~/.lax) were removed 2026-05-19.
+// User protocols now live under workspace/protocols/ and ship via the
+// workspace sync (or the syncProtocols-only workspace subset path).
 export const BRAIN_DIRS: readonly string[] = [
   "agent-runs",
   "dashboards",
-  "skills",
-  "protocols",
 ] as const;
 
 // `memory.db` is intentionally NOT in this list. The SQLite memory

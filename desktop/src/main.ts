@@ -20,7 +20,7 @@ import {
 } from "electron";
 import { join, resolve } from "path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { ChildProcess, spawn } from "child_process";
+import { ChildProcess, spawn, execSync } from "child_process";
 import { homedir } from "os";
 import { createTray, destroyTray } from "./tray";
 import { registerAutostart, unregisterAutostart, isAutostartEnabled } from "./autostart";
@@ -168,6 +168,58 @@ let saxConfig: SAXConfig;
 
 // ── Server Lifecycle ──────────────────────────────────────
 
+const PID_FILE = join(homedir(), ".lax", "server.pid");
+
+interface ServerPidFile {
+  pid: number;
+  parentPid?: number;
+  startedAt: string;
+}
+
+function readServerPidFile(): ServerPidFile | null {
+  if (!existsSync(PID_FILE)) return null;
+  try { return JSON.parse(readFileSync(PID_FILE, "utf-8")) as ServerPidFile; }
+  catch { return null; }
+}
+
+function isPidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function killPidTree(pid: number): void {
+  if (process.platform === "win32") {
+    try { execSync(`taskkill /PID ${pid} /T /F`, { windowsHide: true, stdio: "ignore" }); } catch {}
+  } else {
+    try { process.kill(pid, "SIGTERM"); } catch {}
+    setTimeout(() => { try { process.kill(pid, "SIGKILL"); } catch {} }, 1000);
+  }
+}
+
+/** Detect and kill orphan server processes left over from a previous
+ *  Electron that died abnormally (force-kill, crash, power-off). Without
+ *  this, Electron would silently attach to whatever was already on the
+ *  port — including a stale server running pre-update code. */
+async function reclaimOrphanServer(): Promise<boolean> {
+  const file = readServerPidFile();
+  if (!file) return false;
+  if (!isPidAlive(file.pid)) return false;
+  if (file.parentPid === process.pid) return false; // somehow ours
+  console.warn(`[desktop] Killing orphan server pid=${file.pid} (parentPid=${file.parentPid ?? "n/a"}, current Electron=${process.pid}).`);
+  killPidTree(file.pid);
+  // Brief wait so the port is free before we respawn.
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 100));
+    if (!isPidAlive(file.pid)) break;
+  }
+  return true;
+}
+
 async function isServerRunning(): Promise<boolean> {
   try {
     const controller = new AbortController();
@@ -218,7 +270,10 @@ function startServer(): void {
   serverProcess = spawn("node", nodeArgs, {
     cwd: PROJECT_ROOT,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, PATH: augmentedPath },
+    // LAX_PARENT_PID lets the server self-terminate via heartbeat if we
+    // die abnormally; server.pid handshake (above) catches the cases that
+    // slip through libuv's Job Object cleanup on Windows.
+    env: { ...process.env, PATH: augmentedPath, LAX_PARENT_PID: String(process.pid) },
     windowsHide: true,
   });
 
@@ -1103,7 +1158,13 @@ app.on("ready", async () => {
   // visible feedback during that exact window; the renderer's own
   // pollAndNavigate handles flipping from splash to real app the
   // instant /api/health responds.
-  const alreadyRunning = await isServerRunning();
+  // Orphan-proof launch. Previously: probe port, attach if anything
+  // answered — which silently bound us to stale servers left behind by
+  // crashes/force-kills, running pre-update code. Now: pidfile handshake
+  // detects orphans (live PID whose parentPid isn't us), kills them, then
+  // spawns fresh. See reclaimOrphanServer() + src/lifecycle.ts.
+  const killedOrphan = await reclaimOrphanServer();
+  const alreadyRunning = !killedOrphan && (await isServerRunning());
   if (!alreadyRunning) {
     startServer();
   }

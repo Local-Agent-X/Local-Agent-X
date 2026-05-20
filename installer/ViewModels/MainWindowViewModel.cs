@@ -13,6 +13,7 @@ public partial class MainWindowViewModel : ObservableObject
 {
     private readonly InstallProcess _process = new();
     private readonly NodeBootstrap _node = new();
+    private readonly SourceDownloader _source = new();
     private readonly StringBuilder _log = new();
     private string _repoRoot = "";
 
@@ -52,6 +53,16 @@ public partial class MainWindowViewModel : ObservableObject
             _log.AppendLine($"[node-bootstrap] {line}");
             LogText = _log.ToString();
         });
+        _source.OnStatus += s => Dispatcher.UIThread.Post(() => { CurrentStepDetail = s; });
+        _source.OnProgress += (got, total) => Dispatcher.UIThread.Post(() =>
+        {
+            if (total > 0)
+            {
+                var mb = got / (1024.0 * 1024.0);
+                var totalMb = total!.Value / (1024.0 * 1024.0);
+                CurrentStepDetail = $"Downloading: {mb:F1} / {totalMb:F1} MB";
+            }
+        });
     }
 
     [RelayCommand]
@@ -68,12 +79,42 @@ public partial class MainWindowViewModel : ObservableObject
         // dir, not the .exe's actual folder).
         var exePath = Environment.ProcessPath ?? AppContext.BaseDirectory;
         var exeDir  = Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory;
-        _repoRoot   = ResolveRepoRoot(exeDir);
+        var clonedRepoRoot = ResolveRepoRoot(exeDir);
+        bool inClonedRepo  = File.Exists(Path.Combine(clonedRepoRoot, "scripts", "install-common.mjs"));
+
+        // Two install flows share the rest of this method:
+        //   1. Developer clone — .exe is inside a cloned repo. Use it.
+        //   2. End-user download — .exe was downloaded standalone. Fetch
+        //      the source tarball from GitHub for the tag this installer
+        //      was built to install, extract into the standard per-user
+        //      app-data dir, and run from there.
+        if (inClonedRepo)
+        {
+            _repoRoot = clonedRepoRoot;
+        }
+        else
+        {
+            CurrentStepLabel = "Source download";
+            CurrentStepDetail = $"Fetching {_source.Tag} from GitHub";
+            var srcStep = new StepViewModel { Id = "_bootstrap_source", Label = "Source download", State = "running", Detail = CurrentStepDetail };
+            Steps.Add(srcStep);
+            try
+            {
+                _repoRoot = await Task.Run(() => _source.DownloadAndExtractAsync(InstallLocation.GetSourceDir()));
+                srcStep.State = "done";
+            }
+            catch (Exception ex)
+            {
+                Screen = "error";
+                ErrorMessage = $"Couldn't download Local Agent X source.\n\n{ex.Message}\n\nCheck your internet connection and try again.";
+                return;
+            }
+        }
 
         // Node bootstrap runs BEFORE the IPC stream because install-common.mjs
-        // can't execute without Node. Show a synthetic step in the UI for
-        // this so the user sees something happening — the IPC plan event
-        // will replace the step list once install-common.mjs starts.
+        // can't execute without Node. Show a synthetic step in the UI so the
+        // user sees something happening — the IPC plan event will replace
+        // the step list once install-common.mjs starts.
         if (!_node.NodeAvailable())
         {
             CurrentStepLabel = "Node.js runtime";

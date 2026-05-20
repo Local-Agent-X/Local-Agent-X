@@ -7,8 +7,6 @@ import {
   BRAIN_DIRS,
   BRAIN_JSON_FILES,
   MISSION_FILES,
-  PROTOCOL_FILES,
-  PROTOCOL_DIRS,
   type SyncConfig,
   canonicalizeHomePaths,
 } from "./constants.js";
@@ -88,6 +86,18 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
       writeTombstonesForDeletedApps(tombstonePaths(dataDir, syncDir), syncDir);
       mirrorDir(workspace, join(syncDir, "workspace"), /* additiveOnly */ true);
     }
+  } else if (config.syncProtocols) {
+    // Workspace sync is OFF but the user still wants protocols to flow
+    // between machines. Mirror just workspace/protocols/ as a subset so
+    // protocols + imported SKILL.md packs propagate without dragging
+    // apps/files/downloads along. Additive — never delete remote entries
+    // from a partial-subset push.
+    const protocolsDir = resolve("workspace", "protocols");
+    if (existsSync(protocolsDir)) {
+      const target = join(syncDir, "workspace", "protocols");
+      if (!existsSync(target)) mkdirSync(target, { recursive: true });
+      mirrorDir(protocolsDir, target, /* additiveOnly */ true);
+    }
   }
 
   if (config.syncCronJobs) {
@@ -108,7 +118,6 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
   // for every other machine that pulls.
   for (const file of BRAIN_JSON_FILES) {
     if (!config.syncMissions && MISSION_FILES.has(file)) continue;
-    if (!config.syncProtocols && PROTOCOL_FILES.has(file)) continue;
     const src = join(dataDir, file);
     if (!existsSync(src)) continue;
     try {
@@ -125,7 +134,6 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
   // workstation should match this push," so destructive mirror is
   // correct.
   for (const dir of BRAIN_DIRS) {
-    if (!config.syncProtocols && PROTOCOL_DIRS.has(dir)) continue;
     const src = join(dataDir, dir);
     if (!existsSync(src)) continue;
     try {

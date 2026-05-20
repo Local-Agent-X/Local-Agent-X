@@ -43,6 +43,13 @@ export interface AgentRequestInput {
   attachments?: Array<{ isImage: boolean; url: string; name: string }>;
   /** Uploads directory for resolving attachment paths */
   uploadsDir?: string;
+  /** Force a specific provider for this turn. Used by per-job cron model
+   *  selection so a mission can pin itself to e.g. opus regardless of the
+   *  user's current chat provider. Falls through to auto-detect if the
+   *  named provider lacks credentials (see resolve-provider.ts). */
+  providerOverride?: string;
+  /** Force a specific model. Pairs with providerOverride. */
+  modelOverride?: string;
   /*
    * (compactedSummary / compactedAt were here before. Compaction now lives
    * as a leading system message in sessionMessages — see types.ts

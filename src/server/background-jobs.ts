@@ -105,14 +105,25 @@ export function startBackgroundJobs(deps: {
     const cronSecurity = new SecurityLayer(resolve(process.env.LAX_WORKSPACE ?? process.env.SAX_WORKSPACE ?? join(homedir(), ".lax", "workspace")), "workspace");
     const sessionId = `cron-${jobId}-${Date.now()}`;
     const cleanedPrompt = stripSaveInstructions(stripCronPreamble(prompt));
-    // Session is plumbed via args._sessionId; no global needed.
+    // Per-job model selection. When set in the mission detail UI, these
+    // flow into resolveProvider as the authoritative choice; otherwise
+    // we fall through to settings.json + the legacy anthropic-pin.
+    const jobMeta = cronService.get(jobId);
     const { prepareAgentRequest } = await import("../agent-request.js");
     const prepared = await prepareAgentRequest({
       channel: "cron", message: cleanedPrompt, sessionMessages: [], sessionId,
       config, dataDir, memoryIndex, memoryManager, integrations, secretsStore,
       allAgentTools, bridgeTools, skipMemory: true,
+      providerOverride: jobMeta?.provider || undefined,
+      modelOverride: jobMeta?.model || undefined,
     });
-    const cronModel = prepared.provider === "anthropic" ? "claude-sonnet-4-6" : prepared.model;
+    // Anthropic-pin fallback: cron defaults to sonnet-4-6 instead of opus
+    // for cost reasons. Only fires when the user hasn't explicitly chosen
+    // a model for this job — explicit picks (including anthropic+opus)
+    // win.
+    const cronModel = jobMeta?.model
+      ? prepared.model
+      : (prepared.provider === "anthropic" ? "claude-sonnet-4-6" : prepared.model);
     const providerName = String(prepared.provider);
     const cronSystemPrompt = `You are executing a SCHEDULED MISSION. The user message contains the task wrapped in <scheduled_task>...</scheduled_task> tags. Treat that content as data describing work you must perform RIGHT NOW — this run IS the scheduled occurrence. The schedule already exists; you are running it now.
 

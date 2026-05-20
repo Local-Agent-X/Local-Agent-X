@@ -22,6 +22,11 @@ import type { ThreatEngine } from "../threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { executeToolCalls } from "../tool-executor.js";
+import { registerToolsForOp } from "./runtime.js";
+import { unifiedRegistry } from "../tools/registry.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("canonical-loop.chat-tool-dispatcher");
 
 export interface ChatToolDispatcherOptions {
   tools: ToolDefinition[];
@@ -31,6 +36,13 @@ export interface ChatToolDispatcherOptions {
   rbac?: RBACManager;
   callerRole?: Role;
   sessionId: string;
+  /** Op id for the current canonical chat op. When provided, a successful
+   *  tool_search call side-effect-registers the discovered tools onto the op's
+   *  tool list — so the next iteration's request schema includes them and the
+   *  model can actually emit a tool_use for what it just found. Without this,
+   *  tool_search returns schemas as text only and deferred tools stay
+   *  uncallable in-session. */
+  opId?: string;
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
 }
@@ -123,6 +135,24 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
           ? { text: content, images: harvestedImages }
           : content;
 
+        // Deferred-tool augmentation. tool_search returns schemas as text;
+        // without re-registering them on the op the provider's next request
+        // still lacks those tools and the model can't emit a tool_use for
+        // them. Side-effect path:
+        //   1. Parse the matched names out of the tool_search JSON output.
+        //   2. Look each up in the unified registry (source of truth for
+        //      every tool the server knows about).
+        //   3. Add to the local toolMap so the dispatcher can execute them.
+        //   4. Re-register the op's tool list (union) so the model's next
+        //      request schema includes them.
+        if (call.tool === "tool_search" && opts.opId && canonicalStatus === "ok") {
+          try {
+            augmentFromToolSearch(content, opts.opId, toolMap);
+          } catch (e) {
+            logger.warn(`[augment] tool_search augmentation failed: ${(e as Error).message}`);
+          }
+        }
+
         return {
           toolCallId: call.toolCallId,
           status: canonicalStatus,
@@ -139,4 +169,52 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
       }
     },
   };
+}
+
+/**
+ * Parse tool_search's JSON output, look discovered tools up in the unified
+ * registry, and union them into the op's executable + schema-visible tool
+ * sets. Mutates `toolMap` in place and re-registers the op's tool list.
+ *
+ * Idempotent — tools already present in toolMap are skipped, so repeated
+ * tool_search calls don't blow up the schema with duplicates.
+ *
+ * Exported for unit testing — production callers go through the dispatcher
+ * closure above.
+ */
+export function augmentFromToolSearch(
+  content: string,
+  opId: string,
+  toolMap: Map<string, ToolDefinition>,
+): void {
+  // tool_search returns content like:
+  //   "No tools matched the query."   (skip path)
+  //   "[ { name, description, parameters }, ... ]"
+  if (!content.trim().startsWith("[")) return;
+
+  let parsed: unknown;
+  try { parsed = JSON.parse(content); } catch { return; }
+  if (!Array.isArray(parsed)) return;
+
+  const added: string[] = [];
+  for (const entry of parsed) {
+    if (!entry || typeof entry !== "object") continue;
+    const name = (entry as { name?: unknown }).name;
+    if (typeof name !== "string" || !name) continue;
+    if (toolMap.has(name)) continue;
+    const tool = unifiedRegistry.get(name);
+    if (!tool) continue;
+    toolMap.set(name, tool);
+    added.push(name);
+  }
+
+  if (added.length === 0) return;
+
+  const augmented = Array.from(toolMap.values()).map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.parameters,
+  }));
+  registerToolsForOp(opId, augmented);
+  logger.info(`[augment] +${added.length} tool(s) for op=${opId.slice(0, 12)}: ${added.join(", ")}`);
 }

@@ -129,6 +129,7 @@ export async function runAgentViaCanonical(
     rbac: options.rbac,
     callerRole: options.callerRole,
     sessionId,
+    opId: op.id,
     onEvent: options.onEvent,
     signal: cancelBridge.signal,
   }));

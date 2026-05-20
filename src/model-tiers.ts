@@ -88,7 +88,6 @@ export const ESSENTIAL_TOOLS_ORDER: readonly string[] = [
   "self_edit",                      // agent self-repair via Claude Code
   "memory_save", "memory_search",
   "web_fetch", "web_search",
-  "ask_user",
   "glob", "grep",
 ];
 

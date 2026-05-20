@@ -13,7 +13,7 @@ export const READ_ONLY_TOOLS = new Set([
   'sql_query', 'sql_schema', 'sql_explain', 'spreadsheet_read', 'spreadsheet_query',
   'document_read', 'pdf_read', 'pdf_extract_tables', 'clipboard_read',
   'calendar_list_events', 'calendar_check_availability', 'email_read', 'email_search',
-  'enter_plan_mode', 'exit_plan_mode', 'ask_user', 'task_list', 'task_get', 'tool_search',
+  'enter_plan_mode', 'exit_plan_mode', 'task_list', 'task_get', 'tool_search',
 ]);
 
 const enterPlanMode: ToolDefinition = {

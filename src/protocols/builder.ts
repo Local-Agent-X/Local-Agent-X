@@ -93,6 +93,9 @@ export function deleteProtocol(name: string): boolean {
   if (idx === -1) return false;
   protocols.splice(idx, 1);
   saveCustomProtocols(protocols);
+  // Best-effort: drop the cached embedding so the sidecar doesn't drift.
+  // Lazy import avoids a cycle (dedup → protocols → builder → dedup).
+  void import("./dedup.js").then((m) => m.dropEmbedding(name)).catch(() => { /* swallow */ });
   return true;
 }
 
@@ -104,7 +107,10 @@ export function createBuilderTools(): ToolDefinition[] {
   return [
     {
       name: "protocol_create",
-      description: "Create a new custom protocol with steps, rules, and triggers.",
+      description:
+        "Create a new custom protocol with steps, rules, and triggers. " +
+        "Refuses to create near-duplicates of existing protocols (cosine similarity > 0.85 on name+description+triggers). " +
+        "If you intentionally want to replace an existing similar protocol, pass `supersedes: \"<existing-name>\"` — that bypasses the dedup check and auto-deletes the old one.",
       parameters: {
         type: "object",
         properties: {
@@ -113,19 +119,63 @@ export function createBuilderTools(): ToolDefinition[] {
           triggers: { type: "array", items: { type: "string" }, description: "Phrases that activate this protocol" },
           steps: { type: "array", items: { type: "object" }, description: "Array of ProtocolStep objects" },
           rules: { type: "array", items: { type: "string" }, description: "Rules to follow during execution" },
+          supersedes: { type: "string", description: "Name of an existing protocol this replaces. Bypasses dedup; deletes the named target." },
         },
         required: ["name", "description", "triggers", "steps"],
       },
       async execute(args) {
         try {
+          const name = String(args.name);
+          const description = String(args.description);
+          const triggers = (args.triggers as string[]) || [];
+          const supersedes = typeof args.supersedes === "string" ? args.supersedes : undefined;
+
+          // Dedup check — refuse near-duplicates unless the caller explicitly
+          // names what they're replacing. Soft-degrades to no-op if the
+          // embedding provider isn't available (memory init didn't run).
+          if (!supersedes) {
+            const { findDuplicate } = await import("./dedup.js");
+            const { getAllProtocols } = await import("../protocols.js");
+            const dup = await findDuplicate(
+              { name, description, triggers },
+              getAllProtocols(),
+            );
+            if (dup) {
+              return {
+                content:
+                  `Refused: protocol "${name}" is too similar to existing "${dup.name}" ` +
+                  `(cosine similarity ${dup.similarity.toFixed(2)}). ` +
+                  `Either use \`protocol_edit\` to update "${dup.name}", or re-call with ` +
+                  `\`supersedes: "${dup.name}"\` to replace it.`,
+                isError: true,
+                metadata: { recovery: "Edit the existing protocol or pass supersedes to replace it." },
+              };
+            }
+          }
+
           const protocol = createProtocol({
-            name: String(args.name),
-            description: String(args.description),
-            triggers: args.triggers as string[],
+            name,
+            description,
+            triggers,
             steps: args.steps as ProtocolStep[],
             rules: (args.rules as string[]) || [],
             learnablePreferences: [],
+            ...(supersedes ? { supersedes } : {}),
           });
+
+          // If superseding, drop the old protocol + its embedding cache entry.
+          let supersededNote = "";
+          if (supersedes) {
+            try {
+              const removed = deleteProtocol(supersedes);
+              const { dropEmbedding } = await import("./dedup.js");
+              dropEmbedding(supersedes);
+              supersededNote = removed ? ` Replaced "${supersedes}".` : ` (Note: "${supersedes}" not found.)`;
+            } catch (e) {
+              supersededNote = ` (Failed to remove "${supersedes}": ${(e as Error).message})`;
+            }
+          }
+
           try {
             const { recordUsage } = await import("./usage.js");
             recordUsage({
@@ -134,7 +184,7 @@ export function createBuilderTools(): ToolDefinition[] {
               sessionId: typeof (args as { _sessionId?: string })._sessionId === "string" ? (args as { _sessionId: string })._sessionId : undefined,
             });
           } catch { /* telemetry never fails the call */ }
-          return { content: `Created protocol "${protocol.name}" with ${protocol.steps.length} steps.` };
+          return { content: `Created protocol "${protocol.name}" with ${protocol.steps.length} steps.${supersededNote}` };
         } catch (e: any) {
           return { content: e.message, isError: true };
         }

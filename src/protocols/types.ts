@@ -72,4 +72,8 @@ export interface Protocol {
   category?: string;
   /** Free-form tags for search + filter. */
   tags?: string[];
+  /** Name of an existing protocol this one replaces. Set on creation to
+   *  acknowledge "I know there's a similar one — delete it and use this
+   *  instead". Bypasses the dedup similarity check for the named target. */
+  supersedes?: string;
 }

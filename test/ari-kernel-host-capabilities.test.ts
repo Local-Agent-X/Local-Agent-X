@@ -133,6 +133,32 @@ describe("AriKernel host capability manifest", () => {
     expect(result.reason).toMatch(/blocked|denied|fail-closed|not in TOOL_CLASS_MAP/i);
   });
 
+  it("ariObserve writes internal-class calls into the hash-chained audit DB", async () => {
+    // Internal-class tools used to bypass the kernel entirely. Now they
+    // route through Firewall.audit() which appends to the same SQLite
+    // audit store as gated calls — closing the "kernel only sees half the
+    // catalog" gap. Verifies the contract: call ariObserve, the event
+    // shows up in firewall.getEvents() with toolClass="internal".
+    const { ariObserve, getFirewallForTest } = await import("../src/ari-kernel.js");
+    ariObserve("protocol_create", "internal", { name: "smoke-test" }, { sessionId: "chat-test-1234" });
+    ariObserve("agent_list", "internal", {}, { sessionId: "chat-test-1234" });
+
+    const fw = getFirewallForTest();
+    expect(fw, "firewall should be active in this test").not.toBeNull();
+    const events = fw!.getEvents();
+    const internalEvents = events.filter((e) => e.toolCall.toolClass === "internal");
+    expect(internalEvents.length).toBeGreaterThanOrEqual(2);
+    const names = internalEvents.map((e) => e.toolCall.parameters._tool);
+    expect(names).toContain("protocol_create");
+    expect(names).toContain("agent_list");
+    // Hash-chained: each event must have a previousHash linking to its predecessor.
+    for (const e of internalEvents) {
+      expect(e.previousHash).toBeTruthy();
+      expect(e.hash).toBeTruthy();
+      expect(e.hash).not.toBe(e.previousHash);
+    }
+  });
+
   it("still denies a manifest-granted shell call when web-tainted", async () => {
     // shell.exec IS in the manifest and has a host grant. But the
     // deny-tainted-shell rule (priority 10, see workspace-assistant

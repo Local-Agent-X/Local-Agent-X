@@ -20,7 +20,12 @@ RID="${MAC_BUILD_RID:-osx-arm64}"
 APP_NAME="Install Local Agent X Mac Installer.app"
 OUT_DIR="installer/dist-mac"
 APP_DIR="$OUT_DIR/$APP_NAME"
-SRC_APP="Install Local Agent X Mac Installer.app"
+# Bundle metadata (Info.plist + icon) lives under installer/mac-bundle/ —
+# was inside the checked-in .app skeleton, but having that directory
+# tracked-as-a-.app made macOS treat the clone as a launchable (broken)
+# app. The two real files are all we need; the .app structure gets
+# re-created here at build time.
+BUNDLE_SRC="installer/mac-bundle"
 
 echo "[mac-build] target architecture: $RID"
 
@@ -51,11 +56,11 @@ fi
 cp "$BINARY" "$APP_DIR/Contents/MacOS/install"
 chmod +x "$APP_DIR/Contents/MacOS/install"
 
-# Pull Info.plist + icon from the existing checked-in .app so the
-# bundle identifier, version, icon all stay consistent across releases.
-cp "$SRC_APP/Contents/Info.plist" "$APP_DIR/Contents/Info.plist"
-if [ -f "$SRC_APP/Contents/Resources/icon.icns" ]; then
-    cp "$SRC_APP/Contents/Resources/icon.icns" "$APP_DIR/Contents/Resources/icon.icns"
+# Pull Info.plist + icon from the source dir so the bundle identifier,
+# version, and icon stay consistent across releases.
+cp "$BUNDLE_SRC/Info.plist" "$APP_DIR/Contents/Info.plist"
+if [ -f "$BUNDLE_SRC/icon.icns" ]; then
+    cp "$BUNDLE_SRC/icon.icns" "$APP_DIR/Contents/Resources/icon.icns"
 fi
 
 # Ad-hoc codesign — satisfies Gatekeeper's "must be signed to run" check

@@ -109,6 +109,16 @@ export function createCoreProtocolTools(): ToolDefinition[] {
         if (!pb) {
           return { content: `No protocol found for "${args.name}". Use protocol_list to see all available protocols.` };
         }
+        // Record the invocation — strongest signal of actual use. Drives the
+        // never-used / least-used reports that protocol_prune consumes.
+        try {
+          const { recordUsage } = await import("./protocols/usage.js");
+          recordUsage({
+            action: "invoked",
+            name: pb.name,
+            sessionId: typeof (args as { _sessionId?: string })._sessionId === "string" ? (args as { _sessionId: string })._sessionId : undefined,
+          });
+        } catch { /* telemetry never fails the call */ }
 
         const prefs = loadPrefs()[pb.name] || {};
         const prefsText = Object.keys(prefs).length > 0

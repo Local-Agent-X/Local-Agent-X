@@ -126,6 +126,14 @@ export function createBuilderTools(): ToolDefinition[] {
             rules: (args.rules as string[]) || [],
             learnablePreferences: [],
           });
+          try {
+            const { recordUsage } = await import("./usage.js");
+            recordUsage({
+              action: "built",
+              name: protocol.name,
+              sessionId: typeof (args as { _sessionId?: string })._sessionId === "string" ? (args as { _sessionId: string })._sessionId : undefined,
+            });
+          } catch { /* telemetry never fails the call */ }
           return { content: `Created protocol "${protocol.name}" with ${protocol.steps.length} steps.` };
         } catch (e: any) {
           return { content: e.message, isError: true };

@@ -76,4 +76,8 @@ export interface Protocol {
    *  acknowledge "I know there's a similar one — delete it and use this
    *  instead". Bypasses the dedup similarity check for the named target. */
   supersedes?: string;
+  /** Pinned protocols are exempt from automatic archive/purge transitions.
+   *  Set this for rarely-used-but-critical workflows that shouldn't decay
+   *  just because they don't fire often. */
+  pinned?: boolean;
 }

@@ -128,6 +128,11 @@ export async function initOrRefreshEmbeddingProvider(deps: {
     else if (embProvider === "gemini") apiKey = secretsStore.get("GEMINI_API_KEY");
     const provider = createEmbeddingProvider({ provider: embProvider, apiKey, model: embModel });
     memoryIndex.setEmbeddingProvider(provider);
+    // Share the same provider with anyone else that needs embeddings (protocol
+    // dedup, future similar) — single warm-up cost, single source of truth on
+    // the user's configured choice.
+    const { setEmbeddingProviderSingleton } = await import("../embedding-singleton.js");
+    setEmbeddingProviderSingleton(provider);
     logger.info(`[memory] Embedding provider: ${provider.name}/${provider.model} (${provider.dimensions}d)${degraded ? " [degraded]" : ""}`);
 
     if (provider.name !== "local") {

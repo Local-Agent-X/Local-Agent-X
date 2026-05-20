@@ -53,11 +53,18 @@ KINDS:
     "scaffold a TODO list page"
     "generate a landing page for X"
 
-- agent_spawn — user is asking to DELEGATE a long-running task to a named role/specialist: research, multi-step writing, code review, market scans, browsing-and-summarizing, anything that benefits from a focused worker run. Examples:
+- agent_spawn — user is asking to DELEGATE a long-running task to a named role/specialist for execution NOW: research, multi-step writing, code review, market scans, browsing-and-summarizing, anything that benefits from a focused worker run RIGHT NOW. Examples:
     "research current AI voice toolkits and write a summary"
     "have a coder review the kraken bot for bugs"
     "spawn a researcher to find the top 5 GLP-1 supplements"
     "delegate this competitor analysis to a market-research worker"
+
+  NOT agent_spawn (these are SCHEDULING, not immediate delegation — let the model pick mission_schedule_create directly):
+    "set up a mission to research X daily"
+    "schedule a job to review instagram stats every morning"
+    "remind me to check the dashboard every monday"
+    "create a cron that fetches Y nightly"
+  The word "mission" / "schedule" / "remind me every" / "cron" / "daily / nightly / weekly recurring" = SCHEDULING. Return "free" for these so the model calls the schedule tool directly without a fake worker spawn.
 
 - self_edit — user is REPORTING A BUG OR BROKEN BEHAVIOR in THIS app (Local Agent X / LAX itself). The fix requires touching LAX source code under src/. Examples:
     "the dark-mode toggle doesn't flip when I click it"
@@ -71,7 +78,9 @@ KINDS:
 DISTINCTIONS:
 - "create a dashboard for fastmail" → build_app (concrete artifact)
 - "explain how you'd build a dashboard for fastmail" → free (discussion)
-- "research X for me" → agent_spawn (delegation)
+- "research X for me" → agent_spawn (delegation, do it now)
+- "set up a mission to research X every night" → free (scheduling — mission_schedule_create, not delegation)
+- "remind me daily at 9am to do X" → free (scheduling)
 - "tell me about X" → free (just answer it)
 - "the toggle doesn't work" → self_edit (LAX bug)
 - "fix my todo app's toggle" → free (workspace edit, not LAX source — agent uses edit/write)

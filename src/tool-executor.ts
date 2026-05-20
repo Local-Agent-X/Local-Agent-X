@@ -8,7 +8,7 @@ import type { ToolPolicy } from "./tool-policy.js";
 import type { ThreatEngine } from "./threat-engine.js";
 import type { RBACManager, Role } from "./rbac.js";
 import { checkSessionPolicy } from "./session-policy.js";
-import { ariEvaluate, isAriActive, shouldGateInKernel } from "./ari-kernel.js";
+import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "./ari-kernel.js";
 import { recordSensitiveRead, checkEgressTaint, isSensitivePath } from "./data-lineage.js";
 import { compactIfNeeded, compactIfNeededWithLLM } from "./context-manager.js";
 import { renderToolResultForModel } from "./tools/result-helpers.js";
@@ -444,6 +444,12 @@ async function executeSingleTool(
       msgs.push({ role: "tool", tool_call_id: tc.id, content: result } as ChatCompletionMessageParam);
       return msgs;
     }
+  } else if (isAriActive() && shouldObserveInKernel(tc.name)) {
+    // Audit-only path for internal-class tools. Kernel doesn't gate (no I/O
+    // sink to defend) but emits a uniform audit line so operators see every
+    // dispatched call in the `[ari]` namespace, not just the I/O-gated half.
+    // Never blocks — always falls through to actual execution below.
+    ariObserve(tc.name, "internal", args, { sessionId });
   }
 
   // Layer 0: Session policy

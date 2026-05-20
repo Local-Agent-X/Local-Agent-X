@@ -31,6 +31,8 @@ export const CORE_TOOL_NAMES = new Set([
   "read", "write", "edit", "delete_file", "bash", "glob", "grep",
   // Web & search
   "web_fetch", "web_search",
+  // App self-control (flip toggles, change theme/provider/model via schema)
+  "setting",
   // Interaction
   "ask_user", "tool_search",
   // Vision

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
+import { RUNTIME_SETTINGS, BROADCAST_KEYS, publicSchema } from "../../settings-schema.js";
 
 /** Tiny edit-distance for 'did you mean' hints on sidebar pin 404s. */
 function levenshtein(a: string, b: string): number {
@@ -23,7 +24,13 @@ function levenshtein(a: string, b: string): number {
 export const handlePreferencesRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
-  // Settings CRUD
+  // Settings CRUD — schema-driven runtime persistence.
+  //
+  // The POST body is a flat bag; we always persist it to settings.json
+  // (UI cache), then for each field listed in RUNTIME_SETTINGS we ALSO
+  // promote it to config.json + ctx.config so the server runtime reads
+  // the same value the UI just set. Adding a new runtime-bound setting
+  // is a single line in settings-schema.ts — no edits here.
   if (method === "POST" && url.pathname === "/api/settings") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     const settingsPath = join(ctx.dataDir, "settings.json");
@@ -36,49 +43,48 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     // and a hot-reloader reading the file mid-write could JSON.parse-crash.
     const { atomicWriteFileSync } = await import("../../server-utils.js");
     atomicWriteFileSync(settingsPath, JSON.stringify(merged, null, 2), { mode: 0o600 });
-    // Broadcast setting changes to all connected browsers via WebSocket
-    if (body.theme || body.provider || body.model) {
+
+    // Broadcast UI-sync fields (theme, provider, model) over WS so other
+    // tabs/windows pick up the change without a reload.
+    const broadcastBody: Record<string, unknown> = {};
+    for (const key of Object.keys(body)) {
+      if (BROADCAST_KEYS.has(key)) broadcastBody[key] = body[key];
+    }
+    if (Object.keys(broadcastBody).length > 0) {
       try {
         const { broadcastAll } = await import("../../chat-ws.js");
-        broadcastAll({ type: "settings_changed", settings: body });
+        broadcastAll({ type: "settings_changed", settings: broadcastBody });
       } catch {}
     }
+
+    // Port is special: lives in config.json (read at boot, env-overridable)
+    // but never read via getRuntimeConfig() — separate persistence path.
     if (body.port) {
       const configPath = join(ctx.dataDir, "config.json");
       let cfg: Record<string, unknown> = {};
       try { if (existsSync(configPath)) cfg = JSON.parse(readFileSync(configPath, "utf-8")); } catch {}
       cfg.port = parseInt(String(body.port), 10);
-      const { atomicWriteFileSync } = await import("../../server-utils.js");
       atomicWriteFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
     }
-    // Browser mode persists to main config (read by the browser launcher via
-    // getRuntimeConfig), not just settings.json. Update in-memory too so the
-    // next browser launch picks it up without a server restart.
-    if (body.browserMode === "isolated" || body.browserMode === "attach") {
-      ctx.config.browserMode = body.browserMode;
+
+    // Runtime-bound fields: validate, then mirror into config.json + ctx.config
+    // so getRuntimeConfig() returns the new value on the next read. Invalid
+    // values are dropped silently — the field stays at its old runtime value
+    // and the next GET will reflect that, so the UI re-syncs without us
+    // needing a 400 round-trip path.
+    let runtimeChanged = false;
+    for (const field of RUNTIME_SETTINGS) {
+      if (!(field.field in body)) continue;
+      const parsed = field.validate.safeParse(body[field.field]);
+      if (!parsed.success) continue;
+      (ctx.config as unknown as Record<string, unknown>)[field.field] = parsed.data;
+      runtimeChanged = true;
+    }
+    if (runtimeChanged) {
       const { saveConfig } = await import("../../config.js");
       saveConfig(ctx.config);
     }
-    // Bridge voice preference is read from runtime config by voice.ts
-    // synthesize(); persist to config.json + update in-memory so the next
-    // bridge reply picks the new chain order without a server restart.
-    if (body.bridgeVoicePreference === "auto" || body.bridgeVoicePreference === "sovits"
-        || body.bridgeVoicePreference === "chatterbox" || body.bridgeVoicePreference === "lite") {
-      ctx.config.bridgeVoicePreference = body.bridgeVoicePreference;
-      const { saveConfig } = await import("../../config.js");
-      saveConfig(ctx.config);
-    }
-    // Tool-approval mode is read from runtime config by approval-manager on
-    // every tool call. Without persisting to config.json + ctx.config, the
-    // UI dropdown can be set to "auto" while the gate continues to use the
-    // old value — user sees "Off" in Settings but still gets approval
-    // prompts on bash/build_app/etc. Live failure 2026-05-19. Mirrors the
-    // browserMode / bridgeVoicePreference handling above.
-    if (body.toolApproval === "auto" || body.toolApproval === "confirm-risky" || body.toolApproval === "confirm-all") {
-      ctx.config.toolApproval = body.toolApproval;
-      const { saveConfig } = await import("../../config.js");
-      saveConfig(ctx.config);
-    }
+
     json(200, { ok: true }); return true;
   }
   if (method === "GET" && url.pathname === "/api/settings") {
@@ -87,14 +93,27 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     try {
       if (existsSync(settingsPath)) merged = JSON.parse(readFileSync(settingsPath, "utf-8"));
     } catch {}
-    // Merge in config-backed fields the UI also reads through this endpoint,
-    // so the dropdowns reflect what the runtime actually uses (not just what
-    // was saved last via /api/settings). Without this, fresh installs and
-    // any prior change made via PROFILE_DEFAULTS / config.json directly are
-    // invisible to the UI — it looks like a default when the runtime is on
-    // a different value.
-    merged.toolApproval = ctx.config.toolApproval;
+    // Overlay live runtime values for every schema-listed field. This is
+    // what makes the source-of-truth refactor work: the UI sees what the
+    // server actually uses, not whatever was last written to settings.json
+    // (which could be stale if the runtime value was changed via profile
+    // defaults, env vars, or any path that doesn't round-trip through here).
+    for (const field of RUNTIME_SETTINGS) {
+      const live = (ctx.config as unknown as Record<string, unknown>)[field.field];
+      if (live !== undefined) merged[field.field] = live;
+    }
     json(200, merged);
+    return true;
+  }
+
+  // Schema introspection — returned to agents (and other clients) so they
+  // can discover valid field names + enum values for /api/settings without
+  // guessing. Live failure that motivated this 2026-05-19: agent guessed
+  // `shellAccess` instead of `enableShell`, server accepted the merge,
+  // agent claimed success. Fix is to make the canonical field list
+  // queryable.
+  if (method === "GET" && url.pathname === "/api/settings/schema") {
+    json(200, { fields: publicSchema() });
     return true;
   }
 

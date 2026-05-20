@@ -131,9 +131,20 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
         json(403, { error: "built-in/bundled protocols cannot be deleted — they're vendored. Override locally instead." });
         return true;
       }
-      const { deleteProtocol } = await import("../../protocols/builder.js");
-      const ok = deleteProtocol(name);
-      json(200, { ok });
+      // Mirror the protocol_delete tool semantics: ?permanent=true hard-deletes,
+      // default soft-archives (recoverable via POST /api/protocols/:name/unarchive
+      // or the protocol_unarchive tool).
+      const permanent = url.searchParams.get("permanent") === "true";
+      if (permanent) {
+        const { deleteProtocol } = await import("../../protocols/builder.js");
+        const ok = deleteProtocol(name);
+        json(200, { ok, mode: "permanent" });
+      } else {
+        const { archiveProtocol } = await import("../../protocols/archive.js");
+        const reason = url.searchParams.get("reason") || undefined;
+        const rec = archiveProtocol(name, reason);
+        json(200, { ok: rec !== null, mode: "archived" });
+      }
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
   }

@@ -212,17 +212,99 @@ export function createBuilderTools(): ToolDefinition[] {
     },
     {
       name: "protocol_delete",
-      description: "Delete a custom protocol.",
+      description:
+        "Soft-delete a custom protocol — moves it to the archive (recoverable via protocol_unarchive). " +
+        "Pass `permanent: true` to hard-delete immediately (irrecoverable; drops the embedding cache entry). " +
+        "Archived protocols don't appear in protocol_search or protocol_list. " +
+        "Archive purge is automatic after 30 days unless restored.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Protocol name to delete" },
+          reason: { type: "string", description: "Optional reason recorded with the archive entry" },
+          permanent: { type: "boolean", description: "If true, skip archive and hard-delete. Default false." },
         },
         required: ["name"],
       },
       async execute(args) {
-        const deleted = deleteProtocol(String(args.name));
-        return { content: deleted ? `Deleted protocol "${args.name}".` : `Protocol "${args.name}" not found.` };
+        const name = String(args.name);
+        const permanent = (args as { permanent?: boolean }).permanent === true;
+        if (permanent) {
+          const removed = deleteProtocol(name);
+          return { content: removed ? `Hard-deleted protocol "${name}".` : `Protocol "${name}" not found.` };
+        }
+        const { archiveProtocol } = await import("./archive.js");
+        const reason = typeof (args as { reason?: string }).reason === "string" ? (args as { reason?: string }).reason : undefined;
+        const rec = archiveProtocol(name, reason);
+        if (!rec) {
+          return {
+            content: `Protocol "${name}" not found in active catalog. (Already archived? Use protocol_unarchive to restore.)`,
+            isError: true,
+          };
+        }
+        return { content: `Archived protocol "${name}". Use protocol_unarchive to restore within 30 days.` };
+      },
+    },
+    {
+      name: "protocol_unarchive",
+      description:
+        "Restore an archived protocol back to the active catalog. " +
+        "Fails if a live protocol of the same name already exists — either rename the conflict or remove it first.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Archived protocol name to restore" },
+        },
+        required: ["name"],
+      },
+      async execute(args) {
+        const name = String(args.name);
+        const { unarchiveProtocol } = await import("./archive.js");
+        const result = unarchiveProtocol(name);
+        if (result.error) return { content: result.error, isError: true };
+        return { content: `Restored protocol "${name}" with ${result.restored?.steps.length ?? 0} steps.` };
+      },
+    },
+    {
+      name: "protocol_pin",
+      description:
+        "Pin or unpin a custom protocol. Pinned protocols are exempt from automatic archive/purge transitions — " +
+        "use this for rarely-used-but-critical workflows that shouldn't decay just because they don't fire often.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Protocol name" },
+          pinned: { type: "boolean", description: "true to pin, false to unpin. Default true." },
+        },
+        required: ["name"],
+      },
+      async execute(args) {
+        const name = String(args.name);
+        const pinned = (args as { pinned?: boolean }).pinned === false ? false : true;
+        try {
+          const updated = editProtocol(name, { pinned });
+          return { content: `${pinned ? "Pinned" : "Unpinned"} protocol "${updated.name}".` };
+        } catch (e: any) {
+          return { content: e.message, isError: true };
+        }
+      },
+    },
+    {
+      name: "protocol_list_archived",
+      description: "List archived protocols (soft-deleted, recoverable). Shows when each was archived and why.",
+      parameters: { type: "object", properties: {} },
+      async execute() {
+        const { loadArchived } = await import("./archive.js");
+        const archived = loadArchived();
+        if (archived.length === 0) return { content: "No archived protocols." };
+        const lines = archived
+          .sort((a, b) => b.archivedTs - a.archivedTs)
+          .map((r) => {
+            const daysAgo = Math.floor((Date.now() - r.archivedTs) / 86_400_000);
+            const why = r.reason ? ` — ${r.reason}` : "";
+            return `- ${r.protocol.name} (archived ${daysAgo}d ago)${why}`;
+          });
+        return { content: `Archived protocols (${archived.length}):\n${lines.join("\n")}\n\nRestore with \`protocol_unarchive { name }\`.` };
       },
     },
   ];

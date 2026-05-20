@@ -4,6 +4,12 @@
 
 // Core modules
 export { loadCustomProtocols, saveCustomProtocols, createProtocol, editProtocol, deleteProtocol, getProtocol, createBuilderTools } from "./builder.js";
+export {
+  loadArchived, saveArchived, archiveProtocol, unarchiveProtocol, purgeArchivedProtocol,
+  computeProtocolState, applyAutomaticTransitions,
+  type ArchivedRecord, type ProtocolState, type TransitionReport,
+} from "./archive.js";
+export { runCurator, loadCuratorState, shouldCurate, createCuratorTools, type CuratorReport, type RunCuratorOpts } from "./curator.js";
 export { fetchRegistry, searchProtocols, installProtocol, createMarketplaceTools } from "./marketplace.js";
 export { TEMPLATES, getTemplate, protocolFromTemplate, createTemplateTools } from "./templates.js";
 export { createChain, startChain, advanceChain, getChainState, resolveInputs, failChain, createChainTools } from "./chain.js";
@@ -35,6 +41,7 @@ import { createRollbackTools } from "./rollback.js";
 import { createVariableTools } from "./variables.js";
 import { createProtocolSearchTool } from "./search.js";
 import { createProtocolStatsTools } from "./stats-tools.js";
+import { createCuratorTools } from "./curator.js";
 
 /** Returns all protocol-system tools from submodules. */
 export function createAllProtocolTools(): ToolDefinition[] {
@@ -47,6 +54,7 @@ export function createAllProtocolTools(): ToolDefinition[] {
     ...createRollbackTools(),
     ...createVariableTools(),
     ...createProtocolStatsTools(),
+    ...createCuratorTools(),
     createProtocolSearchTool(),
   ];
 }

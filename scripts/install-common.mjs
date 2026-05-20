@@ -3,6 +3,20 @@
 // Single source of truth for cross-OS install steps. OS-specific bootstrap
 // (Node/Ollama installation) lives in the wrappers; this script runs the
 // cross-cutting work that doesn't change between platforms.
+//
+// IPC mode (`--ipc` flag): in addition to the prose `[install] / [ok] /
+// [warn] / [error]` lines, emit one JSON object per line to stdout marking
+// step boundaries. Consumed by the Avalonia GUI installer so it can render
+// a step list, progress icons, and a friendly status without parsing
+// English. Schema:
+//   {"type":"plan","steps":[{"id":"npm","label":"App dependencies"}, ...]}
+//   {"type":"step","id":"npm","state":"running","detail":"..."}
+//   {"type":"step","id":"npm","state":"done"}
+//   {"type":"step","id":"npm","state":"error","message":"..."}
+//   {"type":"log","level":"info|ok|warn|error","id":"<currentStep|null>","line":"..."}
+//   {"type":"complete"}    ← final success
+//   {"type":"fatal","message":"..."}  ← terminal failure
+// Prose mode behavior is unchanged when --ipc is absent.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -11,25 +25,95 @@ import { homedir } from "node:os";
 
 const NODE_MAJOR_MIN = 22;
 const EMBED_MODEL = "mxbai-embed-large";
+const IPC = process.argv.includes("--ipc");
 
-const log  = (m) => console.log(`[install] ${m}`);
-const ok   = (m) => console.log(`[ok] ${m}`);
-const warn = (m) => console.warn(`[warn] ${m}`);
-const fail = (m) => { console.error(`[error] ${m}`); process.exit(1); };
+// The step plan emitted up front so the UI can render the full list before
+// any step runs. Step ids must match the ones passed to step()/stepDone()/
+// stepError() below — a typo means the UI gets an event for an unknown id.
+const STEPS_PLAN = [
+  { id: "node",       label: "Node.js runtime" },
+  { id: "npm",        label: "App dependencies" },
+  { id: "embedmodel", label: "AI memory engine" },
+  { id: "settings",   label: "User settings" },
+  { id: "build",      label: "App build" },
+  { id: "config",     label: "Configuration" },
+  { id: "desktop",    label: "Desktop app" },
+];
 
+let currentStepId = null;
+
+function ipc(event) {
+  if (!IPC) return;
+  try { process.stdout.write(JSON.stringify(event) + "\n"); } catch { /* swallow */ }
+}
+function step(id, detail) {
+  // Auto-finalize previous step if step() called without explicit stepDone()
+  // (defensive — keeps the event stream clean even if a step block forgets to
+  // mark itself done, which is easy to do mid-refactor).
+  if (currentStepId && currentStepId !== id) {
+    ipc({ type: "step", id: currentStepId, state: "done" });
+  }
+  currentStepId = id;
+  ipc({ type: "step", id, state: "running", detail: detail || null });
+}
+function stepDone(id) {
+  ipc({ type: "step", id, state: "done" });
+  if (currentStepId === id) currentStepId = null;
+}
+function stepError(id, message) {
+  ipc({ type: "step", id, state: "error", message });
+  if (currentStepId === id) currentStepId = null;
+}
+
+const log  = (m) => { if (!IPC) console.log(`[install] ${m}`); ipc({ type: "log", level: "info",  id: currentStepId, line: m }); };
+const ok   = (m) => { if (!IPC) console.log(`[ok] ${m}`);      ipc({ type: "log", level: "ok",    id: currentStepId, line: m }); };
+const warn = (m) => { if (!IPC) console.warn(`[warn] ${m}`);   ipc({ type: "log", level: "warn",  id: currentStepId, line: m }); };
+const fail = (m) => {
+  if (!IPC) console.error(`[error] ${m}`);
+  ipc({ type: "log", level: "error", id: currentStepId, line: m });
+  if (currentStepId) ipc({ type: "step", id: currentStepId, state: "error", message: m });
+  ipc({ type: "fatal", message: m });
+  process.exit(1);
+};
+
+// In IPC mode child process stdout would corrupt the JSONL stream if it
+// inherited the terminal. Capture stdout/stderr into memory and emit each
+// non-empty line as a {type:"log"} event tagged with the current step.
+// Prose mode keeps stdio:"inherit" so users see real-time output (which
+// for slow steps like VS Build Tools is the only feedback they get).
 function run(cmd, args, opts = {}) {
-  return spawnSync(cmd, args, { stdio: "inherit", shell: process.platform === "win32", ...opts });
+  if (!IPC) {
+    return spawnSync(cmd, args, { stdio: "inherit", shell: process.platform === "win32", ...opts });
+  }
+  const result = spawnSync(cmd, args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: process.platform === "win32",
+    encoding: "utf-8",
+    ...opts,
+  });
+  for (const line of (result.stdout || "").split(/\r?\n/)) {
+    if (line.trim()) ipc({ type: "log", level: "info", id: currentStepId, line });
+  }
+  for (const line of (result.stderr || "").split(/\r?\n/)) {
+    if (line.trim()) ipc({ type: "log", level: "warn", id: currentStepId, line });
+  }
+  return result;
 }
 function has(cmd) {
   return spawnSync(cmd, ["--version"], { stdio: "ignore", shell: true }).status === 0;
 }
 
+// Emit the plan once, before any step starts.
+ipc({ type: "plan", steps: STEPS_PLAN });
+
 // 1. Node version assertion
+step("node");
 const nodeMajor = Number(process.versions.node.split(".")[0]);
 if (nodeMajor < NODE_MAJOR_MIN) {
   fail(`Node ${NODE_MAJOR_MIN}+ required (found v${process.versions.node})`);
 }
 ok(`Node v${process.versions.node}`);
+stepDone("node");
 
 // 2. npm install — retry with legacy peer deps on first failure.
 // --loglevel=error hides the transitive-dep deprecation warnings (inflight,
@@ -38,6 +122,7 @@ ok(`Node v${process.versions.node}`);
 // level regardless of --loglevel). If a user needs the full output for
 // debugging, they can rerun with LAX_NPM_LOGLEVEL=warn.
 const npmLogLevel = process.env.LAX_NPM_LOGLEVEL || "error";
+step("npm", "npm install (5-10 min on first install)");
 log("Installing npm dependencies…");
 let res = run("npm", ["install", "--no-audit", "--no-fund", `--loglevel=${npmLogLevel}`]);
 if (res.status !== 0) {
@@ -52,6 +137,7 @@ if (res.status !== 0) {
   if (res.status !== 0) fail("npm install failed. See errors above.");
 }
 ok("npm dependencies installed");
+stepDone("npm");
 
 // 3. Ollama embedding model pull (idempotent — Ollama skips if already present).
 // Two-stage readiness check before pulling. `brew install ollama` puts the
@@ -99,6 +185,7 @@ async function ensureOllamaUp() {
   }
   return false;
 }
+step("embedmodel", `Downloading ${EMBED_MODEL} (~670 MB, one-time)`);
 if (has("ollama")) {
   const ready = await ensureOllamaUp();
   if (!ready) {
@@ -129,8 +216,10 @@ if (has("ollama")) {
 } else {
   warn(`Ollama not on PATH — semantic memory will be unavailable until you install Ollama and run: ollama pull ${EMBED_MODEL}`);
 }
+stepDone("embedmodel");
 
 // 4. Default settings scaffold (~/.lax/settings.json).
+step("settings");
 const laxDir = join(homedir(), ".lax");
 const settingsFile = join(laxDir, "settings.json");
 if (!existsSync(settingsFile)) {
@@ -161,6 +250,7 @@ if (!existsSync(settingsFile)) {
 } else {
   ok("Settings already present");
 }
+stepDone("settings");
 
 // 5. Production build of the server — FAIL-CLOSED. tsc failures most
 //    often signal a broken AriKernel contract (the security/policy gate
@@ -168,12 +258,15 @@ if (!existsSync(settingsFile)) {
 //    over those errors, even though the .app technically has a tsx
 //    fallback for dist/-missing cases — a broken build is a signal worth
 //    stopping for, not silencing.
+step("build", "tsc + arikernel (1-2 min)");
 log("Building server (npm run build)…");
 res = run("npm", ["run", "build"]);
 if (res.status !== 0) fail("npm run build failed. Fix the build errors above before re-running install — the runtime refuses to boot when its security layer (AriKernel pre-dispatch gate) can't wire.");
 ok("Server build complete");
+stepDone("build");
 
 // 6. ~/.lax/config.json — packaged Electron reads projectRoot from here so
+step("config");
 //    it always runs the live repo's dist/index.js, not a copy baked into
 //    the .asar bundle. Merge so we don't clobber port/authToken if set.
 const cfgPath = join(laxDir, "config.json");
@@ -197,8 +290,10 @@ if (!cfg.authToken) {
 }
 writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
 ok(`Wired ${cfgPath} → projectRoot=${cfg.projectRoot}, authToken=${cfg.authToken.slice(0,4)}...${cfg.authToken.slice(-4)}`);
+stepDone("config");
 
 // 7. macOS: build the Mac .app and install it to /Applications.
+step("desktop", process.platform === "darwin" ? "Electron .app build (~3–5 min)" : process.platform === "win32" ? "Electron desktop bundle build" : null);
 //    Set SAX_SKIP_APP=1 to skip (useful for headless dev iteration).
 let appInstalled = false;
 let appBuildPath = null;
@@ -329,8 +424,10 @@ if (process.platform === "darwin" && !process.env.SAX_SKIP_APP) {
 } else if (process.platform === "linux") {
   log("(Linux: no native app target yet — use `npm run dev` to launch the server.)");
 }
+stepDone("desktop");
 
-console.log("");
+ipc({ type: "complete" });
+if (!IPC) console.log("");
 log("Install complete.");
 if (appInstalled && process.platform === "darwin") {
   log("  Launch:      open Launchpad, click \"Local Agent X\"");

@@ -6,6 +6,7 @@ import { handleProtocolRoutes } from "./protocols.js";
 import { handleCronRoutes } from "./cron.js";
 import { handleVoiceCloneRoutes } from "./voice-clones.js";
 import { handleVoiceSetupRoutes } from "./voice-setup.js";
+import { handleVoiceDictateRoutes } from "./voice-dictate.js";
 import { handleSecretsRoutes } from "./secrets.js";
 import { handleIntegrationsRoutes } from "./integrations.js";
 import { handleAuthRoutes } from "./auth.js";
@@ -18,6 +19,7 @@ const handlers: RouteHandler[] = [
   handleCronRoutes,
   handleVoiceCloneRoutes,
   handleVoiceSetupRoutes,
+  handleVoiceDictateRoutes,
   handleSecretsRoutes,
   handleIntegrationsRoutes,
   handleAuthRoutes,

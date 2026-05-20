@@ -310,6 +310,16 @@ export const DEFAULT_POLICY: ToolPolicyConfig = {
     // Config
     { id: "allow-config", tool: "config_*", decision: "allow", reason: "Agent configuration read/write", priority: 50 },
 
+    // Schema-driven settings flip surface. `setting` is the agent's path to
+    // change runtime config (theme, provider, enableShell, etc.) — the same
+    // state the user can mutate via UI. The operational gates that actually
+    // enforce safety (e.g. denying bash when enableShell=false) live in
+    // src/tools/pre-dispatch.ts and fire on the next tool call, not on the
+    // toggle itself. Pre-2026-05-20 this tool was missing from the policy,
+    // which logged ERROR every boot (1 of 192 tools without a rule) and
+    // would have hit deny-by-default if no other rule caught it.
+    { id: "allow-setting", tool: "setting", decision: "allow", reason: "Agent settings flip (toggles, theme, provider — runtime state user can also change via UI)", priority: 50 },
+
     // Skills
     { id: "allow-skills", tool: "skill_*", decision: "allow", reason: "User-defined skill workflows", priority: 50 },
 

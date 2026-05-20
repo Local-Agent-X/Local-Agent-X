@@ -364,6 +364,52 @@ const TOOL_CLASS_MAP: Record<string, string> = {
   mission_schedule_reports: "internal",
   playbook_list: "internal",
   playbook_get: "internal",
+  // Protocols — LAX-internal catalog operations. Mirrors the mission_* class:
+  // even the write-path tools (create/edit/delete/curate/prune/archive_*) write
+  // to fixed, structured paths under workspace/protocols/ (custom.json,
+  // archived.json, embeddings.json, .curator/*) — the agent supplies a NAME,
+  // not a path. Generic file-I/O gating (the `file` class) doesn't fit, same
+  // reasoning that makes mission_schedule_create "internal" despite writing
+  // to workspace/missions/. Pre-2026-05-20 these were unmapped and triggered
+  // a one-time "[ari] X not in TOOL_CLASS_MAP" log every boot; the kernel
+  // already skipped gating for them, so this is documentation + audit clarity,
+  // not a posture change. If we ever expose a tool whose path IS agent-
+  // controlled (e.g. protocol_import_from_url), classify it as "http"/"file"
+  // explicitly instead of letting it fall through to internal.
+  protocol_list: "internal",
+  protocol_get: "internal",
+  protocol_search: "internal",
+  protocol_save_preference: "internal",
+  protocol_format_caption: "internal",
+  protocol_dry_run: "internal",
+  protocol_create: "internal",
+  protocol_edit: "internal",
+  protocol_delete: "internal",
+  protocol_unarchive: "internal",
+  protocol_pin: "internal",
+  protocol_list_archived: "internal",
+  protocol_stats: "internal",
+  protocol_prune: "internal",
+  protocol_archive_bulk: "internal",
+  protocol_curate: "internal",
+  protocol_curator_status: "internal",
+  protocol_chain_create: "internal",
+  protocol_chain_start: "internal",
+  protocol_chain_advance: "internal",
+  protocol_rollback_init: "internal",
+  protocol_rollback_snapshot: "internal",
+  protocol_rollback_undo: "internal",
+  protocol_rollback_history: "internal",
+  protocol_progress_start: "internal",
+  protocol_progress_update: "internal",
+  protocol_progress_get: "internal",
+  protocol_templates_list: "internal",
+  protocol_from_template: "internal",
+  protocol_var_set: "internal",
+  protocol_var_get: "internal",
+  protocol_var_delete: "internal",
+  protocol_var_list: "internal",
+  protocol_var_interpolate: "internal",
   // Media / vision — LAX-internal acquisition + cached files.
   generate_image: "internal",
   generate_video: "internal",

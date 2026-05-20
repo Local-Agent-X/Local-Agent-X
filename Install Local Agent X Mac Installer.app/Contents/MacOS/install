@@ -1,0 +1,21 @@
+#!/bin/bash
+# Local Agent X — macOS .app installer shim.
+# Resolves the repo root (parent of this .app bundle) and hands off to install.command,
+# which already lives at the repo root and contains the cross-platform install logic.
+set -e
+APP_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+REPO_DIR="$(cd "$APP_DIR/.." && pwd)"
+CMD="$REPO_DIR/install.command"
+if [ ! -x "$CMD" ]; then
+    if [ -f "$CMD" ]; then chmod +x "$CMD"; else
+        osascript -e "display dialog \"install.command not found at $CMD\" buttons {\"OK\"} with icon stop"
+        exit 1
+    fi
+fi
+# Open Terminal so the user sees install progress (Finder double-click doesn't give us a tty).
+osascript <<EOF
+tell application "Terminal"
+    activate
+    do script "\"$CMD\""
+end tell
+EOF

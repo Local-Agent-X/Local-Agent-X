@@ -34,6 +34,7 @@ import { createProgressTools } from "./progress.js";
 import { createRollbackTools } from "./rollback.js";
 import { createVariableTools } from "./variables.js";
 import { createProtocolSearchTool } from "./search.js";
+import { createProtocolStatsTools } from "./stats-tools.js";
 
 /** Returns all protocol-system tools from submodules. */
 export function createAllProtocolTools(): ToolDefinition[] {
@@ -45,6 +46,7 @@ export function createAllProtocolTools(): ToolDefinition[] {
     ...createProgressTools(),
     ...createRollbackTools(),
     ...createVariableTools(),
+    ...createProtocolStatsTools(),
     createProtocolSearchTool(),
   ];
 }

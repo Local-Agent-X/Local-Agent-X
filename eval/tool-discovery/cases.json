@@ -42,8 +42,6 @@
 
     { "id": "task.create",             "message": "add a task: ship the eval framework by friday",                    "expected": ["task_create"], "mustNotCall": ["memory_save", "bash"] },
 
-    { "id": "ask.clarify",             "message": "ask me what color scheme I want",                                  "expected": ["ask_user"], "mustNotCall": ["bash"] },
-
     { "id": "ops.start",               "message": "start a long-horizon operation to migrate dns and verify mailboxes", "expected": ["operation_start", "agent_spawn"], "mustNotCall": ["bash"], "note": "agent_spawn is acceptable per delegation-design intent — both are valid for long-horizon work." },
 
     { "id": "tool-search.unknown",     "message": "use the tool that fetches stock prices",                           "expected": ["tool_search"], "mustNotCall": ["bash", "http_request"] }

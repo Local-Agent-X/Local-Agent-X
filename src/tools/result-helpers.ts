@@ -135,7 +135,6 @@ export const toolPrompts: Record<string, () => string> = {
   presentation_from_outline: () => "Outline MUST use # for slide titles and - for bullets, separated by \\n.",
   pdf_create: () => "Use # for headings, \\n\\n for paragraph breaks.",
   sql_query: () => "Read-only by default. Run sql_schema first to see available tables.",
-  ask_user: () => "Use when you need clarification. Don't guess — ask.",
   enter_plan_mode: () => "Enter plan mode to research before making changes. Only read tools available.",
   task_create: () => "Use for multi-step work. Tasks persist across messages.",
 };

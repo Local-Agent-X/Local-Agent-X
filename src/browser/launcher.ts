@@ -8,9 +8,18 @@
 import type { Browser } from "playwright";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { getRuntimeConfig } from "../config.js";
+
+/** Resolve the workspace/downloads dir (creates it if missing) — shared by
+ *  CDP and Playwright fallback paths so downloads land in one place. */
+function resolveDownloadsDir(): string {
+  const cfg = getRuntimeConfig();
+  const dir = resolve(cfg.workspace, "downloads");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return dir;
+}
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser.launcher");
@@ -194,6 +203,10 @@ export async function launchViaCDP(
 
     // Spawn a fully separate Chrome process. On Windows, Chrome merges into
     // the user's main instance unless we force a distinct profile + flags.
+    // --download.default_directory and --disable-download-protection so
+    // downloads land in workspace/downloads/ without the SmartScreen
+    // confirmation dialog blocking the agent.
+    const downloadsDir = resolveDownloadsDir();
     const args = [
       `--remote-debugging-port=${cdpPort}`,
       `--user-data-dir=${userDataDir}`,
@@ -201,6 +214,8 @@ export async function launchViaCDP(
       "--disable-features=RendererCodeIntegrity",
       ...STEALTH_ARGS,
       "--window-size=1280,800",
+      `--download.default_directory=${downloadsDir}`,
+      "--disable-features=DownloadBubble,DownloadBubbleV2",
     ];
 
     logger.info(`[browser] Spawning agent Chrome: ${chromePath} (profile: ${userDataDir})`);
@@ -238,16 +253,21 @@ export async function launchViaCDP(
     }
   }
 
-  // Fallback: Playwright persistent context.
+  // Fallback: Playwright persistent context. acceptDownloads + downloadsPath
+  // so Playwright doesn't abort navigation when a response is a download
+  // (the failure mode that landed files nowhere pre-2026-05-19).
   logger.info("[browser] Launching Playwright persistent context");
   const persistDir = join(homedir(), ".lax", "chrome-profile-pw");
   if (!existsSync(persistDir)) mkdirSync(persistDir, { recursive: true });
+  const downloadsDir = resolveDownloadsDir();
   try {
     const ctx = await pw.chromium.launchPersistentContext(persistDir, {
       channel: "chrome",
       headless: false,
       args: STEALTH_ARGS,
       viewport: { width: 1280, height: 800 },
+      acceptDownloads: true,
+      downloadsPath: downloadsDir,
     });
     logger.info("[browser] Playwright persistent context (Chrome channel)");
     return { browser: ctx.browser()!, chromeProcess: null };
@@ -257,6 +277,8 @@ export async function launchViaCDP(
         headless: false,
         args: STEALTH_ARGS,
         viewport: { width: 1280, height: 800 },
+        acceptDownloads: true,
+        downloadsPath: downloadsDir,
       });
       logger.info("[browser] Playwright persistent context (bundled Chromium)");
       return { browser: ctx.browser()!, chromeProcess: null };

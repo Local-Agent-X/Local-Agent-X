@@ -36,67 +36,74 @@ function bundledDir(): string {
   return join(process.cwd(), "protocols", "bundled");
 }
 
-/** Legacy ~/.lax import dir — kept for back-compat with pre-2026-05-19
- *  installs. New installs should drop SKILL.md packs in workspaceImportedDir
- *  instead so they sync across machines via workspace git sync. */
-function importedDir(): string {
-  return join(homedir(), ".lax", "protocols", "imported");
-}
-
 /** Synced user protocol dir — lives in workspace/protocols/imported/.
  *  Picked up by workspace git sync so user-added SKILL.md packs propagate
- *  to all of the user's machines. Preferred location for new additions. */
+ *  to all of the user's machines. The ONLY location loaded post-migration. */
 function workspaceImportedDir(): string {
-  try {
-    const cfg = getRuntimeConfig();
-    return resolve(cfg.workspace, "protocols", "imported");
-  } catch {
-    // Config not initialized yet (very early boot path). Fall back to legacy
-    // dir so we don't blow up before bootstrap completes.
-    return importedDir();
-  }
+  const cfg = getRuntimeConfig();
+  return resolve(cfg.workspace, "protocols", "imported");
 }
 
 function legacySkillsDir(): string {
   return join(homedir(), ".lax", "skills");
 }
 
-// ── One-time migration: ~/.lax/skills/ → ~/.lax/protocols/imported/ ────────
+/** Pre-2026-05-19 import dir. One-shot migration moves it to workspace
+ *  on first load; after that, the dir is gone and nothing scans it. */
+function legacyImportedDir(): string {
+  return join(homedir(), ".lax", "protocols", "imported");
+}
+
+// ── One-time migrations into workspace/protocols/imported/ ─────────────────
+//
+// Two legacy locations existed before protocols moved into the workspace:
+//   1. ~/.lax/skills/                — earliest layout
+//   2. ~/.lax/protocols/imported/    — intermediate layout (pre-2026-05-19)
+//
+// Both fold into workspace/protocols/imported/ on first load. Idempotent
+// (renameSync is the no-op when source is gone) and best-effort (any
+// permission/cross-device failure skips that entry without throwing).
 
 let _migrationRan = false;
 
-function runLegacySkillsMigration(): void {
+function runProtocolMigrations(): void {
   if (_migrationRan) return;
   _migrationRan = true;
 
-  const legacy = legacySkillsDir();
-  const target = importedDir();
-  if (!existsSync(legacy)) return;
-
+  let target: string;
   try {
-    mkdirSync(target, { recursive: true });
-    let moved = 0;
-    for (const entry of readdirSync(legacy, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const src = join(legacy, entry.name);
-      const dst = join(target, entry.name);
-      if (existsSync(dst)) continue; // user already has one — keep it
-      try { renameSync(src, dst); moved += 1; } catch { /* skip on cross-device or permission errors */ }
-    }
-    if (moved > 0) {
-      logger.info(`[protocols] Migrated ${moved} legacy skill(s) from ~/.lax/skills/ → ~/.lax/protocols/imported/`);
-    }
-    // Best-effort: remove the legacy dir if it's now empty. Keep it on any error.
+    target = workspaceImportedDir();
+  } catch {
+    // Config not initialized yet (rare early-boot path) — defer.
+    _migrationRan = false;
+    return;
+  }
+
+  for (const legacy of [legacySkillsDir(), legacyImportedDir()]) {
+    if (!existsSync(legacy)) continue;
     try {
-      if (readdirSync(legacy).length === 0) {
-        // Use rmdirSync via fs — readdirSync was empty so this should succeed.
-        // Not critical; harmless if it stays.
-        const fs = require("node:fs") as typeof import("node:fs");
-        fs.rmdirSync(legacy);
+      mkdirSync(target, { recursive: true });
+      let moved = 0;
+      for (const entry of readdirSync(legacy, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const src = join(legacy, entry.name);
+        const dst = join(target, entry.name);
+        if (existsSync(dst)) continue; // workspace already has one — keep it
+        try { renameSync(src, dst); moved += 1; } catch { /* cross-device / permission — skip */ }
       }
-    } catch { /* leave it */ }
-  } catch (e) {
-    logger.warn(`[protocols] Legacy skill migration failed: ${(e as Error).message}`);
+      if (moved > 0) {
+        logger.info(`[protocols] Migrated ${moved} pack(s) from ${legacy} → ${target}`);
+      }
+      // Best-effort cleanup of the now-empty legacy dir.
+      try {
+        if (readdirSync(legacy).length === 0) {
+          const fs = require("node:fs") as typeof import("node:fs");
+          fs.rmdirSync(legacy);
+        }
+      } catch { /* leave it */ }
+    } catch (e) {
+      logger.warn(`[protocols] Migration from ${legacy} failed: ${(e as Error).message}`);
+    }
   }
 }
 
@@ -149,11 +156,8 @@ export function invalidateBundledCache(): void {
 }
 
 export function loadImportedProtocols(): Protocol[] {
-  // Scan workspace first (preferred — synced) then legacy ~/.lax. Workspace
-  // entries win on name collision because mergeByName uses last-wins order.
-  const legacy = scanSkillMdDir(importedDir(), "imported");
-  const synced = scanSkillMdDir(workspaceImportedDir(), "imported");
-  return [...legacy, ...synced];
+  runProtocolMigrations();
+  return scanSkillMdDir(workspaceImportedDir(), "imported");
 }
 
 // ── Stamping helpers ──────────────────────────────────────────────────────
@@ -186,7 +190,7 @@ export function mergeByName(...sources: Protocol[][]): Protocol[] {
   return [...byName.values()];
 }
 
-/** Run the legacy migration on first boot — call once during server lifecycle. */
+/** Run the legacy migrations on first boot — call once during server lifecycle. */
 export function bootProtocolsLayer(): void {
-  runLegacySkillsMigration();
+  runProtocolMigrations();
 }

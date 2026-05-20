@@ -7,8 +7,6 @@ import {
   BRAIN_DIRS,
   BRAIN_JSON_FILES,
   MISSION_FILES,
-  PROTOCOL_FILES,
-  PROTOCOL_DIRS,
   type SyncConfig,
 } from "./constants.js";
 import { pullDir, unionMerge } from "./mirror.js";
@@ -130,6 +128,17 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
       pullDir(syncWs, ws, /* additiveOnly */ true);
       applyTombstones(tombstonePaths(dataDir, syncDir));
     }
+  } else if (config.syncProtocols) {
+    // Workspace sync OFF but syncProtocols ON: pull just the protocols
+    // subtree so user-built and imported protocols flow across machines
+    // without pulling apps/downloads/etc. Additive only.
+    const syncProto = join(syncDir, "workspace", "protocols");
+    if (existsSync(syncProto)) {
+      const ws = resolve("workspace");
+      const localProto = join(ws, "protocols");
+      if (!existsSync(localProto)) mkdirSync(localProto, { recursive: true });
+      pullDir(syncProto, localProto, /* additiveOnly */ true);
+    }
   }
 
   if (config.syncCronJobs) {
@@ -154,7 +163,6 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
   for (const file of BRAIN_JSON_FILES) {
     if (file === "agent-projects.json") continue;
     if (!config.syncMissions && MISSION_FILES.has(file)) continue;
-    if (!config.syncProtocols && PROTOCOL_FILES.has(file)) continue;
     const remote = join(syncDir, file);
     if (!existsSync(remote)) continue;
     try {
@@ -190,7 +198,6 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
   // Brain backup — directory trees. Destructive mirror so the
   // destination matches the remote tree exactly.
   for (const dir of BRAIN_DIRS) {
-    if (!config.syncProtocols && PROTOCOL_DIRS.has(dir)) continue;
     const remote = join(syncDir, dir);
     if (!existsSync(remote)) continue;
     const local = join(dataDir, dir);

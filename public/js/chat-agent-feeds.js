@@ -235,11 +235,25 @@ function updateAgentFeed(agentId, update) {
     // Build_app and other URL-producing ops set resultUrl on completion.
     // Render as a clickable "Open" link below the worker activity. esc()
     // on the href guards against any agent-controlled string reaching href.
+    //
+    // /api/* URLs need the auth token appended — Electron child windows
+    // (and external browser tabs) don't carry the parent's Authorization
+    // header, so a bare /api/cron/.../reports/latest 401's. The server
+    // accepts ?token=<bearer> as an equivalent to Authorization: Bearer.
+    // Live failure 2026-05-19: user clicked the worker's report link
+    // and got {"error":"Unauthorized"}.
     if (update.resultUrl) {
       var linkEl = card.querySelector('.agent-feed-result-link');
       if (linkEl) {
-        var safeUrl = esc(update.resultUrl);
-        linkEl.innerHTML = '<a href="' + safeUrl + '" target="_blank" rel="noopener" style="color:var(--accent,#3a7);text-decoration:none">↗ Open: ' + safeUrl + '</a>';
+        var rawUrl = update.resultUrl;
+        var needsAuth = rawUrl.indexOf('/api/') === 0 || rawUrl.indexOf('http://127.0.0.1') === 0 || rawUrl.indexOf('http://localhost') === 0;
+        var token = (typeof AUTH_TOKEN !== 'undefined' && AUTH_TOKEN) ? AUTH_TOKEN : (localStorage.getItem('sax_token') || '');
+        var authedUrl = (needsAuth && token && rawUrl.indexOf('token=') === -1)
+          ? rawUrl + (rawUrl.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(token)
+          : rawUrl;
+        // Show the bare URL to the user (no token leakage in the label),
+        // but link to the authed variant so the click actually loads.
+        linkEl.innerHTML = '<a href="' + esc(authedUrl) + '" target="_blank" rel="noopener" style="color:var(--accent,#3a7);text-decoration:none">↗ Open: ' + esc(rawUrl) + '</a>';
         linkEl.style.display = 'block';
       }
     }

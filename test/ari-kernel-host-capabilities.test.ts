@@ -122,16 +122,15 @@ describe("AriKernel host capability manifest", () => {
     }
   });
 
-  it("fails closed for a tool whose (toolClass, action) is off-manifest", async () => {
-    // `__unknown_tool__` falls through toolClassMap to its default
-    // ("shell"). With action "head", deriveCapabilityClass falls back
-    // to shell.write — for which the host has no grant. The pipeline's
-    // capability gate should reject this with a capability-layer
-    // reason; ariRequired=true wraps it in the canonical
-    // "tool call blocked (ariRequired mode)" message.
+  it("fails closed for a tool not in TOOL_CLASS_MAP", async () => {
+    // Pre-2026-05-20 unmapped tools fell through to `|| "shell"` and were
+    // (usually) denied at the capability layer for the wrong reason — the
+    // dev got a confusing "no grant for shell.write" error instead of
+    // "you forgot to classify this tool". Now ariEvaluate detects unmapped
+    // names up front and returns a clear "not in TOOL_CLASS_MAP" denial.
     const result = await ariEvaluate("__unknown_tool__", "head", {});
     expect(result.allowed).toBe(false);
-    expect(result.reason).toMatch(/blocked|denied/i);
+    expect(result.reason).toMatch(/blocked|denied|fail-closed|not in TOOL_CLASS_MAP/i);
   });
 
   it("still denies a manifest-granted shell call when web-tainted", async () => {

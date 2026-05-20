@@ -427,25 +427,65 @@ const _seenUnmappedTools = new Set<string>();
 /**
  * Should this tool be evaluated by AriKernel at the SAX dispatch layer?
  *
- * Returns true ONLY for tools mapped to a gated I/O class. Internal-class
- * tools and unmapped tools return false — dispatch skips ariEvaluate
- * entirely so legitimate orchestration calls (agent spawning, scheduled
- * missions, bridge wrappers) don't hit a fail-closed gate they don't need.
+ * Returns true for:
+ *   - tools mapped to a gated I/O class (file/http/shell/database/retrieval/secret-vault)
+ *   - tools NOT in the map (fail-closed: missing classification = treat as risky)
  *
- * Unmapped tools are logged once so coverage gaps surface, but they do
- * NOT block. AriKernel's job is to defend I/O surfaces, not to break
- * every newly-added internal tool until someone remembers to update a map.
+ * Returns false ONLY for tools explicitly classified "internal" — pure LAX
+ * state transitions and bridge wrappers that route through the kernel via
+ * a different path (ari_* bridges) or have no I/O sink at all (orchestration).
+ *
+ * Why fail-closed on unmapped: a new tool added without a TOOL_CLASS_MAP
+ * entry is, by definition, an unaudited I/O surface. Defaulting to "skip the
+ * kernel" means a prompt-injection-controlled parameter could reach an
+ * I/O sink with the deepest defense layer disabled. Defaulting to "gate"
+ * means the dev sees a clear block-and-message on first call, fixes the
+ * classification, and the tool works. Forcing-function for coverage.
+ *
+ * The boot-time audit (auditKernelCoverage / printKernelCoverageReport) is
+ * the early-warning twin — same shape as auditPolicyCoverage in
+ * src/tool-policy.ts. Together: boot warns, runtime blocks.
  */
 export function shouldGateInKernel(toolName: string): boolean {
   const cls = TOOL_CLASS_MAP[toolName];
   if (cls === undefined) {
     if (!_seenUnmappedTools.has(toolName)) {
       _seenUnmappedTools.add(toolName);
-      logger.info(`[ari] ${toolName} not in TOOL_CLASS_MAP — dispatch skips kernel (add to map if I/O gating is needed)`);
+      logger.warn(`[ari] ${toolName} not in TOOL_CLASS_MAP — defaulting to BLOCK (fail-closed). Add to TOOL_CLASS_MAP in src/ari-kernel.ts to classify.`);
     }
-    return false;
+    return true;
   }
   return GATED_CLASSES.has(cls);
+}
+
+/** Boot-time coverage audit. Mirrors auditPolicyCoverage in src/tool-policy.ts —
+ *  surfaces missing TOOL_CLASS_MAP entries at startup so devs catch them
+ *  before users hit the runtime block. */
+export interface KernelCoverageReport {
+  totalTools: number;
+  covered: string[];
+  uncovered: string[];
+}
+
+export function auditKernelCoverage(toolNames: string[]): KernelCoverageReport {
+  const covered: string[] = [];
+  const uncovered: string[] = [];
+  for (const name of toolNames) {
+    if (TOOL_CLASS_MAP[name] !== undefined) covered.push(name);
+    else uncovered.push(name);
+  }
+  return { totalTools: toolNames.length, covered, uncovered };
+}
+
+export function printKernelCoverageReport(report: KernelCoverageReport): void {
+  logger.info(`\n  ── AriKernel Coverage ──`);
+  if (report.uncovered.length === 0) {
+    logger.info(`  \x1b[36mℹ\x1b[0m All ${report.totalTools} registered tools are classified in TOOL_CLASS_MAP\n`);
+    return;
+  }
+  logger.error(`  \x1b[31m✖\x1b[0m ${report.uncovered.length} of ${report.totalTools} tools missing from TOOL_CLASS_MAP:`);
+  for (const name of report.uncovered) logger.error(`    - ${name}`);
+  logger.error(`  These will FAIL-CLOSED at runtime (default block). Classify each as a gated class (file/http/shell/database/retrieval/secret-vault) or "internal" in src/ari-kernel.ts.\n`);
 }
 
 /**
@@ -468,6 +508,22 @@ export async function ariEvaluate(
   // Map our tool names to AriKernel tool classes
   const toolClassMap: Record<string, string> = TOOL_CLASS_MAP;
 
+  // Fail-closed on unmapped tools. Pre-2026-05-20 the line below was
+  // `|| "shell"`, which silently routed unclassified tools through a
+  // shell-class grant lookup — usually denying for the wrong reason, but
+  // occasionally allowing if a shell grant happened to be in scope. That
+  // was the actual injection-bypass risk: a new tool with an HTTP sink
+  // could slip past with "shell-class but no grant matched" semantics.
+  // Now: unmapped → explicit block, paired with a clear "classify me" hint
+  // so the next dev hit fixes the gap.
+  if (toolClassMap[toolName] === undefined) {
+    return {
+      allowed: false,
+      reason: `[ARI] ${toolName} not in TOOL_CLASS_MAP — fail-closed. Classify it (file/http/shell/database/retrieval/secret-vault/internal) in src/ari-kernel.ts:TOOL_CLASS_MAP.`,
+      userHint: USER_HINTS.policy,
+    };
+  }
+
   // Per-tool action override: secret-vault tools have a fixed action mapping
   // (capture / fill / clipboard) regardless of what the executor passes in.
   // ARI sees the canonical action in audit logs and behavioral rules.
@@ -477,7 +533,7 @@ export async function ariEvaluate(
     clipboard_write_from_secret: "clipboard",
   };
 
-  const toolClass = toolClassMap[toolName] || "shell";
+  const toolClass = toolClassMap[toolName];
   const effectiveAction = secretVaultActionMap[toolName] ?? action;
 
   try {

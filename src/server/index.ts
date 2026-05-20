@@ -17,7 +17,33 @@ import type { ProviderId } from "../providers/provider-ids.js";
 const bootLogger = createLogger("server.index");
 
 export async function startServer(config: LAXConfig) {
-  const services = await bootstrapServices(config);
+  // Per-phase boot timing. Boot has crept up to 60-90s on developer
+  // machines and we kept guessing which phase. Now every blocking
+  // section logs its duration so the next time someone says "the app
+  // takes forever to start" we have data, not theories. Phases that
+  // intentionally run in background (tool-RAG pre-warm, memory backfill)
+  // are excluded — they don't gate /api/health.
+  const _bootT0 = Date.now();
+  const phase = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+    const t = Date.now();
+    try {
+      const out = await fn();
+      bootLogger.info(`[boot-phase] ${name} ${Date.now() - t}ms`);
+      return out;
+    } catch (e) {
+      bootLogger.error(`[boot-phase] ${name} FAILED after ${Date.now() - t}ms: ${(e as Error).message}`);
+      throw e;
+    }
+  };
+  const phaseSync = <T>(name: string, fn: () => T): T => {
+    const t = Date.now();
+    const out = fn();
+    const dt = Date.now() - t;
+    if (dt > 50) bootLogger.info(`[boot-phase] ${name} ${dt}ms`);
+    return out;
+  };
+
+  const services = await phase("bootstrapServices", () => bootstrapServices(config));
   const { security, publicDir, dataDir, toolPolicy, rbac, agentSync, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations } = services;
 
   // Provider matrix + session bridge bootstrap. Canonical-loop ops run
@@ -63,7 +89,7 @@ export async function startServer(config: LAXConfig) {
     }
   })();
 
-  const tools = await bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir });
+  const tools = await phase("bootstrapTools", () => bootstrapTools({ secretsStore, cronService, memoryIndex, dataDir }));
   const { allAgentTools, bridgeTools, toolRegistry, activeOnEventBySession, activeBrowserSessionIdRef, activeRuntimeBySession } = tools;
 
   // Boot-time coverage audit — catch newly-registered tools that don't
@@ -171,10 +197,10 @@ export async function startServer(config: LAXConfig) {
     activeRuntimeBySession,
   });
 
-  const { server, chatWs } = createHttpServer(requestHandler, { config, dataDir });
+  const { server, chatWs } = phaseSync("createHttpServer", () => createHttpServer(requestHandler, { config, dataDir }));
   chatWsHolder.value = chatWs;
 
-  await setupVoiceWs({ server, config, dataDir, memoryIndex, memoryManager, integrations, secretsStore, allAgentTools, bridgeTools, security, toolPolicy, rbac, activeOnEventBySession });
+  await phase("setupVoiceWs", () => setupVoiceWs({ server, config, dataDir, memoryIndex, memoryManager, integrations, secretsStore, allAgentTools, bridgeTools, security, toolPolicy, rbac, activeOnEventBySession }));
 
   // The WS forward layer calls into the same chat-turn helper the HTTP
   // /api/chat route uses (no more localhost HTTP self-loop). It needs a
@@ -210,11 +236,12 @@ export async function startServer(config: LAXConfig) {
     allAgentTools, agentRunStore, agentTemplateStore, broadcastAll,
   });
 
-  startConfigWatcher(dataDir);
-  bootstrapCanonicalLoop();
+  phaseSync("startConfigWatcher", () => startConfigWatcher(dataDir));
+  phaseSync("bootstrapCanonicalLoop", () => bootstrapCanonicalLoop());
 
   let jobScheduler: import("./scheduler.js").JobScheduler | undefined;
   server.listen(config.port, "127.0.0.1", () => {
+    bootLogger.info(`[boot-phase] TOTAL ${Date.now() - _bootT0}ms (port ${config.port} listening)`);
     logStartup({ config, dataDir });
     const handle = startBackgroundJobs({
       config, dataDir, sessionStore, memoryIndex, memoryManager, secretsStore, security, toolPolicy,

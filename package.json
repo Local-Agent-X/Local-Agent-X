@@ -20,6 +20,8 @@
     "test:replay": "tsx src/replay-test.ts",
     "test:fixtures": "node scripts/run-prompt-fixtures.mjs",
     "eval:tools": "node eval/tool-discovery/run.mjs",
+    "eval:gate": "node scripts/eval-gate.mjs",
+    "eval:install-hook": "node scripts/install-eval-hook.mjs",
     "setup-ai": "node scripts/setup-ai.js"
   },
   "dependencies": {

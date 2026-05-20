@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using Avalonia.Threading;
@@ -11,7 +12,9 @@ namespace LocalAgentX.Installer.ViewModels;
 public partial class MainWindowViewModel : ObservableObject
 {
     private readonly InstallProcess _process = new();
+    private readonly NodeBootstrap _node = new();
     private readonly StringBuilder _log = new();
+    private string _repoRoot = "";
 
     public ObservableCollection<StepViewModel> Steps { get; } = new();
 
@@ -43,19 +46,51 @@ public partial class MainWindowViewModel : ObservableObject
     {
         _process.OnEvent += HandleEvent;
         _process.OnExit += HandleExit;
+        _node.OnStatus  += s => Dispatcher.UIThread.Post(() => { CurrentStepLabel = s; });
+        _node.OnLogLine += line => Dispatcher.UIThread.Post(() =>
+        {
+            _log.AppendLine($"[node-bootstrap] {line}");
+            LogText = _log.ToString();
+        });
     }
 
     [RelayCommand]
-    private void Install()
+    private async Task Install()
     {
         Screen = "progress";
         Steps.Clear();
         _log.Clear();
         LogText = "";
 
-        var exeDir = AppContext.BaseDirectory;
-        var repoRoot = ResolveRepoRoot(exeDir);
-        _process.Start(repoRoot);
+        // Environment.ProcessPath returns the actual on-disk .exe location
+        // even when run as a single-file PublishSingleFile binary (where
+        // AppContext.BaseDirectory points at the bundle extraction temp
+        // dir, not the .exe's actual folder).
+        var exePath = Environment.ProcessPath ?? AppContext.BaseDirectory;
+        var exeDir  = Path.GetDirectoryName(exePath) ?? AppContext.BaseDirectory;
+        _repoRoot   = ResolveRepoRoot(exeDir);
+
+        // Node bootstrap runs BEFORE the IPC stream because install-common.mjs
+        // can't execute without Node. Show a synthetic step in the UI for
+        // this so the user sees something happening — the IPC plan event
+        // will replace the step list once install-common.mjs starts.
+        if (!_node.NodeAvailable())
+        {
+            CurrentStepLabel = "Node.js runtime";
+            CurrentStepDetail = "Installing via winget (one-time)…";
+            Steps.Add(new StepViewModel { Id = "_bootstrap_node", Label = "Node.js runtime", State = "running", Detail = "Installing via winget…" });
+            bool ok = await Task.Run(() => _node.InstallNode());
+            if (!ok)
+            {
+                Screen = "error";
+                ErrorMessage = "Couldn't install Node.js. Install it manually from nodejs.org and re-run.";
+                return;
+            }
+            var step = Steps.FirstOrDefault(s => s.Id == "_bootstrap_node");
+            if (step != null) step.State = "done";
+        }
+
+        _process.Start(_repoRoot);
     }
 
     [RelayCommand]
@@ -68,8 +103,45 @@ public partial class MainWindowViewModel : ObservableObject
     [RelayCommand]
     private void Launch()
     {
-        // Phase 2: invoke the installed app (shortcut on Windows, .app on macOS).
-        // For now: signal completion via process exit so the installer window closes.
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                // Launch electron.exe directly with the desktop main.js — same
+                // shape install-common.mjs writes into the shortcut .lnk, but
+                // without depending on the shortcut existing yet (it's created
+                // late in the install). WorkingDirectory matches the .lnk so
+                // relative paths inside the Electron main process resolve.
+                var electron = Path.Combine(_repoRoot, "desktop", "node_modules", "electron", "dist", "electron.exe");
+                var mainJs   = Path.Combine(_repoRoot, "desktop", "dist", "main.js");
+                if (File.Exists(electron) && File.Exists(mainJs))
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = electron,
+                        WorkingDirectory = Path.Combine(_repoRoot, "desktop"),
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        ArgumentList = { mainJs },
+                    });
+                }
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                // The install copies the built .app to /Applications. `open`
+                // launches it the same way Launchpad / Spotlight does.
+                var dst = "/Applications/Local Agent X.app";
+                if (Directory.Exists(dst))
+                {
+                    Process.Start(new ProcessStartInfo { FileName = "open", ArgumentList = { dst }, UseShellExecute = false });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.AppendLine($"[error] Launch failed: {ex.Message}");
+            LogText = _log.ToString();
+        }
         Environment.Exit(0);
     }
 

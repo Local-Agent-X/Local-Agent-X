@@ -27,6 +27,24 @@ import { getApprovalManager, toolNeedsApproval } from "./approval-manager.js";
 import { logRetry } from "./retry-telemetry.js";
 import { assertToolCallAllowed, ToolBlocked } from "./tools/pre-dispatch.js";
 
+// ── Dry-run mode (eval scaffolding) ──
+//
+// When a session is marked dry-run, executeSingleTool emits the normal
+// tool_start event (so observers can capture which tool was picked) but
+// short-circuits BEFORE policy checks, approval prompts, or `tool.execute()`.
+// The model gets a synthetic "[dry-run]" result back and typically stops.
+//
+// This exists to protect /api/eval/run: previously the eval would dispatch
+// real `build_app`, `agent_spawn`, `operation_start` calls and crash the
+// server with cascading background work (2026-05-19). The set is module-
+// scoped (not on ctx) because eval cases run with throwaway session IDs and
+// don't have a ctx instance to mutate.
+const dryRunSessions = new Set<string>();
+/** Mark a session so its next tool dispatch returns a synthetic dry-run result. */
+export function markDryRunSession(sessionId: string): void { dryRunSessions.add(sessionId); }
+/** Clear the dry-run flag — call from a finally block. */
+export function unmarkDryRunSession(sessionId: string): void { dryRunSessions.delete(sessionId); }
+
 // Tools whose failures are usually transient (network, rate limit) and worth retrying.
 const RETRYABLE_TOOLS = new Set([
   "http_request",
@@ -357,6 +375,18 @@ async function executeSingleTool(
   const riskLevel = getRiskLevel(tc.name, args, security);
   const approvalContext = buildApprovalContext(tc.name, args);
   onEvent?.({ type: "tool_start", toolName: tc.name, toolCallId: tc.id, args, riskLevel, context: approvalContext, requiresApproval: riskLevel === "high" });
+
+  // Dry-run short-circuit. The tool_start event has already fired so eval
+  // observers (and any logging layer) see the chosen tool, but we never
+  // dispatch — no policy eval, no approval prompt, no `tool.execute()`,
+  // no side effects. The model receives a synthetic OK result and the
+  // turn either ends or tries another tool we'll also short-circuit.
+  if (sessionId && dryRunSessions.has(sessionId)) {
+    const dryRunResult = `[dry-run] tool_call captured: ${tc.name}. No side effects executed (eval mode).`;
+    onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: dryRunResult, allowed: true });
+    msgs.push({ role: "tool", tool_call_id: tc.id, content: dryRunResult } as ChatCompletionMessageParam);
+    return msgs;
+  }
 
   // Layer -1: AriKernel. Only gated I/O tools (file/http/shell/database/
   // retrieval/secret-vault per TOOL_CLASS_MAP in ari-kernel.ts) hit the

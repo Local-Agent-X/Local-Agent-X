@@ -19,6 +19,7 @@
     "test": "tsx src/test-suite.ts",
     "test:replay": "tsx src/replay-test.ts",
     "test:fixtures": "node scripts/run-prompt-fixtures.mjs",
+    "eval:tools": "node eval/tool-discovery/run.mjs",
     "setup-ai": "node scripts/setup-ai.js"
   },
   "dependencies": {

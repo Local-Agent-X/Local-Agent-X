@@ -894,3 +894,8 @@ button:focus-visible,.chat-item:focus-visible,.util-btn:focus-visible{outline:2p
 .slash-popup-category{padding:4px 10px;font-size:.58rem;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;background:rgba(255,255,255,.02);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
 .slash-popup-category:first-of-type{border-top:none}
 
+.collapse-section > summary.collapse-head{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:.72rem;color:var(--muted);margin-bottom:4px;padding:2px 0;user-select:none}
+.collapse-section > summary.collapse-head::-webkit-details-marker{display:none}
+.collapse-section > summary.collapse-head:hover{color:var(--text)}
+.collapse-arrow{display:inline-block;transition:transform .15s ease;width:10px;text-align:center}
+.collapse-section[open] > summary > .collapse-arrow{transform:rotate(90deg)}

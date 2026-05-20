@@ -36,6 +36,12 @@ export interface CronJob {
   prompt: string;
   enabled: boolean;
   systemJob?: boolean;
+  /** Per-job model selection. When both `provider` and `model` are set,
+   *  the executor uses them as overrides instead of the system defaults.
+   *  Empty string or undefined means "system default" (resolved at run
+   *  time from settings.json + the legacy anthropic→sonnet-4-6 pin). */
+  provider?: string;
+  model?: string;
   lastRun?: string;
   lastResult?: string;
   lastReportPath?: string;
@@ -401,7 +407,7 @@ export class CronService {
     logger.error(`[cron] Auto-paused job ${job.name} (${job.id}) after ${job.consecutiveFailures} consecutive failures`);
   }
 
-  create(name: string, schedule: string, prompt: string, systemJob?: boolean): CronJob {
+  create(name: string, schedule: string, prompt: string, systemJob?: boolean, opts?: { provider?: string; model?: string }): CronJob {
     if (prompt.length > 5000) throw new Error("Cron job prompt too long (max 5000 characters)");
     if (!schedule || schedule.trim().length === 0) throw new Error("Schedule is required");
     // Validate the schedule by attempting to compute next-run time. Without
@@ -424,6 +430,8 @@ export class CronService {
       systemJob: systemJob || false,
       consecutiveFailures: 0,
       createdAt: new Date().toISOString(),
+      ...(opts?.provider ? { provider: opts.provider } : {}),
+      ...(opts?.model ? { model: opts.model } : {}),
     };
     this.jobs.set(id, job);
     this.saveJobs();

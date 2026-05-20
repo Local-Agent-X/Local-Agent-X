@@ -24,7 +24,11 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // defeated the worker pool's whole purpose, surprised users with
   // unexpected provider switches, and never validated that workers can
   // make Codex perform on long tasks. Workers + fresh context IS the fix.)
-  const resolved = await resolveProvider(config, secretsStore, dataDir);
+  const resolved = await resolveProvider(
+    config, secretsStore, dataDir,
+    input.providerOverride,
+    input.modelOverride,
+  );
   void logger; // logger kept for future routing diagnostics
 
   // 2. Sanitize + truncate history. Compaction now lives as a leading

@@ -15,9 +15,9 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     json(200, { missions, settings: ctx.cronService.getSettings() }); return true;
   }
   if (method === "POST" && url.pathname === "/api/cron") {
-    const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean };
+    const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean; provider?: string; model?: string };
     if (!body.name || !body.schedule || !body.prompt) { json(400, { error: "name, schedule, and prompt are required" }); return true; }
-    try { json(200, { ok: true, job: ctx.cronService.create(body.name, body.schedule, body.prompt, body.systemJob) }); }
+    try { json(200, { ok: true, job: ctx.cronService.create(body.name, body.schedule, body.prompt, body.systemJob, { provider: body.provider, model: body.model }) }); }
     catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
   }

@@ -76,6 +76,7 @@ export async function startServer(config: LAXConfig) {
   // surfacing as a "BLOCKED by tool-policy" failure to a real user.
   {
     const { auditPolicyCoverage, printPolicyCoverageReport } = await import("../tool-policy.js");
+    const { auditKernelCoverage, printKernelCoverageReport } = await import("../ari-kernel.js");
     const seen = new Set<string>();
     const names: string[] = [];
     for (const t of [...allAgentTools, ...bridgeTools]) {
@@ -84,6 +85,10 @@ export async function startServer(config: LAXConfig) {
       names.push(t.name);
     }
     printPolicyCoverageReport(auditPolicyCoverage(names, toolPolicy));
+    // Twin audit for AriKernel's TOOL_CLASS_MAP. Unmapped tools now fail
+    // closed at runtime — surface the gap at boot so devs catch it before
+    // a user does.
+    printKernelCoverageReport(auditKernelCoverage(names));
   }
 
   // Pre-warm the tool-RAG embedding index in the background. Without this,

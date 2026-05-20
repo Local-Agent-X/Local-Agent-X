@@ -120,12 +120,17 @@ import { loadConfig, setRuntimeConfig } from "./config.js";
 import { startServer } from "./server.js";
 import { loadTokens } from "./auth.js";
 import { enforceStartupIntegrity } from "./startup-integrity.js";
+import { initLifecycle } from "./lifecycle.js";
 
 // Fast-fail at boot if AV quarantine (or anything else) wiped tracked
 // files. Prevents silent mid-conversation crashes when packages/arikernel
 // gets eaten by Defender. Either passes silently or exits 2 with a clear
 // remediation message. Must run BEFORE startServer.
 enforceStartupIntegrity();
+
+// Single-instance enforcement + pidfile + parent-pid heartbeat. Must run
+// BEFORE startServer so we never bind ports while a sibling server is up.
+initLifecycle();
 
 logger.info(`
   ╔═══════════════════════════════════╗

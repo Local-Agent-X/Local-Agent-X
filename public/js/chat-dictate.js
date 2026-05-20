@@ -29,8 +29,16 @@ async function toggleDictate() {
   }
 }
 
+// Electron-Chromium strips the Google Speech API key, so webkitSpeechRecognition
+// fails with `network` error on every utterance. We detect that here and route
+// to the server-side Whisper one-shot path (POST /api/voice/dictate-once).
+const isElectronRuntime = () =>
+  typeof navigator !== "undefined" &&
+  /electron/i.test(navigator.userAgent || "");
+
 async function startDictate() {
   if (dictateMode) return;
+  if (isElectronRuntime()) return startDictateElectron();
   // Browser SpeechRecognition is the right tool for one-shot dictation:
   // instant-on, native streaming partials, no model download, no WebSocket.
   // Quality is roughly base.en-equivalent (~3-5% WER). If unavailable
@@ -146,10 +154,143 @@ async function startDictate() {
   }
 }
 
+// Electron / server-Whisper path. No live partials — we record the full
+// utterance, ship the WebM/Opus blob to /api/voice/dictate-once on stop,
+// append the returned transcript. First call may take 30–60s on a fresh
+// install (the local Whisper model auto-downloads); subsequent calls are
+// the model's per-utterance latency (~150ms tiny.en → ~1.5s small.en).
+async function startDictateElectron() {
+  try {
+    dictateMode = true;
+    dictateRestartGuard = false;
+
+    dictateMicStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+    });
+    dictateCtx = new AudioContext();
+    const source = dictateCtx.createMediaStreamSource(dictateMicStream);
+    if (window.VoiceSphere) {
+      const ana = dictateCtx.createAnalyser();
+      ana.fftSize = 2048;
+      source.connect(ana);
+      const savedMode = localStorage.getItem('lax_voice_view_mode') || 'split';
+      VoiceSphere.show(savedMode);
+      VoiceSphere.attachMicAnalyser(ana);
+      VoiceSphere.setState('listening');
+    }
+
+    // MediaRecorder defaults to audio/webm;codecs=opus on Chromium —
+    // the server's ffmpeg pipeline auto-detects the container.
+    // Mime captured up-front so onstop doesn't need to read the
+    // (potentially nulled-out) global recorder ref.
+    const chunks = [];
+    const rec = new MediaRecorder(dictateMicStream);
+    const recMime = rec.mimeType || 'audio/webm';
+    dictateRecorder = rec;
+    rec.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
+    };
+    // onstop fires AFTER stopDictate returns. It owns the rest of the
+    // teardown for this code path: build the blob from the chunks the
+    // closure captured, free the mic + AudioContext + sphere, then POST.
+    // Tearing those down inside stopDictate (as we did initially) raced
+    // the MediaRecorder flush — the mic stream tracks died before the
+    // final dataavailable event fired, producing a zero-byte blob.
+    rec.onstop = () => {
+      const blob = new Blob(chunks, { type: recMime });
+      chunks.length = 0;
+      cleanupDictateResources();
+      updateDictateUI();
+      const ta = document.getElementById('msg-input');
+      if (ta) {
+        ta.focus();
+        const len = ta.value.length;
+        try { ta.setSelectionRange(len, len); } catch {}
+      }
+      if (blob.size === 0) {
+        const preview = document.getElementById('dictate-preview');
+        if (preview) { preview.textContent = ''; preview.style.display = 'none'; }
+        return;
+      }
+      transcribeAndAppend(blob);
+    };
+    rec.start();
+
+    updateDictateUI();
+    document.getElementById('msg-input')?.focus();
+    console.log('[dictate] started (Electron / server Whisper)');
+  } catch (e) {
+    console.error('[dictate] electron start failed:', e);
+    dictateMode = false;
+    cleanupDictateResources();
+    alert('Could not start dictation: ' + (e?.message || e));
+  }
+}
+
+async function transcribeAndAppend(blob) {
+  const preview = document.getElementById('dictate-preview');
+  if (preview) {
+    preview.textContent = 'Transcribing…';
+    preview.style.display = 'block';
+  }
+  try {
+    const r = await fetch(
+      `/api/voice/dictate-once?token=${encodeURIComponent(AUTH_TOKEN)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': blob.type || 'audio/webm',
+          Authorization: `Bearer ${AUTH_TOKEN}`,
+        },
+        body: blob,
+      },
+    );
+    if (!r.ok) {
+      const errBody = await r.text().catch(() => '');
+      throw new Error(`HTTP ${r.status}: ${errBody.slice(0, 200)}`);
+    }
+    const { text } = await r.json();
+    if (text) {
+      appendDictatedText(text);
+    } else if (preview) {
+      preview.textContent = 'No speech detected';
+      setTimeout(() => { preview.textContent = ''; preview.style.display = 'none'; }, 1500);
+      return;
+    }
+    if (preview) { preview.textContent = ''; preview.style.display = 'none'; }
+  } catch (e) {
+    console.error('[dictate] server transcribe failed:', e);
+    if (preview) {
+      preview.textContent = 'Transcription failed — try again';
+      preview.style.display = 'block';
+      setTimeout(() => { preview.textContent = ''; preview.style.display = 'none'; }, 3000);
+    }
+  }
+}
+
 function stopDictate() {
   if (!dictateMode) return;
   dictateMode = false;
   dictateRestartGuard = true; // block onend from auto-restarting
+
+  // Electron / MediaRecorder path: kick off the flush and let onstop own
+  // the rest (cleanup, POST, focus). Bailing here keeps mic teardown out
+  // of the race window between stop() and the final dataavailable event.
+  if (dictateRecorder) {
+    try {
+      if (dictateRecorder.state !== 'inactive') dictateRecorder.stop();
+      else { cleanupDictateResources(); updateDictateUI(); }
+    } catch {
+      cleanupDictateResources();
+      updateDictateUI();
+    }
+    // Intentionally NOT nulling dictateRecorder — onstop reads it and
+    // cleanupDictateResources nulls it after the flush completes.
+    console.log('[dictate] stopped (Electron — awaiting transcribe)');
+    return;
+  }
+
+  // Browser-SR path: SR.stop() is synchronous, tear down immediately.
   cleanupDictateResources();
   const preview = document.getElementById('dictate-preview');
   if (preview) { preview.textContent = ''; preview.style.display = 'none'; }
@@ -168,6 +309,13 @@ function stopDictate() {
 function cleanupDictateResources() {
   try { dictateSR && dictateSR.stop(); } catch {}
   dictateSR = null;
+  // dictateRecorder is normally already stopped by stopDictate (so its
+  // onstop has fired). Guard the redundant stop() in case cleanup is
+  // called from a failed startDictateElectron before the recorder ran.
+  try {
+    if (dictateRecorder && dictateRecorder.state !== 'inactive') dictateRecorder.stop();
+  } catch {}
+  dictateRecorder = null;
   try { dictateMicStream && dictateMicStream.getTracks().forEach(t => t.stop()); } catch {}
   dictateMicStream = null;
   try { dictateCtx && dictateCtx.close(); } catch {}

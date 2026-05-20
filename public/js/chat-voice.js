@@ -73,10 +73,11 @@ let _voiceBrowserTtsBuf = "";
 // which is overkill for one-shot speech-to-text. Mic stream is still
 // captured so the sphere visualization can react to audio.
 let dictateMode = false;
-let dictateSR = null;          // SpeechRecognition instance
+let dictateSR = null;          // SpeechRecognition instance (browser path)
 let dictateMicStream = null;   // MediaStream for sphere analyser only
 let dictateCtx = null;         // AudioContext for sphere analyser
 let dictateRestartGuard = false; // prevent restart-loop on errors
+let dictateRecorder = null;    // MediaRecorder (Electron / server-Whisper path)
 
 async function toggleMic() {
   if (voiceMode) { stopVoiceMode(); }

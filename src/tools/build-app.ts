@@ -207,6 +207,7 @@ export const buildAppTool: ToolDefinition = {
         tools: BUILDER_AGENT_TOOLS,
         security,
         sessionId: sessionId || op.id,
+        opId: op.id,
       }));
     }
 

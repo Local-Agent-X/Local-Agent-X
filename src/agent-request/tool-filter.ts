@@ -57,15 +57,16 @@ export const CORE_TOOL_NAMES = new Set([
   // Planning & tasks
   "enter_plan_mode", "exit_plan_mode",
   "task_create", "task_update", "task_list", "task_get",
-  // Protocols & scheduling.
-  // Lifecycle tools (create/edit/delete/unarchive/search) are eager because
-  // tool_search returns their schemas as text but providers can't emit a
-  // tool_use for a tool absent from the request schema — so deferring them
-  // strands callers. Admin tools (stats, prune, curate, archive_bulk,
-  // list_archived, pin, curator_status) stay deferred — they're infrequent
-  // and the agent can tool_search them when actually needed.
+  // Protocols & scheduling. Full lifecycle + admin surface is eager — the
+  // tool_search dispatch loop (canonical-loop/chat-tool-dispatcher.ts)
+  // now augments the op's tool schema on discovery, but having the common
+  // ones eager avoids the extra turn cost on every operation. Total
+  // overhead is ~2-3KB and these are high-signal calls.
   "protocol_list", "protocol_get", "protocol_search",
   "protocol_create", "protocol_edit", "protocol_delete", "protocol_unarchive",
+  "protocol_pin", "protocol_list_archived",
+  "protocol_stats", "protocol_prune", "protocol_archive_bulk",
+  "protocol_curate", "protocol_curator_status",
   "mission_schedule_create", "mission_schedule_list", "mission_schedule_update",
   "mission_schedule_delete", "mission_schedule_toggle",
   // Agents — canonical delegation surface. agent_spawn is the ONE way

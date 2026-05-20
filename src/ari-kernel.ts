@@ -416,6 +416,179 @@ const TOOL_CLASS_MAP: Record<string, string> = {
   camera_capture: "internal",
   screen_capture: "internal",
   ocr: "internal",
+
+  // ── Coverage backfill 2026-05-20 ──
+  // Boot audit caught 120 unmapped tools after the fail-closed flip. Below
+  // is the full classification, grouped by class. Rules of thumb:
+  //   - Raw file ops (path arg supplied by agent, arbitrary workspace target) → file
+  //   - External egress (Gmail/Calendar APIs, marketplace fetch, site scrape) → http
+  //   - Subprocess spawning → shell
+  //   - SQL → database
+  //   - Vector/session search → retrieval
+  //   - Everything else (orchestration, LAX state, workspace structured
+  //     documents bounded by SecurityLayer, vault metadata) → internal
+
+  // file — raw fs ops the agent points at any workspace path
+  glob: "file",
+  grep: "file",
+  delete_file: "file",
+  view_image: "file",
+
+  // http — external API calls / web fetches
+  calendar_check_availability: "http",
+  calendar_create_event: "http",
+  calendar_list_events: "http",
+  email_draft: "http",
+  email_read: "http",
+  email_search: "http",
+  email_send: "http",
+  email_setup: "http",
+  marketplace_search: "http",
+  marketplace_install: "http",
+  marketplace_list: "http",
+  extract_site_assets: "http",
+  youtube_analyze: "http",
+
+  // shell — spawns child processes
+  process_start: "shell",
+  process_status: "shell",
+  process_kill: "shell",
+  process_list: "shell",
+  install_software: "shell",
+
+  // database — SQL execution
+  sql_query: "database",
+  sql_explain: "database",
+  sql_schema: "database",
+
+  // retrieval — vector/keyword search over session corpora
+  search_past_sessions: "retrieval",
+
+  // internal — orchestration, LAX state, vault metadata, structured workspace docs
+  // (paths bounded by SecurityLayer; not raw read/write surfaces).
+  // memory_*: most memory_ tools are pure state transitions; only memory_search
+  // (retrieval) and memory_save (database) need kernel gating, both already
+  // mapped above. The rest read/mutate LAX-managed memory state in-process.
+  memory_consolidate: "internal",
+  memory_discover: "internal",
+  memory_dream: "internal",
+  memory_forget: "internal",
+  memory_forget_imports: "internal",
+  memory_get: "internal",
+  memory_ingest: "internal",
+  memory_recall: "internal",
+  memory_reflect: "internal",
+  memory_reindex: "internal",
+  memory_update_profile: "internal",
+  // Secrets: vault writes/reads use the secret-vault class via the
+  // browser_/clipboard_*_secret tools (already mapped). The tools below are
+  // metadata-only (request triggers a UI prompt where the USER types the
+  // value; list/meta return names not values). No agent-controlled I/O sink.
+  request_secret: "internal",
+  request_secrets: "internal",
+  list_secrets: "internal",
+  get_secret_meta: "internal",
+  // Agent orchestration — LAX state transitions, no raw I/O sink.
+  agent_list: "internal",
+  agent_create: "internal",
+  agent_team_list: "internal",
+  agent_wakeup: "internal",
+  agent_whoami: "internal",
+  agency_create: "internal",
+  agency_status: "internal",
+  agency_cancel: "internal",
+  agency_list_roles: "internal",
+  agency_result: "internal",
+  // In-platform app builder — operates on workspace/apps/ via structured API.
+  app_create: "internal",
+  app_update: "internal",
+  app_read: "internal",
+  app_action: "internal",
+  app_query: "internal",
+  app_list: "internal",
+  app_delete: "internal",
+  app_permissions: "internal",
+  // Sidebar pin/unpin — UI state only.
+  sidebar_pin: "internal",
+  sidebar_unpin: "internal",
+  // Issues / tasks — agent task management in LAX state.
+  issue_create: "internal",
+  issue_list: "internal",
+  issue_update: "internal",
+  issue_checkout: "internal",
+  issue_release: "internal",
+  issue_search: "internal",
+  // Operations — long-horizon goal orchestrator, writes to workspace/operations/.
+  operation_start: "internal",
+  operation_list: "internal",
+  operation_status: "internal",
+  operation_next: "internal",
+  operation_advance: "internal",
+  // Worker-pool ops — submit/wait/status against the worker pool subprocess
+  // boundary. The work the worker DOES is gated separately when it makes
+  // I/O calls; the dispatch tools themselves are pure orchestration.
+  op_submit: "internal",
+  op_submit_async: "internal",
+  op_wait: "internal",
+  op_status: "internal",
+  op_kill: "internal",
+  op_redirect: "internal",
+  // Autopilot — bounded autonomous work in isolated worktree.
+  autopilot_start: "internal",
+  autopilot_status: "internal",
+  autopilot_stop: "internal",
+  // App-build pipeline — multi-step orchestrator, file/shell work happens
+  // inside spawned workers which gate at their own dispatch layer.
+  build_app: "internal",
+  create_page: "internal",
+  start_app_build: "internal",
+  finalize_app_build: "internal",
+  primal_build_resume: "internal",
+  primal_build_status: "internal",
+  primal_run_build_plan: "internal",
+  // Voice + session + config — UI/state surfaces.
+  voice_visual: "internal",
+  session_status: "internal",
+  setting: "internal",
+  config_get: "internal",
+  config_set: "internal",
+  // Clipboard read/write of plain text — the secret-vault variant is gated
+  // separately. Raw clipboard is OS-managed; no agent path/URL sink.
+  clipboard_read: "internal",
+  clipboard_write: "internal",
+  // Tasks / diagnostics / planning — LAX state only.
+  task_create: "internal",
+  task_get: "internal",
+  task_list: "internal",
+  task_update: "internal",
+  doctor: "internal",
+  usage_report: "internal",
+  tool_search: "internal",
+  list_monitors: "internal",
+  enter_plan_mode: "internal",
+  exit_plan_mode: "internal",
+  // Structured workspace documents — agent supplies a path, but SecurityLayer
+  // path-bounds the call to workspace/ and the tools read/write canonical
+  // formats (xlsx/docx/pdf/pptx) via dedicated parsers. Classified internal
+  // alongside the rest of the workspace-structured-data tools (mission_*,
+  // protocol_*) — the kernel layer doesn't add taint analysis value over
+  // SecurityLayer for these. Raw `read`/`write`/`edit` of arbitrary paths
+  // remains gated as `file`.
+  spreadsheet_read: "internal",
+  spreadsheet_write: "internal",
+  spreadsheet_edit: "internal",
+  spreadsheet_query: "internal",
+  document_create: "internal",
+  document_edit: "internal",
+  document_read: "internal",
+  document_template: "internal",
+  presentation_create: "internal",
+  presentation_add_slide: "internal",
+  presentation_from_outline: "internal",
+  pdf_create: "internal",
+  pdf_read: "internal",
+  pdf_extract_tables: "internal",
+  pdf_merge: "internal",
 };
 
 const GATED_CLASSES: ReadonlySet<string> = new Set([

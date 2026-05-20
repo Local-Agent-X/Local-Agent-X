@@ -412,6 +412,29 @@ async function executeSingleTool(
       browser_capture_to_secret: "capture",
       browser_fill_from_secret: "fill",
       clipboard_write_from_secret: "clipboard",
+      // ── Coverage backfill 2026-05-20 ──
+      // Pair every newly-gated tool with a manifest-valid action (see
+      // HOST_CAPABILITY_MANIFEST in ari-kernel.ts). Without these, the
+      // fallback to "exec" routes file/http/database tools through a
+      // shell-class grant lookup that doesn't exist → false-positive denies.
+      // file
+      glob: "read", grep: "read", view_image: "read", delete_file: "write",
+      // http — get for read paths, post for mutations
+      calendar_check_availability: "get", calendar_list_events: "get",
+      calendar_create_event: "post",
+      email_read: "get", email_search: "get", email_draft: "post",
+      email_send: "post", email_setup: "post",
+      marketplace_search: "get", marketplace_list: "get", marketplace_install: "get",
+      extract_site_assets: "get",
+      youtube_analyze: "get",
+      // shell — subprocess spawns + OS process queries
+      process_start: "exec", process_status: "exec",
+      process_kill: "exec", process_list: "exec",
+      install_software: "exec",
+      // database — SQL (read-class today; tools self-restrict writes)
+      sql_query: "query", sql_explain: "query", sql_schema: "query",
+      // retrieval — vector/keyword session search
+      search_past_sessions: "search",
     };
     const ariResult = await ariEvaluate(tc.name, actionMap[tc.name] || "exec", args);
     if (!ariResult.allowed) {

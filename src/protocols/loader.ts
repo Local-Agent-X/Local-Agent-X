@@ -19,10 +19,11 @@
  */
 
 import { existsSync, readFileSync, readdirSync, mkdirSync, renameSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { Protocol, ProtocolSource } from "../protocols.js";
 import { parseSkillMd } from "./skill-md-parser.js";
+import { getRuntimeConfig } from "../config.js";
 
 import { createLogger } from "../logger.js";
 import { createRequire } from "node:module";
@@ -35,8 +36,25 @@ function bundledDir(): string {
   return join(process.cwd(), "protocols", "bundled");
 }
 
+/** Legacy ~/.lax import dir — kept for back-compat with pre-2026-05-19
+ *  installs. New installs should drop SKILL.md packs in workspaceImportedDir
+ *  instead so they sync across machines via workspace git sync. */
 function importedDir(): string {
   return join(homedir(), ".lax", "protocols", "imported");
+}
+
+/** Synced user protocol dir — lives in workspace/protocols/imported/.
+ *  Picked up by workspace git sync so user-added SKILL.md packs propagate
+ *  to all of the user's machines. Preferred location for new additions. */
+function workspaceImportedDir(): string {
+  try {
+    const cfg = getRuntimeConfig();
+    return resolve(cfg.workspace, "protocols", "imported");
+  } catch {
+    // Config not initialized yet (very early boot path). Fall back to legacy
+    // dir so we don't blow up before bootstrap completes.
+    return importedDir();
+  }
 }
 
 function legacySkillsDir(): string {
@@ -131,7 +149,11 @@ export function invalidateBundledCache(): void {
 }
 
 export function loadImportedProtocols(): Protocol[] {
-  return scanSkillMdDir(importedDir(), "imported");
+  // Scan workspace first (preferred — synced) then legacy ~/.lax. Workspace
+  // entries win on name collision because mergeByName uses last-wins order.
+  const legacy = scanSkillMdDir(importedDir(), "imported");
+  const synced = scanSkillMdDir(workspaceImportedDir(), "imported");
+  return [...legacy, ...synced];
 }
 
 // ── Stamping helpers ──────────────────────────────────────────────────────

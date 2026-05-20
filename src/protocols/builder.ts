@@ -1,25 +1,61 @@
 /**
  * Protocol Builder — create/edit/delete custom protocols programmatically.
- * Custom protocols are stored in ~/.lax/custom-protocols.json
+ *
+ * Storage: workspace/protocols/custom.json. Lives under workspace so the
+ * file is picked up by the workspace git sync — protocols learned on one
+ * machine flow to all of the user's other machines. Previously stored at
+ * ~/.lax/custom-protocols.json (local-only); first load migrates that
+ * file to the new location if present.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { Protocol, ProtocolStep } from "../protocols.js";
 import type { ToolDefinition } from "../types.js";
+import { getRuntimeConfig } from "../config.js";
 
-const CUSTOM_PROTOCOLS_PATH = join(homedir(), ".lax", "custom-protocols.json");
+import { createLogger } from "../logger.js";
+const logger = createLogger("protocols.builder");
 
-function ensureDir(): void {
-  const dir = join(homedir(), ".lax");
+/** Resolve the workspace/protocols dir (creates it if missing). */
+function protocolsDir(): string {
+  const cfg = getRuntimeConfig();
+  const dir = resolve(cfg.workspace, "protocols");
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function customProtocolsPath(): string {
+  return join(protocolsDir(), "custom.json");
+}
+
+const LEGACY_PATH = join(homedir(), ".lax", "custom-protocols.json");
+let _migrationRan = false;
+
+/** One-time migration: ~/.lax/custom-protocols.json → workspace/protocols/custom.json.
+ *  Idempotent — after the first successful move the legacy file is gone and
+ *  this becomes a no-op. */
+function migrateLegacyCustomProtocols(): void {
+  if (_migrationRan) return;
+  _migrationRan = true;
+  try {
+    if (!existsSync(LEGACY_PATH)) return;
+    const newPath = customProtocolsPath();
+    if (existsSync(newPath)) return; // workspace already has one — keep it, don't clobber
+    renameSync(LEGACY_PATH, newPath);
+    logger.info(`[protocols] Migrated custom protocols → ${newPath}`);
+  } catch (e) {
+    logger.warn(`[protocols] Legacy migration failed: ${(e as Error).message}`);
+  }
 }
 
 export function loadCustomProtocols(): Protocol[] {
-  if (existsSync(CUSTOM_PROTOCOLS_PATH)) {
+  migrateLegacyCustomProtocols();
+  const path = customProtocolsPath();
+  if (existsSync(path)) {
     try {
-      return JSON.parse(readFileSync(CUSTOM_PROTOCOLS_PATH, "utf-8"));
+      return JSON.parse(readFileSync(path, "utf-8"));
     } catch {
       return [];
     }
@@ -28,8 +64,8 @@ export function loadCustomProtocols(): Protocol[] {
 }
 
 export function saveCustomProtocols(protocols: Protocol[]): void {
-  ensureDir();
-  writeFileSync(CUSTOM_PROTOCOLS_PATH, JSON.stringify(protocols, null, 2), "utf-8");
+  migrateLegacyCustomProtocols();
+  writeFileSync(customProtocolsPath(), JSON.stringify(protocols, null, 2), "utf-8");
 }
 
 export function createProtocol(protocol: Protocol): Protocol {

@@ -33,7 +33,11 @@ rm -rf "$OUT_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
-echo "[mac-build] dotnet publish (self-contained single-file)…"
+# InstallerSourceTag pins the source version this installer downloads at
+# runtime. CI passes ${{ github.ref_name }} (the git tag/branch);
+# local-dev runs without the env var fall through to "main".
+SRC_TAG="${INSTALLER_SOURCE_TAG:-main}"
+echo "[mac-build] dotnet publish (self-contained single-file, source tag: $SRC_TAG)…"
 dotnet publish installer/Installer.csproj \
     -c Release \
     -r "$RID" \
@@ -41,6 +45,7 @@ dotnet publish installer/Installer.csproj \
     -p:PublishSingleFile=true \
     -p:IncludeNativeLibrariesForSelfExtract=true \
     -p:PublishTrimmed=false \
+    -p:InstallerSourceTag="$SRC_TAG" \
     --nologo
 
 PUB="installer/bin/Release/net8.0/$RID/publish"

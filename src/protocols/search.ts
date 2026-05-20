@@ -18,6 +18,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { Protocol } from "../protocols.js";
 import { getAllProtocols } from "../protocols.js";
+import { recordUsage } from "./usage.js";
 
 interface IndexedDoc {
   name: string;
@@ -158,6 +159,17 @@ export function createProtocolSearchTool(): ToolDefinition {
 
       const idx = getOrBuildIndex();
       const hits = rank(query, idx, limit);
+      // Record the search regardless of outcome — misses are the signal that
+      // tells us where the catalog has gaps. `name` carries the top hit (or
+      // empty on miss) so the same record covers "what did we recommend"
+      // without a second event type.
+      recordUsage({
+        action: "searched",
+        name: hits[0]?.name || "",
+        query,
+        hit: hits.length > 0,
+        sessionId: typeof (args as { _sessionId?: string })._sessionId === "string" ? (args as { _sessionId: string })._sessionId : undefined,
+      });
       if (hits.length === 0) {
         return { content: `No protocols matched "${query}". Try different keywords, or call protocol_list to browse the full catalog.` };
       }

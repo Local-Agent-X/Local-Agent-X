@@ -94,9 +94,21 @@ for (const pkg of packages) {
   }
 
   try {
+    // Resolve local binaries explicitly instead of `npx` — npx caches its
+    // own copy of tsup in ~/AppData/.../npm-cache/_npx, and that cached
+    // tsup can't see the root project's typescript install. Result: tsup
+    // crashes with "Cannot find module 'typescript'" on every package
+    // until the npx cache is rebuilt. Using the project-local bin avoids
+    // the npx layer entirely. Files were quarantined and recovered via
+    // `git checkout -- packages/arikernel/` (2026-05-19).
+    const repoRoot = resolve(import.meta.dirname, "..");
+    const tsupBin = resolve(repoRoot, "node_modules", "tsup", "dist", "cli-default.js");
+    const tscBin = resolve(repoRoot, "node_modules", "typescript", "bin", "tsc");
+    const nodeBin = process.execPath;
+
     if (!hasJs || stale) {
       console.log(`  [ari] tsup @arikernel/${pkg} → dist/index.js`);
-      execSync("npx tsup src/index.ts --format esm", {
+      execSync(`"${nodeBin}" "${tsupBin}" src/index.ts --format esm`, {
         cwd: pkgDir,
         stdio: "pipe",
         timeout: 60_000,
@@ -106,7 +118,7 @@ for (const pkg of packages) {
     if (!hasDts || stale) {
       console.log(`  [ari] tsc @arikernel/${pkg} → dist/*.d.ts`);
       execSync(
-        "npx tsc -p . --emitDeclarationOnly --declaration --noEmitOnError false --strict false --noImplicitAny false --strictNullChecks false",
+        `"${nodeBin}" "${tscBin}" -p . --emitDeclarationOnly --declaration --noEmitOnError false --strict false --noImplicitAny false --strictNullChecks false`,
         {
           cwd: pkgDir,
           stdio: "pipe",

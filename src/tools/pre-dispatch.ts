@@ -15,6 +15,7 @@ import type { ToolPolicy } from "../tool-policy.js";
 import type { ThreatEngine } from "../threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 import { getApprovalManager, toolNeedsApproval } from "../approval-manager.js";
+import { getRuntimeConfig } from "../config.js";
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
 import { evaluate as evaluatePolicy, type RulePack } from "../tool-policy/evaluator.js";
@@ -82,6 +83,35 @@ export async function assertToolCallAllowed(
   if (!ctx.skipSessionPolicy) {
     const sessionBlock = checkSessionPolicy(ctx.sessionId, call.name);
     if (sessionBlock) throw new ToolBlocked({ stage: "session-policy", reason: sessionBlock });
+  }
+
+  // Category-level kill-switches from Settings → Security → Tool Policy.
+  // These sit ABOVE the rule packs so a flipped-off category short-circuits
+  // before any rule eval. Cheap, predictable, user-visible.
+  const cfg = getRuntimeConfig();
+  if (call.name === "bash" && cfg.enableShell === false) {
+    throw new ToolBlocked({
+      stage: "tool-policy",
+      reason: "Shell Access is disabled in Settings → Security → Tool Policy.",
+      recovery: "Re-enable the Shell Access toggle to use bash. Other tools (write/edit/http_request) still work.",
+      userHint: USER_HINTS.policy,
+    });
+  }
+  if (call.name === "http_request" && cfg.enableHttp === false) {
+    throw new ToolBlocked({
+      stage: "tool-policy",
+      reason: "HTTP Requests are disabled in Settings → Security → Tool Policy.",
+      recovery: "Re-enable the HTTP Requests toggle to make outbound API calls.",
+      userHint: USER_HINTS.policy,
+    });
+  }
+  if (call.name.startsWith("browser") && cfg.enableBrowser === false) {
+    throw new ToolBlocked({
+      stage: "tool-policy",
+      reason: "Browser is disabled in Settings → Security → Tool Policy.",
+      recovery: "Re-enable the Browser toggle to use Playwright browser control.",
+      userHint: USER_HINTS.policy,
+    });
   }
 
   // Per-role gate (not a rule pack — RBAC is a principal property).

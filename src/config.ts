@@ -111,6 +111,16 @@ const configSchema = z.object({
   agentTimeoutMs: z.number().int().min(10000).default(300000),
   maxCachedSessions: z.number().int().min(1).default(200),
   bridgeVoicePreference: z.enum(["auto", "sovits", "chatterbox", "lite"]).default("auto"),
+
+  /** Category-level kill-switches behind the Tool Policy toggles in
+   *  Settings → Security. Default-on so the out-of-box agent has full
+   *  capability; flipping off blocks every tool in the category at
+   *  pre-dispatch with a clear "category disabled" reason. Sits OVER the
+   *  granular tool-policy rule engine — these are user-friendly surface-
+   *  area toggles, not replacements for per-rule allow/deny logic. */
+  enableShell: z.boolean().default(true),
+  enableHttp: z.boolean().default(true),
+  enableBrowser: z.boolean().default(true),
 });
 
 function getConfigDir(): string {

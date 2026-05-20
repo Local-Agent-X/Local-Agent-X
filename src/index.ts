@@ -134,6 +134,30 @@ logger.info(`
 `);
 
 const config = loadConfig();
+
+// One-time migration for installs that hit the silent-drift bug: if
+// ~/.lax/settings.json has a runtime field (toolApproval, maxIterations,
+// temperature, browserMode, bridgeVoicePreference) that differs from
+// config.json, the settings.json value wins (that's what the user saw in
+// the UI). Idempotent — after the first run config.json catches up and
+// subsequent boots match on every field.
+try {
+  const { existsSync, readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const settingsPath = join(process.env.HOME || process.env.USERPROFILE || "", ".lax", "settings.json");
+  if (existsSync(settingsPath)) {
+    const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    const { migrateRuntimeSettingsFromSettingsJson } = await import("./settings-schema.js");
+    const { saveConfig } = await import("./config.js");
+    if (migrateRuntimeSettingsFromSettingsJson(settings, config)) {
+      saveConfig(config);
+      logger.info("[config] Migrated runtime settings from settings.json to config.json (source-of-truth alignment)");
+    }
+  }
+} catch (e) {
+  logger.warn(`[config] Runtime-settings migration skipped: ${(e as Error).message}`);
+}
+
 setRuntimeConfig(config);
 
 // Check auth status

@@ -30,7 +30,7 @@ const OPERATOR_TOOLS: ReadonlySet<string> = new Set([
   "web_search", "web_fetch", "view_image", "ocr",
   "memory_search", "memory_save", "memory_recall",
   "document_create", "document_edit", "spreadsheet_read", "spreadsheet_write", "pdf_create",
-  "email_send", "ask_user",
+  "email_send", "ask_user", "setting",
 ]);
 
 /**

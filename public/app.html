@@ -418,9 +418,9 @@
         <div class="section-card">
           <div class="section-title">Tool Policy</div>
           <div class="section-desc">Default-deny. Only allowed tools can execute.</div>
-          <div class="toggle-row"><div><div class="toggle-label">Shell Access (bash)</div><div class="toggle-desc">Allow shell commands (rate limited)</div></div><div class="toggle on" onclick="toggleSwitch(this)"></div></div>
-          <div class="toggle-row"><div><div class="toggle-label">HTTP Requests</div><div class="toggle-desc">Outbound API calls (operator only)</div></div><div class="toggle on" onclick="toggleSwitch(this)"></div></div>
-          <div class="toggle-row"><div><div class="toggle-label">Browser</div><div class="toggle-desc">Playwright browser control (operator only)</div></div><div class="toggle on" onclick="toggleSwitch(this)"></div></div>
+          <div class="toggle-row"><div><div class="toggle-label">Shell Access (bash)</div><div class="toggle-desc">Allow shell commands (rate limited)</div></div><div id="tp-toggle-shell" class="toggle on" onclick="toolPolicyToggle('enableShell', this)"></div></div>
+          <div class="toggle-row"><div><div class="toggle-label">HTTP Requests</div><div class="toggle-desc">Outbound API calls (operator only)</div></div><div id="tp-toggle-http" class="toggle on" onclick="toolPolicyToggle('enableHttp', this)"></div></div>
+          <div class="toggle-row"><div><div class="toggle-label">Browser</div><div class="toggle-desc">Playwright browser control (operator only)</div></div><div id="tp-toggle-browser" class="toggle on" onclick="toolPolicyToggle('enableBrowser', this)"></div></div>
         </div>
         <div class="section-card">
           <div class="section-title">File Access</div>
@@ -985,6 +985,7 @@
 <script src="/js/settings-agent-sync.js?v=v1"></script>
 <script src="/js/settings-file-access.js?v=v1"></script>
 <script src="/js/settings-sandbox.js?v=v1"></script>
+<script src="/js/settings-tool-policy.js?v=v1"></script>
 <script src="/js/settings-search.js?v=v1"></script>
 <script src="/js/settings-integrations.js?v=v1"></script>
 <script src="/js/settings-import-export.js?v=v1"></script>

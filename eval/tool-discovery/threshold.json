@@ -1,0 +1,10 @@
+{
+  "description": "Pass-rate floor for the tool-discovery eval. The pre-commit hook (scripts/eval-gate.mjs) runs the eval when system-prompt.md or tool-filter.ts change and blocks the commit if score < minPass. Bump this number when you raise the bar; never lower it casually.",
+  "minPass": 25,
+  "totalCases": 30,
+  "lastBaseline": {
+    "score": 28,
+    "date": "2026-05-19",
+    "commit": "post-prompt-iteration"
+  }
+}

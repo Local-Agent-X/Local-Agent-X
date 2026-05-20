@@ -31,7 +31,7 @@ function mkTool(name: string, audiences?: Audience[]): ToolDefinition {
 
 const CORE_NAMES = new Set([
   "read", "write", "edit", "bash", "glob", "grep",
-  "web_fetch", "web_search", "ask_user", "tool_search",
+  "web_fetch", "web_search", "setting", "tool_search",
   "view_image", "screen_capture",
   "memory_search", "memory_save", "memory_recall", "memory_get",
   "memory_forget", "memory_reflect", "memory_update_profile", "memory_stats",
@@ -52,12 +52,11 @@ const CORE_NAMES = new Set([
   "primal_run_build_plan", "primal_build_status", "primal_build_resume",
   "start_app_build", "finalize_app_build",
   "request_secret", "request_secrets", "list_secrets",
-  "http_request",
 ]);
 const BUILD_INTENT_NAMES = new Set([
   "build_app", "write", "edit", "read", "bash", "glob", "grep",
   "web_fetch", "web_search", "tool_search",
-  "ask_user", "view_image", "self_edit",
+  "view_image", "self_edit",
   "agent_list", "agent_spawn", "agent_create",
   "agent_status", "agent_kill",
 ]);

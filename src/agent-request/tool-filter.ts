@@ -34,7 +34,7 @@ export const CORE_TOOL_NAMES = new Set([
   // App self-control (flip toggles, change theme/provider/model via schema)
   "setting",
   // Interaction
-  "ask_user", "tool_search",
+  "tool_search",
   // Vision
   "view_image", "screen_capture",
   // Memory
@@ -145,7 +145,7 @@ export const BUILD_INTENT_TOOLS = new Set([
   // Direct file tools for edits and simple tasks
   "write", "edit", "read", "bash", "glob", "grep",
   "web_fetch", "web_search", "tool_search",
-  "ask_user", "view_image",
+  "view_image",
   // self_edit lets Primal route around protected-files for src/ edits inside a
   // sandboxed worktree with build/server-bind/agent-smoke gates before merge.
   "self_edit",

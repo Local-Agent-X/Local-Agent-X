@@ -239,9 +239,6 @@ export const DEFAULT_POLICY: ToolPolicyConfig = {
     { id: "allow-tool-search", tool: "tool_search", decision: "allow", reason: "Discover available tools", priority: 50 },
     { id: "allow-self-edit", tool: "self_edit", decision: "allow", reason: "Agent self-repair via Claude Code subprocess", priority: 50 },
 
-    // User interaction
-    { id: "allow-ask-user", tool: "ask_user", decision: "allow", reason: "Agent asks user for clarification", priority: 50 },
-
     // Document tools
     { id: "allow-document", tool: "document_*", decision: "allow", reason: "Word document create/read/edit", priority: 50 },
     { id: "allow-presentation", tool: "presentation_*", decision: "allow", reason: "PowerPoint create/edit", priority: 50 },

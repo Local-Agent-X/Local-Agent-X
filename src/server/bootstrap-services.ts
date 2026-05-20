@@ -147,6 +147,14 @@ export async function initOrRefreshEmbeddingProvider(deps: {
 }
 
 export async function bootstrapServices(config: LAXConfig): Promise<BootstrappedServices> {
+  const _bsT = (name: string) => {
+    const t = Date.now();
+    return () => {
+      const dt = Date.now() - t;
+      if (dt > 100) logger.info(`[boot-phase] ${name} ${dt}ms`);
+    };
+  };
+  let _t = _bsT("SecurityLayer+hookEngine");
   setServerPort(String(config.port || 7007));
   SecurityLayer._selfPort = String(config.port || 7007);
   const security = new SecurityLayer(config.workspace);
@@ -159,6 +167,8 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
     const n = loadBundledProtocols().length;
     if (n > 0) logger.info(`[protocols] ${n} bundled protocol(s) loaded`);
   }).catch((e) => logger.warn(`[protocols] init failed: ${(e as Error).message}`));
+  _t();
+  _t = _bsT("dirs+toolPolicy+rbac");
   const publicDir = join(import.meta.dirname || ".", "..", "..", "public");
   const dataDir = join(homedir(), ".lax");
   for (const d of ["apps", "images", "videos", "missions"]) mkdirSync(join(resolve(config.workspace), d), { recursive: true });
@@ -166,6 +176,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   const toolPolicy = loadToolPolicy(dataDir);
   const rbac = new RBACManager(dataDir, config.authToken);
   setBrowserAuthContext(config.authToken, String(config.port));
+  _t();
   // Wire SAX's shared pre-dispatch chain into AriKernel's tool executors so
   // any direct executor invocation (outside the chat-path's no-op observer
   // setup) still hits security + tool-policy. Closes F3 in DRY-AUDIT.md.
@@ -173,6 +184,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   // FAIL-CLOSED: AriKernel is a defense layer. If the gate can't wire, tool
   // calls would bypass security + policy silently — exactly the failure mode
   // a defense layer must not have. Halt boot instead so the operator notices.
+  _t = _bsT("wireAriPreDispatch");
   try {
     const { wireAriPreDispatch } = await import("./bootstrap-ari-gate.js");
     wireAriPreDispatch(security, toolPolicy);
@@ -180,23 +192,41 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
     logger.error(`[ari-gate] wire failed — refusing to boot without security gate: ${(e as Error).message}`);
     throw new Error(`AriKernel pre-dispatch gate failed to wire: ${(e as Error).message}`);
   }
+  _t();
 
   const secretsStoreRef: { value: SecretsStore | null } = { value: null };
+  _t = _bsT("agentSync+sessionStore");
   const agentSync = new AgentSync(dataDir, () => secretsStoreRef.value?.get("GITHUB_SYNC_TOKEN"));
   const sessionStore = new SessionStore(dataDir);
+  _t();
+  _t = _bsT("MemoryIndex");
   const memoryIndex = new MemoryIndex(dataDir);
+  _t();
+  _t = _bsT("MemoryManager+personalityFiles");
   const memoryManager = new MemoryManager(memoryIndex);
   ensurePersonalityFiles(join(dataDir, "memory"));
+  _t();
+  _t = _bsT("SecretsStore");
   const secretsStore = new SecretsStore(dataDir);
   secretsStoreRef.value = secretsStore;
   const { setSecretsStoreSingleton } = await import("../secrets.js");
   setSecretsStoreSingleton(secretsStore);
+  _t();
 
-  await initOrRefreshEmbeddingProvider({ config, dataDir, secretsStore, memoryIndex });
+  // Time this — Ollama pull on cold install can take 30-60s and it's
+  // the most common boot-time suspect. Surface the exact ms so we know
+  // whether it's the embedding bootstrap or something else.
+  {
+    const t = Date.now();
+    await initOrRefreshEmbeddingProvider({ config, dataDir, secretsStore, memoryIndex });
+    logger.info(`[boot-phase] initOrRefreshEmbeddingProvider ${Date.now() - t}ms`);
+  }
 
   import("../image-tools.js").then(m => m.initImageTools?.(secretsStore)).catch(() => {});
+  _t = _bsT("CronService+IntegrationRegistry");
   const cronService = new CronService(dataDir);
   const integrations = new IntegrationRegistry(dataDir);
+  _t();
 
   function loadSavedSettings() {
     try {

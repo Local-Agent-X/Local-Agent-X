@@ -66,22 +66,20 @@ describe("auditKernelCoverage", () => {
     expect(report.uncovered.sort()).toEqual(["another_ghost_tool", "definitely_not_a_real_tool"]);
   });
 
-  it("treats the production catalog as 100% covered (regression guard)", () => {
-    // Sample of high-traffic production tools that MUST stay classified.
-    // If any of these falls out of TOOL_CLASS_MAP we want a red test, not
-    // a runtime fail-closed surprise on a user's chat.
-    const productionTools = [
-      "read", "write", "edit", "bash", "browser", "http_request",
-      "web_search", "web_fetch", "memory_search", "memory_save",
-      "agent_spawn", "agent_status", "agent_cancel",
-      "protocol_list", "protocol_get", "protocol_create", "protocol_delete",
-      "protocol_curate", "protocol_stats",
-      "mission_schedule_create", "mission_schedule_list",
-      "browser_capture_to_secret", "browser_fill_from_secret",
-      "generate_image", "screen_capture", "ocr",
-    ];
-    const report = auditKernelCoverage(productionTools);
-    expect(report.uncovered).toEqual([]);
+  it("treats the FULL live tool registry as 100% covered (regression guard)", async () => {
+    // Walks every tool the server actually registers, not a hand-curated
+    // sample. The hand-sample version of this test (pre-2026-05-20) missed
+    // 120 tools that weren't in TOOL_CLASS_MAP — caught only on boot when
+    // the audit printed the gap to the log. This now mirrors what the boot
+    // audit does, so a missing classification breaks CI instead of breaking
+    // the user.
+    const { allTools } = await import("../src/tools/registry-build.js");
+    const names = allTools.map((t) => t.name);
+    const report = auditKernelCoverage(names);
+    expect(
+      report.uncovered,
+      `${report.uncovered.length} tool(s) missing from TOOL_CLASS_MAP: ${report.uncovered.join(", ")}`,
+    ).toEqual([]);
   });
 });
 

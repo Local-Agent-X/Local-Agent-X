@@ -30,15 +30,27 @@ const IPC = process.argv.includes("--ipc");
 // The step plan emitted up front so the UI can render the full list before
 // any step runs. Step ids must match the ones passed to step()/stepDone()/
 // stepError() below — a typo means the UI gets an event for an unknown id.
-const STEPS_PLAN = [
-  { id: "node",       label: "Node.js runtime" },
-  { id: "npm",        label: "App dependencies" },
-  { id: "embedmodel", label: "AI memory engine" },
-  { id: "settings",   label: "User settings" },
-  { id: "build",      label: "App build" },
-  { id: "config",     label: "Configuration" },
-  { id: "desktop",    label: "Desktop app" },
+// `platforms` decides which steps appear on which OS; the filter below
+// computes STEPS_PLAN for the current platform so the UI never shows a
+// step that won't run (e.g. Mac users don't see "C++ build tools" because
+// xcode-clt covers that on macOS).
+const ALL_STEPS = [
+  { id: "node",         label: "Node.js runtime",          platforms: ["win32", "darwin", "linux"] },
+  { id: "vsbuildtools", label: "C++ build tools",          platforms: ["win32"] },
+  { id: "xcode-clt",    label: "Xcode Command Line Tools", platforms: ["darwin"] },
+  { id: "python",       label: "Python 3.12",              platforms: ["win32", "darwin", "linux"] },
+  { id: "ollama",       label: "Ollama AI runtime",        platforms: ["win32", "darwin", "linux"] },
+  { id: "npm",          label: "App dependencies",         platforms: ["win32", "darwin", "linux"] },
+  { id: "embedmodel",   label: "AI memory engine",         platforms: ["win32", "darwin", "linux"] },
+  { id: "settings",     label: "User settings",            platforms: ["win32", "darwin", "linux"] },
+  { id: "build",        label: "App build",                platforms: ["win32", "darwin", "linux"] },
+  { id: "config",       label: "Configuration",            platforms: ["win32", "darwin", "linux"] },
+  { id: "desktop",      label: "Desktop app",              platforms: ["win32", "darwin", "linux"] },
 ];
+
+const STEPS_PLAN = ALL_STEPS
+  .filter(s => s.platforms.includes(process.platform))
+  .map(({ id, label }) => ({ id, label }));
 
 let currentStepId = null;
 
@@ -114,6 +126,130 @@ if (nodeMajor < NODE_MAJOR_MIN) {
 }
 ok(`Node v${process.versions.node}`);
 stepDone("node");
+
+// 1a. C++ build tools — required for native npm modules (better-sqlite3,
+//     sherpa-onnx, etc.) when they fall back to source build. Phase 2 of the
+//     installer-UX refactor moved this from install.bat / install.sh into here
+//     so the JSONL stream covers it and the GUI installer can show a step
+//     instead of a raw cmd window during the slow winget run.
+//
+//     Windows: vswhere detects existing install, winget installs the
+//       VC.Tools.x86.x64 workload silently. ~3 GB download, 10-30 min.
+//     macOS:   xcode-select -p detects existing install; --install opens
+//       a system dialog the user must click through (Apple doesn't provide
+//       unattended CLT install). Polls for completion.
+//     Linux:   apt build-essential.
+if (process.platform === "win32") {
+  step("vsbuildtools", "~3 GB download, 10-30 min on first install");
+  const vswhere = `${process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)"}\\Microsoft Visual Studio\\Installer\\vswhere.exe`;
+  let hasVc = false;
+  if (existsSync(vswhere)) {
+    const r = spawnSync(vswhere, [
+      "-products", "*",
+      "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+      "-property", "installationPath",
+    ], { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+    hasVc = r.status === 0 && (r.stdout || "").trim().length > 0;
+  }
+  if (hasVc) {
+    ok("Visual Studio Build Tools already present");
+  } else {
+    log("Installing Visual Studio Build Tools (silent winget)…");
+    const r = run("winget", [
+      "install", "--id", "Microsoft.VisualStudio.2022.BuildTools",
+      "--accept-package-agreements", "--accept-source-agreements",
+      "--silent", "--disable-interactivity",
+      "--override", "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended",
+    ]);
+    // winget returns 0x8A150011 = "no applicable upgrade found" if Build
+    // Tools is already at latest; treat that as success. Anything else
+    // non-zero is a real failure.
+    if (r.status !== 0 && r.status !== -1978335215) {
+      fail(`winget install BuildTools failed (exit ${r.status}). Re-run installer or install manually from https://visualstudio.microsoft.com/downloads/`);
+    }
+    ok("Visual Studio Build Tools installed");
+  }
+  stepDone("vsbuildtools");
+} else if (process.platform === "darwin") {
+  step("xcode-clt", "Apple requires a system dialog — click Install if prompted");
+  const cltCheck = spawnSync("xcode-select", ["-p"], { stdio: ["ignore", "ignore", "ignore"] });
+  if (cltCheck.status === 0) {
+    ok("Xcode Command Line Tools already present");
+  } else {
+    log("Triggering Xcode CLT install (system dialog opens)…");
+    // xcode-select --install spawns a system dialog and returns
+    // immediately. Poll xcode-select -p for completion. Apple offers no
+    // unattended path; the user must click through the dialog.
+    spawnSync("xcode-select", ["--install"], { stdio: ["ignore", "ignore", "ignore"] });
+    const deadline = Date.now() + 30 * 60 * 1000;
+    let done = false;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 5000));
+      if (spawnSync("xcode-select", ["-p"], { stdio: ["ignore", "ignore", "ignore"] }).status === 0) {
+        done = true; break;
+      }
+    }
+    if (!done) fail("Xcode CLT install didn't complete within 30 min. Click 'Install' in the system dialog and re-run.");
+    ok("Xcode Command Line Tools installed");
+  }
+  stepDone("xcode-clt");
+} else if (process.platform === "linux") {
+  // Linux build-essential — gated under the "python" step's existing path
+  // to keep the step count stable; revisit if Linux usage grows.
+}
+
+// 1b. Python 3.12 — optional for voice servers + user scripts, but the user
+//     base widely expects it so we install it by default.
+step("python");
+const pyOk = (() => {
+  // python3 on darwin/linux, python on win32
+  const cmd = process.platform === "win32" ? "python" : "python3";
+  return spawnSync(cmd, ["--version"], { stdio: ["ignore", "ignore", "ignore"], shell: true }).status === 0;
+})();
+if (pyOk) {
+  ok("Python already present");
+} else {
+  log("Installing Python 3.12…");
+  if (process.platform === "win32") {
+    const r = run("winget", ["install", "Python.Python.3.12", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
+    if (r.status !== 0) warn(`Python install failed (exit ${r.status}) — continuing without (voice servers won't work)`);
+    else ok("Python 3.12 installed");
+  } else if (process.platform === "darwin") {
+    const r = run("brew", ["install", "python@3.12"]);
+    if (r.status !== 0) warn(`Python install failed — continuing without (voice servers won't work)`);
+    else ok("Python 3.12 installed");
+  } else {
+    const r = run("sudo", ["apt-get", "install", "-y", "python3", "python3-pip"]);
+    if (r.status !== 0) warn(`Python install failed — continuing without (voice servers won't work)`);
+    else ok("Python installed");
+  }
+}
+stepDone("python");
+
+// 1c. Ollama runtime — separate from the embed-model pull below. Installing
+//     Ollama is the bootstrap; pulling the model is what makes it usable.
+step("ollama");
+if (has("ollama")) {
+  ok("Ollama already present");
+} else {
+  log("Installing Ollama…");
+  if (process.platform === "win32") {
+    const r = run("winget", ["install", "Ollama.Ollama", "--accept-package-agreements", "--accept-source-agreements", "--silent"]);
+    if (r.status !== 0) fail(`Ollama install failed (exit ${r.status}). Install manually from https://ollama.com/download`);
+    ok("Ollama installed");
+  } else if (process.platform === "darwin") {
+    const r = run("brew", ["install", "ollama"]);
+    if (r.status !== 0) fail("Ollama install failed. Install manually from https://ollama.com/download");
+    ok("Ollama installed");
+  } else {
+    // Linux: pipe Ollama's official install script through sh. Trust the
+    // ollama.com source the same way the upstream README tells users to.
+    const r = spawnSync("sh", ["-c", "curl -fsSL https://ollama.com/install.sh | sh"], { stdio: IPC ? ["ignore", "pipe", "pipe"] : "inherit" });
+    if (r.status !== 0) fail("Ollama install failed. Install manually from https://ollama.com/download");
+    ok("Ollama installed");
+  }
+}
+stepDone("ollama");
 
 // 2. npm install — retry with legacy peer deps on first failure.
 // --loglevel=error hides the transitive-dep deprecation warnings (inflight,

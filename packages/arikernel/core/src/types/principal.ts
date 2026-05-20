@@ -12,6 +12,13 @@ export const TOOL_CLASSES = [
 	// independently (e.g. "strict" mode disables auto-paste of secrets
 	// even where browser.* is otherwise allowed).
 	"secret-vault",
+	// Audit-only class for tool calls that have no agent-controlled I/O sink
+	// (LAX-internal orchestration, state transitions, structured workspace
+	// docs bounded at higher layers). Routed through Firewall.audit() — never
+	// Firewall.execute() — so they land in the hash-chained audit DB and feed
+	// behavioral rules WITHOUT triggering taint/capability/SSRF defenses that
+	// don't apply. Not a wildcard: callers must classify each tool explicitly.
+	"internal",
 ] as const;
 export type ToolClass = (typeof TOOL_CLASSES)[number];
 

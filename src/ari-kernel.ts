@@ -652,16 +652,23 @@ export function shouldObserveInKernel(toolName: string): boolean {
 }
 
 /**
- * Audit-only observation for internal-class tools. Always allows; emits a
- * structured log line capturing the call shape (tool name, action, session,
- * sampled params) so every dispatched call is visible in one place.
+ * Audit-only observation for internal-class tools.
+ *
+ * Routes the call into the kernel's hash-chained audit DB AND feeds it
+ * through the behavioral-rules pipeline — so internal calls land in the
+ * same tamper-evident store as gated calls and count toward rate/anomaly
+ * thresholds. A session that calls `app_delete` 50 times in 30 seconds
+ * trips the same quarantine that an over-eager bash session would.
+ *
+ * Always allows the underlying call; the kernel-side decision is fixed
+ * "allow / audit-only". If the firewall isn't initialized yet, falls back
+ * to a logger.info side-channel so coverage isn't lost during early boot.
  *
  * Distinct from ariEvaluate:
- *   - ariEvaluate: gated I/O classes — taint analysis, capability check,
- *     can deny. Internal class is rejected outright (would never be called).
- *   - ariObserve: internal class — no enforcement, just a uniform audit line.
- *     Calling this on a gated class would skip the kernel's defenses, so
- *     the executor only routes here AFTER the gate check fails.
+ *   - ariEvaluate: gated I/O classes (file/http/shell/database/...) —
+ *     taint analysis, capability check, can deny.
+ *   - ariObserve: internal class — kernel audit + behavioral observation
+ *     without I/O gating (none applies).
  */
 export function ariObserve(
   toolName: string,
@@ -671,16 +678,37 @@ export function ariObserve(
 ): void {
   if (!isAriActive()) return;
 
-  // Truncate large/sensitive param values for log readability. Strips
-  // executor-injected keys (_sessionId etc.) and caps each value at 60 chars.
-  const sampled: Record<string, string> = {};
+  // Strip executor-injected keys (_sessionId etc.) and truncate large values
+  // so the audit row stays small. The kernel's auditStore serializes
+  // toolCall+decision as JSON; bloated parameters blow up the row size and
+  // make replays slow.
+  const sampled: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(params)) {
     if (k.startsWith("_")) continue;
     let s: string;
     try { s = typeof v === "string" ? v : JSON.stringify(v); }
     catch { s = "<unserializable>"; }
-    sampled[k] = s.length > 60 ? s.slice(0, 57) + "..." : s;
+    sampled[k] = s.length > 200 ? s.slice(0, 197) + "..." : s;
   }
+
+  // Hash-chained audit entry + behavioral evaluation. Best-effort: if the
+  // kernel call throws (DB locked, schema mismatch on hot-reload), fall back
+  // to the logger so the trail isn't lost.
+  try {
+    const qi = firewall!.audit({
+      toolClass: "internal",
+      action,
+      parameters: { ...sampled, _tool: toolName, ...(opts.sessionId ? { _sess: opts.sessionId.slice(0, 12) } : {}) },
+    });
+    if (qi) {
+      logger.warn(`[ari-observe] quarantine triggered by ${toolName}/${action}: ${qi.reason}`);
+    }
+  } catch (e) {
+    logger.warn(`[ari-observe] kernel audit failed for ${toolName}: ${(e as Error).message} — falling back to log`);
+  }
+
+  // Keep the human-readable side-channel for grep convenience. The audit DB
+  // is the authoritative tamper-evident record; this is just operator UX.
   const sess = opts.sessionId ? `sess=${opts.sessionId.slice(0, 12)} ` : "";
   logger.info(`[ari-observe] ${toolName}/${action} ${sess}params=${JSON.stringify(sampled)}`);
 }
@@ -817,6 +845,13 @@ export async function ariStatus(): Promise<Record<string, unknown> | null> {
  */
 export function isAriActive(): boolean {
   return firewall !== null;
+}
+
+/** Test-only accessor for the live Firewall. Returns null when the kernel
+ *  isn't started. Production code MUST NOT read this — use ariEvaluate /
+ *  ariObserve so the call shape stays uniform across paths. */
+export function getFirewallForTest(): Firewall | null {
+  return firewall;
 }
 
 /**

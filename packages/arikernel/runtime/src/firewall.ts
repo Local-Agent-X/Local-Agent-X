@@ -617,6 +617,84 @@ export class Firewall {
 	}
 
 	/**
+	 * Audit-only path for tool calls with no agent-controlled I/O sink
+	 * (toolClass: "internal"). Writes the call into the hash-chained audit
+	 * store as if it were a gated call AND feeds it through the behavioral-
+	 * rules pipeline — so a session that calls `app_delete` 50 times in 30s
+	 * trips the same quarantine logic that a session abusing `bash` would.
+	 *
+	 * Distinct from execute(): no policy evaluation, no capability check,
+	 * no taint propagation. The decision is always allow; the audit entry
+	 * carries `reason: "audit-only"` so downstream replay/analysis can
+	 * filter it out from gated decisions if needed.
+	 *
+	 * Returns the QuarantineInfo when behavioral rules just triggered a new
+	 * quarantine for this run (so the caller can surface it), or null
+	 * otherwise. Never throws — DB failures are swallowed and logged via
+	 * onAudit hook absence; the caller must not depend on audit success
+	 * for tool execution.
+	 */
+	audit(opts: {
+		toolClass: import("@arikernel/core").ToolClass;
+		action: string;
+		parameters: Record<string, unknown>;
+		taintLabels?: TaintLabel[];
+		parentCallId?: string;
+	}): QuarantineInfo | null {
+		const timestamp = now();
+		const toolCall = {
+			id: generateId(),
+			runId: this.runId,
+			sequence: 0, // overwritten by AuditStore.append
+			timestamp,
+			principalId: this.principal.id,
+			toolClass: opts.toolClass,
+			action: opts.action,
+			parameters: opts.parameters,
+			taintLabels: opts.taintLabels ?? [],
+			parentCallId: opts.parentCallId,
+		};
+		const decision = {
+			verdict: "allow" as const,
+			matchedRule: null,
+			reason: "audit-only (internal class — no I/O sink to gate)",
+			taintLabels: opts.taintLabels ?? [],
+			timestamp,
+		};
+
+		// Hash-chained append. Wrapped because a DB failure here must not
+		// cascade into a thrown tool call — audit best-effort, execution
+		// authoritative.
+		try {
+			const event = this.auditStore.append(toolCall, decision);
+			this._hooks.onAudit?.(event);
+			this._hooks.onDecision?.(toolCall, decision);
+		} catch {
+			// Swallow — see method doc.
+		}
+
+		// Feed behavioral rules. Audit-only calls count toward rate/anomaly
+		// thresholds even though they aren't I/O — that's the whole point of
+		// the change: kernel sees the full call shape, not just the I/O half.
+		this._runState.pushEvent({
+			timestamp,
+			type: "tool_call_allowed",
+			toolClass: opts.toolClass,
+			action: opts.action,
+			verdict: "allow",
+			metadata: { auditOnly: true },
+		});
+		if (this._runState.behavioralRulesEnabled) {
+			const match = evaluateBehavioralRules(this._runState);
+			if (match) {
+				const qi = applyBehavioralRule(this._runState, match);
+				if (qi) return qi;
+			}
+		}
+		return null;
+	}
+
+	/**
 	 * Quarantine this firewall externally (e.g., from a cross-principal correlator alert).
 	 * Returns QuarantineInfo if newly quarantined, null if already restricted.
 	 */

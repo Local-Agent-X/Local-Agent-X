@@ -382,4 +382,14 @@ export interface LAXConfig {
    *  - "chatterbox" — zero-shot reference-clip clone
    *  - "lite"       — built-in kokoro voice (fastest, no clone needed) */
   bridgeVoicePreference?: "auto" | "sovits" | "chatterbox" | "lite";
+
+  /** Category-level tool toggles surfaced as the Tool Policy switches in
+   *  Settings → Security. Default-on. When false, every tool in the
+   *  category is blocked at pre-dispatch with stage "tool-policy". These
+   *  are the simple per-user kill-switches that sit OVER the granular
+   *  tool-policy rule engine — separate from per-tool rules so the user
+   *  can disable an entire surface area without learning the rule DSL. */
+  enableShell: boolean;
+  enableHttp: boolean;
+  enableBrowser: boolean;
 }

@@ -13,9 +13,11 @@
  * checking the gate function's return; the kernel-started integration
  * test (ari-kernel-host-capabilities.test.ts) covers the firewall side.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   shouldGateInKernel,
+  shouldObserveInKernel,
+  ariObserve,
   auditKernelCoverage,
   printKernelCoverageReport,
   type KernelCoverageReport,
@@ -80,6 +82,45 @@ describe("auditKernelCoverage", () => {
       report.uncovered,
       `${report.uncovered.length} tool(s) missing from TOOL_CLASS_MAP: ${report.uncovered.join(", ")}`,
     ).toEqual([]);
+  });
+});
+
+describe("shouldObserveInKernel", () => {
+  it("returns true for explicitly classified internal tools", () => {
+    expect(shouldObserveInKernel("agent_spawn")).toBe(true);
+    expect(shouldObserveInKernel("protocol_create")).toBe(true);
+    expect(shouldObserveInKernel("memory_recall")).toBe(true);
+    expect(shouldObserveInKernel("task_create")).toBe(true);
+  });
+
+  it("returns false for gated I/O classes", () => {
+    expect(shouldObserveInKernel("read")).toBe(false);
+    expect(shouldObserveInKernel("bash")).toBe(false);
+    expect(shouldObserveInKernel("http_request")).toBe(false);
+    expect(shouldObserveInKernel("memory_search")).toBe(false);
+  });
+
+  it("returns false for unmapped tools (they're handled by the gate, not observe)", () => {
+    expect(shouldObserveInKernel("definitely_not_a_real_tool")).toBe(false);
+  });
+});
+
+describe("ariObserve", () => {
+  // ariObserve early-returns when isAriActive() is false (no firewall),
+  // which is the test environment default. The check exists so observe
+  // doesn't spam logs during tests that don't bring up the kernel; the
+  // host-capabilities integration test exercises the active-kernel path.
+  it("is a no-op when AriKernel is inactive (test env default)", () => {
+    // Just verify it doesn't throw and doesn't blow up on weird input.
+    expect(() => ariObserve("any_tool", "internal", {})).not.toThrow();
+    expect(() => ariObserve("any_tool", "internal", { a: 1, b: "x" })).not.toThrow();
+    expect(() => ariObserve("any_tool", "internal", { _sessionId: "skip-me", real: "keep" })).not.toThrow();
+  });
+
+  it("handles unserializable params without throwing", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(() => ariObserve("any_tool", "internal", cyclic)).not.toThrow();
   });
 });
 

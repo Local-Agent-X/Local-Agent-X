@@ -631,6 +631,60 @@ export function shouldGateInKernel(toolName: string): boolean {
   return GATED_CLASSES.has(cls);
 }
 
+/**
+ * Should this tool flow through the kernel's audit-only observation path?
+ *
+ * Returns true ONLY for "internal" class — orchestration, LAX state
+ * transitions, structured workspace docs. These don't have an agent-
+ * controlled I/O sink the kernel can defend (no taint flow, no capability
+ * surface, no SSRF target), so they SKIP the enforcement pipeline. But
+ * they still pass through ariObserve so the operator gets a uniform
+ * "[ari] every tool call" audit trail in server.log, closing the gap
+ * where ~50% of the catalog used to be invisible at this layer.
+ *
+ * Future: pipe ariObserve emissions into the kernel's hash-chained audit
+ * DB (packages/arikernel/audit-log) so internal calls land in the same
+ * tamper-evident store as gated calls. For now: structured log line in
+ * the same `[ari]` namespace as the kernel's enforcement events.
+ */
+export function shouldObserveInKernel(toolName: string): boolean {
+  return TOOL_CLASS_MAP[toolName] === "internal";
+}
+
+/**
+ * Audit-only observation for internal-class tools. Always allows; emits a
+ * structured log line capturing the call shape (tool name, action, session,
+ * sampled params) so every dispatched call is visible in one place.
+ *
+ * Distinct from ariEvaluate:
+ *   - ariEvaluate: gated I/O classes — taint analysis, capability check,
+ *     can deny. Internal class is rejected outright (would never be called).
+ *   - ariObserve: internal class — no enforcement, just a uniform audit line.
+ *     Calling this on a gated class would skip the kernel's defenses, so
+ *     the executor only routes here AFTER the gate check fails.
+ */
+export function ariObserve(
+  toolName: string,
+  action: string,
+  params: Record<string, unknown>,
+  opts: { sessionId?: string } = {},
+): void {
+  if (!isAriActive()) return;
+
+  // Truncate large/sensitive param values for log readability. Strips
+  // executor-injected keys (_sessionId etc.) and caps each value at 60 chars.
+  const sampled: Record<string, string> = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (k.startsWith("_")) continue;
+    let s: string;
+    try { s = typeof v === "string" ? v : JSON.stringify(v); }
+    catch { s = "<unserializable>"; }
+    sampled[k] = s.length > 60 ? s.slice(0, 57) + "..." : s;
+  }
+  const sess = opts.sessionId ? `sess=${opts.sessionId.slice(0, 12)} ` : "";
+  logger.info(`[ari-observe] ${toolName}/${action} ${sess}params=${JSON.stringify(sampled)}`);
+}
+
 /** Boot-time coverage audit. Mirrors auditPolicyCoverage in src/tool-policy.ts —
  *  surfaces missing TOOL_CLASS_MAP entries at startup so devs catch them
  *  before users hit the runtime block. */

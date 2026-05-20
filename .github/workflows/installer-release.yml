@@ -38,6 +38,10 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Publish single-file self-contained .exe
+        # -p:InstallerSourceTag pins the source version this installer
+        # downloads at runtime. github.ref_name is the tag for tag-triggered
+        # runs and the branch name for workflow_dispatch runs ("main" for
+        # the default branch).
         shell: pwsh
         run: |
           dotnet publish installer/Installer.csproj `
@@ -45,6 +49,7 @@ jobs:
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -p:PublishTrimmed=false `
+            -p:InstallerSourceTag=${{ github.ref_name }} `
             --nologo
 
       - name: Stage release artifact
@@ -73,6 +78,8 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Build .app bundle
+        env:
+          INSTALLER_SOURCE_TAG: ${{ github.ref_name }}
         run: |
           chmod +x scripts/build-mac-installer.sh
           ./scripts/build-mac-installer.sh

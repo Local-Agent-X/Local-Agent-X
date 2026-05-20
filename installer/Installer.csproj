@@ -11,7 +11,20 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <RootNamespace>LocalAgentX.Installer</RootNamespace>
     <AssemblyName>LocalAgentXInstaller</AssemblyName>
+    <!-- Source tag baked into the installer at build time. CI passes
+         -p:InstallerSourceTag=${{ github.ref_name }} so each release's
+         installer pins the matching source version. Local dev builds
+         fall through to "main". Read at runtime by SourceDownloader via
+         AssemblyMetadataAttribute below. -->
+    <InstallerSourceTag Condition="'$(InstallerSourceTag)' == ''">main</InstallerSourceTag>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>SourceTag</_Parameter1>
+      <_Parameter2>$(InstallerSourceTag)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.2.0" />

@@ -1,0 +1,120 @@
+name: Installer Release
+
+# Builds the Windows .exe and macOS .app GUI installers on tag push and
+# attaches both as assets to the GitHub Release the existing release.yml
+# (source tarball) workflow already created for the same tag. The website's
+# "Download for Windows / Mac" links point at these release assets, so
+# tagging a new version is the entire publish flow.
+#
+# Phase 3 of the installer productization. Pre-CI, both binaries were
+# checked into the repo root, which inflated the repo ~88 MB per release.
+# Once a few releases land here we'll remove the committed binaries from
+# git (Phase 3 cleanup) and point any docs at the release URL pattern:
+#   https://github.com/<owner>/<repo>/releases/latest/download/<asset>
+#
+# Trigger: push a tag matching v*  (e.g. `git tag v0.2.0 && git push --tags`).
+# Manually re-run via workflow_dispatch if a release needs to be rebuilt
+# without bumping the tag.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # softprops/action-gh-release needs write to attach assets
+
+jobs:
+  build-windows:
+    name: Windows installer (.exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish single-file self-contained .exe
+        shell: pwsh
+        run: |
+          dotnet publish installer/Installer.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:PublishTrimmed=false `
+            --nologo
+
+      - name: Stage release artifact
+        shell: pwsh
+        run: |
+          $src = "installer/bin/Release/net8.0/win-x64/publish/LocalAgentXInstaller.exe"
+          $dst = "Install Local Agent X Windows Installer.exe"
+          Copy-Item -LiteralPath $src -Destination $dst -Force
+          Write-Host ("Size: {0:N1} MB" -f ((Get-Item -LiteralPath $dst).Length / 1MB))
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: "Install Local Agent X Windows Installer.exe"
+          if-no-files-found: error
+
+  build-macos:
+    name: macOS installer (.app)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build .app bundle
+        run: |
+          chmod +x scripts/build-mac-installer.sh
+          ./scripts/build-mac-installer.sh
+
+      - name: Zip .app for upload
+        # macOS .app bundles are directories; GitHub Release assets must be
+        # single files. `zip -y` preserves symlinks the .app runtime needs.
+        working-directory: installer/dist-mac
+        run: |
+          zip -r -y "Install Local Agent X Mac Installer.zip" "Install Local Agent X Mac Installer.app"
+          ls -la
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: "installer/dist-mac/Install Local Agent X Mac Installer.zip"
+          if-no-files-found: error
+
+  attach-to-release:
+    name: Attach to GitHub Release
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: List downloaded artifacts
+        run: |
+          find dist -type f | sort
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          # The companion release.yml workflow already creates the release
+          # with the source tarball and generated release notes; this run
+          # appends the two installer binaries to that same release.
+          generate_release_notes: false
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            dist/windows-installer/Install Local Agent X Windows Installer.exe
+            dist/macos-installer/Install Local Agent X Mac Installer.zip

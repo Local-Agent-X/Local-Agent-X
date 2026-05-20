@@ -466,6 +466,20 @@ Rules:
     run: runDreamCheck,
   });
 
+  scheduler.register({
+    name: "protocol-curator",
+    intervalMs: 6 * 60 * 60 * 1000, // poll every 6h; shouldCurate() gates actual work to ~daily
+    startupDelayMs: 10 * 60 * 1000,
+    run: async () => {
+      try {
+        const { shouldCurate, runCurator } = await import("../protocols/curator.js");
+        if (!shouldCurate()) return;
+        const r = await runCurator();
+        logger.info(`[curator] pass: archived=${r.transitions.archived.length} purged=${r.transitions.purged.length} clusters=${r.clusters.length} report=${r.reportPath}`);
+      } catch (e) { logger.warn("[curator]", (e as Error).message); }
+    },
+  });
+
   setTimeout(async () => {
     try {
       const { getUniversalIndex } = await import("../memory/universal-index.js");

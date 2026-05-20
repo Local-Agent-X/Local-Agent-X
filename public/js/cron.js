@@ -11,7 +11,99 @@ let cronStatusTimer = null;
 // the next /api/cron list poll, and the user mashes the button repeatedly.
 const cronStopping = new Set();
 
-function init_missions() { loadCronJobs(); }
+function init_missions() { restoreCronSectionState(); loadMissionModelOptions(); loadCronJobs(); }
+
+// Cached list of {provider, model, label} pairs for the per-mission model
+// picker. Loaded once when the missions panel first opens; reused across
+// mission switches. Refreshed implicitly only on page reload.
+let cronModelOptions = null;
+let cronModelOptionsLoading = null;
+
+async function loadMissionModelOptions() {
+  if (cronModelOptions) return cronModelOptions;
+  if (cronModelOptionsLoading) return cronModelOptionsLoading;
+  cronModelOptionsLoading = (async () => {
+    try {
+      const data = await apiJson('/api/providers');
+      const flat = [];
+      for (const p of (data.providers || [])) {
+        for (const m of (p.models || [])) {
+          flat.push({ provider: p.id, model: m, label: `${p.name} · ${m}` });
+        }
+      }
+      cronModelOptions = flat;
+    } catch { cronModelOptions = []; }
+    return cronModelOptions;
+  })();
+  return cronModelOptionsLoading;
+}
+
+function renderMissionModelPicker(job) {
+  const sel = document.getElementById('cron-detail-model');
+  if (!sel) return;
+  const opts = cronModelOptions || [];
+  const currentValue = (job.provider && job.model) ? `${job.provider}:${job.model}` : '';
+  // If the job's saved provider/model isn't in the live options list
+  // (creds removed, model removed from registry, etc.), surface it
+  // anyway so the user can see what was picked and pick something else.
+  const haveCurrent = !currentValue || opts.some(o => `${o.provider}:${o.model}` === currentValue);
+  let html = `<option value=""${currentValue ? '' : ' selected'}>System default</option>`;
+  if (!haveCurrent) html += `<option value="${esc(currentValue)}" selected>(unavailable) ${esc(currentValue)}</option>`;
+  for (const o of opts) {
+    const val = `${o.provider}:${o.model}`;
+    const selAttr = val === currentValue ? ' selected' : '';
+    html += `<option value="${esc(val)}"${selAttr}>${esc(o.label)}</option>`;
+  }
+  sel.innerHTML = html;
+}
+
+async function setMissionModel(value) {
+  if (!selectedJob) return;
+  let provider = '', model = '';
+  if (value) {
+    const idx = value.indexOf(':');
+    if (idx > 0) { provider = value.slice(0, idx); model = value.slice(idx + 1); }
+  }
+  try {
+    const res = await apiJson(`/api/cron/${selectedJob.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, model }),
+    });
+    if (res?.job) {
+      // Refresh local cache so the next switch reflects the new state.
+      selectedJob.provider = res.job.provider || '';
+      selectedJob.model = res.job.model || '';
+      const idx = cronJobs.findIndex(j => j.id === selectedJob.id);
+      if (idx >= 0) cronJobs[idx] = { ...cronJobs[idx], ...res.job };
+    }
+  } catch (e) {
+    alert('Failed to set model: ' + (e?.message || e));
+  }
+}
+
+// Persist open/closed state of the Reports + Recent runs collapsible
+// sections across page reloads. Default (no key set) keeps the HTML
+// `open` attribute — both sections start expanded for first-time users.
+function restoreCronSectionState() {
+  const pairs = [
+    ['cron-reports-wrap', 'lax_cron_reports_open'],
+    ['cron-history-wrap', 'lax_cron_history_open'],
+  ];
+  for (const [id, key] of pairs) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const saved = localStorage.getItem(key);
+    if (saved === '0') el.removeAttribute('open');
+    else if (saved === '1') el.setAttribute('open', '');
+    if (!el.dataset.collapsePersistWired) {
+      el.addEventListener('toggle', () => {
+        localStorage.setItem(key, el.open ? '1' : '0');
+      });
+      el.dataset.collapsePersistWired = '1';
+    }
+  }
+}
 
 async function loadCronJobs() {
   try {
@@ -224,6 +316,13 @@ function renderCronDetail() {
     failsEl.textContent = String(n);
     failsEl.style.color = n > 0 ? '#e07b5a' : 'var(--muted)';
   }
+
+  // Model picker — re-rendered on every mission switch so the dropdown
+  // reflects the just-selected job's saved choice. Options come from
+  // /api/providers (cached by loadMissionModelOptions, kicked off at
+  // missions-panel init time).
+  if (cronModelOptions) renderMissionModelPicker(selectedJob);
+  else loadMissionModelOptions().then(() => { if (selectedJob) renderMissionModelPicker(selectedJob); });
 
   const resultEl = document.getElementById('cron-detail-result');
   if (resultEl) {

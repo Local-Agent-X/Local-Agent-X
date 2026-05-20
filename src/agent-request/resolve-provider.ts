@@ -16,6 +16,9 @@ export async function resolveProvider(
   /** Optional override — forces this provider id if creds are available;
    *  falls through to the normal auto-detect chain otherwise. */
   providerOverride?: string,
+  /** Optional model override. Takes precedence over `saved.model` and the
+   *  provider registry default. Only honored when non-empty. */
+  modelOverride?: string,
 ): Promise<{
   provider: string;
   apiKey: string;
@@ -110,8 +113,12 @@ export async function resolveProvider(
 
   // Default model — registry is SoT. Falls back to config.model when
   // the registry leaves defaultModel empty (e.g., ollama-cloud where
-  // the user picks from the cloud catalog).
-  const model = String(saved.model || "") || meta.defaultModel || config.model;
+  // the user picks from the cloud catalog). Caller-supplied modelOverride
+  // wins when non-empty (per-job cron model selection).
+  const model = (modelOverride && modelOverride.trim())
+    || String(saved.model || "")
+    || meta.defaultModel
+    || config.model;
 
   const temperature = typeof saved.temperature === "number" ? saved.temperature : config.temperature;
   const maxIterations = typeof saved.maxIterations === "number" ? saved.maxIterations : config.maxIterations;

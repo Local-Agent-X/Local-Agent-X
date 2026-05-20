@@ -1096,17 +1096,16 @@ app.on("ready", async () => {
 
   setupIPC();
 
+  // Spawn the server if it isn't already up — but DO NOT block on
+  // health here. Blocking made the user stare at nothing for 30-60s
+  // while waitForServer polled and only THEN got a window. The splash
+  // screen (loaded inside createWindow → buildSplashDataUrl) is the
+  // visible feedback during that exact window; the renderer's own
+  // pollAndNavigate handles flipping from splash to real app the
+  // instant /api/health responds.
   const alreadyRunning = await isServerRunning();
   if (!alreadyRunning) {
     startServer();
-  }
-
-  const serverReady = alreadyRunning || (await waitForServer());
-  if (!serverReady) {
-    showNotification(
-      "Local Agent X",
-      "Server failed to start. Check that the project is built (npm run build)."
-    );
   }
 
   createTray({
@@ -1146,7 +1145,7 @@ app.on("ready", async () => {
     registerAutostart();
   }
 
-  showNotification("Local Agent X", serverReady ? "Agent is online." : "Starting up...");
+  showNotification("Local Agent X", alreadyRunning ? "Agent is online." : "Starting up…");
 });
 
 app.on("activate", () => showWindow());

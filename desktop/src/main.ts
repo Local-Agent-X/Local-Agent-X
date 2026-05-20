@@ -283,7 +283,16 @@ function stopServer(): Promise<void> {
   });
 }
 
-async function waitForServer(maxWaitMs = 15000): Promise<boolean> {
+// 60s ceiling. Cold server boot on a fresh Mac install legitimately
+// takes 15-30s (tsx cold start + ari kernel + sqlite migrations + ollama
+// daemon check + mxbai-embed-large pull on first run + MCP filesystem
+// connect + telegram/whatsapp bridges). The old 15s ceiling was where
+// the chrome-error race lived: server still booting at 15s → wait
+// returns false → window loads against not-yet-listening port → chrome
+// caches the error page. Renderer-side retry (did-fail-load handler in
+// createWindow) is the actual fix; this bump removes the noisy
+// "server didn't start" notification when the server is just slow.
+async function waitForServer(maxWaitMs = 60000): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
     if (await isServerRunning()) return true;
@@ -325,6 +334,41 @@ function createWindow(): void {
   });
 
   const url = `http://127.0.0.1:${saxConfig.port}/?token=${saxConfig.authToken}`;
+  const serverOrigin = `http://127.0.0.1:${saxConfig.port}`;
+
+  // Renderer-side retry: if the server isn't responding yet (cold boot,
+  // restart, sleep wake), did-fail-load fires with chrome's "this site
+  // can't be reached" page. Without a retry the renderer sticks on
+  // chrome-error://chromewebdata/ forever and the user sees a blank
+  // window until they manually refresh — exact symptom on slower / fresh-
+  // install machines where waitForServer hit its ceiling before the
+  // server finished booting. We retry the load every 1s for up to 90s,
+  // which covers any realistic cold-start window without blocking
+  // forever on a truly dead server.
+  const LOAD_RETRY_DEADLINE_MS = 90_000;
+  const LOAD_RETRY_DELAY_MS = 1_000;
+  const loadStartedAt = Date.now();
+  let retryPending = false;
+
+  mainWindow.webContents.on("did-fail-load", (_e, errorCode, _desc, validatedURL) => {
+    // errorCode -3 (ABORTED) fires whenever we navigate away mid-load
+    // (including our own retry); ignore.
+    if (errorCode === -3) return;
+    // Only retry our own origin — sub-resources or external URLs we
+    // intentionally navigated to are not our concern.
+    if (validatedURL && !validatedURL.startsWith(serverOrigin)) return;
+    if (retryPending) return;
+    if (Date.now() - loadStartedAt > LOAD_RETRY_DEADLINE_MS) {
+      console.error(`[desktop] Gave up loading ${url} after ${LOAD_RETRY_DEADLINE_MS}ms — server not responding`);
+      return;
+    }
+    retryPending = true;
+    setTimeout(() => {
+      retryPending = false;
+      mainWindow?.loadURL(url);
+    }, LOAD_RETRY_DELAY_MS);
+  });
+
   mainWindow.loadURL(url);
 
   // Inject custom title bar menu into the page.

@@ -157,8 +157,13 @@ export async function bootstrapTools(deps: {
   // Register the AriKernel executor bridge — file / http / shell / database /
   // retrieval surface as deferred SAX tools so the unified dispatcher can
   // route to them. `toolClass` is set so `getByToolClass()` (the AriKernel-
-  // side view from 2C.1) returns the matching adapter. Closes F2 part 2:
-  // the kernel-side execution path is no longer a parallel SAX dispatcher.
+  // side view from 2C.1) returns the matching adapter. `kernelClass:
+  // "internal"` self-registers each bridge into TOOL_CLASS_MAP so the
+  // dispatch-layer kernel gate skips them — the bridge wraps the kernel
+  // executor directly, so dispatch-layer evaluation would be double-routing.
+  // Closes F2 part 2: the kernel-side execution path is no longer a parallel
+  // SAX dispatcher. Seed example of self-registration; existing static
+  // entries can migrate the same way over time.
   const ARI_BRIDGE_CLASS: Record<string, "file" | "http" | "shell" | "database" | "retrieval"> = {
     ari_file: "file",
     ari_http: "http",
@@ -173,6 +178,7 @@ export async function bootstrapTools(deps: {
       tags: ["arikernel", "kernel-bridge", ...(cls ? [cls] : [])],
       searchHint: bridge.description.slice(0, 80),
       toolClass: cls,
+      kernelClass: "internal",
     });
     allAgentTools.push(bridge);
   }

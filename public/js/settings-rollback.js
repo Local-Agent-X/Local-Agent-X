@@ -12,7 +12,7 @@ function rollbackArtifactSummary(artifacts) {
   }
   return useful.map(a => {
     if (a.type === 'file-backup') return `file: ${escapeHtml(a.original)}`;
-    if (a.type === 'git-stash') return `git stash: ${escapeHtml(a.ref)}`;
+    if (a.type === 'git-stash') return `git stash: ${escapeHtml(a.sha.slice(0, 8))}`;
     return escapeHtml(a.type);
   }).join(', ');
 }

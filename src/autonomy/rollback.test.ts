@@ -84,6 +84,65 @@ describe("captureRollback", () => {
     }
   });
 
+  it("git-stash artifact carries a stable SHA, not a positional ref", () => {
+    const id = freshId(); trackedIds.push(id);
+    const repo = join(tmpdir(), `lax-rb-sha-${id}`);
+    mkdirSync(repo, { recursive: true });
+    try {
+      execSync("git init -q", { cwd: repo });
+      execSync('git config user.email "t@t" && git config user.name "t"', { cwd: repo });
+      writeFileSync(join(repo, "a.txt"), "v1");
+      execSync("git add . && git commit -qm init", { cwd: repo });
+      writeFileSync(join(repo, "a.txt"), "v2-dirty");
+      const c = captureRollback(id, "bash", "shell", { command: "x" }, repo);
+      expect(c.artifacts[0].type).toBe("git-stash");
+      if (c.artifacts[0].type === "git-stash") {
+        expect(c.artifacts[0].sha).toMatch(/^[0-9a-f]{40}$/);
+      }
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  it("git-stash restore survives an intervening stash push (the positional-ref bug)", () => {
+    const id = freshId(); trackedIds.push(id);
+    const repo = join(tmpdir(), `lax-rb-shift-${id}`);
+    mkdirSync(repo, { recursive: true });
+    try {
+      execSync("git init -q", { cwd: repo });
+      execSync('git config user.email "t@t" && git config user.name "t"', { cwd: repo });
+      writeFileSync(join(repo, "a.txt"), "v1");
+      writeFileSync(join(repo, "b.txt"), "v1");
+      execSync("git add . && git commit -qm init", { cwd: repo });
+      writeFileSync(join(repo, "a.txt"), "v2-from-agent");
+
+      captureRollback(id, "bash", "shell", { command: "x" }, repo);
+      // Simulate the user (or another lax capture) stashing something else
+      // AFTER our capture. Our stash shifts to stash@{1}; a positional-ref
+      // restore would pop the WRONG thing. Use a different file so the apply
+      // doesn't merge-conflict on the same content.
+      writeFileSync(join(repo, "b.txt"), "user-edited");
+      execSync('git stash push -m "unrelated"', { cwd: repo });
+
+      const r = restoreRollback(id);
+      expect(r.ok).toBe(true);
+      expect(readFileSync(join(repo, "a.txt"), "utf-8")).toBe("v2-from-agent");
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  it("restoreRollback cleans up the toolCallId backup directory on success", () => {
+    const id = freshId(); trackedIds.push(id);
+    const target = join(tmpdir(), `lax-rb-gc-${id}.txt`);
+    writeFileSync(target, "v1");
+    captureRollback(id, "write", "workspace-write", { path: target });
+
+    const backupDir = join(ROLLBACK_DIR_PATH, id);
+    expect(existsSync(backupDir)).toBe(true);
+
+    writeFileSync(target, "v2");
+    expect(restoreRollback(id).ok).toBe(true);
+    expect(existsSync(backupDir)).toBe(false);
+    rmSync(target, { force: true });
+  });
+
   it("shell in a non-git cwd records no-rollback", () => {
     const id = freshId(); trackedIds.push(id);
     const dir = join(tmpdir(), `lax-rb-nogit-${id}`);

@@ -15,7 +15,7 @@
  * to restored.jsonl so listRollbacks() can mark already-undone entries.
  */
 
-import { existsSync, mkdirSync, copyFileSync, statSync, appendFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, statSync, appendFileSync, readFileSync, rmSync } from "node:fs";
 import { join, basename, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
@@ -30,7 +30,7 @@ const RESTORED_FILE = join(ROLLBACK_DIR, "restored.jsonl");
 
 export type RollbackArtifact =
   | { type: "file-backup"; original: string; backup: string }
-  | { type: "git-stash"; ref: string; cwd: string }
+  | { type: "git-stash"; sha: string; cwd: string }
   | { type: "none"; reason: string };
 
 export interface RollbackContract {
@@ -70,9 +70,11 @@ function captureGitStash(toolCallId: string, cwd: string): RollbackArtifact {
     if (!dirty) return { type: "none", reason: "no uncommitted changes to stash" };
     const stashMsg = `lax-rollback-${toolCallId}`;
     execSync(`git stash push --include-untracked -m "${stashMsg}"`, { cwd, stdio: "ignore" });
-    const ref = execSync(`git stash list --format=%gd:%gs`, { cwd, encoding: "utf-8" })
-      .split("\n").find((l) => l.includes(stashMsg))?.split(":")[0] ?? "stash@{0}";
-    return { type: "git-stash", ref, cwd };
+    // Capture the stash commit SHA, not the positional ref. stash@{0}
+    // shifts when the user (or another lax capture) pushes more stashes;
+    // the SHA is stable and survives reorders.
+    const sha = execSync(`git rev-parse stash@{0}`, { cwd, encoding: "utf-8" }).trim();
+    return { type: "git-stash", sha, cwd };
   } catch (e) {
     return { type: "none", reason: `git stash failed: ${(e as Error).message}` };
   }
@@ -171,7 +173,15 @@ function restoreOne(artifact: RollbackArtifact): { ok: boolean; error?: string }
   }
   if (artifact.type === "git-stash") {
     try {
-      execSync(`git stash pop ${artifact.ref}`, { cwd: artifact.cwd, stdio: "ignore" });
+      // Apply by SHA (stable) — see captureGitStash. `git stash drop` only
+      // accepts positional refs, so look up the current stash@{n} that
+      // matches our SHA at restore time. The ref may have shifted since
+      // capture; the SHA hasn't.
+      execSync(`git stash apply ${artifact.sha}`, { cwd: artifact.cwd, stdio: "ignore" });
+      const list = execSync(`git stash list --format=%H:%gd`, { cwd: artifact.cwd, encoding: "utf-8" });
+      const match = list.split("\n").find((l) => l.startsWith(artifact.sha));
+      const ref = match ? match.split(":")[1] : null;
+      if (ref) execSync(`git stash drop ${ref}`, { cwd: artifact.cwd, stdio: "ignore" });
       return { ok: true };
     } catch (e) { return { ok: false, error: (e as Error).message }; }
   }
@@ -200,6 +210,11 @@ export function restoreRollback(toolCallId: string): RestoreResult {
 
   try { appendFileSync(RESTORED_FILE, JSON.stringify({ toolCallId, ts: Date.now() }) + "\n"); }
   catch (e) { logger.warn(`[rollback] failed to log restoration: ${(e as Error).message}`); }
+
+  // Backups for this call are spent — file-backup artifacts have already
+  // been copied back, git stashes already dropped. Reclaim the disk.
+  try { rmSync(join(ROLLBACK_DIR, toolCallId), { recursive: true, force: true }); }
+  catch (e) { logger.warn(`[rollback] failed to clean ${toolCallId} dir: ${(e as Error).message}`); }
 
   return { ok: true, restored, skipped };
 }

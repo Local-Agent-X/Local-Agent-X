@@ -102,7 +102,8 @@ export async function startServer(config: LAXConfig) {
   // surfacing as a "BLOCKED by tool-policy" failure to a real user.
   {
     const { auditPolicyCoverage, printPolicyCoverageReport } = await import("../tool-policy.js");
-    const { auditKernelCoverage, printKernelCoverageReport, auditAutonomyCoverage } = await import("../ari-kernel.js");
+    const { auditKernelCoverage, printKernelCoverageReport } = await import("../ari-kernel.js");
+    const { auditRiskCoverage } = await import("../autonomy/risk.js");
     const seen = new Set<string>();
     const names: string[] = [];
     for (const t of [...allAgentTools, ...bridgeTools]) {
@@ -116,10 +117,10 @@ export async function startServer(config: LAXConfig) {
     // a user does.
     printKernelCoverageReport(auditKernelCoverage(names));
     // Twin-map invariant for the autonomy classifier. Throws if any
-    // TOOL_CLASS_MAP key is missing a TOOL_AUTONOMY_RISK entry — silent
-    // fallback to "shell" would over-restrict safe tools and degrade the
-    // profile gate's signal before anyone noticed.
-    auditAutonomyCoverage();
+    // TOOL_CLASS_MAP key is missing a TOOL_RISK entry — silent fallback
+    // to "shell" would over-restrict safe tools and degrade the profile
+    // gate's signal before anyone noticed.
+    auditRiskCoverage();
   }
 
   // Pre-warm the tool-RAG embedding index in the background. Without this,

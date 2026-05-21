@@ -1,103 +1,58 @@
 /**
- * Approval Manager — HumanLayer-style pause-and-wait for dangerous tools.
+ * Approval Manager — pause-and-wait gate for tool calls that need user
+ * consent. Thin adapter on top of src/autonomy/profiles.ts:
  *
- * Flow:
- *   1. Agent wants to call tool X. Tool executor checks DANGEROUS_TOOLS.
- *   2. If flagged, calls requestApproval() which emits `approval_requested` event
- *      and returns a Promise that resolves when user responds (or times out).
- *   3. UI shows inline card with Approve / Deny / Always allow for this session.
- *   4. Client sends `approval_response` WS message → resolveApproval() fires.
- *   5. Tool runs iff approved; otherwise execute() is skipped with a BLOCKED result.
+ *   getToolDecision(tool) =
+ *     decide(getProfile(loadProfileName()), classifyToolRisk(tool))
  *
- * Session-scoped "always allow" cache prevents re-prompting for the same tool
- * within one session. Still re-prompts across sessions (or after server restart).
+ * Callers branch on the four-valued Decision instead of a boolean:
+ *   - "allow"               → run, no prompt
+ *   - "allow-with-rollback" → run (rollback layer wraps separately; not
+ *                             yet wired — treat as allow for now)
+ *   - "ask"                 → emit approval_requested, wait for user
+ *   - "deny"                → block without prompting
+ *
+ * Session-scoped "always allow" cache prevents re-prompting for the same
+ * tool within one session. Still re-prompts across sessions.
  */
-import { existsSync, readFileSync } from "node:fs";
+
 import { createPatch } from "diff";
-import { getRuntimeConfig } from "./config.js";
-import { join } from "node:path";
-import { homedir } from "node:os";
 import type { ActionPreview, ServerEvent } from "./types.js";
+import {
+  decide,
+  getProfile,
+  type Decision,
+} from "./autonomy/profiles.js";
+import { loadProfileName } from "./autonomy/profile-store.js";
+import { classifyToolRisk } from "./autonomy/risk.js";
 
 const APPROVAL_TIMEOUT_MS = 5 * 60_000; // 5 min — long enough to read + decide
 
-/**
- * Approval mode — read from settings.json.approvalMode.
- *   "off"       — no approvals, fastest workflow
- *   "sensitive" — default. Gate on truly destructive / externally-visible tools
- *   "strict"    — gate on everything "sensitive" catches PLUS browser control,
- *                 http_request, mission schedule changes. Slower but paranoid.
- */
-export type ApprovalMode = "off" | "sensitive" | "strict";
-
-const SENSITIVE_TOOLS: ReadonlySet<string> = new Set([
-  "bash",           // shell exec, can do anything
-  "write",          // creates/overwrites files
-  "edit",           // modifies files
-  "email_send",     // externally visible, irreversible
-  "memory_forget",  // deletes facts
-]);
-
-const STRICT_EXTRA: ReadonlySet<string> = new Set([
-  "browser",                   // real visible browser control
-  "http_request",              // outbound network calls
-  "mission_schedule_create",
-  "mission_schedule_delete",
-  "mission_schedule_update",
-]);
-
-/** Back-compat export — the combined strict list. */
-export const DANGEROUS_TOOLS: ReadonlySet<string> = new Set([...SENSITIVE_TOOLS, ...STRICT_EXTRA]);
-
-/** Read approval mode from runtime config (~/.lax/config.json). Cached 1s
- *  to avoid disk I/O per call. The settings UI dropdown's POST handler at
- *  routes/settings/preferences.ts persists toolApproval to config.json
- *  (and updates ctx.config in-memory) — reading from getRuntimeConfig keeps
- *  the gate in sync with what the UI saved. Previously this read settings.json
- *  but the UI's POST writes config.json (mirroring how browserMode +
- *  bridgeVoicePreference work), so the enforcement read and the persist
- *  write were on different files and toggling the UI never moved the gate.
- *  Live failure 2026-05-19: user set approval to Off in Settings; UI
- *  showed Off; approval-manager kept reading settings.json (no value
- *  there) and fell back to "sensitive", still prompted on edit/write.
- */
-let _cachedMode: ApprovalMode | null = null;
-let _modeCachedAt = 0;
-function loadApprovalMode(): ApprovalMode {
-  if (_cachedMode && Date.now() - _modeCachedAt < 1000) return _cachedMode;
-  let mode: ApprovalMode = "off";
-  try {
-    const cfg = getRuntimeConfig();
-    if (cfg.toolApproval === "auto") mode = "off";
-    else if (cfg.toolApproval === "confirm-all") mode = "strict";
-    else if (cfg.toolApproval === "confirm-risky") mode = "sensitive";
-  } catch {
-    // config not initialized yet (very early boot) — also tolerate the
-    // legacy settings.json path so we never block tools just because
-    // config hasn't loaded yet.
-    try {
-      const settingsPath = join(homedir(), ".lax", "settings.json");
-      if (existsSync(settingsPath)) {
-        const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as { approvalMode?: string; toolApproval?: string };
-        if (s.approvalMode === "off" || s.approvalMode === "sensitive" || s.approvalMode === "strict") mode = s.approvalMode;
-        else if (s.toolApproval === "auto") mode = "off";
-        else if (s.toolApproval === "confirm-all") mode = "strict";
-        else if (s.toolApproval === "confirm-risky") mode = "sensitive";
-      }
-    } catch {}
-  }
-  _cachedMode = mode;
-  _modeCachedAt = Date.now();
-  return mode;
+// Profile name cached 1s — same shape as the prior approvalMode cache.
+// loadProfileName() reads ~/.lax/autonomy-profile.json on miss.
+let _cachedProfile: ReturnType<typeof loadProfileName> | null = null;
+let _profileCachedAt = 0;
+function currentProfileName(): ReturnType<typeof loadProfileName> {
+  if (_cachedProfile && Date.now() - _profileCachedAt < 1000) return _cachedProfile;
+  _cachedProfile = loadProfileName();
+  _profileCachedAt = Date.now();
+  return _cachedProfile;
 }
 
-/** Should this tool require approval under the current settings? */
-export function toolNeedsApproval(toolName: string): boolean {
-  const mode = loadApprovalMode();
-  if (mode === "off") return false;
-  if (mode === "strict") return SENSITIVE_TOOLS.has(toolName) || STRICT_EXTRA.has(toolName);
-  // default: sensitive
-  return SENSITIVE_TOOLS.has(toolName);
+/** What does the active profile say about this tool? */
+export function getToolDecision(toolName: string): Decision {
+  const profile = getProfile(currentProfileName());
+  return decide(profile, classifyToolRisk(toolName));
+}
+
+/** Does this decision require an interactive user prompt before running? */
+export function decisionRequiresPrompt(d: Decision): boolean {
+  return d === "ask";
+}
+
+/** Does this decision block the tool outright? */
+export function decisionDenies(d: Decision): boolean {
+  return d === "deny";
 }
 
 interface PendingApproval {

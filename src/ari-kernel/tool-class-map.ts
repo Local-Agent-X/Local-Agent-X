@@ -41,12 +41,12 @@ export const TOOL_CLASS_MAP: Record<string, string> = {
   // ari_*: arikernel-bridge wraps kernel executors directly; the kernel
   // runs INSIDE the bridge for these. Dispatch-layer evaluation would be
   // double-routing with a fake class/action.
-  //
-  // The ari_* bridges now self-register at their bootstrap site via
-  // toolRegistry.register({ kernelClass: "internal", ... }) — see
-  // src/server/bootstrap-tools.ts. The static entries below are removed;
-  // they're populated at boot before any tool dispatches.
-  //
+  ari_file: "internal",
+  ari_http: "internal",
+  ari_shell: "internal",
+  ari_database: "internal",
+  ari_retrieval: "internal",
+  ari_sqlite_database: "internal",
   // self_edit runs sandboxed code repair through its own subprocess with
   // its own build/server-bind/agent-smoke gates before merge — kernel
   // gating here would block legitimate repair flows.
@@ -331,33 +331,4 @@ export function shouldGateInKernel(toolName: string): boolean {
 // uniform "[ari] every tool call" audit trail.
 export function shouldObserveInKernel(toolName: string): boolean {
   return TOOL_CLASS_MAP[toolName] === "internal";
-}
-
-// Valid kernel-class identifiers. Six gated I/O classes plus "internal"
-// (audit-only). Tools register against this set; anything outside it is
-// rejected so the map stays inspectable.
-export type KernelClass =
-  | "file"
-  | "http"
-  | "shell"
-  | "database"
-  | "retrieval"
-  | "secret-vault"
-  | "internal";
-
-const KERNEL_CLASS_VALUES: ReadonlySet<KernelClass> = new Set<KernelClass>([
-  "file", "http", "shell", "database", "retrieval", "secret-vault", "internal",
-]);
-
-// Self-registration entry point — lets a tool declare its kernel class at
-// the definition site instead of requiring a coordinated edit to this
-// file. Last write wins (mirrors UnifiedToolRegistry.register semantics).
-// Safe to call before or after startAriKernel: the map is read on each
-// dispatch, not snapshotted at boot.
-export function registerToolClass(toolName: string, kernelClass: KernelClass): void {
-  if (!KERNEL_CLASS_VALUES.has(kernelClass)) {
-    logger.error(`[ari] registerToolClass: invalid class "${kernelClass}" for ${toolName} — must be one of ${[...KERNEL_CLASS_VALUES].join("|")}`);
-    return;
-  }
-  TOOL_CLASS_MAP[toolName] = kernelClass;
 }

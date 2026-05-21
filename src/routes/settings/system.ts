@@ -68,6 +68,21 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
     json(200, { ok: true, profile }); return true;
   }
 
+  // Rollback artifacts — list recent capture contracts and trigger undo.
+  if (method === "GET" && url.pathname === "/api/rollback/list") {
+    const { listRollbacks } = await import("../../autonomy/rollback.js");
+    const limit = Math.min(parseInt(url.searchParams.get("limit") || "50", 10) || 50, 200);
+    json(200, { entries: listRollbacks(limit) }); return true;
+  }
+  if (method === "POST" && url.pathname === "/api/rollback/undo") {
+    const body = await readBody(req);
+    const { toolCallId } = JSON.parse(body);
+    if (typeof toolCallId !== "string" || !toolCallId) { json(400, { error: "toolCallId required" }); return true; }
+    const { restoreRollback } = await import("../../autonomy/rollback.js");
+    const result = restoreRollback(toolCallId);
+    json(result.ok ? 200 : 400, result); return true;
+  }
+
   // Profile switch
   if (method === "POST" && url.pathname === "/api/profile") {
     const body = await readBody(req);

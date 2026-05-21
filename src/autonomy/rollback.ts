@@ -7,13 +7,15 @@
  *
  * Storage layout under ~/.lax/rollback/:
  *   index.jsonl                       one line per captured contract
+ *   restored.jsonl                    one line per toolCallId we've undone
  *   {toolCallId}/<original-name>.bak  raw file backups
  *
- * Restore is currently manual (copy the .bak back, `git stash pop <ref>`).
- * An automated undo command is the next obvious layer.
+ * restoreRollback() walks the contract and reverses each artifact:
+ * file-backup → copyback, git-stash → stash pop. Restoration is logged
+ * to restored.jsonl so listRollbacks() can mark already-undone entries.
  */
 
-import { existsSync, mkdirSync, copyFileSync, statSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, statSync, appendFileSync, readFileSync } from "node:fs";
 import { join, basename, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
@@ -24,6 +26,7 @@ const logger = createLogger("autonomy-rollback");
 
 const ROLLBACK_DIR = join(homedir(), ".lax", "rollback");
 const INDEX_FILE = join(ROLLBACK_DIR, "index.jsonl");
+const RESTORED_FILE = join(ROLLBACK_DIR, "restored.jsonl");
 
 export type RollbackArtifact =
   | { type: "file-backup"; original: string; backup: string }
@@ -127,5 +130,80 @@ export function captureRollback(
   return contract;
 }
 
+// ── Restore / list ────────────────────────────────────────────────────
+
+function readJsonl<T>(path: string): T[] {
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf-8")
+    .split("\n")
+    .filter((l) => l.length > 0)
+    .map((l) => { try { return JSON.parse(l) as T; } catch { return null; } })
+    .filter((x): x is T => x !== null);
+}
+
+function loadRestoredIds(): Set<string> {
+  return new Set(readJsonl<{ toolCallId: string }>(RESTORED_FILE).map((r) => r.toolCallId));
+}
+
+export interface RollbackListEntry extends RollbackContract {
+  restored: boolean;
+}
+
+export function listRollbacks(limit = 50): RollbackListEntry[] {
+  const restored = loadRestoredIds();
+  // Last entry per toolCallId wins (in case the same id ever got two
+  // contracts; shouldn't happen, but be defensive about a JSONL append log).
+  const byId = new Map<string, RollbackContract>();
+  for (const c of readJsonl<RollbackContract>(INDEX_FILE)) byId.set(c.toolCallId, c);
+  const all = Array.from(byId.values()).sort((a, b) => b.ts - a.ts);
+  return all.slice(0, limit).map((c) => ({ ...c, restored: restored.has(c.toolCallId) }));
+}
+
+export type RestoreResult =
+  | { ok: true; restored: RollbackArtifact[]; skipped: RollbackArtifact[] }
+  | { ok: false; error: string };
+
+function restoreOne(artifact: RollbackArtifact): { ok: boolean; error?: string } {
+  if (artifact.type === "file-backup") {
+    if (!existsSync(artifact.backup)) return { ok: false, error: `backup missing: ${artifact.backup}` };
+    try { copyFileSync(artifact.backup, artifact.original); return { ok: true }; }
+    catch (e) { return { ok: false, error: (e as Error).message }; }
+  }
+  if (artifact.type === "git-stash") {
+    try {
+      execSync(`git stash pop ${artifact.ref}`, { cwd: artifact.cwd, stdio: "ignore" });
+      return { ok: true };
+    } catch (e) { return { ok: false, error: (e as Error).message }; }
+  }
+  return { ok: false, error: "no-op artifact" };
+}
+
+export function restoreRollback(toolCallId: string): RestoreResult {
+  const contracts = readJsonl<RollbackContract>(INDEX_FILE).filter((c) => c.toolCallId === toolCallId);
+  if (contracts.length === 0) return { ok: false, error: `no contract for ${toolCallId}` };
+  if (loadRestoredIds().has(toolCallId)) return { ok: false, error: `already restored: ${toolCallId}` };
+
+  const contract = contracts[contracts.length - 1];
+  const restored: RollbackArtifact[] = [];
+  const skipped: RollbackArtifact[] = [];
+
+  for (const a of contract.artifacts) {
+    if (a.type === "none") { skipped.push(a); continue; }
+    const r = restoreOne(a);
+    if (r.ok) restored.push(a);
+    else { logger.warn(`[rollback] restore of ${a.type} failed: ${r.error}`); skipped.push(a); }
+  }
+
+  if (restored.length === 0) {
+    return { ok: false, error: `nothing to restore (all ${contract.artifacts.length} artifacts were no-op or failed)` };
+  }
+
+  try { appendFileSync(RESTORED_FILE, JSON.stringify({ toolCallId, ts: Date.now() }) + "\n"); }
+  catch (e) { logger.warn(`[rollback] failed to log restoration: ${(e as Error).message}`); }
+
+  return { ok: true, restored, skipped };
+}
+
 export const ROLLBACK_INDEX_FILE = INDEX_FILE;
+export const ROLLBACK_RESTORED_FILE = RESTORED_FILE;
 export const ROLLBACK_DIR_PATH = ROLLBACK_DIR;

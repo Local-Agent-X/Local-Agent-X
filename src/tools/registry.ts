@@ -19,6 +19,7 @@
  */
 import type { ToolClass } from "@arikernel/core";
 import type { ToolDefinition } from "../types.js";
+import { registerToolClass, type KernelClass } from "../ari-kernel/tool-class-map.js";
 
 export interface RegistryEntry {
   tool: ToolDefinition;
@@ -37,6 +38,11 @@ export interface RegisterOptions {
   searchHint?: string;
   toolClass?: ToolClass;
   mcpSource?: string;
+  /** AriKernel routing class. When set, the tool name is added to the
+   *  kernel's TOOL_CLASS_MAP so registerToolClass doesn't have to be
+   *  called separately. Accepts "internal" (audit-only) in addition to
+   *  the six gated classes. */
+  kernelClass?: KernelClass;
 }
 
 export interface DeferredToolListing {
@@ -64,6 +70,7 @@ export class UnifiedToolRegistry {
       toolClass: opts?.toolClass,
       mcpSource: opts?.mcpSource,
     });
+    if (opts?.kernelClass) registerToolClass(tool.name, opts.kernelClass);
   }
 
   /** Remove a tool by name. Returns true if something was removed. */

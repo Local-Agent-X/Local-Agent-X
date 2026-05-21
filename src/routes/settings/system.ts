@@ -33,11 +33,13 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
   // System status
   if (method === "GET" && url.pathname === "/api/system-status") {
     const { getSandboxMode, isDockerAvailable } = await import("../../sandbox.js");
+    const { loadProfileName } = await import("../../autonomy/profile-store.js");
     const threatData = getThreatDashboard();
     const providerHealth = getProviderHealthStatus();
     const tStats = getToolStats();
     json(200, {
       profile: ctx.config.profile, toolApproval: ctx.config.toolApproval,
+      autonomyProfile: loadProfileName(),
       retentionDays: ctx.config.retentionDays, autoUpdate: ctx.config.autoUpdate, logLevel: ctx.config.logLevel,
       browserMode: ctx.config.browserMode,
       sandbox: { mode: getSandboxMode(), dockerAvailable: isDockerAvailable() },
@@ -46,6 +48,24 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
       tools: { totalCalls: Object.values(tStats).reduce((sum, t) => sum + (t.totalCalls || 0), 0), successRate: getToolSuccessRate(), recentFailures: getRecentFailures(5) },
       uptime: Math.floor(process.uptime()), memoryUsage: process.memoryUsage().heapUsed, nodeVersion: process.version,
     }); return true;
+  }
+
+  // Autonomy profile (Safe / Normal / Developer / Power / Autonomous).
+  // Separate from /api/profile above, which is the deployment profile
+  // (home / dev / enterprise) and lives in config.json.
+  if (method === "GET" && url.pathname === "/api/autonomy/profile") {
+    const { loadProfileName } = await import("../../autonomy/profile-store.js");
+    const { PROFILE_NAMES } = await import("../../autonomy/profiles.js");
+    json(200, { profile: loadProfileName(), available: PROFILE_NAMES }); return true;
+  }
+  if (method === "POST" && url.pathname === "/api/autonomy/profile") {
+    const body = await readBody(req);
+    const { profile } = JSON.parse(body);
+    const { isProfileName } = await import("../../autonomy/profiles.js");
+    if (!isProfileName(profile)) { json(400, { error: "Invalid profile" }); return true; }
+    const { saveProfileName } = await import("../../autonomy/profile-store.js");
+    saveProfileName(profile);
+    json(200, { ok: true, profile }); return true;
   }
 
   // Profile switch

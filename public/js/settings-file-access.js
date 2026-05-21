@@ -1,9 +1,10 @@
-// ── Settings: File Access Mode + Tool Approval Mode ──
+// ── Settings: File Access Mode + Autonomy Profile ──
 //
 // "What can the agent touch?" controls — file access mode (workspace /
-// expanded / unrestricted) and tool-approval mode (auto / ask-once /
-// always-ask). Both persist to ~/.lax/settings.json and are read by the
-// security layer + approval-manager on every tool call.
+// expanded / unrestricted) and autonomy profile (Safe / Normal /
+// Developer / Power / Autonomous). File access persists to
+// ~/.lax/settings.json (security layer reads it); profile persists to
+// ~/.lax/autonomy-profile.json (approval-manager reads it).
 
 // ── File Access Mode ──
 
@@ -36,27 +37,25 @@ async function setFileAccessMode(mode) {
   } catch {}
 }
 
-async function setApprovalMode(mode) {
-  // Save via the generic /api/settings endpoint (merged into settings.json).
-  // approval-manager.ts reads settings.json.toolApproval on every tool call.
+async function setAutonomyProfile(profile) {
   try {
-    await apiFetch('/api/settings', {
+    await apiFetch('/api/autonomy/profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ toolApproval: mode })
+      body: JSON.stringify({ profile })
     });
-  } catch (e) { console.warn('[approval-mode] save failed', e); }
+  } catch (e) { console.warn('[autonomy] save failed', e); }
 }
 
-// Load saved approval mode on settings page open
+// Load saved autonomy profile on settings page open
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    const res = await apiFetch('/api/settings');
+    const res = await apiFetch('/api/autonomy/profile');
     if (!res.ok) return;
     const s = await res.json();
-    if (s?.toolApproval) {
-      const el = document.getElementById('cfg-approval-mode');
-      if (el) el.value = s.toolApproval;
+    if (s?.profile) {
+      const el = document.getElementById('cfg-autonomy-profile');
+      if (el) el.value = s.profile;
     }
   } catch {}
 });

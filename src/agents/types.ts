@@ -107,15 +107,12 @@ export interface InvokeOpts {
 }
 
 /** Handle returned from invokeAgent. Callers poll run status via
- *  AgentRunStore.get(runId) or subscribe to handler events. */
+ *  AgentRunStore.get(runId) or subscribe to handler events. The runId
+ *  matches the Handler's FieldAgent id, so legacy status/cancel tools
+ *  (Handler.getAgentStatus, Handler.cancelAgent) accept it directly. */
 export interface RunRef {
   /** AgentRun.id — opaque, used to look up history. */
   runId: string;
-  /** The live FieldAgent id from the Handler. Same string as runId in
-   *  the current implementation; kept distinct in the type so a future
-   *  separation (e.g. queued runs that haven't spawned yet) doesn't
-   *  require an API break. */
-  fieldAgentId: string;
   /** The definition that was invoked, post-resolution. Useful for the
    *  caller to confirm which role actually ran (e.g. when the requested
    *  name resolved to a fork or override). */

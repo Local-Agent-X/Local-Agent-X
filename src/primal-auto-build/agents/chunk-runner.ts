@@ -6,9 +6,7 @@
  * invokeDefinition (canonical-loop driver — see src/agents/runtime.ts +
  * src/server/handler-events.ts), awaits completion via the
  * "handler:agent-result" EventBus event. The result fires after the
- * underlying canonical op reaches a terminal state — same shape as the
- * legacy Handler.spawnAgent path emitted, so this subscriber is the
- * migration safety belt for F1 closure.
+ * underlying canonical op reaches a terminal state.
  *
  * Two roles exposed:
  *   - "chunk-runner-trunk" — /senior-engineer methodology, for trunk + mixed
@@ -175,7 +173,7 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
   const ref = invokeDefinition(def, taskWithCwd, {
     parentSessionId: opts.parentSessionId,
   });
-  const agentId = ref.fieldAgentId;
+  const agentId = ref.runId;
 
   return await new Promise<ChunkAgentResult>((resolve) => {
     let settled = false;
@@ -183,37 +181,23 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
       if (settled) return;
       settled = true;
       EventBus.off("handler:agent-result", resultHandler);
-      EventBus.off("handler:agent-error", errorHandler);
-      EventBus.off("handler:agent-done", doneHandler);
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", abortListener);
       resolve(result);
     };
 
     const resultHandler = (data: unknown): void => {
-      const d = data as { agentId: string; result?: string; error?: string; chunk?: string };
+      const d = data as { agentId: string; result?: string; success?: boolean; error?: string; chunk?: string };
       if (d.agentId !== agentId) return;
       if (d.chunk) return; // streaming chunks — wait for the final result
-      if (d.error) {
-        finish({ stdout: d.result || "", exitCode: 1, durationMs: Date.now() - startedAt, error: d.error });
+      if (d.success === false) {
+        finish({ stdout: d.result || "", exitCode: 1, durationMs: Date.now() - startedAt, error: d.error || d.result || "agent failed" });
       } else {
         finish({ stdout: d.result || "", exitCode: 0, durationMs: Date.now() - startedAt });
       }
     };
-    const errorHandler = (data: unknown): void => {
-      const d = data as { agentId: string; error: string };
-      if (d.agentId !== agentId) return;
-      finish({ stdout: "", exitCode: 1, durationMs: Date.now() - startedAt, error: d.error });
-    };
-    const doneHandler = (data: unknown): void => {
-      const d = data as { agentId: string; result?: string };
-      if (d.agentId !== agentId) return;
-      finish({ stdout: d.result || "", exitCode: 0, durationMs: Date.now() - startedAt });
-    };
 
     EventBus.on("handler:agent-result", resultHandler);
-    EventBus.on("handler:agent-error", errorHandler);
-    EventBus.on("handler:agent-done", doneHandler);
 
     const timer = setTimeout(() => {
       finish({ stdout: "", exitCode: 124, durationMs: Date.now() - startedAt, error: `chunk agent timed out after ${timeoutMs}ms` });

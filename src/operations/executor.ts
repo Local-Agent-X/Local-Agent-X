@@ -229,8 +229,7 @@ async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string;
 
   return new Promise<string>((resolve, reject) => {
     // invokeDefinition routes the run through the canonical-loop driver and
-    // emits handler:agent-result on terminal — same EventBus contract as
-    // the legacy Handler.spawnAgent path, but the run is persisted to
+    // emits handler:agent-result on terminal. The run is persisted to
     // ~/.lax/operations/<opId>/events.jsonl so a crash here is recoverable.
     const phaseName = phaseObj.name.slice(0, 30);
     const ref = invokeDefinition(
@@ -245,7 +244,7 @@ async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string;
       prompt,
       { parentSessionId: opts.parentSessionId },
     );
-    const agentId = ref.fieldAgentId;
+    const agentId = ref.runId;
 
     const timeout = setTimeout(() => {
       EventBus.off("handler:agent-result", resultHandler);

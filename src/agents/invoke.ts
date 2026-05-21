@@ -18,9 +18,9 @@
  *   5. Hand the request to the registered canonical-loop driver
  *      (`agents/runtime.ts`). The driver runs `runAgentViaCanonical`,
  *      producing the persisted op record.
- *   6. When the driver resolves, emit `handler:agent-result` (+ done /
- *      error) so chunk-runner.ts, the AgentRunStore subscriber, and other
- *      legacy EventBus listeners observe the terminal state unchanged.
+ *   6. When the driver resolves, emit `handler:agent-result` so
+ *      chunk-runner.ts, the AgentRunStore subscriber, and the UI
+ *      broadcaster observe the terminal state.
  *
  * Returning a RunRef rather than a bare string keeps the door open for
  * queued/deferred invocations later (e.g. budget-checked dispatch) without
@@ -109,25 +109,6 @@ export function invokeDefinition(
 
   logger.info(`[invoke] ${def.role} "${def.name}" id=${def.id} run=${agentId}`);
 
-  // Wall-clock guard. Without this an agent can sit "working" forever if
-  // its driver hangs (provider HTTP stall, infinite tool-call loop with
-  // no progress, etc.) — the user sees the AGENTS sidebar card stuck on
-  // 0-95% with no way to recover except restarting the server. We
-  // abort() the same AbortController the driver already respects, so
-  // recovery is the existing terminal path (driver throws on signal →
-  // runAgentViaDriver converts to a clean failed outcome). Default 30
-  // min matches the order of magnitude of MISSION_HARD_TIMEOUT_MS for
-  // cron; ops can override via LAX_AGENT_TIMEOUT_MS for long jobs.
-  const agentTimeoutMs = Number(process.env.LAX_AGENT_TIMEOUT_MS) || 30 * 60_000;
-  const wallClockTimer = setTimeout(() => {
-    if (!abortController.signal.aborted) {
-      logger.warn(`[invoke] Agent ${agentId} hit ${(agentTimeoutMs / 60000).toFixed(0)}min wall-clock — aborting`);
-      try { abortController.abort(); } catch { /* abort is idempotent */ }
-    }
-  }, agentTimeoutMs);
-  // Don't keep the process alive just for this timer.
-  if (typeof wallClockTimer.unref === "function") wallClockTimer.unref();
-
   void runAgentViaDriver(
     {
       agentId,
@@ -141,24 +122,19 @@ export function invokeDefinition(
       templateId,
     },
     abortController.signal,
-  ).finally(() => clearTimeout(wallClockTimer));
+  );
 
   return {
     runId: agentId,
-    fieldAgentId: agentId,
     definition: def,
   };
 }
 
 /**
  * Event-bridge — translates the canonical-loop driver's terminal outcome
- * into the legacy EventBus signals subscribers expect.
- *
- * `handler:agent-result` is the durable signal — AgentRunStore.save fires
- * on it in `server/handler-events.ts`. `handler:agent-done` and
- * `handler:agent-error` are the chunk-runner / primal-auto-build hooks
- * (see `src/primal-auto-build/agents/chunk-runner.ts`). All three must
- * fire on terminal so existing consumers don't need to learn the new shape.
+ * into the `handler:agent-result` signal. AgentRunStore.save fires on it
+ * in `server/handler-events.ts`; chunk-runner.ts and operations/executor.ts
+ * also subscribe.
  *
  * Errors that escape the driver (e.g. no driver registered, infrastructure
  * failure) are converted into a failed result here — the FieldAgent
@@ -175,28 +151,13 @@ async function runAgentViaDriver(req: AgentRunDriverRequest, signal: AbortSignal
   }
   handler.finalizeExternalRun(req.agentId, outcome);
 
-  if (outcome.success) {
-    EventBus.emit("handler:agent-done", {
-      agentId: req.agentId,
-      result: outcome.result,
-    });
-    EventBus.emit("handler:agent-result", {
-      agentId: req.agentId,
-      result: outcome.result,
-      success: true,
-      tokens: outcome.tokens,
-    });
-  } else {
-    EventBus.emit("handler:agent-error", {
-      agentId: req.agentId,
-      error: outcome.result,
-    });
-    EventBus.emit("handler:agent-result", {
-      agentId: req.agentId,
-      result: outcome.result,
-      success: false,
-    });
-  }
+  EventBus.emit("handler:agent-result", {
+    agentId: req.agentId,
+    result: outcome.result,
+    success: outcome.success,
+    tokens: outcome.tokens,
+    error: outcome.success ? undefined : outcome.result,
+  });
 }
 
 /**

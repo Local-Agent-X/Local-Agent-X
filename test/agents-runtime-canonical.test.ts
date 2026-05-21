@@ -1,30 +1,20 @@
 /**
- * Tests for the canonical-loop dispatch path invokeDefinition now rides on
- * (F1 closure, phase 2B).
+ * Tests for the canonical-loop dispatch path invokeDefinition rides on.
  *
  * Three pin points:
  *
  *   1. Driver dispatch — invokeDefinition routes the run through the
- *      registered AgentRunDriver (not Handler.runAgentAsync). The driver
- *      receives the resolved tools, system prompt, agent id, and an
- *      AbortSignal.
+ *      registered AgentRunDriver. The driver receives the resolved tools,
+ *      system prompt, agent id, and an AbortSignal.
  *
  *   2. Event-bridge — the driver's terminal outcome flows out as
- *      handler:agent-result (+ done/error) on the EventBus. chunk-runner
- *      and the AgentRunStore-persistence subscriber both depend on these
- *      signals being emitted with the same shape as before.
+ *      handler:agent-result on the EventBus. chunk-runner and the
+ *      AgentRunStore-persistence subscriber depend on this signal.
  *
  *   3. Cancel parity — Handler.cancelAgent on an invokeDefinition-driven
- *      run aborts the AbortSignal handed to the driver. After 2B, the
- *      driver passes this signal through to runAgentViaCanonical so
- *      cancellation routes through canonical's opCancel.
- *
- * The crash-recovery assertion (kill mid-tool, replay from
- * op_events.jsonl) is covered structurally here: invokeDefinition rides
- * on `runAgentViaCanonical`, and canonical-loop-04-reconnect-replay
- * already pins the persistence + replay contract for any run that goes
- * through it. Together: every agent invocation after this commit is
- * recoverable from its op_events.jsonl on disk.
+ *      run aborts the AbortSignal handed to the driver, which passes it
+ *      through to runAgentViaCanonical so cancellation routes through
+ *      canonical's opCancel.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { invokeDefinition } from "../src/agents/invoke.js";
@@ -88,7 +78,6 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     });
 
     const resultCapture = captureEvent<{ agentId: string; result: string; success: boolean; tokens?: number }>("handler:agent-result");
-    const doneCapture = captureEvent<{ agentId: string; result: string }>("handler:agent-done");
 
     const ref = invokeDefinition(TEST_DEF, "do a thing", {
       parentSessionId: "sess-xyz",
@@ -96,20 +85,16 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     });
 
     expect(ref.runId).toMatch(/^field-agent-/);
-    expect(ref.fieldAgentId).toBe(ref.runId);
     expect(ref.definition.id).toBe(TEST_DEF.id);
 
-    await waitFor(() => resultCapture.drain().length > 0 || doneCapture.drain().length > 0, 500).catch(() => {});
-    // Re-attach captures after waitFor's drain — both subscriptions were
-    // consumed; re-subscribe to read the steady state.
+    await waitFor(() => resultCapture.drain().length > 0, 500).catch(() => {});
+    // Re-attach capture after drain — the subscription was consumed; re-subscribe.
     const finalResults: Array<{ agentId: string; result: string; success: boolean; tokens?: number }> = [];
-    const finalDones: Array<{ agentId: string; result: string }> = [];
     EventBus.on("handler:agent-result", (d) => { finalResults.push(d as typeof finalResults[number]); });
-    EventBus.on("handler:agent-done", (d) => { finalDones.push(d as typeof finalDones[number]); });
 
     // Drive a fresh invocation since the captures were already drained.
     const ref2 = invokeDefinition(TEST_DEF, "do another thing", {});
-    await waitFor(() => finalResults.some(r => r.agentId === ref2.fieldAgentId), 1_000);
+    await waitFor(() => finalResults.some(r => r.agentId === ref2.runId), 1_000);
 
     expect(received).not.toBeNull();
     expect(received!.agentId).toBeDefined();
@@ -121,7 +106,7 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     expect(signalReceived).not.toBeNull();
     expect(signalReceived!.aborted).toBe(false);
 
-    const r2 = finalResults.find(r => r.agentId === ref2.fieldAgentId);
+    const r2 = finalResults.find(r => r.agentId === ref2.runId);
     expect(r2).toBeDefined();
     expect(r2!.success).toBe(true);
     expect(r2!.result).toBe("driver-done");
@@ -136,7 +121,7 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     const ref = invokeDefinition(TEST_DEF, "task", { parentSessionId: "sess-1" });
 
     expect(spawns).toHaveLength(1);
-    expect(spawns[0].agentId).toBe(ref.fieldAgentId);
+    expect(spawns[0].agentId).toBe(ref.runId);
     expect(spawns[0].name).toBe("Test Runner");
     expect(spawns[0].role).toBe("tester");
     expect(spawns[0].templateId).toBeNull(); // builtin- id, not tpl-
@@ -147,17 +132,17 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     registerAgentRunDriver((_req, _signal) => new Promise(resolve => { resolveDriver = resolve; }));
 
     const ref = invokeDefinition(TEST_DEF, "in-flight task", {});
-    const status = Handler.getInstance().getAgentStatus(ref.fieldAgentId);
+    const status = Handler.getInstance().getAgentStatus(ref.runId);
     expect(Array.isArray(status)).toBe(false);
     if (Array.isArray(status)) return;
-    expect(status.id).toBe(ref.fieldAgentId);
+    expect(status.id).toBe(ref.runId);
     expect(status.name).toBe("Test Runner");
     expect(status.role).toBe("tester");
     expect(status.status).toBe("working");
 
     // Resolve so the test doesn't dangle.
     resolveDriver!({ result: "ok", success: true });
-    await waitFor(() => Handler.getInstance().getAgentStatus(ref.fieldAgentId) !== null && (Handler.getInstance().getAgentStatus(ref.fieldAgentId) as { status: string }).status !== "working", 1_000).catch(() => {});
+    await waitFor(() => Handler.getInstance().getAgentStatus(ref.runId) !== null && (Handler.getInstance().getAgentStatus(ref.runId) as { status: string }).status !== "working", 1_000).catch(() => {});
   });
 
   it("translates a driver rejection into handler:agent-result with success:false", async () => {
@@ -166,26 +151,26 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     EventBus.on("handler:agent-result", (d) => { results.push(d as typeof results[number]); });
 
     const ref = invokeDefinition(TEST_DEF, "task", {});
-    await waitFor(() => results.some(r => r.agentId === ref.fieldAgentId), 1_000);
+    await waitFor(() => results.some(r => r.agentId === ref.runId), 1_000);
 
-    const r = results.find(r => r.agentId === ref.fieldAgentId);
+    const r = results.find(r => r.agentId === ref.runId);
     expect(r).toBeDefined();
     expect(r!.success).toBe(false);
     expect(r!.result).toBe("driver blew up");
   });
 
-  it("translates a success:false outcome into handler:agent-error + handler:agent-result", async () => {
+  it("translates a success:false outcome into handler:agent-result with error", async () => {
     registerAgentRunDriver(async () => ({ result: "merge conflict", success: false }));
-    const errors: Array<{ agentId: string; error: string }> = [];
-    const results: Array<{ agentId: string; result: string; success: boolean }> = [];
-    EventBus.on("handler:agent-error", (d) => { errors.push(d as typeof errors[number]); });
+    const results: Array<{ agentId: string; result: string; success: boolean; error?: string }> = [];
     EventBus.on("handler:agent-result", (d) => { results.push(d as typeof results[number]); });
 
     const ref = invokeDefinition(TEST_DEF, "task", {});
-    await waitFor(() => results.some(r => r.agentId === ref.fieldAgentId), 1_000);
+    await waitFor(() => results.some(r => r.agentId === ref.runId), 1_000);
 
-    expect(errors.find(e => e.agentId === ref.fieldAgentId)?.error).toBe("merge conflict");
-    expect(results.find(r => r.agentId === ref.fieldAgentId)?.success).toBe(false);
+    const r = results.find(r => r.agentId === ref.runId);
+    expect(r?.success).toBe(false);
+    expect(r?.error).toBe("merge conflict");
+    expect(r?.result).toBe("merge conflict");
   });
 
   it("Handler.cancelAgent fires the AbortSignal the driver received", async () => {
@@ -205,11 +190,11 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     await waitFor(() => driverSignal !== null, 500);
 
     expect(driverSignal!.aborted).toBe(false);
-    Handler.getInstance().cancelAgent(ref.fieldAgentId);
+    Handler.getInstance().cancelAgent(ref.runId);
     expect(driverSignal!.aborted).toBe(true);
 
-    await waitFor(() => results.some(r => r.agentId === ref.fieldAgentId), 1_000);
-    const r = results.find(r => r.agentId === ref.fieldAgentId);
+    await waitFor(() => results.some(r => r.agentId === ref.runId), 1_000);
+    const r = results.find(r => r.agentId === ref.runId);
     expect(r!.success).toBe(false);
     // Resolve to ensure cleanup
     resolveDriver!({ result: "[cancelled]", success: false });
@@ -217,16 +202,17 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
 });
 
 describe("invokeDefinition — chunk-runner subscription compatibility", () => {
-  it("emits handler:agent-done with the same shape chunk-runner.ts subscribes to", async () => {
+  it("emits handler:agent-result on success with the shape chunk-runner.ts subscribes to", async () => {
     registerAgentRunDriver(async () => ({ result: "STATUS: done\nDONE_WHEN: met", success: true, tokens: 42 }));
-    const dones: Array<{ agentId: string; result: string }> = [];
-    EventBus.on("handler:agent-done", (d) => { dones.push(d as typeof dones[number]); });
+    const results: Array<{ agentId: string; result: string; success: boolean; tokens?: number }> = [];
+    EventBus.on("handler:agent-result", (d) => { results.push(d as typeof results[number]); });
 
     const ref = invokeDefinition(TEST_DEF, "ship chunk", {});
-    await waitFor(() => dones.some(d => d.agentId === ref.fieldAgentId), 1_000);
+    await waitFor(() => results.some(r => r.agentId === ref.runId), 1_000);
 
-    const d = dones.find(d => d.agentId === ref.fieldAgentId);
-    expect(d).toBeDefined();
-    expect(d!.result).toContain("STATUS: done");
+    const r = results.find(r => r.agentId === ref.runId);
+    expect(r?.success).toBe(true);
+    expect(r?.result).toContain("STATUS: done");
+    expect(r?.tokens).toBe(42);
   });
 });

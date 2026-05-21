@@ -15,8 +15,8 @@
  * different layers at different times. The Run interface below is the
  * shared contract — both legacy types are structurally compatible with
  * it. Future consumers (UI run viewer, agent_status tool, audit log)
- * depend on Run; internal hot-path code (Handler.spawnAgent,
- * AgentRunStore.save) keeps its existing shape for now.
+ * depend on Run; internal hot-path code (invokeDefinition's FieldAgent
+ * lifecycle, AgentRunStore.save) keeps its existing shape for now.
  *
  * State machine (documented contract — not enforced in code):
  *

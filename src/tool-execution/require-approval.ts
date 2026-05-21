@@ -1,14 +1,32 @@
-// Approval phase: HumanLayer-style gate for dangerous tools. Skipped for
-// cron + delegated agents (no human watching) and for the Ari-whitelisted
-// internal tools.
+// Approval phase: profile-gated user consent for tool calls. Skipped for
+// cron + delegated agents (no human watching). Branches on the four-valued
+// Decision from the active autonomy profile.
 
 import { USER_HINTS, type ToolResult } from "../types.js";
-import { getApprovalManager, toolNeedsApproval } from "../approval-manager.js";
+import {
+  getApprovalManager,
+  getToolDecision,
+  decisionRequiresPrompt,
+  decisionDenies,
+} from "../approval-manager.js";
 import type { Phase } from "./context.js";
 import { terminate } from "./context.js";
 
 export const requireApprovalPhase: Phase = async (ctx) => {
-  if (!toolNeedsApproval(ctx.tc.name)) return;
+  const decision = getToolDecision(ctx.tc.name);
+
+  if (decisionDenies(decision)) {
+    const result: ToolResult = {
+      content: `BLOCKED by profile: ${ctx.tc.name} (risk class denied)`,
+      isError: true,
+      status: "blocked",
+      metadata: { layer: "approval", userHint: USER_HINTS.policy },
+    };
+    terminate(ctx, { rendered: "model", result, allowed: false });
+    return;
+  }
+
+  if (!decisionRequiresPrompt(decision)) return;
   if (ctx.callContext !== "local") return;
   if (!ctx.onEvent) return;
 

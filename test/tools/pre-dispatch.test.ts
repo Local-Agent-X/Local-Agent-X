@@ -99,10 +99,10 @@ describe("AriKernel pre-dispatch gate (F3 closure)", () => {
   });
 
   it("assertToolCallAllowed throws ToolBlocked when approval is denied", async () => {
-    // Direct-call assertion: with toolNeedsApproval forced true and approval
-    // denied, the chain throws. Proves the approval branch wires correctly
-    // independent of the host's approvalMode setting.
-    const spy = vi.spyOn(approvalModule, "toolNeedsApproval").mockReturnValue(true);
+    // Direct-call assertion: with the profile gate forced to "ask" and the
+    // user denying, the chain throws. Proves the approval branch wires
+    // correctly independent of the active profile.
+    const spy = vi.spyOn(approvalModule, "getToolDecision").mockReturnValue("ask");
     const approvalMgr = approvalModule.getApprovalManager();
     const original = approvalMgr.requestApproval.bind(approvalMgr);
     const approvalCalls: string[] = [];

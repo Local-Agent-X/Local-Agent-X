@@ -14,7 +14,12 @@ import { checkSessionPolicy } from "../session-policy.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { ThreatEngine } from "../threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
-import { getApprovalManager, toolNeedsApproval } from "../approval-manager.js";
+import {
+  getApprovalManager,
+  getToolDecision,
+  decisionRequiresPrompt,
+  decisionDenies,
+} from "../approval-manager.js";
 import { getRuntimeConfig } from "../config.js";
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
@@ -149,22 +154,36 @@ export async function assertToolCallAllowed(
     });
   }
 
-  // Per-user gate (not a rule pack — approval is interactive consent).
-  if (ctx.approval && toolNeedsApproval(call.name) && ctx.callContext === "local") {
-    const approved = await getApprovalManager().requestApproval({
-      toolName: call.name,
-      toolCallId: call.id,
-      sessionId: ctx.sessionId,
-      context: ctx.approval.context || "",
-      args: call.args,
-      emit: ctx.approval.onEvent,
-    });
-    if (!approved) {
+  // Per-user gate (not a rule pack — interactive consent driven by the
+  // active autonomy profile). The four-valued Decision branches into:
+  // run silently, prompt the user, or block outright.
+  if (ctx.approval && ctx.callContext === "local") {
+    const decision = getToolDecision(call.name);
+
+    if (decisionDenies(decision)) {
       throw new ToolBlocked({
         stage: "approval",
-        reason: `declined approval for ${call.name}`,
+        reason: `BLOCKED by profile: ${call.name} (risk class denied)`,
         userHint: USER_HINTS.policy,
       });
+    }
+
+    if (decisionRequiresPrompt(decision)) {
+      const approved = await getApprovalManager().requestApproval({
+        toolName: call.name,
+        toolCallId: call.id,
+        sessionId: ctx.sessionId,
+        context: ctx.approval.context || "",
+        args: call.args,
+        emit: ctx.approval.onEvent,
+      });
+      if (!approved) {
+        throw new ToolBlocked({
+          stage: "approval",
+          reason: `declined approval for ${call.name}`,
+          userHint: USER_HINTS.policy,
+        });
+      }
     }
   }
 }

@@ -121,8 +121,16 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     },
   });
 
-  bridge.ready().catch((e: Error) => {
-    logger.error(`[gpu-session] ${ctx.sessionId}: bridge init failed: ${e.message}`);
+  bridge.ready().catch((e: Error & { code?: string }) => {
+    // ECONNREFUSED here means the user opted into GPU voice but hasn't
+    // started the Python sidecar — log at info, not error, so it doesn't
+    // look like a runtime fault. The UI still gets a clear voice_error
+    // event so the user sees what's wrong without digging in server logs.
+    if (e.code === "ECONNREFUSED") {
+      logger.info(`[gpu-session] ${ctx.sessionId}: GPU sidecar not running on :${process.env.LAX_VOICE_PORT || 7008}`);
+    } else {
+      logger.error(`[gpu-session] ${ctx.sessionId}: bridge init failed: ${e.message}`);
+    }
     if (!closed) ctx.sendEvent({ type: "voice_error", message: `GPU sidecar unavailable: ${e.message}. Make sure the Python sidecar is running on ${process.env.LAX_VOICE_PORT || 7008}.` });
   });
 

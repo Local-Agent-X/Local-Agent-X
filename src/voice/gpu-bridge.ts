@@ -100,14 +100,28 @@ export function createGPUBridge(cb: GPUBridgeCallbacks = {}, port: number = DEFA
     });
 
     ws.on("close", (code) => {
+      const wasConnected = connected;
       connected = false;
-      logger.warn(`[gpu-bridge] ws closed code=${code}`);
+      // Suppress the close warn when we never opened — the matching error
+      // event already logged (or quietly debug-logged for ECONNREFUSED),
+      // and a second "ws closed code=1006" line is just noise on the path
+      // where the sidecar isn't running by design (GPU mode is opt-in).
+      if (wasConnected) logger.warn(`[gpu-bridge] ws closed code=${code}`);
       cb.onDisconnect?.();
       if (!closed && readyReject) readyReject(new Error(`sidecar disconnected (code ${code})`));
     });
 
-    ws.on("error", (err) => {
-      logger.warn(`[gpu-bridge] ws error: ${err.message}`);
+    ws.on("error", (err: Error & { code?: string }) => {
+      // ECONNREFUSED is the expected shape when the Python sidecar isn't
+      // running. GPU voice is opt-in from settings, so a refused connect
+      // is "user hasn't started the sidecar," not a fault — log at debug
+      // so the console stays clean. Any other error class (port mismatch,
+      // TLS failure, peer reset mid-session) still surfaces at warn.
+      if (err.code === "ECONNREFUSED") {
+        logger.debug(`[gpu-bridge] sidecar not running on :${port} (GPU mode is opt-in)`);
+      } else {
+        logger.warn(`[gpu-bridge] ws error: ${err.message}`);
+      }
       if (!closed && readyReject) readyReject(err);
     });
   }

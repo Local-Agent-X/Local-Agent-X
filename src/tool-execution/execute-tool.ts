@@ -14,6 +14,7 @@ import { createContext } from "./context.js";
 import { resolvePhase } from "./resolve-tool.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";
 import { requireApprovalPhase } from "./require-approval.js";
+import { captureRollbackPhase } from "./capture-rollback.js";
 import { runSandboxedPhase } from "./run-sandboxed.js";
 import { auditPhase } from "./audit-tool-call.js";
 
@@ -41,6 +42,7 @@ async function executeSingleTool(
   if (!ctx.preBlocked && ctx.tool) {
     await requireApprovalPhase(ctx);
     if (ctx.terminated) return ctx.msgs;
+    await captureRollbackPhase(ctx);
     await runSandboxedPhase(ctx);
   }
 

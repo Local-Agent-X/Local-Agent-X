@@ -5,8 +5,9 @@
 
 export { isAriActive } from "./state.js";
 export { getAriPresetForSession, HOST_CAPABILITY_MANIFEST } from "./manifest.js";
-export { shouldGateInKernel, shouldObserveInKernel, TOOL_CLASS_MAP, GATED_CLASSES } from "./tool-class-map.js";
-export { auditKernelCoverage, printKernelCoverageReport } from "./coverage.js";
+export { shouldGateInKernel, shouldObserveInKernel, TOOL_CLASS_MAP, GATED_CLASSES, TOOL_AUTONOMY_RISK, classifyAutonomy } from "./tool-class-map.js";
+export type { AutonomyRisk } from "./tool-class-map.js";
+export { auditKernelCoverage, printKernelCoverageReport, auditAutonomyCoverage } from "./coverage.js";
 export type { KernelCoverageReport } from "./coverage.js";
 export { ariObserve } from "./observe.js";
 export { ariEvaluate } from "./evaluate.js";

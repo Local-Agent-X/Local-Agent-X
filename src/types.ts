@@ -235,6 +235,18 @@ export interface ToolChip {
   actions?: Array<{ label: string; tool: string; args?: Record<string, unknown> }>;
 }
 
+/**
+ * Structured preview of an action awaiting approval. Discriminated by `kind`
+ * so the UI can render an appropriate card (diff view, command box, etc.)
+ * instead of the raw `argsPreview` JSON blob. Built by the preview factories
+ * in approval-manager.ts and attached to the `approval_requested` event.
+ */
+export type ActionPreview =
+  | { kind: "file"; path: string; diff: string; lineCount: { added: number; removed: number }; truncated: boolean }
+  | { kind: "shell"; cmd: string; cwd: string; explanation?: string }
+  | { kind: "network"; method: string; url: string; bodyPreview: string; bodyTruncated: boolean; domain: string }
+  | { kind: "money"; amount: number; currency: string; recipient: string; source: string; formatted: string };
+
 export type ServerEvent =
   | { type: "stream"; delta: string }
   /** Adapter-initiated stream replacement (tool-call-from-text extraction
@@ -255,7 +267,7 @@ export type ServerEvent =
   | { type: "error"; message: string }
   | { type: "secret_request"; name: string; service?: string; reason: string }
   | { type: "secrets_request"; secrets: Array<{ name: string; service?: string; reason: string }> }
-  | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string }
+  | { type: "approval_requested"; approvalId: string; toolName: string; toolCallId?: string; context: string; argsPreview: string; preview?: ActionPreview }
   | { type: "approval_timeout"; approvalId: string; toolName: string; toolCallId?: string }
   | { type: "context_status"; percentage: number; level: string; usedTokens: number; maxTokens: number; compacted: boolean }
   | { type: "visual"; kind: "emoji" | "text" | "shape" | "mood"; value: string; durationMs: number }

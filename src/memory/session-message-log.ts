@@ -159,37 +159,89 @@ export function readSessionLog(dir: string, id: string): Session | null {
 
 /**
  * UI projection of a Session. Same model state, different shape: drops
- * `tool` rows, drops `tool_calls` from assistants, keeps only the
- * visible text timeline. Compaction summary stays as a leading `system`
- * message (the UI knows how to render that).
+ * `tool` rows, replaces `tool_calls` on assistants with a synthetic
+ * `_tools` array the chat renderer turns into expandable tool cards.
+ * Compaction summary stays as a leading `system` message (the UI knows
+ * how to render that).
  *
  * Why a separate projection: model state and display state have different
  * requirements. The model needs full tool_calls / tool_result structure
- * across turns to chain follow-ups. The UI just needs the visible
- * conversation. Coupling them in one array means whichever consumer's
- * invariants change, the other breaks — exactly the bug that landed when
- * canonical-chat started persisting tool rows into session.messages and
- * the chat renderer (built around text-only) silently dropped assistant
- * bubbles.
+ * across turns to chain follow-ups. The UI needs the visible conversation
+ * plus enough tool-call breadcrumbs to rebuild the tool cards a returning
+ * user expects to see (without this they vanish on chat-switch+back, when
+ * hydrateChat overwrites the client-side `_tools`).
  *
  * Frontend-facing API endpoints serve this projection. Model-facing code
  * paths (`prepareAgentRequest`, `seedOpMessages`) read the rich form.
  */
 export function projectSessionForUI(session: Session): Session {
+  // Index tool rows by tool_call_id so we can attach results to the
+  // assistant that triggered them. JSONL preserves order, so the latest
+  // result for a given id is authoritative.
+  const toolResults = new Map<string, string>();
+  for (const m of session.messages) {
+    if (m.role !== "tool") continue;
+    const id = (m as unknown as { tool_call_id?: string }).tool_call_id;
+    const content = typeof m.content === "string" ? m.content : "";
+    if (id) toolResults.set(id, content);
+  }
+
+  type ToolEvent = { type: "start" | "end"; name: string; args?: Record<string, unknown>; result?: string; allowed?: boolean };
+  type UIAssistant = ChatCompletionMessageParam & { _tools?: ToolEvent[] };
+
   const messages: ChatCompletionMessageParam[] = [];
+  // Tool-call breadcrumbs accumulated across one assistant turn. The live
+  // UI builds a single streaming bubble per turn and stacks `tool_start →
+  // tool_end` events into its `_tools` array — even if the model emits
+  // multiple intermediate `assistant` entries (one carrying tool_calls,
+  // another carrying text). The projection mirrors that: tools accumulate
+  // until the next visible text bubble (same turn) and attach there.
+  let pendingTools: ToolEvent[] = [];
+  const flushPending = () => {
+    if (pendingTools.length === 0) return;
+    const out: UIAssistant = { role: "assistant", content: "", _tools: pendingTools };
+    messages.push(out);
+    pendingTools = [];
+  };
+
   for (const m of session.messages) {
     if (m.role === "tool") continue;
+    if (m.role === "user") {
+      // User message marks the end of the prior assistant turn. If tools
+      // accumulated without a text bubble to attach to, emit them as a
+      // standalone empty-content assistant so the cards still render.
+      flushPending();
+      messages.push(m);
+      continue;
+    }
     if (m.role === "assistant") {
-      // Drop tool_calls — UI only renders visible text. Structured
-      // calls live on disk in op-messages.jsonl + the session log's
-      // rich form for the model.
+      const tcalls = (m as unknown as { tool_calls?: Array<{ id: string; function?: { name: string; arguments: string } }> }).tool_calls;
+      if (Array.isArray(tcalls)) {
+        for (const tc of tcalls) {
+          const name = tc.function?.name || "tool";
+          let args: Record<string, unknown> = {};
+          try { args = JSON.parse(tc.function?.arguments || "{}"); } catch {}
+          pendingTools.push({ type: "start", name, args });
+          const result = toolResults.get(tc.id) || "";
+          pendingTools.push({ type: "end", name, allowed: true, result: result.slice(0, 500) });
+        }
+      }
       const text = typeof m.content === "string" ? m.content : "";
+      // No text → defer; the next text bubble (same turn) inherits these
+      // tools as its _tools. The flush on the next user message (or at
+      // end-of-walk) covers the turn-ends-with-no-text case.
       if (!text) continue;
-      messages.push({ role: "assistant", content: text });
+      const out: UIAssistant = { role: "assistant", content: text };
+      if (pendingTools.length > 0) {
+        out._tools = pendingTools;
+        pendingTools = [];
+      }
+      messages.push(out);
       continue;
     }
     messages.push(m);
   }
+  flushPending();
   return { ...session, messages };
 }
 

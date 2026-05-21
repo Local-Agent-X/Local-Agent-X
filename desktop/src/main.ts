@@ -10,7 +10,7 @@
 import { app, globalShortcut } from "electron";
 import { join } from "path";
 
-import { loadSAXConfig, reloadSAXConfig, getSAXConfig, ICON_PATH } from "./config";
+import { loadSAXConfig, reloadSAXConfig, getSAXConfig, ICON_PATH, PROJECT_ROOT } from "./config";
 import { getSetting } from "./settings";
 import { applyNativeTheme } from "./theme";
 import {
@@ -28,6 +28,27 @@ import { registerHotkey, showNotification } from "./hotkey-notifications";
 import { setupIPC } from "./ipc";
 import { createTray, destroyTray } from "./tray";
 import { registerAutostart } from "./autostart";
+import { runReconcile } from "./reconcile";
+
+// Push status text into the splash. Splash markup lives in splash.ts —
+// targets .status (main line) and #h (sub-hint). Failures are swallowed:
+// the splash may have already navigated away to the real app.
+function setSplashStatus(text: string): void {
+  const w = getMainWindow();
+  if (!w || w.isDestroyed()) return;
+  const safe = JSON.stringify(text);
+  w.webContents.executeJavaScript(
+    `(()=>{const e=document.querySelector('.status');if(e)e.textContent=${safe};})()`
+  ).catch(() => {});
+}
+function setSplashHint(text: string): void {
+  const w = getMainWindow();
+  if (!w || w.isDestroyed()) return;
+  const safe = JSON.stringify(text);
+  w.webContents.executeJavaScript(
+    `(()=>{const e=document.getElementById('h');if(e){e.textContent=${safe};e.classList.add('show');}})()`
+  ).catch(() => {});
+}
 
 // ── Chromium flags (must be set before app.ready) ─────────
 // Only mark our own server origin as secure — not every loopback port.
@@ -111,6 +132,39 @@ app.on("ready", async () => {
 
   setupIPC();
 
+  // Show splash early — reconcile may take 30s+ if deps changed, and a
+  // blank screen during that time would feel like a hang. createWindow()
+  // also kicks off the /api/health poll-and-navigate which waits patiently
+  // until startServer() (below) makes the server respond.
+  createWindow();
+
+  // Reconcile npm + desktop build BEFORE starting the server. Closes the
+  // "I pulled new code but the app silently runs old/broken bits" failure
+  // class: if package-lock.json changed we run `npm install`; if
+  // desktop/src changed we rebuild and relaunch so dist/main.js is the
+  // freshly-compiled one.
+  try {
+    const result = await runReconcile({
+      projectRoot: PROJECT_ROOT,
+      onStatus: setSplashStatus,
+    });
+    if (result.needsRelaunch) {
+      console.log(`[desktop] reconcile rebuilt desktop/src — relaunching Electron`);
+      app.relaunch();
+      app.exit(0);
+      return;
+    }
+    if (result.ranSteps.length > 0) {
+      console.log(`[desktop] reconcile ran: ${result.ranSteps.join(", ")}`);
+    }
+  } catch (e) {
+    const msg = (e as Error).message;
+    console.error(`[desktop] reconcile failed: ${msg}`);
+    setSplashStatus("Update failed — see logs and relaunch");
+    setSplashHint(msg.slice(0, 200));
+    return; // Don't start the server with mismatched code.
+  }
+
   // Orphan-proof launch. Previously: probe port, attach if anything
   // answered — silently bound us to stale servers running pre-update
   // code. Now: pidfile handshake detects orphans (live PID whose
@@ -162,7 +216,8 @@ app.on("ready", async () => {
   });
 
   registerHotkey(toggleWindow);
-  createWindow();
+  // (createWindow was called before reconcile so the splash showed during
+  //  any npm install / desktop rebuild — don't call it again here.)
 
   if (getSetting("autostart")) {
     registerAutostart();

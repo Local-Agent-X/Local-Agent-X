@@ -41,12 +41,12 @@ export const TOOL_CLASS_MAP: Record<string, string> = {
   // ari_*: arikernel-bridge wraps kernel executors directly; the kernel
   // runs INSIDE the bridge for these. Dispatch-layer evaluation would be
   // double-routing with a fake class/action.
-  ari_file: "internal",
-  ari_http: "internal",
-  ari_shell: "internal",
-  ari_database: "internal",
-  ari_retrieval: "internal",
-  ari_sqlite_database: "internal",
+  //
+  // The ari_* bridges now self-register at their bootstrap site via
+  // toolRegistry.register({ kernelClass: "internal", ... }) — see
+  // src/server/bootstrap-tools.ts. The static entries below are removed;
+  // they're populated at boot before any tool dispatches.
+  //
   // self_edit runs sandboxed code repair through its own subprocess with
   // its own build/server-bind/agent-smoke gates before merge — kernel
   // gating here would block legitimate repair flows.

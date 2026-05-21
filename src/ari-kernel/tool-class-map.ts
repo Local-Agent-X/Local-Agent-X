@@ -332,3 +332,32 @@ export function shouldGateInKernel(toolName: string): boolean {
 export function shouldObserveInKernel(toolName: string): boolean {
   return TOOL_CLASS_MAP[toolName] === "internal";
 }
+
+// Valid kernel-class identifiers. Six gated I/O classes plus "internal"
+// (audit-only). Tools register against this set; anything outside it is
+// rejected so the map stays inspectable.
+export type KernelClass =
+  | "file"
+  | "http"
+  | "shell"
+  | "database"
+  | "retrieval"
+  | "secret-vault"
+  | "internal";
+
+const KERNEL_CLASS_VALUES: ReadonlySet<KernelClass> = new Set<KernelClass>([
+  "file", "http", "shell", "database", "retrieval", "secret-vault", "internal",
+]);
+
+// Self-registration entry point — lets a tool declare its kernel class at
+// the definition site instead of requiring a coordinated edit to this
+// file. Last write wins (mirrors UnifiedToolRegistry.register semantics).
+// Safe to call before or after startAriKernel: the map is read on each
+// dispatch, not snapshotted at boot.
+export function registerToolClass(toolName: string, kernelClass: KernelClass): void {
+  if (!KERNEL_CLASS_VALUES.has(kernelClass)) {
+    logger.error(`[ari] registerToolClass: invalid class "${kernelClass}" for ${toolName} — must be one of ${[...KERNEL_CLASS_VALUES].join("|")}`);
+    return;
+  }
+  TOOL_CLASS_MAP[toolName] = kernelClass;
+}

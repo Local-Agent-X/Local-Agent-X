@@ -325,22 +325,30 @@ async function sendMessage() {
             // (Stop button hidden) but bubble stayed empty until leave+return.
             if (isViewingThis()) {
               const liveBubble = getBodyEl();
-              if (liveBubble) {
-                const pending = _streamRenderers.get(liveBubble);
-                if (pending && pending.raf) { cancelAnimationFrame(pending.raf); pending.raf = 0; }
-                // Prefer pending.latest (post-stream dedup/replace state)
-                // when present, else the accumulated `content` buffer.
-                const finalText = (pending && pending.latest) || content;
-                if (finalText) {
-                  const existingGroups = liveBubble.querySelectorAll('.activity-group');
-                  const orphanCards = liveBubble.querySelectorAll(':scope > .tool-card, :scope > .approval-card');
-                  const currentMd = md(finalText);
-                  if (liveBubble.innerHTML !== currentMd || existingGroups.length > 0 || orphanCards.length > 0) {
-                    liveBubble.innerHTML = currentMd;
-                    existingGroups.forEach(g => liveBubble.appendChild(g));
-                    orphanCards.forEach(c => liveBubble.appendChild(c));
-                  }
+              const pending = liveBubble ? _streamRenderers.get(liveBubble) : null;
+              if (pending && pending.raf) { cancelAnimationFrame(pending.raf); pending.raf = 0; }
+              // Prefer pending.latest (post-stream dedup/replace state)
+              // when present, else the accumulated `content` buffer.
+              const finalText = (pending && pending.latest) || content;
+              if (liveBubble && finalText) {
+                const existingGroups = liveBubble.querySelectorAll('.activity-group');
+                const orphanCards = liveBubble.querySelectorAll(':scope > .tool-card, :scope > .approval-card');
+                const currentMd = md(finalText);
+                if (liveBubble.innerHTML !== currentMd || existingGroups.length > 0 || orphanCards.length > 0) {
+                  liveBubble.innerHTML = currentMd;
+                  existingGroups.forEach(g => liveBubble.appendChild(g));
+                  orphanCards.forEach(c => liveBubble.appendChild(c));
                 }
+              } else if (typeof renderMessages === 'function') {
+                // Fallback path: no live content to paint (model emitted no
+                // stream deltas between tool_end and done — Codex/browser-tool
+                // combo hits this) OR bodyEl is orphaned. The streaming bubble
+                // created at sendMessage line 110 is sitting empty in the DOM.
+                // Re-render from activeChat.messages, which carries the final
+                // content from lines 299-312 above (or from saveInterval's
+                // persistence). Without this, the bubble stays blank until the
+                // user navigates away+back to trigger hydrateChat.
+                renderMessages();
               }
             }
             updateContextBar();

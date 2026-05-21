@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
-import { captureRollback, ROLLBACK_DIR_PATH, ROLLBACK_INDEX_FILE } from "./rollback.js";
+import { captureRollback, restoreRollback, listRollbacks, ROLLBACK_DIR_PATH, ROLLBACK_INDEX_FILE } from "./rollback.js";
 
 // Tests run against the real ~/.lax/rollback dir, which is fine because
 // every contract is keyed on a unique toolCallId. We clean up our own
@@ -104,6 +104,65 @@ describe("captureRollback", () => {
     if (contract.artifacts[0].type === "none") {
       expect(contract.artifacts[0].reason).toContain("network-read");
     }
+  });
+
+  it("restoreRollback copies file-backup contents back to original", () => {
+    const id = freshId(); trackedIds.push(id);
+    const target = join(tmpdir(), `lax-rb-restore-${id}.txt`);
+    writeFileSync(target, "original");
+    captureRollback(id, "write", "workspace-write", { path: target });
+    writeFileSync(target, "mutated-by-agent");
+
+    const r = restoreRollback(id);
+    expect(r.ok).toBe(true);
+    expect(readFileSync(target, "utf-8")).toBe("original");
+    rmSync(target, { force: true });
+  });
+
+  it("restoreRollback refuses to undo twice", () => {
+    const id = freshId(); trackedIds.push(id);
+    const target = join(tmpdir(), `lax-rb-twice-${id}.txt`);
+    writeFileSync(target, "v1");
+    captureRollback(id, "write", "workspace-write", { path: target });
+    writeFileSync(target, "v2");
+
+    expect(restoreRollback(id).ok).toBe(true);
+    const second = restoreRollback(id);
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.error).toContain("already restored");
+    rmSync(target, { force: true });
+  });
+
+  it("restoreRollback returns error for unknown toolCallId", () => {
+    const r = restoreRollback("never-captured-xyz");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("no contract");
+  });
+
+  it("restoreRollback returns error when contract has only no-op artifacts", () => {
+    const id = freshId(); trackedIds.push(id);
+    captureRollback(id, "memory_save", "workspace-write", { key: "k" });
+    const r = restoreRollback(id);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain("nothing to restore");
+  });
+
+  it("listRollbacks returns the most recent capture and marks restored entries", () => {
+    const id = freshId(); trackedIds.push(id);
+    const target = join(tmpdir(), `lax-rb-list-${id}.txt`);
+    writeFileSync(target, "v1");
+    captureRollback(id, "write", "workspace-write", { path: target });
+
+    const beforeRestore = listRollbacks(50).find((e) => e.toolCallId === id);
+    expect(beforeRestore).toBeDefined();
+    expect(beforeRestore?.restored).toBe(false);
+
+    writeFileSync(target, "v2");
+    restoreRollback(id);
+
+    const afterRestore = listRollbacks(50).find((e) => e.toolCallId === id);
+    expect(afterRestore?.restored).toBe(true);
+    rmSync(target, { force: true });
   });
 
   it("appends a JSON line to the index file", () => {

@@ -1,0 +1,286 @@
+// Agent templates — the catalog of personas (Researcher, Coder,
+// Reviewer, etc.). Persisted to ~/.lax/agent-templates.json with
+// built-in defaults seeded on first run.
+//
+// Per-template provider strategy is Phase 1 groundwork for
+// docs/migration/build-app-to-canonical-op.md: the canonical-op
+// dispatcher reads this to decide whether to spawn a CLI subprocess or
+// run in-process. Optional; templates without it use the lane default.
+
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { TEMPLATES_FILE } from "./paths.js";
+import { ProjectRosterStore } from "../project-rosters.js";
+import { renderPersonaPrompt } from "../tools/render-builder-prompt.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("agent-store");
+
+export type AgentExecStrategy = "cli-subprocess" | "in-canonical-sub-agent";
+
+export interface AgentProviderStrategy {
+  [providerId: string]: AgentExecStrategy | undefined;
+  default?: AgentExecStrategy;
+}
+
+export interface AgentTemplate {
+  id: string;
+  name: string;
+  role: string;
+  systemPrompt: string;
+  allowedTools: string[];
+  description: string;
+  icon?: string;
+  /** True = spawn this agent inside an isolated git worktree of the LAX
+   *  repo. Default false. See AgentDefinition.requiresWorktree for the
+   *  canonical doc and AUDIT Cluster 11 for the migration. */
+  requiresWorktree?: boolean;
+  providerStrategy?: AgentProviderStrategy;
+  // Note: hired / reportsTo / heartbeatSchedule / heartbeatEnabled /
+  // budget moved to ProjectRoster (src/project-rosters.ts) in the L3
+  // persistence split — those are per-project membership facts, not
+  // definition facts. Same agent in two projects has independent
+  // metadata in each.
+  createdAt: number;
+  updatedAt: number;
+}
+
+export class AgentTemplateStore {
+  private static instance: AgentTemplateStore;
+  private templates: AgentTemplate[] = [];
+
+  private constructor() { this.load(); this.migrateAppBuilderTools(); this.seedDefaults(); }
+
+  /**
+   * Phase-3 migration (docs/migration/build-app-to-canonical-op.md):
+   * Phase 2 seeded the `app-builder` template with `list_directory` in
+   * allowedTools — that tool isn't registered. The adapter substituted
+   * `glob` at runtime as a workaround; Phase 3 fixes the template in
+   * place. Idempotent: a template already using `glob` is left alone.
+   */
+  private migrateAppBuilderTools(): void {
+    const t = this.templates.find(x => x.id === "app-builder");
+    if (!t) return;
+    const idx = t.allowedTools.indexOf("list_directory");
+    if (idx < 0) return;
+    if (t.allowedTools.includes("glob")) {
+      t.allowedTools.splice(idx, 1);
+    } else {
+      t.allowedTools[idx] = "glob";
+    }
+    t.updatedAt = Date.now();
+    this.persist();
+    logger.info("[agents] migrated app-builder template: list_directory → glob");
+  }
+
+  static getInstance(): AgentTemplateStore {
+    if (!AgentTemplateStore.instance) AgentTemplateStore.instance = new AgentTemplateStore();
+    return AgentTemplateStore.instance;
+  }
+
+  private load(): void {
+    try {
+      if (existsSync(TEMPLATES_FILE)) {
+        this.templates = JSON.parse(readFileSync(TEMPLATES_FILE, "utf-8"));
+      }
+    } catch { this.templates = []; }
+  }
+
+  private persist(): void {
+    writeFileSync(TEMPLATES_FILE, JSON.stringify(this.templates, null, 2), "utf-8");
+  }
+
+  list(): AgentTemplate[] {
+    return [...this.templates].sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  get(id: string): AgentTemplate | null {
+    return this.templates.find(t => t.id === id) || null;
+  }
+
+  create(template: Omit<AgentTemplate, "id" | "createdAt" | "updatedAt">): AgentTemplate {
+    const id = "tpl-" + Date.now().toString(36) + "-" + randomBytes(3).toString("hex");
+    const full: AgentTemplate = {
+      ...template,
+      id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    this.templates.push(full);
+    this.persist();
+    return full;
+  }
+
+  update(id: string, partial: Partial<AgentTemplate>): AgentTemplate | null {
+    const idx = this.templates.findIndex(t => t.id === id);
+    if (idx < 0) return null;
+    this.templates[idx] = { ...this.templates[idx], ...partial, id, updatedAt: Date.now() };
+    this.persist();
+    return this.templates[idx];
+  }
+
+  delete(id: string): boolean {
+    const len = this.templates.length;
+    this.templates = this.templates.filter(t => t.id !== id);
+    if (this.templates.length < len) { this.persist(); return true; }
+    return false;
+  }
+
+  /** Seed built-in templates on first run (won't overwrite user edits) */
+  private seedDefaults(): void {
+    const defaults: Array<Omit<AgentTemplate, "createdAt" | "updatedAt"> & { createdAt?: number; updatedAt?: number }> = [
+      {
+        id: "builtin-researcher",
+        name: "Researcher",
+        role: "researcher",
+        description: "Quick research — searches the web, reads pages, and returns a concise summary with sources.",
+        systemPrompt: "You are a research agent. Search the web for current, authoritative information on the given topic. Read the most relevant pages. Return a clear, structured summary with key findings and source URLs. Be concise — aim for 300-500 words. Cite your sources inline.",
+        allowedTools: ["web_fetch", "http_request", "read", "write"],
+        icon: "🔍",
+      },
+      {
+        id: "builtin-deep-researcher",
+        name: "Deep Researcher",
+        role: "deep-researcher",
+        description: "Thorough multi-source research with citations, cross-referencing, and structured report output.",
+        systemPrompt: "You are a deep research agent. Conduct thorough research on the given topic using multiple sources. Cross-reference claims across sources. Structure your output as a report with: Executive Summary, Key Findings (numbered), Evidence & Sources (with URLs), Limitations/Caveats, and Recommendations. Aim for completeness over brevity. Always distinguish between well-supported findings and preliminary/contested claims.\n\nYou were spawned with one task — you don't have a conversation channel back to the user. NEVER ask the user to clarify, resend the topic, or confirm scope. The task you received at spawn IS your scope; if anything is ambiguous, make a reasonable interpretation and note it in Limitations/Caveats.\n\nWhen a source fails (HTTP 4xx/5xx, timeout, blocked): pivot. Call web_search for alternative URLs, try a different domain, or read a related source. Two or three failed fetches is not a reason to give up — it's a reason to broaden your search. Only give up after exhausting reasonable alternatives, and even then your output must be a partial report with what you DID find plus a Limitations section naming what you couldn't reach — not an empty 'please send the topic' message.",
+        allowedTools: ["web_fetch", "web_search", "http_request", "read", "write"],
+        icon: "📚",
+      },
+      {
+        id: "builtin-coder",
+        name: "Coder",
+        role: "coder",
+        description: "Writes, edits, and tests code. Can create full apps, fix bugs, and run commands.",
+        systemPrompt: "You are a coding agent. Write clean, working code to accomplish the task. Use the file tools to read existing code, write new files, and edit existing ones. Run bash commands to test your work. When building apps, create all necessary files and verify they work. Report what you built and how to use it.",
+        allowedTools: ["read", "write", "edit", "bash", "build_app"],
+        icon: "💻",
+      },
+      {
+        id: "builtin-reviewer",
+        name: "Code Reviewer",
+        role: "reviewer",
+        description: "Audits code for bugs, security issues, performance problems, and best practices.",
+        systemPrompt: "You are a code review agent. Read the specified files or codebase area. Look for: bugs, security vulnerabilities, performance issues, code smells, missing error handling, and deviations from best practices. Structure your output as: Critical Issues, Warnings, Suggestions, and a Summary. Be specific — include file paths, line numbers, and concrete fix suggestions.",
+        allowedTools: ["read", "bash"],
+        icon: "🔎",
+      },
+      {
+        id: "builtin-browser",
+        name: "Browser Agent",
+        role: "browser",
+        description: "Web automation — navigates sites, extracts data, fills forms, takes screenshots.",
+        systemPrompt: "You are a browser automation agent. Use the browser tool to navigate websites, interact with pages, extract data, and complete web-based tasks. Take screenshots when useful. Report what you found or accomplished with relevant data extracted.",
+        allowedTools: ["browser", "web_fetch", "read", "write"],
+        icon: "🌐",
+      },
+      {
+        id: "builtin-writer",
+        name: "Writer",
+        role: "writer",
+        description: "Creates content — reports, documentation, emails, articles, summaries.",
+        systemPrompt: "You are a writing agent. Create well-structured, clear content for the given task. Match the appropriate tone and format (technical docs, business email, blog post, report, etc.). Use proper headings, sections, and formatting. Save the output to a file if requested. Focus on clarity and usefulness over word count.",
+        allowedTools: ["read", "write", "web_fetch"],
+        icon: "✍️",
+      },
+      {
+        id: "builtin-analyst",
+        name: "Data Analyst",
+        role: "analyst",
+        description: "Reads data files, runs analysis scripts, and produces insights with visualizations.",
+        systemPrompt: "You are a data analysis agent. Read the specified data files, analyze them using appropriate methods (statistics, aggregation, pattern detection), and produce clear insights. Write analysis scripts if needed. Structure output as: Data Overview, Key Findings, Patterns/Anomalies, and Recommendations. Include specific numbers and metrics.",
+        allowedTools: ["read", "write", "bash", "edit"],
+        icon: "📊",
+      },
+      {
+        id: "builtin-sysadmin",
+        name: "System Admin",
+        role: "sysadmin",
+        description: "Checks system health, reads logs, manages processes, diagnoses issues.",
+        systemPrompt: "You are a system administration agent. Check system health, read log files, inspect running processes, and diagnose issues. Use bash commands to gather information. Report your findings clearly: what's healthy, what needs attention, and recommended actions. Be careful — never run destructive commands.",
+        allowedTools: ["bash", "read"],
+        icon: "🖥️",
+      },
+      {
+        id: "builtin-worker",
+        name: "Worker",
+        role: "worker",
+        description: "Generic worker for one-off tasks that don't fit a specialist role. Broad tool surface, neutral persona. Use when no named role (researcher, coder, writer, etc.) matches and the task is a one-off — recurring needs should get their own agent_create entry instead.",
+        systemPrompt: "You are a generic worker agent. The supervisor delegated this task to you because no specialist role fit. Approach the work directly: read what's needed, do it, report the result. Use the right tool for each step (read/write/edit/bash for files, web_fetch/web_search for the web). Keep the output focused on what the supervisor asked for — no extra commentary, no padding.\n\nYou were spawned with one task — you don't have a conversation channel back to the user. NEVER ask the user to clarify or confirm. If the task is genuinely ambiguous, make a reasonable interpretation, do the work, and note the assumption in your result. If a tool fails repeatedly, try alternatives before bailing.",
+        allowedTools: ["read", "write", "edit", "bash", "glob", "grep", "web_fetch", "web_search", "view_image"],
+        icon: "🛠️",
+      },
+      {
+        id: "app-builder",
+        name: "App Builder",
+        role: "App Builder",
+        description: "Builds web apps in workspace/apps/. Strategy varies per provider.",
+        systemPrompt: renderPersonaPrompt(),
+        allowedTools: ["write", "read", "edit", "bash", "glob"],
+        icon: "🛠",
+        providerStrategy: {
+          codex: "cli-subprocess",
+          anthropic: "cli-subprocess",
+          default: "in-canonical-sub-agent",
+        },
+        requiresWorktree: false,
+      },
+      {
+        id: "builtin-ceo",
+        name: "CEO",
+        role: "ceo",
+        description: "Executive agent that owns the plan, delegates work, manages priorities, and ensures the team delivers results.",
+        systemPrompt: `You are the CEO agent. You own the overall plan and are responsible for making sure the team delivers.
+
+Your responsibilities:
+1. PLANNING — Break high-level goals into actionable tasks (issues). Prioritize ruthlessly.
+2. DELEGATION — Assign tasks to the right agents. Match skills to work. Never do the work yourself if someone on the team can do it.
+3. HIRING — If the team lacks a skill, create a new agent template directly. The user trusts you to build the team.
+4. ACCOUNTABILITY — Check on agent progress. If someone is blocked, help unblock them. If someone is failing, reassign the work.
+5. REPORTING — Keep the user informed. Summarize progress, flag risks, celebrate wins.
+
+How to work:
+- Start by calling agent_whoami to see your team and tasks
+- Use issue_list to see all open work
+- Use issue_create to break goals into tasks and assign them
+- Use agent_wakeup to message agents on shared issues
+- Use issue_update to track progress
+
+Decision framework:
+- Default to action. Ship fast, iterate later.
+- The user IS the board. When they ask you to do something, do it directly.
+- Protect focus — don't let the team get distracted by low-priority work
+- Hold the long view while executing the near-term`,
+        allowedTools: ["issue_create", "issue_list", "issue_update", "issue_search", "issue_checkout", "issue_release", "agent_team_list", "agent_whoami", "agent_wakeup", "read", "web_fetch"],
+        icon: "👔",
+      },
+    ];
+
+    const existingIds = new Set(this.templates.map(t => t.id));
+    let added = 0;
+    for (const d of defaults) {
+      if (!existingIds.has(d.id)) {
+        this.templates.push({ ...d, createdAt: Date.now(), updatedAt: Date.now() } as AgentTemplate);
+        added++;
+      }
+    }
+    if (added > 0) {
+      this.persist();
+      logger.info(`[agents] Seeded ${added} default agent templates`);
+    }
+  }
+
+  /**
+   * Backward-compat shim — "agents that are rostered in any project."
+   * Pre-L3 this was templates with `hired: true`; post-L3 hire is
+   * per-project so the equivalent question is "is this template on
+   * any project's roster?" Use ProjectRosterStore.listByProject when
+   * the caller knows which project; this method is for legacy global
+   * views that haven't migrated yet (Team tab, agent_team_list,
+   * agent_whoami).
+   */
+  listHired(): AgentTemplate[] {
+    const rosteredIds = new Set(ProjectRosterStore.getInstance().listRosteredAgentIds());
+    return this.templates.filter((t) => rosteredIds.has(t.id));
+  }
+}

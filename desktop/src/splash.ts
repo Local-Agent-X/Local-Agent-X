@@ -30,7 +30,7 @@ html,body{margin:0;height:100%;background:${bg};color:${fg};font-family:"Segoe U
 </div></div><script>
 let s=0;const h=document.getElementById('h');
 setInterval(()=>{s++;
-if(s===15){h.textContent='First-time setup pulls models — this can take a minute.';h.classList.add('show');}
+if(s===15){h.textContent='Warming up the agent runtime — usually 15-30 seconds.';h.classList.add('show');}
 else if(s===45){h.textContent='Still loading. Check ~/.lax/sax-server.log if this hangs.';}
 },1000);
 </script></body></html>`;

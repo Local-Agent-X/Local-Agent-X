@@ -62,67 +62,6 @@ export class Handler {
     singleton = null;
   }
 
-  // -- Spawn ----------------------------------------------------------------
-
-  /**
-   * @deprecated Replaced by `invokeDefinition` in `src/agents/invoke.ts`,
-   * which routes through the canonical-loop driver (`agents/runtime.ts`) so
-   * runs are persisted to `~/.lax/operations/<opId>/events.jsonl` and
-   * recoverable across crashes. Scheduled for deletion one release after
-   * 2026-05-13. Closes audit finding F1; this method's shadow state machine
-   * is the duplication the audit flagged.
-   *
-   * For external callers that need a FieldAgent registry entry without
-   * driving the run themselves, use `attachExternalRun` — invokeDefinition
-   * is the canonical example.
-   */
-  spawnAgent(config: SpawnConfig): string {
-    const agentId = uid("field-agent");
-    // parentSessionId is plumbed via SpawnConfig.parentSessionId by callers
-    // (agent_spawn execute now reads args._sessionId). The previous singleton
-    // fallback caused concurrent chats to inherit each other's session id.
-    const parentSessionId = config.parentSessionId || "";
-
-    const agent: FieldAgent = {
-      id: agentId,
-      name: config.name,
-      role: config.role,
-      status: "idle",
-      systemPrompt: config.systemPrompt ?? "",
-      tools: config.tools ?? [],
-      currentTask: config.task,
-      output: [],
-      startedAt: Date.now(),
-      tokensUsed: 0,
-      messageQueue: [],
-      templateId: config.templateId,
-      parentSessionId,
-    };
-
-    this.agents.set(agentId, agent);
-
-    this.messageBus.subscribe(agentId, (msg) => {
-      if (msg.type === "request-info" || msg.type === "share-context") {
-        agent.messageQueue.push(String(msg.payload));
-      }
-    });
-
-    EventBus.emit("handler:agent-spawn", {
-      agentId,
-      name: config.name,
-      role: config.role,
-      task: config.task,
-      systemPrompt: config.systemPrompt || "",
-      parentSessionId,
-      parentAgentId: config.parentAgentId || null,
-      templateId: config.templateId || null,
-    });
-
-    this.runAgentAsync(agentId);
-
-    return agentId;
-  }
-
   // -- Attach externally-driven run ----------------------------------------
 
   /**
@@ -134,10 +73,9 @@ export class Handler {
    * legacy `cancelAgent` path keeps working. The caller owns the run
    * itself and must call `finalizeExternalRun` when terminal.
    *
-   * Unlike `spawnAgent`, this does NOT emit `handler:agent-spawn` (the
-   * caller emits it after attaching, so the broadcast ordering stays
-   * predictable: spawn → run → result) and does NOT kick off
-   * `runAgentAsync` (the caller drives the canonical op).
+   * Does NOT emit `handler:agent-spawn` — the caller emits it after
+   * attaching so broadcast ordering stays predictable (spawn → run →
+   * result).
    */
   attachExternalRun(config: SpawnConfig): { agentId: string; abortController: AbortController } {
     const agentId = uid("field-agent");
@@ -171,8 +109,7 @@ export class Handler {
    * Mark an externally-driven run terminal. Caller (invokeDefinition's
    * driver callback) supplies the outcome; we update FieldAgent status,
    * append the result to output, notify subscribers, and schedule the
-   * map entry for cleanup after 5 minutes — matching the legacy
-   * `runAgentAsync` end-of-run lifecycle.
+   * map entry for cleanup after 5 minutes.
    */
   finalizeExternalRun(
     agentId: string,
@@ -406,163 +343,6 @@ export class Handler {
     } catch (e) {
       logger.error(`[handler] pushCompletionToParent threw for sub-agent ${agent.id} → parent ${parent}: ${(e as Error).message}`);
     }
-  }
-
-  /**
-   * @deprecated Replaced by `runAgentViaCanonical` driven through
-   * `agents/runtime.ts`. The shadow state machine here is what F1 flagged:
-   * Handler emits a `handler:agent-run` request and reconstructs terminal
-   * state from an EventBus round-trip, while canonical-loop already owns
-   * persistence, recovery, and the same lifecycle on disk. Scheduled for
-   * deletion one release after 2026-05-13; until then it remains for the
-   * legacy `spawnAgent` path used by tests and any direct caller we
-   * haven't routed yet.
-   */
-  private runAgentAsync(agentId: string): void {
-    const agent = this.agents.get(agentId);
-    if (!agent) return;
-
-    agent.status = "working";
-    agent.abortController = new AbortController();
-
-    const run = async () => {
-      try {
-        // Wait for pause if needed
-        const checkPause = (): Promise<void> => {
-          if (!agent.pauseSignal || !agent.pauseSignal.paused) {
-            return Promise.resolve();
-          }
-          return new Promise<void>((resolve) => {
-            agent.pauseSignal!.resume = resolve;
-          });
-        };
-
-        await checkPause();
-
-        if (agent.abortController?.signal.aborted) return;
-
-        // Subscribe to tool activity for live monitoring
-        const outputHandler = (data: unknown) => {
-          const d = data as { agentId: string; output?: string };
-          if (d.agentId !== agentId || typeof d.output !== "string") return;
-          // Keep last 50 activity entries per agent (tool calls, progress, errors)
-          if (d.output.startsWith("[tool]") || d.output.startsWith("[progress]") || d.output.startsWith("[error]") || d.output.startsWith("[BLOCKER]")) {
-            agent.output.push(d.output);
-            if (agent.output.length > 50) agent.output.shift();
-          }
-        };
-        EventBus.on("handler:agent-output", outputHandler);
-
-        // Emit the run request for the external LLM layer to pick up
-        const resultPromise = new Promise<string>((resolve, reject) => {
-          let resultHandler: ((data: unknown) => void) | null = null;
-          const timeout = setTimeout(() => {
-            EventBus.off("handler:agent-output", outputHandler);
-            if (resultHandler) EventBus.off("handler:agent-result", resultHandler);
-            reject(new Error("Agent execution timed out"));
-          }, 600_000); // 10 min — agents need time for multi-step tasks
-
-          const handler = (data: unknown) => {
-            const d = data as {
-              agentId: string;
-              result?: string;
-              error?: string;
-              tokens?: number;
-              chunk?: string;
-            };
-            if (d.agentId !== agentId) return;
-
-            if (d.chunk) {
-              agent.output.push(d.chunk);
-              if (agent.streamCallback) {
-                agent.streamCallback(agentId, d.chunk);
-              }
-              this.notifyUpdate(agentId, { type: "output", data: d.chunk });
-              return;
-            }
-
-            clearTimeout(timeout);
-            EventBus.off("handler:agent-result", handler);
-            EventBus.off("handler:agent-output", outputHandler);
-
-            if (d.tokens) agent.tokensUsed += d.tokens;
-
-            if (d.error) {
-              reject(new Error(d.error));
-            } else {
-              resolve(d.result ?? "");
-            }
-          };
-
-          resultHandler = handler;
-          EventBus.on("handler:agent-result", handler);
-
-          if (agent.abortController?.signal.aborted) {
-            clearTimeout(timeout);
-            EventBus.off("handler:agent-result", handler);
-            EventBus.off("handler:agent-output", outputHandler);
-            reject(new Error("Aborted"));
-          }
-        });
-
-        await EventBus.emit("handler:agent-run", {
-          agentId,
-          name: agent.name,
-          role: agent.role,
-          systemPrompt: agent.systemPrompt,
-          tools: agent.tools,
-          task: agent.currentTask,
-          parentSessionId: agent.parentSessionId || undefined,
-          templateId: agent.templateId,
-        });
-
-        const result = await resultPromise;
-
-        // Detect content-moderation / empty-response sentinel from Codex path.
-        // Sub-agents that return only the placeholder are NOT done — they
-        // were blocked. Mark as error so the parent can react and the UI
-        // doesn't silently swallow the failure.
-        const isEmptyResponseSentinel =
-          typeof result === "string" &&
-          (result.includes("model returned an empty response") ||
-            result.includes("content moderation blocked"));
-
-        agent.result = result;
-        if (isEmptyResponseSentinel) {
-          agent.status = "failed";
-          agent.output.push(`[blocked] ${result}`);
-          this.notifyUpdate(agentId, { type: "error", data: result });
-          EventBus.emit("handler:agent-error", { agentId, error: result });
-          this.pushCompletionToParent(agent, "failed", result);
-        } else {
-          agent.status = "succeeded";
-          agent.output.push(result);
-          this.notifyUpdate(agentId, { type: "complete", data: result });
-          EventBus.emit("handler:agent-done", { agentId, result });
-          this.pushCompletionToParent(agent, "succeeded", result);
-        }
-      } catch (e) {
-        const msg = String(e);
-        if (!agent.abortController?.signal.aborted) {
-          agent.status = "failed";
-          agent.result = msg;
-          agent.output.push(`[error] ${msg}`);
-          this.notifyUpdate(agentId, { type: "error", data: msg });
-          EventBus.emit("handler:agent-error", { agentId, error: msg });
-          this.pushCompletionToParent(agent, "failed", msg);
-        }
-      }
-      // Clean up completed/errored agents after 5 minutes to prevent unbounded growth
-      setTimeout(() => {
-        const a = this.agents.get(agentId);
-        if (a && (a.status === "succeeded" || a.status === "failed")) {
-          this.messageBus.unsubscribe(agentId);
-          this.agents.delete(agentId);
-        }
-      }, 5 * 60 * 1000);
-    };
-
-    run();
   }
 
 }

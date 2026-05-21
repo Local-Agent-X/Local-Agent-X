@@ -1,21 +1,13 @@
 /**
  * Agent run runtime — the canonical-loop-backed driver invokeAgent rides on.
  *
- * Before F1 closure, `invokeAgent` → `Handler.spawnAgent` → `Handler.runAgentAsync`
- * emitted a `handler:agent-run` event that `server/handler-events.ts` picked up
- * and translated into a `runAgentViaCanonical` call. Two state machines (the
- * Handler's in-memory FieldAgent + canonical-loop's op record) ran side by side,
- * with the canonical op carrying persistence and the Handler entry carrying
- * everything else. Recoverable runs were impossible because invokeAgent callers
- * had no way to bridge the two.
+ * invoke.ts owns the spawn surface and drives a single registered
+ * `AgentRunDriver`; the canonical-loop op record is the recoverable source
+ * of truth. Handler keeps a thin FieldAgent in its map for status / cancel
+ * / message tools, but the *run* is canonical's.
  *
- * After F1: invoke.ts owns the spawn surface, drives a registered single
- * `AgentRunDriver` directly, and lets the canonical-loop op record be the
- * recoverable source of truth. Handler keeps a thin FieldAgent in its map for
- * status / cancel / message tools, but the *run* is canonical's.
- *
- * The driver registration point is so we don't introduce a `src → server`
- * import cycle: `server/handler-events.ts` (which owns config, secrets, security,
+ * The driver registration indirection avoids an `src → server` import
+ * cycle: `server/handler-events.ts` (which owns config, secrets, security,
  * tool policy, project rosters, worktree creation, and the
  * `runAgentViaCanonical` import) registers a driver function during init.
  * `invoke.ts` resolves it lazily at dispatch time. Tests register a stub.

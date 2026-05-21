@@ -46,13 +46,9 @@ export function registerHandlerEvents(deps: {
   const pendingMeta = new Map<string, { name: string; role: string; task: string; systemPrompt: string; parentAgentId: string | null; sessionId: string; startedAt: number; toolsUsed: string[] }>();
 
   // Canonical-loop driver — registered with agents/runtime so invokeAgent
-  // dispatches here instead of going through Handler's shadow state
-  // machine. Reads the same closure deps the previous on("handler:agent-run")
-  // subscriber did; the body is otherwise identical except it RETURNS the
-  // terminal outcome instead of emitting handler:agent-result itself.
-  // invokeDefinition fans the outcome out to subscribers
-  // (chunk-runner, AgentRunStore persistence, UI broadcast) via the legacy
-  // EventBus signals — preserved for migration safety.
+  // dispatches here. Returns the terminal outcome; invokeDefinition fans
+  // it out to subscribers (chunk-runner, AgentRunStore persistence, UI
+  // broadcast) via handler:agent-result / -done / -error.
   const agentRunDriver: AgentRunDriver = async (req, signal) => {
     const { agentId, task, systemPrompt, role, parentSessionId, templateId, tools: invocationTools } = req;
     logger.info(`[handler] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
@@ -146,7 +142,21 @@ export function registerHandlerEvents(deps: {
         opType: "agent_spawn",
         lane: "background",
         signal,
-        onEvent: (event) => { if (event.type === "stream" && "delta" in event && event.delta) eventBus.emit("handler:agent-output", { agentId, output: event.delta }); if (event.type === "tool_start") { logger.info(`[handler] Agent ${agentId} tool: ${event.toolName}`); eventBus.emit("handler:agent-output", { agentId, output: `[tool] ${event.toolName}...` }); } if (event.type === "tool_progress") { eventBus.emit("handler:agent-output", { agentId, output: `[progress] ${event.message}` }); } if (event.type === "tool_start" && event.requiresApproval) event.requiresApproval = false; },
+        onEvent: (event) => {
+          if (event.type === "stream" && "delta" in event && event.delta) {
+            eventBus.emit("handler:agent-output", { agentId, output: event.delta });
+          }
+          if (event.type === "tool_start") {
+            logger.info(`[handler] Agent ${agentId} tool: ${event.toolName}`);
+            eventBus.emit("handler:agent-output", { agentId, output: `[tool] ${event.toolName}...` });
+            const m = pendingMeta.get(agentId);
+            if (m && !m.toolsUsed.includes(event.toolName)) m.toolsUsed.push(event.toolName);
+            if (event.requiresApproval) event.requiresApproval = false;
+          }
+          if (event.type === "tool_progress") {
+            eventBus.emit("handler:agent-output", { agentId, output: `[progress] ${event.message}` });
+          }
+        },
       }), { label: `agent:${agentId}`, timeout: config.agentTimeoutMs });
       if (agentResult?.messages) agentSession.messages.push(...agentResult.messages);
 
@@ -181,7 +191,7 @@ export function registerHandlerEvents(deps: {
   registerAgentRunDriver(agentRunDriver);
 
   eventBus.on("handler:agent-spawn", (d: unknown) => { const evt = d as AgentSpawnEvent; broadcastAll({ type: "agent-spawn", ...evt }); pendingMeta.set(evt.agentId, { name: evt.name, role: evt.role, task: evt.task, systemPrompt: evt.systemPrompt || "", parentAgentId: evt.parentAgentId || null, sessionId: evt.parentSessionId || "", startedAt: Date.now(), toolsUsed: [] }); });
-  eventBus.on("handler:agent-output", (d: unknown) => { const evt = d as AgentOutputEvent; broadcastAll({ type: "agent-output", ...evt }); const m = pendingMeta.get(evt.agentId); if (m && typeof evt.output === "string" && evt.output.startsWith("[tool]")) { const t = evt.output.replace("[tool] ", "").replace("...", "").trim(); if (t && !m.toolsUsed.includes(t)) m.toolsUsed.push(t); } });
+  eventBus.on("handler:agent-output", (d: unknown) => { broadcastAll({ type: "agent-output", ...(d as AgentOutputEvent) }); });
   eventBus.on("handler:agent-blocked", (d: unknown) => { const evt = d as AgentBlockedEvent; broadcastAll({ type: "agent-blocked", agentId: evt.agentId, reason: evt.reason, role: evt.role }); });
   eventBus.on("handler:agent-result", (d: unknown) => {
     const evt = d as AgentResultEvent;

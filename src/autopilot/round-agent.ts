@@ -2,10 +2,8 @@
  * Spawn one round of an autopilot operation.
  *
  * Routes through canonical-loop's `runAgentViaCanonical` so the round shares
- * the same safety stack, observability, and cancel machinery as chat —
- * NOT Handler.spawnAgent (that path collides with the agency delegated-
- * agent worktree pattern in handler-events.ts:117). The session is bound
- * to the autopilot worktree via security.addAllowedPath.
+ * the same safety stack, observability, and cancel machinery as chat. The
+ * session is bound to the autopilot worktree via security.addAllowedPath.
  */
 
 import { type AgentOptions } from "../providers/types.js";

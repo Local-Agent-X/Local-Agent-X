@@ -163,6 +163,29 @@ try {
   logger.warn(`[config] Runtime-settings migration skipped: ${(e as Error).message}`);
 }
 
+// One-time migration for upgrades: if the user had a legacy toolApproval
+// setting but no autonomy-profile.json yet, map their old choice into the
+// new five-profile vocabulary so they don't get surprised by the Normal
+// default. Idempotent — once autonomy-profile.json exists this branch
+// short-circuits.
+try {
+  const { existsSync } = await import("node:fs");
+  const { PROFILE_STORE_PATH, saveProfileName } = await import("./autonomy/profile-store.js");
+  if (!existsSync(PROFILE_STORE_PATH)) {
+    const legacy = (config as { toolApproval?: string }).toolApproval;
+    const mapped =
+      legacy === "auto" ? "Power" :
+      legacy === "confirm-risky" ? "Normal" :
+      legacy === "confirm-all" ? "Safe" : null;
+    if (mapped) {
+      saveProfileName(mapped);
+      logger.info(`[autonomy] Migrated legacy toolApproval="${legacy}" → profile="${mapped}"`);
+    }
+  }
+} catch (e) {
+  logger.warn(`[autonomy] Profile migration skipped: ${(e as Error).message}`);
+}
+
 setRuntimeConfig(config);
 
 // Check auth status

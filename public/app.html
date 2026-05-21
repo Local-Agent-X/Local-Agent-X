@@ -436,16 +436,18 @@
           </div>
         </div>
         <div class="section-card">
-          <div class="section-title">Tool Approval</div>
-          <div class="section-desc">Inline cards appear in chat before dangerous tools run. Choose how strict.</div>
+          <div class="section-title">Autonomy</div>
+          <div class="section-desc">How much can the agent do without asking? Pick a profile. The agent runs everything below your line silently; anything above prompts in chat.</div>
           <div class="field">
-            <label class="field-label">Approval Mode</label>
-            <select class="field-select" id="cfg-approval-mode" onchange="setApprovalMode(this.value)">
-              <option value="auto" selected>Off — auto-approve everything (fastest, default)</option>
-              <option value="confirm-risky">Sensitive — confirm bash / write / edit / email / forget</option>
-              <option value="confirm-all">Strict — confirm everything above + browser, http, cron</option>
+            <label class="field-label">Profile</label>
+            <select class="field-select" id="cfg-autonomy-profile" onchange="setAutonomyProfile(this.value)">
+              <option value="Safe">Safe — ask before edits, shell, or network calls</option>
+              <option value="Normal" selected>Normal — autonomous in workspace, ask for money, deletes, external messages</option>
+              <option value="Developer">Developer — like Normal, but reversible shell/destructive run with rollback</option>
+              <option value="Power">Power — autonomous for everything except money and secrets</option>
+              <option value="Autonomous">Autonomous — fully unattended; reversible actions wrap in rollback</option>
             </select>
-            <div class="field-hint">"Always for this session" checkbox on a card remembers your choice until the server restarts.</div>
+            <div class="field-hint">"Always for this session" on an approval card remembers your choice until the server restarts.</div>
           </div>
         </div>
         <div class="section-card">

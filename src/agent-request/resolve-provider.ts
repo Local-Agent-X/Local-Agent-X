@@ -30,6 +30,7 @@ export async function resolveProvider(
 }> {
   const { loadTokens } = await import("../auth.js");
   const { loadAnthropicTokens, getAnthropicApiKey } = await import("../auth-anthropic.js");
+  const { loadXaiTokens, getXaiApiKey } = await import("../auth-xai.js");
 
   // Load saved settings
   let saved: Record<string, unknown> = {};
@@ -49,6 +50,8 @@ export async function resolveProvider(
     if (p === "codex") return !!loadTokens();
     // OpenAI accepts either a config-level key or the SecretsStore.
     if (p === "openai") return !!(config.openaiApiKey || secretsStore.get(meta.envKey));
+    // xAI accepts either OAuth (SuperGrok / X Premium+) or an API key.
+    if (p === "xai") return !!(loadXaiTokens() || secretsStore.get(meta.envKey));
     // Local Ollama needs no key.
     if (meta.envKey === "") return true;
     return !!secretsStore.get(meta.envKey);
@@ -97,6 +100,12 @@ export async function resolveProvider(
     apiKey = await getApiKey(config.openaiApiKey);
   } else if (provider === "openai") {
     apiKey = config.openaiApiKey || secretsStore.get(meta.envKey) || await getApiKey(config.openaiApiKey);
+  } else if (provider === "xai") {
+    // Prefer OAuth bearer (SuperGrok / X Premium+) when present, fall back
+    // to XAI_API_KEY. Bearer + key are wire-identical on api.x.ai/v1, so
+    // openai-http consumes either without branching.
+    const oauth = await getXaiApiKey();
+    apiKey = oauth || secretsStore.get(meta.envKey) || "";
   } else if (provider === "custom") {
     apiKey = secretsStore.get(meta.envKey) || "";
     try {

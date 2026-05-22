@@ -81,6 +81,7 @@ function init_settings() {
   loadSyncConfig();
   checkSettingsAuth();
   checkAnthropicAuth();
+  checkXaiAuth();
   checkServer('image');
   checkServer('video');
   checkVoiceCaps();

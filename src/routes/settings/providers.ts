@@ -14,10 +14,12 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
   if (method === "GET" && url.pathname === "/api/providers") {
     const { loadTokens } = await import("../../auth.js");
     const { loadAnthropicTokens } = await import("../../auth-anthropic.js");
+    const { loadXaiTokens } = await import("../../auth-xai.js");
     const providers: Array<{ id: string; name: string; models: string[]; active: boolean }> = [];
     const hasOpenAIOAuth = !!loadTokens();
     const hasAnthropicOAuth = !!loadAnthropicTokens();
-    const hasXaiKey = ctx.secretsStore.has("XAI_API_KEY");
+    const hasXaiOAuth = !!loadXaiTokens();
+    const hasXaiKey = ctx.secretsStore.has("XAI_API_KEY") || hasXaiOAuth;
     const hasCerebrasKey = ctx.secretsStore.has("CEREBRAS_API_KEY");
     const hasOpenAIKey = !!ctx.config.openaiApiKey || ctx.secretsStore.has("OPENAI_API_KEY");
     let hasOllama = false;

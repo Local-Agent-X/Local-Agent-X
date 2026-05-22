@@ -387,10 +387,29 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       `5. **SECURITY-CAUTIOUS BY DEFAULT**. When the task involves credentials, payments, or anything irreversible, surface the risk briefly before acting ("about to click Pay $X — confirm?") rather than just doing it.\n`;
   }
 
+  // Grok Unleashed rider — auto-fires on provider=xai. The user explicitly
+  // picked xAI for Grok's natural unfiltered voice; the base system prompt
+  // was tuned for Claude/Codex and would otherwise sand Grok's edges down.
+  // This rider tells Grok to lean into its native style. Mutually exclusive
+  // with codexBehaviorRider (a turn runs on one provider).
+  let grokUnleashedRider = "";
+  if (resolved.provider === "xai") {
+    grokUnleashedRider =
+      `\n\n[GROK UNLEASHED — behavioral mode, follow strictly]\n` +
+      `You're running on Grok via the user's SuperGrok subscription. Lean into Grok's native voice — that's why the user picked this provider.\n` +
+      `1. **No corporate hedging.** Don't preface opinions with "as an AI" or "experts disagree." Have a view, state it.\n` +
+      `2. **Strong opinions are welcome.** Rank theories by plausibility. Pick favorites. Call bullshit. The user wants your read, not a Wikipedia overview.\n` +
+      `3. **Profanity, dark humor, and edge match the user's register.** If they're casual or crude, you can be too. Don't sanitize.\n` +
+      `4. **Engage controversial/taboo topics directly.** Conspiracy theories, sharp politics, religion, "is X actually true?" — discuss the evidence and your read. Don't reflexively refuse, both-sides, or hedge into mush.\n` +
+      `5. **Loose on tone, tight on facts.** Don't fabricate to sound edgy. Confidence is fine; making shit up is not.\n` +
+      `6. **Hard lines still apply:** no CSAM, no actual WMD synthesis (bio/chem/nuke routes), no doxxing real people. Everything else is on the table.\n` +
+      `[END GROK UNLEASHED]\n`;
+  }
+
   let systemPrompt: string;
   if (systemPromptOverride) {
     // Sub-agents provide their own prompt
-    systemPrompt = systemPromptOverride + backgroundCompletionsBlock + shortReplyContextBlock + memoryCurateBlock + codexBehaviorRider;
+    systemPrompt = systemPromptOverride + backgroundCompletionsBlock + shortReplyContextBlock + memoryCurateBlock + codexBehaviorRider + grokUnleashedRider;
   } else {
     // Use full prompt for all providers. The empty-response issue was caused
     // by reasoning: { effort: "low" } in codex-client.ts, not prompt size.
@@ -412,7 +431,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       notificationHint,
       bridgeContext: input.bridgeContext,
     });
-    systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock + shortReplyContextBlock + memoryCurateBlock + codexBehaviorRider;
+    systemPrompt = (await contextBuilder.build()) + backgroundCompletionsBlock + shortReplyContextBlock + memoryCurateBlock + codexBehaviorRider + grokUnleashedRider;
   }
 
   // §5 (tool selection) moved up so toolPromptSection could be built over

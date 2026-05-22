@@ -274,6 +274,16 @@
           </div>
         </div>
         <div class="section-card">
+          <div class="section-title">xAI Grok Authentication</div>
+          <div class="section-desc">Sign in with your <strong>SuperGrok</strong> or <strong>X Premium+</strong> subscription to use Grok models without burning API credit. OAuth wins when both are configured. xAI's backend allowlists OAuth API access by tier — if login succeeds but inference returns 403, fall back to an <code>XAI_API_KEY</code> in the AI &amp; Models tab.</div>
+          <div id="xai-auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
+          <div class="btn-row" style="margin-top:10px">
+            <button id="btn-xai-login" class="action-btn primary" onclick="doXaiLogin()">Sign in with xAI (SuperGrok / X Premium+)</button>
+            <button id="btn-xai-disconnect" class="action-btn danger" onclick="doXaiDisconnect()" style="display:none">Disconnect</button>
+          </div>
+          <div class="field-hint" style="margin-top:8px">Opens accounts.x.ai in your browser. Tokens land in <code>~/.lax/xai-auth.json</code> and refresh automatically.</div>
+        </div>
+        <div class="section-card">
           <div class="section-title">Server</div>
           <div class="section-desc">Local server configuration. Changes require restart.</div>
           <div class="field-row"><div class="field"><label class="field-label">Port</label><input class="field-input" id="cfg-port" type="number" value="7007"/></div><div class="field"><label class="field-label">Workspace</label><input class="field-input" id="cfg-workspace" value="./workspace"/></div></div>
@@ -986,7 +996,7 @@
 <script src="/js/chat-ws-handler.js?v=v1"></script>
 <script src="/js/chat-ws.js?v=v1"></script>
 <script src="/js/chat-render.js?v=v1"></script>
-<script src="/js/chat-send.js?v=v4"></script>
+<script src="/js/chat-send.js?v=v5"></script>
 <script src="/js/chat-uploads.js?v=v1"></script>
 <script src="/js/chat.js?v=vd3"></script>
 <script src="/js/secret-modal.js?v=v1"></script>
@@ -995,6 +1005,7 @@
 <script src="/js/settings-telegram.js?v=v1"></script>
 <script src="/js/settings-onboarding.js?v=v1"></script>
 <script src="/js/settings-anthropic.js?v=v1"></script>
+<script src="/js/settings-xai.js?v=v1"></script>
 <script src="/js/settings-providers.js?v=v1"></script>
 <script src="/js/settings-ollama.js?v=v1"></script>
 <script src="/js/settings-save-load.js?v=v1"></script>

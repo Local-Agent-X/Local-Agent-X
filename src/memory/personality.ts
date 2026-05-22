@@ -127,3 +127,130 @@ export async function readPersonalityFile(
 
   return cleaned;
 }
+
+// ── Dedupe ──
+//
+// Profile files (USER.md / IDENTITY.md / HEART.md / MIND.md) used to drift
+// into stacked-duplicate-block corruption: every memory_update_profile
+// `append` of a fresh About Me / Agent Identity block left the older one
+// in place. The model then saw multiple `Name:` lines in <user_profile>
+// and either re-asked or addressed the user by a stale value.
+//
+// This collapses duplicates by canonical top-level heading. Within a
+// heading group, scalar `- Field: value` lines latest-non-empty-wins
+// (so a corrected name overwrites the old one, but a later empty value
+// doesn't wipe a real earlier one), and `##` subsections latest-wins.
+// Insertion order is preserved by the first occurrence of each heading.
+export function dedupeProfileMarkdown(content: string): string {
+  if (!content || !content.trim()) return content;
+  const lines = content.split("\n");
+
+  // Fast path: nothing to dedupe if there's at most one top-level heading.
+  const TOP_HEADING = /^#\s+(.+?)\s*$/;
+  const topCount = lines.filter((l) => TOP_HEADING.test(l)).length;
+  if (topCount <= 1) return content;
+
+  const SUB_HEADING = /^##\s+(.+?)\s*$/;
+  const SCALAR = /^-\s+([^:\n]+?):\s*(.*)$/;
+
+  interface Block {
+    rawHeadingLine: string;
+    scalarOrder: string[];
+    scalars: Map<string, string>;
+    subOrder: string[];
+    subs: Map<string, { rawHeadingLine: string; body: string[] }>;
+  }
+
+  const groups = new Map<string, Block>();
+  const groupOrder: string[] = [];
+  const preamble: string[] = [];
+
+  let currentBlock: Block | null = null;
+  let currentSub: { rawHeadingLine: string; body: string[] } | null = null;
+
+  const flushSub = () => {
+    if (!currentBlock || !currentSub) return;
+    const key = currentSub.rawHeadingLine.trim();
+    if (!currentBlock.subOrder.includes(key)) currentBlock.subOrder.push(key);
+    // Latest-wins: a later occurrence of the same subheading overwrites.
+    currentBlock.subs.set(key, currentSub);
+    currentSub = null;
+  };
+
+  for (const line of lines) {
+    const top = line.match(TOP_HEADING);
+    if (top) {
+      flushSub();
+      const key = top[1].trim().toLowerCase();
+      let block = groups.get(key);
+      if (!block) {
+        block = {
+          rawHeadingLine: line,
+          scalarOrder: [],
+          scalars: new Map(),
+          subOrder: [],
+          subs: new Map(),
+        };
+        groups.set(key, block);
+        groupOrder.push(key);
+      }
+      currentBlock = block;
+      continue;
+    }
+    if (!currentBlock) {
+      preamble.push(line);
+      continue;
+    }
+    const sub = line.match(SUB_HEADING);
+    if (sub) {
+      flushSub();
+      currentSub = { rawHeadingLine: line, body: [] };
+      continue;
+    }
+    if (currentSub) {
+      currentSub.body.push(line);
+      continue;
+    }
+    const scalar = line.match(SCALAR);
+    if (scalar) {
+      const field = scalar[1].trim();
+      const value = scalar[2].trim();
+      if (!currentBlock.scalarOrder.includes(field)) {
+        currentBlock.scalarOrder.push(field);
+      }
+      const prior = currentBlock.scalars.get(field);
+      // Latest non-empty wins. Empty value only sticks if no prior value.
+      if (value || prior === undefined || !prior.trim()) {
+        currentBlock.scalars.set(field, value);
+      }
+      continue;
+    }
+    // Blank / comment / freeform line in the scalar zone — drop on dedupe.
+    // (HTML comments are stripped by the reader anyway; blank lines are
+    // re-inserted on emit.)
+  }
+  flushSub();
+
+  const out: string[] = [];
+  for (const line of preamble) out.push(line);
+  for (const key of groupOrder) {
+    const b = groups.get(key)!;
+    if (out.length && out[out.length - 1].trim() !== "") out.push("");
+    out.push(b.rawHeadingLine);
+    if (b.scalarOrder.length) {
+      out.push("");
+      for (const field of b.scalarOrder) {
+        out.push(`- ${field}: ${b.scalars.get(field) ?? ""}`);
+      }
+    }
+    for (const subKey of b.subOrder) {
+      const sub = b.subs.get(subKey);
+      if (!sub) continue;
+      out.push("");
+      out.push(sub.rawHeadingLine);
+      for (const bl of sub.body) out.push(bl);
+    }
+  }
+  while (out.length && out[out.length - 1].trim() === "") out.pop();
+  return out.join("\n") + "\n";
+}

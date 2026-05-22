@@ -478,6 +478,18 @@ function newChat(projectId) {
   const sendBtn = document.getElementById('send-btn');
   if (stopBtn) stopBtn.style.display = 'none';
   if (sendBtn) sendBtn.disabled = false;
+  focusChatInput();
+}
+
+// Focus the message textarea after the page-switch spring has applied. Two
+// rAFs put us past Electron's first paint where focus() otherwise no-ops
+// (renderer reports the element isn't yet focusable). Browser tabs don't
+// hit this because their focus subsystem doesn't gate on paint timing.
+function focusChatInput() {
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const ta = document.getElementById('msg-input');
+    if (ta && !ta.disabled) ta.focus();
+  }));
 }
 
 function newChatInProject(projectId, e) {
@@ -506,6 +518,7 @@ function selectChat(id) {
   if (window.chatWs && window.chatWs.readyState === WebSocket.OPEN) {
     window.chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: id }));
   }
+  focusChatInput();
   // Lazy hydration: if the sidebar handed us a metadata stub (or a known-stale
   // local copy), fetch the full session JSON now. One fetch per click instead
   // of N on page load. Skip if we're already streaming into this chat.

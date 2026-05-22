@@ -13,6 +13,7 @@ import { TEMPLATES_FILE } from "./paths.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { renderPersonaPrompt } from "../tools/render-builder-prompt.js";
 import { createLogger } from "../logger.js";
+import type { AgentModelPin } from "../agents/types.js";
 
 const logger = createLogger("agent-store");
 
@@ -35,6 +36,11 @@ export interface AgentTemplate {
    *  repo. Default false. See AgentDefinition.requiresWorktree for the
    *  canonical doc and AUDIT Cluster 11 for the migration. */
   requiresWorktree?: boolean;
+  /** Template-level default provider+model pin. Mirrors
+   *  AgentDefinition.defaultModel — the catalog adapter copies it
+   *  through. Chunk 4 owns the per-template seed values; this chunk
+   *  only adds the field. */
+  defaultModel?: AgentModelPin;
   providerStrategy?: AgentProviderStrategy;
   // Note: hired / reportsTo / heartbeatSchedule / heartbeatEnabled /
   // budget moved to ProjectRoster (src/project-rosters.ts) in the L3

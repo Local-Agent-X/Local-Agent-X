@@ -27,10 +27,11 @@
  * an API break.
  */
 
-import type { AgentDefinition, InvokeOpts, RunRef } from "./types.js";
+import type { AgentDefinition, AgentModelPin, InvokeOpts, RunRef } from "./types.js";
 import { AgentCatalog } from "./catalog.js";
 import { Handler } from "../agency/handler.js";
 import { ProjectStore } from "../agent-store.js";
+import { ProjectRosterStore } from "../project-rosters.js";
 import { EventBus } from "../event-bus.js";
 import { dispatchAgentRun, type AgentRunDriverRequest } from "./runtime.js";
 import { createLogger } from "../logger.js";
@@ -84,6 +85,7 @@ export function invokeDefinition(
     : def.systemPrompt;
   const name = opts.nameOverride ?? def.name;
   const templateId = def.id.startsWith("tpl-") ? def.id : undefined;
+  const modelOverride = resolveAgentModel(def, opts);
 
   const { agentId, abortController } = Handler.getInstance().attachExternalRun({
     name,
@@ -120,6 +122,7 @@ export function invokeDefinition(
       parentSessionId: opts.parentSessionId,
       parentAgentId: opts.parentAgentId,
       templateId,
+      modelOverride,
     },
     abortController.signal,
   );
@@ -185,6 +188,32 @@ function capTools(allowed: string[], override: string[] | undefined): string[] {
  * just being in a project doesn't shrink your tools unless the project
  * owner declared an allowlist.
  */
+/**
+ * Resolve the effective provider+model pin for one invocation.
+ *
+ * Chain (first hit wins):
+ *   1. opts.modelOverride        — per-run pick (delegation tools)
+ *   2. roster.model              — per-project override (set via UI/PATCH)
+ *   3. def.defaultModel          — template-level default
+ *   4. undefined                 — fall through to the global default
+ *                                  at resolveProvider time.
+ *
+ * The roster lookup is gated on opts.scope — agents invoked without a
+ * project scope (main chat, headless ops) can't have a per-project
+ * override, so we skip the store hit.
+ */
+export function resolveAgentModel(
+  def: AgentDefinition,
+  opts: InvokeOpts,
+): AgentModelPin | undefined {
+  if (opts.modelOverride) return opts.modelOverride;
+  if (opts.scope) {
+    const roster = ProjectRosterStore.getInstance().get(opts.scope.projectId, def.id);
+    if (roster?.model) return roster.model;
+  }
+  return def.defaultModel;
+}
+
 export function applyProjectToolGate(allowed: string[], opts: InvokeOpts): string[] {
   if (!opts.scope) return [...allowed];
   const project = ProjectStore.getInstance().get(opts.scope.projectId);

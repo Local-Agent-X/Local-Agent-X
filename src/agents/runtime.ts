@@ -13,6 +13,7 @@
  * `invoke.ts` resolves it lazily at dispatch time. Tests register a stub.
  */
 
+import type { AgentModelPin } from "./types.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("agents.runtime");
@@ -34,6 +35,11 @@ export interface AgentRunDriverRequest {
   parentSessionId?: string;
   parentAgentId?: string;
   templateId?: string;
+  /** Resolved provider+model pin for this run. Set by invokeDefinition
+   *  when resolveAgentModel finds a value at any rung (run override,
+   *  roster, template default). When undefined, the driver falls back
+   *  to the global default via resolveProvider's normal chain. */
+  modelOverride?: AgentModelPin;
 }
 
 /** What the driver returns when the canonical op reaches a terminal state. */

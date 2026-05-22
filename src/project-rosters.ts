@@ -28,6 +28,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+import type { AgentModelPin } from "./agents/types.js";
 import { createLogger } from "./logger.js";
 const logger = createLogger("project-rosters");
 
@@ -47,6 +48,9 @@ export interface ProjectRoster {
   heartbeatEnabled?: boolean;
   /** Monthly spend cap + ledger, project-scoped. */
   budget?: { maxPerMonth: number; spent: number; resetAt: number };
+  /** Per-project provider+model override. Rung 2 of resolveAgentModel —
+   *  beats template.defaultModel, loses to a per-run modelOverride. */
+  model?: AgentModelPin;
   createdAt: number;
   updatedAt: number;
 }
@@ -217,12 +221,27 @@ export class ProjectRosterStore {
     return entry;
   }
 
-  /** Patch a roster entry — partial updates. Returns null if absent. */
-  patch(projectId: string, agentId: string, patch: Partial<Pick<ProjectRoster, "reportsTo" | "heartbeatSchedule" | "heartbeatEnabled" | "budget">>): ProjectRoster | null {
+  /** Patch a roster entry — partial updates. Returns null if absent.
+   *  `model: null` is a sentinel: it clears the per-project model
+   *  override so the template default takes over again. Any other
+   *  field set to `undefined` is treated as "no change" (Object.assign
+   *  semantics), matching the existing reportsTo/heartbeat behavior. */
+  patch(
+    projectId: string,
+    agentId: string,
+    patch: Partial<Pick<ProjectRoster, "reportsTo" | "heartbeatSchedule" | "heartbeatEnabled" | "budget">> & { model?: AgentModelPin | null },
+  ): ProjectRoster | null {
     const key = rosterKey(projectId, agentId);
     const existing = this.rosters[key];
     if (!existing) return null;
-    Object.assign(existing, patch, { updatedAt: Date.now() });
+    if (patch.model === null) {
+      delete existing.model;
+      const { model: _drop, ...rest } = patch;
+      void _drop;
+      Object.assign(existing, rest, { updatedAt: Date.now() });
+    } else {
+      Object.assign(existing, patch, { updatedAt: Date.now() });
+    }
     this.persist();
     return existing;
   }

@@ -50,6 +50,7 @@ function templateToDefinition(t: AgentTemplate): AgentDefinition {
     allowedTools: t.allowedTools,
     description: t.description,
     icon: t.icon,
+    defaultModel: t.defaultModel,
   };
 }
 

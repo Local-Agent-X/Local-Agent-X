@@ -5,6 +5,9 @@ import { getProviderHealthStatus, resetProviderHealth, type ProviderId } from ".
 import { linkIdentities, unlinkIdentity, getIdentityGroups, type ChannelType } from "../session-router.js";
 import type { AgentTemplate, Project } from "../agent-store.js";
 import { AgentTemplateSchema, LinkIdentitiesSchema, validateBody } from "../route-schemas.js";
+import { PROVIDER_IDS, type ProviderId as CanonicalProviderId } from "../providers/provider-ids.js";
+import { PROVIDERS } from "../providers/registry.js";
+import type { AgentModelPin } from "../agents/types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.agents");
@@ -208,11 +211,36 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     const agentId = parts[5];
     const body = await safeParseBody(req);
     if (!body) { json(400, { error: "Invalid JSON" }); return true; }
+
+    // Model field — accepts {provider, model}, or null to clear the
+    // per-project override (template default takes over again).
+    // Validated against the canonical provider+model registry; bad
+    // pairs reject 400 so the UI doesn't silently persist garbage.
+    let modelField: AgentModelPin | null | undefined = undefined;
+    if (body.model === null) {
+      modelField = null;
+    } else if (body.model && typeof body.model === "object") {
+      const m = body.model as { provider?: unknown; model?: unknown };
+      const provider = typeof m.provider === "string" ? m.provider : "";
+      const modelName = typeof m.model === "string" ? m.model : "";
+      if (!(PROVIDER_IDS as readonly string[]).includes(provider)) {
+        json(400, { error: `Unknown provider "${provider}" — must be one of: ${PROVIDER_IDS.join(", ")}` });
+        return true;
+      }
+      const reg = PROVIDERS[provider as CanonicalProviderId];
+      if (reg.models.length > 0 && !reg.models.includes(modelName)) {
+        json(400, { error: `Model "${modelName}" is not in the ${provider} registry. Known: ${reg.models.join(", ")}` });
+        return true;
+      }
+      modelField = { provider: provider as CanonicalProviderId, model: modelName };
+    }
+
     const { ProjectRosterStore } = await import("../project-rosters.js");
     const updated = ProjectRosterStore.getInstance().patch(projectId, agentId, {
       reportsTo: body.reportsTo as string | undefined,
       heartbeatSchedule: body.heartbeatSchedule as string | undefined,
       heartbeatEnabled: body.heartbeatEnabled as boolean | undefined,
+      model: modelField,
     });
     if (!updated) { json(404, { error: "Roster entry not found" }); return true; }
     json(200, updated); return true;
@@ -228,7 +256,7 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
       const rosters = ProjectRosterStore.getInstance().listByProject(projectId);
       const merged = rosters.map((r) => {
         const tpl = ctx.agentTemplateStore.get(r.agentId);
-        return tpl ? { ...tpl, reportsTo: r.reportsTo, heartbeatSchedule: r.heartbeatSchedule, heartbeatEnabled: r.heartbeatEnabled, budget: r.budget, projectId: r.projectId } : null;
+        return tpl ? { ...tpl, reportsTo: r.reportsTo, heartbeatSchedule: r.heartbeatSchedule, heartbeatEnabled: r.heartbeatEnabled, budget: r.budget, projectId: r.projectId, model: r.model } : null;
       }).filter((x): x is NonNullable<typeof x> => x !== null);
       json(200, merged); return true;
     }

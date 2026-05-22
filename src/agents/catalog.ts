@@ -36,6 +36,7 @@ import type { AgentDefinition, InvokeScope } from "./types.js";
 import type { AgentTemplate } from "../agent-store.js";
 import type { AgentRole } from "../agency/agent-roles.js";
 import { AgentTemplateStore, ProjectStore } from "../agent-store.js";
+import { ProjectRosterStore } from "../project-rosters.js";
 import { _seedBuiltinRoles } from "../agency/agent-roles.js";
 
 /** Adapter: legacy AgentTemplate -> canonical AgentDefinition. Strips
@@ -132,7 +133,13 @@ export class AgentCatalog {
     if (!scope) return out;
     const project = ProjectStore.getInstance().get(scope.projectId);
     if (!project) return [];
-    const rosterIds = new Set(project.agentIds);
+    // Post-L3, roster is the source of truth for membership; Project.agentIds
+    // is a vestigial denorm that drifts when hire paths skip addAgent (legacy
+    // migration, etc.). Read the rosters directly so a stale field can't filter
+    // catalog visibility incorrectly.
+    const rosterIds = new Set(
+      ProjectRosterStore.getInstance().listByProject(scope.projectId).map((r) => r.agentId),
+    );
     return out.filter((d) => rosterIds.has(d.id));
   }
 

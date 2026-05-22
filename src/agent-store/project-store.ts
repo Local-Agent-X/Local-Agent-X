@@ -5,6 +5,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { PROJECTS_FILE } from "./paths.js";
+import { ProjectRosterStore } from "../project-rosters.js";
 
 export interface Project {
   id: string;
@@ -100,9 +101,19 @@ export class ProjectStore {
     return true;
   }
 
-  /** Get which project an agent belongs to */
+  /** Get which project an agent belongs to.
+   *
+   * Post-L3, ProjectRosterStore is the source of truth for membership;
+   * `Project.agentIds` is a vestigial denorm that drifted out of sync
+   * (legacy migrations + the create endpoint accepting seed agentIds
+   * both write rosters without rewriting the field in lockstep). Reads
+   * go through the roster so getAgentProject can't lie even when the
+   * field on disk is stale. Callers that need every project an agent
+   * is in should use ProjectRosterStore.listByAgent directly. */
   getAgentProject(agentId: string): Project | null {
-    return this.projects.find(p => p.agentIds.includes(agentId)) || null;
+    const rosters = ProjectRosterStore.getInstance().listByAgent(agentId);
+    if (rosters.length === 0) return null;
+    return this.get(rosters[0].projectId);
   }
 
   /** Check if two agents are in the same project */

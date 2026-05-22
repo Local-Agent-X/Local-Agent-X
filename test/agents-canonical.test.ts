@@ -23,6 +23,7 @@ import { invokeAgent, AgentNotFoundError, applyProjectToolGate } from "../src/ag
 import { createAgentTools } from "../src/agents/tools.js";
 import { _seedBuiltinRoles } from "../src/agency/agent-roles.js";
 import { AgentTemplateStore, ProjectStore } from "../src/agent-store.js";
+import { ProjectRosterStore } from "../src/project-rosters.js";
 
 describe("AgentCatalog — superset merge of legacy sources", () => {
   beforeEach(() => {
@@ -154,6 +155,11 @@ describe("AgentCatalog — project scoping", () => {
 
   afterEach(() => {
     if (testProjectId) {
+      // Tear down roster entries we seeded so the next fixture starts clean.
+      const rosterStore = ProjectRosterStore.getInstance();
+      for (const r of rosterStore.listByProject(testProjectId)) {
+        rosterStore.remove(testProjectId, r.agentId);
+      }
       ProjectStore.getInstance().delete(testProjectId);
       testProjectId = null;
     }
@@ -166,6 +172,11 @@ describe("AgentCatalog — project scoping", () => {
       agentIds,
       ...(allowedTools !== undefined ? { allowedTools } : {}),
     });
+    // Post-L3, ProjectRosterStore is the source of truth for membership.
+    // Project.agentIds is a vestigial denorm; the catalog reads from the
+    // roster. Seed roster entries so the fixture matches real hire flow.
+    const rosterStore = ProjectRosterStore.getInstance();
+    for (const agentId of agentIds) rosterStore.upsert(p.id, agentId);
     testProjectId = p.id;
     return p.id;
   }

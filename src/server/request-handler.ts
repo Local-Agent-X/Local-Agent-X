@@ -3,7 +3,7 @@ import { join, resolve, relative } from "node:path";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseMultipart, jsonResponse, corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard } from "../server-utils.js";
-import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleAutopilotRoutes, handleKrakenProxyRoutes, handleFastmailProxyRoutes, handleHealthRoutes } from "../routes/index.js";
+import { handleSessionRoutes, handleSecurityRoutes, handleMemoryRoutes, handleAgentRoutes, handleRunsRoutes, handleAppRoutes, handleSettingsRoutes, handleBridgeRoutes, handleChatRoutes, handleMcpRoutes, handleAutopilotRoutes, handleKrakenProxyRoutes, handleFastmailProxyRoutes, handleHealthRoutes } from "../routes/index.js";
 import type { ServerContext } from "../server-context.js";
 import type { Role } from "../rbac.js";
 import type { LAXConfig, ServerEvent, Session, ToolDefinition } from "../types.js";
@@ -111,7 +111,7 @@ export function createRequestHandler(deps: {
         else activeRuntimeBySession.delete(sid);
       },
     };
-    for (const h of [handleHealthRoutes, handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes, handleAutopilotRoutes, handleKrakenProxyRoutes, handleFastmailProxyRoutes]) {
+    for (const h of [handleHealthRoutes, handleSessionRoutes, handleChatRoutes, handleMemoryRoutes, handleSecurityRoutes, handleAgentRoutes, handleRunsRoutes, handleAppRoutes, handleBridgeRoutes, handleSettingsRoutes, handleMcpRoutes, handleAutopilotRoutes, handleKrakenProxyRoutes, handleFastmailProxyRoutes]) {
       if (await h(method, url, req, res, ctx, requestRole)) return;
     }
     if (method === "POST" && url.pathname === "/api/upload") {

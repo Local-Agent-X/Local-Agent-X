@@ -7,6 +7,7 @@
 
 import { EventBus } from "../event-bus.js";
 import { AgencyMessageBus } from "./message-bus.js";
+import { appendTraceEvent } from "../agents/run-trace.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("agency.handler");
@@ -102,6 +103,13 @@ export class Handler {
         agent.messageQueue.push(String(msg.payload));
       }
     });
+    appendTraceEvent(agentId, {
+      type: "run_start",
+      runId: agentId,
+      ts: agent.startedAt,
+      role: agent.role,
+      task: agent.currentTask || "",
+    });
     return { agentId, abortController: ac };
   }
 
@@ -130,6 +138,13 @@ export class Handler {
       this.notifyUpdate(agentId, { type: "error", data: outcome.result });
       this.pushCompletionToParent(agent, "failed", outcome.result);
     }
+    appendTraceEvent(agentId, {
+      type: "run_end",
+      runId: agentId,
+      ts: Date.now(),
+      status: agent.status,
+      tokensUsed: agent.tokensUsed || undefined,
+    });
     setTimeout(() => {
       const a = this.agents.get(agentId);
       if (a && (a.status === "succeeded" || a.status === "failed")) {

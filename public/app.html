@@ -457,6 +457,12 @@
           <button class="action-btn" id="rollback-refresh-btn" onclick="loadRollbackList()" style="margin-top:8px">Refresh</button>
         </div>
         <div class="section-card">
+          <div class="section-title">Run Traces</div>
+          <div class="section-desc">Step-by-step activity log for each agent run. Click a run to expand its tool-call timeline.</div>
+          <div id="run-traces-list" style="margin-top:8px;font-size:.78rem"></div>
+          <button class="action-btn" id="run-traces-refresh-btn" onclick="loadRunTracesList()" style="margin-top:8px">Refresh</button>
+        </div>
+        <div class="section-card">
           <div class="section-title">Bash Sandbox</div>
           <div class="section-desc">Run shell commands inside a Docker container instead of directly on your host. Off by default — turning it on isolates bash but disables OS-native commands (ipconfig, Get-*, etc.) and all network access from bash.</div>
           <div class="field">
@@ -999,6 +1005,7 @@
 <script src="/js/settings-agent-sync.js?v=v1"></script>
 <script src="/js/settings-file-access.js?v=v1"></script>
 <script src="/js/settings-rollback.js?v=v1"></script>
+<script src="/js/settings-run-traces.js?v=v1"></script>
 <script src="/js/settings-sandbox.js?v=v1"></script>
 <script src="/js/settings-tool-policy.js?v=v1"></script>
 <script src="/js/settings-search.js?v=v1"></script>

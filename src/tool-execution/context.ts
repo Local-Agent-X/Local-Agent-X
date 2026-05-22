@@ -17,6 +17,11 @@ export interface ToolCallContext {
   readonly rbac?: RBACManager;
   readonly callerRole?: Role;
   readonly sessionId?: string;
+  /** Stable run id when this tool call is part of an agent run (canonical-loop
+   *  agent-runner threads its agentId/runId through here). Absent for chat
+   *  turns, MCP bridge calls, and other ad-hoc dispatches — the trace
+   *  emit-phase short-circuits when absent. */
+  readonly runId?: string;
   readonly onEvent?: (event: ServerEvent) => void;
   readonly signal?: AbortSignal;
   readonly priorMessages?: ChatCompletionMessageParam[];
@@ -51,6 +56,7 @@ export function createContext(input: {
   rbac?: RBACManager;
   callerRole?: Role;
   sessionId?: string;
+  runId?: string;
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
   priorMessages?: ChatCompletionMessageParam[];
@@ -64,6 +70,7 @@ export function createContext(input: {
     rbac: input.rbac,
     callerRole: input.callerRole,
     sessionId: input.sessionId,
+    runId: input.runId,
     onEvent: input.onEvent,
     signal: input.signal,
     priorMessages: input.priorMessages,

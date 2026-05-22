@@ -758,11 +758,28 @@ async function loadAgentTemplates() {
   } catch { list.innerHTML = '<div style="color:var(--muted);padding:20px;text-align:center">Failed to load</div>'; }
 }
 
-function showTemplateForm(existing) {
+async function fetchHiredProjectsForTemplate(templateId) {
+  // /api/agents/hired with no projectId returns rostered entries across all
+  // projects. We don't trust template.hired -- that field is L3-deprecated and
+  // can be stale on disk. Source of truth is the roster.
+  try {
+    const r = await fetch(`${API}/api/agents/hired`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    if (!r.ok) return [];
+    const hired = await r.json();
+    if (!Array.isArray(hired)) return [];
+    return hired.filter(h => h.id === templateId).map(h => h.projectId).filter(Boolean);
+  } catch { return []; }
+}
+
+async function showTemplateForm(existing) {
   openAgentForm();
   const form = document.getElementById('agents-template-form');
   const t = existing || { id: '', name: '', role: '', systemPrompt: '', description: '', allowedTools: [] };
   const isEdit = !!t.id;
+  // Real hire status comes from rosters, not from template.hired (deprecated).
+  const hiredProjects = isEdit ? await fetchHiredProjectsForTemplate(t.id) : [];
+  const isHired = hiredProjects.length > 0;
+  const hiredInCurrent = !!_currentProject && hiredProjects.includes(_currentProject);
   form.innerHTML = `
     <h2 style="font-family:var(--mono);font-size:1rem;color:var(--accent);margin-bottom:16px">${isEdit ? 'Edit' : 'New'} Agent Template</h2>
     <div class="field"><label class="field-label">Name</label><input class="field-input" id="tpl-name" value="${esc(t.name)}" placeholder="e.g. Code Reviewer"></div>
@@ -774,8 +791,8 @@ function showTemplateForm(existing) {
       <button class="action-btn primary" onclick="saveTemplate('${t.id}')">${isEdit ? 'Update' : 'Create'}</button>
       <button class="action-btn secondary" onclick="cancelTemplateForm()">Cancel</button>
       ${isEdit ? `<button class="action-btn danger" onclick="deleteTemplate('${t.id}')">Delete</button>` : ''}
-      ${isEdit && !t.hired ? `<button class="action-btn secondary" onclick="hireAgent('${t.id}')">Hire Agent</button>` : ''}
-      ${isEdit && t.hired ? `<span style="color:var(--accent);font-size:.72rem;font-family:var(--mono)">HIRED</span>` : ''}
+      ${isEdit && !hiredInCurrent ? `<button class="action-btn secondary" onclick="hireAgent('${t.id}')">${isHired ? 'Hire here too' : 'Hire Agent'}</button>` : ''}
+      ${isEdit && isHired ? `<span style="color:var(--accent);font-size:.72rem;font-family:var(--mono)" title="Rostered in: ${hiredProjects.join(', ')}">HIRED${hiredProjects.length > 1 ? ` (${hiredProjects.length})` : ''}</span>` : ''}
     </div>
   `;
 }
@@ -808,20 +825,39 @@ async function saveTemplate(existingId) {
 
 async function hireAgent(id) {
   if (!_currentProject) {
-    alert('Select a project first — hire is always a Project action.');
+    showHireBanner('Pick a project from the dropdown at the top of the Agents page first — hire is always a Project action.', 'error');
     return;
   }
-  const schedule = prompt('Heartbeat schedule (e.g. "every 4h", "daily 9am", or leave empty for no heartbeat):');
   try {
-    await fetch(`${API}/api/agents/templates/${id}/hire`, {
+    const r = await fetch(`${API}/api/agents/templates/${id}/hire`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ projectId: _currentProject, heartbeatSchedule: schedule || undefined })
+      body: JSON.stringify({ projectId: _currentProject })
     });
-    alert('Agent hired into project!');
+    if (!r.ok) {
+      const detail = await r.text().catch(() => '');
+      showHireBanner(`Hire failed (${r.status}). ${detail}`, 'error');
+      return;
+    }
     loadTeam();
     loadAgentTemplates();
     cancelTemplateForm();
-  } catch {}
+  } catch (e) {
+    showHireBanner(`Hire failed: ${e && e.message ? e.message : e}`, 'error');
+  }
+}
+
+function showHireBanner(msg, kind) {
+  const form = document.getElementById('agents-template-form');
+  if (!form) return;
+  let banner = form.querySelector('.hire-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.className = 'hire-banner';
+    form.appendChild(banner);
+  }
+  const color = kind === 'error' ? '#ff5555' : 'var(--accent)';
+  banner.style.cssText = `color:${color};font-family:var(--mono);font-size:.72rem;margin-top:12px;padding:8px;border:1px solid ${color};border-radius:4px`;
+  banner.textContent = msg;
 }
 
 async function showTemplateDetail(id) {

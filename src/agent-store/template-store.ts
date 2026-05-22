@@ -55,7 +55,33 @@ export class AgentTemplateStore {
   private static instance: AgentTemplateStore;
   private templates: AgentTemplate[] = [];
 
-  private constructor() { this.load(); this.migrateAppBuilderTools(); this.seedDefaults(); }
+  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.seedDefaults(); }
+
+  /**
+   * Strip deprecated org-membership fields from persisted templates.
+   *
+   * The L3 split moved `hired / reportsTo / heartbeatSchedule /
+   * heartbeatEnabled / budget` from AgentTemplate to ProjectRoster, but
+   * pre-L3 JSON on disk still carries them. The UI used to read
+   * `template.hired` to render the HIRED badge, which lied whenever the
+   * field outlived its roster counterpart (template hired flag never
+   * cleared, no matching roster entry). Idempotent: a clean template is
+   * left alone.
+   */
+  private migrateStripDeprecatedOrgFields(): void {
+    const deprecated = ["hired", "reportsTo", "heartbeatSchedule", "heartbeatEnabled", "budget"] as const;
+    let touched = false;
+    for (const t of this.templates) {
+      const tt = t as unknown as Record<string, unknown>;
+      for (const k of deprecated) {
+        if (k in tt) { delete tt[k]; touched = true; }
+      }
+    }
+    if (touched) {
+      this.persist();
+      logger.info("[agents] stripped deprecated org-membership fields from persisted templates");
+    }
+  }
 
   /**
    * Phase-3 migration (docs/migration/build-app-to-canonical-op.md):

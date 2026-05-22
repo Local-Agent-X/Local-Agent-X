@@ -15,6 +15,7 @@ import { resolvePhase } from "./resolve-tool.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";
 import { requireApprovalPhase } from "./require-approval.js";
 import { captureRollbackPhase } from "./capture-rollback.js";
+import { emitTraceStartPhase, emitTraceCompletePhase } from "./emit-trace.js";
 import { runSandboxedPhase } from "./run-sandboxed.js";
 import { auditPhase } from "./audit-tool-call.js";
 
@@ -30,8 +31,9 @@ async function executeSingleTool(
   onEvent?: (event: ServerEvent) => void,
   signal?: AbortSignal,
   priorMessages?: ChatCompletionMessageParam[],
+  runId?: string,
 ): Promise<ChatCompletionMessageParam[]> {
-  const ctx = createContext({ tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages });
+  const ctx = createContext({ tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, runId, onEvent, signal, priorMessages });
 
   await resolvePhase(ctx);
   if (ctx.terminated) return ctx.msgs;
@@ -43,7 +45,9 @@ async function executeSingleTool(
     await requireApprovalPhase(ctx);
     if (ctx.terminated) return ctx.msgs;
     await captureRollbackPhase(ctx);
+    await emitTraceStartPhase(ctx);
     await runSandboxedPhase(ctx);
+    await emitTraceCompletePhase(ctx);
   }
 
   await auditPhase(ctx);
@@ -97,6 +101,7 @@ export interface UnifiedDispatchCtx {
   rbac?: RBACManager;
   callerRole?: Role;
   sessionId?: string;
+  runId?: string;
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
   priorMessages?: ChatCompletionMessageParam[];
@@ -127,6 +132,7 @@ export async function dispatchSingleToolCall(
     ctx.onEvent,
     ctx.signal,
     ctx.priorMessages,
+    ctx.runId,
   );
   const last = msgs[msgs.length - 1];
   const content = typeof last?.content === "string" ? last.content : "";
@@ -153,6 +159,7 @@ export async function executeToolCalls(
   onEvent?: (event: ServerEvent) => void,
   signal?: AbortSignal,
   priorMessages?: ChatCompletionMessageParam[],
+  runId?: string,
 ): Promise<ChatCompletionMessageParam[]> {
   const results: ChatCompletionMessageParam[] = [];
 
@@ -172,15 +179,15 @@ export async function executeToolCalls(
       }
       if (batch.length > 1) {
         const parallel = await Promise.all(
-          batch.map((b) => executeSingleTool(b, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages)),
+          batch.map((b) => executeSingleTool(b, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId)),
         );
         results.push(...parallel.flat());
       } else {
-        const msgs = await executeSingleTool(batch[0], toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages);
+        const msgs = await executeSingleTool(batch[0], toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId);
         results.push(...msgs);
       }
     } else {
-      const msgs = await executeSingleTool(tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages);
+      const msgs = await executeSingleTool(tc, toolMap, security, toolPolicy, threatEngine, rbac, callerRole, sessionId, onEvent, signal, priorMessages, runId);
       results.push(...msgs);
     }
     i++;

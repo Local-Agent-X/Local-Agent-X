@@ -43,6 +43,10 @@ export interface ChatToolDispatcherOptions {
    *  tool_search returns schemas as text only and deferred tools stay
    *  uncallable in-session. */
   opId?: string;
+  /** Agent run id when this dispatcher serves a spawned-agent op. Threaded
+   *  into `ToolCallContext.runId` so the trace emit-phase can write a per-run
+   *  activity log. Absent on chat-turn dispatchers. */
+  runId?: string;
   onEvent?: (event: ServerEvent) => void;
   signal?: AbortSignal;
 }
@@ -76,6 +80,7 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
           opts.onEvent,
           opts.signal,
           /* priorMessages */ undefined,
+          opts.runId,
         );
 
         // executeToolCalls returns 1+ ChatCompletionMessageParam. The

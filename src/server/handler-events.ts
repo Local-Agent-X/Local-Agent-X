@@ -141,6 +141,7 @@ export function registerHandlerEvents(deps: {
         wallClockMs: config.agentTimeoutMs,
         opType: "agent_spawn",
         lane: "background",
+        runId: agentId,
         signal,
         onEvent: (event) => {
           if (event.type === "stream" && "delta" in event && event.delta) {

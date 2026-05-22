@@ -66,6 +66,11 @@ export interface CanonicalAgentOptions extends AgentOptions {
   /** Canonical lane. Defaults to "background" — non-chat callers don't
    *  share the `interactive` cap with live chat turns. */
   lane?: OpLane;
+  /** FieldAgent run id from invokeDefinition. Threaded through to the
+   *  tool-execution context so per-run activity traces correlate with the
+   *  AgentRunStore record. Absent for callers that aren't an agent spawn
+   *  (e.g. cron missions, memory consolidation). */
+  runId?: string;
 }
 
 export async function runAgentViaCanonical(
@@ -130,6 +135,7 @@ export async function runAgentViaCanonical(
     callerRole: options.callerRole,
     sessionId,
     opId: op.id,
+    runId: options.runId,
     onEvent: options.onEvent,
     signal: cancelBridge.signal,
   }));

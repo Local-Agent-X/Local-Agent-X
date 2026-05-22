@@ -18,7 +18,7 @@ import type { AgentRunStore, AgentTemplateStore } from "../agent-store.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.handler-events");
 
-interface AgentSpawnEvent { agentId: string; name: string; role: string; task: string; systemPrompt?: string; parentAgentId?: string; parentSessionId?: string }
+interface AgentSpawnEvent { agentId: string; name: string; role: string; task: string; systemPrompt?: string; parentAgentId?: string; parentSessionId?: string; templateId?: string | null }
 interface AgentOutputEvent { agentId: string; output: string }
 interface AgentBlockedEvent { agentId: string; reason: string; role: string }
 interface AgentResultEvent { agentId: string; result: string; success: boolean; tokens?: number }
@@ -52,7 +52,7 @@ export function registerHandlerEvents(deps: {
   } = deps;
 
   const eventBus = EventBus.getInstance();
-  const pendingMeta = new Map<string, { name: string; role: string; task: string; systemPrompt: string; parentAgentId: string | null; sessionId: string; startedAt: number; toolsUsed: string[] }>();
+  const pendingMeta = new Map<string, { name: string; role: string; task: string; systemPrompt: string; parentAgentId: string | null; sessionId: string; startedAt: number; toolsUsed: string[]; templateId: string | null }>();
 
   // Canonical-loop driver — registered with agents/runtime so invokeAgent
   // dispatches here. Returns the terminal outcome; invokeDefinition fans
@@ -210,7 +210,7 @@ export function registerHandlerEvents(deps: {
   };
   registerAgentRunDriver(agentRunDriver);
 
-  eventBus.on("handler:agent-spawn", (d: unknown) => { const evt = d as AgentSpawnEvent; broadcastAll({ type: "agent-spawn", ...evt }); pendingMeta.set(evt.agentId, { name: evt.name, role: evt.role, task: evt.task, systemPrompt: evt.systemPrompt || "", parentAgentId: evt.parentAgentId || null, sessionId: evt.parentSessionId || "", startedAt: Date.now(), toolsUsed: [] }); });
+  eventBus.on("handler:agent-spawn", (d: unknown) => { const evt = d as AgentSpawnEvent; broadcastAll({ type: "agent-spawn", ...evt }); pendingMeta.set(evt.agentId, { name: evt.name, role: evt.role, task: evt.task, systemPrompt: evt.systemPrompt || "", parentAgentId: evt.parentAgentId || null, sessionId: evt.parentSessionId || "", startedAt: Date.now(), toolsUsed: [], templateId: evt.templateId || null }); });
   eventBus.on("handler:agent-output", (d: unknown) => { broadcastAll({ type: "agent-output", ...(d as AgentOutputEvent) }); });
   eventBus.on("handler:agent-blocked", (d: unknown) => { const evt = d as AgentBlockedEvent; broadcastAll({ type: "agent-blocked", agentId: evt.agentId, reason: evt.reason, role: evt.role }); });
   eventBus.on("handler:agent-result", (d: unknown) => {
@@ -234,7 +234,7 @@ export function registerHandlerEvents(deps: {
       }
       const status: AgentRun["status"] = explicitFailure || guardError ? "failed" : "succeeded";
       const errorField = explicitFailure ? evt.result : guardError;
-      agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status, output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: errorField } as AgentRun);
+      agentRunStore.save({ id: evt.agentId, parentAgentId: m.parentAgentId, sessionId: m.sessionId, name: m.name, role: m.role, task: m.task, systemPrompt: m.systemPrompt, status, output: [], result: evt.result || "", toolsUsed: m.toolsUsed, tokensUsed: evt.tokens || 0, startedAt: m.startedAt, completedAt: Date.now(), error: errorField, templateId: m.templateId || undefined } as AgentRun);
       if (m.sessionId && evt.result) {
         try {
           const parentSession = sessionStore.load(m.sessionId);

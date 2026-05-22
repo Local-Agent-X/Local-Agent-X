@@ -52,7 +52,10 @@ function walkTsFiles(dir: string): string[] {
       // someone vendors something there.
       if (name === "node_modules" || name === "dist") continue;
       out.push(...walkTsFiles(full));
-    } else if (st.isFile() && full.endsWith(".ts") && !full.endsWith(".d.ts")) {
+    } else if (st.isFile() && full.endsWith(".ts") && !full.endsWith(".d.ts") && !full.endsWith(".test.ts")) {
+      // Co-located *.test.ts files are not production code. The contract
+      // gates production registrations; test stubs (via registerAgentRunDriver
+      // in a test fixture) are out of scope by design.
       out.push(full);
     }
   }

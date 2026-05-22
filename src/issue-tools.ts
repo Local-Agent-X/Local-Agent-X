@@ -157,6 +157,10 @@ const issueUpdate: ToolDefinition = {
     // HIERARCHY: auto-notify manager when status changes to done or blocked.
     // Hierarchy is project-scoped post-L3, so resolve reportsTo via the
     // roster entry for (issue.projectId, assignee), not the template.
+    //
+    // done   → leave a comment; manager picks it up on next heartbeat.
+    // blocked → invoke the manager out-of-cycle via canonical invoke
+    //           (implicit escalation — the chunk-2 wake-trigger spec).
     const newStatus = String(args.status || prevStatus);
     if (args.status && (newStatus === "done" || newStatus === "blocked") && issue.assignee) {
       const roster = rosterForIssue(issue.assignee, issue.projectId);
@@ -171,6 +175,23 @@ const issueUpdate: ToolDefinition = {
             : `Task blocked: ${issue.title} — needs help`;
           store.comment(id, "system", `Auto-notified manager ${manager.name}: ${statusMsg}`);
           updates.push(`manager ${manager.name} notified`);
+
+          if (newStatus === "blocked") {
+            try {
+              const { invokeAgent } = await import("./agents/invoke.js");
+              const task =
+                `Your report's issue ${id} just went BLOCKED: "${issue.title}".\n\n` +
+                `Read issue ${id} (use issue_list / issue_search), triage the blocker, ` +
+                `and either unblock the report (agent_wakeup) or escalate further ` +
+                `(agent_escalate to your manager / user) if it needs a decision you can't make.`;
+              invokeAgent(manager.id, task, {
+                scope: issue.projectId ? { projectId: issue.projectId } : undefined,
+              });
+              updates.push(`manager ${manager.name} woken`);
+            } catch (e) {
+              store.comment(id, "system", `Failed to wake manager ${manager.name}: ${(e as Error).message}`);
+            }
+          }
         }
       }
     }

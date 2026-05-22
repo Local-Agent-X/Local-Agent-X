@@ -23,6 +23,15 @@ interface AgentOutputEvent { agentId: string; output: string }
 interface AgentBlockedEvent { agentId: string; reason: string; role: string }
 interface AgentResultEvent { agentId: string; result: string; success: boolean; tokens?: number }
 interface AgentRedirectEvent { agentId: string; [key: string]: unknown }
+interface AgentEscalationEvent {
+  from: string;
+  fromName: string;
+  to: string;
+  toName?: string;
+  context: string;
+  urgency: "normal" | "high";
+  issueId?: string;
+}
 
 export function registerHandlerEvents(deps: {
   config: LAXConfig;
@@ -241,4 +250,22 @@ export function registerHandlerEvents(deps: {
     }
   });
   eventBus.on("handler:agent-redirect", (d: unknown) => { const evt = d as AgentRedirectEvent; broadcastAll({ type: "agent-update", ...evt, status: "redirected" }); });
+  // agent_escalate emits this when its `to` resolves to "user" (or
+  // record-only to another agent). Forward to the chat-attached UI; the
+  // renderer treats wakeUser=true as a higher-priority alert. UI styling
+  // is a follow-up chunk — the channel + payload ship now.
+  eventBus.on("handler:agent-escalation", (d: unknown) => {
+    const evt = d as AgentEscalationEvent;
+    broadcastAll({
+      type: "agent-escalation",
+      from: evt.from,
+      fromName: evt.fromName,
+      to: evt.to,
+      toName: evt.toName,
+      context: evt.context,
+      urgency: evt.urgency,
+      issueId: evt.issueId,
+      wakeUser: evt.to === "user" && evt.urgency === "high",
+    });
+  });
 }

@@ -313,6 +313,7 @@ export class Handler {
       startedAt: agent.startedAt,
       elapsed: Date.now() - agent.startedAt,
       tokensUsed: agent.tokensUsed,
+      templateId: agent.templateId,
     };
   }
 

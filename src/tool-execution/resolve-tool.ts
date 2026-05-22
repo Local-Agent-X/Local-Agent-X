@@ -30,6 +30,7 @@ const SESSION_SCOPED_TOOLS = new Set([
   "memory_search", "search_past_sessions", "memory_save",
   "self_edit",
   "build_app",
+  "agent_escalate",
 ]);
 
 function deriveCallContext(sessionId: string | undefined): CallContext {

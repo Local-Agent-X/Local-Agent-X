@@ -24,6 +24,10 @@ export interface FieldAgentStatus {
   startedAt: number;
   elapsed: number;
   tokensUsed: number;
+  /** Definition this run is bound to. Exposed so tools that need to map
+   *  a runId back to the calling agent's template (e.g. agent_escalate
+   *  resolving the caller's roster) can do it through the public API. */
+  templateId?: string;
 }
 
 export interface SpawnConfig {

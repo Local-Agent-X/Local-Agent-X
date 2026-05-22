@@ -3,6 +3,7 @@ import type { ToolPlugin } from "./plugin.js";
 import { allTools, createHttpRequestTool, buildToolRegistry } from "../tools.js";
 import { appTools } from "../app-tools.js";
 import { issueTools } from "../issue-tools.js";
+import { agentEscalate } from "../agents/escalate-tool.js";
 import { imageTools } from "../image-tools.js";
 import { createSecretTools } from "../secret-tools.js";
 import { createBrowserTools } from "../browser-tools.js";
@@ -155,6 +156,13 @@ export const plugins: ToolPlugin[] = [
   {
     id: "issues",
     register() { return issueTools; },
+  },
+  {
+    // Full-agent only — kept out of BRIDGE_PLUGIN_IDS so escalate doesn't
+    // surface to the main chat. Routing the human user "up" to a manager
+    // has no meaning; only sub-agents have a reportsTo to walk.
+    id: "escalation",
+    register() { return [agentEscalate]; },
   },
   {
     id: "operations",

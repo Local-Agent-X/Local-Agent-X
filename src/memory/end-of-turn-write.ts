@@ -28,7 +28,7 @@ import { createLogger } from "../logger.js";
 import { redactKnownSecrets } from "../sanitize.js";
 import { resetSession as resetCurateNudge } from "./curate-nudge.js";
 import { dispatch } from "../llm-dispatch.js";
-import { PERSONALITY_FILES } from "./personality.js";
+import { PERSONALITY_FILES, dedupeProfileMarkdown } from "./personality.js";
 import { writeMemorySafely, MemoryWriteBlocked } from "./write-safely.js";
 
 const logger = createLogger("memory.end-of-turn-write");
@@ -239,6 +239,13 @@ async function applyWrite(d: WriteDecision): Promise<void> {
       // Section doesn't exist yet — append as new section
       updated = existing + (existing.endsWith("\n") ? "" : "\n") + `\n## ${heading}\n${d.content}\n`;
     }
+  }
+
+  // Profile-file safety net: collapse duplicate top-level blocks before
+  // persisting. Mirrors the funnel in memory_update_profile so both write
+  // paths land on the same canonical shape.
+  if (filename === "USER.md" || filename === "IDENTITY.md" || filename === "HEART.md") {
+    updated = dedupeProfileMarkdown(updated);
   }
 
   // Char-limit check — same caps as memory_update_profile tool.

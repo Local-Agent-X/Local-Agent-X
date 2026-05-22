@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryIndex } from "../../memory.js";
-import { PERSONALITY_FILES } from "../personality.js";
+import { PERSONALITY_FILES, dedupeProfileMarkdown } from "../personality.js";
 import {
   writeMemorySafely,
   writeMindFileSafely,
@@ -94,7 +94,7 @@ export function createSaveTools(memory: MemoryIndex) {
         "Files: 'user' (USER.md — preferences, workflow, communication style — bounded ~2000 chars), " +
         "'mind' or 'memory' (MIND.md — facts, projects, accumulated knowledge — bounded ~5000 chars), " +
         "'heart' (HEART.md — your personality), 'identity' (IDENTITY.md — your name/vibe). " +
-        "Prefer action='replace_section' over 'append' — files have char limits and bloat hurts cache. " +
+        "Prefer action='replace_section' over 'append'. For SCALAR fields like Name/Location/Job, action MUST be 'replace_section' with section_heading set to the parent block ('About Me' for USER.md, 'Agent Identity' for IDENTITY.md) — never 'append' for scalar edits, that creates duplicate blocks the next turn has to untangle. " +
         "Phrase entries GENERALLY ('user prefers business-suite-level dashboards for analytics across Meta properties') " +
         "rather than verbatim ('user said use facebook dashboard') so the rule transfers across future tasks.",
       parameters: {
@@ -239,6 +239,15 @@ export function createSaveTools(memory: MemoryIndex) {
               `Don't drop the write. Don't claim "saved!" — the user will think it persisted when it didn't. Pick one of the three retries above and execute it now.`,
             isError: false,
           };
+        }
+
+        // Profile-file safety net: collapse any duplicate top-level blocks
+        // before persisting. Tool description steers the model toward
+        // replace_section, but bad calls (`append` of a fresh "# About Me"
+        // when one exists) used to corrupt the file permanently. This
+        // catches that at the funnel.
+        if (filename === "USER.md" || filename === "IDENTITY.md" || filename === "HEART.md") {
+          updated = dedupeProfileMarkdown(updated);
         }
 
         try {

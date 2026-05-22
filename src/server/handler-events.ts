@@ -50,7 +50,7 @@ export function registerHandlerEvents(deps: {
   // it out to subscribers (chunk-runner, AgentRunStore persistence, UI
   // broadcast) via handler:agent-result / -done / -error.
   const agentRunDriver: AgentRunDriver = async (req, signal) => {
-    const { agentId, task, systemPrompt, role, parentSessionId, templateId, tools: invocationTools } = req;
+    const { agentId, task, systemPrompt, role, parentSessionId, templateId, tools: invocationTools, modelOverride } = req;
     logger.info(`[handler] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
 
     const template = templateId ? agentTemplateStore.get(templateId) : null;
@@ -73,7 +73,17 @@ export function registerHandlerEvents(deps: {
     let worktreeInfo: { path: string; branch: string } | null = null;
     try {
       const { resolveProvider } = await import("../agent-request.js");
-      const { provider, apiKey, model } = await resolveProvider(config, secretsStore, dataDir);
+      // Thread the resolved per-agent model pin into the provider chain.
+      // resolveAgentModel (invoke.ts) already walked run→roster→template;
+      // the pin arrives here as req.modelOverride. When unset, we fall
+      // through to the global default (no override args).
+      const { provider, apiKey, model } = await resolveProvider(
+        config,
+        secretsStore,
+        dataDir,
+        modelOverride?.provider,
+        modelOverride?.model,
+      );
 
       // Canonical resolver: read each tool's `audiences` field. Spawned
       // agents default to the "spawned-agent" audience; ops-phase workers

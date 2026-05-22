@@ -25,6 +25,17 @@
  * source of truth; invoke.ts is the single entrypoint to spawn.
  */
 
+import type { ProviderId } from "../providers/provider-ids.js";
+
+/** A pinned (provider, model) pair. Used by AgentDefinition.defaultModel
+ *  (template-level pin), ProjectRoster.model (per-project override), and
+ *  InvokeOpts.modelOverride (per-run override) — three rungs of the
+ *  resolution chain consumed by resolveAgentModel() in agents/invoke.ts. */
+export interface AgentModelPin {
+  provider: ProviderId;
+  model: string;
+}
+
 /** The canonical "what is an agent" record — pure definition, no state. */
 export interface AgentDefinition {
   /** Stable identifier. For built-ins this is "builtin-<role>"; for user
@@ -57,6 +68,10 @@ export interface AgentDefinition {
    *  that edits user projects (chunk-runner workers, etc) or operates
    *  in the web/file/shell surface (operator, researcher, browser). */
   requiresWorktree?: boolean;
+  /** Template-level default provider+model pin. Rung 3 of the
+   *  resolveAgentModel chain (run-override → roster.model → this →
+   *  undefined). Leave unset to let the global default win. */
+  defaultModel?: AgentModelPin;
 }
 
 /** Org-level metadata about an agent definition. Lives separately from
@@ -104,6 +119,10 @@ export interface InvokeOpts {
    *  catalog. Agents running inside a project pass scope so delegation
    *  is gated by the org's roster + tool allowlist. */
   scope?: InvokeScope;
+  /** Per-run provider+model pin. Rung 1 of resolveAgentModel —
+   *  highest-priority override, used by delegation tools that want to
+   *  pick a model explicitly for a single invocation. */
+  modelOverride?: AgentModelPin;
 }
 
 /** Handle returned from invokeAgent. Callers poll run status via

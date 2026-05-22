@@ -169,14 +169,110 @@ async function loadTeam() {
   } catch { list.innerHTML = '<div style="color:var(--muted);padding:20px;text-align:center">Failed to load</div>'; }
 }
 
+// Provider registry cache — loaded on first hired-agent panel open. Keyed by
+// provider id, value is {label, models[], defaultModel}. Source: GET
+// /api/providers/registry (single source of truth in src/providers/registry.ts).
+let _providerRegistry = null;
+async function getProviderRegistry() {
+  if (_providerRegistry) return _providerRegistry;
+  try {
+    const r = await fetch(`${API}/api/providers/registry`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+    const data = await r.json();
+    _providerRegistry = Array.isArray(data.providers) ? data.providers : [];
+  } catch { _providerRegistry = []; }
+  return _providerRegistry;
+}
+
+// Render the per-agent model picker — two cascading <select>s. Hidden when
+// no project is selected (model is a per-roster pin, can't set without one).
+function renderModelPicker(agentId, currentModel, registry) {
+  if (!_currentProject) {
+    return `<div class="agent-detail-field"><span class="agent-detail-label">Model</span><span style="color:var(--muted);font-size:.7rem">Select a project to assign a model</span></div>`;
+  }
+  const selectedProvider = currentModel?.provider || '';
+  const providerOpts = ['<option value="">Use template default</option>']
+    .concat(registry.map(p => `<option value="${esc(p.id)}" ${p.id===selectedProvider?'selected':''}>${esc(p.label)}</option>`))
+    .join('');
+  const selectedProviderEntry = registry.find(p => p.id === selectedProvider);
+  const modelList = selectedProviderEntry?.models || [];
+  const selectedModel = currentModel?.model || '';
+  const modelOpts = ['<option value="">Use template default</option>']
+    .concat(modelList.map(m => `<option value="${esc(m)}" ${m===selectedModel?'selected':''}>${esc(m)}</option>`))
+    .join('');
+  return `
+    <div style="margin-top:12px">
+      <div class="agent-detail-label">Model (per-project override)</div>
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <select id="agent-model-provider" class="field-input" style="flex:1;font-size:.75rem;padding:4px 8px" onchange="onAgentProviderChange('${agentId}')">${providerOpts}</select>
+        <select id="agent-model-name" class="field-input" style="flex:1;font-size:.75rem;padding:4px 8px" onchange="onAgentModelChange('${agentId}')" ${selectedProvider?'':'disabled'}>${modelOpts}</select>
+      </div>
+      <div style="font-size:.65rem;color:var(--muted);margin-top:4px;line-height:1.4">Overrides the template default for this project only. Pick "Use template default" on either dropdown to clear the override.</div>
+    </div>`;
+}
+
+async function onAgentProviderChange(agentId) {
+  const provSel = document.getElementById('agent-model-provider');
+  const modelSel = document.getElementById('agent-model-name');
+  if (!provSel || !modelSel) return;
+  const provider = provSel.value;
+  const registry = await getProviderRegistry();
+  const entry = registry.find(p => p.id === provider);
+  const models = entry?.models || [];
+  modelSel.innerHTML = '<option value="">Use template default</option>' +
+    models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  modelSel.disabled = !provider;
+  // If the user picked a provider, default to its flagship so the PATCH
+  // is well-formed (validator rejects {provider:"x", model:""} on
+  // providers that have a non-empty model list).
+  if (provider && entry?.defaultModel) {
+    modelSel.value = entry.defaultModel;
+    await patchAgentModel(agentId, { provider, model: entry.defaultModel });
+  } else if (!provider) {
+    await patchAgentModel(agentId, null);
+  }
+}
+
+async function onAgentModelChange(agentId) {
+  const provSel = document.getElementById('agent-model-provider');
+  const modelSel = document.getElementById('agent-model-name');
+  if (!provSel || !modelSel) return;
+  const provider = provSel.value;
+  const model = modelSel.value;
+  if (!provider || !model) { await patchAgentModel(agentId, null); return; }
+  await patchAgentModel(agentId, { provider, model });
+}
+
+async function patchAgentModel(agentId, pin) {
+  if (!_currentProject) return;
+  try {
+    await fetch(`${API}/api/projects/${_currentProject}/rosters/${agentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify({ model: pin }),
+    });
+  } catch (e) { console.error('Failed to update agent model:', e); }
+}
+
 async function showHiredAgent(id) {
   openAgentPanel();
   const detail = document.getElementById('agents-detail-view');
   try {
-    const r = await fetch(`${API}/api/agents/templates`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-    const templates = await r.json();
-    const a = templates.find(t => t.id === id);
+    // Prefer project-scoped roster fetch so the panel sees the per-project
+    // model override + heartbeat metadata. Falls back to template-only when
+    // no project is selected (model picker stays hidden in that case).
+    let a;
+    if (_currentProject) {
+      const r = await fetch(`${API}/api/agents/hired?projectId=${encodeURIComponent(_currentProject)}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+      const rostered = await r.json();
+      a = Array.isArray(rostered) ? rostered.find(t => t.id === id) : null;
+    }
+    if (!a) {
+      const r = await fetch(`${API}/api/agents/templates`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
+      const templates = await r.json();
+      a = templates.find(t => t.id === id);
+    }
     if (!a || !detail) return;
+    const registry = await getProviderRegistry();
     // Get issues assigned to this agent
     const ir = await fetch(`${API}/api/issues?assignee=${id}`, { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
     const issues = await ir.json();
@@ -191,6 +287,7 @@ async function showHiredAgent(id) {
         ${a.reportsTo ? `<div class="agent-detail-field"><span class="agent-detail-label">Reports To</span><span>${esc(a.reportsTo)}</span></div>` : ''}
         <div class="agent-detail-field"><span class="agent-detail-label">Tools</span><span>${(a.allowedTools || []).join(', ') || 'All'}</span></div>
       </div>
+      ${renderModelPicker(a.id, a.model, registry)}
       <div style="margin-top:16px">
         <div class="agent-detail-label">System Prompt</div>
         <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:.78rem;line-height:1.5;margin-top:4px;max-height:120px;overflow-y:auto">${esc(a.systemPrompt)}</div>

@@ -313,6 +313,58 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     json(200, { ok: true }); return true;
   }
 
+  // ── xAI Grok OAuth (SuperGrok / X Premium+) ──
+  if (method === "POST" && url.pathname === "/api/auth/xai/login") {
+    try {
+      const { initiateXaiLogin } = await import("../../auth-xai.js");
+      const { authUrl, promise } = await initiateXaiLogin();
+      promise.then(() => logger.info("xAI login completed")).catch((e) => logger.warn("xAI login failed:", e.message));
+      // Open in the system browser from the server process. The renderer's
+      // window.open path is unreliable in the Electron wrapper for long URLs
+      // with `+`-encoded scopes (Codex flow happens to work, xAI doesn't —
+      // Chromium silently drops the call before setWindowOpenHandler fires).
+      // Launching from Node bypasses all of that.
+      let opened = false;
+      try {
+        const { execFile } = await import("node:child_process");
+        if (process.platform === "win32") {
+          // rundll32 + url.dll passes the URL via argv directly to the
+          // FileProtocolHandler API — no cmd, no shell, no `&` parsing.
+          // `cmd /c start "" <url>` truncates the URL at the first `&`
+          // because cmd reads `&` as a command separator.
+          execFile("rundll32.exe", ["url.dll,FileProtocolHandler", authUrl]);
+        } else if (process.platform === "darwin") {
+          execFile("open", [authUrl]);
+        } else {
+          execFile("xdg-open", [authUrl]);
+        }
+        opened = true;
+      } catch (e) { logger.warn(`[auth-xai] system-browser launch failed: ${(e as Error).message}`); }
+      json(200, { ok: true, authUrl, opened });
+    } catch (e) { json(500, { error: safeErrorMessage(e) }); }
+    return true;
+  }
+  if (method === "POST" && url.pathname === "/api/auth/xai/logout") {
+    try { const { deleteXaiTokens } = await import("../../auth-xai.js"); deleteXaiTokens(); json(200, { ok: true }); }
+    catch (e) { json(500, { error: safeErrorMessage(e) }); }
+    return true;
+  }
+  if (method === "GET" && url.pathname === "/api/auth/xai/status") {
+    try {
+      const { loadXaiTokens, isXaiTokenExpired } = await import("../../auth-xai.js");
+      const tokens = loadXaiTokens();
+      const hasApiKey = ctx.secretsStore.has("XAI_API_KEY");
+      const hasOAuth = !!tokens;
+      const expired = isXaiTokenExpired(tokens);
+      const authenticated = (hasOAuth && !expired) || hasApiKey;
+      // method = which path resolve-provider would pick. OAuth wins when both
+      // are configured (uses subscription quota instead of API spend).
+      const method = hasOAuth && !expired ? "oauth" : hasApiKey ? "api_key" : "none";
+      json(200, { authenticated, method, hasOAuth, hasApiKey, expired });
+    } catch (e) { json(500, { error: safeErrorMessage(e) }); }
+    return true;
+  }
+
   return false;
 };
 

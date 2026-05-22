@@ -22,7 +22,7 @@ import {
   setQuitting,
   setRestarting,
 } from "./server-process";
-import { createWindow, getMainWindow, showWindow, toggleWindow } from "./window";
+import { createWindow, getMainWindow, showWindow, toggleWindow, prewarmAppWindow } from "./window";
 import { setupApplicationMenu } from "./app-menu";
 import { registerHotkey, showNotification } from "./hotkey-notifications";
 import { setupIPC } from "./ipc";
@@ -183,6 +183,12 @@ app.on("ready", async () => {
       },
     });
   }
+
+  // Spawn a hidden BrowserWindow now so the first pinned-app click reuses
+  // an already-warm renderer instead of paying the cold-spawn cost. The
+  // prewarm itself polls isServerRunning() — safe to call before the server
+  // is fully up.
+  prewarmAppWindow();
 
   createTray({
     iconPath: ICON_PATH,

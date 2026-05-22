@@ -363,6 +363,10 @@ export function registerShutdown(deps: {
   process.on("SIGINT", async () => {
     getScheduler()?.stopAll();
     cronService.stop();
+    try {
+      const { WatchdogService } = await import("../agents/watchdog.js");
+      WatchdogService.getInstance().stop();
+    } catch { /* watchdog may never have started */ }
     agentSync.stopHeartbeat();
     EventBus.removeAllListeners();
     await agentSync.push().catch(() => {});

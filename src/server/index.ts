@@ -255,6 +255,18 @@ export async function startServer(config: LAXConfig) {
       getOrCreateSession, saveSession,
     });
     jobScheduler = handle.scheduler;
+
+    // Stall watchdog — system-level sweep that escalates silent agents
+    // every 15 minutes. Not a user-authored cron job (so it doesn't go
+    // through CronService); registerShutdown stops it on SIGINT.
+    void (async () => {
+      try {
+        const { WatchdogService } = await import("../agents/watchdog.js");
+        WatchdogService.getInstance().start();
+      } catch (e) {
+        bootLogger.warn(`[watchdog] start failed: ${(e as Error).message}`);
+      }
+    })();
   });
 
   registerShutdown({

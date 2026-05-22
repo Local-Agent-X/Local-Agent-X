@@ -51,6 +51,16 @@ export interface ProjectRoster {
   /** Per-project provider+model override. Rung 2 of resolveAgentModel —
    *  beats template.defaultModel, loses to a per-run modelOverride. */
   model?: AgentModelPin;
+  /** Stall threshold for the watchdog, in hours. Below this, the agent
+   *  is considered "working." At threshold the manager is woken; at 2x
+   *  the watchdog escalates past the manager directly to the user.
+   *  Undefined falls back to the watchdog's 24h default. */
+  stallThresholdHours?: number;
+  /** Epoch ms of the most recent watchdog escalation for this agent.
+   *  Dedup guard — the watchdog suppresses re-escalation within the
+   *  current threshold window so a stuck agent doesn't get pinged on
+   *  every 15-minute tick. */
+  lastEscalatedAt?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -229,7 +239,7 @@ export class ProjectRosterStore {
   patch(
     projectId: string,
     agentId: string,
-    patch: Partial<Pick<ProjectRoster, "reportsTo" | "heartbeatSchedule" | "heartbeatEnabled" | "budget">> & { model?: AgentModelPin | null },
+    patch: Partial<Pick<ProjectRoster, "reportsTo" | "heartbeatSchedule" | "heartbeatEnabled" | "budget" | "stallThresholdHours" | "lastEscalatedAt">> & { model?: AgentModelPin | null },
   ): ProjectRoster | null {
     const key = rosterKey(projectId, agentId);
     const existing = this.rosters[key];

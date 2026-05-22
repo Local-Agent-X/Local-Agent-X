@@ -31,6 +31,13 @@ export interface AgentRun {
   /** Sub-classification for terminal `failed` — currently only
    *  "timeout" is meaningful (wall-clock ceiling vs in-task error). */
   reason?: "timeout";
+  /** AgentDefinition id this run was spawned from. Optional because
+   *  ad-hoc runs (operations/executor phase agents, legacy records
+   *  pre-chunk-3) have no template. Set by handler-events.ts from the
+   *  agent-spawn event's templateId so callers like the stall watchdog
+   *  can find "the most recent run for agent X" without scanning every
+   *  field. */
+  templateId?: string;
 }
 
 // Normalise persisted records written under the pre-F13 vocabulary.

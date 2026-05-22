@@ -23,25 +23,33 @@ import { homedir } from "node:os";
 import { ProjectRosterStore } from "../src/project-rosters.js";
 
 const ROSTERS_FILE = join(homedir(), ".lax", "project-rosters.json");
+const PROJECTS_FILE = join(homedir(), ".lax", "agent-projects.json");
 
-let backupContents: string | null = null;
+let backupRosters: string | null = null;
+let backupProjects: string | null = null;
 
 describe("ProjectRosterStore", () => {
   beforeEach(() => {
-    // Back up the dev install's real data and replace with an EMPTY
-    // map. Empty file is treated as "already migrated, nothing there"
-    // — bypasses the legacy-template migration that would otherwise
-    // pull in the user's seeded agents/projects and contaminate the
-    // test fixture.
-    backupContents = existsSync(ROSTERS_FILE) ? readFileSync(ROSTERS_FILE, "utf-8") : null;
+    // Back up the dev install's real data and replace both files with
+    // empty content. Empty rosters file = "already migrated, nothing
+    // there"; empty projects file = no backfill candidates. Without
+    // stubbing both, the constructor's idempotent backfill reads the
+    // real ~/.lax/agent-projects.json and seeds rosters that pollute
+    // the test fixture.
+    backupRosters = existsSync(ROSTERS_FILE) ? readFileSync(ROSTERS_FILE, "utf-8") : null;
+    backupProjects = existsSync(PROJECTS_FILE) ? readFileSync(PROJECTS_FILE, "utf-8") : null;
     writeFileSync(ROSTERS_FILE, "{}", "utf-8");
+    writeFileSync(PROJECTS_FILE, "[]", "utf-8");
     ProjectRosterStore._resetForTest();
   });
 
   afterEach(() => {
-    if (backupContents !== null) writeFileSync(ROSTERS_FILE, backupContents, "utf-8");
+    if (backupRosters !== null) writeFileSync(ROSTERS_FILE, backupRosters, "utf-8");
     else if (existsSync(ROSTERS_FILE)) unlinkSync(ROSTERS_FILE);
-    backupContents = null;
+    if (backupProjects !== null) writeFileSync(PROJECTS_FILE, backupProjects, "utf-8");
+    else if (existsSync(PROJECTS_FILE)) unlinkSync(PROJECTS_FILE);
+    backupRosters = null;
+    backupProjects = null;
     ProjectRosterStore._resetForTest();
   });
 

@@ -100,9 +100,46 @@ export class ProjectRosterStore {
         logger.warn(`failed to parse ${ROSTERS_FILE}: ${(e as Error).message}; starting empty`);
         this.rosters = {};
       }
+      // Idempotent backfill: catches projects created via the buggy
+      // POST /api/projects path before that route was fixed -- agentIds
+      // got set but rosters were never written. Once the route is fixed
+      // this only ever runs on installs that were affected; future
+      // installs see a no-op on every boot.
+      this.backfillFromProjectAgentIds();
     } else {
       this.rosters = this.migrateFromLegacy();
       this.persist();
+    }
+  }
+
+  private backfillFromProjectAgentIds(): void {
+    let projects: LegacyProject[] = [];
+    try {
+      if (existsSync(LEGACY_PROJECTS_FILE)) {
+        projects = JSON.parse(readFileSync(LEGACY_PROJECTS_FILE, "utf-8"));
+      }
+    } catch { return; }
+    const now = Date.now();
+    let added = 0;
+    for (const proj of projects) {
+      if (!Array.isArray(proj.agentIds) || proj.agentIds.length === 0) continue;
+      const hasCeo = proj.agentIds.includes("builtin-ceo");
+      for (const agentId of proj.agentIds) {
+        const key = rosterKey(proj.id, agentId);
+        if (this.rosters[key]) continue;
+        this.rosters[key] = {
+          projectId: proj.id,
+          agentId,
+          reportsTo: hasCeo && agentId !== "builtin-ceo" ? "builtin-ceo" : undefined,
+          createdAt: now,
+          updatedAt: now,
+        };
+        added += 1;
+      }
+    }
+    if (added > 0) {
+      this.persist();
+      logger.info(`[backfill] Created ${added} roster entries from project.agentIds with no existing roster row`);
     }
   }
 

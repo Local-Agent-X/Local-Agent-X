@@ -12,6 +12,27 @@ import type { AgentModelPin } from "../agents/types.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.agents");
 
+/** Create roster entries for any seeded agentIds on a freshly-created project.
+ *  Mirrors what the legacy migration does for pre-L3 data: each entry becomes
+ *  a real ProjectRoster row (the source of truth post-L3), with CEO-led trees
+ *  auto-wiring reportsTo so the org chart isn't flat by default. */
+async function seedProjectRosters(
+  projectId: string,
+  agentIds: string[],
+  ctx: { projectStore: { addAgent(id: string, agentId: string): boolean } },
+): Promise<void> {
+  if (agentIds.length === 0) return;
+  const { ProjectRosterStore } = await import("../project-rosters.js");
+  const rosterStore = ProjectRosterStore.getInstance();
+  const hasCeo = agentIds.includes("builtin-ceo");
+  for (const agentId of agentIds) {
+    rosterStore.upsert(projectId, agentId, {
+      reportsTo: (hasCeo && agentId !== "builtin-ceo") ? "builtin-ceo" : undefined,
+    });
+    ctx.projectStore.addAgent(projectId, agentId);
+  }
+}
+
 export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
@@ -335,16 +356,7 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
     const body = await safeParseBody(req);
     if (!body || !body.name) { json(400, { error: "name required" }); return true; }
     const project = ctx.projectStore.create({ name: body.name as string, description: (body.description as string) || "", agentIds: (body.agentIds as string[]) || [], workspace: body.workspace as string | undefined });
-    const agentIds: string[] = (body.agentIds as string[]) || [];
-    const hasCeo = agentIds.includes("builtin-ceo");
-    const { ProjectRosterStore } = await import("../project-rosters.js");
-    const rosterStore = ProjectRosterStore.getInstance();
-    for (const agentId of agentIds) {
-      rosterStore.upsert(project.id, agentId, {
-        reportsTo: (hasCeo && agentId !== "builtin-ceo") ? "builtin-ceo" : undefined,
-      });
-      ctx.projectStore.addAgent(project.id, agentId);
-    }
+    await seedProjectRosters(project.id, (body.agentIds as string[]) || [], ctx);
     json(200, project); return true;
   }
 
@@ -354,7 +366,13 @@ export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx
   if (method === "POST" && url.pathname === "/api/projects") {
     const body = await safeParseBody(req);
     if (!body || !body.name) { json(400, { error: "name required" }); return true; }
-    json(200, ctx.projectStore.create({ name: body.name as string, description: (body.description as string) || "", workspace: body.workspace as string | undefined, agentIds: (body.agentIds as string[]) || [], secretKeys: body.secretKeys as string[] | undefined, allowedTools: body.allowedTools as string[] | undefined })); return true;
+    const project = ctx.projectStore.create({ name: body.name as string, description: (body.description as string) || "", workspace: body.workspace as string | undefined, agentIds: (body.agentIds as string[]) || [], secretKeys: body.secretKeys as string[] | undefined, allowedTools: body.allowedTools as string[] | undefined });
+    // Mirror from-starter — any seeded agentIds become real roster entries
+    // (the L3 source of truth). Without this, a project created with
+    // agentIds:[...] looked populated on disk but had zero hires for the
+    // Team tab / org chart / membership reads.
+    await seedProjectRosters(project.id, (body.agentIds as string[]) || [], ctx);
+    json(200, project); return true;
   }
   if (method === "GET" && url.pathname.match(/^\/api\/projects\/proj-[^/]+$/)) {
     const id = url.pathname.split("/").pop()!;

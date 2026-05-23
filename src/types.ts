@@ -392,8 +392,10 @@ export interface LAXConfig {
    *  - "auto"       — clones first (sovits→chatterbox), then lite kokoro
    *  - "sovits"     — fine-tuned clone (best when trained weights exist)
    *  - "chatterbox" — zero-shot reference-clip clone
-   *  - "lite"       — built-in kokoro voice (fastest, no clone needed) */
-  bridgeVoicePreference?: "auto" | "sovits" | "chatterbox" | "lite";
+   *  - "lite"       — built-in kokoro voice (fastest, no clone needed)
+   *  - "xai"        — xAI Grok TTS via SuperGrok / X Premium+ OAuth (remote,
+   *                   slower than local sidecars, included with subscription) */
+  bridgeVoicePreference?: "auto" | "sovits" | "chatterbox" | "lite" | "xai";
 
   /** Category-level tool toggles surfaced as the Tool Policy switches in
    *  Settings → Security. Default-on. When false, every tool in the

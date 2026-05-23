@@ -102,7 +102,10 @@ const PROVIDER_MODELS = {
   ],
   xai: [
     { value: 'grok-4', label: 'Grok 4 (frontier)' },
-    { value: 'grok-3-mini', label: 'Grok 3 Mini (default)' },
+    { value: 'grok-4-fast', label: 'Grok 4 Fast (cheap, 2M context)' },
+    { value: 'grok-4-heavy', label: 'Grok 4 Heavy (multi-agent, top tier)' },
+    { value: 'grok-code-fast-1', label: 'Grok Code Fast 1 (coding)' },
+    { value: 'grok-3-mini', label: 'Grok 3 Mini' },
     { value: 'grok-3', label: 'Grok 3' },
   ],
   openai: [

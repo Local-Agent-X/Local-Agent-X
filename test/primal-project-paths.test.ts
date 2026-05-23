@@ -34,6 +34,12 @@ describe("resolveProjectDir", () => {
   });
 
   it("PROJECTS_DIR points at workspace/apps inside the LAX repo", () => {
-    expect(PROJECTS_DIR.replace(/\\/g, "/")).toMatch(/local-agent-x\/workspace\/apps$/);
+    // What this test actually guards: the resolver targets the repo's
+    // workspace/apps directory, not some arbitrary cwd. The previous
+    // regex pinned a specific folder name (local-agent-x), which fails for
+    // anyone whose checkout uses a different directory name — including
+    // Alex's "Local Agent X" (capitalized, with spaces) and any teammate
+    // who clones into ~/dev/lax or similar. Assert the structural fact only.
+    expect(PROJECTS_DIR.replace(/\\/g, "/")).toMatch(/\/workspace\/apps$/);
   });
 });

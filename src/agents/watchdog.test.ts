@@ -93,6 +93,16 @@ afterEach(() => {
   templates.delete(ceoTpl.id);
   templates.delete(managerTpl.id);
   templates.delete(workerTpl.id);
+
+  // Roster entries are persisted to ~/.lax/project-rosters.json on
+  // upsert. _resetForTest() only clears the in-memory singleton, so
+  // without explicit removes the file accumulates orphan entries from
+  // every test run that ever ran. Remove every entry created in
+  // beforeEach before the singleton reset.
+  const rosters = ProjectRosterStore.getInstance();
+  rosters.remove(project.id, ceoTpl.id);
+  rosters.remove(project.id, managerTpl.id);
+  rosters.remove(project.id, workerTpl.id);
   ProjectStore.getInstance().delete(project.id);
 
   ProjectRosterStore._resetForTest();

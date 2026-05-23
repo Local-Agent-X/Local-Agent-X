@@ -101,6 +101,8 @@ const MERGED_BRAIN_FILES: ReadonlySet<string> = new Set([
   "tasks.json",
   "calendar.json",
   "custom-missions.json",
+  "mcp.json",
+  "hooks.json",
 ]);
 
 // ── Pull direction: sync repo → local (with deletion propagation) ──
@@ -367,6 +369,54 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
         }
       } catch (e) {
         logger.warn(`[sync] custom-missions.json pull skipped: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  // hooks.json: {hooks: [{name, event, command, ...}]}. Same shape as
+  // custom-missions but wrapped. Name-keyed, no timestamp, local wins.
+  {
+    const remotePath = join(syncDir, "hooks.json");
+    const localPath = join(dataDir, "hooks.json");
+    if (existsSync(remotePath)) {
+      try {
+        const remote = JSON.parse(readFileSync(remotePath, "utf-8"));
+        const local = existsSync(localPath) ? JSON.parse(readFileSync(localPath, "utf-8")) : { hooks: [] };
+        const remoteHooks = Array.isArray(remote?.hooks) ? remote.hooks : [];
+        const localHooks = Array.isArray(local?.hooks) ? local.hooks : [];
+        const hooks = unionMergeBy<{ name: string }>(
+          localHooks, remoteHooks,
+          (x) => x.name,
+          () => true,
+        );
+        const merged = { ...remote, ...local, hooks };
+        writeFileSync(localPath, JSON.stringify(merged, null, 2), "utf-8");
+      } catch (e) {
+        logger.warn(`[sync] hooks.json pull skipped: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  // mcp.json: {servers: {<name>: {...}}}. Map of MCP server configs
+  // keyed by server name. Spread-merge: union of server names, local
+  // wins on collision (server config edited on this machine survives
+  // a stale-remote pull). Path canonicalization runs on PUSH; expansion
+  // back to ${HOME} happens at mcp-client load on the destination, so
+  // sync just writes bytes here.
+  {
+    const remotePath = join(syncDir, "mcp.json");
+    const localPath = join(dataDir, "mcp.json");
+    if (existsSync(remotePath)) {
+      try {
+        const remote = JSON.parse(readFileSync(remotePath, "utf-8"));
+        const local = existsSync(localPath) ? JSON.parse(readFileSync(localPath, "utf-8")) : {};
+        const remoteServers = (remote && typeof remote === "object" && remote.servers && typeof remote.servers === "object") ? remote.servers : {};
+        const localServers = (local && typeof local === "object" && local.servers && typeof local.servers === "object") ? local.servers : {};
+        const servers = { ...remoteServers, ...localServers };
+        const merged = { ...remote, ...local, servers };
+        writeFileSync(localPath, JSON.stringify(merged, null, 2), "utf-8");
+      } catch (e) {
+        logger.warn(`[sync] mcp.json pull skipped: ${(e as Error).message}`);
       }
     }
   }

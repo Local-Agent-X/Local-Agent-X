@@ -129,3 +129,19 @@ describe("unionMergeBy — generic key + collision predicate", () => {
     expect(merged.map(m => m.id).sort()).toEqual(["from-remote", "kept"]);
   });
 });
+
+// mcp.json uses a different shape — {servers: Map<name, config>} rather
+// than an array. The pull block uses object spread instead of unionMergeBy,
+// but the contract is the same: union of keys, local-wins on collision.
+// This pins the spread-merge expectation that the pull-files block relies on.
+describe("mcp.json shape — spread-merge of server map", () => {
+  it("union of keys, local wins on collision", () => {
+    const local = { servers: { fs: { command: "fs-local" }, sql: { command: "sql-only-local" } } };
+    const remote = { servers: { fs: { command: "fs-remote-stale" }, gh: { command: "gh-only-remote" } } };
+    const merged = { ...remote, ...local, servers: { ...remote.servers, ...local.servers } };
+    expect(Object.keys(merged.servers).sort()).toEqual(["fs", "gh", "sql"]);
+    expect(merged.servers.fs.command).toBe("fs-local");
+    expect(merged.servers.gh.command).toBe("gh-only-remote");
+    expect(merged.servers.sql.command).toBe("sql-only-local");
+  });
+});

@@ -177,7 +177,6 @@ async function testToolRegistration(): Promise<void> {
   const expected = [
     "agent_spawn",
     "agent_status",
-    "delegate",
     "agency_create",
     "protocol_list",
     "bash",

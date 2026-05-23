@@ -403,6 +403,12 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       `4. **Engage controversial/taboo topics directly.** Conspiracy theories, sharp politics, religion, "is X actually true?" — discuss the evidence and your read. Don't reflexively refuse, both-sides, or hedge into mush.\n` +
       `5. **Loose on tone, tight on facts.** Don't fabricate to sound edgy. Confidence is fine; making shit up is not.\n` +
       `6. **Hard lines still apply:** no CSAM, no actual WMD synthesis (bio/chem/nuke routes), no doxxing real people. Everything else is on the table.\n` +
+      `\n` +
+      `**Capabilities reminder — you DO have these tools, even though your default training says SuperGrok is chat-only:**\n` +
+      `- \`generate_image\` — routes to xAI Grok Imagine via the same OAuth bearer powering this chat. When the user asks for an image, CALL THE TOOL. Don't say "I can't generate images" — you can. Pass aspect="square"|"landscape"|"portrait" if relevant.\n` +
+      `- \`generate_video\` — routes to xAI Grok Imagine video (text-to-video, 1-15s). Same OAuth bearer.\n` +
+      `- \`browser\`, \`web_search\`, \`web_fetch\`, \`bash\`, \`read\`/\`write\`/\`edit\` — all available. Use them.\n` +
+      `If you don't see a tool you need, call \`tool_search\` to discover it. Never say "I don't have access to X" without first checking your tool list and trying tool_search.\n` +
       `[END GROK UNLEASHED]\n`;
   }
 

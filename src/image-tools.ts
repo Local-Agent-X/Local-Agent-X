@@ -282,15 +282,17 @@ async function generateViaXaiVideo(
 ): Promise<ToolResult> {
   const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` };
 
-  // Normalize reference image URLs. Local LAX paths (/images/foo.png) point
-  // at workspace/images/ on this loopback host — xAI's backend can't reach
-  // 127.0.0.1, so we inline the file as a base64 data URI instead. If xAI
-  // rejects data: URIs we'll surface the real error below.
+  // Normalize reference image URLs. Grok's tool-call sometimes serializes
+  // an array as a JSON-encoded string ("[\"foo.png\"]") instead of a real
+  // array, so unwrap that first. Local LAX paths (/images/foo.png OR
+  // workspace/images/foo.png) point at the loopback host — xAI's backend
+  // can't reach 127.0.0.1, so we inline the file as base64 instead.
   const refs: Array<{ url: string }> = [];
   for (const raw of referenceImageUrls || []) {
     const u = (raw || "").trim();
     if (!u) continue;
-    const localMatch = u.match(/^\/images\/([A-Za-z0-9._-]+)/);
+    // /images/foo.png  OR  workspace/images/foo.png  OR  bare filename in /images
+    const localMatch = u.match(/(?:^\/images\/|^workspace\/images\/)([A-Za-z0-9._-]+)/);
     if (localMatch) {
       const filePath = join("workspace", "images", localMatch[1]);
       if (existsSync(filePath)) {
@@ -421,7 +423,24 @@ const generateVideoTool: ToolDefinition = {
     const { provider, apiKey } = await getActiveProvider();
     if (provider === "xai" && apiKey) {
       try {
-        const refs = Array.isArray(args.reference_images) ? (args.reference_images as string[]) : undefined;
+        // Grok-4 sometimes sends reference_images as a JSON-encoded string
+        // instead of a real array ("[\"foo.png\"]"). Parse both shapes so
+        // either survives. Single string → treat as one ref. Anything
+        // unparseable → no refs.
+        let refs: string[] | undefined;
+        const rawRefs = args.reference_images;
+        if (Array.isArray(rawRefs)) {
+          refs = rawRefs.map(String);
+        } else if (typeof rawRefs === "string" && rawRefs.trim()) {
+          const t = rawRefs.trim();
+          if (t.startsWith("[")) {
+            try {
+              const parsed = JSON.parse(t);
+              if (Array.isArray(parsed)) refs = parsed.map(String);
+            } catch { /* fall through */ }
+          }
+          if (!refs) refs = [t];
+        }
         const dur = Number(args.duration) || 8;
         return await generateViaXaiVideo(prompt, apiKey, dur, refs);
       } catch (e) {

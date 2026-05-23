@@ -224,7 +224,7 @@ function classifyModelTier(model) {
   return 'medium';
 }
 
-function updateStatusBar() {
+function updateStatusBar(force) {
   const bar = document.getElementById('status-bar-dynamic');
   if (!bar) return;
   // Skip re-render while the user is actively interacting with one of the
@@ -235,10 +235,18 @@ function updateStatusBar() {
   // focus on a select whose dropdown is open, so activeElement is a
   // reliable proxy. Same applies to the speed slider mid-drag. The 10s
   // cadence is for eventual freshness — skipping a tick is harmless.
-  const ae = document.activeElement;
-  if (ae && bar.contains(ae)) {
-    const tag = ae.tagName;
-    if (tag === 'SELECT' || tag === 'INPUT' || tag === 'OPTION') return;
+  //
+  // `force` overrides the guard for user-initiated re-renders. After the
+  // user picks an option, the <select> retains focus even though its
+  // dropdown is closed, so the periodic-tick guard would otherwise eat
+  // the rebuild that quickSwitchProvider/quickSwitchModel actually needs
+  // (leaving a Grok provider paired with a stale gpt-5.5/codex model list).
+  if (!force) {
+    const ae = document.activeElement;
+    if (ae && bar.contains(ae)) {
+      const tag = ae.tagName;
+      if (tag === 'SELECT' || tag === 'INPUT' || tag === 'OPTION') return;
+    }
   }
   const tokenInfo = window.lastContextStatus ? `${(window.lastContextStatus.usedTokens / 1000).toFixed(0)}K tokens` : '';
   const data = _providersCache;
@@ -378,7 +386,7 @@ async function quickSwitchProvider(providerId) {
     try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); s.provider = providerId; s.model = model; localStorage.setItem('sax_settings', JSON.stringify(s)); } catch {}
     _providersCacheTime = 0; // Force refresh
     await loadProviders();
-    updateStatusBar();
+    updateStatusBar(true);
   } catch (e) { console.warn('[provider] Switch failed:', e); }
 }
 
@@ -394,6 +402,6 @@ async function quickSwitchModel(model) {
     try { const s = JSON.parse(localStorage.getItem('sax_settings') || '{}'); s.model = model; localStorage.setItem('sax_settings', JSON.stringify(s)); } catch {}
     _providersCacheTime = 0;
     await loadProviders();
-    updateStatusBar();
+    updateStatusBar(true);
   } catch (e) { console.warn('[model] Switch failed:', e); }
 }

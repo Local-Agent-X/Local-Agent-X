@@ -12,11 +12,12 @@
  *     chip + opId; the op lands in the store with type "app_build").
  */
 import { describe, it, expect, afterEach, beforeAll } from "vitest";
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   buildAppTool,
+  checkBuildCollision,
   pickForcedProviderFromRuntime,
   resolveBuildProvider,
   resolveBuildStrategy,
@@ -147,6 +148,66 @@ describe("build_app — chat-runtime provider plumbing", () => {
   it("explicit backend=claude wins over ctx.runtime=codex", () => {
     const forced = pickForcedProviderFromRuntime("claude", "codex");
     expect(resolveBuildProvider("claude", forced ? { forcedProvider: forced } : {})).toBe("anthropic");
+  });
+});
+
+describe("checkBuildCollision — overwrite guard", () => {
+  function freshAppDir(): { dir: string; name: string; cleanup: () => void } {
+    const name = `collide-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const dir = join(tmpdir(), name);
+    return { dir, name, cleanup: () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* swallow */ } } };
+  }
+
+  it("no existing index.html → not blocked, not an update", () => {
+    const { dir, name, cleanup } = freshAppDir();
+    try {
+      const r = checkBuildCollision(dir, name, false);
+      expect(r.blocked).toBe(false);
+      expect(r.isUpdate).toBe(false);
+    } finally { cleanup(); }
+  });
+
+  it("existing index.html + update:true → not blocked, isUpdate true", () => {
+    const { dir, name, cleanup } = freshAppDir();
+    try {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "index.html"), "<html>existing</html>", "utf-8");
+      const r = checkBuildCollision(dir, name, true);
+      expect(r.blocked).toBe(false);
+      expect(r.isUpdate).toBe(true);
+    } finally { cleanup(); }
+  });
+
+  it("existing index.html + update:false → blocked with a message naming both ways out", () => {
+    const { dir, name, cleanup } = freshAppDir();
+    try {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "index.html"), "<html>existing</html>", "utf-8");
+      const r = checkBuildCollision(dir, name, false);
+      expect(r.blocked).toBe(true);
+      expect(r.isUpdate).toBe(false);
+      expect(r.errorMessage).toContain("update: true");
+      expect(r.errorMessage).toContain(`${name}-v2`);
+    } finally { cleanup(); }
+  });
+
+  it("build_app.execute returns isError when colliding without update flag", async () => {
+    const appName = `routing-collide-${Date.now()}`;
+    const appDir = resolve("workspace", "apps", appName);
+    try {
+      mkdirSync(appDir, { recursive: true });
+      writeFileSync(join(appDir, "index.html"), "<html>existing</html>", "utf-8");
+      const r = await buildAppTool.execute({
+        name: appName,
+        prompt: "make a calculator",
+        backend: "auto",
+        _sessionId: "test-session-collide",
+      });
+      expect(r.isError).toBe(true);
+      expect(String(r.content)).toContain("already exists");
+    } finally {
+      try { rmSync(appDir, { recursive: true, force: true }); } catch { /* swallow */ }
+    }
   });
 });
 

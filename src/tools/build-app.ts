@@ -99,6 +99,46 @@ export function resolveBuildStrategy(provider: string): AgentExecStrategy {
   return (strategy[provider] ?? strategy.default ?? "in-canonical-sub-agent");
 }
 
+export interface CollisionCheckResult {
+  /** When true, the build must NOT proceed — return the error to the agent. */
+  blocked: boolean;
+  /** When true, the build is a deliberate update of an existing app. */
+  isUpdate: boolean;
+  /** Agent-facing error message when blocked. */
+  errorMessage?: string;
+}
+
+/**
+ * Guard against the silent-overwrite collision: two builds picking the same
+ * slug (e.g. both Codex and Grok choosing `graphing-calculator`) would let
+ * the second one stomp the first because `isUpdate` used to be inferred from
+ * directory existence alone. Now `isUpdate` is an explicit caller intent
+ * (the `update` arg), and a collision without that flag is refused with a
+ * message that tells the LLM exactly how to disambiguate.
+ *
+ * Pure helper so the decision logic is unit-testable without queuing an op.
+ */
+export function checkBuildCollision(
+  appDir: string,
+  appName: string,
+  updateFlag: boolean,
+): CollisionCheckResult {
+  const exists = existsSync(resolve(appDir, "index.html"));
+  if (!exists) return { blocked: false, isUpdate: false };
+  if (updateFlag) return { blocked: false, isUpdate: true };
+  return {
+    blocked: true,
+    isUpdate: false,
+    errorMessage:
+      `App "${appName}" already exists at workspace/apps/${appName}/index.html. ` +
+      `Refusing to overwrite silently. Pick one:\n` +
+      `  • Modifying the existing app (user said "make it green", "update X", "add Y to it") ` +
+      `→ call build_app again with update: true.\n` +
+      `  • New, separate app (different variant or different brief) ` +
+      `→ pick a different name (e.g. "${appName}-v2", "${appName}-green").`,
+  };
+}
+
 export const buildAppTool: ToolDefinition = {
   name: "build_app",
   description:
@@ -109,6 +149,7 @@ export const buildAppTool: ToolDefinition = {
       name: { type: "string", description: "App directory name (e.g. 'trading-bot', 'todo-app')" },
       prompt: { type: "string", description: "Build brief — what to make, target features, styling notes, behavior. Be specific." },
       backend: { type: "string", enum: ["codex", "claude", "auto"], description: "Which CLI to use. 'auto' (default) matches your active provider. 'codex' = codex CLI. 'claude' = claude CLI." },
+      update: { type: "boolean", description: "Set true ONLY when modifying an EXISTING app under the same name — e.g. user said 'make it green', 'update X', 'add Y to it'. Omit/false for a new app; if the name collides, the tool refuses rather than overwrite. For a new variant on the same theme, pick a different name instead." },
     },
     required: ["name", "prompt"],
   },
@@ -133,9 +174,17 @@ export const buildAppTool: ToolDefinition = {
     const appDir = resolve("workspace", "apps", appName);
     const port = process.env.LAX_PORT ?? process.env.SAX_PORT ?? "7007";
     const appUrl = `http://127.0.0.1:${port}/apps/${appName}/index.html`;
+
+    // Collision guard before mkdir so a refused build leaves no empty dir
+    // behind. Caller must pass update:true to modify an existing app.
+    const collision = checkBuildCollision(appDir, appName, args.update === true);
+    if (collision.blocked) {
+      return { content: collision.errorMessage ?? "App name collision.", isError: true };
+    }
+    const isUpdate = collision.isUpdate;
+
     mkdirSync(appDir, { recursive: true });
 
-    const isUpdate = existsSync(resolve(appDir, "index.html"));
     const contextFiles = isUpdate ? readUpdateContextFiles(appDir) : [];
     const assetFiles = listAssetsDir(appDir);
 

@@ -1,8 +1,8 @@
 # LAX Canonical Operation Loop — v1 PRD
 
-**Status:** Design locked, awaiting implementation
+**Status:** Shipped 2026-05-15 (v1 — worker-pool retired, build_app migrated, every op type rides canonical-loop). Doc remains as the architectural spec; section numbers (§5, §6, §9, §15, §17) are cited throughout src/canonical-loop/README.md.
 **Owner:** Alex
-**Last updated:** 2026-05-04
+**Last updated:** 2026-05-04 (status updated 2026-05-22)
 
 ---
 

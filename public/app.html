@@ -1036,7 +1036,11 @@
 <script src="/js/voice-picker-catalog.js?v=v2"></script>
 <script src="/js/voice-picker.js?v=v6"></script>
 <script src="/js/secrets.js"></script>
-<script src="/js/cron.js"></script>
+<!-- Missions modules. cron.js owns shared state (cronJobs, selectedJob, …)
+     so it must load first. -->
+<script src="/js/cron.js?v=v2"></script>
+<script src="/js/cron-detail.js?v=v1"></script>
+<script src="/js/cron-actions.js?v=v1"></script>
 <script src="/js/protocols.js"></script>
 <script src="/js/notifications.js"></script>
 <script src="/js/apps.js"></script>

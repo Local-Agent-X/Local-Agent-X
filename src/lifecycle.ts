@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 import { createLogger } from "./logger.js";
+import { isPidAlive, isOurServerProcess } from "./pid-probe.js";
 
 const logger = createLogger("lifecycle");
 
@@ -41,19 +42,6 @@ function readPidFile(): PidFile | null {
     return JSON.parse(readFileSync(PIDFILE, "utf-8")) as PidFile;
   } catch {
     return null;
-  }
-}
-
-/** `process.kill(pid, 0)` is a POSIX-style liveness probe — no signal sent,
- *  throws if the PID doesn't exist. Works on Windows too (Node implements
- *  it via OpenProcess). EPERM (Windows protected process) counts as alive. */
-function isAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
@@ -77,17 +65,23 @@ function removePidFile(): void {
 }
 
 export function initLifecycle(): void {
-  // Single-instance check. A stale pidfile (PID dead) is harmless — we
-  // overwrite. A live foreign PID means a previous server is still
-  // running; refuse to start so we don't double-bind ports or fight over
-  // the audit DB.
+  // Single-instance check. A stale pidfile (PID dead OR recycled to a
+  // non-node process — happens routinely on Windows after a reboot) is
+  // harmless: we delete it and overwrite below. A live foreign node
+  // process means a previous server is still running; refuse to start so
+  // we don't double-bind ports or fight over the audit DB.
   const existing = readPidFile();
-  if (existing && existing.pid !== process.pid && isAlive(existing.pid)) {
-    logger.error(
-      `[lifecycle] Refusing to start — server already running (pid ${existing.pid}, ` +
-      `started ${existing.startedAt}). The launcher should kill it before respawning.`,
-    );
-    process.exit(75); // EX_TEMPFAIL — recoverable, retry after kill
+  if (existing && existing.pid !== process.pid) {
+    if (isOurServerProcess(existing.pid)) {
+      logger.error(
+        `[lifecycle] Refusing to start — server already running (pid ${existing.pid}, ` +
+        `started ${existing.startedAt}). The launcher should kill it before respawning.`,
+      );
+      process.exit(75); // EX_TEMPFAIL — recoverable, retry after kill
+    }
+    // Stale (PID dead or recycled). Drop the file so writePidFile() below
+    // writes a clean one for us.
+    try { unlinkSync(PIDFILE); } catch {}
   }
 
   const parentPidRaw = process.env.LAX_PARENT_PID;
@@ -101,7 +95,7 @@ export function initLifecycle(): void {
   if (parentPid && Number.isInteger(parentPid)) {
     logger.info(`[lifecycle] heartbeat bound to parent pid ${parentPid}`);
     const timer = setInterval(() => {
-      if (!isAlive(parentPid)) {
+      if (!isPidAlive(parentPid)) {
         logger.warn(`[lifecycle] parent ${parentPid} is gone — shutting down`);
         clearInterval(timer);
         removePidFile();

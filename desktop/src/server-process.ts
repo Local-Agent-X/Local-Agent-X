@@ -9,10 +9,11 @@
 // we never silently attach to stale pre-update code.
 
 import { ChildProcess, spawn, execSync } from "child_process";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { PROJECT_ROOT, getSAXConfig } from "./config";
+import { isPidAlive, isOurServerProcess } from "./pid-probe";
 
 const PID_FILE = join(homedir(), ".lax", "server.pid");
 
@@ -45,16 +46,6 @@ function readServerPidFile(): ServerPidFile | null {
   catch { return null; }
 }
 
-function isPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
 function killPidTree(pid: number): void {
   if (process.platform === "win32") {
     try { execSync(`taskkill /PID ${pid} /T /F`, { windowsHide: true, stdio: "ignore" }); } catch {}
@@ -68,17 +59,27 @@ function killPidTree(pid: number): void {
 // Electron that died abnormally (force-kill, crash, power-off). Without
 // this, Electron would silently attach to whatever was already on the
 // port — including a stale server running pre-update code.
+//
+// A pidfile pointing at a dead-or-recycled PID (typical case after a
+// reboot — Windows reassigns the number to an unrelated process) is
+// stale: delete it and return so the next stage spawns cleanly. Without
+// the delete, the server child reads the same stale file and exits with
+// "refusing to start", looping the launcher forever.
 export async function reclaimOrphanServer(): Promise<boolean> {
   const file = readServerPidFile();
   if (!file) return false;
-  if (!isPidAlive(file.pid)) return false;
   if (file.parentPid === process.pid) return false; // somehow ours
+  if (!isOurServerProcess(file.pid)) {
+    try { unlinkSync(PID_FILE); } catch {}
+    return false;
+  }
   console.warn(`[desktop] Killing orphan server pid=${file.pid} (parentPid=${file.parentPid ?? "n/a"}, current Electron=${process.pid}).`);
   killPidTree(file.pid);
   for (let i = 0; i < 20; i++) {
     await new Promise(r => setTimeout(r, 100));
     if (!isPidAlive(file.pid)) break;
   }
+  try { unlinkSync(PID_FILE); } catch {}
   return true;
 }
 
@@ -151,15 +152,38 @@ export function startServer(handlers?: ServerEventHandlers): void {
     windowsHide: true,
   });
 
-  serverProcess.stdout?.on("data", (data: Buffer) => {
-    const line = data.toString().trim();
-    if (line) console.log("[server]", line);
-  });
-
-  serverProcess.stderr?.on("data", (data: Buffer) => {
-    const line = data.toString().trim();
-    if (line) console.error("[server]", line);
-  });
+  // Tee server stdout/stderr to a real file. Electron's GUI-launched
+  // main-process console is /dev/null, so any crash-loop output is invisible
+  // unless we persist it. File is opened append so successive respawns
+  // accumulate (with a START marker so you can find the latest boot).
+  const stdioLogPath = join(homedir(), ".lax", "logs", "desktop-stdio.log");
+  try {
+    const fs = require("node:fs") as typeof import("node:fs");
+    fs.mkdirSync(join(homedir(), ".lax", "logs"), { recursive: true });
+    const stdioStream = fs.createWriteStream(stdioLogPath, { flags: "a" });
+    stdioStream.write(`\n\n══ START boot pid=${serverProcess.pid} at ${new Date().toISOString()} ══\n`);
+    serverProcess.stdout?.on("data", (data: Buffer) => {
+      const text = data.toString();
+      stdioStream.write(text);
+      const line = text.trim();
+      if (line) console.log("[server]", line);
+    });
+    serverProcess.stderr?.on("data", (data: Buffer) => {
+      const text = data.toString();
+      stdioStream.write(text);
+      const line = text.trim();
+      if (line) console.error("[server]", line);
+    });
+  } catch {
+    serverProcess.stdout?.on("data", (data: Buffer) => {
+      const line = data.toString().trim();
+      if (line) console.log("[server]", line);
+    });
+    serverProcess.stderr?.on("data", (data: Buffer) => {
+      const line = data.toString().trim();
+      if (line) console.error("[server]", line);
+    });
+  }
 
   serverProcess.on("exit", (code, signal) => {
     // Crash classification:

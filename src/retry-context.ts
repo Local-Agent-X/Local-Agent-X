@@ -1,13 +1,13 @@
 /**
  * RetryContext — shared retry budget + correlationId for a single request.
  *
- * History: docs/retry-strategy-canonical.md was written when six retry
- * layers (L1-L6) could stack on one chat turn. After P4.C6 + bc91139 +
- * P5.C4 only L1 (`withRetry` in src/auto-retry.ts, called by tool-executor
- * for transient-network tools) remains. The shared-budget machinery
- * matters only when a second layer reappears, but the correlationId is
- * useful today: it stitches retry log lines for one turn together across
- * what telemetry would otherwise see as unrelated events.
+ * History: six retry layers (L1-L6) could once stack on one chat turn.
+ * After P4.C6 + bc91139 + P5.C4 only L1 (`withRetry` in src/auto-retry.ts,
+ * called by tool-executor for transient-network tools) remains. The
+ * shared-budget machinery matters only when a second layer reappears, but
+ * the correlationId is useful today: it stitches retry log lines for one
+ * turn together across what telemetry would otherwise see as unrelated
+ * events.
  *
  * Future layers that would plug in here if resurrected:
  *   - Per-loop stream-error retries (L2/L3/L4) — were in run-anthropic /

@@ -10,7 +10,7 @@
  */
 
 export { detectUnresolvedErrors, buildReflectionPrompt } from "./agent-guards/reflection.js";
-export { checkApprovalHallucination, checkCreationHallucination } from "./agent-guards/hallucination.js";
+export { checkApprovalHallucination, checkCreationHallucination, checkWorkerHallucination } from "./agent-guards/hallucination.js";
 export { checkUnmatchedActionClaim } from "./agent-guards/action-claim.js";
 export {
   checkTaskAnchor,

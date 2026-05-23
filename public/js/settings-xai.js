@@ -51,6 +51,22 @@ async function doXaiLogin() {
   } catch (e) { console.error('xAI login failed:', e); }
 }
 
+async function doXaiExchangeCode() {
+  const input = document.getElementById('xai-manual-code');
+  const status = document.getElementById('xai-manual-status');
+  const code = (input?.value || '').trim();
+  if (status) { status.style.color = ''; status.textContent = ''; }
+  if (!code) { if (status) status.textContent = 'Paste the code from xAI first.'; return; }
+  try {
+    await apiPost('/api/auth/xai/exchange-code', { code });
+    if (input) { input.value = ''; input.placeholder = 'connected'; }
+    if (status) { status.style.color = 'var(--accent)'; status.textContent = 'Connected to xAI.'; }
+    checkXaiAuth();
+  } catch (e) {
+    if (status) status.textContent = 'Code exchange failed. Make sure Sign In was clicked first, then try again.';
+  }
+}
+
 async function doXaiDisconnect() {
   if (!confirm('Disconnect xAI OAuth? Removes saved tokens from ~/.lax/xai-auth.json. Any saved XAI_API_KEY stays in place.')) return;
   try { await apiFetch('/api/auth/xai/logout', { method: 'POST' }); } catch {}

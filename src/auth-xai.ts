@@ -115,6 +115,99 @@ export function isXaiTokenExpired(tokens: XaiTokens | null): boolean {
   return !!tokens.expiresAt && Date.now() > tokens.expiresAt;
 }
 
+// ── In-flight login state ──
+//
+// Holds the PKCE verifier/challenge + state + chosen redirect URI between
+// initiateXaiLogin() and either of:
+//   (a) the loopback callback firing,
+//   (b) the user manually pasting the code into the UI (fallback when the
+//       browser can't reach our loopback — strict security extensions,
+//       firewalled environments, or xAI's preflight "could not reach app"
+//       page that hands the code over for manual exchange).
+// One in-flight login at a time — a second initiate overwrites the first.
+interface PendingXaiLogin {
+  verifier: string;
+  challenge: string;
+  state: string;
+  endpoints: OidcEndpoints;
+  redirectUri: string;
+  expiresAt: number;
+}
+const PENDING_LOGIN_TTL_MS = 10 * 60 * 1000;
+let pendingXaiLogin: PendingXaiLogin | null = null;
+
+// Shared token-exchange path used by both the loopback callback handler
+// and the manual-paste endpoint. xAI re-validates code_challenge at the
+// token step in addition to code_verifier — without it the server rejects
+// with "code_challenge is required" despite a valid verifier.
+async function performXaiTokenExchange(params: {
+  code: string;
+  endpoints: OidcEndpoints;
+  redirectUri: string;
+  verifier: string;
+  challenge: string;
+}): Promise<XaiTokens> {
+  const tokenRes = await fetch(params.endpoints.tokenEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: CLIENT_ID,
+      code: params.code,
+      redirect_uri: params.redirectUri,
+      code_verifier: params.verifier,
+      code_challenge: params.challenge,
+      code_challenge_method: "S256",
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!tokenRes.ok) {
+    const body = await tokenRes.text();
+    throw new Error(`xAI token exchange failed (${tokenRes.status}): ${body}`);
+  }
+  const data = await tokenRes.json() as {
+    access_token: string;
+    refresh_token?: string;
+    expires_in?: number;
+  };
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 - REFRESH_SKEW_MS : undefined,
+    authorizationEndpoint: params.endpoints.authorizationEndpoint,
+    tokenEndpoint: params.endpoints.tokenEndpoint,
+    provider: "xai",
+  };
+}
+
+// Manual fallback: user pastes the code from xAI's "could not reach app"
+// page directly. Uses the verifier/challenge from the in-flight login.
+// Caller must have started login (initiateXaiLogin) before this — without
+// the saved verifier the token endpoint will reject the code.
+export async function exchangeXaiCodeManually(code: string): Promise<void> {
+  const trimmed = (code || "").trim();
+  if (!trimmed) throw new Error("Paste the code from xAI first.");
+  const pending = pendingXaiLogin;
+  if (!pending) throw new Error("No xAI login in progress — click Sign In with xAI first.");
+  if (pending.expiresAt < Date.now()) {
+    pendingXaiLogin = null;
+    throw new Error("Login session expired — click Sign In with xAI again.");
+  }
+  const tokens = await performXaiTokenExchange({
+    code: trimmed,
+    endpoints: pending.endpoints,
+    redirectUri: pending.redirectUri,
+    verifier: pending.verifier,
+    challenge: pending.challenge,
+  });
+  saveXaiTokens(tokens);
+  pendingXaiLogin = null;
+  logger.info("[auth-xai] OAuth tokens saved (manual code paste)");
+}
+
 export function deleteXaiTokens(): void {
   const authPath = getAuthPath();
   if (existsSync(authPath)) unlinkSync(authPath);
@@ -201,6 +294,14 @@ export async function initiateXaiLogin(): Promise<{ authUrl: string; promise: Pr
     referrer: "local-agent-x",
   }).toString();
 
+  // Stash the PKCE + endpoint state so a parallel manual-code paste can
+  // complete the exchange (see exchangeXaiCodeManually). Overwrites any
+  // prior in-flight login — we only support one at a time.
+  pendingXaiLogin = {
+    verifier, challenge, state, endpoints, redirectUri,
+    expiresAt: Date.now() + PENDING_LOGIN_TTL_MS,
+  };
+
   const promise = new Promise<void>((resolve, reject) => {
     const server = createServer(async (req, res) => {
       const url = new URL(req.url || "/", `http://${CALLBACK_HOST}:${CALLBACK_PORT}`);
@@ -229,47 +330,13 @@ export async function initiateXaiLogin(): Promise<{ authUrl: string; promise: Pr
       }
 
       try {
-        const tokenRes = await fetch(endpoints.tokenEndpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            Accept: "application/json",
-          },
-          body: new URLSearchParams({
-            grant_type: "authorization_code",
-            client_id: CLIENT_ID,
-            code,
-            redirect_uri: redirectUri,
-            code_verifier: verifier,
-            // xAI re-validates challenge at the token step (without these
-            // it rejects with "code_challenge is required" despite a valid
-            // verifier).
-            code_challenge: challenge,
-            code_challenge_method: "S256",
-          }),
-          signal: AbortSignal.timeout(30_000),
+        const tokens = await performXaiTokenExchange({
+          code, endpoints, redirectUri, verifier, challenge,
         });
-
-        if (!tokenRes.ok) {
-          const body = await tokenRes.text();
-          throw new Error(`xAI token exchange failed (${tokenRes.status}): ${body}`);
-        }
-
-        const data = await tokenRes.json() as {
-          access_token: string;
-          refresh_token?: string;
-          expires_in?: number;
-        };
-
-        const tokens: XaiTokens = {
-          accessToken: data.access_token,
-          refreshToken: data.refresh_token,
-          expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 - REFRESH_SKEW_MS : undefined,
-          authorizationEndpoint: endpoints.authorizationEndpoint,
-          tokenEndpoint: endpoints.tokenEndpoint,
-          provider: "xai",
-        };
         saveXaiTokens(tokens);
+        // Clear pending state so a parallel manual paste doesn't double-exchange
+        // (xAI invalidates auth codes on first use; the second call would 400).
+        pendingXaiLogin = null;
         logger.info("[auth-xai] OAuth tokens saved");
 
         res.writeHead(200, { "Content-Type": "text/html" });

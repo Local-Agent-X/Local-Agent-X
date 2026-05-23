@@ -173,9 +173,16 @@ const SPINE_RULES: readonly SpineRule[] = [
       "src/server/handler-events.ts",
       "src/server/lifecycle.ts",
       "src/server/background-jobs.ts",
+      // background-jobs.ts is now a barrel re-exporting from the directory;
+      // the actual cron / dream / worker runners live under it and are the
+      // legitimate spine entry points for scheduled / background ops.
+      "src/server/background-jobs/",
       "src/server/bootstrap-bridges.ts",
       "src/autopilot/round-agent.ts",
       "src/routes/chat/run-chat-turn.ts",
+      // run-chat-turn.ts is now a barrel re-exporting from the directory;
+      // canonical-run.ts is the per-turn orchestrator entry point.
+      "src/routes/chat/run-chat-turn/",
       "src/routes/chat/delegation-handoff.ts",
     ],
   },

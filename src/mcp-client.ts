@@ -27,6 +27,13 @@ import type { ToolDefinition, ToolResult } from "./types.js";
 
 const logger = createLogger("mcp-client");
 
+// Servers whose tools we'd unconditionally drop after connecting. Mirror of
+// the post-connect filter in src/server/bootstrap-tools.ts — keep them in
+// sync. Skipping at connect time saves the subprocess spawn cost (12s on
+// boot for the filesystem server) rather than paying it and throwing away
+// the result.
+const REDUNDANT_MCP_SERVERS = new Set<string>(["filesystem"]);
+
 export { expandPlaceholders, setSecretLookup } from "./mcp-client/placeholders.js";
 
 export class MCPManager {
@@ -58,6 +65,16 @@ export class MCPManager {
     const config = this.loadConfig();
     for (const [name, raw] of Object.entries(config.servers)) {
       if (raw.disabled) continue;
+      // Skip servers whose tools we'd unconditionally filter as redundant.
+      // The MCP filesystem server emits read/write/edit/list tools that
+      // duplicate native `read`/`write`/`edit`/`bash` with worse safety
+      // posture (no SecurityLayer integration, default-deny in
+      // tool-policy). Connecting just to drop all 14 tools costs ~12s of
+      // subprocess spawn on every boot. Skip the connection entirely.
+      if (REDUNDANT_MCP_SERVERS.has(name)) {
+        logger.info(`[mcp] Skipping "${name}" — tools duplicate native equivalents (see bootstrap-tools.ts filter)`);
+        continue;
+      }
       if (this.connections.has(name) && this.connections.get(name)!.connected) continue;
 
       // Expand ${HOME}/${secret:...}/etc. before spawning. If a server

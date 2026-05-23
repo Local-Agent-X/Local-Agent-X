@@ -91,17 +91,14 @@ export async function bootstrapTools(deps: {
     await mcpManager.connectAll();
     mcpManager.startConfigWatcher();
     const mcpTools = mcpManager.getAllTools();
-    // Filter redundant filesystem MCP tools — native `read`/`write`/`edit`/
-    // `bash` already cover read/write/edit/list/search with full audit and
-    // SecurityLayer integration. Exposing both surfaces to the model doubles
-    // tool noise and lets weak models pick the MCP variant which tool-policy
-    // then denies (since MCP tools default-deny). MCP earns its keep when it
-    // adds NEW capabilities — not when it duplicates the native filesystem.
-    const nonRedundantMcpTools = mcpTools.filter(t => !t.name.startsWith("mcp_filesystem_"));
-    const filteredCount = mcpTools.length - nonRedundantMcpTools.length;
-    if (nonRedundantMcpTools.length > 0) {
-      allAgentTools.push(...nonRedundantMcpTools);
-      for (const tool of nonRedundantMcpTools) {
+    // Redundant servers (filesystem) are skipped at connect time —
+    // see REDUNDANT_MCP_SERVERS in src/mcp-client.ts. Native `read`/
+    // `write`/`edit`/`bash` already cover those surfaces with full
+    // SecurityLayer integration, and connecting just to drop the tools
+    // cost ~12s of subprocess spawn on every boot.
+    if (mcpTools.length > 0) {
+      allAgentTools.push(...mcpTools);
+      for (const tool of mcpTools) {
         const serverName = tool.name.replace(/^mcp_/, "").split("_")[0] ?? "unknown";
         toolRegistry.register(tool, {
           defer: true,
@@ -110,9 +107,7 @@ export async function bootstrapTools(deps: {
           mcpSource: serverName,
         });
       }
-      logger.info(`[mcp] Added ${nonRedundantMcpTools.length} tools from MCP servers${filteredCount > 0 ? ` (filtered ${filteredCount} redundant filesystem duplicates)` : ""}`);
-    } else if (filteredCount > 0) {
-      logger.info(`[mcp] Filtered ${filteredCount} redundant filesystem MCP tools (native covers these)`);
+      logger.info(`[mcp] Added ${mcpTools.length} tools from MCP servers`);
     }
     process.on("SIGINT", () => { mcpManager.disconnectAll(); });
   } catch (e) {

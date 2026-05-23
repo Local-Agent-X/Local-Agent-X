@@ -12,10 +12,11 @@ import { createLogger } from "../logger.js";
 import { detectCapabilities } from "./capabilities.js";
 import { trySidecarSynth, tryLiteSynth } from "./tts-sidecars.js";
 import { synthesizeKokoro, synthesizePiper, synthesizeWinSapi } from "./tts-local.js";
+import { synthesizeXai } from "./tts-xai.js";
 
 const logger = createLogger("voice");
 
-type EngineId = "sovits" | "chatterbox" | "lite";
+type EngineId = "sovits" | "chatterbox" | "lite" | "xai";
 
 export async function synthesize(
   text: string,
@@ -30,9 +31,12 @@ export async function synthesize(
     sovits:     () => trySidecarSynth(svPort, "sovits", text),
     chatterbox: () => trySidecarSynth(cbPort, "chatterbox", text),
     lite:       () => tryLiteSynth(litePort, text, voice, speed),
+    xai:        () => synthesizeXai(text, voice),
   };
 
   // Default chain (auto) is sovits→chatterbox→lite — clones first, then built-in.
+  // xAI is opt-in only (bridgeVoicePreference="xai"); not in the auto chain
+  // because remote round-trips lose to local sidecars on Alex's 3060 setup.
   let preference: "auto" | EngineId = "auto";
   try {
     const { getRuntimeConfig } = await import("../config.js");

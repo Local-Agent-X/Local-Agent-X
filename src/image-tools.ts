@@ -1,6 +1,7 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
 import type { ToolDefinition, ToolResult } from "./types.js";
 import type { SecretsStore } from "./secrets.js";
 
@@ -26,8 +27,11 @@ function getSDServerUrl(): string { return getRuntimeConfig().sdServerUrl; }
 // Injected at runtime via createImageTools()
 let _secretsStore: SecretsStore | undefined;
 
-/** Get current provider + API key from settings + secrets */
-function getActiveProvider(): { provider: string; apiKey?: string } {
+/** Get current provider + API key from settings + secrets. For xai, prefer
+ *  the SuperGrok / X Premium+ OAuth bearer over the API key — same wire
+ *  shape, but the OAuth bearer draws from subscription quota instead of
+ *  API spend. */
+async function getActiveProvider(): Promise<{ provider: string; apiKey?: string }> {
   const settingsPath = join(homedir(), ".lax", "settings.json");
   let provider = "local";
   try {
@@ -38,44 +42,73 @@ function getActiveProvider(): { provider: string; apiKey?: string } {
   } catch {}
 
   let apiKey: string | undefined;
-  if (_secretsStore) {
-    const keyName = provider === "xai" ? "XAI_API_KEY" : provider === "openai" ? "OPENAI_API_KEY" : "";
-    if (keyName) apiKey = _secretsStore.get(keyName);
+  if (provider === "xai") {
+    try {
+      const { getXaiApiKey } = await import("./auth-xai.js");
+      const oauth = await getXaiApiKey();
+      if (oauth) apiKey = oauth;
+    } catch {}
+    if (!apiKey && _secretsStore) apiKey = _secretsStore.get("XAI_API_KEY") || undefined;
+  } else if (provider === "openai" && _secretsStore) {
+    apiKey = _secretsStore.get("OPENAI_API_KEY") || undefined;
   }
 
   return { provider, apiKey };
 }
 
-/** Generate image via xAI Grok API */
-async function generateViaXai(prompt: string, apiKey: string): Promise<ToolResult> {
+/** Map LAX-style aspect (square/landscape/portrait) → xAI aspect ratio string. */
+function xaiAspectRatio(aspect?: string): string {
+  switch ((aspect || "").toLowerCase()) {
+    case "landscape": case "16:9": return "16:9";
+    case "portrait":  case "9:16": return "9:16";
+    case "4:3": case "3:4": case "3:2": case "2:3": return aspect as string;
+    default: return "1:1";
+  }
+}
+
+/** Generate image via xAI Grok Imagine. */
+async function generateViaXai(
+  prompt: string,
+  apiKey: string,
+  aspect?: string,
+  quality?: boolean,
+): Promise<ToolResult> {
   const res = await fetch("https://api.x.ai/v1/images/generations", {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: "grok-2-image", prompt, n: 1, response_format: "url" }),
+    body: JSON.stringify({
+      model: quality ? "grok-imagine-image-quality" : "grok-imagine-image",
+      prompt,
+      aspect_ratio: xaiAspectRatio(aspect),
+      resolution: "1k",
+    }),
     signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) {
     const errText = await res.text();
     return err(`xAI image generation failed (${res.status}): ${errText.slice(0, 300)}`);
   }
-  const data = (await res.json()) as { data: Array<{ url: string; revised_prompt?: string }> };
-  if (!data.data?.[0]?.url) return err("xAI returned no image.");
+  const data = (await res.json()) as { data: Array<{ url?: string; b64_json?: string }> };
+  const first = data.data?.[0];
+  if (!first?.url && !first?.b64_json) return err("xAI returned no image.");
 
-  const imageUrl = data.data[0].url;
-
-  // Download and save locally
-  const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(30_000) });
-  if (!imgRes.ok) return ok(`Image generated!\nPrompt: ${prompt}\nView: ${imageUrl}\n(Could not save locally)`);
-
-  const buffer = Buffer.from(await imgRes.arrayBuffer());
   const imagesDir = join("workspace", "generated");
   if (!existsSync(imagesDir)) mkdirSync(imagesDir, { recursive: true });
   const filename = `grok_${Date.now()}.png`;
   const savePath = join(imagesDir, filename);
+
+  let buffer: Buffer;
+  if (first.b64_json) {
+    buffer = Buffer.from(first.b64_json, "base64");
+  } else {
+    const imgRes = await fetch(first.url!, { signal: AbortSignal.timeout(30_000) });
+    if (!imgRes.ok) return ok(`Image generated!\nPrompt: ${prompt}\nView: ${first.url}\n(Could not save locally)`);
+    buffer = Buffer.from(await imgRes.arrayBuffer());
+  }
   writeFileSync(savePath, buffer);
 
   return ok(
-    `Image generated via Grok!\n` +
+    `Image generated via Grok Imagine!\n` +
     `Prompt: ${prompt}\n` +
     `Saved: ${savePath}\n` +
     `View: /uploads/../workspace/generated/${filename}`
@@ -145,6 +178,14 @@ const generateImageTool: ToolDefinition = {
         type: "number",
         description: "Guidance scale (default 7.5) — only used for local SD",
       },
+      aspect: {
+        type: "string",
+        description: "Aspect ratio for xAI Grok Imagine: square (1:1), landscape (16:9), portrait (9:16), 4:3, 3:4, 3:2, 2:3. Default square.",
+      },
+      quality: {
+        type: "boolean",
+        description: "Use grok-imagine-image-quality (higher fidelity, ~10-20s) instead of the default grok-imagine-image (~5-10s). Only applies to xAI backend.",
+      },
     },
     required: ["prompt"],
   },
@@ -153,10 +194,10 @@ const generateImageTool: ToolDefinition = {
     if (!prompt.trim()) return err("Prompt is required.");
 
     // Check active provider — use API image gen if available
-    const { provider, apiKey } = getActiveProvider();
+    const { provider, apiKey } = await getActiveProvider();
 
     if (provider === "xai" && apiKey) {
-      try { return await generateViaXai(prompt, apiKey); }
+      try { return await generateViaXai(prompt, apiKey, args.aspect as string | undefined, Boolean(args.quality)); }
       catch (e) { return err(`xAI image generation failed: ${(e as Error).message}`); }
     }
 
@@ -228,13 +269,88 @@ const generateImageTool: ToolDefinition = {
 /** Video generation server URL — configurable via config.videoServerUrl */
 function getVideoServerUrl(): string { return getRuntimeConfig().videoServerUrl; }
 
+/** Generate video via xAI Grok Imagine (text-to-video, async polling).
+ *  POST /v1/videos/generations returns { request_id }, then we poll
+ *  GET /v1/videos/{request_id} until status=done. Final body has the
+ *  video URL, which we fetch and save as MP4. */
+async function generateViaXaiVideo(
+  prompt: string,
+  apiKey: string,
+  duration: number,
+  referenceImageUrls?: string[],
+): Promise<ToolResult> {
+  const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` };
+  const refs = (referenceImageUrls || []).filter(u => u?.trim()).map(url => ({ url }));
+  // Reference-image path caps at 10s per xAI's docs.
+  const clamped = Math.max(1, Math.min(refs.length > 0 ? 10 : 15, Math.floor(duration)));
+
+  const body: Record<string, unknown> = {
+    model: "grok-imagine-video",
+    prompt,
+    duration: clamped,
+  };
+  if (refs.length > 0) body.reference_images = refs;
+
+  const submit = await fetch("https://api.x.ai/v1/videos/generations", {
+    method: "POST",
+    headers: { ...headers, "x-idempotency-key": randomUUID() },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!submit.ok) {
+    const errText = await submit.text();
+    return err(`xAI video submit failed (${submit.status}): ${errText.slice(0, 300)}`);
+  }
+  const submitted = await submit.json() as { request_id?: string };
+  const requestId = submitted.request_id;
+  if (!requestId) return err("xAI video response missing request_id");
+
+  // Poll for completion — Grok Imagine videos run ~60-240s.
+  const deadline = Date.now() + 6 * 60 * 1000;
+  let videoUrl: string | null = null;
+  let lastStatus = "queued";
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 5000));
+    const poll = await fetch(`https://api.x.ai/v1/videos/${requestId}`, {
+      headers, signal: AbortSignal.timeout(30_000),
+    });
+    if (!poll.ok) {
+      const errText = await poll.text();
+      return err(`xAI video poll failed (${poll.status}): ${errText.slice(0, 300)}`);
+    }
+    const pollBody = await poll.json() as { status?: string; video?: { url?: string }; url?: string };
+    lastStatus = (pollBody.status || "").toLowerCase();
+    if (lastStatus === "done") { videoUrl = pollBody.video?.url || pollBody.url || null; break; }
+    if (["failed", "error", "expired", "cancelled"].includes(lastStatus)) {
+      return err(`xAI video generation ${lastStatus} (request ${requestId})`);
+    }
+  }
+  if (!videoUrl) return err(`xAI video generation timed out (last status: ${lastStatus})`);
+
+  const vidRes = await fetch(videoUrl, { signal: AbortSignal.timeout(60_000) });
+  if (!vidRes.ok) return ok(`Video generated!\nPrompt: ${prompt}\nView: ${videoUrl}\n(Could not save locally)`);
+  const buffer = Buffer.from(await vidRes.arrayBuffer());
+  const videosDir = join("workspace", "videos");
+  if (!existsSync(videosDir)) mkdirSync(videosDir, { recursive: true });
+  const filename = `grok_${Date.now()}.mp4`;
+  const savePath = join(videosDir, filename);
+  writeFileSync(savePath, buffer);
+
+  return ok(
+    `Video generated via Grok Imagine!\n` +
+    `Prompt: ${prompt}\n` +
+    `Duration: ${clamped}s\n` +
+    `Saved: ${savePath}\n` +
+    `View: http://127.0.0.1:${getRuntimeConfig().port}/videos/${filename}`
+  );
+}
+
 const generateVideoTool: ToolDefinition = {
   name: "generate_video",
   description:
-    "Generate a short video (~6 seconds) from a text prompt using local CogVideoX (runs on your GPU). " +
-    "The video server must be running on port 7861. If not running, use bash to start it: " +
-    "'python workspace/sd-server/video-server.py' (first run downloads ~4GB model). " +
-    "Use detailed prompts for best results. Videos are saved as MP4.",
+    "Generate a short video from a text prompt. When provider=xai with credentials, uses xAI Grok Imagine " +
+    "(text-to-video, ~60-240s, up to 15s duration, optional reference images). Otherwise falls back to local CogVideoX " +
+    "(must be running on port 7861, ~6 second outputs). Videos saved as MP4.",
   parameters: {
     type: "object",
     properties: {
@@ -244,11 +360,20 @@ const generateVideoTool: ToolDefinition = {
       },
       num_frames: {
         type: "number",
-        description: "Number of frames (default 49 = ~6 seconds at 8fps, max 81)",
+        description: "Number of frames (default 49 = ~6 seconds at 8fps, max 81) — local CogVideoX only",
       },
       steps: {
         type: "number",
-        description: "Inference steps (default 50, more = higher quality but slower)",
+        description: "Inference steps (default 50, more = higher quality but slower) — local CogVideoX only",
+      },
+      duration: {
+        type: "number",
+        description: "Seconds (1-15, capped at 10 if reference_images supplied). xAI Grok Imagine only. Default 8.",
+      },
+      reference_images: {
+        type: "array",
+        items: { type: "string" },
+        description: "Up to 7 reference image URLs for style/character guidance. xAI Grok Imagine only.",
       },
     },
     required: ["prompt"],
@@ -256,6 +381,23 @@ const generateVideoTool: ToolDefinition = {
   async execute(args) {
     const prompt = String(args.prompt || "");
     if (!prompt.trim()) return err("Prompt is required.");
+
+    // Try xAI Grok Imagine first when provider=xai and creds are configured.
+    const { provider, apiKey } = await getActiveProvider();
+    if (provider === "xai" && apiKey) {
+      try {
+        const refs = Array.isArray(args.reference_images) ? (args.reference_images as string[]) : undefined;
+        const dur = Number(args.duration) || 8;
+        return await generateViaXaiVideo(prompt, apiKey, dur, refs);
+      } catch (e) {
+        // Fall through to local CogVideoX on xAI failure — gives the user
+        // a working fallback if SuperGrok hits the 403 allowlist gate.
+        const msg = (e as Error).message;
+        if (!/timeout|aborted/i.test(msg)) {
+          return err(`xAI video generation failed: ${msg}`);
+        }
+      }
+    }
 
     const numFrames = Math.min(81, Math.max(17, Number(args.num_frames) || 49));
     const steps = Math.min(80, Math.max(20, Number(args.steps) || 50));

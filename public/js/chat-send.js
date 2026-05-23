@@ -222,7 +222,9 @@ async function sendMessage() {
               // the group container and orphaned tool cards float in body.
               const existingGroups = bodyEl.querySelectorAll('.activity-group');
               const orphanCards = bodyEl.querySelectorAll(':scope > .tool-card');
+              const mediaPreviews = bodyEl.querySelectorAll(':scope > .tool-media-preview');
               bodyEl.innerHTML = content ? md(content) : '';
+              mediaPreviews.forEach(m => bodyEl.appendChild(m));
               existingGroups.forEach(g => bodyEl.appendChild(g));
               orphanCards.forEach(c => bodyEl.appendChild(c));
               appendToolCardGrouped(bodyEl, event.toolName, event.args, event.riskLevel, event.context);

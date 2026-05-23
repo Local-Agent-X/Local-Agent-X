@@ -107,11 +107,14 @@ function renderStreamContent(bodyEl, content) {
     // delta would wipe the consolidated activity container.
     const existingGroups = bodyEl.querySelectorAll('.activity-group');
     const orphanCards = bodyEl.querySelectorAll(':scope > .tool-card, :scope > .approval-card');
+    const mediaPreviews = bodyEl.querySelectorAll(':scope > .tool-media-preview');
     // Strip inline plans — the agent's "Plan: 1) X, 2) Y" bullet is for
     // its own reasoning, not for the user's eyes. We remove it before render
     // so the visible bubble just shows the final answer, not the scratchwork.
     const stripped = stripAgentScratchwork(pending.latest);
     bodyEl.innerHTML = stripped ? md(stripped) : '';
+    // Re-attach media previews FIRST so they sit above the activity group.
+    mediaPreviews.forEach(m => bodyEl.appendChild(m));
     existingGroups.forEach(g => bodyEl.appendChild(g));
     orphanCards.forEach(c => bodyEl.appendChild(c));
   });

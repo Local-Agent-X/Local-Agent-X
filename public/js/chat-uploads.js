@@ -218,7 +218,7 @@ function updateStreamUI() {
       sendBtn.title = isStreamingHere
         ? 'Inject into the running turn (it is still working)'
         : 'Send message';
-      sendBtn.innerHTML = isStreamingHere ? '+' : '&#9650;';
+      sendBtn.innerHTML = isStreamingHere ? '&#8629;' : '&#9650;';
     }
   } catch {}
 }

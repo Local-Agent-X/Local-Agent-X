@@ -261,12 +261,19 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
 
   // Brain backup — directory trees. Destructive mirror so the
   // destination matches the remote tree exactly.
+  // Additive pull: locally-created run files (agent-runs/) and locally-
+  // built dashboards (dashboards/) that haven't been pushed yet must
+  // survive a stale-remote pull. Files are uniquely named per run id /
+  // dashboard id, so there's no collision-on-create. Updates still flow
+  // via the mtime-newer check inside pullDir. Deletes don't propagate
+  // through this path -- if cross-machine delete becomes needed, layer
+  // a tombstone source the way project-tombstones works.
   for (const dir of BRAIN_DIRS) {
     const remote = join(syncDir, dir);
     if (!existsSync(remote)) continue;
     const local = join(dataDir, dir);
     try {
-      pullDir(remote, local, /* additiveOnly */ false);
+      pullDir(remote, local, /* additiveOnly */ true);
     } catch (e) {
       logger.warn(`[sync] brain pull skipped dir ${dir}: ${(e as Error).message}`);
     }

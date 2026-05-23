@@ -39,133 +39,38 @@
  *   - The promise returned by `runTurn` resolves once the transport
  *     iterable drains; the worker (Issue 06) sees `tracker.cancelled`
  *     and skips the post-turn commit.
+ *
+ * Helpers split into ./anthropic/* — this file is the adapter class.
  */
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
-import { hasInjects } from "../../agent-loop/inject-queue.js";
-import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
-import { createLogger } from "../../logger.js";
 
-const logger = createLogger("canonical-loop.anthropic");
+import {
+  ANTHROPIC_ADAPTER_NAME,
+  ANTHROPIC_ADAPTER_VERSION,
+  PROVIDER_STATE_MAX_BYTES_DEFAULT,
+  type AnthropicAdapterOptions,
+  type AnthropicTransport,
+  type AnthropicTransportRequest,
+  type StreamConsumeResult,
+} from "./anthropic/types.js";
+import { byteLengthUtf8, convertTools } from "./anthropic/helpers.js";
+import { streamConsume, applyToolCallTextFallback } from "./anthropic/stream-consume.js";
 
-export const ANTHROPIC_ADAPTER_NAME = "anthropic";
-export const ANTHROPIC_ADAPTER_VERSION = "1.0.0";
-export const PROVIDER_STATE_MAX_BYTES_DEFAULT = 256 * 1024;
-
-// ── Transport contract ───────────────────────────────────────────────────
-
-export interface AnthropicTransportRequest {
-  model: string;
-  systemPrompt: string;
-  messages: TransportMessage[];
-  tools: TransportTool[];
-  signal: AbortSignal;
-  maxTokens?: number;
-  /**
-   * Chat session id, when this transport is driving a chat op. Used for
-   * warm-pool keying so a session reuses a long-lived CLI process across
-   * turns instead of cold-spawning per request.
-   */
-  sessionId?: string;
-  /**
-   * Force a single tool for this request. The transport translates
-   * `{type:"tool", name}` into Anthropic's wire-shape tool_choice on the
-   * direct-HTTP path; on the CLI path it appends a system-prompt
-   * directive because the subprocess doesn't accept tool_choice flags.
-   */
-  forcedToolChoice?: { type: "tool"; name: string };
-}
-
-export interface TransportMessage {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string;
-  /** Required when role === "tool". */
-  toolCallId?: string;
-  /**
-   * Optional assistant tool_calls for round-tripping function_call items
-   * across turns. Codex's ChatGPT-backend doesn't support
-   * `previous_response_id`, so the message history must include the
-   * assistant's prior tool_call(s) before the matching tool_result —
-   * otherwise the API rejects with "no tool call found for function call
-   * output with call_id …". Set when role === "assistant" and the model
-   * emitted tool calls; the per-provider transport translates this to the
-   * underlying client's tool-call shape.
-   */
-  toolCalls?: Array<{ id: string; name: string; arguments: string }>;
-  /**
-   * Image attachments riding on this message (only meaningful when
-   * role === "user"). Each transport picks them up at request time and
-   * folds them into the wire format its provider accepts: OpenAI-compat
-   * gets multi-part text+image_url base64; Anthropic gets the same
-   * multi-part shape and lets `anthropic-client/request.ts` convert it
-   * to Anthropic's `image` content blocks. Codex ignores these — its
-   * Responses API path doesn't currently support vision.
-   */
-  images?: Array<{ url: string; name: string; filePath?: string }>;
-}
-
-export interface TransportTool {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>;
-}
-
-export type TransportEvent =
-  | { type: "text"; delta: string }
-  | { type: "tool_call"; id: string; name: string; arguments: string }
-  | { type: "error"; code: string; message: string; retryable?: boolean }
-  | {
-      type: "done";
-      stopReason?: string;
-      /**
-       * Optional usage from the underlying provider's terminal frame.
-       * Captured into providerState so soak-metrics can read it without
-       * subscribing to provider-specific shapes. Populated by both the
-       * Anthropic and Codex transports when their respective `result` /
-       * `done` events carry usage. Cache fields are Anthropic-specific —
-       * Codex returns them as undefined.
-       */
-      usage?: {
-        inputTokens: number;
-        outputTokens: number;
-        cacheReadTokens?: number;
-        cacheCreateTokens?: number;
-      };
-    };
-
-export interface AnthropicTransport {
-  stream(req: AnthropicTransportRequest): AsyncIterable<TransportEvent>;
-}
-
-// ── Adapter ──────────────────────────────────────────────────────────────
-
-export interface AnthropicAdapterOptions {
-  /** Defaults to a transport that wraps `streamAnthropicResponse`. */
-  transport?: AnthropicTransport;
-  /** Provider model id. Override per-op via a custom factory. */
-  model?: string;
-  /** System prompt applied to every turn. */
-  systemPrompt?: string;
-  /** Per-turn output token cap. */
-  maxTokens?: number;
-  /** PRD §21: 256 KB suggested cap on `provider_state` JSON size. */
-  providerStateMaxBytes?: number;
-  /**
-   * When this adapter drives a chat op, the session id is propagated to
-   * the transport so the warm pool reuses one CLI process across turns
-   * for the session.
-   */
-  sessionId?: string;
-  /**
-   * Forced single tool for this op's first turn — surfaced from the
-   * intent classifier in prepare-request.ts. Anthropic's API accepts
-   * `tool_choice: { type: "tool", name: "..." }`; the CLI subprocess
-   * doesn't expose tool_choice as a flag, so the transport pivots that
-   * into a system-prompt directive when the auth path is OAuth/CLI.
-   */
-  forcedToolChoice?: { type: "tool"; name: string };
-}
+export {
+  ANTHROPIC_ADAPTER_NAME,
+  ANTHROPIC_ADAPTER_VERSION,
+  PROVIDER_STATE_MAX_BYTES_DEFAULT,
+} from "./anthropic/types.js";
+export type {
+  AnthropicAdapterOptions,
+  AnthropicTransport,
+  AnthropicTransportRequest,
+  TransportEvent,
+  TransportMessage,
+  TransportTool,
+} from "./anthropic/types.js";
 
 export class AnthropicAdapter implements Adapter {
   readonly name = ANTHROPIC_ADAPTER_NAME;
@@ -173,7 +78,7 @@ export class AnthropicAdapter implements Adapter {
 
   private aborted = false;
   private aborter: AbortController = new AbortController();
-  private inflight: Promise<void> | null = null;
+  private inflight: Promise<StreamConsumeResult> | null = null;
   private readonly transportPromise: Promise<AnthropicTransport>;
 
   constructor(private readonly opts: AnthropicAdapterOptions = {}) {
@@ -207,24 +112,15 @@ export class AnthropicAdapter implements Adapter {
 
     const transport = await this.transportPromise;
 
-    let assembledText = "";
-    let finalizedMessageId: string | null = null;
-    const toolCallIds: string[] = [];
-    let firstError: { code: string; message: string } | null = null;
-    let providerStop: string | undefined;
-    let usageInputTokens: number | undefined;
-    let usageOutputTokens: number | undefined;
-    let cacheReadTokens: number | undefined;
-    let cacheCreateTokens: number | undefined;
-
     // Only force on the first turn — after the model has called the
     // forced tool once, subsequent turns should free up so it can finish
     // narrating / chaining follow-up calls. Same posture as the legacy
     // force-tool-use middleware.
     const forcedToolChoice = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
+    const model = this.opts.model ?? "claude-opus-4-7";
 
     const req: AnthropicTransportRequest = {
-      model: this.opts.model ?? "claude-opus-4-7",
+      model,
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
       messages: canonicalToTransport(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
       tools: convertTools(input.tools),
@@ -238,129 +134,29 @@ export class AnthropicAdapter implements Adapter {
     // The adapter just yields events; turn-loop watches the report stream
     // and calls adapter.abort("idle-stalled") if no events for IDLE_TIMEOUT_MS.
 
-    const consume = async (): Promise<void> => {
-      try {
-        for await (const ev of transport.stream(req)) {
-          if (this.aborted) break;
-          // Mid-stream user interrupt. Anthropic's streaming model does
-          // in-stream tool execution: one runTurn can include many model
-          // iterations + tool calls without returning. If the user types
-          // a course-correction during that, the inject queue receives
-          // the message but driveTurn doesn't re-fire (and drainInjects
-          // doesn't run) until this runTurn returns. Result: the user's
-          // "don't ever use AI Import" sits unseen for minutes while the
-          // agent keeps doing the thing they're trying to stop.
-          //
-          // Fix: poll the inject queue at the top of each stream event.
-          // When the user types, we abort our own stream — the runTurn
-          // returns cleanly, the worker's `hasInjects` check (worker.ts)
-          // fires the next driveTurn, drainInjectsIntoTurn pulls the
-          // inject into op_messages, and the model sees the user's text
-          // on its very next API call. Whatever the model was about to
-          // say next gets discarded; that's the right tradeoff — the
-          // user explicitly intervened.
-          if (this.opts.sessionId && hasInjects(this.opts.sessionId)) {
-            this.aborted = true;
-            try { this.aborter?.abort(); } catch { /* already aborted */ }
-            break;
-          }
-          if (ev.type === "text") {
-            if (ev.delta.length === 0) continue;
-            assembledText += ev.delta;
-            report({ kind: "stream_chunk", body: { delta: ev.delta } });
-            continue;
-          }
-          if (ev.type === "tool_call") {
-            toolCallIds.push(ev.id);
-            report({
-              kind: "tool_call_requested",
-              call: {
-                toolCallId: ev.id,
-                tool: ev.name,
-                args: parseArgs(ev.arguments),
-              },
-            });
-            continue;
-          }
-          if (ev.type === "error") {
-            // Routine errors come through as adapter_reports (PRD §15 H).
-            // We capture the FIRST error and propagate via TurnResult.
-            if (!firstError) {
-              firstError = { code: ev.code, message: redactSecrets(ev.message) };
-            }
-            report({
-              kind: "error",
-              code: ev.code,
-              message: redactSecrets(ev.message),
-              retryable: ev.retryable === true,
-            });
-            continue;
-          }
-          if (ev.type === "done") {
-            providerStop = ev.stopReason;
-            if (ev.usage) {
-              usageInputTokens = ev.usage.inputTokens;
-              usageOutputTokens = ev.usage.outputTokens;
-              cacheReadTokens = ev.usage.cacheReadTokens;
-              cacheCreateTokens = ev.usage.cacheCreateTokens;
-            }
-            continue;
-          }
-        }
-      } catch (e) {
-        // Defensive: contract H says routine errors come via report,
-        // not exceptions. If the transport throws, convert into an error
-        // report and proceed. We never re-throw out of runTurn.
-        const message = redactSecrets((e as Error).message ?? String(e));
-        if (!firstError) firstError = { code: "transport_exception", message };
-        report({ kind: "error", code: "transport_exception", message, retryable: false });
-      }
-    };
-
-    this.inflight = consume();
+    this.inflight = this.runStreamConsume(transport, req, report);
+    let result: StreamConsumeResult;
     try {
-      await this.inflight;
+      result = await this.inflight;
     } finally {
       this.inflight = null;
     }
 
-    // Tool-call-in-text fallback. Mirror of the rescue path in
-    // openai-compat.ts. Anthropic models occasionally emit a tool call as
-    // raw JSON inside the text channel instead of as a structured tool_use
-    // block — typically after long sessions or when the model "explains"
-    // a call before making it. Without this, the JSON shows up in chat,
-    // the loop sees zero tool calls, and the turn stalls.
-    // Fires ONLY when no structured tool_use arrived AND the text contains
-    // a clear pattern. Healthy turns are untouched.
-    if (toolCallIds.length === 0 && assembledText.length > 0) {
-      const validNames = new Set(input.tools.map(t => t.name));
-      const extracted = extractToolCallsFromText(assembledText, validNames);
-      if (extracted.toolCalls.length > 0) {
-        logger.info(`${req.model} emitted ${extracted.toolCalls.length} tool call(s) as text — extracted`);
-        for (const tc of extracted.toolCalls) {
-          toolCallIds.push(tc.id);
-          report({
-            kind: "tool_call_requested",
-            call: { toolCallId: tc.id, tool: tc.name, args: parseArgs(tc.arguments) },
-          });
-        }
-        assembledText = extracted.remainingText;
-        // Retract the JSON the UI already streamed into the bubble; the
-        // persisted message will use the cleaned text. Clients without
-        // stream_redact handling are no worse off than before.
-        report({ kind: "stream_redact", replacementText: extracted.remainingText });
-      }
-    }
+    // Tool-call-in-text fallback: some turns emit a tool call as JSON in
+    // the text channel instead of as a structured tool_use block. Detect
+    // + rewrite. No-op for healthy turns.
+    applyToolCallTextFallback(result, report, model, new Set(input.tools.map(t => t.name)));
 
     // Finalize the assistant message if any text was produced. A turn that
     // only emitted tool calls (no narration) finalizes nothing — the next
     // turn carries the tool_result(s) back to the adapter.
-    if (assembledText.length > 0) {
+    let finalizedMessageId: string | null = null;
+    if (result.assembledText.length > 0) {
       finalizedMessageId = `am-${input.opId}-${input.turnIdx}-${Date.now().toString(36)}`;
       const msg: CanonicalMessage = {
         messageId: finalizedMessageId,
         role: "assistant",
-        content: { text: assembledText },
+        content: { text: result.assembledText },
       };
       report({ kind: "message_finalized", message: msg });
     }
@@ -373,9 +169,9 @@ export class AnthropicAdapter implements Adapter {
     let terminalReason: "done" | "error" | undefined;
     if (this.aborted) {
       terminalReason = "error";
-    } else if (firstError) {
+    } else if (result.firstError) {
       terminalReason = "error";
-    } else if (toolCallIds.length > 0) {
+    } else if (result.toolCallIds.length > 0) {
       terminalReason = undefined;
     } else {
       terminalReason = "done";
@@ -383,16 +179,16 @@ export class AnthropicAdapter implements Adapter {
 
     let providerState: ProviderStateEnvelope = this.buildProviderState(input, {
       finalizedMessageId,
-      stopReason: providerStop,
-      pendingTools: toolCallIds.length,
+      stopReason: result.providerStop,
+      pendingTools: result.toolCallIds.length,
       // Soak-metrics reads model + usage off providerPayload to compute
       // cost. Skip empty values so we don't pollute soak with zeros for
       // turns that didn't yield usage info.
-      model: this.opts.model ?? "claude-opus-4-7",
-      ...(usageInputTokens !== undefined ? { usageInputTokens } : {}),
-      ...(usageOutputTokens !== undefined ? { usageOutputTokens } : {}),
-      ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
-      ...(cacheCreateTokens !== undefined ? { cacheCreateTokens } : {}),
+      model,
+      ...(result.usageInputTokens !== undefined ? { usageInputTokens: result.usageInputTokens } : {}),
+      ...(result.usageOutputTokens !== undefined ? { usageOutputTokens: result.usageOutputTokens } : {}),
+      ...(result.cacheReadTokens !== undefined ? { cacheReadTokens: result.cacheReadTokens } : {}),
+      ...(result.cacheCreateTokens !== undefined ? { cacheCreateTokens: result.cacheCreateTokens } : {}),
     });
 
     // Size cap (PRD §21): fail loudly. Surface via error report so the
@@ -428,6 +224,26 @@ export class AnthropicAdapter implements Adapter {
 
   // ── internals ──────────────────────────────────────────────────────────
 
+  private async runStreamConsume(
+    transport: AnthropicTransport,
+    req: AnthropicTransportRequest,
+    report: (r: AdapterReport) => void,
+  ): Promise<StreamConsumeResult> {
+    const result = await streamConsume(transport, req, report, {
+      isAborted: () => this.aborted,
+      sessionId: this.opts.sessionId,
+    });
+    // Mid-stream inject interrupt: streamConsume broke out of the loop
+    // and flagged this on the result. Flip the adapter's aborted flag
+    // AND abort the transport's signal so its subprocess/HTTP request
+    // tears down. Same effect as before the extraction.
+    if (result.interruptedByInject) {
+      this.aborted = true;
+      try { this.aborter?.abort(); } catch { /* already aborted */ }
+    }
+    return result;
+  }
+
   private buildProviderState(input: TurnInput, payload: Record<string, unknown>): ProviderStateEnvelope {
     return {
       adapterName: ANTHROPIC_ADAPTER_NAME,
@@ -447,51 +263,6 @@ export class AnthropicAdapter implements Adapter {
     }
     return null;
   }
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────
-
-
-function convertTools(tools: TurnInput["tools"]): TransportTool[] {
-  return tools.map(t => ({
-    name: t.name,
-    description: t.description ?? "",
-    parameters: ((t.inputSchema as Record<string, unknown>) ?? {}),
-  }));
-}
-
-function parseArgs(raw: string): unknown {
-  if (!raw) return {};
-  try { return JSON.parse(raw); } catch { return { _raw: raw }; }
-}
-
-function byteLengthUtf8(s: string): number {
-  let len = 0;
-  for (let i = 0; i < s.length; i++) {
-    const code = s.charCodeAt(i);
-    if (code < 0x80) len += 1;
-    else if (code < 0x800) len += 2;
-    else if (code >= 0xd800 && code <= 0xdbff) { len += 4; i++; }
-    else len += 3;
-  }
-  return len;
-}
-
-/**
- * Best-effort secret redaction for transport-error messages. Provider
- * errors should never include the bearer token, but we belt-and-suspender
- * by stripping recognized prefixes if they ever leak in. Anything we
- * can't classify cheaply is left alone — the canonical contract requires
- * NO raw secrets in events, but the production transport already filters
- * upstream; this is a defensive last line.
- */
-function redactSecrets(s: string): string {
-  if (!s) return s;
-  return s
-    .replace(/sk-ant-[a-zA-Z0-9_\-]+/g, "[REDACTED_API_KEY]")
-    .replace(/sk-ant-oat[a-zA-Z0-9_\-]+/g, "[REDACTED_OAUTH]")
-    .replace(/oauth:[a-zA-Z0-9_\-\.]+/g, "[REDACTED_OAUTH]")
-    .replace(/Bearer\s+[a-zA-Z0-9_\-\.]+/gi, "Bearer [REDACTED]");
 }
 
 /** Convenience factory for adapter-factory registration. */

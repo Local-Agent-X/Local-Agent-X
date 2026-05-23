@@ -138,6 +138,7 @@
     <div id="chat-main">
       <!-- Chat toolbar (mood/context indicators only — controls moved to status bar) -->
       <div id="chat-toolbar">
+        <span id="stream-indicator" title="A turn is in flight. The send button will inject into the running turn." style="display:none;align-items:center;gap:6px;font-size:.65rem;font-family:var(--mono);padding:3px 10px;border-radius:6px;border:1px solid var(--accent-dim);color:var(--accent)"><span class="chat-dot active-pulse" style="width:6px;height:6px;border-radius:50%"></span><span>STREAMING</span></span>
         <span id="mood-indicator" title="Detected mood" style="display:none;font-size:.65rem;font-family:var(--mono);padding:3px 8px;border-radius:6px;border:1px solid var(--border);color:var(--muted)"></span>
         <span id="smart-ctx-indicator" title="Smart context active" style="display:none;font-size:.65rem;font-family:var(--mono);padding:3px 8px;border-radius:6px;border:1px solid var(--accent-dim);color:var(--accent)">CTX</span>
       </div>

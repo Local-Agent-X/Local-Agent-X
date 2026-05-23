@@ -512,8 +512,12 @@ function selectChat(id) {
   if (stopBtn) stopBtn.style.display = isThisChatStreaming ? 'flex' : 'none';
   // Step 4: send-btn always enabled. When this chat is streaming, the
   // sendMessage handler routes the message as an interject into the
-  // running turn. When not streaming, normal new-turn flow.
+  // running turn. When not streaming, normal new-turn flow. The visual
+  // mode (inject vs send) + the toolbar STREAMING pill are driven from
+  // updateStreamUI() — single source of truth bound to streamingSessionId
+  // + activeChat. Call it here on chat-switch so we don't carry stale UI.
   if (sendBtn) sendBtn.disabled = false;
+  try { if (typeof updateStreamUI === 'function') updateStreamUI(); } catch {}
   // Subscribe to this chat's events via WS
   if (window.chatWs && window.chatWs.readyState === WebSocket.OPEN) {
     window.chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: id }));

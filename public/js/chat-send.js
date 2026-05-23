@@ -123,7 +123,7 @@ async function sendMessage() {
   try { bodyEl.classList.add('streaming'); } catch {}
   const streamSessionId = activeChat.id; // Capture which session THIS stream belongs to
   const streamChat = activeChat; // Reference to the chat object (survives navigation)
-  streamingSessionId = streamSessionId; stopSpeaking(); ttsSentenceBuffer = '';
+  window.streamingSessionId = streamSessionId; stopSpeaking(); ttsSentenceBuffer = '';
   // Track task start for browser notifications (feature 96)
   if (window.taskStartTime !== undefined) window.taskStartTime = Date.now();
   const stopBtn = document.getElementById('stop-btn');
@@ -297,7 +297,7 @@ async function sendMessage() {
             chatWs.removeEventListener('message', wsHandler);
             if (saveInterval) clearInterval(saveInterval);
             // Finalize
-            if (streamingSessionId === streamSessionId) streamingSessionId = null;
+            if (streamingSessionId === streamSessionId) window.streamingSessionId = null;
             _liveStreams.delete(streamSessionId);
             // Keep `pin-bottom` — it's the latest turn and should retain the
             // viewport-height reserved space below until the user sends again.
@@ -600,7 +600,7 @@ async function sendMessage() {
   // Browser notification for completed long tasks (feature 96)
   if (typeof window.notifyTaskComplete === 'function') window.notifyTaskComplete(streamChat.title);
   // ALWAYS clear streaming state — must happen before anything that could throw
-  if (streamingSessionId === streamSessionId) streamingSessionId = null;
+  if (streamingSessionId === streamSessionId) window.streamingSessionId = null;
   _liveStreams.delete(streamSessionId);
   // pin-bottom stays — see WS-handler note. Latest turn keeps reserved height.
   // Always hide stop button and re-enable send when stream ends

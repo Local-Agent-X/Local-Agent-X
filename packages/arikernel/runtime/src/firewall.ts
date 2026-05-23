@@ -13,6 +13,8 @@ import type {
 	ToolCallRequest,
 	ToolResult,
 } from "@arikernel/core";
+import { generateId, now } from "@arikernel/core";
+import { applyBehavioralRule, evaluateBehavioralRules } from "./behavioral-rules.js";
 import { PolicyEngine } from "@arikernel/policy-engine";
 import { TaintTracker } from "@arikernel/taint-tracker";
 import type { ToolExecutor } from "@arikernel/tool-executors";

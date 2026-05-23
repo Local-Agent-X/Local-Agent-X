@@ -30,16 +30,17 @@ export const hallucinationCheckMiddleware: CanonicalMiddleware = {
     // Worker hallucination fires EVERY turn (not just turn 0). Narrative claims
     // about background workers/sub-agents that weren't actually spawned slip past
     // the creation-hallucination check (no first-person verb, no sentence-start
-    // verb). LLM verifier as second pass to avoid false positives.
+    // verb).
+    //
+    // No LLM second-opinion here: ctx.toolsCalledThisOp is built from
+    // op_turns.toolCallSummary entries with resultStatus === "ok" (see
+    // host.ts), so a "background worker is on it" claim with no successful
+    // spawn-class call in the ledger is provably false. An LLM verifier on
+    // top would only re-introduce the false-negative that let the live
+    // 2026-05-23 PDF-worker hallucination through.
     const workerNudge = checkWorkerHallucination(text, ctx.toolsCalledThisOp);
     if (workerNudge) {
-      const confirmed = await verifyClaimHallucinationWithLLM(
-        text,
-        Array.from(ctx.toolsCalledThisOp),
-      );
-      if (confirmed !== false) {
-        return { kind: "nudge", message: workerNudge, reason: "worker-hallucination" };
-      }
+      return { kind: "nudge", message: workerNudge, reason: "worker-hallucination" };
     }
 
     if (ctx.turnIdx === 0) {

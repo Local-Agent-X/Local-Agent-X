@@ -70,7 +70,10 @@ export interface CanonicalLoopContext {
    *  afterToolExecution fires. */
   toolResults: CanonicalToolResultView[];
 
-  // ── Cross-turn (op-level) tallies — built by host from op_messages ──
+  // ── Cross-turn (op-level) tallies — built by host from op_turns ──
+  // Contains only tools whose prior-turn toolCallSummary recorded
+  // resultStatus === "ok". Failed/cancelled attempts are not included —
+  // a failed spawn is not proof that a worker exists.
   toolsCalledThisOp: Set<string>;
   committingToolsThisOp: Set<string>;
   /** Per-turn evidence counts, oldest first. Maintained across turns. */

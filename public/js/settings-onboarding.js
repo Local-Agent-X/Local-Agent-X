@@ -73,7 +73,7 @@ function showOnboarding() {
           <h2 class="onboarding-title">Choose Your AI Provider</h2>
           <p class="onboarding-desc">Select which AI model to use. You can change this later in Settings.</p>
           <div class="onboarding-options">
-            <button class="onboarding-option" onclick="selectOnboardProvider('xai')"><strong>xAI Grok</strong><br><span style="color:var(--muted);font-size:.72rem">API key required</span></button>
+            <button class="onboarding-option" onclick="selectOnboardProvider('xai')"><strong>xAI Grok</strong><br><span style="color:var(--muted);font-size:.72rem">SuperGrok / X Premium+ or API key</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('gemini')"><strong>Google Gemini</strong><br><span style="color:var(--muted);font-size:.72rem">API key from ai.google.dev</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('codex')"><strong>OpenAI Codex</strong><br><span style="color:var(--muted);font-size:.72rem">Free with ChatGPT</span></button>
             <button class="onboarding-option" onclick="selectOnboardProvider('anthropic')"><strong>Anthropic Claude</strong><br><span style="color:var(--muted);font-size:.72rem">Subscription auth</span></button>
@@ -154,11 +154,23 @@ function populateConnectStep() {
       <span style="color:var(--muted);font-size:.75rem">Subscription auth; Anthropic may require Extra Usage</span>
     `;
   } else if (_onboardProvider === 'xai') {
-    desc.textContent = 'Enter your xAI API key to use Grok models.';
+    desc.textContent = 'Sign in with SuperGrok / X Premium+, or paste an xAI API key.';
     container.innerHTML = `
-      <input type="password" id="ob-api-key" placeholder="xai-..." style="width:100%;max-width:360px;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.9rem">
-      <button class="action-btn primary" onclick="onboardSaveKey('xai','XAI_API_KEY')" style="padding:8px 24px">Save Key</button>
-      <span style="color:var(--muted);font-size:.75rem">Get your key at console.x.ai</span>
+      <button class="action-btn primary" onclick="onboardOAuth('xai')" style="padding:10px 32px;font-size:1rem">Sign In with xAI</button>
+      <span style="color:var(--muted);font-size:.75rem">SuperGrok / X Premium+ subscription required for OAuth</span>
+      <details style="margin-top:10px;width:100%;max-width:360px;font-size:.8rem">
+        <summary style="cursor:pointer;color:var(--muted)">Browser couldn't reach the app? Paste the code from xAI</summary>
+        <div style="display:flex;flex-direction:column;align-items:stretch;gap:6px;margin-top:8px">
+          <input type="text" id="ob-xai-code" placeholder="paste code from xAI consent page" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.85rem;font-family:var(--mono)">
+          <button class="action-btn secondary" onclick="onboardExchangeXaiCode()" style="padding:6px 16px">Submit Code</button>
+        </div>
+      </details>
+      <div style="margin-top:18px;display:flex;flex-direction:column;align-items:center;gap:8px;width:100%;max-width:360px">
+        <span style="color:var(--muted);font-size:.7rem;letter-spacing:.04em">— OR USE AN API KEY —</span>
+        <input type="password" id="ob-api-key" placeholder="xai-..." style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.9rem">
+        <button class="action-btn secondary" onclick="onboardSaveKey('xai','XAI_API_KEY')" style="padding:8px 24px">Save Key</button>
+        <span style="color:var(--muted);font-size:.72rem">Get one at console.x.ai</span>
+      </div>
     `;
   } else if (_onboardProvider === 'openai') {
     desc.textContent = 'Enter your OpenAI API key.';
@@ -182,17 +194,38 @@ function populateConnectStep() {
 
 async function onboardOAuth(type) {
   const status = document.getElementById('ob-connect-status');
+  const endpoints = {
+    anthropic: '/api/auth/anthropic/login',
+    xai: '/api/auth/xai/login',
+  };
   try {
-    const endpoint = type === 'anthropic' ? '/api/auth/anthropic/login' : '/api/auth/login';
+    const endpoint = endpoints[type] || '/api/auth/login';
     const res = await apiPost(endpoint, {});
     if (res.authUrl) {
-      window.open(res.authUrl, '_blank', 'width=600,height=700');
+      // xAI's server spawns the browser itself (more reliable than
+      // window.open for long URLs in Electron) and returns `opened: true`
+      // when it did. Skip the redundant window.open in that case.
+      if (!res.opened) window.open(res.authUrl, '_blank', 'width=600,height=700');
       if (status) status.textContent = 'Sign-in window opened — complete login there, then click Next.';
     } else if (res.error) {
       if (status) status.textContent = 'Error: ' + res.error;
     }
   } catch (e) {
     if (status) status.textContent = 'Failed to start sign-in. Try again or set up in Settings later.';
+  }
+}
+
+async function onboardExchangeXaiCode() {
+  const input = document.getElementById('ob-xai-code');
+  const status = document.getElementById('ob-connect-status');
+  const code = (input?.value || '').trim();
+  if (!code) { if (status) status.textContent = 'Paste the code from xAI first.'; return; }
+  try {
+    await apiPost('/api/auth/xai/exchange-code', { code });
+    if (status) { status.style.color = 'var(--accent)'; status.textContent = 'Connected to xAI! Click Next to continue.'; }
+    if (input) { input.value = ''; input.placeholder = '••••••••  (connected)'; }
+  } catch (e) {
+    if (status) status.textContent = 'Code exchange failed. Make sure Sign In with xAI was clicked first, then try again.';
   }
 }
 

@@ -226,6 +226,14 @@
             <button id="btn-xai-disconnect" class="action-btn danger" onclick="doXaiDisconnect()" style="display:none">Disconnect</button>
           </div>
           <div class="field-hint" style="margin-top:8px">Opens accounts.x.ai in your browser. Tokens land in <code>~/.lax/xai-auth.json</code> and refresh automatically.</div>
+          <details style="margin-top:10px;font-size:.85rem">
+            <summary style="cursor:pointer;color:var(--muted)">Browser couldn't reach the app? Paste the code from xAI</summary>
+            <div class="btn-row" style="margin-top:8px;align-items:stretch;gap:6px">
+              <input type="text" id="xai-manual-code" placeholder="paste code from xAI consent page" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:var(--mono);font-size:.85rem">
+              <button class="action-btn secondary" onclick="doXaiExchangeCode()" style="padding:6px 16px">Submit Code</button>
+            </div>
+            <div id="xai-manual-status" class="field-hint" style="margin-top:6px"></div>
+          </details>
         </div>
         <div class="section-card">
           <div class="section-title">OpenAI Authentication</div>

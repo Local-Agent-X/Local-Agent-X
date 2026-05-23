@@ -344,6 +344,16 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     } catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }
+  if (method === "POST" && url.pathname === "/api/auth/xai/exchange-code") {
+    try {
+      const body = await safeParseBody(req);
+      const code = typeof body?.code === "string" ? body.code : "";
+      const { exchangeXaiCodeManually } = await import("../../auth-xai.js");
+      await exchangeXaiCodeManually(code);
+      json(200, { ok: true });
+    } catch (e) { json(400, { error: safeErrorMessage(e) }); }
+    return true;
+  }
   if (method === "POST" && url.pathname === "/api/auth/xai/logout") {
     try { const { deleteXaiTokens } = await import("../../auth-xai.js"); deleteXaiTokens(); json(200, { ok: true }); }
     catch (e) { json(500, { error: safeErrorMessage(e) }); }

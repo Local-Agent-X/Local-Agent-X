@@ -26,91 +26,10 @@ export const SUPERVISOR_EXCLUDED: ReadonlySet<string> = new Set([
   "agency_list_roles", "agency_result",
 ]);
 
-export const CORE_TOOL_NAMES = new Set([
-  // Filesystem & code
-  "read", "write", "edit", "delete_file", "bash", "glob", "grep",
-  // Web & search
-  "web_fetch", "web_search",
-  // App self-control (flip toggles, change theme/provider/model via schema)
-  "setting",
-  // Interaction
-  "tool_search",
-  // Vision
-  "view_image", "screen_capture",
-  // Memory
-  "memory_search", "memory_save", "memory_recall", "memory_get",
-  "memory_forget", "memory_reflect", "memory_update_profile", "memory_stats",
-  "memory_consolidate", "memory_ingest",
-  // Operations — long-horizon goal orchestration
-  "operation_start", "operation_list", "operation_status", "operation_next", "operation_advance",
-  // Worker-pool observation tools — kept so the supervisor can monitor
-  // and cancel ops spawned by autopilot, scheduled tasks, or other
-  // internal callers. The submission tools (op_submit / op_submit_async /
-  // op_wait) are intentionally NOT exposed: per docs/canonical-agent-design.md
-  // Q1, delegation goes through agent_spawn (canonical layer). Internal
-  // code paths that need worker-pool dispatch can call submitOp directly.
-  "op_status", "op_kill", "op_redirect",
-  // Autopilot — bounded autonomous work in isolated worktree
-  "autopilot_start", "autopilot_stop", "autopilot_status",
-  // Self-edit (sandboxed code repair via subprocess)
-  "self_edit",
-  // Planning & tasks
-  "enter_plan_mode", "exit_plan_mode",
-  "task_create", "task_update", "task_list", "task_get",
-  // Protocols & scheduling. Full lifecycle + admin surface is eager — the
-  // tool_search dispatch loop (canonical-loop/chat-tool-dispatcher.ts)
-  // now augments the op's tool schema on discovery, but having the common
-  // ones eager avoids the extra turn cost on every operation. Total
-  // overhead is ~2-3KB and these are high-signal calls.
-  "protocol_list", "protocol_get", "protocol_search",
-  "protocol_create", "protocol_edit", "protocol_delete", "protocol_unarchive",
-  "protocol_pin", "protocol_list_archived",
-  "protocol_stats", "protocol_prune", "protocol_archive_bulk",
-  "protocol_curate", "protocol_curator_status",
-  "mission_schedule_create", "mission_schedule_list", "mission_schedule_update",
-  "mission_schedule_delete", "mission_schedule_toggle",
-  // Agents — canonical delegation surface. agent_spawn is the ONE way
-  // the supervisor delegates work to a specialist; agent_list discovers
-  // the catalog before spawning; agent_create extends it when no role
-  // fits. agent_status / agent_cancel / agent_output observe and control
-  // running spawns. Anything matching a named role (or the generic
-  // "worker") goes through this path — never op_submit_async.
-  //
-  // 🔄 REVERSE UNO — this line is the lever. For five layers of
-  // canonical-agent work we built the tool surface, taught the prompt
-  // to use it, wrote the tests — and Primal still routed through
-  // op_submit_async because THIS gate was stripping agent_spawn out of
-  // the request payload. Flipping the include/exclude here is what
-  // finally made the canonical path load-bearing. The actual fix was
-  // one file. (Owner's call, 2026-05-11.)
-  "agent_list", "agent_spawn", "agent_create",
-  "agent_status", "agent_cancel", "agent_output",
-  // Browser
-  "browser",
-  // Apps
-  "build_app", "app_create", "app_list",
-  // Auto-build orchestrator — entrypoints for /app-build → spec → plan →
-  // chunk-runner loop. These MUST be in the per-turn tool schema, not
-  // gated by keyword, because the user often pastes a literal tool call
-  // (e.g. primal_run_build_plan({...})) which doesn't match any keyword
-  // regex. Without these, Codex says "tool isn't in my loaded schema"
-  // even though tool_search returns the def — burning a turn and looking
-  // broken. (Live failure: 2026-05-12.)
-  "primal_run_build_plan", "primal_build_status", "primal_build_resume",
-  "start_app_build", "finalize_app_build",
-  // Secrets
-  "request_secret", "request_secrets", "list_secrets",
-  // HTTP
-  "http_request",
-  // File creation primitives. Promoted out of the keyword router because
-  // these are first-class capabilities — bare phrasings like "write a
-  // doc that says hello" used to miss the /document|docx|word/ regex on
-  // "doc" and Codex would then claim no tool existed instead of falling
-  // back to `write`. (Live failure on Mac 2026-05-16.) Anthropic strong
-  // models get the full inventory anyway; this matters for Codex/OpenAI
-  // 128-cap and for medium/weak tier shrink+RAG.
-  "document_create", "document_edit", "document_read",
-]);
+// Audience mapping (which tools are eager for which audience) is owned by
+// src/tools/audience-map.ts. This file owns the keyword router, build-intent
+// regex, supervisor-excluded list, and literal-tool-call detector — all of
+// which the main-chat resolver injects into resolveToolsForRequest.
 
 // Keywords that trigger including specific tool groups
 const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
@@ -144,25 +63,9 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
   { keywords: /agency|team|hire/i, toolPrefixes: ["agency_"] },
 ];
 
-// Build intent = minimal tool set. When the user asks to build/create an app,
-// the agent only needs file operations. Fewer tools = smaller context = Codex
-// stops returning empty responses on complex prompts.
-export const BUILD_INTENT_TOOLS = new Set([
-  // build_app is the primary tool for new apps — spawns CLI subprocess for reliability
-  "build_app",
-  // Direct file tools for edits and simple tasks
-  "write", "edit", "read", "bash", "glob", "grep",
-  "web_fetch", "web_search", "tool_search",
-  "view_image",
-  // self_edit lets Primal route around protected-files for src/ edits inside a
-  // sandboxed worktree with build/server-bind/agent-smoke gates before merge.
-  "self_edit",
-  // Canonical delegation surface — build-intent messages can still
-  // delegate long-running research/build work to a named specialist
-  // (e.g. a coder agent) without falling back to blocking calls.
-  "agent_list", "agent_spawn", "agent_create",
-  "agent_status", "agent_kill",
-]);
+// Build-intent narrowing fires when the user asks to build/create an app —
+// the resolver swaps main-chat audience for the smaller build-intent set so
+// Codex doesn't choke on the full inventory. Membership lives in audience-map.ts.
 const BUILD_INTENT_REGEX = /\b(build|create|make|write|generate|scaffold|set up)\s+(me\s+)?(a\s+|an\s+|the\s+)?(app|bot|dashboard|tracker|tool|game|website|page|site|form|calculator|chat|api|script)/i;
 
 /**

@@ -1057,7 +1057,12 @@
 <script src="/js/protocols.js"></script>
 <script src="/js/notifications.js"></script>
 <script src="/js/apps.js"></script>
-<script src="/js/apps-ide.js"></script>
+<!-- apps-ide split: core (state + lifecycle) loads first, then the WS
+     handler and the tool/file rendering helpers, then the agent panel
+     that already lived in its own file. -->
+<script src="/js/apps-ide.js?v=v2"></script>
+<script src="/js/apps-ide-ws.js?v=v1"></script>
+<script src="/js/apps-ide-tools-files.js?v=v1"></script>
 <script src="/js/apps-ide-agents.js"></script>
 <script type="module" src="/js/agents.js?v=v4"></script>
 <script src="/js/shortcuts.js"></script>

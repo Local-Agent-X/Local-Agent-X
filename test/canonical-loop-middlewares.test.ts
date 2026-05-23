@@ -19,8 +19,9 @@ import { randomUUID } from "node:crypto";
 import type { Op } from "../src/ops/types.js";
 import type { CanonicalLoopContext, CanonicalToolResultView } from "../src/canonical-loop/middlewares/types.js";
 import type { ToolCall, ToolDescriptor } from "../src/canonical-loop/contract-types.js";
-import { newOpId } from "../src/ops/op-store.js";
-import { appendOpMessage } from "../src/canonical-loop/store.js";
+import { newOpId, writeOp } from "../src/ops/op-store.js";
+import { appendOpMessage, insertOpTurn } from "../src/canonical-loop/store.js";
+import { buildCanonicalLoopContext } from "../src/canonical-loop/middlewares/host.js";
 import { _resetMiddlewareStates } from "../src/canonical-loop/middlewares/state.js";
 import { _resetEvidenceHistories } from "../src/canonical-loop/middlewares/evidence-history.js";
 
@@ -233,6 +234,34 @@ describe("hallucination-check middleware", () => {
     const op = mkOp("hall-no-creation-late");
     const r = await hallucinationCheckMiddleware.afterModelCall!(mkCtx({
       op, turnIdx: 1, assistantContent: "I added the X to your settings.",
+    }));
+    expect(r.kind).toBe("continue");
+  });
+
+  it("nudges worker-hallucination when no spawn tool succeeded — no LLM second-opinion", async () => {
+    // verifyMock returns false (would have vetoed in the old code). The new
+    // code must NOT consult the verifier on the worker path — the ledger is
+    // authoritative. Repro of the live 2026-05-23 PDF-worker failure.
+    verifyMock.mockResolvedValue(false);
+    const op = mkOp("hall-worker-no-spawn");
+    const r = await hallucinationCheckMiddleware.afterModelCall!(mkCtx({
+      op,
+      turnIdx: 2,
+      assistantContent: "Background worker is building the PDF from your meals right now.",
+      toolsCalledThisOp: ["bash"], // bash ran, but no spawn-class tool
+    }));
+    expect(r.kind).toBe("nudge");
+    expect((r as { reason: string }).reason).toBe("worker-hallucination");
+    expect(verifyMock).not.toHaveBeenCalled();
+  });
+
+  it("does not fire worker-hallucination when a spawn tool actually succeeded this op", async () => {
+    const op = mkOp("hall-worker-spawn-ok");
+    const r = await hallucinationCheckMiddleware.afterModelCall!(mkCtx({
+      op,
+      turnIdx: 2,
+      assistantContent: "Background worker is processing your request.",
+      toolsCalledThisOp: ["agent_spawn"], // real spawn in the ledger
     }));
     expect(r.kind).toBe("continue");
   });
@@ -455,5 +484,53 @@ describe("auto-build-app middleware", () => {
     autoBuildAppMiddleware.afterModelCall!(ctx);
     expect(ctx.toolCalls).toHaveLength(1);
     expect(ctx.toolCalls[0].tool).toBe("build_app");
+  });
+});
+
+// ── host: toolsCalledThisOp success-only semantics ──────────────────────
+
+describe("buildCanonicalLoopContext — toolsCalledThisOp", () => {
+  function commitTurn(op: Op, turnIdx: number, summary: Array<{ tool: string; resultStatus: "ok" | "error" | "cancelled" }>): void {
+    insertOpTurn({
+      opId: op.id,
+      turnIdx,
+      providerState: { kind: "anthropic", state: {} as never },
+      toolCallSummary: summary.map(s => ({
+        tool: s.tool,
+        argsHash: "deadbeef00000000",
+        resultStatus: s.resultStatus,
+        durationMs: 1,
+      })),
+      terminalReason: "done",
+      redirectConsumed: false,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  it("includes tools with resultStatus=ok, excludes error/cancelled", () => {
+    const op = mkOp("host-success-only");
+    writeOp(op);
+    commitTurn(op, 0, [
+      { tool: "read", resultStatus: "ok" },
+      { tool: "agent_spawn", resultStatus: "error" },     // failed spawn — must NOT count
+      { tool: "bash", resultStatus: "cancelled" },        // cancelled — must NOT count
+      { tool: "write", resultStatus: "ok" },
+    ]);
+
+    const ctx = buildCanonicalLoopContext({ op, turnIdx: 1, evidenceHistory: [] });
+    expect([...ctx.toolsCalledThisOp].sort()).toEqual(["read", "write"]);
+    expect(ctx.toolsCalledThisOp.has("agent_spawn")).toBe(false);
+    expect(ctx.toolsCalledThisOp.has("bash")).toBe(false);
+  });
+
+  it("aggregates across multiple turns", () => {
+    const op = mkOp("host-multi-turn");
+    writeOp(op);
+    commitTurn(op, 0, [{ tool: "read", resultStatus: "ok" }]);
+    commitTurn(op, 1, [{ tool: "edit", resultStatus: "ok" }]);
+    commitTurn(op, 2, [{ tool: "agent_spawn", resultStatus: "error" }]);
+
+    const ctx = buildCanonicalLoopContext({ op, turnIdx: 3, evidenceHistory: [] });
+    expect([...ctx.toolsCalledThisOp].sort()).toEqual(["edit", "read"]);
   });
 });

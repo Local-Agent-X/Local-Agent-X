@@ -19,7 +19,7 @@ import type {
   CanonicalToolResultView,
 } from "./types.js";
 import { getDefaultMiddlewareStack } from "./registry.js";
-import { readOpMessages } from "../store.js";
+import { readOpMessages, readOpTurns } from "../store.js";
 import { isCommittingTool } from "../../committing-tool-check.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -93,22 +93,28 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
     );
   }
 
+  // Per-op success ledger. A tool name lands here only when a prior turn's
+  // toolCallSummary recorded resultStatus === "ok" for it. Attempts that
+  // errored or were cancelled DO NOT count as proof of work — otherwise a
+  // failed agent_spawn (or any other spawn-class tool) lets the model claim
+  // "background worker is on it" and clear the hallucination guard. The
+  // structured per-turn summary in op_turns is the authoritative source;
+  // op_messages doesn't carry status alongside the tool name.
   const toolsCalledThisOp = new Set<string>();
   const committingToolsThisOp = new Set<string>();
-  const rows = readOpMessages(op.id);
+  for (const turn of readOpTurns(op.id)) {
+    for (const s of turn.toolCallSummary ?? []) {
+      if (s.resultStatus !== "ok") continue;
+      toolsCalledThisOp.add(s.tool);
+      if (isCommittingTool(s.tool)) committingToolsThisOp.add(s.tool);
+    }
+  }
+
   let userMessage = "";
-  for (const r of rows) {
-    if (r.role === "user" && !userMessage) {
-      const t = (r.content as { text?: string })?.text;
-      if (typeof t === "string") userMessage = t;
-    }
-    if (r.role !== "assistant") continue;
-    const tc = (r.content as { toolCalls?: Array<{ name: string }> })?.toolCalls;
-    if (!Array.isArray(tc)) continue;
-    for (const c of tc) {
-      toolsCalledThisOp.add(c.name);
-      if (isCommittingTool(c.name)) committingToolsThisOp.add(c.name);
-    }
+  for (const r of readOpMessages(op.id)) {
+    if (r.role !== "user") continue;
+    const t = (r.content as { text?: string })?.text;
+    if (typeof t === "string" && t) { userMessage = t; break; }
   }
   if (!userMessage) userMessage = op.task ?? "";
 

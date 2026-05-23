@@ -970,7 +970,15 @@
 <!-- Scripts -->
 <script src="/js/spring.js"></script>
 <script src="/js/shared.js?v=v2"></script>
-<script src="/js/app.js?v=va5"></script>
+<!-- App shell modules. Load order matters: state.js defines the `let`
+     bindings (chats, projects, activeChat, …) used by every other module.
+     app.js runs the top-level boot last, so it must come after all
+     function-defining modules. -->
+<script src="/js/app-state.js?v=v1"></script>
+<script src="/js/app-sync.js?v=v1"></script>
+<script src="/js/app-sidebar-actions.js?v=v1"></script>
+<script src="/js/app-sidebar-render.js?v=v1"></script>
+<script src="/js/app.js?v=va6"></script>
 <script type="module" src="/js/voice-sphere.js?v=vb8"></script>
 <script src="/js/voice/hotkey-capture.js?v=v1"></script>
 <script src="/js/voice/push-to-talk.js?v=v1"></script>

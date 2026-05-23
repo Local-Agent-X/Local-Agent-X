@@ -198,8 +198,31 @@ function previewImage(index) {
 window.streamingSessionId = null;
 Object.defineProperty(window, 'streamingSessionId', {
   get() { return streamingSessionId; },
-  set(v) { streamingSessionId = v; }
+  set(v) { streamingSessionId = v; try { updateStreamUI(); } catch {} }
 });
+
+// Single source of truth for "is a turn in flight for the chat I'm looking at"
+// → drives the toolbar STREAMING indicator + the send-btn inject-mode style.
+// Bound to streamingSessionId via the property setter above; also called on
+// chat switch from selectChat() in app.js. Lives outside any per-message
+// element so DOM rebuilds inside the assistant bubble can't hide it.
+function updateStreamUI() {
+  try {
+    const active = (typeof window !== 'undefined' && window.activeChat) ? window.activeChat : null;
+    const isStreamingHere = !!(active && streamingSessionId && streamingSessionId === active.id);
+    const ind = document.getElementById('stream-indicator');
+    if (ind) ind.style.display = isStreamingHere ? 'inline-flex' : 'none';
+    const sendBtn = document.getElementById('send-btn');
+    if (sendBtn) {
+      sendBtn.classList.toggle('inject-mode', isStreamingHere);
+      sendBtn.title = isStreamingHere
+        ? 'Inject into the running turn (it is still working)'
+        : 'Send message';
+      sendBtn.innerHTML = isStreamingHere ? '+' : '&#9650;';
+    }
+  } catch {}
+}
+window.updateStreamUI = updateStreamUI;
 // (extracted to /js/chat-ws.js or /js/chat-helpers.js)
 
 

@@ -284,7 +284,7 @@ function stopChat() {
     body: JSON.stringify({ sessionId: activeChat.id }),
   }).catch(() => {});
   // Force stop local rendering immediately
-  streamingSessionId = null;
+  window.streamingSessionId = null;
   // Close and reconnect WS to kill any in-flight stream
   if (chatWs) {
     chatWs.close();

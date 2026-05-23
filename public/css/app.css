@@ -343,6 +343,11 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 #send-btn{width:36px;height:36px;border-radius:50%;background:var(--accent);border:none;color:var(--bg);font-size:1rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-bottom:2px}
 #send-btn:hover{box-shadow:0 0 14px var(--accent-dim)}
 #send-btn:disabled{opacity:.3;cursor:not-allowed}
+/* Inject mode — applied when streamingSessionId === activeChat.id.
+   Visually distinct from the default "Send" state so the user can't
+   mistake an in-flight turn for "ready." */
+#send-btn.inject-mode{background:transparent;border:1px solid var(--accent);color:var(--accent)}
+#send-btn.inject-mode:hover{background:var(--accent-dim);box-shadow:0 0 8px var(--accent-dim)}
 .code-block{background:#0d0d18;border:1px solid var(--border);border-radius:8px;padding:10px;overflow-x:auto;font-family:var(--mono);font-size:.82rem;margin:8px 0}
 .inline-code{background:#1a1a30;padding:1px 5px;border-radius:4px;font-family:var(--mono);font-size:.85em}
 .md-h{color:var(--accent);margin:8px 0 4px}

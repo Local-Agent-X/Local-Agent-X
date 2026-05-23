@@ -19,7 +19,7 @@ const _liveStreams = new Map(); // sessionId → { content, toolEvents }
 
 function init_chat() {
   // Always clear stale streaming state on page load
-  streamingSessionId = null;
+  window.streamingSessionId = null;
   const stopBtn = document.getElementById('stop-btn');
   if (stopBtn) stopBtn.style.display = 'none';
   const sendBtn = document.getElementById('send-btn');

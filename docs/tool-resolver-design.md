@@ -1,8 +1,7 @@
 # Canonical Tool Resolver — Design
 
-**Status:** Design ready for implementation (P1.C2).
-**Scope:** AUDIT Cluster 11 consolidation. Replaces five drifting tool-filter sets with one canonical resolver keyed on an explicit audience field.
-**Companion:** [AUDIT.md Cluster 11](../AUDIT.md), [AUDIT-PLAN.md P1](../AUDIT-PLAN.md).
+**Status:** Shipped (canonical resolver lives in [src/tool-search.ts](../src/tool-search.ts); `audiences` field on [src/types.ts](../src/types.ts) `ToolDefinition`). Doc remains as the design rationale.
+**Scope:** Replaces five drifting tool-filter sets with one canonical resolver keyed on an explicit audience field.
 
 ---
 

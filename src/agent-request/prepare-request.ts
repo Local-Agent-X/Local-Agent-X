@@ -3,7 +3,7 @@ import { sanitizeHistory, truncateHistory } from "../providers/sanitize.js";
 import { loadSystemPrompt } from "../config-loader.js";
 import type { AgentRequestInput, ForcedToolChoice, PreparedAgentRequest } from "./types.js";
 import { resolveProvider } from "./resolve-provider.js";
-import { CORE_TOOL_NAMES, SUPERVISOR_EXCLUDED, filterToolsForMessage } from "./tool-filter.js";
+import { SUPERVISOR_EXCLUDED, filterToolsForMessage } from "./tool-filter.js";
 import { buildTurnContextCached } from "./turn-context-cache.js";
 import { classifyIntent, hasLiteralToolCall, NO_SPAWN_OVERRIDE_RE } from "../classifiers/intent-classifier.js";
 
@@ -180,7 +180,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
         const semantic = await rag.select(message, allAgentTools, {
           topK: 22,
           minScore: 0.25,
-          corePinned: [...CORE_TOOL_NAMES],
+          corePinned: allAgentTools.filter(t => t.audiences?.includes("main-chat")).map(t => t.name),
           includeMCP: true,
         });
         const union = new Set(tools.map(t => t.name));

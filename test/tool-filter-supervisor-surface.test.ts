@@ -24,7 +24,7 @@
 import { describe, it, expect } from "vitest";
 import type { ToolDefinition } from "../src/types.js";
 import { filterToolsForMessage } from "../src/agent-request/tool-filter.js";
-import { tagToolsByAudience } from "../src/agent-request/audience-tagger.js";
+import { applyAudiences } from "../src/tools/audience-map.js";
 
 function fakeTool(name: string): ToolDefinition {
   return {
@@ -47,14 +47,14 @@ const TOOLS_OF_INTEREST = [
   "read", "write", "bash", "web_fetch", "tool_search",
 ];
 
-// Real tools get their `audiences` field set by registry-build.ts via
-// tagToolsByAudience (reads CORE_TOOL_NAMES / OPERATOR_TOOLS / BUILD_INTENT_TOOLS).
-// The canonical resolver filterToolsForMessage uses then filters by audience.
-// Bare fixtures with no audiences would all get filtered out — testing the
-// resolver in isolation rather than the supervisor-surface invariant we
-// actually care about. So run the same tagger production uses.
+// Real tools get their `audiences` field stamped by registry-build.ts via
+// applyAudiences (reads src/tools/audience-map.ts). The canonical resolver
+// then filters by audience. Bare fixtures with no audiences would all get
+// filtered out — testing the resolver in isolation rather than the
+// supervisor-surface invariant we actually care about. So run the same
+// stamper production uses.
 const SAMPLE_TOOLS = TOOLS_OF_INTEREST.map(fakeTool);
-tagToolsByAudience(SAMPLE_TOOLS);
+applyAudiences(SAMPLE_TOOLS);
 
 describe("supervisor tool surface — canonical delegation included, op-submit excluded", () => {
   it("includes agent_list / agent_spawn / agent_create on a normal message", () => {

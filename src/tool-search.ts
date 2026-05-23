@@ -2,11 +2,11 @@ import type { Audience, ToolDefinition, ToolResult } from "./types.js";
 import { UnifiedToolRegistry } from "./tools/registry.js";
 
 /**
- * Canonical per-request tool resolver (AUDIT Cluster 11).
+ * Canonical per-request tool resolver.
  *
- * Replaces the five drifting filter sets (CORE_TOOL_NAMES, OPERATOR_TOOLS,
- * BUILD_INTENT_TOOLS, EAGER_TOOLS, ToolDefinition.defer) with one function
- * that reads each tool's `audiences` field. See docs/tool-resolver-design.md.
+ * One function that reads each tool's `audiences` field. Audience mapping
+ * lives in src/tools/audience-map.ts; resolver behavior is documented in
+ * docs/tool-resolver-design.md.
  *
  * Behavior is keyed on audience:
  *  - "main-chat":     eager set for main-chat + keyword routing + literal-call detection

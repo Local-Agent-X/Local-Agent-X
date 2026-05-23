@@ -3,7 +3,7 @@ import { createToolSearchTool } from "../tool-search.js";
 import { type UnifiedToolRegistry, unifiedRegistry } from "./registry.js";
 import { buildToolPromptSection } from "../tool-prompt-builder.js";
 import { applyPrompts } from "./result-helpers.js";
-import { tagToolsByAudience } from "../agent-request/audience-tagger.js";
+import { applyAudiences } from "./audience-map.js";
 import { readTool, writeTool, editTool, deleteFileTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";
 import { processTools } from "./process-tools.js";
@@ -106,11 +106,10 @@ export const allTools: ToolDefinition[] = applyPrompts([
 ]);
 
 export function buildToolRegistry(): { registry: UnifiedToolRegistry; eagerTools: ToolDefinition[]; toolSearchTool: ToolDefinition; promptSection: string } {
-  // Tag every tool's `audiences` field from the legacy Sets BEFORE
-  // registry insertion so the canonical resolver (tool-search.ts:
-  // resolveToolsForRequest) has accurate audience info. Transitional —
-  // tagToolsByAudience folds into ToolDefinition declarations later.
-  tagToolsByAudience(allTools);
+  // Stamp every tool's `audiences` field from the canonical map before
+  // registry insertion so the resolver (tool-search.ts: resolveToolsForRequest)
+  // sees accurate tags. The map is the sole source of truth.
+  applyAudiences(allTools);
 
   for (const tool of allTools) {
     if (unifiedRegistry.get(tool.name)) continue;

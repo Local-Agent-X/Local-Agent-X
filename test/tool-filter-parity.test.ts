@@ -15,10 +15,10 @@ import { describe, it, expect } from "vitest";
 import { filterToolsForMessage } from "../src/agent-request/tool-filter.js";
 import type { Audience, ToolDefinition } from "../src/types.js";
 
-// Stub tool list mirroring real tools, with audiences pre-set as
-// tagToolsByAudience would set them. These ARE the tags the resolver
-// reads — keeping them inline avoids depending on registry-build.ts's
-// side effects in test.
+// Stub tool list mirroring real tools, with audiences pre-set the same
+// way audience-map.ts's applyAudiences would set them. These ARE the tags
+// the resolver reads — keeping them inline avoids depending on
+// registry-build.ts's side effects in test.
 function mkTool(name: string, audiences?: Audience[]): ToolDefinition {
   return {
     name,
@@ -71,7 +71,7 @@ const PREFIXES_BY_KEYWORD: Array<{ re: RegExp; prefixes: string[] }> = [
 ];
 
 // Build the test tool list with audiences set the same way
-// tagToolsByAudience does at runtime.
+// applyAudiences does at runtime.
 function buildTestToolList(): ToolDefinition[] {
   const allNames = new Set<string>();
   for (const n of CORE_NAMES) allNames.add(n);

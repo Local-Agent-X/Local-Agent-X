@@ -47,8 +47,11 @@
       "target": ["dmg", "zip"],
       "icon": "../public/icon.png",
       "category": "public.app-category.developer-tools",
-      "identity": null,
+      "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Local Agent X uses the microphone for voice mode and speech-to-text.",
         "NSCameraUsageDescription": "Local Agent X uses the camera for the camera_capture tool when you request it.",

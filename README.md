@@ -79,14 +79,8 @@ There is no separate lint step.
 
 Three lanes for change: **runtime state** flips through HTTP endpoints (settings, provider, theme — never edit files for live state), **self-modification** goes into the agent-editable `config/` directory which hot-reloads, and **external sites** flow through the `browser` tool rather than raw fetch. Every tool call runs through `tool-executor.ts` and the in-process Ari Kernel security layer; new tools need an explicit allow rule in `tool-policy.ts`. The architectural rules are non-negotiable and live in [AGENTS.md](AGENTS.md) — read that before touching the codebase.
 
-The canonical-loop refactor that landed in May 2026 (one agent loop, one tool resolver, one adapter registry path) is archived at [docs/audits/2026-05-canonical-refactor/INDEX.md](docs/audits/2026-05-canonical-refactor/INDEX.md).
-
 ## Status
 
-Active development. The current convergence pass is the DRY repair effort:
-
-- [AUDIT-STATE.md](AUDIT-STATE.md) — status summary, points at the completed canonical-loop audit and the active DRY work.
-- [DRY-AUDIT.md](DRY-AUDIT.md) — duplicated-knowledge findings (F1–F15).
-- [DRY-REPAIR-PLAN.md](DRY-REPAIR-PLAN.md) — phased plan closing those findings.
+Active development.
 
 Security contact: see [SECURITY.md](SECURITY.md).

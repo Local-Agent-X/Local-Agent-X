@@ -987,7 +987,12 @@
      Inverse direction (chat.js helpers like sendChatWsControl) resolves at
      runtime via the shared classic-script global lexical environment. -->
 <script src="/js/chat-tool-cards.js?v=v1"></script>
-<script src="/js/chat-agent-feeds.js?v=v2"></script>
+<!-- chat-agent-feeds split: render + actions before core so the core's
+     _renderAgentFeedsList sees renderAgentCard and updateAgentFeed's
+     control-button HTML references on*Agent handlers. -->
+<script src="/js/chat-agent-feeds-render.js?v=v1"></script>
+<script src="/js/chat-agent-feeds-actions.js?v=v1"></script>
+<script src="/js/chat-agent-feeds.js?v=v3"></script>
 <script src="/js/chat-status-bar.js?v=v2"></script>
 <script src="/js/chat-voice-modal-train.js?v=v1"></script>
 <script src="/js/chat-voice-modal-chatterbox.js?v=v1"></script>

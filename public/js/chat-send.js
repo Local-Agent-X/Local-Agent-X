@@ -336,9 +336,11 @@ async function sendMessage() {
               if (liveBubble && finalText) {
                 const existingGroups = liveBubble.querySelectorAll('.activity-group');
                 const orphanCards = liveBubble.querySelectorAll(':scope > .tool-card, :scope > .approval-card');
+                const mediaPreviews = liveBubble.querySelectorAll(':scope > .tool-media-preview');
                 const currentMd = md(finalText);
-                if (liveBubble.innerHTML !== currentMd || existingGroups.length > 0 || orphanCards.length > 0) {
+                if (liveBubble.innerHTML !== currentMd || existingGroups.length > 0 || orphanCards.length > 0 || mediaPreviews.length > 0) {
                   liveBubble.innerHTML = currentMd;
+                  mediaPreviews.forEach(m => liveBubble.appendChild(m));
                   existingGroups.forEach(g => liveBubble.appendChild(g));
                   orphanCards.forEach(c => liveBubble.appendChild(c));
                 }

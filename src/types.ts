@@ -5,8 +5,8 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 /**
  * Audience = the consumer context that decides which tools are visible.
  * Canonical resolver in src/tool-search.ts reads `audiences` on each
- * ToolDefinition to build the per-request tool list. See
- * docs/tool-resolver-design.md (AUDIT Cluster 11) for the migration.
+ * ToolDefinition to build the per-request tool list. The audience-tool
+ * mapping is owned by src/tools/audience-map.ts.
  */
 export type Audience =
   | "main-chat"      // top-level user-facing chat (Primal)

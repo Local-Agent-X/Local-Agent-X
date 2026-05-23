@@ -5,8 +5,7 @@ import { UnifiedToolRegistry } from "./tools/registry.js";
  * Canonical per-request tool resolver.
  *
  * One function that reads each tool's `audiences` field. Audience mapping
- * lives in src/tools/audience-map.ts; resolver behavior is documented in
- * docs/tool-resolver-design.md.
+ * lives in src/tools/audience-map.ts.
  *
  * Behavior is keyed on audience:
  *  - "main-chat":     eager set for main-chat + keyword routing + literal-call detection

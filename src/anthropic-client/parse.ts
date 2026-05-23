@@ -122,7 +122,6 @@ export function cleanUrls(text: string): string {
 // here," degrading subsequent turns. Layered on top of stream-time + persist-
 // time stripping — defense in depth.
 //
-// See docs/tool-resolver-design.md for the broader pattern.
 
 export type LeakShape =
   | "openai-envelope-fenced"   // ```json {"tool_calls":[...]}```

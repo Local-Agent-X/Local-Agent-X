@@ -217,6 +217,16 @@
       <!-- General -->
       <div id="stab-general" class="tab-pane active">
         <div class="section-card">
+          <div class="section-title">xAI Grok Authentication</div>
+          <div class="section-desc">Sign in with your <strong>SuperGrok</strong> or <strong>X Premium+</strong> subscription to use Grok models without burning API credit. OAuth wins when both are configured. xAI's backend allowlists OAuth API access by tier — if login succeeds but inference returns 403, fall back to an <code>XAI_API_KEY</code> in the AI &amp; Models tab.</div>
+          <div id="xai-auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
+          <div class="btn-row" style="margin-top:10px">
+            <button id="btn-xai-login" class="action-btn primary" onclick="doXaiLogin()">Sign in with xAI (SuperGrok / X Premium+)</button>
+            <button id="btn-xai-disconnect" class="action-btn danger" onclick="doXaiDisconnect()" style="display:none">Disconnect</button>
+          </div>
+          <div class="field-hint" style="margin-top:8px">Opens accounts.x.ai in your browser. Tokens land in <code>~/.lax/xai-auth.json</code> and refresh automatically.</div>
+        </div>
+        <div class="section-card">
           <div class="section-title">OpenAI Authentication</div>
           <div class="section-desc">Connect to OpenAI via OAuth to use GPT/Codex models.</div>
           <div id="auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
@@ -272,16 +282,6 @@
               </div>
             </div>
           </div>
-        </div>
-        <div class="section-card">
-          <div class="section-title">xAI Grok Authentication</div>
-          <div class="section-desc">Sign in with your <strong>SuperGrok</strong> or <strong>X Premium+</strong> subscription to use Grok models without burning API credit. OAuth wins when both are configured. xAI's backend allowlists OAuth API access by tier — if login succeeds but inference returns 403, fall back to an <code>XAI_API_KEY</code> in the AI &amp; Models tab.</div>
-          <div id="xai-auth-status" class="status-badge warn"><span class="status-dot"></span> Checking...</div>
-          <div class="btn-row" style="margin-top:10px">
-            <button id="btn-xai-login" class="action-btn primary" onclick="doXaiLogin()">Sign in with xAI (SuperGrok / X Premium+)</button>
-            <button id="btn-xai-disconnect" class="action-btn danger" onclick="doXaiDisconnect()" style="display:none">Disconnect</button>
-          </div>
-          <div class="field-hint" style="margin-top:8px">Opens accounts.x.ai in your browser. Tokens land in <code>~/.lax/xai-auth.json</code> and refresh automatically.</div>
         </div>
         <div class="section-card">
           <div class="section-title">Server</div>

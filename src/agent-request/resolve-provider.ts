@@ -74,7 +74,13 @@ export async function resolveProvider(
     provider = savedProvider;
   }
   if (!provider || !hasCredsFor(provider)) {
-    provider = loadAnthropicTokens() ? "anthropic" : (loadTokens() && !config.openaiApiKey) ? "codex" : "xai";
+    // xAI (OAuth or API key) takes priority — Grok is the default on fresh
+    // installs and stays the default when the user has multiple providers
+    // configured but hasn't explicitly picked one in settings.json.
+    if (loadXaiTokens() || secretsStore.get("XAI_API_KEY")) provider = "xai";
+    else if (loadAnthropicTokens()) provider = "anthropic";
+    else if (loadTokens() && !config.openaiApiKey) provider = "codex";
+    else provider = "xai"; // no creds anywhere → xai fallback so the picker shows Grok
     providerWasOverridden = true;
   }
   // If we fell through to a different provider OR the caller-override forced

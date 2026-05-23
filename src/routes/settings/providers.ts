@@ -42,9 +42,13 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       }
     } catch {}
     if (!currentProvider) {
-      if (hasAnthropicOAuth) currentProvider = "anthropic";
+      // xAI first — Grok is the default. Auto-detect priority matches
+      // resolve-provider.ts's fallback chain so the UI dropdown and the
+      // request path agree on which provider is "active by default."
+      if (hasXaiKey) currentProvider = "xai";
+      else if (hasAnthropicOAuth) currentProvider = "anthropic";
       else if (hasOpenAIOAuth) currentProvider = "codex";
-      else if (hasXaiKey) currentProvider = "xai";
+      else currentProvider = "xai"; // empty-state still shows Grok as the recommendation
     }
     if (!currentModel && currentProvider) {
       const reg = PROVIDERS[currentProvider as ProviderId];

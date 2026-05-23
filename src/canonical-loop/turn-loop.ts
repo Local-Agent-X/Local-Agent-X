@@ -14,67 +14,33 @@
  *     `emit()`.
  *   - The adapter never writes anything; it only emits adapter_report items
  *     through the report callback.
+ *
+ * Helpers split into ./turn-loop/* — this file is the orchestrator.
  */
-import { createHash, randomUUID } from "node:crypto";
-import type { Adapter, AdapterReport, TurnInput } from "./adapter-contract.js";
+import type { Adapter, AdapterReport } from "./adapter-contract.js";
 import type { CanonicalMessage, ToolCall } from "./contract-types.js";
-import type {
-  CanonicalMessageRole,
-  OpMessageRow,
-  ProviderStateEnvelope,
-  RedirectInstruction,
-  ToolCallSummary,
-} from "./types.js";
-import { appendOpMessage, readLatestOpTurn, readOpMessages } from "./store.js";
+import type { ProviderStateEnvelope } from "./types.js";
 import { emit, publishStreamChunk } from "./event-emitter.js";
 import { commitTurn, type CommitTurnMessage } from "./checkpoint.js";
-import { getToolDispatcher, getToolsForOp } from "./runtime.js";
-import { readOp } from "../ops/op-store.js";
+import { getToolsForOp } from "./runtime.js";
 import type { Op } from "../ops/types.js";
-import { drainInjects } from "../agent-loop/inject-queue.js";
-import { getSessionForOp } from "../ops/session-bridge.js";
 import {
   buildCanonicalLoopContext,
   getActiveMiddlewareStack,
   runMiddlewarePhase,
-  type FiredMiddlewareResult,
 } from "./middlewares/host.js";
 import type { CanonicalToolResultView } from "./middlewares/types.js";
 import { getEvidenceHistory } from "./middlewares/evidence-history.js";
-import { createLogger } from "../logger.js";
 
-const logger = createLogger("canonical-loop.turn-loop");
+import type { DriveTurnResult, DriveTurnOptions, MiddlewareDirective } from "./turn-loop/types.js";
+import { extractText, extractToolResultText } from "./turn-loop/content-extract.js";
+import { appendNudgeAsUserMessage, middlewareAbortResult } from "./turn-loop/nudges.js";
+import { buildTurnInput, readPendingRedirect } from "./turn-loop/build-input.js";
+import { drainInjectsIntoTurn } from "./turn-loop/inject-drain.js";
+import { dispatchTools } from "./turn-loop/dispatch-tools.js";
+import { createIdleWatchdog, readIdleTimeoutMs } from "./turn-loop/idle-watchdog.js";
 
-export interface DriveTurnResult {
-  terminalReason: "done" | "error" | null;
-  toolCount: number;
-  messageCount: number;
-  /** True if the turn was aborted mid-flight via cancel; commit was skipped. */
-  cancelled: boolean;
-  /**
-   * Set when a middleware in the canonical safety stack returned a non-
-   * "continue" verdict. The worker uses this to override the natural
-   * "break on terminal" logic — a `nudge` keeps the worker looping
-   * (synthetic user message has been appended to op_messages), an `abort`
-   * forces the worker to exit and transition the op to failed.
-   */
-  middlewareDirective?: {
-    kind: "nudge" | "abort";
-    reason: string;
-    firedBy: string;
-    message?: string;
-  };
-}
-
-export interface DriveTurnOptions {
-  /**
-   * Optional cancel-check called after the adapter resolves runTurn and
-   * again after tool dispatch. If it returns true, the partial turn is
-   * discarded — no commitTurn, no op_turns row, no op_messages, no
-   * turn_committed event (PRD §13: cancel discards the partial turn).
-   */
-  isCancelled?: () => boolean;
-}
+export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 
 export async function driveTurn(
   op: Op,
@@ -128,41 +94,20 @@ export async function driveTurn(
   const finalized: CanonicalMessage[] = [];
   const toolCalls: ToolCall[] = [];
   let adapterError: { code: string; message: string } | null = null;
-  /** Sticky middleware directive across the turn's phases. The first
-   *  non-`continue` verdict (from any phase) wins — same short-circuit
-   *  semantics as agent-loop's runPhase per-phase short-circuit, lifted
-   *  to a per-turn bubble so the worker can apply the verdict after
-   *  commit. beforeTurn nudges are already consumed (synthetic message
-   *  injected into THIS turn); we don't bubble them up. */
-  let middlewareDirective:
-    | { kind: "nudge"; reason: string; firedBy: string; message: string }
-    | { kind: "abort"; reason: string; firedBy: string; message?: string }
-    | null = null;
+  let middlewareDirective: MiddlewareDirective | null = null;
 
   // Idle-event detection — provider-agnostic. Watches the report stream
   // for ANY activity (stream chunks, tool calls, finalized messages,
-  // errors). If nothing arrives for IDLE_TIMEOUT_MS the adapter is
-  // assumed stuck and we abort with reason "idle-stalled" so transports
-  // that recognize it (warm-pool's reason matcher) can hard-kill the
-  // underlying CLI/HTTP connection. Productive long turns reset the
-  // timer on every event and never trip this; only true stalls die.
-  // Lives here so any future adapter (xai, gemini, local) inherits it.
-  // Default 600s. Used to be 120s, which killed legitimately long
-  // thinking + tool-prep turns (Opus on a big prompt, planning convos
-  // with the methodology body inlined, etc.). 10 min is still tight
-  // enough that true stalls die; productive turns reset the timer on
-  // every adapter event so they never trip it. Override via env var.
-  const idleMs = parseInt(process.env.LAX_CANONICAL_IDLE_TIMEOUT_MS ?? "600000", 10);
-  let lastReportAt = Date.now();
+  // errors). If nothing arrives for idleMs the adapter is assumed stuck
+  // and we abort with reason "idle-stalled" so transports that recognize
+  // it (warm-pool's reason matcher) can hard-kill the underlying CLI/HTTP
+  // connection. Lives behind a shared watchdog so any future adapter
+  // (xai, gemini, local) inherits it.
   let idleFired = false;
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
-  const armIdleTimer = () => {
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      if (Date.now() - lastReportAt < idleMs) {
-        armIdleTimer();
-        return;
-      }
+  const idleMs = readIdleTimeoutMs();
+  const watchdog = createIdleWatchdog({
+    idleMs,
+    onTimeout: () => {
       idleFired = true;
       adapterError = { code: "stalled", message: `no adapter reports for ${idleMs}ms — model presumed stuck` };
       emit(op.id, "error", { code: "stalled", message: adapterError.message, retryable: false });
@@ -171,9 +116,8 @@ export async function driveTurn(
       // transports that watch reason (warm-pool kill on /idle|stalled|stop/)
       // do the right thing.
       void adapter.abort(new Error("idle-stalled"));
-    }, idleMs);
-  };
-  armIdleTimer();
+    },
+  });
 
   // Time-component split for soak: how much of the turn was spent inside
   // the adapter's model call vs dispatching tools. Together with
@@ -181,7 +125,7 @@ export async function driveTurn(
   // they reconstruct where the turn's wall-clock went.
   const modelStart = Date.now();
   const result = await adapter.runTurn(input, (r: AdapterReport) => {
-    lastReportAt = Date.now();
+    watchdog.noteActivity();
     if (r.kind === "stream_chunk") {
       publishStreamChunk(op.id, r.body);
       return;
@@ -208,7 +152,7 @@ export async function driveTurn(
       emit(op.id, "error", { code: r.code, message: r.message, retryable: r.retryable });
     }
   });
-  if (idleTimer) clearTimeout(idleTimer);
+  watchdog.disarm();
   void idleFired; // surfaced via adapterError; reserved for telemetry
   const modelMs = Date.now() - modelStart;
 
@@ -262,7 +206,7 @@ export async function driveTurn(
   // If a middleware aborted, skip tool dispatch — same effect as agent-
   // loop's runPhase short-circuit before tool execution.
   const { toolMessages, toolSummary } = middlewareDirective?.kind === "abort"
-    ? { toolMessages: [] as CommitTurnMessage[], toolSummary: [] as ToolCallSummary[] }
+    ? { toolMessages: [] as CommitTurnMessage[], toolSummary: [] }
     : await dispatchTools(op.id, turnIdx, toolCalls, opts.isCancelled);
   const toolDispatchMs = Date.now() - toolDispatchStart;
 
@@ -367,225 +311,4 @@ export async function driveTurn(
         }
       : undefined,
   };
-}
-
-// ── Middleware helpers ────────────────────────────────────────────────────
-
-function extractText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (content && typeof content === "object") {
-    const c = content as { text?: unknown; result?: unknown };
-    if (typeof c.text === "string") return c.text;
-    if (typeof c.result === "string") return c.result;
-  }
-  return "";
-}
-
-function extractToolResultText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (content && typeof content === "object") {
-    const c = content as { text?: unknown; result?: unknown };
-    if (typeof c.text === "string") return c.text;
-    const r = c.result;
-    if (typeof r === "string") return r;
-    if (r && typeof r === "object" && typeof (r as { text?: unknown }).text === "string") {
-      return (r as { text: string }).text;
-    }
-    if (r != null) {
-      try { return JSON.stringify(r); } catch { return ""; }
-    }
-  }
-  return "";
-}
-
-/** Append a synthetic user-role op_message carrying a middleware nudge.
- *  Sits in op_messages at (turnIdx, seqInTurn=N) where N is one past any
- *  existing row in that turn. The next driveTurn(turnIdx) — or this turn,
- *  for a beforeTurn nudge — sees it via the standard buildTurnInput
- *  history read. */
-function appendNudgeAsUserMessage(opId: string, turnIdx: number, message: string): void {
-  const existing = readOpMessages(opId).filter(m => m.turnIdx === turnIdx).length;
-  const row: OpMessageRow = {
-    messageId: `nudge-${opId}-${turnIdx}-${existing}-${randomUUID().slice(0, 6)}`,
-    opId,
-    turnIdx,
-    seqInTurn: existing,
-    // role MUST stay "user" — providers need this as input so the model
-    // treats the nudge as a user instruction on the next turn. The UI
-    // distinguishes nudges from real user messages via `content.kind`
-    // below, so it can render them as small italic system notes (or hide
-    // them entirely) without ever surfacing the synthetic message as if
-    // the user typed it. Adapters' canonicalToTransport only emits
-    // `content.text` so the `kind` marker stays on our side of the wire.
-    role: "user",
-    content: { text: message, kind: "nudge" },
-    createdAt: new Date().toISOString(),
-  };
-  appendOpMessage(row);
-  emit(opId, "message_appended", { turnIdx, role: row.role, messageId: row.messageId });
-}
-
-function middlewareAbortResult(
-  op: Op,
-  turnIdx: number,
-  fired: FiredMiddlewareResult,
-): DriveTurnResult {
-  if (fired.kind !== "abort") throw new Error("middlewareAbortResult requires abort verdict");
-  emit(op.id, "error", {
-    code: "middleware-abort",
-    message: fired.message ?? `Turn aborted by ${fired.firedBy ?? "middleware"}.`,
-    retryable: false,
-  });
-  // Reserved for future per-turn telemetry; the abort emit above already
-  // surfaces the turn's stop reason.
-  void turnIdx;
-  return {
-    terminalReason: "error",
-    toolCount: 0,
-    messageCount: 0,
-    cancelled: false,
-    middlewareDirective: {
-      kind: "abort",
-      reason: fired.reason ?? "unknown",
-      firedBy: fired.firedBy ?? "unknown",
-      message: fired.message,
-    },
-  };
-}
-
-function buildTurnInput(
-  op: Op,
-  turnIdx: number,
-  pendingRedirect: RedirectInstruction | null,
-): TurnInput {
-  const history = readOpMessages(op.id);
-  const messages: CanonicalMessage[] = history.map(m => ({
-    messageId: m.messageId,
-    role: m.role,
-    content: m.content,
-    turnIdx: m.turnIdx,
-    seqInTurn: m.seqInTurn,
-    createdAt: m.createdAt,
-  }));
-  const prior = readLatestOpTurn(op.id);
-  // Tools come from the per-op registry (chat-runner registers them on
-  // submit; legacy worker-pool ops don't register and get []). Without
-  // this, the adapter never tells the model about its tool surface and
-  // tool-needing chats degrade to "I'm in planning mode" responses.
-  const input: TurnInput = {
-    opId: op.id,
-    turnIdx,
-    messages,
-    providerState: prior?.providerState,
-    tools: getToolsForOp(op.id),
-  };
-  if (pendingRedirect) input.pendingRedirect = pendingRedirect;
-  return input;
-}
-
-function readPendingRedirect(opId: string): RedirectInstruction | null {
-  const fresh = readOp(opId);
-  return fresh?.canonical?.redirectInstruction ?? null;
-}
-
-function drainInjectsIntoTurn(op: Op, turnIdx: number): void {
-  const sessionId = getSessionForOp(op.id);
-  if (!sessionId) return;
-  const injects = drainInjects(sessionId);
-  if (injects.length === 0) return;
-  // Pair this with chat-ws's `[ws-chat] inject sess=… len=N` enqueue line
-  // for end-to-end visibility — until this log existed there was no way to
-  // confirm an inject ever made it into an iteration vs sat in the queue
-  // past the turn's end. The legacy agent-loop has its own
-  // interjectDrainMiddleware that logs separately; chat turns go through
-  // the canonical-loop and this function instead, so the message logged
-  // there never fired for chats.
-  const totalChars = injects.reduce((s, t) => s + t.length, 0);
-  logger.info(`[interject-drain] consumed=${injects.length} sess=${sessionId} op=${op.id} turn=${turnIdx} totalChars=${totalChars}`);
-  // Offset past any pre-existing rows for this turn (e.g. the seeded turn-0
-  // user message) so (op_id, turn_idx, seq_in_turn) stays unique.
-  let seqInTurn = readOpMessages(op.id).filter(m => m.turnIdx === turnIdx).length;
-  const now = new Date().toISOString();
-  for (const text of injects) {
-    // Lightweight temporal-context marker. The model already has the
-    // conversation history (so it knows what task is active) — what it
-    // doesn't otherwise know is that this message arrived WHILE a turn
-    // was running, not after it ended. Marking that fact is real signal:
-    // it nudges the model to treat the message as relevant to the
-    // current work without prescribing an interpretation. Deliberately
-    // does NOT say "this applies to the active task" — the user might
-    // be redirecting, and biasing toward continuation would suppress
-    // legitimate course corrections.
-    const framed = `[mid-turn user message] ${text}`;
-    const row: OpMessageRow = {
-      messageId: `inject-${op.id}-${turnIdx}-${seqInTurn}-${randomUUID().slice(0, 6)}`,
-      opId: op.id,
-      turnIdx,
-      seqInTurn,
-      role: "user",
-      content: { text: framed },
-      createdAt: now,
-    };
-    appendOpMessage(row);
-    emit(op.id, "message_appended", { turnIdx, role: row.role, messageId: row.messageId });
-    seqInTurn += 1;
-  }
-}
-
-interface DispatchedTools {
-  toolMessages: CommitTurnMessage[];
-  toolSummary: ToolCallSummary[];
-}
-
-async function dispatchTools(
-  opId: string,
-  turnIdx: number,
-  calls: ToolCall[],
-  isCancelled?: () => boolean,
-): Promise<DispatchedTools> {
-  if (calls.length === 0) return { toolMessages: [], toolSummary: [] };
-  const dispatcher = getToolDispatcher(opId);
-  const toolMessages: CommitTurnMessage[] = [];
-  const toolSummary: ToolCallSummary[] = [];
-
-  for (const call of calls) {
-    // Bail before dispatching the next tool if the op was cancelled while a
-    // previous tool in this batch was running. Without this, a parallel call
-    // group like [self_edit, web_search, web_search, ...] keeps marching after
-    // cancel — every subsequent tool fires its own abort error and the worker
-    // never reaches the post-dispatch isCancelled check in driveTurn because
-    // the for-loop never breaks. Empty toolMessages/toolSummary returned here
-    // is fine: driveTurn sees the cancellation at the post-dispatch check
-    // and returns cancelled=true without committing the partial turn.
-    if (isCancelled?.()) break;
-    const argsHash = hashArgs(call.args);
-    emit(opId, "tool_started", { turnIdx, tool: call.tool, argsHash });
-    const out = await dispatcher.dispatch(call);
-    emit(opId, "tool_finished", {
-      turnIdx,
-      tool: call.tool,
-      status: out.status,
-      durationMs: out.durationMs,
-    });
-    toolSummary.push({
-      tool: call.tool,
-      argsHash,
-      resultStatus: out.status,
-      durationMs: out.durationMs,
-    });
-    const role: CanonicalMessageRole = "tool_result";
-    toolMessages.push({
-      role,
-      content: { toolCallId: call.toolCallId, result: out.result, status: out.status },
-    });
-  }
-  return { toolMessages, toolSummary };
-}
-
-function hashArgs(args: unknown): string {
-  try {
-    return createHash("sha256").update(JSON.stringify(args ?? null)).digest("hex").slice(0, 16);
-  } catch {
-    return "0000000000000000";
-  }
 }

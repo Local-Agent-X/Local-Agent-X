@@ -5,7 +5,6 @@ import type {
 	CapabilityClass,
 	CapabilityConstraint,
 	CapabilityGrant,
-	CapabilityRequest,
 	DelegatedCapability,
 	DelegationResult,
 	IssuanceDecision,
@@ -14,22 +13,28 @@ import type {
 	ToolCallRequest,
 	ToolResult,
 } from "@arikernel/core";
-import {
-	CAPABILITY_CLASS_MAP,
-	ToolCallDeniedError,
-	createDelegatedPrincipal,
-	delegateCapability,
-	generateId,
-	now,
-	revokeDelegationsFrom,
-} from "@arikernel/core";
 import { PolicyEngine } from "@arikernel/policy-engine";
 import { TaintTracker } from "@arikernel/taint-tracker";
 import type { ToolExecutor } from "@arikernel/tool-executors";
 import { ExecutorRegistry } from "@arikernel/tool-executors";
-import { applyBehavioralRule, evaluateBehavioralRules } from "./behavioral-rules.js";
 import type { EnforcementMode, FirewallOptions } from "./config.js";
-import { validateOptions } from "./config.js";
+import { constructFirewall } from "./firewall/construct.js";
+import {
+	delegateToChild,
+	quarantineExternal,
+	revokeDelegationsFromPrincipal,
+} from "./firewall/delegation.js";
+import { execute as executeRequest } from "./firewall/execution.js";
+import {
+	type RequestOptions,
+	requestCapabilityAsync,
+	requestCapabilitySync,
+} from "./firewall/issuance.js";
+import {
+	type Observation,
+	injectExternalTaint,
+	observeToolOutput,
+} from "./firewall/observation.js";
 import type { FirewallHooks } from "./hooks.js";
 import { CapabilityIssuer } from "./issuer.js";
 import { PersistentTaintRegistry } from "./persistent-taint-registry.js";
@@ -37,10 +42,9 @@ import { Pipeline } from "./pipeline.js";
 import {
 	type QuarantineInfo,
 	type RunStateCounters,
-	type RunStatePolicy,
 	RunStateTracker,
 } from "./run-state.js";
-import { SidecarHttpClient, createSidecarProxies } from "./sidecar-proxy.js";
+import { SidecarHttpClient } from "./sidecar-proxy.js";
 import { type ITokenStore, TokenStore } from "./token-store.js";
 
 export class Firewall {
@@ -61,128 +65,22 @@ export class Firewall {
 	readonly runId: string;
 
 	constructor(options: FirewallOptions) {
-		validateOptions(options);
-
-		// Enforcement mode must be explicit in production.
-		// Omitting it in production is a misconfiguration — fail fast rather than
-		// silently falling back to cooperative (embedded) enforcement.
-		if (options.mode === undefined) {
-			if (process.env.NODE_ENV === "production") {
-				throw new Error(
-					"AriKernel: enforcement mode must be explicit in production. " +
-						"Set mode: 'sidecar' (recommended) or mode: 'embedded' (trusted environments only). " +
-						"See the sidecar-mode docs for minimum sidecar setup.",
-				);
-			}
-			console.warn(
-				"[AriKernel] No enforcement mode set — defaulting to 'embedded'. " +
-					"Embedded mode runs tools in-process and is not suitable for production. " +
-					"Set mode: 'sidecar' for production deployments.",
-			);
-		}
-
-		this._mode = options.mode ?? "embedded";
-		this._sidecarOptions = options.sidecar;
-
-		// Embedded mode in production is allowed only when explicitly chosen,
-		// but warn clearly — it provides cooperative enforcement only.
-		if (this._mode === "embedded" && process.env.NODE_ENV === "production") {
-			console.warn(
-				"[AriKernel] Embedded mode is active in production. " +
-					"Enforcement is cooperative — the host process can bypass the pipeline. " +
-					"Use mode: 'sidecar' for strongest enforcement in production.",
-			);
-		}
-
-		if (this._mode === "sidecar" && !options.sidecar) {
-			throw new Error(
-				'Firewall mode is "sidecar" but no sidecar connection options were provided. ' +
-					"Set options.sidecar with baseUrl and authToken.",
-			);
-		}
-
-		this.runId = generateId();
-
-		this.principal = {
-			id: generateId(),
-			name: options.principal.name,
-			capabilities: options.principal.capabilities,
-		};
-
-		this.policyEngine = new PolicyEngine(options.policies);
-		this.taintTracker = new TaintTracker();
-		this.auditStore = new AuditStore(options.auditLog ?? "./audit.db");
-		this.executorRegistry = new ExecutorRegistry();
-		this.tokenStore = options.tokenStore ?? new TokenStore();
-
-		// In sidecar mode, the Firewall acts as a thin client. All policy
-		// evaluation, token management, behavioral rules, taint tracking, and
-		// tool execution are delegated to the sidecar over HTTP.
-		// The SidecarHttpClient handles both requestCapability() and execute().
-		// SidecarProxyExecutors are still registered for backward compatibility
-		// (e.g., if anything calls pipeline.intercept directly), but the primary
-		// path bypasses the local pipeline entirely.
-		if (this._mode === "sidecar") {
-			const principalId = options.sidecar?.principalId ?? options.principal.name;
-			const proxyConfig = {
-				baseUrl: options.sidecar?.baseUrl,
-				principalId,
-				authToken: options.sidecar?.authToken,
-			};
-			this._sidecarClient = new SidecarHttpClient({
-				baseUrl: options.sidecar?.baseUrl ?? "http://localhost:8787",
-				principalId,
-				authToken: options.sidecar?.authToken,
-			});
-			for (const proxy of createSidecarProxies(proxyConfig)) {
-				this.executorRegistry.register(proxy);
-			}
-		}
-		this.issuer = new CapabilityIssuer(
-			this.policyEngine,
-			this.taintTracker,
-			this.tokenStore,
-			options.signingKey,
-		);
-
-		this._hooks = options.hooks ?? {};
-		this._runState = new RunStateTracker(options.runStatePolicy);
-
-		// Initialize persistent cross-run taint tracking.
-		// Key by principal.name (the stable caller-supplied identity) rather than
-		// principal.id (a random ULID generated per Firewall instance). This ensures
-		// that two runs for the same logical principal share persistent state.
-		if (options.persistentTaint?.enabled) {
-			this._persistentTaint = new PersistentTaintRegistry(
-				this.auditStore,
-				this.principal.name,
-				options.persistentTaint,
-			);
-			// Restore sticky flags from prior runs for this principal
-			this._persistentTaint.initializeRunState(this._runState);
-		}
-
-		this.auditStore.startRun(this.runId, this.principal.id, {
-			principal: options.principal,
-			policies: Array.isArray(options.policies) ? "[inline]" : options.policies,
-		});
-
-		const securityMode = options.securityMode ?? (options.signingKey ? "secure" : "dev");
-
-		this.pipeline = new Pipeline(
-			this.runId,
-			this.principal,
-			this.policyEngine,
-			this.taintTracker,
-			this.auditStore,
-			this.executorRegistry,
-			options.hooks ?? {},
-			this.tokenStore,
-			this._runState,
-			options.signingKey,
-			securityMode,
-			this._persistentTaint ?? undefined,
-		);
+		const c = constructFirewall(options);
+		this.runId = c.runId;
+		this.principal = c.principal;
+		this.policyEngine = c.policyEngine;
+		this.taintTracker = c.taintTracker;
+		this.auditStore = c.auditStore;
+		this.executorRegistry = c.executorRegistry;
+		this.pipeline = c.pipeline;
+		this.issuer = c.issuer;
+		this.tokenStore = c.tokenStore;
+		this._hooks = c.hooks;
+		this._runState = c.runState;
+		this._persistentTaint = c.persistentTaint;
+		this._mode = c.mode;
+		this._sidecarOptions = c.sidecarOptions;
+		this._sidecarClient = c.sidecarClient;
 	}
 
 	/**
@@ -202,50 +100,9 @@ export class Firewall {
 	 */
 	requestCapability(
 		capabilityClass: CapabilityClass,
-		options?: {
-			constraints?: CapabilityConstraint;
-			taintLabels?: TaintLabel[];
-			justification?: string;
-		},
+		options?: RequestOptions,
 	): IssuanceDecision {
-		// In sidecar mode, synchronous requestCapability cannot route to the
-		// sidecar (HTTP is async). Return a synthetic non-authoritative grant.
-		//
-		// SAFETY: This synthetic grant cannot bypass sidecar authority because:
-		// 1. execute() routes directly to the sidecar, never consulting local tokens
-		// 2. The grant has empty lease/nonce values that would fail real validation
-		// 3. No local pipeline code path runs in sidecar mode
-		//
-		// Callers SHOULD use requestCapabilityAsync() for a real sidecar decision.
-		if (this._sidecarClient) {
-			const ts = now();
-			const requestId = generateId();
-			return {
-				requestId,
-				granted: true,
-				grant: {
-					id: generateId(),
-					requestId,
-					principalId: this.principal.id,
-					capabilityClass,
-					constraints: (options?.constraints ?? {}) as CapabilityConstraint,
-					lease: {
-						issuedAt: ts,
-						expiresAt: "", // sidecar manages expiry
-						maxCalls: 0, // sidecar manages call count
-						callsUsed: 0,
-					},
-					taintContext: options?.taintLabels ?? [],
-					revoked: false,
-					nonce: "",
-				},
-				reason: "Sidecar-mode: authoritative grant issued by sidecar on execute()",
-				taintLabels: options?.taintLabels ?? [],
-				timestamp: ts,
-			};
-		}
-
-		return this._requestCapabilityLocal(capabilityClass, options);
+		return requestCapabilitySync(this._issuanceCtx(), capabilityClass, options);
 	}
 
 	/**
@@ -258,146 +115,9 @@ export class Firewall {
 	 */
 	async requestCapabilityAsync(
 		capabilityClass: CapabilityClass,
-		options?: {
-			constraints?: CapabilityConstraint;
-			taintLabels?: TaintLabel[];
-			justification?: string;
-		},
+		options?: RequestOptions,
 	): Promise<IssuanceDecision> {
-		if (this._sidecarClient) {
-			const decision = await this._sidecarClient.requestCapability(capabilityClass, {
-				constraints: options?.constraints as Record<string, unknown> | undefined,
-				taintLabels: options?.taintLabels,
-				justification: options?.justification,
-			});
-
-			// Fire local hooks for observability (non-authoritative)
-			this._hooks.onIssuance?.(
-				{
-					id: decision.requestId,
-					principalId: this.principal.id,
-					capabilityClass,
-					constraints: options?.constraints,
-					taintLabels: options?.taintLabels ?? [],
-					justification: options?.justification,
-					timestamp: decision.timestamp,
-				},
-				decision,
-			);
-
-			return decision;
-		}
-
-		return this._requestCapabilityLocal(capabilityClass, options);
-	}
-
-	/** Local capability evaluation — used only in embedded mode. */
-	private _requestCapabilityLocal(
-		capabilityClass: CapabilityClass,
-		options?: {
-			constraints?: CapabilityConstraint;
-			taintLabels?: TaintLabel[];
-			justification?: string;
-		},
-	): IssuanceDecision {
-		// Merge explicit taint labels with kernel-maintained run-level taint.
-		// This ensures taint propagates to capability issuance even when the
-		// agent omits taintLabels — the kernel tracks taint, not the agent.
-		let taintLabels = options?.taintLabels ?? [];
-		if (this._runState.tainted) {
-			const runLabels = this._runState.accumulatedTaintLabels as TaintLabel[];
-			if (runLabels.length > 0) {
-				const seen = new Set(taintLabels.map((l) => `${l.source}:${l.origin}`));
-				for (const label of runLabels) {
-					const key = `${label.source}:${label.origin}`;
-					if (!seen.has(key)) {
-						seen.add(key);
-						taintLabels = [...taintLabels, label];
-					}
-				}
-			}
-		}
-
-		const request: CapabilityRequest = {
-			id: generateId(),
-			principalId: this.principal.id,
-			capabilityClass,
-			constraints: options?.constraints,
-			taintLabels,
-			justification: options?.justification,
-			timestamp: now(),
-		};
-
-		// Deny unknown capability classes — fail closed instead of crashing
-		if (!(capabilityClass in CAPABILITY_CLASS_MAP)) {
-			this._runState.recordCapabilityRequest(false);
-			const denied: IssuanceDecision = {
-				requestId: request.id,
-				granted: false,
-				reason:
-					`Unknown capability class '${capabilityClass}'. ` +
-					`Valid classes: ${Object.keys(CAPABILITY_CLASS_MAP).join(", ")}`,
-				taintLabels: request.taintLabels,
-				timestamp: now(),
-			};
-			this._hooks.onIssuance?.(request, denied);
-			return denied;
-		}
-
-		// Block non-read-only capability issuance in restricted mode
-		if (this._runState.restricted) {
-			const mapping = CAPABILITY_CLASS_MAP[capabilityClass];
-			const safeReadOnly = mapping.actions.every((a) =>
-				this._runState.isAllowedInRestrictedMode(mapping.toolClass, a),
-			);
-			if (!safeReadOnly) {
-				this._runState.recordCapabilityRequest(false);
-				this._runState.pushEvent({
-					timestamp: request.timestamp,
-					type: "capability_denied",
-					toolClass: mapping.toolClass,
-					metadata: { capabilityClass, reason: "restricted_mode" },
-				});
-				const denied: IssuanceDecision = {
-					requestId: request.id,
-					granted: false,
-					reason:
-						`Run is in restricted mode (entered at ${this._runState.restrictedAt}). ` +
-						`Only read-only capabilities can be issued. '${capabilityClass}' is blocked.`,
-					taintLabels: request.taintLabels,
-					timestamp: now(),
-				};
-				this._hooks.onIssuance?.(request, denied);
-				return denied;
-			}
-		}
-
-		// Push capability_requested event before evaluation
-		const mapping = CAPABILITY_CLASS_MAP[capabilityClass];
-		this._runState.pushEvent({
-			timestamp: request.timestamp,
-			type: "capability_requested",
-			toolClass: mapping.toolClass,
-			metadata: { capabilityClass },
-		});
-
-		const decision = this.issuer.evaluate(request, this.principal);
-		this._runState.recordCapabilityRequest(decision.granted);
-
-		// Push granted/denied event
-		this._runState.pushEvent({
-			timestamp: decision.timestamp,
-			type: decision.granted ? "capability_granted" : "capability_denied",
-			toolClass: mapping.toolClass,
-			metadata: { capabilityClass },
-		});
-
-		// Evaluate behavioral rules after capability events
-		this.checkBehavioralRulesFromCapability(capabilityClass);
-
-		this._hooks.onIssuance?.(request, decision);
-
-		return decision;
+		return requestCapabilityAsync(this._issuanceCtx(), capabilityClass, options);
 	}
 
 	registerExecutor(executor: ToolExecutor): void {
@@ -412,63 +132,16 @@ export class Firewall {
 	}
 
 	async execute(request: ToolCallRequest): Promise<ToolResult> {
-		// In sidecar mode, bypass the local pipeline entirely.
-		// The sidecar is the single authoritative enforcement boundary —
-		// it handles policy evaluation, token enforcement, behavioral rules,
-		// taint tracking, tool execution, and audit logging.
-		// The host fires local hooks for observability only.
-		if (this._sidecarClient) {
-			return this._executeViaSidecar(request);
-		}
-
-		return this.pipeline.intercept(request);
-	}
-
-	/**
-	 * Execute a tool call through the sidecar thin-client path.
-	 *
-	 * NO local policy evaluation, NO local token enforcement, NO local
-	 * behavioral rules, NO local quarantine gating. The sidecar is
-	 * authoritative for all of these.
-	 *
-	 * On success: returns ToolResult, fires local hooks for observability.
-	 * On denial: throws ToolCallDeniedError, fires local hooks.
-	 *
-	 * Host-side denial counters (deniedActions) and local audit records
-	 * are intentionally NOT updated here. In sidecar mode the sidecar
-	 * owns all accounting, audit trails, and run-state tracking. The
-	 * host fires onDecision/onExecute hooks for observability only.
-	 */
-	private async _executeViaSidecar(request: ToolCallRequest): Promise<ToolResult> {
-		try {
-			const result = await this._sidecarClient!.execute(request);
-
-			// Fire observability hooks (non-authoritative — host-side telemetry only)
-			this._hooks.onExecute?.(
-				{
-					id: result.callId,
-					runId: this.runId,
-					sequence: 0,
-					timestamp: now(),
-					principalId: this.principal.id,
-					toolClass: request.toolClass,
-					action: request.action,
-					parameters: request.parameters,
-					taintLabels: request.taintLabels ?? [],
-					grantId: request.grantId,
-				},
-				result,
-			);
-
-			return result;
-		} catch (e) {
-			if (e instanceof ToolCallDeniedError) {
-				// Fire observability hooks for the denial
-				this._hooks.onDecision?.(e.toolCall, e.decision);
-				throw e;
-			}
-			throw e;
-		}
+		return executeRequest(
+			{
+				principal: this.principal,
+				runId: this.runId,
+				pipeline: this.pipeline,
+				hooks: this._hooks,
+				sidecarClient: this._sidecarClient,
+			},
+			request,
+		);
 	}
 
 	/**
@@ -481,93 +154,18 @@ export class Firewall {
 	 *
 	 * This closes the "middleware taint gap" for adapters that support it.
 	 * Adapters that cannot provide output continue operating in degraded mode.
-	 *
-	 * @param observation - The tool output to observe
-	 * @returns Taint labels derived from the output
 	 */
-	observeToolOutput(observation: {
-		toolClass: string;
-		action: string;
-		data: unknown;
-		callId?: string;
-	}): TaintLabel[] {
-		const callId = observation.callId ?? generateId();
-
-		// Content scanning — detect injection patterns in real output
-		const contentTaints = this.taintTracker.scanOutput(observation.data, callId);
-
-		// Auto-taint — derive taint from tool class
-		const autoTaints = this.deriveAutoTaint(observation.toolClass, observation.data);
-
-		const allTaints = this.taintTracker.merge(contentTaints, autoTaints);
-		if (allTaints.length === 0) return [];
-
-		// Accumulate into run-state and emit events
-		if (this._runState) {
-			// Capture existing sources before accumulation for diff
-			const priorSources = new Set(
-				(this._runState.accumulatedTaintLabels as TaintLabel[]).map((t) => t.source),
-			);
-
-			this._runState.accumulateTaintLabels(allTaints);
-
-			const newSources = [...new Set(allTaints.map((t) => t.source))].filter(
-				(s) => !priorSources.has(s),
-			);
-
-			if (newSources.length > 0) {
-				this._runState.pushEvent({
-					timestamp: now(),
-					type: "taint_observed",
-					toolClass: observation.toolClass,
-					action: observation.action,
-					taintSources: newSources,
-				});
-
-				// Check behavioral rules after taint event
-				if (this._runState.behavioralRulesEnabled) {
-					const match = evaluateBehavioralRules(this._runState);
-					if (match) {
-						const quarantine = applyBehavioralRule(this._runState, match);
-						if (quarantine) {
-							this.auditStore.appendSystemEvent(
-								this.runId,
-								this.principal.id,
-								"quarantine",
-								quarantine.reason,
-								{
-									triggerType: quarantine.triggerType,
-									ruleId: quarantine.ruleId,
-									counters: quarantine.countersSnapshot,
-									matchedEvents: quarantine.matchedEvents,
-								},
-							);
-						}
-					}
-				}
-			}
-		}
-
-		return allTaints;
-	}
-
-	private deriveAutoTaint(toolClass: string, data: unknown): TaintLabel[] {
-		const ts = now();
-		if (toolClass === "http") {
-			let origin = "unknown";
-			if (typeof data === "object" && data !== null && "url" in data) {
-				try {
-					origin = new URL(String((data as Record<string, unknown>).url)).hostname;
-				} catch {
-					/* keep unknown */
-				}
-			}
-			return [{ source: "web", origin, confidence: 1.0, addedAt: ts }];
-		}
-		if (toolClass === "retrieval") {
-			return [{ source: "rag", origin: "retrieval", confidence: 0.9, addedAt: ts }];
-		}
-		return [];
+	observeToolOutput(observation: Observation): TaintLabel[] {
+		return observeToolOutput(
+			{
+				principal: this.principal,
+				runId: this.runId,
+				taintTracker: this.taintTracker,
+				runState: this._runState,
+				auditStore: this.auditStore,
+			},
+			observation,
+		);
 	}
 
 	replay(runId?: string): ReplayResult | null {
@@ -699,15 +297,16 @@ export class Firewall {
 	 * Returns QuarantineInfo if newly quarantined, null if already restricted.
 	 */
 	quarantineExternal(ruleId: string, reason: string): QuarantineInfo | null {
-		const result = this._runState.quarantineByRule(ruleId, reason, []);
-		if (result) {
-			this.auditStore.appendSystemEvent(this.runId, this.principal.id, "quarantine", reason, {
-				triggerType: "cross_principal_alert",
-				ruleId,
-				counters: result.countersSnapshot,
-			});
-		}
-		return result;
+		return quarantineExternal(
+			{
+				principal: this.principal,
+				runState: this._runState,
+				auditStore: this.auditStore,
+				runId: this.runId,
+			},
+			ruleId,
+			reason,
+		);
 	}
 
 	/**
@@ -716,38 +315,16 @@ export class Firewall {
 	 * contamination from one principal's actions to another.
 	 */
 	injectExternalTaint(labels: TaintLabel[]): void {
-		if (labels.length === 0) return;
-		this._runState.accumulateTaintLabels(labels);
-		for (const label of labels) {
-			this._runState.pushEvent({
-				timestamp: now(),
-				type: "taint_observed",
-				toolClass: "external",
-				action: "inject",
-				taintSources: [label.source],
-			});
-		}
-	}
-
-	private checkBehavioralRulesFromCapability(capabilityClass: string): void {
-		if (!this._runState.behavioralRulesEnabled) return;
-		const match = evaluateBehavioralRules(this._runState);
-		if (!match) return;
-		const quarantine = applyBehavioralRule(this._runState, match);
-		if (quarantine) {
-			this.auditStore.appendSystemEvent(
-				this.runId,
-				this.principal.id,
-				"quarantine",
-				quarantine.reason,
-				{
-					triggerType: quarantine.triggerType,
-					ruleId: quarantine.ruleId,
-					counters: quarantine.countersSnapshot,
-					matchedEvents: quarantine.matchedEvents,
-				},
-			);
-		}
+		injectExternalTaint(
+			{
+				principal: this.principal,
+				runId: this.runId,
+				taintTracker: this.taintTracker,
+				runState: this._runState,
+				auditStore: this.auditStore,
+			},
+			labels,
+		);
 	}
 
 	/**
@@ -762,32 +339,25 @@ export class Firewall {
 		childName: string,
 		requestedCapabilities: Capability[],
 	): { firewall: Firewall; denied: DelegationResult[] } {
-		const childId = generateId();
-		const { principal: childPrincipal, denied } = createDelegatedPrincipal(
-			{ ...this.principal, capabilities: this.principal.capabilities as DelegatedCapability[] },
-			childId,
+		return delegateToChild<Firewall>(
+			{
+				principal: this.principal,
+				policyEngine: this.policyEngine,
+				hooks: this._hooks,
+				runState: this._runState,
+				mode: this._mode,
+				sidecarOptions: this._sidecarOptions,
+				auditStore: this.auditStore,
+				runId: this.runId,
+			},
 			childName,
 			requestedCapabilities,
-			now(),
-		);
-
-		const childFirewall = new Firewall({
-			principal: {
-				name: childPrincipal.name,
-				capabilities: childPrincipal.capabilities,
+			(options) => new Firewall(options),
+			(firewall, principal) => {
+				// biome-ignore lint/suspicious/noExplicitAny: accessing private field for delegation
+				(firewall as any).principal = principal;
 			},
-			policies: [...this.policyEngine.getRules()],
-			hooks: this._hooks,
-			runStatePolicy: this._runState.policy,
-			mode: this._mode,
-			sidecar: this._sidecarOptions,
-		});
-
-		// Override the generated principal to preserve parentId and delegation metadata
-		// biome-ignore lint/suspicious/noExplicitAny: accessing private field for delegation
-		(childFirewall as any).principal = childPrincipal;
-
-		return { firewall: childFirewall, denied };
+		);
 	}
 
 	/**
@@ -796,10 +366,7 @@ export class Firewall {
 	 * Transitive: if A → B → C, revoking B removes C's delegated capabilities too.
 	 */
 	revokeDelegationsFrom(principalId: string): void {
-		this.principal.capabilities = revokeDelegationsFrom(
-			this.principal.capabilities as DelegatedCapability[],
-			principalId,
-		);
+		this.principal.capabilities = revokeDelegationsFromPrincipal(this.principal, principalId);
 	}
 
 	/** The enforcement mode this firewall is operating in. */
@@ -818,10 +385,21 @@ export class Firewall {
 	}
 
 	close(): void {
-		// Purge expired persistent taint events on close
 		this._persistentTaint?.purgeExpired();
 		this.auditStore.endRun(this.runId);
 		this.auditStore.close();
+	}
+
+	private _issuanceCtx() {
+		return {
+			principal: this.principal,
+			issuer: this.issuer,
+			runState: this._runState,
+			auditStore: this.auditStore,
+			runId: this.runId,
+			hooks: this._hooks,
+			sidecarClient: this._sidecarClient,
+		};
 	}
 }
 

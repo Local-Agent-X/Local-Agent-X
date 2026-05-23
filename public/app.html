@@ -1021,7 +1021,13 @@
 <script src="/js/chat-voice-ui.js?v=v1"></script>
 <script src="/js/chat-extras.js?v=v1"></script>
 <script src="/js/chat-helpers.js?v=v1"></script>
-<script src="/js/chat-ws-handler.js?v=v1"></script>
+<!-- chat-ws-handler split: per-event-group modules must load BEFORE
+     chat-ws-handler.js so its dispatcher can reference handleSettingsChanged,
+     dispatchBgOpEvent, handleAgentFeedEvent, renderBuildRunSummary. -->
+<script src="/js/chat-ws-handler-build-summary.js?v=v1"></script>
+<script src="/js/chat-ws-handler-bg-ops.js?v=v1"></script>
+<script src="/js/chat-ws-handler-misc.js?v=v1"></script>
+<script src="/js/chat-ws-handler.js?v=v2"></script>
 <script src="/js/chat-ws.js?v=v1"></script>
 <script src="/js/chat-render.js?v=v1"></script>
 <!-- chat-send split: dispatch modules must load before chat-send.js so

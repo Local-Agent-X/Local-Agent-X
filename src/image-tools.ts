@@ -4,6 +4,9 @@ import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { ToolDefinition, ToolResult } from "./types.js";
 import type { SecretsStore } from "./secrets.js";
+import { createLogger } from "./logger.js";
+
+const xaiLogger = createLogger("image-tools.xai");
 
 function ok(content: string): ToolResult {
   return { content };
@@ -316,6 +319,7 @@ async function generateViaXaiVideo(
   };
   if (refs.length > 0) body.reference_images = refs;
 
+  xaiLogger.info(`[xai-video] submitting prompt="${prompt.slice(0, 80)}" duration=${clamped} refs=${refs.length}`);
   const submit = await fetch("https://api.x.ai/v1/videos/generations", {
     method: "POST",
     headers: { ...headers, "x-idempotency-key": randomUUID() },
@@ -324,6 +328,7 @@ async function generateViaXaiVideo(
   });
   if (!submit.ok) {
     const errText = await submit.text();
+    xaiLogger.error(`[xai-video] SUBMIT FAILED (${submit.status}): ${errText.slice(0, 500)}`);
     return err(`xAI video submit failed (${submit.status}): ${errText.slice(0, 300)}`);
   }
   const submitted = await submit.json() as { request_id?: string };
@@ -359,6 +364,7 @@ async function generateViaXaiVideo(
         pollBody.failure_reason ||
         pollBody.message ||
         "no reason returned by xAI";
+      xaiLogger.error(`[xai-video] STATUS=${lastStatus} reason=${reason} request=${requestId} full=${JSON.stringify(pollBody).slice(0, 800)}`);
       return err(`xAI video generation ${lastStatus} (${reason}). request=${requestId}`);
     }
   }

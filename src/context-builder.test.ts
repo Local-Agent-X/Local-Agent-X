@@ -55,7 +55,8 @@ describe("Context Builder", () => {
     const order = builder.getSectionOrder();
 
     expect(order[0]).toBe("core-identity");
-    expect(order[1]).toBe("provider-hint");
+    expect(order[1]).toBe("runtime-context");
+    expect(order).toContain("provider-hint");
     expect(order).toContain("context-block");
     expect(order).toContain("canary");
     // Canary should be last

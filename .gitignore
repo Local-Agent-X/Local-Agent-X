@@ -38,6 +38,12 @@ config/app-manifest.json
 probe*.mjs
 junit.xml
 
+# Stray "{}" artifact — 0-byte file that intermittently appears in repo root
+# during commits/test runs. Source unidentified after ~30 min of probing
+# (precommit hook, full vitest, individual tests in isolation, empty commits
+# all failed to reliably reproduce). Harmless but noisy in `git status`.
+{}
+
 # Python bytecode cache — regenerated on every import, version-tied,
 # never useful in the repo. Universal Python convention.
 __pycache__/

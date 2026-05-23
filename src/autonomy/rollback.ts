@@ -60,6 +60,14 @@ function captureFileBackup(toolCallId: string, filePath: string): RollbackArtifa
 }
 
 function captureGitStash(toolCallId: string, cwd: string): RollbackArtifact {
+  // Self-protect: never stash the LAX dev repo itself. captureRollback's
+  // default cwd is process.cwd(); during tests that's this repo, and a
+  // shell-class tool dispatched without an explicit cwd would otherwise
+  // git-stash live working-tree edits out from under the developer.
+  // Users running LAX against their own project repos won't match.
+  if (existsSync(join(cwd, "src", "autonomy", "rollback.ts"))) {
+    return { type: "none", reason: "refusing to stash LAX source repo" };
+  }
   try {
     execSync("git rev-parse --is-inside-work-tree", { cwd, stdio: "ignore" });
   } catch {

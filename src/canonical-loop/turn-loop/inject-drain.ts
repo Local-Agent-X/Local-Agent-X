@@ -12,6 +12,7 @@ import { appendOpMessage, readOpMessages } from "../store.js";
 import { emit } from "../event-emitter.js";
 import { drainInjects } from "../../agent-loop/inject-queue.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
+import { broadcastToSession } from "../../chat-ws/state.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.turn-loop.inject-drain");
@@ -21,20 +22,20 @@ export function drainInjectsIntoTurn(op: Op, turnIdx: number): void {
   if (!sessionId) return;
   const injects = drainInjects(sessionId);
   if (injects.length === 0) return;
-  // Pair this with chat-ws's `[ws-chat] inject sess=… len=N` enqueue line
-  // for end-to-end visibility — until this log existed there was no way to
-  // confirm an inject ever made it into an iteration vs sat in the queue
-  // past the turn's end. The legacy agent-loop has its own
+  // Pair this with chat-ws's `[ws-chat] inject queued sess=… id=…` enqueue
+  // line for end-to-end visibility — until this log existed there was no
+  // way to confirm an inject ever made it into an iteration vs sat in the
+  // queue past the turn's end. The legacy agent-loop has its own
   // interjectDrainMiddleware that logs separately; chat turns go through
   // the canonical-loop and this function instead, so the message logged
   // there never fired for chats.
-  const totalChars = injects.reduce((s, t) => s + t.length, 0);
+  const totalChars = injects.reduce((s, it) => s + it.text.length, 0);
   logger.info(`[interject-drain] consumed=${injects.length} sess=${sessionId} op=${op.id} turn=${turnIdx} totalChars=${totalChars}`);
   // Offset past any pre-existing rows for this turn (e.g. the seeded turn-0
   // user message) so (op_id, turn_idx, seq_in_turn) stays unique.
   let seqInTurn = readOpMessages(op.id).filter(m => m.turnIdx === turnIdx).length;
   const now = new Date().toISOString();
-  for (const text of injects) {
+  for (const item of injects) {
     // Lightweight temporal-context marker. The model already has the
     // conversation history (so it knows what task is active) — what it
     // doesn't otherwise know is that this message arrived WHILE a turn
@@ -44,7 +45,7 @@ export function drainInjectsIntoTurn(op: Op, turnIdx: number): void {
     // does NOT say "this applies to the active task" — the user might
     // be redirecting, and biasing toward continuation would suppress
     // legitimate course corrections.
-    const framed = `[mid-turn user message] ${text}`;
+    const framed = `[mid-turn user message] ${item.text}`;
     const row: OpMessageRow = {
       messageId: `inject-${op.id}-${turnIdx}-${seqInTurn}-${randomUUID().slice(0, 6)}`,
       opId: op.id,
@@ -56,6 +57,11 @@ export function drainInjectsIntoTurn(op: Op, turnIdx: number): void {
     };
     appendOpMessage(row);
     emit(op.id, "message_appended", { turnIdx, role: row.role, messageId: row.messageId });
+    // Tell the client this specific inject was consumed so its "queued"
+    // bubble styling can drop. Best-effort: a broadcast failure here
+    // doesn't affect the turn's correctness, the UI just stays "queued"
+    // visually until the next render pass.
+    try { broadcastToSession(sessionId, { type: "inject_consumed", injectId: item.id }); } catch {}
     seqInTurn += 1;
   }
 }

@@ -76,9 +76,34 @@ export function attachMessageRouter(ctx: RouterContext): void {
 
     if (type === "inject" && sessionId && typeof msg.message === "string" && msg.message.trim()) {
       try {
+        const text = msg.message.trim();
+        const clientInjectId = typeof msg.injectId === "string" && msg.injectId ? msg.injectId : undefined;
+        // If no op is currently bound to this session, the user's "inject" is
+        // really a fresh turn — the previous turn already terminated and the
+        // worker isn't around to drain the queue. Without this re-route the
+        // message would sit in the queue indefinitely and only surface when
+        // the next user send started a new turn (the orphan-inject bug).
+        const { listOpsForSession } = await import("../ops/session-bridge.js");
+        const liveOps = listOpsForSession(sessionId);
+        if (liveOps.length === 0) {
+          const handler = getChatHandler();
+          if (handler) {
+            logger.info(`[ws-chat] inject routed to new turn sess=${sessionId} len=${text.length} (no live ops)`);
+            // Mirror the queue-drain path: tell the client this inject is
+            // no longer "queued" so the local echo bubble drops its pending
+            // styling. The new turn's response will arrive via the normal
+            // stream path.
+            if (clientInjectId) broadcastToSession(sessionId, { type: "inject_consumed", injectId: clientInjectId });
+            handler(sessionId, text, []);
+            return;
+          }
+          logger.warn(`[ws-chat] inject dropped sess=${sessionId} — no live ops and no chat handler`);
+          return;
+        }
         const { pushInject } = await import("../agent-loop/inject-queue.js");
-        pushInject(sessionId, msg.message.trim());
-        logger.info(`[ws-chat] inject sess=${sessionId} len=${msg.message.length}`);
+        const injectId = pushInject(sessionId, text, clientInjectId);
+        logger.info(`[ws-chat] inject queued sess=${sessionId} len=${text.length} id=${injectId.slice(0, 8)} liveOps=${liveOps.length}`);
+        broadcastToSession(sessionId, { type: "inject_queued", injectId });
       } catch (e) {
         logger.warn(`[ws-chat] inject failed: ${(e as Error).message}`);
       }

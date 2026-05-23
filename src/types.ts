@@ -297,6 +297,13 @@ export type ServerEvent =
   // replays missed canonical events via `reconnectOp(opId, sinceSeq)`.
   // Stop button → `{type:"cancel_op", opId}` → `opCancel(opId)`.
   | { type: "chat_op_started"; opId: string }
+  // Mid-turn user inject lifecycle. Emitted when a user sends while a turn
+  // is already in flight: `inject_queued` confirms the message landed in the
+  // server's inject queue (paired with the client-generated injectId echoed
+  // on the local bubble); `inject_consumed` fires when drainInjectsIntoTurn
+  // pulls it into a turn iteration so the UI can drop the "queued" styling.
+  | { type: "inject_queued"; injectId: string }
+  | { type: "inject_consumed"; injectId: string }
   // Out-of-band UI hint emitted by tools that want to surface a structured
   // affordance (op id, kill button, blocked reason) WITHOUT putting that
   // info in the model-visible result text. Originally added so BLOCKED

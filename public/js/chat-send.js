@@ -44,12 +44,19 @@ async function sendMessage() {
     const input = document.getElementById('msg-input');
     const text = input.value.trim();
     if (!text) return;
+    // Client-generated ID so the local echo can be correlated with the
+    // server's inject_consumed event (which drops the "queued" styling).
+    const injectId = (window.crypto && window.crypto.randomUUID)
+      ? window.crypto.randomUUID()
+      : ('inj-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8));
     if (chatWs && chatWs.readyState === WebSocket.OPEN) {
-      chatWs.send(JSON.stringify({ type: 'inject', sessionId: activeChat.id, message: text }));
+      chatWs.send(JSON.stringify({ type: 'inject', sessionId: activeChat.id, message: text, injectId }));
     }
     // Echo locally as a user message so the chat reflects the interject
-    // immediately without waiting for round-trip confirmation.
-    activeChat.messages.push({ role: 'user', content: text, timestamp: Date.now(), _injected: true });
+    // immediately without waiting for round-trip confirmation. `_queueState`
+    // is set to 'queued' so renderMessages can apply the dimmed/pending
+    // bubble style until the server's inject_consumed event arrives.
+    activeChat.messages.push({ role: 'user', content: text, timestamp: Date.now(), _injected: true, _injectId: injectId, _queueState: 'queued' });
     if (typeof renderMessages === 'function') renderMessages();
     input.value = ''; input.style.height = 'auto';
     saveChats();

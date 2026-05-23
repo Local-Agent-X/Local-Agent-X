@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { unionMergeRecordsById } from "../src/sync/pull-files.js";
+import { unionMergeRecordsById, unionMergeBy } from "../src/sync/pull-files.js";
 
 interface Rec { id: string; updatedAt?: number; payload?: string }
 
@@ -78,5 +78,54 @@ describe("unionMergeRecordsById", () => {
     ];
     const merged = unionMergeRecordsById(local, []);
     expect(merged).toHaveLength(2);
+  });
+});
+
+// Generic unionMergeBy covers the snake_case (tasks), name-keyed
+// (sidebar pins, custom missions), and no-timestamp (calendar events)
+// cases. The wrapper above proves the common id+updatedAt path; these
+// pin the variants.
+describe("unionMergeBy — generic key + collision predicate", () => {
+  interface Task { id: string; updated_at?: number; title?: string }
+  interface Named { name: string; payload?: string }
+
+  it("tasks.json shape: snake_case timestamp, local-newer wins", () => {
+    const local: Task[] = [
+      { id: "t-1", updated_at: 200, title: "local-newer" },
+      { id: "t-LOCAL-ONLY", updated_at: 50, title: "fresh" },
+    ];
+    const remote: Task[] = [
+      { id: "t-1", updated_at: 100, title: "remote-older" },
+    ];
+    const merged = unionMergeBy(local, remote, (x) => x.id, (l, r) => (Number(l.updated_at) || 0) > (Number(r.updated_at) || 0));
+    expect(merged.find(t => t.id === "t-1")?.title).toBe("local-newer");
+    expect(merged.find(t => t.id === "t-LOCAL-ONLY")).toBeDefined();
+  });
+
+  it("name-keyed without timestamp: local-only entry survives stale-remote pull", () => {
+    const local: Named[] = [
+      { name: "🚀 Naughty Toys", payload: "local-pin" },
+    ];
+    const remote: Named[] = [
+      { name: "Mygroomtime", payload: "from-other-machine" },
+    ];
+    const merged = unionMergeBy(local, remote, (x) => x.name, () => true);
+    expect(merged).toHaveLength(2);
+    expect(merged.find(n => n.name === "🚀 Naughty Toys")).toBeDefined();
+    expect(merged.find(n => n.name === "Mygroomtime")).toBeDefined();
+  });
+
+  it("name-keyed: local-wins-on-collision (local edit beats stale-remote)", () => {
+    const local: Named[] = [{ name: "research-flow", payload: "local-edit" }];
+    const remote: Named[] = [{ name: "research-flow", payload: "remote-stale" }];
+    const merged = unionMergeBy(local, remote, (x) => x.name, () => true);
+    expect(merged[0].payload).toBe("local-edit");
+  });
+
+  it("skips items with empty/falsy keys", () => {
+    const local = [{ id: "" }, { id: "kept" }];
+    const remote = [{ id: "from-remote" }];
+    const merged = unionMergeBy(local, remote, (x) => x.id, () => true);
+    expect(merged.map(m => m.id).sort()).toEqual(["from-remote", "kept"]);
   });
 });

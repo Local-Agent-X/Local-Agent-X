@@ -17,24 +17,49 @@ const require = createRequire(import.meta.url);
 const logger = createLogger("sync.pull-files");
 
 /**
- * Union-merge two arrays of records by id, picking the record with the
- * highest `updatedAt` on collision. Records present in only one side are
- * carried through. Closes the "local-newer record nuked by stale-remote
- * pull" failure mode that wiped Acme Springfield on 2026-05-22.
+ * Generic union-merge of two record arrays by a caller-supplied key, with
+ * a caller-supplied collision predicate that decides whether local or
+ * remote wins. Items with an empty / falsy key are skipped.
+ *
+ * Three callers today: id+updatedAt records (projects/issues/templates),
+ * id+updated_at snake_case (tasks), name-keyed without a timestamp
+ * (sidebar pins, custom missions, calendar events).
+ */
+export function unionMergeBy<T>(
+  local: T[],
+  remote: T[],
+  keyOf: (item: T) => string,
+  localWins: (l: T, r: T) => boolean,
+): T[] {
+  const byKey = new Map<string, T>();
+  for (const r of remote) {
+    const k = keyOf(r);
+    if (k) byKey.set(k, r);
+  }
+  for (const l of local) {
+    const k = keyOf(l);
+    if (!k) continue;
+    const r = byKey.get(k);
+    if (!r || localWins(l, r)) byKey.set(k, l);
+  }
+  return Array.from(byKey.values());
+}
+
+/**
+ * Union-merge by `id` with `updatedAt` tiebreak (camelCase). The original
+ * helper, kept as a convenience wrapper because three call sites use it
+ * (agent-projects.json, agent-issues.json, agent-templates.json).
  */
 export function unionMergeRecordsById<T extends { id: string; updatedAt?: number }>(
   local: T[],
   remote: T[],
 ): T[] {
-  const byId = new Map<string, T>();
-  for (const r of remote) byId.set(r.id, r);
-  for (const l of local) {
-    const r = byId.get(l.id);
-    if (!r || (Number(l.updatedAt) || 0) > (Number(r.updatedAt) || 0)) {
-      byId.set(l.id, l);
-    }
-  }
-  return Array.from(byId.values());
+  return unionMergeBy(
+    local,
+    remote,
+    (x) => x.id,
+    (l, r) => (Number(l.updatedAt) || 0) > (Number(r.updatedAt) || 0),
+  );
 }
 
 /**
@@ -67,12 +92,15 @@ function pullMergedRecordFile<T extends { id: string; updatedAt?: number }>(opts
   }
 }
 
-/** Files whose pull goes through pullMergedRecordFile, not the destructive
- *  overwrite loop. Keep in sync with the explicit per-file blocks below. */
+/** Files whose pull goes through an explicit merge block below, not the
+ *  destructive overwrite loop. Keep in sync with the per-file blocks. */
 const MERGED_BRAIN_FILES: ReadonlySet<string> = new Set([
   "agent-projects.json",
   "agent-issues.json",
   "agent-templates.json",
+  "tasks.json",
+  "calendar.json",
+  "custom-missions.json",
 ]);
 
 // ── Pull direction: sync repo → local (with deletion propagation) ──
@@ -130,28 +158,36 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
     } catch { writeFileSync(join(dataDir, "tool-policy.json"), readFileSync(syncPolicy, "utf-8")); }
   }
 
-  // Sidebar pins: replace the local sidebarPins array with the remote
-  // one, MINUS anything tombstoned. Tombstones come from two stores:
-  // the local per-machine "I unpinned this here" list, and the synced
-  // store in sync-repo/.tombstones/pins/ where other machines record
-  // their unpins. Without this filter, a remote that still has Sample
-  // pinned would re-pin Sample on this machine every pull, undoing the
-  // user's unpin.
+  // Sidebar pins: union-merge local + remote by name (local-wins on
+  // collision since there's no timestamp, and the local copy reflects
+  // the user's most recent unpin/rename on THIS machine). Then filter
+  // through tombstones so a remote re-add of an unpinned item can't
+  // resurrect it.
+  //
+  // Old behavior replaced local with (remote − tombstones), wiping any
+  // pin the user added on this machine before it could be pushed. Same
+  // family as the projects-on-pull data-loss bug.
   const syncPins = join(syncDir, "sidebar-pins.json");
   if (existsSync(syncPins)) {
     try {
       const remotePins = JSON.parse(readFileSync(syncPins, "utf-8"));
       if (Array.isArray(remotePins)) {
-        const { pinTombstonePaths, listTombstonedPinNames, applyPinTombstones } = await import("./pin-tombstones.js");
-        const tombstoned = listTombstonedPinNames(pinTombstonePaths(dataDir, syncDir));
-        const filteredPins = applyPinTombstones(remotePins as Array<{ name: string }>, tombstoned);
-        if (filteredPins.length < remotePins.length) {
-          logger.info(`[sync] pin tombstones filtered ${remotePins.length - filteredPins.length} remote pin(s)`);
-        }
         const localSettingsPath = join(dataDir, "settings.json");
         let localSettings: Record<string, unknown> = {};
         if (existsSync(localSettingsPath)) {
           try { localSettings = JSON.parse(readFileSync(localSettingsPath, "utf-8")); } catch { /* swallow */ }
+        }
+        const localPins = Array.isArray(localSettings.sidebarPins) ? localSettings.sidebarPins as Array<{ name: string }> : [];
+        const merged = unionMergeBy<{ name: string }>(
+          localPins, remotePins as Array<{ name: string }>,
+          (x) => x.name,
+          () => true,
+        );
+        const { pinTombstonePaths, listTombstonedPinNames, applyPinTombstones } = await import("./pin-tombstones.js");
+        const tombstoned = listTombstonedPinNames(pinTombstonePaths(dataDir, syncDir));
+        const filteredPins = applyPinTombstones(merged, tombstoned);
+        if (filteredPins.length < merged.length) {
+          logger.info(`[sync] pin tombstones filtered ${merged.length - filteredPins.length} pin(s)`);
         }
         localSettings.sidebarPins = filteredPins;
         writeFileSync(localSettingsPath, JSON.stringify(localSettings, null, 2), "utf-8");
@@ -258,6 +294,82 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
   pullMergedRecordFile<{ id: string; updatedAt?: number }>({
     dataDir, syncDir, fileName: "agent-templates.json",
   });
+
+  // tasks.json: array of {id, updated_at, ...}. Same merge semantic as
+  // projects/issues/templates but with snake_case timestamp. Inlined
+  // because the field name shift is too small to justify a separate
+  // helper.
+  {
+    const remotePath = join(syncDir, "tasks.json");
+    const localPath = join(dataDir, "tasks.json");
+    if (existsSync(remotePath)) {
+      try {
+        const remote = JSON.parse(readFileSync(remotePath, "utf-8"));
+        const local = existsSync(localPath) ? JSON.parse(readFileSync(localPath, "utf-8")) : [];
+        if (Array.isArray(remote) && Array.isArray(local)) {
+          const merged = unionMergeBy<{ id: string; updated_at?: number }>(
+            local, remote,
+            (x) => x.id,
+            (l, r) => (Number(l.updated_at) || 0) > (Number(r.updated_at) || 0),
+          );
+          writeFileSync(localPath, JSON.stringify(merged, null, 2), "utf-8");
+        }
+      } catch (e) {
+        logger.warn(`[sync] tasks.json pull skipped: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  // calendar.json: wrapped {events: [{id, ...}]}. No per-event
+  // timestamp -- on collision, local wins (most-recently-edited on this
+  // machine). Cross-machine convergence still happens because remote-
+  // only events are added. Preserves any non-events top-level fields by
+  // shallow-merging.
+  {
+    const remotePath = join(syncDir, "calendar.json");
+    const localPath = join(dataDir, "calendar.json");
+    if (existsSync(remotePath)) {
+      try {
+        const remote = JSON.parse(readFileSync(remotePath, "utf-8"));
+        const local = existsSync(localPath) ? JSON.parse(readFileSync(localPath, "utf-8")) : { events: [] };
+        const remoteEvents = Array.isArray(remote?.events) ? remote.events : [];
+        const localEvents = Array.isArray(local?.events) ? local.events : [];
+        const events = unionMergeBy<{ id: string }>(
+          localEvents, remoteEvents,
+          (x) => x.id,
+          () => true,
+        );
+        const merged = { ...remote, ...local, events };
+        writeFileSync(localPath, JSON.stringify(merged, null, 2), "utf-8");
+      } catch (e) {
+        logger.warn(`[sync] calendar.json pull skipped: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  // custom-missions.json: array of {name, ...}. Name-keyed, no timestamp.
+  // On collision, local wins (a mission edited on this machine wins over
+  // a stale remote copy with the same name).
+  {
+    const remotePath = join(syncDir, "custom-missions.json");
+    const localPath = join(dataDir, "custom-missions.json");
+    if (existsSync(remotePath)) {
+      try {
+        const remote = JSON.parse(readFileSync(remotePath, "utf-8"));
+        const local = existsSync(localPath) ? JSON.parse(readFileSync(localPath, "utf-8")) : [];
+        if (Array.isArray(remote) && Array.isArray(local)) {
+          const merged = unionMergeBy<{ name: string }>(
+            local, remote,
+            (x) => x.name,
+            () => true,
+          );
+          writeFileSync(localPath, JSON.stringify(merged, null, 2), "utf-8");
+        }
+      } catch (e) {
+        logger.warn(`[sync] custom-missions.json pull skipped: ${(e as Error).message}`);
+      }
+    }
+  }
 
   // Brain backup — directory trees. Destructive mirror so the
   // destination matches the remote tree exactly.

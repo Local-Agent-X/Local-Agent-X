@@ -232,6 +232,7 @@ function renderMessages() {
                 if (endEvt) {
                   card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
                   card.querySelector('.tool-detail').textContent = (endEvt.result || '').slice(0, 200) || '✓ Done';
+                  attachMediaPreview(card, te.name, endEvt.result || '');
                 }
               }
             }

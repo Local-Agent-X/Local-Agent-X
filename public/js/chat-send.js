@@ -241,6 +241,7 @@ async function sendMessage() {
                   .replace(/<content>\n?/g, '').replace(/\n?<\/content>/g, '')
                   .trim().slice(0, 200);
                 last.querySelector('.tool-detail').textContent = cleanResult || '\u2713 Done';
+                attachMediaPreview(last, event.toolName, event.result || '');
               }
             }
             break;
@@ -339,16 +340,27 @@ async function sendMessage() {
                   existingGroups.forEach(g => liveBubble.appendChild(g));
                   orphanCards.forEach(c => liveBubble.appendChild(c));
                 }
-              } else if (typeof renderMessages === 'function') {
-                // Fallback path: no live content to paint (model emitted no
-                // stream deltas between tool_end and done — Codex/browser-tool
-                // combo hits this) OR bodyEl is orphaned. The streaming bubble
-                // created at sendMessage line 110 is sitting empty in the DOM.
-                // Re-render from activeChat.messages, which carries the final
-                // content from lines 299-312 above (or from saveInterval's
-                // persistence). Without this, the bubble stays blank until the
-                // user navigates away+back to trigger hydrateChat.
-                renderMessages();
+              } else {
+                // Fallback path: no live content to paint. Two sub-cases:
+                //   (a) `activeChat.messages` already has the final text
+                //       (saveInterval flushed it, or the persist branch above
+                //       wrote it). renderMessages() is enough.
+                //   (b) `activeChat.messages` is ALSO empty — stream events
+                //       never reached the local wsHandler (WS reconnect race,
+                //       half-open connection, server-only-persist provider
+                //       path). The canonical text lives in the server-side
+                //       session log; pull it via hydrateChat. Without this,
+                //       bubble stays blank until user manually navigates
+                //       away+back.
+                // We can't cheaply tell (a) vs (b) at this point, so hydrate
+                // unconditionally — it's idempotent and hydrateChat()
+                // already calls renderMessages on success. renderMessages
+                // first for immediate paint, hydrate for safety-net catch-up.
+                if (typeof renderMessages === 'function') renderMessages();
+                if (typeof hydrateChat === 'function') {
+                  streamChat._needsHydrate = true;
+                  hydrateChat(streamChat).catch(e => console.warn('[chat] done-time hydrate failed:', e && e.message));
+                }
               }
             }
             updateContextBar();
@@ -510,8 +522,18 @@ async function sendMessage() {
       streamChat.messages.push({ role: 'assistant', content, timestamp: Date.now() });
       streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
     }
-    // If user navigated back, re-render to show completed response
-    if (isViewingThis()) renderMessages();
+    // If user navigated back, re-render to show completed response.
+    // Same hydrate-safety-net as the WS path: when no stream content
+    // landed locally (events lost, server-only persist path), pull the
+    // canonical session log from /api/sessions/<id> so the bubble fills
+    // in without requiring a navigate-away+back.
+    if (isViewingThis()) {
+      renderMessages();
+      if (!content.trim() && typeof hydrateChat === 'function') {
+        streamChat._needsHydrate = true;
+        hydrateChat(streamChat).catch(e => console.warn('[chat] done-time hydrate failed (HTTP path):', e && e.message));
+      }
+    }
   } catch (e) {
     // Silent auto-retry up to 3 times on network errors before showing error to user
     if (!content && e.message && (e.message.includes('network') || e.message.includes('Failed to fetch') || e.message.includes('CONNECTION'))) {

@@ -62,3 +62,49 @@ export function checkCreationHallucination(text: string): string | null {
   }
   return null;
 }
+
+// Worker / background-process hallucination. Model narrates that a worker
+// or sub-agent is on the task without actually calling agent_spawn / op_submit /
+// build_app. Slips past CREATION_HALLUCINATION_RE because the claim isn't a
+// first-person past-tense verb and isn't at sentence start ("Worker already on
+// it for PR." / "Background worker is running."). Real failure 2026-05-23:
+// Grok, asked about visit timing for PR/DR/Brazil, replied "Worker already on
+// it for PR. Dominican and Brazil added to the same run." — sidebar empty, no
+// agent_spawn ever fired.
+const WORKER_HALLUCINATION_RE = new RegExp(
+  // "(a) worker/sub-agent/background process is/are/already on it/running/etc"
+  "\\b(?:a |an |the )?(?:background\\s+)?(?:worker|sub[-\\s]?agent|background\\s+(?:process|task|run))" +
+  "\\s+(?:is|are|already|will be|on (?:it|the case|that)|running|processing|searching|fetching|gathering|working)\\b" +
+  "|" +
+  // "spawned/launched/started/delegated/sent (a/the) worker/agent/sub-agent"
+  "\\b(?:spawn(?:ed|ing)?|launch(?:ed|ing)?|start(?:ed|ing)?|delegate(?:d|ing)?|sent off)\\s+" +
+  "(?:a |an |the )?(?:sub[-\\s]?)?(?:worker|agent|background\\s+(?:process|task|run))\\b" +
+  "|" +
+  // "added to the run/queue/batch/same run/background" — implies something is processing
+  "\\badded to (?:the )?(?:run|queue|batch|same run|background)\\b",
+  "i"
+);
+
+const SPAWN_TOOLS: ReadonlySet<string> = new Set([
+  "agent_spawn", "agent_create",
+  "op_submit", "op_submit_async", "op_submit_dry_run",
+  "build_app",
+]);
+
+/**
+ * Returns a nudge if the assistant narrates a background worker/agent is on
+ * the task but no spawn-class tool was actually called in this op.
+ */
+export function checkWorkerHallucination(
+  text: string,
+  toolsCalledThisOp: Set<string>,
+): string | null {
+  for (const tool of SPAWN_TOOLS) {
+    if (toolsCalledThisOp.has(tool)) return null;
+  }
+  const cleaned = stripCodeBlocks(text);
+  if (WORKER_HALLUCINATION_RE.test(cleaned)) {
+    return "You did NOT spawn a worker, sub-agent, or background process — no agent_spawn / op_submit / build_app fired this op. Do NOT claim background work is in progress. Either call agent_spawn right now to actually delegate, or answer the user directly. Don't invent workers that don't exist.";
+  }
+  return null;
+}

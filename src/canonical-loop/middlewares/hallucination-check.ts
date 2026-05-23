@@ -10,6 +10,7 @@ import type { CanonicalMiddleware } from "./types.js";
 import {
   checkApprovalHallucination,
   checkCreationHallucination,
+  checkWorkerHallucination,
 } from "../../agent-guards.js";
 import { verifyClaimHallucinationWithLLM } from "../../classifiers/claim-verify.js";
 
@@ -24,6 +25,21 @@ export const hallucinationCheckMiddleware: CanonicalMiddleware = {
     const approvalNudge = checkApprovalHallucination(text);
     if (approvalNudge) {
       return { kind: "nudge", message: approvalNudge, reason: "approval-hallucination" };
+    }
+
+    // Worker hallucination fires EVERY turn (not just turn 0). Narrative claims
+    // about background workers/sub-agents that weren't actually spawned slip past
+    // the creation-hallucination check (no first-person verb, no sentence-start
+    // verb). LLM verifier as second pass to avoid false positives.
+    const workerNudge = checkWorkerHallucination(text, ctx.toolsCalledThisOp);
+    if (workerNudge) {
+      const confirmed = await verifyClaimHallucinationWithLLM(
+        text,
+        Array.from(ctx.toolsCalledThisOp),
+      );
+      if (confirmed !== false) {
+        return { kind: "nudge", message: workerNudge, reason: "worker-hallucination" };
+      }
     }
 
     if (ctx.turnIdx === 0) {

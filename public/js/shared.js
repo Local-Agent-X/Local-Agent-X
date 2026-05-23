@@ -206,6 +206,25 @@ function md(s) {
     return ph(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
   });
 
+  // 2.5. Auto-linkify bare URLs (http/https). Grok in particular tends to
+  // emit raw URLs without markdown brackets and trailing-punctuation patterns
+  // ("see https://x.com.") that the legacy post-escape autolinker swallowed
+  // into the href. Doing it BEFORE escape keeps the URL intact and lets us
+  // strip trailing sentence punctuation cleanly. Image URLs are wrapped as
+  // inline images, everything else as plain links. Stop at `)` and `]` so
+  // markdown-wrapped URLs that slipped past the earlier link replacer don't
+  // get half-eaten here.
+  h = h.replace(/\b(https?:\/\/[^\s<>"'`)\]]+)/g, (_, url) => {
+    let trailing = '';
+    const trimMatch = url.match(/[.,;:!?]+$/);
+    if (trimMatch) { trailing = trimMatch[0]; url = url.slice(0, -trailing.length); }
+    const safeUrl = sanitizeUrl(url);
+    if (/\.(?:png|jpe?g|gif|webp|svg)(?:\?|#|$)/i.test(url)) {
+      return ph(`<img src="${safeUrl}" alt="image" class="inline-chat-img" onclick="openLightbox(this.src)" />`) + trailing;
+    }
+    return ph(`<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(url)}</a>`) + trailing;
+  });
+
   // 3. Escape HTML
   h = esc(h);
 

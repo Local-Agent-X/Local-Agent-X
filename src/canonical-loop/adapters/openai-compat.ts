@@ -24,42 +24,31 @@
  * Catches qwen2's silent-fail pattern (cf. the explicit-error fallback
  * already inside OllamaHttpAdapter). For models that don't have this
  * failure mode (gpt-5, grok, etc.), the condition just never fires.
+ *
+ * Helpers split into ./openai-compat/* — this file is the adapter class.
  */
-import { readFileSync } from "node:fs";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
-import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ProviderRequest } from "../../providers/adapter/types.js";
 import { markNoToolSupport } from "../../providers/types.js";
 import { createLogger } from "../../logger.js";
-import { extractToolCallsFromText } from "./tool-call-text-extractor.js";
-import { sanitizeAssistantTextForRebuild } from "../../anthropic-client/parse.js";
-import { hasInjects } from "../../agent-loop/inject-queue.js";
+
+import {
+  OPENAI_COMPAT_ADAPTER_NAME,
+  OPENAI_COMPAT_ADAPTER_VERSION,
+  PROVIDER_STATE_MAX_BYTES,
+  type OpenAICompatAdapterOptions,
+  type StreamOnceResult,
+} from "./openai-compat/types.js";
+import { byteLengthUtf8 } from "./openai-compat/helpers.js";
+import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
+import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
+
+export { OPENAI_COMPAT_ADAPTER_NAME, OPENAI_COMPAT_ADAPTER_VERSION } from "./openai-compat/types.js";
+export type { OpenAICompatAdapterOptions, OpenAICompatTarget } from "./openai-compat/types.js";
+export { resolveOpenAICompatTarget } from "./openai-compat/resolve-target.js";
 
 const logger = createLogger("canonical-loop.adapters.openai-compat");
-
-export const OPENAI_COMPAT_ADAPTER_NAME = "openai-compat";
-export const OPENAI_COMPAT_ADAPTER_VERSION = "1.0.0";
-const PROVIDER_STATE_MAX_BYTES = 256 * 1024;
-
-export interface OpenAICompatAdapterOptions {
-  /** Required. The model id the OpenAI-compat endpoint expects. */
-  model: string;
-  /** Required. Full OpenAI-compatible base URL (must include `/v1`). */
-  baseURL: string;
-  /** Required. Bearer token. Use a placeholder ("ollama") for local
-   *  Ollama which doesn't auth. */
-  apiKey: string;
-  systemPrompt?: string;
-  temperature?: number;
-  sessionId?: string;
-  /**
-   * Forced single-tool selection from the intent classifier. Applied on
-   * turn 0 only — subsequent turns release the pin so the model can
-   * narrate or chain. Undefined = "auto" (no force).
-   */
-  forcedToolChoice?: { type: "tool"; name: string };
-}
 
 export class OpenAICompatAdapter implements Adapter {
   readonly name = OPENAI_COMPAT_ADAPTER_NAME;
@@ -103,37 +92,12 @@ export class OpenAICompatAdapter implements Adapter {
       ...(forcedInList && forced ? { toolChoice: forced } : {}),
     };
 
-    this.inflight = this.streamOnce(req, report);
+    this.inflight = this.runStreamOnce(req, report);
     let result = await this.inflight;
 
-    // Tool-call-in-text fallback. Some models (qwen3-next, gpt-oss, llama
-    // variants on Ollama) sporadically emit tool calls as raw JSON inside
-    // `content` instead of populating the structured tool_calls field.
-    // Detect and rewrite. Fires ONLY when tool_calls is empty AND the text
-    // matches a known pattern — no-op for Claude/GPT-5/healthy providers.
-    // Live failure 2026-05-12: qwen3-next:80b on Ollama Turbo emitted
-    // `{"action":"click","ref":49}` and `{"name":"browser","arguments":{...}}`
-    // as plain text mid-conversation, leaking tool calls to the chat UI
-    // and stalling the agent because no click dispatched.
-    if (result.pendingToolCalls.length === 0 && result.assembledText.length > 0) {
-      const validNames = new Set(req.tools.map(t => t.name));
-      const extracted = extractToolCallsFromText(result.assembledText, validNames);
-      if (extracted.toolCalls.length > 0) {
-        logger.info(`${model} emitted ${extracted.toolCalls.length} tool call(s) as text — extracted`);
-        for (const tc of extracted.toolCalls) {
-          result.pendingToolCalls.push(tc);
-          report({ kind: "tool_call_requested", call: { toolCallId: tc.id, tool: tc.name, args: parseArgs(tc.arguments) } });
-        }
-        result.assembledText = extracted.remainingText;
-        // Tell the UI to retract the JSON it already streamed into the
-        // bubble and replace with the cleaned text. Without this, the
-        // user sees JSON soup left over from the original stream chunks
-        // even though the persisted message is clean. Clients that don't
-        // handle stream_redact leave the dirty stream rendered (no
-        // regression for older UIs).
-        report({ kind: "stream_redact", replacementText: extracted.remainingText });
-      }
-    }
+    // Tool-call-in-text fallback: some models emit tool calls as raw JSON
+    // inside `content` instead of populating tool_calls. Detect + rewrite.
+    applyToolCallTextFallback(result, report, model, new Set(req.tools.map(t => t.name)));
 
     // Empty-response retry. Some models (qwen2:7b is the canonical
     // offender) accept the `tools` field, run for several seconds, then
@@ -154,7 +118,7 @@ export class OpenAICompatAdapter implements Adapter {
       logger.info(`${model} returned empty with tools — retrying without tools`);
       markNoToolSupport(baseURL, model);
       const retryReq: ProviderRequest = { ...req, tools: [] as unknown as ProviderRequest["tools"] };
-      this.inflight = this.streamOnce(retryReq, report);
+      this.inflight = this.runStreamOnce(retryReq, report);
       result = await this.inflight;
     }
     this.inflight = null;
@@ -227,352 +191,21 @@ export class OpenAICompatAdapter implements Adapter {
       : null;
   }
 
-  private async streamOnce(req: ProviderRequest, report: (r: AdapterReport) => void): Promise<StreamOnceResult> {
-    const out: StreamOnceResult = {
-      assembledText: "",
-      assembledThinking: "",
-      pendingToolCalls: [],
-      firstError: null,
-      providerStop: undefined,
-      usagePromptTokens: undefined,
-      usageCompletionTokens: undefined,
-    };
-    try {
-      // OllamaHttpAdapter extends OpenAIHttpAdapter — same streaming +
-      // tool-call accumulation code path used by every OpenAI-compat
-      // provider. The class name is historical; the wire shape is what
-      // matters and it's universal here.
-      const { ollamaHttpAdapter } = await import("../../providers/adapters/ollama-http.js");
-      for await (const ev of ollamaHttpAdapter.stream(req)) {
-        if (this.aborted) break;
-        // Mid-stream user interrupt — same shape as anthropic.ts and
-        // codex.ts. Abort the stream when the user types so the next
-        // driveTurn drains the inject and the model sees the message
-        // on its next API call.
-        if (this.opts.sessionId && hasInjects(this.opts.sessionId)) {
-          this.aborted = true;
-          break;
-        }
-        if (ev.type === "text") {
-          if (!ev.delta) continue;
-          out.assembledText += ev.delta;
-          report({ kind: "stream_chunk", body: { delta: ev.delta } });
-          continue;
-        }
-        if (ev.type === "thinking") {
-          // Reasoning-model chain-of-thought (Cerebras `delta.reasoning`,
-          // DeepSeek-style `reasoning_content`). Accumulate silently so
-          // we have something to show if the model burns its budget on
-          // reasoning and never emits a final `content` answer. Streaming
-          // this live to chat would dump raw thoughts into the bubble,
-          // which is bad UX — surface only as a final fallback below.
-          if (ev.delta) out.assembledThinking += ev.delta;
-          continue;
-        }
-        if (ev.type === "tool_call") {
-          out.pendingToolCalls.push({ id: ev.id, name: ev.name, arguments: ev.arguments });
-          report({ kind: "tool_call_requested", call: { toolCallId: ev.id, tool: ev.name, args: parseArgs(ev.arguments) } });
-          continue;
-        }
-        if (ev.type === "usage") {
-          out.usagePromptTokens = ev.promptTokens;
-          out.usageCompletionTokens = ev.completionTokens;
-          continue;
-        }
-        if (ev.type === "error") {
-          const message = ev.message ?? "transport error";
-          if (!out.firstError) out.firstError = { code: "transport_error", message };
-          report({ kind: "error", code: "transport_error", message, retryable: false });
-          continue;
-        }
-        if (ev.type === "done") {
-          out.providerStop = ev.stopReason;
-          continue;
-        }
-      }
-    } catch (e) {
-      const message = (e as Error).message ?? String(e);
-      if (!out.firstError) out.firstError = { code: "transport_exception", message };
-      report({ kind: "error", code: "transport_exception", message, retryable: false });
-    }
-    // Reasoning-only fallback. The model reasoned the entire output
-    // budget away and never emitted `content` — without this, the user
-    // sees an empty bubble. Surface the reasoning as the assistant text
-    // so the turn is at least visible. Skip when the turn produced tool
-    // calls (then text is optional) or had a transport error (the error
-    // event already surfaced).
-    if (
-      out.assembledText.length === 0 &&
-      out.assembledThinking.length > 0 &&
-      out.pendingToolCalls.length === 0 &&
-      !out.firstError
-    ) {
-      out.assembledText = out.assembledThinking;
-      report({ kind: "stream_chunk", body: { delta: out.assembledThinking } });
-    }
-    return out;
-  }
-}
-
-interface StreamOnceResult {
-  assembledText: string;
-  assembledThinking: string;
-  pendingToolCalls: Array<{ id: string; name: string; arguments: string }>;
-  firstError: { code: string; message: string } | null;
-  providerStop: string | undefined;
-  usagePromptTokens: number | undefined;
-  usageCompletionTokens: number | undefined;
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────
-
-/**
- * Convert canonical messages → OpenAI ChatCompletionMessageParam[] for
- * the OpenAI-compatible transport. Distinct from `canonicalToTransport`
- * because that helper produces TransportMessage[] with `toolCalls`/
- * `toolCallId` keys (Anthropic shape), while the OpenAI client expects
- * `tool_calls`/`tool_call_id`.
- */
-function canonicalToChatParam(
-  messages: CanonicalMessage[],
-  pendingRedirect: TurnInput["pendingRedirect"],
-  validToolNames?: ReadonlySet<string>,
-): ChatCompletionMessageParam[] {
-  const out: ChatCompletionMessageParam[] = [];
-  for (const m of messages) {
-    const c = m.content as Record<string, unknown> | string | null | undefined;
-    if (m.role === "system") {
-      out.push({ role: "system", content: extractText(c) });
-      continue;
-    }
-    if (m.role === "user") {
-      const text = extractText(c);
-      const images = extractImages(c);
-      if (images.length > 0) {
-        // Build OpenAI vision content parts: text + base64 image_url(s).
-        // Mirrors the legacy buildUserContentWithImages format so existing
-        // vision-capable models (gpt-5, qwen-vl, gemini, etc.) parse the
-        // request unchanged. File reads happen synchronously here — small
-        // cost paid once per turn, no async on the hot path.
-        out.push({ role: "user", content: imagesToOpenAIParts(text, images) });
-      } else {
-        out.push({ role: "user", content: text });
-      }
-      continue;
-    }
-    if (m.role === "assistant") {
-      const obj = (c ?? {}) as { text?: unknown; toolCalls?: unknown };
-      const tc = Array.isArray(obj.toolCalls)
-        ? (obj.toolCalls as Array<{ id: string; name: string; arguments: string }>)
-        : undefined;
-      // Layer-3 history-rebuild sanitization — see parse.ts. Strips
-      // tool-call-shaped JSON / XML / tree-style notation from prior
-      // assistant text so the model doesn't mimic its own bad output.
-      const rawText = extractText(c);
-      const { cleaned: text, leaks } = sanitizeAssistantTextForRebuild(rawText, validToolNames);
-      if (leaks.length > 0) {
-        logger.info(
-          `stripped ${leaks.length} leak(s) from assistant history: ` +
-          leaks.map(l => `${l.shape}${l.toolName ? `(${l.toolName})` : ""}`).join(", "),
-        );
-      }
-      if (tc && tc.length > 0) {
-        out.push({
-          role: "assistant",
-          content: text,
-          tool_calls: tc.map(t => ({
-            id: t.id,
-            type: "function",
-            function: { name: t.name, arguments: t.arguments },
-          })),
-        });
-      } else {
-        out.push({ role: "assistant", content: text });
-      }
-      continue;
-    }
-    if (m.role === "tool_result") {
-      const obj = (c ?? {}) as { toolCallId?: string; result?: unknown };
-      const r = obj.result;
-      // Vision-emitting tools (browser screenshot, image_read, etc.)
-      // produce a `{ text, images: [{mime, b64}, ...] }` envelope. Emit
-      // a tool message with the text summary, then a follow-up user
-      // message with image_url multi-part content so the next turn's
-      // model actually sees the image. Mirrors the legacy
-      // tool-executor.ts pattern at line ~677.
-      let resultText: string;
-      let imagesPayload: Array<{ mime: string; b64: string }> | null = null;
-      if (r && typeof r === "object" && Array.isArray((r as { images?: unknown }).images)) {
-        const env = r as { text?: unknown; images: unknown[] };
-        resultText = typeof env.text === "string" ? env.text : JSON.stringify(env);
-        imagesPayload = env.images.filter((x): x is { mime: string; b64: string } =>
-          !!x && typeof x === "object" && typeof (x as { mime?: unknown }).mime === "string" && typeof (x as { b64?: unknown }).b64 === "string",
-        );
-      } else {
-        resultText = typeof r === "string" ? r : JSON.stringify(r ?? null);
-      }
-      out.push({
-        role: "tool",
-        tool_call_id: obj.toolCallId ?? "tc-unknown",
-        content: resultText,
-      });
-      if (imagesPayload && imagesPayload.length > 0) {
-        const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> = [
-          { type: "text", text: `[Tool returned ${imagesPayload.length} image${imagesPayload.length === 1 ? "" : "s"} — analyze and use them in your reply.]` },
-        ];
-        for (const img of imagesPayload) {
-          parts.push({ type: "image_url", image_url: { url: `data:${img.mime};base64,${img.b64}`, detail: "auto" } });
-        }
-        out.push({ role: "user", content: parts });
-      }
-      continue;
-    }
-    if (m.role === "control") {
-      const text = extractText(c);
-      if (text) out.push({ role: "user", content: `[CONTROL] ${text}` });
-      continue;
-    }
-  }
-  if (pendingRedirect) {
-    out.push({ role: "user", content: `[REDIRECT] ${pendingRedirect.text}` });
-  }
-  return out;
-}
-
-function extractText(c: unknown): string {
-  if (c == null) return "";
-  if (typeof c === "string") return c;
-  if (typeof c === "object" && "text" in (c as Record<string, unknown>)) {
-    const v = (c as { text?: unknown }).text;
-    return typeof v === "string" ? v : "";
-  }
-  return "";
-}
-
-interface CanonicalImageRef {
-  url: string;
-  name: string;
-  filePath?: string;
-}
-
-function extractImages(c: unknown): CanonicalImageRef[] {
-  if (c == null || typeof c !== "object") return [];
-  const v = (c as { images?: unknown }).images;
-  if (!Array.isArray(v)) return [];
-  return v.filter((x): x is CanonicalImageRef =>
-    !!x && typeof x === "object" && typeof (x as CanonicalImageRef).name === "string",
-  );
-}
-
-/**
- * Build OpenAI vision content parts: a text part plus one image_url
- * part per attachment, base64-data-url'd from the on-disk file. Mirrors
- * `buildUserContentWithImages` in run-standard-helpers.ts (legacy path)
- * so the wire shape is identical for any provider that's vision-capable.
- *
- * Adds a trailing text part listing on-disk file paths so the agent can
- * `read`/`bash cp` the original bytes when an app needs the asset on
- * disk (matches legacy behavior — the agent uses these hints to avoid
- * regenerating an image when the user already attached one).
- */
-function imagesToOpenAIParts(
-  text: string,
-  images: CanonicalImageRef[],
-): Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> {
-  const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> = [
-    { type: "text", text },
-  ];
-  const filePathHints: string[] = [];
-  for (const img of images) {
-    try {
-      if (!img.filePath) continue;
-      const data = readFileSync(img.filePath);
-      const ext = (img.name.split(".").pop() || "png").toLowerCase();
-      const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
-      const dataUrl = `data:${mime};base64,${data.toString("base64")}`;
-      parts.push({ type: "image_url", image_url: { url: dataUrl, detail: "auto" } });
-      filePathHints.push(`  - ${img.name} → ${img.filePath}`);
-    } catch {
-      // Skip unreadable attachments rather than fail the whole turn.
-    }
-  }
-  if (filePathHints.length > 0) {
-    parts.push({
-      type: "text",
-      text:
-        `\n\n[Attached file paths on disk — use these if you need to copy the real bytes into the workspace]\n` +
-        filePathHints.join("\n") +
-        `\n\nTo use an attachment as an app asset: read the file with bash/read, then write it to the target path under workspace/apps/<app>/, or use bash cp. Do NOT generate a new image or download from the web when a user attachment exists — use the file at the path above.`,
+  private async runStreamOnce(req: ProviderRequest, report: (r: AdapterReport) => void): Promise<StreamOnceResult> {
+    const result = await streamOnce(req, report, {
+      isAborted: () => this.aborted,
+      sessionId: this.opts.sessionId,
     });
+    // Mid-stream inject interrupt: streamOnce broke out of the loop and
+    // flagged this on the result. Flip the adapter's aborted flag so
+    // post-stream handling (terminalReason resolution, empty-response
+    // retry guard) treats the turn as aborted, same effect as before
+    // the extraction.
+    if (result.interruptedByInject) this.aborted = true;
+    return result;
   }
-  return parts;
-}
-
-function parseArgs(raw: string): unknown {
-  if (!raw) return {};
-  try { return JSON.parse(raw); } catch { return { _raw: raw }; }
-}
-
-function byteLengthUtf8(s: string): number {
-  let len = 0;
-  for (let i = 0; i < s.length; i++) {
-    const code = s.charCodeAt(i);
-    if (code < 0x80) len += 1;
-    else if (code < 0x800) len += 2;
-    else if (code >= 0xd800 && code <= 0xdbff) { len += 4; i++; }
-    else len += 3;
-  }
-  return len;
 }
 
 export function createOpenAICompatAdapter(opts: OpenAICompatAdapterOptions): OpenAICompatAdapter {
   return new OpenAICompatAdapter(opts);
-}
-
-/**
- * Resolve the OpenAI-compat baseURL + apiKey for a given canonical
- * provider id. Mirrors the providerURLs map in run-standard.ts so we
- * don't drift while both code paths exist. Once the legacy path is
- * removed, this becomes the only source of truth.
- *
- * Returns null when the provider isn't OpenAI-compat (anthropic/codex
- * use their own adapters) or when required config is missing.
- */
-export interface OpenAICompatTarget {
-  baseURL: string;
-  apiKey: string;
-}
-
-export async function resolveOpenAICompatTarget(
-  provider: string,
-  prepared: { apiKey: string; customBaseURL?: string },
-): Promise<OpenAICompatTarget | null> {
-  const { PROVIDERS, isHttpProvider } = await import("../../providers/registry.js");
-  const { PROVIDER_IDS } = await import("../../providers/provider-ids.js");
-
-  if (!(PROVIDER_IDS as readonly string[]).includes(provider)) return null;
-  const meta = PROVIDERS[provider as typeof PROVIDER_IDS[number]];
-
-  // The transport discriminator is the safety belt: anthropic (cli)
-  // cannot accidentally fall through to openai-compat routing.
-  if (!isHttpProvider(meta)) return null;
-
-  // Ollama Cloud keeps its own resolver because the baseURL pairs with
-  // a cache-warmed apiKey (the registry returns null for it on purpose).
-  if (provider === "ollama-cloud") {
-    const { getCloudOllamaCallTarget } = await import("../../ollama-cloud.js");
-    return getCloudOllamaCallTarget();
-  }
-
-  const { getRuntimeConfig } = await import("../../config.js");
-  const baseURL = typeof meta.baseURL === "function"
-    ? meta.baseURL({ ollamaUrl: getRuntimeConfig().ollamaUrl, customBaseURL: prepared.customBaseURL })
-    : meta.baseURL;
-  if (!baseURL) return null;
-
-  // Local Ollama doesn't require an API key — fall back to the literal
-  // string "ollama" the old branch used so downstream auth headers stay
-  // identical to pre-registry behavior.
-  const apiKey = provider === "local" ? (prepared.apiKey || "ollama") : prepared.apiKey;
-  return { baseURL, apiKey };
 }

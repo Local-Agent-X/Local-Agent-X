@@ -1,4 +1,4 @@
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -7,6 +7,32 @@ import type { SecretsStore } from "./secrets.js";
 import { createLogger } from "./logger.js";
 
 const xaiLogger = createLogger("image-tools.xai");
+
+/** Find the most recent image across uploads + workspace/images. Used as
+ *  an implicit reference fallback when Grok asks to generate a video but
+ *  doesn't pass reference_images (xAI's tool-use RLHF is unreliable about
+ *  threading attached/generated images into follow-up calls). */
+function findRecentLocalImage(): string | null {
+  const candidates: Array<{ path: string; mtime: number }> = [];
+  const exts = /\.(png|jpg|jpeg|webp)$/i;
+  for (const dir of [join("workspace", "images"), join(homedir(), ".lax", "uploads")]) {
+    if (!existsSync(dir)) continue;
+    try {
+      for (const f of readdirSync(dir)) {
+        if (!exts.test(f)) continue;
+        const p = join(dir, f);
+        try { candidates.push({ path: p, mtime: statSync(p).mtimeMs }); } catch { /* skip */ }
+      }
+    } catch { /* skip dir */ }
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.mtime - a.mtime);
+  return candidates[0].path;
+}
+
+/** Regex for "this photo/image/girl/her/him/they" language in a prompt —
+ *  signals the user is referencing something in the chat context. */
+const PROMPT_REFS_EARLIER_IMAGE = /\b(this|the|her|him|they|that)\s+(photo|image|picture|girl|woman|man|guy|person|model|character|pic)\b|\battached\s+(image|photo|picture)\b|\bfrom\s+the\s+(image|photo|picture)\b/i;
 
 function ok(content: string): ToolResult {
   return { content };
@@ -285,29 +311,69 @@ async function generateViaXaiVideo(
 ): Promise<ToolResult> {
   const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` };
 
-  // Normalize reference image URLs. Grok's tool-call sometimes serializes
-  // an array as a JSON-encoded string ("[\"foo.png\"]") instead of a real
-  // array, so unwrap that first. Local LAX paths (/images/foo.png OR
-  // workspace/images/foo.png) point at the loopback host — xAI's backend
-  // can't reach 127.0.0.1, so we inline the file as base64 instead.
+  // Resolve a single reference-image string into an absolute filesystem
+  // path if it matches any known local shape. xAI's backend can't reach
+  // 127.0.0.1 loopback URLs, so anything local gets inlined as base64.
+  // Accepted shapes:
+  //   /images/foo.png            (chat tool-result URL)
+  //   /uploads/foo.png           (user-attached upload URL)
+  //   workspace/images/foo.png   (generated path Grok sometimes echoes)
+  //   workspace/uploads/foo.png  (rare but seen)
+  //   bare filename in workspace/images/  (Grok hallucinates these)
+  const resolveLocal = (u: string): string | null => {
+    const m =
+      u.match(/(?:^\/images\/|^workspace\/images\/)([A-Za-z0-9._-]+)/) ||
+      u.match(/(?:^\/uploads\/|^workspace\/uploads\/)([A-Za-z0-9._-]+)/);
+    if (m) {
+      const fname = m[1];
+      const fromImages = join("workspace", "images", fname);
+      if (existsSync(fromImages)) return fromImages;
+      const fromUploads = join(homedir(), ".lax", "uploads", fname);
+      if (existsSync(fromUploads)) return fromUploads;
+    }
+    return null;
+  };
+  const fileToBase64Ref = (filePath: string) => {
+    const ext = (filePath.split(/[.]/).pop() || "png").toLowerCase();
+    const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "webp" ? "image/webp" : "image/png";
+    const b64 = readFileSync(filePath).toString("base64");
+    return { url: `data:${mime};base64,${b64}`, source: filePath };
+  };
+
+  // Normalize. Grok's tool-call sometimes serializes an array as a
+  // JSON-encoded string ("[\"foo.png\"]") instead of a real array —
+  // unwrap already happened in the caller; here we just iterate.
   const refs: Array<{ url: string }> = [];
+  const refSources: string[] = []; // for telemetry in the result
   for (const raw of referenceImageUrls || []) {
     const u = (raw || "").trim();
     if (!u) continue;
-    // /images/foo.png  OR  workspace/images/foo.png  OR  bare filename in /images
-    const localMatch = u.match(/(?:^\/images\/|^workspace\/images\/)([A-Za-z0-9._-]+)/);
-    if (localMatch) {
-      const filePath = join("workspace", "images", localMatch[1]);
-      if (existsSync(filePath)) {
-        const ext = (localMatch[1].split(".").pop() || "png").toLowerCase();
-        const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "webp" ? "image/webp" : "image/png";
-        const b64 = readFileSync(filePath).toString("base64");
-        refs.push({ url: `data:${mime};base64,${b64}` });
-        continue;
-      }
+    const local = resolveLocal(u);
+    if (local) {
+      const { url, source } = fileToBase64Ref(local);
+      refs.push({ url });
+      refSources.push(source);
+      continue;
     }
     // External http(s) URL or unknown shape — pass through and let xAI decide.
     refs.push({ url: u });
+    refSources.push(u);
+  }
+
+  // Layer 3: if Grok passed no refs but the prompt references "this photo /
+  // the image / her" etc., fall back to the most recent local image. This
+  // is the safety net for Grok-4's unreliable tool-use — when it forgets
+  // to thread the attached image into a follow-up generate_video call.
+  let usedFallback = false;
+  if (refs.length === 0 && PROMPT_REFS_EARLIER_IMAGE.test(prompt)) {
+    const recent = findRecentLocalImage();
+    if (recent) {
+      const { url, source } = fileToBase64Ref(recent);
+      refs.push({ url });
+      refSources.push(source);
+      usedFallback = true;
+      xaiLogger.info(`[xai-video] auto-using recent local image as ref: ${recent}`);
+    }
   }
   // Reference-image path caps at 10s per xAI's docs.
   const clamped = Math.max(1, Math.min(refs.length > 0 ? 10 : 15, Math.floor(duration)));
@@ -379,12 +445,21 @@ async function generateViaXaiVideo(
   const savePath = join(videosDir, filename);
   writeFileSync(savePath, buffer);
 
+  // Telemetry: always say whether a reference image was used, where it
+  // came from, and whether it was the auto-fallback. Grok needs to see
+  // this so it can correctly report to the user (and if the wrong image
+  // got auto-picked, the user can correct on the next turn).
+  const refLine = refSources.length > 0
+    ? `Reference image used: ${refSources.join(", ")}${usedFallback ? " (auto-selected from chat — Grok did not pass it explicitly)" : ""}`
+    : `Reference image used: none (text-to-video only)`;
+
   return ok(
     `Video generated via Grok Imagine!\n` +
     `Prompt: ${prompt}\n` +
     `Duration: ${clamped}s\n` +
+    `${refLine}\n` +
     `Saved: ${savePath}\n` +
-    `View: http://127.0.0.1:${getRuntimeConfig().port}/videos/${filename}`
+    `View: /videos/${filename}`
   );
 }
 

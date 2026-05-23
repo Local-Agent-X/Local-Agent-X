@@ -183,6 +183,18 @@ function md(s) {
       const fileUrl = normalizedUrl + (token ? (normalizedUrl.includes('?') ? '&' : '?') + 'token=' + token : '');
       return ph(`<a href="${fileUrl}" class="md-link file-download">${esc(text)}</a>`);
     }
+    // /videos/<file>  or  /images/<file>  (absolute or relative) — auth-gated
+    // static routes. Add the auth token so the link works when clicked from
+    // any context (Electron child window, regular browser tab, copy/paste).
+    const mediaMatch = normalizedUrl.match(/^(?:https?:\/\/[^/]+)?(\/(?:videos|images)\/[A-Za-z0-9._-]+)(\?[^#]*)?$/);
+    if (mediaMatch) {
+      const token = AUTH_TOKEN || '';
+      const path = mediaMatch[1];
+      const existingQS = mediaMatch[2] || '';
+      const sep = existingQS ? '&' : '?';
+      const url = path + existingQS + (token ? sep + 'token=' + token : '');
+      return ph(`<a href="${url}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
+    }
     // Relative paths to document files → convert to /files/ route
     const docMatch = normalizedUrl.match(/^[^\/].*\.(docx?|xlsx?|pptx?|pdf|csv)$/i);
     if (docMatch) {

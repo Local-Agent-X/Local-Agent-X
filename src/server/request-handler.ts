@@ -154,6 +154,11 @@ export function createRequestHandler(deps: {
         const dir = resolve(config.workspace, subdir), file = resolve(dir, url.pathname.replace(prefix, "")), rel = relative(dir, file);
         if (rel.startsWith("..") || url.pathname.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return; }
         if (existsSync(file)) { const ext = file.split(".").pop() || ""; const ct: Record<string, string> = { mp4: "video/mp4", webm: "video/webm", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml" }; res.writeHead(200, { "Content-Type": ct[ext] || "application/octet-stream" }); res.end(readFileSync(file)); return; }
+        // File not at the resolved path — return 404 here with the actual
+        // checked path so the next access shows what went wrong instead of
+        // falling through to the generic "Not found" at the bottom.
+        json(404, { error: "File not found", path: url.pathname, checked: file, workspace: config.workspace });
+        return;
       }
     }
     if (method === "GET" && url.pathname.startsWith("/files/")) {

@@ -95,6 +95,31 @@ function handleChatWsMessage(e) {
       if (msg.event.type === 'done' || msg.event.type === 'error') {
         if (msg._opId) inflightChatOps.delete(msg._opId);
       }
+      // Mid-turn inject lifecycle (Step 4 JARVIS). `inject_queued` is
+      // informational — the local echo already exists tagged _queueState:'queued',
+      // so nothing to do client-side. `inject_consumed` drops the queued
+      // styling once the server actually drained it (or re-routed it as a
+      // fresh turn when no op was running — the orphan-inject race fix).
+      if (msg.event.type === 'inject_queued') {
+        return;
+      }
+      if (msg.event.type === 'inject_consumed') {
+        try {
+          const sid = msg.sessionId;
+          const chat = (typeof chats !== 'undefined' && Array.isArray(chats)) ? chats.find(c => c.id === sid) : null;
+          if (chat && Array.isArray(chat.messages)) {
+            const m = chat.messages.find(x => x && x._injectId === msg.event.injectId && x._queueState === 'queued');
+            if (m) {
+              delete m._queueState;
+              if (typeof activeChat !== 'undefined' && activeChat && activeChat.id === sid && typeof renderMessages === 'function') {
+                renderMessages();
+              }
+              try { if (typeof saveChats === 'function') saveChats(); } catch {}
+            }
+          }
+        } catch(e) { console.warn('[inject_consumed] failed to clear queue state', e); }
+        return;
+      }
       // Worker-pool ops surface in the AGENTS sidebar (not the chat thread)
       // so background work doesn't pollute the conversation. The sidebar
       // already handles live status updates, output streaming, and removal,

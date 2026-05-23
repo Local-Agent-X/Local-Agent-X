@@ -168,7 +168,11 @@ function renderMessages() {
     const msg = activeChat.messages[i];
     if (msg.role === 'user') {
       const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
-      addMessageEl('user', displayText, msg.attachments, msg.timestamp);
+      const userEl = addMessageEl('user', displayText, msg.attachments, msg.timestamp);
+      // Pending mid-turn inject: dim the bubble until the server's
+      // inject_consumed event drops _queueState. See chat-send.js inject
+      // path + chat-ws-handler.js inject_consumed branch.
+      if (userEl && msg._queueState === 'queued') userEl.classList.add('queued');
     } else if (msg.role === 'assistant' && msg._worker) {
       // Persisted worker bubble — render with the same styling as a live
       // worker_stream bubble, just static. Skip the regular assistant
@@ -266,6 +270,10 @@ function renderMessages() {
       lastAssistant.classList.add('pin-bottom');
     }
   }
-  el.scrollTop = el.scrollHeight;
+  // Defer one frame so the browser applies pin-bottom's min-height before we
+  // read scrollHeight — otherwise scrollHeight reflects the pre-pin layout
+  // and the scroll lands at the top instead of past the reserved padding,
+  // leaving the chat flush at the top of the viewport on re-entry.
+  requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
 }
 

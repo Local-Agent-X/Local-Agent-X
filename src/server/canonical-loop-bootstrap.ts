@@ -35,15 +35,27 @@ export function bootstrapCanonicalLoop(): void {
   }
   logger.info(`[canonical-loop] AnthropicAdapter registered for lanes: ${ALL_LANES.join(", ")}`);
 
-  try {
-    const recovered = sweepStaleCanonicalOps();
-    if (recovered.length > 0) {
-      const summary = recovered
-        .map(r => `${r.opId}=${r.outcome.kind}`)
-        .join(", ");
-      logger.info(`[canonical-loop] boot-sweep recovered ${recovered.length} stale op(s): ${summary}`);
+  // Stale-op recovery sweep is a fire-and-forget — no caller waits for the
+  // result. Used to run synchronously inside this function and added 9-18s
+  // to boot (it scans every op directory on disk and re-reads JSON). Now
+  // backgrounded so server.listen() isn't gated by recovery work. New ops
+  // submitted during the sweep window are unaffected — they go through
+  // submitCanonicalOp which doesn't touch lease-expired rows.
+  setImmediate(() => {
+    const t = Date.now();
+    try {
+      const recovered = sweepStaleCanonicalOps();
+      const dt = Date.now() - t;
+      if (recovered.length > 0) {
+        const summary = recovered
+          .map(r => `${r.opId}=${r.outcome.kind}`)
+          .join(", ");
+        logger.info(`[canonical-loop] background sweep recovered ${recovered.length} stale op(s) in ${dt}ms: ${summary}`);
+      } else {
+        logger.info(`[canonical-loop] background sweep completed in ${dt}ms (no stale ops)`);
+      }
+    } catch (e) {
+      logger.warn(`[canonical-loop] background sweep failed: ${(e as Error).message}`);
     }
-  } catch (e) {
-    logger.warn(`[canonical-loop] boot-sweep failed: ${(e as Error).message}`);
-  }
+  });
 }

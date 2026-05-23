@@ -73,7 +73,10 @@ export function isMediumOrWeak(model: string): boolean {
 export function maxToolsForTier(tier: ModelTier): number {
   switch (tier) {
     case "weak":   return 8;
-    case "medium": return 15;
+    // 17 = 15 essentials + 2 user-intent slots. Bumped from 15 after
+    // image/video joined essentials (Alex asked Grok to generate an
+    // image, generate_image had been shrunk out before RAG warm-up).
+    case "medium": return 17;
     case "strong": return Number.MAX_SAFE_INTEGER;
   }
 }
@@ -89,6 +92,11 @@ export const ESSENTIAL_TOOLS_ORDER: readonly string[] = [
   "memory_save", "memory_search",
   "web_fetch", "web_search",
   "glob", "grep",
+  // Media gen — first-class capabilities for medium-tier providers (xAI
+  // Grok via SuperGrok, Gemini, etc.). Used to be filter+RAG-gated which
+  // meant "generate an image" would silently drop the tool when RAG
+  // wasn't warmed yet or the cap squeezed it out.
+  "generate_image", "generate_video",
 ];
 
 /**

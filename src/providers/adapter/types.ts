@@ -4,9 +4,7 @@
  * adapters stay interchangeable and the dispatcher (run-standard.ts after
  * migration) can swap them without per-provider conditionals.
  *
- * Pattern from /tmp/compare/upstream-agent-main/agent/anthropic_adapter.py
- * + bedrock_adapter.py + codex_responses_adapter.py — each adapter is
- * one file implementing the same interface.
+ * Each adapter is one file implementing the same interface.
  */
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";

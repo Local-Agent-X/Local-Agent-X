@@ -2,9 +2,8 @@
  * Error classifier — single owner for "what kind of error / unexpected
  * result is this and how should we recover?"
  *
- * Pattern stolen from /tmp/compare/upstream-agent-main/agent/error_classifier.py:
- *   "Replaces scattered inline string-matching with a centralized classifier
- *    that the main retry loop consults for every API failure."
+ * Replaces scattered inline string-matching with a centralized classifier
+ * that the main retry loop consults for every API failure.
  *
  * Today this logic in SAX is scattered across:
  *   - src/agent-guards.ts (EMPTY_RESULT_RE for dead-end detection)
@@ -18,8 +17,7 @@
  * dispatch on the returned reason. Adding a new pattern = edit this file
  * (only). Tuning recovery strategy = edit this file (only).
  *
- * upstream' original taxonomy is much richer (1000 LOC) — we steal the
- * shape and the most-used patterns now; expand the taxonomy as we hit
+ * Start with the most-used patterns; expand the taxonomy as we hit
  * cases that need finer-grained recovery.
  */
 

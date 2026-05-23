@@ -7,9 +7,7 @@
  * a new provider = one new file under src/providers/adapters/ + one
  * registry registration.
  *
- * Pattern from /tmp/compare/upstream-agent-main/agent/anthropic_adapter.py
- * + bedrock_adapter.py — same shape, every provider, no per-provider
- * conditionals at the call site.
+ * Same shape, every provider, no per-provider conditionals at the call site.
  */
 
 import type { ProviderRequest, StreamChunk, ProviderResponse } from "./types.js";

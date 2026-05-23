@@ -50,7 +50,7 @@ export function usesAnthropicSubscriptionAuth(token: string): boolean {
 
 export function buildAnthropicRateLimitHint(status: number, token: string): string {
   if (status !== 429 || !usesAnthropicSubscriptionAuth(token)) return "";
-  return " Note: Anthropic told upstream users on April 4, 2026 that Claude subscription auth used inside external tools now requires Extra Usage, and Anthropic cooldowns can also be model-scoped.";
+  return " Note: Claude subscription auth used inside external tools now requires Extra Usage (per Anthropic guidance, April 2026), and Anthropic cooldowns can also be model-scoped.";
 }
 
 export function unwrapAnthropicSubscriptionToken(token: string): string {

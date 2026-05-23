@@ -4,7 +4,7 @@
 // edge-tts, ...) at module-import time. tier4-factory.ts imports the built-in
 // providers so they auto-register; createTier4() then delegates here.
 //
-// This mirrors the upstream `tts.providers.<name>` pattern and gives the UI a
+// Mirrors a `tts.providers.<name>` registry pattern and gives the UI a
 // single list-and-pick surface without per-variant branching in the consumer.
 
 import type { Tier4Callbacks, Tier4Config, Tier4StreamingTTS } from "./types.js";

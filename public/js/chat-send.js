@@ -254,6 +254,14 @@ async function sendMessage() {
           case 'tool_progress':
             if (viewing) updateToolProgress(bodyEl, event.toolName, event.message);
             break;
+          case 'visual':
+            // voice_visual tool fired during a chat turn. Mirror the
+            // voice-WS handler so the sphere morphs whether the user is in
+            // chat or voice mode.
+            if (window.VoiceSphere && typeof VoiceSphere.handleDirective === 'function') {
+              VoiceSphere.handleDirective({ kind: event.kind, value: event.value, durationMs: event.durationMs });
+            }
+            break;
           case 'secret_request': showSecretModal(event.name, event.service, event.reason); break;
           case 'secrets_request': showMultiSecretModal(event.secrets); break;
           case 'approval_requested':
@@ -476,6 +484,14 @@ async function sendMessage() {
               break;
             case 'tool_progress':
               if (viewing) updateToolProgress(bodyEl, event.toolName, event.message);
+              break;
+            case 'visual':
+              // voice_visual tool fired during a chat turn. Mirror the
+              // voice-WS handler so the sphere morphs whether the user is in
+              // chat or voice mode.
+              if (window.VoiceSphere && typeof VoiceSphere.handleDirective === 'function') {
+                VoiceSphere.handleDirective({ kind: event.kind, value: event.value, durationMs: event.durationMs });
+              }
               break;
             case 'secret_request': showSecretModal(event.name, event.service, event.reason); break;
             case 'secrets_request': showMultiSecretModal(event.secrets); break;

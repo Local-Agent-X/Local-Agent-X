@@ -70,6 +70,12 @@ function _browserSpeak(text) {
 function feedTTS(delta) {
   if (!_browserTtsActive() || !delta) return;
   _browserTtsBuf += delta;
+  // Strip server-appended history markers before any sentence cut. These
+  // are not for the user to hear — they're round-tripped into the next
+  // turn's prompt (see server/lifecycle.ts:258). Without this filter the
+  // marker ends up in the buffer with no sentence terminator, and flushTTS
+  // speaks the whole tool-call dump on stream end.
+  _browserTtsBuf = stripSystemMarkers(_browserTtsBuf);
   // Speak whole sentences as they arrive. If the buffer crosses a sentence
   // terminator, slice off and speak that part; keep the tail for next delta.
   const SENT = /[.!?]["')\]]?(\s|$)/g;
@@ -84,9 +90,25 @@ function feedTTS(delta) {
 }
 function flushTTS() {
   if (!_browserTtsActive()) { _browserTtsBuf = ""; return; }
-  const tail = _browserTtsBuf.trim();
+  const tail = stripSystemMarkers(_browserTtsBuf).trim();
   if (tail) _browserSpeak(tail);
   _browserTtsBuf = "";
+}
+
+// Drop the server's history markers from a string. The trace marker (tool
+// call dump) and the interrupted marker are appended to assistant content
+// for the next turn's prompt; they aren't spoken content. Once `[Tool calls`
+// or `[interrupted by user` appears, everything from there to end-of-string
+// is gone — markers are always end-of-turn so there's no after-text to keep.
+function stripSystemMarkers(s) {
+  if (!s) return s;
+  const a = s.indexOf('[Tool calls this turn');
+  const b = s.indexOf('[interrupted by user');
+  let cut = -1;
+  if (a >= 0 && b >= 0) cut = Math.min(a, b);
+  else if (a >= 0) cut = a;
+  else if (b >= 0) cut = b;
+  return cut >= 0 ? s.slice(0, cut) : s;
 }
 function stopSpeaking() {
   if (voicePlaybackNode) voicePlaybackNode.port.postMessage({ cmd: 'flush' });

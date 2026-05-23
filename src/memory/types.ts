@@ -110,7 +110,7 @@ export const CANONICAL_SOURCES: readonly CanonicalSource[] = [
 ] as const;
 
 /**
- * Memory scope classification (upstream `MemorySource` equivalent). Profile-
+ * Memory scope classification. Profile-
  * scope content describes the user as a stable entity and is safe to surface
  * in any session. Session-scope content is bound to a specific conversation
  * and must NOT auto-leak across sessions — only via the explicit

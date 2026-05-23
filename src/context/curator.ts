@@ -1,9 +1,8 @@
 /**
  * Context curator — decides what to include in the per-turn context.
  *
- * upstream pattern (curator.py): scoring/ranking which memory hits, which
- * past messages, which references make the cut for this turn's context
- * window budget.
+ * Scoring/ranking which memory hits, which past messages, which references
+ * make the cut for this turn's context window budget.
  *
  * Today SAX's curation logic is split between:
  *   - memoryManager.buildTurnContext (memory hit selection)

@@ -20,9 +20,9 @@
  *      counter so the next prompt fires the nudge regardless of cadence.
  *
  * The nudge text itself is short and tells the model WHAT to write, not what
- * we observed. upstream-style: the model decides what's memory-worthy and how
- * to phrase it generally. That's the whole point of switching from
- * regex-driven verbatim injection to model-driven curation.
+ * we observed. The model decides what's memory-worthy and how to phrase it
+ * generally. That's the whole point of switching from regex-driven verbatim
+ * injection to model-driven curation.
  *
  * Cooldown: after a nudge fires, the counter resets to 0. We don't fire two
  * nudges in a row even if a high-priority signal fires immediately after.

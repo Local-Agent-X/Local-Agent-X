@@ -5,9 +5,9 @@
  * Sections above the cache boundary are stable across turns (cacheable by LLM).
  * Sections below are dynamic per request.
  *
- * Pattern borrowed from upstream: static sections are separated from dynamic
- * ones by a cache boundary marker. LLM providers that support prompt caching
- * (Anthropic, OpenAI) can cache the stable prefix and only reprocess the suffix.
+ * Static sections are separated from dynamic ones by a cache boundary marker.
+ * LLM providers that support prompt caching (Anthropic, OpenAI) can cache the
+ * stable prefix and only reprocess the suffix.
  */
 
 import { createRequire } from "node:module";

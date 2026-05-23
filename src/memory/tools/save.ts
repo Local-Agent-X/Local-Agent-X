@@ -202,7 +202,7 @@ export function createSaveTools(memory: MemoryIndex) {
           return { content: `Unknown action: ${action}`, isError: true };
         }
 
-        // Char-limit enforcement (upstream-style). Bounded files are what
+        // Char-limit enforcement. Bounded files are what
         // force the model to consolidate instead of append-forever — without
         // a ceiling, the model treats memory as a dump and never compresses.
         // Limits are generous (USER ~2000, MIND ~5000) but not infinite.

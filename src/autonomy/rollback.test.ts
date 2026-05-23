@@ -143,6 +143,19 @@ describe("captureRollback", () => {
     rmSync(target, { force: true });
   });
 
+  it("refuses to stash the LAX source repo (cwd contains src/autonomy/rollback.ts)", () => {
+    const id = freshId(); trackedIds.push(id);
+    // process.cwd() during vitest IS the LAX repo. Without the self-protect,
+    // a shell-class capture without an explicit cwd would git-stash live
+    // working-tree edits — see test/tools/dispatcher-collapse.test.ts which
+    // dispatched ari_shell without a cwd and stashed real uncommitted work.
+    const contract = captureRollback(id, "bash", "shell", { command: "echo hi" });
+    expect(contract.artifacts[0].type).toBe("none");
+    if (contract.artifacts[0].type === "none") {
+      expect(contract.artifacts[0].reason).toContain("LAX source repo");
+    }
+  });
+
   it("shell in a non-git cwd records no-rollback", () => {
     const id = freshId(); trackedIds.push(id);
     const dir = join(tmpdir(), `lax-rb-nogit-${id}`);

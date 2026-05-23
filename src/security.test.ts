@@ -79,13 +79,16 @@ describe("SecurityLayer", () => {
       expect(d.allowed).toBe(false);
     });
 
-    it("blocks backticks", () => {
+    // Backtick is PowerShell's escape character and `$` is its variable
+    // syntax — blocking either on Windows would break legitimate PS usage.
+    // The metachar block only fires on POSIX (shell-policy.ts:204-218).
+    it.skipIf(process.platform === "win32")("blocks backticks (POSIX)", () => {
       const d = sec.evaluate({ toolName: "bash", args: { command: "echo `whoami`" }, sessionId: "t" });
       expect(d.allowed).toBe(false);
     });
 
-    it("blocks dollar signs", () => {
-      const d = sec.evaluate({ toolName: "bash", args: { command: "echo $HOME" }, sessionId: "t" });
+    it.skipIf(process.platform === "win32")("blocks dollar signs (POSIX)", () => {
+      const d = sec.evaluate({ toolName: "bash", args: { command: "echo $(whoami)" }, sessionId: "t" });
       expect(d.allowed).toBe(false);
     });
 
@@ -109,13 +112,15 @@ describe("SecurityLayer", () => {
       expect(d.allowed).toBe(false);
     });
 
-    it("blocks python -c", () => {
+    // python -c and node -e are deliberately allowed for data transforms
+    // (shell-policy.ts:12-13). perl -e / ruby -e / php -r stay blocked.
+    it("allows python -c (data transform)", () => {
       const d = sec.evaluate({ toolName: "bash", args: { command: 'python -c "import os"' }, sessionId: "t" });
-      expect(d.allowed).toBe(false);
+      expect(d.allowed).toBe(true);
     });
 
-    it("blocks more than 2 pipes", () => {
-      const d = sec.evaluate({ toolName: "bash", args: { command: "a | b | c | d" }, sessionId: "t" });
+    it("blocks more than 5 pipes", () => {
+      const d = sec.evaluate({ toolName: "bash", args: { command: "a | b | c | d | e | f | g" }, sessionId: "t" });
       expect(d.allowed).toBe(false);
     });
 

@@ -16,6 +16,31 @@ const require = createRequire(import.meta.url);
 
 const logger = createLogger("sync.pull-files");
 
+/**
+ * Union-merge two arrays of records by id, picking the record with the
+ * highest `updatedAt` on collision. Records present in only one side are
+ * carried through. Closes the "local-newer project nuked by stale-remote
+ * pull" failure mode that wiped Acme Springfield on 2026-05-22.
+ *
+ * Exported so the projects pull (and any future record-array pull that
+ * shares this id+updatedAt shape — issues, templates) can call it instead
+ * of re-implementing the merge.
+ */
+export function unionMergeRecordsById<T extends { id: string; updatedAt?: number }>(
+  local: T[],
+  remote: T[],
+): T[] {
+  const byId = new Map<string, T>();
+  for (const r of remote) byId.set(r.id, r);
+  for (const l of local) {
+    const r = byId.get(l.id);
+    if (!r || (Number(l.updatedAt) || 0) > (Number(r.updatedAt) || 0)) {
+      byId.set(l.id, l);
+    }
+  }
+  return Array.from(byId.values());
+}
+
 // ── Pull direction: sync repo → local (with deletion propagation) ──
 
 export async function copyFromSync(dataDir: string, syncDir: string, config: SyncConfig): Promise<void> {
@@ -172,22 +197,30 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
     }
   }
 
-  // agent-projects.json: filter the remote project list through the
-  // tombstone set before persist. Same shape as the sidebar-pins
-  // filter — the goal is "deletes propagate, undeletes don't ressurect."
+  // agent-projects.json: union-merge by id with updatedAt tiebreak, then
+  // filter through the tombstone set. The old behavior was to overwrite
+  // local with (remote − tombstones), which silently wiped any locally-
+  // created project that hadn't been pushed yet (Acme Springfield case:
+  // created on this box, sync-repo was stale, pull nuked it). The merge
+  // preserves "deletes propagate via tombstones" while letting local-only
+  // and locally-newer records survive a pull from a stale remote.
   {
     const remoteProj = join(syncDir, "agent-projects.json");
+    const localProj = join(dataDir, "agent-projects.json");
     if (existsSync(remoteProj)) {
       try {
         const remote = JSON.parse(readFileSync(remoteProj, "utf-8"));
-        if (Array.isArray(remote)) {
+        const local = existsSync(localProj) ? JSON.parse(readFileSync(localProj, "utf-8")) : [];
+        if (Array.isArray(remote) && Array.isArray(local)) {
+          const merged = unionMergeRecordsById(local, remote);
           const { projectTombstonePaths, listTombstonedProjectIds, applyProjectTombstones } = await import("./project-tombstones.js");
           const tombstoned = listTombstonedProjectIds(projectTombstonePaths(dataDir, syncDir));
-          const filtered = applyProjectTombstones(remote as Array<{ id: string }>, tombstoned);
-          if (filtered.length < remote.length) {
-            logger.info(`[sync] project tombstones filtered ${remote.length - filtered.length} remote project(s)`);
+          const filtered = applyProjectTombstones(merged as Array<{ id: string }>, tombstoned);
+          const wipedByTombstone = merged.length - filtered.length;
+          if (wipedByTombstone > 0) {
+            logger.info(`[sync] project tombstones filtered ${wipedByTombstone} project(s)`);
           }
-          writeFileSync(join(dataDir, "agent-projects.json"), JSON.stringify(filtered, null, 2), "utf-8");
+          writeFileSync(localProj, JSON.stringify(filtered, null, 2), "utf-8");
         }
       } catch (e) {
         logger.warn(`[sync] agent-projects pull skipped: ${(e as Error).message}`);

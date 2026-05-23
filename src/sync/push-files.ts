@@ -129,15 +129,17 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
     }
   }
 
-  // Brain backup — directory trees. mirrorDir is destructive (matches
-  // source on the destination side); the goal here is "the user's
-  // workstation should match this push," so destructive mirror is
-  // correct.
+  // Brain backup — directory trees. Additive so a push from one
+  // machine can't wipe sync-repo entries another machine pushed but
+  // hasn't been pulled back here yet. Matches the additive pull on
+  // the other side (sync/pull-files.ts) and the workspace push, which
+  // has used additive for the same "don't delete other machines' work"
+  // reason since the tombstone system landed.
   for (const dir of BRAIN_DIRS) {
     const src = join(dataDir, dir);
     if (!existsSync(src)) continue;
     try {
-      mirrorDir(src, join(syncDir, dir), /* additiveOnly */ false);
+      mirrorDir(src, join(syncDir, dir), /* additiveOnly */ true);
     } catch (e) {
       logger.warn(`[sync] brain push skipped dir ${dir}: ${(e as Error).message}`);
     }

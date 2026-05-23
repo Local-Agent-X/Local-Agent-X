@@ -281,7 +281,29 @@ async function generateViaXaiVideo(
   referenceImageUrls?: string[],
 ): Promise<ToolResult> {
   const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` };
-  const refs = (referenceImageUrls || []).filter(u => u?.trim()).map(url => ({ url }));
+
+  // Normalize reference image URLs. Local LAX paths (/images/foo.png) point
+  // at workspace/images/ on this loopback host — xAI's backend can't reach
+  // 127.0.0.1, so we inline the file as a base64 data URI instead. If xAI
+  // rejects data: URIs we'll surface the real error below.
+  const refs: Array<{ url: string }> = [];
+  for (const raw of referenceImageUrls || []) {
+    const u = (raw || "").trim();
+    if (!u) continue;
+    const localMatch = u.match(/^\/images\/([A-Za-z0-9._-]+)/);
+    if (localMatch) {
+      const filePath = join("workspace", "images", localMatch[1]);
+      if (existsSync(filePath)) {
+        const ext = (localMatch[1].split(".").pop() || "png").toLowerCase();
+        const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "webp" ? "image/webp" : "image/png";
+        const b64 = readFileSync(filePath).toString("base64");
+        refs.push({ url: `data:${mime};base64,${b64}` });
+        continue;
+      }
+    }
+    // External http(s) URL or unknown shape — pass through and let xAI decide.
+    refs.push({ url: u });
+  }
   // Reference-image path caps at 10s per xAI's docs.
   const clamped = Math.max(1, Math.min(refs.length > 0 ? 10 : 15, Math.floor(duration)));
 
@@ -319,11 +341,23 @@ async function generateViaXaiVideo(
       const errText = await poll.text();
       return err(`xAI video poll failed (${poll.status}): ${errText.slice(0, 300)}`);
     }
-    const pollBody = await poll.json() as { status?: string; video?: { url?: string }; url?: string };
+    const pollBody = await poll.json() as {
+      status?: string;
+      video?: { url?: string };
+      url?: string;
+      error?: string | { message?: string };
+      failure_reason?: string;
+      message?: string;
+    };
     lastStatus = (pollBody.status || "").toLowerCase();
     if (lastStatus === "done") { videoUrl = pollBody.video?.url || pollBody.url || null; break; }
     if (["failed", "error", "expired", "cancelled"].includes(lastStatus)) {
-      return err(`xAI video generation ${lastStatus} (request ${requestId})`);
+      const reason =
+        (typeof pollBody.error === "string" ? pollBody.error : pollBody.error?.message) ||
+        pollBody.failure_reason ||
+        pollBody.message ||
+        "no reason returned by xAI";
+      return err(`xAI video generation ${lastStatus} (${reason}). request=${requestId}`);
     }
   }
   if (!videoUrl) return err(`xAI video generation timed out (last status: ${lastStatus})`);

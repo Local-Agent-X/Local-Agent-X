@@ -39,6 +39,10 @@ const PRICING: Record<string, ModelPricing> = {
   "o3-pro": { input: 20, output: 80 },
   "o4-mini": { input: 1.10, output: 4.40 },
   // xAI
+  "grok-4": { input: 3, output: 15 },
+  "grok-4-fast": { input: 0.20, output: 0.50 },
+  "grok-4-heavy": { input: 5, output: 25 },
+  "grok-code-fast-1": { input: 0.20, output: 1.50 },
   "grok-3": { input: 3, output: 15 },
   "grok-3-mini": { input: 0.30, output: 0.50 },
   "grok-2": { input: 2, output: 10 },

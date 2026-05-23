@@ -78,7 +78,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     transport: "http",
     id: "xai",
     label: "xAI Grok",
-    models: ["grok-4", "grok-3", "grok-3-mini"],
+    models: ["grok-4", "grok-4-fast", "grok-4-heavy", "grok-code-fast-1", "grok-3", "grok-3-mini"],
     defaultModel: "grok-4",
     baseURL: "https://api.x.ai/v1",
     envKey: "XAI_API_KEY",

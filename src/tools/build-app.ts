@@ -12,8 +12,7 @@
  *   - everyone else      → in-canonical-sub-agent (provider's HTTP adapter
  *     drives the turn_loop with write/read/edit/bash/glob tools).
  *
- * See docs/migration/build-app-to-canonical-op.md for the migration history
- * (this tool is the Phase-3 collapse of build_app + build_app_canonical).
+ * This tool is the collapse of the legacy build_app + build_app_canonical.
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";

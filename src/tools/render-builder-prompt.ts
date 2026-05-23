@@ -1,7 +1,6 @@
 /**
- * Builder-prompt rendering — lifted out of builder-tools.ts so both the legacy
- * CLI-subprocess path and the upcoming canonical-op path (Phase 2 of
- * docs/migration/build-app-to-canonical-op.md) render from the same source.
+ * Builder-prompt rendering — lifted out of builder-tools.ts so both the
+ * CLI-subprocess path and the canonical-op path render from the same source.
  *
  * Pure renderer at the top, fs-touching helpers at the bottom. The pure
  * functions take pre-read inputs only; the caller is responsible for any

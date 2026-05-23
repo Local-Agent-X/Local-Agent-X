@@ -2,9 +2,8 @@
  * App-build CLI spawn — owns the codex / claude subprocess lifecycle for the
  * cli-subprocess strategy of the app_build canonical op.
  *
- * Lifted from the pre-canonical builder-tools.ts (Phase 3 of
- * docs/migration/build-app-to-canonical-op.md). Two changes from the
- * lift-and-shift baseline:
+ * Two changes from the pre-canonical builder-tools.ts baseline this
+ * lifted from:
  *
  *   1. Accepts an AbortSignal. On abort the subprocess tree dies via
  *      killProcessTree (Windows shell:true wraps the real binary in cmd.exe,

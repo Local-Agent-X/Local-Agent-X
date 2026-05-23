@@ -2,10 +2,9 @@
 // Reviewer, etc.). Persisted to ~/.lax/agent-templates.json with
 // built-in defaults seeded on first run.
 //
-// Per-template provider strategy is Phase 1 groundwork for
-// docs/migration/build-app-to-canonical-op.md: the canonical-op
-// dispatcher reads this to decide whether to spawn a CLI subprocess or
-// run in-process. Optional; templates without it use the lane default.
+// Per-template provider strategy lets the canonical-op dispatcher decide
+// whether to spawn a CLI subprocess or run in-process. Optional; templates
+// without it use the lane default.
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -84,11 +83,10 @@ export class AgentTemplateStore {
   }
 
   /**
-   * Phase-3 migration (docs/migration/build-app-to-canonical-op.md):
-   * Phase 2 seeded the `app-builder` template with `list_directory` in
+   * Older seeds of the `app-builder` template included `list_directory` in
    * allowedTools — that tool isn't registered. The adapter substituted
-   * `glob` at runtime as a workaround; Phase 3 fixes the template in
-   * place. Idempotent: a template already using `glob` is left alone.
+   * `glob` at runtime as a workaround; this fixes the template in place.
+   * Idempotent: a template already using `glob` is left alone.
    */
   private migrateAppBuilderTools(): void {
     const t = this.templates.find(x => x.id === "app-builder");

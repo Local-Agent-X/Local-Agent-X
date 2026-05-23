@@ -11,8 +11,8 @@
  * and the providers/health API endpoint. `getProviderHealthStatus` reads
  * from disk; `resetProviderHealth` lets the user manually clear a stuck
  * entry. recordSuccess/recordFailure are gone, so the persisted file is
- * effectively a museum — the canonical retry strategy (see
- * docs/retry-strategy-canonical.md) will repopulate it post-P4.
+ * effectively a museum — kept for the UI to read existing entries until
+ * something starts writing it again.
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";

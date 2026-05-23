@@ -19,12 +19,8 @@ const logger = createLogger("sync.pull-files");
 /**
  * Union-merge two arrays of records by id, picking the record with the
  * highest `updatedAt` on collision. Records present in only one side are
- * carried through. Closes the "local-newer project nuked by stale-remote
+ * carried through. Closes the "local-newer record nuked by stale-remote
  * pull" failure mode that wiped Acme Springfield on 2026-05-22.
- *
- * Exported so the projects pull (and any future record-array pull that
- * shares this id+updatedAt shape — issues, templates) can call it instead
- * of re-implementing the merge.
  */
 export function unionMergeRecordsById<T extends { id: string; updatedAt?: number }>(
   local: T[],
@@ -40,6 +36,44 @@ export function unionMergeRecordsById<T extends { id: string; updatedAt?: number
   }
   return Array.from(byId.values());
 }
+
+/**
+ * Pull a JSON file that contains a record array with `{id, updatedAt}`
+ * shape, union-merging local + remote rather than overwriting. Optional
+ * tombstone filter runs AFTER the merge so deletes still propagate.
+ *
+ * Used by agent-projects.json, agent-issues.json, and agent-templates.json
+ * — all three are user-data record arrays where a locally-newer entry
+ * MUST survive a pull from a stale remote.
+ */
+function pullMergedRecordFile<T extends { id: string; updatedAt?: number }>(opts: {
+  dataDir: string;
+  syncDir: string;
+  fileName: string;
+  filterTombstoned?: (records: T[]) => T[];
+}): void {
+  const remotePath = join(opts.syncDir, opts.fileName);
+  const localPath = join(opts.dataDir, opts.fileName);
+  if (!existsSync(remotePath)) return;
+  try {
+    const remote = JSON.parse(readFileSync(remotePath, "utf-8"));
+    const local = existsSync(localPath) ? JSON.parse(readFileSync(localPath, "utf-8")) : [];
+    if (!Array.isArray(remote) || !Array.isArray(local)) return;
+    let merged = unionMergeRecordsById<T>(local as T[], remote as T[]);
+    if (opts.filterTombstoned) merged = opts.filterTombstoned(merged);
+    writeFileSync(localPath, JSON.stringify(merged, null, 2), "utf-8");
+  } catch (e) {
+    logger.warn(`[sync] ${opts.fileName} pull skipped: ${(e as Error).message}`);
+  }
+}
+
+/** Files whose pull goes through pullMergedRecordFile, not the destructive
+ *  overwrite loop. Keep in sync with the explicit per-file blocks below. */
+const MERGED_BRAIN_FILES: ReadonlySet<string> = new Set([
+  "agent-projects.json",
+  "agent-issues.json",
+  "agent-templates.json",
+]);
 
 // ── Pull direction: sync repo → local (with deletion propagation) ──
 
@@ -177,16 +211,14 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
     }
   }
 
-  // Brain backup — flat JSON files. Last-push-wins overwrite. Only
-  // pull when the remote file exists; never delete a local-only
-  // file just because it's missing from the remote (a fresh sync
-  // repo wouldn't have these yet).
-  //
-  // agent-projects.json is handled separately below — it's filtered
-  // through project tombstones before persist so a remote that still
-  // has a project we deleted locally can't bring it back.
+  // Brain backup — flat JSON files. Last-push-wins overwrite, EXCEPT for
+  // files in MERGED_BRAIN_FILES (record-array shape with id+updatedAt) —
+  // those go through pullMergedRecordFile below so locally-newer entries
+  // survive a stale-remote pull. Don't delete a local-only file just
+  // because it's missing from the remote (a fresh sync repo wouldn't
+  // have these yet).
   for (const file of BRAIN_JSON_FILES) {
-    if (file === "agent-projects.json") continue;
+    if (MERGED_BRAIN_FILES.has(file)) continue;
     if (!config.syncMissions && MISSION_FILES.has(file)) continue;
     const remote = join(syncDir, file);
     if (!existsSync(remote)) continue;
@@ -197,36 +229,35 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
     }
   }
 
-  // agent-projects.json: union-merge by id with updatedAt tiebreak, then
-  // filter through the tombstone set. The old behavior was to overwrite
-  // local with (remote − tombstones), which silently wiped any locally-
-  // created project that hadn't been pushed yet (Acme Springfield case:
-  // created on this box, sync-repo was stale, pull nuked it). The merge
-  // preserves "deletes propagate via tombstones" while letting local-only
-  // and locally-newer records survive a pull from a stale remote.
+  // agent-projects.json: union-merge + project-tombstone filter.
+  // Closes the Acme Springfield case (2026-05-22) where a locally-
+  // created project was wiped by pull from a stale sync-repo.
   {
-    const remoteProj = join(syncDir, "agent-projects.json");
-    const localProj = join(dataDir, "agent-projects.json");
-    if (existsSync(remoteProj)) {
-      try {
-        const remote = JSON.parse(readFileSync(remoteProj, "utf-8"));
-        const local = existsSync(localProj) ? JSON.parse(readFileSync(localProj, "utf-8")) : [];
-        if (Array.isArray(remote) && Array.isArray(local)) {
-          const merged = unionMergeRecordsById(local, remote);
-          const { projectTombstonePaths, listTombstonedProjectIds, applyProjectTombstones } = await import("./project-tombstones.js");
-          const tombstoned = listTombstonedProjectIds(projectTombstonePaths(dataDir, syncDir));
-          const filtered = applyProjectTombstones(merged as Array<{ id: string }>, tombstoned);
-          const wipedByTombstone = merged.length - filtered.length;
-          if (wipedByTombstone > 0) {
-            logger.info(`[sync] project tombstones filtered ${wipedByTombstone} project(s)`);
-          }
-          writeFileSync(localProj, JSON.stringify(filtered, null, 2), "utf-8");
-        }
-      } catch (e) {
-        logger.warn(`[sync] agent-projects pull skipped: ${(e as Error).message}`);
-      }
-    }
+    const { projectTombstonePaths, listTombstonedProjectIds, applyProjectTombstones } = await import("./project-tombstones.js");
+    const tombstoned = listTombstonedProjectIds(projectTombstonePaths(dataDir, syncDir));
+    pullMergedRecordFile<{ id: string; updatedAt?: number }>({
+      dataDir, syncDir, fileName: "agent-projects.json",
+      filterTombstoned: (recs) => {
+        const filtered = applyProjectTombstones(recs, tombstoned);
+        const wiped = recs.length - filtered.length;
+        if (wiped > 0) logger.info(`[sync] project tombstones filtered ${wiped} project(s)`);
+        return filtered as typeof recs;
+      },
+    });
   }
+
+  // agent-issues.json + agent-templates.json: same record-array shape,
+  // same union-merge fix. Issues created or templates edited on this
+  // machine that haven't been pushed yet now survive a stale pull. No
+  // tombstone store for these today; if individual issues/templates
+  // need delete-propagation later, add a tombstone source like
+  // project-tombstones.ts.
+  pullMergedRecordFile<{ id: string; updatedAt?: number }>({
+    dataDir, syncDir, fileName: "agent-issues.json",
+  });
+  pullMergedRecordFile<{ id: string; updatedAt?: number }>({
+    dataDir, syncDir, fileName: "agent-templates.json",
+  });
 
   // Brain backup — directory trees. Destructive mirror so the
   // destination matches the remote tree exactly.

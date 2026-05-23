@@ -1,8 +1,7 @@
 # Canonical-loop rollback runbook
 
 **Audience:** on-call / shipper.
-**Scope:** the LAX canonical op loop after the worker-pool retirement
-(Phase 2 of [worker-pool-retirement.md](../migration/worker-pool-retirement.md)).
+**Scope:** the LAX canonical op loop (sole execution path since the worker-pool retirement landed 2026-05-15).
 **Source of truth:** [PRD §17 / §22](../canonical-loop-prd.md).
 
 The canonical loop is the **only** execution path for ops. There is no

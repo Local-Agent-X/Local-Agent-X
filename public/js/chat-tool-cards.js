@@ -258,3 +258,53 @@ function updateToolProgress(container, toolName, message) {
     textEl.textContent = message;
   }
 }
+
+// Inline media preview for generate_image / generate_video tool results.
+// Scans the result text for /images/<filename> or /videos/<filename> URLs
+// and injects an <img> / <video> element under the tool card so the user
+// sees the actual artifact instead of just "Saved: workspace/images/foo.png".
+//
+// Static routes /images/ and /videos/ require ?token= for auth (request-
+// handler.ts gates them). AUTH_TOKEN comes from shared.js.
+function attachMediaPreview(card, toolName, result) {
+  if (!card || !result) return;
+  if (toolName !== 'generate_image' && toolName !== 'generate_video') return;
+  // Avoid duplicate previews on tool_end retries / re-renders.
+  if (card.querySelector('.tool-media-preview')) return;
+
+  const re = /(\/(?:images|videos)\/[A-Za-z0-9._-]+)/g;
+  const matches = [...result.matchAll(re)].map(m => m[1]);
+  if (matches.length === 0) return;
+
+  const tok = (typeof AUTH_TOKEN === 'string' && AUTH_TOKEN) ? '?token=' + encodeURIComponent(AUTH_TOKEN) : '';
+  const wrap = document.createElement('div');
+  wrap.className = 'tool-media-preview';
+  wrap.style.cssText = 'margin-top:.5rem;display:flex;flex-wrap:wrap;gap:.5rem';
+
+  for (const path of matches) {
+    const url = path + tok;
+    if (path.startsWith('/videos/')) {
+      const v = document.createElement('video');
+      v.src = url;
+      v.controls = true;
+      v.preload = 'metadata';
+      v.style.cssText = 'max-width:480px;max-height:360px;border-radius:6px;background:#000';
+      wrap.appendChild(v);
+    } else {
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      const img = document.createElement('img');
+      img.src = url;
+      img.alt = 'generated image';
+      img.loading = 'lazy';
+      img.style.cssText = 'max-width:480px;max-height:480px;border-radius:6px;display:block';
+      a.appendChild(img);
+      wrap.appendChild(a);
+    }
+  }
+  // Hosted inside the tool card so it shares the open/closed collapse state.
+  card.appendChild(wrap);
+  card.classList.add('open');
+}

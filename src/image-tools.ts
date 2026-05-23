@@ -92,7 +92,8 @@ async function generateViaXai(
   const first = data.data?.[0];
   if (!first?.url && !first?.b64_json) return err("xAI returned no image.");
 
-  const imagesDir = join("workspace", "generated");
+  // Write into workspace/images/ so the /images/<file> static mount serves it.
+  const imagesDir = join("workspace", "images");
   if (!existsSync(imagesDir)) mkdirSync(imagesDir, { recursive: true });
   const filename = `grok_${Date.now()}.png`;
   const savePath = join(imagesDir, filename);
@@ -111,7 +112,7 @@ async function generateViaXai(
     `Image generated via Grok Imagine!\n` +
     `Prompt: ${prompt}\n` +
     `Saved: ${savePath}\n` +
-    `View: /uploads/../workspace/generated/${filename}`
+    `View: /images/${filename}`
   );
 }
 

@@ -344,10 +344,10 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 #send-btn:hover{box-shadow:0 0 14px var(--accent-dim)}
 #send-btn:disabled{opacity:.3;cursor:not-allowed}
 /* Inject mode — applied when streamingSessionId === activeChat.id.
-   Visually distinct from the default "Send" state so the user can't
-   mistake an in-flight turn for "ready." */
-#send-btn.inject-mode{background:transparent;border:1px solid var(--accent);color:var(--accent)}
-#send-btn.inject-mode:hover{background:var(--accent-dim);box-shadow:0 0 8px var(--accent-dim)}
+   Orange so the user can't mistake an in-flight turn for "ready," and
+   distinct from the cyan upload + button next to it. */
+#send-btn.inject-mode{background:var(--warn);color:#1a0e00;box-shadow:0 0 10px rgba(255,170,0,.4)}
+#send-btn.inject-mode:hover{box-shadow:0 0 14px rgba(255,170,0,.7)}
 .code-block{background:#0d0d18;border:1px solid var(--border);border-radius:8px;padding:10px;overflow-x:auto;font-family:var(--mono);font-size:.82rem;margin:8px 0}
 .inline-code{background:#1a1a30;padding:1px 5px;border-radius:4px;font-family:var(--mono);font-size:.85em}
 .md-h{color:var(--accent);margin:8px 0 4px}

@@ -1,8 +1,90 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, statSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, statSync, readdirSync } from "node:fs";
+import { resolve, dirname, basename } from "node:path";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
+import { validateSyntax } from "./syntax-validate.js";
+
+// ── Edit-failure recovery helpers ────────────────────────────────────────
+// When edit() fails, the model previously saw a bare string like
+// "old_string found 2 times" with no info about WHERE the matches were —
+// so it would re-emit the same insufficient old_string on the next turn,
+// hit the same error, and loop. Grok-code-fast-1 did this twice in a row
+// on the repeating-text session, burning a 178s turn for zero edits.
+// These helpers surface line numbers + surrounding context (ambiguous),
+// nearest-line candidates (not-found), or sibling files (file-not-found)
+// so the model's next call can disambiguate without another wasted turn.
+// Output flows through err()'s metadata.recovery → rendered as a
+// "Recovery: ..." line in the tool_result the canonical loop feeds back.
+
+function locateOccurrences(content: string, needle: string, max = 5): { line: number; snippet: string }[] {
+  const matches: { line: number; snippet: string }[] = [];
+  const lines = content.split("\n");
+  let pos = 0;
+  while (matches.length < max) {
+    const idx = content.indexOf(needle, pos);
+    if (idx === -1) break;
+    let lineNum = 1;
+    for (let i = 0; i < idx; i++) if (content[i] === "\n") lineNum++;
+    const from = Math.max(0, lineNum - 2);
+    const to = Math.min(lines.length, lineNum + 1);
+    const snippet = lines.slice(from, to).map((l, i) => `  L${from + i + 1}: ${l}`).join("\n");
+    matches.push({ line: lineNum, snippet });
+    pos = idx + needle.length;
+  }
+  return matches;
+}
+
+function suggestNearbyLines(content: string, oldStr: string, max = 5): { line: number; text: string }[] {
+  // Use the first non-trivial line of the old_string as a probe. The model
+  // probably got the surrounding context wrong but the anchor line right;
+  // surfacing every line that contains the anchor lets it re-pick.
+  const firstLine = (oldStr.split("\n").find((l) => l.trim().length >= 4) || "").trim();
+  if (!firstLine) return [];
+  const probe = firstLine.slice(0, Math.min(60, firstLine.length));
+  const lines = content.split("\n");
+  const hits: { line: number; text: string }[] = [];
+  for (let i = 0; i < lines.length && hits.length < max; i++) {
+    if (lines[i].includes(probe)) hits.push({ line: i + 1, text: lines[i] });
+  }
+  return hits;
+}
+
+function suggestSiblingPaths(missingPath: string, max = 5): string[] {
+  // Model often gets the dir right and the filename wrong (or vice versa).
+  // List parent-dir entries with similar name; cheap, no recursion.
+  try {
+    const dir = dirname(missingPath);
+    const name = basename(missingPath).toLowerCase();
+    if (!existsSync(dir)) return [];
+    const entries = readdirSync(dir);
+    const scored = entries
+      .map((e) => ({ e, score: similarity(e.toLowerCase(), name) }))
+      .filter((s) => s.score > 0.4)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, max);
+    return scored.map((s) => `${dir}/${s.e}`.replace(/\\/g, "/"));
+  } catch {
+    return [];
+  }
+}
+
+// Lightweight similarity: longest common substring ratio. Good enough for
+// "did the model mean foo.tsx when it said foo.ts" without a Levenshtein dep.
+function similarity(a: string, b: string): number {
+  if (a === b) return 1;
+  const short = a.length < b.length ? a : b;
+  const long = a.length < b.length ? b : a;
+  if (long.length === 0) return 0;
+  let longest = 0;
+  for (let i = 0; i < short.length; i++) {
+    for (let j = i + 1; j <= short.length; j++) {
+      if (long.includes(short.slice(i, j))) longest = Math.max(longest, j - i);
+      else break;
+    }
+  }
+  return longest / long.length;
+}
 
 /** When write/edit touches a file under workspace/apps/<name>/, append a
  *  hint with the app's served URL. Without this, models routinely answer
@@ -151,7 +233,11 @@ export const writeTool: ToolDefinition = {
         } catch { /* read failed — fall back to writing as-is */ }
       }
       writeFileSync(filePath, toWrite, "utf-8");
-      return ok(`Wrote ${filePath}${appUrlHint(filePath)}`);
+      const syntaxIssue = validateSyntax(filePath, toWrite);
+      return ok(
+        `Wrote ${filePath}${appUrlHint(filePath)}`,
+        syntaxIssue ? { recovery: syntaxIssue } : undefined,
+      );
     } catch (e) {
       return err(`Failed to write ${filePath}: ${(e as Error).message}`);
     }
@@ -173,7 +259,15 @@ export const editTool: ToolDefinition = {
   },
   async execute(args) {
     const filePath = resolve(String(args.path));
-    if (!existsSync(filePath)) return err(`File not found: ${filePath}`);
+    if (!existsSync(filePath)) {
+      const siblings = suggestSiblingPaths(filePath);
+      return err(
+        `File not found: ${filePath}`,
+        siblings.length
+          ? { recovery: `Did you mean one of:\n  ${siblings.join("\n  ")}` }
+          : undefined,
+      );
+    }
 
     try {
       const content = readFileSync(filePath, "utf-8");
@@ -207,19 +301,36 @@ export const editTool: ToolDefinition = {
       }
 
       if (!content.includes(effOld)) {
-        return err(`old_string not found in ${filePath}. Make sure it matches exactly.`);
+        const nearby = suggestNearbyLines(content, oldStr);
+        const recovery = nearby.length
+          ? `Closest lines matching the first line of your old_string:\n${nearby.map((h) => `  L${h.line}: ${h.text}`).join("\n")}\nPick one and include 3-5 lines of surrounding context in old_string.`
+          : `No close matches found. Re-read the file to see current content; the file may have been edited or your anchor text is wrong.`;
+        return err(
+          `old_string not found in ${filePath}. Make sure it matches exactly.`,
+          { recovery },
+        );
       }
 
       const occurrences = content.split(effOld).length - 1;
       if (occurrences > 1) {
+        const matches = locateOccurrences(content, effOld);
+        const recovery =
+          `Matches at lines: ${matches.map((m) => m.line).join(", ")}.\n` +
+          matches.map((m, i) => `Match ${i + 1} (around L${m.line}):\n${m.snippet}`).join("\n\n") +
+          `\n\nPick the one you want and include 3-5 lines around it in old_string so it matches only that location.`;
         return err(
           `old_string found ${occurrences} times in ${filePath}. Provide more context to make it unique.`,
+          { recovery },
         );
       }
 
       const updated = content.replace(effOld, effNew);
       writeFileSync(filePath, updated, "utf-8");
-      return ok(`Edited ${filePath}${appUrlHint(filePath)}`);
+      const syntaxIssue = validateSyntax(filePath, updated);
+      return ok(
+        `Edited ${filePath}${appUrlHint(filePath)}`,
+        syntaxIssue ? { recovery: syntaxIssue } : undefined,
+      );
     } catch (e) {
       return err(`Failed to edit ${filePath}: ${(e as Error).message}`);
     }

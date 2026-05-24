@@ -8,6 +8,7 @@ import { loadAgentHistory } from './history.js';
 import { loadAgentTemplates } from './templates.js';
 import { loadActiveAgents } from './active.js';
 import { loadOrgChart } from './orgchart.js';
+import { loadDashboard } from './dashboard.js';
 
 export function switchAgentsTab(tab, btn) {
   document.querySelectorAll('.agents-tab-content').forEach(el => el.classList.remove('active'));
@@ -16,6 +17,7 @@ export function switchAgentsTab(tab, btn) {
   if (panel) panel.classList.add('active');
   if (btn) btn.classList.add('active');
   // Refresh data
+  if (tab === 'dashboard') loadDashboard();
   if (tab === 'team') loadTeam();
   if (tab === 'issues') loadIssues();
   if (tab === 'history') loadAgentHistory();

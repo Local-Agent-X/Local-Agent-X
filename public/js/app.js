@@ -16,6 +16,22 @@ function navigate(route) {
   const prevRoute = currentRoute();
   location.hash = '#' + route;
 
+  // IDE fullscreen hides the sidebar. Keep the class in sync with whether
+  // the IDE is actually visible on the apps page — otherwise nav-away
+  // leaves the sidebar hidden on chat/settings, and nav-back leaves
+  // the IDE up with the sidebar showing on top of it. The IDE container
+  // is the source of truth (style.display === 'flex' means the user is
+  // in IDE mode); the class just mirrors that whenever the apps route is
+  // (or isn't) the active one. localStorage is NOT touched here — that's
+  // exitIdeView's job, so cross-route round-trips don't lose the session.
+  const ideEl = document.getElementById('apps-ide');
+  const ideOpen = ideEl && ideEl.style.display === 'flex';
+  if (route === 'apps' && ideOpen) {
+    document.body.classList.add('ide-fullscreen');
+  } else if (route !== 'apps') {
+    document.body.classList.remove('ide-fullscreen');
+  }
+
   // Hide all built-in pages
   ROUTES.forEach(r => {
     const page = document.getElementById('page-' + r);

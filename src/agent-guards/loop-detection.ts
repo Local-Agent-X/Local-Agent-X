@@ -71,7 +71,7 @@ export const NO_PROGRESS_LIMIT_WEAK = 15;
 // navigations). `http_request` covers API calls. The communication tools
 // cover messaging. Membership here means "this tool just did something
 // observable; the counter resets."
-const MUTATION_TOOLS = new Set([
+export const MUTATION_TOOLS = new Set([
   // File changes
   "write", "edit", "self_edit", "build_app",
   "mcp_filesystem_write_file", "mcp_filesystem_edit_file",

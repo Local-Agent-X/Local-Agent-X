@@ -17,27 +17,42 @@ let _ideTrackedAgents = {}; // agentId -> { name, role, status }
 
 function enterIdeView(appId, appName, appUrl, buildPrompt) {
   _ideAppId = appId;
-  _ideSessionId = 'ide-' + appId + '-' + Date.now();
+  // Stable session ID per app so chat persists across leave/return. Used
+  // to be `ide-${appId}-${Date.now()}` which made every IDE entry a fresh
+  // session — user lost the conversation as soon as they navigated away
+  // and back. Now one chat per app, accumulates across sessions.
+  _ideSessionId = 'ide-' + appId;
   _ideContent = '';
   _ideToolCount = 0;
   _ideTrackedAgents = {};
   window._ideAppUrl = appUrl;
 
-  // Hide gallery, show IDE
+  // Hide gallery, show IDE. Fullscreen class hides the sidebar + hamburger
+  // toggles — IDE is a focused mode, sidebar nav competes with the 3-panel
+  // layout. Back-to-Apps lives in the IDE topbar.
   const gallery = document.querySelector('#page-apps .page-header');
   const body = document.querySelector('#page-apps .page-body');
   const ide = document.getElementById('apps-ide');
   if (gallery) gallery.style.display = 'none';
   if (body) body.style.display = 'none';
   if (ide) ide.style.display = 'flex';
+  document.body.classList.add('ide-fullscreen');
+  // Persist so a renderer reload (Electron crash, F5, accidental refresh)
+  // can drop the user back into the same IDE session instead of dumping
+  // them at the apps gallery. Restore happens in ideRestoreSession() on
+  // page init.
+  try { localStorage.setItem('sax_ide_open', JSON.stringify({ id: appId, name: appName, url: appUrl })); } catch {}
 
   // Set app name
   const nameEl = document.getElementById('ide-app-name');
   if (nameEl) nameEl.textContent = appName || appId;
 
-  // Clear chat and add welcome
+  // Clear chat and load any prior conversation for this app's stable
+  // session. Async — the bubbles populate when the fetch returns; the
+  // user can keep interacting in the meantime.
   const msgs = document.getElementById('ide-chat-messages');
   if (msgs) msgs.innerHTML = '';
+  ideLoadHistory();
 
   // Set status bar
   ideSetStatus('ready', 'Ready');
@@ -49,12 +64,25 @@ function enterIdeView(appId, appName, appUrl, buildPrompt) {
   const frame = document.getElementById('ide-preview-frame');
   if (appUrl && frame) {
     frame.src = window._ideAppUrl;
+    // Re-inject the picker if it's on (e.g. user toggled it, navigated
+    // away and back). Idempotent — noops if the iframe is empty.
+    if (typeof _ideOnPreviewLoad === 'function') {
+      frame.addEventListener('load', _ideOnPreviewLoad, { once: true });
+    }
+    if (typeof _ideOnPreviewLoadErrors === 'function') {
+      frame.addEventListener('load', _ideOnPreviewLoadErrors, { once: true });
+    }
   } else if (frame) {
     frame.srcdoc = '<div style="display:flex;align-items:center;justify-content:center;height:100%;font-family:system-ui;color:#999;background:#1a1a2e"><div style="text-align:center"><div style="font-size:2rem;margin-bottom:12px;opacity:.5">&#9881;</div><div>Waiting for build...</div></div></div>';
   }
 
   // Load file tree
   ideLoadFiles();
+
+  // Wire up provider+model selectors so the user can switch mid-session.
+  // Safe between turns — each turn picks model fresh from /api/settings
+  // at request prep. Mid-turn changes only affect the next turn.
+  ideInitModelSelector();
 
   // Set up WS listener for this session
   ideAttachWsListener();
@@ -89,8 +117,87 @@ function exitIdeView() {
   if (gallery) gallery.style.display = '';
   if (body) body.style.display = '';
   if (ide) ide.style.display = 'none';
+  document.body.classList.remove('ide-fullscreen');
+  try { localStorage.removeItem('sax_ide_open'); } catch {}
   loadApps();
 }
+
+// Called on apps-page init. If the user was inside the IDE when the
+// renderer reloaded (Electron crash, F5, OOM from huge npm installs),
+// restore them to the same IDE session so they don't lose their place.
+function ideRestoreSession() {
+  try {
+    const raw = localStorage.getItem('sax_ide_open');
+    if (!raw) return false;
+    const saved = JSON.parse(raw);
+    if (!saved || !saved.id) return false;
+    // Defer one tick so #apps-ide and its children are in the DOM
+    setTimeout(() => enterIdeView(saved.id, saved.name || saved.id, saved.url || null), 0);
+    return true;
+  } catch { return false; }
+}
+window.ideRestoreSession = ideRestoreSession;
+
+// ── Provider / model selector ──
+async function ideInitModelSelector() {
+  const provSel = document.getElementById('ide-provider-select');
+  const modelSel = document.getElementById('ide-model-select');
+  if (!provSel || !modelSel) return;
+  // Reuse APPS_PROVIDERS / APPS_MODELS if the apps gallery already
+  // hydrated them; otherwise fetch the registry ourselves (cheap, cached
+  // by the server).
+  let providers = (typeof APPS_PROVIDERS !== 'undefined' && APPS_PROVIDERS.length) ? APPS_PROVIDERS : null;
+  let models = (typeof APPS_MODELS !== 'undefined' && Object.keys(APPS_MODELS).length) ? APPS_MODELS : null;
+  if (!providers || !models) {
+    try {
+      const reg = await apiFetch('/api/providers/registry').then(r => r.json());
+      providers = (reg.providers || []).map(p => ({ value: p.id, label: p.label }));
+      models = Object.fromEntries((reg.providers || []).map(p => [p.id, p.models]));
+      if (typeof APPS_PROVIDERS !== 'undefined') { APPS_PROVIDERS = providers; APPS_MODELS = models; }
+    } catch { providers = providers || []; models = models || {}; }
+  }
+  window._ideModelsByProvider = models;
+  provSel.innerHTML = providers.map(p => `<option value="${p.value}">${p.label}</option>`).join('');
+  try {
+    const r = await apiFetch('/api/settings');
+    const s = await r.json();
+    if (s.provider) provSel.value = s.provider;
+    populateIdeModels(s.provider || provSel.value, s.model);
+  } catch { populateIdeModels(provSel.value); }
+}
+
+function populateIdeModels(provider, currentModel) {
+  const modelSel = document.getElementById('ide-model-select');
+  if (!modelSel) return;
+  const list = (window._ideModelsByProvider && window._ideModelsByProvider[provider]) || [];
+  if (list.length) {
+    modelSel.innerHTML = list.map(m => `<option value="${m}">${m}</option>`).join('');
+    modelSel.style.display = '';
+    if (currentModel && list.includes(currentModel)) modelSel.value = currentModel;
+  } else {
+    modelSel.innerHTML = '<option value="">default</option>';
+    modelSel.style.display = provider === 'local' ? 'none' : '';
+  }
+}
+
+function onIdeProviderChange(provider) {
+  populateIdeModels(provider);
+  const model = document.getElementById('ide-model-select')?.value || '';
+  apiPost('/api/settings', { provider, model }).catch(() => {});
+  // Keep the apps gallery selectors in sync so user doesn't see drift
+  const galProv = document.getElementById('apps-provider-select');
+  if (galProv && typeof populateAppsModels === 'function') { galProv.value = provider; populateAppsModels(provider, model); }
+}
+
+function onIdeModelChange(model) {
+  const provider = document.getElementById('ide-provider-select')?.value;
+  apiPost('/api/settings', { provider, model }).catch(() => {});
+  const galModel = document.getElementById('apps-model-select');
+  if (galModel) galModel.value = model;
+}
+
+window.onIdeProviderChange = onIdeProviderChange;
+window.onIdeModelChange = onIdeModelChange;
 
 // ── Status bar ──
 function ideSetStatus(state, text) {
@@ -129,14 +236,32 @@ function sendIdeChatMessage() {
   input.value = '';
   input.style.height = 'auto';
   ideAddMessage('user', text);
-  ideSendToAgent(ideContextPrefix() + text);
+  const errPrefix = (typeof ideDrainErrorsForAgent === 'function') ? ideDrainErrorsForAgent() : '';
+  ideSendToAgent(ideContextPrefix() + errPrefix + text);
 }
 
 function ideContextPrefix() {
   return 'IMPORTANT: You are in IDE mode editing an app. ' +
     'Do NOT use agent_spawn, delegate, or build_app tools. ' +
     'Do the work YOURSELF using read, write, edit, bash, glob, and grep tools directly. ' +
-    'Work in workspace/apps/' + _ideAppId + '/. ';
+    'Work in workspace/apps/' + _ideAppId + '/. ' +
+    'Do NOT include http://127.0.0.1 URLs in your reply — the user is viewing the app in a live preview iframe next to this chat, so any "open the app here" link is redundant noise. ';
+}
+// Marker used to strip the prefix from displayed user messages so the
+// hidden IDE instructions don't show up as a chat bubble when history reloads.
+const IDE_PREFIX_MARKER = 'IMPORTANT: You are in IDE mode editing an app.';
+function ideStripPrefix(text) {
+  if (typeof text !== 'string' || !text.startsWith(IDE_PREFIX_MARKER)) return text;
+  // Prefix ends at the last sentence-ending period before the user's real text.
+  // Pattern: a series of sentences ending in '. ', then the user content.
+  // Cheapest robust match: find 'workspace/apps/{id}/. ' OR 'redundant noise. '
+  // and slice past it. Fall back to the original text if no match.
+  const cuts = [/redundant noise\.\s+/, new RegExp('workspace/apps/[^/]+/\\.\\s+')];
+  for (const re of cuts) {
+    const m = text.match(re);
+    if (m && m.index != null) return text.slice(m.index + m[0].length);
+  }
+  return text;
 }
 
 function ideSendToAgent(message) {
@@ -170,6 +295,47 @@ function ideEnableInput() {
   if (btn) btn.disabled = false;
 }
 
+// Wipe this app's stable session and reset the UI. Used by the Fresh
+// Chat button in the topbar — the session is per-app and accumulates
+// over many builds, so the user needs an explicit "start over" affordance
+// when the conversation has drifted or they just want a clean slate.
+async function ideFreshChat() {
+  if (!_ideSessionId) return;
+  if (!confirm('Wipe this app\'s chat history and start fresh? The app files stay put — only the conversation is reset.')) return;
+  try {
+    await apiFetch('/api/sessions/' + encodeURIComponent(_ideSessionId), { method: 'DELETE' });
+  } catch { /* if delete fails, still reset the UI — server can have a stale row, user sees a clean chat */ }
+  const msgs = document.getElementById('ide-chat-messages');
+  if (msgs) msgs.innerHTML = '';
+  _ideContent = '';
+  _ideToolCount = 0;
+  _ideTrackedAgents = {};
+  ideSetStatus('ready', 'Ready');
+}
+window.ideFreshChat = ideFreshChat;
+
+// Fetch and render the user/assistant history for this app's stable
+// session. UI-projection view drops tool-call detail rows — we just want
+// the conversation bubbles. Silent-fail: a fresh app has no session yet
+// (404), nothing to render.
+async function ideLoadHistory() {
+  if (!_ideSessionId) return;
+  try {
+    const r = await apiFetch('/api/sessions/' + encodeURIComponent(_ideSessionId));
+    if (!r.ok) return;
+    const session = await r.json();
+    const list = Array.isArray(session?.messages) ? session.messages : [];
+    for (const m of list) {
+      if (m.role !== 'user' && m.role !== 'assistant') continue;
+      const raw = typeof m.content === 'string' ? m.content : '';
+      if (!raw) continue;
+      const text = m.role === 'user' ? ideStripPrefix(raw) : raw;
+      if (!text) continue;
+      ideAddMessage(m.role, text);
+    }
+  } catch { /* fresh session or transient — fine to skip */ }
+}
+
 // ── Chat messages ──
 function ideAddMessage(role, text, isPlaceholder) {
   const msgs = document.getElementById('ide-chat-messages');
@@ -181,6 +347,7 @@ function ideAddMessage(role, text, isPlaceholder) {
     el.id = 'ide-assistant-active';
   } else {
     el.innerHTML = typeof md === 'function' ? md(text) : text;
+    if (typeof text === 'string') el.dataset.rawText = text;
   }
   msgs.appendChild(el);
   msgs.scrollTop = msgs.scrollHeight;
@@ -201,12 +368,15 @@ function toggleIdeFiles() {
   if (btn) btn.classList.toggle('active', panel && !panel.classList.contains('collapsed'));
 }
 
-// Exports
+// Exports — only for symbols defined in THIS file. Functions defined in
+// sibling scripts (ideRefreshPreview / ideCloseFileViewer / ideViewFile
+// live in apps-ide-tools-files.js) export themselves at the bottom of
+// the file they're defined in, otherwise the script-load order races
+// and the bare identifier here throws ReferenceError, killing every
+// export below it (broke the onIdeProviderChange + error-pipe init
+// registrations).
 window.enterIdeView = enterIdeView;
 window.exitIdeView = exitIdeView;
 window.sendIdeChatMessage = sendIdeChatMessage;
 window.toggleIdeChat = toggleIdeChat;
 window.toggleIdeFiles = toggleIdeFiles;
-window.ideRefreshPreview = ideRefreshPreview;
-window.ideCloseFileViewer = ideCloseFileViewer;
-window.ideViewFile = ideViewFile;

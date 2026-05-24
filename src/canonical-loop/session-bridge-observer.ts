@@ -83,6 +83,15 @@ function teardownStreamForwarder(opId: string): void {
   streamSubscriptions.delete(opId);
 }
 
+// Strip trailing chars that are never valid URL tails — bold/italic markdown
+// (`**`, `*`, `_`), sentence punctuation, closing brackets. Live failure
+// 2026-05-23: agent emitted `**APP_READY: <url>**`, regex captured the
+// trailing `**`, the rendered sidebar link 404'd while the apps-page link
+// worked.
+function trimUrlNoise(url: string): string {
+  return url.replace(/[*)\]>.,;:'"`!?]+$/, "");
+}
+
 /** Scan an op's persisted messages for the final assistant turn and
  *  pull out the APP_READY: <url> marker the build_app adapter emits.
  *  Returns the URL string, or undefined if the marker isn't present. */
@@ -96,7 +105,7 @@ function extractAppReadyUrl(opId: string): string | undefined {
       const text = typeof content === "string" ? content : content?.text;
       if (!text) continue;
       const match = text.match(/APP_READY:\s*(\S+)/);
-      if (match) return match[1];
+      if (match) return trimUrlNoise(match[1]);
       return undefined;
     }
   } catch { /* malformed op-messages — return undefined */ }
@@ -138,11 +147,11 @@ function extractArtifactUrl(opId: string, workspaceDir: string): string | undefi
       if (!text) continue;
       // Most precise: a build_app-style explicit URL line.
       const urlMatch = String(text).match(/Open:\s*(https?:\/\/\S+)/);
-      if (urlMatch) return urlMatch[1];
+      if (urlMatch) return trimUrlNoise(urlMatch[1]);
       // Generic "Created <abs-path>" / "Wrote N bytes to <abs-path>" patterns.
       const created = String(text).match(/(?:Created|Wrote (?:\d+ bytes? )?to|Edited)\s+(\/\S+)/);
       if (!created) continue;
-      const absPath = created[1].replace(/[),:.]+$/, "");
+      const absPath = trimUrlNoise(created[1]);
       // Workspace-bound only — sidebar links go through the static handler.
       if (!absPath.startsWith(wsAbs)) continue;
       const rel = absPath.slice(wsAbs.length);

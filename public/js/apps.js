@@ -11,6 +11,8 @@ async function init_apps() {
   initAppsModelSelector();
   await loadApps();
   await loadCustomPages();
+  // Re-enter the IDE if the user was inside it when the renderer reloaded.
+  if (typeof ideRestoreSession === 'function') ideRestoreSession();
 }
 
 async function initAppsModelSelector() {

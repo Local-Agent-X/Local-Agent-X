@@ -23,8 +23,18 @@ async function shouldShowOnboarding() {
   // fires on the re-install. First-time users never hit this bug (no
   // prior localStorage), only re-installers — which made it invisible
   // until the fresh-install test today caught it.
+  //
+  // The r.ok / d.ok guards below are load-bearing: a 401/500/timeout
+  // would otherwise return `{ error: "..." }`, the code would treat
+  // `s.onboarded` as undefined, fall through to /api/providers, treat
+  // THAT error the same way, hit line "no active provider" and CLEAR
+  // localStorage — turning a transient network blip into a permanent
+  // wizard-loop on every subsequent reload. Real failure (2026-05-23):
+  // existing user on Electron reload triggered the wizard despite
+  // settings.json having `onboarded: true` on disk.
   try {
     const r = await apiFetch('/api/settings');
+    if (!r.ok) throw new Error('settings ' + r.status);
     const s = await r.json();
     if (s.onboarded) { localStorage.setItem('sax_onboarded', '1'); return false; }
     // Only count as onboarded if a provider is ACTIVE (has working
@@ -36,6 +46,7 @@ async function shouldShowOnboarding() {
     // and Getting Started's "Connect an AI provider" was pre-checked
     // while the user actually had no provider connected.
     const p = await apiFetch('/api/providers');
+    if (!p.ok) throw new Error('providers ' + p.status);
     const d = await p.json();
     const hasActive = (d.current && d.current.provider) || (Array.isArray(d.providers) && d.providers.some(pr => pr.active));
     if (hasActive) {
@@ -49,9 +60,9 @@ async function shouldShowOnboarding() {
     localStorage.removeItem('sax_onboarded');
     return true;
   } catch {
-    // Server unreachable — last-resort fallback. Use localStorage so we
-    // don't re-prompt a user who's already onboarded if the network is
-    // briefly down.
+    // Server unreachable or errored — fall back to localStorage so we
+    // don't re-prompt a user who's already onboarded. Do NOT wipe the
+    // flag here; that's the self-reinforcing-loop trap.
     return !localStorage.getItem('sax_onboarded');
   }
 }

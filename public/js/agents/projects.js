@@ -9,6 +9,7 @@ import { openAgentForm, closeAgentDetail } from './panel.js';
 import { loadTeam } from './team.js';
 import { loadIssues } from './issues.js';
 import { loadOrgChart } from './orgchart.js';
+import { loadDashboard } from './dashboard.js';
 
 export async function loadProjects() {
   const sel = document.getElementById('agents-project-select');
@@ -23,6 +24,7 @@ export async function loadProjects() {
 
 export function switchProject(orgId) {
   state.currentProject = orgId;
+  loadDashboard();
   loadTeam();
   loadIssues();
   loadOrgChart();

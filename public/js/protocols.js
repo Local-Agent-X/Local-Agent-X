@@ -63,59 +63,35 @@ function protocolRenderTree() {
       if (ao !== bo) return ao - bo;
       return a.name.localeCompare(b.name);
     });
-    const open = searchQuery ? 'open' : '';
     return `
-      <div class="proto-cat ${open}" data-cat="${esc(cat)}">
-        <div class="proto-cat-header" onclick="protocolToggleCategory('${esc(cat)}')">
-          <span class="proto-cat-arrow">▶</span>
-          <span>${esc(cat)}</span>
-          <span class="proto-cat-count">${items.length}</span>
-        </div>
-        <div class="proto-cat-items">
-          ${items.map(p => {
-            // Only user-created protocols get a tag. builtin (typed packs)
-            // and bundled (SKILL.md vendored in protocols/bundled/) both
-            // ship with the app — same tier from the user's perspective —
-            // so neither shows a label. imported (user SKILL.md imports)
-            // and custom (user typed records) collapse to a single "custom"
-            // tag since the distinction is internal plumbing.
-            const stype = p.source?.type;
-            const sourceTag = (stype === 'imported' || stype === 'custom')
-              ? `<span class="proto-item-source">custom</span>`
-              : '';
-            const active = selectedName === p.name ? 'active' : '';
-            return `<div class="proto-item ${active}" onclick="protocolSelect('${esc(p.name)}')" title="${esc(p.description || '')}">
-              <span>${esc(p.name)}</span>${sourceTag}
-            </div>`;
-          }).join('')}
-        </div>
+      <div class="drill-section-head"><span>${esc(cat)}</span><span class="drill-section-count">${items.length}</span></div>
+      <div class="drill-grid">
+        ${items.map(p => {
+          // Only user-created protocols get a tag. builtin (typed packs)
+          // and bundled (SKILL.md vendored in protocols/bundled/) both
+          // ship with the app — same tier from the user's perspective —
+          // so neither shows a label. imported and custom collapse to a
+          // single "custom" tag since the distinction is internal plumbing.
+          const stype = p.source?.type;
+          const sourceTag = (stype === 'imported' || stype === 'custom')
+            ? `<span class="proto-item-source" style="margin-left:auto">custom</span>`
+            : '';
+          const desc = (p.description || '').slice(0, 110);
+          return `<div class="drill-card" onclick="protocolSelect('${esc(p.name)}')" title="${esc(p.description || '')}">
+            <div class="drill-card-title">${esc(p.name)}${sourceTag}</div>
+            ${desc ? `<div class="drill-card-sub" style="font-family:inherit;line-height:1.35">${esc(desc)}${p.description && p.description.length > 110 ? '…' : ''}</div>` : ''}
+          </div>`;
+        }).join('')}
       </div>`;
   }).join('');
-
-  // Keep the selected category open
-  if (selectedName) {
-    const item = filtered.find(p => p.name === selectedName);
-    if (item) {
-      const cat = item.category || 'General';
-      const node = tree.querySelector(`[data-cat="${cssEscape(cat)}"]`);
-      node?.classList.add('open');
-    }
-  }
-}
-
-function protocolToggleCategory(cat) {
-  const node = document.querySelector(`#protocol-tree [data-cat="${cssEscape(cat)}"]`);
-  if (node) node.classList.toggle('open');
 }
 
 async function protocolSelect(name) {
   selectedName = name;
   editing = false;
   editDraft = null;
-  protocolRenderTree();
-  document.getElementById('protocol-empty').style.display = 'none';
+  showProtocolsDetail();
   const view = document.getElementById('protocol-view');
-  view.style.display = 'block';
   view.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:.8rem">Loading…</div>';
   try {
     const data = await apiFetch(`/api/protocols/${encodeURIComponent(name)}`).then(r => r.json());
@@ -126,9 +102,23 @@ async function protocolSelect(name) {
   }
 }
 
+function showProtocolsDetail() {
+  document.getElementById('protocols-list-view')?.classList.add('hidden');
+  document.getElementById('protocol-detail-wrap')?.classList.add('active');
+}
+
+function backToProtocolsList() {
+  selectedName = null;
+  selectedRecord = null;
+  editing = false;
+  editDraft = null;
+  document.getElementById('protocol-detail-wrap')?.classList.remove('active');
+  document.getElementById('protocols-list-view')?.classList.remove('hidden');
+}
+
 function protocolRenderDetail() {
   const view = document.getElementById('protocol-view');
-  if (!selectedRecord) { view.style.display = 'none'; document.getElementById('protocol-empty').style.display = 'flex'; return; }
+  if (!selectedRecord) { backToProtocolsList(); return; }
   const p = selectedRecord;
   const stype = p.source?.type || 'builtin';
   const readOnly = stype === 'builtin' || stype === 'bundled';
@@ -248,7 +238,7 @@ function protocolCancelEdit() {
   editing = false;
   editDraft = null;
   if (selectedRecord) protocolRenderDetail();
-  else { document.getElementById('protocol-empty').style.display = 'flex'; document.getElementById('protocol-view').style.display = 'none'; }
+  else backToProtocolsList();
 }
 
 function protocolStartNew() {
@@ -256,8 +246,7 @@ function protocolStartNew() {
   selectedName = null;
   editing = true;
   editDraft = { name: '', description: '', body: '', triggers: '', category: '', tags: '' };
-  document.getElementById('protocol-empty').style.display = 'none';
-  document.getElementById('protocol-view').style.display = 'block';
+  showProtocolsDetail();
   protocolRenderEdit();
 }
 
@@ -329,11 +318,8 @@ async function protocolDelete() {
       alert(err.error || `Delete failed (${res.status})`);
       return;
     }
-    selectedRecord = null;
-    selectedName = null;
+    backToProtocolsList();
     await protocolLoad();
-    document.getElementById('protocol-empty').style.display = 'flex';
-    document.getElementById('protocol-view').style.display = 'none';
   } catch (e) {
     alert(`Delete failed: ${e.message || e}`);
   }

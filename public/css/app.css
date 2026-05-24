@@ -837,6 +837,7 @@ button:focus-visible,.chat-item:focus-visible,.util-btn:focus-visible{outline:2p
 .ide-topbar-select:hover{border-color:var(--accent)}
 .ide-topbar-select:focus{outline:none;border-color:var(--accent)}
 .ide-revert-wrap{position:relative;display:inline-block}
+.ide-topbar-btn[disabled]{opacity:.4;cursor:not-allowed;pointer-events:none}
 .ide-revert-menu{position:absolute;top:calc(100% + 4px);right:0;min-width:260px;max-width:340px;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:50;padding:4px;font-family:var(--mono)}
 .ide-revert-empty{padding:10px 12px;color:var(--muted);font-size:.7rem}
 .ide-revert-item{padding:8px 10px;border-radius:4px;cursor:pointer;transition:background .12s}

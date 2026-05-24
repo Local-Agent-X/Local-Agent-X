@@ -4,6 +4,7 @@ import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
 import { validateSyntax } from "./syntax-validate.js";
+import { checkAppWrite, writeGuardRejectionMessage } from "../app-tools/write-guard.js";
 
 // ── Edit-failure recovery helpers ────────────────────────────────────────
 // When edit() fails, the model previously saw a bare string like
@@ -208,6 +209,8 @@ export const writeTool: ToolDefinition = {
         return err(`BLOCKED: Content appears to contain a secret/credential. Secrets must never be written to workspace files. Use the secrets vault instead.`);
       }
     }
+    const guard = checkAppWrite(filePath, content);
+    if (!guard.allow) return err(writeGuardRejectionMessage(guard.reason ?? "policy violation"));
     try {
       mkdirSync(dirname(filePath), { recursive: true });
       // Preserve the file's existing line-ending style on overwrite. The
@@ -325,6 +328,8 @@ export const editTool: ToolDefinition = {
       }
 
       const updated = content.replace(effOld, effNew);
+      const guard = checkAppWrite(filePath, updated);
+      if (!guard.allow) return err(writeGuardRejectionMessage(guard.reason ?? "policy violation"));
       writeFileSync(filePath, updated, "utf-8");
       const syntaxIssue = validateSyntax(filePath, updated);
       return ok(

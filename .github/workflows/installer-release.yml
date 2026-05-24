@@ -82,8 +82,9 @@ jobs:
   build-macos:
     name: macOS installer (.dmg, signed + notarized)
     runs-on: macos-latest
+    # KEYCHAIN_PATH is exported via $GITHUB_ENV in the first step below —
+    # job-level `env` can't reference ${{ runner.* }}, only step-level can.
     env:
-      KEYCHAIN_PATH: ${{ runner.temp }}/build.keychain-db
       DMG_PATH: installer/dist-mac/Install Local Agent X Mac Installer.dmg
       APP_PATH: installer/dist-mac/Install Local Agent X Mac Installer.app
     steps:
@@ -105,6 +106,8 @@ jobs:
           MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
           MACOS_KEYCHAIN_PWD: ${{ secrets.MACOS_KEYCHAIN_PWD }}
         run: |
+          KEYCHAIN_PATH="${RUNNER_TEMP}/build.keychain-db"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
           CERT_PATH="${RUNNER_TEMP}/cert.p12"
           echo "$MACOS_CERTIFICATE" | base64 --decode > "$CERT_PATH"
           security create-keychain -p "$MACOS_KEYCHAIN_PWD" "$KEYCHAIN_PATH"

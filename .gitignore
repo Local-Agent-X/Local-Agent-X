@@ -63,3 +63,9 @@ __pycache__/
 installer/bin/
 installer/obj/
 installer/dist-mac/
+
+# Native speech helper build outputs (swiftc + csc produce these from
+# sources in desktop/native/{mac,win}/ via `npm run build:native`). CI
+# rebuilds them as part of `npm run dist`; sources are committed, binaries
+# are not — Mach-Os and PE binaries don't belong in git.
+desktop/native/dist-bin/

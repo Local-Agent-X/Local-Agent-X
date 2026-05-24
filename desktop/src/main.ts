@@ -30,6 +30,7 @@ import { setupIPC } from "./ipc";
 import { createTray, destroyTray } from "./tray";
 import { registerAutostart } from "./autostart";
 import { runReconcile } from "./reconcile";
+import { shutdownNativeSpeech } from "./native-speech";
 
 // Push status text into the splash. Splash markup lives in splash.ts —
 // targets .status (main line) and #h (sub-hint). Failures are swallowed:
@@ -297,6 +298,7 @@ app.on("before-quit", () => {
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  shutdownNativeSpeech();
   stopServer();
   destroyTray();
 });

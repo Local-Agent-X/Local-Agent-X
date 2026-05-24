@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Embedded into the helper binary via -sectcreate at link time.
+       macOS aborts (SIGABRT) the moment a binary calls a privacy-gated API
+       without these usage strings, even when launched as a child of an
+       app that does have them. Each TCC-protected API needs its own key:
+       NSMicrophoneUsageDescription for AVAudioEngine input,
+       NSSpeechRecognitionUsageDescription for SFSpeechRecognizer. -->
+  <!-- TCC will only honor the Info.plist if macOS recognizes this as a
+       valid .app bundle. CFBundleExecutable + CFBundlePackageType are
+       what register the bundle with LaunchServices; without them macOS
+       falls back to treating the inner binary as a naked Mach-O and
+       ignores our usage descriptions. -->
+  <key>CFBundleIdentifier</key>
+  <string>com.openagentx.desktop.speech-helper</string>
+  <key>CFBundleName</key>
+  <string>lax-speech-mac</string>
+  <key>CFBundleExecutable</key>
+  <string>lax-speech-mac</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <!-- LSUIElement keeps the helper out of the Dock + cmd-tab when launched
+       directly. We're a background tool, not a user-visible app. -->
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Local Agent X uses the microphone to transcribe what you say into the chat.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Local Agent X uses on-device speech recognition to turn your voice into text.</string>
+</dict>
+</plist>

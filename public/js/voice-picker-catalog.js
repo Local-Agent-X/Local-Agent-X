@@ -47,9 +47,16 @@ window.LAX_VOICE_CATALOG = {
   TIERS: [
     {
       id: 'browser',
-      label: 'Browser',
-      tagline: 'Free · works on any device · no install',
-      detail: 'Browser SpeechSynthesis + Web Speech API. Robotic but instant — recommended if you just want voice to work right now.',
+      label: 'Browser / Native',
+      tagline: 'Free · works everywhere · no install',
+      // In a real browser this tier uses Web Speech API (Google cloud ASR
+      // via the browser's baked-in key). In the desktop app the renderer
+      // routes STT to the OS native recognizer instead — SFSpeechRecognizer
+      // on macOS, System.Speech on Windows — because Electron-Chromium
+      // ships without the Google key. TTS stays on window.speechSynthesis
+      // either way (OS voices). Same UX in both contexts, different STT
+      // engine under the hood.
+      detail: 'In a browser: Google Web Speech + browser SpeechSynthesis. In the desktop app: OS native speech recognition (SFSpeechRecognizer on macOS, System.Speech on Windows) + system voices. Robotic but instant — recommended if you just want voice to work right now.',
       settings: { voiceMode: 'browser', voiceEngine: 'tier4', voiceTier4Provider: 'browser', voiceSttProvider: 'browser' },
       voicePool: ['browser'],
       prerequisites: [{ kind: 'browser-tts', label: 'Browser SpeechSynthesis' }],

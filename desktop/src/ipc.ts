@@ -5,7 +5,7 @@
 // settings checkbox) and OS-level chrome (titleBarOverlay, app
 // background, autostart registration).
 
-import { app, BrowserWindow, globalShortcut, ipcMain, shell } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, shell, systemPreferences } from "electron";
 import { join } from "path";
 import { getProjectRoot, reloadSAXConfig, getSAXConfig } from "./config";
 import { type DesktopSettings, getSetting, setSetting } from "./settings";
@@ -22,6 +22,11 @@ import {
 import { showNotification, registerHotkey } from "./hotkey-notifications";
 import { getMainWindow, toggleWindow } from "./window";
 import { registerAutostart, unregisterAutostart } from "./autostart";
+import {
+  isNativeSpeechAvailable,
+  startNativeSpeech,
+  stopNativeSpeech,
+} from "./native-speech";
 
 export function setupIPC(): void {
   ipcMain.handle("get-server-status", async () => {
@@ -84,6 +89,31 @@ export function setupIPC(): void {
   ipcMain.handle("show-notification", (_e, title: string, body: string) => {
     showNotification(title, body);
   });
+
+  // macOS: getUserMedia in a hardened-runtime Electron app does NOT trigger
+  // the TCC prompt on its own — the renderer's Chromium media stack expects
+  // the host app to have called systemPreferences.askForMediaAccess first.
+  // Without this call the mic just silently fails with NotAllowedError and
+  // no system dialog ever appears. Renderer invokes this right before
+  // getUserMedia. No-op outside darwin (other OSes prompt via getUserMedia
+  // directly).
+  ipcMain.handle("request-media-access", async (_e, mediaType: "microphone" | "camera") => {
+    if (process.platform !== "darwin") return true;
+    try {
+      return await systemPreferences.askForMediaAccess(mediaType);
+    } catch (err) {
+      console.warn(`[desktop] askForMediaAccess(${mediaType}) failed:`, err);
+      return false;
+    }
+  });
+
+  // Native OS speech recognition bridge — replaces the broken
+  // webkitSpeechRecognition (Browser tier) on macOS + Windows. Renderer
+  // invokes start/stop; transcript events stream back on the
+  // "native-speech-event" channel (see native-speech.ts).
+  ipcMain.handle("native-speech-available", () => isNativeSpeechAvailable());
+  ipcMain.handle("native-speech-start", () => { startNativeSpeech(); });
+  ipcMain.handle("native-speech-stop", () => { stopNativeSpeech(); });
 
   ipcMain.handle("toggle-window", () => toggleWindow());
   ipcMain.handle("toggle-devtools", () => {

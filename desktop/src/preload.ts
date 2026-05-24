@@ -18,6 +18,28 @@ contextBridge.exposeInMainWorld("desktop", {
   showNotification: (title: string, body: string) =>
     ipcRenderer.invoke("show-notification", title, body),
 
+  // macOS-only TCC prompt trigger. Renderer awaits this before getUserMedia
+  // so the OS dialog actually appears the first time mic/camera is used —
+  // without it, hardened-runtime Electron silently denies. Returns true on
+  // non-macOS (TCC isn't a thing).
+  requestMediaAccess: (mediaType: "microphone" | "camera"): Promise<boolean> =>
+    ipcRenderer.invoke("request-media-access", mediaType),
+
+  // Native OS speech recognition — drop-in replacement for the broken
+  // webkitSpeechRecognition path in Electron. The renderer treats this
+  // like an event stream:
+  //   nativeSpeech.available()              → boolean (helper binary present)
+  //   nativeSpeech.start() / .stop()        → control the recognition session
+  //   nativeSpeech.onEvent(cb)              → "result" + "error" + "auth" events
+  nativeSpeech: {
+    available: (): Promise<boolean> => ipcRenderer.invoke("native-speech-available"),
+    start: (): Promise<void> => ipcRenderer.invoke("native-speech-start"),
+    stop: (): Promise<void> => ipcRenderer.invoke("native-speech-stop"),
+    onEvent: (cb: (event: unknown) => void) => {
+      ipcRenderer.on("native-speech-event", (_e, ev) => cb(ev));
+    },
+  },
+
   // Window
   toggleWindow: () => ipcRenderer.invoke("toggle-window"),
   toggleDevTools: () => ipcRenderer.invoke("toggle-devtools"),

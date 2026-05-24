@@ -56,6 +56,75 @@ function setSplashHint(text: string): void {
   ).catch(() => {});
 }
 
+// Fatal boot error → swap the spinner for action buttons (Repair / Open
+// Logs / Quit). One universal recovery affordance that covers every
+// stuck-splash class (reconcile failure, server start failure, pidfile
+// conflict, internal errors) without enumerating individual causes —
+// the Repair button wipes the state files boot depends on and relaunches,
+// which fixes the entire class. Buttons live in splash.ts; their clicks
+// navigate to lax://repair etc., intercepted below in createWindow's
+// will-navigate handler installation.
+function showSplashRecovery(status: string, hint: string): void {
+  setSplashStatus(status);
+  setSplashHint(hint);
+  const w = getMainWindow();
+  if (!w || w.isDestroyed()) return;
+  w.webContents.executeJavaScript("window.__laxShowRecovery&&window.__laxShowRecovery()").catch(() => {});
+}
+
+// Intercept lax://<action> clicks from the splash recovery buttons.
+// data: URLs can't reach IPC (no preload), so the buttons just navigate
+// to a custom scheme and we catch will-navigate. preventDefault keeps
+// the renderer from chrome-erroring; we then route to the action.
+function setupSplashRecoveryIntercept(): void {
+  const w = getMainWindow();
+  if (!w || w.isDestroyed()) return;
+  w.webContents.on("will-navigate", (e, url) => {
+    if (!url.startsWith("lax://")) return;
+    e.preventDefault();
+    const action = url.slice("lax://".length).replace(/\/+$/, "");
+    handleRecoveryAction(action);
+  });
+}
+
+function handleRecoveryAction(action: string): void {
+  if (action === "quit") {
+    setQuitting(true);
+    app.quit();
+    return;
+  }
+  if (action === "logs") {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const logPath = join(require("os").homedir(), ".lax", "logs", "desktop-stdio.log");
+    if (fs.existsSync(logPath)) {
+      require("electron").shell.openPath(logPath);
+    } else {
+      require("electron").shell.openPath(join(require("os").homedir(), ".lax"));
+    }
+    return;
+  }
+  if (action === "repair") {
+    // Wipe the state files that boot depends on. Each one corresponds to
+    // a stuck-splash failure class:
+    //   reconcile-state.json → reconcile thinks code is mismatched and
+    //                          retries npm install/build on every boot
+    //   server.pid           → "Server already running" (orphan claim)
+    // We deliberately do NOT wipe config.json (port + authToken) — losing
+    // those forces a fresh handshake that breaks any pinned/bookmarked
+    // URLs the user has, and the user almost certainly doesn't want that.
+    const fs = require("node:fs") as typeof import("node:fs");
+    const lax = join(require("os").homedir(), ".lax");
+    for (const file of ["reconcile-state.json", "server.pid"]) {
+      try { fs.unlinkSync(join(lax, file)); } catch { /* not present — fine */ }
+    }
+    console.log(`[desktop] repair: wiped reconcile-state.json + server.pid, relaunching`);
+    app.relaunch();
+    app.exit(0);
+    return;
+  }
+  console.warn(`[desktop] unknown recovery action: ${action}`);
+}
+
 // ── Chromium flags (must be set before app.ready) ─────────
 // Only mark our own server origin as secure — not every loopback port.
 // The port is in ~/.lax/config.json, but Chromium flags must be set
@@ -143,6 +212,7 @@ app.on("ready", async () => {
   // also kicks off the /api/health poll-and-navigate which waits patiently
   // until startServer() (below) makes the server respond.
   createWindow();
+  setupSplashRecoveryIntercept();
 
   // PROJECT_ROOT is null when packaged + ~/.lax/config.json's projectRoot
   // field is unset or points somewhere without src/index.ts. Self-heal:
@@ -160,8 +230,7 @@ app.on("ready", async () => {
     const resolved = await resolveAndPersistProjectRoot();
     if (!resolved) {
       console.error(`[desktop] self-heal aborted — user opted out or no valid folder`);
-      setSplashStatus("Configuration error");
-      setSplashHint(PROJECT_ROOT_ERROR ?? "PROJECT_ROOT not resolved");
+      showSplashRecovery("Configuration error", PROJECT_ROOT_ERROR ?? "PROJECT_ROOT not resolved");
       return;
     }
     console.log(`[desktop] self-heal resolved projectRoot=${resolved}`);
@@ -173,8 +242,7 @@ app.on("ready", async () => {
   if (!liveProjectRoot) {
     // Defensive — resolveAndPersistProjectRoot returned a value but the
     // setter didn't take effect. Shouldn't happen; failsafe to splash.
-    setSplashStatus("Internal error");
-    setSplashHint("PROJECT_ROOT setter did not propagate. Restart the app.");
+    showSplashRecovery("Internal error", "PROJECT_ROOT setter did not propagate. Click Repair to clear state and relaunch.");
     return;
   }
 
@@ -215,8 +283,7 @@ app.on("ready", async () => {
       setSplashHint("Install Node.js + npm to enable auto-update on launch.");
       // Fall through to normal boot.
     } else {
-      setSplashStatus("Update failed — see logs and relaunch");
-      setSplashHint(msg.slice(0, 200));
+      showSplashRecovery("Update failed", msg.slice(0, 200));
       return; // Don't start the server with mismatched code.
     }
   }
@@ -239,21 +306,21 @@ app.on("ready", async () => {
       },
       onStartupFailure: ({ reason }) => {
         // src/index.ts missing or PROJECT_ROOT null at spawn time. The
-        // splash is currently showing — paint the error there so the
-        // user has something actionable instead of a frozen progress UI.
-        setSplashStatus("Server failed to start");
-        setSplashHint(reason);
+        // splash is currently showing — surface recovery so the user
+        // can click Repair instead of staring at a frozen progress UI.
+        showSplashRecovery("Server failed to start", reason);
       },
       onAlreadyRunning: ({ competingPid, pidfilePath }) => {
         // src/lifecycle.ts exited 75: another LAX server still owns
         // ~/.lax/server.pid. Auto-restart is intentionally suppressed
         // for this exit code (server-process.ts:exit handler) — the
-        // refusal would just repeat. Tell the user how to recover.
+        // refusal would just repeat. Repair button wipes server.pid +
+        // relaunches, which fixes this without the user needing to know
+        // about pidfiles.
         const hint = competingPid
-          ? `Another LAX server is running (PID ${competingPid}). Quit it (kill ${competingPid}) or delete ${pidfilePath}, then relaunch.`
-          : `Another LAX server claims ${pidfilePath}. Delete the file or kill the listed PID, then relaunch.`;
-        setSplashStatus("Server already running");
-        setSplashHint(hint);
+          ? `Another LAX server is running (PID ${competingPid}). Repair will clear the pidfile and relaunch.`
+          : `Another LAX server claims ${pidfilePath}. Repair will clear it and relaunch.`;
+        showSplashRecovery("Server already running", hint);
       },
     });
   }

@@ -88,8 +88,10 @@ function handleChatWsMessage(e) {
       // queued → working → completed lifecycle.
       if (dispatchBgOpEvent(msg)) return;
 
-      // If we're viewing this chat AND it's the one streaming via SSE, skip WS events (avoid duplicates)
-      if (activeChat && activeChat.id === msg.sessionId && streamingSessionId === msg.sessionId) {
+      // If we're viewing this chat AND it's the one streaming via SSE, skip WS events (avoid duplicates).
+      // Per-session via _liveStreams so concurrent streams (main + IDE) each
+      // get their own dedup behavior; the singular pointer races otherwise.
+      if (activeChat && activeChat.id === msg.sessionId && _liveStreams.has(msg.sessionId)) {
         return;
       }
       // If we're NOT viewing this chat but it's active, update sidebar indicator

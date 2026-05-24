@@ -23,8 +23,9 @@ function autoScroll() {
   // The user message was scrolled to the top of the viewport at send time,
   // and the assistant placeholder reserves viewport-height of room below
   // (see .pin-bottom). The response fills that space; the reader controls
-  // scroll afterward.
-  if (streamingSessionId) return;
+  // scroll afterward. Per-session: another chat streaming (IDE while user
+  // views main) must not suppress main's auto-scroll.
+  if (typeof window.activeChat !== 'undefined' && window.activeChat && _liveStreams.has(window.activeChat.id)) return;
   if (userScrolledUp) return;
   const el = document.getElementById('messages');
   if (el) el.scrollTop = el.scrollHeight;
@@ -156,7 +157,7 @@ function renderMessages() {
   // save tick or page reload. Pull straight from _liveStreams (which
   // exposes closure-bound content + toolEvents getters from the stream
   // handler) and upsert so the iteration sees a real assistant slot.
-  if (streamingSessionId === activeChat.id) {
+  if (_liveStreams.has(activeChat.id)) {
     const live = _liveStreams.get(activeChat.id);
     const hasStreamingMsg = activeChat.messages.some(function(m) { return m && m.role === 'assistant' && m._streaming; });
     if (live && !hasStreamingMsg) {

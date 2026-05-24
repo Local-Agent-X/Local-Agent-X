@@ -319,12 +319,12 @@ function isChatActive(sessionId) {
   const el = document.getElementById('messages');
   if (!el) { document.addEventListener('DOMContentLoaded', initScrollPause); return; }
   el.addEventListener('wheel', () => {
-    if (!streamingSessionId) return;
+    if (!(activeChat && _liveStreams.has(activeChat.id))) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
     userScrolledUp = !atBottom;
   });
   el.addEventListener('scroll', () => {
-    if (!streamingSessionId) return;
+    if (!(activeChat && _liveStreams.has(activeChat.id))) return;
 
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
     if (atBottom) userScrolledUp = false;

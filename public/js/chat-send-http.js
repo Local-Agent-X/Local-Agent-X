@@ -218,9 +218,13 @@ function _finalizeHttpTurn(ctx, streamSessionId, streamChat) {
   flushTTS();
   // Browser notification for completed long tasks (feature 96)
   if (typeof window.notifyTaskComplete === 'function') window.notifyTaskComplete(streamChat.title);
-  // ALWAYS clear streaming state — must happen before anything that could throw
+  // ALWAYS clear streaming state — must happen before anything that could throw.
+  // Clear the singular only if it points at us (another session may rightfully
+  // own the pointer now); updateStreamUI unconditionally so the active-chat UI
+  // refreshes even when concurrent streams desynchronize the singular.
   if (streamingSessionId === streamSessionId) window.streamingSessionId = null;
   _liveStreams.delete(streamSessionId);
+  try { if (typeof window.updateStreamUI === 'function') window.updateStreamUI(); } catch {}
   // pin-bottom stays — see WS-handler note. Latest turn keeps reserved height.
   // Always hide stop button and re-enable send when stream ends
   try {

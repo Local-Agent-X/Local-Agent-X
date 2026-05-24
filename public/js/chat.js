@@ -1,13 +1,28 @@
 // ── Chat Panel ──
-let streamingSessionId = null; // Track WHICH session is streaming, not global boolean
+// `streamingSessionId` is a legacy singular pointer kept around for
+// updateStreamUI() trigger semantics (its setter in chat-uploads.js fires
+// the UI refresh). Per-session truth lives in `_liveStreams` below — any
+// "is X streaming" question must use `isStreaming(X)`, not equality with
+// the singular. The singular is undefined behavior when multiple sessions
+// stream concurrently (main chat + IDE chat).
+let streamingSessionId = null;
 let pendingUploads = [];
 let userScrolledUp = false;
 
 // Registry of in-flight streams. Keyed by sessionId. Lets renderMessages
 // pull the live content (instead of the savePartial-stale persisted copy)
 // when a chat is re-entered mid-stream, and lets the stream handler reattach
-// to a freshly-rendered bodyEl after a chat switch.
+// to a freshly-rendered bodyEl after a chat switch. ALSO the canonical
+// "is X streaming" source — see isStreaming() below.
 const _liveStreams = new Map(); // sessionId → { content, toolEvents }
+
+// Per-session streaming predicate. Use this instead of comparing to the
+// singular streamingSessionId, which only reflects the most-recent stream
+// start and races whenever main chat + IDE chat run concurrently.
+function isStreaming(sessionId) {
+  return !!sessionId && _liveStreams.has(sessionId);
+}
+window.isStreaming = isStreaming;
 
 // (extracted to /js/chat-ws.js or /js/chat-helpers.js)
 

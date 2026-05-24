@@ -157,8 +157,15 @@ function _sendMessageWs(ctx) {
 }
 
 function _finalizeWsTurn(ctx, streamSessionId, streamChat) {
+  // Clear the singular only if it points at us — another session may be
+  // mid-stream and rightfully own the pointer now. Either way, _liveStreams
+  // delete + explicit updateStreamUI ensures the UI for the active chat
+  // reflects current truth (the singular setter would have triggered
+  // updateStreamUI, but only on the matched branch — concurrent streams
+  // need the unconditional refresh).
   if (streamingSessionId === streamSessionId) window.streamingSessionId = null;
   _liveStreams.delete(streamSessionId);
+  try { if (typeof window.updateStreamUI === 'function') window.updateStreamUI(); } catch {}
   // Keep `pin-bottom` — it's the latest turn and should retain the
   // viewport-height reserved space below until the user sends again.
   try {

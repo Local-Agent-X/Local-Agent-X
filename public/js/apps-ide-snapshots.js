@@ -3,8 +3,23 @@
 // files on click. The snapshot is taken automatically at the end of any
 // turn that wrote/edited a file under workspace/apps/<appId>/.
 
-function ideRevertMenuEl() { return document.getElementById('ide-revert-menu'); }
-function ideRevertBtnEl()  { return document.getElementById('ide-revert-btn'); }
+function ideRevertMenuEl()  { return document.getElementById('ide-revert-menu'); }
+function ideRevertBtnEl()   { return document.getElementById('ide-revert-btn'); }
+function ideForwardBtnEl()  { return document.getElementById('ide-forward-btn'); }
+
+// Cursor: which turnIdx we're currently AT, or null = at the latest snapshot.
+// Set by ideRevertSnapshot; advanced by ideForwardSnapshot; cleared when a
+// new turn lands (snapshot list grows past where we were).
+let _ideSnapshotCursor = null;
+// Last seen items list — cached so Forward doesn't have to re-fetch.
+let _ideSnapshotItems = [];
+
+function _ideUpdateForwardBtn() {
+  const btn = ideForwardBtnEl();
+  if (!btn) return;
+  if (_ideSnapshotCursor === null) btn.setAttribute('disabled', '');
+  else btn.removeAttribute('disabled');
+}
 
 function _ideFmtAgo(ts) {
   const s = Math.max(1, Math.floor((Date.now() - ts) / 1000));
@@ -39,10 +54,20 @@ async function ideRefreshSnapshots() {
     const r = await fetch(`${API}/api/apps/${_ideAppId}/snapshots`, {
       headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
     });
-    if (!r.ok) { _ideRenderRevertMenu([]); return; }
+    if (!r.ok) { _ideSnapshotItems = []; _ideRenderRevertMenu([]); return; }
     const items = await r.json();
-    _ideRenderRevertMenu(Array.isArray(items) ? items : []);
+    _ideSnapshotItems = Array.isArray(items) ? items : [];
+    // If a new turn snapshot landed after we were holding a cursor, the
+    // user has implicitly accepted a new "latest" — clear the cursor so
+    // Forward goes back to disabled.
+    if (_ideSnapshotCursor !== null && _ideSnapshotItems.length > 0
+        && _ideSnapshotItems[0].turnIdx > _ideSnapshotCursor) {
+      _ideSnapshotCursor = null;
+    }
+    _ideUpdateForwardBtn();
+    _ideRenderRevertMenu(_ideSnapshotItems);
   } catch {
+    _ideSnapshotItems = [];
     _ideRenderRevertMenu([]);
   }
 }
@@ -63,8 +88,36 @@ function ideToggleRevertMenu() {
 }
 
 async function ideRevertSnapshot(turnIdx, ts) {
-  if (typeof _ideAppId === 'undefined' || !_ideAppId) return;
   if (!confirm(`Restore app files to turn ${turnIdx}? Files edited in later turns will be overwritten with the snapshot.`)) return;
+  const menu = ideRevertMenuEl();
+  if (menu) menu.style.display = 'none';
+  await _ideDoRestore(turnIdx, ts, /* newCursor */ turnIdx, /* statusVerb */ 'Reverted');
+}
+
+// Step forward toward the most recent snapshot. Disabled until a revert
+// sets a cursor. At the newest snapshot, cursor clears so the button
+// re-disables.
+async function ideForwardSnapshot() {
+  if (typeof _ideAppId === 'undefined' || !_ideAppId) return;
+  if (_ideSnapshotCursor === null) return;
+  // Make sure the cached list is fresh before deciding "next-newer".
+  await ideRefreshSnapshots();
+  if (_ideSnapshotItems.length === 0 || _ideSnapshotCursor === null) return;
+  // Items are newest-first. The "next-newer" turn is the one with the
+  // smallest turnIdx that's still > cursor.
+  let next = null;
+  for (const s of _ideSnapshotItems) {
+    if (s.turnIdx > _ideSnapshotCursor && (!next || s.turnIdx < next.turnIdx)) next = s;
+  }
+  if (!next) return;
+  // If we're stepping to the absolute newest, clear the cursor afterwards
+  // so the button disables — we're "back at HEAD".
+  const isLatest = next.turnIdx === _ideSnapshotItems[0].turnIdx;
+  await _ideDoRestore(next.turnIdx, next.ts, isLatest ? null : next.turnIdx, 'Forward to');
+}
+
+async function _ideDoRestore(turnIdx, ts, newCursor, statusVerb) {
+  if (typeof _ideAppId === 'undefined' || !_ideAppId) return;
   try {
     const r = await fetch(`${API}/api/apps/${_ideAppId}/revert`, {
       method: 'POST',
@@ -76,18 +129,19 @@ async function ideRevertSnapshot(turnIdx, ts) {
     });
     const out = await r.json().catch(() => ({}));
     if (!r.ok || out.ok === false) {
-      alert('Revert failed: ' + (out.error || (out.errors && out.errors.join('; ')) || 'unknown error'));
+      alert('Restore failed: ' + (out.error || (out.errors && out.errors.join('; ')) || 'unknown error'));
       return;
     }
-    const menu = ideRevertMenuEl();
-    if (menu) menu.style.display = 'none';
+    _ideSnapshotCursor = newCursor;
+    _ideUpdateForwardBtn();
     if (typeof ideRefreshPreview === 'function') ideRefreshPreview();
     if (typeof ideLoadFiles === 'function') ideLoadFiles();
     if (typeof ideSetStatus === 'function') {
-      ideSetStatus('done', `Reverted to turn ${turnIdx} (${(out.restored || []).length} file${(out.restored || []).length === 1 ? '' : 's'})`);
+      const n = (out.restored || []).length;
+      ideSetStatus('done', `${statusVerb} turn ${turnIdx} (${n} file${n === 1 ? '' : 's'})`);
     }
   } catch (e) {
-    alert('Revert failed: ' + (e && e.message ? e.message : 'network error'));
+    alert('Restore failed: ' + (e && e.message ? e.message : 'network error'));
   }
 }
 
@@ -104,3 +158,4 @@ document.addEventListener('click', (e) => {
 window.ideToggleRevertMenu = ideToggleRevertMenu;
 window.ideRefreshSnapshots = ideRefreshSnapshots;
 window.ideRevertSnapshot   = ideRevertSnapshot;
+window.ideForwardSnapshot  = ideForwardSnapshot;

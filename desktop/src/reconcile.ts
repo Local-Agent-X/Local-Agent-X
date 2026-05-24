@@ -22,6 +22,23 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "
 import { join, relative } from "path";
 import { homedir } from "os";
 
+// GUI-launched Mac apps (Finder/Launchpad/Spotlight) inherit a minimal
+// PATH that excludes Homebrew, nvm, and asdf. Without this augment, our
+// runStep() invocations of `npm` ENOENT — the splash hangs with
+// "Update failed — spawn npm ENOENT" and the user is stuck. Same set of
+// paths as server-process.ts uses when spawning `node`. Kept duplicated
+// here rather than extracted because a third spawning site doesn't exist
+// yet (the abstraction would have only two callers).
+function buildAugmentedPath(): string {
+  const augments = [
+    "/opt/homebrew/bin", "/opt/homebrew/sbin",
+    "/usr/local/bin", "/usr/local/sbin",
+    join(homedir(), ".nvm/versions/node/current/bin"),
+  ];
+  const existing = (process.env.PATH || "").split(":");
+  return [...augments, ...existing].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
+}
+
 const STATE_PATH = join(homedir(), ".lax", "reconcile-state.json");
 
 interface ReconcileState {
@@ -99,6 +116,7 @@ function runStep(cmd: string, args: string[], cwd: string): Promise<void> {
       cwd,
       shell: process.platform === "win32",
       stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, PATH: buildAugmentedPath() },
     });
     let stderrTail = "";
     proc.stdout?.on("data", (b: Buffer) => process.stdout.write(b));

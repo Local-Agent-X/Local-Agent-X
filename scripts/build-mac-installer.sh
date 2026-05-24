@@ -68,15 +68,39 @@ if [ -f "$BUNDLE_SRC/icon.icns" ]; then
     cp "$BUNDLE_SRC/icon.icns" "$APP_DIR/Contents/Resources/icon.icns"
 fi
 
-# Ad-hoc codesign — satisfies Gatekeeper's "must be signed to run" check
-# without establishing trust. Without it, modern macOS refuses to launch
-# the .app at all (not even with right-click → Open). With ad-hoc the user
-# still sees the "unidentified developer" prompt once, but they CAN
-# right-click → Open to bypass. Real Apple Developer ID signing is Phase 4.
+# Codesign. Two modes:
+#   1. APPLE_SIGN_IDENTITY set → real Developer ID signing with hardened
+#      runtime + secure timestamp + entitlements. Required for notarization;
+#      gives users one-click install with no Gatekeeper prompt.
+#   2. Unset → ad-hoc (-). Lets the .app launch locally for dev iteration
+#      but users get an "unidentified developer" warning.
+# CI sets APPLE_SIGN_IDENTITY from the MACOS_SIGN_IDENTITY secret after
+# importing the .p12 into a temp keychain.
 if command -v codesign >/dev/null 2>&1; then
-    echo "[mac-build] ad-hoc codesign…"
-    codesign --force --deep --sign - "$APP_DIR" || \
-        echo "[mac-build] codesign failed — .app will trigger Gatekeeper. Consider real signing." >&2
+    if [ -n "${APPLE_SIGN_IDENTITY:-}" ]; then
+        echo "[mac-build] Developer ID codesign: $APPLE_SIGN_IDENTITY"
+        ENT_ARG=()
+        if [ -f "$BUNDLE_SRC/entitlements.plist" ]; then
+            ENT_ARG=(--entitlements "$BUNDLE_SRC/entitlements.plist")
+        fi
+        # Sign the inner Mach-O first, then the bundle. Hardened runtime
+        # rejects signing an outer bundle whose inner binaries are unsigned
+        # under the same identity.
+        codesign --force --sign "$APPLE_SIGN_IDENTITY" \
+            --options=runtime --timestamp \
+            "${ENT_ARG[@]}" \
+            "$APP_DIR/Contents/MacOS/install"
+        codesign --force --sign "$APPLE_SIGN_IDENTITY" \
+            --options=runtime --timestamp \
+            "${ENT_ARG[@]}" \
+            "$APP_DIR"
+        echo "[mac-build] verifying signature…"
+        codesign --verify --strict --verbose=2 "$APP_DIR"
+    else
+        echo "[mac-build] ad-hoc codesign (no APPLE_SIGN_IDENTITY)…"
+        codesign --force --deep --sign - "$APP_DIR" || \
+            echo "[mac-build] codesign failed — .app will trigger Gatekeeper." >&2
+    fi
 fi
 
 echo "[mac-build] built: $APP_DIR"

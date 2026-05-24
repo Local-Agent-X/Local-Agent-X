@@ -203,13 +203,16 @@ Object.defineProperty(window, 'streamingSessionId', {
 
 // Single source of truth for "is a turn in flight for the chat I'm looking at"
 // → drives the toolbar STREAMING indicator + the send-btn inject-mode style.
-// Bound to streamingSessionId via the property setter above; also called on
-// chat switch from selectChat() in app.js. Lives outside any per-message
-// element so DOM rebuilds inside the assistant bubble can't hide it.
+// Trigger-bound to the streamingSessionId setter above (which fires on every
+// stream start/end), but the predicate is per-session via _liveStreams.has()
+// so concurrent streams (main chat + IDE chat) each get correct UI for their
+// own active view. The singular streamingSessionId is only a "something
+// changed, recheck" notification — never used to decide which session is
+// active.
 function updateStreamUI() {
   try {
     const active = (typeof window !== 'undefined' && window.activeChat) ? window.activeChat : null;
-    const isStreamingHere = !!(active && streamingSessionId && streamingSessionId === active.id);
+    const isStreamingHere = !!(active && typeof window.isStreaming === 'function' && window.isStreaming(active.id));
     const ind = document.getElementById('stream-indicator');
     if (ind) ind.style.display = isStreamingHere ? 'inline-flex' : 'none';
     const sendBtn = document.getElementById('send-btn');

@@ -193,8 +193,10 @@ function selectChat(id) {
   try { if (typeof window.updateStatusBar === 'function') window.updateStatusBar(); } catch {}
   navigate('chat');
   if (window.renderMessages) renderMessages();
-  // Update send/stop button state for THIS chat
-  const isThisChatStreaming = window.streamingSessionId === id;
+  // Update send/stop button state for THIS chat. Per-session via isStreaming()
+  // so switching to a chat that has a stream running (while another stream is
+  // also active in a different session) correctly shows its Stop button.
+  const isThisChatStreaming = !!(typeof window.isStreaming === 'function' && window.isStreaming(id));
   const stopBtn = document.getElementById('stop-btn');
   const sendBtn = document.getElementById('send-btn');
   if (stopBtn) stopBtn.style.display = isThisChatStreaming ? 'flex' : 'none';

@@ -15,10 +15,10 @@ voice-models/
 .DS_Store
 Thumbs.db
 
-# Claude Code local config
-.claude/
-!.claude/skills/
-!.claude/skills/**
+# Claude Code local config — ignore local state, keep shared skills
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/worktrees/
 
 # Workspace — personal files, agent-built apps, generated content
 # These sync via the brain/memory repo, not the code repo

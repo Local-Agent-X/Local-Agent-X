@@ -302,8 +302,15 @@ export async function driveTurn(
   // op while the worker is still planning to spin another turn.
   if (terminalReason === "done") {
     const middlewareNudged = middlewareDirective?.kind === "nudge";
+    // Only chat_turn ops drain injects into their next turn (see
+    // line 76 above and inject-drain.ts:5). A freeform / delegated op
+    // sharing a session with pending chat injects must NOT extend itself
+    // waiting for them — the injects belong to the chat_turn worker.
+    // Without this gate, "non-chat_turn ops do NOT drain the queue" was
+    // accidentally upgraded to "non-chat_turn ops hang forever whenever a
+    // chat inject is queued on the same session."
     const sessionId = getSessionForOp(op.id);
-    const injectsPending = sessionId ? hasInjects(sessionId) : false;
+    const injectsPending = op.type === "chat_turn" && sessionId ? hasInjects(sessionId) : false;
     if (middlewareNudged || failureNudged || injectsPending) {
       terminalReason = null;
     }

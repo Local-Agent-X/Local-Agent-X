@@ -888,7 +888,9 @@
           <div id="ide-chat-messages"></div>
           <div id="ide-chat-input-area">
             <textarea id="ide-chat-input" placeholder="Describe changes..." rows="2"
-              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendIdeChatMessage()}"></textarea>
+              onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();if(typeof dictateMode!=='undefined'&&dictateMode){stopDictate()}else{sendIdeChatMessage()}}"></textarea>
+            <button id="ide-dictate-btn" onclick="toggleDictate('ide-chat-input')" title="Dictate (speech to text only — no agent reply)" aria-label="Dictate">&#127908;</button>
+            <button id="ide-chat-stop" onclick="stopIdeChat()" title="Stop agent" aria-label="Stop agent" style="display:none;background:var(--danger);border-color:var(--danger);color:#fff">&#9632;</button>
             <button id="ide-chat-send" onclick="sendIdeChatMessage()" aria-label="Send">&#9650;</button>
           </div>
         </div>

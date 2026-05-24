@@ -97,7 +97,7 @@ export function turnTouchedAppFiles(toolCalls: ToolCall[]): boolean {
 // the original pipe, csp/resource/blank from the Tier-1 patch.
 const CSP_LINE =
   "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-  "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'";
+  "img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self'";
 
 function tagForKind(kind: string): string {
   switch (kind) {

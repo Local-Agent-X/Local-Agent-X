@@ -72,7 +72,7 @@ Task: ${isUpdate ? "UPDATE existing app" : "CREATE new app"}
 
 Environment:
 - Files in this folder are served at: ${appUrl}
-- The preview iframe enforces this CSP: script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'.
+- The preview iframe enforces this CSP: script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self'.
 - External CDNs (Tailwind, jsdelivr, unpkg, Google Fonts) are blocked at the network layer. Inline or self-host.
 - After write/edit, the preview reloads automatically; runtime errors are forwarded back to you in the next turn.
 ${context}${assetManifest}

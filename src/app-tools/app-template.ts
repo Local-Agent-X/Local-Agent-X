@@ -57,7 +57,7 @@ function renderStarterHtml(appName: string): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self'" />
 <title>${escapeHtml(title)}</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
@@ -177,7 +177,7 @@ This app runs in a sandboxed iframe under this Content Security Policy:
 
     script-src 'self' 'unsafe-inline'
     style-src  'self' 'unsafe-inline'
-    img-src    'self' data: blob:
+    img-src    'self' data: https: blob:
     font-src   'self' data:
     connect-src 'self'
 
@@ -185,7 +185,7 @@ What that means:
 - CDN scripts (Tailwind CDN, jsdelivr, unpkg, cdnjs) are blocked.
 - Google Fonts and any @import from external URLs are blocked.
 - Inline <style> and inline <script> work. External \`<script src>\` only if the file lives in this directory.
-- Images may be data:, blob:, or local paths. Use system font stack.
+- Images may be data:, blob:, https: URLs, or local paths. Fonts must be system stack.
 
 Files in this directory are served at /apps/<id>/. Paths in index.html resolve relative to it.
 

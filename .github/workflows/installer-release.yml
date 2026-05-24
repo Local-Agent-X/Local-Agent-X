@@ -176,22 +176,71 @@ jobs:
           codesign --verify --verbose=2 "$DMG_PATH"
 
       - name: Notarize .dmg with notarytool
-        # --wait blocks until Apple finishes (~1-5 min). If notarization
-        # fails, fetch the log with the submission ID from the failure
-        # output to debug entitlements / hardened-runtime issues.
+        # Resilient notarization: submit returns immediately with a
+        # submission ID, then we poll `notarytool info` in a shell loop
+        # with sleep 30s between polls. A single network hiccup during
+        # one poll cycle is a 30s pause and a retry — not a 50-min loss.
+        # (The previous `notarytool submit --wait` form held one long-
+        # lived HTTP poll inside notarytool itself, and a single
+        # NSURLError -1009 from the runner killed the whole step after
+        # ~50 min of waiting.)
+        id: notarize
         env:
           MACOS_API_KEY_P8: ${{ secrets.MACOS_API_KEY_P8 }}
           MACOS_API_KEY_ID: ${{ secrets.MACOS_API_KEY_ID }}
           MACOS_API_ISSUER_ID: ${{ secrets.MACOS_API_ISSUER_ID }}
         run: |
+          set -u
           KEY_PATH="${RUNNER_TEMP}/AuthKey.p8"
           echo "$MACOS_API_KEY_P8" | base64 --decode > "$KEY_PATH"
-          xcrun notarytool submit "$DMG_PATH" \
+          trap 'rm -f "$KEY_PATH"' EXIT
+
+          # 1) Submit. Returns immediately with the submission ID.
+          SUBMIT_JSON=$(xcrun notarytool submit "$DMG_PATH" \
             --key "$KEY_PATH" \
             --key-id "$MACOS_API_KEY_ID" \
             --issuer "$MACOS_API_ISSUER_ID" \
-            --wait
-          rm -f "$KEY_PATH"
+            --output-format json) || { echo "::error::notarytool submit failed"; exit 1; }
+          echo "$SUBMIT_JSON"
+          SUBMISSION_ID=$(echo "$SUBMIT_JSON" | jq -r '.id')
+          echo "submission-id=$SUBMISSION_ID" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Notary submission::$SUBMISSION_ID — recoverable via 'xcrun notarytool info' if this step dies"
+
+          # 2) Poll every 30s, tolerant of transient network errors.
+          #    Apple's official guidance is "usually <1h"; we cap at 90 min.
+          DEADLINE=$(( $(date -u +%s) + 5400 ))
+          LAST_STATUS=""
+          while [ "$(date -u +%s)" -lt "$DEADLINE" ]; do
+            INFO_JSON=$(xcrun notarytool info "$SUBMISSION_ID" \
+              --key "$KEY_PATH" \
+              --key-id "$MACOS_API_KEY_ID" \
+              --issuer "$MACOS_API_ISSUER_ID" \
+              --output-format json 2>&1) || INFO_JSON=""
+            STATUS=$(echo "$INFO_JSON" | jq -r '.status // empty' 2>/dev/null || echo "")
+            if [ "$STATUS" != "$LAST_STATUS" ]; then
+              echo "[$(date -u +%H:%M:%S)] notarize status: ${STATUS:-<network err, retrying>}"
+              LAST_STATUS="$STATUS"
+            fi
+            case "$STATUS" in
+              Accepted)
+                echo "✅ Apple accepted submission $SUBMISSION_ID"
+                exit 0
+                ;;
+              Invalid|Rejected)
+                echo "::error::Apple rejected submission $SUBMISSION_ID with status=$STATUS"
+                echo "=== notarytool log ==="
+                xcrun notarytool log "$SUBMISSION_ID" \
+                  --key "$KEY_PATH" \
+                  --key-id "$MACOS_API_KEY_ID" \
+                  --issuer "$MACOS_API_ISSUER_ID" || true
+                exit 1
+                ;;
+            esac
+            sleep 30
+          done
+          echo "::error::Timed out after 90 min. Submission ID: $SUBMISSION_ID"
+          echo "Manual re-query: xcrun notarytool info $SUBMISSION_ID --key <p8> --key-id $MACOS_API_KEY_ID --issuer <issuer>"
+          exit 1
 
       - name: Staple notarization ticket to .dmg
         # Embeds the ticket in the .dmg so Gatekeeper can verify offline

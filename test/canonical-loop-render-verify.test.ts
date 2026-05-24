@@ -202,7 +202,7 @@ describe("formatRuntimeErrorsForAgent — renders the nudge body", () => {
   it("includes the CSP env spec and the 'Fix and re-run.' footer", () => {
     const text = formatRuntimeErrorsForAgent([mkErr("TypeError: x")]);
     expect(text).toContain("script-src 'self' 'unsafe-inline'");
-    expect(text).toContain("img-src 'self' data: blob:");
+    expect(text).toContain("img-src 'self' data: https: blob:");
     expect(text).toContain("External CDNs and Google Fonts are blocked");
     expect(text).toContain("Files resolve relative to index.html");
     expect(text).toContain("Fix and re-run.");

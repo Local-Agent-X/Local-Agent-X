@@ -83,9 +83,10 @@ function _ideHandleRuntimeError(d) {
 // works as the user-driven fallback).
 function _ideForwardRuntimeErrorToServer(kind, message, source, line, col, stack) {
   try {
-    if (typeof chatWs === 'undefined' || !chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+    const ws = window.chatWs;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     if (typeof _ideSessionId === 'undefined' || !_ideSessionId) return;
-    chatWs.send(JSON.stringify({
+    ws.send(JSON.stringify({
       type: 'ide_runtime_error',
       sessionId: _ideSessionId,
       kind, message, source, line, col,

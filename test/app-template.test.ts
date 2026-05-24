@@ -103,7 +103,7 @@ describe("seedAppTemplate", () => {
     // CSP block, each directive on its own line
     expect(md).toContain("script-src 'self' 'unsafe-inline'");
     expect(md).toContain("style-src  'self' 'unsafe-inline'");
-    expect(md).toContain("img-src    'self' data: blob:");
+    expect(md).toContain("img-src    'self' data: https: blob:");
     expect(md).toContain("font-src   'self' data:");
     expect(md).toContain("connect-src 'self'");
     // The "editing this folder" line

@@ -56,6 +56,11 @@ function _ideHandleRuntimeError(d) {
     prev.count += 1;
     prev.ts = now;
     _ideUpdateErrorBubbleCount(prev);
+    // Server-side render-verify gate also needs the repeat — without
+    // pushing again, a real second occurrence within the dedup window
+    // gets dropped from the gate's view of the world. The client buffer
+    // dedups visually; the server treats each push as a fresh signal.
+    _ideForwardRuntimeErrorToServer(kind, message, source, line, col, d.stack);
     return;
   }
   const entry = {
@@ -63,9 +68,31 @@ function _ideHandleRuntimeError(d) {
     stack: typeof d.stack === 'string' ? d.stack : '',
     source, line, col,
     count: 1, ts: now, el: null,
+    sentToServer: false,
   };
   _ideErrorBuffer.set(key, entry);
   entry.el = _ideRenderErrorBubble(entry);
+  _ideForwardRuntimeErrorToServer(kind, message, source, line, col, entry.stack);
+  entry.sentToServer = true;
+}
+
+// Push the error into the per-op server-side render-verify buffer so the
+// canonical loop's post-turn gate can see it and force the agent to fix
+// it. Best-effort — if the WS isn't open or the session isn't set we
+// silently skip (the visual bubble + next-message prefix path still
+// works as the user-driven fallback).
+function _ideForwardRuntimeErrorToServer(kind, message, source, line, col, stack) {
+  try {
+    if (typeof chatWs === 'undefined' || !chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+    if (typeof _ideSessionId === 'undefined' || !_ideSessionId) return;
+    chatWs.send(JSON.stringify({
+      type: 'ide_runtime_error',
+      sessionId: _ideSessionId,
+      kind, message, source, line, col,
+      stack: stack || '',
+      ts: Date.now(),
+    }));
+  } catch {}
 }
 
 function _ideNormalizeSource(src) {
@@ -113,6 +140,9 @@ function _ideUpdateErrorBubbleCount(entry) {
 function _ideErrorBubbleHTML(entry) {
   const label = entry.kind === 'rejection' ? 'Unhandled rejection'
               : entry.kind === 'console' ? 'console.error'
+              : entry.kind === 'csp' ? 'CSP violation'
+              : entry.kind === 'resource' ? 'Resource error'
+              : entry.kind === 'blank' ? 'Empty render'
               : 'Runtime error';
   const where = entry.source + (entry.line ? (':' + entry.line + (entry.col ? ':' + entry.col : '')) : '');
   const countHidden = entry.count > 1 ? '' : 'display:none';
@@ -169,7 +199,24 @@ function _ideErrorPipeSource() {
       try { window.parent.postMessage(payload, '*'); } catch {}
     }
 
+    // Capture phase so resource-load failures (<img>, <script>, <link>) fire
+    // here — they don't bubble up to window. Branch on event target type to
+    // separate the two paths: ScriptError vs resource 404.
     window.addEventListener('error', function(ev) {
+      var tgt = ev && ev.target;
+      if (tgt && tgt !== window && tgt instanceof HTMLElement) {
+        var url = tgt.src || tgt.href || '';
+        post({
+          type: 'lax-ide-runtime-error',
+          kind: 'resource',
+          message: 'Failed to load resource: ' + (url || tgt.tagName),
+          stack: '',
+          source: String(url || tgt.tagName),
+          line: 0, col: 0,
+          ts: Date.now()
+        });
+        return;
+      }
       var err = ev && ev.error;
       var msg = (ev && ev.message) || (err && err.message) || 'Unknown error';
       post({
@@ -182,7 +229,51 @@ function _ideErrorPipeSource() {
         col: ev && typeof ev.colno === 'number' ? ev.colno : 0,
         ts: Date.now()
       });
+    }, true);
+
+    // CSP refusals don't fire 'error' on window — securitypolicyviolation is
+    // the only signal. #1 silent-failure mode for weaker models reaching for
+    // a CDN script — they get a blank screen with no JS error.
+    document.addEventListener('securitypolicyviolation', function(ev) {
+      post({
+        type: 'lax-ide-runtime-error',
+        kind: 'csp',
+        message: 'Refused: ' + (ev.blockedURI || '') + ' (' + (ev.violatedDirective || '') + ')',
+        stack: '',
+        source: ev.documentURI || '',
+        line: ev.lineNumber || 0,
+        col: ev.columnNumber || 0,
+        ts: Date.now()
+      });
     });
+
+    // Blank-page heuristic — catches fully-broken layouts that don't throw
+    // (e.g. CSS-only catastrophe, body never populated). Runs once after
+    // DOMContentLoaded + a 500ms paint window so dynamic content has a chance
+    // to land before we declare the page empty.
+    function blankCheck() {
+      try {
+        var body = document.body;
+        if (!body) return;
+        var text = (body.innerText || '').trim();
+        var media = document.querySelectorAll('img,video,canvas,svg').length;
+        if (text.length < 50 && media === 0) {
+          post({
+            type: 'lax-ide-runtime-error',
+            kind: 'blank',
+            message: 'Preview rendered no visible content (body text < 50 chars, no media elements)',
+            stack: '',
+            source: '', line: 0, col: 0,
+            ts: Date.now()
+          });
+        }
+      } catch {}
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function() { setTimeout(blankCheck, 500); });
+    } else {
+      setTimeout(blankCheck, 500);
+    }
 
     window.addEventListener('unhandledrejection', function(ev) {
       var reason = ev && ev.reason;

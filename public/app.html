@@ -872,6 +872,10 @@
         <button class="ide-topbar-btn" onclick="toggleIdeChat()" title="Toggle chat panel">Chat</button>
         <button class="ide-topbar-btn" onclick="toggleIdeFiles()" title="Toggle file tree">Files</button>
         <button class="ide-topbar-btn" onclick="ideRefreshPreview()" title="Refresh preview">Refresh</button>
+        <div class="ide-revert-wrap">
+          <button id="ide-revert-btn" class="ide-topbar-btn" onclick="ideToggleRevertMenu()" title="Revert app files to an earlier turn">&#8634; Revert</button>
+          <div id="ide-revert-menu" class="ide-revert-menu" style="display:none"></div>
+        </div>
         <button class="ide-topbar-btn" onclick="openApp(window._ideAppUrl)" title="Open in new tab">Pop Out</button>
       </div>
       <!-- Status bar -->
@@ -1115,6 +1119,7 @@
 <script src="/js/apps-ide-errors.js?v=v1"></script>
 <script src="/js/apps-ide-agents.js"></script>
 <script src="/js/apps-ide-resize.js?v=v1"></script>
+<script src="/js/apps-ide-snapshots.js?v=v1"></script>
 <script type="module" src="/js/agents.js?v=v4"></script>
 <script src="/js/shortcuts.js"></script>
 <script src="/js/app-sidebar-toggle.js?v=v1"></script>

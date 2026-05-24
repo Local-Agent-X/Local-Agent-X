@@ -46,6 +46,8 @@ import { hasInjects } from "../agent-loop/inject-queue.js";
 import { getSessionForOp } from "../ops/session-bridge.js";
 import { dispatchTools } from "./turn-loop/dispatch-tools.js";
 import { createIdleWatchdog, readIdleTimeoutMs } from "./turn-loop/idle-watchdog.js";
+import { snapshotTouchedApps } from "./turn-loop/snapshot-apps.js";
+import { runRenderVerifyGate, turnTouchedAppFiles } from "./turn-loop/render-verify.js";
 
 export type { DriveTurnResult, DriveTurnOptions } from "./turn-loop/types.js";
 
@@ -307,6 +309,25 @@ export async function driveTurn(
     }
   }
 
+  // Render-verify gate (Tier 1.A). When the model says "done" on a turn
+  // that wrote/edited files under workspace/apps/<id>/, give the preview
+  // iframe a moment to report any uncaught errors / unhandled rejections
+  // / console.errors that landed after the reload. If errors arrive
+  // within the window, suppress the terminal, prepend a formatted error
+  // block as a synthetic user message on the next turn, and let the same
+  // model fix what it just broke. Capped at MAX_RETRIES so an unfixable
+  // bug can't infinite-loop.
+  if (terminalReason === "done" && turnTouchedAppFiles(toolCalls)) {
+    const gate = await runRenderVerifyGate(op.id);
+    if (gate.shouldRetry) {
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge);
+      terminalReason = null;
+    }
+    // gate.capReached → leave terminalReason="done" but the errors are
+    // already drained; the user sees the broken preview + the model's
+    // "done", same as today. Future: emit a one-line warning event.
+  }
+
   commitTurn({
     op,
     turnIdx,
@@ -319,6 +340,11 @@ export async function driveTurn(
     modelMs,
     toolDispatchMs,
   });
+
+  // Tier 1.C: per-turn snapshot of any app files this turn wrote/edited.
+  // Powers the IDE topbar's ↺ Revert dropdown so the user can undo a bad
+  // edit without asking the agent to fix what it just broke.
+  void snapshotTouchedApps(toolCalls, turnIdx);
 
   // For nudges, append the synthetic user message at turnIdx+1 so the next
   // driveTurn sees it via buildTurnInput's op_messages read. For aborts,

@@ -27,6 +27,7 @@ import {
   renderBuilderPrompt,
 } from "./render-builder-prompt.js";
 import { AgentTemplateStore, type AgentExecStrategy } from "../agent-store.js";
+import { seedAppTemplate } from "../app-tools/app-template.js";
 import { buildContextPack } from "../ops/context-pack-builder.js";
 import { newOpId } from "../ops/op-store.js";
 import { getRetryPolicy } from "../ops/heartbeat.js";
@@ -184,6 +185,12 @@ export const buildAppTool: ToolDefinition = {
     const isUpdate = collision.isUpdate;
 
     mkdirSync(appDir, { recursive: true });
+    // For NEW builds, drop a working index.html + AGENTS.md so the agent
+    // edits a starter (correct CSP, viewport meta, neutral palette) rather
+    // than generating from scratch — cuts weak-model regressions where a
+    // first turn tries to load Tailwind CDN and lands an unstyled page.
+    // Idempotent on update flows (existing files are preserved).
+    if (!isUpdate) seedAppTemplate(appDir, appName);
 
     const contextFiles = isUpdate ? readUpdateContextFiles(appDir) : [];
     const assetFiles = listAssetsDir(appDir);

@@ -358,6 +358,10 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     return true;
   }
 
+  // Per-turn snapshot routes — IDE topbar ↺ Revert dropdown.
+  const { handleAppSnapshotsRoutes } = await import("./apps-snapshots.js");
+  if (await handleAppSnapshotsRoutes(method, appPath, req, res, json, ctx.config.workspace)) return true;
+
   // Read a single file from a workspace app directory
   const fileMatch = appPath.match(/^\/api\/apps\/([a-zA-Z0-9_-]+)\/files\/(.+)$/);
   if (method === "GET" && fileMatch) {

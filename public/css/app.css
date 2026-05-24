@@ -836,6 +836,14 @@ button:focus-visible,.chat-item:focus-visible,.util-btn:focus-visible{outline:2p
 .ide-topbar-select{background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:.68rem;padding:3px 8px;cursor:pointer;max-width:160px}
 .ide-topbar-select:hover{border-color:var(--accent)}
 .ide-topbar-select:focus{outline:none;border-color:var(--accent)}
+.ide-revert-wrap{position:relative;display:inline-block}
+.ide-revert-menu{position:absolute;top:calc(100% + 4px);right:0;min-width:260px;max-width:340px;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:50;padding:4px;font-family:var(--mono)}
+.ide-revert-empty{padding:10px 12px;color:var(--muted);font-size:.7rem}
+.ide-revert-item{padding:8px 10px;border-radius:4px;cursor:pointer;transition:background .12s}
+.ide-revert-item:hover{background:rgba(64,240,240,.08)}
+.ide-revert-item-head{font-size:.72rem;color:var(--text);font-weight:600;display:flex;align-items:baseline;gap:8px}
+.ide-revert-ago{font-weight:400;color:var(--muted);font-size:.66rem}
+.ide-revert-item-files{margin-top:2px;font-size:.66rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 #ide-panels{display:flex;flex:1;overflow:hidden}
 .ide-panel{overflow:hidden;display:flex;flex-direction:column;border-right:1px solid var(--border)}

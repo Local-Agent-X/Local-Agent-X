@@ -14,6 +14,7 @@ import {
   broadcastToSession,
   getChatHandler,
 } from "./state.js";
+import { handleIdeRuntimeError } from "./ide-runtime-error.js";
 
 const logger = createLogger("chat-ws");
 
@@ -112,6 +113,11 @@ export function attachMessageRouter(ctx: RouterContext): void {
 
     if (type === "chat" && sessionId) {
       await handleChat(ctx, sessionId, msg);
+      return;
+    }
+
+    if (type === "ide_runtime_error" && sessionId) {
+      await handleIdeRuntimeError(sessionId, msg);
       return;
     }
 

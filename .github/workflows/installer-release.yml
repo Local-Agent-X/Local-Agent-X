@@ -131,6 +131,30 @@ jobs:
           chmod +x scripts/build-mac-installer.sh
           ./scripts/build-mac-installer.sh
 
+      - name: Reclaim disk space before .dmg packaging
+        # macos-latest runners ship with multiple Xcode versions + iOS
+        # simulators (~10GB combined). hdiutil's scratch volume needs
+        # ~2x the source size and was hitting "No space left on device"
+        # on the first attempt. We only need xcrun/notarytool from the
+        # active Xcode; everything else here is dead weight for this job.
+        run: |
+          echo "=== before cleanup ==="
+          df -h /
+          sudo rm -rf ~/Library/Developer/CoreSimulator || true
+          sudo rm -rf /Library/Developer/CoreSimulator || true
+          # Keep only the active Xcode that xcode-select points at.
+          ACTIVE_XCODE="$(xcode-select -p 2>/dev/null | sed -E 's|/Contents/Developer$||')"
+          for x in /Applications/Xcode_*.app; do
+            if [ "$x" != "$ACTIVE_XCODE" ]; then
+              echo "removing $x"
+              sudo rm -rf "$x" || true
+            fi
+          done
+          # .NET publish intermediates are now duplicated inside the .app.
+          rm -rf installer/bin installer/obj || true
+          echo "=== after cleanup ==="
+          df -h /
+
       - name: Package .app into .dmg
         # hdiutil ships with macOS; no extra deps. UDZO = compressed
         # read-only, the standard format for distribution DMGs.

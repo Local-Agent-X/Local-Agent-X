@@ -23,6 +23,14 @@
   <key>com.apple.security.device.camera</key>
   <true/>
 
+  <!-- SFSpeechRecognizer access (replaces the Browser-tier webkitSR path
+       under Electron's keyless Chromium). Pairs with the matching
+       NSSpeechRecognitionUsageDescription in the .app's Info.plist and
+       in the bundled LaxSpeech.app helper. Without it, the helper's
+       requestAuthorization call comes back .denied under hardened runtime. -->
+  <key>com.apple.developer.speech-recognition</key>
+  <true/>
+
   <!-- Network access: LAX speaks to provider APIs (outbound, "client")
        and binds the local server on 127.0.0.1 for the renderer to hit
        ("server"). -->

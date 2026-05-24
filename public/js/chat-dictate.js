@@ -31,15 +31,32 @@ async function toggleDictate(targetId) {
 }
 
 // Electron-Chromium strips the Google Speech API key, so webkitSpeechRecognition
-// fails with `network` error on every utterance. We detect that here and route
-// to the server-side Whisper one-shot path (POST /api/voice/dictate-once).
+// fails with `network` error on every utterance. The desktop app routes
+// around it in two ways, in preference order:
+//   1. Native OS recognizer (SFSpeechRecognizer on macOS, System.Speech on
+//      Windows) via window.desktop.nativeSpeech — zero install, no model
+//      download. Same bridge voice mode uses.
+//   2. Server-side Whisper via POST /api/voice/dictate-once — needs ffmpeg
+//      on PATH + the Whisper model downloaded. Used as fallback when the
+//      native helper isn't available (e.g. Linux).
 const isElectronRuntime = () =>
   typeof navigator !== "undefined" &&
   /electron/i.test(navigator.userAgent || "");
 
+// Mode flag the shared native-speech listener checks before forwarding
+// transcripts to the textarea. Mutually exclusive with voiceNativeActive
+// because dictateMode itself is mutually exclusive with voiceMode.
+let dictateNativeActive = false;
+
 async function startDictate() {
   if (dictateMode) return;
-  if (isElectronRuntime()) return startDictateElectron();
+  if (isElectronRuntime()) {
+    const nativeSpeech = window.desktop?.nativeSpeech;
+    if (nativeSpeech && await nativeSpeech.available()) {
+      return startDictateNative();
+    }
+    return startDictateElectron();
+  }
   // Browser SpeechRecognition is the right tool for one-shot dictation:
   // instant-on, native streaming partials, no model download, no WebSocket.
   // Quality is roughly base.en-equivalent (~3-5% WER). If unavailable
@@ -155,6 +172,96 @@ async function startDictate() {
   }
 }
 
+// Native OS recognizer path. Same bridge voice mode uses — see
+// desktop/src/native-speech.ts and the LaxSpeech.app / lax-speech-win.exe
+// helpers. No mic capture in the renderer (the helper owns the mic);
+// we just feed VoiceSphere a separate AudioContext stream for visuals
+// and let the helper stream transcripts back via IPC.
+let _dictateNativeListenerAttached = false;
+
+async function startDictateNative() {
+  try {
+    dictateMode = true;
+    dictateNativeActive = true;
+    dictateRestartGuard = false;
+
+    // Visual-only mic stream — keeps the sphere reactive while the helper
+    // does the actual recognition. macOS prompts for mic once (handled by
+    // window.desktop.requestMediaAccess), then both this getUserMedia and
+    // the helper's AVAudioEngine share the granted permission.
+    if (window.desktop?.requestMediaAccess) {
+      const granted = await window.desktop.requestMediaAccess('microphone');
+      if (!granted) {
+        dictateMode = false;
+        dictateNativeActive = false;
+        alert('Microphone access denied. Enable it in System Settings → Privacy & Security → Microphone for Local Agent X.');
+        return;
+      }
+    }
+    try {
+      dictateMicStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      });
+      dictateCtx = new AudioContext();
+      const source = dictateCtx.createMediaStreamSource(dictateMicStream);
+      if (window.VoiceSphere) {
+        const ana = dictateCtx.createAnalyser();
+        ana.fftSize = 2048;
+        source.connect(ana);
+        const savedMode = localStorage.getItem('lax_voice_view_mode') || 'split';
+        VoiceSphere.show(savedMode);
+        VoiceSphere.attachMicAnalyser(ana);
+        VoiceSphere.setState('listening');
+      }
+    } catch (sphereErr) {
+      console.warn('[dictate-native] sphere mic init failed (continuing):', sphereErr);
+    }
+
+    // Attach the IPC listener once per page lifetime. Multiple .on() calls
+    // would multicast every transcript — we only want one handler.
+    if (!_dictateNativeListenerAttached) {
+      _dictateNativeListenerAttached = true;
+      window.desktop.nativeSpeech.onEvent((ev) => {
+        if (!ev || typeof ev !== 'object') return;
+        // Both dictate and voice listeners are attached at module level;
+        // each gates on its own active flag so they don't cross-fire.
+        if (!dictateNativeActive) return;
+        if (ev.type === 'result') {
+          const text = (ev.text || '').trim();
+          if (!text) return;
+          if (ev.isFinal) {
+            appendDictatedText(text);
+            const preview = document.getElementById('dictate-preview');
+            if (preview) { preview.textContent = ''; preview.style.display = 'none'; }
+          } else {
+            const preview = document.getElementById('dictate-preview');
+            if (preview) { preview.textContent = text; preview.style.display = 'block'; }
+          }
+        } else if (ev.type === 'auth') {
+          alert(
+            'macOS denied Speech Recognition for Local Agent X.\n\n' +
+            'Open System Settings → Privacy & Security → Speech Recognition and enable Local Agent X, then click dictate again.',
+          );
+          stopDictate();
+        } else if (ev.type === 'error') {
+          console.warn('[dictate-native] helper error:', ev.code, ev.message);
+        }
+      });
+    }
+
+    await window.desktop.nativeSpeech.start();
+    updateDictateUI();
+    document.getElementById(dictateTargetId)?.focus();
+    console.log('[dictate] started (native OS recognizer)');
+  } catch (e) {
+    console.error('[dictate-native] start failed:', e);
+    dictateMode = false;
+    dictateNativeActive = false;
+    cleanupDictateResources();
+    alert('Could not start dictation: ' + (e?.message || e));
+  }
+}
+
 // Electron / server-Whisper path. No live partials — we record the full
 // utterance, ship the WebM/Opus blob to /api/voice/dictate-once on stop,
 // append the returned transcript. First call may take 30–60s on a fresh
@@ -164,6 +271,19 @@ async function startDictateElectron() {
   try {
     dictateMode = true;
     dictateRestartGuard = false;
+
+    // macOS Electron quirk: getUserMedia doesn't surface the TCC prompt on
+    // its own under hardened runtime. Ask via the main process first so the
+    // OS dialog actually appears the first time the user clicks dictate.
+    // No-op on non-macOS / non-Electron (preload bridge is absent there).
+    if (window.desktop?.requestMediaAccess) {
+      const granted = await window.desktop.requestMediaAccess('microphone');
+      if (!granted) {
+        dictateMode = false;
+        alert('Microphone access denied. Enable it in System Settings → Privacy & Security → Microphone for Local Agent X.');
+        return;
+      }
+    }
 
     dictateMicStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
@@ -273,6 +393,26 @@ function stopDictate() {
   if (!dictateMode) return;
   dictateMode = false;
   dictateRestartGuard = true; // block onend from auto-restarting
+
+  // Native OS recognizer path: stop the helper and free the sphere mic.
+  // No buffer flush to wait on — transcripts arrive event-by-event so
+  // anything already typed is already in the textarea.
+  if (dictateNativeActive) {
+    dictateNativeActive = false;
+    try { window.desktop?.nativeSpeech?.stop(); } catch {}
+    cleanupDictateResources();
+    const preview = document.getElementById('dictate-preview');
+    if (preview) { preview.textContent = ''; preview.style.display = 'none'; }
+    updateDictateUI();
+    const ta = document.getElementById(dictateTargetId);
+    if (ta) {
+      ta.focus();
+      const len = ta.value.length;
+      try { ta.setSelectionRange(len, len); } catch {}
+    }
+    console.log('[dictate] stopped (native)');
+    return;
+  }
 
   // Electron / MediaRecorder path: kick off the flush and let onstop own
   // the rest (cleanup, POST, focus). Bailing here keeps mic teardown out

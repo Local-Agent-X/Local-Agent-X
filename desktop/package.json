@@ -4,11 +4,14 @@
   "description": "Local Agent X — Desktop Companion",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc",
+    "build:native:mac": "bash native/mac/build.sh",
+    "build:native:win": "powershell -ExecutionPolicy Bypass -File native/win/build.ps1",
+    "build:native": "node -e \"const p=process.platform;require('child_process').execSync(p==='darwin'?'npm run build:native:mac':p==='win32'?'npm run build:native:win':'echo [native-speech] no helper for '+p,{stdio:'inherit'})\"",
+    "build": "tsc && npm run build:native",
     "start": "electron dist/main.js",
-    "dev": "tsc && electron dist/main.js",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "dev": "npm run build && electron dist/main.js",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder"
   },
   "devDependencies": {
     "electron": "^35.0.0",
@@ -37,7 +40,13 @@
     "win": {
       "target": "nsis",
       "icon": "../public/icon.ico",
-      "sign": false
+      "sign": false,
+      "extraResources": [
+        {
+          "from": "native/dist-bin/lax-speech-win.exe",
+          "to": "lax-speech-win.exe"
+        }
+      ]
     },
     "nsis": {
       "oneClick": true,
@@ -52,9 +61,17 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "notarize": true,
+      "extraResources": [
+        {
+          "from": "native/dist-bin/LaxSpeech.app",
+          "to": "LaxSpeech.app",
+          "filter": ["**/*"]
+        }
+      ],
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Local Agent X uses the microphone for voice mode and speech-to-text.",
         "NSCameraUsageDescription": "Local Agent X uses the camera for the camera_capture tool when you request it.",
+        "NSSpeechRecognitionUsageDescription": "Local Agent X uses on-device speech recognition to turn your voice into text.",
         "NSAppleEventsUsageDescription": "Local Agent X may control other apps when you ask it to.",
         "LSMinimumSystemVersion": "11.0"
       }

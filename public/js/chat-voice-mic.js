@@ -10,6 +10,14 @@
 // voiceSRRestartGuard, voiceBrowserTtsActive, _voiceBrowserTtsBuf) lives
 // in chat-voice.js. handleVoiceWsMessage lives in chat-voice-ws-handler.js.
 
+// Track whether the current voice session is running the Electron-only
+// native-speech bridge (SFSpeechRecognizer on macOS, System.Speech on
+// Windows) instead of webkitSpeechRecognition. Browser-tier voice in the
+// desktop app routes through here because Electron-Chromium ships without
+// Google's Speech API key. Wired below in startVoiceMode().
+let voiceNativeActive = false;
+let voiceNativeListenerAttached = false;
+
 async function startVoiceMode() {
   if (voiceMode) return;
   try {
@@ -83,6 +91,16 @@ async function startVoiceMode() {
     }
 
     // 4) Mic capture
+    // macOS Electron quirk: getUserMedia doesn't surface the TCC prompt on
+    // its own under hardened runtime. Ask via the main process first so the
+    // OS dialog actually appears the first time voice mode runs. No-op on
+    // non-macOS / non-Electron (preload bridge is absent there).
+    if (window.desktop?.requestMediaAccess) {
+      const granted = await window.desktop.requestMediaAccess('microphone');
+      if (!granted) {
+        throw new Error('Microphone access denied — enable it in System Settings → Privacy & Security → Microphone for Local Agent X.');
+      }
+    }
     voiceMicStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
     });
@@ -100,9 +118,51 @@ async function startVoiceMode() {
       source.connect(voiceMicNode);
       voiceMicNode.port.postMessage({ cmd: 'start' });
     } else {
-      // Browser tier — start SpeechRecognition. Same engine the dictate
-      // button uses, but here finals go to the server over the WS as
-      // transcript messages so the agent loop runs.
+      // Browser tier — STT runs client-side. In a real browser we use
+      // webkitSpeechRecognition (Google cloud ASR via the browser's
+      // baked-in API key). In Electron-Chromium that key is stripped, so
+      // the desktop app instead routes to the native OS recognizer
+      // (SFSpeechRecognizer on macOS via LaxSpeech.app, System.Speech on
+      // Windows via lax-speech-win.exe). Transcript shape is identical —
+      // both paths send {type:'transcript', text, isFinal} over the WS,
+      // so the server-side voice-session logic doesn't know or care
+      // which client-side recognizer produced the text.
+      const nativeSpeech = window.desktop?.nativeSpeech;
+      const useNativeSpeech = !!nativeSpeech && await nativeSpeech.available();
+      if (useNativeSpeech) {
+        voiceNativeActive = true;
+        if (!voiceNativeListenerAttached) {
+          voiceNativeListenerAttached = true;
+          nativeSpeech.onEvent((ev) => {
+            if (!ev || typeof ev !== 'object') return;
+            if (ev.type === 'result') {
+              // Mirror chat-voice-mic's existing PTT gate so push-to-talk
+              // still works with native recognition.
+              if (window.PushToTalk && window.PushToTalk.getState() === 'closed') return;
+              const text = (ev.text || '').trim();
+              if (!text) return;
+              console.log(`[voice-native] ${ev.isFinal ? 'FINAL' : 'interim'}: "${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"`);
+              if (voiceWS && voiceWS.readyState === WebSocket.OPEN) {
+                voiceWS.send(JSON.stringify({ type: 'transcript', text, isFinal: !!ev.isFinal }));
+              }
+            } else if (ev.type === 'auth') {
+              // macOS Speech Recognition denied / not determined. Surface
+              // a clear recovery path — there's no JS way to re-prompt
+              // once denied; user has to flip the toggle in Settings.
+              alert(
+                'macOS denied Speech Recognition for Local Agent X.\n\n' +
+                'Open System Settings → Privacy & Security → Speech Recognition and enable Local Agent X, then click the mic again.',
+              );
+              stopVoiceMode();
+            } else if (ev.type === 'error') {
+              console.warn('[voice-native] helper error:', ev.code, ev.message);
+            }
+          });
+        }
+        await nativeSpeech.start();
+        // Native path skips the entire SpeechRecognition setup below;
+        // the rest of the session (WS, sphere, push-to-talk) is shared.
+      } else {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) {
         alert('This browser does not support SpeechRecognition. Switch to a Chromium-based browser, or pick a different voice tier (Edge cloud, Kokoro local).');
@@ -197,6 +257,7 @@ async function startVoiceMode() {
       try { voiceSR.start(); } catch (e) {
         console.warn('[voice-sr] initial start failed:', e && e.message);
       }
+      } // end of useNativeSpeech else branch
     }
 
     // 5) Playback — only for tiers that receive PCM TTS frames over the WS.
@@ -281,6 +342,12 @@ function cleanupVoiceResources() {
   if (voiceSR) {
     try { voiceSR.onend = null; voiceSR.onresult = null; voiceSR.onerror = null; voiceSR.stop(); } catch {}
     voiceSR = null;
+  }
+  // Electron native-speech bridge — same role as voiceSR but the recognizer
+  // runs in the LaxSpeech.app helper process, not in the renderer.
+  if (voiceNativeActive) {
+    voiceNativeActive = false;
+    try { window.desktop?.nativeSpeech?.stop(); } catch {}
   }
   if (voiceBrowserTtsActive && 'speechSynthesis' in window) {
     try { window.speechSynthesis.cancel(); } catch {}

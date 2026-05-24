@@ -10,7 +10,8 @@
 import { app, globalShortcut } from "electron";
 import { join } from "path";
 
-import { loadSAXConfig, reloadSAXConfig, getSAXConfig, ICON_PATH, PROJECT_ROOT } from "./config";
+import { loadSAXConfig, reloadSAXConfig, getSAXConfig, ICON_PATH, PROJECT_ROOT, PROJECT_ROOT_ERROR, getProjectRoot } from "./config";
+import { resolveAndPersistProjectRoot } from "./project-root-resolver";
 import { getSetting } from "./settings";
 import { applyNativeTheme } from "./theme";
 import {
@@ -45,8 +46,12 @@ function setSplashHint(text: string): void {
   const w = getMainWindow();
   if (!w || w.isDestroyed()) return;
   const safe = JSON.stringify(text);
+  // Also clearInterval the splash's 1s ticker — otherwise its s===15 /
+  // s===45 branches overwrite our hint with the default "Warming up…" /
+  // "Still loading…" text a few seconds later. (splash.ts captures the
+  // handle on window.__laxSplashTimer for exactly this reason.)
   w.webContents.executeJavaScript(
-    `(()=>{const e=document.getElementById('h');if(e){e.textContent=${safe};e.classList.add('show');}})()`
+    `(()=>{const e=document.getElementById('h');if(e){e.textContent=${safe};e.classList.add('show');}if(window.__laxSplashTimer){clearInterval(window.__laxSplashTimer);window.__laxSplashTimer=null;}})()`
   ).catch(() => {});
 }
 
@@ -138,6 +143,40 @@ app.on("ready", async () => {
   // until startServer() (below) makes the server respond.
   createWindow();
 
+  // PROJECT_ROOT is null when packaged + ~/.lax/config.json's projectRoot
+  // field is unset or points somewhere without src/index.ts. Self-heal:
+  // (1) auto-discover common install paths (~/Projects/Local-Agent-X etc.)
+  // (2) if not found, show a dialog with "Browse folder…" / "Open download
+  //     page" / "Quit"
+  // (3) if user opts out, fall through to the splash error so they still
+  //     see what's wrong.
+  // After this block, the live config.getProjectRoot() returns the resolved
+  // path — startServer + reconcile use that getter, not the module-load
+  // const PROJECT_ROOT.
+  if (!PROJECT_ROOT) {
+    console.warn(`[desktop] ${PROJECT_ROOT_ERROR} — attempting self-heal`);
+    setSplashStatus("Looking for source code…");
+    const resolved = await resolveAndPersistProjectRoot();
+    if (!resolved) {
+      console.error(`[desktop] self-heal aborted — user opted out or no valid folder`);
+      setSplashStatus("Configuration error");
+      setSplashHint(PROJECT_ROOT_ERROR ?? "PROJECT_ROOT not resolved");
+      return;
+    }
+    console.log(`[desktop] self-heal resolved projectRoot=${resolved}`);
+    setSplashStatus("Starting…");
+  }
+  // Beyond this point getProjectRoot() returns a valid path. Reconcile
+  // uses it directly via the projectRoot arg below.
+  const liveProjectRoot = getProjectRoot();
+  if (!liveProjectRoot) {
+    // Defensive — resolveAndPersistProjectRoot returned a value but the
+    // setter didn't take effect. Shouldn't happen; failsafe to splash.
+    setSplashStatus("Internal error");
+    setSplashHint("PROJECT_ROOT setter did not propagate. Restart the app.");
+    return;
+  }
+
   // Reconcile npm + desktop build BEFORE starting the server. Closes the
   // "I pulled new code but the app silently runs old/broken bits" failure
   // class: if package-lock.json changed we run `npm install`; if
@@ -145,7 +184,7 @@ app.on("ready", async () => {
   // freshly-compiled one.
   try {
     const result = await runReconcile({
-      projectRoot: PROJECT_ROOT,
+      projectRoot: liveProjectRoot,
       onStatus: setSplashStatus,
     });
     if (result.needsRelaunch) {
@@ -180,6 +219,24 @@ app.on("ready", async () => {
         // stream just goes silent.
         const w = getMainWindow();
         if (w) try { w.webContents.send("server-crashed", { code, signal }); } catch {}
+      },
+      onStartupFailure: ({ reason }) => {
+        // src/index.ts missing or PROJECT_ROOT null at spawn time. The
+        // splash is currently showing — paint the error there so the
+        // user has something actionable instead of a frozen progress UI.
+        setSplashStatus("Server failed to start");
+        setSplashHint(reason);
+      },
+      onAlreadyRunning: ({ competingPid, pidfilePath }) => {
+        // src/lifecycle.ts exited 75: another LAX server still owns
+        // ~/.lax/server.pid. Auto-restart is intentionally suppressed
+        // for this exit code (server-process.ts:exit handler) — the
+        // refusal would just repeat. Tell the user how to recover.
+        const hint = competingPid
+          ? `Another LAX server is running (PID ${competingPid}). Quit it (kill ${competingPid}) or delete ${pidfilePath}, then relaunch.`
+          : `Another LAX server claims ${pidfilePath}. Delete the file or kill the listed PID, then relaunch.`;
+        setSplashStatus("Server already running");
+        setSplashHint(hint);
       },
     });
   }

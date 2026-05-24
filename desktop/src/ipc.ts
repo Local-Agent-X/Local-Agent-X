@@ -7,7 +7,7 @@
 
 import { app, BrowserWindow, globalShortcut, ipcMain, shell } from "electron";
 import { join } from "path";
-import { PROJECT_ROOT, reloadSAXConfig, getSAXConfig } from "./config";
+import { getProjectRoot, reloadSAXConfig, getSAXConfig } from "./config";
 import { type DesktopSettings, getSetting, setSetting } from "./settings";
 import { bgForTheme, overlayForTheme, applyNativeTheme } from "./theme";
 import {
@@ -94,7 +94,12 @@ export function setupIPC(): void {
     // Resolve against PROJECT_ROOT, not process.cwd() — the old `..` hack
     // happened to work on Windows when cwd was `<repo>/desktop`, but
     // breaks on a Finder-launched Mac .app (cwd is `/`).
-    const filePath = join(PROJECT_ROOT, relativePath);
+    const root = getProjectRoot();
+    if (!root) {
+      console.warn(`[desktop] open-file IPC ignored — PROJECT_ROOT unresolved`);
+      return Promise.resolve("PROJECT_ROOT unresolved");
+    }
+    const filePath = join(root, relativePath);
     console.log(`[desktop] Opening file: ${filePath}`);
     return shell.openPath(filePath);
   });

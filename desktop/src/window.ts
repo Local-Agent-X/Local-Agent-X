@@ -10,7 +10,7 @@
 
 import { BrowserWindow, Menu, MenuItem, shell } from "electron";
 import { join } from "path";
-import { ICON_PATH, PROJECT_ROOT, getSAXConfig } from "./config";
+import { ICON_PATH, getProjectRoot, getSAXConfig } from "./config";
 import { bgForTheme, overlayForTheme } from "./theme";
 import { getSetting, setSetting } from "./settings";
 import { buildSplashDataUrl } from "./splash";
@@ -197,10 +197,15 @@ export function createWindow(): void {
 // Finder/Launchpad-launched .app has cwd `/`; a Windows desktop-launch.bat
 // has cwd `<repo>/desktop`. Neither resolves the workspace/ path correctly.
 function openDocByPath(pathname: string): void {
+  const root = getProjectRoot();
+  if (!root) {
+    console.warn(`[desktop] openDocByPath(${pathname}) ignored — PROJECT_ROOT unresolved`);
+    return;
+  }
   const relativePath = pathname.startsWith("/files/")
     ? join("workspace", decodeURIComponent(pathname.slice(7)))
     : decodeURIComponent(pathname.slice(1));
-  const filePath = join(PROJECT_ROOT, relativePath);
+  const filePath = join(root, relativePath);
   shell.openPath(filePath).then((err) => {
     if (err) console.warn(`[desktop] Failed to open ${filePath}: ${err}`);
   });

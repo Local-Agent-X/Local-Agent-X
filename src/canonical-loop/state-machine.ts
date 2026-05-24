@@ -16,6 +16,7 @@ import { emit, clearEmittedErrorsForOp } from "./event-emitter.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
 import { clearMiddlewareStateForOp } from "./middlewares/state.js";
 import { clearEvidenceHistory } from "./middlewares/evidence-history.js";
+import { clearRenderVerifyStateForOp } from "./turn-loop/render-verify.js";
 import type { Op, OpStatus } from "../ops/types.js";
 import type { CanonicalEvent, CanonicalState } from "./types.js";
 
@@ -98,6 +99,7 @@ export function transitionOp(
     clearMiddlewareStateForOp(op.id);
     clearEvidenceHistory(op.id);
     clearEmittedErrorsForOp(op.id);
+    clearRenderVerifyStateForOp(op.id);
   }
   // Loop-side write — preserve control-API signal columns from disk so a
   // concurrent opPause/opCancel/etc. is not clobbered. `clearLeaseFromOp`

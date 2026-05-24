@@ -62,16 +62,26 @@ export function renderPerBuildContext(input: BuilderPromptInput): string {
         ? `\n\nNO LOCAL ASSETS YET. If the user mentioned a source URL or attached photos, the parent agent should have extracted them into assets/ before invoking you. Do NOT use placeholder.com or stock CDNs — instead, build a bold typography-driven hero with CSS gradients and ask in PROJECT.md for the photos to be added.\n`
         : "");
 
+  const starterLine = isUpdate
+    ? ""
+    : "- An index.html starter + AGENTS.md have been seeded — READ both, then EDIT index.html rather than rewriting it from scratch. Keep the inline-only CSP rule.\n";
+
   return `You are building a web app in the directory: ${appDir}
 App name: ${appName}
 Task: ${isUpdate ? "UPDATE existing app" : "CREATE new app"}
+
+Environment:
+- Files in this folder are served at: ${appUrl}
+- The preview iframe enforces this CSP: script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'.
+- External CDNs (Tailwind, jsdelivr, unpkg, Google Fonts) are blocked at the network layer. Inline or self-host.
+- After write/edit, the preview reloads automatically; runtime errors are forwarded back to you in the next turn.
 ${context}${assetManifest}
 Instructions: ${prompt}
 
 RULES:
 - Write ALL files to ${appDir}/ (use absolute paths)
 - The main entry point MUST be index.html
-- Create PROJECT.md with app description and status
+${starterLine}- Create PROJECT.md with app description and status
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
 - Make it look polished — use modern CSS, good colors, responsive design
 - The app will be served at ${appUrl}

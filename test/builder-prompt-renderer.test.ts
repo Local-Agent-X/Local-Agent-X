@@ -17,9 +17,9 @@ import {
   type BuilderPromptInput,
 } from "../src/tools/render-builder-prompt.js";
 
-// Reproduces the inline template literal from builder-tools.ts pre-extraction.
-// Keep this in sync only if the renderer changes intentionally — divergence
-// here means we've changed the prompt the subprocess receives.
+// Mirrors the renderer's inline template. Keep this in sync only if the
+// renderer changes intentionally — divergence here means we've changed the
+// prompt the subprocess receives.
 function legacyTemplate(input: BuilderPromptInput): string {
   const { appName, prompt, appDir, appUrl, isUpdate, contextFiles, assetFiles } = input;
   const isWebsite = looksLikeWebsiteRequest(prompt);
@@ -32,16 +32,25 @@ function legacyTemplate(input: BuilderPromptInput): string {
         ? `\n\nNO LOCAL ASSETS YET. If the user mentioned a source URL or attached photos, the parent agent should have extracted them into assets/ before invoking you. Do NOT use placeholder.com or stock CDNs — instead, build a bold typography-driven hero with CSS gradients and ask in PROJECT.md for the photos to be added.\n`
         : "");
   const websiteRules = isWebsite ? WEBSITE_RULES_FRAGMENT : "";
+  const starterLine = isUpdate
+    ? ""
+    : "- An index.html starter + AGENTS.md have been seeded — READ both, then EDIT index.html rather than rewriting it from scratch. Keep the inline-only CSP rule.\n";
   return `You are building a web app in the directory: ${appDir}
 App name: ${appName}
 Task: ${isUpdate ? "UPDATE existing app" : "CREATE new app"}
+
+Environment:
+- Files in this folder are served at: ${appUrl}
+- The preview iframe enforces this CSP: script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'.
+- External CDNs (Tailwind, jsdelivr, unpkg, Google Fonts) are blocked at the network layer. Inline or self-host.
+- After write/edit, the preview reloads automatically; runtime errors are forwarded back to you in the next turn.
 ${context}${assetManifest}
 Instructions: ${prompt}
 
 RULES:
 - Write ALL files to ${appDir}/ (use absolute paths)
 - The main entry point MUST be index.html
-- Create PROJECT.md with app description and status
+${starterLine}- Create PROJECT.md with app description and status
 - For single-page apps: put everything in index.html (inline CSS/JS is fine)
 - Make it look polished — use modern CSS, good colors, responsive design
 - The app will be served at ${appUrl}
@@ -179,6 +188,16 @@ describe("renderPerBuildContext — matches the per-build prefix of the legacy t
   it("website + zero assets renders the 'NO LOCAL ASSETS YET' fallback", () => {
     const out = renderPerBuildContext(SAMPLE_WEBSITE_NO_ASSETS);
     expect(out).toContain("NO LOCAL ASSETS YET");
+  });
+
+  it("includes the per-build Environment briefing block (CSP + auto-reload + appUrl)", () => {
+    const out = renderPerBuildContext(SAMPLE_CREATE);
+    expect(out).toContain("Environment:");
+    expect(out).toContain("Files in this folder are served at: " + SAMPLE_CREATE.appUrl);
+    expect(out).toContain("script-src 'self' 'unsafe-inline'");
+    expect(out).toContain("External CDNs (Tailwind, jsdelivr, unpkg, Google Fonts) are blocked");
+    expect(out).toContain("preview reloads automatically");
+    expect(out).toContain("runtime errors are forwarded back to you in the next turn");
   });
 });
 

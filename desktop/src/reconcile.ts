@@ -115,6 +115,12 @@ function runStep(cmd: string, args: string[], cwd: string): Promise<void> {
   });
 }
 
+// sha256 of an empty buffer — sha256SrcTree returns this when the walk
+// finds zero .ts files (typically: projectRoot points at a directory that
+// doesn't contain desktop/src). Hardcoded so the comparison is obvious at
+// the call site below.
+const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
 export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult> {
   const { projectRoot, onStatus } = opts;
   const ranSteps: string[] = [];
@@ -122,6 +128,18 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   const currentRootLock = sha256File(join(projectRoot, "package-lock.json"));
   const currentDesktopLock = sha256File(join(projectRoot, "desktop", "package-lock.json"));
   const currentDesktopSrc = sha256SrcTree(join(projectRoot, "desktop", "src"), projectRoot);
+
+  // Misconfigured projectRoot guard. If we found zero .ts files under
+  // desktop/src AND the root package-lock.json is missing, the path
+  // is almost certainly not a LAX repo — refuse to write a baseline of
+  // empty hashes that would make every subsequent launch silently skip
+  // its rebuild. Caller (main.ts) surfaces the error on the splash.
+  if (currentDesktopSrc === EMPTY_SHA256 && !currentRootLock) {
+    throw new Error(
+      `Reconcile aborted: projectRoot "${projectRoot}" has no desktop/src/*.ts files and no package-lock.json. ` +
+      `This is almost certainly the wrong projectRoot. Check ~/.lax/config.json.`,
+    );
+  }
 
   const stored = loadState();
 

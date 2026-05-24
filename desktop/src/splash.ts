@@ -29,7 +29,11 @@ html,body{margin:0;height:100%;background:${bg};color:${fg};font-family:"Segoe U
 <div class="hint" id="h"></div>
 </div></div><script>
 let s=0;const h=document.getElementById('h');
-setInterval(()=>{s++;
+// Capture the interval on window so main.ts can clearInterval() when
+// painting an explicit hint (config error, startup failure). Without
+// this the timer would tick on at s=15/s=45 and clobber the explicit
+// hint with the default "Warming up…" / "Still loading…" text.
+window.__laxSplashTimer=setInterval(()=>{s++;
 if(s===15){h.textContent='Warming up the agent runtime — usually 15-30 seconds.';h.classList.add('show');}
 else if(s===45){h.textContent='Still loading. Check ~/.lax/sax-server.log if this hangs.';}
 },1000);

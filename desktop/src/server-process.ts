@@ -12,7 +12,7 @@ import { ChildProcess, spawn, execSync } from "child_process";
 import { existsSync, readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { PROJECT_ROOT, getSAXConfig } from "./config";
+import { getProjectRoot, getSAXConfig } from "./config";
 import { isPidAlive, isOurServerProcess } from "./pid-probe";
 
 const PID_FILE = join(homedir(), ".lax", "server.pid");
@@ -28,12 +28,25 @@ export interface ServerEventHandlers {
    *  signal). Caller usually forwards to the renderer to clear the
    *  "typing" indicator + surface a banner. */
   onCrash?: (info: { code: number | null; signal: NodeJS.Signals | null }) => void;
+  /** Fired when startServer() refuses to spawn — e.g. PROJECT_ROOT is
+   *  unset, or src/index.ts is missing. Without this the failure used
+   *  to be a console.error to a /dev/null stdout and the splash hung
+   *  forever. Caller surfaces this on the splash so the user sees what
+   *  went wrong and how to fix it. */
+  onStartupFailure?: (info: { reason: string }) => void;
+  /** Fired when the server child exits with code 75 (EX_TEMPFAIL),
+   *  which src/lifecycle.ts uses to signal "another LAX server already
+   *  owns the pidfile — refuse to start". This is NOT a crash; the
+   *  default 3s-restart loop would hit the same refusal forever. The
+   *  splash should ask the user to kill the stale server. */
+  onAlreadyRunning?: (info: { competingPid?: number; pidfilePath: string }) => void;
 }
 
 let serverProcess: ChildProcess | null = null;
 let isQuitting = false;
 let isRestarting = false;
 let crashHandler: ServerEventHandlers["onCrash"] | undefined;
+let alreadyRunningHandler: ServerEventHandlers["onAlreadyRunning"] | undefined;
 
 export function setQuitting(v: boolean): void { isQuitting = v; }
 export function setRestarting(v: boolean): void { isRestarting = v; }
@@ -115,6 +128,20 @@ export async function waitForServer(maxWaitMs = 60000): Promise<boolean> {
 export function startServer(handlers?: ServerEventHandlers): void {
   if (serverProcess) return;
   if (handlers?.onCrash) crashHandler = handlers.onCrash;
+  if (handlers?.onAlreadyRunning) alreadyRunningHandler = handlers.onAlreadyRunning;
+
+  // Read PROJECT_ROOT live — project-root-resolver.ts can mutate it at
+  // app.ready via setProjectRoot() when auto-discovery or the user picker
+  // resolves a path. A `const PROJECT_ROOT` import would have snapshotted
+  // the module-load value and missed the post-resolver update.
+  const projectRoot = getProjectRoot();
+  if (!projectRoot) {
+    const reason =
+      "PROJECT_ROOT could not be resolved. Edit ~/.lax/config.json so projectRoot points at your Local-Agent-X repo, then relaunch.";
+    console.error(`[desktop] ${reason}`);
+    try { handlers?.onStartupFailure?.({ reason }); } catch {}
+    return;
+  }
 
   // Always run from src/index.ts via tsx. We deliberately do NOT prefer
   // a compiled dist/ even when present — that created a recurring "I
@@ -122,9 +149,12 @@ export function startServer(handlers?: ServerEventHandlers): void {
   // ~2s to cold start (negligible against the full boot) in exchange for
   // "what's on disk IS what runs" — structurally impossible for the two
   // to drift. `npm run build` still exists for packaging without source.
-  const srcIndex = join(PROJECT_ROOT, "src", "index.ts");
+  const srcIndex = join(projectRoot, "src", "index.ts");
   if (!existsSync(srcIndex)) {
-    console.error(`[desktop] src/index.ts not found at ${srcIndex} — refusing to start`);
+    const reason =
+      `src/index.ts not found at ${srcIndex}. Either projectRoot in ~/.lax/config.json points at the wrong place, or this repo is incomplete.`;
+    console.error(`[desktop] ${reason}`);
+    try { handlers?.onStartupFailure?.({ reason }); } catch {}
     return;
   }
   const nodeArgs = ["--max-old-space-size=4096", "--import=tsx", srcIndex];
@@ -143,7 +173,7 @@ export function startServer(handlers?: ServerEventHandlers): void {
 
   console.log(`[desktop] Starting LAX server (tsx, ${srcIndex})...`);
   serverProcess = spawn("node", nodeArgs, {
-    cwd: PROJECT_ROOT,
+    cwd: projectRoot,
     stdio: ["ignore", "pipe", "pipe"],
     // LAX_PARENT_PID lets the server self-terminate via heartbeat if we
     // die abnormally; server.pid handshake catches the cases that slip
@@ -186,13 +216,29 @@ export function startServer(handlers?: ServerEventHandlers): void {
   }
 
   serverProcess.on("exit", (code, signal) => {
-    // Crash classification:
+    // Exit classification:
     //   code === 0           : clean shutdown (rare except via tray Quit)
-    //   code !== 0           : server threw, hit OOM, or process.exit(1)
+    //   code === 75          : EX_TEMPFAIL from src/lifecycle.ts — another
+    //                          LAX server already owns the pidfile. NOT a
+    //                          crash; auto-restart would hit the same
+    //                          refusal forever. Surface to splash instead.
+    //   code !== 0 (other)   : server threw, hit OOM, or process.exit(1)
     //   signal === "SIGKILL" : OS killed it (often OOM via macOS jetsam)
     const wasUnclean = code !== 0 || signal != null;
     console.log(`[desktop] Server exited code=${code} signal=${signal}`);
     serverProcess = null;
+
+    if (code === 75 && !isQuitting && !isRestarting) {
+      const competing = readServerPidFile();
+      try {
+        alreadyRunningHandler?.({
+          competingPid: competing?.pid,
+          pidfilePath: PID_FILE,
+        });
+      } catch {}
+      return; // Do NOT auto-restart — same refusal will happen.
+    }
+
     if (wasUnclean && !isQuitting && !isRestarting && crashHandler) {
       try { crashHandler({ code, signal }); } catch { /* renderer may already be gone */ }
     }

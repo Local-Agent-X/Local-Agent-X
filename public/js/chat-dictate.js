@@ -21,10 +21,11 @@
 // entirely (~80MB Kokoro download); for v1 the model loads but never fires
 // because we don't auto-submit transcripts.
 
-async function toggleDictate() {
+async function toggleDictate(targetId) {
   if (dictateMode) { stopDictate(); }
   else {
     if (voiceMode) stopVoiceMode();   // mutex: only one mic mode at a time
+    dictateTargetId = (typeof targetId === 'string' && targetId) ? targetId : 'msg-input';
     await startDictate();
   }
 }
@@ -144,7 +145,7 @@ async function startDictate() {
     // (stops dictation) instead of triggering the dictate-btn click again.
     // Without this the user's Enter could hit whatever element had focus
     // when they clicked the button.
-    document.getElementById('msg-input')?.focus();
+    document.getElementById(dictateTargetId)?.focus();
     console.log('[dictate] started (browser SpeechRecognition)');
   } catch (e) {
     console.error('[dictate] start failed:', e);
@@ -201,7 +202,7 @@ async function startDictateElectron() {
       chunks.length = 0;
       cleanupDictateResources();
       updateDictateUI();
-      const ta = document.getElementById('msg-input');
+      const ta = document.getElementById(dictateTargetId);
       if (ta) {
         ta.focus();
         const len = ta.value.length;
@@ -217,7 +218,7 @@ async function startDictateElectron() {
     rec.start();
 
     updateDictateUI();
-    document.getElementById('msg-input')?.focus();
+    document.getElementById(dictateTargetId)?.focus();
     console.log('[dictate] started (Electron / server Whisper)');
   } catch (e) {
     console.error('[dictate] electron start failed:', e);
@@ -297,7 +298,7 @@ function stopDictate() {
   updateDictateUI();
   // Cursor back to the textarea + caret at end so the next Enter sends
   // the dictated message instead of falling through to nothing.
-  const ta = document.getElementById('msg-input');
+  const ta = document.getElementById(dictateTargetId);
   if (ta) {
     ta.focus();
     const len = ta.value.length;
@@ -324,14 +325,22 @@ function cleanupDictateResources() {
 }
 
 function updateDictateUI() {
-  const btn = document.getElementById('dictate-btn');
-  if (!btn) return;
-  if (dictateMode) {
-    btn.classList.add('dictating');
-    btn.title = 'Stop dictation (or press Enter)';
-  } else {
-    btn.classList.remove('dictating');
-    btn.title = 'Dictate (speech to text only — no agent reply)';
+  // Toggle whichever button kicked off this dictation. Both main chat and
+  // the IDE composer have their own dictate button; only one is active at
+  // a time (dictateMode + dictateTargetId enforce mutex). Always reset the
+  // off-target button so a previous dictating-state class doesn't linger.
+  const targetBtnId = dictateTargetId === 'ide-chat-input' ? 'ide-dictate-btn' : 'dictate-btn';
+  const ALL_BTNS = ['dictate-btn', 'ide-dictate-btn'];
+  for (const id of ALL_BTNS) {
+    const b = document.getElementById(id);
+    if (!b) continue;
+    if (id === targetBtnId && dictateMode) {
+      b.classList.add('dictating');
+      b.title = 'Stop dictation (or press Enter)';
+    } else {
+      b.classList.remove('dictating');
+      b.title = 'Dictate (speech to text only — no agent reply)';
+    }
   }
 }
 
@@ -340,7 +349,7 @@ function updateDictateUI() {
 // punctuation if missing. Whisper does intra-utterance punctuation well;
 // cross-utterance is best-effort. User edits before sending = safety net.
 function appendDictatedText(utterance) {
-  const ta = document.getElementById('msg-input');
+  const ta = document.getElementById(dictateTargetId);
   if (!ta || !utterance) return;
   let text = utterance.trim();
   if (!text) return;

@@ -78,6 +78,12 @@ let dictateMicStream = null;   // MediaStream for sphere analyser only
 let dictateCtx = null;         // AudioContext for sphere analyser
 let dictateRestartGuard = false; // prevent restart-loop on errors
 let dictateRecorder = null;    // MediaRecorder (Electron / server-Whisper path)
+// Target textarea for the current dictation session. Defaults to main chat;
+// the IDE composer flips it to 'ide-chat-input' via toggleDictate(id) so
+// the same pipeline (mic, SR, Whisper round-trip) routes transcripts to
+// whichever composer kicked it off. Single global because dictateMode is
+// itself mutually-exclusive — only one composer can dictate at a time.
+let dictateTargetId = 'msg-input';
 
 async function toggleMic() {
   if (voiceMode) { stopVoiceMode(); }

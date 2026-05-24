@@ -228,11 +228,32 @@ function ideStopTimer() {
 
 // ── Send & input ──
 function sendIdeChatMessage() {
-  if (_ideStreaming) return;
   const input = document.getElementById('ide-chat-input');
   if (!input) return;
   const text = input.value.trim();
   if (!text) return;
+
+  // Mid-stream inject: the agent's mid-turn already. Send the text into the
+  // running op's inject queue instead of starting a new turn. Server's
+  // interjectDrainMiddleware picks it up at the next iteration boundary so
+  // the agent sees the new instruction without abandoning current work.
+  // (Same path main chat uses; see chat-send.js inject branch.)
+  if (_ideStreaming) {
+    if (typeof chatWs !== 'undefined' && chatWs && chatWs.readyState === WebSocket.OPEN) {
+      const injectId = (window.crypto && window.crypto.randomUUID)
+        ? window.crypto.randomUUID()
+        : ('inj-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8));
+      chatWs.send(JSON.stringify({ type: 'inject', sessionId: _ideSessionId, message: text, injectId }));
+      input.value = '';
+      input.style.height = 'auto';
+      // Echo locally so the user sees the inject landed; no [queued] styling
+      // because the IDE doesn't render queue-state (main chat does — the IDE
+      // intentionally stays lighter).
+      ideAddMessage('user', text);
+    }
+    return;
+  }
+
   input.value = '';
   input.style.height = 'auto';
   ideAddMessage('user', text);
@@ -284,16 +305,62 @@ function ideSendToAgent(message) {
 function ideDisableInput() {
   const input = document.getElementById('ide-chat-input');
   const btn = document.getElementById('ide-chat-send');
-  if (input) { input.disabled = true; input.placeholder = 'Agent is working...'; }
-  if (btn) btn.disabled = true;
+  const stopBtn = document.getElementById('ide-chat-stop');
+  // Keep input + send-btn ENABLED during streaming: sendIdeChatMessage routes
+  // typed text to the inject queue when _ideStreaming. Locking the input
+  // prevented the user from steering mid-turn ("actually use blue", "skip the
+  // header"); main chat's composer made the same choice.
+  if (input) { input.placeholder = 'Working… type to inject into this turn'; }
+  if (stopBtn) stopBtn.style.display = 'flex';
 }
 
 function ideEnableInput() {
   const input = document.getElementById('ide-chat-input');
   const btn = document.getElementById('ide-chat-send');
+  const stopBtn = document.getElementById('ide-chat-stop');
   if (input) { input.disabled = false; input.placeholder = 'Describe changes...'; input.focus(); }
   if (btn) btn.disabled = false;
+  if (stopBtn) stopBtn.style.display = 'none';
 }
+
+// Send {type: 'stop', sessionId} — server's handleStop cancels the canonical
+// op + releases the turn lock. Same signal main chat's stopChat sends; do
+// NOT close-and-reconnect the WS (main chat does that as a sledgehammer
+// and it would kill any concurrent main-chat stream). HTTP fallback in case
+// the WS dropped.
+function stopIdeChat() {
+  if (!_ideSessionId) return;
+  if (typeof chatWs !== 'undefined' && chatWs && chatWs.readyState === WebSocket.OPEN) {
+    chatWs.send(JSON.stringify({ type: 'stop', sessionId: _ideSessionId }));
+  }
+  if (typeof apiFetch === 'function') {
+    apiFetch('/api/chats/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: _ideSessionId }),
+    }).catch(() => {});
+  }
+  // Mark the in-flight assistant message as stopped so the user sees the
+  // cancellation took effect before the server's `done`/`error` event arrives
+  // (which can lag a few seconds). Match main chat's [stopped by user] style.
+  const activeEl = document.getElementById('ide-assistant-active');
+  if (activeEl) {
+    const textEl = activeEl.querySelector('.ide-text') || activeEl;
+    if (!textEl.textContent.includes('[stopped')) {
+      const note = document.createElement('div');
+      note.style.cssText = 'color:var(--muted);font-size:.72rem;margin-top:8px;font-style:italic';
+      note.textContent = '[stopped by user]';
+      activeEl.appendChild(note);
+    }
+    activeEl.removeAttribute('id');
+  }
+  _ideStreaming = false;
+  _ideContent = '';
+  ideStopTimer();
+  ideSetStatus('ready', 'Stopped');
+  ideEnableInput();
+}
+window.stopIdeChat = stopIdeChat;
 
 // Wipe this app's stable session and reset the UI. Used by the Fresh
 // Chat button in the topbar — the session is per-app and accumulates

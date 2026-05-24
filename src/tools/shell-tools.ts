@@ -5,6 +5,7 @@ import { delimiter, join } from "node:path";
 import type { ServerEvent, ToolDefinition } from "../types.js";
 import { getSandboxMode, execInSandbox } from "../sandbox.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
+import { detectTargetShell, translateForShell } from "./shell-translate.js";
 
 // Prefer PowerShell 7+ (pwsh.exe) over the built-in PS 5.1 (powershell.exe)
 // when it's on PATH. PS 5.1 treats `&&`/`||` as parser errors; pwsh 7+
@@ -153,6 +154,13 @@ export const bashTool: ToolDefinition = {
     let cmd = command;
     if (process.platform === "win32") {
       cmd = cmd.replace(/\bmkdir\s+-p\s+/g, "New-Item -ItemType Directory -Force -Path ");
+    }
+    // Cross-platform translation: rewrite POSIX-isms (`&&`, `||`,
+    // `/dev/null`) when the resolved shell is PS 5.1 specifically.
+    // pwsh 7+ and bash handle them natively, so detectTargetShell returns
+    // a no-op target for those. Mac and Linux always no-op here.
+    if (process.platform === "win32") {
+      cmd = translateForShell(cmd, detectTargetShell(getWindowsShell()));
     }
 
     const sandboxMode = getSandboxMode();

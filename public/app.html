@@ -672,18 +672,18 @@
       <div style="flex:1"></div>
       <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="openSecretModal()">+ New Secret</button>
     </div>
-    <div class="split-pane">
-      <div class="split-pane-list">
-        <div id="secrets-list"></div>
+    <div class="drill-container">
+      <div id="secrets-list-view" class="drill-list-view">
+        <div id="secrets-list" class="drill-grid"></div>
       </div>
-      <div class="split-pane-detail">
-        <div id="secret-detail-empty" class="split-pane-empty">Select a secret on the left to view its metadata and usage.<br><br>Encrypted keys and tokens. Reference them as <code style="color:var(--accent)">{{NAME}}</code> in agent tools.</div>
-        <div id="secret-detail-view" style="display:none;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)">
-          <h2 id="detail-name" style="font-family:var(--mono);font-size:.9rem;color:var(--accent);margin-bottom:4px"></h2>
+      <div id="secret-detail-view" class="drill-detail-view">
+        <button class="drill-back" onclick="backToSecretsList()">&larr; All secrets</button>
+        <div style="padding:18px 20px;border:1px solid var(--border);border-radius:10px;background:var(--surface);max-width:680px">
+          <h2 id="detail-name" style="font-family:var(--mono);font-size:.95rem;color:var(--accent);margin-bottom:4px"></h2>
           <div id="detail-service" style="font-size:.75rem;color:var(--muted);margin-bottom:8px"></div>
-          <div id="detail-meta" style="font-size:.72rem;color:var(--muted);margin-bottom:12px"></div>
+          <div id="detail-meta" style="font-size:.72rem;color:var(--muted);margin-bottom:14px"></div>
           <div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Usage:</div>
-          <code id="detail-usage" style="display:block;font-family:var(--mono);font-size:.8rem;color:var(--accent);padding:8px;background:var(--bg);border-radius:6px;margin-bottom:12px"></code>
+          <code id="detail-usage" style="display:block;font-family:var(--mono);font-size:.8rem;color:var(--accent);padding:8px;background:var(--bg);border-radius:6px;margin-bottom:14px"></code>
           <div class="btn-row"><button class="action-btn primary" onclick="updateSecretValue()">Update Value</button><button class="action-btn danger" onclick="deleteSecretItem()">Delete</button></div>
         </div>
       </div>
@@ -717,13 +717,13 @@
       <div style="flex:1"></div>
       <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="openMissionModal()">+ New Mission</button>
     </div>
-    <div class="split-pane">
-      <div class="split-pane-list">
-        <div id="cron-list"></div>
+    <div class="drill-container">
+      <div id="missions-list-view" class="drill-list-view">
+        <div id="cron-list" class="drill-rows"></div>
       </div>
-      <div class="split-pane-detail">
-        <div id="cron-detail-empty" class="split-pane-empty">Select a mission on the left to see details, history, and reports.</div>
-        <div id="cron-detail-view" style="display:none;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)">
+      <div id="cron-detail-wrap" class="drill-detail-view">
+        <button class="drill-back" onclick="backToMissionsList()">&larr; All missions</button>
+        <div id="cron-detail-view" style="padding:18px 20px;border:1px solid var(--border);border-radius:10px;background:var(--surface);max-width:920px">
         <h2 id="cron-detail-name" style="font-family:var(--mono);font-size:.9rem;color:var(--accent);margin-bottom:8px"></h2>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;font-family:var(--mono);font-size:.75rem">
           <div><span style="color:var(--muted)">Schedule:</span> <span id="cron-detail-schedule"></span></div>
@@ -817,19 +817,18 @@
       <div style="flex:1"></div>
       <span class="page-subtitle" id="protocol-count"></span>
     </div>
-    <div class="page-body" id="protocol-shell">
-      <aside class="protocol-sidebar" id="protocol-sidebar">
-        <button id="protocol-new-btn" type="button" onclick="protocolStartNew()">+ New Protocol</button>
-        <input id="protocol-search" type="search" placeholder="Search protocols…" autocomplete="off" oninput="protocolFilter()"/>
-        <div id="protocol-tree"></div>
-      </aside>
-      <section class="protocol-detail" id="protocol-detail">
-        <div id="protocol-empty" class="protocol-empty">
-          <p>Pick a protocol from the sidebar, or hit <strong>+ New Protocol</strong> to write your own.</p>
-          <p style="font-size:.72rem;color:var(--muted);margin-top:8px">Imported SKILL.md files appear here too — edit them and the change persists as your override.</p>
+    <div class="drill-container">
+      <div id="protocols-list-view" class="drill-list-view">
+        <div class="drill-toolbar">
+          <input id="protocol-search" class="drill-search" type="search" placeholder="Search protocols…" autocomplete="off" oninput="protocolFilter()"/>
+          <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="protocolStartNew()">+ New Protocol</button>
         </div>
-        <div id="protocol-view" class="protocol-view" style="display:none"></div>
-      </section>
+        <div id="protocol-tree"></div>
+      </div>
+      <div id="protocol-detail-wrap" class="drill-detail-view">
+        <button class="drill-back" onclick="backToProtocolsList()">&larr; All protocols</button>
+        <div id="protocol-view" class="protocol-view"></div>
+      </div>
     </div>
   </div>
 
@@ -866,6 +865,10 @@
         <button id="ide-back-btn" onclick="exitIdeView()" title="Back to Apps">&#8592; Apps</button>
         <span id="ide-app-name"></span>
         <div style="flex:1"></div>
+        <select id="ide-provider-select" class="ide-topbar-select" onchange="onIdeProviderChange(this.value)" title="Provider"></select>
+        <select id="ide-model-select" class="ide-topbar-select" onchange="onIdeModelChange(this.value)" title="Model"></select>
+        <button class="ide-topbar-btn" onclick="ideFreshChat()" title="Wipe this app's chat history and start fresh">Fresh Chat</button>
+        <button class="ide-topbar-btn" onclick="ideTogglePicker()" title="Click an element in the preview to edit it">Select</button>
         <button class="ide-topbar-btn" onclick="toggleIdeChat()" title="Toggle chat panel">Chat</button>
         <button class="ide-topbar-btn" onclick="toggleIdeFiles()" title="Toggle file tree">Files</button>
         <button class="ide-topbar-btn" onclick="ideRefreshPreview()" title="Refresh preview">Refresh</button>
@@ -884,12 +887,15 @@
             <button id="ide-chat-send" onclick="sendIdeChatMessage()" aria-label="Send">&#9650;</button>
           </div>
         </div>
+        <div class="ide-resize-handle" data-resize-target="ide-chat-panel" data-resize-side="right"></div>
         <!-- Center: Preview -->
         <div id="ide-preview-panel" class="ide-panel">
           <iframe id="ide-preview-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
         </div>
-        <!-- Right: File tree -->
-        <div id="ide-files-panel" class="ide-panel">
+        <div class="ide-resize-handle" data-resize-target="ide-files-panel" data-resize-side="left"></div>
+        <!-- Right: File tree (collapsed by default — preview is the primary -->
+        <!-- workspace, file tree is a side-channel the user opens on demand) -->
+        <div id="ide-files-panel" class="ide-panel collapsed">
           <div id="ide-files-header">Files</div>
           <div id="ide-file-tree"></div>
           <div id="ide-file-viewer" style="display:none">
@@ -919,7 +925,8 @@
         <button class="action-btn primary" style="font-size:.65rem;padding:3px 10px" onclick="showNewProjectForm()">+ New Project</button>
         <div style="flex:1"></div>
         <div class="agents-tabs" style="border-bottom:none;padding:0">
-          <button class="agents-tab active" onclick="switchAgentsTab('team',this)">Team</button>
+          <button class="agents-tab active" onclick="switchAgentsTab('dashboard',this)">Dashboard</button>
+          <button class="agents-tab" onclick="switchAgentsTab('team',this)">Team</button>
           <button class="agents-tab" onclick="switchAgentsTab('orgchart',this)">Org Chart</button>
           <button class="agents-tab" onclick="switchAgentsTab('issues',this)">Issues</button>
           <button class="agents-tab" onclick="switchAgentsTab('templates',this)">Templates</button>
@@ -929,7 +936,28 @@
 
       <!-- Full-width content -->
       <div style="flex:1;overflow-y:auto;padding:20px">
-        <div id="agents-tab-team" class="agents-tab-content active">
+        <div id="agents-tab-dashboard" class="agents-tab-content active">
+          <div id="agents-dashboard-scope" style="font-size:.7rem;color:var(--muted);margin-bottom:14px;font-family:var(--mono)"></div>
+          <div class="dash-stats" id="agents-dash-stats"></div>
+          <div class="dash-section">
+            <div class="dash-section-head"><span>Running now</span><span class="dash-section-count" id="dash-running-count"></span></div>
+            <div id="dash-running"></div>
+          </div>
+          <div class="dash-section">
+            <div class="dash-section-head"><span>Recent activity</span><a class="dash-section-link" onclick="switchAgentsTab('history',document.querySelectorAll('.agents-tab')[5])">View all &rarr;</a></div>
+            <div id="dash-recent"></div>
+          </div>
+          <div class="dash-section">
+            <div class="dash-section-head"><span>Pending issues</span><a class="dash-section-link" onclick="switchAgentsTab('issues',document.querySelectorAll('.agents-tab')[3])">View all &rarr;</a></div>
+            <div id="dash-issues"></div>
+          </div>
+          <div class="dash-section">
+            <div class="dash-section-head"><span>Templates</span><a class="dash-section-link" onclick="switchAgentsTab('templates',document.querySelectorAll('.agents-tab')[4])">View all &rarr;</a></div>
+            <div id="dash-templates" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px"></div>
+          </div>
+        </div>
+
+        <div id="agents-tab-team" class="agents-tab-content">
           <div id="agents-team-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px"></div>
         </div>
 
@@ -1083,7 +1111,10 @@
 <script src="/js/apps-ide.js?v=v2"></script>
 <script src="/js/apps-ide-ws.js?v=v1"></script>
 <script src="/js/apps-ide-tools-files.js?v=v1"></script>
+<script src="/js/apps-ide-picker.js?v=v1"></script>
+<script src="/js/apps-ide-errors.js?v=v1"></script>
 <script src="/js/apps-ide-agents.js"></script>
+<script src="/js/apps-ide-resize.js?v=v1"></script>
 <script type="module" src="/js/agents.js?v=v4"></script>
 <script src="/js/shortcuts.js"></script>
 <script src="/js/app-sidebar-toggle.js?v=v1"></script>

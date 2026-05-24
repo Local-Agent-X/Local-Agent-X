@@ -16,30 +16,38 @@ function renderSecretsList() {
   document.getElementById('secret-count').textContent = secrets.length;
   const el = document.getElementById('secrets-list');
   if (!el) return;
-  if (secrets.length === 0) { el.innerHTML = '<div style="padding:12px;font-size:.78rem;color:var(--muted)">No secrets stored yet.</div>'; return; }
+  if (secrets.length === 0) {
+    el.innerHTML = '<div class="drill-empty">No secrets stored yet. Hit <strong>+ New Secret</strong> to add one — reference them as <code style="color:var(--accent)">{{NAME}}</code> in agent tools.</div>';
+    return;
+  }
   el.innerHTML = secrets.map(s => `
-    <div class="secret-item ${selectedSecret?.name === s.name ? 'active' : ''}" onclick="selectSecretItem('${esc(s.name)}')">
-      <span class="secret-dot"></span>
-      <div class="secret-info">
-        <div class="secret-item-name">${esc(s.name)}</div>
-        ${s.service ? `<div class="secret-item-service">${esc(s.service)}</div>` : ''}
-      </div>
+    <div class="drill-card" onclick="selectSecretItem('${esc(s.name)}')">
+      <div class="drill-card-title"><span class="secret-dot"></span>${esc(s.name)}</div>
+      ${s.service ? `<div class="drill-card-sub">${esc(s.service)}</div>` : '<div class="drill-card-sub" style="color:var(--muted);opacity:.5">no service</div>'}
     </div>
   `).join('');
 }
 
 function selectSecretItem(name) {
   selectedSecret = secrets.find(s => s.name === name) || null;
-  renderSecretsList();
+  if (!selectedSecret) { backToSecretsList(); return; }
   renderSecretDetail();
+  showSecretsDetail();
+}
+
+function showSecretsDetail() {
+  document.getElementById('secrets-list-view')?.classList.add('hidden');
+  document.getElementById('secret-detail-view')?.classList.add('active');
+}
+
+function backToSecretsList() {
+  selectedSecret = null;
+  document.getElementById('secret-detail-view')?.classList.remove('active');
+  document.getElementById('secrets-list-view')?.classList.remove('hidden');
 }
 
 function renderSecretDetail() {
-  const empty = document.getElementById('secret-detail-empty');
-  const view = document.getElementById('secret-detail-view');
-  if (!selectedSecret) { if (empty) empty.style.display = 'flex'; if (view) view.style.display = 'none'; return; }
-  if (empty) empty.style.display = 'none';
-  if (view) view.style.display = 'block';
+  if (!selectedSecret) return;
   document.getElementById('detail-name').textContent = selectedSecret.name;
   document.getElementById('detail-service').textContent = selectedSecret.service ? `Service: ${selectedSecret.service}` : '';
   document.getElementById('detail-usage').textContent = `{{${selectedSecret.name}}}`;
@@ -79,5 +87,6 @@ async function updateSecretValue() {
 async function deleteSecretItem() {
   if (!selectedSecret || !confirm(`Delete "${selectedSecret.name}"?`)) return;
   await apiFetch(`/api/secrets/${encodeURIComponent(selectedSecret.name)}`, { method: 'DELETE' });
-  selectedSecret = null; await loadSecrets(); renderSecretDetail();
+  backToSecretsList();
+  await loadSecrets();
 }

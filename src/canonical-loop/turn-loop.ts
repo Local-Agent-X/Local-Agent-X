@@ -20,7 +20,7 @@
 import type { Adapter, AdapterReport } from "./adapter-contract.js";
 import type { CanonicalMessage, ToolCall } from "./contract-types.js";
 import type { ProviderStateEnvelope } from "./types.js";
-import { emit, publishStreamChunk } from "./event-emitter.js";
+import { emit, emitErrorOnce, publishStreamChunk } from "./event-emitter.js";
 import { commitTurn, type CommitTurnMessage } from "./checkpoint.js";
 import { getToolsForOp } from "./runtime.js";
 import type { Op } from "../ops/types.js";
@@ -37,6 +37,13 @@ import { extractText, extractToolResultText } from "./turn-loop/content-extract.
 import { appendNudgeAsUserMessage, middlewareAbortResult } from "./turn-loop/nudges.js";
 import { buildTurnInput, readPendingRedirect } from "./turn-loop/build-input.js";
 import { drainInjectsIntoTurn } from "./turn-loop/inject-drain.js";
+import {
+  collectToolFailures,
+  formatFailureNudgeForModel,
+  shouldNudgeForFailures,
+} from "./turn-loop/tool-failure-summary.js";
+import { hasInjects } from "../agent-loop/inject-queue.js";
+import { getSessionForOp } from "../ops/session-bridge.js";
 import { dispatchTools } from "./turn-loop/dispatch-tools.js";
 import { createIdleWatchdog, readIdleTimeoutMs } from "./turn-loop/idle-watchdog.js";
 
@@ -258,14 +265,47 @@ export async function driveTurn(
 
   const providerState: ProviderStateEnvelope = result.providerState;
   // A middleware abort forces the turn to terminal=error so the worker
-  // breaks the drive loop. A nudge does NOT force terminal — the
-  // adapter's natural terminalReason still applies (so a turn that
-  // ended with tool calls just continues into the next turn where the
-  // nudge user-message is visible).
+  // breaks the drive loop.
   const middlewareAborted = middlewareDirective?.kind === "abort";
-  const terminalReason: "done" | "error" | null = middlewareAborted
+  let terminalReason: "done" | "error" | null = middlewareAborted
     ? "error"
     : (result.terminalReason ?? (adapterError ? "error" : null));
+
+  // Active gaslighting-prevention: when tools returned non-ok statuses
+  // this turn AND no successful mutation landed, inject a nudge into
+  // turn+1 telling the model to acknowledge or fix. Mixed turns
+  // (failures + at least one successful mutation) are NOT gaslighting —
+  // the model iterated and ultimately changed something on disk. The
+  // existing per-op turn cap bounds the retry.
+  let failureNudged = false;
+  if (!middlewareAborted) {
+    const failureSummary = collectToolFailures(toolMessages, toolSummary);
+    if (shouldNudgeForFailures(failureSummary)) {
+      appendNudgeAsUserMessage(op.id, turnIdx + 1, formatFailureNudgeForModel(failureSummary));
+      failureNudged = true;
+    }
+  }
+
+  // Unified continuation guard. Whenever the worker is going to keep
+  // looping past this turn (middleware nudge appended at turn+1, our
+  // own failure-detection nudge above, or a mid-turn user inject sitting
+  // in the chat queue), we MUST NOT call transitionOp(succeeded) inside
+  // commitTurn — the next turn will also resolve as done and the second
+  // succeeded → succeeded transition is illegal and surfaces as a
+  // worker_exception in chat. Bug screenshot 2026-05-23: repeating-text
+  // game-loop fix landed but the user saw a confusing red error.
+  //
+  // The worker's resume-gate logic mirrors these three conditions; this
+  // is the corresponding pre-commit gate so commitTurn doesn't end the
+  // op while the worker is still planning to spin another turn.
+  if (terminalReason === "done") {
+    const middlewareNudged = middlewareDirective?.kind === "nudge";
+    const sessionId = getSessionForOp(op.id);
+    const injectsPending = sessionId ? hasInjects(sessionId) : false;
+    if (middlewareNudged || failureNudged || injectsPending) {
+      terminalReason = null;
+    }
+  }
 
   commitTurn({
     op,
@@ -288,7 +328,7 @@ export async function driveTurn(
     appendNudgeAsUserMessage(op.id, turnIdx + 1, middlewareDirective.message);
   }
   if (middlewareAborted) {
-    emit(op.id, "error", {
+    emitErrorOnce(op.id, {
       code: "middleware-abort",
       message: middlewareDirective!.message ?? `Turn aborted by ${middlewareDirective!.firedBy}.`,
       retryable: false,

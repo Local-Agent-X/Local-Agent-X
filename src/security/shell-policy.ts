@@ -1,5 +1,6 @@
 import type { SecurityDecision } from "../types.js";
 import { USER_HINTS } from "../types.js";
+import { countTopLevelPipes } from "../tools/shell-translate.js";
 
 // Commands that should never be executed, even without metacharacters
 const BLOCKED_COMMANDS = [
@@ -219,7 +220,10 @@ export function evaluateShellCommand(command: string): SecurityDecision {
   }
 
   // Allow at most 5 pipes (e.g., `ls | grep foo | sort | head | cut`).
-  const pipeCount = (command.match(/\|/g) || []).length;
+  // Quote-aware: literal `|` inside `"..."` / `'...'` doesn't count, and
+  // `||` is a chain operator not a pipe. Naive matching false-positived
+  // benign commands like `echo "a|b|c|d|e|f"` against this 5-pipe cap.
+  const pipeCount = countTopLevelPipes(command);
   if (pipeCount > 5) {
     return {
       allowed: false,

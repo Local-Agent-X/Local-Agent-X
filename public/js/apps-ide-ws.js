@@ -15,7 +15,21 @@ function ideAttachWsListener() {
       const ev = msg.event;
       switch (ev.type) {
         case 'stream':
-          _ideContent += ev.delta;
+          // Two stream-event shapes from the canonical loop:
+          // (1) { delta: "..." } — incremental append
+          // (2) { replace: true, text: "..." } — full-content replace (used
+          //     when an adapter rewrites the streaming buffer mid-stream,
+          //     e.g. tool-call-text-extractor cleanup). The IDE used to
+          //     treat every event as #1 and did `_ideContent += ev.delta`
+          //     — for replace events that's `_ideContent += undefined`
+          //     which appends the literal string "undefined" to the
+          //     bubble. Two replaces in a row produced "undefinedundefined"
+          //     in chat. Now we dispatch on shape.
+          if (ev.replace === true && typeof ev.text === 'string') {
+            _ideContent = ev.text;
+          } else if (typeof ev.delta === 'string') {
+            _ideContent += ev.delta;
+          }
           ideUpdateAssistantMsg(_ideContent);
           break;
         case 'tool_start':
@@ -60,15 +74,24 @@ function ideAttachWsListener() {
           ideRefreshPreview();
           ideLoadFiles();
           break;
-        case 'error':
+        case 'error': {
           _ideStreaming = false;
           _ideContent = '';
           ideStopTimer();
           ideStopAgentPolling();
-          ideSetStatus('error', ev.message || ev.error || 'Error');
-          ideAddMessage('assistant', 'Error: ' + (ev.message || ev.error || 'Something went wrong'));
+          const errText = 'Error: ' + (ev.message || ev.error || 'Something went wrong');
+          // Server-side dedup is the primary guard (emitErrorOnce), this is
+          // the safety net against duplicate WS deliveries / fan-out paths.
+          const msgs = document.getElementById('ide-chat-messages');
+          const last = msgs && msgs.lastElementChild;
+          const isDupe = last && last.classList.contains('assistant') && last.dataset && last.dataset.rawText === errText;
+          if (!isDupe) ideAddMessage('assistant', errText);
+          const statusText = ev.message || ev.error || 'Error';
+          const statusEl = document.querySelector('#ide-status-bar .ide-status-text');
+          if (!statusEl || statusEl.textContent !== statusText) ideSetStatus('error', statusText);
           ideEnableInput();
           break;
+        }
       }
     } catch (err) { /* ignore */ }
   };

@@ -53,9 +53,8 @@ async function deleteCronJob() {
   try {
     await fetch(API + '/api/cron/' + selectedJob.id, { method: 'DELETE', headers: { Authorization: 'Bearer ' + AUTH_TOKEN } });
     cronJobs = cronJobs.filter(j => j.id !== selectedJob.id);
-    selectedJob = null;
+    backToMissionsList();
     renderCronList();
-    renderCronDetail();
   } catch (e) { alert('Failed: ' + e.message); }
 }
 

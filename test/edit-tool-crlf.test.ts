@@ -87,6 +87,99 @@ describe("edit tool — line-ending tolerance", () => {
     expect(result.isError).toBe(true);
     expect(result.content).toMatch(/found .* times/);
   });
+});
+
+describe("edit tool — structured failure recovery", () => {
+  it("ambiguous match surfaces line numbers + snippets so the model can disambiguate", async () => {
+    const path = join(dir, "level.js");
+    writeFileSync(
+      path,
+      [
+        "function spawnEnemy() {",
+        "  const e = new Enemy();",
+        "  e.x = 100;",
+        "}",
+        "function spawnBoss() {",
+        "  const e = new Enemy();",
+        "  e.x = 800;",
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const result = await editTool.execute({
+      path,
+      old_string: "const e = new Enemy();",
+      new_string: "const e = new Enemy(level);",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/found 2 times/);
+    expect(result.metadata?.recovery).toBeTruthy();
+    const rec = String(result.metadata?.recovery);
+    expect(rec).toMatch(/L2/);
+    expect(rec).toMatch(/L6/);
+    expect(rec).toMatch(/Match 1/);
+    expect(rec).toMatch(/Match 2/);
+  });
+
+  it("not-found surfaces nearby line candidates based on the first anchor line", async () => {
+    const path = join(dir, "level.js");
+    writeFileSync(
+      path,
+      [
+        "function init() {",
+        "  const player = new Player();",
+        "  player.x = 50;",
+        "  player.y = 100;",
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const result = await editTool.execute({
+      path,
+      old_string: "const player = new Player();\n  player.x = 999;",
+      new_string: "x",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/not found/);
+    const rec = String(result.metadata?.recovery || "");
+    expect(rec).toMatch(/L2/);
+    expect(rec).toMatch(/Player/);
+  });
+
+  it("file-not-found suggests similarly-named siblings", async () => {
+    writeFileSync(join(dir, "level.js"), "x", "utf-8");
+    writeFileSync(join(dir, "player.js"), "x", "utf-8");
+
+    const result = await editTool.execute({
+      path: join(dir, "levels.js"),
+      old_string: "x",
+      new_string: "y",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/File not found/);
+    const rec = String(result.metadata?.recovery || "");
+    expect(rec).toMatch(/level\.js/);
+  });
+
+  it("not-found with no anchor match gives a re-read hint rather than a misleading suggestion", async () => {
+    const path = join(dir, "f.js");
+    writeFileSync(path, "hello world\n", "utf-8");
+
+    const result = await editTool.execute({
+      path,
+      old_string: "totally absent garbage xyz",
+      new_string: "x",
+    });
+
+    expect(result.isError).toBe(true);
+    const rec = String(result.metadata?.recovery || "");
+    expect(rec).toMatch(/Re-read|re-read/);
+  });
 
   it("does not promote new_string to CRLF when the file was LF (no silent style flip)", async () => {
     const path = join(dir, "f.html");

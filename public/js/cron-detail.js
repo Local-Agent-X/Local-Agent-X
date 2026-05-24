@@ -153,11 +153,7 @@ function renderCronLiveStatus(data) {
 }
 
 function renderCronDetail() {
-  const empty = document.getElementById('cron-detail-empty');
-  const view = document.getElementById('cron-detail-view');
-  if (!selectedJob) { if (empty) empty.style.display = 'flex'; if (view) view.style.display = 'none'; return; }
-  if (empty) empty.style.display = 'none';
-  if (view) view.style.display = 'block';
+  if (!selectedJob) return;
   document.getElementById('cron-detail-name').textContent = selectedJob.name;
   document.getElementById('cron-detail-schedule').textContent = selectedJob.schedule;
   document.getElementById('cron-detail-prompt').textContent = selectedJob.prompt;

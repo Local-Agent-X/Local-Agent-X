@@ -12,7 +12,7 @@
  * workers (other than via this module), and the public control API never
  * write `canonical.state` directly.
  */
-import { emit } from "./event-emitter.js";
+import { emit, clearEmittedErrorsForOp } from "./event-emitter.js";
 import { persistOpKeepingSignals } from "./op-persist.js";
 import { clearMiddlewareStateForOp } from "./middlewares/state.js";
 import { clearEvidenceHistory } from "./middlewares/evidence-history.js";
@@ -97,6 +97,7 @@ export function transitionOp(
     // this op).
     clearMiddlewareStateForOp(op.id);
     clearEvidenceHistory(op.id);
+    clearEmittedErrorsForOp(op.id);
   }
   // Loop-side write — preserve control-API signal columns from disk so a
   // concurrent opPause/opCancel/etc. is not clobbered. `clearLeaseFromOp`

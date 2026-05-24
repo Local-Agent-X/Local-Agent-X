@@ -8,13 +8,23 @@
 // Auth token (localStorage persists across tabs/sessions, sessionStorage as backup)
 let AUTH_TOKEN = localStorage.getItem('sax_token') || sessionStorage.getItem('sax_token') || '';
 const urlToken = new URLSearchParams(location.search).get('token');
+// In Electron the renderer URL never goes to a browser history / address
+// bar / clipboard — the only consequence of stripping the token via
+// history.replaceState is that a webContents.reload() loses it and the
+// session breaks (CmdOrCtrl+R from the app menu or location.reload() from
+// the in-window titlebar). Keep the URL token intact in Electron so every
+// reload re-tokenizes correctly. In a real browser, keep the strip — the
+// token would otherwise live in tab history and screenshotted address bars.
+const isElectron = /Electron/i.test(navigator.userAgent);
 if (urlToken) {
   AUTH_TOKEN = urlToken;
   localStorage.setItem('sax_token', urlToken);
   sessionStorage.setItem('sax_token', urlToken);
-  const cleanUrl = new URL(location.href);
-  cleanUrl.searchParams.delete('token');
-  history.replaceState(null, '', cleanUrl.pathname + cleanUrl.hash);
+  if (!isElectron) {
+    const cleanUrl = new URL(location.href);
+    cleanUrl.searchParams.delete('token');
+    history.replaceState(null, '', cleanUrl.pathname + cleanUrl.hash);
+  }
 } else if (AUTH_TOKEN) {
   localStorage.setItem('sax_token', AUTH_TOKEN);
   sessionStorage.setItem('sax_token', AUTH_TOKEN);

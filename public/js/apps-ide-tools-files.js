@@ -3,6 +3,28 @@
 // debounced workspace-preview iframe reload, and the right-side file
 // list with one-click read-only viewer.
 
+// Activity-group wrapper mirrors the regular chat's collapsible bundle —
+// one "⚙ Agent activity (N)" header per assistant turn, click to expand.
+// Without this every tool call stacked flat in the IDE bubble, flooding
+// the chat with 15 cards for one build_app. Same UX as chat-tool-cards.js
+// but IDE-scoped DOM (different IDs, smaller card layout).
+function ideEnsureActivityGroup(parentEl) {
+  let group = parentEl.querySelector(':scope > .ide-activity-group');
+  if (group) return group;
+  group = document.createElement('div');
+  group.className = 'ide-activity-group';
+  group.innerHTML =
+    '<div class="ide-activity-header" onclick="this.parentElement.classList.toggle(\'open\');this.querySelector(\'.ide-activity-chevron\').textContent=this.parentElement.classList.contains(\'open\')?\'\\u25BC\':\'\\u25B6\'">' +
+      '<span class="ide-activity-icon">&#9881;</span>' +
+      '<span class="ide-activity-label">Agent activity</span>' +
+      '<span class="ide-activity-count">0</span>' +
+      '<span class="ide-activity-chevron">&#9654;</span>' +
+    '</div>' +
+    '<div class="ide-activity-body"></div>';
+  parentEl.appendChild(group);
+  return group;
+}
+
 function ideAddToolCard(name, args, riskLevel, context) {
   const el = document.getElementById('ide-assistant-active');
   if (!el) return;
@@ -10,22 +32,51 @@ function ideAddToolCard(name, args, riskLevel, context) {
   const thinking = el.querySelector('.ide-thinking');
   if (thinking) thinking.remove();
 
+  const group = ideEnsureActivityGroup(el);
+  const body = group.querySelector('.ide-activity-body');
+  const lastCard = body.lastElementChild;
+
+  // Same-name dedup ("write ×3") — collapses repeated calls so the count
+  // header reflects work density instead of card noise.
+  if (lastCard && lastCard.dataset.tool === name && !lastCard.dataset.finished) {
+    const count = parseInt(lastCard.dataset.callCount || '1', 10) + 1;
+    lastCard.dataset.callCount = String(count);
+    const countEl = lastCard.querySelector('.tool-count');
+    if (countEl) countEl.textContent = '×' + count;
+    const summary = lastCard.querySelector('.tool-summary');
+    if (summary) summary.textContent = ideToolLabel(name, args);
+    ideBumpActivityCount(group);
+    return;
+  }
+
   const card = document.createElement('div');
   card.className = 'tool-card';
   card.dataset.tool = name;
+  card.dataset.callCount = '1';
   card.innerHTML =
     '<div class="tool-header" onclick="this.parentElement.classList.toggle(\'open\')">' +
       '<span class="indicator"></span>' +
       '<span class="tool-name">' + esc(name) + '</span>' +
-      '<span style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' +
+      '<span class="tool-count" style="font-size:.7rem;color:var(--muted);margin-right:.3rem"></span>' +
+      '<span class="tool-summary" style="color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' +
         esc(ideToolLabel(name, args)) +
       '</span>' +
       '<span class="ide-tool-spinner"></span>' +
     '</div>' +
     '<div class="tool-detail">' + esc(ideFormatToolArgs(name, args)) + '</div>';
-  el.appendChild(card);
+  body.appendChild(card);
+  ideBumpActivityCount(group);
   const msgs = document.getElementById('ide-chat-messages');
   if (msgs) msgs.scrollTop = msgs.scrollHeight;
+}
+
+function ideBumpActivityCount(group) {
+  const countEl = group.querySelector('.ide-activity-count');
+  if (!countEl) return;
+  const cards = group.querySelectorAll('.tool-card');
+  let total = 0;
+  for (const c of cards) total += parseInt(c.dataset.callCount || '1', 10);
+  countEl.textContent = String(total);
 }
 
 function ideFinishToolCard(name, result, allowed) {
@@ -34,6 +85,7 @@ function ideFinishToolCard(name, result, allowed) {
   const cards = el.querySelectorAll('.tool-card[data-tool="' + name + '"]');
   const card = cards[cards.length - 1];
   if (!card) return;
+  card.dataset.finished = '1';
   const indicator = card.querySelector('.indicator');
   if (indicator) indicator.className = 'indicator ' + (allowed ? 'allowed' : 'blocked');
   const spinner = card.querySelector('.ide-tool-spinner');
@@ -78,6 +130,14 @@ function _ideDoRefresh() {
   const appUrl = `http://127.0.0.1:${port}/apps/${_ideAppId}/index.html`;
   window._ideAppUrl = appUrl;
   frame.src = appUrl + '?_t=' + Date.now();
+  // Re-inject the element picker if it was on — the iframe just got a
+  // fresh window, so the previous load's script is gone.
+  if (typeof _ideOnPreviewLoad === 'function') {
+    frame.addEventListener('load', _ideOnPreviewLoad, { once: true });
+  }
+  if (typeof _ideOnPreviewLoadErrors === 'function') {
+    frame.addEventListener('load', _ideOnPreviewLoadErrors, { once: true });
+  }
 }
 
 // ── File tree ──
@@ -133,3 +193,7 @@ function ideCloseFileViewer() {
   if (tree) tree.style.display = '';
   if (viewer) viewer.style.display = 'none';
 }
+
+window.ideRefreshPreview = ideRefreshPreview;
+window.ideCloseFileViewer = ideCloseFileViewer;
+window.ideViewFile = ideViewFile;

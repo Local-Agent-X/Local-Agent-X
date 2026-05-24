@@ -51,7 +51,7 @@ function renderCronList() {
   const el = document.getElementById('cron-list');
   if (!el) return;
   if (cronJobs.length === 0) {
-    el.innerHTML = '<div style="padding:12px;font-size:.78rem;color:var(--muted)">No scheduled missions yet. Create one above.</div>';
+    el.innerHTML = '<div class="drill-empty">No scheduled missions yet. Hit <strong>+ New Mission</strong> to schedule a recurring task.</div>';
     return;
   }
   el.innerHTML = cronJobs.map(j => {
@@ -65,9 +65,6 @@ function renderCronList() {
       ? `<div class="cron-row-err" title="${esc(j.lastErrorMessage)}">⚠ ${esc(truncate(j.lastErrorMessage, 80))} <span style="color:var(--muted);cursor:pointer;margin-left:4px" title="Dismiss" onclick="event.stopPropagation();clearCronErrorById('${j.id}')">✕</span></div>` : '';
     const pauseGlyph = j.enabled ? '⏸' : '▶';
     const stopping = cronStopping.has(j.id);
-    // Stopping state shows as a distinct text chip rather than a tiny glyph —
-    // a `…` next to `⏸` was visually indistinguishable from `▶▶ ⏸` at icon
-    // size, so users couldn't tell the click landed.
     const runAct = stopping
       ? `<span class="cron-row-act" title="Aborting…" style="color:#e07b5a;font-size:.65rem;font-weight:600;letter-spacing:.5px;cursor:wait;opacity:.85">STOPPING</span>`
       : j.isRunning
@@ -78,11 +75,11 @@ function renderCronList() {
       + `<span class="cron-row-act" title="${j.enabled ? 'Pause' : 'Resume'}" onclick="event.stopPropagation();toggleCronById('${j.id}')">${pauseGlyph}</span>`
       + `</span>`;
     return `
-    <div class="secret-item ${selectedJob?.id === j.id ? 'active' : ''}" onclick="selectCronJob('${j.id}')">
-      <span class="secret-dot" style="${dotColor ? `background:${dotColor};box-shadow:none` : ''}"></span>
-      <div class="secret-info">
-        <div class="secret-item-name">${esc(j.name)} ${status}</div>
-        <div class="secret-item-service">${esc(j.schedule)} ${j.enabled ? '' : '(paused)'} · last ${lastTime}${nextNote}${failNote}</div>
+    <div class="drill-row" onclick="selectCronJob('${j.id}')">
+      <span class="secret-dot" style="${dotColor ? `background:${dotColor};box-shadow:none` : ''};flex-shrink:0"></span>
+      <div style="flex:1;min-width:0">
+        <div style="font-family:var(--mono);font-size:.8rem;color:var(--text)">${esc(j.name)} ${status}</div>
+        <div style="font-size:.7rem;color:var(--muted);font-family:var(--mono);margin-top:2px">${esc(j.schedule)} ${j.enabled ? '' : '(paused)'} · last ${lastTime}${nextNote}${failNote}</div>
         ${errLine}
       </div>
       ${actions}
@@ -92,9 +89,21 @@ function renderCronList() {
 
 function selectCronJob(id) {
   selectedJob = cronJobs.find(j => j.id === id) || null;
-  renderCronList();
+  if (!selectedJob) { backToMissionsList(); return; }
   renderCronDetail();
+  showMissionsDetail();
   startCronStatusPolling();
+}
+
+function showMissionsDetail() {
+  document.getElementById('missions-list-view')?.classList.add('hidden');
+  document.getElementById('cron-detail-wrap')?.classList.add('active');
+}
+
+function backToMissionsList() {
+  selectedJob = null;
+  document.getElementById('cron-detail-wrap')?.classList.remove('active');
+  document.getElementById('missions-list-view')?.classList.remove('hidden');
 }
 
 // ── Formatting helpers ──

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SessionStore, MemoryIndex } from "../../memory.js";
 import { createLogger } from "../../logger.js";
@@ -43,7 +43,18 @@ export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
       const newlySummarized: string[] = [];
       for (const meta of recent.slice(0, 30)) {
         const sf = join(dir, `${meta.id}.md`);
-        if (existsSync(sf)) continue;
+        // Re-summarize when the session has been updated since the last
+        // summary was written. Without this, stable-id sessions (e.g.
+        // `ide-{appId}` IDE chats that accumulate forever) get captured
+        // exactly once and then go stale — every subsequent build/fix
+        // conversation on the same app fails to make it into memory.
+        // mtime-vs-updatedAt is the cheapest accurate signal: one statSync,
+        // no extra state to track.
+        if (existsSync(sf)) {
+          try {
+            if (statSync(sf).mtimeMs >= meta.updatedAt) continue;
+          } catch { continue; }
+        }
         const sess = sessionStore.load(meta.id);
         if (!sess) continue;
         const userMsgs = sess.messages.filter(m => m.role === "user" && typeof m.content === "string").map(m => (m.content as string).slice(0, 200));

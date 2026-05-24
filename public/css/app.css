@@ -143,28 +143,9 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .notif-item{padding:10px 12px;border-bottom:1px solid var(--border);font-size:.75rem}
 .notif-item .notif-time{font-size:.6rem;color:var(--muted);margin-top:4px}
 .notif-badge{position:absolute;top:-4px;right:-4px;background:var(--danger);color:#fff;font-size:.55rem;min-width:14px;height:14px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:700}
-/* ── Protocols page (master/detail editor) ── */
-#protocol-shell{display:grid;grid-template-columns:320px 1fr;gap:0;height:100%;overflow:hidden;padding:0}
-.protocol-sidebar{border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;min-height:0;padding:14px 12px;gap:10px;overflow:hidden}
-#protocol-new-btn{padding:8px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:6px;font-family:var(--mono);font-size:.72rem;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.5px}
-#protocol-new-btn:hover{filter:brightness(1.1)}
-#protocol-search{padding:8px 10px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;font-size:.78rem;outline:none}
-#protocol-search:focus{border-color:var(--accent)}
-#protocol-tree{flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#222 transparent;padding-right:4px}
-.proto-cat{margin-bottom:6px}
-.proto-cat-header{display:flex;align-items:center;gap:6px;padding:6px;font-family:var(--mono);font-size:.68rem;color:var(--accent);text-transform:uppercase;letter-spacing:1px;cursor:pointer;user-select:none;border-radius:4px}
-.proto-cat-header:hover{background:var(--hover)}
-.proto-cat-arrow{font-size:.7rem;width:10px;display:inline-block;color:var(--muted);transition:transform .15s}
-.proto-cat-count{margin-left:auto;color:var(--muted);font-size:.65rem}
-.proto-cat-items{padding-left:4px;display:none}
-.proto-cat.open .proto-cat-items{display:block}
-.proto-cat.open .proto-cat-arrow{transform:rotate(90deg)}
-.proto-item{display:flex;align-items:center;gap:6px;padding:5px 8px;cursor:pointer;font-size:.74rem;color:var(--text);border-radius:4px;border-left:2px solid transparent}
-.proto-item:hover{background:var(--hover)}
-.proto-item.active{background:var(--surface-2);border-left-color:var(--accent);color:var(--accent)}
-.proto-item-source{font-size:.6rem;color:var(--muted);margin-left:auto;text-transform:uppercase}
-.protocol-detail{flex:1;overflow-y:auto;padding:28px 32px;min-width:0}
-.protocol-empty{display:flex;flex-direction:column;justify-content:center;align-items:center;height:100%;color:var(--muted);font-size:.85rem;text-align:center;max-width:480px;margin:0 auto}
+/* ── Protocols page detail (list/grid uses shared .drill-* classes) ── */
+#protocol-tree{flex:1;min-height:0}
+.proto-item-source{font-size:.6rem;color:var(--muted);text-transform:uppercase}
 .protocol-view h2{font-family:var(--mono);font-size:1.05rem;color:var(--accent);letter-spacing:1px;margin-bottom:4px;word-break:break-word}
 .proto-meta{font-size:.7rem;color:var(--muted);margin-bottom:18px;line-height:1.5}
 .proto-meta a{color:var(--accent);text-decoration:none}
@@ -481,14 +462,29 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .app-modal-close{margin-left:auto;background:transparent;border:none;color:var(--muted);font-size:1.5rem;cursor:pointer;padding:0 6px;line-height:1}
 .app-modal-close:hover{color:var(--text)}
 .app-modal code{background:var(--bg);padding:1px 5px;border-radius:3px;font-size:.72rem}
-.split-pane{flex:1;display:grid;grid-template-columns:360px 1fr;gap:0;overflow:hidden;min-height:0}
-.split-pane-list{overflow-y:auto;padding:12px 16px 24px;border-right:1px solid var(--border)}
-.split-pane-detail{overflow-y:auto;padding:16px 24px 24px;min-width:0}
-.split-pane-empty{display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:.78rem;text-align:center;padding:24px}
-@media (max-width:900px){
-  .split-pane{grid-template-columns:1fr;grid-template-rows:auto auto}
-  .split-pane-list{border-right:none;border-bottom:1px solid var(--border);max-height:40vh}
-}
+/* ── Drill-in pattern (one view at a time, no nested sidebar feel) ── */
+.drill-container{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.drill-list-view{flex:1;overflow-y:auto;padding:20px 28px 28px}
+.drill-list-view.hidden{display:none}
+.drill-detail-view{flex:1;overflow-y:auto;padding:18px 28px 28px;display:none;flex-direction:column}
+.drill-detail-view.active{display:flex}
+.drill-back{display:inline-flex;align-items:center;gap:6px;background:transparent;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-family:var(--mono);font-size:.72rem;cursor:pointer;margin-bottom:16px;width:fit-content;letter-spacing:.5px}
+.drill-back:hover{border-color:var(--accent);color:var(--accent)}
+.drill-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.drill-rows{display:flex;flex-direction:column;gap:8px}
+.drill-card{padding:14px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface);cursor:pointer;transition:border-color .15s,transform .1s;display:flex;flex-direction:column;gap:6px}
+.drill-card:hover{border-color:var(--accent);transform:translateY(-1px)}
+.drill-card-title{font-family:var(--mono);font-size:.78rem;color:var(--text);display:flex;align-items:center;gap:8px;word-break:break-all}
+.drill-card-sub{font-size:.7rem;color:var(--muted);font-family:var(--mono)}
+.drill-row{display:flex;align-items:center;gap:14px;padding:12px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface);cursor:pointer;transition:border-color .15s}
+.drill-row:hover{border-color:var(--accent)}
+.drill-section-head{font-family:var(--mono);font-size:.68rem;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px;margin:22px 0 10px;display:flex;align-items:center;gap:8px}
+.drill-section-head:first-child{margin-top:0}
+.drill-section-count{color:var(--muted);font-weight:400;font-size:.66rem}
+.drill-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+.drill-search{flex:1;max-width:480px;padding:8px 12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;font-size:.78rem;outline:none}
+.drill-search:focus{border-color:var(--accent)}
+.drill-empty{padding:32px;color:var(--muted);font-size:.78rem;text-align:center}
 .cron-layout{display:grid;grid-template-columns:340px 1fr;flex:1;overflow:hidden}
 .cron-left{border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;padding:16px}
 .cron-right{display:flex;flex-direction:column;padding:32px 40px;overflow-y:auto}
@@ -532,6 +528,18 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 .agents-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
 .agents-tab-content{display:none;flex-direction:column;flex:1;overflow:hidden}
 .agents-tab-content.active{display:flex}
+/* ── Agents Dashboard ── */
+.dash-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:24px;max-width:900px}
+.dash-stat{padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+.dash-stat-label{font-family:var(--mono);font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+.dash-stat-value{font-family:var(--mono);font-size:1.4rem;color:var(--accent);font-weight:700;line-height:1}
+.dash-stat-sub{font-size:.62rem;color:var(--muted);margin-top:4px;font-family:var(--mono)}
+.dash-section{margin-bottom:24px;max-width:900px}
+.dash-section-head{display:flex;align-items:baseline;gap:8px;font-family:var(--mono);font-size:.68rem;color:var(--accent);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.dash-section-count{color:var(--muted);font-weight:400;font-size:.62rem}
+.dash-section-link{margin-left:auto;color:var(--muted);font-size:.65rem;cursor:pointer;text-transform:none;letter-spacing:.3px}
+.dash-section-link:hover{color:var(--accent)}
+.dash-empty{padding:14px;color:var(--muted);font-size:.74rem;font-style:italic}
 
 .agent-history-item{padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
 .agent-history-item:hover{background:var(--hover)}
@@ -825,6 +833,9 @@ button:focus-visible,.chat-item:focus-visible,.util-btn:focus-visible{outline:2p
 .ide-topbar-btn{background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-family:var(--mono);font-size:.68rem;padding:4px 12px;cursor:pointer;transition:all .15s}
 .ide-topbar-btn:hover{color:var(--accent);border-color:var(--accent)}
 .ide-topbar-btn.active{color:var(--accent);border-color:var(--accent);background:rgba(64,240,240,.06)}
+.ide-topbar-select{background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:.68rem;padding:3px 8px;cursor:pointer;max-width:160px}
+.ide-topbar-select:hover{border-color:var(--accent)}
+.ide-topbar-select:focus{outline:none;border-color:var(--accent)}
 
 #ide-panels{display:flex;flex:1;overflow:hidden}
 .ide-panel{overflow:hidden;display:flex;flex-direction:column;border-right:1px solid var(--border)}
@@ -843,6 +854,18 @@ button:focus-visible,.chat-item:focus-visible,.util-btn:focus-visible{outline:2p
 .ide-msg{padding:8px 12px;border-radius:10px;font-size:.8rem;line-height:1.5;max-width:100%;word-wrap:break-word}
 .ide-msg.user{background:var(--user-bg);color:var(--text);align-self:flex-end;border-bottom-right-radius:4px}
 .ide-msg.assistant{background:var(--agent-bg);color:var(--text);align-self:flex-start;border-bottom-left-radius:4px}
+/* Runtime error bubbles — distinct from user/assistant: red border, danger-tinted bg, mono font.
+   Header is always visible; the stack expands on click via .open. */
+.ide-msg.ide-runtime-error{align-self:stretch;background:rgba(220,53,69,.08);border:1px solid var(--danger);border-radius:8px;font-family:var(--mono);font-size:.7rem;padding:6px 8px;cursor:pointer;color:var(--text)}
+.ide-msg.ide-runtime-error .ide-err-head{display:flex;align-items:center;gap:6px}
+.ide-msg.ide-runtime-error .ide-err-label{color:var(--danger);font-weight:600;flex-shrink:0}
+.ide-msg.ide-runtime-error .ide-err-count{font-variant-numeric:tabular-nums;color:var(--danger);background:rgba(220,53,69,.15);border-radius:8px;padding:0 5px;font-size:.62rem;flex-shrink:0}
+.ide-msg.ide-runtime-error .ide-err-clear{margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:.95rem;line-height:1;padding:0 2px}
+.ide-msg.ide-runtime-error .ide-err-clear:hover{color:var(--danger)}
+.ide-msg.ide-runtime-error .ide-err-msg{margin-top:3px;word-break:break-word;white-space:pre-wrap}
+.ide-msg.ide-runtime-error .ide-err-where{margin-top:2px;color:var(--muted);font-size:.62rem}
+.ide-msg.ide-runtime-error .ide-err-stack{display:none;margin:5px 0 0;padding:5px 6px;background:rgba(0,0,0,.25);border-radius:4px;font-size:.62rem;max-height:180px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+.ide-msg.ide-runtime-error.open .ide-err-stack{display:block}
 /* IDE thinking dots */
 .ide-thinking{display:flex;gap:5px;padding:6px 0}
 .ide-thinking span{width:7px;height:7px;background:var(--accent);border-radius:50%;animation:idePulse 1.4s infinite both;opacity:.4}
@@ -863,6 +886,39 @@ button:focus-visible,.chat-item:focus-visible,.util-btn:focus-visible{outline:2p
 /* IDE tool spinner */
 .ide-tool-spinner{width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* IDE activity group — collapsible wrapper that bundles consecutive tool
+   cards inside the assistant bubble. Mirrors chat-tool-cards.js's
+   activity-group pattern; IDE-scoped so the styling can be tighter. */
+.ide-activity-group{border:1px solid var(--border);border-radius:6px;margin:4px 0;overflow:hidden;background:var(--surface-2,rgba(0,0,0,.15))}
+.ide-activity-header{display:flex;align-items:center;gap:6px;padding:5px 8px;cursor:pointer;user-select:none;font-size:.72rem;color:var(--muted)}
+.ide-activity-header:hover{color:var(--text)}
+.ide-activity-icon{opacity:.7}
+.ide-activity-label{flex:1}
+.ide-activity-count{font-variant-numeric:tabular-nums;font-family:var(--mono);color:var(--accent)}
+.ide-activity-chevron{font-size:.6rem;opacity:.6;transition:transform .15s}
+.ide-activity-group.open .ide-activity-chevron{transform:rotate(0deg)}
+.ide-activity-body{max-height:320px;overflow-y:auto;padding:0 6px 6px}
+.ide-activity-group:not(.open) .ide-activity-body{display:none}
+
+/* IDE resize handles — 4px draggable gutters between panels. Sit between
+   sibling .ide-panel elements; cursor + accent on hover make them
+   discoverable without consuming visible space. */
+.ide-resize-handle{flex:0 0 4px;background:transparent;cursor:ew-resize;position:relative;z-index:5;transition:background .15s}
+.ide-resize-handle:hover,.ide-resize-handle.dragging{background:var(--accent-dim,rgba(64,240,240,.35))}
+/* When the panel a handle controls is collapsed, the handle has nothing to drag — hide it */
+#ide-chat-panel.collapsed + .ide-resize-handle,
+.ide-resize-handle + #ide-files-panel.collapsed{display:none}
+/* Suspend the chat-panel width transition during drag so the panel tracks the cursor instead of easing behind it */
+body.ide-resizing #ide-chat-panel,body.ide-resizing #ide-files-panel{transition:none!important}
+body.ide-resizing{cursor:ew-resize;user-select:none}
+body.ide-resizing iframe{pointer-events:none}
+
+/* IDE fullscreen mode — sidebar + hamburger toggles belong to nav, hide while editing an app */
+body.ide-fullscreen #sidebar,
+body.ide-fullscreen #mobile-menu-btn,
+body.ide-fullscreen #sidebar-expand-btn,
+body.ide-fullscreen #sidebar-backdrop{display:none!important}
 
 /* IDE file empty state */
 .ide-file-empty{padding:12px;color:var(--muted);font-size:.72rem;font-family:var(--mono)}

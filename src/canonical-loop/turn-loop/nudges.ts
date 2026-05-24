@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import type { Op } from "../../ops/types.js";
 import type { OpMessageRow } from "../types.js";
 import { appendOpMessage, readOpMessages } from "../store.js";
-import { emit } from "../event-emitter.js";
+import { emit, emitErrorOnce } from "../event-emitter.js";
 import type { FiredMiddlewareResult } from "../middlewares/host.js";
 import type { DriveTurnResult } from "./types.js";
 
@@ -47,7 +47,7 @@ export function middlewareAbortResult(
   fired: FiredMiddlewareResult,
 ): DriveTurnResult {
   if (fired.kind !== "abort") throw new Error("middlewareAbortResult requires abort verdict");
-  emit(op.id, "error", {
+  emitErrorOnce(op.id, {
     code: "middleware-abort",
     message: fired.message ?? `Turn aborted by ${fired.firedBy ?? "middleware"}.`,
     retryable: false,

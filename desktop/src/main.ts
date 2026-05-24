@@ -199,10 +199,26 @@ app.on("ready", async () => {
     }
   } catch (e) {
     const msg = (e as Error).message;
+    const code = (e as NodeJS.ErrnoException).code;
     console.error(`[desktop] reconcile failed: ${msg}`);
-    setSplashStatus("Update failed — see logs and relaunch");
-    setSplashHint(msg.slice(0, 200));
-    return; // Don't start the server with mismatched code.
+    // Self-heal class: ENOENT means we couldn't even find `npm` to run the
+    // reconcile step. That's "couldn't verify," not "code is broken" —
+    // the .app's bundled dist/ is whatever shipped in the signed installer,
+    // so booting it is safe. (The original hard-fail was meant to catch
+    // package-lock-changed-but-install-failed mismatches; ENOENT predates
+    // any code change.) Log + continue. Other reconcile errors (npm ran
+    // but exited nonzero) still hard-fail because those indicate a real
+    // mismatch between sources and built artifacts.
+    if (code === "ENOENT" || /\bENOENT\b|spawn npm/i.test(msg)) {
+      console.warn(`[desktop] reconcile skipped — npm not on PATH. Continuing with bundled dist/.`);
+      setSplashStatus("Couldn't check for updates — continuing");
+      setSplashHint("Install Node.js + npm to enable auto-update on launch.");
+      // Fall through to normal boot.
+    } else {
+      setSplashStatus("Update failed — see logs and relaunch");
+      setSplashHint(msg.slice(0, 200));
+      return; // Don't start the server with mismatched code.
+    }
   }
 
   // Orphan-proof launch. Previously: probe port, attach if anything

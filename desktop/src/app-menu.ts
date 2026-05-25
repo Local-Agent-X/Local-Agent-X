@@ -6,8 +6,9 @@
 // webContents.executeJavaScript, same as the old in-window menu's
 // handlers.
 
-import { app, BrowserWindow, Menu } from "electron";
+import { app, BrowserWindow, Menu, clipboard } from "electron";
 import { stopServer, startServer } from "./server-process";
+import { getSAXConfig } from "./config";
 
 export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null): void {
   if (process.platform !== "darwin") return; // Windows/Linux keep the in-window titlebar
@@ -38,6 +39,20 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
           label: "New Session",
           accelerator: "CmdOrCtrl+N",
           click: () => triggerRenderer("window.startNewSession?.()"),
+        },
+        { type: "separator" },
+        {
+          label: "Copy App URL",
+          accelerator: "CmdOrCtrl+Shift+L",
+          // Useful escape hatch — paste into Chrome to compare LAX in a
+          // real browser (Web Speech API works, no Electron quirks), or
+          // share with another tool on the same machine that needs the
+          // tokenized link. Reads live from config so a server restart
+          // (which can rotate the port on conflict) is reflected.
+          click: () => {
+            const cfg = getSAXConfig();
+            clipboard.writeText(`http://127.0.0.1:${cfg.port}/?token=${cfg.authToken}`);
+          },
         },
         { type: "separator" },
         {

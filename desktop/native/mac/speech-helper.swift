@@ -22,6 +22,31 @@ import Foundation
 import AVFoundation
 import Speech
 
+// Sidecar log — Finder-launched .apps swallow stdout/stderr, so we keep
+// our own breadcrumb trail in ~/.lax/logs/lax-speech-mac.log alongside
+// the server's stdio log. Anyone debugging "the helper started but no
+// transcripts arrived" reads this file. Cheap (a few hundred bytes per
+// session); rolled by user manually if it ever matters.
+let logPath: String = {
+    let home = NSHomeDirectory()
+    let dir = "\(home)/.lax/logs"
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    return "\(dir)/lax-speech-mac.log"
+}()
+let logHandle: FileHandle? = {
+    if !FileManager.default.fileExists(atPath: logPath) {
+        FileManager.default.createFile(atPath: logPath, contents: nil)
+    }
+    let h = FileHandle(forWritingAtPath: logPath)
+    h?.seekToEndOfFile()
+    return h
+}()
+func dlog(_ msg: String) {
+    let stamp = ISO8601DateFormatter().string(from: Date())
+    let line = "\(stamp) \(msg)\n"
+    logHandle?.write(Data(line.utf8))
+}
+
 // stdout/stderr line emitter. Apple's print() uses \n which is fine, but we
 // flush explicitly so the parent doesn't sit on buffered output during long
 // pauses between transcripts.
@@ -29,6 +54,7 @@ func emit(_ obj: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: obj, options: []),
           let line = String(data: data, encoding: .utf8) else { return }
     FileHandle.standardOutput.write(Data((line + "\n").utf8))
+    if let t = obj["type"] as? String { dlog("emit \(t) \(obj)") }
 }
 
 func emitError(_ code: String, _ message: String) {
@@ -79,14 +105,16 @@ final class SpeechSession {
         // Each task gets a fresh request — SFSpeechRecognitionRequest can't
         // be reused after endAudio. Reuse the AVAudioEngine to avoid the
         // mic re-acquire delay.
+        dlog("beginTask: locale=\(recognizer.locale.identifier) supportsOnDevice=\(recognizer.supportsOnDeviceRecognition) isAvailable=\(recognizer.isAvailable)")
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
-        // On-device when available — privacy + works offline. Falls back to
-        // server-side automatically on older hardware where requiresOnDevice
-        // would refuse outright. We don't *require* on-device; we prefer it.
-        if recognizer.supportsOnDeviceRecognition {
-            req.requiresOnDeviceRecognition = true
-        }
+        // Server-side recognition by default. On-device is preferred on
+        // paper (privacy, offline) but in practice the model isn't always
+        // downloaded for the system locale, and SFSpeechRecognizer
+        // silently produces zero results when requiresOnDevice=true and
+        // no model is present. Leaving it false lets Apple route to the
+        // cloud as a fallback — same engine Safari uses for Web Speech.
+        req.requiresOnDeviceRecognition = false
         self.request = req
 
         // Audio engine setup. The input node's format must match what we
@@ -103,25 +131,36 @@ final class SpeechSession {
             return
         }
 
+        dlog("beginTask: input format sr=\(format.sampleRate) ch=\(format.channelCount)")
         input.removeTap(onBus: 0)
+        var bufCount: Int = 0
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             self?.request?.append(buffer)
+            bufCount += 1
+            // Log every 200th buffer so we can tell audio is actually
+            // flowing without spamming. 1024 frames @ 44.1kHz ≈ 23ms,
+            // so 200 buffers ≈ 4.6s of audio.
+            if bufCount % 200 == 0 { dlog("audio buffers appended: \(bufCount)") }
         }
 
         do {
             audioEngine.prepare()
             try audioEngine.start()
+            dlog("audio engine started")
         } catch {
+            dlog("audio engine start failed: \(error)")
             emitError("audio_engine_start_failed", "\(error)")
             running = false
             return
         }
 
+        dlog("creating recognitionTask")
         self.task = recognizer.recognitionTask(with: req) { [weak self] result, error in
             guard let self = self else { return }
             if let result = result {
                 let text = result.bestTranscription.formattedString
                 let isFinal = result.isFinal
+                dlog("recognitionTask result: isFinal=\(isFinal) text=\"\(text)\"")
                 if isFinal {
                     self.lastFinalText = text
                 }
@@ -135,6 +174,7 @@ final class SpeechSession {
             }
             if let error = error {
                 let nsError = error as NSError
+                dlog("recognitionTask error: domain=\(nsError.domain) code=\(nsError.code) \(error.localizedDescription)")
                 // 203 / "kAFAssistantErrorDomain 203" = no speech detected —
                 // routine. Don't spam the parent for that.
                 if nsError.code == 203 {
@@ -145,6 +185,7 @@ final class SpeechSession {
                 if self.running { self.rotate() }
             }
         }
+        dlog("recognitionTask created")
     }
 
     private func rotate() {

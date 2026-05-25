@@ -35,5 +35,7 @@ export function printKernelCoverageReport(report: KernelCoverageReport): void {
   logger.error(`  These will FAIL-CLOSED at runtime (default block). Classify each as a gated class (file/http/shell/database/retrieval/secret-vault) or "internal" in src/ari-kernel/tool-class-map.ts.\n`);
 }
 
-// auditAutonomyCoverage moved to src/autonomy/risk.ts as auditRiskCoverage
-// alongside the canonical TOOL_RISK map. Server boot wires it from there.
+// auditAutonomyCoverage / auditRiskCoverage retired — TOOL_CLASS_MAP and
+// TOOL_RISK are now derived projections of the single TOOLS record in
+// src/tool-registry.ts. The twin-map alignment invariant is enforced at
+// compile time (the registry entry type requires both fields per tool).

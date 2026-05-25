@@ -3,7 +3,6 @@ import { TOOL_CLASS_MAP } from "../ari-kernel/tool-class-map.js";
 import {
   TOOL_RISK,
   classifyToolRisk,
-  auditRiskCoverage,
   type ToolRisk,
 } from "./risk.js";
 
@@ -68,18 +67,18 @@ describe("classifyToolRisk", () => {
   });
 });
 
-describe("auditRiskCoverage", () => {
-  it("passes when both maps are aligned", () => {
-    expect(() => auditRiskCoverage()).not.toThrow();
-  });
-
-  it("throws when a TOOL_CLASS_MAP key has no TOOL_RISK entry", () => {
-    const synthetic = "__risk_test_missing__";
-    (TOOL_CLASS_MAP as Record<string, string>)[synthetic] = "internal";
-    try {
-      expect(() => auditRiskCoverage()).toThrow(/auditRiskCoverage/);
-    } finally {
-      delete (TOOL_CLASS_MAP as Record<string, string>)[synthetic];
-    }
+describe("registry alignment", () => {
+  // The runtime auditRiskCoverage() throw was replaced by the single
+  // TOOLS record in src/tool-registry.ts — both fields are now required
+  // by the type system. This test catches accidental fork in the derived
+  // projections (e.g., if anyone manually re-augments TOOL_CLASS_MAP or
+  // TOOL_RISK after derivation).
+  it("derived TOOL_RISK and TOOL_CLASS_MAP share the same key set", () => {
+    const kernelKeys = new Set(Object.keys(TOOL_CLASS_MAP));
+    const riskKeys = new Set(Object.keys(TOOL_RISK));
+    const onlyKernel = [...kernelKeys].filter(k => !riskKeys.has(k));
+    const onlyRisk = [...riskKeys].filter(k => !kernelKeys.has(k));
+    expect(onlyKernel, `keys in TOOL_CLASS_MAP not in TOOL_RISK: ${onlyKernel.join(", ")}`).toEqual([]);
+    expect(onlyRisk, `keys in TOOL_RISK not in TOOL_CLASS_MAP: ${onlyRisk.join(", ")}`).toEqual([]);
   });
 });

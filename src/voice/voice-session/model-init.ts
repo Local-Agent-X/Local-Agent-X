@@ -146,10 +146,17 @@ export async function initializeVoiceStack(deps: ModelInitDeps): Promise<Initial
     const whisperPaths = getWhisperModelPaths({ variant: voiceSettings.whisperModel });
     const settingsStt = voiceSettings.sttProvider as
       | "local-whisper" | "groq" | "openai" | "mistral" | "browser" | undefined;
-    const sttProviderName = settingsStt
+    const rawProvider = settingsStt
       && (settingsStt === "local-whisper" || settingsStt === "groq" || settingsStt === "openai" || settingsStt === "mistral" || settingsStt === "browser")
       ? settingsStt
       : (resolveSttProviderName() ?? "local-whisper");
+    // Dictate from Electron can't use the "browser" STT provider — there's
+    // no Web Speech API key in Electron-Chromium. Force local-whisper.
+    // (The earlier isBrowserTier override in index.ts only covered the
+    // top-level skip; this branch is the per-provider selection.)
+    const sttProviderName = (ctx.mode === "dictate" && rawProvider === "browser")
+      ? "local-whisper"
+      : rawProvider;
 
     let whisper: WhisperTranscriber | null = null;
     if (sttProviderName === "browser") {
@@ -208,7 +215,9 @@ export async function initializeVoiceStack(deps: ModelInitDeps): Promise<Initial
     // Kokoro voice actually loaded; this matters if settings.voiceTier4Voice
     // was unknown and fell back to default. Speed comes from voiceSettings
     // (single source of truth — kokoro-engine doesn't re-expose it).
-    const ttsRuntime = TIER4_MODE
+    // tts is null in dictate mode (TTS init skipped above) — don't try
+    // to read .runtime / .voice off it.
+    const ttsRuntime = (TIER4_MODE && tts)
       ? {
           ...(tts as unknown as Tier4StreamingTTS).runtime,
           voice: (tts as unknown as Tier4StreamingTTS).voice,

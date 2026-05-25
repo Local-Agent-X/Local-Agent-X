@@ -103,7 +103,6 @@ export async function startServer(config: LAXConfig) {
   {
     const { auditPolicyCoverage, printPolicyCoverageReport } = await import("../tool-policy.js");
     const { auditKernelCoverage, printKernelCoverageReport } = await import("../ari-kernel.js");
-    const { auditRiskCoverage } = await import("../autonomy/risk.js");
     const seen = new Set<string>();
     const names: string[] = [];
     for (const t of [...allAgentTools, ...bridgeTools]) {
@@ -112,15 +111,12 @@ export async function startServer(config: LAXConfig) {
       names.push(t.name);
     }
     printPolicyCoverageReport(auditPolicyCoverage(names, toolPolicy));
-    // Twin audit for AriKernel's TOOL_CLASS_MAP. Unmapped tools now fail
+    // Twin audit for AriKernel's TOOL_CLASS_MAP. Unmapped tools fail
     // closed at runtime — surface the gap at boot so devs catch it before
-    // a user does.
+    // a user does. (The TOOL_CLASS_MAP × TOOL_RISK alignment invariant
+    // that used to be a runtime audit is now enforced at compile time
+    // via the single TOOLS record in src/tool-registry.ts.)
     printKernelCoverageReport(auditKernelCoverage(names));
-    // Twin-map invariant for the autonomy classifier. Throws if any
-    // TOOL_CLASS_MAP key is missing a TOOL_RISK entry — silent fallback
-    // to "shell" would over-restrict safe tools and degrade the profile
-    // gate's signal before anyone noticed.
-    auditRiskCoverage();
   }
 
   // Pre-warm the tool-RAG embedding index in the background. Without this,

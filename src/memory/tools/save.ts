@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryIndex } from "../../memory.js";
-import { PERSONALITY_FILES, dedupeProfileMarkdown } from "../personality.js";
+import { PERSONALITY_FILES, dedupeProfileMarkdown, setUserScalarField } from "../personality.js";
 import {
   writeMemorySafely,
   writeMindFileSafely,
@@ -85,6 +85,56 @@ export function createSaveTools(memory: MemoryIndex) {
     },
 
     {
+      name: "memory_set_user_field",
+      description:
+        "Surgically set ONE scalar field in USER.md (Name, Location, Job/Role, Communication style, Interests, Pronouns). " +
+        "Use this WHENEVER the user states a personal scalar fact — 'my name is X', 'I'm a Y', 'call me Z', 'I prefer pronouns A/B'. " +
+        "Always prefer this over memory_update_profile for scalar facts: it patches the canonical line in the 'About Me' block, " +
+        "creates the field if missing, and overwrites any prior value. No action/heading guesswork that can corrupt the file.",
+      parameters: {
+        type: "object",
+        properties: {
+          field: {
+            type: "string",
+            description: "Canonical field name (Name, Location, Job, Role, Pronouns, Interests, Communication style, etc.). Matched case-insensitively against existing bullets; created in the 'About Me' block if absent.",
+          },
+          value: {
+            type: "string",
+            description: "The new value. Empty string clears the field.",
+          },
+        },
+        required: ["field", "value"],
+      },
+      async execute(args: Record<string, unknown>) {
+        const field = String(args.field || "").trim();
+        const value = String(args.value || "").trim();
+        if (!field) {
+          return { content: "field is required", isError: true };
+        }
+        const filePath = join(memory["memoryDir"], "USER.md");
+        const existing = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
+        const updated = setUserScalarField(existing, field, value);
+        // Funnel through the same dedupe + safety gate every other write uses.
+        const safe = dedupeProfileMarkdown(updated);
+        try {
+          writeMemorySafely({
+            content: safe,
+            source: "tool",
+            target: filePath,
+            mode: "overwrite",
+          });
+        } catch (e) {
+          if (e instanceof MemoryWriteBlocked) {
+            return { content: `BLOCKED: ${e.reason}`, isError: true };
+          }
+          throw e;
+        }
+        memory.markDirty();
+        return { content: `USER.md: ${field} = ${value || "(cleared)"}` };
+      },
+    },
+
+    {
       name: "memory_update_profile",
       description:
         "Persist a durable preference, workflow rule, or fact you just learned about the user. " +
@@ -94,7 +144,9 @@ export function createSaveTools(memory: MemoryIndex) {
         "Files: 'user' (USER.md — preferences, workflow, communication style — bounded ~2000 chars), " +
         "'mind' or 'memory' (MIND.md — facts, projects, accumulated knowledge — bounded ~5000 chars), " +
         "'heart' (HEART.md — your personality), 'identity' (IDENTITY.md — your name/vibe). " +
-        "Prefer action='replace_section' over 'append'. For SCALAR fields like Name/Location/Job, action MUST be 'replace_section' with section_heading set to the parent block ('About Me' for USER.md, 'Agent Identity' for IDENTITY.md) — never 'append' for scalar edits, that creates duplicate blocks the next turn has to untangle. " +
+        "**Do NOT use this for scalar identity fields** (Name, Location, Job/Role, Pronouns, Communication style). " +
+        "For those, use memory_set_user_field — it patches the canonical bullet directly with no action/heading guesswork. " +
+        "This tool is for narrative sections, workflow rules, and curated facts. Prefer action='replace_section' over 'append'. " +
         "Phrase entries GENERALLY ('user prefers business-suite-level dashboards for analytics across Meta properties') " +
         "rather than verbatim ('user said use facebook dashboard') so the rule transfers across future tasks.",
       parameters: {

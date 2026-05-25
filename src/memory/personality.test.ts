@@ -7,7 +7,7 @@
  * the identity question or addressed the user by an outdated value.
  */
 import { describe, it, expect } from "vitest";
-import { dedupeProfileMarkdown } from "./personality.js";
+import { dedupeProfileMarkdown, setUserScalarField } from "./personality.js";
 
 describe("dedupeProfileMarkdown", () => {
   it("is a no-op for a clean single-block file", () => {
@@ -150,5 +150,80 @@ describe("dedupeProfileMarkdown", () => {
     // (User-side correction needs to come through ANOTHER write — this just
     // ensures we don't multiply blocks; it doesn't invent intent.)
     expect(out).toContain("- Name: John Conner");
+  });
+
+  it("handles single-block files with duplicate subsections (the actual corruption pattern)", () => {
+    // Pre-fix shape: one top-level # About Me with a stale "Name:" line,
+    // then later appends piled on extra `## Communication style` and
+    // `## Family & People` subsections — sometimes prefixed with the
+    // garbage "## ## Heading" double-marker. The old fast-path bailed
+    // on single-top-heading files and let the duplicates persist.
+    const input = [
+      "# About Me",
+      "",
+      "- Name: Daddy Fag",
+      "- Location:",
+      "",
+      "## ## Communication style",
+      "## Communication style",
+      "- Prefers to be addressed as \"Daddy\".",
+      "",
+      "## ## Family & People## Family & People",
+      "- Preferred form of address and full name: \"Daddy Fag\".",
+      "## Family & People",
+      "- Preferred form of address: \"Mr. Fag\".",
+    ].join("\n");
+
+    const out = dedupeProfileMarkdown(input);
+    expect((out.match(/^##\s+Communication style\s*$/gm) ?? []).length).toBe(1);
+    expect((out.match(/^##\s+Family & People\s*$/gm) ?? []).length).toBe(1);
+    // The double-prefix garbage ("## ## Heading") should be normalized away
+    expect(out).not.toMatch(/^##\s+##\s+/m);
+  });
+});
+
+describe("setUserScalarField", () => {
+  it("rewrites an existing scalar in place — replaces the stale value", () => {
+    const input = "# About Me\n\n- Name: Daddy Fag\n- Location:\n";
+    const out = setUserScalarField(input, "Name", "Alex");
+    expect(out).toContain("- Name: Alex");
+    expect(out).not.toContain("Daddy Fag");
+    // No duplicate Name bullet added.
+    expect((out.match(/^-\s+Name:/gm) ?? []).length).toBe(1);
+  });
+
+  it("matches case-insensitively so 'name' and 'NAME' update the same line", () => {
+    const input = "# About Me\n\n- Name: Old\n";
+    expect(setUserScalarField(input, "name", "New")).toContain("- Name: New");
+    expect(setUserScalarField(input, "NAME", "Newer")).toContain("- Name: Newer");
+  });
+
+  it("adds a new bullet under the heading when the field doesn't exist yet", () => {
+    const input = "# About Me\n\n- Name: Alex\n";
+    const out = setUserScalarField(input, "Pronouns", "he/him");
+    expect(out).toContain("- Name: Alex");
+    expect(out).toContain("- Pronouns: he/him");
+  });
+
+  it("creates a minimal file when the input is empty/blank", () => {
+    expect(setUserScalarField("", "Name", "Alex")).toBe("# About Me\n\n- Name: Alex\n");
+    expect(setUserScalarField("   \n", "Name", "Alex")).toBe("# About Me\n\n- Name: Alex\n");
+  });
+
+  it("clears the field when value is empty (preserves the bullet)", () => {
+    const input = "# About Me\n\n- Name: Alex\n";
+    const out = setUserScalarField(input, "Name", "");
+    expect(out).toContain("- Name:");
+    expect(out).not.toContain("Alex");
+  });
+
+  it("ignores trailing duplicates — first match wins, dedupe later collapses the rest", () => {
+    // Replicates the post-corruption shape where the same field appeared
+    // multiple times. Our pass rewrites the first; dedupeProfileMarkdown
+    // (called from the tool funnel) collapses the trailing copies.
+    const input = "# About Me\n\n- Name: Daddy Fag\n\n## Family & People\n- Name: Mr. Fag\n";
+    const out = setUserScalarField(input, "Name", "Alex");
+    const firstLine = out.split("\n").find((l) => l.startsWith("- Name:"));
+    expect(firstLine).toBe("- Name: Alex");
   });
 });

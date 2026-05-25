@@ -145,13 +145,29 @@ export function dedupeProfileMarkdown(content: string): string {
   if (!content || !content.trim()) return content;
   const lines = content.split("\n");
 
-  // Fast path: nothing to dedupe if there's at most one top-level heading.
+  // No fast-path. Even files with a single top-level heading can have
+  // duplicate subsections + scalar bullets piled up from append-style
+  // writes — we run the full normalize on every save so the file
+  // self-heals instead of accumulating contradictions.
   const TOP_HEADING = /^#\s+(.+?)\s*$/;
-  const topCount = lines.filter((l) => TOP_HEADING.test(l)).length;
-  if (topCount <= 1) return content;
-
   const SUB_HEADING = /^##\s+(.+?)\s*$/;
   const SCALAR = /^-\s+([^:\n]+?):\s*(.*)$/;
+
+  // Normalize the two specific garbage patterns we've seen in real
+  // corruption: stacked "## ## Heading" and same-name "## Foo## Foo".
+  // Apply repeatedly until stable so triple-stacked cases also resolve.
+  const normalizeHeadingLine = (line: string): string => {
+    let prev = "";
+    let cur = line;
+    while (cur !== prev) {
+      prev = cur;
+      cur = cur
+        .replace(/^##(?:\s+##)+\s+(.+)$/, "## $1")
+        .replace(/^##\s+([^#]+?)##\s+\1\s*$/, "## $1")
+        .replace(/^##\s+([^#]+?)##\s+.+$/, "## $1");
+    }
+    return cur;
+  };
 
   interface Block {
     rawHeadingLine: string;
@@ -201,10 +217,11 @@ export function dedupeProfileMarkdown(content: string): string {
       preamble.push(line);
       continue;
     }
-    const sub = line.match(SUB_HEADING);
+    const normalizedHeading = normalizeHeadingLine(line);
+    const sub = normalizedHeading.match(SUB_HEADING);
     if (sub) {
       flushSub();
-      currentSub = { rawHeadingLine: line, body: [] };
+      currentSub = { rawHeadingLine: `## ${sub[1].trim()}`, body: [] };
       continue;
     }
     if (currentSub) {
@@ -240,17 +257,79 @@ export function dedupeProfileMarkdown(content: string): string {
     if (b.scalarOrder.length) {
       out.push("");
       for (const field of b.scalarOrder) {
-        out.push(`- ${field}: ${b.scalars.get(field) ?? ""}`);
+        const v = b.scalars.get(field) ?? "";
+        // Don't pad an empty value with a trailing space — keeps clean
+        // input round-tripping cleanly through dedupe.
+        out.push(v ? `- ${field}: ${v}` : `- ${field}:`);
       }
     }
     for (const subKey of b.subOrder) {
       const sub = b.subs.get(subKey);
       if (!sub) continue;
-      out.push("");
+      // Avoid stacking two blank lines between consecutive empty-bodied
+      // subheadings — input "## A\n\n## B\n" round-trips cleanly.
+      if (out.length && out[out.length - 1].trim() !== "") out.push("");
       out.push(sub.rawHeadingLine);
       for (const bl of sub.body) out.push(bl);
     }
   }
   while (out.length && out[out.length - 1].trim() === "") out.pop();
   return out.join("\n") + "\n";
+}
+
+// Set or update a scalar bullet in USER.md ("- Name: Alex").
+//
+// Resolution order:
+//   1. If a "- <Field>: ..." line already exists anywhere in the file
+//      (case-insensitive), rewrite its value in place. First occurrence
+//      wins; dedupe later collapses any trailing duplicates.
+//   2. If no such line exists, append it under the first top-level
+//      heading (usually "# About Me"). Boilerplate "<!-- … -->" comment
+//      blocks stay where they are.
+//   3. If the file has no top-level heading at all, prepend a minimal
+//      "# About Me" block and add the field.
+//
+// Empty value clears the field — the bullet stays but the value goes
+// blank, so the next read knows the slot exists but is undeclared.
+export function setUserScalarField(existing: string, field: string, value: string): string {
+  const fieldDisplay = field.trim();
+  const valueClean = value.trim();
+  const SCALAR = /^(-\s+)([^:\n]+?)(\s*:\s*)(.*)$/;
+
+  if (existing && existing.trim()) {
+    const lines = existing.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const m = lines[i].match(SCALAR);
+      if (!m) continue;
+      if (m[2].trim().toLowerCase() === fieldDisplay.toLowerCase()) {
+        // Preserve the existing label's casing — "Name" stays "Name" even
+        // if the caller passed "name". Avoids label churn on case drift.
+        const existingLabel = m[2].trim();
+        lines[i] = `${m[1]}${existingLabel}${m[3]}${valueClean}`;
+        return lines.join("\n");
+      }
+    }
+    // No existing bullet for this field — insert one after the first
+    // top-level heading. If we can't find one, fall through to fresh-file
+    // path below.
+    const headingIdx = lines.findIndex((l) => /^#\s+/.test(l));
+    if (headingIdx >= 0) {
+      // Find the first non-comment, non-blank line after the heading to
+      // anchor the insertion. We want the bullet to sit with other
+      // scalars when they exist, not floating between heading and an
+      // HTML comment block.
+      let insertAt = headingIdx + 1;
+      let firstBulletIdx = -1;
+      for (let i = headingIdx + 1; i < lines.length; i++) {
+        if (/^#{1,6}\s/.test(lines[i])) break;
+        if (SCALAR.test(lines[i])) { firstBulletIdx = i; break; }
+      }
+      if (firstBulletIdx >= 0) insertAt = firstBulletIdx;
+      lines.splice(insertAt, 0, `- ${fieldDisplay}: ${valueClean}`);
+      return lines.join("\n");
+    }
+  }
+
+  // Fresh file or no heading found — minimal valid structure.
+  return `# About Me\n\n- ${fieldDisplay}: ${valueClean}\n`;
 }

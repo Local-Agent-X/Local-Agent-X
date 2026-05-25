@@ -114,6 +114,18 @@ export async function buildContextBlock(
     sections.push(`<core_memory>\n${coreMemory.trim()}\n</core_memory>`);
   }
 
+  // Atomic entry stores (FACTS-USER.md / FACTS-AGENT.md). These hold
+  // facts the agent persists via the `memory` tool — one statement per
+  // entry, substring-replaceable. Injecting them as their own section
+  // keeps the structured personality files (user_profile, agent_identity)
+  // independent of the entry-based ones, so corruption in one doesn't
+  // cascade into the other.
+  try {
+    const { renderEntryStoreBlocks } = await import("./tools/save.js");
+    const entryBlock = renderEntryStoreBlocks(memory);
+    if (entryBlock) sections.push(`<learned_facts>\n${entryBlock}\n</learned_facts>`);
+  } catch { /* tool module not yet loaded; skip silently */ }
+
   if (!opts.skipDailyLog) {
     const todayLog = memory.getDailyLogPath();
     if (existsSync(todayLog)) {

@@ -45,6 +45,13 @@ contextBridge.exposeInMainWorld("desktop", {
   toggleDevTools: () => ipcRenderer.invoke("toggle-devtools"),
   quit: () => ipcRenderer.invoke("quit-app"),
 
+  // Open the tokenized LAX URL in the user's default browser (escape hatch
+  // for Web Speech API, sharing with another tool on the same box, etc.)
+  // and copy that same URL to clipboard. Both read live from config so
+  // they survive a server port rotation.
+  openInBrowser: () => ipcRenderer.invoke("open-in-browser"),
+  copyAppUrl: () => ipcRenderer.invoke("copy-app-url"),
+
   // File operations
   openFile: (relativePath: string) => ipcRenderer.invoke("open-file", relativePath),
 

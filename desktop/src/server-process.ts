@@ -172,13 +172,26 @@ export function startServer(handlers?: ServerEventHandlers): void {
   const augmentedPath = [...PATH_AUGMENTS, ...existingPath].filter((p, i, a) => p && a.indexOf(p) === i).join(":");
 
   console.log(`[desktop] Starting LAX server (tsx, ${srcIndex})...`);
+  // LAX_BUNDLED_MODELS_DIR points the server at electron-builder's
+  // extraResources directory so whisper-model-fetch can find the
+  // pre-bundled tiny.en files before falling back to download. In dev
+  // (npm run dev / direct tsx), this is unset and the server falls back
+  // to ~/.lax/models normally.
+  const electron = require("electron") as typeof import("electron");
+  const bundledModelsDir = electron.app.isPackaged ? process.resourcesPath : "";
+
   serverProcess = spawn("node", nodeArgs, {
     cwd: projectRoot,
     stdio: ["ignore", "pipe", "pipe"],
     // LAX_PARENT_PID lets the server self-terminate via heartbeat if we
     // die abnormally; server.pid handshake catches the cases that slip
     // through libuv's Job Object cleanup on Windows.
-    env: { ...process.env, PATH: augmentedPath, LAX_PARENT_PID: String(process.pid) },
+    env: {
+      ...process.env,
+      PATH: augmentedPath,
+      LAX_PARENT_PID: String(process.pid),
+      ...(bundledModelsDir ? { LAX_BUNDLED_MODELS_DIR: bundledModelsDir } : {}),
+    },
     windowsHide: true,
   });
 

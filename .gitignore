@@ -68,4 +68,6 @@ installer/dist-mac/
 # sources in desktop/native/{mac,win}/ via `npm run build:native`). CI
 # rebuilds them as part of `npm run dist`; sources are committed, binaries
 # are not — Mach-Os and PE binaries don't belong in git.
+# Also covers the bundled Whisper tiny.en blob (~104MB ONNX) which
+# build:native:whisper fetches from huggingface — never committed.
 desktop/native/dist-bin/

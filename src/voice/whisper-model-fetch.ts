@@ -53,6 +53,17 @@ const VARIANT_SPECS: Record<WhisperVariant, VariantSpec> = {
 };
 
 function modelDirFor(variant: WhisperVariant): string {
+  // When LAX_BUNDLED_MODELS_DIR is set AND it contains the variant we
+  // want, use the bundled copy — saves the first-run download. The
+  // desktop main process sets this to electron's process.resourcesPath
+  // when packaged; we look for whisper-tiny-en/, whisper-base-en/, etc.
+  // directly inside it. Only the default (tiny.en) is bundled today;
+  // others fall through to the normal ~/.lax/models download path.
+  const bundled = process.env.LAX_BUNDLED_MODELS_DIR;
+  if (bundled) {
+    const bundledDir = join(bundled, `whisper-${variant.replace(".", "-")}`);
+    if (existsSync(bundledDir)) return bundledDir;
+  }
   return join(homedir(), ".lax", "models", `whisper-${variant.replace(".", "-")}`);
 }
 

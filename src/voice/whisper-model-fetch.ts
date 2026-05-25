@@ -5,14 +5,16 @@
 //   2. LAX_VOICE_WHISPER_MODEL env var (lowercased + validated)
 //   3. settings.json `voiceWhisperModel` (resolved by voice-session, then
 //      passed in as an option)
-//   4. DEFAULT_WHISPER_VARIANT (small.en) — quality/speed sweet spot. Most
-//      users don't have a discrete GPU, so accurate CPU transcription is
-//      the highest-impact default. Power users who want the snappy 150-300ms
-//      tiny.en pick it from the settings dropdown. One-time ~280MB download.
+//   4. DEFAULT_WHISPER_VARIANT (tiny.en) — speed wins for dictation. The
+//      streaming WS dictate path runs Whisper once per utterance after
+//      VAD speech-end; small.en added ~1s of perceived lag vs real-browser
+//      Web Speech. tiny.en's 7-10% WER is plenty for dictation review-
+//      then-send. Power users who want max accuracy bump to base/small
+//      from the settings dropdown.
 //
-//   tiny.en   ~104MB   ~7-10% WER   ~150-300ms / utterance
+//   tiny.en   ~104MB   ~7-10% WER   ~150-300ms / utterance   (default)
 //   base.en   ~150MB   ~5-7% WER    ~300-600ms / utterance
-//   small.en  ~280MB   ~3-5% WER    ~700-1500ms / utterance   (default)
+//   small.en  ~280MB   ~3-5% WER    ~700-1500ms / utterance
 //
 // Files live at ~/.lax/models/whisper-<variant-with-dot->dash>/ and are
 // pulled from csukuangfj/sherpa-onnx-whisper-<variant> on first use.
@@ -26,7 +28,7 @@ export type WhisperVariant = "tiny.en" | "base.en" | "small.en";
 export const VALID_WHISPER_VARIANTS: ReadonlySet<WhisperVariant> =
   new Set<WhisperVariant>(["tiny.en", "base.en", "small.en"]);
 
-export const DEFAULT_WHISPER_VARIANT: WhisperVariant = "small.en";
+export const DEFAULT_WHISPER_VARIANT: WhisperVariant = "tiny.en";
 
 export function resolveWhisperVariant(opts?: { variant?: WhisperVariant }): WhisperVariant {
   if (opts?.variant && VALID_WHISPER_VARIANTS.has(opts.variant)) return opts.variant;

@@ -76,9 +76,13 @@ final class SpeechSession {
     private var lastFinalText = ""
 
     init?() {
-        // Locale default = current. Browser tier uses navigator.language;
-        // here we match the OS locale which is the closest equivalent.
-        guard let r = SFSpeechRecognizer() else { return nil }
+        // Force en-US explicitly. SFSpeechRecognizer() default uses the
+        // current system locale, but if the user's locale has no installed
+        // model (which we can't detect at init time), the recognizer
+        // silently produces zero results. en-US ships with macOS and is
+        // safe; we can expose a tier-config knob later if non-English
+        // users need it.
+        guard let r = SFSpeechRecognizer(locale: Locale(identifier: "en-US")) else { return nil }
         self.recognizer = r
     }
 
@@ -105,15 +109,38 @@ final class SpeechSession {
         // Each task gets a fresh request — SFSpeechRecognitionRequest can't
         // be reused after endAudio. Reuse the AVAudioEngine to avoid the
         // mic re-acquire delay.
-        dlog("beginTask: locale=\(recognizer.locale.identifier) supportsOnDevice=\(recognizer.supportsOnDeviceRecognition) isAvailable=\(recognizer.isAvailable)")
+        let authStatus = SFSpeechRecognizer.authorizationStatus()
+        let authLabel: String = {
+            switch authStatus {
+            case .authorized: return "authorized"
+            case .denied: return "denied"
+            case .restricted: return "restricted"
+            case .notDetermined: return "notDetermined"
+            @unknown default: return "unknown(\(authStatus.rawValue))"
+            }
+        }()
+        dlog("beginTask: locale=\(recognizer.locale.identifier) supportsOnDevice=\(recognizer.supportsOnDeviceRecognition) isAvailable=\(recognizer.isAvailable) auth=\(authLabel)")
+        if authStatus != .authorized {
+            // Surface to parent — usually means user clicked "Don't Allow"
+            // on the Speech Recognition prompt (separate from Microphone).
+            // System Settings → Privacy & Security → Speech Recognition is
+            // the only way to flip this back on.
+            emit(["type": "auth", "status": authLabel])
+            running = false
+            return
+        }
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
+        // taskHint = .dictation tells the recognizer this is free-form
+        // user dictation (vs. .search / .confirmation / .unspecified),
+        // which biases the language model toward natural sentences
+        // rather than command keywords.
+        req.taskHint = .dictation
         // Server-side recognition by default. On-device is preferred on
         // paper (privacy, offline) but in practice the model isn't always
         // downloaded for the system locale, and SFSpeechRecognizer
         // silently produces zero results when requiresOnDevice=true and
-        // no model is present. Leaving it false lets Apple route to the
-        // cloud as a fallback — same engine Safari uses for Web Speech.
+        // no model is present.
         req.requiresOnDeviceRecognition = false
         self.request = req
 
@@ -134,19 +161,48 @@ final class SpeechSession {
         dlog("beginTask: input format sr=\(format.sampleRate) ch=\(format.channelCount)")
         input.removeTap(onBus: 0)
         var bufCount: Int = 0
+        // Tee the first ~5s of mic audio to a WAV file so we can verify
+        // it's real speech (rather than silence / garbage / wrong device).
+        // If dictation isn't transcribing, the diagnostic question is:
+        // "is the recognizer getting good audio?" — open the WAV to find
+        // out. Capped at 80 buffers (~5s @ 16kHz/1600-frame buffers) so
+        // it doesn't bloat indefinitely.
+        let wavPath = "\(NSHomeDirectory())/.lax/logs/lax-speech-mac.wav"
+        let wavURL = URL(fileURLWithPath: wavPath)
+        try? FileManager.default.removeItem(at: wavURL)
+        var wavFile: AVAudioFile? = nil
+        do {
+            wavFile = try AVAudioFile(forWriting: wavURL, settings: format.settings)
+            dlog("dumping first ~5s to \(wavPath)")
+        } catch {
+            dlog("could not open WAV dump: \(error)")
+        }
+
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             self?.request?.append(buffer)
             bufCount += 1
-            // Log every 200th buffer so we can tell audio is actually
-            // flowing without spamming. 1024 frames @ 44.1kHz ≈ 23ms,
-            // so 200 buffers ≈ 4.6s of audio.
-            if bufCount % 200 == 0 { dlog("audio buffers appended: \(bufCount)") }
+            // Write first 80 buffers (~5s) to disk so we can verify the
+            // captured audio is actual speech. After 80, just drop the
+            // tee so the file stays small.
+            if bufCount <= 80, let wf = wavFile {
+                do { try wf.write(from: buffer) } catch { dlog("wav write failed: \(error)") }
+            }
+            // Log first 3 buffers explicitly so we know the tap fired at
+            // all, then every 50 after that with max amplitude.
+            if bufCount <= 3 || bufCount % 50 == 0 {
+                var maxAmp: Float = 0
+                if let ch = buffer.floatChannelData?[0] {
+                    let n = Int(buffer.frameLength)
+                    for i in 0..<n { let v = abs(ch[i]); if v > maxAmp { maxAmp = v } }
+                }
+                dlog("audio buffers appended: \(bufCount) frameLen=\(buffer.frameLength) maxAmp=\(String(format: "%.4f", maxAmp))")
+            }
         }
 
         do {
             audioEngine.prepare()
             try audioEngine.start()
-            dlog("audio engine started")
+            dlog("audio engine started, isRunning=\(audioEngine.isRunning)")
         } catch {
             dlog("audio engine start failed: \(error)")
             emitError("audio_engine_start_failed", "\(error)")
@@ -154,9 +210,26 @@ final class SpeechSession {
             return
         }
 
+        // Sanity check 1s later. If isRunning has flipped to false, the
+        // engine started and immediately died (often a TCC mic denial
+        // that doesn't surface as an exception). Helps disambiguate
+        // "tap never fires because engine stopped" from "tap never
+        // fires because no audio is reaching it."
+        DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self else { return }
+            dlog("1s post-start: engine.isRunning=\(self.audioEngine.isRunning) running=\(self.running)")
+        }
+
         dlog("creating recognitionTask")
+        var callbackCount = 0
         self.task = recognizer.recognitionTask(with: req) { [weak self] result, error in
             guard let self = self else { return }
+            callbackCount += 1
+            // Log every callback firing — even if result and error are
+            // both nil. If we never see "callback fired" lines, the
+            // recognitionTask isn't actually processing the audio we're
+            // feeding it (separate from auth / engine / format issues).
+            dlog("recognitionTask callback #\(callbackCount): hasResult=\(result != nil) hasError=\(error != nil)")
             if let result = result {
                 let text = result.bestTranscription.formattedString
                 let isFinal = result.isFinal

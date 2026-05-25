@@ -51,8 +51,19 @@ let dictateNativeActive = false;
 async function startDictate() {
   if (dictateMode) return;
   if (isElectronRuntime()) {
+    // Native OS recognizer path is preferred when available AND opted in.
+    // Opt-out exists because SFSpeechRecognizer on macOS sometimes
+    // accepts audio without producing transcripts (cause TBD — possibly
+    // an unsigned-build TCC scope issue, possibly a recognizer config
+    // we haven't pinned down). When the native path doesn't work the
+    // fallback is server-side Whisper (/api/voice/dictate-once) which
+    // needs ffmpeg on PATH but is reliable.
+    //
+    // Flip lax_native_speech=true in localStorage to re-enable native
+    // once we've stabilized it. Default off until then.
+    const nativeOptIn = (() => { try { return localStorage.getItem('lax_native_speech') === 'true'; } catch { return false; } })();
     const nativeSpeech = window.desktop?.nativeSpeech;
-    if (nativeSpeech && await nativeSpeech.available()) {
+    if (nativeOptIn && nativeSpeech && await nativeSpeech.available()) {
       return startDictateNative();
     }
     return startDictateElectron();

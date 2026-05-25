@@ -59,9 +59,30 @@ async function startVoiceMode() {
     // voice-session.ts and gpu-session.ts skip agent_start + TTS in
     // dictate mode so the user only gets the transcript, not a phantom
     // agent reply.
+    // Determine which side runs STT this session. Browser tier in a real
+    // browser uses webkitSpeechRecognition (Google's cloud ASR via the
+    // browser's baked-in key). Electron-Chromium ships without that key,
+    // so its renderer reports clientStt=false even on the Browser tier;
+    // the server then runs Whisper + Sherpa streaming partials for it.
+    // Same flag drives whether we set up webkitSR (client) or the
+    // mic-capture-worklet (server-STT).
+    const activeTier = (typeof window.getActiveVoiceTier === 'function') ? window.getActiveVoiceTier() : null;
+    const isBrowserTier = activeTier?.id === 'browser';
+    const isElectronRuntime = /electron/i.test(navigator.userAgent || '');
+    const useClientStt = isBrowserTier && !isElectronRuntime;
+    // TTS stays on speechSynthesis for browser tier in both environments —
+    // OS voices, no install.
+    voiceBrowserTtsActive = isBrowserTier;
+    _voiceBrowserTtsBuf = "";
+
     const sid = (typeof activeChat !== 'undefined' && activeChat?.id) ? activeChat.id : 'default';
     const sessionMode = dictateMode ? 'dictate' : 'chat';
-    ws.send(JSON.stringify({ type: 'hello', sessionId: 'chat-' + sid + '-' + Date.now(), mode: sessionMode }));
+    ws.send(JSON.stringify({
+      type: 'hello',
+      sessionId: 'chat-' + sid + '-' + Date.now(),
+      mode: sessionMode,
+      clientStt: useClientStt,
+    }));
     const savedVoice = localStorage.getItem('lax_voice') || 'am_michael';
     const savedSpeed = parseFloat(localStorage.getItem('lax_speed') || '1.15');
     ws.send(JSON.stringify({ type: 'voice_settings', voice: savedVoice, speed: savedSpeed }));
@@ -73,21 +94,19 @@ async function startVoiceMode() {
     // "mic-capture is not defined in AudioWorkletGlobalScope". Bump the
     // version when the worklet code changes.
     //
-    // Browser tier branch: if the user picked the "Browser" voice tier the
-    // server has no STT — we run Web Speech API client-side and ship final
-    // transcripts via the WS `transcript` message. We still need a mic stream
-    // for the sphere's analyser, but skip the mic-capture worklet (no PCM
-    // streaming) and skip the playback worklet (browser tier uses
-    // window.speechSynthesis for TTS, never receives PCM frames).
-    const activeTier = (typeof window.getActiveVoiceTier === 'function') ? window.getActiveVoiceTier() : null;
-    const isBrowserTier = activeTier?.id === 'browser';
-    voiceBrowserTtsActive = isBrowserTier;
-    _voiceBrowserTtsBuf = "";
-
+    // mic-capture worklet streams PCM whenever the server is doing STT
+    // (everything except the real-browser-with-Web-Speech case). Playback
+    // worklet receives TTS PCM only when the server is also doing TTS —
+    // browser tier uses speechSynthesis instead.
     voiceCtx = new AudioContext();
-    if (!isBrowserTier) {
+    if (useClientStt) {
+      // Real browser + browser tier: nothing to register; webkit handles
+      // capture + recognition, speechSynthesis handles playback.
+    } else {
       await voiceCtx.audioWorklet.addModule('/js/voice/mic-capture-worklet.js?v=vb2');
-      await voiceCtx.audioWorklet.addModule('/js/voice/playback-worklet.js?v=vb2');
+      if (!voiceBrowserTtsActive) {
+        await voiceCtx.audioWorklet.addModule('/js/voice/playback-worklet.js?v=vb2');
+      }
     }
 
     // 4) Mic capture
@@ -105,7 +124,7 @@ async function startVoiceMode() {
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
     });
     const source = voiceCtx.createMediaStreamSource(voiceMicStream);
-    if (!isBrowserTier) {
+    if (!useClientStt) {
       voiceMicNode = new AudioWorkletNode(voiceCtx, 'mic-capture');
       voiceMicNode.port.onmessage = (e) => {
         if (!e.data || e.data.type !== 'pcm') return;

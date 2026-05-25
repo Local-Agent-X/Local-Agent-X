@@ -46,6 +46,14 @@ export interface VoiceSessionContext {
    *  spin up. Saves token cost AND avoids playing a phantom reply when
    *  the user only wanted speech-to-text. Defaults to "chat" if missing. */
   mode?: "chat" | "dictate";
+  /** Whether the client is doing STT on its own (real-browser Browser
+   *  tier uses webkitSpeechRecognition and ships transcripts via the
+   *  `transcript` message). When false, the server must run STT itself —
+   *  Electron-Chromium can't reach Google's Speech API, so its renderer
+   *  reports clientStt=false even on the Browser tier. Defaults to false
+   *  if missing (safe — server runs STT, costs a Whisper round trip but
+   *  produces correct output). */
+  clientStt?: boolean;
   sendAudio: (frame: Int16Array) => void;
   sendEvent: (event: Record<string, unknown>) => void;
 }
@@ -149,9 +157,11 @@ export function setupVoiceWebSocket(server: Server, authToken: string): void {
           sessionId = String(msg.sessionId || "");
           if (!sessionId) { ws.close(4000, "hello requires sessionId"); return; }
           const mode: "chat" | "dictate" = msg.mode === "dictate" ? "dictate" : "chat";
+          const clientStt = msg.clientStt === true;
           session = sessionFactory({
             sessionId,
             mode,
+            clientStt,
             sendAudio: ctx.sendAudio,
             sendEvent: ctx.sendEvent,
           });

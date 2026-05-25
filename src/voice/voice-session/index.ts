@@ -80,15 +80,22 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
 
     const buffers = createAudioBuffers();
 
-    // Browser tier: client runs SpeechRecognition + speechSynthesis;
-    // server-side STT/VAD/Whisper/TTS are dead weight.
+    // Browser tier shortcut: when the client *can* do STT itself (real
+    // browser with Web Speech API), we skip the entire server stack —
+    // the renderer ships transcripts via the `transcript` message and
+    // uses window.speechSynthesis for TTS. Dead weight server-side.
     //
-    // Exception: dictate mode always needs server-side STT. Electron's
-    // Chromium doesn't have the Web Speech API key, so the browser-tier
-    // STT path doesn't work inside the desktop app. When the renderer
-    // opens this session with mode=dictate, it's explicitly asking the
-    // server to do the recognition — overriding the tier preference.
-    const isBrowserTier = voiceSettings.sttProvider === "browser" && ctx.mode !== "dictate";
+    // Two exceptions where we must NOT take this shortcut:
+    //  1. mode=dictate → renderer is always streaming PCM to us (the
+    //     dictate path doesn't depend on Web Speech).
+    //  2. clientStt === false → Electron-Chromium can't reach Google's
+    //     Speech API, so the renderer reports it can't do STT. Run
+    //     server-side STT for it. TTS still goes through speechSynthesis
+    //     (handled by model-init.ts skipping TTS when tier4Provider=browser).
+    const isBrowserTier =
+      voiceSettings.sttProvider === "browser"
+      && ctx.mode !== "dictate"
+      && ctx.clientStt === true;
 
     (async () => {
       if (isBrowserTier) {

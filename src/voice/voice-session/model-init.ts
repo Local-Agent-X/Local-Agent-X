@@ -98,12 +98,15 @@ export async function initializeVoiceStack(deps: ModelInitDeps): Promise<Initial
     ctx.sendEvent({ type: "whisper_model_ready" });
 
     // ── TTS ──
-    // Dictate mode never plays audio back — server emits transcripts only.
-    // Skip TTS init entirely so a tier4Provider="browser" setting doesn't
-    // blow up createTier4 (its variant list is kokoro/chatterbox/edge-tts;
-    // "browser" only makes sense for client-side speechSynthesis).
+    // Skip server TTS init in two cases:
+    //  - mode=dictate (no audio reply anyway)
+    //  - voiceSettings.tier4Provider === "browser" (client uses
+    //    window.speechSynthesis for TTS; tier4Provider="browser" isn't
+    //    a real server-side variant and would crash createTier4)
+    // Otherwise we go through the normal Tier4/CPU-fallback init.
     let tts: StreamingTTS | null = null;
-    if (ctx.mode !== "dictate") {
+    const clientHandlesTts = voiceSettings.tier4Provider === "browser";
+    if (ctx.mode !== "dictate" && !clientHandlesTts) {
       if (TIER4_MODE) {
         // Provider selection. settings.voiceTier4Provider beats env
         // (LAX_VOICE_TIER4_PROVIDER), env beats the kokoro/chatterbox-clone

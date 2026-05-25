@@ -65,21 +65,25 @@ window.LAX_VOICE_CATALOG = {
       id: 'edge',
       label: 'Edge cloud',
       tagline: '~22 neural voices · Microsoft cloud · no API key',
-      detail: 'Edge Read-Aloud TTS + cloud Whisper STT. ~250ms STT latency. Needs `npm i msedge-tts mpg123-decoder` for TTS and one of the supported STT providers for transcription.',
-      settings: { voiceMode: 'standard', voiceEngine: 'tier4', voiceTier4Provider: 'edge-tts', voiceSttProvider: 'groq' },
+      detail: 'Edge Read-Aloud TTS (Microsoft cloud, no API key) + local Whisper STT (bundled with the desktop app). Optionally swap STT for cloud Groq/OpenAI/Mistral if you have a key — ~250ms vs ~500ms.',
+      // local-whisper as the default — works zero-setup with the bundled
+      // tiny.en model. Cloud providers stay opt-in via the dropdown.
+      settings: { voiceMode: 'standard', voiceEngine: 'tier4', voiceTier4Provider: 'edge-tts', voiceSttProvider: 'local-whisper' },
       voicePool: ['edge'],
       // STT providers the Edge tier can pair with. Picker renders a dropdown
       // and rewrites the `secret:` prereq to whatever the user selects. The
       // first entry is the default for fresh installs.
       sttProviders: [
-        { id: 'groq',    label: 'Groq Whisper-large-v3 (free tier)',         secret: 'GROQ_API_KEY' },
-        { id: 'openai',  label: 'OpenAI Whisper-1 (~$0.006/min, paid)',      secret: 'OPENAI_API_KEY' },
-        { id: 'mistral', label: 'Mistral Voxtral (cheap, EU-hosted)',        secret: 'MISTRAL_API_KEY' },
+        { id: 'local-whisper', label: 'Local Whisper (bundled, no key needed)',  secret: '' },
+        { id: 'groq',          label: 'Groq Whisper-large-v3 (free tier)',       secret: 'GROQ_API_KEY' },
+        { id: 'openai',        label: 'OpenAI Whisper-1 (~$0.006/min, paid)',    secret: 'OPENAI_API_KEY' },
+        { id: 'mistral',       label: 'Mistral Voxtral (cheap, EU-hosted)',      secret: 'MISTRAL_API_KEY' },
       ],
       prerequisites: [
         { kind: 'npm:msedge-tts', label: 'msedge-tts npm package' },
         // Tier-2 secret is dynamic — voice-picker.js synthesizes the right
-        // `secret:<KEY>` prereq based on the selected sttProvider above.
+        // `secret:<KEY>` prereq based on the selected sttProvider above
+        // (local-whisper has no secret, so no prereq is added).
       ],
     },
     // NOTE: Tier 3 "Kokoro local" (in-process kokoro-js + Node ONNX) was
@@ -118,6 +122,10 @@ window.LAX_VOICE_CATALOG = {
   ],
 
   // Default tier when settings.json has no voice keys at all (fresh user).
-  // Browser is the only option that works with literally zero setup.
-  DEFAULT_TIER_ID: 'browser',
+  // Edge in Electron (the bundled msedge-tts + tiny.en Whisper gives
+  // good-quality voice chat with zero setup), Browser in a real browser
+  // (Web Speech API is instant + free, no network round trip on STT).
+  DEFAULT_TIER_ID: (typeof navigator !== "undefined" && /electron/i.test(navigator.userAgent || ""))
+    ? 'edge'
+    : 'browser',
 };

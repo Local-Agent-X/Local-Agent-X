@@ -78,6 +78,14 @@ export async function createProject() {
     closeAgentDetail();
     loadProjects();
     loadTeam();
+    // Refresh the chat sidebar's project list too -- without this, the
+    // new project only shows in the Agents-page dropdown and the user
+    // has to reload the Electron app to see it in the sidebar. The
+    // sidebar's own +New Project button calls this same function for
+    // the same reason (see app-sidebar-actions.js:71).
+    if (typeof window.syncProjectsFromServer === 'function') {
+      await window.syncProjectsFromServer();
+    }
   } catch {}
 }
 

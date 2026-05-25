@@ -98,36 +98,42 @@ export async function initializeVoiceStack(deps: ModelInitDeps): Promise<Initial
     ctx.sendEvent({ type: "whisper_model_ready" });
 
     // ── TTS ──
-    let tts: StreamingTTS | null;
-    if (TIER4_MODE) {
-      // Provider selection. settings.voiceTier4Provider beats env
-      // (LAX_VOICE_TIER4_PROVIDER), env beats the kokoro/chatterbox-clone
-      // auto-pick. Set to "edge-tts" to route through the edge-tts
-      // adapter (no API key, requires `npm i msedge-tts mpg123-decoder`).
-      const providerOverride = voiceSettings.tier4Provider
-        || process.env.LAX_VOICE_TIER4_PROVIDER?.trim();
-      const variant = providerOverride && providerOverride.length > 0
-        ? providerOverride
-        : tier4VariantFromEnv();
-      logger.info(`[voice-session] ${ctx.sessionId}: TIER4 mode → variant=${variant}`);
-      // Only spread defined fields — the kokoro-engine merge below treats
-      // explicit `undefined` as a real override and would clobber env vars.
-      const t4 = await createTier4(
-        {
-          variant,
-          referenceWavPath: process.env.LAX_VOICE_CLONE_REF,
-          ...(voiceSettings.tier4Device ? { device: voiceSettings.tier4Device } : {}),
-          ...(voiceSettings.tier4Dtype ? { dtype: voiceSettings.tier4Dtype } : {}),
-          ...(voiceSettings.tier4Voice ? { voice: voiceSettings.tier4Voice } : {}),
-          ...(voiceSettings.tier4Speed !== undefined ? { speed: voiceSettings.tier4Speed } : {}),
-        },
-        ttsCallbacks,
-      );
-      tts = t4 as unknown as StreamingTTS;
-    } else {
-      tts = createStreamingTTS(getTTSModelPaths(), ttsCallbacks);
+    // Dictate mode never plays audio back — server emits transcripts only.
+    // Skip TTS init entirely so a tier4Provider="browser" setting doesn't
+    // blow up createTier4 (its variant list is kokoro/chatterbox/edge-tts;
+    // "browser" only makes sense for client-side speechSynthesis).
+    let tts: StreamingTTS | null = null;
+    if (ctx.mode !== "dictate") {
+      if (TIER4_MODE) {
+        // Provider selection. settings.voiceTier4Provider beats env
+        // (LAX_VOICE_TIER4_PROVIDER), env beats the kokoro/chatterbox-clone
+        // auto-pick. Set to "edge-tts" to route through the edge-tts
+        // adapter (no API key, requires `npm i msedge-tts mpg123-decoder`).
+        const providerOverride = voiceSettings.tier4Provider
+          || process.env.LAX_VOICE_TIER4_PROVIDER?.trim();
+        const variant = providerOverride && providerOverride.length > 0
+          ? providerOverride
+          : tier4VariantFromEnv();
+        logger.info(`[voice-session] ${ctx.sessionId}: TIER4 mode → variant=${variant}`);
+        // Only spread defined fields — the kokoro-engine merge below treats
+        // explicit `undefined` as a real override and would clobber env vars.
+        const t4 = await createTier4(
+          {
+            variant,
+            referenceWavPath: process.env.LAX_VOICE_CLONE_REF,
+            ...(voiceSettings.tier4Device ? { device: voiceSettings.tier4Device } : {}),
+            ...(voiceSettings.tier4Dtype ? { dtype: voiceSettings.tier4Dtype } : {}),
+            ...(voiceSettings.tier4Voice ? { voice: voiceSettings.tier4Voice } : {}),
+            ...(voiceSettings.tier4Speed !== undefined ? { speed: voiceSettings.tier4Speed } : {}),
+          },
+          ttsCallbacks,
+        );
+        tts = t4 as unknown as StreamingTTS;
+      } else {
+        tts = createStreamingTTS(getTTSModelPaths(), ttsCallbacks);
+      }
     }
-    const ttsSampleRate = tts.sampleRate;
+    const ttsSampleRate = tts?.sampleRate ?? 0;
 
     // ── STT (Whisper) provider selection ──
     // settings.voiceSttProvider beats LAX_VOICE_STT_PROVIDER. Picks

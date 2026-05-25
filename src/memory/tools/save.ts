@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryIndex } from "../../memory.js";
 import { PERSONALITY_FILES, dedupeProfileMarkdown, setUserScalarField } from "../personality.js";
+import { EntryStore } from "../entries.js";
 import {
   writeMemorySafely,
   writeMindFileSafely,
@@ -9,6 +10,24 @@ import {
   runMemoryGate,
   MemoryWriteBlocked,
 } from "../write-safely.js";
+
+// Atomic entry-based store, lazy per MemoryIndex. Lives next to the
+// existing structured files. Two targets: user-scoped facts and
+// agent-scoped facts (env, conventions). Caps are conservative — the
+// store rejects over-cap writes with retry hints, so they're discoverable.
+const ENTRY_STORES = new WeakMap<MemoryIndex, { user: EntryStore; agent: EntryStore }>();
+function getEntryStores(memory: MemoryIndex): { user: EntryStore; agent: EntryStore } {
+  let stores = ENTRY_STORES.get(memory);
+  if (!stores) {
+    const baseDir = memory["memoryDir"] as string;
+    stores = {
+      user: new EntryStore({ baseDir, filename: "FACTS-USER.md", charLimit: 2000 }),
+      agent: new EntryStore({ baseDir, filename: "FACTS-AGENT.md", charLimit: 4000 }),
+    };
+    ENTRY_STORES.set(memory, stores);
+  }
+  return stores;
+}
 
 export function createSaveTools(memory: MemoryIndex) {
   return [
@@ -322,5 +341,86 @@ export function createSaveTools(memory: MemoryIndex) {
         };
       },
     },
+
+    {
+      name: "memory",
+      description:
+        "Save durable information to persistent memory that survives across sessions and is injected into future turns. " +
+        "Prefer this over memory_save / memory_update_profile for ANY fact you learn during a conversation — environment, " +
+        "preferences, project knowledge. Entries are atomic (one statement per call), identified by SUBSTRING for updates. " +
+        "\n\n" +
+        "WHEN TO USE:\n" +
+        "- User states a preference, habit, or fact ('I prefer terse responses', 'my dog's name is Rex')\n" +
+        "- You discover something about the environment (toolchain version, project convention, API quirk)\n" +
+        "- User corrects an earlier statement ('actually I work at Google now' → use action=replace)\n" +
+        "- You learned a workflow that will be useful next session\n\n" +
+        "ACTIONS:\n" +
+        "- add: append a new entry. Use for first-time facts.\n" +
+        "- replace: find the existing entry matching old_text (substring) and swap it. " +
+        "Use when correcting a stale fact you already saved.\n" +
+        "- remove: delete the entry matching old_text. Use when a fact is no longer true.\n\n" +
+        "TARGETS:\n" +
+        "- user: facts ABOUT the user (name, role, preferences, what they're working on)\n" +
+        "- agent: facts the AGENT learned (env, conventions, project quirks, lessons)\n\n" +
+        "Each entry should be ONE compact statement, written as a complete sentence so a future session " +
+        "can read it without context. Phrase generally ('user prefers business-suite dashboards') not " +
+        "verbatim ('user said use the facebook dashboard'). " +
+        "Don't save: session task state, ephemeral TODOs, raw conversation excerpts, trivial/obvious info.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["add", "replace", "remove"] },
+          target: { type: "string", enum: ["user", "agent"] },
+          content: { type: "string", description: "The entry text. Required for add and replace." },
+          old_text: { type: "string", description: "Substring of the existing entry to replace or remove. Required for replace and remove." },
+        },
+        required: ["action", "target"],
+      },
+      async execute(args: Record<string, unknown>) {
+        const action = String(args.action || "");
+        const target = String(args.target || "");
+        const content = args.content != null ? String(args.content) : "";
+        const oldText = args.old_text != null ? String(args.old_text) : "";
+        const stores = getEntryStores(memory);
+        const store = target === "user" ? stores.user : target === "agent" ? stores.agent : null;
+        if (!store) {
+          return { content: `target must be 'user' or 'agent' (got '${target}')`, isError: true };
+        }
+        try {
+          let result;
+          if (action === "add") {
+            result = store.add(content);
+          } else if (action === "replace") {
+            result = store.replace(oldText, content);
+          } else if (action === "remove") {
+            result = store.remove(oldText);
+          } else {
+            return { content: `unknown action: ${action}. Use add, replace, or remove.`, isError: true };
+          }
+          if (!result.success) {
+            return { content: result.error ?? "memory write failed", isError: true };
+          }
+          memory.markDirty();
+          return {
+            content: `${result.message} (${result.usage}, ${result.entries?.length ?? 0} entries)`,
+          };
+        } catch (e) {
+          return { content: `memory tool error: ${(e as Error).message}`, isError: true };
+        }
+      },
+    },
   ];
+}
+
+// Render the agent + user fact stores as a system-prompt block for
+// session start. Returns empty string when both are empty. Called from
+// the prompt-assembly path alongside USER.md / IDENTITY.md.
+export function renderEntryStoreBlocks(memory: MemoryIndex): string {
+  const stores = getEntryStores(memory);
+  const blocks: string[] = [];
+  const userBlock = stores.user.renderForSystemPrompt("THINGS I KNOW ABOUT THE USER");
+  if (userBlock) blocks.push(userBlock);
+  const agentBlock = stores.agent.renderForSystemPrompt("THINGS I'VE LEARNED");
+  if (agentBlock) blocks.push(agentBlock);
+  return blocks.join("\n\n");
 }

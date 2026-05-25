@@ -71,3 +71,11 @@ installer/dist-mac/
 # Also covers the bundled Whisper tiny.en blob (~104MB ONNX) which
 # build:native:whisper fetches from huggingface — never committed.
 desktop/native/dist-bin/
+
+# Vitest JSON reporter dumps (one-off scan output, can be 500KB+).
+# Regenerated whenever someone runs `vitest --reporter=json > vt-results.json`.
+vt-results.json
+
+# Local scratch backup dirs created during refactors. Prefixed `temp-`
+# so the convention is clear: temporary, not for history.
+temp-*/

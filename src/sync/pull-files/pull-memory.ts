@@ -18,11 +18,20 @@ export function pullMemoryDir(dataDir: string, syncDir: string): void {
     let checkTaint: ((s: string) => { safe: boolean; reason?: string }) | null = null;
     try { checkTaint = require("../../sanitize.js").checkMemoryTaint; } catch {}
 
+    // Daily chat archives (YYYY-MM-DD.md) are auto-generated transcripts
+    // of the user's own conversations — already inside the trust boundary
+    // when they were created. Skip taint checks on them or the filter
+    // false-positives on the agent's own defensive responses (where the
+    // agent quoted `<system>` tags or `<<<EXTERNAL_UNTRUSTED_CONTENT>>>`
+    // markers from an injection attempt it caught). User-curated notes
+    // with any other filename still get checked.
+    const isDailyChatArchive = (name: string): boolean => /^\d{4}-\d{2}-\d{2}\.md$/.test(name);
+
     for (const f of readdirSync(syncMemDir)) {
       if (!f.endsWith(".md")) continue;
       remoteMemFiles.add(f);
       const syncContent = readFileSync(join(syncMemDir, f), "utf-8");
-      if (checkTaint) {
+      if (checkTaint && !isDailyChatArchive(f)) {
         const t = checkTaint(syncContent);
         if (!t.safe) { logger.warn(`[sync] Rejected ${f}: ${t.reason}`); continue; }
       }

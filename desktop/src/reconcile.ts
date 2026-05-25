@@ -161,24 +161,18 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
 
   const stored = loadState();
 
-  // First-ever launch (no state file): trust the installer's build is
-  // fresh, just record current hashes. Skip running install/build to
-  // avoid a 30s+ delay on first launch when everything is already
-  // correct (install-common.mjs just finished).
-  if (!stored) {
-    saveState({
-      version: 1,
-      rootLock: currentRootLock,
-      desktopLock: currentDesktopLock,
-      desktopSrc: currentDesktopSrc,
-      lastReconciledAt: new Date().toISOString(),
-    });
-    return { needsRelaunch: false, ranSteps: ["first-launch (recorded baseline)"] };
-  }
-
-  const rootChanged    = stored.rootLock    !== currentRootLock;
-  const desktopChanged = stored.desktopLock !== currentDesktopLock;
-  const srcChanged     = stored.desktopSrc  !== currentDesktopSrc;
+  // Missing state = either a true first launch OR a prior boot was
+  // repaired (splash Repair button wipes reconcile-state.json to recover
+  // from a stuck-reconcile loop). Treat both the same: rebuild
+  // defensively, then baseline. The earlier "first-launch shortcut"
+  // (baseline immediately, skip rebuild) was a footgun for the second
+  // case — it locked the user into stale dist with no recovery path
+  // except a manual `npm run build`. Worth the 10-20s on a true first
+  // launch (tsc is mostly a no-op when dist is fresh) to never poison
+  // the baseline.
+  const rootChanged    = !stored || stored.rootLock    !== currentRootLock;
+  const desktopChanged = !stored || stored.desktopLock !== currentDesktopLock;
+  const srcChanged     = !stored || stored.desktopSrc  !== currentDesktopSrc;
 
   if (rootChanged) {
     onStatus?.("Updating components…");
@@ -196,6 +190,11 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
     ranSteps.push("desktop tsc build");
   }
 
+  // Save BEFORE the caller's app.relaunch() — otherwise the relaunched
+  // process sees the same missing/stale state and reconciles in a loop.
+  // A boot crash after this save is fine; user can either fix the source
+  // (next launch will see hash change and rebuild) or click Repair (wipes
+  // state, next launch rebuilds defensively per the comment above).
   saveState({
     version: 1,
     rootLock: currentRootLock,
@@ -204,5 +203,9 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
     lastReconciledAt: new Date().toISOString(),
   });
 
+  // Relaunch whenever desktop/src was rebuilt — the currently-running
+  // Electron is still on the old dist (we can't hot-swap main.js). No
+  // infinite-loop risk: we just saved state above, so the relaunched
+  // process sees hashes matching and skips rebuild on the next pass.
   return { needsRelaunch: srcChanged, ranSteps };
 }

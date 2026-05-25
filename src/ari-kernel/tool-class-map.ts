@@ -64,6 +64,7 @@ export const TOOL_CLASS_MAP: Record<string, string> = {
   agent_status: "internal",
   agent_output: "internal",
   agent_message: "internal",
+  agent_escalate: "internal",
   delegate: "internal",
   swarm_create: "internal",
   swarm_status: "internal",

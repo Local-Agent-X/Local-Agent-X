@@ -185,10 +185,13 @@ async function startDictateNative() {
     dictateNativeActive = true;
     dictateRestartGuard = false;
 
-    // Visual-only mic stream — keeps the sphere reactive while the helper
-    // does the actual recognition. macOS prompts for mic once (handled by
-    // window.desktop.requestMediaAccess), then both this getUserMedia and
-    // the helper's AVAudioEngine share the granted permission.
+    // Pre-prompt for mic access at the OS level so the helper's
+    // AVAudioEngine doesn't get silently denied (or, worse, get back
+    // zero-amplitude buffers that look like silence). Renderer does NOT
+    // call getUserMedia on this path — observed behavior was the helper
+    // getting one initial buffer then silence whenever the renderer
+    // held a parallel audio capture session. Sphere stays in idle
+    // visualization until we add a transcript-driven pulse here.
     if (window.desktop?.requestMediaAccess) {
       const granted = await window.desktop.requestMediaAccess('microphone');
       if (!granted) {
@@ -198,23 +201,14 @@ async function startDictateNative() {
         return;
       }
     }
-    try {
-      dictateMicStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-      });
-      dictateCtx = new AudioContext();
-      const source = dictateCtx.createMediaStreamSource(dictateMicStream);
-      if (window.VoiceSphere) {
-        const ana = dictateCtx.createAnalyser();
-        ana.fftSize = 2048;
-        source.connect(ana);
+    if (window.VoiceSphere) {
+      try {
         const savedMode = localStorage.getItem('lax_voice_view_mode') || 'split';
         VoiceSphere.show(savedMode);
-        VoiceSphere.attachMicAnalyser(ana);
         VoiceSphere.setState('listening');
+      } catch (sphereErr) {
+        console.warn('[dictate-native] sphere show failed (continuing):', sphereErr);
       }
-    } catch (sphereErr) {
-      console.warn('[dictate-native] sphere mic init failed (continuing):', sphereErr);
     }
 
     // Attach the IPC listener once per page lifetime. Multiple .on() calls

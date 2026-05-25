@@ -2,7 +2,7 @@
   "name": "local-agent-x-desktop",
   "version": "0.1.0",
   "description": "Local Agent X — Desktop Companion",
-  "main": "dist/main.js",
+  "main": "dist/loader.js",
   "scripts": {
     "build:native:mac": "bash native/mac/build.sh",
     "build:native:win": "powershell -ExecutionPolicy Bypass -File native/win/build.ps1",

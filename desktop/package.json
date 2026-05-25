@@ -6,7 +6,8 @@
   "scripts": {
     "build:native:mac": "bash native/mac/build.sh",
     "build:native:win": "powershell -ExecutionPolicy Bypass -File native/win/build.ps1",
-    "build:native": "node -e \"const p=process.platform;require('child_process').execSync(p==='darwin'?'npm run build:native:mac':p==='win32'?'npm run build:native:win':'echo [native-speech] no helper for '+p,{stdio:'inherit'})\"",
+    "build:native:whisper": "node native/whisper/fetch.mjs",
+    "build:native": "node -e \"const p=process.platform;const cp=require('child_process');cp.execSync(p==='darwin'?'npm run build:native:mac':p==='win32'?'npm run build:native:win':'echo [native-speech] no helper for '+p,{stdio:'inherit'});cp.execSync('npm run build:native:whisper',{stdio:'inherit'})\"",
     "build": "tsc && npm run build:native",
     "start": "electron dist/main.js",
     "dev": "npm run build && electron dist/main.js",
@@ -45,6 +46,11 @@
         {
           "from": "native/dist-bin/lax-speech-win.exe",
           "to": "lax-speech-win.exe"
+        },
+        {
+          "from": "native/dist-bin/whisper-tiny-en",
+          "to": "whisper-tiny-en",
+          "filter": ["**/*"]
         }
       ]
     },
@@ -65,6 +71,11 @@
         {
           "from": "native/dist-bin/LaxSpeech.app",
           "to": "LaxSpeech.app",
+          "filter": ["**/*"]
+        },
+        {
+          "from": "native/dist-bin/whisper-tiny-en",
+          "to": "whisper-tiny-en",
           "filter": ["**/*"]
         }
       ],

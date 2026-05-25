@@ -23,7 +23,7 @@ export const MAIN_WINDOW_TITLEBAR_JS = `
   bar.style.cssText = 'position:fixed;top:0;left:0;right:0;height:32px;z-index:99999;display:flex;align-items:center;background:var(--bg, #0a0a0f);-webkit-app-region:drag;font-family:"Segoe UI",sans-serif;font-size:12px;user-select:none;';
 
   const menus = [
-    { label:'File', items:['New Session','Restart Server','—','Quit'] },
+    { label:'File', items:['Open in Browser','Copy App URL','—','Restart Server','—','Quit'] },
     { label:'Edit', items:['Undo','Redo','—','Cut','Copy','Paste'] },
     { label:'View', items:['Reload','Toggle Agents','Toggle DevTools','—','Zoom In','Zoom Out','Reset Zoom'] },
     { label:'Window', items:['Minimize','Close to Tray'] },
@@ -72,7 +72,8 @@ export const MAIN_WINDOW_TITLEBAR_JS = `
           if(window.desktop) {
             if(item==='Quit') window.desktop.quit();
             if(item==='Restart Server') window.desktop.restartServer();
-            if(item==='New Session') window.startNewSession?.();
+            if(item==='Open in Browser') window.desktop.openInBrowser?.();
+            if(item==='Copy App URL') window.desktop.copyAppUrl?.();
             if(item==='Toggle DevTools') window.desktop.toggleDevTools();
           }
           if(item==='Reload') location.reload();

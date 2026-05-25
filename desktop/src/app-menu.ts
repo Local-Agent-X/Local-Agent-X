@@ -6,9 +6,14 @@
 // webContents.executeJavaScript, same as the old in-window menu's
 // handlers.
 
-import { app, BrowserWindow, Menu, clipboard } from "electron";
+import { app, BrowserWindow, Menu, clipboard, shell } from "electron";
 import { stopServer, startServer } from "./server-process";
 import { getSAXConfig } from "./config";
+
+function tokenizedAppUrl(): string {
+  const cfg = getSAXConfig();
+  return `http://127.0.0.1:${cfg.port}/?token=${cfg.authToken}`;
+}
 
 export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null): void {
   if (process.platform !== "darwin") return; // Windows/Linux keep the in-window titlebar
@@ -36,11 +41,10 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
       label: "File",
       submenu: [
         {
-          label: "New Session",
-          accelerator: "CmdOrCtrl+N",
-          click: () => triggerRenderer("window.startNewSession?.()"),
+          label: "Open in Browser",
+          accelerator: "CmdOrCtrl+Shift+B",
+          click: () => { shell.openExternal(tokenizedAppUrl()); },
         },
-        { type: "separator" },
         {
           label: "Copy App URL",
           accelerator: "CmdOrCtrl+Shift+L",
@@ -49,10 +53,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
           // share with another tool on the same machine that needs the
           // tokenized link. Reads live from config so a server restart
           // (which can rotate the port on conflict) is reflected.
-          click: () => {
-            const cfg = getSAXConfig();
-            clipboard.writeText(`http://127.0.0.1:${cfg.port}/?token=${cfg.authToken}`);
-          },
+          click: () => { clipboard.writeText(tokenizedAppUrl()); },
         },
         { type: "separator" },
         {

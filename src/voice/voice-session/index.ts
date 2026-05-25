@@ -82,7 +82,13 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
 
     // Browser tier: client runs SpeechRecognition + speechSynthesis;
     // server-side STT/VAD/Whisper/TTS are dead weight.
-    const isBrowserTier = voiceSettings.sttProvider === "browser";
+    //
+    // Exception: dictate mode always needs server-side STT. Electron's
+    // Chromium doesn't have the Web Speech API key, so the browser-tier
+    // STT path doesn't work inside the desktop app. When the renderer
+    // opens this session with mode=dictate, it's explicitly asking the
+    // server to do the recognition — overriding the tier preference.
+    const isBrowserTier = voiceSettings.sttProvider === "browser" && ctx.mode !== "dictate";
 
     (async () => {
       if (isBrowserTier) {

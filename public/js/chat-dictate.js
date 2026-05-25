@@ -51,22 +51,19 @@ let dictateNativeActive = false;
 async function startDictate() {
   if (dictateMode) return;
   if (isElectronRuntime()) {
-    // Native OS recognizer path is preferred when available AND opted in.
-    // Opt-out exists because SFSpeechRecognizer on macOS sometimes
-    // accepts audio without producing transcripts (cause TBD — possibly
-    // an unsigned-build TCC scope issue, possibly a recognizer config
-    // we haven't pinned down). When the native path doesn't work the
-    // fallback is server-side Whisper (/api/voice/dictate-once) which
-    // needs ffmpeg on PATH but is reliable.
-    //
-    // Flip lax_native_speech=true in localStorage to re-enable native
-    // once we've stabilized it. Default off until then.
+    // Streaming over /ws/voice (mode=dictate) is the default — partial
+    // transcripts arrive while the user speaks, matching real-browser
+    // Web Speech UX. Falls back to the legacy record-then-POST path
+    // (startDictateElectron) when the streaming WS can't open.
+    // Native OS recognizer (SFSpeechRecognizer) is opt-in via the
+    // lax_native_speech localStorage flag — it produces zero transcripts
+    // on unsigned dev builds and is currently parked pending signing.
     const nativeOptIn = (() => { try { return localStorage.getItem('lax_native_speech') === 'true'; } catch { return false; } })();
     const nativeSpeech = window.desktop?.nativeSpeech;
     if (nativeOptIn && nativeSpeech && await nativeSpeech.available()) {
       return startDictateNative();
     }
-    return startDictateElectron();
+    return startDictateStreaming();
   }
   // Browser SpeechRecognition is the right tool for one-shot dictation:
   // instant-on, native streaming partials, no model download, no WebSocket.
@@ -267,11 +264,106 @@ async function startDictateNative() {
   }
 }
 
-// Electron / server-Whisper path. No live partials — we record the full
-// utterance, ship the WebM/Opus blob to /api/voice/dictate-once on stop,
-// append the returned transcript. First call may take 30–60s on a fresh
-// install (the local Whisper model auto-downloads); subsequent calls are
-// the model's per-utterance latency (~150ms tiny.en → ~1.5s small.en).
+// Streaming dictation via /ws/voice (mode=dictate). Mirrors the WS+worklet
+// pipeline voice mode uses, but the server-side voice-session skips agent
+// reply / TTS when mode=dictate, so the client just receives `partial` and
+// `final` transcript events (already wired in chat-voice-ws-handler.js to
+// fill the preview row + appendDictatedText respectively). Partials arrive
+// as the user speaks — matches real-browser Web Speech UX.
+async function startDictateStreaming() {
+  try {
+    dictateMode = true;
+    dictateRestartGuard = false;
+
+    // Electron mic TCC prompt — getUserMedia alone won't surface the OS
+    // dialog under hardened runtime. Handled here so the prompt fires
+    // before AudioContext setup.
+    if (window.desktop?.requestMediaAccess) {
+      const granted = await window.desktop.requestMediaAccess('microphone');
+      if (!granted) {
+        dictateMode = false;
+        alert('Microphone access denied. Enable it in System Settings → Privacy & Security → Microphone for Local Agent X.');
+        return;
+      }
+    }
+
+    // 1) WebSocket to /ws/voice. Closure-guard the onclose so a stale
+    // close from a prior session can't tear down the current one.
+    const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/voice?token=${encodeURIComponent(AUTH_TOKEN)}`;
+    const ws = new WebSocket(wsUrl);
+    voiceWS = ws;
+    ws.binaryType = 'arraybuffer';
+    await new Promise((resolve, reject) => {
+      ws.onopen = () => resolve();
+      ws.onerror = () => reject(new Error('dictate ws error'));
+      ws.onclose = (e) => {
+        if (ws.readyState !== WebSocket.OPEN) reject(new Error(`dictate ws closed before open (code ${e.code})`));
+      };
+    });
+    ws.onmessage = handleVoiceWsMessage;
+    ws.onclose = () => {
+      if (voiceWS !== ws) return;
+      console.log('[dictate] ws closed');
+      stopDictate();
+    };
+
+    // 2) Hello with mode=dictate. voice-session.ts forces server STT for
+    // this mode even when the user's voiceSettings.sttProvider is "browser"
+    // — Electron-Chromium can't run Web Speech, so dictate always needs
+    // server-side recognition.
+    const sid = (typeof activeChat !== 'undefined' && activeChat?.id) ? activeChat.id : 'default';
+    ws.send(JSON.stringify({ type: 'hello', sessionId: 'dictate-' + sid + '-' + Date.now(), mode: 'dictate' }));
+
+    // 3) AudioContext + mic-capture worklet. Same worklet voice mode uses
+    // — it emits {type:'pcm', pcm: Int16Array} every ~20ms, which we ship
+    // to the server WS as binary frames.
+    dictateCtx = new AudioContext();
+    await dictateCtx.audioWorklet.addModule('/js/voice/mic-capture-worklet.js?v=vb2');
+
+    dictateMicStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+    });
+    const source = dictateCtx.createMediaStreamSource(dictateMicStream);
+    const micNode = new AudioWorkletNode(dictateCtx, 'mic-capture');
+    micNode.port.onmessage = (e) => {
+      if (!e.data || e.data.type !== 'pcm') return;
+      if (voiceWS && voiceWS.readyState === WebSocket.OPEN) voiceWS.send(e.data.pcm);
+    };
+    source.connect(micNode);
+    micNode.port.postMessage({ cmd: 'start' });
+    // Stash on dictate state so stopDictate can disconnect it.
+    dictateMicStream._micNode = micNode;
+
+    // 4) Sphere reacts to mic level via a tap off the same source.
+    if (window.VoiceSphere) {
+      try {
+        const ana = dictateCtx.createAnalyser();
+        ana.fftSize = 2048;
+        source.connect(ana);
+        const savedMode = localStorage.getItem('lax_voice_view_mode') || 'split';
+        VoiceSphere.show(savedMode);
+        VoiceSphere.attachMicAnalyser(ana);
+        VoiceSphere.setState('listening');
+      } catch (sphereErr) {
+        console.warn('[dictate-streaming] sphere init failed:', sphereErr);
+      }
+    }
+
+    updateDictateUI();
+    document.getElementById(dictateTargetId)?.focus();
+    console.log('[dictate] started (streaming WS)');
+  } catch (e) {
+    console.error('[dictate-streaming] start failed:', e);
+    dictateMode = false;
+    cleanupDictateResources();
+    alert('Could not start dictation: ' + (e?.message || e));
+  }
+}
+
+// Electron / server-Whisper batch path. Legacy fallback only — preferred
+// path is now startDictateStreaming (streaming partials over the WS).
+// Kept because some scenarios (server WS unreachable, future Linux build)
+// may still need a record-then-POST option.
 async function startDictateElectron() {
   try {
     dictateMode = true;
@@ -419,6 +511,25 @@ function stopDictate() {
     return;
   }
 
+  // Streaming WS path: send bye so the server commits a final transcript,
+  // then close. cleanupDictateResources handles mic + worklet + WS
+  // teardown. Don't wait for the `final` event — it arrives async via
+  // handleVoiceWsMessage and routes through appendDictatedText.
+  if (voiceWS && voiceWS.readyState === WebSocket.OPEN) {
+    try { voiceWS.send(JSON.stringify({ type: 'bye' })); } catch {}
+    try { voiceWS.close(); } catch {}
+    cleanupDictateResources();
+    updateDictateUI();
+    const ta = document.getElementById(dictateTargetId);
+    if (ta) {
+      ta.focus();
+      const len = ta.value.length;
+      try { ta.setSelectionRange(len, len); } catch {}
+    }
+    console.log('[dictate] stopped (streaming WS)');
+    return;
+  }
+
   // Electron / MediaRecorder path: kick off the flush and let onstop own
   // the rest (cleanup, POST, focus). Bailing here keeps mic teardown out
   // of the race window between stop() and the final dataavailable event.
@@ -462,10 +573,23 @@ function cleanupDictateResources() {
     if (dictateRecorder && dictateRecorder.state !== 'inactive') dictateRecorder.stop();
   } catch {}
   dictateRecorder = null;
+  // Streaming WS path stashes its AudioWorkletNode on the MediaStream so
+  // we can disconnect it before the context closes (avoids a noisy
+  // "AudioWorkletNode running after context close" warning).
+  try {
+    const micNode = dictateMicStream && dictateMicStream._micNode;
+    if (micNode) { micNode.port.postMessage({ cmd: 'stop' }); micNode.disconnect(); }
+  } catch {}
   try { dictateMicStream && dictateMicStream.getTracks().forEach(t => t.stop()); } catch {}
   dictateMicStream = null;
   try { dictateCtx && dictateCtx.close(); } catch {}
   dictateCtx = null;
+  // Streaming dictate uses voiceWS — null it so a stale handler from the
+  // closed socket doesn't drive UI state on a future session.
+  if (voiceWS) {
+    try { voiceWS.close(); } catch {}
+    voiceWS = null;
+  }
   if (window.VoiceSphere) { try { VoiceSphere.hide(); } catch {} }
 }
 

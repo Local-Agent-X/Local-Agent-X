@@ -19,7 +19,26 @@ import { MAIN_WINDOW_TITLEBAR_JS, buildAppDragStripJs } from "./window-injection
 
 let mainWindow: BrowserWindow | null = null;
 
+// True once the splash has handed off to the real app URL. Stays false
+// for the entire time we're on the spinner / recovery screen. main.ts
+// reads it via isStuckOnSplash() so a second launch can detect that
+// the existing instance never made it past boot and yield to us.
+let navigatedToApp = false;
+let bootStartedAt = 0;
+
 export function getMainWindow(): BrowserWindow | null { return mainWindow; }
+
+/**
+ * True when the splash has been on screen longer than `gracePeriodMs`
+ * without the real app loading. Used by main.ts to decide whether a
+ * concurrent shortcut click should yield (we're stuck) or focus (we're
+ * just booting normally).
+ */
+export function isStuckOnSplash(gracePeriodMs: number): boolean {
+  if (navigatedToApp) return false;
+  if (bootStartedAt === 0) return false;
+  return Date.now() - bootStartedAt > gracePeriodMs;
+}
 
 export function createWindow(): void {
   const bounds = getSetting("windowBounds");
@@ -54,10 +73,11 @@ export function createWindow(): void {
   // "blank window for 30+ seconds while the server boots" failure mode.
   mainWindow.loadURL(buildSplashDataUrl(getSetting("theme")));
 
-  let navigatedToApp = false;
+  navigatedToApp = false;
+  bootStartedAt = Date.now();
   const HEALTH_POLL_DEADLINE_MS = 120_000;
   const HEALTH_POLL_DELAY_MS = 500;
-  const navStartedAt = Date.now();
+  const navStartedAt = bootStartedAt;
 
   const pollAndNavigate = async (): Promise<void> => {
     while (!navigatedToApp && Date.now() - navStartedAt < HEALTH_POLL_DEADLINE_MS) {

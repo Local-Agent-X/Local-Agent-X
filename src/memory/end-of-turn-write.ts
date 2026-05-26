@@ -36,25 +36,25 @@ const logger = createLogger("memory.end-of-turn-write");
 const DISABLED = process.env.LAX_MEMORY_END_OF_TURN === "0";
 const TIMEOUT_MS = 8000; // generous — runs in background, no user blocking
 
-const WRITE_DECISION_PROMPT = `You decide what (if anything) the agent should write to long-term memory after a user/agent exchange just finished.
+const WRITE_DECISION_PROMPT = `You decide whether the user/agent exchange just finished revealed something durable about the USER (preferences, workflow rules, communication style, identity) that belongs in their narrative profile (USER.md).
 
 OUTPUT EXACTLY ONE JSON LINE, no prose, no code fences:
-{"write": false} | {"write": true, "file": "user"|"mind", "action": "append"|"replace_section", "section_heading": "string or null", "content": "string"}
+{"write": false} | {"write": true, "action": "append"|"replace_section", "section_heading": "string or null", "content": "string"}
 
 DECISION RULES:
-- write=false unless the exchange revealed something durable a future session should know.
-- file="user" for preferences, workflow rules, communication style, identity facts about the user. Cap 2000 chars total.
-- file="mind" for procedural knowledge, project conventions, multi-step workflows, project-specific facts. Cap 5000 chars total.
+- write=false unless the exchange revealed something durable about the USER's preferences, workflow, or identity.
+- This pass only writes to USER.md (the narrative profile). Cap 2000 chars total.
+- Standalone facts (names of family, project conventions, multi-step workflows, dates, things-that-happened) are NOT for this pass — the agent has a separate \`remember\` tool that saves those into the Facts DB during the turn. Do NOT try to capture them here.
 - action="replace_section" if the topic likely already has a section (use the section_heading you'd use); "append" only for genuinely new topics.
 - content: write the GENERALIZED rule, not the verbatim correction. Bad: "user said use facebook dashboard for that one query." Good: "Alex prefers Meta Business Suite over per-app dashboards for analytics across Meta properties — has richer aggregate data."
-- Keep content tight (1-3 sentences max for replace_section, 1-2 for append). Files are bounded — bloat costs every future turn.
+- Keep content tight (1-3 sentences max for replace_section, 1-2 for append). USER.md is bounded — bloat costs every future turn.
 - If the exchange was routine (q&a, casual chat, in-task work without preference signal), write=false.
 
 Examples (input → output):
-- "user: always sort my reports by date / agent: got it, sorting now" → {"write": true, "file": "user", "action": "append", "section_heading": null, "content": "Reports default to sort-by-date (most recent first) — applies to any report request unless user overrides."}
-- "user: that's facebook stats, I want instagram, switch the dropdown / agent: switched, here are the IG numbers" → {"write": true, "file": "user", "action": "replace_section", "section_heading": "Analytics workflow", "content": "Analytics workflow: For Instagram analytics, use Meta Business Suite (business.facebook.com/latest/insights) and toggle the asset dropdown to Instagram — user prefers it over the IG app for richer aggregate data."}
+- "user: always sort my reports by date / agent: got it, sorting now" → {"write": true, "action": "append", "section_heading": null, "content": "Reports default to sort-by-date (most recent first) — applies to any report request unless user overrides."}
+- "user: that's facebook stats, I want instagram, switch the dropdown / agent: switched, here are the IG numbers" → {"write": true, "action": "replace_section", "section_heading": "Analytics workflow", "content": "Analytics workflow: For Instagram analytics, use Meta Business Suite (business.facebook.com/latest/insights) and toggle the asset dropdown to Instagram — user prefers it over the IG app for richer aggregate data."}
 - "user: what's my follower count / agent: you have N followers" → {"write": false}
-- "user: my sister's name is Alex / agent: noted" → {"write": true, "file": "mind", "action": "append", "section_heading": null, "content": "User's sister: Alex."}`;
+- "user: my sister's name is Alex / agent: noted" → {"write": false}`;
 
 export interface EndOfTurnContext {
   sessionId: string;
@@ -112,7 +112,7 @@ export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<vo
   try {
     await applyWrite(decision);
     logger.info(
-      `[end-of-turn] wrote to ${decision.file}.md ` +
+      `[end-of-turn] wrote to USER.md ` +
       `(action=${decision.action}, section=${decision.section_heading || "—"}, ` +
       `${decision.content.length}ch) sess=${ctx.sessionId}`,
     );
@@ -186,7 +186,6 @@ async function callForDecision(
 
 interface WriteDecision {
   write: true;
-  file: "user" | "mind";
   action: "append" | "replace_section";
   section_heading: string | null;
   content: string;
@@ -203,22 +202,25 @@ export function parseWriteDecision(raw: string): WriteDecision | null {
   if (!parsed || typeof parsed !== "object") return null;
   const obj = parsed as Record<string, unknown>;
   if (obj.write !== true) return null;
-  const file = obj.file === "user" || obj.file === "mind" ? obj.file : null;
+  // Legacy classifiers may still emit `file: "user"` or `file: "mind"`. Accept
+  // "user" or absent (default), reject anything else — "mind" is retired.
+  if (obj.file !== undefined && obj.file !== "user") return null;
   const action = obj.action === "append" || obj.action === "replace_section" ? obj.action : null;
   const content = typeof obj.content === "string" ? obj.content.trim() : "";
-  if (!file || !action || !content) return null;
+  if (!action || !content) return null;
   if (content.length > 800) return null; // sanity cap — single write should never be huge
   const section_heading = typeof obj.section_heading === "string" && obj.section_heading.trim()
     ? obj.section_heading.trim()
     : null;
   if (action === "replace_section" && !section_heading) return null;
-  return { write: true, file, action, section_heading, content };
+  return { write: true, action, section_heading, content };
 }
 
 async function applyWrite(d: WriteDecision): Promise<void> {
   // Mirrors memory_update_profile's write path with the same char caps.
-  const filename = PERSONALITY_FILES[d.file];
-  if (!filename) throw new Error(`unknown profile file key: ${d.file}`);
+  // End-of-turn only writes USER.md — facts go through the agent's `remember`
+  // tool during the turn, not this classifier.
+  const filename = PERSONALITY_FILES.user;
   const filePath = join(homedir(), ".lax", "memory", filename);
   const existing = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
 
@@ -249,7 +251,7 @@ async function applyWrite(d: WriteDecision): Promise<void> {
   }
 
   // Char-limit check — same caps as memory_update_profile tool.
-  const LIMITS: Record<string, number> = { "USER.md": 2000, "MIND.md": 5000 };
+  const LIMITS: Record<string, number> = { "USER.md": 2000 };
   const limit = LIMITS[filename];
   if (limit !== undefined && updated.length > limit) {
     logger.warn(`[end-of-turn] skipped write — ${filename} would be ${updated.length}/${limit}`);

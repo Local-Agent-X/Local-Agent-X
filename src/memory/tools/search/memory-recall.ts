@@ -52,6 +52,12 @@ export function memoryRecallTool(memory: MemoryIndex) {
         return { content: "No facts found matching the query." };
       }
 
+      // Agent-initiated recall counts as "this fact mattered enough to look
+      // up" — bump last_updated so the hot-score keeps these facts warm in
+      // future system-prompt injections. See index-facts-mutate.ts:198-201.
+      const ids = facts.map(f => f.id).filter((n): n is number => typeof n === "number");
+      if (ids.length > 0) memory.reinforceFacts(ids);
+
       const formatted = facts
         .map((f, i) => {
           const date = new Date(f.timestamp).toISOString().split("T")[0];

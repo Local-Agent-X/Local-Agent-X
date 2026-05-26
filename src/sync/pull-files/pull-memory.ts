@@ -27,8 +27,16 @@ export function pullMemoryDir(dataDir: string, syncDir: string): void {
     // with any other filename still get checked.
     const isDailyChatArchive = (name: string): boolean => /^\d{4}-\d{2}-\d{2}\.md$/.test(name);
 
+    // Retired memory files that must not be pulled back — pairs with the
+    // SYNC_SKIP_MEMORY_FILES set in push-files.ts. MIND.md was replaced by
+    // the indexed Facts DB; pulling it back would resurrect old content
+    // (the local→remote union-merge stripping doesn't help if a stale
+    // remote still has the file).
+    const SYNC_SKIP_MEMORY_FILES = new Set(["MIND.md"]);
+
     for (const f of readdirSync(syncMemDir)) {
       if (!f.endsWith(".md")) continue;
+      if (SYNC_SKIP_MEMORY_FILES.has(f)) continue;
       remoteMemFiles.add(f);
       const syncContent = readFileSync(join(syncMemDir, f), "utf-8");
       if (checkTaint && !isDailyChatArchive(f)) {

@@ -5,7 +5,7 @@ export function memorySearchTool(memory: MemoryIndex) {
   return {
     name: "memory_search",
     description:
-      "Search long-term memory for retained facts, knowledge files, and entity pages. Defaults to same-session + profile-level content only — past sessions are NOT included by default. To explicitly pull from prior conversations, use `search_past_sessions` instead. Use this for: what did the user write down about X, what's stored in MIND.md, what facts have been retained about an entity.",
+      "Search long-term memory for retained facts, knowledge files, and entity pages. Defaults to same-session + profile-level content only — past sessions are NOT included by default. To explicitly pull from prior conversations, use `search_past_sessions` instead. Use this for: what did the user write down about X, what's stored in USER.md or an entity page, what facts have been retained about an entity.",
     parameters: {
       type: "object",
       properties: {
@@ -15,7 +15,7 @@ export function memorySearchTool(memory: MemoryIndex) {
           type: "array",
           items: { type: "string" },
           description:
-            "Filter by canonical source. One or more of: entity, daily-log, mind, session-summary, session, personality, import (default: all)",
+            "Filter by canonical source. One or more of: entity, daily-log, session-summary, session, personality, import (default: all)",
         },
         entity: {
           type: "string",

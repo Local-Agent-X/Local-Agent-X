@@ -11,6 +11,7 @@ import {
   canonicalizeHomePaths,
 } from "./constants.js";
 import { mirrorDir } from "./mirror.js";
+import { exportFactsForSync } from "./facts-sync.js";
 import { tombstonePaths, writeTombstonesForDeletedApps } from "./tombstones.js";
 
 const logger = createLogger("sync.push-files");
@@ -22,18 +23,29 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
   const syncMemDir = join(syncDir, "memory");
   if (!existsSync(syncMemDir)) mkdirSync(syncMemDir, { recursive: true });
 
+  // MIND.md is retired — facts moved to the indexed Facts DB
+  // (see src/memory/tools/facts.ts). It must not propagate through sync:
+  // union-merge would resurrect any old MIND.md content from another
+  // machine, undoing the migration.
+  const SYNC_SKIP_MEMORY_FILES = new Set(["MIND.md"]);
+
   const localMemFiles = new Set<string>();
   if (existsSync(memDir)) {
     for (const f of readdirSync(memDir)) {
-      if (f.endsWith(".md")) {
+      if (f.endsWith(".md") && !SYNC_SKIP_MEMORY_FILES.has(f)) {
         localMemFiles.add(f);
         writeFileSync(join(syncMemDir, f), readFileSync(join(memDir, f), "utf-8"), "utf-8");
       }
     }
   }
-  // Delete from sync repo if deleted locally
+  // Delete from sync repo if deleted locally OR if it's a retired file.
+  // Listing retired files here makes the deletion eventually-consistent —
+  // first sync from any machine after this lands strips the file from
+  // the shared repo, so subsequent pulls don't bring it back.
   for (const f of readdirSync(syncMemDir)) {
-    if (f.endsWith(".md") && !localMemFiles.has(f)) unlinkSync(join(syncMemDir, f));
+    if (f.endsWith(".md") && (!localMemFiles.has(f) || SYNC_SKIP_MEMORY_FILES.has(f))) {
+      unlinkSync(join(syncMemDir, f));
+    }
   }
 
   const policyPath = join(dataDir, "tool-policy.json");
@@ -162,5 +174,16 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
     } catch (e) {
       logger.warn(`[sync] brain push skipped ${file}: ${(e as Error).message}`);
     }
+  }
+
+  // Facts DB sync — durable knowledge cross-machine layer. We export ONLY
+  // the facts table (+ derived entity_mentions) as JSONL, not the whole
+  // 1.5 GB memory.db, because chunks / FTS / embedding cache are either
+  // machine-specific or rederivable. ~700 facts ≈ 350 KB; scales linearly.
+  try {
+    const r = exportFactsForSync(dataDir, syncDir);
+    if (r.exported > 0) logger.info(`[sync] exported ${r.exported} facts to facts.jsonl`);
+  } catch (e) {
+    logger.warn(`[sync] facts export skipped: ${(e as Error).message}`);
   }
 }

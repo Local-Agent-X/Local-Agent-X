@@ -166,7 +166,7 @@
 		"workspace-assistant": {
 			"id": "workspace-assistant",
 			"name": "Workspace Assistant",
-			"description": "Coding assistants working inside a project. File read/write in workspace, shell approval-gated.",
+			"description": "Coding assistants working inside a project. File read/write in workspace, shell approval-gated, memory store + retrieval allowed.",
 			"capabilities": [
 				{
 					"toolClass": "file",
@@ -175,7 +175,9 @@
 				},
 				{ "toolClass": "http", "actions": ["get"], "constraints": { "allowedHosts": ["*"] } },
 				{ "toolClass": "shell", "actions": ["exec"] },
-				{ "toolClass": "secret-vault", "actions": ["capture", "fill", "clipboard"] }
+				{ "toolClass": "secret-vault", "actions": ["capture", "fill", "clipboard"] },
+				{ "toolClass": "database", "actions": ["query", "exec", "mutate"] },
+				{ "toolClass": "retrieval", "actions": ["search"] }
 			],
 			"policies": [
 				"allow-http-get",
@@ -196,6 +198,22 @@
 					"match": { "toolClass": "shell" },
 					"decision": "require-approval",
 					"reason": "Shell commands require approval in workspace mode"
+				},
+				{
+					"id": "allow-memory-database",
+					"name": "Allow memory database operations",
+					"priority": 100,
+					"match": { "toolClass": "database" },
+					"decision": "allow",
+					"reason": "Memory store (memory_save, memory_consolidate) — internal SQLite, no external surface"
+				},
+				{
+					"id": "allow-memory-retrieval",
+					"name": "Allow memory retrieval search",
+					"priority": 100,
+					"match": { "toolClass": "retrieval", "action": "search" },
+					"decision": "allow",
+					"reason": "Memory search (memory_search) — read-only retrieval over local index"
 				},
 				"deny-tainted-shell",
 				"deny-http-write"

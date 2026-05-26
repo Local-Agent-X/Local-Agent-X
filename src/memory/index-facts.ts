@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import type Database from "better-sqlite3";
 import type { FactKind, RetainedFact } from "./types.js";
-import { extractKeywords, parseFactLine, rowToFact, slugify } from "./utils.js";
+import { parseFactLine, rowToFact, slugify } from "./utils.js";
 import { getDailyLogPath } from "./index-files.js";
 import { extractRelations } from "./index-relations.js";
 
@@ -301,46 +301,6 @@ export function recallOpinions(
     )
     .all() as Array<Record<string, unknown>>;
   return rows.map(rowToFact);
-}
-
-/**
- * Find facts whose content is topically related to the query text. Used by
- * buildContextBlock to surface "you mentioned X — here are facts about Y
- * that share content" alongside the recency-ranked core_memory block.
- *
- * Uses FTS5 with OR-semantics (space-separated keywords) so any keyword
- * overlap qualifies — matches the "feels like a friend who connects dots"
- * heuristic. Stop-word filtering via extractKeywords keeps the query from
- * matching every fact that contains "the" / "my" / "have".
- */
-export function searchFactsByContent(
-  db: InstanceType<typeof Database>,
-  hasFts: boolean,
-  query: string,
-  limit = 8
-): RetainedFact[] {
-  if (!hasFts) return [];
-  const keywords = extractKeywords(query);
-  if (keywords.length === 0) return [];
-  // Cap at 8 terms — FTS5 query parser has limits and longer queries don't
-  // improve precision for the "related to this turn" surface.
-  const ftsQuery = keywords
-    .slice(0, 8)
-    .map((k) => `"${k.replace(/"/g, '""')}"`)
-    .join(" OR ");
-  try {
-    const rows = db
-      .prepare(
-        `SELECT f.* FROM facts f
-         JOIN facts_fts fts ON fts.rowid = f.id
-         WHERE facts_fts MATCH ? AND f.valid_to IS NULL
-         ORDER BY bm25(facts_fts) ASC LIMIT ?`
-      )
-      .all(ftsQuery, limit) as Array<Record<string, unknown>>;
-    return rows.map(rowToFact);
-  } catch {
-    return [];
-  }
 }
 
 export function recallAsOf(

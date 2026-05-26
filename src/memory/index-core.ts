@@ -273,10 +273,6 @@ export class MemoryIndex {
     return Facts.recallOpinions(this.db, entitySlug, opts);
   }
 
-  searchFactsByContent(query: string, limit = 8): RetainedFact[] {
-    return Facts.searchFactsByContent(this.db, this.hasFts, query, limit);
-  }
-
   recallAsOf(asOf: Date, opts?: { kind?: FactKind; entitySlug?: string; limit?: number }): RetainedFact[] {
     return Facts.recallAsOf(this.db, asOf, opts);
   }

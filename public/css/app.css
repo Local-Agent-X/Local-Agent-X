@@ -75,6 +75,14 @@ body.platform-darwin #sidebar-header{display:block;height:28px;-webkit-app-regio
 body.platform-darwin #sidebar.collapsed #sidebar-header{display:none}
 body.platform-darwin #ide-topbar{padding-left:76px}
 
+/* Sidebar collapsed: the floating expand button (☰) is position:fixed
+   at top:14px left:8px — exactly where the traffic lights sit. Push it
+   down past the ~32px traffic-light zone so it's reachable and the
+   lights aren't drawn on top of it. The existing body.desktop-frame
+   rule does similar at top:52px but that class is never applied; this
+   replaces it for the Electron-macOS path. */
+body.platform-darwin #sidebar-expand-btn{top:40px}
+
 /* Brand row — AGENT X logo + New Chat button + collapse arrow on a
    single line below the traffic-light spacer. Logo flexes to fill so
    the buttons sit hard against the right edge. */

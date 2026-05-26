@@ -20,6 +20,12 @@ export const DEFAULT_POLICY: ToolPolicyConfig = {
 
     // Memory tools — safe, internal only
     { id: "allow-memory", tool: "memory_*", decision: "allow", reason: "Memory operations (internal)", priority: 50 },
+    // Single-fact Facts DB API (no memory_ prefix). Same internal scope —
+    // explicit rules required because the memory_* wildcard above doesn't
+    // match them.
+    { id: "allow-remember", tool: "remember", decision: "allow", reason: "Save durable fact to Facts DB (internal)", priority: 50 },
+    { id: "allow-update-fact", tool: "update_fact", decision: "allow", reason: "Correct a fact in the Facts DB (internal)", priority: 50 },
+    { id: "allow-forget", tool: "forget", decision: "allow", reason: "Soft-delete a fact in the Facts DB (internal)", priority: 50 },
 
     // Operations — long-horizon goal orchestration, writes only to workspace/operations/
     { id: "allow-operations", tool: "operation_*", decision: "allow", reason: "Operations orchestration (safe — writes only to workspace/operations/)", priority: 50 },

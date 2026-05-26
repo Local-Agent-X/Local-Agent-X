@@ -182,6 +182,62 @@ describe("dedupeProfileMarkdown", () => {
   });
 });
 
+describe("dedupeProfileMarkdown — cross-section contradiction sweep", () => {
+  it("strips an affirmative bullet that contradicts a negation in a different section (live HEART.md case)", () => {
+    const input = [
+      "# Agent Heart",
+      "",
+      "## Greeting Style",
+      "- Use English by default. No Spanish greetings unless Alex explicitly switches to Spanish or asks for them.",
+      "",
+      "## Language Preference",
+      "- Do not greet Alex in Spanish by default. Use English unless he explicitly speaks Spanish or asks for Spanish.",
+      "- Always greet Alex in Spanish at the start of every conversation (e.g. \"Hola Alex\", \"Qué tal, Alex\"). After the greeting, continue in English unless he switches to Spanish.",
+    ].join("\n");
+
+    const out = dedupeProfileMarkdown(input);
+    expect(out).not.toContain("Always greet Alex in Spanish");
+    expect(out).toContain("Use English by default");
+    expect(out).toContain("Do not greet Alex in Spanish");
+  });
+
+  it("leaves clean files untouched", () => {
+    const input = [
+      "# Agent Heart",
+      "",
+      "## Personality Traits",
+      "- Warm, genuine, and direct",
+      "- Match user's energy",
+      "",
+      "## Boundaries",
+      "- Never expose internal memory system details",
+    ].join("\n");
+    const out = dedupeProfileMarkdown(input);
+    expect(out).toContain("Warm, genuine, and direct");
+    expect(out).toContain("Never expose internal memory system details");
+  });
+
+  it("does not touch scalar bullets (key: value lines)", () => {
+    const input = [
+      "# About Me",
+      "",
+      "- Name: Alex",
+      "- Location: Springfield",
+      "",
+      "## Greeting Style",
+      "- No Spanish greetings",
+      "- Always greet in Spanish",
+    ].join("\n");
+    const out = dedupeProfileMarkdown(input);
+    // Scalars preserved
+    expect(out).toContain("- Name: Alex");
+    expect(out).toContain("- Location: Springfield");
+    // Contradiction stripped
+    expect(out).toContain("- No Spanish greetings");
+    expect(out).not.toContain("- Always greet in Spanish");
+  });
+});
+
 describe("setUserScalarField", () => {
   it("rewrites an existing scalar in place — replaces the stale value", () => {
     const input = "# About Me\n\n- Name: Daddy Fag\n- Location:\n";

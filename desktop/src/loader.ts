@@ -15,9 +15,24 @@
 // reconcile compiles dist/main.js to disk, app.relaunch() fires, and the
 // next launch picks up the disk copy. All subsequent launches use disk.
 
+import { app } from "electron";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+
+// Pin the userData folder name BEFORE Electron resolves app.getPath('userData').
+// Without this, Electron falls back to package.json's `name` field — which
+// is sometimes correct, but on Windows + with our loader bootstrap pattern
+// can race and resolve to the literal default "electron", landing localStorage
+// + IndexedDB + cookies at %APPDATA%\electron\ (mac: ~/Library/Application
+// Support/electron/). Setting the name here makes the location deterministic
+// across platforms: <appData>/Local Agent X/.
+//
+// Important: must run before any code that calls app.getPath('userData') or
+// triggers Electron to resolve the userData path internally (BrowserWindow,
+// session, etc.). The loader runs ahead of any of that, so this is the
+// right place — earlier than even main.ts.
+app.setName("Local Agent X");
 
 function resolveDiskMain(): string | null {
   // config.json's projectRoot is the source-of-truth for where the user's

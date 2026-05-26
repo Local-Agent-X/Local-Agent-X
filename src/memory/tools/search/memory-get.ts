@@ -6,14 +6,14 @@ export function memoryGetTool(memory: MemoryIndex) {
   return {
     name: "memory_get",
     description:
-      "Read a specific memory file by path. Use to retrieve MIND.md, a daily log, or an entity page.",
+      "Read a specific memory file by path. Use to retrieve USER.md, a daily log, or an entity page.",
     parameters: {
       type: "object",
       properties: {
         path: {
           type: "string",
           description:
-            "File path within memory dir (e.g. MIND.md, 2026-03-22.md, bank/entities/peter.md)",
+            "File path within memory dir (e.g. USER.md, 2026-03-22.md, bank/entities/peter.md)",
         },
       },
       required: ["path"],

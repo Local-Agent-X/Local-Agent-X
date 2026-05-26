@@ -3,11 +3,17 @@
  *
  * Write-through indexer + backfill orchestrator for every text store the
  * memory system touches. Replaces the lazy "wait for sync()" path so that
- * every entity page, daily log, MIND.md update, session summary and raw
- * session transcript becomes searchable the moment it lands on disk.
+ * every entity page, daily log, session summary and raw session transcript
+ * becomes searchable the moment it lands on disk.
  *
  * Idempotent via content_hash dedup (see MemoryIndex.indexChunksIdempotent).
  * Repeated backfill passes only embed genuinely new chunks.
+ *
+ * MIND.md is retired — the indexer no longer scans for it. Durable facts
+ * live in the indexed Facts DB (src/memory/index-facts.ts), which has its
+ * own search path. Legacy chunks with source='mind' may still exist from
+ * pre-migration; the 'mind' value remains in the CanonicalSource union so
+ * those rows stay readable, but no new chunks are written.
  */
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -128,6 +134,13 @@ export class UniversalIndex {
     this.entitiesDir = join(this.memoryDir, "bank", "entities");
   }
 
+  // Public read accessor for the bound MemoryIndex. Used by orchestrator
+  // modules that need to query facts (e.g. contradiction-detector) without
+  // having to thread memory through OrchestratorInput.
+  getMemory(): MemoryIndex {
+    return this.memory;
+  }
+
   // ── Per-store indexers ─────────────────────────────────────────────────
 
   async indexEntityPage(slug: string): Promise<IndexResult> {
@@ -148,15 +161,6 @@ export class UniversalIndex {
     const metadata: ChunkMetadata = { source_type: "memory-file", date: dateStr };
     const chunks = chunkBySections(raw, path, "daily-log", metadata);
     return this.memory.indexChunksIdempotent(chunks, path, "daily-log");
-  }
-
-  async indexMindFile(): Promise<IndexResult> {
-    const path = join(this.memoryDir, "MIND.md");
-    const raw = safeRead(path);
-    if (!raw || !raw.trim()) return { added: 0, removed: 0, unchanged: 0 };
-    const metadata: ChunkMetadata = { source_type: "memory-file" };
-    const chunks = chunkBySections(raw, path, "mind", metadata);
-    return this.memory.indexChunksIdempotent(chunks, path, "mind");
   }
 
   async indexSessionSummary(sessionId: string): Promise<IndexResult> {
@@ -250,7 +254,7 @@ export class UniversalIndex {
       }
     }
 
-    // Memory root files: MIND.md, daily logs, personality files
+    // Memory root files: daily logs and personality files.
     if (existsSync(this.memoryDir)) {
       const files = readdirSync(this.memoryDir, { withFileTypes: true })
         .filter(e => e.isFile() && e.name.endsWith(".md"))
@@ -258,9 +262,7 @@ export class UniversalIndex {
 
       for (const name of files) {
         try {
-          if (name === "MIND.md") {
-            accum("mind", await this.indexMindFile());
-          } else if (/^\d{4}-\d{2}-\d{2}\.md$/.test(name)) {
+          if (/^\d{4}-\d{2}-\d{2}\.md$/.test(name)) {
             const dateStr = name.replace(".md", "");
             accum("daily-log", await this.indexDailyLog(new Date(dateStr)));
           } else {
@@ -318,7 +320,9 @@ export class UniversalIndex {
         return added;
       }
       case "mind":
-        return (await this.indexMindFile()).added;
+        // Retired — kept in the switch only to satisfy the exhaustive type
+        // check on CanonicalSource. No new chunks are written.
+        return 0;
       case "session-summary": {
         if (!existsSync(this.summariesDir)) return 0;
         for (const f of readdirSync(this.summariesDir).filter(f => f.endsWith(".md"))) {
@@ -337,7 +341,7 @@ export class UniversalIndex {
       }
       case "personality": {
         if (!existsSync(this.memoryDir)) return 0;
-        for (const f of readdirSync(this.memoryDir).filter(f => f.endsWith(".md") && f !== "MIND.md" && !/^\d{4}-\d{2}-\d{2}\.md$/.test(f))) {
+        for (const f of readdirSync(this.memoryDir).filter(f => f.endsWith(".md") && !/^\d{4}-\d{2}-\d{2}\.md$/.test(f))) {
           const r = await this.indexPersonalityFile(f);
           added += r.added;
         }

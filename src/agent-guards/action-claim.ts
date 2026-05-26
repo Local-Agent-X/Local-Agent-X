@@ -43,8 +43,8 @@ const ACTION_VERB_TO_TOOLS: Array<{ verb: RegExp; tools: string[] }> = [
   // memory_save. Includes both present-tense ("remember", "bookmark") and
   // past-tense ("remembered", "bookmarked") because future-tense claims
   // ("I'll remember that") are hollow promises that need the same retry.
-  { verb: /\b(notes?|noted|remembers?|remembered|records?|recorded|logs?|logged|bookmarks?|bookmarked|memorizes?|memorized|stores?|stored)\b/i, tools: [
-    "memory_save", "memory_update_profile",
+  { verb: /\b(notes?|noted|remembers?|remembered|records?|recorded|logs?|logged|bookmarks?|bookmarked|memorizes?|memorized|stores?|stored|forgot|forgets?)\b/i, tools: [
+    "memory_save", "memory_update_profile", "memory_set_user_field", "remember", "update_fact", "forget",
   ] },
   // "sent/posted/emailed/messaged"
   { verb: /\b(sent|posted|emailed|messaged|tweeted|published|mailed)\b/i, tools: [

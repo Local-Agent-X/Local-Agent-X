@@ -6,7 +6,7 @@
 // kind marker (W/B/O/S) or a `(c=X)` confidence tag. Lines without either
 // are chat transcript / log noise — without this gate a raw user message
 // like "add X to sidebar" would become a "fact" with default 0.5
-// confidence and get promoted to MIND.md.
+// confidence and pollute the consolidation pass.
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -80,7 +80,7 @@ export function parseFactsFromLog(content: string, baseTime?: number): FactEntry
     // OR an explicit `(c=X)` confidence marker somewhere in the line.
     // Lines without either are chat transcript or log noise — skip them,
     // otherwise a raw user message like "add X to sidebar" becomes a
-    // "fact" with default 0.5 confidence and gets promoted to MIND.md.
+    // "fact" with default 0.5 confidence and pollutes the consolidator.
     const withoutTimestamp = trimmed.replace(/^\[[\d:]+\s*(?:AM|PM)?\]\s*/, "");
     const afterChatTag = withoutTimestamp.replace(/^\[(?:chat|ide|session|tg|cron|wa)-[A-Za-z0-9_-]+\]\s*/, "");
     const hasKindPrefix = /^[WBOS](?:\(c=[\d.]+\))?\s/.test(afterChatTag);

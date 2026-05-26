@@ -34,7 +34,7 @@ const logger = createLogger("memory.curate-classifier");
 const CLASSIFIER_TIMEOUT_MS = 2000;
 const CLASSIFIER_DISABLED = process.env.LAX_MEMORY_CURATE_CLASSIFIER === "0";
 
-const SYSTEM_PROMPT = `You decide whether a user message contains durable, transferable knowledge that the agent should write to long-term memory (USER.md or MIND.md).
+const SYSTEM_PROMPT = `You decide whether a user message contains durable, transferable knowledge that the agent should save (via the \`remember\` tool for facts, or \`memory_update_profile\` for narrative profile sections).
 
 Output ONE JSON line and nothing else:
 {"teach": true|false, "kind": "preference"|"correction"|"workflow"|"fact"|"explicit-remember"|"none", "confidence": 0-1, "why": "one short phrase"}

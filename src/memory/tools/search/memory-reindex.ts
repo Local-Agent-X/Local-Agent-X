@@ -1,4 +1,4 @@
-const VALID_SOURCES = ["entity", "daily-log", "mind", "session-summary", "session", "personality"] as const;
+const VALID_SOURCES = ["entity", "daily-log", "session-summary", "session", "personality"] as const;
 type IndexSource = (typeof VALID_SOURCES)[number];
 
 export function memoryReindexTool() {
@@ -12,7 +12,7 @@ export function memoryReindexTool() {
         source: {
           type: "string",
           description:
-            "One of: all, entity, daily-log, mind, session-summary, session, personality (default: all)",
+            "One of: all, entity, daily-log, session-summary, session, personality (default: all)",
         },
         force: {
           type: "boolean",

@@ -2,14 +2,19 @@
  * Local Agent X — Memory Consolidation
  *
  * Analogous to sleep consolidation in the brain: groups related facts,
- * merges duplicates, detects reinforcement, promotes important facts to
- * long-term storage (MIND.md), and updates entity pages.
+ * merges duplicates, detects reinforcement, and updates entity pages.
  *
  * Runs nightly at 3 AM or on demand. Persists consolidation history to
  * ~/.lax/consolidation-log.json.
  *
  * Helpers split into ./memory-consolidation/* — this file owns the
  * singleton, the consolidate() cycle, and the history persistence.
+ *
+ * Note: this pass no longer "promotes" facts to a separate long-term store.
+ * The Facts DB (src/memory/index-facts.ts) IS long-term storage; facts land
+ * there directly via the agent's `remember` tool. `promotedCount` in the
+ * report is now a count of recurring-fact clusters surfaced, kept for the
+ * reflection-history shape.
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -23,7 +28,7 @@ import {
 import { ensureDirs, jaccardSimilarity, slugify } from "./memory-consolidation/utils.js";
 import { loadTodayFacts } from "./memory-consolidation/load-facts.js";
 import { countContradictions, getPromotionCandidates, mergeRelatedFacts } from "./memory-consolidation/analyze.js";
-import { promoteToLongTerm, scrubMindFile, updateAllEntityPages } from "./memory-consolidation/write.js";
+import { updateAllEntityPages } from "./memory-consolidation/write.js";
 
 export type { FactEntry, MergedFact, ConsolidationReport } from "./memory-consolidation/types.js";
 
@@ -82,12 +87,10 @@ export class MemoryConsolidator {
       contradictionsFound += countContradictions(group);
     }
 
-    // Identify promotion candidates
+    // Surface recurring-fact clusters for the report (≥3 occurrences). No
+    // longer triggers a promotion — the Facts DB already holds them.
     const candidates = getPromotionCandidates();
     const promoted = candidates.map((f) => f.content);
-    if (promoted.length > 0) {
-      promoteToLongTerm(promoted);
-    }
 
     // Update entity pages
     const entityPagesUpdated = updateAllEntityPages(grouped);
@@ -116,14 +119,6 @@ export class MemoryConsolidator {
   }
 
   // ── Pass-through wrappers preserving the public class surface ────
-
-  scrubMindFile(): { linesRemoved: number; linesKept: number } {
-    return scrubMindFile();
-  }
-
-  promoteToLongTerm(facts: string[]): void {
-    promoteToLongTerm(facts);
-  }
 
   mergeRelatedFacts(facts: FactEntry[]): MergedFact[] {
     return mergeRelatedFacts(facts);

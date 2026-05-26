@@ -249,7 +249,7 @@ async function applyWrite(d: WriteDecision): Promise<void> {
   }
 
   // Char-limit check — same caps as memory_update_profile tool.
-  const LIMITS: Record<string, number> = { "USER.md": 2000, "MIND.md": 5000 };
+  const LIMITS: Record<string, number> = { "USER.md": 2000 };
   const limit = LIMITS[filename];
   if (limit !== undefined && updated.length > limit) {
     logger.warn(`[end-of-turn] skipped write — ${filename} would be ${updated.length}/${limit}`);

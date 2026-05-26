@@ -3,18 +3,6 @@ import type { MemoryIndex } from "./index-core.js";
 import { ensurePersonalityFiles, readPersonalityFile } from "./personality.js";
 import { extractKeywords, safeReadTextFile } from "./utils.js";
 
-function sanitizeCoreMemoryForContext(coreMemory: string): string {
-  const lines = coreMemory.split(/\r?\n/);
-  const kept: string[] = [];
-  for (const line of lines) {
-    if (/^\s*-\s*\[chat-[A-Za-z0-9_-]+\]\s+(User|Agent):/i.test(line)) continue;
-    if (/^\s*-\s*(User|Agent):\s/i.test(line)) continue;
-    if (/^\s*-\s*\[(ide|session|tg|cron|wa)-[A-Za-z0-9_-]+\]\s+(User|Agent):/i.test(line)) continue;
-    kept.push(line);
-  }
-  return kept.join("\n");
-}
-
 function sanitizeDailyLogForModeration(log: string): string {
   const lines = log.split(/\r?\n/);
   const out: string[] = [];
@@ -106,12 +94,6 @@ export async function buildContextBlock(
   const user = await readPersonalityFile(memDir, "user");
   if (user) {
     sections.push(`<user_profile>\n${user}\n</user_profile>`);
-  }
-
-  const coreMemoryRaw = memory.readMemoryFile();
-  const coreMemory = sanitizeCoreMemoryForContext(coreMemoryRaw);
-  if (coreMemory.trim()) {
-    sections.push(`<core_memory>\n${coreMemory.trim()}\n</core_memory>`);
   }
 
   if (!opts.skipDailyLog) {

@@ -2,10 +2,6 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import type { FileRecord } from "./types.js";
 
-export function getMemoryFilePath(memoryDir: string): string {
-  return join(memoryDir, "MIND.md");
-}
-
 export function getDailyLogPath(memoryDir: string, date?: Date): string {
   const d = date || new Date();
   const dateStr = d.toISOString().split("T")[0];

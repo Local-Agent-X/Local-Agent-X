@@ -17,8 +17,6 @@ export const PERSONALITY_FILES: Record<string, string> = {
   user: "USER.md",         // Who the user is, how they want to be addressed
   heart: "HEART.md",       // Agent personality, behavior config, vibe
   identity: "IDENTITY.md", // Agent name, emoji, catchphrase
-  memory: "MIND.md",       // Core facts and curated knowledge
-  mind: "MIND.md",         // Alias — agent can say "mind" or "memory"
 };
 
 const DEFAULT_USER_MD = `# About Me

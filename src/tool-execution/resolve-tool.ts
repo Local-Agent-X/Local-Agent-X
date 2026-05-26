@@ -172,13 +172,15 @@ export const resolvePhase: Phase = async (ctx) => {
     return;
   }
 
-  // Protected files: block writes to core engine files that would brick the agent.
-  if (["write", "edit"].includes(tc.name) && ctx.args.path) {
+  // Protected files: block writes/deletes to core engine files that would
+  // brick the agent. delete_file is in the list because deletion+recreation
+  // is the same blast radius as a write — both flatten the original content.
+  if (["write", "edit", "delete_file"].includes(tc.name) && ctx.args.path) {
     try {
       const { isProtectedFile } = await import("../config-loader.js");
       const check = isProtectedFile(String(ctx.args.path));
       if (check.protected) {
-        const result = `User hint: ${USER_HINTS.secrets}\nBLOCKED: ${check.reason}. This file is part of the protected core — modifying it could break the agent engine. Edit config/ files instead to customize behavior.`;
+        const result = `User hint: ${USER_HINTS.secrets}\nBLOCKED: ${check.reason}`;
         terminate(ctx, { rendered: "raw", content: result, allowed: false });
         return;
       }

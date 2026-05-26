@@ -26,7 +26,8 @@
     "src/secrets.ts",
     "src/db-migrations.ts",
     "src/ari-kernel.ts",
-    "config/protected-files.json"
+    "config/protected-files.json",
+    "config/system-prompt.md"
   ],
   "reason": {
     "src/index.ts": "Server bootstrap — breaks = nothing starts",
@@ -50,6 +51,7 @@
     "src/secrets.ts": "Secrets manager — breaks = exposed credentials",
     "src/db-migrations.ts": "Database schema — breaks = data corruption",
     "src/ari-kernel.ts": "ARI kernel — breaks = no policy enforcement",
-    "config/protected-files.json": "This file — agent can't remove its own guardrails"
+    "config/protected-files.json": "This file — agent can't remove its own guardrails",
+    "config/system-prompt.md": "Global agent prompt. Per-user preferences and facts go to MEMORY, not here — use `remember`, `memory_set_user_field`, or `memory_update_profile` instead. Editing the system prompt for user-specific content pollutes every future conversation with every user."
   }
 }

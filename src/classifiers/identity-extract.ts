@@ -24,7 +24,7 @@
 
 import { classifyJson } from "./classify-with-llm.js";
 
-const SYSTEM_PROMPT = `You extract durable identity facts from a user's message to a chat agent. ONLY extract facts the user EXPLICITLY stated about themselves or about renaming the agent. Do not infer, do not guess.
+const SYSTEM_PROMPT = `You extract durable identity facts AND durable preference / biographical statements from a user's message to a chat agent. ONLY extract facts the user EXPLICITLY stated. Do not infer, do not guess.
 
 Output JSON with these fields (omit or set to null when not stated):
 {
@@ -33,14 +33,22 @@ Output JSON with these fields (omit or set to null when not stated):
   "user_location": <string | null>,    // explicit "I live in X" / "I moved to Y" — proper-noun place
   "user_employer": <string | null>,    // explicit "I work at X" — actual employer name
   "user_role": <string | null>,        // explicit profession ("I'm a developer", "I'm a nurse")
-  "family_count": <{relation: string, n: number} | null>  // "I have 2 kids" / "I have 3 daughters"
+  "family_count": <{relation: string, n: number} | null>,  // "I have 2 kids" / "I have 3 daughters"
+  "preference_rule": <string | null>,     // durable instruction about how to respond / behave: "never greet me in Spanish", "always use light mode", "I prefer concise answers", "stop using emojis"
+  "biographical_event": <string | null>   // durable life event: "my dog gigi passed away last Thursday", "I got married yesterday", "we just moved to Austin", "my mom is in the hospital"
 }
 
 Critical rejections (return all-null):
-- Short ack messages: "Done.", "Cool.", "Hello.", "Welcome.", "Nice." — these are reactions, NOT renames.
+- Short ack messages: "Done.", "Cool.", "Hello.", "Welcome.", "Nice." — these are reactions, NOT facts.
 - Fragmentary states: "I'm tired", "I'm here", "I'm back", "I'm good" — these are states, NOT names or roles.
 - Hypothetical or third-person: "if my name was X", "she's called Y" — not the user.
 - Quotes / instruction / examples — not the user's own statement.
+- One-shot task requests: "make the button green this time", "use a sans serif font here" — scoped to a single task, NOT a durable rule. preference_rule is for behavior that should persist across sessions.
+
+Rewriting for preference_rule and biographical_event:
+- Phrase as a third-person statement about the user, transferable across sessions. Bad: "stop using emojis". Good: "User prefers responses without emojis."
+- Include any concrete entity names with @-prefix where natural ("@gigi", "@nutrishop").
+- Keep to ONE sentence, ≤180 characters.
 
 Reply with exactly the JSON object on a single line. No fences, no prose.`;
 
@@ -51,6 +59,8 @@ export interface IdentityFacts {
   user_employer?: string | null;
   user_role?: string | null;
   family_count?: { relation: string; n: number } | null;
+  preference_rule?: string | null;
+  biographical_event?: string | null;
 }
 
 export async function extractIdentityFactsWithLLM(
@@ -59,8 +69,13 @@ export async function extractIdentityFactsWithLLM(
 ): Promise<IdentityFacts | null> {
   if (!userMessage || userMessage.trim().length < 2) return null;
   // Cheap pre-skip: extremely long messages almost certainly aren't a single-
-  // shot identity statement — they're stories or instructions. Save the call.
-  if (userMessage.length > 600) return null;
+  // shot identity statement. The cap was 600 chars when this only handled
+  // names/roles; biographical_event commonly arrives inside a longer story
+  // ("we had a tough day, the vet called this morning and gigi passed away
+  // last Thursday after a long fight…"), so the cap is bumped to 1200 to
+  // let those through. Beyond 1200 it's almost certainly a multi-fact story
+  // that belongs to the dream/consolidation path, not single-shot extract.
+  if (userMessage.length > 1200) return null;
 
   return classifyJson<IdentityFacts>({
     category: "identity-extract",
@@ -79,8 +94,11 @@ export async function extractIdentityFactsWithLLM(
       if (p.user_location && p.user_location.length > 100) p.user_location = null;
       if (p.user_employer && p.user_employer.length > 80) p.user_employer = null;
       if (p.user_role && p.user_role.length > 60) p.user_role = null;
+      if (p.preference_rule && (p.preference_rule.length < 8 || p.preference_rule.length > 200)) p.preference_rule = null;
+      if (p.biographical_event && (p.biographical_event.length < 8 || p.biographical_event.length > 200)) p.biographical_event = null;
       const any =
-        p.user_name || p.agent_name || p.user_location || p.user_employer || p.user_role || p.family_count;
+        p.user_name || p.agent_name || p.user_location || p.user_employer ||
+        p.user_role || p.family_count || p.preference_rule || p.biographical_event;
       return any ? p : { user_name: null }; // return empty-shape so caller knows it ran
     },
   });

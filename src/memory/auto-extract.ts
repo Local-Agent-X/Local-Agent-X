@@ -118,6 +118,36 @@ export async function autoExtractAndSave(
     if (facts.family_count) summary.push(`family: ${facts.family_count.n} ${facts.family_count.relation}`);
     safeAppendDaily(memory, `User shared identity facts — ${summary.join(", ")}`, sessionId);
   }
+
+  // Phase 2 (May 2026) — auto-write durable preferences and biographical
+  // events into the Facts DB. Both grok-4 and gpt-5.5 freeze on these:
+  // "never greet me in Spanish" reads as command-to-agent → no `remember`
+  // call; "my dog passed away" triggers empathy training → no `remember`
+  // call. Server-side extraction makes capture model-agnostic.
+  //
+  // Writes go through memory.rememberFact (NOT writeMemorySafely) because
+  // they target the bitemporal Facts DB, not a markdown file. The UNIQUE
+  // constraint on (kind, content, entities) handles the no-double-write
+  // case if the model ALSO called `remember` this turn. autoInvalidate
+  // supersedes older contradicting facts.
+  if (facts.preference_rule) {
+    try {
+      memory.rememberFact(facts.preference_rule, { kind: "opinion", confidence: 0.85 });
+      safeAppendDaily(memory, `Captured preference: ${facts.preference_rule}`, sessionId);
+      logger.info(`[memory] Auto-saved preference: ${facts.preference_rule}`);
+    } catch (e) {
+      logger.warn(`[memory] preference write failed: ${(e as Error).message}`);
+    }
+  }
+  if (facts.biographical_event) {
+    try {
+      memory.rememberFact(facts.biographical_event, { kind: "experience", confidence: 0.9 });
+      safeAppendDaily(memory, `Captured event: ${facts.biographical_event}`, sessionId);
+      logger.info(`[memory] Auto-saved biographical event: ${facts.biographical_event}`);
+    } catch (e) {
+      logger.warn(`[memory] biographical_event write failed: ${(e as Error).message}`);
+    }
+  }
 }
 
 function safeAppendDaily(memory: MemoryIndex, content: string, sessionId?: string): void {

@@ -74,6 +74,13 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 body.platform-darwin #sidebar-header{display:block;height:28px;-webkit-app-region:drag;flex-shrink:0}
 body.platform-darwin #sidebar.collapsed #sidebar-header{display:none}
 body.platform-darwin #ide-topbar{padding-left:76px}
+/* When the sidebar is collapsed the page content reaches the left
+   window edge and the first letter of each page title (PROTOCOLS,
+   APPS, SECRETS VAULT, …) sits directly under the macOS traffic
+   lights. Match the 76px reservation so titles clear the button
+   strip. Only applies when collapsed — with the sidebar open the
+   page-header starts at x=280px, well past the lights. */
+body.platform-darwin #sidebar.collapsed + #main .page-header{padding-left:76px}
 
 /* Sidebar collapsed: the floating expand button (☰) is position:fixed
    at top:14px left:8px — exactly where the traffic lights sit. Push it

@@ -176,25 +176,36 @@ export async function buildContextBlock(
     };
     let bodyBytes = 0;
     const MAX_BYTES = 3000;
+    // Biographical events within this window are flagged as "still fresh" —
+    // gives the model an explicit salience signal so a recent loss / move /
+    // milestone gets acknowledged with care instead of buried in a flat list.
+    const FRESH_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+    const nowMs = Date.now();
     for (const f of coreFacts) {
       const ents = f.entities.length > 0 ? ` (@${f.entities.join(", @")})` : "";
-      // Experience facts get a YYYY-MM-DD prefix — they're time-bound and
-      // the date is what makes "Rex passed away last Thursday" anchorable.
       let prefix = "";
+      let suffix = "";
       if (f.kind === "experience" && f.lastUpdated) {
         const d = new Date(f.lastUpdated);
         prefix = `${d.toISOString().slice(0, 10)}: `;
+        if (nowMs - f.lastUpdated < FRESH_WINDOW_MS) suffix = " — still fresh";
       }
-      const line = `- ${prefix}${f.content}${ents}`;
+      const line = `- ${prefix}${f.content}${ents}${suffix}`;
       bodyBytes += line.length + 1;
       if (bodyBytes > MAX_BYTES) break;
       buckets[f.kind].push(line);
     }
+    // Relational labels (May 2026) — the prior labels (Identity /
+    // Preferences / Recent / Observations) framed the block as a database
+    // schema and the model read them that way: cold, transactional, "fact
+    // to retrieve" not "context to weave". Rewording to second-person
+    // relational nudges the model into the "you know this person" frame
+    // on every turn without needing prompt-level reminders.
     const HEADINGS: Array<[FactKind, string]> = [
-      ["world", "Identity"],
-      ["opinion", "Preferences"],
-      ["experience", "Recent"],
-      ["observation", "Observations"],
+      ["world", "Things you know about them"],
+      ["opinion", "How they like things"],
+      ["experience", "Recent in their life"],
+      ["observation", "Other notes"],
     ];
     const body = HEADINGS
       .filter(([k]) => buckets[k].length > 0)
@@ -202,7 +213,7 @@ export async function buildContextBlock(
       .join("\n\n");
     if (body) {
       sections.push(
-        `<core_memory>\n(read-only view of the Facts DB — extend via remember/update_fact/forget; do NOT edit this block)\n\n${body}\n</core_memory>`
+        `<core_memory>\n(what you know about this person. Weave it into responses naturally — do NOT narrate that you're using it, and do NOT edit this block. Extend via remember/update_fact/forget.)\n\n${body}\n</core_memory>`
       );
     }
   }

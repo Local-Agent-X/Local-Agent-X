@@ -68,7 +68,7 @@ describe("shouldNudgeForFailures — gaslighting heuristic", () => {
     expect(shouldNudgeForFailures(r)).toBe(true);
   });
 
-  it("does NOT nudge when failures coexist with a successful write (repeating-text case)", () => {
+  it("does NOT nudge when failures coexist with a successful write (Super Alex Bros case)", () => {
     const r = collectToolFailures(
       [
         tm("[error] old_string not found", "call-1"),

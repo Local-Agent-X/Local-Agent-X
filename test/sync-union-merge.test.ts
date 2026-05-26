@@ -5,7 +5,7 @@
  * The original pull was destructive last-write-wins on the remote sync-repo
  * file — any locally-newer record was silently overwritten. Repro: a project
  * created on this machine that hadn't been pushed yet got wiped the next
- * time pull ran against a stale sync-repo (Acme Springfield, 2026-05-22).
+ * time pull ran against a stale sync-repo (2026-05-22 incident).
  *
  * Contract:
  *   - records present only on remote → keep

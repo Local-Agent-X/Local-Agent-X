@@ -186,12 +186,13 @@ export async function autoExtractAndSave(
       }
     }
   }
-  // Ongoing states — current medications, diets, fitness routines,
-  // chronic conditions, active projects. Distinct from biographical_event
-  // (point-in-time) because these are present-tense states that should
-  // still be true tomorrow. Verified May 2026: "I'm taking <med>"
-  // was remembered by the model but "I'm also taking <med>" two
-  // turns later wasn't — same shape, different model judgment. The
+  // Ongoing states — any durable present-tense fact about the user
+  // (current medications, diets, fitness routines, possessions, habits,
+  // active projects, learning, living situation, etc). Distinct from
+  // biographical_event (point-in-time) because these are present-tense
+  // states that should still be true tomorrow. Verified May 2026: model
+  // saved "I'm taking <med>" via remember() but skipped "I'm also taking
+  // <med2>" two turns later — same shape, different model judgment. The
   // classifier closes the variance. Kind=observation because they're
   // factual statements about the user's current state, conf=0.9 (high —
   // these are explicit user claims about their own life).

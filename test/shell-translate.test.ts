@@ -135,7 +135,7 @@ describe("countTopLevelPipes — quote-aware pipe counting", () => {
   });
 });
 
-describe("translateForShell — repeating-text repro (2026-05-23)", () => {
+describe("translateForShell — Super Alex Bros repro (2026-05-23)", () => {
   it("translates the exact command that aborted Grok's 14-tool turn", () => {
     const cmd = 'cd "C:\\Users\\manri\\local-agent-x\\workspace\\apps\\super-peter-bros" && grep -r "speed" .';
     expect(translateForShell(cmd, "powershell-51"))

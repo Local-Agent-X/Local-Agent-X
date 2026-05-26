@@ -124,11 +124,36 @@ export function createWindow(): void {
   // covers these actions, and the native window chrome already supplies
   // traffic lights.
   mainWindow.webContents.on("did-finish-load", () => {
-    if (process.platform === "darwin") return;
-    // Don't inject over the splash — it'd flash a menu bar across the
-    // loading screen. Skip anything that isn't the real LAX origin.
     const currentUrl = mainWindow?.webContents.getURL() ?? "";
+    // Don't inject over the splash — it'd flash a menu bar / odd padding
+    // across the loading screen. Skip anything that isn't the real LAX
+    // origin.
     if (!currentUrl.startsWith(serverOrigin)) return;
+
+    if (process.platform === "darwin") {
+      // hiddenInset puts the native traffic-light buttons at the standard
+      // top-left (x≈12, y≈18). The renderer's #sidebar-header starts at
+      // x=0 and visually collides with them — buttons are still clickable
+      // but UI elements look stacked under the traffic lights. Reserve
+      // ~76px of left padding for the traffic-light zone (~70px buttons
+      // + 6px breathing room) so #sidebar-header content (Agent X logo,
+      // + New Chat, collapse arrow) clears them. Same pattern as
+      // VS Code / Slack / Discord. Costs 76px on the top-left only —
+      // doesn't push content down at all.
+      // When sidebar is expanded: 76px left padding clears the lights
+      // horizontally so the "Agent X" + "New Chat" + collapse arrow all
+      // start to the right of them.
+      // When sidebar is collapsed: the sidebar itself becomes narrow
+      // (~40px), so left-padding would push the expand button out of
+      // the visible width. Instead nudge the header down ~28px so the
+      // expand button sits below the lights vertically.
+      mainWindow?.webContents.insertCSS(`
+        #sidebar-header { padding-left: 76px; box-sizing: border-box; transition: padding 0.15s ease; }
+        #sidebar.collapsed #sidebar-header { padding-left: 0; padding-top: 28px; }
+      `).catch(() => { /* renderer not ready */ });
+      return;
+    }
+
     mainWindow?.webContents.executeJavaScript(MAIN_WINDOW_TITLEBAR_JS);
   });
 

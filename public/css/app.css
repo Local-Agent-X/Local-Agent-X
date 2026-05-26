@@ -57,6 +57,18 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 #sidebar{width:280px;min-width:280px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column}
 #sidebar.collapsed{width:0;min-width:0;overflow:hidden;border-right:none}
 #sidebar-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+
+/* macOS Electron only: reserve top-left horizontal space for the native
+   traffic-light buttons (close/min/max) so renderer UI doesn't visually
+   stack under them. ~76px clears the ~70px button zone + 6px breathing
+   room. The `platform-darwin` class is set by desktop/src/preload.ts at
+   DOMContentLoaded — guarantees CSS applies before first paint, which
+   the earlier main-process insertCSS approach could not (silent failure
+   in some boot orderings, confirmed by `document.styleSheets` showing
+   zero injected sheets). */
+body.platform-darwin #sidebar-header{padding-left:76px}
+body.platform-darwin #sidebar.collapsed #sidebar-header{padding-left:0;padding-top:28px}
+body.platform-darwin #ide-topbar{padding-left:76px}
 #logo{font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase;text-shadow:0 0 10px var(--accent-dim);flex:1;cursor:pointer}
 #new-chat-btn{background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:7px 12px;font-size:.75rem;cursor:pointer;font-family:var(--mono);transition:all .2s;white-space:nowrap}
 #new-chat-btn:hover{background:var(--accent);color:var(--bg);box-shadow:0 0 12px var(--accent-dim)}

@@ -34,6 +34,7 @@ Output JSON with these fields (omit or set to null when not stated):
   "user_employer": <string | null>,    // explicit "I work at X" — actual employer name
   "user_role": <string | null>,        // explicit profession ("I'm a developer", "I'm a nurse")
   "family_count": <{relation: string, n: number} | null>,  // "I have 2 kids" / "I have 3 daughters"
+  "relationships": <Array<{relation: string, name: string}> | null>,  // family/close people named explicitly: "my wife is Sam" → [{relation:"wife",name:"Sam"}]; "my brother Tom and his kid Sarah" → two entries. Use relation as the user described it (wife/husband/partner/mom/dad/brother/sister/son/daughter/kid/friend/etc).
   "preference_rule": <string | null>,     // durable instruction about how to respond / behave: "never greet me in Spanish", "always use light mode", "I prefer concise answers", "stop using emojis"
   "biographical_event": <string | null>   // durable life event: "my dog gigi passed away last Thursday", "I got married yesterday", "we just moved to Austin", "my mom is in the hospital"
 }
@@ -59,6 +60,7 @@ export interface IdentityFacts {
   user_employer?: string | null;
   user_role?: string | null;
   family_count?: { relation: string; n: number } | null;
+  relationships?: Array<{ relation: string; name: string }> | null;
   preference_rule?: string | null;
   biographical_event?: string | null;
 }
@@ -96,9 +98,22 @@ export async function extractIdentityFactsWithLLM(
       if (p.user_role && p.user_role.length > 60) p.user_role = null;
       if (p.preference_rule && (p.preference_rule.length < 8 || p.preference_rule.length > 200)) p.preference_rule = null;
       if (p.biographical_event && (p.biographical_event.length < 8 || p.biographical_event.length > 200)) p.biographical_event = null;
+      if (Array.isArray(p.relationships)) {
+        const cleaned = p.relationships.filter(
+          (r) =>
+            r &&
+            typeof r.relation === "string" &&
+            typeof r.name === "string" &&
+            r.relation.length >= 2 && r.relation.length <= 30 &&
+            r.name.length >= 2 && r.name.length <= 40
+        );
+        p.relationships = cleaned.length > 0 ? cleaned : null;
+      } else {
+        p.relationships = null;
+      }
       const any =
         p.user_name || p.agent_name || p.user_location || p.user_employer ||
-        p.user_role || p.family_count || p.preference_rule || p.biographical_event;
+        p.user_role || p.family_count || p.relationships || p.preference_rule || p.biographical_event;
       return any ? p : { user_name: null }; // return empty-shape so caller knows it ran
     },
   });

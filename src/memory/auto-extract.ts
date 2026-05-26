@@ -148,6 +148,24 @@ export async function autoExtractAndSave(
       logger.warn(`[memory] biographical_event write failed: ${(e as Error).message}`);
     }
   }
+  // Named family / close relationships. "my wife's name is Sam" was
+  // hitting Phase 3's long-tail remember() path because the classifier
+  // only knew family_count (a number), not names. Capturing relation+
+  // name pairs server-side puts these durable identity facts on the
+  // same silent path as user_name / user_location. Phrasing puts the
+  // name as the @-entity so recallByEntity('jenny') surfaces the fact.
+  if (facts.relationships) {
+    for (const rel of facts.relationships) {
+      try {
+        const content = `@${rel.name} is the user's ${rel.relation}`;
+        memory.rememberFact(content, { kind: "world", confidence: 0.95 });
+        safeAppendDaily(memory, `Captured relationship: ${rel.relation} = ${rel.name}`, sessionId);
+        logger.info(`[memory] Auto-saved relationship: ${rel.relation} = ${rel.name}`);
+      } catch (e) {
+        logger.warn(`[memory] relationship write failed: ${(e as Error).message}`);
+      }
+    }
+  }
 }
 
 function safeAppendDaily(memory: MemoryIndex, content: string, sessionId?: string): void {

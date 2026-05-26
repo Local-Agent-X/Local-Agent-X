@@ -134,6 +134,13 @@ export class UniversalIndex {
     this.entitiesDir = join(this.memoryDir, "bank", "entities");
   }
 
+  // Public read accessor for the bound MemoryIndex. Used by orchestrator
+  // modules that need to query facts (e.g. contradiction-detector) without
+  // having to thread memory through OrchestratorInput.
+  getMemory(): MemoryIndex {
+    return this.memory;
+  }
+
   // ── Per-store indexers ─────────────────────────────────────────────────
 
   async indexEntityPage(slug: string): Promise<IndexResult> {

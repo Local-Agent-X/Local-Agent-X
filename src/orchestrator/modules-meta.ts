@@ -6,6 +6,7 @@ import { SharedHistory } from "../shared-history.js";
 import { MilestoneCelebrator } from "../milestone-celebrations.js";
 import { CorrectionLearner } from "../correction-learning.js";
 import { ContradictionDetector } from "../contradiction-detector.js";
+import { getUniversalIndex } from "../memory/universal-index.js";
 import type { OrchestratorInput, ModuleSignal } from "./types.js";
 import { GRAPH_STOP_WORDS } from "./types.js";
 
@@ -112,18 +113,35 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
     }
 
     case "contradiction-detector": {
+      // Pre-fix this read from cd.getContradictionHistory() — its own
+      // log of past contradictions. The auto-recording path was
+      // unreliable, so the comparison set was almost always empty and
+      // the detector never fired. Now we pull live facts from the Facts
+      // DB so the detector actually sees the user's accumulated
+      // preferences when they say "stop X" / "don't do X anymore".
       const cd = ContradictionDetector.getInstance();
-      const history = cd.getContradictionHistory();
-      const existingFacts = history.map(r => r.contradiction.oldFact);
-      if (existingFacts.length > 0) {
-        const contradiction = cd.checkContradiction(input.message, existingFacts);
+      let factTexts: string[] = [];
+      try {
+        const ui = getUniversalIndex();
+        const memory = ui?.getMemory();
+        if (memory) {
+          factTexts = memory
+            .recallRecentFacts({ limit: 100, minConfidence: 0.4 })
+            .map(f => f.content);
+        }
+      } catch { /* facts unavailable — fall through to no-op */ }
+      if (factTexts.length > 0) {
+        const contradiction = cd.checkContradiction(input.message, factTexts);
         if (contradiction) {
           signals.push({
             source: "contradiction-detector",
-            signal: `Possible contradiction: "${contradiction.oldFact}" vs "${contradiction.newFact}" — gently clarify`,
-            priority: 7,
+            signal:
+              `Possible contradiction with prior fact: "${contradiction.oldFact}" — ` +
+              `user just said "${contradiction.newFact}". Call \`forget\` or \`update_fact\` ` +
+              `to retire the stale fact, don't just save a new one alongside it.`,
+            priority: 9,
             category: "contradiction",
-            confidence: 0.7,
+            confidence: 0.8,
           });
         }
       }

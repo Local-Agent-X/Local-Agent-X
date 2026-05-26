@@ -19,6 +19,25 @@ import { MAIN_WINDOW_TITLEBAR_JS, buildAppDragStripJs } from "./window-injection
 
 let mainWindow: BrowserWindow | null = null;
 
+// CSS injected on did-finish-load (macOS only) so the native traffic-light
+// buttons at the standard top-left (x≈12, y≈18) don't visually collide
+// with renderer-side UI that starts at x=0. ~76px clears the ~70px
+// three-button zone plus 6px breathing room. Same pattern VS Code /
+// Slack / Discord all use. Two toolbars need it:
+//
+//   #sidebar-header   — main window left rail. Expanded: pad left.
+//                       Collapsed (~40px wide): pad top instead so the
+//                       expand button isn't pushed past the visible
+//                       width.
+//   #ide-topbar       — IDE / pinned-app window top toolbar. "← Apps"
+//                       button sits at x=0 and gets covered by the
+//                       green light.
+const MACOS_TRAFFIC_LIGHT_PADDING_CSS = `
+  #sidebar-header { padding-left: 76px; box-sizing: border-box; transition: padding 0.15s ease; }
+  #sidebar.collapsed #sidebar-header { padding-left: 0; padding-top: 28px; }
+  #ide-topbar { padding-left: 76px; box-sizing: border-box; }
+`;
+
 // True once the splash has handed off to the real app URL. Stays false
 // for the entire time we're on the spinner / recovery screen. main.ts
 // reads it via isStuckOnSplash() so a second launch can detect that
@@ -147,10 +166,7 @@ export function createWindow(): void {
       // (~40px), so left-padding would push the expand button out of
       // the visible width. Instead nudge the header down ~28px so the
       // expand button sits below the lights vertically.
-      mainWindow?.webContents.insertCSS(`
-        #sidebar-header { padding-left: 76px; box-sizing: border-box; transition: padding 0.15s ease; }
-        #sidebar.collapsed #sidebar-header { padding-left: 0; padding-top: 28px; }
-      `).catch(() => { /* renderer not ready */ });
+      mainWindow?.webContents.insertCSS(MACOS_TRAFFIC_LIGHT_PADDING_CSS).catch(() => { /* renderer not ready */ });
       return;
     }
 
@@ -321,6 +337,12 @@ function attachAppDragStrip(appWin: BrowserWindow): void {
     if (!currentUrl.startsWith(appOrigin) || currentUrl.includes("/api/health")) return;
     const js = buildAppDragStripJs(getSetting("theme"));
     appWin.webContents.executeJavaScript(js).catch(() => { /* page unloaded */ });
+    if (process.platform === "darwin") {
+      // Same traffic-light padding as the main window — #ide-topbar's
+      // "← Apps" button sits at x=0 and gets covered by the green light
+      // on a popped-out pinned-app window without this.
+      appWin.webContents.insertCSS(MACOS_TRAFFIC_LIGHT_PADDING_CSS).catch(() => {});
+    }
   });
 }
 

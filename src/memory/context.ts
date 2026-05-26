@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import type { MemoryIndex } from "./index-core.js";
 import { ensurePersonalityFiles, readPersonalityFile } from "./personality.js";
+import type { FactKind } from "./types.js";
 import { extractKeywords, safeReadTextFile } from "./utils.js";
 
 function sanitizeDailyLogForModeration(log: string): string {
@@ -118,26 +119,13 @@ export async function buildContextBlock(
     }
   }
 
-  const opinions = memory.recallOpinions();
-  const topOpinions = opinions.filter((f) => f.confidence >= 0.7).slice(0, 10);
-  if (topOpinions.length > 0) {
-    const opLines = topOpinions
-      .map((f) => {
-        const ents =
-          f.entities.length > 0 ? ` (@${f.entities.join(", @")})` : "";
-        return `- ${f.content}${ents}`;
-      })
-      .join("\n");
-    sections.push(`<user_preferences>\n${opLines}\n</user_preferences>`);
-  }
-
-  // Entities mentioned in this turn's user message. Pulled BEFORE the
-  // learned_facts block so any cold facts about those entities get
-  // reinforced (last_updated bumped) — which both surfaces them in this
-  // turn AND keeps them warm for the next session. This is the "human
-  // memory" pattern: a fact you haven't touched in months stays in
-  // long-term storage, but the moment something relevant comes up, it
-  // gets pulled back into hot context.
+  // Entities mentioned in this turn's user message. Run BEFORE core_memory
+  // rendering so any cold facts about those entities get reinforced
+  // (last_updated bumped) — which both surfaces them in this turn (they
+  // sort to the top of the hot-score ranking) AND keeps them warm for the
+  // next session. The "human memory" pattern: a fact you haven't touched
+  // in months stays in long-term storage, but the moment something
+  // relevant comes up, it gets pulled back into hot context.
   let mentionedEntities: string[] = [];
   const entityFactIds = new Set<number>();
   if (opts.userMessage && opts.userMessage.trim().length > 0) {
@@ -163,22 +151,60 @@ export async function buildContextBlock(
     }
   }
 
-  // Recent non-opinion facts the agent has retained via `remember` (or via
-  // legacy retain paths). Opinions live in <user_preferences> above; this
-  // block surfaces world / observation / experience kinds so the model
-  // actually sees what it saved. Ranked by hot-score (confidence × recency
-  // decay), so high-confidence durable facts can outrank recent low-value
-  // chatter. The reinforcement step above means entities mentioned this
-  // turn have their facts freshly bumped, so they sort to the top.
-  const recentFacts = memory.recallRecentFacts({ limit: 30, minConfidence: 0.5 });
-  if (recentFacts.length > 0) {
-    const factLines = recentFacts
-      .map((f) => {
-        const ents = f.entities.length > 0 ? ` (@${f.entities.join(", @")})` : "";
-        return `- ${f.content}${ents}`;
-      })
-      .join("\n");
-    sections.push(`<learned_facts>\n${factLines}\n</learned_facts>`);
+  // <core_memory> — unified, read-only projection of the Facts DB grouped
+  // by kind. Replaces the prior split <user_preferences> + <learned_facts>
+  // blocks. The model used to lose its tool-call reflex when no live view
+  // existed (verified May 2026: removing the MIND.md view caused both
+  // grok-4 and gpt-5.5 to ack-and-skip `remember` on durable statements).
+  // Rendering from the DB (not a file) keeps the affordance without
+  // resurrecting append-only growth.
+  //
+  // Ordering: facts come pre-sorted by hot-score (confidence × time-decay)
+  // from recallRecentFacts. Entities reinforced above sort to the top.
+  // Cap at ~3 KB of body to bound context cost.
+  const coreFacts = memory.recallRecentFacts({
+    kinds: ["world", "experience", "opinion", "observation"],
+    limit: 60,
+    minConfidence: 0.4,
+  });
+  if (coreFacts.length > 0) {
+    const buckets: Record<FactKind, string[]> = {
+      world: [],
+      opinion: [],
+      experience: [],
+      observation: [],
+    };
+    let bodyBytes = 0;
+    const MAX_BYTES = 3000;
+    for (const f of coreFacts) {
+      const ents = f.entities.length > 0 ? ` (@${f.entities.join(", @")})` : "";
+      // Experience facts get a YYYY-MM-DD prefix — they're time-bound and
+      // the date is what makes "Rex passed away last Thursday" anchorable.
+      let prefix = "";
+      if (f.kind === "experience" && f.lastUpdated) {
+        const d = new Date(f.lastUpdated);
+        prefix = `${d.toISOString().slice(0, 10)}: `;
+      }
+      const line = `- ${prefix}${f.content}${ents}`;
+      bodyBytes += line.length + 1;
+      if (bodyBytes > MAX_BYTES) break;
+      buckets[f.kind].push(line);
+    }
+    const HEADINGS: Array<[FactKind, string]> = [
+      ["world", "Identity"],
+      ["opinion", "Preferences"],
+      ["experience", "Recent"],
+      ["observation", "Observations"],
+    ];
+    const body = HEADINGS
+      .filter(([k]) => buckets[k].length > 0)
+      .map(([k, label]) => `## ${label}\n${buckets[k].join("\n")}`)
+      .join("\n\n");
+    if (body) {
+      sections.push(
+        `<core_memory>\n(read-only view of the Facts DB — extend via remember/update_fact/forget; do NOT edit this block)\n\n${body}\n</core_memory>`
+      );
+    }
   }
 
   if (mentionedEntities.length > 0) {

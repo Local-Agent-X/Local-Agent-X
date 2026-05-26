@@ -69,7 +69,13 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 body.platform-darwin #sidebar-header{padding-left:76px}
 body.platform-darwin #sidebar.collapsed #sidebar-header{padding-left:0;padding-top:28px}
 body.platform-darwin #ide-topbar{padding-left:76px}
-#logo{font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase;text-shadow:0 0 10px var(--accent-dim);flex:1;cursor:pointer}
+
+/* "AGENT X" brand label lives in its own row below the traffic-light
+   zone so the lights don't squeeze it onto two lines. Full-width row;
+   the previous in-header position fought with the 76px left padding. */
+#sidebar-brand{padding:8px 16px 10px;border-bottom:1px solid var(--border)}
+#sidebar.collapsed #sidebar-brand{display:none}
+#logo{font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase;text-shadow:0 0 10px var(--accent-dim);cursor:pointer}
 #new-chat-btn{background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:7px 12px;font-size:.75rem;cursor:pointer;font-family:var(--mono);transition:all .2s;white-space:nowrap}
 #new-chat-btn:hover{background:var(--accent);color:var(--bg);box-shadow:0 0 12px var(--accent-dim)}
 #pinned-section{padding:8px 0;border-bottom:1px solid var(--border)}

@@ -273,6 +273,43 @@ export async function driveTurn(
     ? "error"
     : (result.terminalReason ?? (adapterError ? "error" : null));
 
+  // Memory-write short-circuit (May 2026). When this turn's only tool
+  // calls are silent persistence writes AND the model already produced
+  // user-facing text BEFORE those calls, terminate the turn here so the
+  // worker doesn't drive a second turn purely to "wrap up". Without this,
+  // grok-4 medium reliably produces a follow-up turn that narrates the
+  // save ("Got it — X is saved", "No blocker — already saved on the
+  // first try", "facts about @X and @Y are already saved via remember"),
+  // breaking the illusion of seamless context. Verified in production:
+  // the wrap-up turn isn't called for in the system prompt — it's the
+  // model's own tool-use training pulling it back for a confirmation
+  // pass that other tools (bash, edit) legitimately need. Memory tools
+  // are by contract silent — the activity row is the receipt.
+  //
+  // Only applies when every tool call this turn is a memory writer.
+  // Mixed turns (e.g. remember + bash) still drive a wrap-up turn so
+  // the bash result gets surfaced. The downstream failure-nudge logic
+  // already resets terminalReason to null if any memory write failed,
+  // so failed remembers still get a retry pass.
+  const MEMORY_WRITE_TOOLS = new Set([
+    "remember",
+    "update_fact",
+    "forget",
+    "memory_save",
+    "memory_set_user_field",
+    "memory_update_profile",
+  ]);
+  const allMemoryWrites =
+    toolCalls.length > 0 && toolCalls.every((c) => MEMORY_WRITE_TOOLS.has(c.tool));
+  if (
+    terminalReason === null &&
+    !middlewareAborted &&
+    allMemoryWrites &&
+    assistantText.trim().length > 0
+  ) {
+    terminalReason = "done";
+  }
+
   // Active gaslighting-prevention: when tools returned non-ok statuses
   // this turn AND no successful mutation landed, inject a nudge into
   // turn+1 telling the model to acknowledge or fix. Mixed turns

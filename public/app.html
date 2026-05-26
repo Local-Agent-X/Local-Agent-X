@@ -193,8 +193,8 @@
 
   <!-- ══ SETTINGS PAGE ══ -->
   <div id="page-settings" class="page">
-    <div style="padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px;flex-shrink:0">
-      <h1 style="font-family:var(--mono);font-size:.9rem;color:var(--accent);letter-spacing:2px">SETTINGS</h1>
+    <div class="page-header">
+      <h2>SETTINGS</h2>
       <div style="flex:1"></div>
       <span id="save-status" style="font-family:var(--mono);font-size:.68rem;color:var(--muted)"></span>
       <!-- Settings import/export -->
@@ -925,13 +925,17 @@
 
   <div id="page-agents" class="page">
     <div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
-      <!-- Top bar: project selector + tabs -->
-      <div style="display:flex;align-items:center;gap:12px;padding:10px 20px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap">
+      <!-- Page header (matches Apps/Missions/Protocols/Secrets/Settings) -->
+      <div class="page-header">
+        <h2>AGENTS</h2>
+        <div style="flex:1"></div>
         <select id="agents-project-select" class="field-input" style="font-size:.72rem;padding:4px 10px;min-width:160px" onchange="switchProject(this.value)">
           <option value="">All Projects</option>
         </select>
-        <button class="action-btn primary" style="font-size:.65rem;padding:3px 10px" onclick="showNewProjectForm()">+ New Project</button>
-        <div style="flex:1"></div>
+        <button class="action-btn primary" style="padding:7px 14px;font-size:.78rem" onclick="showNewProjectForm()">+ New Project</button>
+      </div>
+      <!-- Tabs row -->
+      <div style="display:flex;align-items:center;gap:12px;padding:6px 20px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap">
         <div class="agents-tabs" style="border-bottom:none;padding:0">
           <button class="agents-tab active" onclick="switchAgentsTab('dashboard',this)">Dashboard</button>
           <button class="agents-tab" onclick="switchAgentsTab('team',this)">Team</button>

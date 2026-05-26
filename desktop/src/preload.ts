@@ -5,6 +5,24 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 
+// Platform body-class — set as early as possible so renderer CSS can
+// condition layout on macOS without waiting for IPC. Previous attempt
+// used main.webContents.insertCSS at did-finish-load, which silently
+// no-op'd in some boot orderings (verified via DevTools:
+// document.styleSheets had zero injected sheets). Adding the class from
+// the preload's DOMContentLoaded listener is deterministic — the class
+// is on <body> before any layout pass.
+if (process.platform === "darwin") {
+  const apply = () => {
+    try { document.body.classList.add("platform-darwin"); } catch {}
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", apply, { once: true });
+  } else {
+    apply();
+  }
+}
+
 contextBridge.exposeInMainWorld("desktop", {
   // Server
   getServerStatus: () => ipcRenderer.invoke("get-server-status"),

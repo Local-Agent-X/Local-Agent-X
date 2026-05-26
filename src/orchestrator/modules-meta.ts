@@ -102,8 +102,9 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
       // injecting the verbatim "user corrected X to Y" signal here — that
       // pattern made the system feel like a passive correction logger
       // instead of a learner. Now the model itself decides what to write to
-      // USER.md / MIND.md via memory_update_profile in response to the
-      // nudge. Synthesis happens at write time, not at recall time.
+      // USER.md (via memory_update_profile) or the Facts DB (via `remember`)
+      // in response to the nudge. Synthesis happens at write time, not at
+      // recall time.
       if (!input.agentPreviousMessage) return true;
       const cl = CorrectionLearner.getInstance();
       cl.detectCorrection(input.message, input.agentPreviousMessage);

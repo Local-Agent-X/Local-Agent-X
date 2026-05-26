@@ -123,8 +123,8 @@ export async function ingestConversations(
   }
 
   // After ingest: extract durable facts (surgeries, launches, moves, preferences)
-  // from the imported chunks into MIND.md + the facts table. Fire-and-forget so
-  // the ingest call returns immediately — extraction runs async and logs progress.
+  // from the imported chunks into the facts table. Fire-and-forget so the
+  // ingest call returns immediately — extraction runs async and logs progress.
   if (result.chunksCreated > 0) {
     logger.info(`[ingest] Kicking off background extraction for ${result.chunksCreated} new chunks (365-day lookback)...`);
     (async () => {

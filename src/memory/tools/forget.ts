@@ -6,7 +6,8 @@ import { PERSONALITY_FILES } from "../personality.js";
 
 // ── Deep-forget helpers (redact from profile files + daily logs) ──
 
-/** Remove or redact mentions of `term` from USER.md, MIND.md, HEART.md. */
+/** Remove or redact mentions of `term` from the active personality files
+ *  (USER.md, HEART.md, IDENTITY.md). MIND.md is retired and not included. */
 function redactFromProfileFiles(memDir: string, term: string): number {
   const termLower = term.toLowerCase();
   const termRe = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
@@ -154,7 +155,7 @@ export function createForgetTool(memory: MemoryIndex) {
       }
 
       // Deep forget: also scrub profile files + daily logs so the term
-      // doesn't resurface via USER.md/MIND.md/daily log context injection.
+      // doesn't resurface via USER.md/HEART.md/daily log context injection.
       if (confirm) {
         const term = fact || query || "";
         if (term.length >= 2) {

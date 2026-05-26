@@ -20,7 +20,7 @@ export const COMPLETION_OPENER =
 // ./!/?, after newline, or after markdown bullet/list/heading prefix).
 // Catches the case where the reply opens with a status line ("Build CLI
 // timed out. I'll write it directly...") but ends with a completion recap
-// ("Built **Kraken Bot** at workspace/apps/kraken-bot/...") — that "Built"
+// ("Built **MyApp** at workspace/apps/myapp/...") — that "Built"
 // follows a period+space, so it counts as sentence-start.
 //
 // Anchoring to sentence-start (not anywhere in text) avoids false-negatives

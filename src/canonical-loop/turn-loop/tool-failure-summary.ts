@@ -4,9 +4,9 @@
 // loop. We inject a synthetic user-role nudge into turn+1 and force the
 // drive loop to continue (override terminalReason "done" → null) so the
 // model has to address the failure on the next turn instead of gaslighting
-// the user. Real failure (2026-05-23, repeating-text): grok-code-fast-1
-// said "fixed it" while two `edit` calls hit `old_string found 2 times`
-// and never wrote a byte.
+// the user. Real failure (2026-05-23): grok-code-fast-1 said "fixed it"
+// while two `edit` calls hit `old_string found 2 times` and never wrote
+// a byte.
 //
 // Why not a UI banner: the banner sits in the assistant message AFTER the
 // turn — it tells the user but does nothing to fix the model's behavior.
@@ -32,7 +32,7 @@ export interface ToolFailureSummary {
    * outside world. Used to suppress the gaslighting nudge in the mixed
    * case where the model had failures earlier but ultimately landed a real
    * change — that's not gaslighting, that's iteration. Real failure 2026-
-   * 05-23: repeating-text turn had 4 edit failures + 1 successful write
+   * 05-23: one turn had 4 edit failures + 1 successful write
    * (the actual fix). My v1 nudge fired on the failures alone and forced
    * an extra turn that regurgitated the same response, surfacing as a
    * "chat printed response twice" UX bug.

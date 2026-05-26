@@ -34,8 +34,9 @@ Output JSON with these fields (omit or set to null when not stated):
   "user_employer": <string | null>,    // explicit "I work at X" — actual employer name
   "user_role": <string | null>,        // explicit profession ("I'm a developer", "I'm a nurse")
   "family_count": <{relation: string, n: number} | null>,  // "I have 2 kids" / "I have 3 daughters"
-  "relationships": <Array<{relation: string, name: string}> | null>,  // family/close people named explicitly: "my wife is Sam" → [{relation:"wife",name:"Sam"}]; "my brother Tom and his kid Sarah" → two entries. Use relation as the user described it (wife/husband/partner/mom/dad/brother/sister/son/daughter/kid/friend/etc).
+  "relationships": <Array<{relation: string, name: string}> | null>,  // family/close people named explicitly: "my wife is Sam" → [{relation:"wife",name:"Sam"}]; "my brother Chris and his kid Riley" → two entries. Use relation as the user described it (wife/husband/partner/mom/dad/brother/sister/son/daughter/kid/friend/etc).
   "preference_rule": <string | null>,     // durable instruction about how to respond / behave: "never greet me in Spanish", "always use light mode", "I prefer concise answers", "stop using emojis"
+  "personal_affinity": <Array<string> | null>,  // durable LIKES/DISLIKES about things in the user's life (foods, places, brands, hobbies, music, shows, sports, drinks, restaurants): "I love pizza" → ["User's favorite food is pizza"], "@AcmePizza is my favorite spot" → ["@AcmePizza is the user's favorite pizza place"], "I hate olives" → ["User dislikes olives"], "I love pizza and tacos" → ["User loves pizza", "User loves tacos"]. Phrase each as a third-person statement about the user, ≤180 chars. Use @-prefix on named entities (places, brands).
   "biographical_event": <string | null>   // durable life event: "my dog gigi passed away last Thursday", "I got married yesterday", "we just moved to Austin", "my mom is in the hospital"
 }
 
@@ -62,6 +63,7 @@ export interface IdentityFacts {
   family_count?: { relation: string; n: number } | null;
   relationships?: Array<{ relation: string; name: string }> | null;
   preference_rule?: string | null;
+  personal_affinity?: string[] | null;
   biographical_event?: string | null;
 }
 
@@ -111,9 +113,18 @@ export async function extractIdentityFactsWithLLM(
       } else {
         p.relationships = null;
       }
+      if (Array.isArray(p.personal_affinity)) {
+        const cleaned = p.personal_affinity.filter(
+          (a) => typeof a === "string" && a.length >= 8 && a.length <= 200
+        );
+        p.personal_affinity = cleaned.length > 0 ? cleaned : null;
+      } else {
+        p.personal_affinity = null;
+      }
       const any =
         p.user_name || p.agent_name || p.user_location || p.user_employer ||
-        p.user_role || p.family_count || p.relationships || p.preference_rule || p.biographical_event;
+        p.user_role || p.family_count || p.relationships || p.preference_rule ||
+        p.personal_affinity || p.biographical_event;
       return any ? p : { user_name: null }; // return empty-shape so caller knows it ran
     },
   });

@@ -1,8 +1,8 @@
 // xAI Grok TTS — POST https://api.x.ai/v1/tts with the SuperGrok / X
 // Premium+ OAuth bearer (or XAI_API_KEY fallback). Opt-in only:
 // bridgeVoicePreference="xai" picks it; the local sidecar chain stays
-// the default because local is faster (Alex's three-tier voice was
-// tuned for 0.9-3s warm path on his 3060).
+// the default because local is faster (the three-tier voice was
+// tuned for 0.9-3s warm path on a mid-range GPU).
 //
 // xAI's TTS endpoint is NOT OpenAI-compat. It takes a flat payload with
 // voice_id + language and returns raw audio bytes (default mp3).

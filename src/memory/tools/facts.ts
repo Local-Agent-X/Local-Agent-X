@@ -88,7 +88,7 @@ export function createFactsTools(memory: MemoryIndex) {
         "Correct a fact already in memory. Finds the existing fact whose content contains `query` (substring match) " +
         "and replaces it with `content`. Old version is preserved as superseded (bitemporal) so history isn't lost. " +
         "\n\n" +
-        "Use when the user corrects a previous statement ('actually my wife is @Sam not @Jen', " +
+        "Use when the user corrects a previous statement ('actually my wife is @Sam not @Sammy', " +
         "'we switched from postgres to sqlite', 'the deadline moved to Friday'). " +
         "If 0 or multiple facts match the substring, the call refuses — pick a more specific substring.",
       parameters: {

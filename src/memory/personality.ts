@@ -294,7 +294,7 @@ function sweepBulletContradictions(lines: string[]): string[] {
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i].match(/^\s*-\s+(.+?)\s*$/);
     if (!m) continue;
-    // Skip scalar fields ("- Name: Alex") — those are handled by the
+    // Skip scalar fields ("- Name: <value>") — those are handled by the
     // latest-wins logic above. Contradiction sweep is for prose bullets
     // (instructions / rules), not key-value entries.
     if (/^[^:]{1,40}:/.test(m[1])) continue;
@@ -316,7 +316,7 @@ function sweepBulletContradictions(lines: string[]): string[] {
   return lines.filter((_, i) => !toDrop.has(i));
 }
 
-// Set or update a scalar bullet in USER.md ("- Name: Alex").
+// Set or update a scalar bullet in USER.md ("- Name: <value>").
 //
 // Resolution order:
 //   1. If a "- <Field>: ..." line already exists anywhere in the file

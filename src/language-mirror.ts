@@ -300,7 +300,7 @@ export class LanguageMirror {
       if (topGreeting === "sup") return "Sup";
       return "Hey";
     }
-    if (profile.greetingStyle === "formal") return "Hello, Alex";
+    if (profile.greetingStyle === "formal") return "Hello";
     return "Hey";
   }
 

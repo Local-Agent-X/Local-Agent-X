@@ -104,8 +104,8 @@ function autoInvalidateContradicting(
 
 // Cheap candidate pool for the contradiction sweep. Entity overlap is the
 // strong signal — facts mentioning the same person/project rarely cross
-// topic boundaries. Cap at 50 so a noisy entity (e.g. "Alex" mentioned
-// in hundreds of facts) doesn't make every `remember` O(n) over the table.
+// topic boundaries. Cap at 50 so a noisy entity (e.g. the user's name
+// mentioned in hundreds of facts) doesn't make every `remember` O(n).
 function findCandidatesForContradictionCheck(
   db: InstanceType<typeof Database>,
   newFact: RetainedFact,

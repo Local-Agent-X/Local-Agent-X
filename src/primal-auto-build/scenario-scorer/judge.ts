@@ -5,7 +5,7 @@
  * Distinct from the step-planner — the planner makes per-step driving
  * decisions, the judge makes ONE overall scoring call at the end. Reads
  * the scenario's "Pass criteria" as the rubric. The score isn't just
- * pass/fail because Alex wants the option to auto-fix on near-misses
+ * pass/fail because we want the option to auto-fix on near-misses
  * (score 5-6) and halt only on real misses (<5).
  *
  * Scoring rubric (encoded in the prompt):

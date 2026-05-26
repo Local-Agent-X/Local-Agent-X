@@ -236,8 +236,22 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
           temperature: 0, maxTokens: 400, timeoutMs,
         });
       })();
+    } else if (provider === "xai") {
+      // Route through dispatch's callXai (api.x.ai/v1 OpenAI-compat endpoint).
+      // Without this, every classifier silently returned null for xAI users
+      // — identity / affinity / preference auto-capture all bypassed unless
+      // the model itself happened to call remember(). Verified May 2026.
+      providerCall = (async () => {
+        const { dispatch } = await import("../llm-dispatch.js");
+        return await dispatch({
+          prompt: `${opts.systemPrompt}\n\n---\n\n${opts.userPrompt}`,
+          provider: "xai",
+          xaiModel: model,
+          temperature: 0, maxTokens: 400, timeoutMs,
+        });
+      })();
     } else {
-      // xAI / Gemini / custom — not yet routed through a unified client
+      // Gemini / custom — not yet routed through a unified client
       return null;
     }
 

@@ -148,12 +148,12 @@ export async function autoExtractAndSave(
       logger.warn(`[memory] biographical_event write failed: ${(e as Error).message}`);
     }
   }
-  // Named family / close relationships. "my wife's name is Sam" was
+  // Named family / close relationships. "my wife's name is X" was
   // hitting Phase 3's long-tail remember() path because the classifier
   // only knew family_count (a number), not names. Capturing relation+
   // name pairs server-side puts these durable identity facts on the
   // same silent path as user_name / user_location. Phrasing puts the
-  // name as the @-entity so recallByEntity('jenny') surfaces the fact.
+  // name as the @-entity so recallByEntity surfaces the fact later.
   if (facts.relationships) {
     for (const rel of facts.relationships) {
       try {
@@ -163,6 +163,26 @@ export async function autoExtractAndSave(
         logger.info(`[memory] Auto-saved relationship: ${rel.relation} = ${rel.name}`);
       } catch (e) {
         logger.warn(`[memory] relationship write failed: ${(e as Error).message}`);
+      }
+    }
+  }
+  // Personal affinities — favorites, loves, hates about foods, places,
+  // brands, hobbies, etc. The model on its own often skips these because
+  // they don't fit the "never X / always Y / I prefer Z" instruction-
+  // shape it associates with preference_rule. Verified May 2026:
+  // affinity statements like "I love pizza, X is my favorite spot"
+  // produced zero remember() calls and zero classifier writes (xAI was
+  // bypassing the classifier; both failures lifted now). Kind=opinion
+  // because affinities are stable user preferences, conf=0.85 matches
+  // preference_rule.
+  if (facts.personal_affinity) {
+    for (const affinity of facts.personal_affinity) {
+      try {
+        memory.rememberFact(affinity, { kind: "opinion", confidence: 0.85 });
+        safeAppendDaily(memory, `Captured affinity: ${affinity}`, sessionId);
+        logger.info(`[memory] Auto-saved affinity: ${affinity}`);
+      } catch (e) {
+        logger.warn(`[memory] affinity write failed: ${(e as Error).message}`);
       }
     }
   }

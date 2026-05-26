@@ -53,7 +53,7 @@ export const handleSecretsRoutes: RouteHandler = async (method, url, req, res, c
   // Reveal the decrypted value for ONE secret. Same auth-token gate as every
   // other loopback route. Never exports. Never logged. Caller is the user's
   // browser session that already has the token — this is only a convenience
-  // read so Alex can copy/paste creds he asked the agent to generate.
+  // read so the user can copy/paste creds they asked the agent to generate.
   if (method === "GET" && url.pathname.match(/^\/api\/secrets\/[^/]+\/reveal$/)) {
     const name = decodeURIComponent(url.pathname.split("/")[3]);
     if (!/^[A-Z0-9_]{1,64}$/i.test(name)) { json(400, { error: "Invalid secret name" }); return true; }

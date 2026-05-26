@@ -272,6 +272,32 @@ if (res.status !== 0) {
   ]);
   if (res.status !== 0) fail("npm install failed. See errors above.");
 }
+
+// Native modules (better-sqlite3 + onnxruntime-node) embed a NODE_MODULE_VERSION
+// in their compiled .node binary that has to match the running Node's ABI.
+// When the host upgrades Node (or we wipe Node 25 → install Node 22), `npm
+// install` sees node_modules is "complete" and skips the rebuild — leaving
+// stale binaries that crash the server on first import. `npm rebuild`
+// forces a recompile against the current Node. Idempotent + fast when
+// already correct (~2-5s); only does real work when a mismatch exists.
+//
+// Specifically targeting better-sqlite3 keeps the rebuild scoped — a full
+// `npm rebuild` would unnecessarily recompile every package's prepublish
+// scripts and balloon install time.
+log("Verifying native module ABI…");
+const rebuildRes = run("npm", [
+  "rebuild",
+  "better-sqlite3",
+  "--no-audit",
+  "--no-fund",
+  `--loglevel=${npmLogLevel}`,
+]);
+if (rebuildRes.status !== 0) {
+  // Non-fatal: if rebuild fails we still try to continue. The server
+  // import will crash with a clearer error than we'd produce from here.
+  warn("npm rebuild better-sqlite3 returned non-zero; continuing");
+}
+
 ok("npm dependencies installed");
 stepDone("npm");
 

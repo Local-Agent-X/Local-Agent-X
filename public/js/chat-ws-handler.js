@@ -30,6 +30,11 @@ function handleChatWsMessage(e) {
       renderSidebar(); // Update indicators
     }
 
+    if (msg.type === 'session_snapshot' && msg.sessionId) {
+      reconcileSessionSnapshot(msg);
+      return;
+    }
+
     if (msg.type === 'event' && msg.sessionId && msg.event) {
       // Track canonical chat opId + seq so we can reconnect-resume after
       // a WS drop. The opId arrives once per turn via `chat_op_started`;
@@ -125,4 +130,47 @@ function handleChatWsMessage(e) {
 
     // ── Agent feed events (inline — no monkey-patching needed) ──
     handleAgentFeedEvent(msg);
+}
+
+// Reconcile renderer-side state against server's truth on every WS subscribe.
+// The server emits `session_snapshot` immediately after accepting a subscribe
+// (see src/chat-ws/message-router.ts). Two things to fix:
+//   1. Worker chips stuck on "working" — the bg_op completion / failure event
+//      went out while this client wasn't subscribed (page reload, server
+//      restart, leave-and-back). Any chip keyed to this session whose opId
+//      isn't in liveOpIds is server-confirmed terminal — flip it to done.
+//   2. Chat messages missing — selectChat lazy-hydrates on click, but a user
+//      sitting on the chat at WS-(re)connect time never triggers selectChat
+//      and stays on the stale localStorage copy until they navigate away and
+//      back. Force a hydrate when server's count exceeds local.
+function reconcileSessionSnapshot(msg) {
+  try {
+    const sessionId = msg.sessionId;
+    const liveSet = new Set(msg.liveOpIds || []);
+
+    if (typeof agentFeedsData !== 'undefined') {
+      for (const opId of Object.keys(agentFeedsData)) {
+        const data = agentFeedsData[opId];
+        if (!data || data.sessionId !== sessionId) continue;
+        if (liveSet.has(opId)) continue;
+        if (data.status === 'done' || data.status === 'failed' || data.status === 'cancelled') continue;
+        if (typeof updateAgentFeed === 'function') {
+          updateAgentFeed(opId, { status: 'done' });
+        }
+      }
+    }
+
+    if (typeof chats !== 'undefined' && Array.isArray(chats) && typeof msg.messageCount === 'number') {
+      const chat = chats.find(c => c.id === sessionId);
+      if (chat) {
+        const localCount = (chat.messages || []).length;
+        if (msg.messageCount > localCount) {
+          chat._needsHydrate = true;
+          if (typeof hydrateChat === 'function') hydrateChat(chat).catch(() => {});
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[session_snapshot] reconcile failed', err);
+  }
 }

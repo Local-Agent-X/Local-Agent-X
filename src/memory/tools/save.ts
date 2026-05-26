@@ -103,24 +103,21 @@ export function createSaveTools(memory: MemoryIndex) {
     {
       name: "memory_update_profile",
       description:
-        "Persist a durable preference, workflow rule, or fact you just learned about the user. " +
-        "Call this WHENEVER a turn revealed something the next session (or a different provider) " +
-        "should know — preferences ('always', 'never', 'I prefer'), corrections ('that's not how I want it'), " +
-        "workflow rules ('first do X, then Y'), or relationship/business facts. Don't wait for a curator. " +
+        "Edit a narrative profile file — multi-paragraph user background, agent personality, or agent identity. " +
         "Files: 'user' (USER.md — preferences, workflow, communication style — bounded ~2000 chars), " +
-        "'mind' or 'memory' (MIND.md — facts, projects, accumulated knowledge — bounded ~5000 chars), " +
         "'heart' (HEART.md — your personality), 'identity' (IDENTITY.md — your name/vibe). " +
         "**Do NOT use this for scalar identity fields** (Name, Location, Job/Role, Pronouns, Communication style). " +
         "For those, use memory_set_user_field — it patches the canonical bullet directly with no action/heading guesswork. " +
-        "This tool is for narrative sections, workflow rules, and curated facts. Prefer action='replace_section' over 'append'. " +
-        "Phrase entries GENERALLY ('user prefers business-suite-level dashboards for analytics across Meta properties') " +
-        "rather than verbatim ('user said use facebook dashboard') so the rule transfers across future tasks.",
+        "**Do NOT use this for individual durable facts** (preferences, environment, project conventions, names). " +
+        "For those, use `remember` — it stores in the indexed Facts DB which is properly queryable and updatable. " +
+        "This tool is reserved for narrative profile content that doesn't fit single-sentence facts. " +
+        "Prefer action='replace_section' over 'append'.",
       parameters: {
         type: "object",
         properties: {
           file: {
             type: "string",
-            enum: ["user", "heart", "identity", "mind", "memory"],
+            enum: ["user", "heart", "identity"],
             description: "Which profile file to update",
           },
           action: {
@@ -153,7 +150,7 @@ export function createSaveTools(memory: MemoryIndex) {
         const filename = PERSONALITY_FILES[fileKey];
         if (!filename) {
           return {
-            content: `Unknown file: ${fileKey}. Use: user, heart, identity, mind, or memory`,
+            content: `Unknown file: ${fileKey}. Use: user, heart, or identity (MIND.md is retired — use 'remember' for facts).`,
             isError: true,
           };
         }
@@ -220,15 +217,12 @@ export function createSaveTools(memory: MemoryIndex) {
           return { content: `Unknown action: ${action}`, isError: true };
         }
 
-        // Char-limit enforcement. Bounded files are what
-        // force the model to consolidate instead of append-forever — without
-        // a ceiling, the model treats memory as a dump and never compresses.
-        // Limits are generous (USER ~2000, MIND ~5000) but not infinite.
-        // 'heart'/'identity' are user-author content with no limit — they're
-        // not append targets.
+        // Char-limit enforcement on USER.md. Bounded narrative files force
+        // the model to consolidate instead of append-forever. 'heart' and
+        // 'identity' are user-author content with no limit — they're not
+        // append targets.
         const PROFILE_CHAR_LIMITS: Record<string, number> = {
           "USER.md": 2000,
-          "MIND.md": 5000,
         };
         const limit = PROFILE_CHAR_LIMITS[filename];
         if (limit !== undefined && updated.length > limit) {
@@ -237,23 +231,15 @@ export function createSaveTools(memory: MemoryIndex) {
           // showed Codex giving up after one over-limit response when this
           // returned isError:true; treating it as guidance produces the
           // intended retry behavior.
-          //
-          // Directive guidance: name the existing sections so the model
-          // can pick a stale one for replace_section, AND suggest the
-          // alternative target (USER vs MIND) so workflow/procedural
-          // content can land in the larger file instead.
           const sectionHeadings = Array.from(existing.matchAll(/^##?\s+([^\n]+)/gm))
             .map(m => m[1].trim())
             .slice(0, 12);
-          const altTarget = filename === "USER.md" ? "mind" : "user";
-          const altFile = filename === "USER.md" ? "MIND.md" : "USER.md";
-          const altLimit = filename === "USER.md" ? 5000 : 2000;
           return {
             content:
               `${filename} is full: this write would be ${updated.length} chars (cap ${limit}). The write was NOT applied. RETRY in this same turn — pick ONE of:\n` +
               `  (a) call again with action='replace_section' and section_heading set to a stale/redundant section. Existing sections in ${filename}: ${sectionHeadings.join(" | ")}\n` +
               `  (b) call again with action='full_replace' after reading the file — keep only what's still relevant; aim for ~${Math.round(limit * 0.7)} chars to leave growth room\n` +
-              `  (c) if this content is more procedural/workflow than profile/preference, call again with file='${altTarget}' (writes to ${altFile}, ${altLimit} char cap)\n` +
+              `  (c) if this content is an individual durable fact, call \`remember\` instead (Facts DB has no per-file cap)\n` +
               `Don't drop the write. Don't claim "saved!" — the user will think it persisted when it didn't. Pick one of the three retries above and execute it now.`,
             isError: false,
           };

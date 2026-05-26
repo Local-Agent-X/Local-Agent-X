@@ -22,18 +22,29 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
   const syncMemDir = join(syncDir, "memory");
   if (!existsSync(syncMemDir)) mkdirSync(syncMemDir, { recursive: true });
 
+  // MIND.md is retired — facts moved to the indexed Facts DB
+  // (see src/memory/tools/facts.ts). It must not propagate through sync:
+  // union-merge would resurrect any old MIND.md content from another
+  // machine, undoing the migration.
+  const SYNC_SKIP_MEMORY_FILES = new Set(["MIND.md"]);
+
   const localMemFiles = new Set<string>();
   if (existsSync(memDir)) {
     for (const f of readdirSync(memDir)) {
-      if (f.endsWith(".md")) {
+      if (f.endsWith(".md") && !SYNC_SKIP_MEMORY_FILES.has(f)) {
         localMemFiles.add(f);
         writeFileSync(join(syncMemDir, f), readFileSync(join(memDir, f), "utf-8"), "utf-8");
       }
     }
   }
-  // Delete from sync repo if deleted locally
+  // Delete from sync repo if deleted locally OR if it's a retired file.
+  // Listing retired files here makes the deletion eventually-consistent —
+  // first sync from any machine after this lands strips the file from
+  // the shared repo, so subsequent pulls don't bring it back.
   for (const f of readdirSync(syncMemDir)) {
-    if (f.endsWith(".md") && !localMemFiles.has(f)) unlinkSync(join(syncMemDir, f));
+    if (f.endsWith(".md") && (!localMemFiles.has(f) || SYNC_SKIP_MEMORY_FILES.has(f))) {
+      unlinkSync(join(syncMemDir, f));
+    }
   }
 
   const policyPath = join(dataDir, "tool-policy.json");

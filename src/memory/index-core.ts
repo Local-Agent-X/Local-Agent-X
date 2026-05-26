@@ -5,7 +5,6 @@ import type {
   Chunk, EmbeddingProvider, FactKind, MemoryConfig, MemorySearchResult, RetainedFact,
 } from "./types.js";
 import { DEFAULT_MEMORY_CONFIG } from "./types.js";
-import { atomicWriteFileSync } from "./utils.js";
 import { openDatabaseSafe } from "./index-db.js";
 import * as Schema from "./index-schema.js";
 import * as Files from "./index-files.js";
@@ -73,10 +72,6 @@ export class MemoryIndex {
 
   // ── Knowledge Memory Files ──
 
-  getMemoryFilePath(): string {
-    return Files.getMemoryFilePath(this.memoryDir);
-  }
-
   getDailyLogPath(date?: Date): string {
     return Files.getDailyLogPath(this.memoryDir, date);
   }
@@ -99,27 +94,15 @@ export class MemoryIndex {
     this.reindexThroughUniversal("daily-log").catch(() => {});
   }
 
-  readMemoryFile(): string {
-    const p = this.getMemoryFilePath();
-    return existsSync(p) ? readFileSync(p, "utf-8") : "";
-  }
-
-  writeMemoryFile(content: string): void {
-    atomicWriteFileSync(this.getMemoryFilePath(), content);
-    this.dirty = true;
-    this.reindexThroughUniversal("mind").catch(() => {});
-  }
-
   private async reindexThroughUniversal(
-    target: "mind" | "daily-log" | "entity",
+    target: "daily-log" | "entity",
     slug?: string,
   ): Promise<void> {
     try {
       const { getUniversalIndex } = await import("./universal-index.js");
       const ui = getUniversalIndex();
       if (!ui) return;
-      if (target === "mind") await ui.indexMindFile();
-      else if (target === "daily-log") await ui.indexDailyLog();
+      if (target === "daily-log") await ui.indexDailyLog();
       else if (target === "entity" && slug) await ui.indexEntityPage(slug);
     } catch { /* no-op */ }
   }

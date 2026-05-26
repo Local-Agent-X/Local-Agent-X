@@ -170,9 +170,10 @@ function formatNudge(triggers: NudgeTrigger[]): string {
     const reasons = triggers.map((t) => triggerHints[t]).join("; ");
     return (
       `[memory-curate] Recent signal: ${reasons}. ` +
-      `If you learned a durable preference, workflow rule, or fact about the user, ` +
-      `update USER.md (preferences/workflow) or MIND.md (facts) NOW via memory_update_profile. ` +
-      `Use action=replace_section if a related section exists; only append if it's a genuinely new topic. ` +
+      `If you learned a durable fact about the user (preference, environment, project, name, decision), ` +
+      `call \`remember\` NOW with it as one sentence. ` +
+      `For scalar identity fields (Name, Location, Role, Pronouns) use \`memory_set_user_field\`. ` +
+      `For narrative profile sections in USER.md use \`memory_update_profile\` with action=replace_section. ` +
       `Phrase generally so it transfers across providers and future tasks. ` +
       `Skip if nothing new — don't write fluff to satisfy the nudge.`
     );
@@ -181,9 +182,9 @@ function formatNudge(triggers: NudgeTrigger[]): string {
   // Routine cadence-based nudge — softer framing
   return (
     `[memory-curate] Periodic review: think about the last ~10 turns. ` +
-    `Did you learn a durable preference, workflow rule, or fact about the user that future ` +
-    `sessions should know? If yes, update USER.md (preferences/workflow) or MIND.md (facts) ` +
-    `via memory_update_profile (replace_section if related, append if new topic). ` +
+    `Did you learn a durable fact, preference, or workflow rule that future sessions should know? ` +
+    `If yes, call \`remember\` (facts), \`memory_set_user_field\` (scalar identity), or ` +
+    `\`memory_update_profile file='user'\` (narrative profile sections). ` +
     `Phrase generally — these notes are read by every provider on every future turn. ` +
     `If nothing durable was learned, skip — empty nudges are worse than no nudge.`
   );

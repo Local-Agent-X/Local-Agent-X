@@ -174,6 +174,7 @@ export async function buildContextBlock(
       experience: [],
       observation: [],
     };
+    const includedIds = new Set<number>();
     let bodyBytes = 0;
     const MAX_BYTES = 3000;
     // Biographical events within this window are flagged as "still fresh" —
@@ -181,7 +182,7 @@ export async function buildContextBlock(
     // milestone gets acknowledged with care instead of buried in a flat list.
     const FRESH_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
     const nowMs = Date.now();
-    for (const f of coreFacts) {
+    const formatLine = (f: typeof coreFacts[number]): string => {
       const ents = f.entities.length > 0 ? ` (@${f.entities.join(", @")})` : "";
       let prefix = "";
       let suffix = "";
@@ -190,10 +191,36 @@ export async function buildContextBlock(
         prefix = `${d.toISOString().slice(0, 10)}: `;
         if (nowMs - f.lastUpdated < FRESH_WINDOW_MS) suffix = " — still fresh";
       }
-      const line = `- ${prefix}${f.content}${ents}${suffix}`;
+      return `- ${prefix}${f.content}${ents}${suffix}`;
+    };
+    for (const f of coreFacts) {
+      const line = formatLine(f);
       bodyBytes += line.length + 1;
       if (bodyBytes > MAX_BYTES) break;
       buckets[f.kind].push(line);
+      if (f.id !== undefined) includedIds.add(f.id);
+    }
+    // Topical retrieval (May 2026) — sort-by-hot-score alone surfaces what
+    // the user mentioned RECENTLY, not what's RELATED to what they just
+    // said. Without this, mentioning "my dog Rex" wouldn't surface "your
+    // dog Rex passed away last week", because Rex's slug isn't in the
+    // current message and the fact's hot-score might not put it in the
+    // top 60 if other things have been touched more recently. The FTS5
+    // OR-keyword search over fact content closes that gap: facts that
+    // share content with the current message get a dedicated group at
+    // the END (clear context: "this is related to what they just said")
+    // so the model can connect dots a friend would connect.
+    const relatedLines: string[] = [];
+    if (opts.userMessage && opts.userMessage.trim().length > 0) {
+      const related = memory.searchFactsByContent(opts.userMessage, 8);
+      for (const f of related) {
+        if (f.id !== undefined && includedIds.has(f.id)) continue;
+        const line = formatLine(f);
+        bodyBytes += line.length + 1;
+        if (bodyBytes > MAX_BYTES) break;
+        relatedLines.push(line);
+        if (f.id !== undefined) includedIds.add(f.id);
+      }
     }
     // Relational labels (May 2026) — the prior labels (Identity /
     // Preferences / Recent / Observations) framed the block as a database
@@ -207,10 +234,13 @@ export async function buildContextBlock(
       ["experience", "Recent in their life"],
       ["observation", "Other notes"],
     ];
-    const body = HEADINGS
+    const groups: string[] = HEADINGS
       .filter(([k]) => buckets[k].length > 0)
-      .map(([k, label]) => `## ${label}\n${buckets[k].join("\n")}`)
-      .join("\n\n");
+      .map(([k, label]) => `## ${label}\n${buckets[k].join("\n")}`);
+    if (relatedLines.length > 0) {
+      groups.push(`## Related to what they just said\n${relatedLines.join("\n")}`);
+    }
+    const body = groups.join("\n\n");
     if (body) {
       sections.push(
         `<core_memory>\n(what you know about this person. Weave it into responses naturally — do NOT narrate that you're using it, and do NOT edit this block. Extend via remember/update_fact/forget.)\n\n${body}\n</core_memory>`

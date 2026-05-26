@@ -101,9 +101,28 @@ export async function driveTurn(
   const input = buildTurnInput(op, turnIdx, pendingRedirect);
 
   const finalized: CanonicalMessage[] = [];
+  // Parallel array — stream-order index for each finalized message. Used to
+  // drop assistant messages that arrived AFTER a memory-write tool call
+  // within the same turn (the "Got it — saved" / "preference was committed
+  // via memory" leakage). See MEMORY_WRITE_TOOLS handling below.
+  const finalizedOrder: number[] = [];
   const toolCalls: ToolCall[] = [];
   let adapterError: { code: string; message: string } | null = null;
   let middlewareDirective: MiddlewareDirective | null = null;
+  // Memory-write tools are silent — when one fires mid-stream we abort
+  // the adapter so the model can't produce a wrap-up text, and we mark
+  // the stream position so any text that already arrived (or snuck in
+  // before abort took effect) gets filtered from the commit below.
+  const MEMORY_WRITE_TOOLS = new Set([
+    "remember",
+    "update_fact",
+    "forget",
+    "memory_save",
+    "memory_set_user_field",
+    "memory_update_profile",
+  ]);
+  let eventOrder = 0;
+  let memoryToolFiredAt: number | null = null;
 
   // Idle-event detection — provider-agnostic. Watches the report stream
   // for ANY activity (stream chunks, tool calls, finalized messages,
@@ -134,8 +153,13 @@ export async function driveTurn(
   // they reconstruct where the turn's wall-clock went.
   const modelStart = Date.now();
   const result = await adapter.runTurn(input, (r: AdapterReport) => {
+    eventOrder++;
     watchdog.noteActivity();
     if (r.kind === "stream_chunk") {
+      // Suppress chunks that arrive after a memory-write tool fired this
+      // turn. The model's wrap-up confirmation ("Got it — saved", "the
+      // preference was already committed via memory") streams from here.
+      if (memoryToolFiredAt !== null) return;
       publishStreamChunk(op.id, r.body);
       return;
     }
@@ -145,15 +169,32 @@ export async function driveTurn(
       // Re-uses the stream-chunk publish path with a `replace: true`
       // marker so the client can swap the bubble's text rather than
       // append.
+      if (memoryToolFiredAt !== null) return;
       publishStreamChunk(op.id, { replace: true, text: r.replacementText });
       return;
     }
     if (r.kind === "message_finalized") {
       finalized.push(r.message);
+      finalizedOrder.push(eventOrder);
       return;
     }
     if (r.kind === "tool_call_requested") {
       toolCalls.push(r.call);
+      if (memoryToolFiredAt === null && MEMORY_WRITE_TOOLS.has(r.call.tool)) {
+        // First memory-write tool of this turn. Two-pronged silence:
+        //   (1) record the stream position so any LATER message_finalized
+        //       gets filtered out at commit time (catches text that was
+        //       already in flight when this event fired);
+        //   (2) abort the adapter so it stops producing additional text
+        //       past this point.
+        // Without (2), the adapter keeps streaming and the leak ("No
+        // unresolved task or new request from the user; the preference
+        // was already committed via memory") still lands. Without (1),
+        // any text the adapter already committed before honoring the
+        // abort still surfaces on chat reload.
+        memoryToolFiredAt = eventOrder;
+        void adapter.abort(new Error("memory-tool-silence"));
+      }
       return;
     }
     if (r.kind === "error") {
@@ -164,6 +205,21 @@ export async function driveTurn(
   watchdog.disarm();
   void idleFired; // surfaced via adapterError; reserved for telemetry
   const modelMs = Date.now() - modelStart;
+
+  // Filter out finalized assistant messages that arrived AFTER a memory-
+  // write tool fired this turn. These are the wrap-up confirmations the
+  // model produces ("the preference was already committed via memory")
+  // even after the adapter abort signal — abort isn't always honored
+  // instantly, so any message that finalized post-abort gets dropped
+  // here at the commit boundary. Non-assistant finalized messages (rare)
+  // pass through unchanged.
+  let filteredFinalized = finalized;
+  if (memoryToolFiredAt !== null) {
+    filteredFinalized = finalized.filter((m, i) => {
+      if (m.role !== "assistant") return true;
+      return finalizedOrder[i] < memoryToolFiredAt!;
+    });
+  }
 
   // Cancel-aware bail BEFORE tool dispatch and BEFORE commit. The adapter
   // has already returned (via abort or natural completion); the worker's
@@ -179,7 +235,7 @@ export async function driveTurn(
   // appends a synthetic build_app call) — we use the same array reference
   // turn-loop will dispatch from, so any synthetic call lands in the
   // toolCalls list before dispatchTools fires.
-  const assistantText = finalized
+  const assistantText = filteredFinalized
     .filter(m => m.role === "assistant")
     .map(m => extractText(m.content))
     .join("");
@@ -260,7 +316,7 @@ export async function driveTurn(
   }
 
   const allMessages: CommitTurnMessage[] = [];
-  for (const m of finalized) {
+  for (const m of filteredFinalized) {
     allMessages.push({ messageId: m.messageId, role: m.role, content: m.content });
   }
   for (const tm of toolMessages) allMessages.push(tm);
@@ -291,14 +347,8 @@ export async function driveTurn(
   // the bash result gets surfaced. The downstream failure-nudge logic
   // already resets terminalReason to null if any memory write failed,
   // so failed remembers still get a retry pass.
-  const MEMORY_WRITE_TOOLS = new Set([
-    "remember",
-    "update_fact",
-    "forget",
-    "memory_save",
-    "memory_set_user_field",
-    "memory_update_profile",
-  ]);
+  // (MEMORY_WRITE_TOOLS is defined at the top of this function — same
+  // set used by the in-turn abort/filter for the same shape of leakage.)
   const allMemoryWrites =
     toolCalls.length > 0 && toolCalls.every((c) => MEMORY_WRITE_TOOLS.has(c.tool));
   if (

@@ -1,6 +1,6 @@
 // Types + on-disk path constants for the memory consolidator. Kept here so
 // the orchestrator and helper modules import a single source of truth for
-// where MIND.md, entity pages, and the consolidation log live.
+// where entity pages and the consolidation log live.
 
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -36,5 +36,4 @@ export interface ConsolidationLogEntry {
 export const LAX_DIR = join(homedir(), ".lax");
 export const MEMORY_DIR = join(LAX_DIR, "memory");
 export const ENTITIES_DIR = join(MEMORY_DIR, "bank", "entities");
-export const MIND_PATH = join(MEMORY_DIR, "MIND.md");
 export const LOG_PATH = join(LAX_DIR, "consolidation-log.json");

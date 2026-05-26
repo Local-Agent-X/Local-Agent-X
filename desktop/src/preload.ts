@@ -13,11 +13,20 @@ import { contextBridge, ipcRenderer } from "electron";
 // the preload's DOMContentLoaded listener is deterministic — the class
 // is on <body> before any layout pass.
 if (process.platform === "darwin") {
+  // preload runs in a renderer context with DOM available, but the
+  // desktop tsconfig doesn't include the DOM lib (it's mostly a
+  // Node/Electron-main project). Cast through globalThis to access
+  // document without dragging the whole DOM lib in.
+  const doc = (globalThis as unknown as { document: {
+    readyState: string;
+    body: { classList: { add: (c: string) => void } };
+    addEventListener: (ev: string, cb: () => void, opts?: { once?: boolean }) => void;
+  } }).document;
   const apply = () => {
-    try { document.body.classList.add("platform-darwin"); } catch {}
+    try { doc.body.classList.add("platform-darwin"); } catch {}
   };
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", apply, { once: true });
+  if (doc.readyState === "loading") {
+    doc.addEventListener("DOMContentLoaded", apply, { once: true });
   } else {
     apply();
   }

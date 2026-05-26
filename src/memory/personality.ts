@@ -1,5 +1,5 @@
 /**
- * Personality files — user profile, agent heart/identity, mind.
+ * Personality files — user profile, agent heart, identity.
  *
  * These markdown files live in the memory dir and are loaded into every
  * system prompt by buildContextBlock. Defaults are written on first run
@@ -9,9 +9,11 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { safeReadTextFile } from "./utils.js";
 import { writeMemorySafely } from "./write-safely.js";
+import { findContradictions } from "./contradiction-sweep.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.personality");
+const contradictionLogger = createLogger("memory.contradiction");
 
 export const PERSONALITY_FILES: Record<string, string> = {
   user: "USER.md",         // Who the user is, how they want to be addressed
@@ -272,7 +274,46 @@ export function dedupeProfileMarkdown(content: string): string {
     }
   }
   while (out.length && out[out.length - 1].trim() === "") out.pop();
-  return out.join("\n") + "\n";
+
+  // Cross-section contradiction sweep. The block-level dedupe above merges
+  // duplicate headings and overwrites scalar fields, but it can't catch a
+  // semantically-contradicting bullet that lives under a different section
+  // heading (real example: HEART.md had "Always greet in Spanish" under
+  // `## Language Preference` while `## Greeting Style` said "No Spanish
+  // greetings" — different section, same topic, opposite polarity). The
+  // sweep walks every `- bullet` across all sections, flags pairs that
+  // overlap heavily AND differ in polarity, and strips the affirmative
+  // side. Negation wins because corrections to durable rules are
+  // overwhelmingly phrased as retractions of an earlier instruction.
+  const finalLines = sweepBulletContradictions(out);
+  return finalLines.join("\n") + "\n";
+}
+
+function sweepBulletContradictions(lines: string[]): string[] {
+  const bullets: Array<{ text: string; payload: number }> = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^\s*-\s+(.+?)\s*$/);
+    if (!m) continue;
+    // Skip scalar fields ("- Name: Alex") — those are handled by the
+    // latest-wins logic above. Contradiction sweep is for prose bullets
+    // (instructions / rules), not key-value entries.
+    if (/^[^:]{1,40}:/.test(m[1])) continue;
+    bullets.push({ text: m[1], payload: i });
+  }
+  if (bullets.length < 2) return lines;
+
+  const pairs = findContradictions(bullets);
+  if (pairs.length === 0) return lines;
+
+  const toDrop = new Set<number>();
+  for (const p of pairs) {
+    toDrop.add(p.drop);
+    contradictionLogger.warn(
+      `[contradiction] profile: dropped "${lines[p.drop].trim().slice(0, 80)}" ` +
+      `(contradicts "${lines[p.keep].trim().slice(0, 80)}", overlap=${p.overlap.toFixed(2)})`,
+    );
+  }
+  return lines.filter((_, i) => !toDrop.has(i));
 }
 
 // Set or update a scalar bullet in USER.md ("- Name: Alex").

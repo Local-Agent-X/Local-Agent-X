@@ -11,6 +11,7 @@ import {
   canonicalizeHomePaths,
 } from "./constants.js";
 import { mirrorDir } from "./mirror.js";
+import { exportFactsForSync } from "./facts-sync.js";
 import { tombstonePaths, writeTombstonesForDeletedApps } from "./tombstones.js";
 
 const logger = createLogger("sync.push-files");
@@ -173,5 +174,16 @@ export function copyToSync(dataDir: string, syncDir: string, config: SyncConfig)
     } catch (e) {
       logger.warn(`[sync] brain push skipped ${file}: ${(e as Error).message}`);
     }
+  }
+
+  // Facts DB sync — durable knowledge cross-machine layer. We export ONLY
+  // the facts table (+ derived entity_mentions) as JSONL, not the whole
+  // 1.5 GB memory.db, because chunks / FTS / embedding cache are either
+  // machine-specific or rederivable. ~700 facts ≈ 350 KB; scales linearly.
+  try {
+    const r = exportFactsForSync(dataDir, syncDir);
+    if (r.exported > 0) logger.info(`[sync] exported ${r.exported} facts to facts.jsonl`);
+  } catch (e) {
+    logger.warn(`[sync] facts export skipped: ${(e as Error).message}`);
   }
 }

@@ -149,6 +149,22 @@ export async function buildContextBlock(
     sections.push(`<user_preferences>\n${opLines}\n</user_preferences>`);
   }
 
+  // Recent non-opinion facts the agent has retained via `remember` (or via
+  // legacy retain paths). Opinions live in <user_preferences> above; this
+  // block surfaces world / observation / experience kinds so the model
+  // actually sees what it saved. Without this, retained facts were stored
+  // in the DB but never injected — making `retain` feel like a no-op.
+  const recentFacts = memory.recallRecentFacts({ limit: 30, minConfidence: 0.5 });
+  if (recentFacts.length > 0) {
+    const factLines = recentFacts
+      .map((f) => {
+        const ents = f.entities.length > 0 ? ` (@${f.entities.join(", @")})` : "";
+        return `- ${f.content}${ents}`;
+      })
+      .join("\n");
+    sections.push(`<learned_facts>\n${factLines}\n</learned_facts>`);
+  }
+
   if (opts.userMessage && opts.userMessage.trim().length > 0) {
     const stats = memory.getStats();
     if (stats.totalEntities > 0) {

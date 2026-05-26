@@ -234,8 +234,8 @@ ${transcriptBlock}
 Use the available tools to:
 - read existing memory files before overwriting
 - write/edit memory files in ${MEMORY_DIR} with newly-learned facts
-- use memory_save target=memory for high-value strategic facts (MIND.md)
-- use memory_save target=retain for structured facts with entity/confidence
+- use \`remember\` for durable facts (one sentence per call; tag entities with @-prefix)
+- use \`update_fact\` to correct a fact already in memory; \`forget\` to mark one no longer true
 
 What to extract:
 - Concrete decisions ("camera goes in the bridge of the glasses, speakers at the temples")

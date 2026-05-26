@@ -56,7 +56,12 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
 /* ── Sidebar ── */
 #sidebar{width:280px;min-width:280px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column}
 #sidebar.collapsed{width:0;min-width:0;overflow:hidden;border-right:none}
-#sidebar-header{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+/* Empty by default — on platform-darwin it becomes a 28px drag spacer
+   so the native traffic-light buttons sit in their own row, with
+   #sidebar-brand (logo + New Chat + collapse) cleanly below them. On
+   Windows/Linux the title-bar overlay handles its own spacing; we
+   hide this row entirely there. */
+#sidebar-header{display:none}
 
 /* macOS Electron only: reserve top-left horizontal space for the native
    traffic-light buttons (close/min/max) so renderer UI doesn't visually
@@ -66,16 +71,16 @@ body::after{content:'';position:fixed;inset:0;pointer-events:none;background:rep
    the earlier main-process insertCSS approach could not (silent failure
    in some boot orderings, confirmed by `document.styleSheets` showing
    zero injected sheets). */
-body.platform-darwin #sidebar-header{padding-left:76px}
-body.platform-darwin #sidebar.collapsed #sidebar-header{padding-left:0;padding-top:28px}
+body.platform-darwin #sidebar-header{display:block;height:28px;-webkit-app-region:drag;flex-shrink:0}
+body.platform-darwin #sidebar.collapsed #sidebar-header{display:none}
 body.platform-darwin #ide-topbar{padding-left:76px}
 
-/* "AGENT X" brand label lives in its own row below the traffic-light
-   zone so the lights don't squeeze it onto two lines. Full-width row;
-   the previous in-header position fought with the 76px left padding. */
-#sidebar-brand{padding:8px 16px 10px;border-bottom:1px solid var(--border)}
+/* Brand row — AGENT X logo + New Chat button + collapse arrow on a
+   single line below the traffic-light spacer. Logo flexes to fill so
+   the buttons sit hard against the right edge. */
+#sidebar-brand{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border)}
 #sidebar.collapsed #sidebar-brand{display:none}
-#logo{font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase;text-shadow:0 0 10px var(--accent-dim);cursor:pointer}
+#logo{font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase;text-shadow:0 0 10px var(--accent-dim);flex:1;cursor:pointer;white-space:nowrap}
 #new-chat-btn{background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:7px 12px;font-size:.75rem;cursor:pointer;font-family:var(--mono);transition:all .2s;white-space:nowrap}
 #new-chat-btn:hover{background:var(--accent);color:var(--bg);box-shadow:0 0 12px var(--accent-dim)}
 #pinned-section{padding:8px 0;border-bottom:1px solid var(--border)}

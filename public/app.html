@@ -35,12 +35,11 @@
 
 <!-- ═══ SIDEBAR (persists across all pages) ═══ -->
 <div id="sidebar" role="navigation" aria-label="Sidebar navigation">
-  <div id="sidebar-header">
-    <button id="new-chat-btn" onclick="newChat()">+ New Chat</button>
-    <button id="sidebar-collapse-btn" onclick="toggleSidebarCollapse()" title="Collapse sidebar" aria-label="Collapse sidebar" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:2px 6px;margin-left:auto">&#x276E;</button>
-  </div>
+  <div id="sidebar-header"></div>
   <div id="sidebar-brand">
     <span id="logo" onclick="navigate('chat')" role="button" tabindex="0" aria-label="Go to chat">Agent X</span>
+    <button id="new-chat-btn" onclick="newChat()">+ New Chat</button>
+    <button id="sidebar-collapse-btn" onclick="toggleSidebarCollapse()" title="Collapse sidebar" aria-label="Collapse sidebar" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1.1rem;padding:2px 6px;margin-left:4px">&#x276E;</button>
   </div>
 
   <div id="pinned-section" style="display:none">

@@ -63,7 +63,7 @@ describe("writeMemorySafely — F5 gate funnel", () => {
   });
 
   it("blocks content containing wrapped-external-source markers", () => {
-    const target = join(dir, "MIND.md");
+    const target = join(dir, "HEART.md");
     const tainted =
       "Some legitimate-looking note. <<<EXTERNAL_UNTRUSTED_CONTENT id=\"abc\">>>\n" +
       "metadata: source=web_fetch\nbody.\n<<<END_EXTERNAL_UNTRUSTED_CONTENT id=\"abc\">>>";

@@ -32,6 +32,11 @@ export function listMemoryFiles(memoryDir: string): FileRecord[] {
       } else if (entry.name.endsWith(".md")) {
         let fileSource = source;
         if (source === "personality") {
+          // MIND.md was its own source in the pre-May-2026 era; the file is
+          // no longer created, but a stray copy left by old sync repos
+          // shouldn't index back into the personality stream. Tag as the
+          // retired "mind" source so it sorts into the legacy bucket and
+          // doesn't poison <user_profile>.
           if (entry.name === "MIND.md") fileSource = "mind";
           else if (/^\d{4}-\d{2}-\d{2}\.md$/.test(entry.name)) fileSource = "daily-log";
         }

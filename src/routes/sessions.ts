@@ -186,7 +186,7 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
   }
 
   // Delete ALL sessions (clear sidebar). Destructive — wipes every session
-  // JSON on disk. Memory (MIND.md, facts, chunks) is untouched.
+  // JSON on disk. Memory (facts DB, chunks, profile files) is untouched.
   if (method === "DELETE" && url.pathname === "/api/sessions") {
     const all = ctx.sessionStore.list();
     let deleted = 0;

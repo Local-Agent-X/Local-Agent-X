@@ -28,7 +28,11 @@ const ARI_ACTION_MAP: Record<string, string> = {
   web_search: "get", web_fetch: "get", http_request: "get", browser: "get",
   bash: "exec",
   memory_search: "search",
-  memory_save: "write",
+  // ARI database toolClass declares actions [query, exec, mutate] — "write"
+  // is not in that set, so action="write" tripped deny-by-default at the
+  // policy engine. memory_save is a row insert into the daily-log SQLite
+  // table, which maps cleanly to mutate.
+  memory_save: "mutate",
   // secret-vault actions are overridden inside ariEvaluate by
   // secretVaultActionMap; "capture" is just a valid no-op default.
   browser_capture_to_secret: "capture",

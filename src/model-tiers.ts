@@ -73,10 +73,11 @@ export function isMediumOrWeak(model: string): boolean {
 export function maxToolsForTier(tier: ModelTier): number {
   switch (tier) {
     case "weak":   return 8;
-    // 17 = 15 essentials + 2 user-intent slots. Bumped from 15 after
-    // image/video joined essentials (Alex asked Grok to generate an
-    // image, generate_image had been shrunk out before RAG warm-up).
-    case "medium": return 17;
+    // 21 = 19 essentials + 2 user-intent slots. Most recent bump added
+    // the profile-write tools (memory_update_profile, memory_set_user_field,
+    // remember, forget) so medium models can actually respond to "stop X" /
+    // "use Y by default" by writing the preference, not just acknowledging it.
+    case "medium": return 21;
     case "strong": return Number.MAX_SAFE_INTEGER;
   }
 }
@@ -90,6 +91,13 @@ export const ESSENTIAL_TOOLS_ORDER: readonly string[] = [
   "http_request", "browser",
   "self_edit",                      // agent self-repair via Claude Code
   "memory_save", "memory_search",
+  // Profile + Facts DB writers — without these in the medium-tier set,
+  // models like grok-4-fast that get a "stop X" / "use Y" preference
+  // fall back to memory_save (daily log only) which doesn't trigger the
+  // HEART.md / USER.md contradiction sweep, so contradictory rules
+  // accumulate. memory_update_profile is the load-bearing one; the
+  // others give the agent precise verbs for scalars / facts / retractions.
+  "memory_update_profile", "memory_set_user_field", "remember", "forget",
   "web_fetch", "web_search",
   "glob", "grep",
   // Media gen — first-class capabilities for medium-tier providers (xAI

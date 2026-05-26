@@ -130,8 +130,8 @@ export async function readPersonalityFile(
 
 // ── Dedupe ──
 //
-// Profile files (USER.md / IDENTITY.md / HEART.md / MIND.md) used to drift
-// into stacked-duplicate-block corruption: every memory_update_profile
+// Profile files (USER.md / IDENTITY.md / HEART.md) used to drift into
+// stacked-duplicate-block corruption: every memory_update_profile
 // `append` of a fresh About Me / Agent Identity block left the older one
 // in place. The model then saw multiple `Name:` lines in <user_profile>
 // and either re-asked or addressed the user by a stale value.

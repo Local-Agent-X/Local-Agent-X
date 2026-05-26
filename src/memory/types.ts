@@ -89,7 +89,9 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
  *
  *   entity          — bank/entities/<slug>.md
  *   daily-log       — YYYY-MM-DD.md
- *   mind            — MIND.md
+ *   mind            — LEGACY: MIND.md (retired May 2026 — value kept for
+ *                     read-back of chunks indexed before the retirement;
+ *                     no new chunks should be created with this source)
  *   session-summary — session-summaries/<id>.md
  *   session         — raw session JSON (~/.lax/sessions/<id>.json)
  *   personality     — USER.md / HEART.md / other memory-root files

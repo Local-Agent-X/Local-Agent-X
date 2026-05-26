@@ -10,7 +10,6 @@ export const PROTECTED_FILES = new Set([
   "IDENTITY.md",
   "HEART.md",
   "USER.md",
-  "MIND.md",
 ]);
 
 export const WEIGHTS = {

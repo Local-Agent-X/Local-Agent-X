@@ -82,15 +82,12 @@ describe("UniversalIndex.indexDailyLog (incremental)", () => {
 
 describe("UniversalIndex.backfillAll idempotency", () => {
   it("second run adds zero new chunks", async () => {
-    // Seed one file in each store
+    // Seed one file in each (still-indexed) store. MIND.md is retired
+    // so it's no longer part of the indexed surface; entity / session-
+    // summary / daily-log files exercise the same multi-store backfill.
     writeFileSync(
       join(tempDir, "memory", "bank", "entities", "alice.md"),
       "# Alice\n\n## Facts\n\n- Alice picks oat milk over almond.\n",
-      "utf-8",
-    );
-    writeFileSync(
-      join(tempDir, "memory", "MIND.md"),
-      "# Strategic Memory\n\n- The reflective coatings on AR lenses must survive iris recognition without dropping the laser pattern.\n",
       "utf-8",
     );
     writeFileSync(
@@ -115,11 +112,6 @@ describe("Cross-source search", () => {
       "# Glasses\n\n## Facts\n\n- The smart glasses use waveguide optics.\n",
       "utf-8",
     );
-    writeFileSync(
-      join(tempDir, "memory", "MIND.md"),
-      "# MIND\n\n- Glasses project priorities: battery, thermals, weight.\n",
-      "utf-8",
-    );
     const today = new Date().toISOString().split("T")[0];
     writeFileSync(
       join(tempDir, "memory", `${today}.md`),
@@ -134,6 +126,8 @@ describe("Cross-source search", () => {
     // Should hit at least two distinct stores
     expect(sources.size).toBeGreaterThanOrEqual(2);
     for (const h of hits) {
+      // "mind" stays in this list as a legacy-readonly value for chunks
+      // indexed before the May 2026 retirement; no new chunks use it.
       expect(["entity", "mind", "daily-log", "session-summary", "session", "personality", "import"]).toContain(h.source);
     }
   });

@@ -12,7 +12,7 @@ import { ChildProcess, spawn, execSync } from "child_process";
 import { existsSync, readFileSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { getProjectRoot, getSAXConfig } from "./config";
+import { getProjectRoot, getSAXConfig, reloadSAXConfig, type SAXConfig } from "./config";
 import { isPidAlive, isOurServerProcess } from "./pid-probe";
 
 const PID_FILE = join(homedir(), ".lax", "server.pid");
@@ -261,6 +261,33 @@ export function startServer(handlers?: ServerEventHandlers): void {
       }, 3000);
     }
   });
+}
+
+// Stop + wait + reload config + start + wait-for-ready. Single source of
+// truth for "restart the server" so the menu (File → Restart Server) and
+// the IPC handler (renderer button) can't drift.
+//
+// History: the menu used to call stopServer() + startServer() inline
+// without setRestarting / config reload / waitForServer / URL reload.
+// Result: server actually restarted but the renderer kept polling the
+// old (now-dead) URL and looked frozen. The IPC handler had the full
+// sequence; the menu didn't. Both now route through here.
+//
+// Callers handle the post-ready URL reload themselves (so this module
+// doesn't need to know about BrowserWindow).
+export async function restartServer(): Promise<{ ready: boolean; cfg: SAXConfig }> {
+  setRestarting(true);
+  await stopServer();
+  // Brief pause — child process exit doesn't synchronously release the
+  // port on all platforms; without this the new spawn occasionally
+  // fails with EADDRINUSE.
+  await new Promise(r => setTimeout(r, 1000));
+  const cfg = reloadSAXConfig();
+  console.log(`[desktop] Restarting on port ${cfg.port}`);
+  startServer();
+  setRestarting(false);
+  const ready = await waitForServer();
+  return { ready, cfg };
 }
 
 export function stopServer(): Promise<void> {

@@ -12,11 +12,8 @@ import { type DesktopSettings, getSetting, setSetting } from "./settings";
 import { bgForTheme, overlayForTheme, applyNativeTheme } from "./theme";
 import {
   isServerRunning,
-  stopServer,
-  startServer,
-  waitForServer,
+  restartServer,
   setQuitting,
-  setRestarting,
   getServerPid,
 } from "./server-process";
 import { showNotification, registerHotkey } from "./hotkey-notifications";
@@ -38,14 +35,7 @@ export function setupIPC(): void {
   });
 
   ipcMain.handle("restart-server", async () => {
-    setRestarting(true);
-    await stopServer();
-    await new Promise(r => setTimeout(r, 1000));
-    const cfg = reloadSAXConfig();
-    console.log("[desktop] Restarting on port", cfg.port);
-    startServer();
-    setRestarting(false);
-    const ready = await waitForServer();
+    const { ready, cfg } = await restartServer();
     const mainWindow = getMainWindow();
     if (ready && mainWindow) {
       const newUrl = `http://127.0.0.1:${cfg.port}/?token=${cfg.authToken}`;

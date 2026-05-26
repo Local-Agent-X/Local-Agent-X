@@ -7,7 +7,7 @@
 // handlers.
 
 import { app, BrowserWindow, Menu, clipboard, shell } from "electron";
-import { stopServer, startServer } from "./server-process";
+import { restartServer } from "./server-process";
 import { getSAXConfig } from "./config";
 
 function tokenizedAppUrl(): string {
@@ -59,7 +59,20 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
         {
           label: "Restart Server",
           accelerator: "CmdOrCtrl+Shift+R",
-          click: async () => { await stopServer(); startServer(); },
+          // Route through the shared restartServer() helper so the
+          // native macOS menu and the IPC-driven titlebar (Windows/
+          // Linux) take exactly the same steps: stop → reload config
+          // → start → wait for ready → reload window URL. The inline
+          // stopServer()+startServer() this used to do was missing
+          // setRestarting/waitForServer/loadURL — the server actually
+          // restarted but the window kept polling the dead URL.
+          click: async () => {
+            const { ready, cfg } = await restartServer();
+            const win = getMainWindow();
+            if (ready && win) {
+              win.loadURL(`http://127.0.0.1:${cfg.port}/?token=${cfg.authToken}`);
+            }
+          },
         },
         { type: "separator" },
         // close-to-tray is wired on mainWindow's close handler, so this

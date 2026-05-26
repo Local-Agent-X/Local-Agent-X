@@ -42,13 +42,24 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       }
     } catch {}
     if (!currentProvider) {
-      // xAI first — Grok is the default. Auto-detect priority matches
-      // resolve-provider.ts's fallback chain so the UI dropdown and the
-      // request path agree on which provider is "active by default."
+      // Auto-detect priority matches resolve-provider.ts's fallback chain
+      // so the UI dropdown and the request path agree on which provider
+      // is "active by default" when at least one credential is present.
+      //
+      // Empty state (no creds anywhere) returns currentProvider="" — NOT
+      // a hardcoded default. The onboarding gate in the renderer treats
+      // `current.provider` as the "user has an active provider" signal,
+      // and any falsy-via-truthy default here makes the wizard auto-skip
+      // on every fresh install (settings.json then gets onboarded:true
+      // POSTed back automatically, locking the wizard out forever).
+      // Past attempts patched "Ollama-running-counts-as-onboarded" but
+      // this same bug shape kept tripping through other auto-detect
+      // branches — fixed at the root.
       if (hasXaiKey) currentProvider = "xai";
       else if (hasAnthropicOAuth) currentProvider = "anthropic";
       else if (hasOpenAIOAuth) currentProvider = "codex";
-      else currentProvider = "xai"; // empty-state still shows Grok as the recommendation
+      // No `else` — leave empty so the renderer knows the user needs to
+      // pick + connect a provider before they're considered onboarded.
     }
     if (!currentModel && currentProvider) {
       const reg = PROVIDERS[currentProvider as ProviderId];

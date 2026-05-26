@@ -78,18 +78,6 @@ export function startBackgroundJobs(deps: {
     },
   });
 
-  // One-shot startup: scrub stale transcript lines from MIND.md. The 6h
-  // memory-bg cycle handles ongoing consolidation, so no separate nightly
-  // schedule is needed.
-  import("../../memory-consolidation.js").then(({ MemoryConsolidator: MC }) => {
-    try {
-      const scrub = MC.getInstance().scrubMindFile();
-      if (scrub.linesRemoved > 0) {
-        logger.info(`[memory] Scrubbed ${scrub.linesRemoved} transcript lines from MIND.md (${scrub.linesKept} strategic lines kept)`);
-      }
-    } catch (e) { logger.warn("[memory] MIND.md scrub failed:", (e as Error).message); }
-  }).catch(e => logger.warn("[memory] MIND.md scrub init failed:", (e as Error).message));
-
   scheduler.register({
     name: "dream-check",
     intervalMs: 2 * 60 * 60 * 1000,

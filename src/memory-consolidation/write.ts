@@ -1,51 +1,16 @@
-// Disk writers + the universal-index write-through. Three exports:
-//   - promoteToLongTerm: appends new candidates to MIND.md
+// Disk writer for consolidation. One export:
 //   - updateAllEntityPages: writes per-entity markdown files under bank/entities/
-//   - scrubMindFile: one-shot cleanup that removes chat-transcript lines
-//     that leaked into MIND.md in older builds (idempotent — a clean
-//     file passes through untouched)
 //
-// All writers fire a best-effort reindex into the universal-index after
-// the file changes. Failure to reindex never blocks the write.
+// The old promoteToLongTerm wrote facts to MIND.md. MIND.md is retired —
+// facts now live in the indexed Facts DB (src/memory/index-facts.ts), and
+// agent-driven writes go through `remember`/`update_fact`/`forget`. The
+// dream-consolidation cycle no longer "promotes" because there's no
+// separate long-term store to promote into; the Facts DB IS that store.
 
 import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
-import { ENTITIES_DIR, MIND_PATH, type FactEntry } from "./types.js";
-import { ensureDirs, todayDateStr } from "./utils.js";
-
-export function promoteToLongTerm(facts: string[]): void {
-  if (facts.length === 0) return;
-  ensureDirs();
-
-  let mindContent = "";
-  if (existsSync(MIND_PATH)) {
-    mindContent = readFileSync(MIND_PATH, "utf-8");
-  }
-
-  const newLines: string[] = [];
-  for (const fact of facts) {
-    const trimmed = fact.trim();
-    // Last-line-of-defense: refuse to write chat-transcript snippets into
-    // strategic memory even if they slipped past every earlier filter.
-    if (/^\[(?:chat|ide|session|tg|cron|wa)-[A-Za-z0-9_-]+\]/i.test(trimmed)) continue;
-    if (/^(User|Agent):\s/i.test(trimmed)) continue;
-    if (/^User (?:said|asked|wrote|shared|sent|told|replied)/i.test(trimmed)) continue;
-    // Skip if already present
-    if (mindContent.includes(trimmed)) continue;
-    newLines.push(`- ${trimmed}`);
-  }
-
-  if (newLines.length === 0) return;
-
-  const section = `\n\n## Consolidated (${todayDateStr()})\n${newLines.join("\n")}\n`;
-  writeFileSync(MIND_PATH, mindContent + section, "utf-8");
-
-  // Write-through: MIND.md just changed, push the new chunks into search.
-  // Fire-and-forget so a missing universal-index never blocks consolidation.
-  import("../memory/universal-index.js")
-    .then(({ getUniversalIndex }) => getUniversalIndex()?.indexMindFile())
-    .catch(() => {});
-}
+import { ENTITIES_DIR, type FactEntry } from "./types.js";
+import { todayDateStr } from "./utils.js";
 
 export function updateAllEntityPages(grouped: Map<string, FactEntry[]>): number {
   let updated = 0;
@@ -96,30 +61,3 @@ export function updateAllEntityPages(grouped: Map<string, FactEntry[]>): number 
   return updated;
 }
 
-/**
- * One-shot scrub of MIND.md to remove chat-transcript lines that shouldn't
- * be there. Strategic Memory should hold curated facts, not raw User:/Agent:
- * turns. Idempotent — a clean file passes through untouched.
- *
- * Called on startup. The consolidator now also rejects transcript lines at
- * parse time so pollution doesn't re-accumulate.
- */
-export function scrubMindFile(): { linesRemoved: number; linesKept: number } {
-  if (!existsSync(MIND_PATH)) return { linesRemoved: 0, linesKept: 0 };
-  const original = readFileSync(MIND_PATH, "utf-8");
-  const lines = original.split(/\r?\n/);
-  const kept: string[] = [];
-  let removed = 0;
-  for (const line of lines) {
-    // Strip chat-transcript shaped bullet entries
-    if (/^\s*-\s*\[(?:chat|ide|session|tg|cron|wa)-[A-Za-z0-9_-]+\]\s+(User|Agent):/i.test(line)) { removed++; continue; }
-    if (/^\s*-\s*(User|Agent):\s/i.test(line)) { removed++; continue; }
-    if (/^\s*-\s*User (?:said|asked|wrote|shared|sent|told|replied)/i.test(line)) { removed++; continue; }
-    kept.push(line);
-  }
-  if (removed === 0) return { linesRemoved: 0, linesKept: kept.length };
-  // Collapse any run of 3+ blank lines down to 2
-  const collapsed = kept.join("\n").replace(/\n{3,}/g, "\n\n");
-  writeFileSync(MIND_PATH, collapsed, "utf-8");
-  return { linesRemoved: removed, linesKept: kept.length };
-}

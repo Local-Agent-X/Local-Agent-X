@@ -1,10 +1,8 @@
-// Fact analysis primitives. Pure functions — no IO. Used by the
-// consolidate cycle to dedup near-identical facts, find candidates
-// worth promoting to long-term storage, and surface contradictions
-// within an entity's facts.
+// Fact analysis primitives. Used by the consolidate cycle to dedup
+// near-identical facts, surface recurring fact clusters, and detect
+// contradictions within an entity's facts.
 
-import { existsSync, readFileSync } from "node:fs";
-import { MIND_PATH, type FactEntry, type MergedFact } from "./types.js";
+import { type FactEntry, type MergedFact } from "./types.js";
 import { jaccardSimilarity } from "./utils.js";
 import { loadSqliteFacts, loadAllRecentFacts } from "./load-facts.js";
 
@@ -64,13 +62,13 @@ const NOISE_PATTERNS = [
   /\brestarting\b/i,                  // Server restarts
 ];
 
+// Surface fact clusters seen ≥3 times — used only for the consolidation
+// report stats. The clusters already live in the Facts DB; this is a
+// reflection metric, not a promotion gate.
 export function getPromotionCandidates(): FactEntry[] {
   // Try SQLite facts first (from memory_save retain), fall back to daily log parsing
   let allFacts = loadSqliteFacts(30);
   if (allFacts.length === 0) allFacts = loadAllRecentFacts(30);
-  const mindContent = existsSync(MIND_PATH)
-    ? readFileSync(MIND_PATH, "utf-8")
-    : "";
 
   // Count similar fact occurrences
   const occurrences = new Map<number, number>();
@@ -88,7 +86,7 @@ export function getPromotionCandidates(): FactEntry[] {
 
   const candidates: FactEntry[] = [];
   for (const [idx, count] of occurrences) {
-    if (count >= 3 && !mindContent.includes(allFacts[idx].content.trim())) {
+    if (count >= 3) {
       const text = allFacts[idx].content;
       const isNoise = NOISE_PATTERNS.some(p => p.test(text));
       if (!isNoise) {

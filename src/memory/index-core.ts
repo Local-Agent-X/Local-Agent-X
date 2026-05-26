@@ -16,6 +16,7 @@ import * as Forget from "./index-forget.js";
 import * as Search from "./index-search.js";
 import type { SearchOptions } from "./index-search.js";
 import * as Facts from "./index-facts.js";
+import * as FactsMutate from "./index-facts-mutate.js";
 import * as Relations from "./index-relations.js";
 import * as Reflectx from "./index-reflect.js";
 import { startWatcher, type WatcherHandle } from "./index-watcher.js";
@@ -301,6 +302,31 @@ export class MemoryIndex {
 
   validityStats(): { valid: number; invalidated: number } {
     return Facts.validityStats(this.db);
+  }
+
+  // ── Single-fact agent API (used by remember / update_fact / forget tools) ──
+
+  rememberFact(
+    content: string,
+    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string }
+  ): FactsMutate.OneFactResult {
+    return FactsMutate.rememberFact(this.db, this.hasFts, content, opts);
+  }
+
+  updateFact(
+    query: string,
+    newContent: string,
+    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string }
+  ): FactsMutate.OneFactResult {
+    return FactsMutate.updateFact(this.db, this.hasFts, query, newContent, opts);
+  }
+
+  forgetFact(query: string): FactsMutate.OneFactResult {
+    return FactsMutate.forgetFact(this.db, query);
+  }
+
+  recallRecentFacts(opts?: { kinds?: FactKind[]; minConfidence?: number; limit?: number; sinceMs?: number }): RetainedFact[] {
+    return FactsMutate.recallRecentFacts(this.db, opts);
   }
 
   // ── Relations ──

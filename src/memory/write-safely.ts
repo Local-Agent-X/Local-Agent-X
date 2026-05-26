@@ -101,22 +101,6 @@ export function appendToDailyLogSafely(opts: {
   opts.memory.appendDailyLog(sanitized, opts.sessionId);
 }
 
-/** Replace MIND.md via MemoryIndex (keeps markDirty + reindex). */
-export function writeMindFileSafely(opts: {
-  memory: MemoryIndex;
-  content: string;
-  source: MemoryWriteSource;
-  threshold?: number;
-}): void {
-  const sanitized = applyGateChain({
-    content: opts.content,
-    source: opts.source,
-    target: opts.memory.getMemoryFilePath(),
-    threshold: opts.threshold,
-  });
-  opts.memory.writeMemoryFile(sanitized);
-}
-
 /**
  * Gate-only — for sinks that aren't a file write (e.g. memory.retain
  * stores facts in the DB). Returns sanitized content or throws.

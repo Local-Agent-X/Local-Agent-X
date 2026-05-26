@@ -4,9 +4,7 @@ import type { MemoryIndex } from "../../memory.js";
 import { PERSONALITY_FILES, dedupeProfileMarkdown, setUserScalarField } from "../personality.js";
 import {
   writeMemorySafely,
-  writeMindFileSafely,
   appendToDailyLogSafely,
-  runMemoryGate,
   MemoryWriteBlocked,
 } from "../write-safely.js";
 
@@ -15,23 +13,18 @@ export function createSaveTools(memory: MemoryIndex) {
     {
       name: "memory_save",
       description:
-        "Save important information to long-term memory. Targets: 'daily' (conversation log), 'memory' (curated MIND.md facts), 'retain' (structured fact with type/entity/confidence for the Retain system).",
+        "Append a line to today's daily conversation log. Use for transient session context that should be recoverable but isn't a durable fact. " +
+        "For durable facts (preferences, environment, project knowledge), call `remember` instead — it stores in the indexed fact DB " +
+        "that gets injected into future sessions.",
       parameters: {
         type: "object",
         properties: {
-          content: { type: "string", description: "The information to remember" },
-          target: {
-            type: "string",
-            enum: ["daily", "memory", "retain"],
-            description:
-              "'daily' for daily log (default), 'memory' for MIND.md, 'retain' for structured fact",
-          },
+          content: { type: "string", description: "The line to append to today's daily log" },
         },
         required: ["content"],
       },
       async execute(args: Record<string, unknown>) {
         const rawContent = String(args.content || "");
-        const target = String(args.target || "daily");
         const sessionId = args._sessionId ? String(args._sessionId) : undefined;
 
         if (!rawContent.trim()) {
@@ -39,42 +32,15 @@ export function createSaveTools(memory: MemoryIndex) {
         }
 
         try {
-          if (target === "memory") {
-            const existing = memory.readMemoryFile();
-            writeMindFileSafely({
-              memory,
-              source: "tool",
-              content: existing + (existing ? "\n\n" : "") + rawContent,
-            });
-            return { content: "Saved to MIND.md" };
-          } else if (target === "retain") {
-            // Retain stores facts in the DB. Gate-only — no file write.
-            const gated = runMemoryGate({
-              content: rawContent,
-              source: "tool",
-              target: "memory:retain",
-            });
-            const facts = memory.retain(gated, "agent-tool");
-            if (facts.length === 0) {
-              const facts2 = memory.retain(`- S ${gated}`, "agent-tool");
-              return {
-                content: `Retained ${facts2.length} fact(s) as observation`,
-              };
-            }
-            return {
-              content: `Retained ${facts.length} fact(s): ${facts.map((f) => `[${f.kind}] ${f.content.slice(0, 60)}`).join("; ")}`,
-            };
-          } else {
-            appendToDailyLogSafely({
-              memory,
-              source: "tool",
-              content: rawContent,
-              sessionId,
-            });
-            return {
-              content: `Saved to daily log (${new Date().toISOString().split("T")[0]})`,
-            };
-          }
+          appendToDailyLogSafely({
+            memory,
+            source: "tool",
+            content: rawContent,
+            sessionId,
+          });
+          return {
+            content: `Saved to daily log (${new Date().toISOString().split("T")[0]})`,
+          };
         } catch (e) {
           if (e instanceof MemoryWriteBlocked) {
             return { content: `BLOCKED: ${e.reason}`, isError: true };

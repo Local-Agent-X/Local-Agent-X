@@ -234,7 +234,7 @@ export async function startServer(config: LAXConfig) {
   wireWsChat({ chatWs, buildCtx: buildWsCtx });
 
   registerHandlerEvents({
-    config, dataDir, sessions, sessionStore, secretsStore, security, toolPolicy,
+    config, dataDir, sessions, sessionStore, memoryIndex, secretsStore, security, toolPolicy,
     allAgentTools, agentRunStore, agentTemplateStore, broadcastAll,
   });
 

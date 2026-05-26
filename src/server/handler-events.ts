@@ -9,7 +9,7 @@ import { ProjectStore, type AgentRun } from "../agent-store.js";
 import { looksLikeClarificationRequest } from "../agents/result-guard.js";
 import { registerAgentRunDriver, type AgentRunDriver } from "../agents/runtime.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
-import type { SessionStore } from "../memory.js";
+import type { SessionStore, MemoryIndex } from "../memory.js";
 import type { SecretsStore } from "../secrets.js";
 import type { SecurityLayer } from "../security.js";
 import type { ToolPolicy } from "../tool-policy.js";
@@ -38,6 +38,7 @@ export function registerHandlerEvents(deps: {
   dataDir: string;
   sessions: Map<string, Session>;
   sessionStore: SessionStore;
+  memoryIndex: MemoryIndex;
   secretsStore: SecretsStore;
   security: SecurityLayer;
   toolPolicy: ToolPolicy;
@@ -47,7 +48,7 @@ export function registerHandlerEvents(deps: {
   broadcastAll: (event: Record<string, unknown>) => void;
 }): void {
   const {
-    config, dataDir, sessions, sessionStore, secretsStore, security, toolPolicy,
+    config, dataDir, sessions, sessionStore, memoryIndex, secretsStore, security, toolPolicy,
     allAgentTools, agentRunStore, agentTemplateStore, broadcastAll,
   } = deps;
 
@@ -72,7 +73,22 @@ export function registerHandlerEvents(deps: {
     let parentContext = "";
     if (parentSessionId) { const ps = sessions.get(parentSessionId); if (ps?.messages.length) { parentContext = `\n\n--- PARENT CONTEXT ---\n${ps.messages.slice(-10).filter(m => typeof m.content === "string").map(m => `${m.role === "user" ? "User" : "Agent"}: ${(m.content as string).slice(0, 200)}`).join("\n")}\n--- END ---\n`; } }
     let briefing = "";
-    try { const uMd = join(dataDir, "memory", "USER.md"), mMd = join(dataDir, "memory", "MIND.md"); const u = existsSync(uMd) ? readFileSync(uMd, "utf-8").slice(0, 500) : "", m = existsSync(mMd) ? readFileSync(mMd, "utf-8").slice(0, 500) : ""; briefing = `\n\n--- BRIEFING ---\nUser: ${u || "(none)"}\nFacts: ${m || "(none)"}\nSecrets: ${secretsStore.list().map(s => s.name).join(", ") || "(none)"}\n--- END ---\n`; } catch {}
+    try {
+      const uMd = join(dataDir, "memory", "USER.md");
+      const u = existsSync(uMd) ? readFileSync(uMd, "utf-8").slice(0, 500) : "";
+      // Pull recent durable facts from the Facts DB (replaces the old MIND.md
+      // read). Confidence floor + limit caps briefing size; the briefing was
+      // historically ~500 chars of MIND.md, this lands in the same ballpark.
+      let factsBlock = "(none)";
+      try {
+        const facts = memoryIndex.recallRecentFacts({ limit: 10, minConfidence: 0.6 });
+        if (facts.length > 0) {
+          const rendered = facts.map(f => `- ${f.content}`).join("\n");
+          factsBlock = rendered.length > 500 ? rendered.slice(0, 497) + "..." : rendered;
+        }
+      } catch { /* facts DB unavailable — leave default */ }
+      briefing = `\n\n--- BRIEFING ---\nUser: ${u || "(none)"}\nFacts: ${factsBlock}\nSecrets: ${secretsStore.list().map(s => s.name).join(", ") || "(none)"}\n--- END ---\n`;
+    } catch {}
 
     const identityBlock = template
       ? `\n\n--- YOUR IDENTITY ---\nAgent ID: ${template.id}\nName: ${template.name}\nRole: ${template.role}\n${roster?.reportsTo ? `Reports to: ${roster.reportsTo}` : "Reports to: Board (user)"}\n${agentProject ? `Project: ${agentProject.name}` : ""}\nUse agent_whoami with agentId="${template.id}" to see your full status and assigned issues.\n--- END IDENTITY ---\n`

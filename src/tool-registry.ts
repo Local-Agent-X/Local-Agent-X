@@ -115,18 +115,27 @@ export const TOOLS: Record<string, ToolEntry> = {
   get_secret_meta:             { kernel: "internal",     risk: "secrets" },
 
   // ── Memory ──
-  memory_save:           { kernel: "database", risk: "workspace-write" },
-  memory_consolidate:    { kernel: "internal", risk: "workspace-write" },
-  memory_discover:       { kernel: "internal", risk: "safe" },
-  memory_dream:          { kernel: "internal", risk: "workspace-write" },
-  memory_forget:         { kernel: "internal", risk: "destructive" },
-  memory_forget_imports: { kernel: "internal", risk: "destructive" },
-  memory_get:            { kernel: "internal", risk: "safe" },
-  memory_ingest:         { kernel: "internal", risk: "workspace-write" },
-  memory_recall:         { kernel: "internal", risk: "safe" },
-  memory_reflect:        { kernel: "internal", risk: "workspace-write" },
-  memory_reindex:        { kernel: "internal", risk: "workspace-write" },
-  memory_update_profile: { kernel: "internal", risk: "workspace-write" },
+  memory_save:            { kernel: "database", risk: "workspace-write" },
+  memory_consolidate:     { kernel: "internal", risk: "workspace-write" },
+  memory_discover:        { kernel: "internal", risk: "safe" },
+  memory_dream:           { kernel: "internal", risk: "workspace-write" },
+  memory_forget:          { kernel: "internal", risk: "destructive" },
+  memory_forget_imports:  { kernel: "internal", risk: "destructive" },
+  memory_get:             { kernel: "internal", risk: "safe" },
+  memory_ingest:          { kernel: "internal", risk: "workspace-write" },
+  memory_recall:          { kernel: "internal", risk: "safe" },
+  memory_reflect:         { kernel: "internal", risk: "workspace-write" },
+  memory_reindex:         { kernel: "internal", risk: "workspace-write" },
+  memory_stats:           { kernel: "internal", risk: "safe" },
+  memory_set_user_field:  { kernel: "internal", risk: "workspace-write" },
+  memory_update_profile:  { kernel: "internal", risk: "workspace-write" },
+  // Single-fact Facts DB API (replaces MIND.md as the durable knowledge layer).
+  // Routed via existing memory_* tool-policy allow rule; classified internal
+  // because they only mutate the Facts DB (no raw I/O, no agent-controlled
+  // path/URL/shell argument the kernel needs to gate).
+  remember:               { kernel: "internal", risk: "workspace-write" },
+  update_fact:            { kernel: "internal", risk: "workspace-write" },
+  forget:                 { kernel: "internal", risk: "destructive" },
 
   // ── Self-edit — sandboxed, but the merge mutates running source ──
   self_edit: { kernel: "internal", risk: "destructive" },

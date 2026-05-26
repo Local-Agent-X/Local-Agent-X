@@ -87,7 +87,7 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
   // user" from "instructions for what voice to write in" — the bulky
   // user-profile + core_memory + RAG-hit context blocks trigger them to
   // collapse into the user's first-person voice and produce a fake
-  // nightly-update-as-Alex response. The Voice Guard in the base
+  // nightly-update-as-the-user response. The Voice Guard in the base
   // prompt helps, but the cleaner fix on weak models is to not put
   // most of that context in front of them in the first place. Strong
   // models (Sonnet/Opus, gpt-5-class) keep the full context — they

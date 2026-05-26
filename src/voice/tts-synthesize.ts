@@ -36,7 +36,7 @@ export async function synthesize(
 
   // Default chain (auto) is sovits→chatterbox→lite — clones first, then built-in.
   // xAI is opt-in only (bridgeVoicePreference="xai"); not in the auto chain
-  // because remote round-trips lose to local sidecars on Alex's 3060 setup.
+  // because remote round-trips lose to local sidecars on the dev setup.
   let preference: "auto" | EngineId = "auto";
   try {
     const { getRuntimeConfig } = await import("../config.js");

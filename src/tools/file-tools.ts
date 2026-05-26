@@ -11,7 +11,7 @@ import { checkAppWrite, writeGuardRejectionMessage } from "../app-tools/write-gu
 // "old_string found 2 times" with no info about WHERE the matches were —
 // so it would re-emit the same insufficient old_string on the next turn,
 // hit the same error, and loop. Grok-code-fast-1 did this twice in a row
-// on the repeating-text session, burning a 178s turn for zero edits.
+// on one user session, burning a 178s turn for zero edits.
 // These helpers surface line numbers + surrounding context (ambiguous),
 // nearest-line candidates (not-found), or sibling files (file-not-found)
 // so the model's next call can disambiguate without another wasted turn.

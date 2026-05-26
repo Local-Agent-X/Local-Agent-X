@@ -7,8 +7,8 @@
 //
 //   + ~~ The token '&&' is not a valid statement separator in this version.
 //
-// — a technical error they can't action. Real failure (2026-05-23, Super
-// Alex Bros): grok-code-fast-1 emitted `cd workspace/apps/x && grep -r
+// — a technical error they can't action. Real failure (2026-05-23):
+// grok-code-fast-1 emitted `cd workspace/apps/x && grep -r
 // speed .` 14 times in one turn; PS 5.1 rejected every call, the model
 // couldn't make progress, the no-progress middleware aborted the turn.
 //

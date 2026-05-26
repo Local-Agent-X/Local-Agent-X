@@ -46,7 +46,7 @@ DECISION RULES:
 - This pass only writes to USER.md (the narrative profile). Cap 2000 chars total.
 - Standalone facts (names of family, project conventions, multi-step workflows, dates, things-that-happened) are NOT for this pass — the agent has a separate \`remember\` tool that saves those into the Facts DB during the turn. Do NOT try to capture them here.
 - action="replace_section" if the topic likely already has a section (use the section_heading you'd use); "append" only for genuinely new topics.
-- content: write the GENERALIZED rule, not the verbatim correction. Bad: "user said use facebook dashboard for that one query." Good: "Alex prefers Meta Business Suite over per-app dashboards for analytics across Meta properties — has richer aggregate data."
+- content: write the GENERALIZED rule, not the verbatim correction. Bad: "user said use facebook dashboard for that one query." Good: "User prefers Meta Business Suite over per-app dashboards for analytics across Meta properties — has richer aggregate data."
 - Keep content tight (1-3 sentences max for replace_section, 1-2 for append). USER.md is bounded — bloat costs every future turn.
 - If the exchange was routine (q&a, casual chat, in-task work without preference signal), write=false.
 

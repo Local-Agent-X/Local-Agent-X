@@ -331,8 +331,8 @@ export async function driveTurn(
   // in the chat queue), we MUST NOT call transitionOp(succeeded) inside
   // commitTurn — the next turn will also resolve as done and the second
   // succeeded → succeeded transition is illegal and surfaces as a
-  // worker_exception in chat. Bug screenshot 2026-05-23: repeating-text
-  // game-loop fix landed but the user saw a confusing red error.
+  // worker_exception in chat. Bug screenshot 2026-05-23: a game-loop
+  // fix landed but the user saw a confusing red error.
   //
   // The worker's resume-gate logic mirrors these three conditions; this
   // is the corresponding pre-commit gate so commitTurn doesn't end the

@@ -25,7 +25,7 @@ import { createLogger } from "./logger.js";
 
 const logger = createLogger("llm-dispatch");
 
-export type LLMProvider = "ollama" | "anthropic" | "openai";
+export type LLMProvider = "ollama" | "anthropic" | "openai" | "xai";
 
 export interface DispatchOptions {
   prompt: string;
@@ -34,6 +34,7 @@ export interface DispatchOptions {
   ollamaModel?: string;
   anthropicModel?: string;
   openaiModel?: string;
+  xaiModel?: string;
   /** Sampling temperature (default 0). */
   temperature?: number;
   /** Max output tokens (default 200). */
@@ -50,6 +51,7 @@ const DEFAULTS = {
   ollamaModel: "llama3:8b",
   anthropicModel: "claude-haiku-4-5-20251001",
   openaiModel: "gpt-4o-mini",
+  xaiModel: "grok-4",
   temperature: 0,
   maxTokens: 200,
   timeoutMs: 30_000,
@@ -88,6 +90,7 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
   if (provider === "ollama") return callOllama(opts.prompt, opts.ollamaModel ?? DEFAULTS.ollamaModel, temp, maxTokens, timeout);
   if (provider === "anthropic") return callAnthropic(opts.prompt, opts.anthropicModel ?? DEFAULTS.anthropicModel, temp, maxTokens, timeout, opts.rejectOAuth ?? false);
   if (provider === "openai") return callOpenAI(opts.prompt, opts.openaiModel ?? DEFAULTS.openaiModel, temp, maxTokens, timeout);
+  if (provider === "xai") return callXai(opts.prompt, opts.xaiModel ?? DEFAULTS.xaiModel, temp, maxTokens, timeout);
   return null;
 }
 
@@ -163,6 +166,43 @@ async function callOpenAI(prompt: string, model: string, temperature: number, ma
     return data.choices?.[0]?.message?.content || null;
   } catch (e) {
     logger.warn(`openai call threw: ${(e as Error).message}`);
+    return null;
+  }
+}
+
+async function callXai(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number): Promise<string | null> {
+  // xAI exposes an OpenAI-compatible endpoint at api.x.ai/v1; wire-identical
+  // to /v1/chat/completions on api.openai.com, so the OpenAI client shape
+  // works unchanged. Auth comes from either env XAI_API_KEY or the secrets
+  // store (chat path stores it there). Without this, every background
+  // classifier (identity-extract, claim-verify, intent-classifier, etc.)
+  // silently no-ops for xAI users — verified May 2026: identity-shape
+  // statements ("my kid's name is X") didn't auto-save because
+  // classify-with-llm hit the xAI/Gemini fallback that returns null
+  // before reaching this dispatcher.
+  try {
+    let apiKey = process.env.XAI_API_KEY || "";
+    if (!apiKey) {
+      try {
+        const { getSecretsStoreSingleton } = await import("./secrets.js");
+        apiKey = getSecretsStoreSingleton()?.get("XAI_API_KEY") || "";
+      } catch { /* no secrets store available */ }
+    }
+    if (!apiKey) return null;
+    const res = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model, temperature, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) {
+      logger.warn(`xai call failed: HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+    return data.choices?.[0]?.message?.content || null;
+  } catch (e) {
+    logger.warn(`xai call threw: ${(e as Error).message}`);
     return null;
   }
 }

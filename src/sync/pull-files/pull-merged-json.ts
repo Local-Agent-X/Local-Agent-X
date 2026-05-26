@@ -8,8 +8,8 @@ const logger = createLogger("sync.pull-files.merged-json");
 
 export async function pullAgentProjects(dataDir: string, syncDir: string): Promise<void> {
   // agent-projects.json: union-merge + project-tombstone filter.
-  // Closes the Acme Springfield case (2026-05-22) where a locally-
-  // created project was wiped by pull from a stale sync-repo.
+  // Closes the 2026-05-22 case where a locally-created project was
+  // wiped by pull from a stale sync-repo.
   const { projectTombstonePaths, listTombstonedProjectIds, applyProjectTombstones } = await import("../project-tombstones.js");
   const tombstoned = listTombstonedProjectIds(projectTombstonePaths(dataDir, syncDir));
   pullMergedRecordFile<{ id: string; updatedAt?: number }>({

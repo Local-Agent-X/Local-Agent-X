@@ -13,6 +13,7 @@ import {
   broadcastActiveChats,
   broadcastToSession,
   getChatHandler,
+  getMessageCountForSession,
 } from "./state.js";
 import { handleIdeRuntimeError } from "./ide-runtime-error.js";
 
@@ -51,6 +52,30 @@ export function attachMessageRouter(ctx: RouterContext): void {
         for (const event of chat.events) {
           ws.send(JSON.stringify({ type: "event", sessionId, event }));
         }
+      }
+      // Session snapshot — late subscribers (page reload, leave-and-come-back,
+      // WS reconnect after server restart) get the current truth so the
+      // renderer can reconcile stale UI:
+      //   - worker chips stuck on "working" because the terminal event went
+      //     out while no one was listening
+      //   - chat messages that landed on disk but never reached this client
+      // The per-session `events` replay above only fires for sessions still
+      // in `activeChats` (live op); once `activeChats.delete` runs at op
+      // completion the buffer is gone. This snapshot is what closes that
+      // gap — works whether the session is live or fully completed.
+      try {
+        const { listOpsForSession } = await import("../ops/session-bridge.js");
+        const liveOpIds = listOpsForSession(sessionId);
+        const countFn = getMessageCountForSession();
+        const messageCount = countFn ? countFn(sessionId) : 0;
+        ws.send(JSON.stringify({
+          type: "session_snapshot",
+          sessionId,
+          liveOpIds,
+          messageCount,
+        }));
+      } catch (e) {
+        logger.warn(`[ws-chat] session_snapshot failed for ${sessionId}: ${(e as Error).message}`);
       }
       return;
     }

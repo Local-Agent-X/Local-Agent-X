@@ -29,6 +29,17 @@ let chatHandler: ChatHandler | null = null;
 export function setChatHandler(h: ChatHandler): void { chatHandler = h; }
 export function getChatHandler(): ChatHandler | null { return chatHandler; }
 
+// Message-count provider for the session_snapshot event. Wired from
+// src/server/index.ts where SessionStore is in scope; the chat-ws layer
+// doesn't import SessionStore directly to avoid a circular dependency.
+let messageCountForSession: ((sessionId: string) => number) | null = null;
+export function setMessageCountForSession(fn: (sessionId: string) => number): void {
+  messageCountForSession = fn;
+}
+export function getMessageCountForSession(): ((sessionId: string) => number) | null {
+  return messageCountForSession;
+}
+
 export function broadcastToSession(sessionId: string, event: ServerEvent): void {
   const payload = JSON.stringify({ type: "event", sessionId, event });
   for (const [ws, subs] of clients) {

@@ -202,6 +202,14 @@ export async function startServer(config: LAXConfig) {
   const { server, chatWs } = phaseSync("createHttpServer", () => createHttpServer(requestHandler, { config, dataDir }));
   chatWsHolder.value = chatWs;
 
+  // Wire the message-count provider used by the WS session_snapshot event.
+  // chat-ws can't import SessionStore directly (would pull memory.ts into a
+  // layer that should stay transport-only), so we hand it a closure here.
+  {
+    const { setMessageCountForSession } = await import("../chat-ws/state.js");
+    setMessageCountForSession((id) => sessionStore.load(id)?.messages?.length ?? 0);
+  }
+
   await phase("setupVoiceWs", () => setupVoiceWs({ server, config, dataDir, memoryIndex, memoryManager, integrations, secretsStore, allAgentTools, bridgeTools, security, toolPolicy, rbac, activeOnEventBySession }));
 
   // The WS forward layer calls into the same chat-turn helper the HTTP

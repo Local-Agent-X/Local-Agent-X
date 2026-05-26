@@ -1,8 +1,12 @@
 import type Database from "better-sqlite3";
 import type { FactKind, RetainedFact } from "./types.js";
 import { DEFAULT_MEMORY_CONFIG } from "./types.js";
-import { rowToFact } from "./utils.js";
+import { rowToFact, slugify } from "./utils.js";
 import { retain, invalidateFact } from "./index-facts.js";
+import { findContradictions } from "./contradiction-sweep.js";
+
+import { createLogger } from "../logger.js";
+const contradictionLogger = createLogger("memory.contradiction");
 
 // Hot-score for prompt injection. Confidence × exponential decay on age.
 // At half_life days the score is 0.5×confidence; at 3× half_life it's ~12%.
@@ -60,7 +64,66 @@ export function rememberFact(
   if (facts.length === 0) {
     return { ok: false, error: "fact already exists or failed to insert" };
   }
-  return { ok: true, fact: facts[0], newFactId: facts[0].id };
+  const newFact = facts[0];
+  if (newFact.id !== undefined) autoInvalidateContradicting(db, newFact);
+  return { ok: true, fact: newFact, newFactId: newFact.id };
+}
+
+// After inserting a fact, scan live facts that share at least one entity
+// (or, if no entities, share a content keyword) and invalidate any that
+// contradict the new one. Without this, every "stop X" correction just
+// adds a new fact next to the original "do X" — both survive `valid_to
+// IS NULL` and both flow into recallRecentFacts, so the model sees both
+// rules and picks whichever fits the moment. The Spanish-greeting bug
+// in HEART.md is the canonical case.
+function autoInvalidateContradicting(
+  db: InstanceType<typeof Database>,
+  newFact: RetainedFact,
+): void {
+  const newId = newFact.id!;
+  const candidates = findCandidatesForContradictionCheck(db, newFact);
+  if (candidates.length === 0) return;
+
+  const items = [
+    { text: newFact.content, payload: newId },
+    ...candidates.map(c => ({ text: c.content, payload: c.id! })),
+  ];
+  const pairs = findContradictions(items);
+  for (const p of pairs) {
+    if (p.drop === newId) continue; // never invalidate the fact we just inserted
+    invalidateFact(db, p.drop, {
+      reason: `superseded by remember #${newId}: auto-detected contradiction (overlap=${p.overlap.toFixed(2)})`,
+      replacedBy: newId,
+    });
+    contradictionLogger.info(
+      `[contradiction] facts: invalidated #${p.drop} ("${candidates.find(c => c.id === p.drop)?.content.slice(0, 60)}") ` +
+      `superseded by #${newId} ("${newFact.content.slice(0, 60)}"), overlap=${p.overlap.toFixed(2)}`,
+    );
+  }
+}
+
+// Cheap candidate pool for the contradiction sweep. Entity overlap is the
+// strong signal — facts mentioning the same person/project rarely cross
+// topic boundaries. Cap at 50 so a noisy entity (e.g. "Alex" mentioned
+// in hundreds of facts) doesn't make every `remember` O(n) over the table.
+function findCandidatesForContradictionCheck(
+  db: InstanceType<typeof Database>,
+  newFact: RetainedFact,
+): RetainedFact[] {
+  if (!newFact.entities || newFact.entities.length === 0) return [];
+  const slugs = newFact.entities.map(e => slugify(e)).filter(Boolean);
+  if (slugs.length === 0) return [];
+  const placeholders = slugs.map(() => "?").join(",");
+  const rows = db.prepare(
+    `SELECT DISTINCT f.* FROM facts f
+     JOIN entity_mentions em ON em.fact_id = f.id
+     WHERE em.entity_slug IN (${placeholders})
+       AND f.valid_to IS NULL
+       AND f.id != ?
+     ORDER BY f.last_updated DESC
+     LIMIT 50`
+  ).all(...slugs, newFact.id) as Array<Record<string, unknown>>;
+  return rows.map(rowToFact);
 }
 
 export function findOneFactByContent(
@@ -186,11 +249,35 @@ export function recallRecentFacts(
 
   const candidates = rows.map(rowToFact);
   const now = Date.now();
-  return candidates
+  const ranked = candidates
     .map((f) => ({ f, score: hotScore(f, now, halfLife) }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
     .map((x) => x.f);
+
+  // Dedup-on-recall: at most one fact per (kind, primary-entity). Safety
+  // net for facts that snuck past the auto-invalidation in rememberFact —
+  // e.g. legacy migrated facts, or facts inserted directly via retain.
+  // The first (highest hot-score) survivor wins; older or lower-confidence
+  // entries in the same slot are dropped from the prompt injection but
+  // remain queryable via recallByEntity / memory_recall.
+  //
+  // Facts with no @-entity tag (entities[] is empty) bypass dedup — those
+  // are general observations about the user, not entity-scoped statements,
+  // and collapsing them by kind alone would crush the prompt.
+  const seen = new Set<string>();
+  const out: RetainedFact[] = [];
+  for (const f of ranked) {
+    if (f.entities.length === 0) {
+      out.push(f);
+    } else {
+      const key = `${f.kind}|${f.entities[0].toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(f);
+    }
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 // Bump last_updated on a set of fact IDs. Used to "reinforce" facts that

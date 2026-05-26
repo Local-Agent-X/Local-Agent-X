@@ -68,8 +68,18 @@ function countRecentSessions(since: number): number {
   } catch { return 0; }
 }
 
-/** Check if it's time to dream */
-export function shouldDream(minHours = 24, minSessions = 5): boolean {
+/**
+ * Check if it's time to dream.
+ *
+ * Default thresholds (6h + 2 sessions) lowered from the original 24h + 5
+ * sessions in May 2026 as Phase 4 of the memory restore. With Phase 1
+ * (`<core_memory>` live render) and Phase 2 (same-turn auto-extract of
+ * preferences/events) doing most of the work, dream is the long-tail
+ * safety net — facts that fell through both should still get distilled
+ * within hours, not days. The 30-minute stuck-lock recovery below means
+ * a more frequent cadence doesn't risk pile-ups.
+ */
+export function shouldDream(minHours = 6, minSessions = 2): boolean {
   const state = loadDreamState();
   // Crash recovery: if dreaming flag is stuck for 30+ minutes, force-release it
   if (state.dreaming) {

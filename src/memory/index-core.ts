@@ -325,8 +325,12 @@ export class MemoryIndex {
     return FactsMutate.forgetFact(this.db, query);
   }
 
-  recallRecentFacts(opts?: { kinds?: FactKind[]; minConfidence?: number; limit?: number; sinceMs?: number }): RetainedFact[] {
+  recallRecentFacts(opts?: { kinds?: FactKind[]; minConfidence?: number; limit?: number; sinceMs?: number; halfLifeDays?: number }): RetainedFact[] {
     return FactsMutate.recallRecentFacts(this.db, opts);
+  }
+
+  reinforceFacts(ids: number[]): number {
+    return FactsMutate.reinforceFacts(this.db, ids);
   }
 
   // ── Relations ──

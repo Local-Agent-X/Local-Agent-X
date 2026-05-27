@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 
 import { appDir, defPath, eventsPath, statePath } from "./paths.js";
@@ -8,7 +8,7 @@ import type { AppDefinition, AppState, AppStatus, AppVisibility, AuditEntry } fr
 type AuditWriter = (appId: string, actor: string, action: string, details?: Record<string, unknown>) => AuditEntry;
 
 export function migrateFromDashboards(writeAudit: AuditWriter): void {
-  const oldDir = join(homedir(), ".lax", "dashboards");
+  const oldDir = join(getLaxDir(), "dashboards");
   if (!existsSync(oldDir)) return;
 
   try {

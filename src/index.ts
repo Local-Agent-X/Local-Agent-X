@@ -2,7 +2,7 @@
 // Mirrors all console output to ~/.lax/logs/server.log so logs survive restarts.
 import { createWriteStream, mkdirSync, existsSync, statSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("index");
@@ -28,7 +28,7 @@ process.stdout.on("error", (err) => {
   try { logStream.write(`[${new Date().toISOString()}] WARN stdout error: ${err.message}\n`); } catch {}
 });
 
-const logDir = join(homedir(), ".lax", "logs");
+const logDir = join(getLaxDir(), "logs");
 if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true, mode: 0o700 });
 
 // Rotate if log exceeds 5MB

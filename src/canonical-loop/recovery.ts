@@ -28,7 +28,7 @@
  * just before emitting `lease_lost`.
  */
 import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 import { readOp } from "../ops/op-store.js";
 import { emit } from "./event-emitter.js";
@@ -139,7 +139,7 @@ export function recoverStaleOps(opIds: string[]): RecoveryOutcome[] {
  * Returns the list of outcomes for logging by the caller.
  */
 export function sweepStaleCanonicalOps(): { opId: string; outcome: RecoveryOutcome }[] {
-  const opsBase = join(homedir(), ".lax", "operations");
+  const opsBase = join(getLaxDir(), "operations");
   if (!existsSync(opsBase)) return [];
 
   let opIds: string[];

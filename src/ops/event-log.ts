@@ -14,14 +14,14 @@
 
 import { existsSync, mkdirSync, appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { redactEventForDisk } from "./redactor.js";
 import type { OpEvent } from "./types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.event-log");
 
-const OPS_BASE = join(homedir(), ".lax", "operations");
+const OPS_BASE = join(getLaxDir(), "operations");
 
 /** Resolve the on-disk dir for an op. Creates if missing. */
 export function opDir(opId: string): string {

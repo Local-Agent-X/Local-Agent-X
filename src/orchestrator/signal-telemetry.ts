@@ -10,10 +10,10 @@
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import type { ModuleSignal } from "./types.js";
 
-const DIR = join(homedir(), ".lax", "telemetry");
+const DIR = join(getLaxDir(), "telemetry");
 const FILE = join(DIR, "signals.jsonl");
 
 export interface SignalRef {

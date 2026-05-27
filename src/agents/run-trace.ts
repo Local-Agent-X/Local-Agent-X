@@ -10,12 +10,12 @@
 
 import { existsSync, mkdirSync, appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("agents.run-trace");
 
-export const TRACES_DIR = join(homedir(), ".lax", "run-traces");
+export const TRACES_DIR = join(getLaxDir(), "run-traces");
 
 const DEFAULT_MAX_FIELD_BYTES = 2048;
 

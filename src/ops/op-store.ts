@@ -12,14 +12,14 @@
 
 import { existsSync, writeFileSync, readFileSync, renameSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { opDir } from "./event-log.js";
 import type { Op, OpStatus } from "./types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.op-store");
 
-const OPS_BASE = join(homedir(), ".lax", "operations");
+const OPS_BASE = join(getLaxDir(), "operations");
 
 export function writeOp(op: Op): void {
   const target = join(opDir(op.id), "operation.json");

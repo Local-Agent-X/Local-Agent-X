@@ -14,7 +14,7 @@
 import { execFile } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import type { HookDefinition, HookEvent, HookEventContext, HookResult, HooksConfig } from "./hook-types.js";
 import { CREDENTIAL_ENV_PREFIXES } from "../security/credential-patterns.js";
 
@@ -25,7 +25,7 @@ interface SecurityEvaluator {
   evaluate(ctx: { toolName: string; args: Record<string, unknown>; sessionId: string; callContext?: string }): { allowed: boolean; reason: string };
 }
 
-const HOOKS_PATH = join(homedir(), ".lax", "hooks.json");
+const HOOKS_PATH = join(getLaxDir(), "hooks.json");
 const IS_WINDOWS = process.platform === "win32";
 
 function scrubEnv(): Record<string, string> {

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../../lax-data-dir.js";
 import { type AgentOptions } from "../../providers/types.js";
 import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
 import { stripEphemeralMessages } from "../../providers/sanitize.js";
@@ -83,7 +83,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
 
   cronService.onExecute(async (jobId, prompt, _ctx) => {
     const missionStartMs = Date.now();
-    const cronSecurity = new SecurityLayer(resolve(process.env.LAX_WORKSPACE ?? process.env.SAX_WORKSPACE ?? join(homedir(), ".lax", "workspace")), "workspace");
+    const cronSecurity = new SecurityLayer(resolve(process.env.LAX_WORKSPACE ?? process.env.SAX_WORKSPACE ?? join(getLaxDir(), "workspace")), "workspace");
     const sessionId = `cron-${jobId}-${Date.now()}`;
     const cleanedPrompt = stripSaveInstructions(stripCronPreamble(prompt));
     const jobMeta = cronService.get(jobId);

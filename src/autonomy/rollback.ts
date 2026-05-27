@@ -17,14 +17,14 @@
 
 import { existsSync, mkdirSync, copyFileSync, statSync, appendFileSync, readFileSync, rmSync } from "node:fs";
 import { join, basename, isAbsolute } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { execSync } from "node:child_process";
 import { createLogger } from "../logger.js";
 import type { ToolRisk } from "./risk.js";
 
 const logger = createLogger("autonomy-rollback");
 
-const ROLLBACK_DIR = join(homedir(), ".lax", "rollback");
+const ROLLBACK_DIR = join(getLaxDir(), "rollback");
 const INDEX_FILE = join(ROLLBACK_DIR, "index.jsonl");
 const RESTORED_FILE = join(ROLLBACK_DIR, "restored.jsonl");
 

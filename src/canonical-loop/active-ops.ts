@@ -11,13 +11,13 @@
  * change loop behavior, signals, or events.
  */
 import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 import { readOp } from "../ops/op-store.js";
 import { readLatestOpTurn } from "./store.js";
 
 const ACTIVE_STATES = new Set(["queued", "running", "paused", "cancelling"]);
-const OPS_BASE = join(homedir(), ".lax", "operations");
+const OPS_BASE = join(getLaxDir(), "operations");
 
 export interface ActiveCanonicalOp {
   /** Marker so callers can distinguish canonical rows from legacy pool rows. */

@@ -10,13 +10,13 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import type { AutopilotLockFile } from "./types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("autopilot.lock");
 
-const LOCK_DIR = join(homedir(), ".lax", "autopilot");
+const LOCK_DIR = join(getLaxDir(), "autopilot");
 
 function getRepoHash(): string {
   try {

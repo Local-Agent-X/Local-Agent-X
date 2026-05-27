@@ -21,7 +21,7 @@
 
 import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 
 export type WhisperVariant = "tiny.en" | "base.en" | "small.en";
 
@@ -64,7 +64,7 @@ function modelDirFor(variant: WhisperVariant): string {
     const bundledDir = join(bundled, `whisper-${variant.replace(".", "-")}`);
     if (existsSync(bundledDir)) return bundledDir;
   }
-  return join(homedir(), ".lax", "models", `whisper-${variant.replace(".", "-")}`);
+  return join(getLaxDir(), "models", `whisper-${variant.replace(".", "-")}`);
 }
 
 function modelFilesFor(variant: WhisperVariant): ModelFile[] {

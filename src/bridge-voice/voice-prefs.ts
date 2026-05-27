@@ -12,7 +12,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("bridge-voice.prefs");
@@ -24,7 +24,7 @@ interface PrefsFile {
   whatsapp?: Record<string, boolean>;
 }
 
-const PREFS_PATH = join(homedir(), ".lax", "bridge-voice-prefs.json");
+const PREFS_PATH = join(getLaxDir(), "bridge-voice-prefs.json");
 
 let cache: PrefsFile | null = null;
 
@@ -49,7 +49,7 @@ function load(): PrefsFile {
 
 function save(prefs: PrefsFile): void {
   try {
-    mkdirSync(join(homedir(), ".lax"), { recursive: true });
+    mkdirSync(getLaxDir(), { recursive: true });
     writeFileSync(PREFS_PATH, JSON.stringify(prefs, null, 2));
   } catch (e) {
     logger.error(`failed to save prefs: ${(e as Error).message}`);

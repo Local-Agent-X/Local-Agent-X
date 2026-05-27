@@ -5,11 +5,11 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { randomBytes } from "node:crypto";
 
 export const IS_WIN = process.platform === "win32";
-export const VOICE_DIR = join(homedir(), ".lax", "workspace", "voice-chat");
+export const VOICE_DIR = join(getLaxDir(), "workspace", "voice-chat");
 
 export const WHISPER_EXE = IS_WIN
   ? join(VOICE_DIR, "whisper-bin", "Release", "whisper-cli.exe")
@@ -24,7 +24,7 @@ export const PIPER_VOICE = join(VOICE_DIR, "piper", "voices", "en_US-ryan-medium
 export const KOKORO_MODEL = join(VOICE_DIR, "kokoro", "kokoro-v1.0.onnx");
 export const KOKORO_VOICES = join(VOICE_DIR, "kokoro", "voices-v1.0.bin");
 
-export const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
+export const TMP_DIR = join(getLaxDir(), "voice-tmp");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
 export function tmpPath(ext: string): string {

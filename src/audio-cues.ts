@@ -6,13 +6,13 @@
 import { writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
-const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
-const CACHE_DIR = join(homedir(), ".lax", "audio-cues");
+const TMP_DIR = join(getLaxDir(), "voice-tmp");
+const CACHE_DIR = join(getLaxDir(), "audio-cues");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
 

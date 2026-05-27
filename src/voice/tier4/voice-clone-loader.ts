@@ -14,10 +14,10 @@
 // would consume. The actual encoder run is in chatterbox-clone-stub.ts.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getLaxDir } from "../../lax-data-dir.js";
 
-const TIER4_CACHE = join(homedir(), ".lax", "models", "tts", "kokoro-onnx");
+const TIER4_CACHE = join(getLaxDir(), "models", "tts", "kokoro-onnx");
 
 export function getTier4CacheDir(): string {
   if (!existsSync(TIER4_CACHE)) mkdirSync(TIER4_CACHE, { recursive: true });

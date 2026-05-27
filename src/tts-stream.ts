@@ -7,15 +7,15 @@
 import { spawn } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 
-const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
+const TMP_DIR = join(getLaxDir(), "voice-tmp");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
-const KOKORO_MODEL = join(homedir(), ".lax", "workspace", "voice-chat", "kokoro", "kokoro-v1.0.onnx");
-const KOKORO_VOICES = join(homedir(), ".lax", "workspace", "voice-chat", "kokoro", "voices-v1.0.bin");
+const KOKORO_MODEL = join(getLaxDir(), "workspace", "voice-chat", "kokoro", "kokoro-v1.0.onnx");
+const KOKORO_VOICES = join(getLaxDir(), "workspace", "voice-chat", "kokoro", "voices-v1.0.bin");
 
 function tmpPath(ext: string): string {
   return join(TMP_DIR, `stream_${randomBytes(6).toString("hex")}.${ext}`);

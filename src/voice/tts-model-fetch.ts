@@ -16,13 +16,13 @@
 
 import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { spawn } from "node:child_process";
+import { getLaxDir } from "../lax-data-dir.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("voice.tts-model-fetch");
 
-const MODEL_DIR = join(homedir(), ".lax", "models", "tts");
+const MODEL_DIR = join(getLaxDir(), "models", "tts");
 const BUNDLE_NAME = "matcha-icefall-en_US-ljspeech";
 const BUNDLE_URL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${BUNDLE_NAME}.tar.bz2`;
 const VOCODER_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos-22khz-univ.onnx";

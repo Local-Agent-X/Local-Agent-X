@@ -5,7 +5,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 import { randomBytes } from "node:crypto";
 import { execSync, execFileSync } from "node:child_process";
 
@@ -17,8 +17,8 @@ function validateLang(lang: string): string {
   return lang;
 }
 
-const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
-const TESS_DIR = join(homedir(), ".lax", "tesseract");
+const TMP_DIR = join(getLaxDir(), "voice-tmp");
+const TESS_DIR = join(getLaxDir(), "tesseract");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 if (!existsSync(TESS_DIR)) mkdirSync(TESS_DIR, { recursive: true });
 

@@ -22,7 +22,7 @@ import { stripCodeBlocks } from "./code-strip.js";
 const ACTION_VERB_TO_TOOLS: Array<{ verb: RegExp; tools: string[] }> = [
   // "removed/unpinned/deleted X" — lots of tools can remove state
   { verb: /\b(removed?|unpinned?|deleted?|dropped?|cleared?|unscheduled?)\b/i, tools: [
-    "sidebar_unpin", "secret_delete", "cron_delete", "bash", "memory_delete",
+    "sidebar_unpin", "sidebar_clear", "secret_delete", "cron_delete", "bash", "memory_delete",
     "http_request", "delete", "browser", "agent_cancel", "mission_cancel",
     "skill_remove", "cron_toggle", "email_draft",
   ] },

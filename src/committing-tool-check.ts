@@ -19,6 +19,7 @@ const COMMITTING_TOOLS = new Set<string>([
   "browser_fill_from_secret",
   "sidebar_pin",
   "sidebar_unpin",
+  "sidebar_clear",
   "memory_save",
   "memory_update_profile",
   "memory_set_user_field",

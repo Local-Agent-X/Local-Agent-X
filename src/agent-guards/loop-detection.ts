@@ -92,7 +92,7 @@ export const MUTATION_TOOLS = new Set([
   "secret_save", "secret_delete",
   "browser_capture_to_secret", "browser_fill_from_secret",
   // Sidebar / UI state
-  "sidebar_pin", "sidebar_unpin",
+  "sidebar_pin", "sidebar_unpin", "sidebar_clear",
   // Memory writes
   "memory_save", "memory_update_profile",
   // Cron / scheduling mutations

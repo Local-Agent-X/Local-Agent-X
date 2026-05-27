@@ -23,6 +23,18 @@ import { ProjectStore } from "../agent-store.js";
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
 
+/** Broadcast a "projects_changed" event so any open client refreshes
+ *  its Projects sidebar / agent-page list. Mirrors the
+ *  sidebar_pins_changed / settings_changed pattern used by
+ *  src/app-tools/sidebar.ts and src/tools/setting-tool.ts. Best-effort:
+ *  swallow errors so a missing WS context doesn't fail the tool call. */
+async function broadcastProjectsChanged(): Promise<void> {
+  try {
+    const { broadcastAll } = await import("../chat-ws.js");
+    broadcastAll({ type: "projects_changed" });
+  } catch { /* no WS context (e.g. test) — tool itself still succeeded */ }
+}
+
 /** Mirror of seedProjectRosters in src/routes/agents/projects.ts so a
  *  tool-created project ends up shaped identically to one created via
  *  the HTTP API. CEO-led trees auto-wire reportsTo so the org chart
@@ -91,6 +103,7 @@ export function createProjectTools(): ToolDefinition[] {
             allowedTools: Array.isArray(args.allowed_tools) ? args.allowed_tools.map(String) : undefined,
           });
           await seedRosters(project.id, agentIds);
+          await broadcastProjectsChanged();
           const rosterLine = agentIds.length > 0
             ? `\nSeeded roster: ${agentIds.length} agent(s).`
             : `\nRoster is empty — add agents via project_add_agent or seed agent_ids on the next call.`;
@@ -139,6 +152,7 @@ export function createProjectTools(): ToolDefinition[] {
         const project = ProjectStore.getInstance().get(projectId);
         if (!project) return err(`Project not found: ${projectId}. Use project_list to see available projects.`);
         await seedRosters(projectId, [agentId]);
+        await broadcastProjectsChanged();
         return ok(`Added ${agentId} to ${project.name} (id: ${projectId}).`);
       },
     },

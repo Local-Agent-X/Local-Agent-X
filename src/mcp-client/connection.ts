@@ -5,6 +5,7 @@ import { wrapExternalContent } from "../sanitize.js";
 import type { ToolResult } from "../types.js";
 import { type MCPServerConfig, type MCPTool, type PendingRequest, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./types.js";
 import { verifyOrTrust } from "./integrity.js";
+import { DENY_PREFIXES, DENY_SUBSTRINGS, DENY_EXACT } from "./env-credential-patterns.js";
 
 const logger = createLogger("mcp-client");
 
@@ -43,24 +44,19 @@ const ENV_ALLOWLIST: readonly string[] = [
   "NODE_PATH",
 ];
 
-const DENY_PREFIXES: readonly string[] = [
-  "ANTHROPIC_", "OPENAI_", "AWS_", "GOOGLE_", "AZURE_", "GCP_",
-  "STRIPE_", "TWILIO_", "SENDGRID_", "MAILGUN_",
-  "LAX_AUTH_", "SAX_AUTH_", "LAX_MCP_TOKEN",
-];
-
-const DENY_SUBSTRINGS: readonly string[] = [
-  "_KEY", "_SECRET", "_TOKEN", "_PASSWORD", "_PASSWD",
-  "_CREDENTIAL", "_PRIVATE", "_API_KEY",
-];
-
-const DENY_EXACT: readonly string[] = [
-  "GITHUB_TOKEN", "GH_TOKEN", "NPM_TOKEN", "HF_TOKEN",
-  "DATABASE_URL", "DB_PASSWORD",
-];
-
-function isCredentialKey(key: string): boolean {
+/**
+ * Match `key` against the shared credential-deny tables.
+ *
+ * `exemptCredentialKeys` lets a trusted-code caller (warm-pool bridge env
+ * builder in src/anthropic-client/mcp-config.ts) bypass the deny for
+ * specific keys it legitimately needs to pass through — currently
+ * `LAX_MCP_TOKEN`, which the bridge needs to authenticate back to LAX but
+ * which the external-MCP path must still strip. Pass keys in their
+ * canonical (uppercase) form; the comparison is case-insensitive.
+ */
+export function isCredentialKey(key: string, exemptCredentialKeys?: ReadonlySet<string>): boolean {
   const upper = key.toUpperCase();
+  if (exemptCredentialKeys && exemptCredentialKeys.has(upper)) return false;
   if (DENY_EXACT.includes(upper)) return true;
   for (const prefix of DENY_PREFIXES) {
     if (upper.startsWith(prefix)) return true;

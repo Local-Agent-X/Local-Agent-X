@@ -122,11 +122,10 @@ function dpapiAvailable(): boolean {
 
 function macKeychainStore(data: Buffer): void {
   const hex = data.toString("hex");
-  try {
-    execFileSync("security", [
-      "delete-generic-password", "-s", SERVICE_NAME, "-a", ACCOUNT_NAME
-    ], { stdio: "ignore" });
-  } catch { /* ok */ }
+  // `-U` already updates the existing entry idempotently. A preceding
+  // explicit delete adds a race window (process A deletes, process B
+  // adds, process A adds-and-clobbers) for zero benefit when multiple
+  // SecretsStore instances race on first boot.
   execFileSync("security", [
     "add-generic-password", "-s", SERVICE_NAME, "-a", ACCOUNT_NAME, "-w", hex, "-U"
   ], { timeout: 5000 });
@@ -142,7 +141,21 @@ function macKeychainRetrieve(): Buffer {
 function macKeychainAvailable(): boolean {
   if (process.platform !== "darwin") return false;
   try {
-    execFileSync("security", ["help"], { stdio: "ignore", timeout: 3000 });
+    // Resolve the default user keychain. If macOS can't find one — no
+    // default set, default pointing to a deleted file, sandboxed parent
+    // process whose audit session lacks visibility into the user's
+    // login keychain — a subsequent add/find-generic-password call
+    // triggers the modal "Keychain Not Found / Reset To Defaults" GUI
+    // dialog, blocking the boot until the user dismisses it. Pre-empt
+    // that by detecting an unusable default here and falling through
+    // to the file fallback silently.
+    const out = execFileSync("security", ["default-keychain", "-d", "user"], {
+      encoding: "utf-8",
+      timeout: 3000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const path = out.trim().replace(/^"|"$/g, "");
+    if (!path || !existsSync(path)) return false;
     return true;
   } catch {
     return false;
@@ -213,6 +226,19 @@ export function getOrCreateMasterKey(dataDir: string): KeychainResult {
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const dpapiPath = join(dataDir, "master.dpapi");
   const secretsPath = join(dataDir, "secrets.enc");
+
+  // Escape hatch: skip every OS keychain provider and go straight to the
+  // file fallback. Use when the OS keychain GUI ("Keychain Not Found",
+  // ACL prompts) keeps interrupting the user — common when many SecretsStore
+  // instances boot in parallel (server + workers + mcp-client) and race on
+  // `security` CLI calls. Only safe to flip ON for an install that has no
+  // existing secrets.enc, or one that was created under file-fallback to
+  // begin with; flipping it ON for a keychain-backed install will orphan
+  // every secret in secrets.enc.
+  if (process.env.LAX_DISABLE_OS_KEYCHAIN === "1") {
+    logger.info("[keychain] LAX_DISABLE_OS_KEYCHAIN=1 — skipping OS keychain providers");
+    return { key: fileFallbackGetOrCreate(dataDir), provider: "file-fallback" };
+  }
 
   // Critical safety rule: an EXISTING master key file is load-only. We
   // never auto-rotate on retrieve failure — the previous behavior
@@ -321,6 +347,7 @@ export function getOrCreateMasterKey(dataDir: string): KeychainResult {
 
 /** Check which keychain provider is available on this system */
 export function detectKeychainProvider(): KeychainProvider {
+  if (process.env.LAX_DISABLE_OS_KEYCHAIN === "1") return "file-fallback";
   if (dpapiAvailable()) return "dpapi";
   if (macKeychainAvailable()) return "macos-keychain";
   if (libsecretAvailable()) return "libsecret";

@@ -17,28 +17,6 @@
 //   - feedTTS, flushTTS, stopSpeaking, ttsSentenceBuffer (chat-voice-tts.js)
 //   - detectMood                       (chat-extras.js)
 
-// Sidebar-clear intent detector. Returns true ONLY when the message OPENS
-// with an imperative verb (clear/remove/wipe/empty/hide/delete) and contains
-// BOTH "sidebar" and a conversation/chat keyword within the same sentence.
-// Anchoring to the start avoids false positives like "Grok cleared all my
-// sidebar conversations" (past-tense narration) or "the sidebar conversations
-// are stale" (description). False negatives are fine — the agent path still
-// runs and can succeed. False positives silently nuke the user's sidebar, so
-// the matcher is intentionally narrow.
-const _IMPERATIVE_OPEN_RE = /^\s*(?:please\s+|can\s+you\s+|could\s+you\s+|kindly\s+|just\s+|go\s+ahead\s+and\s+|now\s+)?(?:clear|remove|empty|wipe|hide|delete)\b/i;
-const _SIDEBAR_RE = /\bsidebar\b/i;
-// Require plural or explicit history/log suffix — singular "chat" can mean
-// "this one chat" (handled by per-id delete, not bulk clear).
-const _CONVERSATION_NOUN_RE = /\b(?:conversations|chats|(?:chat|conversation)\s+(?:history|log))\b/i;
-function _isSidebarClearIntent(text) {
-  if (!text || typeof text !== 'string') return false;
-  // First sentence only — "clear my sidebar conversations. also rename foo"
-  // matches; "I'd like to ask about clearing sidebar conversations" doesn't.
-  const head = text.split(/[.?!\n]/)[0] || '';
-  if (!_IMPERATIVE_OPEN_RE.test(head)) return false;
-  return _SIDEBAR_RE.test(head) && _CONVERSATION_NOUN_RE.test(head);
-}
-
 // [chat-diag] frontend → server log sink. Browser console doesn't
 // persist; this POSTs to /api/diag/log so the breadcrumbs land in
 // ~/.lax/logs/server.log. Fire-and-forget so it never blocks the chat
@@ -93,21 +71,6 @@ async function sendMessage() {
   const input = document.getElementById('msg-input');
   const text = input.value.trim();
   if (!text && pendingUploads.length === 0) return;
-
-  // Deterministic intent intercept — fire UI-state mutations directly so
-  // they can't be sabotaged by a model picking the wrong tool or
-  // hallucinating success via `bash echo`. We still send the message to
-  // the agent (so the reply has personality, not a canned line), but we
-  // append a hidden note to finalText below telling the agent the work is
-  // already done and to NOT call any tools — just acknowledge naturally.
-  // The user's displayText stays clean; the note is invisible to them.
-  let _sidebarClearIntentFired = false;
-  if (text && _isSidebarClearIntent(text)) {
-    try {
-      if (typeof handleSidebarClearChats === 'function') handleSidebarClearChats();
-      _sidebarClearIntentFired = true;
-    } catch (e) { console.warn('[intent-intercept] sidebar_clear failed', e); }
-  }
   // Wait for any in-flight uploads to finish before capturing attachments —
   // images need their server URL resolved, otherwise the backend filters them out
   // (see prepare-request.ts: `if (a.isImage && a.url)`).
@@ -133,20 +96,7 @@ async function sendMessage() {
   const uploadPrefix = nonImageFiles.length
     ? `Attached files:\n${nonImageFiles.map(f => `- ${f.name} (${f.size} bytes)`).join('\n')}\n\n`
     : (hasImages && !text ? '' : '');
-  // Hidden agent note when the intent intercept already fired the action.
-  // Goes to finalText (agent sees it) but NOT displayText (user doesn't).
-  // Encourages the agent to call sidebar_clear so the tool card renders
-  // (visible activity > silent confirmation), while making clear the call
-  // is idempotent — the client-side intercept already cleared the sidebar
-  // and the broadcast event is a no-op when re-fired. If the agent skips
-  // the tool and just replies, the feature still works (action already
-  // done). If the agent tries something destructive like
-  // `http_request DELETE /api/sessions`, the backend alias also routes
-  // to the same no-op.
-  const intentNote = _sidebarClearIntentFired
-    ? "\n\n[SYSTEM NOTE — not from the user: The sidebar Conversations list has been pre-cleared by a client-side intent intercept; backend session files at ~/.lax/sessions/ are preserved. Please CALL the `sidebar_clear` tool now to log the action visibly — the call is idempotent and safe (the WS broadcast no-ops if chats are already tombstoned). Then give the user a brief, natural acknowledgment in your own voice (one sentence). Do NOT call `http_request`, `bash`, or any other tool — use `sidebar_clear` exactly once and stop.]"
-    : "";
-  const finalText = uploadPrefix + text + intentNote;
+  const finalText = uploadPrefix + text;
   const displayText = text || '';
   input.value = ''; input.style.height = 'auto';
   pendingUploads = []; renderUploadPreviews();
@@ -159,11 +109,7 @@ async function sendMessage() {
   const empty = document.getElementById('empty'); if (empty) empty.remove();
   const msgTime = Date.now();
   const userMsgEl = addMessageEl('user', displayText, msgAttachments, msgTime);
-  // Store the original user text in chat history, NOT finalText. The
-  // intent-intercept note is a one-shot signal to the current agent call;
-  // persisting it would leak the bracketed system text into the chat
-  // bubble on next render and into future agent context windows.
-  activeChat.messages.push({ role: 'user', content: uploadPrefix + text, attachments: msgAttachments, timestamp: msgTime });
+  activeChat.messages.push({ role: 'user', content: finalText, attachments: msgAttachments, timestamp: msgTime });
   const msgEl = addMessageEl('assistant', '');
   let bodyEl = msgEl.querySelector('.msg-body');
   bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';

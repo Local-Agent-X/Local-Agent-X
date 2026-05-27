@@ -2,43 +2,55 @@
 // (non-idempotent, user-visible) tool call. Used by the chat route to
 // suppress auto-failover after side effects — replaying the turn on a
 // different provider would re-execute the tool (double email, double
-// delete, double API call).
+// delete, double API call) — and by the mid-turn-stale safety brake to
+// avoid aborting turns that already dispatched real work.
 //
 // Philosophy: be conservative. When in doubt, treat as committing. Missing
 // an auto-failover is annoying; double-sending an email is worse.
+//
+// Single source of truth: tool-registry.ts. Each tool's `risk` decides
+// whether it commits. The hand-maintained list this module used to keep
+// drifted: agency_create, task_create, issue_create, agent_team_*, and
+// most protocol/mission/spreadsheet writers were missing, so the safety
+// brake didn't credit them as progress and aborted turns mid-work
+// (Nutrishop demo, 2026-05-27). Deriving from the registry kills that
+// drift class — adding a tool to tool-registry.ts is the one and only
+// step needed for every downstream consumer.
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import { TOOLS, type ToolRisk } from "./tool-registry.js";
 
-/** Tools whose invocation MUST NOT be auto-replayed on a fallback provider. */
-const COMMITTING_TOOLS = new Set<string>([
-  "email_send",
-  "email_setup",
-  "secret_save",
-  "secret_delete",
-  "browser_capture_to_secret",
-  "browser_fill_from_secret",
-  "sidebar_pin",
-  "sidebar_unpin",
-  "sidebar_clear",
-  "memory_save",
-  "memory_update_profile",
-  "memory_set_user_field",
-  "remember",
-  "update_fact",
-  "forget",
-  "cron_create",
-  "cron_delete",
-  "cron_update",
-  "agent_spawn",
-  "delegate",
-  "operation_start",
-  "build_app",
-  "write",
-  "edit",
-  "bash",
-  "self_edit",
-  "whatsapp_send",
-  "telegram_send",
+/** Risk classes that count as committing for failover + progress checks. */
+const COMMITTING_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>([
+  "workspace-write",
+  "network-write",
+  "shell",
+  "destructive",
+  "money",
+  "external-comms",
+  "secrets",
+]);
+
+/** Tools whose risk classification is too coarse — they need arg-aware
+ *  inspection to decide committingness. detectCommittingCalls handles
+ *  these properly with method/action checks; at the name-only
+ *  isCommittingTool layer we conservatively return false (matches the
+ *  pre-derivation behavior). Callers with args available should prefer
+ *  detectCommittingCalls. */
+const ARG_AWARE_TOOLS: ReadonlySet<string> = new Set<string>([
+  "http_request",  // GET/HEAD idempotent; POST/PUT/DELETE/PATCH committing
+  "browser",       // click on commit-style buttons is committing
+]);
+
+/** Explicit overrides for tool names referenced elsewhere in the codebase
+ *  (loop-detection.ts, action-claim.ts) that are NOT in tool-registry.ts.
+ *  Either legacy names from a prior rename or planned-but-unimplemented
+ *  tools. When one of these lands in the registry with a committing-risk
+ *  classification, remove it from here — the derivation will cover it. */
+const LEGACY_COMMITTING_OVERRIDES: ReadonlySet<string> = new Set<string>([
+  "secret_save", "secret_delete",
+  "cron_create", "cron_delete", "cron_update",
+  "whatsapp_send", "telegram_send",
 ]);
 
 const COMMITTING_HTTP_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
@@ -69,7 +81,10 @@ export function detectCommittingCalls(
       const name = tc.function?.name || "";
       if (!name) continue;
 
-      if (COMMITTING_TOOLS.has(name)) {
+      // Arg-aware checks below own http_request / browser. Everything else
+      // defers to isCommittingTool, which derives from the registry plus
+      // legacy overrides.
+      if (!ARG_AWARE_TOOLS.has(name) && isCommittingTool(name)) {
         findings.push({ toolName: name, reason: `${name} is non-idempotent` });
         continue;
       }
@@ -114,8 +129,19 @@ export function turnPerformedCommittingCall(
   return detectCommittingCalls(messages).length > 0;
 }
 
-/** True if a single tool name is in the committing set. Lets detectors
- *  ask "did this turn commit anything yet?" without re-scanning messages. */
+/** True if a single tool name is committing. Lets detectors ask "did this
+ *  turn commit anything yet?" without re-scanning messages.
+ *
+ *  Decision order:
+ *    1. Legacy override Set (for tools not yet in tool-registry).
+ *    2. Arg-aware tools (http_request, browser) return false here —
+ *       they need args for an accurate verdict; use detectCommittingCalls
+ *       when args are in scope.
+ *    3. Registry-derived: any tool whose `risk` is in COMMITTING_RISKS. */
 export function isCommittingTool(name: string): boolean {
-  return COMMITTING_TOOLS.has(name);
+  if (LEGACY_COMMITTING_OVERRIDES.has(name)) return true;
+  if (ARG_AWARE_TOOLS.has(name)) return false;
+  const entry = TOOLS[name];
+  if (!entry) return false;
+  return COMMITTING_RISKS.has(entry.risk);
 }

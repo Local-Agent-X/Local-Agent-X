@@ -125,11 +125,22 @@ function _sendMessageWs(ctx) {
             ctx.bodyEl.appendChild(note);
           }
           break;
-        case 'error':
+        case 'error': {
           if (saveInterval) clearInterval(saveInterval);
-          ctx.content += '\n\nError: ' + event.message;
-          if (viewing) ctx.bodyEl.innerHTML = md(ctx.content);
+          // Safety net against duplicate WS deliveries / fan-out paths
+          // (mirrors apps-ide-ws.js). Server-side emitErrorOnce dedups
+          // per (op, code, message), but multiple WS subscribers or
+          // accumulated handlers can still deliver the same event to
+          // this client more than once — 2026-05-27 Nutrishop trace
+          // stacked 4 identical "Error: middleware-abort..." bubbles
+          // from a single server-side error event.
+          const errText = '\n\nError: ' + event.message;
+          if (!ctx.content.endsWith(errText)) {
+            ctx.content += errText;
+            if (viewing) ctx.bodyEl.innerHTML = md(ctx.content);
+          }
           break;
+        }
         case 'done': {
           chatWs.removeEventListener('message', wsHandler);
           if (saveInterval) clearInterval(saveInterval);

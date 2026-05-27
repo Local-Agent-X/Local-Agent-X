@@ -98,9 +98,23 @@ function saveProjects() {
   try { localStorage.setItem('sax_projects_cache_v1', JSON.stringify(projects)); } catch {}
 }
 
-// Tombstones: track deleted session IDs so sync doesn't resurrect them
-function getDeletedIds() { try { return JSON.parse(localStorage.getItem('sax_deleted_sessions') || '{}'); } catch { return {}; } }
+// Tombstones: track deleted session IDs so sync doesn't resurrect them.
+// Integration sessions (wa-/tg-/sms-) are protected — they drive the
+// Messaging panel, not Conversations, and "clear sidebar" semantics
+// should never affect them. Filter on every read so stale bad tombstones
+// from earlier versions self-heal without a migration.
+function _isIntegrationSessionId(id) {
+  return typeof id === 'string' && (id.startsWith('wa-') || id.startsWith('tg-') || id.startsWith('sms-'));
+}
+function getDeletedIds() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('sax_deleted_sessions') || '{}');
+    for (const k of Object.keys(raw)) { if (_isIntegrationSessionId(k)) delete raw[k]; }
+    return raw;
+  } catch { return {}; }
+}
 function markDeleted(id) {
+  if (_isIntegrationSessionId(id)) return; // never tombstone integrations
   const deleted = getDeletedIds();
   deleted[id] = Date.now();
   // Prune tombstones older than 30 days

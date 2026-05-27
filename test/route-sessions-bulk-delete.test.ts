@@ -23,8 +23,8 @@ function makeCtx() {
   return { ctx, deleted };
 }
 
-describe("DELETE /api/sessions — bulk delete disabled", () => {
-  it("returns 405 and points the caller at sidebar_clear; nothing is deleted", async () => {
+describe("DELETE /api/sessions — aliased to sidebar_clear", () => {
+  it("returns 200 + hidden:true + deleted:0; nothing on disk is touched", async () => {
     const { ctx, deleted } = makeCtx();
     const url = new URL("http://test/api/sessions");
     const req = mockJsonRequest({});
@@ -33,11 +33,13 @@ describe("DELETE /api/sessions — bulk delete disabled", () => {
     const handled = await handleSessionRoutes("DELETE", url, req, cap.res, ctx, "user");
 
     expect(handled).toBe(true);
-    expect(cap.status).toBe(405);
+    expect(cap.status).toBe(200);
     const body = JSON.parse(cap.body);
-    expect(body.error).toMatch(/disabled/i);
-    expect(body.message).toMatch(/sidebar_clear/);
-    expect(deleted).toEqual([]); // nothing on disk was touched
+    expect(body.ok).toBe(true);
+    expect(body.hidden).toBe(true);
+    expect(body.deleted).toBe(0);
+    expect(body.note).toMatch(/sidebar_clear/);
+    expect(deleted).toEqual([]); // disk untouched regardless of which tool the model picked
   });
 });
 

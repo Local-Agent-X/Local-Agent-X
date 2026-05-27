@@ -143,6 +143,28 @@ describe("recallRecentFacts candidate-window sizing", () => {
     }
   });
 
+  it("minConfidence is inclusive — 0.4 in, 0.39 out", () => {
+    const now = Date.now();
+    const rOn = memory.rememberFact("fact exactly at the floor", {
+      kind: "observation",
+      confidence: 0.4,
+    });
+    expect(rOn.ok).toBe(true);
+    setFactClock(rOn.fact!.id!, now, now);
+
+    const rUnder = memory.rememberFact("fact a hair under the floor", {
+      kind: "observation",
+      confidence: 0.39,
+    });
+    expect(rUnder.ok).toBe(true);
+    setFactClock(rUnder.fact!.id!, now, now);
+
+    const result = memory.recallRecentFacts({ limit: 10, minConfidence: 0.4, kinds: ["observation"] });
+    const ids = result.map((f) => f.id);
+    expect(ids).toContain(rOn.fact!.id);
+    expect(ids).not.toContain(rUnder.fact!.id);
+  });
+
   it("dedups same-(kind,primary-entity) facts after rerank — highest hot_score wins", () => {
     const now = Date.now();
 

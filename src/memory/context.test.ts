@@ -315,4 +315,42 @@ describe("<core_memory> cap / heading order / reinforcement", () => {
     expect(block).not.toContain("<core_memory>");
     expect(block).not.toContain("</core_memory>");
   });
+
+  it("separates populated buckets with exactly one blank line — no orphan whitespace", async () => {
+    const now = Date.now();
+    // Populate 2 of 4 buckets so the join contract is observable.
+    const r1 = memory.rememberFact("owns NutriShop McKinney", { kind: "world", confidence: 0.9 });
+    expect(r1.ok).toBe(true);
+    setFactClock(r1.fact!.id!, now, now);
+    const r2 = memory.rememberFact("shipped Calenbella last week", { kind: "experience", confidence: 0.9 });
+    expect(r2.ok).toBe(true);
+    setFactClock(r2.fact!.id!, now, now);
+
+    const block = await buildContextBlock(memory, { skipDailyLog: true });
+    const core = extractCoreMemory(block);
+
+    // Pin the inter-bucket separator: last bullet of "world" → blank line →
+    // next "## " heading. Catches a regression that flattens to `\n## ` or
+    // expands to `\n\n\n## `.
+    expect(core).toMatch(/^- owns NutriShop McKinney\n\n## Recent in their life$/m);
+    expect(core).not.toMatch(/\n\n\n/);
+  });
+
+  it("renders multiple entities with ', @' separator", async () => {
+    const now = Date.now();
+    // Single-entity baseline.
+    const rOne = memory.rememberFact("loves hiking @peter", { kind: "observation", confidence: 0.9 });
+    expect(rOne.ok).toBe(true);
+    setFactClock(rOne.fact!.id!, now, now);
+    // Two-entity case. parseFactLine extracts every @-mention into entities[].
+    const rTwo = memory.rememberFact("adopted puppies @gigi @rex", { kind: "experience", confidence: 0.9 });
+    expect(rTwo.ok).toBe(true);
+    setFactClock(rTwo.fact!.id!, now, now);
+
+    const block = await buildContextBlock(memory, { skipDailyLog: true });
+    const core = extractCoreMemory(block);
+
+    expect(core).toMatch(/loves hiking \(@peter\)/);
+    expect(core).toMatch(/adopted puppies \(@gigi, @rex\)/);
+  });
 });

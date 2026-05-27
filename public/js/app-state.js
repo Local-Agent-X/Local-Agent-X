@@ -4,6 +4,10 @@
 // app-sidebar-render, app.js) read and reassign them by bare identifier.
 // Persistence helpers live here too so all storage keys are in one place.
 
+// One-shot cleanup: tag system was removed 2026-05-26. Drop the orphaned
+// localStorage keys so existing users don't carry dead state forever.
+try { localStorage.removeItem('sax_chat_tags'); localStorage.removeItem('sax_all_tags'); } catch {}
+
 let chats = loadChatsFromCache(); // Start with cache, then fetch from server
 let projects = loadProjects();
 // Mirror to window so cross-script consumers (chat-status-bar's project
@@ -11,18 +15,19 @@ let projects = loadProjects();
 try { window.projects = projects; window.activeChat = null; } catch {}
 let activeChat = null;
 let expandedProjects = new Set();
+let projectsCollapsed = (() => { try { return localStorage.getItem('sax_projects_collapsed') === '1'; } catch { return false; } })();
+let projectLastAccessed = (() => { try { return JSON.parse(localStorage.getItem('sax_project_last_accessed') || '{}'); } catch { return {}; } })();
+let mobileSectionCollapsed = (() => { try { return localStorage.getItem('sax_mobile_collapsed') === '1'; } catch { return false; } })();
+function saveProjectsCollapsed() { try { localStorage.setItem('sax_projects_collapsed', projectsCollapsed ? '1' : '0'); } catch {} }
+function saveProjectLastAccessed() { try { localStorage.setItem('sax_project_last_accessed', JSON.stringify(projectLastAccessed)); } catch {} }
+function saveMobileSectionCollapsed() { try { localStorage.setItem('sax_mobile_collapsed', mobileSectionCollapsed ? '1' : '0'); } catch {} }
+function touchProject(id) { if (!id) return; projectLastAccessed[id] = Date.now(); saveProjectLastAccessed(); }
 let serverSyncing = false; // Prevent save loops
 let chatSearchQuery = ''; // Chat search filter
 let pinnedChatIds = loadPinnedChats(); // Pinned chat IDs
-let chatTags = loadChatTags(); // {chatId: [tags]}
-let allTags = loadAllTags(); // All known tags
-let activeTagFilter = ''; // Current tag filter
 
 function loadPinnedChats() { try { return JSON.parse(localStorage.getItem('sax_pinned_chats') || '[]'); } catch { return []; } }
 function savePinnedChats() { localStorage.setItem('sax_pinned_chats', JSON.stringify(pinnedChatIds)); }
-function loadChatTags() { try { return JSON.parse(localStorage.getItem('sax_chat_tags') || '{}'); } catch { return {}; } }
-function saveChatTags() { localStorage.setItem('sax_chat_tags', JSON.stringify(chatTags)); localStorage.setItem('sax_all_tags', JSON.stringify(allTags)); }
-function loadAllTags() { try { return JSON.parse(localStorage.getItem('sax_all_tags') || '["work","personal","research","debug"]'); } catch { return ['work','personal','research','debug']; } }
 
 // Cache-only load (instant, for page load)
 function loadChatsFromCache() { try { return JSON.parse(localStorage.getItem('sax_chats_v2') || '[]'); } catch { return []; } }

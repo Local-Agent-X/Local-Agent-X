@@ -3,54 +3,13 @@
 // All state lives in app-state.js; sync helpers in app-sync.js. This file is
 // purely user-driven mutations + the small menus that drive them.
 
-// ── Tag / pin / search actions ──
+// ── Pin / search actions ──
 function togglePinChat(id, e) {
   e.stopPropagation();
   const idx = pinnedChatIds.indexOf(id);
   if (idx >= 0) pinnedChatIds.splice(idx, 1);
   else pinnedChatIds.push(id);
   savePinnedChats(); renderSidebar();
-}
-
-function addTagToChat(chatId, tag, e) {
-  if (e) e.stopPropagation();
-  if (!chatTags[chatId]) chatTags[chatId] = [];
-  if (!chatTags[chatId].includes(tag)) chatTags[chatId].push(tag);
-  if (!allTags.includes(tag)) allTags.push(tag);
-  saveChatTags(); renderSidebar();
-}
-
-function removeTagFromChat(chatId, tag, e) {
-  if (e) e.stopPropagation();
-  if (chatTags[chatId]) chatTags[chatId] = chatTags[chatId].filter(t => t !== tag);
-  saveChatTags(); renderSidebar();
-}
-
-function showTagMenu(chatId, e) {
-  e.stopPropagation();
-  document.querySelectorAll('.tag-menu').forEach(m => m.remove());
-  const menu = document.createElement('div');
-  menu.className = 'tag-menu';
-  const currentTags = chatTags[chatId] || [];
-  menu.innerHTML = allTags.map(t =>
-    `<div class="tag-menu-item ${currentTags.includes(t) ? 'active' : ''}" onclick="${currentTags.includes(t) ? `removeTagFromChat('${esc(chatId)}','${esc(t)}',event)` : `addTagToChat('${esc(chatId)}','${esc(t)}',event)`}">${esc(t)}</div>`
-  ).join('') + `<div class="tag-menu-item add-tag" onclick="promptNewTag('${esc(chatId)}',event)">+ New tag</div>`;
-  e.target.closest('.chat-item').appendChild(menu);
-  setTimeout(() => document.addEventListener('click', function h() { menu.remove(); document.removeEventListener('click', h); }), 10);
-}
-
-function promptNewTag(chatId, e) {
-  e.stopPropagation();
-  const tag = prompt('New tag name:');
-  if (!tag) return;
-  const cleaned = tag.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '');
-  if (!cleaned) return;
-  addTagToChat(chatId, cleaned);
-}
-
-function filterByTag(tag) {
-  activeTagFilter = (activeTagFilter === tag) ? '' : tag;
-  renderSidebar();
 }
 
 function onChatSearch(val) {
@@ -98,39 +57,104 @@ async function deleteProject(id, e) {
 }
 
 function toggleProject(id) {
-  if (expandedProjects.has(id)) expandedProjects.delete(id);
-  else expandedProjects.add(id);
+  if (expandedProjects.has(id)) {
+    expandedProjects.delete(id);
+  } else {
+    expandedProjects.add(id);
+    touchProject(id);
+  }
   renderSidebar();
 }
 
 function projectChatsCount(pid) { return chats.filter(c => c.projectId === pid).length; }
 
-// ── Move / tag context menu (mixed targets) ──
+function toggleProjectsSection(e) {
+  // Collapse-button click on the + is suppressed via stopPropagation in the
+  // header markup, so this only fires for header-body clicks.
+  if (e) { e.stopPropagation(); }
+  projectsCollapsed = !projectsCollapsed;
+  saveProjectsCollapsed();
+  renderSidebar();
+}
+
+function toggleMobileSection(e) {
+  if (e) { e.stopPropagation(); }
+  mobileSectionCollapsed = !mobileSectionCollapsed;
+  saveMobileSectionCollapsed();
+  renderSidebar();
+}
+
+function showAllProjectsMenu(e) {
+  if (e) { e.stopPropagation(); }
+  document.querySelectorAll('.projects-flyout').forEach(m => m.remove());
+  const flyout = document.createElement('div');
+  flyout.className = 'projects-flyout';
+  const sorted = [...projects].sort((a, b) => projectSortKey(b) - projectSortKey(a));
+  flyout.innerHTML = sorted.map(p => {
+    const count = projectChatsCount(p.id);
+    return `<div class="projects-flyout-item" onclick="openProjectFromFlyout('${esc(p.id)}',event)">`
+      + `<span class="projects-flyout-name">${esc(p.name)}</span>`
+      + (count ? `<span class="projects-flyout-count">${count}</span>` : '')
+      + `</div>`;
+  }).join('') || '<div class="projects-flyout-empty">No projects</div>';
+  // Anchor to the clicked More button: align top, push horizontally past the sidebar.
+  const anchor = e?.target?.closest('.project-more');
+  document.body.appendChild(flyout);
+  if (anchor) {
+    const rect = anchor.getBoundingClientRect();
+    const sidebar = document.getElementById('sidebar');
+    const sbRight = sidebar ? sidebar.getBoundingClientRect().right : rect.right;
+    flyout.style.top = Math.max(8, rect.top) + 'px';
+    flyout.style.left = (sbRight + 6) + 'px';
+  } else {
+    flyout.style.top = '80px';
+    flyout.style.left = '260px';
+  }
+  setTimeout(() => {
+    document.addEventListener('click', function h(ev) {
+      if (flyout.contains(ev.target)) return;
+      flyout.remove();
+      document.removeEventListener('click', h);
+    });
+  }, 10);
+}
+
+function openProjectFromFlyout(id, e) {
+  if (e) { e.stopPropagation(); }
+  document.querySelectorAll('.projects-flyout').forEach(m => m.remove());
+  // Expand the project so the user sees its chats, and bump its access time
+  // so it surfaces into the top-4 next render.
+  if (!expandedProjects.has(id)) expandedProjects.add(id);
+  touchProject(id);
+  renderSidebar();
+  // Scroll the now-visible project into view.
+  requestAnimationFrame(() => {
+    const items = document.querySelectorAll('#project-list .project-item');
+    for (const item of items) {
+      if (item.getAttribute('onclick')?.includes(`'${id}'`)) {
+        item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        break;
+      }
+    }
+  });
+}
+
+// ── Move-to-project context menu ──
 function showMoveMenu(chatId, e) {
   e.stopPropagation();
   document.querySelectorAll('.move-menu').forEach(m => m.remove());
   const menu = document.createElement('div');
   menu.className = 'move-menu';
   const chat = chats.find(c => c.id === chatId);
-  const currentTags = chatTags[chatId] || [];
-
-  // Show TAG targets first (work/personal/research/debug — these are what users
-  // actually mean when they say "move this chat to research"). Current tags
-  // show as highlighted with a remove option. Then show projects if any.
-  const tagRows = allTags.map(t => {
-    const isActive = currentTags.includes(t);
-    return `<div class="move-menu-item${isActive ? ' active' : ''}" onclick="${isActive ? `removeTagFromChat('${esc(chatId)}','${esc(t)}',event)` : `addTagToChat('${esc(chatId)}','${esc(t)}',event)`}">${isActive ? '✓ ' : ''}${esc(t)}</div>`;
-  }).join('');
 
   const projectRows = projects.map(p =>
     `<div class="move-menu-item" onclick="moveChat('${esc(chatId)}','${esc(p.id)}',event)">&#128193; ${esc(p.name)}</div>`
   ).join('');
 
-  const divider = (tagRows && projectRows) ? '<div class="move-menu-divider"></div>' : '';
   const removeRow = chat?.projectId ? `<div class="move-menu-item remove" onclick="moveChat('${esc(chatId)}','',event)">Remove from project</div>` : '';
 
-  menu.innerHTML = tagRows + divider + projectRows + removeRow;
-  if (!menu.innerHTML) menu.innerHTML = '<div class="move-menu-item" style="color:var(--muted)">No categories yet</div>';
+  menu.innerHTML = projectRows + removeRow;
+  if (!menu.innerHTML) menu.innerHTML = '<div class="move-menu-item" style="color:var(--muted)">No projects yet</div>';
   e.target.closest('.chat-item').appendChild(menu);
   setTimeout(() => document.addEventListener('click', function h() { menu.remove(); document.removeEventListener('click', h); }), 10);
 }
@@ -183,12 +207,14 @@ function focusChatInput() {
 function newChatInProject(projectId, e) {
   if (e) { e.stopPropagation(); e.preventDefault(); }
   if (!projectId) return;
+  touchProject(projectId);
   newChat(projectId);
 }
 
 function selectChat(id) {
   activeChat = chats.find(c => c.id === id) || null;
   try { window.activeChat = activeChat; } catch {}
+  if (activeChat && activeChat.projectId) touchProject(activeChat.projectId);
   renderSidebar();
   try { if (typeof window.updateStatusBar === 'function') window.updateStatusBar(); } catch {}
   navigate('chat');

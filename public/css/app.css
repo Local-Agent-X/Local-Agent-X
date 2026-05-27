@@ -131,6 +131,22 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 .project-new-chat:hover{color:var(--accent);background:var(--accent-dim,rgba(64,240,240,.12))}
 .project-chats{display:none;padding:2px 0 4px 20px}
 .project-item.expanded+.project-chats{display:block}
+.projects-header,.mobile-header{cursor:pointer;user-select:none}
+.projects-header:hover,.mobile-header:hover{background:var(--hover)}
+.projects-chevron,.mobile-chevron{display:inline-block;font-size:.6rem;margin-right:4px;color:var(--muted);transition:transform .15s}
+#projects-section.collapsed #project-list{display:none}
+#mobile-section{padding:4px 0;border-bottom:1px solid var(--border)}
+.mobile-header{padding:6px 12px 4px}
+.mobile-sub-header{padding:6px 12px 2px 20px}
+.mobile-sub-header span{font-size:.62rem!important;opacity:.75}
+.project-more{padding:6px 10px 6px 12px;cursor:pointer;font-size:.72rem;color:var(--muted);display:flex;align-items:center;gap:6px;font-family:var(--mono);letter-spacing:.5px;transition:all .15s}
+.project-more:hover{background:var(--hover);color:var(--accent)}
+.projects-flyout{position:fixed;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;min-width:220px;max-width:320px;max-height:60vh;overflow-y:auto;z-index:1500;box-shadow:0 6px 24px rgba(0,0,0,.55);scrollbar-width:thin;scrollbar-color:#222 transparent}
+.projects-flyout-item{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:.78rem;color:var(--muted);cursor:pointer;border-radius:6px;transition:all .12s}
+.projects-flyout-item:hover{background:var(--hover);color:var(--text)}
+.projects-flyout-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.projects-flyout-count{font-size:.65rem;color:var(--muted);font-family:var(--mono)}
+.projects-flyout-empty{padding:10px 12px;font-size:.72rem;color:var(--muted)}
 .chat-group-label{padding:6px 12px 2px;font-size:.6rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
 #chats-section{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
 #chats-header{padding:8px 12px 4px;font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px;flex-shrink:0}
@@ -644,21 +660,6 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 /* ── Pin indicator (feature 88) ── */
 .chat-item.pinned{border-left:2px solid var(--warn)}
 .pin-icon{font-size:.6rem;vertical-align:middle}
-
-/* ── Tag pills (feature 89) ── */
-.tag-filter-bar{display:flex;gap:4px;padding:4px 4px 8px;flex-wrap:wrap}
-.tag-pill{font-family:var(--mono);font-size:.6rem;padding:3px 8px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;transition:all .15s}
-.tag-pill:hover{border-color:var(--accent);color:var(--text)}
-.tag-pill.active{background:var(--accent);color:var(--bg);border-color:var(--accent)}
-.chat-tags-inline{display:none;gap:3px;flex-wrap:wrap;margin-left:auto}
-.chat-item:hover .chat-tags-inline,.chat-item.active .chat-tags-inline{display:flex}
-.tag-pill-sm{font-family:var(--mono);font-size:.55rem;padding:1px 5px;border-radius:6px;background:var(--surface-2);color:var(--muted);white-space:nowrap}
-.tag-menu{position:absolute;right:0;top:100%;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px;min-width:120px;z-index:100;box-shadow:0 4px 16px rgba(0,0,0,.5)}
-.tag-menu-item{padding:5px 10px;font-size:.7rem;color:var(--muted);cursor:pointer;border-radius:4px;font-family:var(--mono)}
-.tag-menu-item:hover{background:var(--hover);color:var(--text)}
-.tag-menu-item.active{color:var(--accent)}
-.tag-menu-item.active::before{content:'\2713 ';color:var(--accent)}
-.tag-menu-item.add-tag{color:var(--accent);border-top:1px solid var(--border);margin-top:2px;padding-top:6px}
 
 /* ── Code block copy button (feature 91) ── */
 .code-block-wrapper{position:relative;margin:8px 0}

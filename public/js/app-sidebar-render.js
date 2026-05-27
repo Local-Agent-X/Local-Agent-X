@@ -3,40 +3,62 @@
 // app-state.js; called from action handlers and the sync layer whenever
 // state changes.
 
+const PROJECTS_VISIBLE_LIMIT = 4;
+
+function projectSortKey(p) {
+  // Last-accessed first, then fall back to project's own updatedAt/createdAt
+  // so projects with no recorded access still have a stable order.
+  return projectLastAccessed[p.id] || p.updatedAt || p.createdAt || 0;
+}
+
+function renderProjectRow(p) {
+  const expanded = expandedProjects.has(p.id);
+  const count = projectChatsCount(p.id);
+  const pChats = chats.filter(c => c.projectId === p.id);
+  return `
+    <div class="project-item ${expanded ? 'expanded' : ''}" onclick="toggleProject('${p.id}')">
+      <span class="project-arrow">&#9654;</span>
+      <span class="project-name">${esc(p.name)}</span>
+      ${count ? `<span class="project-count">${count}</span>` : ''}
+      <button class="project-new-chat" onclick="newChatInProject('${p.id}',event)" title="New chat in this project">+</button>
+      <button class="project-delete" onclick="deleteProject('${p.id}',event)" title="Delete">&times;</button>
+    </div>
+    <div class="project-chats">
+      ${pChats.map(c => `
+        <div class="chat-item ${activeChat && activeChat.id === c.id ? 'active' : ''}" onclick="selectChat('${c.id}')">
+          <span class="chat-dot${typeof isChatActive==='function'&&isChatActive(c.id)?' active-pulse':''}"></span>
+          <span class="chat-title">${esc(c.title)}</span>
+          <span class="chat-actions">
+            <button class="chat-action-btn" onclick="showMoveMenu('${c.id}',event)" title="Move">&#8618;</button>
+            <button class="chat-action-btn delete" onclick="deleteChat('${c.id}',event)" title="Delete">&times;</button>
+          </span>
+        </div>
+      `).join('')}
+      ${pChats.length === 0 ? '<div style="padding:4px 8px;font-size:.7rem;color:var(--muted)">No chats</div>' : ''}
+    </div>
+  `;
+}
+
 function renderProjects() {
+  const section = document.getElementById('projects-section');
+  if (section) section.classList.toggle('collapsed', !!projectsCollapsed);
+  const chevron = section?.querySelector('.projects-chevron');
+  if (chevron) chevron.innerHTML = projectsCollapsed ? '&#9656;' : '&#9662;';
+
   const el = document.getElementById('project-list');
   if (!el) return;
+  if (projectsCollapsed) { el.innerHTML = ''; return; }
   if (projects.length === 0) {
     el.innerHTML = '<div style="padding:4px 12px;font-size:.72rem;color:var(--muted)">No projects yet</div>';
     return;
   }
-  el.innerHTML = projects.map(p => {
-    const expanded = expandedProjects.has(p.id);
-    const count = projectChatsCount(p.id);
-    const pChats = chats.filter(c => c.projectId === p.id);
-    return `
-      <div class="project-item ${expanded ? 'expanded' : ''}" onclick="toggleProject('${p.id}')">
-        <span class="project-arrow">&#9654;</span>
-        <span class="project-name">${esc(p.name)}</span>
-        ${count ? `<span class="project-count">${count}</span>` : ''}
-        <button class="project-new-chat" onclick="newChatInProject('${p.id}',event)" title="New chat in this project">+</button>
-        <button class="project-delete" onclick="deleteProject('${p.id}',event)" title="Delete">&times;</button>
-      </div>
-      <div class="project-chats">
-        ${pChats.map(c => `
-          <div class="chat-item ${activeChat && activeChat.id === c.id ? 'active' : ''}" onclick="selectChat('${c.id}')">
-            <span class="chat-dot${typeof isChatActive==='function'&&isChatActive(c.id)?' active-pulse':''}"></span>
-            <span class="chat-title">${esc(c.title)}</span>
-            <span class="chat-actions">
-              <button class="chat-action-btn" onclick="showMoveMenu('${c.id}',event)" title="Move">&#8618;</button>
-              <button class="chat-action-btn delete" onclick="deleteChat('${c.id}',event)" title="Delete">&times;</button>
-            </span>
-          </div>
-        `).join('')}
-        ${pChats.length === 0 ? '<div style="padding:4px 8px;font-size:.7rem;color:var(--muted)">No chats</div>' : ''}
-      </div>
-    `;
-  }).join('');
+  const sorted = [...projects].sort((a, b) => projectSortKey(b) - projectSortKey(a));
+  const visible = sorted.slice(0, PROJECTS_VISIBLE_LIMIT);
+  const hiddenCount = Math.max(0, sorted.length - visible.length);
+  const moreBtn = hiddenCount > 0
+    ? `<div class="project-more" onclick="showAllProjectsMenu(event)">&#8943; More (${hiddenCount})</div>`
+    : '';
+  el.innerHTML = visible.map(renderProjectRow).join('') + moreBtn;
 }
 
 function renderChatList() {
@@ -53,11 +75,6 @@ function renderChatList() {
     });
   }
 
-  // Apply tag filter
-  if (activeTagFilter) {
-    unassigned = unassigned.filter(c => (chatTags[c.id] || []).includes(activeTagFilter));
-  }
-
   const waChats = unassigned.filter(c => c.id && c.id.startsWith('wa-'));
   const tgChats = unassigned.filter(c => c.id && c.id.startsWith('tg-'));
   const regularChats = unassigned.filter(c => !c.id || (!c.id.startsWith('wa-') && !c.id.startsWith('tg-')));
@@ -71,12 +88,10 @@ function renderChatList() {
 
   const renderItem = (c) => {
     const isPinned = pinnedChatIds.includes(c.id);
-    const tags = chatTags[c.id] || [];
     return `
     <div class="chat-item ${activeChat && activeChat.id === c.id ? 'active' : ''}${isPinned ? ' pinned' : ''}" onclick="selectChat('${c.id}')" role="option" aria-selected="${activeChat && activeChat.id === c.id}">
       <span class="chat-dot${typeof isChatActive==='function'&&isChatActive(c.id)?' active-pulse':''}"></span>
       <span class="chat-title">${isPinned ? '<span class="pin-icon" title="Pinned">&#128204;</span> ' : ''}${esc(c.title)}</span>
-      ${tags.length ? `<span class="chat-tags-inline">${tags.map(t => `<span class="tag-pill-sm">${esc(t)}</span>`).join('')}</span>` : ''}
       <span class="chat-actions">
         <button class="chat-action-btn" onclick="renameChat('${c.id}',event)" title="Rename" aria-label="Rename chat">&#9998;</button>
         <button class="chat-action-btn" onclick="showMoveMenu('${c.id}',event)" title="Move to project" aria-label="Move chat to project">&#128193;</button>
@@ -105,12 +120,17 @@ function renderChatList() {
     else { tgSection.style.display = 'none'; }
   }
 
-  // Tag filter bar
-  let tagBarHtml = '';
-  if (allTags.length > 0) {
-    tagBarHtml = `<div class="tag-filter-bar" role="toolbar" aria-label="Filter by tag">${allTags.map(t =>
-      `<button class="tag-pill${activeTagFilter === t ? ' active' : ''}" onclick="filterByTag('${esc(t)}')" aria-pressed="${activeTagFilter === t}">${esc(t)}</button>`
-    ).join('')}</div>`;
+  // Mobile wrapper: hide entirely when both subsections are empty; otherwise
+  // honor the persisted collapse state. Body display toggles inside the wrapper.
+  const mobileSection = document.getElementById('mobile-section');
+  const mobileBody = document.getElementById('mobile-body');
+  if (mobileSection) {
+    const hasAny = waChats.length > 0 || tgChats.length > 0;
+    mobileSection.style.display = hasAny ? '' : 'none';
+    mobileSection.classList.toggle('collapsed', !!mobileSectionCollapsed);
+    const chev = mobileSection.querySelector('.mobile-chevron');
+    if (chev) chev.innerHTML = mobileSectionCollapsed ? '&#9656;' : '&#9662;';
+    if (mobileBody) mobileBody.style.display = mobileSectionCollapsed ? 'none' : '';
   }
 
   // Group regular conversations by date
@@ -129,7 +149,7 @@ function renderChatList() {
     else groups.older.push(c);
   }
 
-  let html = tagBarHtml;
+  let html = '';
   const renderGroup = (label, items) => {
     if (items.length === 0) return '';
     return `<div class="chat-group-label">${label}</div>` + items.map(renderItem).join('');

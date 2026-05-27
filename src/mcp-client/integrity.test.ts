@@ -102,6 +102,14 @@ describe("hashCommandBinary", () => {
     expect(hashCommandBinary(f1)).not.toBe(hashCommandBinary(f2));
   });
 
+  it("throws on a 0-byte file rather than returning the empty-string digest", () => {
+    // SHA-256 of zero bytes is a known constant; returning it would let any
+    // 0-byte file pass once trust-on-first-use stamped that constant in.
+    const f = join(tempDir, "empty.bin");
+    writeFileSync(f, Buffer.alloc(0));
+    expect(() => hashCommandBinary(f)).toThrow(/empty or unreadable/);
+  });
+
   it("caps the read at 4MB — changes BEYOND the cap do not alter the digest", () => {
     const cap = __HASH_READ_CAP_BYTES_FOR_TESTS;
     const f = join(tempDir, "big.bin");
@@ -220,5 +228,21 @@ describe("verifyOrTrust — command not found", () => {
     if (!result.ok) {
       expect(result.reason).toMatch(/command not found/);
     }
+  });
+});
+
+describe("verifyOrTrust — unhashable binary", () => {
+  it("returns ok:false on a 0-byte binary without stamping a trust entry", () => {
+    const bin = join(tempDir, "srv-empty-bin");
+    writeFileSync(bin, Buffer.alloc(0));
+    const result = verifyOrTrust("srv-empty", bin);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toMatch(/could not hash binary/);
+      expect(result.reason).toMatch(/empty or unreadable/);
+    }
+    // Critically: no trust-store entry was written, so a later non-empty
+    // binary at the same name still hits the first-trust path correctly.
+    expect(existsSync(__trustStorePathForTests())).toBe(false);
   });
 });

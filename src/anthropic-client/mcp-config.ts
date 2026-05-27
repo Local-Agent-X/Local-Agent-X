@@ -15,6 +15,39 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { createLogger } from "../logger.js";
+import { isCredentialKey } from "../mcp-client/connection.js";
+
+const logger = createLogger("mcp-config");
+
+// Host-env keys the bridge subprocess is allowed to inherit. MCP spec
+// REPLACES parent env (does not merge) when Claude CLI spawns the bridge
+// — without PATH the spawned `node` isn't resolvable and the bridge dies
+// silently before announcing tools (live failure 2026-05-14; see file
+// header). Mirrors the external-MCP allowlist for parity, minus
+// `NODE_PATH`/`SHELL`/`USER`/`LOGNAME` which the bridge has no use for.
+const HOST_ENV_ALLOWLIST: readonly string[] = [
+  // Binary resolution
+  "PATH", "PATHEXT",
+  // Home dir
+  "HOME", "USERPROFILE",
+  // Windows shell + system paths
+  "SYSTEMROOT", "WINDIR", "COMSPEC",
+  // Windows user dirs
+  "APPDATA", "LOCALAPPDATA",
+  // Temp dirs
+  "TMPDIR", "TEMP", "TMP",
+  // Locale
+  "LANG", "LC_ALL", "LC_CTYPE",
+  // Linux XDG dirs
+  "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+];
+
+// `LAX_MCP_TOKEN` matches the shared deny-prefix table (it lives there so
+// external untrusted MCP servers don't receive our auth token). The
+// bridge subprocess IS trusted code and needs the token to call back to
+// LAX, so the strip pass below exempts it for this path only.
+const BRIDGE_EXEMPT_CREDENTIAL_KEYS: ReadonlySet<string> = new Set(["LAX_MCP_TOKEN"]);
 
 export interface McpConfigInput {
   /** Local Agent X server port (bridge calls back over HTTP). */
@@ -47,18 +80,28 @@ export function writeMcpConfig(input: McpConfigInput): string {
     LAX_MCP_URL: `http://127.0.0.1:${input.port}`,
     LAX_MCP_TOKEN: input.token,
     ...(input.sessionId ? { LAX_MCP_SESSION_ID: input.sessionId } : {}),
-    // Host-env passthrough. MCP spec REPLACES parent env (does not merge),
-    // so without these the bridge subprocess can't find `node` and dies
-    // before printing the initialize response. See file header for the
-    // failure mode this prevents.
-    ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
-    ...(process.env.PATHEXT ? { PATHEXT: process.env.PATHEXT } : {}),
-    ...(process.env.USERPROFILE ? { USERPROFILE: process.env.USERPROFILE } : {}),
-    ...(process.env.SYSTEMROOT ? { SYSTEMROOT: process.env.SYSTEMROOT } : {}),
-    ...(process.env.APPDATA ? { APPDATA: process.env.APPDATA } : {}),
-    ...(process.env.LOCALAPPDATA ? { LOCALAPPDATA: process.env.LOCALAPPDATA } : {}),
-    ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
   };
+  // Host-env passthrough (curated allowlist). MCP spec REPLACES parent
+  // env when the CLI spawns the bridge, so vars not in this set are gone.
+  for (const key of HOST_ENV_ALLOWLIST) {
+    const val = process.env[key];
+    if (typeof val === "string" && val.length > 0) env[key] = val;
+  }
+  // Defense-in-depth credential strip. The allowlist above already
+  // excludes credential-shaped keys, but this catches future drift — if a
+  // contributor adds `OPENAI_API_KEY` to the allowlist or a caller starts
+  // injecting via input, the strip refuses it and logs the key name only.
+  // LAX_MCP_TOKEN is exempt because the bridge needs it to authenticate.
+  const stripped: string[] = [];
+  for (const key of Object.keys(env)) {
+    if (isCredentialKey(key, BRIDGE_EXEMPT_CREDENTIAL_KEYS)) {
+      delete env[key];
+      stripped.push(key);
+    }
+  }
+  if (stripped.length > 0) {
+    logger.warn(`bridge-env: stripped credential-pattern keys (use secret vault instead): ${stripped.join(", ")}`);
+  }
 
   const mcpConfig = {
     mcpServers: {

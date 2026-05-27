@@ -185,18 +185,27 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     return true;
   }
 
-  // Bulk delete — REMOVED. The endpoint existed only as a footgun: no UI
-  // button or internal caller used it, but agents (especially weaker
-  // models that don't follow the system prompt) kept reaching for it as
-  // a shortcut when the user asked to "clear the sidebar", destroying
-  // backend session JSONL on disk. Reply with 405 + a pointer to the
-  // correct path, loud enough that the agent reads it and adapts.
-  // For surgical removal of one session, DELETE /api/sessions/<id>
-  // still works below.
+  // Bulk delete — aliased to sidebar_clear semantics. The endpoint used
+  // to wipe every session JSONL on disk; agents that didn't follow the
+  // system prompt reached for it as a shortcut for "clear the sidebar"
+  // and destroyed real data including WhatsApp/Telegram threads. Failing
+  // loudly (405) didn't solve the inconsistency — Codex picked the right
+  // tool, Grok did not, so the destructive call became model-dependent.
+  // Make both paths converge: bulk DELETE here does what sidebar_clear
+  // does (emit the WS event, the browser tombstones non-integration
+  // chats, no disk write). Either tool the model picks now produces the
+  // same safe outcome. Surgical DELETE /api/sessions/<id> below is
+  // unchanged for callers that want to remove ONE session.
   if (method === "DELETE" && url.pathname === "/api/sessions") {
-    json(405, {
-      error: "Bulk DELETE /api/sessions is disabled",
-      message: "To hide all chats from the sidebar Conversations list, call the sidebar_clear tool (frontend-only; backend session files stay intact). To remove one specific session, use DELETE /api/sessions/<id>.",
+    try {
+      const { broadcastAll } = await import("../chat-ws.js");
+      broadcastAll({ type: "sidebar_clear_chats", at: Date.now() });
+    } catch { /* WS broadcast best-effort; the response below is the source of truth */ }
+    json(200, {
+      ok: true,
+      hidden: true,
+      deleted: 0,
+      note: "Bulk DELETE aliased to sidebar_clear — sidebar Conversations hidden via frontend tombstones, backend session files untouched. Use DELETE /api/sessions/<id> for surgical removal.",
     });
     return true;
   }

@@ -106,6 +106,11 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   agent_list:   ["main-chat", "build-intent"],
   agent_spawn:  ["main-chat", "build-intent"],
   agent_create: ["main-chat", "build-intent"],
+
+  // Project containers (sibling to agent_* — same eager visibility)
+  project_create:    ["main-chat", "build-intent"],
+  project_list:      ["main-chat", "build-intent"],
+  project_add_agent: ["main-chat", "build-intent"],
   agent_status: ["main-chat", "build-intent"],
   agent_cancel: ["main-chat"],
   agent_output: ["main-chat"],

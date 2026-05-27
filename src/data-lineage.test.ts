@@ -14,6 +14,72 @@ import { runSandboxedPhase } from "./tool-execution/run-sandboxed.js";
 import type { ToolCallContext } from "./tool-execution/context.js";
 import type { ToolDefinition } from "./types.js";
 
+describe("isSensitivePath — pattern spec table", () => {
+  // The test table IS the spec. Each row is (path, expected). False-positive
+  // rows come from the regex-too-broad incident (Bug 5): substring matches on
+  // `password`, `credentials`, `secret`, `.env`, `.config` flagged docs, logs,
+  // source files, and other-named directories as sensitive, eroding signal.
+  const cases: Array<[string, boolean, string?]> = [
+    // -- True positives --
+    ["/Users/x/.aws/credentials", true],
+    ["/Users/x/.aws/config", true],
+    ["/Users/x/.ssh/id_rsa", true],
+    ["/Users/x/.ssh/id_ed25519", true],
+    ["/Users/x/.ssh/id_ecdsa", true],
+    ["/Users/x/.ssh/id_dsa", true],
+    ["/Users/x/.ssh/config", true, "dir-scoped: .ssh/config is the SSH client config"],
+    ["/Users/x/.kube/config", true],
+    ["/Users/x/.docker/config.json", true],
+    ["/Users/x/.config/gcloud/credentials.db", true],
+    ["/Users/x/.config/gh/hosts.yml", true],
+    ["/etc/ssl/private/server.pem", true],
+    ["/etc/ssl/private/server.key", true],
+    ["/opt/app/keystore.p12", true],
+    ["/opt/app/store.pfx", true],
+    ["/opt/app/release.keystore", true],
+    ["/Users/x/Library/Keychains/login.keychain-db", true],
+    ["/project/.env", true],
+    ["/project/.env.local", true],
+    ["/project/.env.production", true],
+    ["/project/.envrc", true],
+    ["/home/x/.npmrc", true],
+    ["/home/x/.netrc", true],
+    ["/srv/app/secrets.json", true],
+    ["/srv/app/secrets.yaml", true],
+    ["/srv/app/secrets.toml", true],
+    ["/srv/app/credentials.json", true],
+    ["/home/x/auth.json", true],
+    ["/home/x/.gnupg/secring.gpg", true, "any file inside ~/.gnupg"],
+    ["C:\\Users\\me\\.aws\\credentials", true, "windows path separator"],
+    ["C:\\Users\\me\\.ssh\\id_rsa", true],
+
+    // -- False positives that the old regexes wrongly flagged --
+    ["/Users/x/.configurator/notoken.md", false, "old /\\.config.*token/i fired"],
+    ["/var/log/password_audit.log", false, "old /password/i fired"],
+    ["/home/x/notes/password.md", false, "user-authored doc with the word in the name"],
+    ["/repo/src/tokenizer.py", false, "source file, not a credential"],
+    ["/repo/README.md", false, "README content can mention secrets; the file isn't one"],
+    ["/repo/docs/secrets.md", false, ".md is not a credential extension"],
+    ["/repo/src/secrets.py", false, "source file named after the topic"],
+    ["/var/log/credentialserver.log", false, "old /credentials/i substring-matched"],
+    ["/home/x/Documents/old_password.txt", false],
+    ["/home/x/.ssh/id_rsa.pub", false, "public key — paired with private but not secret"],
+    ["/home/x/.ssh/known_hosts", false],
+    ["/home/x/.ssh/authorized_keys", false],
+    ["/home/x/myproject/config", false, "bare `config` outside known cred dirs"],
+    ["/home/x/credentials.txt", false, "wrong extension"],
+    ["/srv/app/mysecrets.json", false, "basename must equal `secrets.json`, not contain it"],
+    ["", false],
+  ];
+
+  for (const [path, expected, note] of cases) {
+    const label = note ? `${path}  (${note})` : path;
+    it(`${expected ? "flags" : "ignores"}: ${label}`, () => {
+      expect(isSensitivePath(path)).toBe(expected);
+    });
+  }
+});
+
 describe("extractSensitivePathsFromCommand", () => {
   it("matches POSIX absolute paths to ssh keys", () => {
     const matches = extractSensitivePathsFromCommand("cat /home/user/.ssh/id_rsa");

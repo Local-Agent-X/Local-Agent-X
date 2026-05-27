@@ -65,16 +65,89 @@ export function clearSessionTaint(sessionId: string): void {
   sessionTaint.delete(sessionId);
 }
 
-/** Check if a file path is sensitive (triggers taint on read) */
+// Basenames that are credential files regardless of where they live on disk.
+// Match is case-insensitive but exact — `secrets.json` matches, `mysecrets.json`
+// and `secrets.py` do not.
+const SENSITIVE_BASENAMES: ReadonlySet<string> = new Set([
+  // Shell / package auth dotfiles.
+  ".env", ".envrc", ".npmrc", ".pypirc", ".netrc",
+  // SSH private keys (canonical algorithm names).
+  "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
+  // Generic credential / secrets files.
+  "auth.json",
+  "secrets.json", "secrets.yaml", "secrets.yml", "secrets.toml",
+  "credentials.json", "credentials.db",
+  // Windows DPAPI-protected master keys (Chromium, etc.).
+  "master.dpapi", "master.key",
+]);
+
+// Suffix matches for key material containers. Endpoint-anchored, so a
+// `notes.key.md` file doesn't trip on `.key`.
+const SENSITIVE_EXTENSIONS: ReadonlyArray<string> = [
+  ".pem", ".key", ".p12", ".pfx", ".keystore", ".keychain-db",
+];
+
+// (parent-directory, basename) pairs. The file is sensitive only when its
+// immediate parent directory has the named identity — so `~/.aws/credentials`
+// trips, but `~/notes/credentials` does not, and a stray `config` file is
+// only flagged inside a known config-dir (.ssh, .aws, .kube).
+const DIR_SCOPED_FILES: ReadonlyArray<readonly [string, string]> = [
+  [".aws", "credentials"],
+  [".aws", "config"],
+  [".ssh", "config"],
+  [".docker", "config.json"],
+  [".kube", "config"],
+  // gcloud + gh credential stores live under ~/.config/<tool>/...
+  ["gcloud", "credentials.db"],
+  ["gcloud", "access_tokens.db"],
+  ["gcloud", "legacy_credentials"],
+  ["gh", "hosts.yml"],
+];
+
+// Directories whose entire contents are credential material. Any file at any
+// depth inside one of these is flagged.
+const SENSITIVE_DIR_NAMES: ReadonlySet<string> = new Set([".gnupg"]);
+
+function pathSegments(p: string): string[] {
+  return p.split(/[\\/]/).filter(Boolean);
+}
+
+/**
+ * Check if a file path is sensitive (triggers taint on read).
+ *
+ * Matches by file shape, NOT by substring. The prior implementation used
+ * unanchored patterns like `/password/i` and `/credentials/i` that fired on
+ * `password_audit.log`, `tokenizer.py`, and any README mentioning secrets —
+ * generating enough false positives that users stopped trusting the gate.
+ * This version anchors on basename, extension, or known credential-directory
+ * locations only.
+ */
 export function isSensitivePath(filePath: string): boolean {
-  const sensitive = [
-    /\.ssh/i, /\.aws/i, /\.env/i, /credentials/i, /\.gnupg/i,
-    /\.config.*token/i, /\.config.*secret/i, /auth\.json/i,
-    /secrets?\.(enc|json|yaml|yml)/i, /master\.(dpapi|key)/i,
-    /password/i, /\.npmrc/i, /\.pypirc/i, /\.netrc/i,
-    /id_rsa/i, /id_ed25519/i, /\.pem$/i, /\.key$/i,
-  ];
-  return sensitive.some(p => p.test(filePath));
+  if (!filePath) return false;
+  const segs = pathSegments(filePath);
+  if (segs.length === 0) return false;
+  const segsLower = segs.map(s => s.toLowerCase());
+  const base = segsLower[segsLower.length - 1];
+
+  if (SENSITIVE_BASENAMES.has(base)) return true;
+  // `.env.local`, `.env.production`, etc. Open-ended, so not in the basename set.
+  if (base.startsWith(".env.")) return true;
+  for (const ext of SENSITIVE_EXTENSIONS) {
+    if (base.endsWith(ext)) return true;
+  }
+
+  if (segsLower.length >= 2) {
+    const parent = segsLower[segsLower.length - 2];
+    for (const [dir, name] of DIR_SCOPED_FILES) {
+      if (parent === dir && base === name) return true;
+    }
+  }
+
+  for (const seg of segsLower) {
+    if (SENSITIVE_DIR_NAMES.has(seg)) return true;
+  }
+
+  return false;
 }
 
 /** Get session taint summary */

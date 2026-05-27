@@ -1,8 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
 import type Database from "better-sqlite3";
 import type { FactKind, RetainedFact } from "./types.js";
 import { parseFactLine, rowToFact, slugify } from "./utils.js";
-import { getDailyLogPath } from "./index-files.js";
 import { extractRelations } from "./index-relations.js";
 
 import { createLogger } from "../logger.js";
@@ -204,22 +202,6 @@ function findResolverCandidates(
      ORDER BY f.timestamp DESC LIMIT ?`
   ).all(...slugs, limit) as Array<{ id: number; content: string; kind: string; timestamp: number }>;
   return rows;
-}
-
-export function retainFromDailyLog(
-  db: InstanceType<typeof Database>,
-  hasFts: boolean,
-  memoryDir: string,
-  date?: Date
-): RetainedFact[] {
-  const logPath = getDailyLogPath(memoryDir, date);
-  if (!existsSync(logPath)) return [];
-
-  const content = readFileSync(logPath, "utf-8");
-  const retainMatch = content.match(/## Retain\s*\n([\s\S]*?)(?=\n## |\n*$)/);
-  if (!retainMatch) return [];
-
-  return retain(db, hasFts, retainMatch[1], logPath);
 }
 
 export function recallByEntity(

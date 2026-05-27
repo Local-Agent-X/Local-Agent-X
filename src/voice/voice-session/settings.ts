@@ -18,8 +18,8 @@
 //                    no Python or GPU needed — emergency fallback only)
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getLaxDir } from "../../lax-data-dir.js";
 import { createLogger } from "../../logger.js";
 import type { WhisperProvider } from "../whisper-stream.js";
 import { VALID_WHISPER_PROVIDERS } from "../whisper-stream.js";
@@ -64,7 +64,7 @@ export function resolveVoiceSettings(): ResolvedVoiceSettings {
   const out: ResolvedVoiceSettings = { engine: "tier4" };
   let savedEngine: VoiceEngineId | undefined;
   try {
-    const dataDir = process.env.LAX_DATA_DIR || join(homedir(), ".lax");
+    const dataDir = getLaxDir();
     const sp = join(dataDir, "settings.json");
     if (existsSync(sp)) {
       const saved = JSON.parse(readFileSync(sp, "utf-8")) as {

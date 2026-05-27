@@ -5,11 +5,11 @@
 
 import { existsSync, mkdirSync, readFileSync, appendFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
-const TIMELINE_DIR = join(homedir(), ".lax", "voice-timeline");
+const TIMELINE_DIR = join(getLaxDir(), "voice-timeline");
 if (!existsSync(TIMELINE_DIR)) mkdirSync(TIMELINE_DIR, { recursive: true });
 
 export type VoiceEventType =

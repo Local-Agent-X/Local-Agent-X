@@ -6,8 +6,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
+import { getLaxDir } from "./lax-data-dir.js";
 
 /** Safely parse a fraction string like "30000/1001" without eval() */
 function parseFraction(s: string): number {
@@ -20,7 +20,7 @@ function parseFraction(s: string): number {
   return Number(s) || 0;
 }
 
-const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
+const TMP_DIR = join(getLaxDir(), "voice-tmp");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
 export interface VideoInfo {

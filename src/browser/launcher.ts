@@ -10,6 +10,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { getRuntimeConfig } from "../config.js";
 
 /** Resolve the workspace/downloads dir (creates it if missing) — shared by
@@ -183,7 +184,7 @@ export async function launchViaCDP(
       userDataDir = real;
       logger.info(`[browser] Attach mode — using your real Chrome profile: ${userDataDir}`);
     } else {
-      userDataDir = join(homedir(), ".lax", "chrome-profile");
+      userDataDir = join(getLaxDir(), "chrome-profile");
       if (!existsSync(userDataDir)) mkdirSync(userDataDir, { recursive: true });
     }
     const cdpUrl = `http://127.0.0.1:${cdpPort}`;
@@ -257,7 +258,7 @@ export async function launchViaCDP(
   // so Playwright doesn't abort navigation when a response is a download
   // (the failure mode that landed files nowhere pre-2026-05-19).
   logger.info("[browser] Launching Playwright persistent context");
-  const persistDir = join(homedir(), ".lax", "chrome-profile-pw");
+  const persistDir = join(getLaxDir(), "chrome-profile-pw");
   if (!existsSync(persistDir)) mkdirSync(persistDir, { recursive: true });
   const downloadsDir = resolveDownloadsDir();
   try {

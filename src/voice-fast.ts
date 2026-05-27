@@ -6,13 +6,13 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 
 const IS_WIN = process.platform === "win32";
-const TMP_DIR = join(homedir(), ".lax", "voice-tmp");
-const VOICE_DIR = join(homedir(), ".lax", "workspace", "voice-chat");
+const TMP_DIR = join(getLaxDir(), "voice-tmp");
+const VOICE_DIR = join(getLaxDir(), "workspace", "voice-chat");
 if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
 function tmpPath(ext: string): string {

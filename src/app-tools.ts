@@ -17,7 +17,7 @@
 import type { ToolDefinition } from "./types.js";
 import { appCreate, appUpdate, appList, appDelete, appPermissions } from "./app-tools/lifecycle.js";
 import { appRead, appAction, appQuery } from "./app-tools/runtime.js";
-import { sidebarPin, sidebarUnpin } from "./app-tools/sidebar.js";
+import { sidebarPin, sidebarUnpin, sidebarClear } from "./app-tools/sidebar.js";
 
 export const appTools: ToolDefinition[] = [
   appCreate,
@@ -30,4 +30,5 @@ export const appTools: ToolDefinition[] = [
   appPermissions,
   sidebarPin,
   sidebarUnpin,
+  sidebarClear,
 ];

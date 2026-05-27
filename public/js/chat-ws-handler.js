@@ -118,6 +118,11 @@ function handleChatWsMessage(e) {
       handleSidebarPinsChanged(msg);
     }
 
+    // ── Sidebar Conversations list cleared by the agent ──
+    if (msg.type === 'sidebar_clear_chats') {
+      handleSidebarClearChats(msg);
+    }
+
     // ── App files changed: auto-reload any pinned iframe pointing at that app ──
     if (msg.type === 'app-files-changed' && msg.appName) {
       handleAppFilesChanged(msg);

@@ -327,17 +327,26 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
       let opened = false;
       try {
         const { execFile } = await import("node:child_process");
+        let child;
         if (process.platform === "win32") {
           // rundll32 + url.dll passes the URL via argv directly to the
           // FileProtocolHandler API — no cmd, no shell, no `&` parsing.
           // `cmd /c start "" <url>` truncates the URL at the first `&`
           // because cmd reads `&` as a command separator.
-          execFile("rundll32.exe", ["url.dll,FileProtocolHandler", authUrl]);
+          child = execFile("rundll32.exe", ["url.dll,FileProtocolHandler", authUrl]);
         } else if (process.platform === "darwin") {
-          execFile("open", [authUrl]);
+          child = execFile("open", [authUrl]);
         } else {
-          execFile("xdg-open", [authUrl]);
+          child = execFile("xdg-open", [authUrl]);
         }
+        // execFile is fire-and-forget: a synchronous return does NOT prove the
+        // browser opened. Spawn failures (ENOENT) — and on some Windows setups
+        // rundll32 simply no-ops — surface asynchronously via the 'error'
+        // event, AFTER this response is already sent. So `opened` is only a
+        // best-effort hint; the renderer ALWAYS shows a clickable fallback
+        // link regardless (settings-xai.js showXaiOpenFallback). The listener
+        // also prevents an async 'error' from becoming an unhandled event.
+        child.on("error", (e) => logger.warn(`[auth-xai] system-browser launch failed (async): ${e.message}`));
         opened = true;
       } catch (e) { logger.warn(`[auth-xai] system-browser launch failed: ${(e as Error).message}`); }
       json(200, { ok: true, authUrl, opened });

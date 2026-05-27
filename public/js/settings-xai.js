@@ -39,16 +39,66 @@ async function doXaiLogin() {
   if (btn) { btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Opening browser...'; setTimeout(() => { btn.disabled = false; btn.textContent = prev; }, 4000); }
   try {
     const d = await apiPost('/api/auth/xai/login', {});
-    // Server spawns the browser itself (more reliable in Electron than
-    // window.open for long OAuth URLs). Only fall back to window.open if
-    // the server-side launch didn't take.
-    if (d.authUrl && !d.opened) window.open(d.authUrl, '_blank');
+    // The server tries to launch the system browser itself, but that can
+    // silently no-op (e.g. rundll32 FileProtocolHandler on some Windows
+    // setups), and a fire-and-forget spawn can't confirm the browser
+    // actually opened — so d.opened is only a hint. ALWAYS surface a
+    // clickable recovery link regardless: a real user click on an <a> routes
+    // through Electron's setWindowOpenHandler -> shell.openExternal, which is
+    // reliable where programmatic window.open (dropped by Chromium for these
+    // long URLs) is not.
+    if (d.authUrl) {
+      showXaiOpenFallback(d.authUrl, !!d.opened);
+      // Best-effort programmatic open only when the server didn't claim it
+      // already launched — harmless if it gets dropped.
+      if (!d.opened) { try { window.open(d.authUrl, '_blank'); } catch {} }
+    }
     // Poll for completion — xAI's callback flips the token file but
     // doesn't notify the UI directly.
     setTimeout(checkXaiAuth, 5000);
     setTimeout(checkXaiAuth, 15000);
     setTimeout(checkXaiAuth, 30000);
-  } catch (e) { console.error('xAI login failed:', e); }
+  } catch (e) {
+    console.error('xAI login failed:', e);
+    const fb = document.getElementById('xai-open-fallback');
+    if (fb) { fb.style.display = ''; fb.textContent = 'Could not start xAI login: ' + (e?.message || 'unknown error') + '. Try again.'; }
+  }
+}
+
+// Render a clickable fallback link + copy button for the xAI auth URL. Shown
+// on every login attempt so the user is never stranded when the server-side
+// browser launch silently fails (the bug this fixes: server reported
+// opened=true while rundll32 no-op'd, suppressing the only recovery path).
+function showXaiOpenFallback(authUrl, opened) {
+  const fb = document.getElementById('xai-open-fallback');
+  if (!fb) { if (!opened) { try { window.open(authUrl, '_blank'); } catch {} } return; }
+  fb.style.display = '';
+  fb.innerHTML = '';
+  const note = document.createElement('div');
+  note.style.color = 'var(--muted)';
+  note.style.marginBottom = '6px';
+  note.textContent = opened
+    ? "Didn't see the sign-in page open? Click here:"
+    : 'Open the xAI sign-in page:';
+  const link = document.createElement('a');
+  link.href = authUrl;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = 'Open xAI sign-in page';
+  link.style.color = 'var(--accent)';
+  link.style.fontWeight = '600';
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'action-btn secondary';
+  copyBtn.textContent = 'Copy link';
+  copyBtn.style.marginLeft = '10px';
+  copyBtn.style.padding = '4px 12px';
+  copyBtn.onclick = async () => {
+    try { await navigator.clipboard.writeText(authUrl); copyBtn.textContent = 'Copied'; setTimeout(() => { copyBtn.textContent = 'Copy link'; }, 2000); }
+    catch { copyBtn.textContent = 'Copy failed'; }
+  };
+  fb.appendChild(note);
+  fb.appendChild(link);
+  fb.appendChild(copyBtn);
 }
 
 async function doXaiExchangeCode() {

@@ -68,12 +68,20 @@ KINDS:
     "create a cron that fetches Y nightly"
   The word "mission" / "schedule" / "remind me every" / "cron" / "daily / nightly / weekly recurring" = SCHEDULING. Return "free" for these so the model calls the schedule tool directly without a fake worker spawn.
 
-- self_edit — user is REPORTING A BUG OR BROKEN BEHAVIOR in THIS app (Local Agent X / LAX itself). The fix requires touching LAX source code under src/. Examples:
+- self_edit — user is REPORTING A BUG OR BROKEN BEHAVIOR in THIS app (Local Agent X / LAX itself). The fix requires touching LAX source code under src/. The user's words must indicate something is BROKEN, MISBEHAVING, or MISSING — not just that they want LAX to do something for them right now. Examples:
     "the dark-mode toggle doesn't flip when I click it"
     "settings page won't save my provider choice"
     "the voice mic icon is stuck on after I close voice"
     "chat history is getting truncated every turn"
     "edit src/voice/voice-session.ts to wire X"
+
+  NOT self_edit — requests to MUTATE USER DATA / UI STATE that LAX already exposes via a tool. These look like "remove / clear / hide / delete / pin / unpin / archive X" where X is user data (chats, conversations, pins, projects, files, secrets, tabs, notifications). LAX has dedicated tools for these (sidebar_clear, sidebar_pin, sidebar_unpin, delete_file, app_delete, project_*, etc.). Return "free" so the agent picks the right tool. Examples:
+    "remove all chats from conversation sidebar" → free (sidebar_clear)
+    "clear my chat history" → free (sidebar_clear)
+    "hide all conversations" → free (sidebar_clear)
+    "pin calculator to the sidebar" → free (sidebar_pin)
+    "delete the kraken project" → free (project_delete)
+  Rule of thumb: if the user is asking to CHANGE WHAT IS DISPLAYED (their data/state in the running app), that's a tool call, not a source edit. self_edit is reserved for "the feature itself is broken / missing in the code."
 
 - free — anything else. Ordinary conversation, status checks, casual questions, ambiguous requests, "how would you build..." (asking for discussion, not the build), "explain", "what is...", short acks, follow-ups, requests that don't unambiguously map to ONE of the three primitives above. When in doubt, choose "free" — forcing the wrong tool is worse than no forcing.
 
@@ -88,6 +96,8 @@ DISTINCTIONS:
 - "tell me about X" → free (just answer it)
 - "the toggle doesn't work" → self_edit (LAX bug)
 - "fix my todo app's toggle" → free (workspace edit, not LAX source — agent uses edit/write)
+- "remove all chats from the sidebar" → free (data mutation — sidebar_clear tool exists)
+- "the sidebar clear button doesn't work" → self_edit (behavior bug in LAX)
 
 Reply with JSON only. No prose, no markdown fences.`;
 

@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   extractSensitivePathsFromCommand,
   recordSensitiveRead,
@@ -8,6 +10,9 @@ import {
   isSensitivePath,
   detectSecretsInOutput,
 } from "./data-lineage.js";
+import { runSandboxedPhase } from "./tool-execution/run-sandboxed.js";
+import type { ToolCallContext } from "./tool-execution/context.js";
+import type { ToolDefinition } from "./types.js";
 
 describe("extractSensitivePathsFromCommand", () => {
   it("matches POSIX absolute paths to ssh keys", () => {
@@ -257,5 +262,101 @@ describe("secret-taint integration", () => {
     const egress = checkEgressTaint("test-http-e2e");
     expect(egress.blocked).toBe(true);
     expect(egress.reason).toMatch(/openai-key/);
+  });
+});
+
+// Regression test for the taint-race bug: when a tool reads a sensitive
+// path the result must NOT contain the raw bytes by the time it lands in
+// ctx.result. Without redaction, dataLineageGate only fires on the NEXT
+// egress call — meaning the model already has the secret bytes in its
+// context and can exfil through any non-gated channel.
+describe("run-sandboxed redacts result content when taint fires", () => {
+  function makeCtx(input: {
+    name: string;
+    args: Record<string, unknown>;
+    tool: ToolDefinition;
+    sessionId: string;
+  }): ToolCallContext {
+    return {
+      tc: { id: "1", name: input.name, arguments: JSON.stringify(input.args) },
+      toolMap: new Map(),
+      // SecurityLayer is unused by runSandboxedPhase but the type requires it.
+      security: undefined as never,
+      sessionId: input.sessionId,
+      callContext: "local",
+      args: input.args,
+      tool: input.tool,
+      riskLevel: "low",
+      approvalContext: "",
+      preBlocked: false,
+      allowed: true,
+      msgs: [],
+      terminated: false,
+    } as ToolCallContext;
+  }
+
+  it("read of a sensitive path: ctx.result.content does not contain the secret bytes", async () => {
+    const sentinel = "SENSITIVE_TEST_PAYLOAD_8a3f";
+    const dir = mkdtempSync(join(tmpdir(), "lineage-redact-"));
+    // secrets.json matches isSensitivePath via /secrets?\.(enc|json|yaml|yml)/i
+    const file = join(dir, "secrets.json");
+    writeFileSync(file, sentinel, "utf-8");
+
+    const readStub: ToolDefinition = {
+      name: "read",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      async execute(args) {
+        // Return the file's contents verbatim — what the real read tool
+        // would have placed into ctx.result before redaction.
+        return { content: `1\t${sentinel}`, isError: false };
+      },
+    };
+
+    const sessionId = "redact-read-test";
+    clearSessionTaint(sessionId);
+    const ctx = makeCtx({ name: "read", args: { path: file }, tool: readStub, sessionId });
+
+    try {
+      await runSandboxedPhase(ctx);
+
+      expect(ctx.result).toBeDefined();
+      // The whole point: the sentinel bytes must NOT reach ctx.result.
+      expect(ctx.result!.content).not.toContain(sentinel);
+      expect(ctx.result!.status).toBe("blocked");
+      expect(ctx.result!.metadata?.redacted).toBe(true);
+      // Session is still tainted so a follow-up egress call would be blocked.
+      expect(checkEgressTaint(sessionId).blocked).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("benign read: ctx.result passes through unchanged", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lineage-redact-"));
+    const file = join(dir, "notes.txt");
+    writeFileSync(file, "hello world", "utf-8");
+
+    const readStub: ToolDefinition = {
+      name: "read",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      async execute() {
+        return { content: "1\thello world", isError: false };
+      },
+    };
+
+    const sessionId = "redact-benign-test";
+    clearSessionTaint(sessionId);
+    const ctx = makeCtx({ name: "read", args: { path: file }, tool: readStub, sessionId });
+
+    try {
+      await runSandboxedPhase(ctx);
+      expect(ctx.result?.content).toContain("hello world");
+      expect(ctx.result?.status).not.toBe("blocked");
+      expect(checkEgressTaint(sessionId).blocked).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

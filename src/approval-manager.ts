@@ -13,10 +13,14 @@
  *   - "deny"                → block without prompting
  *
  * Session-scoped "always allow" cache prevents re-prompting for the same
- * tool within one session. Still re-prompts across sessions.
+ * (tool, argsFingerprint) within one session. Fingerprint captures the
+ * risk-relevant arg (binary for shell, parent dir for write, hostname for
+ * network, action for browser) so a grant doesn't accidentally cover
+ * unrelated calls. Still re-prompts across sessions.
  */
 
 import { createPatch } from "diff";
+import { dirname as pathDirname, resolve as pathResolve } from "node:path";
 import type { ActionPreview, ServerEvent } from "./types.js";
 import {
   decide,
@@ -60,6 +64,59 @@ interface PendingApproval {
   timer: ReturnType<typeof setTimeout>;
   sessionId: string;
   toolName: string;
+  args: Record<string, unknown>;
+}
+
+/**
+ * Compute a stable, risk-relevant fingerprint of a tool call's args. Used to
+ * key the session auto-approve cache so a grant for `bash git status` does
+ * NOT cover `bash rm -rf /`. Must be pure — no Date.now, no randomness, no
+ * env reads — so the same input always produces the same key.
+ */
+export function computeArgsFingerprint(
+  toolName: string,
+  args: Record<string, unknown>,
+): string {
+  const tool = toolName.toLowerCase();
+
+  if (tool === "bash" || tool === "shell" || tool === "ari_shell") {
+    const raw = typeof args.command === "string" ? args.command : "";
+    // Strip leading env-var assignments: `FOO=bar BAZ=qux cmd ...`
+    const stripped = raw.replace(/^(\s*\w+=\S+\s+)+/, "").trimStart();
+    // Take chars up to first whitespace, pipe, semicolon, or chained-op.
+    const m = stripped.match(/^([^\s|;&]+)/);
+    return (m?.[1] ?? "").toLowerCase();
+  }
+
+  if (tool === "write" || tool === "edit" || tool === "delete_file") {
+    const p = typeof args.path === "string" ? args.path : "";
+    if (!p) return "<unresolvable>";
+    try {
+      return pathDirname(pathResolve(p));
+    } catch {
+      return "<unresolvable>";
+    }
+  }
+
+  if (tool === "http_request" || tool === "web_fetch") {
+    const u = typeof args.url === "string" ? args.url : "";
+    if (!u) return "<malformed>";
+    try {
+      return new URL(u).hostname;
+    } catch {
+      return "<malformed>";
+    }
+  }
+
+  if (tool === "browser") {
+    return typeof args.action === "string" ? args.action : "";
+  }
+
+  return "*";
+}
+
+function cacheKey(toolName: string, args: Record<string, unknown>): string {
+  return `${toolName}::${computeArgsFingerprint(toolName, args)}`;
 }
 
 class ApprovalManager {
@@ -84,9 +141,11 @@ class ApprovalManager {
     preview?: ActionPreview;
     emit: (event: ServerEvent) => void;
   }): Promise<boolean> {
-    // Session-scoped auto-approval short-circuit
+    // Session-scoped auto-approval short-circuit. Key is composite
+    // (toolName, argsFingerprint) so a prior grant for one binary/host/dir
+    // does not cover unrelated calls under the same tool.
     const auto = this.sessionAutoApprove.get(opts.sessionId);
-    if (auto?.has(opts.toolName)) return true;
+    if (auto?.has(cacheKey(opts.toolName, opts.args))) return true;
 
     const id = `apr-${this.nextId++}-${Date.now()}`;
 
@@ -98,7 +157,7 @@ class ApprovalManager {
         }
       }, APPROVAL_TIMEOUT_MS);
 
-      this.pending.set(id, { resolve, timer, sessionId: opts.sessionId, toolName: opts.toolName });
+      this.pending.set(id, { resolve, timer, sessionId: opts.sessionId, toolName: opts.toolName, args: opts.args });
 
       opts.emit({
         type: "approval_requested",
@@ -122,7 +181,7 @@ class ApprovalManager {
     if (approved && rememberForSession) {
       let auto = this.sessionAutoApprove.get(p.sessionId);
       if (!auto) { auto = new Set(); this.sessionAutoApprove.set(p.sessionId, auto); }
-      auto.add(p.toolName);
+      auto.add(cacheKey(p.toolName, p.args));
     }
 
     p.resolve(approved);

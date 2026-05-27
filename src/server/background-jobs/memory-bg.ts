@@ -16,15 +16,6 @@ export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
   return async () => {
     try { const { MemoryOrchestrator: MO } = await import("../../memory-orchestrator.js"); const r = MO.getInstance().runBackground(memoryIndex); logger.info(`[memory-bg] ${r.totalTimeMs}ms`); } catch (e) { logger.warn("[memory-bg]", (e as Error).message); }
     try {
-      let totalRetained = 0;
-      for (let i = 0; i < 3; i++) {
-        const date = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
-        const facts = memoryIndex.retainFromDailyLog(date);
-        totalRetained += facts.length;
-      }
-      if (totalRetained > 0) logger.info(`[memory-bg] Retained ${totalRetained} facts from daily logs`);
-    } catch (e) { logger.warn("[memory-bg] Retain:", (e as Error).message); }
-    try {
       const reflectResult = await memoryIndex.reflect(7);
       if (reflectResult.entitiesUpdated.length > 0 || reflectResult.opinionsUpdated > 0) {
         logger.info(`[memory-bg] Reflect: ${reflectResult.entitiesUpdated.length} entities, ${reflectResult.opinionsUpdated} opinions`);

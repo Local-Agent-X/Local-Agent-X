@@ -123,6 +123,13 @@ function handleChatWsMessage(e) {
       handleSidebarClearChats(msg);
     }
 
+    // ── Projects list changed (agent created/added via project_* tools) ──
+    // window.loadProjects is exposed by public/js/agents/projects.js; it
+    // re-fetches /api/projects and re-renders the sidebar Projects group.
+    if (msg.type === 'projects_changed' && typeof window.loadProjects === 'function') {
+      try { window.loadProjects(); } catch {}
+    }
+
     // ── App files changed: auto-reload any pinned iframe pointing at that app ──
     if (msg.type === 'app-files-changed' && msg.appName) {
       handleAppFilesChanged(msg);

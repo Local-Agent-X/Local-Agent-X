@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -72,6 +72,90 @@ describe("validateSandboxConfig — repo-root rule", () => {
       workspacePath: join(tmpdir(), "lax-sandbox-workspace"),
     }));
     expect(r.ok).toBe(true);
+  });
+});
+
+// Bug 6: a mount source like `/tmp/innocent -> /etc/shadow` passes lexical
+// validation but docker follows the symlink at mount time, exposing the
+// linked target inside the container. Validator now runs realpathSync after
+// the literal-path deny check and re-checks the resolved path.
+describe("validateSandboxConfig — symlink resolution (Bug 6)", () => {
+  let prevRepoRoot: string | undefined;
+  let scratchRepo: string;
+  let scratchHost: string;
+
+  beforeEach(() => {
+    prevRepoRoot = process.env.LAX_REPO_ROOT;
+    // realpath both scratch dirs so prefix comparisons line up — on macOS
+    // tmpdir lives behind `/var -> /private/var`, and the validator compares
+    // realpath'd mount sources against the env-declared (non-real) repo root.
+    scratchRepo = realpathSync(mkdtempSync(join(tmpdir(), "lax-symlink-repo-")));
+    process.env.LAX_REPO_ROOT = scratchRepo;
+    scratchHost = realpathSync(mkdtempSync(join(tmpdir(), "lax-symlink-host-")));
+  });
+
+  afterEach(() => {
+    if (prevRepoRoot === undefined) delete process.env.LAX_REPO_ROOT;
+    else process.env.LAX_REPO_ROOT = prevRepoRoot;
+    try { rmSync(scratchRepo, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try { rmSync(scratchHost, { recursive: true, force: true }); } catch { /* best-effort */ }
+  });
+
+  it("rejects mount whose symlink resolves into the LAX repo root", () => {
+    const targetInRepo = join(scratchRepo, "subdir");
+    mkdirSync(targetInRepo);
+    const link = join(scratchHost, "looks-safe");
+    symlinkSync(targetInRepo, link);
+
+    const r = validateSandboxConfig(baseConfig({ extraMounts: [`${link}:/container/x`] }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toMatch(/symlink/i);
+      expect(r.reason).toMatch(/repo/i);
+    }
+  });
+
+  it("accepts mount whose symlink resolves to another safe location", () => {
+    const target = realpathSync(mkdtempSync(join(tmpdir(), "lax-symlink-target-")));
+    try {
+      const link = join(scratchHost, "safe-link");
+      symlinkSync(target, link);
+      const r = validateSandboxConfig(baseConfig({ extraMounts: [`${link}:/container/x`] }));
+      expect(r.ok).toBe(true);
+    } finally {
+      try { rmSync(target, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+  });
+
+  it("rejects non-existent mount source with does-not-exist error", () => {
+    const missing = join(scratchHost, "no-such-path");
+    const r = validateSandboxConfig(baseConfig({ extraMounts: [`${missing}:/container/x`] }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/does not exist/i);
+  });
+
+  it("rejects dangling symlink (target absent) with does-not-exist error", () => {
+    const link = join(scratchHost, "dangling");
+    symlinkSync(join(scratchHost, "missing-target"), link);
+    const r = validateSandboxConfig(baseConfig({ extraMounts: [`${link}:/container/x`] }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/does not exist/i);
+  });
+
+  it("regression: accepts plain safe path (no symlink involved)", () => {
+    const safe = realpathSync(mkdtempSync(join(tmpdir(), "lax-symlink-plain-")));
+    try {
+      const r = validateSandboxConfig(baseConfig({ extraMounts: [`${safe}:/container/x`] }));
+      expect(r.ok).toBe(true);
+    } finally {
+      try { rmSync(safe, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+  });
+
+  it("regression: still rejects plain forbidden literal path", () => {
+    const r = validateSandboxConfig(baseConfig({ extraMounts: ["/etc/shadow:/container/x"] }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/shadow/i);
   });
 });
 

@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { homedir } from "node:os";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { validateSandboxConfig, execInSandbox } from "./sandbox.js";
@@ -24,6 +25,21 @@ function withMounts(mounts: string[], over: Partial<SandboxConfig> = {}): Sandbo
 }
 
 describe("validateSandboxConfig", () => {
+  // Some tests need a real on-disk file as the mount source: the validator
+  // now realpath-resolves sources (Bug 6 fix) and rejects missing paths.
+  let scratchHost: string;
+  let benignSource: string;
+
+  beforeEach(() => {
+    scratchHost = realpathSync(mkdtempSync(join(tmpdir(), "lax-sandbox-host-")));
+    benignSource = join(scratchHost, "somefile");
+    writeFileSync(benignSource, "");
+  });
+
+  afterEach(() => {
+    try { rmSync(scratchHost, { recursive: true, force: true }); } catch { /* best-effort */ }
+  });
+
   it("accepts a sensible default config", () => {
     expect(validateSandboxConfig(DEFAULTS)).toEqual({ ok: true });
   });
@@ -52,9 +68,12 @@ describe("validateSandboxConfig", () => {
     if (!r.ok) expect(r.reason).toMatch(/secrets/);
   });
 
-  it("does NOT trip on substring matches like /var/log/credentialserver.log", () => {
+  it("does NOT trip on substring matches like credentialserver.log", () => {
     // Segment-exact check should leave this alone (credentialserver != credentials).
-    const r = validateSandboxConfig(withMounts(["/var/log/credentialserver.log:/x"]));
+    // Source must exist on disk — realpath check rejects missing paths.
+    const benign = join(scratchHost, "credentialserver.log");
+    writeFileSync(benign, "");
+    const r = validateSandboxConfig(withMounts([`${benign}:/x`]));
     expect(r.ok).toBe(true);
   });
 
@@ -69,8 +88,8 @@ describe("validateSandboxConfig", () => {
     expect(r.ok).toBe(false);
   });
 
-  it("allows a benign /tmp extraMount", () => {
-    const r = validateSandboxConfig(withMounts(["/tmp/somefile:/somefile"]));
+  it("allows a benign tmpdir extraMount", () => {
+    const r = validateSandboxConfig(withMounts([`${benignSource}:/somefile`]));
     expect(r.ok).toBe(true);
   });
 
@@ -93,7 +112,7 @@ describe("validateSandboxConfig", () => {
   });
 
   it("rejects networkEnabled=true with any non-empty extraMounts (defense in depth)", () => {
-    const r = validateSandboxConfig(withMounts(["/tmp/somefile:/x"], { networkEnabled: true }));
+    const r = validateSandboxConfig(withMounts([`${benignSource}:/x`], { networkEnabled: true }));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toMatch(/networkEnabled/);
   });

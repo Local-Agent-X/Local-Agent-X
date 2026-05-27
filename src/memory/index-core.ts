@@ -251,10 +251,6 @@ export class MemoryIndex {
     return Facts.retainSmart(this.db, this.hasFts, text, sourceFile, sourceLine, opts);
   }
 
-  retainFromDailyLog(date?: Date): RetainedFact[] {
-    return Facts.retainFromDailyLog(this.db, this.hasFts, this.memoryDir, date);
-  }
-
   // ── RECALL ──
 
   recallByEntity(entitySlug: string, limit = 20, opts?: { includeInvalidated?: boolean }): RetainedFact[] {

@@ -185,28 +185,19 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     return true;
   }
 
-  // Bulk delete — wipes regular chat sessions only. Preserves system
-  // internals (dream/cron/ide, same as the GET filter above) AND persistent
-  // integration threads (wa/tg/sms) which represent live external
-  // connections, not regular chat history. The earlier "delete everything"
-  // form nuked WhatsApp/Telegram threads when an agent reached for this
-  // endpoint to clear the sidebar. Surgical per-id delete is still
-  // available via DELETE /api/sessions/<id>.
+  // Bulk delete — REMOVED. The endpoint existed only as a footgun: no UI
+  // button or internal caller used it, but agents (especially weaker
+  // models that don't follow the system prompt) kept reaching for it as
+  // a shortcut when the user asked to "clear the sidebar", destroying
+  // backend session JSONL on disk. Reply with 405 + a pointer to the
+  // correct path, loud enough that the agent reads it and adapts.
+  // For surgical removal of one session, DELETE /api/sessions/<id>
+  // still works below.
   if (method === "DELETE" && url.pathname === "/api/sessions") {
-    const all = ctx.sessionStore.list();
-    let deleted = 0;
-    let skipped = 0;
-    for (const s of all) {
-      if (
-        s.id.startsWith("dream-") || s.id.startsWith("cron-") || s.id.startsWith("ide-") ||
-        s.id.startsWith("wa-") || s.id.startsWith("tg-") || s.id.startsWith("sms-")
-      ) {
-        skipped++;
-        continue;
-      }
-      try { ctx.sessionStore.delete(s.id); deleted++; } catch {}
-    }
-    json(200, { ok: true, deleted, skipped });
+    json(405, {
+      error: "Bulk DELETE /api/sessions is disabled",
+      message: "To hide all chats from the sidebar Conversations list, call the sidebar_clear tool (frontend-only; backend session files stay intact). To remove one specific session, use DELETE /api/sessions/<id>.",
+    });
     return true;
   }
 

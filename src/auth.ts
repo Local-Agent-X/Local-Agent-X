@@ -1,50 +1,12 @@
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { spawn, spawnSync } from "node:child_process";
-import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import { getAuthPath } from "./config.js";
 import type { OAuthTokens } from "./types.js";
+import { isCodexMirrorEnabled, warnMirrorDisabledOnce, mirrorImpl } from "./auth-codex-mirror.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("auth");
-
-// ── Codex CLI auto-install on first OAuth success ──
-// Yesterday's bridge (commit 718c13d) writes tokens to ~/.codex/auth.json so
-// the CLI is *authenticated* once installed. But the bridge assumed CLI was
-// already on PATH — fresh users who only ran the LAX installer don't have
-// the global @openai/codex package. build_app then fails with "codex CLI
-// not available". This closes the gap: after the bridge writes auth.json,
-// check for the codex binary; if missing, install it (async, non-blocking).
-// One install per process via the in-flight Promise gate so we don't race.
-let _codexCliInstallInFlight: Promise<void> | null = null;
-function ensureCodexCliInstalled(): void {
-  if (_codexCliInstallInFlight) return;
-  // Fast check: is `codex --version` on PATH?
-  try {
-    const check = spawnSync("codex", ["--version"], { stdio: "ignore", shell: process.platform === "win32", timeout: 3000 });
-    if (check.status === 0) return; // already installed
-  } catch { /* fall through to install */ }
-  logger.info("[auth] Codex CLI not on PATH — installing @openai/codex globally (background)…");
-  _codexCliInstallInFlight = new Promise<void>((resolve) => {
-    const proc = spawn("npm", ["install", "-g", "@openai/codex"], {
-      stdio: "ignore",
-      shell: process.platform === "win32",
-    });
-    proc.on("exit", (code) => {
-      if (code === 0) logger.info("[auth] Codex CLI installed — build_app is now available");
-      else logger.warn(`[auth] Codex CLI install exited with ${code}. Install manually if needed: npm install -g @openai/codex`);
-      _codexCliInstallInFlight = null;
-      resolve();
-    });
-    proc.on("error", (e) => {
-      logger.warn(`[auth] Codex CLI install spawn failed: ${e.message}. Install manually: npm install -g @openai/codex`);
-      _codexCliInstallInFlight = null;
-      resolve();
-    });
-  });
-}
 
 // OpenAI Codex OAuth endpoints (shared public client ID for CLI tools)
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
@@ -85,7 +47,10 @@ export function loadTokens(): OAuthTokens | null {
   return null;
 }
 
-function saveTokens(tokens: OAuthTokens): void {
+// Exported for tests. Real callers are inside this module (login + refresh);
+// the gate test in auth.test.ts drives it directly to verify the env-var
+// controls whether the Codex mirror runs.
+export function saveTokens(tokens: OAuthTokens): void {
   const authPath = getAuthPath();
   // Atomic write. Without this, a crash or kill-9 mid-write leaves
   // auth.json half-written; next loadTokens parses partial JSON and
@@ -98,115 +63,18 @@ function saveTokens(tokens: OAuthTokens): void {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
     throw e;
   }
-  // Bridge to the Codex CLI's own credential store. Without this,
-  // LAX's "Sign in with OpenAI" left ~/.codex/auth.json missing so
-  // build_app's subprocess 401'd at the WebSocket layer with no
-  // path back for the user except running `codex login` separately.
-  // The bridge fires on every successful saveTokens (initial login
-  // AND refresh), keeping the two stores in lockstep automatically.
-  mirrorToCodexCli(tokens);
-}
-
-/**
- * Decode a JWT's payload without verifying the signature. We don't
- * need verification — we got the token from a trusted endpoint over
- * TLS and we're just reading a claim, not authenticating anyone with
- * it. Returns null on any parse failure (malformed JWT, base64 error,
- * non-JSON payload).
- */
-function decodeJwtPayload(jwt: string): Record<string, unknown> | null {
-  try {
-    const parts = jwt.split(".");
-    if (parts.length < 2) return null;
-    const payload = Buffer.from(parts[1], "base64url").toString("utf-8");
-    return JSON.parse(payload) as Record<string, unknown>;
-  } catch { return null; }
-}
-
-/**
- * Pull the ChatGPT account_id claim out of the id_token. Tries the
- * standard OpenAI claim shapes (we don't have a typed schema for this
- * — discovered the field empirically from a real ~/.codex/auth.json).
- * Returns null if no recognizable claim is present.
- */
-function extractAccountId(idToken: string): string | null {
-  const payload = decodeJwtPayload(idToken);
-  if (!payload) return null;
-  // Direct top-level keys seen in OpenAI ID tokens
-  for (const k of ["chatgpt_account_id", "account_id", "https://api.openai.com/auth/chatgpt_account_id"]) {
-    const v = payload[k];
-    if (typeof v === "string" && v.length > 0) return v;
-  }
-  // Nested under https://api.openai.com/auth claim namespace
-  const auth = payload["https://api.openai.com/auth"];
-  if (auth && typeof auth === "object") {
-    const a = auth as Record<string, unknown>;
-    for (const k of ["chatgpt_account_id", "account_id"]) {
-      const v = a[k];
-      if (typeof v === "string" && v.length > 0) return v;
-    }
-  }
-  return null;
-}
-
-/**
- * Write a mirror of LAX's OAuth tokens to ~/.codex/auth.json in the
- * exact shape the Codex CLI expects. Format learned from a working
- * ~/.codex/auth.json captured after the user signed in via the new
- * "Sign in via Codex CLI" button (commit b25b632):
- *
- *   {
- *     "auth_mode": "chatgpt",
- *     "OPENAI_API_KEY": null,
- *     "tokens": {
- *       "id_token": "<jwt>",
- *       "access_token": "<jwt>",
- *       "refresh_token": "...",
- *       "account_id": "<uuid>"
- *     },
- *     "last_refresh": "ISO 8601"
- *   }
- *
- * Atomic write (tmp + rename). Logs and continues on any failure —
- * the LAX-side auth.json is the source of truth; this mirror is a
- * convenience for the CLI subprocess and shouldn't crash the chat
- * path if the file write fails (e.g. permissions on ~/.codex/).
- */
-function mirrorToCodexCli(tokens: OAuthTokens): void {
-  if (!tokens.idToken) {
-    // Pre-bridge installs / older saved tokens won't have id_token.
-    // We don't fail loudly here — the next refresh (triggered within
-    // 5min of the next chat that uses the token) will populate idToken
-    // and the bridge will fire then. Log once so the gap is visible.
-    logger.warn("[auth] saveTokens called without id_token — Codex CLI bridge skipped. The CLI will pick up tokens on the next refresh.");
-    return;
-  }
-  const codexPath = join(homedir(), ".codex", "auth.json");
-  const accountId = tokens.accountId ?? extractAccountId(tokens.idToken) ?? "";
-  const codexAuth = {
-    auth_mode: "chatgpt",
-    OPENAI_API_KEY: null,
-    tokens: {
-      id_token: tokens.idToken,
-      access_token: tokens.accessToken,
-      refresh_token: tokens.refreshToken,
-      account_id: accountId,
-    },
-    last_refresh: new Date().toISOString(),
-  };
-  const tmp = `${codexPath}.tmp`;
-  try {
-    mkdirSync(dirname(codexPath), { recursive: true });
-    writeFileSync(tmp, JSON.stringify(codexAuth, null, 2), { mode: 0o600 });
-    renameSync(tmp, codexPath);
-    logger.info(`[auth] mirrored tokens to ${codexPath} (Codex CLI bridge)`);
-    // Fire-and-forget: if codex binary isn't on PATH, install it. Bridge
-    // write succeeded means we have valid tokens — useless without the
-    // CLI to consume them. Non-blocking so token-save stays fast.
-    ensureCodexCliInstalled();
-  } catch (e) {
-    try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }
-    logger.warn(`[auth] Codex CLI bridge write failed: ${(e as Error).message}`);
+  // Bridge to the Codex CLI's own credential store, gated by
+  // LAX_MIRROR_CODEX_AUTH. When enabled, every saveTokens (initial
+  // login AND refresh) writes ~/.codex/auth.json so the CLI subprocess
+  // used by build_app can authenticate without a separate `codex login`.
+  // Default is OFF: the mirror doubles the on-disk credential surface,
+  // so users opt in explicitly when they need build_app. With the gate
+  // off we also skip the @openai/codex auto-install — no point pulling
+  // a CLI we can't authenticate.
+  if (isCodexMirrorEnabled()) {
+    mirrorImpl.fn(tokens);
+  } else {
+    warnMirrorDisabledOnce();
   }
 }
 

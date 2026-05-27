@@ -13,6 +13,8 @@
  * source is tainted for the rest of the run. The LLM can't "un-see" it.
  */
 
+import { homedir } from "node:os";
+
 export type TaintSource = "sensitive_file" | "secret" | "memory" | "web" | "user_data";
 
 interface TaintEntry {
@@ -82,4 +84,67 @@ export function getTaintSummary(sessionId: string): { count: number; sources: st
     count: taints.length,
     sources: [...new Set(taints.map(t => t.source))],
   };
+}
+
+// Shell metacharacters that separate tokens we care about. We intentionally
+// keep this conservative — false positives here mean a legitimate http call
+// gets blocked, which is worse than missing an exotic obfuscation.
+const SHELL_SPLIT_RE = /[\s|<>;()&]+/;
+
+function looksLikePathToken(token: string): boolean {
+  if (!token) return false;
+  if (token.startsWith("/")) return true;
+  if (token.startsWith("~")) return true;
+  if (/^[A-Za-z]:[\\/]/.test(token)) return true;
+  // Relative or bare token with a separator — only treat as path if it has
+  // a dot or recognisable directory segment so things like `echo foo/bar`
+  // (no extension, no leading dot) don't false-positive on the `.ssh`
+  // pattern when the substring happens to appear.
+  if ((token.includes("/") || token.includes("\\")) && /\./.test(token)) return true;
+  return false;
+}
+
+function stripQuotes(token: string): string {
+  if (token.length >= 2) {
+    const first = token[0];
+    const last = token[token.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      return token.slice(1, -1);
+    }
+  }
+  return token;
+}
+
+function expandTilde(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/") || p.startsWith("~\\")) return homedir() + p.slice(1);
+  return p;
+}
+
+/**
+ * Scan a shell command for path-like tokens that match isSensitivePath.
+ * Returns matched paths (deduped, original token form post-quote-strip
+ * pre-tilde-expansion — callers should re-check with isSensitivePath if
+ * they care about the resolved form).
+ *
+ * Conservative by design: only fires on tokens that clearly look like
+ * filesystem paths (leading `/`, `~`, drive letter, or separator+dot).
+ */
+export function extractSensitivePathsFromCommand(command: string): string[] {
+  if (!command) return [];
+  const seen = new Set<string>();
+  const matches: string[] = [];
+  for (const raw of command.split(SHELL_SPLIT_RE)) {
+    if (!raw) continue;
+    // Strip a trailing `>` or `,` that some shells leave attached; we already
+    // split on most metachars but redirects like `2>file` split to `file`.
+    const token = stripQuotes(raw);
+    if (!looksLikePathToken(token)) continue;
+    const expanded = expandTilde(token);
+    if (!isSensitivePath(expanded)) continue;
+    if (seen.has(token)) continue;
+    seen.add(token);
+    matches.push(token);
+  }
+  return matches;
 }

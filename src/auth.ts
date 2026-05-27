@@ -1,9 +1,11 @@
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { dirname } from "node:path";
 import { getAuthPath } from "./config.js";
 import type { OAuthTokens } from "./types.js";
 import { isCodexMirrorEnabled, warnMirrorDisabledOnce, mirrorImpl } from "./auth-codex-mirror.js";
+import { encryptAuthBlob, decryptAuthBlob } from "./auth-storage.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("auth");
@@ -28,23 +30,67 @@ function generatePkce(): { verifier: string; challenge: string } {
 export function loadTokens(): OAuthTokens | null {
   const authPath = getAuthPath();
   if (!existsSync(authPath)) return null;
+
+  let raw: string;
   try {
-    const data = JSON.parse(readFileSync(authPath, "utf-8"));
-    if (data.accessToken && data.refreshToken && data.expiresAt) {
-      return data as OAuthTokens;
-    }
-    // File exists, parsed, but missing required fields — treat as
-    // corrupted-by-shape. Loud-log so future "I signed in but chat says
-    // not authenticated" reports have a debuggable signal.
-    logger.error(`[auth] ${authPath} parsed OK but missing required fields (accessToken/refreshToken/expiresAt) — treating as no-auth`);
+    raw = readFileSync(authPath, "utf-8");
+  } catch (e) {
+    logger.error(`[auth] FAILED to read ${authPath}: ${(e as Error).message} — treating as no-auth.`);
+    return null;
+  }
+
+  // Decrypt-or-pass-through. Envelope → decrypt; legacy plaintext → keep
+  // as-is and re-save encrypted below. Any other shape (tampered envelope,
+  // wrong key, malformed JSON) throws — we surface it to the user and
+  // return null so the chat path's "no auth, please log in" UX kicks in.
+  let plaintext: string;
+  let wasEncrypted: boolean;
+  try {
+    const result = decryptAuthBlob(raw, dirname(authPath));
+    plaintext = result.plaintext;
+    wasEncrypted = result.wasEncrypted;
+  } catch (e) {
+    logger.error(`[auth] FAILED to decrypt ${authPath}: ${(e as Error).message} — treating as no-auth. If this persists, delete the file and re-login.`);
+    return null;
+  }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(plaintext);
   } catch (e) {
     // Loud on parse failure — used to be silent "// Corrupted file"
     // which hid a real failure mode (partial write, manual edit, disk
     // I/O error mid-read). Returning null without logging meant the
     // chat path saw "no token" and the user couldn't tell why.
     logger.error(`[auth] FAILED to parse ${authPath}: ${(e as Error).message} — treating as no-auth. Re-login if this persists.`);
+    return null;
   }
-  return null;
+
+  const tokens = data as Partial<OAuthTokens>;
+  if (!tokens.accessToken || !tokens.refreshToken || !tokens.expiresAt) {
+    // File exists, parsed, but missing required fields — treat as
+    // corrupted-by-shape. Loud-log so future "I signed in but chat says
+    // not authenticated" reports have a debuggable signal.
+    logger.error(`[auth] ${authPath} parsed OK but missing required fields (accessToken/refreshToken/expiresAt) — treating as no-auth`);
+    return null;
+  }
+
+  // Backwards-compat one-shot migration: any legacy plaintext file is
+  // rewritten as an envelope on next load. No flag, no opt-in — the
+  // user's tokens just stop being readable on a stolen disk image.
+  if (!wasEncrypted) {
+    try {
+      saveTokens(tokens as OAuthTokens);
+      logger.info(`[auth] ${authPath} migrated to encrypted-at-rest format.`);
+    } catch (e) {
+      // Migration failure isn't fatal — the tokens we just parsed are
+      // still valid; the user can keep using them. They just stay
+      // plaintext on disk until the next saveTokens succeeds.
+      logger.warn(`[auth] Could not migrate ${authPath} to encrypted format: ${(e as Error).message}`);
+    }
+  }
+
+  return tokens as OAuthTokens;
 }
 
 // Exported for tests. Real callers are inside this module (login + refresh);
@@ -52,12 +98,31 @@ export function loadTokens(): OAuthTokens | null {
 // controls whether the Codex mirror runs.
 export function saveTokens(tokens: OAuthTokens): void {
   const authPath = getAuthPath();
+  const jsonString = JSON.stringify(tokens, null, 2);
+
+  // Encrypt-at-rest. The plaintext JSON is wrapped in an AES-GCM
+  // envelope keyed by the OS keychain (DPAPI / macOS Keychain /
+  // libsecret). A stolen laptop or leaked disk image no longer hands
+  // an attacker the user's live OAuth tokens — they also need the OS
+  // keychain. If encryption fails (keychain unavailable, key wrong
+  // length, etc.) we don't crash a successful login: log loud and
+  // write plaintext as a degraded mode. keychain.ts always returns
+  // *some* key (file-fallback as last resort), so this branch should
+  // be rare in practice.
+  let payload: string;
+  try {
+    payload = encryptAuthBlob(jsonString, dirname(authPath));
+  } catch (e) {
+    logger.warn(`[auth] CRITICAL: could not encrypt ${authPath}: ${(e as Error).message}. Falling back to PLAINTEXT on disk — your OAuth tokens are NOT protected at rest until the keychain becomes available.`);
+    payload = jsonString;
+  }
+
   // Atomic write. Without this, a crash or kill-9 mid-write leaves
   // auth.json half-written; next loadTokens parses partial JSON and
   // logs corruption — user thinks their saved auth vanished.
   const tmp = `${authPath}.tmp`;
   try {
-    writeFileSync(tmp, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+    writeFileSync(tmp, payload, { mode: 0o600 });
     renameSync(tmp, authPath);
   } catch (e) {
     try { if (existsSync(tmp)) unlinkSync(tmp); } catch { /* best-effort */ }

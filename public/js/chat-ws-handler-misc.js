@@ -39,6 +39,29 @@ function handleSidebarPinsChanged(msg) {
   } catch(e) { /* app.js not loaded yet — will pick up on next page load */ }
 }
 
+// Agent (or another tab) asked to wipe the Conversations list from the
+// sidebar. Tombstone every chat ID so sync doesn't resurrect them on the
+// next pull, then clear the in-memory + cached array and re-render.
+// Backend session files are NOT deleted — recovery is "clear tombstones."
+function handleSidebarClearChats() {
+  try {
+    if (typeof chats !== 'undefined' && Array.isArray(chats)) {
+      for (const c of chats) {
+        if (c && c.id && typeof markDeleted === 'function') markDeleted(c.id);
+      }
+      chats = [];
+      try { window.chats = chats; } catch {}
+    }
+    if (typeof activeChat !== 'undefined' && activeChat) {
+      activeChat = null;
+      try { window.activeChat = null; } catch {}
+    }
+    if (typeof saveChats === 'function') saveChats();
+    if (typeof renderSidebar === 'function') renderSidebar();
+    if (typeof renderMessages === 'function') renderMessages();
+  } catch (e) { console.warn('[sidebar-clear-chats] failed', e); }
+}
+
 // Manifest-generator detects edits under workspace/apps/<name>/ and broadcasts.
 // Without this, the pinned-app iframe only refreshed on user click — agents
 // editing files in the background were invisible until a manual click/refresh.

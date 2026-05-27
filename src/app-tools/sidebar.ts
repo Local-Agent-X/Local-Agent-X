@@ -121,3 +121,31 @@ export const sidebarUnpin: ToolDefinition = {
     return ok(`Removed ${name} from the sidebar.`);
   },
 };
+
+// Hides every chat from the sidebar (frontend-only) without touching the
+// backend session store. The model can't reach localStorage directly; this
+// tool broadcasts a WS event and the browser tombstones every chat ID it
+// holds, then clears `chats[]`. Backend `.jsonl` session files are
+// untouched — recoverable by clearing tombstones later. Use ONLY when the
+// user explicitly asks to clear, hide, or empty the sidebar conversations
+// list. Do NOT call `http_request DELETE /api/sessions` for this — that
+// wipes backend data and still doesn't clear the sidebar (the sidebar
+// reads from localStorage + tombstones, not the backend list directly).
+export const sidebarClear: ToolDefinition = {
+  name: "sidebar_clear",
+  description:
+    "Hide ALL chats from the sidebar's CONVERSATIONS section without deleting the underlying session data on disk. ONLY use when the user explicitly references conversations / chats / chat history (e.g. 'clear my chat history from the sidebar', 'hide all my conversations', 'clear the conversations list', 'wipe sidebar chat history'). The sidebar has FOUR distinct sections — Pinned apps, Projects, Messaging (WhatsApp/Telegram), and Conversations — and this tool ONLY affects Conversations. If the user says something ambiguous like 'clear the sidebar', 'empty the sidebar', or 'reset the sidebar' without naming a section, ASK them which section they mean before calling any tool. For app pins use sidebar_unpin. Never call this when the user is talking about pins, projects, or messaging.",
+  parameters: {
+    type: "object",
+    properties: {},
+  },
+  async execute() {
+    try {
+      const { broadcastAll } = await import("../chat-ws.js");
+      broadcastAll({ type: "sidebar_clear_chats", at: Date.now() });
+    } catch (e) {
+      return err(`Failed to broadcast sidebar clear: ${String((e as Error)?.message || e)}`);
+    }
+    return ok("Sent sidebar-clear signal to the browser. The Conversations list will empty on next render; backend session files are untouched.");
+  },
+};

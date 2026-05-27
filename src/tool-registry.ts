@@ -282,6 +282,7 @@ export const TOOLS: Record<string, ToolEntry> = {
   // ── UI / state / config ──
   sidebar_pin:    { kernel: "internal", risk: "workspace-write" },
   sidebar_unpin:  { kernel: "internal", risk: "workspace-write" },
+  sidebar_clear:  { kernel: "internal", risk: "workspace-write" },
   voice_visual:   { kernel: "internal", risk: "safe" },
   session_status: { kernel: "internal", risk: "safe" },
   setting:        { kernel: "internal", risk: "workspace-write" },

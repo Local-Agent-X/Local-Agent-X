@@ -46,12 +46,14 @@ const SYSTEM_PROMPT = `You decide which tool the assistant should be FORCED to c
 
 KINDS:
 
-- build_app — user is asking to CREATE A NEW STANDALONE app, dashboard, page, tool, tracker, calculator, form, site, or similar artifact. The request is for a fresh thing that doesn't exist yet. Examples:
+- build_app — user is asking to CREATE A NEW STANDALONE, RUNNABLE app, dashboard, page, tool, tracker, calculator, form, site, or similar artifact. The request is for a fresh thing that doesn't exist yet. Examples:
     "create a dashboard that imports our fastmail"
     "build me a kanban app"
     "make a calculator that converts USD to crypto"
     "scaffold a TODO list page"
     "generate a landing page for X"
+
+  NOT build_app — a bare "project" / "workspace" container inside THIS app (Local Agent X). Phrases like "create a project", "new project called X", "add a project for my client work", "start a project" mean a LAX project container, handled by the project_create tool — NOT a standalone runnable artifact. Return "free" for these so the model calls project_create itself. Only classify as build_app when the user clearly wants a runnable app/page/site/tool (the artifact words above), not just an organizational "project".
 
 - agent_spawn — user is asking to DELEGATE a long-running task to a named role/specialist for execution NOW: research, multi-step writing, code review, market scans, browsing-and-summarizing, anything that benefits from a focused worker run RIGHT NOW. Examples:
     "research current AI voice toolkits and write a summary"
@@ -76,6 +78,8 @@ KINDS:
 - free — anything else. Ordinary conversation, status checks, casual questions, ambiguous requests, "how would you build..." (asking for discussion, not the build), "explain", "what is...", short acks, follow-ups, requests that don't unambiguously map to ONE of the three primitives above. When in doubt, choose "free" — forcing the wrong tool is worse than no forcing.
 
 DISTINCTIONS:
+- "create a project" / "new project called X" → free (LAX project container → project_create, NOT a standalone app)
+- "build a project management app" → build_app (concrete runnable artifact, despite the word "project")
 - "create a dashboard for fastmail" → build_app (concrete artifact)
 - "explain how you'd build a dashboard for fastmail" → free (discussion)
 - "research X for me" → agent_spawn (delegation, do it now)

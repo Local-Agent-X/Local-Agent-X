@@ -17,6 +17,28 @@
 //   - feedTTS, flushTTS, stopSpeaking, ttsSentenceBuffer (chat-voice-tts.js)
 //   - detectMood                       (chat-extras.js)
 
+// Sidebar-clear intent detector. Returns true ONLY when the message OPENS
+// with an imperative verb (clear/remove/wipe/empty/hide/delete) and contains
+// BOTH "sidebar" and a conversation/chat keyword within the same sentence.
+// Anchoring to the start avoids false positives like "Grok cleared all my
+// sidebar conversations" (past-tense narration) or "the sidebar conversations
+// are stale" (description). False negatives are fine — the agent path still
+// runs and can succeed. False positives silently nuke the user's sidebar, so
+// the matcher is intentionally narrow.
+const _IMPERATIVE_OPEN_RE = /^\s*(?:please\s+|can\s+you\s+|could\s+you\s+|kindly\s+|just\s+|go\s+ahead\s+and\s+|now\s+)?(?:clear|remove|empty|wipe|hide|delete)\b/i;
+const _SIDEBAR_RE = /\bsidebar\b/i;
+// Require plural or explicit history/log suffix — singular "chat" can mean
+// "this one chat" (handled by per-id delete, not bulk clear).
+const _CONVERSATION_NOUN_RE = /\b(?:conversations|chats|(?:chat|conversation)\s+(?:history|log))\b/i;
+function _isSidebarClearIntent(text) {
+  if (!text || typeof text !== 'string') return false;
+  // First sentence only — "clear my sidebar conversations. also rename foo"
+  // matches; "I'd like to ask about clearing sidebar conversations" doesn't.
+  const head = text.split(/[.?!\n]/)[0] || '';
+  if (!_IMPERATIVE_OPEN_RE.test(head)) return false;
+  return _SIDEBAR_RE.test(head) && _CONVERSATION_NOUN_RE.test(head);
+}
+
 // [chat-diag] frontend → server log sink. Browser console doesn't
 // persist; this POSTs to /api/diag/log so the breadcrumbs land in
 // ~/.lax/logs/server.log. Fire-and-forget so it never blocks the chat
@@ -71,6 +93,17 @@ async function sendMessage() {
   const input = document.getElementById('msg-input');
   const text = input.value.trim();
   if (!text && pendingUploads.length === 0) return;
+
+  // Deterministic intent intercept — fire UI-state mutations directly so they
+  // can't be sabotaged by a model picking the wrong tool (or no tool at all
+  // and hallucinating success via `bash echo`). The agent still receives the
+  // message and confirms verbally, but the action no longer depends on tool
+  // selection. Tight regex: requires an action verb adjacent to both the
+  // sidebar word and a conversation/chat keyword, in either order. Questions
+  // like "how do I clear the sidebar?" don't match (no conversation noun).
+  if (text && _isSidebarClearIntent(text)) {
+    try { if (typeof handleSidebarClearChats === 'function') handleSidebarClearChats(); } catch (e) { console.warn('[intent-intercept] sidebar_clear failed', e); }
+  }
   // Wait for any in-flight uploads to finish before capturing attachments —
   // images need their server URL resolved, otherwise the backend filters them out
   // (see prepare-request.ts: `if (a.isImage && a.url)`).

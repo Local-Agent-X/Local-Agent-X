@@ -22,7 +22,6 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { createLogger } from "../logger.js";
 import { redactKnownSecrets } from "../sanitize.js";
@@ -30,6 +29,7 @@ import { resetSession as resetCurateNudge } from "./curate-nudge.js";
 import { dispatch } from "../llm-dispatch.js";
 import { PERSONALITY_FILES, dedupeProfileMarkdown } from "./personality.js";
 import { writeMemorySafely, MemoryWriteBlocked } from "./write-safely.js";
+import type { MemoryIndex } from "./index-core.js";
 
 const logger = createLogger("memory.end-of-turn-write");
 
@@ -63,6 +63,7 @@ export interface EndOfTurnContext {
   provider: string;
   model: string;
   apiKey: string;
+  memory: MemoryIndex;
 }
 
 /**
@@ -110,7 +111,7 @@ export async function runEndOfTurnMemoryWrite(ctx: EndOfTurnContext): Promise<vo
   // the model would have used. Don't go through the tool registry — call
   // the underlying MemoryIndex directly to avoid nested tool dispatch.
   try {
-    await applyWrite(decision);
+    await applyWrite(decision, ctx.memory);
     logger.info(
       `[end-of-turn] wrote to USER.md ` +
       `(action=${decision.action}, section=${decision.section_heading || "—"}, ` +
@@ -216,12 +217,12 @@ export function parseWriteDecision(raw: string): WriteDecision | null {
   return { write: true, action, section_heading, content };
 }
 
-async function applyWrite(d: WriteDecision): Promise<void> {
+async function applyWrite(d: WriteDecision, memory: MemoryIndex): Promise<void> {
   // Mirrors memory_update_profile's write path with the same char caps.
   // End-of-turn only writes USER.md — facts go through the agent's `remember`
   // tool during the turn, not this classifier.
   const filename = PERSONALITY_FILES.user;
-  const filePath = join(homedir(), ".lax", "memory", filename);
+  const filePath = join(memory.getMemoryDir(), filename);
   const existing = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
 
   let updated: string;

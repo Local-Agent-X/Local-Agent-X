@@ -33,7 +33,7 @@ export interface ConsolidationLogEntry {
   mergedPairs: Array<{ from: string[]; to: string }>;
 }
 
-export const LAX_DIR = join(homedir(), ".lax");
+export const LAX_DIR = process.env.LAX_DATA_DIR || join(homedir(), ".lax");
 export const MEMORY_DIR = join(LAX_DIR, "memory");
 export const ENTITIES_DIR = join(MEMORY_DIR, "bank", "entities");
 export const LOG_PATH = join(LAX_DIR, "consolidation-log.json");

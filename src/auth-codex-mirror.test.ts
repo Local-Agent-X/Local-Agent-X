@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   isCodexMirrorEnabled,
+  isCodexAutoInstallEnabled,
   warnMirrorDisabledOnce,
   _resetMirrorOnceFlagForTests,
   mirrorImpl,
@@ -23,7 +24,7 @@ import { saveTokens, loadTokens } from "./auth.js";
 import { _resetMasterKeyCacheForTests } from "./auth-storage.js";
 import type { OAuthTokens } from "./types.js";
 
-const ENV_KEYS = ["LAX_MIRROR_CODEX_AUTH", "HOME", "USERPROFILE"] as const;
+const ENV_KEYS = ["LAX_MIRROR_CODEX_AUTH", "LAX_INSTALL_CODEX_CLI", "HOME", "USERPROFILE"] as const;
 
 function snapshotEnv(): Record<string, string | undefined> {
   const snap: Record<string, string | undefined> = {};
@@ -54,6 +55,7 @@ let tempHome: string;
 beforeEach(() => {
   envSnap = snapshotEnv();
   delete process.env.LAX_MIRROR_CODEX_AUTH;
+  delete process.env.LAX_INSTALL_CODEX_CLI;
   // Redirect getAuthPath() (and ~/.codex/ if anything ever writes there
   // in this file) into a tempdir. Both names matter: getConfigDir reads
   // HOME first, USERPROFILE second; homedir() (used by the mirror's
@@ -91,6 +93,30 @@ describe("isCodexMirrorEnabled", () => {
   it.each(["0", "false", "no", "", "random_garbage"])("returns false for non-truthy value %j", (val) => {
     process.env.LAX_MIRROR_CODEX_AUTH = val;
     expect(isCodexMirrorEnabled()).toBe(false);
+  });
+});
+
+describe("isCodexAutoInstallEnabled", () => {
+  it("returns false when LAX_INSTALL_CODEX_CLI is unset", () => {
+    delete process.env.LAX_INSTALL_CODEX_CLI;
+    expect(isCodexAutoInstallEnabled()).toBe(false);
+  });
+
+  it.each(["1", "true", "TRUE", "True"])("returns true for truthy value %s", (val) => {
+    process.env.LAX_INSTALL_CODEX_CLI = val;
+    expect(isCodexAutoInstallEnabled()).toBe(true);
+  });
+
+  it.each(["0", "false", "no", "", "random_garbage"])("returns false for non-truthy value %j", (val) => {
+    process.env.LAX_INSTALL_CODEX_CLI = val;
+    expect(isCodexAutoInstallEnabled()).toBe(false);
+  });
+
+  it("is independent of LAX_MIRROR_CODEX_AUTH — install gate is its own consent decision", () => {
+    process.env.LAX_MIRROR_CODEX_AUTH = "1";
+    delete process.env.LAX_INSTALL_CODEX_CLI;
+    expect(isCodexMirrorEnabled()).toBe(true);
+    expect(isCodexAutoInstallEnabled()).toBe(false);
   });
 });
 

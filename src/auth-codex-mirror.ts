@@ -10,9 +10,18 @@
  * credential surface — stolen laptop / leaked backup leaks two files
  * instead of one. Users who actively need build_app enable the env var.
  *
- * When the mirror is disabled, both the file write AND the
- * @openai/codex auto-install are skipped — no point pulling a CLI we
- * can't authenticate.
+ * Two independent env-var gates:
+ *   - LAX_MIRROR_CODEX_AUTH=1  → write the ~/.codex/auth.json mirror
+ *   - LAX_INSTALL_CODEX_CLI=1  → if codex is not on PATH, run
+ *                                `npm install -g @openai/codex` in the
+ *                                background
+ *
+ * The install gate is separate so token-save doesn't silently trigger a
+ * network call + global package install on a fresh laptop just because
+ * the user opted into the file mirror. With the install gate OFF and
+ * codex missing, the mirror logs an actionable manual-install hint and
+ * carries on (the auth.json mirror is still written for the next time
+ * codex shows up on PATH).
  */
 import { writeFileSync, existsSync, renameSync, unlinkSync, mkdirSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
@@ -26,6 +35,19 @@ const logger = createLogger("auth");
 /** Exported for tests. Reads LAX_MIRROR_CODEX_AUTH; default OFF. */
 export function isCodexMirrorEnabled(): boolean {
   const raw = process.env.LAX_MIRROR_CODEX_AUTH;
+  if (typeof raw !== "string") return false;
+  const v = raw.toLowerCase();
+  return v === "1" || v === "true";
+}
+
+/**
+ * Reads LAX_INSTALL_CODEX_CLI; default OFF. Gates the auto `npm install
+ * -g @openai/codex` that runs when codex is missing from PATH. Separate
+ * from the mirror gate because "save my tokens" and "install a global
+ * CLI on my machine" are different consent decisions.
+ */
+export function isCodexAutoInstallEnabled(): boolean {
+  const raw = process.env.LAX_INSTALL_CODEX_CLI;
   if (typeof raw !== "string") return false;
   const v = raw.toLowerCase();
   return v === "1" || v === "true";
@@ -51,17 +73,27 @@ let _codexCliInstallInFlight: Promise<void> | null = null;
 
 /**
  * After the bridge writes auth.json, ensure the codex binary is on
- * PATH. If missing, install @openai/codex globally (async, non-blocking).
- * Tokens without a CLI to consume them are useless, but token-save
- * stays fast — install runs in the background.
+ * PATH. If missing AND LAX_INSTALL_CODEX_CLI=1, install @openai/codex
+ * globally (async, non-blocking). If missing and the install gate is
+ * OFF, log an actionable manual-install hint and return — token-save
+ * shouldn't silently run `npm install -g` over the network on a fresh
+ * laptop just because the user enabled the credential mirror.
  */
 function ensureCodexCliInstalled(): void {
   if (_codexCliInstallInFlight) return;
   try {
     const check = spawnSync("codex", ["--version"], { stdio: "ignore", shell: process.platform === "win32", timeout: 3000 });
     if (check.status === 0) return;
-  } catch { /* fall through to install */ }
-  logger.info("[auth] Codex CLI not on PATH — installing @openai/codex globally (background)…");
+  } catch { /* fall through */ }
+  if (!isCodexAutoInstallEnabled()) {
+    logger.info(
+      "[auth] Codex CLI not on PATH and auto-install is OFF (LAX_INSTALL_CODEX_CLI unset). " +
+      "Install manually with: npm install -g @openai/codex — or set LAX_INSTALL_CODEX_CLI=1 " +
+      "to let LAX install it in the background on the next token save.",
+    );
+    return;
+  }
+  logger.info("[auth] Codex CLI not on PATH — installing @openai/codex globally (background, LAX_INSTALL_CODEX_CLI=1)…");
   _codexCliInstallInFlight = new Promise<void>((resolve) => {
     const proc = spawn("npm", ["install", "-g", "@openai/codex"], {
       stdio: "ignore",

@@ -63,7 +63,8 @@ function enterIdeView(appId, appName, appUrl, buildPrompt) {
 
   const frame = document.getElementById('ide-preview-frame');
   if (appUrl && frame) {
-    frame.src = window._ideAppUrl;
+    try { frame.src = 'about:blank'; } catch {}
+    frame.src = window._ideAppUrl + '?_t=' + Date.now();
     // Re-inject the picker if it's on (e.g. user toggled it, navigated
     // away and back). Idempotent — noops if the iframe is empty.
     if (typeof _ideOnPreviewLoad === 'function') {
@@ -263,8 +264,12 @@ function sendIdeChatMessage() {
 
 function ideContextPrefix() {
   return 'IMPORTANT: You are in IDE mode editing an app. ' +
+    'If the user is asking a question, brainstorming, or asking what to do next ' +
+    '(e.g. "what should we add?", "what do you think?", "any ideas?", "should we...?"), ' +
+    'reply in chat with your suggestions FIRST and wait for an explicit go-ahead before editing. ' +
+    'Only start editing files when given a clear directive ("add X", "fix Y", "build it", "do it", "go"). ' +
     'Do NOT use agent_spawn, delegate, or build_app tools. ' +
-    'Do the work YOURSELF using read, write, edit, bash, glob, and grep tools directly. ' +
+    'When you do edit, do the work YOURSELF using read, write, edit, bash, glob, and grep tools directly. ' +
     'Work in workspace/apps/' + _ideAppId + '/. ' +
     'Do NOT include http://127.0.0.1 URLs in your reply — the user is viewing the app in a live preview iframe next to this chat, so any "open the app here" link is redundant noise. ';
 }

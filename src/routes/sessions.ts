@@ -185,15 +185,28 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     return true;
   }
 
-  // Delete ALL sessions (clear sidebar). Destructive — wipes every session
-  // JSON on disk. Memory (facts DB, chunks, profile files) is untouched.
+  // Bulk delete — wipes regular chat sessions only. Preserves system
+  // internals (dream/cron/ide, same as the GET filter above) AND persistent
+  // integration threads (wa/tg/sms) which represent live external
+  // connections, not regular chat history. The earlier "delete everything"
+  // form nuked WhatsApp/Telegram threads when an agent reached for this
+  // endpoint to clear the sidebar. Surgical per-id delete is still
+  // available via DELETE /api/sessions/<id>.
   if (method === "DELETE" && url.pathname === "/api/sessions") {
     const all = ctx.sessionStore.list();
     let deleted = 0;
+    let skipped = 0;
     for (const s of all) {
+      if (
+        s.id.startsWith("dream-") || s.id.startsWith("cron-") || s.id.startsWith("ide-") ||
+        s.id.startsWith("wa-") || s.id.startsWith("tg-") || s.id.startsWith("sms-")
+      ) {
+        skipped++;
+        continue;
+      }
       try { ctx.sessionStore.delete(s.id); deleted++; } catch {}
     }
-    json(200, { ok: true, deleted });
+    json(200, { ok: true, deleted, skipped });
     return true;
   }
 

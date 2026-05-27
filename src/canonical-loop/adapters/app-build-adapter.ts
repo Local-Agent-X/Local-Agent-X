@@ -239,11 +239,11 @@ async function defaultProviderAdapterFactory(
   const { createOpenAICompatAdapter, resolveOpenAICompatTarget } = await import("./openai-compat.js");
   const { resolveProvider } = await import("../../agent-request/resolve-provider.js");
   const { getRuntimeConfig } = await import("../../config.js");
-  const { getSecretsStoreSingleton, SecretsStore } = await import("../../secrets.js");
+  const { getOrInitSecretsStore } = await import("../../secrets.js");
   const { getLaxDir } = await import("../../lax-data-dir.js");
   const dataDir = getLaxDir();
   const config = getRuntimeConfig();
-  const secrets = getSecretsStoreSingleton() ?? new SecretsStore(dataDir);
+  const secrets = getOrInitSecretsStore(dataDir);
   const prepared = await resolveProvider(config, secrets, dataDir, provider);
   let target = await resolveOpenAICompatTarget(prepared.provider, {
     apiKey: prepared.apiKey,

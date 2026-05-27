@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 
 import type { PatternsFile } from "./types.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
-const LAX_DIR = join(homedir(), ".lax");
+const LAX_DIR = getLaxDir();
 const PATTERNS_FILE = join(LAX_DIR, "proactive-patterns.json");
 const MAX_INTERACTIONS = 2000;
 const MAX_PATTERNS = 500;

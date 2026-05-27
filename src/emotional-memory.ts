@@ -7,8 +7,8 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
+import { getLaxDir } from "./lax-data-dir.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -137,7 +137,7 @@ const ADAPTATION_HINTS: Record<Emotion, string> = {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const LAX_DIR = join(homedir(), ".lax");
+const LAX_DIR = getLaxDir();
 const HISTORY_FILE = join(LAX_DIR, "emotional-history.json");
 const MAX_ENTRIES = 1000;
 

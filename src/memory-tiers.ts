@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 import { tokenizeBasic } from "./memory/text-utils.js";
 
@@ -60,7 +60,7 @@ interface TierData {
 //  Constants
 // ══════════════════════════════════════════════════════════
 
-const LAX_DIR = join(homedir(), ".lax");
+const LAX_DIR = getLaxDir();
 const TIERS_FILE = join(LAX_DIR, "memory-tiers.json");
 const MS_PER_DAY = 86_400_000;
 

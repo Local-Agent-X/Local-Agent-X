@@ -58,8 +58,19 @@ export async function bootstrapTools(deps: {
   const outputsById = new Map<string, ToolDefinition[]>();
   const seenTools = new Set<string>();
 
+  // Stamp audiences on plugin-produced tools from the canonical map,
+  // same as registry-build.ts does for the static allTools. Without
+  // this, plugin tools have `audiences === undefined` even when listed
+  // in AUDIENCES_BY_TOOL, so they fail the audience filter in
+  // tool-search.ts:82 and miss corePinned in tool-selection.ts:105.
+  // Symptom: agent_create / project_create only reach the model via
+  // the RAG semantic step — whichever sibling has higher embedding
+  // similarity wins the slot, often leaving the right tool out.
+  const { applyAudiences } = await import("../tools/audience-map.js");
+
   for (const plugin of plugins) {
     const produced = await plugin.register(ctx);
+    applyAudiences(produced);
     outputsById.set(plugin.id, produced);
     for (const tool of produced) {
       if (seenTools.has(tool.name)) {

@@ -31,7 +31,12 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
   // misroutes to pin).
   { keywords: /\bapp\b|dashboard|tracker/i, toolPrefixes: ["app_"] },
   { keywords: /\bsidebar\b|\bpin\b|\bunpin\b/i, toolPrefixes: ["sidebar_"] },
-  { keywords: /issue|ticket|project|kanban/i, toolPrefixes: ["issue_"] },
+  { keywords: /issue|ticket|kanban/i, toolPrefixes: ["issue_"] },
+  // "project" is ambiguous — could mean an issue-tracker project (issue_*)
+  // OR a Local-Agent-X project container (project_*). Surface both; the
+  // model picks based on phrasing ("create a project" → project_create,
+  // "open project ABC's issues" → issue_list).
+  { keywords: /\bproject\b/i, toolPrefixes: ["project_", "issue_"] },
   { keywords: /instagram|twitter|tiktok|social|post on/i, toolPrefixes: ["mission_"] },
   { keywords: /config|setting/i, toolPrefixes: ["config_"] },
   { keywords: /skill/i, toolPrefixes: ["skill_"] },

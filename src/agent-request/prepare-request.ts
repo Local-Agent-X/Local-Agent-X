@@ -22,13 +22,25 @@ import { buildSystemPrompt } from "./prepare-request/build-system-prompt.js";
 const logger = createLogger("agent-request.prepare-request");
 
 export async function prepareAgentRequest(input: AgentRequestInput): Promise<PreparedAgentRequest> {
+  // Per-step timing logs. Added 2026-05-27 after IDE-mode chat turns wedged
+  // somewhere inside this pipeline with zero breadcrumbs: only the entry
+  // [retry] log fired, then nothing until server restart. Tag each step
+  // with the sessionId slice so IDE vs chat hangs are distinguishable.
+  const sessTag = input.sessionId.slice(0, 16);
+  const stepStart = (label: string): (() => void) => {
+    const t = Date.now();
+    logger.info(`[step] ${label} START sess=${sessTag}`);
+    return () => logger.info(`[step] ${label} ${Date.now() - t}ms sess=${sessTag}`);
+  };
+
   // 1. Resolve provider + keys
+  let end = stepStart("resolveProvider");
   const resolved = await resolveProvider(
     input.config, input.secretsStore, input.dataDir,
     input.providerOverride,
     input.modelOverride,
   );
-  void logger; // logger kept for future routing diagnostics
+  end();
 
   // 2. Sanitize + truncate history. Compaction now lives as a leading
   // `system` message in sessionMessages itself (round-tripped through a
@@ -36,13 +48,16 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // slice/prepend logic needed here — the session passed in is already
   // the right shape, with `[system_summary, ...recent_msgs]` when
   // compacted and just `[...msgs]` otherwise.
+  end = stepStart("truncateHistory");
   const maxKeep = input.maxHistory || (input.channel === "web" ? 40 : 30);
   const cleanHistory = truncateHistory(sanitizeHistory(input.sessionMessages), maxKeep);
+  end();
 
   // 3. Tool selection (intent + tier filter + RAG re-rank). Must run
   // before build-context so we know the tier (weak-tier context strip)
   // and before system-prompt build so forceBuildIntent can drive the
   // CLI nudge.
+  end = stepStart("selectTools");
   const toolSel = await selectTools({
     message: input.message,
     channel: input.channel,
@@ -51,10 +66,12 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     resolvedProvider: resolved.provider,
     resolvedModel: resolved.model,
   });
+  end();
 
   // 4. Build per-turn memory + context (skip heavy parts for bridges/cron).
   // The memory pipeline runs for every provider — the orchestrator's
   // grounding signals help Codex the same way they help Claude.
+  end = stepStart("buildContext");
   const isCodexProvider = resolved.provider === "codex";
   const ctx = await buildContext({
     message: input.message,
@@ -68,10 +85,12 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     tier: toolSel.tier,
     resolvedModel: resolved.model,
   });
+  end();
 
   // 5. Memory-curate nudge detection (Stage 1 regex + Stage 2 LLM). Runs
   // for the side-effect boosts even when LAX_MEMORY_INPROMPT_NUDGE is
   // unset — the boost counter is read by the end-of-turn memory write.
+  end = stepStart("detectAndBoostCurate");
   const memoryCurateBlock = await detectAndBoostCurate({
     message: input.message,
     sessionMessages: input.sessionMessages,
@@ -80,9 +99,11 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     resolvedModel: resolved.model,
     resolvedApiKey: resolved.apiKey,
   });
+  end();
 
   // 6. Build the final system prompt (base + blocks + provider rider +
   // build-intent CLI nudge if applicable).
+  end = stepStart("buildSystemPrompt");
   const systemPrompt = await buildSystemPrompt({
     message: input.message,
     sessionId: input.sessionId,
@@ -103,6 +124,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     forceBuildIntent: toolSel.forceBuildIntent,
     intentReason: toolSel.intentVerdict?.reason,
   });
+  end();
 
   // 7. Process image attachments
   const images: Array<{ url: string; filePath?: string; name: string }> = [];

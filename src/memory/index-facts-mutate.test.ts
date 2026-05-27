@@ -121,6 +121,28 @@ describe("recallRecentFacts candidate-window sizing", () => {
     ]);
   });
 
+  // Pins the writer (formatBullet's letter map) and parser (parseFactLine's
+  // letter map) together: rememberFact formats the bullet with KIND_PREFIX
+  // from index-facts-mutate.ts, then retain() parses it back via
+  // parseFactLine from utils.ts. If the two maps drift again (the original
+  // bug split them — writer said B for experience, parser agreed, but the
+  // dream prompt told the LLM B meant behavior), this test catches it.
+  it("roundtrips FactKind through rememberFact's formatBullet → parseFactLine on insert", () => {
+    const kinds = ["world", "experience", "opinion", "observation"] as const;
+    for (const kind of kinds) {
+      const r = memory.rememberFact(`roundtrip probe for ${kind} kind`, {
+        kind,
+        confidence: 0.7,
+      });
+      expect(r.ok, `rememberFact failed for kind=${kind}`).toBe(true);
+      expect(r.fact!.kind).toBe(kind);
+      // Reload from DB to be sure it wasn't only correct on the return value.
+      const db = memory["db"];
+      const row = db.prepare("SELECT kind FROM facts WHERE id = ?").get(r.fact!.id!) as { kind: string };
+      expect(row.kind).toBe(kind);
+    }
+  });
+
   it("dedups same-(kind,primary-entity) facts after rerank — highest hot_score wins", () => {
     const now = Date.now();
 

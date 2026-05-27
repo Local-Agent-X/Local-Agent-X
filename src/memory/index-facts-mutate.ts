@@ -27,7 +27,7 @@ function hotScore(fact: RetainedFact, nowMs: number, halfLifeDays: number): numb
 
 const KIND_PREFIX: Record<FactKind, string> = {
   world: "W",
-  experience: "B",
+  experience: "E",
   opinion: "O",
   observation: "S",
 };

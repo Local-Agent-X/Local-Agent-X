@@ -7,8 +7,8 @@
 
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { DemoRecorder } from "./demo-recorder.js";
+import { getLaxDir } from "./lax-data-dir.js";
 import type { Recording } from "./demo-recorder.js";
 
 export type DemoStepType = "message" | "wait" | "assert" | "screenshot" | "narrate";
@@ -44,7 +44,7 @@ export interface DemoRunResult {
   recording: Recording | null;
 }
 
-const SCRIPTS_DIR = join(homedir(), ".lax", "demo-scripts");
+const SCRIPTS_DIR = join(getLaxDir(), "demo-scripts");
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) {

@@ -6,8 +6,8 @@
 
 import { existsSync, accessSync, constants } from "node:fs";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
 import { execSync } from "node:child_process";
+import { getLaxDir } from "./lax-data-dir.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
@@ -32,7 +32,7 @@ type CheckFn = () => Promise<DiagnosticResult> | DiagnosticResult;
 // ── Individual Checks ──
 
 function checkConfigExists(): DiagnosticResult {
-  const cfgPath = join(homedir(), ".lax", "config.json");
+  const cfgPath = join(getLaxDir(), "config.json");
   if (!existsSync(cfgPath)) {
     return { name: "Config file", status: "fail", message: "~/.lax/config.json not found", fix: "Run the server once to auto-generate config" };
   }
@@ -59,7 +59,7 @@ function checkWorkspace(): DiagnosticResult {
 }
 
 function checkDatabase(): DiagnosticResult {
-  const dbPath = join(homedir(), ".lax", "db.sqlite");
+  const dbPath = join(getLaxDir(), "db.sqlite");
   if (!existsSync(dbPath)) {
     return { name: "Database", status: "warn", message: "db.sqlite not found — will be created on first use" };
   }
@@ -79,7 +79,7 @@ async function checkApiKey(name: string, keyEnv: string, testUrl: string, header
   if (!key) {
     // Check secrets vault
     try {
-      const vaultPath = join(homedir(), ".lax", "secrets-vault.json");
+      const vaultPath = join(getLaxDir(), "secrets-vault.json");
       if (existsSync(vaultPath)) {
         const vault = JSON.parse(require("fs").readFileSync(vaultPath, "utf-8"));
         if (vault[keyEnv] || vault[name.toUpperCase().replace(/\s+/g, "_") + "_API_KEY"]) {
@@ -129,7 +129,7 @@ function checkPlaywright(): DiagnosticResult {
 
 function checkDiskSpace(): DiagnosticResult {
   try {
-    const laxDir = join(homedir(), ".lax");
+    const laxDir = getLaxDir();
     // Rough check: try to write a temp file
     const tmpFile = join(laxDir, ".doctor-check");
     require("fs").writeFileSync(tmpFile, "ok");
@@ -141,7 +141,7 @@ function checkDiskSpace(): DiagnosticResult {
 }
 
 function checkMemoryDir(): DiagnosticResult {
-  const memDir = join(homedir(), ".lax", "memory");
+  const memDir = join(getLaxDir(), "memory");
   if (!existsSync(memDir)) return { name: "Memory system", status: "warn", message: "No memory directory yet — will be created on first use" };
   try {
     const files = require("fs").readdirSync(memDir) as string[];
@@ -152,7 +152,7 @@ function checkMemoryDir(): DiagnosticResult {
 }
 
 function checkSecretsVault(): DiagnosticResult {
-  const vaultPath = join(homedir(), ".lax", "secrets-vault.json");
+  const vaultPath = join(getLaxDir(), "secrets-vault.json");
   if (!existsSync(vaultPath)) return { name: "Secrets vault", status: "pass", message: "No secrets stored" };
   try {
     const vault = JSON.parse(require("fs").readFileSync(vaultPath, "utf-8"));

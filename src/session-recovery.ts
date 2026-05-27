@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
-const CHECKPOINT_DIR = join(homedir(), ".lax", "checkpoints");
+const CHECKPOINT_DIR = join(getLaxDir(), "checkpoints");
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function ensureDir(): void {

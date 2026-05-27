@@ -16,8 +16,8 @@
 
 import { existsSync, readFileSync, appendFileSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import { createLogger } from "../logger.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import type { AutoDelegateLogEntry } from "./types.js";
 
 const logger = createLogger("routing.decision-log");
@@ -29,7 +29,7 @@ let logLoaded = false;
 
 function getLogFilePath(): string {
   if (logFilePath) return logFilePath;
-  const dir = process.env.LAX_DATA_DIR || join(homedir(), ".lax");
+  const dir = getLaxDir();
   logFilePath = join(dir, "auto-delegate-decisions.jsonl");
   return logFilePath;
 }

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 interface QueuedRequest {
   id: string;
@@ -22,7 +22,7 @@ export class OfflineQueue {
   private processing = false;
 
   constructor(healthUrl: string) {
-    const dir = join(homedir(), ".lax");
+    const dir = getLaxDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     this.queuePath = join(dir, "offline-queue.json");
     this.healthUrl = healthUrl;

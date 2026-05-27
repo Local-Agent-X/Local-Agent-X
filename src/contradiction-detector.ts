@@ -8,6 +8,7 @@
  * Persists contradiction history to ~/.lax/contradiction-history.json.
  */
 
+import { getLaxDir } from "./lax-data-dir.js";
 import {
   existsSync,
   mkdirSync,
@@ -15,7 +16,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 
 // ══════════════════════════════════════════════════════════
 //  Types
@@ -46,7 +46,7 @@ export interface ContradictionRecord {
 //  Constants
 // ══════════════════════════════════════════════════════════
 
-const LAX_DIR = join(homedir(), ".lax");
+const LAX_DIR = getLaxDir();
 const HISTORY_FILE = join(LAX_DIR, "contradiction-history.json");
 
 // ── Keyword patterns for contradiction categories ────────

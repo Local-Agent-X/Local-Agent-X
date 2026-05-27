@@ -10,8 +10,8 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
+import { getLaxDir } from "./lax-data-dir.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ interface StyleStore {
 
 // ── Constants ───────────────────────────────────────────────
 
-const LAX_DIR = join(homedir(), ".lax");
+const LAX_DIR = getLaxDir();
 const STORE_FILE = join(LAX_DIR, "language-style.json");
 
 const CASUAL_GREETINGS = /^(yo|hey|sup|ayy|heyy|heya|yoo|waddup|what'?s? ?up)\b/i;

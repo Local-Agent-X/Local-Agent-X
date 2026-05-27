@@ -25,8 +25,8 @@
 
 import { writeFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { createHash } from "node:crypto";
+import { getLaxDir } from "./lax-data-dir.js";
 import { type ChildProcess } from "node:child_process";
 import { createNamedWorktree, mergeWorktree } from "./agency/worktree.js";
 import { gateBuild, gateBind, gateSmoke, spawnClaude, killProbe, SKIPPED_GATE, type GateResult } from "./self-edit-sandbox-gates.js";
@@ -36,7 +36,7 @@ const logger = createLogger("self-edit.sandbox");
 
 // ── Config ─────────────────────────────────────────────────────────────────
 
-const SANDBOX_LOCK = join(homedir(), ".lax", "self-edit-sandbox.lock");
+const SANDBOX_LOCK = join(getLaxDir(), "self-edit-sandbox.lock");
 const PROBE_PORT_MIN = 7100;
 const PROBE_PORT_MAX = 7999;
 
@@ -73,7 +73,7 @@ function isPidAlive(pid: number): boolean {
 }
 
 function acquireLock(): { acquired: boolean; holder?: { pid: number; startedAt: string } } {
-  mkdirSync(join(homedir(), ".lax"), { recursive: true, mode: 0o700 });
+  mkdirSync(getLaxDir(), { recursive: true, mode: 0o700 });
   if (existsSync(SANDBOX_LOCK)) {
     try {
       const existing = JSON.parse(readFileSync(SANDBOX_LOCK, "utf-8"));

@@ -1,7 +1,7 @@
 import { writeFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { getLaxDir } from "../lax-data-dir.js";
 
 import type {
   Benchmark,
@@ -15,7 +15,7 @@ import type {
 import { ALL_BUILT_IN } from "./benchmarks.js";
 import { resultsToMarkdown, comparisonToMarkdown } from "./formatters.js";
 
-const BENCHMARKS_DIR = join(homedir(), ".lax", "benchmarks");
+const BENCHMARKS_DIR = join(getLaxDir(), "benchmarks");
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) {

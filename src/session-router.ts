@@ -18,11 +18,11 @@ import { randomBytes } from "node:crypto";
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { createRequire } from "node:module";
+import { getLaxDir } from "./lax-data-dir.js";
 const require = createRequire(import.meta.url);
 
-const LAX_DIR = join(homedir(), ".lax");
+const LAX_DIR = getLaxDir();
 const LINKS_FILE = join(LAX_DIR, "identity-links.json");
 
 // ── Types ──

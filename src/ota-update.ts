@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile, readFile, rm, copyFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { execFile } from "node:child_process";
+import { getLaxDir } from "./lax-data-dir.js";
 
 export interface UpdateInfo {
   version: string;
@@ -45,7 +45,7 @@ export class OTAManager {
   ) {
     this.repoOwner = repoOwner;
     this.repoName = repoName;
-    this.laxDir = laxDir ?? join(homedir(), ".lax");
+    this.laxDir = laxDir ?? getLaxDir();
     this.historyPath = join(this.laxDir, "update-history.json");
     this.backupDir = join(this.laxDir, "backups");
     this.updatesDir = join(this.laxDir, "updates");

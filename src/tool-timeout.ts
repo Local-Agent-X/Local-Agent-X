@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 export const DEFAULT_TIMEOUTS: Record<string, number> = {
   bash: 120_000,
@@ -15,7 +15,7 @@ export const DEFAULT_TIMEOUTS: Record<string, number> = {
 const DEFAULT_FALLBACK = 30_000;
 
 function configPath(): string {
-  return join(homedir(), ".lax", "tool-timeouts.json");
+  return join(getLaxDir(), "tool-timeouts.json");
 }
 
 function loadCustomTimeouts(): Record<string, number> {
@@ -29,7 +29,7 @@ function loadCustomTimeouts(): Record<string, number> {
 }
 
 function saveCustomTimeouts(timeouts: Record<string, number>): void {
-  const dir = join(homedir(), ".lax");
+  const dir = getLaxDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(configPath(), JSON.stringify(timeouts, null, 2), "utf-8");
 }

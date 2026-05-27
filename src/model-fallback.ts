@@ -17,14 +17,14 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 
 import { createLogger } from "./logger.js";
 import type { ProviderId } from "./providers/provider-ids.js";
+import { getLaxDir } from "./lax-data-dir.js";
 export type { ProviderId };
 const logger = createLogger("model-fallback");
 
-const LAX_DIR = join(homedir(), ".lax");
+const LAX_DIR = getLaxDir();
 const HEALTH_FILE = join(LAX_DIR, "provider-health.json");
 
 export interface ProviderHealth {

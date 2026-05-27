@@ -1,7 +1,7 @@
 import { existsSync, accessSync, constants, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { createRequire } from "node:module";
+import { getLaxDir } from "./lax-data-dir.js";
 const require = createRequire(import.meta.url);
 
 export type TestStatus = "pass" | "fail" | "warn";
@@ -16,7 +16,7 @@ export interface StartupTestResult {
 
 async function testDiskAccess(): Promise<StartupTestResult> {
   const start = Date.now();
-  const testDir = join(homedir(), ".lax");
+  const testDir = getLaxDir();
   const testFile = join(testDir, ".startup-test-probe");
 
   try {
@@ -43,7 +43,7 @@ async function testDiskAccess(): Promise<StartupTestResult> {
 
 async function testConfigReadable(): Promise<StartupTestResult> {
   const start = Date.now();
-  const configPath = join(homedir(), ".lax", "config.json");
+  const configPath = join(getLaxDir(), "config.json");
 
   try {
     if (!existsSync(configPath)) {
@@ -77,8 +77,8 @@ async function testConfigReadable(): Promise<StartupTestResult> {
 async function testAuthToken(): Promise<StartupTestResult> {
   const start = Date.now();
   const authPaths = [
-    join(homedir(), ".lax", "config.json"),
-    join(homedir(), ".lax", "anthropic-auth.json"),
+    join(getLaxDir(), "config.json"),
+    join(getLaxDir(), "anthropic-auth.json"),
   ];
 
   for (const p of authPaths) {
@@ -145,8 +145,8 @@ async function testVoiceEngine(): Promise<StartupTestResult> {
 
   // Check for common TTS/voice dependencies
   const voiceIndicators = [
-    join(homedir(), ".lax", "voice-tmp"),
-    join(homedir(), ".lax", "audio-cues"),
+    join(getLaxDir(), "voice-tmp"),
+    join(getLaxDir(), "audio-cues"),
   ];
 
   const available = voiceIndicators.some((p) => existsSync(p));
@@ -166,8 +166,8 @@ async function testAriKernel(): Promise<StartupTestResult> {
   const start = Date.now();
 
   // Check if ARI kernel policy files exist
-  const policyFile = join(homedir(), ".lax", "custom-policies.json");
-  const auditDir = join(homedir(), ".lax", "audit");
+  const policyFile = join(getLaxDir(), "custom-policies.json");
+  const auditDir = join(getLaxDir(), "audit");
 
   const hasPolicy = existsSync(policyFile);
   const hasAudit = existsSync(auditDir);

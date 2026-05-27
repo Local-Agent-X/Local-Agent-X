@@ -6,8 +6,8 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { USER_HINTS } from "./types.js";
+import { getLaxDir } from "./lax-data-dir.js";
 
 export interface EgressRule {
   domain: string;
@@ -21,10 +21,10 @@ interface EgressPolicyStore {
   rules: EgressRule[];
 }
 
-const POLICY_FILE = join(homedir(), ".lax", "egress-policy.json");
+const POLICY_FILE = join(getLaxDir(), "egress-policy.json");
 
 function ensureDir(): void {
-  const dir = join(homedir(), ".lax");
+  const dir = getLaxDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 

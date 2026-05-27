@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 export interface CrashEntry {
   id: string;
@@ -26,7 +26,7 @@ interface CrashPattern {
 const MAX_ENTRIES = 500;
 
 function logPath(): string {
-  return join(homedir(), ".lax", "crash-log.json");
+  return join(getLaxDir(), "crash-log.json");
 }
 
 function loadLog(): CrashLog {
@@ -40,7 +40,7 @@ function loadLog(): CrashLog {
 }
 
 function saveLog(log: CrashLog): void {
-  const dir = join(homedir(), ".lax");
+  const dir = getLaxDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(logPath(), JSON.stringify(log, null, 2), "utf-8");
 }

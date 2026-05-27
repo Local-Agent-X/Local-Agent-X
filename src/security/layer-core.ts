@@ -1,7 +1,7 @@
 import { resolve, relative, join } from "node:path";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { homedir } from "node:os";
 import type { SecurityDecision } from "../types.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import { USER_HINTS } from "../types.js";
 import {
   CONTEXT_RESTRICTED_TOOLS,
@@ -82,7 +82,7 @@ export class SecurityLayer {
     this.fileAccessMode = fileAccessMode || this.loadFileAccessMode();
     // Load egress allowlist from ~/.lax/egress-allowlist.json
     try {
-      const allowlistPath = join(homedir(), ".lax", "egress-allowlist.json");
+      const allowlistPath = join(getLaxDir(), "egress-allowlist.json");
       if (existsSync(allowlistPath)) {
         const domains: string[] = JSON.parse(readFileSync(allowlistPath, "utf-8"));
         this.egressAllowlist = new Set(domains.map((d: string) => d.toLowerCase()));
@@ -97,7 +97,7 @@ export class SecurityLayer {
 
   private loadFileAccessMode(): FileAccessMode {
     try {
-      const cfgPath = join(homedir(), ".lax", "security.json");
+      const cfgPath = join(getLaxDir(), "security.json");
       if (existsSync(cfgPath)) {
         const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
         if (["workspace", "common", "unrestricted"].includes(cfg.fileAccessMode)) {
@@ -111,7 +111,7 @@ export class SecurityLayer {
   setFileAccessMode(mode: FileAccessMode): void {
     this.fileAccessMode = mode;
     try {
-      const cfgPath = join(homedir(), ".lax", "security.json");
+      const cfgPath = join(getLaxDir(), "security.json");
       let cfg: Record<string, unknown> = {};
       if (existsSync(cfgPath)) cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
       cfg.fileAccessMode = mode;

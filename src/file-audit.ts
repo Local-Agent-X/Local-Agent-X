@@ -6,8 +6,8 @@
 
 import { writeFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { createHash } from "node:crypto";
+import { getLaxDir } from "./lax-data-dir.js";
 
 export interface FileAccessEntry {
   timestamp: string;
@@ -36,7 +36,7 @@ class FileAuditTrail {
   private readonly MAX_ENTRIES = 5000;
 
   constructor() {
-    this.logDir = join(homedir(), ".lax", "audit", "file-access");
+    this.logDir = join(getLaxDir(), "audit", "file-access");
     if (!existsSync(this.logDir)) mkdirSync(this.logDir, { recursive: true, mode: 0o700 });
   }
 

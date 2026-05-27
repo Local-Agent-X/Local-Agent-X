@@ -2,7 +2,7 @@ import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, unlinkSync, renameSync, mkdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("auth-xai");
@@ -47,7 +47,7 @@ export interface XaiTokens {
 }
 
 function getAuthPath(): string {
-  return join(homedir(), ".lax", "xai-auth.json");
+  return join(getLaxDir(), "xai-auth.json");
 }
 
 function generatePkce(): { verifier: string; challenge: string } {

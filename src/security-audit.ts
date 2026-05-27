@@ -11,7 +11,7 @@
 
 import { existsSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
 import { createRequire } from "node:module";
@@ -253,7 +253,7 @@ function checkDangerousFlags(dataDir: string): AuditFinding[] {
 // ── Main audit runner ──
 
 export function runSecurityAudit(config: { authToken: string; workspace: string }): AuditReport {
-  const dataDir = join(homedir(), ".lax");
+  const dataDir = getLaxDir();
   const findings: AuditFinding[] = [];
 
   // Shallow checks

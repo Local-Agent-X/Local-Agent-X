@@ -6,8 +6,8 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { getLaxDir } from "./lax-data-dir.js";
 
 export interface PolicyRule {
   id: string;
@@ -33,10 +33,10 @@ interface PolicyStore {
   rules: PolicyRule[];
 }
 
-const POLICIES_FILE = join(homedir(), ".lax", "custom-policies.json");
+const POLICIES_FILE = join(getLaxDir(), "custom-policies.json");
 
 function ensureDir(): void {
-  const dir = join(homedir(), ".lax");
+  const dir = getLaxDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 

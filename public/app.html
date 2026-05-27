@@ -50,9 +50,9 @@
   </div>
 
   <div id="projects-section">
-    <div class="section-header">
-      <span>Projects</span>
-      <button class="add-btn" onclick="newProject()" title="New project">+</button>
+    <div class="section-header projects-header" onclick="toggleProjectsSection(event)" title="Click to collapse/expand">
+      <span><span class="projects-chevron">&#9662;</span> Projects</span>
+      <button class="add-btn" onclick="newProject();event.stopPropagation()" title="New project">+</button>
     </div>
     <div id="project-list"></div>
   </div>
@@ -66,13 +66,20 @@
   </div>
 
   <div id="chats-section" role="list" aria-label="Chat list">
-    <div id="wa-chats-section" style="display:none">
-      <div id="wa-chats-header" class="section-header" style="padding:8px 12px 4px"><span>WhatsApp</span></div>
-      <div id="wa-chat-list"></div>
-    </div>
-    <div id="tg-chats-section" style="display:none">
-      <div class="section-header" style="padding:8px 12px 4px"><span>Telegram</span></div>
-      <div id="tg-chat-list"></div>
+    <div id="mobile-section" style="display:none">
+      <div class="section-header mobile-header" onclick="toggleMobileSection(event)" title="Click to collapse/expand">
+        <span><span class="mobile-chevron">&#9662;</span> Messaging</span>
+      </div>
+      <div id="mobile-body">
+        <div id="wa-chats-section" style="display:none">
+          <div id="wa-chats-header" class="section-header mobile-sub-header"><span>WhatsApp</span></div>
+          <div id="wa-chat-list"></div>
+        </div>
+        <div id="tg-chats-section" style="display:none">
+          <div class="section-header mobile-sub-header"><span>Telegram</span></div>
+          <div id="tg-chat-list"></div>
+        </div>
+      </div>
     </div>
     <div id="chats-header" style="padding:8px 12px 4px;font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px">Conversations</div>
     <div id="chat-list" role="listbox" aria-label="Conversations"></div>

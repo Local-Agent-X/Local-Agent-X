@@ -138,7 +138,6 @@ async function testModuleImports(): Promise<void> {
     "./demo-recorder.js",
     "./demo-runner.js",
     "./benchmark-suite.js",
-    "./agency/index.js",
     "./agency/handler.js",
     "./security-tests.js",
     "./threat-dashboard.js",
@@ -177,7 +176,6 @@ async function testToolRegistration(): Promise<void> {
   const expected = [
     "agent_spawn",
     "agent_status",
-    "agency_create",
     "protocol_list",
     "bash",
     "read",
@@ -189,7 +187,6 @@ async function testToolRegistration(): Promise<void> {
   // Check tools by importing each module that creates them
   const toolSources: Record<string, () => Promise<string[]>> = {
     "base tools": async () => { const m = await import("./tools.js"); const t = typeof (m.allTools as any) === "function" ? (m.allTools as any)() : m.allTools; return Array.isArray(t) ? t.map((x: any) => x.name || "") : []; },
-    "swarm tools": async () => { const m = await import("./agency/index.js"); return m.createAgencyTools().map((t: any) => t.name); },
     "handler tools": async () => { const m = await import("./agency/handler.js"); return m.createHandlerTools().map((t: any) => t.name); },
     "agent tools": async () => { const m = await import("./agents/tools.js"); return m.createAgentTools().map((t: any) => t.name); },
     "mission tools": async () => { const m = await import("./protocols.js"); return m.createCoreProtocolTools().map((t: any) => t.name); },

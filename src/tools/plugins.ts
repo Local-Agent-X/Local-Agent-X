@@ -9,7 +9,6 @@ import { createSecretTools } from "../secret-tools.js";
 import { createBrowserTools } from "../browser-tools.js";
 import { createCoreProtocolTools } from "../protocols.js";
 import { createCronTools } from "../cron-service.js";
-import { createAgencyTools } from "../agency/index.js";
 import { createHandlerTools } from "../agency/handler.js";
 import { createAgentTools } from "../agents/tools.js";
 import { createMemoryTools } from "../memory.js";
@@ -118,10 +117,6 @@ export const plugins: ToolPlugin[] = [
   {
     id: "agents",
     register() { return createAgentTools(); },
-  },
-  {
-    id: "agency",
-    register() { return createAgencyTools(); },
   },
   {
     id: "handlers",

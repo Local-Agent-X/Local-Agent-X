@@ -161,11 +161,6 @@ export const TOOLS: Record<string, ToolEntry> = {
   swarm_cancel:    { kernel: "internal", risk: "destructive" },
   swarm_list_roles:{ kernel: "internal", risk: "safe" },
   swarm_result:    { kernel: "internal", risk: "safe" },
-  agency_create:   { kernel: "internal", risk: "workspace-write" },
-  agency_status:   { kernel: "internal", risk: "safe" },
-  agency_cancel:   { kernel: "internal", risk: "destructive" },
-  agency_list_roles:{ kernel: "internal", risk: "safe" },
-  agency_result:   { kernel: "internal", risk: "safe" },
 
   // ── Missions / playbooks ──
   mission_list:             { kernel: "internal", risk: "safe" },

@@ -130,4 +130,19 @@ describe("execInSandbox integration smoke (rejection path)", () => {
     expect(result.stderr).toMatch(/Sandbox config rejected/);
     expect(result.stdout).toBe("");
   });
+
+  // Regression guard: execInSandbox() must not fail validation on its own
+  // defaults. Previously DEFAULT_CONFIG.workspacePath was "./workspace",
+  // which resolved into the repo root and the validator rejected — making
+  // docker-mode bash always return "Sandbox config rejected: ..." since
+  // the only real caller (shell-tools.ts) passes no override.
+  it("does NOT reject validation when called with no config override", () => {
+    // Docker is probably not running in CI/test envs; we only assert that
+    // we got past validation. If validation rejected, stderr would start
+    // with "Sandbox config rejected". After the docker spawn it'll be some
+    // other error (docker not installed, image not found, etc.) — that's
+    // fine, the validation gate is what we care about.
+    const result = execInSandbox("echo hi");
+    expect(result.stderr).not.toMatch(/Sandbox config rejected/);
+  });
 });

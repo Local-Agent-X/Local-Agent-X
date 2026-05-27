@@ -1,4 +1,7 @@
 import { execSync, execFileSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createLogger } from "./logger.js";
 import { getRuntimeConfig, saveConfig } from "./config.js";
@@ -29,10 +32,20 @@ export { validateSandboxConfig } from "./sandbox-validate.js";
  * - Uses a lightweight Alpine image
  */
 
+// Default workspace lives under the OS temp dir, NOT inside the repo.
+// validateSandboxConfig rejects any workspacePath inside LAX_REPO_ROOT
+// (so the agent can't bind-mount its own source into the container);
+// the previous default of "./workspace" resolved to cwd()+"/workspace",
+// which tripped that rule and made docker-mode bash always return
+// "Sandbox config rejected" with no caller override. The os.tmpdir()
+// location is outside the repo, outside ~/.lax (also denied), and is on
+// Docker Desktop's default file-sharing paths across platforms.
+const DEFAULT_WORKSPACE_PATH = join(tmpdir(), "lax-sandbox-workspace");
+
 const DEFAULT_CONFIG: SandboxConfig = {
   mode: "host",
   image: "node:22-alpine",
-  workspacePath: "./workspace",
+  workspacePath: DEFAULT_WORKSPACE_PATH,
   networkEnabled: false,
   extraMounts: [],
   memoryLimit: "512m",
@@ -63,6 +76,11 @@ export function execInSandbox(
     logger.warn(`[sandbox] Config rejected: ${validation.reason}`);
     return { stdout: "", stderr: `Sandbox config rejected: ${validation.reason}`, exitCode: 1 };
   }
+
+  // docker -v auto-creates a missing source as a root-owned directory;
+  // pre-create as the running user so subsequent host-side reads/writes
+  // by the agent don't hit a permission wall.
+  try { mkdirSync(cfg.workspacePath, { recursive: true }); } catch { /* best-effort */ }
 
   // ─── Non-negotiable security defaults ─────────────────────────────────────
   // The following docker flags are NOT user-configurable and must not be

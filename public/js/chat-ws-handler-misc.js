@@ -40,19 +40,41 @@ function handleSidebarPinsChanged(msg) {
 }
 
 // Agent (or another tab) asked to wipe the Conversations list from the
-// sidebar. Tombstone every chat ID so sync doesn't resurrect them on the
-// next pull, then clear the in-memory + cached array and re-render.
-// Backend session files are NOT deleted — recovery is "clear tombstones."
+// sidebar. Tombstone non-integration chat IDs so sync doesn't resurrect
+// them, but PRESERVE wa-/tg-/sms- sessions — those drive the Messaging
+// section, not Conversations, and were getting nuked by the original
+// implementation. Also un-tombstones any integration IDs an earlier
+// version of this handler wrongly tombstoned, so the Messaging section
+// self-heals on next sidebar_clear call (or page load + refresh).
+// Backend session files are NOT touched — recovery for the conversation
+// IDs is "clear tombstones."
+function _isIntegrationSessionId(id) {
+  return typeof id === 'string' && (id.startsWith('wa-') || id.startsWith('tg-') || id.startsWith('sms-'));
+}
 function handleSidebarClearChats() {
   try {
-    if (typeof chats !== 'undefined' && Array.isArray(chats)) {
-      for (const c of chats) {
-        if (c && c.id && typeof markDeleted === 'function') markDeleted(c.id);
+    // Heal prior mistake: drop any integration-prefix tombstones so the
+    // Messaging section comes back on next sync.
+    try {
+      const t = JSON.parse(localStorage.getItem('sax_deleted_sessions') || '{}');
+      let mutated = false;
+      for (const k of Object.keys(t)) {
+        if (_isIntegrationSessionId(k)) { delete t[k]; mutated = true; }
       }
-      chats = [];
+      if (mutated) localStorage.setItem('sax_deleted_sessions', JSON.stringify(t));
+    } catch {}
+
+    if (typeof chats !== 'undefined' && Array.isArray(chats)) {
+      const keepers = [];
+      for (const c of chats) {
+        if (!c || !c.id) continue;
+        if (_isIntegrationSessionId(c.id)) { keepers.push(c); continue; }
+        if (typeof markDeleted === 'function') markDeleted(c.id);
+      }
+      chats = keepers;
       try { window.chats = chats; } catch {}
     }
-    if (typeof activeChat !== 'undefined' && activeChat) {
+    if (typeof activeChat !== 'undefined' && activeChat && !_isIntegrationSessionId(activeChat.id)) {
       activeChat = null;
       try { window.activeChat = null; } catch {}
     }

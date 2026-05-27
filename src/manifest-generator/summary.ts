@@ -81,6 +81,7 @@ export function getManifestSummary(): string {
     "- **Schedule recurring tasks**: `http_request` → `POST {{APP_URL}}/api/cron`",
     "- **Build a standalone app**: use `build_app` tool — creates in `workspace/apps/{name}/`",
     "- **Pin/unpin sidebar**: use `sidebar_pin` / `sidebar_unpin` tools",
+    "- **Clear sidebar Conversations list**: use `sidebar_clear` (frontend-only; do NOT call `http_request DELETE /api/sessions` — that destroys backend session data)",
     "- **Change system prompt**: `read` + `edit` on `config/system-prompt.md` (hot-reloads)",
     "- **Add/remove tools**: `read` + `edit` on `config/tools.json`",
     "",

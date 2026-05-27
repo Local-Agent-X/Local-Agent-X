@@ -8,9 +8,12 @@ import { getRetryContext } from "../retry-context.js";
 import { recordCircuitFailure, recordCircuitSuccess } from "../circuit-breaker.js";
 import { recordToolCall as recordToolStat } from "../tool-tracker.js";
 import { recordToolCall as recordRateLimit } from "../tool-rate-limiter.js";
-import { recordSensitiveRead, isSensitivePath } from "../data-lineage.js";
+import { recordSensitiveRead, isSensitivePath, extractSensitivePathsFromCommand } from "../data-lineage.js";
+import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
 import { isTransientError } from "./errors.js";
+
+const logger = createLogger("tool-execution");
 
 // Tools whose failures are usually transient (network, rate limit).
 const RETRYABLE_TOOLS = new Set([
@@ -50,6 +53,19 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     }
     if (tc.name === "read" && isSensitivePath(String(args.path || ""))) {
       recordSensitiveRead(sessionId || "default", "sensitive_file", String(args.path));
+    }
+    if (tc.name === "bash") {
+      const cmd = String(args.command || "");
+      const matches = extractSensitivePathsFromCommand(cmd);
+      if (matches.length > 0) {
+        for (const p of matches) {
+          recordSensitiveRead(sessionId || "default", "sensitive_file", p);
+        }
+        logger.warn(
+          `bash command referenced sensitive paths; session ${sessionId || "default"} now tainted for egress`,
+          { paths: matches },
+        );
+      }
     }
   } catch (e) {
     ctx.result = { content: `Tool error: ${(e as Error).message}`, isError: true };

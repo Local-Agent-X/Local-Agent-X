@@ -12,6 +12,8 @@ import {
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
 import { evaluateWebFetch, validateUrlWithDns } from "./network-policy.js";
+import { TOOL_CLASS_MAP } from "../ari-kernel/tool-class-map.js";
+import type { KernelClass } from "../tool-registry.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("security.layer-core");
@@ -167,50 +169,166 @@ export class SecurityLayer {
 
     let decision: SecurityDecision;
 
-    switch (toolName) {
-      case "read":
-      case "write":
-      case "edit":
-        decision = evaluateFileAccess(
-          this.workspace,
-          this.fileAccessMode,
-          (rp, sid) => this.isInAllowedPaths(rp, sid),
-          toolName,
-          String(args.path || ""),
-          ctx.sessionId,
-        );
-        break;
-      case "bash":
-        decision = evaluateShellCommand(String(args.command || ""));
-        break;
-      case "web_fetch":
-      case "http_request":
-        decision = evaluateWebFetch(this.egressAllowlist, String(SecurityLayer._selfPort || "7007"), String(args.url || ""));
-        break;
-      case "browser":
-        if ((args.action === "navigate" || args.action === "new_tab") && args.url) {
-          const browserUrl = String(args.url);
-          // Allow localhost/127.0.0.1 for browser — user's own dev servers
-          try {
-            const host = new URL(browserUrl).hostname;
-            if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
-              decision = { allowed: true, reason: "Browser navigation to localhost allowed" };
-            } else {
-              decision = evaluateWebFetch(this.egressAllowlist, String(SecurityLayer._selfPort || "7007"), browserUrl);
-            }
-          } catch {
-            decision = { allowed: false, reason: "Blocked: invalid URL", userHint: USER_HINTS.network };
-          }
-        } else {
-          decision = { allowed: true, reason: "Browser action allowed" };
-        }
-        break;
-      default:
-        decision = { allowed: true, reason: "Unknown tool — allowed by default" };
+    // Per-tool explicit cases handle the tools whose ARGUMENTS carry the
+    // routing signal SecurityLayer needs to gate (path, command, url).
+    // Everything else falls through to class-based dispatch on the
+    // kernel taxonomy declared in src/tool-registry.ts.
+    if (toolName === "browser") {
+      decision = this.evaluateBrowser(args);
+    } else if (
+      toolName === "read" ||
+      toolName === "write" ||
+      toolName === "edit" ||
+      toolName === "delete_file"
+    ) {
+      decision = evaluateFileAccess(
+        this.workspace,
+        this.fileAccessMode,
+        (rp, sid) => this.isInAllowedPaths(rp, sid),
+        toolName,
+        String(args.path || ""),
+        ctx.sessionId,
+      );
+    } else if (toolName === "bash") {
+      decision = evaluateShellCommand(String(args.command || ""));
+    } else if (toolName === "web_fetch" || toolName === "http_request") {
+      decision = evaluateWebFetch(
+        this.egressAllowlist,
+        String(SecurityLayer._selfPort || "7007"),
+        String(args.url || ""),
+      );
+    } else {
+      decision = this.evaluateByKernelClass(toolName, TOOL_CLASS_MAP[toolName], args, ctx);
     }
 
     this.auditLog.push({ timestamp: Date.now(), tool: toolName, decision });
     return decision;
+  }
+
+  private evaluateBrowser(args: Record<string, unknown>): SecurityDecision {
+    if ((args.action === "navigate" || args.action === "new_tab") && args.url) {
+      const browserUrl = String(args.url);
+      // Allow localhost/127.0.0.1 for browser — user's own dev servers
+      try {
+        const host = new URL(browserUrl).hostname;
+        if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
+          return { allowed: true, reason: "Browser navigation to localhost allowed" };
+        }
+        return evaluateWebFetch(
+          this.egressAllowlist,
+          String(SecurityLayer._selfPort || "7007"),
+          browserUrl,
+        );
+      } catch {
+        return { allowed: false, reason: "Blocked: invalid URL", userHint: USER_HINTS.network };
+      }
+    }
+    return { allowed: true, reason: "Browser action allowed" };
+  }
+
+  /**
+   * Class-based dispatch for tools that aren't routed by their explicit
+   * named case above. Replaces the old default-allow branch with a
+   * kernel-class lookup against src/tool-registry.ts. New tools that
+   * register with a known class get the right gate automatically.
+   *
+   * Unknown tools (not in TOOLS) fall through to a deny case unless they
+   * carry an mcpServer signal — MCP-sourced tools are gated by binary-
+   * integrity check at connect time + approval flow at call time, and
+   * SecurityLayer participates by allowing-and-logging.
+   */
+  private evaluateByKernelClass(
+    toolName: string,
+    kernelClass: KernelClass | undefined,
+    args: Record<string, unknown>,
+    ctx: ToolCallContext,
+  ): SecurityDecision {
+    if (kernelClass === undefined) {
+      if (ctx.mcpServer) {
+        return {
+          allowed: true,
+          reason: `MCP-sourced tool from "${ctx.mcpServer}" — gated by integrity check and approval flow`,
+        };
+      }
+      return {
+        allowed: false,
+        reason: `Blocked: tool "${toolName}" not in registry — register in src/tool-registry.ts`,
+        userHint: USER_HINTS.policy,
+      };
+    }
+
+    switch (kernelClass) {
+      case "internal":
+        // No raw I/O sink — gated upstream by kernel + tool-policy.
+        return { allowed: true, reason: "Internal-class tool — gated by kernel/policy layers" };
+
+      case "http":
+        // No URL arg means the call's destination is hardcoded inside
+        // the tool itself (e.g. email_send → Gmail API). SecurityLayer
+        // cannot SSRF-check what it can't see — pass through; the
+        // tool's own implementation owns the actual HTTP call.
+        if (typeof args.url === "string" && args.url.length > 0) {
+          return evaluateWebFetch(
+            this.egressAllowlist,
+            String(SecurityLayer._selfPort || "7007"),
+            args.url,
+          );
+        }
+        return {
+          allowed: true,
+          reason: `${toolName}: http-class tool with no URL arg — destination is internal`,
+        };
+
+      case "shell":
+        // Non-bash shell tools (process_start, install_software). bash
+        // is handled by the explicit case above and is the only one
+        // routed through evaluateShellCommand. The kernel and the
+        // tool's own implementation are the gates for the rest.
+        return {
+          allowed: true,
+          reason: `${toolName}: shell-class tool — gated by kernel and tool implementation`,
+        };
+
+      case "file":
+        // Non-path file tools (glob, grep, view_image, ari_file). Tools
+        // with a `path` arg are handled via the explicit case above.
+        return {
+          allowed: true,
+          reason: `${toolName}: file-class tool without explicit path gate`,
+        };
+
+      case "database":
+        // sql_query / sql_explain / sql_schema operate on the LAX-managed
+        // SQL store. Internal-like for SecurityLayer's purposes.
+        return {
+          allowed: true,
+          reason: `${toolName}: database-class tool — gated by kernel and tool implementation`,
+        };
+
+      case "retrieval":
+        // memory_search / search_past_sessions — internal-like.
+        return {
+          allowed: true,
+          reason: `${toolName}: retrieval-class tool — gated by kernel and tool implementation`,
+        };
+
+      case "secret-vault":
+        // browser_capture_to_secret / browser_fill_from_secret /
+        // clipboard_write_from_secret. High-risk but the gate that
+        // matters is the secret-vault-action gate inside the Ari
+        // kernel (ARI_ACTION_MAP).
+        return {
+          allowed: true,
+          reason: `${toolName}: secret-vault-class tool — gated by Ari kernel`,
+        };
+    }
+
+    // KernelClass union exhausted; unreachable but fail-closed.
+    return {
+      allowed: false,
+      reason: `Blocked: tool "${toolName}" has unrecognized kernel class "${String(kernelClass)}"`,
+      userHint: USER_HINTS.policy,
+    };
   }
 
   /**

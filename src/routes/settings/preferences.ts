@@ -175,8 +175,8 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     try {
       const { pinTombstonePaths, clearPinTombstone } = await import("../../sync/pin-tombstones.js");
       const { join: pjoin } = await import("node:path");
-      const { homedir } = await import("node:os");
-      clearPinTombstone(pinTombstonePaths(ctx.dataDir, pjoin(homedir(), ".lax", "sync-repo")), String(name));
+      const { getLaxDir } = await import("../../lax-data-dir.js");
+      clearPinTombstone(pinTombstonePaths(ctx.dataDir, pjoin(getLaxDir(), "sync-repo")), String(name));
     } catch {}
     try { ctx.agentSync.notifyChange(`pin-add:${name}`); } catch {}
     try { const { broadcastAll } = await import("../../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
@@ -197,8 +197,8 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     try {
       const { pinTombstonePaths, tombstonePin } = await import("../../sync/pin-tombstones.js");
       const { join: pjoin } = await import("node:path");
-      const { homedir } = await import("node:os");
-      tombstonePin(pinTombstonePaths(ctx.dataDir, pjoin(homedir(), ".lax", "sync-repo")), pinName);
+      const { getLaxDir } = await import("../../lax-data-dir.js");
+      tombstonePin(pinTombstonePaths(ctx.dataDir, pjoin(getLaxDir(), "sync-repo")), pinName);
     } catch {}
     try { ctx.agentSync.notifyChange(`pin-remove:${pinName}`); } catch {}
     try { const { broadcastAll } = await import("../../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}

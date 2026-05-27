@@ -105,9 +105,9 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
         // tombstone store NOW so a restart-before-push followed by
         // a pull doesn't resurrect this app from the remote.
         try {
-          const { homedir } = await import("node:os");
+          const { getLaxDir } = await import("../lax-data-dir.js");
           const { tombstoneAppEagerly } = await import("../sync/tombstones.js");
-          const syncDir = join(homedir(), ".lax", "sync-repo");
+          const syncDir = join(getLaxDir(), "sync-repo");
           if (existsSync(syncDir)) tombstoneAppEagerly(syncDir, id);
         } catch (e) {
           logger.warn(`[apps] eager tombstone write failed for ${id}: ${(e as Error).message}`);

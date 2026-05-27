@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getLaxDir } from "../../../lax-data-dir.js";
 
 export async function handleTrainingDelete(
   url: URL,
@@ -11,8 +11,8 @@ export async function handleTrainingDelete(
     json(400, { error: "invalid exp_name" });
     return;
   }
-  const trainingRoot = join(homedir(), ".lax", "sovits-training", "datasets");
-  const sovitsRepo = join(homedir(), ".lax", "sovits", "repo");
+  const trainingRoot = join(getLaxDir(), "sovits-training", "datasets");
+  const sovitsRepo = join(getLaxDir(), "sovits", "repo");
   try {
     const { rmSync, readdirSync } = await import("node:fs");
     const targets = [

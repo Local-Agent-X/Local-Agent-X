@@ -1,7 +1,7 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { getLaxDir } from './lax-data-dir.js';
 import type { ToolDefinition, ToolResult } from './types.js';
 
 interface CalendarEvent {
@@ -10,7 +10,7 @@ interface CalendarEvent {
 }
 interface CalendarData { events: CalendarEvent[]; }
 
-const CALENDAR_PATH = join(homedir(), '.lax', 'calendar.json');
+const CALENDAR_PATH = join(getLaxDir(), 'calendar.json');
 
 async function loadCalendar(): Promise<CalendarData> {
   try {
@@ -22,7 +22,7 @@ async function loadCalendar(): Promise<CalendarData> {
 }
 
 async function saveCalendar(data: CalendarData): Promise<void> {
-  await mkdir(join(homedir(), '.lax'), { recursive: true });
+  await mkdir(getLaxDir(), { recursive: true });
   await writeFile(CALENDAR_PATH, JSON.stringify(data, null, 2), 'utf-8');
 }
 

@@ -105,8 +105,8 @@ export async function downloadTelegramFile(token: string, fileId: string, kind: 
   const buf = Buffer.from(await res.arrayBuffer());
   const { mkdirSync, writeFileSync } = await import("node:fs");
   const { join } = await import("node:path");
-  const { homedir } = await import("node:os");
-  const uploadsDir = join(homedir(), ".lax", "uploads");
+  const { getLaxDir } = await import("../lax-data-dir.js");
+  const uploadsDir = join(getLaxDir(), "uploads");
   mkdirSync(uploadsDir, { recursive: true });
   const ext = (remotePath.split(".").pop() || "bin").toLowerCase();
   const fname = `tg-${kind}-${Date.now()}.${ext}`;

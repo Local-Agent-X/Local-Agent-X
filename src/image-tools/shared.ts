@@ -6,8 +6,8 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import type { ToolResult } from "../types.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import type { SecretsStore } from "../secrets.js";
 
 export function ok(content: string): ToolResult { return { content }; }
@@ -25,7 +25,7 @@ export function initImageTools(secrets: SecretsStore) {
  *  shape, but the OAuth bearer draws from subscription quota instead of
  *  API spend. */
 export async function getActiveProvider(): Promise<{ provider: string; apiKey?: string }> {
-  const settingsPath = join(homedir(), ".lax", "settings.json");
+  const settingsPath = join(getLaxDir(), "settings.json");
   let provider = "local";
   try {
     if (existsSync(settingsPath)) {
@@ -56,7 +56,7 @@ export async function getActiveProvider(): Promise<{ provider: string; apiKey?: 
 export function findRecentLocalImage(): string | null {
   const candidates: Array<{ path: string; mtime: number }> = [];
   const exts = /\.(png|jpg|jpeg|webp)$/i;
-  for (const dir of [join("workspace", "images"), join(homedir(), ".lax", "uploads")]) {
+  for (const dir of [join("workspace", "images"), join(getLaxDir(), "uploads")]) {
     if (!existsSync(dir)) continue;
     try {
       for (const f of readdirSync(dir)) {

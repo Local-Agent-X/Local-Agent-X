@@ -17,7 +17,7 @@ import {
 import { renderApp } from "../app-renderer.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { EventBus } from "../event-bus.js";
 import { ok, err, getActor, getAppPort } from "./shared.js";
 
@@ -92,7 +92,7 @@ export const appCreate: ToolDefinition = {
     // Generate and save HTML
     const port = getAppPort();
     const html = renderApp(def, port);
-    const dir = join(homedir(), ".lax", "apps", rawId);
+    const dir = join(getLaxDir(), "apps", rawId);
     writeFileSync(join(dir, "index.html"), html, "utf-8");
 
     EventBus.emit("app:create", { id: rawId, name: def.name });
@@ -143,7 +143,7 @@ export const appUpdate: ToolDefinition = {
     // Re-render HTML
     const port = getAppPort();
     const html = renderApp(result.app!, port);
-    const dir = join(homedir(), ".lax", "apps", id);
+    const dir = join(getLaxDir(), "apps", id);
     writeFileSync(join(dir, "index.html"), html, "utf-8");
 
     EventBus.emit("app:update", { id });

@@ -16,8 +16,8 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { getLaxDir } from "../../lax-data-dir.js";
 import { dnsPinCheck } from "../../browser/guards.js";
 
 export interface ImageSpec {
@@ -53,7 +53,7 @@ const ALLOWED_MIME = new Set<AcquiredImage["mimeType"]>([
 ]);
 
 function cacheDir(): string {
-  return join(homedir(), ".lax", "image-cache");
+  return join(getLaxDir(), "image-cache");
 }
 
 function cachePathFor(url: string): string {

@@ -16,8 +16,8 @@
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { getLaxDir } from "../lax-data-dir.js";
 import type { ToolDefinition } from "../types.js";
 import {
   renderPerBuildContext,
@@ -85,7 +85,7 @@ export function resolveBuildProvider(
   if (backendArg && backendArg !== "auto") return backendArg;
   try {
     const settingsPath = opts.settingsPath
-      ?? join(process.env.HOME || process.env.USERPROFILE || homedir(), ".lax", "settings.json");
+      ?? join(getLaxDir(), "settings.json");
     if (existsSync(settingsPath)) {
       const s = JSON.parse(readFileSync(settingsPath, "utf-8"));
       if (typeof s.provider === "string" && s.provider.length > 0) return s.provider;

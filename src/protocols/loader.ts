@@ -20,8 +20,8 @@
 
 import { existsSync, readFileSync, readdirSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
 import type { Protocol, ProtocolSource } from "../protocols.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import { parseSkillMd } from "./skill-md-parser.js";
 import { getRuntimeConfig } from "../config.js";
 
@@ -45,13 +45,13 @@ function workspaceImportedDir(): string {
 }
 
 function legacySkillsDir(): string {
-  return join(homedir(), ".lax", "skills");
+  return join(getLaxDir(), "skills");
 }
 
 /** Pre-2026-05-19 import dir. One-shot migration moves it to workspace
  *  on first load; after that, the dir is gone and nothing scans it. */
 function legacyImportedDir(): string {
-  return join(homedir(), ".lax", "protocols", "imported");
+  return join(getLaxDir(), "protocols", "imported");
 }
 
 // ── One-time migrations into workspace/protocols/imported/ ─────────────────

@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, basename } from "node:path";
 import type { ToolDefinition, ToolResult } from "./types.js";
+import { getLaxDir } from "./lax-data-dir.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
@@ -16,7 +17,7 @@ function resolvePath(p: string): string {
 // Load email config from ~/.lax/email.json (set via Connected APIs UI) or env vars
 function loadEmailJson(): Record<string, string> {
   try {
-    const p = resolve(homedir(), ".lax", "email.json");
+    const p = resolve(getLaxDir(), "email.json");
     const { readFileSync } = require("node:fs") as typeof import("node:fs");
     return JSON.parse(readFileSync(p, "utf-8"));
   } catch { return {}; }
@@ -67,7 +68,7 @@ function env(key: string): string | undefined {
  *  here — it must be stored in the secrets vault as SMTP_PASS. */
 function writeEmailJson(patch: Record<string, string>): void {
   const { writeFileSync, readFileSync, existsSync, mkdirSync } = require("node:fs") as typeof import("node:fs");
-  const dir = resolve(homedir(), ".lax");
+  const dir = resolve(getLaxDir());
   mkdirSync(dir, { recursive: true });
   const p = resolve(dir, "email.json");
   let existing: Record<string, string> = {};

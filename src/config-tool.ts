@@ -1,9 +1,9 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { getLaxDir } from './lax-data-dir.js';
 import type { ToolDefinition, ToolResult } from './types.js';
 
-const SETTINGS_PATH = join(homedir(), '.lax', 'settings.json');
+const SETTINGS_PATH = join(getLaxDir(), 'settings.json');
 
 async function loadSettings(): Promise<Record<string, unknown>> {
   try {

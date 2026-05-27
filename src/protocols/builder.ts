@@ -10,8 +10,8 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
 import type { Protocol, ProtocolStep } from "../protocols.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import type { ToolDefinition } from "../types.js";
 import { getRuntimeConfig } from "../config.js";
 
@@ -30,7 +30,7 @@ function customProtocolsPath(): string {
   return join(protocolsDir(), "custom.json");
 }
 
-const LEGACY_PATH = join(homedir(), ".lax", "custom-protocols.json");
+const LEGACY_PATH = join(getLaxDir(), "custom-protocols.json");
 let _migrationRan = false;
 
 /** One-time migration: ~/.lax/custom-protocols.json → workspace/protocols/custom.json.

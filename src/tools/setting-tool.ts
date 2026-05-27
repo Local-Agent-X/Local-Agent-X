@@ -26,12 +26,12 @@ import { getRuntimeConfig, saveConfig } from "../config.js";
 import { atomicWriteFileSync } from "../server-utils.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import type { ToolDefinition } from "../types.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import { ok, err } from "./result-helpers.js";
 
 function settingsPath(): string {
-  return join(homedir(), ".lax", "settings.json");
+  return join(getLaxDir(), "settings.json");
 }
 
 function listKnownFields(): string {

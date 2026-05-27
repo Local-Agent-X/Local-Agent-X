@@ -7,8 +7,8 @@
 import type { ToolDefinition } from "../types.js";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
 import { ok, err } from "./shared.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
 export const sidebarPin: ToolDefinition = {
   name: "sidebar_pin",
@@ -28,7 +28,7 @@ export const sidebarPin: ToolDefinition = {
     const icon = String(args.icon || "📌");
 
     // Resolve the app URL — check workspace/apps/ for a matching folder
-    const dataDir = join(homedir(), ".lax");
+    const dataDir = getLaxDir();
     const workspaceApps = resolve("workspace", "apps");
     const slug = name.toLowerCase().replace(/\s+/g, "-");
 
@@ -91,7 +91,7 @@ export const sidebarUnpin: ToolDefinition = {
     const name = String(args.name || "").trim();
     if (!name) return err("name is required");
 
-    const dataDir = join(homedir(), ".lax");
+    const dataDir = getLaxDir();
     const settingsPath = join(dataDir, "settings.json");
     let settings: Record<string, unknown> = {};
     try { if (existsSync(settingsPath)) settings = JSON.parse(readFileSync(settingsPath, "utf-8")); } catch {}

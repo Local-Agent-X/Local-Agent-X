@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getLaxDir } from "../lax-data-dir.js";
 
 export interface ProtocolPreferences {
   [missionName: string]: Record<string, unknown>;
 }
 
-const prefsDir = join(homedir(), ".lax", "protocol-prefs");
+const prefsDir = join(getLaxDir(), "protocol-prefs");
 
 export function loadPrefs(): ProtocolPreferences {
   const path = join(prefsDir, "prefs.json");

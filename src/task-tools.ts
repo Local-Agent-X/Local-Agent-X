@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getLaxDir } from "./lax-data-dir.js";
 import type { ToolDefinition, ToolResult } from "./types.js";
 
 interface Task {
@@ -14,7 +14,7 @@ interface Task {
   updated_at: string;
 }
 
-const TASKS_PATH = join(homedir(), ".lax", "tasks.json");
+const TASKS_PATH = join(getLaxDir(), "tasks.json");
 const STATUS_ICON: Record<Task["status"], string> =
   { pending: "\u23F3", in_progress: "\uD83D\uDD04", completed: "\u2705", failed: "\u274C" };
 const VALID_STATUSES = new Set(["pending", "in_progress", "completed", "failed"]);
@@ -27,7 +27,7 @@ function loadTasks(): Map<string, Task> {
 }
 
 function saveTasks(tasks: Map<string, Task>): void {
-  mkdirSync(join(homedir(), ".lax"), { recursive: true });
+  mkdirSync(getLaxDir(), { recursive: true });
   writeFileSync(TASKS_PATH, JSON.stringify([...tasks.values()], null, 2), "utf-8");
 }
 

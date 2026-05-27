@@ -2,7 +2,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 import { pathToFileURL } from "node:url";
 import { createHash, verify as cryptoVerify, createPublicKey } from "node:crypto";
 
@@ -42,9 +42,9 @@ interface LoadedPlugin {
   trustLevel: TrustLevel;
 }
 
-const PLUGINS_DIR = join(homedir(), ".lax", "plugins");
+const PLUGINS_DIR = join(getLaxDir(), "plugins");
 const REGISTRY_PATH = join(PLUGINS_DIR, "registry.json");
-const TRUSTED_PUBLISHERS_PATH = join(homedir(), ".lax", "trusted-publishers.json");
+const TRUSTED_PUBLISHERS_PATH = join(getLaxDir(), "trusted-publishers.json");
 
 // Fixed SPKI DER prefix for Ed25519 public keys (12 bytes)
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");

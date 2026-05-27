@@ -13,8 +13,8 @@
  * text (`<tool_use>...`, `Tool use: build_app`, `//gpu_dispatch:builder`).
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { getLaxDir } from "../lax-data-dir.js";
 
 export interface McpConfigInput {
   /** Local Agent X server port (bridge calls back over HTTP). */
@@ -33,7 +33,7 @@ export interface McpConfigInput {
  * deletes per-request; warm-pool deletes on process exit).
  */
 export function writeMcpConfig(input: McpConfigInput): string {
-  const tmpDir = join(homedir(), ".lax", "tmp");
+  const tmpDir = join(getLaxDir(), "tmp");
   if (!existsSync(tmpDir)) mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
   const configPath = join(tmpDir, `mcp-${input.tag}.json`);
 

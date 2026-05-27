@@ -68,7 +68,8 @@ export interface AuditEntry {
   action: string;      // 'app:create', 'app:update', 'app:delete', 'state:update', 'event:push', etc.
   appId: string;
   details: Record<string, unknown>;
-  signature: string;   // HMAC signature for tamper detection
+  prevHash: string;    // sha256 of prior entry's signature, "genesis" for first, "<legacy>" for pre-chain entries
+  signature: string;   // HMAC signature for tamper detection (covers prevHash)
 }
 
 // ── App Definition ───────────────────────────────────────────

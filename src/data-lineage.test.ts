@@ -6,6 +6,7 @@ import {
   checkEgressTaint,
   clearSessionTaint,
   isSensitivePath,
+  detectSecretsInOutput,
 } from "./data-lineage.js";
 
 describe("extractSensitivePathsFromCommand", () => {
@@ -106,5 +107,155 @@ describe("bash taint integration", () => {
     expect(checkEgressTaint("test-session").blocked).toBe(true);
     clearSessionTaint("test-session");
     expect(checkEgressTaint("test-session").blocked).toBe(false);
+  });
+});
+
+describe("detectSecretsInOutput — positive cases", () => {
+  it("matches OpenAI-style API key", () => {
+    const res = detectSecretsInOutput("sk-abc123xyz456789012345");
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("openai-key");
+  });
+
+  it("matches Anthropic-style API key", () => {
+    const secret = "sk-ant-" + "deadbeef" + "a".repeat(30);
+    const res = detectSecretsInOutput(secret);
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("anthropic-key");
+  });
+
+  it("matches AWS access key ID", () => {
+    const res = detectSecretsInOutput("AKIAIOSFODNN7EXAMPLE");
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("aws-access-key");
+  });
+
+  it("matches AWS secret access key when keyword anchors the line", () => {
+    const res = detectSecretsInOutput("aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("aws-secret");
+  });
+
+  it("matches GitHub PAT (ghp_ form)", () => {
+    const res = detectSecretsInOutput("ghp_" + "a".repeat(36));
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("github-pat");
+  });
+
+  it("matches Slack bot token", () => {
+    const res = detectSecretsInOutput("xoxb-1234567890-abcdef123456");
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("slack-token");
+  });
+
+  it("matches Google API key", () => {
+    const res = detectSecretsInOutput("AIza" + "a".repeat(35));
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("google-key");
+  });
+
+  it("matches JWT-shaped string", () => {
+    const seg = "a".repeat(20);
+    const jwt = `eyJ${seg}.eyJ${seg}.${seg}`;
+    const res = detectSecretsInOutput(jwt);
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("jwt");
+  });
+
+  it("matches private key block markers", () => {
+    const res = detectSecretsInOutput("-----BEGIN RSA PRIVATE KEY-----");
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("private-key-block");
+  });
+
+  it("matches keyword-near-value heuristic", () => {
+    const res = detectSecretsInOutput("password: abcdef1234567890ABCDE");
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("keyword-near-value");
+  });
+});
+
+describe("detectSecretsInOutput — negative cases", () => {
+  it("does not match plain text", () => {
+    const res = detectSecretsInOutput("hello world");
+    expect(res.matched).toBe(false);
+    expect(res.kinds).toEqual([]);
+  });
+
+  it("does not match random prose without secret shapes", () => {
+    const res = detectSecretsInOutput("some random text without secrets");
+    expect(res.matched).toBe(false);
+    expect(res.kinds).toEqual([]);
+  });
+
+  it("does not match file metadata lines", () => {
+    const res = detectSecretsInOutput("file.txt size 1024");
+    expect(res.matched).toBe(false);
+  });
+
+  it("does not match a plain GitHub URL", () => {
+    const res = detectSecretsInOutput("see https://github.com/foo/bar for more");
+    expect(res.matched).toBe(false);
+  });
+});
+
+describe("detectSecretsInOutput — 256KB cap", () => {
+  it("does not detect a secret pattern past the 256KB cap", () => {
+    const filler = "x".repeat(300_000);
+    const input = filler + " AKIA0000000000000000";
+    const res = detectSecretsInOutput(input);
+    expect(res.matched).toBe(false);
+  });
+
+  it("detects a secret pattern within the cap", () => {
+    const filler = "x".repeat(100_000);
+    const input = filler + " AKIA0000000000000000";
+    const res = detectSecretsInOutput(input);
+    expect(res.matched).toBe(true);
+    expect(res.kinds).toContain("aws-access-key");
+  });
+});
+
+describe("detectSecretsInOutput — no-leak invariant", () => {
+  it("never returns the matched substring (only kind labels)", () => {
+    const secret = "AKIAIOSFODNN7EXAMPLE";
+    const res = detectSecretsInOutput(`some prefix ${secret} some suffix`);
+    expect(res.matched).toBe(true);
+    // Neither the kinds array nor any string within it should contain the
+    // secret. This protects against accidental log leaks.
+    for (const k of res.kinds) {
+      expect(k).not.toContain(secret);
+    }
+    expect(JSON.stringify(res)).not.toContain(secret);
+  });
+});
+
+describe("secret-taint integration", () => {
+  it("end-to-end via bash stdout: detection + recordSensitiveRead blocks egress", () => {
+    clearSessionTaint("test-end-to-end");
+    expect(checkEgressTaint("test-end-to-end").blocked).toBe(false);
+
+    const fakeStdout = "AKIA0000000000000000";
+    const det = detectSecretsInOutput(fakeStdout);
+    expect(det.matched).toBe(true);
+    if (det.matched) {
+      recordSensitiveRead("test-end-to-end", "secret", `bash:${det.kinds.join(",")}`);
+    }
+    expect(checkEgressTaint("test-end-to-end").blocked).toBe(true);
+  });
+
+  it("end-to-end via http result: openai-key shape taints session", () => {
+    clearSessionTaint("test-http-e2e");
+    expect(checkEgressTaint("test-http-e2e").blocked).toBe(false);
+
+    const fakeBody = `{"key":"sk-abc123xyz456789012345"}`;
+    const det = detectSecretsInOutput(fakeBody);
+    expect(det.matched).toBe(true);
+    if (det.matched) {
+      recordSensitiveRead("test-http-e2e", "secret", `http_request:${det.kinds.join(",")}`);
+    }
+    const egress = checkEgressTaint("test-http-e2e");
+    expect(egress.blocked).toBe(true);
+    expect(egress.reason).toMatch(/openai-key/);
   });
 });

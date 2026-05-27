@@ -121,6 +121,61 @@ function expandTilde(p: string): string {
   return p;
 }
 
+// Max bytes scanned for secrets. Larger inputs are sliced; missed taint on a
+// >256KB response is acceptable (rare) and bounded scan keeps the regex pass
+// cheap on huge stdout dumps.
+const SECRET_SCAN_CAP = 256 * 1024;
+
+// High-precision secret patterns. Order doesn't matter — every pattern that
+// fires contributes its kind to the result. Anthropic is checked BEFORE the
+// generic openai pattern so the more specific kind wins for `sk-ant-...`.
+const SECRET_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
+  { kind: "anthropic-key", re: /sk-ant-[A-Za-z0-9_-]{20,}/ },
+  { kind: "openai-key", re: /sk-(?!ant-)[A-Za-z0-9_-]{20,}/ },
+  { kind: "aws-access-key", re: /AKIA[0-9A-Z]{16}/ },
+  { kind: "github-pat", re: /ghp_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{82,}/ },
+  { kind: "slack-token", re: /xox[abp]-[A-Za-z0-9-]{10,}/ },
+  { kind: "google-key", re: /AIza[0-9A-Za-z_-]{35}/ },
+  { kind: "jwt", re: /eyJ[A-Za-z0-9_-]{20,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/ },
+  { kind: "private-key-block", re: /-----BEGIN (RSA |EC |OPENSSH |PGP |DSA )?PRIVATE KEY-----/ },
+];
+
+// AWS secret access keys are pure base64-ish; flag only when keyword anchor
+// appears on the same line to avoid blasting every random 40-char token.
+const AWS_SECRET_LINE_RE = /aws_secret_access_key[^\n]*[A-Za-z0-9/+=]{40,}/i;
+
+// "password: <value>" style: keyword + delimiter + ≥20-char value.
+const KEYWORD_NEAR_VALUE_RE =
+  /(?:password|token|secret|api[_-]?key|apikey|bearer)\s*[:=]\s*['"]?([A-Za-z0-9._/+=-]{20,})/i;
+
+/**
+ * Scan text (bash stdout, http response body, web fetch body) for secret-shaped
+ * substrings. Returns `kinds` (pattern names) only — NEVER the matched value,
+ * so logging the result can't leak the secret.
+ *
+ * Caller responsibility: if `matched` is true, call recordSensitiveRead with
+ * source "secret" to taint the session.
+ */
+export function detectSecretsInOutput(text: string): { matched: boolean; kinds: string[] } {
+  if (!text || typeof text !== "string") return { matched: false, kinds: [] };
+  const slice = text.length > SECRET_SCAN_CAP ? text.slice(0, SECRET_SCAN_CAP) : text;
+  const kinds = new Set<string>();
+
+  for (const { kind, re } of SECRET_PATTERNS) {
+    if (re.test(slice)) kinds.add(kind);
+  }
+
+  if (AWS_SECRET_LINE_RE.test(slice)) {
+    kinds.add("aws-secret");
+  }
+
+  if (KEYWORD_NEAR_VALUE_RE.test(slice)) {
+    kinds.add("keyword-near-value");
+  }
+
+  return { matched: kinds.size > 0, kinds: [...kinds] };
+}
+
 /**
  * Scan a shell command for path-like tokens that match isSensitivePath.
  * Returns matched paths (deduped, original token form post-quote-strip

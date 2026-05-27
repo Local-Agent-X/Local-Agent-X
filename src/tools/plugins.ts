@@ -11,6 +11,7 @@ import { createCoreProtocolTools } from "../protocols.js";
 import { createCronTools } from "../cron-service.js";
 import { createHandlerTools } from "../agency/handler.js";
 import { createAgentTools } from "../agents/tools.js";
+import { createProjectTools } from "./project-tools.js";
 import { createMemoryTools } from "../memory.js";
 import { createArikernelBridgeTools } from "./arikernel-bridge.js";
 
@@ -117,6 +118,10 @@ export const plugins: ToolPlugin[] = [
   {
     id: "agents",
     register() { return createAgentTools(); },
+  },
+  {
+    id: "projects",
+    register() { return createProjectTools(); },
   },
   {
     id: "handlers",

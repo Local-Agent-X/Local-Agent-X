@@ -135,11 +135,16 @@ async function sendMessage() {
     : (hasImages && !text ? '' : '');
   // Hidden agent note when the intent intercept already fired the action.
   // Goes to finalText (agent sees it) but NOT displayText (user doesn't).
-  // Tells the agent the work is done and to acknowledge briefly without
-  // calling any tools — prevents the "bash echo narration → loop abort"
-  // failure path while keeping the reply conversational instead of canned.
+  // Encourages the agent to call sidebar_clear so the tool card renders
+  // (visible activity > silent confirmation), while making clear the call
+  // is idempotent — the client-side intercept already cleared the sidebar
+  // and the broadcast event is a no-op when re-fired. If the agent skips
+  // the tool and just replies, the feature still works (action already
+  // done). If the agent tries something destructive like
+  // `http_request DELETE /api/sessions`, the backend alias also routes
+  // to the same no-op.
   const intentNote = _sidebarClearIntentFired
-    ? "\n\n[SYSTEM NOTE — not from the user: The sidebar Conversations list has just been cleared automatically by a client-side intent intercept. Backend session files at ~/.lax/sessions/ are preserved. Do NOT call any tools — the action is already complete. Just give the user a brief, natural acknowledgment in your own voice (one sentence).]"
+    ? "\n\n[SYSTEM NOTE — not from the user: The sidebar Conversations list has been pre-cleared by a client-side intent intercept; backend session files at ~/.lax/sessions/ are preserved. Please CALL the `sidebar_clear` tool now to log the action visibly — the call is idempotent and safe (the WS broadcast no-ops if chats are already tombstoned). Then give the user a brief, natural acknowledgment in your own voice (one sentence). Do NOT call `http_request`, `bash`, or any other tool — use `sidebar_clear` exactly once and stop.]"
     : "";
   const finalText = uploadPrefix + text + intentNote;
   const displayText = text || '';

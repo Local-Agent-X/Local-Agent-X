@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { MemoryIndex } from "../../memory.js";
-import { atomicWriteFileSync } from "../utils.js";
+import { atomicWriteFileSync, displayContent } from "../utils.js";
 import { PERSONALITY_FILES } from "../personality.js";
 
 // ── Deep-forget helpers (redact from profile files + daily logs) ──
@@ -109,7 +109,7 @@ export function createForgetTool(memory: MemoryIndex) {
         const matching = memory.findFacts(fact);
         if (!confirm) {
           results.push(`Would delete ${matching.length} fact(s):`);
-          matching.slice(0, 10).forEach(f => results.push(`  - ${f.content.slice(0, 80)}`));
+          matching.slice(0, 10).forEach(f => results.push(`  - ${displayContent(f).slice(0, 80)}`));
         } else {
           const deleted = memory.forgetFacts(fact);
           results.push(`Deleted ${deleted} fact(s)`);

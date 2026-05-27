@@ -150,7 +150,14 @@ export class MCPConnection {
 
     const env = buildMcpChildEnv(this.config.env);
 
-    this.proc = spawn(this.config.command, this.config.args || [], {
+    // Spawn the resolved absolute path the integrity check hashed, NOT the
+    // bare command name. If we re-pass `this.config.command`, Node (and on
+    // Windows the cmd.exe shim) does its own PATH lookup, which can resolve
+    // to a different binary than the one we just trusted (TOCTOU: PATH races,
+    // evil-twin binaries appearing between hash and spawn). The trust store
+    // advertises "this binary matches the hash you trusted" — that property
+    // only holds if we execute the exact resolved path.
+    this.proc = spawn(verdict.resolvedPath, this.config.args || [], {
       stdio: ["pipe", "pipe", "pipe"],
       env,
       shell: process.platform === "win32",

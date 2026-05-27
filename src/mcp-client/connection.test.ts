@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { buildMcpChildEnv, __resetMcpEnvLogState } from "./connection.js";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { buildMcpChildEnv, __resetMcpEnvLogState, MCPConnection } from "./connection.js";
+
+const spawnMock = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: spawnMock };
+});
 
 // Snapshot + restore process.env around every test so a leaked variable
 // from one case (e.g. a planted ANTHROPIC_API_KEY) cannot influence
@@ -140,5 +150,76 @@ describe("buildMcpChildEnv", () => {
     process.env.PATH = "/system/bin";
     const env = buildMcpChildEnv({ PATH: "/custom/bin" });
     expect(env.PATH).toBe("/custom/bin");
+  });
+});
+
+// ─── Connect-layer integrity wiring ──────────────────────────────────────
+//
+// integrity.test.ts covers verifyOrTrust() in isolation. This block covers
+// the wiring at the connect() callsite: spawn MUST be invoked with the
+// path the integrity check hashed, not the bare config.command. Anything
+// else re-opens the TOCTOU window between hash and spawn.
+
+describe("MCPConnection.connect — integrity-resolved spawn path", () => {
+  let tempDir: string;
+  let dataDir: string;
+  let binPath: string;
+  const envSnap: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const k of ["LAX_DATA_DIR", "HOME", "USERPROFILE", "PATH", "LAX_MCP_STRICT_TRUST", "LAX_MCP_RETRUST"]) {
+      envSnap[k] = process.env[k];
+    }
+    tempDir = mkdtempSync(join(tmpdir(), "lax-mcp-conn-test-"));
+    dataDir = join(tempDir, ".lax");
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    const binDir = join(tempDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    binPath = join(binDir, process.platform === "win32" ? "mock-mcp.exe" : "mock-mcp");
+    writeFileSync(binPath, Buffer.from("#!/bin/sh\nexit 0\n"), { mode: 0o755 });
+    process.env.LAX_DATA_DIR = dataDir;
+    process.env.HOME = tempDir;
+    process.env.USERPROFILE = tempDir;
+    process.env.PATH = binDir + (process.platform === "win32" ? ";" : ":") + (envSnap.PATH || "");
+    delete process.env.LAX_MCP_STRICT_TRUST;
+    delete process.env.LAX_MCP_RETRUST;
+
+    spawnMock.mockReset();
+    // Return a stub ChildProcess shape — connect() reads .stdout/.stderr/.stdin
+    // and registers listeners; we don't need a real process, just enough
+    // surface that the synchronous spawn(...) call doesn't crash before our
+    // assertion runs.
+    spawnMock.mockReturnValue({
+      stdout: { setEncoding: () => {}, on: () => {} },
+      stderr: { setEncoding: () => {}, on: () => {} },
+      stdin: { writable: false, write: () => {} },
+      on: () => {},
+      kill: () => {},
+      killed: false,
+      pid: 12345,
+    });
+  });
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(envSnap)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  });
+
+  it("spawns the resolved absolute path, not the bare command name (TOCTOU defense)", async () => {
+    const bareName = process.platform === "win32" ? "mock-mcp.exe" : "mock-mcp";
+    const conn = new MCPConnection("mock-srv", { command: bareName, args: ["--foo"] });
+
+    // connect() will hang on the initialize handshake against our stub; we
+    // only care about the spawn() invocation, which happens synchronously
+    // before any await. Kick it off and assert on the mock without waiting.
+    conn.connect().catch(() => { /* expected — stub stdin is non-writable */ });
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const firstArg = spawnMock.mock.calls[0][0];
+    expect(firstArg).toBe(binPath);
+    expect(firstArg).not.toBe(bareName);
   });
 });

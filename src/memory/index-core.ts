@@ -204,7 +204,7 @@ export class MemoryIndex {
     );
   }
 
-  findFacts(pattern: string): Array<{ id: number; content: string }> {
+  findFacts(pattern: string): Array<{ id: number; content: string; entities: string[] }> {
     return Forget.findFacts(this.db, pattern);
   }
 

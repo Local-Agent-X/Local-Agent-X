@@ -43,8 +43,9 @@ export function forgetFacts(
 export function findFacts(
   db: InstanceType<typeof Database>,
   pattern: string
-): Array<{ id: number; content: string }> {
-  return db.prepare("SELECT id, content FROM facts WHERE content LIKE ?").all(`%${pattern}%`) as Array<{ id: number; content: string }>;
+): Array<{ id: number; content: string; entities: string[] }> {
+  const rows = db.prepare("SELECT id, content, entities FROM facts WHERE content LIKE ?").all(`%${pattern}%`) as Array<{ id: number; content: string; entities: string }>;
+  return rows.map(r => ({ id: r.id, content: r.content, entities: JSON.parse(r.entities || "[]") }));
 }
 
 export function forgetChunks(

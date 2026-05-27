@@ -11,7 +11,7 @@
  * directly names a FactKind.
  */
 import { describe, it, expect } from "vitest";
-import { parseFactLine } from "./utils.js";
+import { parseFactLine, displayContent } from "./utils.js";
 
 describe("parseFactLine — schema-aligned prefix letters", () => {
   it("E maps to experience and parses confidence + entity", () => {
@@ -67,5 +67,22 @@ describe("parseFactLine — schema-aligned prefix letters", () => {
     expect(r!.kind).toBe("observation");
     expect(r!.confidence).toBe(1.0);
     expect(r!.entities).toEqual(["user"]);
+  });
+});
+
+describe("displayContent — re-attaches stripped entities for display", () => {
+  it("no entities → content unchanged", () => {
+    expect(displayContent({ content: "user prefers oat milk", entities: [] }))
+      .toBe("user prefers oat milk");
+  });
+
+  it("single entity → ` (@name)` appended", () => {
+    expect(displayContent({ content: "is the user's wife", entities: ["jenny"] }))
+      .toBe("is the user's wife (@jenny)");
+  });
+
+  it("multiple entities → comma-separated `(@a, @b)`", () => {
+    expect(displayContent({ content: "adopted puppies", entities: ["gigi", "rex"] }))
+      .toBe("adopted puppies (@gigi, @rex)");
   });
 });

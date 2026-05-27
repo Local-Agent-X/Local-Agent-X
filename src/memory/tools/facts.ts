@@ -1,5 +1,6 @@
 import type { MemoryIndex } from "../../memory.js";
 import type { FactKind } from "../types.js";
+import { displayContent } from "../utils.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
 
 // Agent-facing single-fact tools. Sit on top of the Facts DB primitives
@@ -72,7 +73,7 @@ export function createFactsTools(memory: MemoryIndex) {
           }
           memory.markDirty();
           const f = result.fact!;
-          return { content: `Remembered [${f.kind}, c=${f.confidence}] #${f.id}: ${f.content.slice(0, 80)}` };
+          return { content: `Remembered [${f.kind}, c=${f.confidence}] #${f.id}: ${displayContent(f).slice(0, 80)}` };
         } catch (e) {
           if (e instanceof MemoryWriteBlocked) {
             return { content: `BLOCKED: ${e.reason}`, isError: true };
@@ -121,7 +122,7 @@ export function createFactsTools(memory: MemoryIndex) {
           }
           memory.markDirty();
           return {
-            content: `Updated fact #${result.oldFactId} → #${result.newFactId}: ${result.fact!.content.slice(0, 80)}`,
+            content: `Updated fact #${result.oldFactId} → #${result.newFactId}: ${displayContent(result.fact!).slice(0, 80)}`,
           };
         } catch (e) {
           if (e instanceof MemoryWriteBlocked) {
@@ -155,7 +156,7 @@ export function createFactsTools(memory: MemoryIndex) {
           return { content: formatToolError("forget failed", result), isError: true };
         }
         memory.markDirty();
-        return { content: `Forgot fact #${result.oldFactId}: ${result.fact!.content.slice(0, 80)}` };
+        return { content: `Forgot fact #${result.oldFactId}: ${displayContent(result.fact!).slice(0, 80)}` };
       },
     },
   ];

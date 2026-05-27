@@ -129,6 +129,17 @@ export function parseFactLine(
   return { kind, content, entities, confidence: Math.max(0, Math.min(1, confidence)) };
 }
 
+// parseFactLine strips @-entities out of content and stores them on the
+// side, which is right for retrieval (entity-keyed recall) but wrong for
+// any display path that shows content alone — "@Jenny is the user's wife"
+// persists as content="is the user's wife", entities=["jenny"], and reads
+// back to the user as a nameless sentence. Tool responses, previews, and
+// any future fact-list UI go through this so the name is glued back on.
+export function displayContent(fact: Pick<RetainedFact, "content" | "entities">): string {
+  if (!fact.entities || fact.entities.length === 0) return fact.content;
+  return `${fact.content} (@${fact.entities.join(", @")})`;
+}
+
 export function rowToFact(row: Record<string, unknown>): RetainedFact {
   return {
     id: row.id as number,

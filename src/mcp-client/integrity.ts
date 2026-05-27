@@ -115,9 +115,9 @@ export function hashCommandBinary(absPath: string): string {
   const hash = createHash("sha256");
   const buf = Buffer.alloc(64 * 1024);
   let fd = -1;
+  let totalRead = 0;
   try {
     fd = openSync(absPath, "r");
-    let totalRead = 0;
     while (totalRead < HASH_READ_CAP_BYTES) {
       const want = Math.min(buf.length, HASH_READ_CAP_BYTES - totalRead);
       const n = readSync(fd, buf, 0, want, totalRead);
@@ -129,6 +129,14 @@ export function hashCommandBinary(absPath: string): string {
     if (fd >= 0) {
       try { closeSync(fd); } catch { /* best-effort */ }
     }
+  }
+  if (totalRead === 0) {
+    // SHA-256 of zero bytes is a known constant (e3b0c4…). Returning it
+    // would let any 0-byte file pass verifyOrTrust once trust-on-first-use
+    // stamped that constant into the store — and any later 0-byte file at
+    // the same path would then "verify" against any other 0-byte file.
+    // Refuse so verifyOrTrust can surface an explicit failure.
+    throw new Error(`binary is empty or unreadable: ${absPath}`);
   }
   return hash.digest("hex");
 }
@@ -192,7 +200,16 @@ export function verifyOrTrust(
     };
   }
 
-  const sha256 = hashCommandBinary(resolvedPath);
+  let sha256: string;
+  try {
+    sha256 = hashCommandBinary(resolvedPath);
+  } catch (e) {
+    return {
+      ok: false,
+      reason: `could not hash binary: ${(e as Error).message}`,
+      userHint: `the file at ${resolvedPath} is empty, missing, or unreadable. Check that the MCP server binary exists and the LAX process has read permission.`,
+    };
+  }
   const store = loadTrustStore();
   const existing = store[serverName];
 

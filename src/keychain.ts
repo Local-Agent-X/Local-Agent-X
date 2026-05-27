@@ -126,8 +126,21 @@ function macKeychainStore(data: Buffer): void {
   // explicit delete adds a race window (process A deletes, process B
   // adds, process A adds-and-clobbers) for zero benefit when multiple
   // SecretsStore instances race on first boot.
+  //
+  // `-T /usr/bin/security` puts the security CLI on the entry's ACL
+  // trust list. Without this, macOS keys ACL trust on the *creating
+  // process's code signing identity* — so an in-place upgrade from
+  // unsigned-dev to a Developer-ID-signed build (different signature)
+  // re-prompts the user with "Allow / Always Allow / Deny" on the
+  // first find-generic-password call. We always shell out via
+  // /usr/bin/security, so trusting just the CLI is narrower than `-A`
+  // (which would grant any app on the system) while still surviving
+  // signature changes on app upgrade.
   execFileSync("security", [
-    "add-generic-password", "-s", SERVICE_NAME, "-a", ACCOUNT_NAME, "-w", hex, "-U"
+    "add-generic-password",
+    "-s", SERVICE_NAME, "-a", ACCOUNT_NAME, "-w", hex,
+    "-T", "/usr/bin/security",
+    "-U"
   ], { timeout: 5000 });
 }
 

@@ -283,8 +283,14 @@ function stopChat() {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
     body: JSON.stringify({ sessionId: activeChat.id }),
   }).catch(() => {});
-  // Force stop local rendering immediately
+  // Force stop local rendering immediately. Drop the session from
+  // _liveStreams so isStreaming(id) flips false — otherwise the
+  // STREAMING badge + inject-mode send button stay lit because we
+  // force-close the WS below and the server's `done` event (which
+  // normally clears _liveStreams) never arrives.
+  try { _liveStreams.delete(activeChat.id); } catch {}
   window.streamingSessionId = null;
+  try { window.updateStreamUI && window.updateStreamUI(); } catch {}
   // Close and reconnect WS to kill any in-flight stream
   if (chatWs) {
     chatWs.close();

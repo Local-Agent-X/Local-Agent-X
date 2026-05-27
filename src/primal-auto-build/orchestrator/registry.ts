@@ -16,7 +16,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
-import { homedir } from "node:os";
+import { getLaxDir } from "../../lax-data-dir.js";
 import { join } from "node:path";
 
 export interface RegistryEntry {
@@ -31,7 +31,7 @@ interface RegistryFile {
 }
 
 function registryPath(): string {
-  return join(homedir(), ".lax", "active-orchestrators.json");
+  return join(getLaxDir(), "active-orchestrators.json");
 }
 
 function read(): RegistryFile {

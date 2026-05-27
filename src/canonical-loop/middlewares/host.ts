@@ -23,7 +23,7 @@ import { readOpMessages, readOpTurns } from "../store.js";
 import { isCommittingTool } from "../../committing-tool-check.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../../lax-data-dir.js";
 
 export type PhaseName = "beforeTurn" | "afterModelCall" | "afterToolExecution";
 
@@ -77,7 +77,7 @@ export function buildCanonicalLoopContext(args: BuildContextArgs): CanonicalLoop
     ?? ((op as { canonical?: { model?: string } }).canonical?.model);
   if (!model) {
     try {
-      const settingsPath = join(homedir(), ".lax", "settings.json");
+      const settingsPath = join(getLaxDir(), "settings.json");
       if (existsSync(settingsPath)) {
         const raw = JSON.parse(readFileSync(settingsPath, "utf-8")) as { model?: string };
         if (typeof raw.model === "string" && raw.model.length > 0) model = raw.model;

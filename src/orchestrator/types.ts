@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 
 export const GRAPH_STOP_WORDS = new Set([
   "the", "this", "that", "what", "when", "where", "which", "who", "how",
@@ -109,7 +109,7 @@ export interface TriageResult {
   triggered: string[];
 }
 
-export const LAX_DIR = join(homedir(), ".lax");
+export const LAX_DIR = getLaxDir();
 export const EXAMPLES_FILE = join(LAX_DIR, "orchestration-examples.json");
 export const STATE_FILE = join(LAX_DIR, "orchestrator-state.json");
 export const MAX_EXAMPLES = 200;

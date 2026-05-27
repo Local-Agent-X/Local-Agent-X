@@ -92,11 +92,12 @@ export const defaultJudgmentHook: JudgmentHook = createLlmJudgmentHook(async (pr
   const { getRuntimeConfig } = await import("../../config.js");
   const { SecretsStore } = await import("../../secrets.js");
   const { resolveProvider } = await import("../../agent-request.js");
-  const { homedir } = await import("node:os");
+  const { getLaxDir } = await import("../../lax-data-dir.js");
 
   const runtime = getRuntimeConfig();
-  const secretsStore = new SecretsStore(join(homedir(), ".lax"));
-  const resolved = await resolveProvider(runtime, secretsStore, join(homedir(), ".lax"));
+  const dataDir = getLaxDir();
+  const secretsStore = new SecretsStore(dataDir);
+  const resolved = await resolveProvider(runtime, secretsStore, dataDir);
   if (!resolved.apiKey) throw new Error("no api key");
 
   if (resolved.provider === "anthropic") {

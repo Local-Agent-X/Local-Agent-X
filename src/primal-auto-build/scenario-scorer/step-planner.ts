@@ -98,12 +98,11 @@ async function getProductionLlmCall(): Promise<LlmCall> {
   const { getRuntimeConfig } = await import("../../config.js");
   const { SecretsStore } = await import("../../secrets.js");
   const { resolveProvider } = await import("../../agent-request.js");
-  const { homedir } = await import("node:os");
-  const { join } = await import("node:path");
+  const { getLaxDir } = await import("../../lax-data-dir.js");
 
   return async (prompt: string, signal?: AbortSignal): Promise<string> => {
     const runtime = getRuntimeConfig();
-    const dataDir = join(homedir(), ".lax");
+    const dataDir = getLaxDir();
     const secretsStore = new SecretsStore(dataDir);
     const resolved = await resolveProvider(runtime, secretsStore, dataDir);
     if (!resolved.apiKey) throw new Error("no api key for step planner");

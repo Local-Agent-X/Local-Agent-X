@@ -20,7 +20,7 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, dirname, isAbsolute, resolve, relative } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ContextPack, FileSnapshot, MemoryHit, OpBudget, OpLane, ProviderCapabilityRequirement } from "./types.js";
 
@@ -212,7 +212,7 @@ async function collectAgentsRules(scopeHint?: string): Promise<string> {
 async function fetchMemoryHits(query: string | undefined, limit: number): Promise<MemoryHit[]> {
   if (!query || !query.trim()) return [];
   try {
-    const dataDir = join(homedir(), ".lax");
+    const dataDir = getLaxDir();
     // Lazy import — memory module is heavy
     const { MemoryIndex } = await import("../memory.js");
     const idx = new MemoryIndex(dataDir);

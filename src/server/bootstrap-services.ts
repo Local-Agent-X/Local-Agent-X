@@ -1,6 +1,6 @@
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { SecurityLayer } from "../security.js";
 import { loadToolPolicy } from "../tool-policy.js";
 import { SessionStore, MemoryIndex, MemoryManager, ensurePersonalityFiles } from "../memory.js";
@@ -170,7 +170,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   _t();
   _t = _bsT("dirs+toolPolicy+rbac");
   const publicDir = join(import.meta.dirname || ".", "..", "..", "public");
-  const dataDir = join(homedir(), ".lax");
+  const dataDir = getLaxDir();
   for (const d of ["apps", "images", "videos", "missions"]) mkdirSync(join(resolve(config.workspace), d), { recursive: true });
   mkdirSync(join(dataDir, "uploads"), { recursive: true });
   const toolPolicy = loadToolPolicy(dataDir);

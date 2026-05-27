@@ -19,14 +19,14 @@
 
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
 import { isPidAlive, isOurServerProcess } from "./pid-probe.js";
 
 const logger = createLogger("lifecycle");
 
-const LAX_DIR = join(homedir(), ".lax");
+const LAX_DIR = getLaxDir();
 const PIDFILE = join(LAX_DIR, "server.pid");
 const HEARTBEAT_MS = 5_000;
 

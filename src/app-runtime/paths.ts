@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 
-export const APPS_DIR = join(homedir(), ".lax", "apps");
-export const AUDIT_DIR = join(homedir(), ".lax", "apps", "_audit");
+export const APPS_DIR = join(getLaxDir(), "apps");
+export const AUDIT_DIR = join(getLaxDir(), "apps", "_audit");
 
 export function ensureDir(dir: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

@@ -8,7 +8,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { getLaxDir } from "../../lax-data-dir.js";
 import { join } from "node:path";
 import { buildContextPack } from "../context-pack-builder.js";
 import { getRetryPolicy } from "../heartbeat.js";
@@ -38,7 +38,7 @@ export interface SubmitArgs {
  */
 export async function readSettingsProvider(): Promise<string | null> {
   try {
-    const sp = join(homedir(), ".lax", "settings.json");
+    const sp = join(getLaxDir(), "settings.json");
     if (!existsSync(sp)) return null;
     const s = JSON.parse(readFileSync(sp, "utf-8"));
     return typeof s.provider === "string" ? s.provider : null;

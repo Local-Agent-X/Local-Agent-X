@@ -240,9 +240,8 @@ async function defaultProviderAdapterFactory(
   const { resolveProvider } = await import("../../agent-request/resolve-provider.js");
   const { getRuntimeConfig } = await import("../../config.js");
   const { getSecretsStoreSingleton, SecretsStore } = await import("../../secrets.js");
-  const { homedir } = await import("node:os");
-  const { join } = await import("node:path");
-  const dataDir = join(homedir(), ".lax");
+  const { getLaxDir } = await import("../../lax-data-dir.js");
+  const dataDir = getLaxDir();
   const config = getRuntimeConfig();
   const secrets = getSecretsStoreSingleton() ?? new SecretsStore(dataDir);
   const prepared = await resolveProvider(config, secrets, dataDir, provider);

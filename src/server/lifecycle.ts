@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentOptions } from "../providers/types.js";
@@ -343,7 +343,7 @@ export function logStartup(deps: { config: LAXConfig; dataDir: string }): void {
   // kills processes whose --user-data-dir matches the agent profile
   // exactly. Never touches the user's regular Chrome.
   try {
-    const agentProfile = join(homedir(), ".lax", "chrome-profile");
+    const agentProfile = join(getLaxDir(), "chrome-profile");
     void import("../browser/cleanup-stale.js").then(({ cleanupStaleAgentChrome }) =>
       cleanupStaleAgentChrome(agentProfile),
     ).catch((e) => logger.warn(`[browser-cleanup] failed: ${(e as Error).message}`));

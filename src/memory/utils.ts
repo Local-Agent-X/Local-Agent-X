@@ -94,15 +94,15 @@ export function buildFtsQuery(raw: string): string {
 
 const KIND_PREFIX: Record<string, FactKind> = {
   W: "world",
-  B: "experience",
   O: "opinion",
+  E: "experience",
   S: "observation",
 };
 
 export function parseFactLine(
   line: string
 ): { kind: FactKind; content: string; entities: string[]; confidence: number } | null {
-  const prefixMatch = line.match(/^([WBOS])(?:\(c=(\d+\.?\d*)\))?\s+(.*)/);
+  const prefixMatch = line.match(/^([WOES])(?:\(c=(\d+\.?\d*)\))?\s+(.*)/);
 
   let kind: FactKind = "observation";
   let confidence = 1.0;
@@ -112,6 +112,12 @@ export function parseFactLine(
     kind = KIND_PREFIX[prefixMatch[1]] || "observation";
     confidence = prefixMatch[2] ? parseFloat(prefixMatch[2]) : 1.0;
     rest = prefixMatch[3];
+  } else if (/^[A-Z](?:\(c=\d+\.?\d*\))?\s/.test(line)) {
+    // Looks prefix-shaped (capital letter + optional (c=...) + space) but the
+    // letter isn't in the schema-aligned set. The legacy "B" (behavior) prefix
+    // from older dream output lands here. Drop instead of silently smuggling
+    // the malformed prefix into observation content.
+    return null;
   }
 
   const entityMatches = rest.match(/@([\w-]+)/g) || [];

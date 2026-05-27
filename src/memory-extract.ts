@@ -150,7 +150,7 @@ export async function runExtraction(
 
 /**
  * Ask LLM to extract salient facts from a session's chunks.
- * Returns text in the `- W/O/B/S @entity: content` format that retainSmart consumes.
+ * Returns text in the `- W/O/E/S @entity: content` format that retainSmart consumes.
  */
 async function extractFactsFromSession(
   sessionPath: string,
@@ -190,16 +190,16 @@ Output format (one fact per line, exactly this syntax):
 - <KIND> @<entity> <content>
 
 KIND is one of:
-  W = world fact (objective, verifiable)
+  W = world fact (objective, verifiable about the user or their domain)
   O = opinion / preference
-  B = behavior / pattern
-  S = schedule / plan
+  E = experience (life event — births, deaths, moves, milestones, completed actions, plans they're actively pursuing)
+  S = observation (behaviors, patterns, recurring notes — things that describe how they operate, not events that happened)
 
 Examples:
 - W @user switched crypto exchanges from Coinbase to Kraken
 - O @user prefers bash over Python for scripting
-- S @user plans to ship a side project v2 by end of month
-- B @user writes commit messages in past tense
+- E @user shipped side project v2 last Thursday
+- S @user writes commit messages in past tense
 
 Skip:
 - Information that's only meaningful in the current conversation

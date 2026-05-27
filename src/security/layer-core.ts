@@ -34,6 +34,14 @@ export class SecurityLayer {
   private workspace: string;
   private auditLog: Array<{ timestamp: number; tool: string; decision: SecurityDecision }> = [];
   private egressAllowlist: Set<string> = new Set();
+  // true once we successfully loaded an egress-allowlist.json file from
+  // disk (even if its content is `[]`). false means no file existed —
+  // evaluateWebFetch uses this to distinguish "user has explicitly
+  // configured an empty allowlist (deny everything)" from "no config
+  // present (deny everything with a setup hint)". Previously a missing
+  // file silently allowed every public host, which made the advertised
+  // egress-allowlist feature fail-open on a default install.
+  private egressAllowlistConfigured: boolean = false;
   private sessionAllowedPaths = new Map<string, Set<string>>();
   fileAccessMode: FileAccessMode = "common";
 
@@ -82,15 +90,35 @@ export class SecurityLayer {
   constructor(workspace: string, fileAccessMode?: FileAccessMode) {
     this.workspace = resolve(workspace);
     this.fileAccessMode = fileAccessMode || this.loadFileAccessMode();
-    // Load egress allowlist from ~/.lax/egress-allowlist.json
+    // Load egress allowlist from ~/.lax/egress-allowlist.json.
+    //
+    // Semantics (intentional change from earlier behavior):
+    //   - file present + populated → enforce that list
+    //   - file present + `[]`      → enforce (user has explicitly opted into
+    //                                  "deny all"); egressAllowlistConfigured=true
+    //   - file missing             → enforce + emit a setup-hint error
+    //                                  (egressAllowlistConfigured stays false)
+    //
+    // The previous behavior was "missing file = allow all public hosts,"
+    // which silently turned the advertised egress allowlist into a no-op
+    // on every default install.
     try {
       const allowlistPath = join(getLaxDir(), "egress-allowlist.json");
       if (existsSync(allowlistPath)) {
-        const domains: string[] = JSON.parse(readFileSync(allowlistPath, "utf-8"));
-        this.egressAllowlist = new Set(domains.map((d: string) => d.toLowerCase()));
-        logger.info(`[security] Egress allowlist loaded: ${this.egressAllowlist.size} domains`);
+        const parsed = JSON.parse(readFileSync(allowlistPath, "utf-8"));
+        if (Array.isArray(parsed)) {
+          this.egressAllowlist = new Set(parsed.map((d: unknown) => String(d).toLowerCase()));
+          this.egressAllowlistConfigured = true;
+          logger.info(`[security] Egress allowlist loaded: ${this.egressAllowlist.size} domains`);
+        } else {
+          logger.warn(`[security] ${allowlistPath} is not a JSON array — treating as missing (deny-by-default)`);
+        }
+      } else {
+        logger.warn(
+          `[security] No egress allowlist at ${allowlistPath} — outbound network requests will be denied. ` +
+          `Create the file with a JSON array of allowed domains (e.g. ["api.anthropic.com","github.com","*.npmjs.org"]) to enable egress.`,
+        );
       }
-      // If no file exists, allowlist is empty = all public domains allowed (backwards compatible)
     } catch (e) {
       logger.warn(`[security] Failed to load egress allowlist: ${(e as Error).message}`);
     }
@@ -194,6 +222,7 @@ export class SecurityLayer {
     } else if (toolName === "web_fetch" || toolName === "http_request") {
       decision = evaluateWebFetch(
         this.egressAllowlist,
+        this.egressAllowlistConfigured,
         String(SecurityLayer._selfPort || "7007"),
         String(args.url || ""),
       );
@@ -216,6 +245,7 @@ export class SecurityLayer {
         }
         return evaluateWebFetch(
           this.egressAllowlist,
+          this.egressAllowlistConfigured,
           String(SecurityLayer._selfPort || "7007"),
           browserUrl,
         );
@@ -270,6 +300,7 @@ export class SecurityLayer {
         if (typeof args.url === "string" && args.url.length > 0) {
           return evaluateWebFetch(
             this.egressAllowlist,
+            this.egressAllowlistConfigured,
             String(SecurityLayer._selfPort || "7007"),
             args.url,
           );
@@ -337,7 +368,12 @@ export class SecurityLayer {
    * Call this for actual network requests (not just policy check).
    */
   async validateUrlWithDns(url: string): Promise<SecurityDecision> {
-    return validateUrlWithDns(this.egressAllowlist, String(SecurityLayer._selfPort || "7007"), url);
+    return validateUrlWithDns(
+      this.egressAllowlist,
+      this.egressAllowlistConfigured,
+      String(SecurityLayer._selfPort || "7007"),
+      url,
+    );
   }
 
   getAuditLog() {

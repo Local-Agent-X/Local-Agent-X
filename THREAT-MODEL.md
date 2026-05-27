@@ -103,7 +103,7 @@ Layer 10: Output Redaction   — Credential masking before AI sees tool results
 3. **Secrets encryption** — Uses OS keychain (DPAPI/Keychain) when available, falls back to scrypt N=131072 (~500ms/attempt).
 4. **Memory taint is heuristic** — Pattern-based detection + Unicode normalization can be evaded by sufficiently creative injection. ARI Kernel taint tracking adds formal enforcement.
 5. **No formal verification** — Security properties are tested empirically, not formally proven.
-6. **Egress allowlist is opt-in** — Create `~/.sax/egress-allowlist.json` to restrict outbound domains. Without it, all public domains are allowed.
+6. **Egress allowlist is deny-by-default** — Outbound HTTP/web_fetch requests require `~/.lax/egress-allowlist.json` (a JSON array of allowed domains, wildcards like `*.example.com` supported). Missing or non-array file → all egress denied with a setup hint pointing at the path. Explicit empty `[]` is honored as "deny everything."
 
 ## Incident Response
 

@@ -1,5 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { resolve, join } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { SecurityLayer } from "./layer-core.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
@@ -9,6 +11,29 @@ import { evaluateWebFetch } from "./network-policy.js";
 // constructor doesn't read ~/.lax/security.json and produce host-dependent
 // results.
 const WORKSPACE = "./workspace";
+
+// Isolated LAX_DATA_DIR for the main suite, populated with a known egress
+// allowlist so the deny-by-default semantics don't make every "public URL
+// allowed" assertion depend on the dev's ~/.lax/egress-allowlist.json.
+let savedLaxDir: string | undefined;
+let suiteLaxDir: string;
+
+beforeAll(() => {
+  savedLaxDir = process.env.LAX_DATA_DIR;
+  suiteLaxDir = mkdtempSync(join(tmpdir(), "layer-core-test-"));
+  process.env.LAX_DATA_DIR = suiteLaxDir;
+  writeFileSync(
+    join(suiteLaxDir, "egress-allowlist.json"),
+    JSON.stringify(["api.github.com", "example.com"]),
+    "utf-8",
+  );
+});
+
+afterAll(() => {
+  if (savedLaxDir === undefined) delete process.env.LAX_DATA_DIR;
+  else process.env.LAX_DATA_DIR = savedLaxDir;
+  rmSync(suiteLaxDir, { recursive: true, force: true });
+});
 
 function makeLayer() {
   return new SecurityLayer(WORKSPACE, "common");
@@ -91,15 +116,23 @@ describe("SecurityLayer kernel-class dispatch", () => {
       expect(d.allowed).toBe(false);
     });
 
-    it("web_fetch: public URL allowed", () => {
+    it("web_fetch: public URL allowed (host on suite allowlist)", () => {
       const sec = makeLayer();
-      const expected = evaluateWebFetch(new Set(), "7007", "https://api.github.com");
+      // The suite fixture allowlists api.github.com — direct evaluateWebFetch
+      // with the same inputs must agree.
+      const expected = evaluateWebFetch(
+        new Set(["api.github.com"]),
+        true,
+        "7007",
+        "https://api.github.com",
+      );
       const d = sec.evaluate({
         toolName: "web_fetch",
         args: { url: "https://api.github.com" },
         sessionId: "t",
       });
       expect(d.allowed).toBe(expected.allowed);
+      expect(d.allowed).toBe(true);
     });
 
     it("http_request: SSRF gate still fires on cloud metadata", () => {
@@ -337,5 +370,107 @@ describe("SecurityLayer kernel-class dispatch", () => {
       expect(d.allowed).toBe(true);
       expect(d.reason).toMatch(/MCP-sourced tool/);
     });
+  });
+});
+
+// Regression: previously a missing ~/.lax/egress-allowlist.json was treated
+// as "no restrictions" — silent fail-open that made the advertised
+// allowlist a no-op on every default install. The fix denies by default
+// and points the user at the config path.
+describe("egress allowlist deny-by-default when missing", () => {
+  // Each test below isolates LAX_DATA_DIR to a fresh directory; the
+  // outer suite's beforeAll fixture must not bleed in.
+  function withLaxDir<T>(setup: (dir: string) => void, run: () => T): T {
+    const dir = mkdtempSync(join(tmpdir(), "no-allowlist-"));
+    const prev = process.env.LAX_DATA_DIR;
+    process.env.LAX_DATA_DIR = dir;
+    try {
+      setup(dir);
+      return run();
+    } finally {
+      if (prev === undefined) delete process.env.LAX_DATA_DIR;
+      else process.env.LAX_DATA_DIR = prev;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("missing allowlist file: SecurityLayer denies web_fetch to arbitrary public host", () => {
+    withLaxDir(
+      () => { /* leave the dir empty — no egress-allowlist.json */ },
+      () => {
+        const sec = new SecurityLayer(WORKSPACE, "common");
+        const d = sec.evaluate({
+          toolName: "web_fetch",
+          args: { url: "https://example.com" },
+          sessionId: "t",
+        });
+        expect(d.allowed).toBe(false);
+        expect(d.reason).toMatch(/no egress allowlist configured|egress-allowlist\.json/i);
+      },
+    );
+  });
+
+  it("missing allowlist file: SecurityLayer denies http_request similarly", () => {
+    withLaxDir(
+      () => { /* no file */ },
+      () => {
+        const sec = new SecurityLayer(WORKSPACE, "common");
+        const d = sec.evaluate({
+          toolName: "http_request",
+          args: { url: "https://attacker.example" },
+          sessionId: "t",
+        });
+        expect(d.allowed).toBe(false);
+      },
+    );
+  });
+
+  it("evaluateWebFetch direct call: not-configured → deny with setup hint", () => {
+    const d = evaluateWebFetch(new Set(), false, "7007", "https://example.com");
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/no egress allowlist configured/i);
+  });
+
+  it("explicit empty [] is honored: enforce → deny everything", () => {
+    withLaxDir(
+      (dir) => writeFileSync(join(dir, "egress-allowlist.json"), "[]", "utf-8"),
+      () => {
+        const sec = new SecurityLayer(WORKSPACE, "common");
+        const d = sec.evaluate({
+          toolName: "web_fetch",
+          args: { url: "https://example.com" },
+          sessionId: "t",
+        });
+        expect(d.allowed).toBe(false);
+        // Different error message from the missing-file case — proves the
+        // configured flag was loaded.
+        expect(d.reason).toMatch(/not in the egress allowlist/i);
+      },
+    );
+  });
+
+  it("populated allowlist: only listed host allowed", () => {
+    withLaxDir(
+      (dir) => writeFileSync(
+        join(dir, "egress-allowlist.json"),
+        JSON.stringify(["api.anthropic.com"]),
+        "utf-8",
+      ),
+      () => {
+        const sec = new SecurityLayer(WORKSPACE, "common");
+        const allowed = sec.evaluate({
+          toolName: "web_fetch",
+          args: { url: "https://api.anthropic.com/v1/messages" },
+          sessionId: "t",
+        });
+        expect(allowed.allowed).toBe(true);
+        const denied = sec.evaluate({
+          toolName: "web_fetch",
+          args: { url: "https://example.com" },
+          sessionId: "t",
+        });
+        expect(denied.allowed).toBe(false);
+      },
+    );
   });
 });

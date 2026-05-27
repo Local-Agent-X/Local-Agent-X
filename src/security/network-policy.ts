@@ -110,6 +110,7 @@ const BLOCKED_HOSTNAMES = new Set([
 
 export function evaluateWebFetch(
   egressAllowlist: ReadonlySet<string>,
+  egressAllowlistConfigured: boolean,
   selfPort: string,
   url: string,
 ): SecurityDecision {
@@ -174,22 +175,32 @@ export function evaluateWebFetch(
   }
 
   // ── Egress domain allowlist ──
-  // If an allowlist is configured, only approved domains can be accessed.
-  // This prevents exfiltration to attacker-controlled servers.
-  if (egressAllowlist.size > 0) {
-    const allowed = egressAllowlist.has(host) ||
-      // Check wildcard subdomains: *.example.com matches sub.example.com
-      // Require at least 2 labels in the wildcard domain (*.com is too broad)
-      Array.from(egressAllowlist).some(d => {
-        if (!d.startsWith("*.")) return false;
-        const baseDomain = d.slice(2);
-        // Reject overly broad wildcards like *.com, *.org, *.net
-        if (baseDomain.split(".").length < 2) return false;
-        return host === baseDomain || host.endsWith("." + baseDomain);
-      });
-    if (!allowed) {
-      return { allowed: false, reason: `Blocked: ${host} is not in the egress allowlist. Add it to ~/.lax/egress-allowlist.json to permit.`, userHint: USER_HINTS.network };
-    }
+  // Deny-by-default. If no allowlist file is configured at all, refuse
+  // outbound requests with an actionable setup hint — the alternative
+  // (silently allowing every public host when the file is absent) makes
+  // the advertised egress-allowlist feature a no-op on default installs.
+  if (!egressAllowlistConfigured) {
+    return {
+      allowed: false,
+      reason:
+        `Blocked: no egress allowlist configured. ` +
+        `Create ~/.lax/egress-allowlist.json with a JSON array of allowed domains ` +
+        `(e.g. ["api.anthropic.com","github.com","*.npmjs.org"]) to permit outbound requests.`,
+      userHint: USER_HINTS.network,
+    };
+  }
+  const allowed = egressAllowlist.has(host) ||
+    // Check wildcard subdomains: *.example.com matches sub.example.com
+    // Require at least 2 labels in the wildcard domain (*.com is too broad)
+    Array.from(egressAllowlist).some(d => {
+      if (!d.startsWith("*.")) return false;
+      const baseDomain = d.slice(2);
+      // Reject overly broad wildcards like *.com, *.org, *.net
+      if (baseDomain.split(".").length < 2) return false;
+      return host === baseDomain || host.endsWith("." + baseDomain);
+    });
+  if (!allowed) {
+    return { allowed: false, reason: `Blocked: ${host} is not in the egress allowlist. Add it to ~/.lax/egress-allowlist.json to permit.`, userHint: USER_HINTS.network };
   }
 
   return { allowed: true, reason: "Web fetch allowed" };
@@ -202,11 +213,12 @@ export function evaluateWebFetch(
  */
 export async function validateUrlWithDns(
   egressAllowlist: ReadonlySet<string>,
+  egressAllowlistConfigured: boolean,
   selfPort: string,
   url: string,
 ): Promise<SecurityDecision> {
   // First do the synchronous check
-  const syncResult = evaluateWebFetch(egressAllowlist, selfPort, url);
+  const syncResult = evaluateWebFetch(egressAllowlist, egressAllowlistConfigured, selfPort, url);
   if (!syncResult.allowed) return syncResult;
 
   const parsed = new URL(url);

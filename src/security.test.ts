@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { mkdirSync, rmSync } from "node:fs";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -15,7 +15,31 @@ import { classifyData } from "./threat-engine.js";
 // ═══════════════════════════════════════════════════════════════════
 
 describe("SecurityLayer", () => {
-  const sec = new SecurityLayer("./workspace");
+  // Egress allowlist is now deny-by-default when missing, so the
+  // "public URL allowed" assertions need an isolated LAX_DATA_DIR
+  // with a populated fixture. The fixture lists exactly the hosts /
+  // literal IPs that the existing tests rely on.
+  let sec: SecurityLayer;
+  let savedLaxDir: string | undefined;
+  let suiteLaxDir: string;
+
+  beforeAll(() => {
+    savedLaxDir = process.env.LAX_DATA_DIR;
+    suiteLaxDir = mkdtempSync(join(tmpdir(), "security-test-"));
+    process.env.LAX_DATA_DIR = suiteLaxDir;
+    writeFileSync(
+      join(suiteLaxDir, "egress-allowlist.json"),
+      JSON.stringify(["api.github.com", "google.com", "172.32.0.1"]),
+      "utf-8",
+    );
+    sec = new SecurityLayer("./workspace");
+  });
+
+  afterAll(() => {
+    if (savedLaxDir === undefined) delete process.env.LAX_DATA_DIR;
+    else process.env.LAX_DATA_DIR = savedLaxDir;
+    rmSync(suiteLaxDir, { recursive: true, force: true });
+  });
 
   // ── SSRF ──
 

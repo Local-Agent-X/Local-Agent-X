@@ -26,25 +26,25 @@ import { renderToolResultForModel } from "../src/tools/result-helpers.js";
 describe("userHint on blocked-tool responses", () => {
   describe("network category (SSRF, egress, threat-restricted, data lineage)", () => {
     it("network-policy: invalid URL", () => {
-      const d = evaluateWebFetch(new Set(), "7007", "not a url");
+      const d = evaluateWebFetch(new Set(), false, "7007", "not a url");
       expect(d.allowed).toBe(false);
       expect(d.userHint).toBe(USER_HINTS.network);
     });
 
     it("network-policy: SSRF private IPv4", () => {
-      const d = evaluateWebFetch(new Set(), "7007", "http://10.0.0.1/admin");
+      const d = evaluateWebFetch(new Set(), false, "7007", "http://10.0.0.1/admin");
       expect(d.allowed).toBe(false);
       expect(d.userHint).toBe(USER_HINTS.network);
     });
 
     it("network-policy: cloud metadata endpoint", () => {
-      const d = evaluateWebFetch(new Set(), "7007", "http://169.254.169.254/");
+      const d = evaluateWebFetch(new Set(), false, "7007", "http://169.254.169.254/");
       expect(d.allowed).toBe(false);
       expect(d.userHint).toBe(USER_HINTS.network);
     });
 
     it("network-policy: egress allowlist rejection", () => {
-      const d = evaluateWebFetch(new Set(["example.com"]), "7007", "https://attacker.com/");
+      const d = evaluateWebFetch(new Set(["example.com"]), true, "7007", "https://attacker.com/");
       expect(d.allowed).toBe(false);
       expect(d.userHint).toBe(USER_HINTS.network);
     });

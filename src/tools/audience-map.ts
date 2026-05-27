@@ -119,6 +119,15 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   app_create: ["main-chat"],
   app_list:   ["main-chat"],
 
+  // Sidebar — eager main-chat visibility. The keyword router
+  // (tool-filter.ts) used to be the only path that surfaced these, but
+  // Grok refused to call sidebar_clear on a message containing the word
+  // "sidebar" because the indirect route was unreliable. Eager is the
+  // right default for user-facing app-state mutations anyway.
+  sidebar_pin:   ["main-chat"],
+  sidebar_unpin: ["main-chat"],
+  sidebar_clear: ["main-chat"],
+
   // Auto-build orchestrator
   primal_run_build_plan: ["main-chat"],
   primal_build_status:   ["main-chat"],

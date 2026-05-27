@@ -94,30 +94,19 @@ async function sendMessage() {
   const text = input.value.trim();
   if (!text && pendingUploads.length === 0) return;
 
-  // Deterministic intent intercept — fire UI-state mutations directly so they
-  // can't be sabotaged by a model picking the wrong tool (or no tool at all
-  // and hallucinating success via `bash echo`). Short-circuits the agent
-  // dispatch entirely: action runs, a confirmation bubble is appended to the
-  // chat, and we return before the spinner / network round-trip. The agent
-  // adds no value to a deterministic UI command and risks a confusing loop-
-  // abort error (Grok kept retrying bash echo) that overshadows the fact
-  // that the work was already done. If the user wants the agent involved
-  // for something else, they send a separate message.
+  // Deterministic intent intercept — fire UI-state mutations directly so
+  // they can't be sabotaged by a model picking the wrong tool or
+  // hallucinating success via `bash echo`. We still send the message to
+  // the agent (so the reply has personality, not a canned line), but we
+  // append a hidden note to finalText below telling the agent the work is
+  // already done and to NOT call any tools — just acknowledge naturally.
+  // The user's displayText stays clean; the note is invisible to them.
+  let _sidebarClearIntentFired = false;
   if (text && _isSidebarClearIntent(text)) {
-    try { if (typeof handleSidebarClearChats === 'function') handleSidebarClearChats(); } catch (e) { console.warn('[intent-intercept] sidebar_clear failed', e); }
-    if (!activeChat) newChat();
-    const msgTime = Date.now();
-    addMessageEl('user', text, null, msgTime);
-    activeChat.messages.push({ role: 'user', content: text, timestamp: msgTime });
-    const reply = "Cleared sidebar conversations (frontend-only — backend session files preserved at ~/.lax/sessions/, recoverable by clearing localStorage `sax_deleted_sessions`).";
-    addMessageEl('assistant', reply);
-    activeChat.messages.push({ role: 'assistant', content: reply, timestamp: Date.now() });
-    if (activeChat.messages.length <= 2) {
-      activeChat.title = text.slice(0, 50) + (text.length > 50 ? '...' : '');
-    }
-    input.value = ''; input.style.height = 'auto';
-    saveChats(); renderSidebar();
-    return;
+    try {
+      if (typeof handleSidebarClearChats === 'function') handleSidebarClearChats();
+      _sidebarClearIntentFired = true;
+    } catch (e) { console.warn('[intent-intercept] sidebar_clear failed', e); }
   }
   // Wait for any in-flight uploads to finish before capturing attachments —
   // images need their server URL resolved, otherwise the backend filters them out
@@ -144,7 +133,15 @@ async function sendMessage() {
   const uploadPrefix = nonImageFiles.length
     ? `Attached files:\n${nonImageFiles.map(f => `- ${f.name} (${f.size} bytes)`).join('\n')}\n\n`
     : (hasImages && !text ? '' : '');
-  const finalText = uploadPrefix + text;
+  // Hidden agent note when the intent intercept already fired the action.
+  // Goes to finalText (agent sees it) but NOT displayText (user doesn't).
+  // Tells the agent the work is done and to acknowledge briefly without
+  // calling any tools — prevents the "bash echo narration → loop abort"
+  // failure path while keeping the reply conversational instead of canned.
+  const intentNote = _sidebarClearIntentFired
+    ? "\n\n[SYSTEM NOTE — not from the user: The sidebar Conversations list has just been cleared automatically by a client-side intent intercept. Backend session files at ~/.lax/sessions/ are preserved. Do NOT call any tools — the action is already complete. Just give the user a brief, natural acknowledgment in your own voice (one sentence).]"
+    : "";
+  const finalText = uploadPrefix + text + intentNote;
   const displayText = text || '';
   input.value = ''; input.style.height = 'auto';
   pendingUploads = []; renderUploadPreviews();
@@ -157,7 +154,11 @@ async function sendMessage() {
   const empty = document.getElementById('empty'); if (empty) empty.remove();
   const msgTime = Date.now();
   const userMsgEl = addMessageEl('user', displayText, msgAttachments, msgTime);
-  activeChat.messages.push({ role: 'user', content: finalText, attachments: msgAttachments, timestamp: msgTime });
+  // Store the original user text in chat history, NOT finalText. The
+  // intent-intercept note is a one-shot signal to the current agent call;
+  // persisting it would leak the bracketed system text into the chat
+  // bubble on next render and into future agent context windows.
+  activeChat.messages.push({ role: 'user', content: uploadPrefix + text, attachments: msgAttachments, timestamp: msgTime });
   const msgEl = addMessageEl('assistant', '');
   let bodyEl = msgEl.querySelector('.msg-body');
   bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';

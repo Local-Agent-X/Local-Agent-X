@@ -185,10 +185,10 @@ export async function buildContextBlock(
       const ents = f.entities.length > 0 ? ` (@${f.entities.join(", @")})` : "";
       let prefix = "";
       let suffix = "";
-      if (f.kind === "experience" && f.lastUpdated) {
-        const d = new Date(f.lastUpdated);
+      if (f.kind === "experience" && f.timestamp) {
+        const d = new Date(f.timestamp);
         prefix = `${d.toISOString().slice(0, 10)}: `;
-        if (nowMs - f.lastUpdated < FRESH_WINDOW_MS) suffix = " — still fresh";
+        if (nowMs - f.timestamp < FRESH_WINDOW_MS) suffix = " — still fresh";
       }
       const line = `- ${prefix}${f.content}${ents}${suffix}`;
       bodyBytes += line.length + 1;

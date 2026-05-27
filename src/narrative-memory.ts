@@ -10,8 +10,8 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
+import { getLaxDir } from "./lax-data-dir.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -47,7 +47,7 @@ interface NarrativeStore {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const LAX_DIR = join(homedir(), ".lax");
+const LAX_DIR = getLaxDir();
 const STORE_FILE = join(LAX_DIR, "narratives.json");
 const MAX_NARRATIVES = 2000;
 

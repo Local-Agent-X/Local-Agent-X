@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 
 export interface AssociationContext {
   timeOfDay: number;
@@ -65,7 +65,7 @@ export interface AssociativeStore {
   associations: StoredAssociation[];
 }
 
-export const LAX_DIR = join(homedir(), ".lax");
+export const LAX_DIR = getLaxDir();
 export const STORE_FILE = join(LAX_DIR, "associative-memory.json");
 export const HALF_LIFE_MS = 60 * 24 * 60 * 60 * 1000;
 export const MAX_NODES = 5000;

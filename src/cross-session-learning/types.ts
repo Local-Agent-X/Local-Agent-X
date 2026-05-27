@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 
 export interface ActionEntry {
   sessionId: string;
@@ -36,7 +36,7 @@ export interface SessionData {
   lastPrune: number;
 }
 
-export const LAX_DIR = join(homedir(), ".lax");
+export const LAX_DIR = getLaxDir();
 export const DATA_FILE = join(LAX_DIR, "cross-session-data.json");
 export const MAX_ACTIONS = 5000;
 export const DEFAULT_MIN_OCCURRENCES = 3;

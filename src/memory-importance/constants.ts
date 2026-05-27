@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 
-export const LAX_DIR = join(homedir(), ".lax");
+export const LAX_DIR = getLaxDir();
 export const MEMORY_DIR = join(LAX_DIR, "memory");
 export const ARCHIVE_DIR = join(LAX_DIR, "memory-archive");
 export const SCORES_FILE = join(LAX_DIR, "memory-scores.json");

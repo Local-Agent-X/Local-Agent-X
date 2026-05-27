@@ -19,13 +19,13 @@
 
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { extractSessionPairs, type ConversationMessage } from "./memory-chunking.js";
+import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("memory-dream");
 
-const LAX_DIR = process.env.LAX_DATA_DIR || join(homedir(), ".lax");
+const LAX_DIR = getLaxDir();
 const MEMORY_DIR = join(LAX_DIR, "memory");
 const SESSIONS_DIR = join(LAX_DIR, "sessions");
 const DREAM_STATE_PATH = join(LAX_DIR, "dream-state.json");

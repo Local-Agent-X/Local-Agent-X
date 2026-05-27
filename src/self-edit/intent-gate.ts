@@ -16,13 +16,13 @@ export async function checkSelfEditIntent(
 ): Promise<{ verdict: "match" | "mismatch" | "unsure"; reason: string } | null> {
   try {
     const { getRuntimeConfig } = await import("../config.js");
-    const { SecretsStore } = await import("../secrets.js");
+    const { getOrInitSecretsStore } = await import("../secrets.js");
     const { resolveProvider } = await import("../agent-request.js");
     const { getLaxDir } = await import("../lax-data-dir.js");
 
     const runtime = getRuntimeConfig();
     const dataDir = getLaxDir();
-    const secretsStore = new SecretsStore(dataDir);
+    const secretsStore = getOrInitSecretsStore(dataDir);
     const resolved = await resolveProvider(runtime, secretsStore, dataDir);
     if (!resolved.apiKey) return null;
 

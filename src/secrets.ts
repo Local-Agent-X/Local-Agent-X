@@ -413,3 +413,18 @@ export function setSecretsStoreSingleton(store: SecretsStore): void {
 export function getSecretsStoreSingleton(): SecretsStore | null {
   return _secretsStoreSingleton;
 }
+
+// Returns the process-wide SecretsStore, constructing it (and registering it
+// as the singleton) on first call. Use this instead of `new SecretsStore(dir)`
+// in code paths that may run before the server has booted the singleton —
+// self-edit, primal-auto-build judges, and any other subprocess entrypoint.
+// Constructing a fresh SecretsStore each time hits the OS keychain on every
+// call, which is what surfaced the "Keychain Not Found" GUI dialog cascade.
+export function getOrInitSecretsStore(dataDir: string): SecretsStore {
+  let store = _secretsStoreSingleton;
+  if (!store) {
+    store = new SecretsStore(dataDir);
+    _secretsStoreSingleton = store;
+  }
+  return store;
+}

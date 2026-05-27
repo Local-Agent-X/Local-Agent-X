@@ -8,7 +8,7 @@ import { getRetryContext } from "../retry-context.js";
 import { recordCircuitFailure, recordCircuitSuccess } from "../circuit-breaker.js";
 import { recordToolCall as recordToolStat } from "../tool-tracker.js";
 import { recordToolCall as recordRateLimit } from "../tool-rate-limiter.js";
-import { recordSensitiveRead, isSensitivePath, extractSensitivePathsFromCommand } from "../data-lineage.js";
+import { recordSensitiveRead, isSensitivePath, extractSensitivePathsFromCommand, detectSecretsInOutput } from "../data-lineage.js";
 import { createLogger } from "../logger.js";
 import type { Phase } from "./context.js";
 import { isTransientError } from "./errors.js";
@@ -65,6 +65,28 @@ export const runSandboxedPhase: Phase = async (ctx) => {
           `bash command referenced sensitive paths; session ${sessionId || "default"} now tainted for egress`,
           { paths: matches },
         );
+      }
+      const stdout = typeof ctx.result?.content === "string" ? ctx.result.content : "";
+      if (stdout.length > 0) {
+        const det = detectSecretsInOutput(stdout);
+        if (det.matched) {
+          recordSensitiveRead(sessionId || "default", "secret", `bash:${det.kinds.join(",")}`);
+          logger.warn(
+            `bash output contained secret-shaped content (kinds: ${det.kinds.join(", ")}) — session tainted`,
+          );
+        }
+      }
+    }
+    if (tc.name === "http_request" || tc.name === "web_fetch") {
+      const body = typeof ctx.result?.content === "string" ? ctx.result.content : "";
+      if (body.length > 0) {
+        const det = detectSecretsInOutput(body);
+        if (det.matched) {
+          recordSensitiveRead(sessionId || "default", "secret", `${tc.name}:${det.kinds.join(",")}`);
+          logger.warn(
+            `${tc.name} response contained secret-shaped content (kinds: ${det.kinds.join(", ")}) — session tainted`,
+          );
+        }
       }
     }
   } catch (e) {

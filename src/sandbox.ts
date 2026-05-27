@@ -2,7 +2,12 @@ import { execSync, execFileSync } from "node:child_process";
 
 import { createLogger } from "./logger.js";
 import { getRuntimeConfig, saveConfig } from "./config.js";
+import type { SandboxConfig, SandboxMode } from "./sandbox-types.js";
+import { validateSandboxConfig } from "./sandbox-validate.js";
 const logger = createLogger("sandbox");
+
+export type { SandboxMode } from "./sandbox-types.js";
+export { validateSandboxConfig } from "./sandbox-validate.js";
 
 /**
  * Container Sandbox for Shell Execution
@@ -23,17 +28,6 @@ const logger = createLogger("sandbox");
  * - Has a 2-minute timeout
  * - Uses a lightweight Alpine image
  */
-
-export type SandboxMode = "host" | "docker";
-
-interface SandboxConfig {
-  mode: SandboxMode;
-  image: string;                    // Docker image to use
-  workspacePath: string;            // Host path to mount as /workspace
-  networkEnabled: boolean;          // Allow network in container (default: false)
-  extraMounts: string[];            // Additional read-only mounts
-  memoryLimit: string;              // Container memory limit (e.g., "512m")
-}
 
 const DEFAULT_CONFIG: SandboxConfig = {
   mode: "host",
@@ -64,7 +58,19 @@ export function execInSandbox(
 ): { stdout: string; stderr: string; exitCode: number } {
   const cfg = { ...DEFAULT_CONFIG, ...config };
 
-  // Build docker run command
+  const validation = validateSandboxConfig(cfg);
+  if (!validation.ok) {
+    logger.warn(`[sandbox] Config rejected: ${validation.reason}`);
+    return { stdout: "", stderr: `Sandbox config rejected: ${validation.reason}`, exitCode: 1 };
+  }
+
+  // ─── Non-negotiable security defaults ─────────────────────────────────────
+  // The following docker flags are NOT user-configurable and must not be
+  // exposed via SandboxConfig. Adding a knob here (e.g., "allowCapabilities",
+  // "writableRoot", "privileged") is what gets sandboxes broken in production.
+  // If you think you need to weaken one of these, the answer is almost always
+  // "use a different image" or "run on the host" — not "loosen the cage".
+  // ──────────────────────────────────────────────────────────────────────────
   const args: string[] = [
     "docker", "run",
     "--rm",                              // Remove container after execution

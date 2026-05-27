@@ -46,8 +46,11 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     NO_SPAWN_OVERRIDE_RE.test(input.message) ||
     hasLiteralToolCall(input.message);
   if (!skipClassifier) {
+    const t0 = Date.now();
+    logger.info(`[step] classifyIntent START`);
     try { intentVerdict = await classifyIntent(input.message); }
     catch (e) { logger.info(`[intent] classifier threw — skipping: ${(e as Error).message}`); }
+    logger.info(`[step] classifyIntent ${Date.now() - t0}ms verdict=${intentVerdict?.kind || "null"}`);
   }
   const forceBuildIntent = intentVerdict?.kind === "build_app";
 
@@ -94,6 +97,8 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
       // (src/server/index.ts) is the only builder. If a chat beats the
       // pre-warm we just ship without RAG re-rank this turn.
       if (rag.isReady) {
+        const ragT0 = Date.now();
+        logger.info(`[step] tool-rag.select START`);
         const semantic = await rag.select(input.message, input.allAgentTools, {
           topK: 22,
           minScore: 0.25,
@@ -105,6 +110,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
           if (!SUPERVISOR_EXCLUDED.has(t.name)) union.add(t.name);
         }
         tools = input.allAgentTools.filter(t => union.has(t.name));
+        logger.info(`[step] tool-rag.select ${Date.now() - ragT0}ms picked=${semantic.length}`);
       } else {
         logger.info(`[tool-rag] not ready yet — shipping filtered set without RAG re-rank`);
       }

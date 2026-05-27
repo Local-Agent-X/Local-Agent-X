@@ -52,6 +52,8 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
     recallScanText = `${input.message}\n[user attached an image — reflex: identify any brand/project/domain you can read from it, then call search_past_sessions on that name before answering]`;
   }
 
+  const bcT0 = Date.now();
+  logger.info(`[step] buildTurnContextCached START sess=${input.sessionId.slice(0, 16)}`);
   const turnCtx = await buildTurnContextCached(input.memoryManager, {
     userMessage: recallScanText,
     sessionId: input.sessionId,
@@ -63,6 +65,7 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
     liteMode: !input.skipMemory && input.isTrivialToolRequest,
     minimalMode: input.skipMemory,
   });
+  logger.info(`[step] buildTurnContextCached ${Date.now() - bcT0}ms sess=${input.sessionId.slice(0, 16)}`);
   let contextBlock = turnCtx.contextBlock;
   let relevantMemories = turnCtx.relevantMemories;
   let smartContext = turnCtx.smartContext;

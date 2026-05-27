@@ -7,6 +7,126 @@ import { type MCPServerConfig, type MCPTool, type PendingRequest, PROTOCOL_VERSI
 
 const logger = createLogger("mcp-client");
 
+// ─────────────────────────────────────────────────────────────────────
+// MCP child env construction
+//
+// Default-deny. The previous spawn-env merge handed every host env var
+// (ANTHROPIC_API_KEY, AWS creds, GitHub tokens, …) to every MCP
+// subprocess. Replaced with a curated allowlist of vars MCP
+// children legitimately need for binary resolution / locale / temp dirs,
+// plus explicit per-server grants. A deny-pattern filter runs AFTER the
+// merge so a caller cannot grant a credential via configEnv either —
+// credentials must flow through the secret vault, never env injection.
+// ─────────────────────────────────────────────────────────────────────
+
+const ENV_ALLOWLIST: readonly string[] = [
+  // Binary resolution
+  "PATH", "PATHEXT",
+  // Home dir
+  "HOME", "USERPROFILE",
+  // Windows shell + system paths
+  "SYSTEMROOT", "WINDIR", "COMSPEC",
+  // Windows user dirs
+  "APPDATA", "LOCALAPPDATA",
+  // Temp dirs
+  "TMPDIR", "TEMP", "TMP",
+  // Locale
+  "LANG", "LC_ALL", "LC_CTYPE",
+  // POSIX shell discovery
+  "SHELL",
+  // Unix identity
+  "USER", "LOGNAME",
+  // Linux XDG dirs
+  "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+  // Node module resolution
+  "NODE_PATH",
+];
+
+const DENY_PREFIXES: readonly string[] = [
+  "ANTHROPIC_", "OPENAI_", "AWS_", "GOOGLE_", "AZURE_", "GCP_",
+  "STRIPE_", "TWILIO_", "SENDGRID_", "MAILGUN_",
+  "LAX_AUTH_", "SAX_AUTH_", "LAX_MCP_TOKEN",
+];
+
+const DENY_SUBSTRINGS: readonly string[] = [
+  "_KEY", "_SECRET", "_TOKEN", "_PASSWORD", "_PASSWD",
+  "_CREDENTIAL", "_PRIVATE", "_API_KEY",
+];
+
+const DENY_EXACT: readonly string[] = [
+  "GITHUB_TOKEN", "GH_TOKEN", "NPM_TOKEN", "HF_TOKEN",
+  "DATABASE_URL", "DB_PASSWORD",
+];
+
+function isCredentialKey(key: string): boolean {
+  const upper = key.toUpperCase();
+  if (DENY_EXACT.includes(upper)) return true;
+  for (const prefix of DENY_PREFIXES) {
+    if (upper.startsWith(prefix)) return true;
+  }
+  for (const sub of DENY_SUBSTRINGS) {
+    if (upper.includes(sub)) return true;
+  }
+  return false;
+}
+
+let allowlistLogged = false;
+
+/**
+ * Build the env for an MCP child subprocess. Default-deny: only the
+ * curated allowlist passes through from process.env, then per-server
+ * grants from `configEnv`, then a final credential-pattern strip that
+ * even overrides caller grants (credentials belong in the secret vault,
+ * not env injection).
+ */
+export function buildMcpChildEnv(configEnv?: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+
+  // Allowlist passthrough
+  const granted: string[] = [];
+  for (const key of ENV_ALLOWLIST) {
+    const val = process.env[key];
+    if (typeof val === "string" && val.length > 0) {
+      out[key] = val;
+      granted.push(key);
+    }
+  }
+
+  if (!allowlistLogged) {
+    logger.info(`mcp-env: allowlist active (${granted.length} vars passed: ${granted.join(", ") || "<none>"})`);
+    allowlistLogged = true;
+  }
+
+  // Per-server grants (caller-controlled, overrides allowlist values)
+  if (configEnv) {
+    for (const [k, v] of Object.entries(configEnv)) {
+      if (typeof v === "string") out[k] = v;
+    }
+  }
+
+  // Final credential strip — runs after merge so caller grants can't
+  // smuggle a credential through either.
+  const stripped: string[] = [];
+  for (const key of Object.keys(out)) {
+    if (isCredentialKey(key)) {
+      delete out[key];
+      stripped.push(key);
+    }
+  }
+  if (stripped.length > 0) {
+    logger.warn(`mcp-env: stripped credential-pattern keys (use secret vault instead): ${stripped.join(", ")}`);
+  }
+
+  return out;
+}
+
+// Test-only reset for the once-per-process info log. Not exported via
+// the public API; consumed by env-builder tests to assert clean state
+// across test cases.
+export function __resetMcpEnvLogState(): void {
+  allowlistLogged = false;
+}
+
 export class MCPConnection {
   private proc: ChildProcess | null = null;
   private messageId = 0;
@@ -20,7 +140,7 @@ export class MCPConnection {
   }
 
   async connect(): Promise<void> {
-    const env = { ...process.env, ...(this.config.env || {}) };
+    const env = buildMcpChildEnv(this.config.env);
 
     this.proc = spawn(this.config.command, this.config.args || [], {
       stdio: ["pipe", "pipe", "pipe"],

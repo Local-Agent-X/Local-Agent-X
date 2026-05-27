@@ -96,13 +96,28 @@ async function sendMessage() {
 
   // Deterministic intent intercept — fire UI-state mutations directly so they
   // can't be sabotaged by a model picking the wrong tool (or no tool at all
-  // and hallucinating success via `bash echo`). The agent still receives the
-  // message and confirms verbally, but the action no longer depends on tool
-  // selection. Tight regex: requires an action verb adjacent to both the
-  // sidebar word and a conversation/chat keyword, in either order. Questions
-  // like "how do I clear the sidebar?" don't match (no conversation noun).
+  // and hallucinating success via `bash echo`). Short-circuits the agent
+  // dispatch entirely: action runs, a confirmation bubble is appended to the
+  // chat, and we return before the spinner / network round-trip. The agent
+  // adds no value to a deterministic UI command and risks a confusing loop-
+  // abort error (Grok kept retrying bash echo) that overshadows the fact
+  // that the work was already done. If the user wants the agent involved
+  // for something else, they send a separate message.
   if (text && _isSidebarClearIntent(text)) {
     try { if (typeof handleSidebarClearChats === 'function') handleSidebarClearChats(); } catch (e) { console.warn('[intent-intercept] sidebar_clear failed', e); }
+    if (!activeChat) newChat();
+    const msgTime = Date.now();
+    addMessageEl('user', text, null, msgTime);
+    activeChat.messages.push({ role: 'user', content: text, timestamp: msgTime });
+    const reply = "Cleared sidebar conversations (frontend-only — backend session files preserved at ~/.lax/sessions/, recoverable by clearing localStorage `sax_deleted_sessions`).";
+    addMessageEl('assistant', reply);
+    activeChat.messages.push({ role: 'assistant', content: reply, timestamp: Date.now() });
+    if (activeChat.messages.length <= 2) {
+      activeChat.title = text.slice(0, 50) + (text.length > 50 ? '...' : '');
+    }
+    input.value = ''; input.style.height = 'auto';
+    saveChats(); renderSidebar();
+    return;
   }
   // Wait for any in-flight uploads to finish before capturing attachments —
   // images need their server URL resolved, otherwise the backend filters them out

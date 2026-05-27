@@ -230,11 +230,14 @@ export function recallRecentFacts(
     sinceClause = "AND last_updated >= ?";
     params.push(opts.sinceMs);
   }
-  // Candidate window: 3× the requested limit, ordered by recency. Bigger
-  // window catches high-confidence older facts that pure-recency ordering
-  // would otherwise miss; 3× is enough for the rerank to find them without
-  // pulling the whole table.
-  params.push(limit * 3);
+  // Candidate window for the hot-score rerank. Sized large enough that a
+  // high-confidence older fact still enters the pool when hundreds of
+  // recent low-confidence facts sit above it in last_updated DESC order —
+  // a 3× window was too tight for real DBs (the rerank ran over a slice
+  // that had already excluded the items it was designed to find). 10× the
+  // limit with a 500-row floor keeps the JS sort trivial while giving the
+  // rerank meaningful selection across the realistic working set.
+  params.push(Math.max(limit * 10, 500));
   const rows = db
     .prepare(
       `SELECT * FROM facts

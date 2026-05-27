@@ -6,8 +6,8 @@
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import type { ThreatLevel, DataLabel } from "./threat-engine.js";
+import { getLaxDir } from "./lax-data-dir.js";
 
 interface AuditEntry {
   seq: number;
@@ -58,7 +58,7 @@ export interface AuditPage {
 }
 
 function getAuditDir(): string {
-  return join(homedir(), ".lax", "audit");
+  return join(getLaxDir(), "audit");
 }
 
 /** List available audit log dates */

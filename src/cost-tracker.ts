@@ -6,7 +6,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 // ── Pricing per 1M tokens (USD) ──
 
@@ -95,7 +95,7 @@ export interface UsageSummary {
 
 // ── File-based storage (lightweight, no extra deps) ──
 
-const USAGE_FILE = join(homedir(), ".lax", "usage-log.json");
+const USAGE_FILE = join(getLaxDir(), "usage-log.json");
 const MAX_RECORDS = 10000;
 
 function loadRecords(): UsageRecord[] {

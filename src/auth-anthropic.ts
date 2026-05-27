@@ -2,7 +2,7 @@ import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, unlinkSync, renameSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("auth-anthropic");
@@ -40,7 +40,7 @@ export interface AnthropicTokens {
 }
 
 function getAuthPath(): string {
-  return join(homedir(), ".lax", "anthropic-auth.json");
+  return join(getLaxDir(), "anthropic-auth.json");
 }
 
 // ── PKCE ──

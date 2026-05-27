@@ -17,7 +17,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, watch as fsWatch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 import { createLogger } from "./logger.js";
 import { MCPConnection } from "./mcp-client/connection.js";
@@ -47,7 +47,7 @@ export class MCPManager {
 
   static getInstance(dataDir?: string): MCPManager {
     if (!MCPManager.instance) {
-      MCPManager.instance = new MCPManager(dataDir || join(homedir(), ".lax"));
+      MCPManager.instance = new MCPManager(dataDir || getLaxDir());
     }
     return MCPManager.instance;
   }
@@ -220,7 +220,7 @@ export class MCPManager {
       },
     };
     try {
-      mkdirSync(join(homedir(), ".lax"), { recursive: true });
+      mkdirSync(getLaxDir(), { recursive: true });
       writeFileSync(this.configPath, JSON.stringify(defaultConfig, null, 2), "utf-8");
     } catch {}
     return defaultConfig;

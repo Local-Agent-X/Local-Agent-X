@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getLaxDir } from "../../../lax-data-dir.js";
 
 export async function handleTrainingLog(
   url: URL,
@@ -11,7 +11,7 @@ export async function handleTrainingLog(
     json(400, { error: "invalid exp_name" });
     return;
   }
-  const logPath = join(homedir(), ".lax", "sovits-training", "datasets", expName, "_pipeline.log");
+  const logPath = join(getLaxDir(), "sovits-training", "datasets", expName, "_pipeline.log");
   if (!existsSync(logPath)) {
     json(200, { content: "", size: 0, missing: true });
     return;

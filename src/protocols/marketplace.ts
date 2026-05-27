@@ -5,13 +5,13 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import type { Protocol } from "../protocols.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import type { ToolDefinition } from "../types.js";
 import { loadCustomProtocols, saveCustomProtocols } from "./builder.js";
 
 const MARKETPLACE_REGISTRY_URL = "https://raw.githubusercontent.com/local-agent-x/protocol-marketplace/main/registry.json";
-const CACHE_PATH = join(homedir(), ".lax", "marketplace-cache.json");
+const CACHE_PATH = join(getLaxDir(), "marketplace-cache.json");
 
 interface MarketplaceEntry {
   name: string;
@@ -40,7 +40,7 @@ function loadCache(): MarketplaceCache | null {
 }
 
 function saveCache(cache: MarketplaceCache): void {
-  const dir = join(homedir(), ".lax");
+  const dir = getLaxDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2), "utf-8");
 }

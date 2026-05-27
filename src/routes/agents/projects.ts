@@ -73,10 +73,10 @@ export const handleProjectRoutes: RouteHandler = async (method, url, req, res, c
     // and the project comes back on next pull.
     try {
       const proj = ctx.projectStore.get(id);
-      const { homedir } = await import("node:os");
       const { join } = await import("node:path");
+      const { getLaxDir } = await import("../../lax-data-dir.js");
       const { projectTombstonePaths, tombstoneProject } = await import("../../sync/project-tombstones.js");
-      const dataDir = join(homedir(), ".lax");
+      const dataDir = getLaxDir();
       const syncDir = join(dataDir, "sync-repo");
       tombstoneProject(projectTombstonePaths(dataDir, syncDir), id, proj?.name);
     } catch (e) {

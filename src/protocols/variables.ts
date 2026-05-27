@@ -5,10 +5,10 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import type { ToolDefinition } from "../types.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
-const VARIABLES_PATH = join(homedir(), ".lax", "protocol-variables.json");
+const VARIABLES_PATH = join(getLaxDir(), "protocol-variables.json");
 
 export interface VariableScope {
   global: Record<string, unknown>;
@@ -16,7 +16,7 @@ export interface VariableScope {
 }
 
 function ensureDir(): void {
-  const dir = join(homedir(), ".lax");
+  const dir = getLaxDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 

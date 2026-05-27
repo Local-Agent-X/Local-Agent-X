@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getLaxDir } from "../../../lax-data-dir.js";
 
 // Walks ~/.lax/sovits-training/datasets/ and returns runs that have a
 // workdir but no corresponding registered clone. Each entry includes the
@@ -9,8 +9,8 @@ import { join } from "node:path";
 export async function handleTrainingList(
   json: (status: number, data: unknown) => void,
 ): Promise<void> {
-  const trainingRoot = join(homedir(), ".lax", "sovits-training", "datasets");
-  const sovitsRepo = join(homedir(), ".lax", "sovits", "repo");
+  const trainingRoot = join(getLaxDir(), "sovits-training", "datasets");
+  const sovitsRepo = join(getLaxDir(), "sovits", "repo");
   if (!existsSync(trainingRoot)) { json(200, { runs: [] }); return; }
   try {
     const { readdirSync, statSync, readFileSync } = await import("node:fs");

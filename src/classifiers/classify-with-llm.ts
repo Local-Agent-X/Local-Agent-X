@@ -27,7 +27,7 @@
 import { createLogger } from "../logger.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 
 // Aggressive default timeout. These classifiers shape signal quality but
 // aren't load-bearing — every call site already has a regex/heuristic
@@ -79,7 +79,7 @@ async function resolveActiveProvider(): Promise<{
   let provider = "anthropic";
   let model = "";
   try {
-    const settingsPath = join(homedir(), ".lax", "settings.json");
+    const settingsPath = join(getLaxDir(), "settings.json");
     if (existsSync(settingsPath)) {
       const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as {
         provider?: string; model?: string;

@@ -23,7 +23,7 @@ import {
   statSync,
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("app-tools.snapshots");
@@ -46,7 +46,7 @@ export interface RevertResult {
 }
 
 function snapshotsRoot(): string {
-  return join(homedir(), ".lax", "app-snapshots");
+  return join(getLaxDir(), "app-snapshots");
 }
 
 function appSnapshotDir(appId: string): string {

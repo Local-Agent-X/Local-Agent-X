@@ -1,7 +1,7 @@
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { getLaxDir } from "../lax-data-dir.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { createLogger } from "../logger.js";
 import { getRuntimeConfig } from "../config.js";
@@ -41,7 +41,7 @@ async function generateViaXaiVideo(
       const fname = m[1];
       const fromImages = join("workspace", "images", fname);
       if (existsSync(fromImages)) return fromImages;
-      const fromUploads = join(homedir(), ".lax", "uploads", fname);
+      const fromUploads = join(getLaxDir(), "uploads", fname);
       if (existsSync(fromUploads)) return fromUploads;
     }
     return null;

@@ -47,11 +47,12 @@ export function classifyModel(model: string): ModelTier {
   if (/claude-opus-4|claude-sonnet-4-[6-9]|claude-sonnet-4-1[0-9]|claude-haiku-4-5/.test(m)) return "strong";
   if (/^o[34]($|-|\.)/.test(m)) return "strong";                 // o3/o4 family
   if (/gemini-(2\.5|3)/.test(m)) return "strong";
-
-  // grok-4 is smart but xAI's tool-use RLHF is thinner than OpenAI/Anthropic —
-  // it paralyzes on full 100+ tool catalogs. Keeping as "medium" (cap 15)
-  // gives it a focused set it can actually reason over quickly.
-  // Falls through to medium default.
+  // grok-4 / grok-4-fast — xAI's frontier tier. Earlier comment downgraded
+  // it to medium on the theory that tool-use RLHF was thin; in practice the
+  // tighter cap was making things worse (silently cut sidebar_clear,
+  // model fell back to bash-echo narration). Give it the full catalog;
+  // tool_search is in the schema either way for genuine over-50-tool cases.
+  if (/^grok-4(\b|-|$)/.test(m)) return "strong";
 
   return "medium";
 }

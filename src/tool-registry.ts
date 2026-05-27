@@ -140,6 +140,11 @@ export const TOOLS: Record<string, ToolEntry> = {
   // ── Self-edit — sandboxed, but the merge mutates running source ──
   self_edit: { kernel: "internal", risk: "destructive" },
 
+  // ── Project containers (roster + scope for delegation) ──
+  project_create:    { kernel: "internal", risk: "workspace-write" },
+  project_list:      { kernel: "internal", risk: "safe" },
+  project_add_agent: { kernel: "internal", risk: "workspace-write" },
+
   // ── Agent / swarm / delegation orchestration ──
   agent_spawn:     { kernel: "internal", risk: "workspace-write" },
   agent_create:    { kernel: "internal", risk: "workspace-write" },

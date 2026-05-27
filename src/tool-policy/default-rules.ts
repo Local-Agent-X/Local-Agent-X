@@ -166,6 +166,7 @@ export const DEFAULT_POLICY: ToolPolicyConfig = {
     { id: "allow-agent-spawn", tool: "agent_spawn", decision: "allow", reason: "Agent delegation", priority: 50 },
     { id: "allow-delegate", tool: "delegate", decision: "allow", reason: "Task delegation", priority: 50 },
     { id: "allow-agent-ops", tool: "agent_*", decision: "allow", reason: "Agent management", priority: 50 },
+    { id: "allow-project-ops", tool: "project_*", decision: "allow", reason: "Project container management", priority: 50 },
 
     // Agency — multi-agent orchestration
     { id: "allow-agency", tool: "agency_*", decision: "allow", reason: "Agency orchestration", priority: 50 },

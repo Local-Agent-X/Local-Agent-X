@@ -4,7 +4,7 @@
 // the verdict and exposes it alongside the final tool list.
 
 import type { ToolDefinition } from "../../types.js";
-import { SUPERVISOR_EXCLUDED, filterToolsForMessage } from "../tool-filter.js";
+import { filterToolsForMessage } from "../tool-filter.js";
 import { classifyIntent, hasLiteralToolCall, NO_SPAWN_OVERRIDE_RE } from "../../classifiers/intent-classifier.js";
 import { createLogger } from "../../logger.js";
 
@@ -107,7 +107,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
         });
         const union = new Set(tools.map(t => t.name));
         for (const t of semantic) {
-          if (!SUPERVISOR_EXCLUDED.has(t.name)) union.add(t.name);
+          union.add(t.name);
         }
         tools = input.allAgentTools.filter(t => union.has(t.name));
         logger.info(`[step] tool-rag.select ${Date.now() - ragT0}ms picked=${semantic.length}`);

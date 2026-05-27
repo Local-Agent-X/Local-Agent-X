@@ -130,7 +130,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     const session = getOrCreateSession(sessionId);
     session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system"); session.updatedAt = Date.now(); saveSession(session);
     let output = extractAgentOutput(result.messages);
-    const spawnNameRe = /^(agent_spawn|agency_create|delegate)$/;
+    const spawnNameRe = /^(agent_spawn|delegate)$/;
     const hasSpawn = result.messages.some(m => {
       if (m.role !== "assistant" || !Array.isArray(m.content)) return false;
       return (m.content as Array<{ type?: string; name?: string }>).some(b => b?.type === "tool_use" && typeof b.name === "string" && spawnNameRe.test(b.name));

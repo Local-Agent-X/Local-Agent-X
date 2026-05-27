@@ -10,18 +10,12 @@ import { jsonResponse, readBody, safeErrorMessage } from "../server-utils.js";
 // As of the canonical agent design (docs/canonical-agent-design.md) and
 // the Reverse Uno fix (2026-05-11), `agent_spawn` IS the canonical
 // delegation primitive — it must be exposed via MCP so Claude picks it
-// naturally. `agency_*` (the legacy heavyweight CEO-bootstrap path)
-// overlaps with agent_spawn and confuses Claude into hanging on
-// agency_create for one-off tasks. Hide all of agency from MCP; the
-// agency layer stays programmatically callable for non-chat consumers.
+// naturally.
 const MCP_HIDDEN_TOOLS = new Set<string>([
   "op_wait",      // blocks the chat turn — supervisor should let auto-notify surface results
   "op_submit",    // sugar = op_submit_async + op_wait, same blocking problem
   "delegate",     // generic delegate primitive — superseded by agent_spawn
   "agent_message",// reply-to-agent primitive used inside agency, not by user-facing supervisor
-  // Legacy agency layer — overlaps with agent_spawn, off the canonical surface.
-  "agency_create", "agency_status", "agency_cancel",
-  "agency_list_roles", "agency_result",
 ]);
 
 function serializeMcpContent(results: Array<{ role: string; content: unknown }>): Array<Record<string, unknown>> {

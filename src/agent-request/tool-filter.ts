@@ -5,31 +5,10 @@ import { resolveToolsForRequest } from "../tool-search.js";
 // Always include core tools. Add extras if the user's message hints at them.
 // tool_search is always included so the agent can discover anything else.
 
-/**
- * Tools that must NEVER be surfaced to the main-chat supervisor (Primal),
- * regardless of keyword match, literal call detection, or tool-RAG
- * semantic retrieval. Enforced at the END of filterToolsForMessage and
- * mirrored in prepare-request.ts where the tool-RAG union is computed.
- *
- * `agency_*` predates the canonical agent design (docs/canonical-agent-design.md)
- * which locked in agent_list / agent_spawn / agent_create as the THREE
- * delegation primitives. `agency_create` overlaps with `agent_spawn` —
- * description-similarity high enough that Claude (more than Codex) often
- * picks the heavier agency path for one-off tasks. The agency layer is
- * still programmatically callable; it just doesn't appear in Primal's
- * tool schema. (Live failure: 2026-05-12 — "spawn a researcher to find
- * the capital of France" routed via Anthropic CLI hung 135s on
- * agency_create when agent_spawn would have answered in seconds.)
- */
-export const SUPERVISOR_EXCLUDED: ReadonlySet<string> = new Set([
-  "agency_create", "agency_status", "agency_cancel",
-  "agency_list_roles", "agency_result",
-]);
-
 // Audience mapping (which tools are eager for which audience) is owned by
 // src/tools/audience-map.ts. This file owns the keyword router, build-intent
-// regex, supervisor-excluded list, and literal-tool-call detector — all of
-// which the main-chat resolver injects into resolveToolsForRequest.
+// regex, and literal-tool-call detector — all of which the main-chat resolver
+// injects into resolveToolsForRequest.
 
 // Keywords that trigger including specific tool groups
 const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
@@ -60,7 +39,6 @@ const TOOL_KEYWORD_MAP: Array<{ keywords: RegExp; toolPrefixes: string[] }> = [
   { keywords: /chain|pipeline/i, toolPrefixes: ["mission_chain_"] },
   { keywords: /template/i, toolPrefixes: ["mission_template"] },
   { keywords: /marketplace/i, toolPrefixes: ["marketplace_"] },
-  { keywords: /agency|team|hire/i, toolPrefixes: ["agency_"] },
 ];
 
 // Build-intent narrowing fires when the user asks to build/create an app —
@@ -122,7 +100,7 @@ export function filterToolsForMessage(
   message: string,
   opts?: { forceBuildIntent?: boolean },
 ): ToolDefinition[] {
-  const resolved = resolveToolsForRequest(
+  return resolveToolsForRequest(
     {
       audience: "main-chat",
       message,
@@ -136,5 +114,4 @@ export function filterToolsForMessage(
     },
     allTools,
   );
-  return resolved.filter(t => !SUPERVISOR_EXCLUDED.has(t.name));
 }

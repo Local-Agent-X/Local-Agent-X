@@ -49,8 +49,8 @@ export function getManifestSummary(): string {
     `### Tools: ${manifest.tools.length} total`,
     `Available tools include: ${manifest.tools.slice(0, 30).map(t => t.name).join(", ")}${manifest.tools.length > 30 ? `, and ${manifest.tools.length - 30} more (use tool_search)` : ""}`,
     "",
-    `### API Routes: ${manifest.apiRoutes.length} endpoints`,
-    "Use these to interact with the app programmatically via http_request.",
+    `### API Routes: ${manifest.apiRoutes.length} endpoints — call via http_request when no dedicated tool fits`,
+    ...summarizeRoutesByResource(manifest.apiRoutes),
     "",
     "### Config Files (your safe zone — edit freely)",
     ...manifest.configFiles.filter(c => c.agentEditable).map(c => `- \`${c.path}\` — ${c.description}`),
@@ -75,6 +75,7 @@ export function getManifestSummary(): string {
     "- **Change any setting**: `http_request` → `POST {{APP_URL}}/api/settings` with the setting JSON",
     "- **Change AI provider/model**: `http_request` → `POST {{APP_URL}}/api/providers/switch` with `{\"provider\": \"...\", \"model\": \"...\"}`",
     "- **Create an organization**: `http_request` → `POST {{APP_URL}}/api/agents/organizations` — uses existing Agents page Org Chart tab",
+    "- **Create a project**: use `project_create` tool (name + optional agent_ids); list with `project_list`; add members with `project_add_agent`",
     "- **Spawn agents**: use `agent_spawn` tool (calls API internally)",
     "- **Connect WhatsApp**: `http_request` → `POST {{APP_URL}}/api/whatsapp/connect`",
     "- **Connect Telegram**: `http_request` → `POST {{APP_URL}}/api/telegram/connect`",
@@ -89,4 +90,36 @@ export function getManifestSummary(): string {
   ];
 
   return lines.join("\n").replace(/\{\{APP_URL\}\}/g, appUrl);
+}
+
+/** Group API routes by their first /api/<resource> segment and emit one
+ *  line per resource so the agent can discover endpoints without dumping
+ *  all 200+ rows. Each line lists distinct methods + path tails; long
+ *  tails are truncated so a chatty resource doesn't blow the budget. */
+function summarizeRoutesByResource(routes: AppManifest["apiRoutes"]): string[] {
+  const byResource = new Map<string, { method: string; tail: string }[]>();
+  for (const r of routes) {
+    const match = r.path.match(/^\/api\/([^/]+)(\/.*)?$/);
+    if (!match) continue;
+    const resource = match[1];
+    const tail = match[2] || "";
+    const list = byResource.get(resource) || [];
+    list.push({ method: r.method, tail });
+    byResource.set(resource, list);
+  }
+  const resources = Array.from(byResource.keys()).sort();
+  const lines = resources.map((resource) => {
+    const entries = byResource.get(resource)!;
+    const seen = new Set<string>();
+    const compact: string[] = [];
+    for (const e of entries) {
+      const key = `${e.method} ${e.tail}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      compact.push(e.tail ? `${e.method}${e.tail}` : e.method);
+      if (compact.length >= 6) { compact.push("…"); break; }
+    }
+    return `- \`/api/${resource}\` — ${compact.join(", ")}`;
+  });
+  return lines;
 }

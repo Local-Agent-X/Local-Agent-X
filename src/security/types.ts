@@ -9,6 +9,11 @@ export interface ToolCallContext {
   args: Record<string, unknown>;
   sessionId: string;
   callContext?: CallContext; // Where the call originates from
+  // Server name when this tool came from an MCP server. Plumbing for
+  // future policy work that may want to distinguish MCP-sourced calls
+  // from native ones (e.g. tighter risk ceilings on third-party MCP
+  // tools). No call site sets this yet — leave undefined for native.
+  mcpServer?: string;
 }
 
 // Tools blocked in non-local contexts (API calls, delegated agents, cron jobs)

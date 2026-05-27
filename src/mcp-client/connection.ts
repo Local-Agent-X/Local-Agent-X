@@ -4,6 +4,7 @@ import { createLogger } from "../logger.js";
 import { wrapExternalContent } from "../sanitize.js";
 import type { ToolResult } from "../types.js";
 import { type MCPServerConfig, type MCPTool, type PendingRequest, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "./types.js";
+import { verifyOrTrust } from "./integrity.js";
 
 const logger = createLogger("mcp-client");
 
@@ -140,6 +141,17 @@ export class MCPConnection {
   }
 
   async connect(): Promise<void> {
+    // Binary integrity gate — fail closed on mismatch BEFORE spawning.
+    // First-trust auto-accepts; subsequent hash drift refuses to spawn.
+    // Operator escape hatches: LAX_MCP_RETRUST / LAX_MCP_STRICT_TRUST.
+    const verdict = verifyOrTrust(this.serverName, this.config.command);
+    if (!verdict.ok) {
+      throw new Error(`MCP server "${this.serverName}" integrity check failed: ${verdict.reason}. ${verdict.userHint}`);
+    }
+    if (verdict.firstTrust) {
+      logger.info(`MCP server "${this.serverName}" trusted on first connect (sha256: ${verdict.sha256.slice(0, 12)}...).`);
+    }
+
     const env = buildMcpChildEnv(this.config.env);
 
     this.proc = spawn(this.config.command, this.config.args || [], {

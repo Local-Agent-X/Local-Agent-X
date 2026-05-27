@@ -19,7 +19,8 @@ import {
   _resetMirrorOnceFlagForTests,
   mirrorImpl,
 } from "./auth-codex-mirror.js";
-import { saveTokens } from "./auth.js";
+import { saveTokens, loadTokens } from "./auth.js";
+import { _resetMasterKeyCacheForTests } from "./auth-storage.js";
 import type { OAuthTokens } from "./types.js";
 
 const ENV_KEYS = ["LAX_MIRROR_CODEX_AUTH", "HOME", "USERPROFILE"] as const;
@@ -62,6 +63,10 @@ beforeEach(() => {
   process.env.HOME = tempHome;
   process.env.USERPROFILE = tempHome;
   _resetMirrorOnceFlagForTests();
+  // Each test starts with a fresh tempdir; the keychain master key
+  // cached in auth-storage.ts would otherwise point at the previous
+  // test's now-deleted ~/.lax/, leading to wrong-key decrypt errors.
+  _resetMasterKeyCacheForTests();
 });
 
 afterEach(() => {
@@ -127,9 +132,15 @@ describe("saveTokens gate", () => {
 
     expect(mirrorSpy).not.toHaveBeenCalled();
     // LAX-side auth.json was still written (gate only controls the mirror).
+    // Disk format is the encrypted-at-rest envelope, not raw JSON.
     const laxAuth = join(tempHome, ".lax", "auth.json");
     expect(existsSync(laxAuth)).toBe(true);
-    expect(JSON.parse(readFileSync(laxAuth, "utf-8")).accessToken).toBe("access-test");
+    const onDisk = readFileSync(laxAuth, "utf-8");
+    expect(onDisk).toContain('"format":"lax-auth-v1"');
+    expect(onDisk).not.toContain("access-test");
+    // Roundtrip via the real load path.
+    const loaded = loadTokens();
+    expect(loaded?.accessToken).toBe("access-test");
     // Disabled-once notice surfaced.
     const noticeHits = logSpy.mock.calls.filter(
       (args) => typeof args[0] === "string" && args[0].includes("LAX_MIRROR_CODEX_AUTH"),

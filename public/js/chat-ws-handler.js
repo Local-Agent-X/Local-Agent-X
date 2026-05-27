@@ -124,10 +124,14 @@ function handleChatWsMessage(e) {
     }
 
     // ── Projects list changed (agent created/added via project_* tools) ──
-    // window.loadProjects is exposed by public/js/agents/projects.js; it
-    // re-fetches /api/projects and re-renders the sidebar Projects group.
-    if (msg.type === 'projects_changed' && typeof window.loadProjects === 'function') {
-      try { window.loadProjects(); } catch {}
+    // Mirror the UI's createProject() flow in public/js/agents/projects.js:
+    // loadProjects() refreshes the Agents-page dropdown; syncProjectsFromServer()
+    // refreshes the chat SIDEBAR (it calls renderSidebar() under the hood).
+    // Calling only loadProjects leaves the sidebar stale until page reload —
+    // the same comment-flagged trap the UI's "+New Project" already avoids.
+    if (msg.type === 'projects_changed') {
+      try { if (typeof window.loadProjects === 'function') window.loadProjects(); } catch {}
+      try { if (typeof window.syncProjectsFromServer === 'function') window.syncProjectsFromServer(); } catch {}
     }
 
     // ── App files changed: auto-reload any pinned iframe pointing at that app ──

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 interface ToolCallRecord {
   name: string;
@@ -23,7 +23,7 @@ interface ToolStatsEntry {
 type ToolStats = Record<string, ToolStatsEntry>;
 
 const MAX_ENTRIES = 10000;
-const LAX_DIR = join(homedir(), ".lax");
+const LAX_DIR = getLaxDir();
 const STATS_FILE = join(LAX_DIR, "tool-stats.json");
 
 const records: ToolCallRecord[] = [];

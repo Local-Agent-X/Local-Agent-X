@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 
 export interface Migration {
   version: number;
@@ -26,7 +26,7 @@ registerBuiltinMigration({
   version: 1,
   name: "config-defaults",
   up: (dataDir: string) => {
-    const cfgPath = join(homedir(), ".lax", "config.json");
+    const cfgPath = join(getLaxDir(), "config.json");
     if (!existsSync(cfgPath)) return;
     try {
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
@@ -50,7 +50,7 @@ registerBuiltinMigration({
   version: 2,
   name: "add-project-root",
   up: () => {
-    const cfgPath = join(homedir(), ".lax", "config.json");
+    const cfgPath = join(getLaxDir(), "config.json");
     if (!existsSync(cfgPath)) return;
     try {
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
@@ -68,7 +68,7 @@ function registerBuiltinMigration(m: Migration): void {
 }
 
 function versionFilePath(): string {
-  return join(homedir(), ".lax", "migration-version.json");
+  return join(getLaxDir(), "migration-version.json");
 }
 
 function loadVersion(): MigrationVersion {
@@ -84,7 +84,7 @@ function loadVersion(): MigrationVersion {
 }
 
 function saveVersion(version: MigrationVersion): void {
-  const dir = join(homedir(), ".lax");
+  const dir = getLaxDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(versionFilePath(), JSON.stringify(version, null, 2), { encoding: "utf-8", mode: 0o600 });
 }

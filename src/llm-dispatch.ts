@@ -20,7 +20,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "./lax-data-dir.js";
 import { createLogger } from "./logger.js";
 
 const logger = createLogger("llm-dispatch");
@@ -61,7 +61,7 @@ const DEFAULTS = {
 export function detectProvider(opts: { rejectOAuth?: boolean; preferEnvKeys?: boolean } = {}): LLMProvider | null {
   if (!opts.preferEnvKeys) {
     try {
-      const settingsPath = join(homedir(), ".lax", "settings.json");
+      const settingsPath = join(getLaxDir(), "settings.json");
       if (existsSync(settingsPath)) {
         const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as { provider?: string };
         if (s.provider === "ollama") return "ollama";

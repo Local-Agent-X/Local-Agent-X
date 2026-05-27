@@ -26,15 +26,15 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 
 import type { AgentModelPin } from "./agents/types.js";
 import { createLogger } from "./logger.js";
+import { getLaxDir } from "./lax-data-dir.js";
 const logger = createLogger("project-rosters");
 
-const ROSTERS_FILE = join(homedir(), ".lax", "project-rosters.json");
-const LEGACY_TEMPLATES_FILE = join(homedir(), ".lax", "agent-templates.json");
-const LEGACY_PROJECTS_FILE = join(homedir(), ".lax", "agent-projects.json");
+const ROSTERS_FILE = join(getLaxDir(), "project-rosters.json");
+const LEGACY_TEMPLATES_FILE = join(getLaxDir(), "agent-templates.json");
+const LEGACY_PROJECTS_FILE = join(getLaxDir(), "agent-projects.json");
 
 /** One agent's membership record in one project. */
 export interface ProjectRoster {

@@ -7,8 +7,8 @@
 
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { getLaxDir } from "./lax-data-dir.js";
 
 export type RecordingEventType =
   | "user_message"
@@ -36,7 +36,7 @@ export interface Recording {
   events: RecordingEvent[];
 }
 
-const RECORDINGS_DIR = join(homedir(), ".lax", "recordings");
+const RECORDINGS_DIR = join(getLaxDir(), "recordings");
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) {

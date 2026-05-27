@@ -5,6 +5,19 @@ import { createLogger } from "../../logger.js";
 
 const logger = createLogger("routes.agents.projects");
 
+/** Push a projects_changed event to every connected client. The frontend
+ *  WS handler (public/js/chat-ws-handler.js) reacts by re-rendering both
+ *  the Agents-page dropdown (loadProjects) and the chat sidebar
+ *  (syncProjectsFromServer). Same pattern as the project_create tool
+ *  uses. Best-effort: a missing chat-ws import (tests, scripts) doesn't
+ *  fail the route. */
+async function broadcastProjectsChanged(): Promise<void> {
+  try {
+    const { broadcastAll } = await import("../../chat-ws.js");
+    broadcastAll({ type: "projects_changed" });
+  } catch { /* no WS context — request itself still succeeded */ }
+}
+
 /** Create roster entries for any seeded agentIds on a freshly-created project.
  *  Mirrors what the legacy migration does for pre-L3 data: each entry becomes
  *  a real ProjectRoster row (the source of truth post-L3), with CEO-led trees
@@ -34,6 +47,7 @@ export const handleProjectRoutes: RouteHandler = async (method, url, req, res, c
     if (!body || !body.name) { json(400, { error: "name required" }); return true; }
     const project = ctx.projectStore.create({ name: body.name as string, description: (body.description as string) || "", agentIds: (body.agentIds as string[]) || [], workspace: body.workspace as string | undefined });
     await seedProjectRosters(project.id, (body.agentIds as string[]) || [], ctx);
+    await broadcastProjectsChanged();
     json(200, project); return true;
   }
 
@@ -49,6 +63,7 @@ export const handleProjectRoutes: RouteHandler = async (method, url, req, res, c
     // agentIds:[...] looked populated on disk but had zero hires for the
     // Team tab / org chart / membership reads.
     await seedProjectRosters(project.id, (body.agentIds as string[]) || [], ctx);
+    await broadcastProjectsChanged();
     json(200, project); return true;
   }
   if (method === "GET" && url.pathname.match(/^\/api\/projects\/proj-[^/]+$/)) {
@@ -63,6 +78,7 @@ export const handleProjectRoutes: RouteHandler = async (method, url, req, res, c
     if (!body) { json(400, { error: "Invalid JSON" }); return true; }
     const updated = ctx.projectStore.update(id, body as Partial<Project>);
     if (!updated) { json(404, { error: "Project not found" }); return true; }
+    await broadcastProjectsChanged();
     json(200, updated); return true;
   }
   if (method === "DELETE" && url.pathname.match(/^\/api\/projects\/proj-[^/]+$/)) {
@@ -83,20 +99,27 @@ export const handleProjectRoutes: RouteHandler = async (method, url, req, res, c
       logger.warn(`[sync] project tombstone write failed for ${id}: ${(e as Error).message}`);
     }
     const deleted = ctx.projectStore.delete(id);
-    if (deleted) { try { ctx.agentSync.notifyChange(`project-delete:${id}`); } catch {} }
+    if (deleted) {
+      try { ctx.agentSync.notifyChange(`project-delete:${id}`); } catch {}
+      await broadcastProjectsChanged();
+    }
     json(deleted ? 200 : 404, { ok: true }); return true;
   }
   if (method === "POST" && url.pathname.match(/^\/api\/projects\/proj-[^/]+\/agents$/)) {
     const id = url.pathname.split("/")[3];
     const body = await safeParseBody(req);
     if (!body || !body.agentId) { json(400, { error: "agentId required" }); return true; }
-    json(ctx.projectStore.addAgent(id, body.agentId as string) ? 200 : 404, { ok: true }); return true;
+    const ok = ctx.projectStore.addAgent(id, body.agentId as string);
+    if (ok) await broadcastProjectsChanged();
+    json(ok ? 200 : 404, { ok: true }); return true;
   }
   if (method === "DELETE" && url.pathname.match(/^\/api\/projects\/proj-[^/]+\/agents$/)) {
     const id = url.pathname.split("/")[3];
     const body = await safeParseBody(req);
     if (!body || !body.agentId) { json(400, { error: "agentId required" }); return true; }
-    json(ctx.projectStore.removeAgent(id, body.agentId as string) ? 200 : 404, { ok: true }); return true;
+    const ok = ctx.projectStore.removeAgent(id, body.agentId as string);
+    if (ok) await broadcastProjectsChanged();
+    json(ok ? 200 : 404, { ok: true }); return true;
   }
 
   return false;

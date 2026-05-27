@@ -7,6 +7,7 @@
 // invoked, so future config drift or plugin-driven mount-passing can't punch
 // through the hardened defaults in execInSandbox().
 
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath, sep as pathSep, posix as posixPath, win32 as win32Path } from "node:path";
 
@@ -208,9 +209,35 @@ export function validateSandboxConfig(
     }
     const rawExpanded = expandTilde(source);
     const abs = resolvePath(rawExpanded);
+
+    // First pass: literal-path deny check against the unfollowed path. Catches
+    // a Linux container source like "/etc/shadow" handed in from a Windows host
+    // (where the path doesn't exist locally and realpath would just fail).
     const reason = denyReasonForPath(abs, rawExpanded);
     if (reason) {
       return { ok: false, reason: `extraMount source rejected: ${reason}` };
+    }
+
+    // Second pass: follow symlinks. Docker resolves symlinks at bind-mount
+    // time, so a source that looks safe (`/tmp/innocent`) but actually points
+    // at `/etc/shadow` would expose the linked target inside the container.
+    // The validator's promise is "this path is safe to mount" — that has to
+    // hold against the realpath, not just the lexical form.
+    let realPath: string;
+    try {
+      realPath = realpathSync(abs);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === "ENOENT") {
+        return { ok: false, reason: `extraMount source does not exist: ${abs}` };
+      }
+      return { ok: false, reason: `extraMount source could not be resolved: ${abs} (${code ?? (err as Error)?.message ?? "unknown error"})` };
+    }
+    if (realPath !== abs) {
+      const realReason = denyReasonForPath(realPath, realPath);
+      if (realReason) {
+        return { ok: false, reason: `extraMount source rejected after symlink resolution: ${realReason}` };
+      }
     }
   }
 

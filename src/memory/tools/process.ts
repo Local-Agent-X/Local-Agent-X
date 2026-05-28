@@ -44,7 +44,7 @@ export function createProcessTools(memory: MemoryIndex) {
         },
       },
       async execute(args: Record<string, unknown>) {
-        const { runExtraction } = await import("../../memory-extract.js");
+        const { runExtraction } = await import("../extract.js");
         const result = await runExtraction(memory, {
           lookbackHours: typeof args.lookbackHours === "number" ? args.lookbackHours : undefined,
           maxSessions: typeof args.maxSessions === "number" ? args.maxSessions : undefined,

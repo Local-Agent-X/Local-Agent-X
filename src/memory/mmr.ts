@@ -23,7 +23,7 @@
 
 interface Scored { score: number; snippet: string }
 
-import { tokenizeStrict, jaccardSimilarity as jaccard } from "./memory/text-utils.js";
+import { tokenizeStrict, jaccardSimilarity as jaccard } from "./text-utils.js";
 
 /**
  * Re-rank candidates using MMR. Returns at most `k` items.

@@ -138,7 +138,7 @@ export class MemoryManager {
       // memory context to inject."
       (async () => {
         try {
-          const { processMessage } = await import("../memory-orchestrator.js");
+          const { processMessage } = await import("../orchestrator/process-message.js");
           return await processMessage({
             message: input.userMessage,
             sessionId: input.sessionId,
@@ -236,7 +236,7 @@ export class MemoryManager {
 
   /** Background consolidation, compression, tier reclassification. */
   async runBackground(): Promise<import("../orchestrator/types.js").BackgroundReport> {
-    const { MemoryOrchestrator } = await import("../memory-orchestrator.js");
+    const { MemoryOrchestrator } = await import("../orchestrator/orchestrator.js");
     return MemoryOrchestrator.getInstance().runBackground(this.index);
   }
 

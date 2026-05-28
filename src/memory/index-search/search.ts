@@ -57,7 +57,7 @@ export async function searchInIndex(
     try {
       let embedText = query;
       if (options?.hyde) {
-        const { generateHyDE } = await import("../../memory-hyde.js");
+        const { generateHyDE } = await import("../hyde.js");
         const hyp = await generateHyDE(query, { provider: options.hydeProvider, model: options.hydeModel });
         if (hyp) embedText = hyp;
       }
@@ -86,7 +86,7 @@ export async function searchInIndex(
       const relaxedMin = Math.min(minScore, deps.config.textWeight);
       let processed = postProcess(deps.db, deps.config, merged, maxResults * 3, relaxedMin, { ...options, query });
       if (options?.rerank && processed.length > 0) {
-        try { const { rerankWithLLM } = await import("../../memory-reranker.js"); const rProvider = options.rerankModel?.startsWith("provider:") ? options.rerankModel.split(":")[1] : "ollama";
+        try { const { rerankWithLLM } = await import("../reranker.js"); const rProvider = options.rerankModel?.startsWith("provider:") ? options.rerankModel.split(":")[1] : "ollama";
       const rModel = options.rerankModel?.startsWith("provider:") ? undefined : options.rerankModel;
       processed = await rerankWithLLM(query, processed, { provider: rProvider, model: rModel }); } catch (e) { logger.warn("[memory] Rerank error:", (e as Error).message); }
       }
@@ -98,7 +98,7 @@ export async function searchInIndex(
 
   if (options?.rerank && processed.length > 0) {
     try {
-      const { rerankWithLLM } = await import("../../memory-reranker.js");
+      const { rerankWithLLM } = await import("../reranker.js");
       const rProvider = options.rerankModel?.startsWith("provider:") ? options.rerankModel.split(":")[1] : "ollama";
       const rModel = options.rerankModel?.startsWith("provider:") ? undefined : options.rerankModel;
       processed = await rerankWithLLM(query, processed, { provider: rProvider, model: rModel });

@@ -264,7 +264,7 @@ export async function autoSearchContext(
 
     if (candidates.length === 0) return "";
 
-    const { mmrRerank } = await import("../memory-mmr.js");
+    const { mmrRerank } = await import("./mmr.js");
     const results = mmrRerank(candidates, 3, 0.7);
 
     const relevant = results

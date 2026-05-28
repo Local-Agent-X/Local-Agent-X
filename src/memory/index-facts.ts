@@ -108,7 +108,7 @@ export async function retainSmart(
   sourceLine = 0,
   opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string } }
 ): Promise<{ facts: RetainedFact[]; decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> }> {
-  const { resolveFact } = await import("../memory-resolver.js");
+  const { resolveFact } = await import("./resolver.js");
   const candidateLimit = opts?.candidateLimit ?? 5;
   const facts: RetainedFact[] = [];
   const decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> = [];

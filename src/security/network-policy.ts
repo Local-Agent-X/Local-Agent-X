@@ -108,11 +108,29 @@ const BLOCKED_HOSTNAMES = new Set([
   "kubernetes.default",                    // K8s in-cluster API
 ]);
 
+export type EgressMode = "permissive" | "strict";
+
+/**
+ * Match a hostname against the egress list (exact host or *.domain.com wildcard).
+ * Rejects overly broad wildcards (*.com, *.org) — wildcard must have ≥2 labels.
+ */
+export function matchEgressList(host: string, list: ReadonlySet<string>): boolean {
+  if (list.has(host)) return true;
+  for (const d of list) {
+    if (!d.startsWith("*.")) continue;
+    const baseDomain = d.slice(2);
+    if (baseDomain.split(".").length < 2) continue;
+    if (host === baseDomain || host.endsWith("." + baseDomain)) return true;
+  }
+  return false;
+}
+
 export function evaluateWebFetch(
   egressAllowlist: ReadonlySet<string>,
   egressAllowlistConfigured: boolean,
   selfPort: string,
   url: string,
+  egressMode: EgressMode = "permissive",
 ): SecurityDecision {
   let parsed: URL;
   try {
@@ -174,33 +192,27 @@ export function evaluateWebFetch(
     return { allowed: false, reason: `Blocked: ${host} is a cloud metadata endpoint`, userHint: USER_HINTS.network };
   }
 
-  // ── Egress domain allowlist ──
-  // Deny-by-default. If no allowlist file is configured at all, refuse
-  // outbound requests with an actionable setup hint — the alternative
-  // (silently allowing every public host when the file is absent) makes
-  // the advertised egress-allowlist feature a no-op on default installs.
-  if (!egressAllowlistConfigured) {
-    return {
-      allowed: false,
-      reason:
-        `Blocked: no egress allowlist configured. ` +
-        `Create ~/.lax/egress-allowlist.json with a JSON array of allowed domains ` +
-        `(e.g. ["api.anthropic.com","github.com","*.npmjs.org"]) to permit outbound requests.`,
-      userHint: USER_HINTS.network,
-    };
-  }
-  const allowed = egressAllowlist.has(host) ||
-    // Check wildcard subdomains: *.example.com matches sub.example.com
-    // Require at least 2 labels in the wildcard domain (*.com is too broad)
-    Array.from(egressAllowlist).some(d => {
-      if (!d.startsWith("*.")) return false;
-      const baseDomain = d.slice(2);
-      // Reject overly broad wildcards like *.com, *.org, *.net
-      if (baseDomain.split(".").length < 2) return false;
-      return host === baseDomain || host.endsWith("." + baseDomain);
-    });
-  if (!allowed) {
-    return { allowed: false, reason: `Blocked: ${host} is not in the egress allowlist. Add it to ~/.lax/egress-allowlist.json to permit.`, userHint: USER_HINTS.network };
+  // ── Egress policy ──
+  // Permissive (default): all public hosts allowed. SSRF/private-IP/cloud-metadata
+  // blocks above remain; allowlist (if present) gates secret-bearing requests
+  // at the tool layer (web-tools.ts), not the network layer.
+  //
+  // Strict: deny-by-default; only allowlisted hosts pass. Missing file in
+  // strict mode emits an actionable setup hint.
+  if (egressMode === "strict") {
+    if (!egressAllowlistConfigured) {
+      return {
+        allowed: false,
+        reason:
+          `Blocked: egress mode is "strict" but no allowlist configured. ` +
+          `Create ~/.lax/egress-allowlist.json with a JSON array of allowed domains ` +
+          `(e.g. ["api.anthropic.com","github.com","*.npmjs.org"]) or set egressMode to "permissive" in ~/.lax/security.json.`,
+        userHint: USER_HINTS.network,
+      };
+    }
+    if (!matchEgressList(host, egressAllowlist)) {
+      return { allowed: false, reason: `Blocked: ${host} is not in the egress allowlist (strict mode). Add it to ~/.lax/egress-allowlist.json to permit.`, userHint: USER_HINTS.network };
+    }
   }
 
   return { allowed: true, reason: "Web fetch allowed" };
@@ -216,9 +228,10 @@ export async function validateUrlWithDns(
   egressAllowlistConfigured: boolean,
   selfPort: string,
   url: string,
+  egressMode: EgressMode = "permissive",
 ): Promise<SecurityDecision> {
   // First do the synchronous check
-  const syncResult = evaluateWebFetch(egressAllowlist, egressAllowlistConfigured, selfPort, url);
+  const syncResult = evaluateWebFetch(egressAllowlist, egressAllowlistConfigured, selfPort, url, egressMode);
   if (!syncResult.allowed) return syncResult;
 
   const parsed = new URL(url);

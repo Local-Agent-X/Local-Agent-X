@@ -3,6 +3,7 @@ import type { ToolDefinition } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
 import type { SecretsStore } from "../secrets.js";
 import { ok, err } from "./result-helpers.js";
+import { checkOutboundRequest } from "./http-egress-guard.js";
 
 async function dnsPin(url: string): Promise<string | null> {
   try {
@@ -161,6 +162,9 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           recovery: "Use one of the valid methods.",
         });
       }
+
+      const guard = checkOutboundRequest({ url, method, body: args.body, headers: args.headers });
+      if (guard) return err(guard.message, guard.meta);
 
       let autoAuth = false;
       try {

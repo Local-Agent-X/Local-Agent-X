@@ -373,15 +373,17 @@ describe("SecurityLayer kernel-class dispatch", () => {
   });
 });
 
-// Regression: previously a missing ~/.lax/egress-allowlist.json was treated
-// as "no restrictions" — silent fail-open that made the advertised
-// allowlist a no-op on every default install. The fix denies by default
-// and points the user at the config path.
-describe("egress allowlist deny-by-default when missing", () => {
+// Egress mode is `permissive` by default — agent can surf the public web
+// while SSRF/private-IP/cloud-metadata blocks remain in force. The previous
+// deny-by-default model broke autonomous web research without adding real
+// safety (allowlist file ≠ exfiltration defense). Strict mode is preserved
+// for users who want it; secret-bearing requests are gated at the tool
+// layer via the trusted-destinations check in web-tools.ts.
+describe("egress mode semantics", () => {
   // Each test below isolates LAX_DATA_DIR to a fresh directory; the
   // outer suite's beforeAll fixture must not bleed in.
   function withLaxDir<T>(setup: (dir: string) => void, run: () => T): T {
-    const dir = mkdtempSync(join(tmpdir(), "no-allowlist-"));
+    const dir = mkdtempSync(join(tmpdir(), "egress-mode-"));
     const prev = process.env.LAX_DATA_DIR;
     process.env.LAX_DATA_DIR = dir;
     try {
@@ -394,46 +396,44 @@ describe("egress allowlist deny-by-default when missing", () => {
     }
   }
 
-  it("missing allowlist file: SecurityLayer denies web_fetch to arbitrary public host", () => {
+  it("default permissive: missing config → public host allowed", () => {
     withLaxDir(
-      () => { /* leave the dir empty — no egress-allowlist.json */ },
+      () => { /* no security.json, no allowlist */ },
       () => {
         const sec = new SecurityLayer(WORKSPACE, "common");
         const d = sec.evaluate({
           toolName: "web_fetch",
-          args: { url: "https://example.com" },
+          args: { url: "https://en.wikipedia.org/wiki/Anything" },
           sessionId: "t",
         });
-        expect(d.allowed).toBe(false);
-        expect(d.reason).toMatch(/no egress allowlist configured|egress-allowlist\.json/i);
+        expect(d.allowed).toBe(true);
       },
     );
   });
 
-  it("missing allowlist file: SecurityLayer denies http_request similarly", () => {
+  it("default permissive: SSRF still blocks private IPs", () => {
     withLaxDir(
-      () => { /* no file */ },
+      () => {},
       () => {
         const sec = new SecurityLayer(WORKSPACE, "common");
         const d = sec.evaluate({
           toolName: "http_request",
-          args: { url: "https://attacker.example" },
+          args: { url: "http://169.254.169.254/latest/meta-data/" },
           sessionId: "t",
         });
         expect(d.allowed).toBe(false);
+        expect(d.reason).toMatch(/metadata|private|reserved/i);
       },
     );
   });
 
-  it("evaluateWebFetch direct call: not-configured → deny with setup hint", () => {
-    const d = evaluateWebFetch(new Set(), false, "7007", "https://example.com");
-    expect(d.allowed).toBe(false);
-    expect(d.reason).toMatch(/no egress allowlist configured/i);
-  });
-
-  it("explicit empty [] is honored: enforce → deny everything", () => {
+  it("strict mode: missing allowlist → deny with setup hint", () => {
     withLaxDir(
-      (dir) => writeFileSync(join(dir, "egress-allowlist.json"), "[]", "utf-8"),
+      (dir) => writeFileSync(
+        join(dir, "security.json"),
+        JSON.stringify({ egressMode: "strict" }),
+        "utf-8",
+      ),
       () => {
         const sec = new SecurityLayer(WORKSPACE, "common");
         const d = sec.evaluate({
@@ -442,20 +442,25 @@ describe("egress allowlist deny-by-default when missing", () => {
           sessionId: "t",
         });
         expect(d.allowed).toBe(false);
-        // Different error message from the missing-file case — proves the
-        // configured flag was loaded.
-        expect(d.reason).toMatch(/not in the egress allowlist/i);
+        expect(d.reason).toMatch(/strict.*no allowlist|egress-allowlist\.json/i);
       },
     );
   });
 
-  it("populated allowlist: only listed host allowed", () => {
+  it("strict mode: only allowlisted hosts pass", () => {
     withLaxDir(
-      (dir) => writeFileSync(
-        join(dir, "egress-allowlist.json"),
-        JSON.stringify(["api.anthropic.com"]),
-        "utf-8",
-      ),
+      (dir) => {
+        writeFileSync(
+          join(dir, "security.json"),
+          JSON.stringify({ egressMode: "strict" }),
+          "utf-8",
+        );
+        writeFileSync(
+          join(dir, "egress-allowlist.json"),
+          JSON.stringify(["api.anthropic.com"]),
+          "utf-8",
+        );
+      },
       () => {
         const sec = new SecurityLayer(WORKSPACE, "common");
         const allowed = sec.evaluate({
@@ -470,6 +475,43 @@ describe("egress allowlist deny-by-default when missing", () => {
           sessionId: "t",
         });
         expect(denied.allowed).toBe(false);
+        expect(denied.reason).toMatch(/not in the egress allowlist/i);
+      },
+    );
+  });
+
+  it("evaluateWebFetch direct call: permissive default → public host allowed", () => {
+    const d = evaluateWebFetch(new Set(), false, "7007", "https://example.com");
+    expect(d.allowed).toBe(true);
+  });
+
+  it("evaluateWebFetch strict + missing → deny with setup hint", () => {
+    const d = evaluateWebFetch(new Set(), false, "7007", "https://example.com", "strict");
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/strict.*no allowlist/i);
+  });
+
+  it("permissive + populated allowlist: any public host still allowed (allowlist gates secrets, not surfing)", () => {
+    withLaxDir(
+      (dir) => writeFileSync(
+        join(dir, "egress-allowlist.json"),
+        JSON.stringify(["api.anthropic.com"]),
+        "utf-8",
+      ),
+      () => {
+        const sec = new SecurityLayer(WORKSPACE, "common");
+        const listed = sec.evaluate({
+          toolName: "web_fetch",
+          args: { url: "https://api.anthropic.com/v1/messages" },
+          sessionId: "t",
+        });
+        expect(listed.allowed).toBe(true);
+        const unlisted = sec.evaluate({
+          toolName: "web_fetch",
+          args: { url: "https://example.com" },
+          sessionId: "t",
+        });
+        expect(unlisted.allowed).toBe(true);
       },
     );
   });

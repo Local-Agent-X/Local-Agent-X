@@ -7,7 +7,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { getLaxDir } from "./lax-data-dir.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
 export interface PolicyRule {
   id: string;

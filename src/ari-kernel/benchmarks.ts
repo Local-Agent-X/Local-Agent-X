@@ -5,11 +5,11 @@
  * ARI's detection capabilities across threat categories.
  */
 
-import { SecurityLayer } from "./security/index.js";
-import { detectInjection } from "./sanitize.js";
-import { scanForSecrets } from "./secret-scanner.js";
+import { SecurityLayer } from "../security/index.js";
+import { detectInjection } from "../sanitize.js";
+import { scanForSecrets } from "../secret-scanner.js";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("ari-benchmarks");
 
 export interface BenchmarkCase {

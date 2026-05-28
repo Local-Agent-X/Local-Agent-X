@@ -39,7 +39,20 @@ async function sendMessage() {
     if (chatWs && chatWs.readyState === WebSocket.OPEN) {
       chatWs.send(JSON.stringify({ type: 'inject', sessionId: activeChat.id, message: text, injectId }));
     }
-    activeChat.messages.push({ role: 'user', content: text, timestamp: Date.now(), _injected: true, _injectId: injectId, _queueState: 'queued' });
+    const injectMsg = { role: 'user', content: text, timestamp: Date.now(), _injected: true, _injectId: injectId, _queueState: 'queued' };
+    // Insert BEFORE any trailing streaming-assistant slot. Pushing to the end
+    // would land the new user bubble after the in-flight assistant placeholder,
+    // and since renderMessages() iterates by array index the assistant would
+    // keep filling above the user bubble. Server-side commitTurn persists in
+    // correct temporal order, so a later session_snapshot rehydrate masked the
+    // bug until you navigated away and back.
+    let insertIdx = activeChat.messages.length;
+    for (let i = activeChat.messages.length - 1; i >= 0; i--) {
+      const m = activeChat.messages[i];
+      if (m && m.role === 'assistant' && m._streaming) insertIdx = i;
+      else break;
+    }
+    activeChat.messages.splice(insertIdx, 0, injectMsg);
     if (typeof renderMessages === 'function') renderMessages();
     input.value = ''; input.style.height = 'auto';
     saveChats();

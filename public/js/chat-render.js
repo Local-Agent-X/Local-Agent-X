@@ -178,7 +178,7 @@ function renderMessages() {
       // worker_stream bubble, just static. Skip the regular assistant
       // path so the agent's pin-bottom and tool-card logic doesn't apply.
       appendStaticWorkerBubble(msg._opId, msg.content || '', msg._taskHint, msg._workerStatus);
-    } else if (msg.role === 'assistant' && (msg.content || msg._tools)) {
+    } else if (msg.role === 'assistant' && (msg.content || msg._tools || msg._streaming)) {
       // Live-content lookup is gated on `_streaming` ONLY, not on array
       // position. Earlier this required the streaming entry to be the
       // LAST message — which broke as soon as a mid-turn inject pushed a
@@ -211,7 +211,14 @@ function renderMessages() {
         const allMsgs = el.querySelectorAll('.msg.assistant');
         const lastMsgEl = allMsgs[allMsgs.length - 1];
         const lastBody = lastMsgEl ? lastMsgEl.querySelector('.msg-body') : null;
-        if (lastBody) lastBody.classList.add('streaming');
+        if (lastBody) {
+          lastBody.classList.add('streaming');
+          // Restore the thinking dots when the stream is in flight but no
+          // deltas have arrived yet — without this, a mid-stream inject (or
+          // any pre-delta renderMessages rebuild) wipes the indicator and
+          // the chat looks frozen until the first token lands.
+          if (!displayContent) lastBody.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
+        }
       }
       // Render tool cards — from live registry when streaming, otherwise from
       // the persisted snapshot. Cards go INSIDE bodyEl (not the bubble) so the

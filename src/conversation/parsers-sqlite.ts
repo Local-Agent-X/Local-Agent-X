@@ -7,8 +7,8 @@
 // pipeline (chunking, indexing, fact extraction) is reused as-is.
 
 import { basename, extname } from "node:path";
-import type { ParsedConversation, ParsedMessage } from "./conversation-parsers.js";
-import { createLogger } from "./logger.js";
+import type { ParsedConversation, ParsedMessage } from "./parsers.js";
+import { createLogger } from "../logger.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 

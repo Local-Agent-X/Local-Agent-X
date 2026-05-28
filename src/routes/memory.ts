@@ -138,7 +138,7 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
       }
       if (files.length === 0) { json(400, { error: "No files found in upload" }); return true; }
       // Run ingest
-      const { ingestConversations } = await import("../conversation-ingest.js");
+      const { ingestConversations } = await import("../conversation/ingest.js");
       const result = await ingestConversations(ctx.memoryIndex, tmpDir);
       // Clean up temp files
       for (const f of files) try { unlinkSync(f); } catch {}
@@ -178,7 +178,7 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
     const path = body.path as string;
     if (!path) { json(400, { error: "path required" }); return true; }
     try {
-      const { ingestConversations } = await import("../conversation-ingest.js");
+      const { ingestConversations } = await import("../conversation/ingest.js");
       const result = await ingestConversations(ctx.memoryIndex, path);
       json(200, result);
     } catch (e) {

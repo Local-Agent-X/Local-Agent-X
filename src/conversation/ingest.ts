@@ -8,11 +8,11 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
-import { parseExportFile, detectFormat } from "./conversation-parsers.js";
-import { chunkConversationPairs } from "./memory/chunking.js";
-import type { ChunkMetadata } from "./memory/index.js";
+import { parseExportFile, detectFormat } from "./parsers.js";
+import { chunkConversationPairs } from "../memory/chunking.js";
+import type { ChunkMetadata } from "../memory/index.js";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("conversation-ingest");
 
 // ── Types ──
@@ -83,7 +83,7 @@ export async function ingestConversations(
     try {
       const ext = extname(filePath).toLowerCase();
       if (SQLITE_EXTENSIONS.has(ext)) {
-        const { parseSQLiteFile } = await import("./conversation-parsers-sqlite.js");
+        const { parseSQLiteFile } = await import("./parsers-sqlite.js");
         globalTotal += parseSQLiteFile(filePath).length;
       } else {
         const content = readFileSync(filePath, "utf-8");
@@ -129,7 +129,7 @@ export async function ingestConversations(
     logger.info(`[ingest] Kicking off background extraction for ${result.chunksCreated} new chunks (365-day lookback)...`);
     (async () => {
       try {
-        const { runExtraction } = await import("./memory/extract.js");
+        const { runExtraction } = await import("../memory/extract.js");
         const t0 = Date.now();
         const summary = await runExtraction(memory, {
           lookbackHours: 365 * 24, // full year — covers typical ChatGPT history exports
@@ -163,7 +163,7 @@ async function ingestSingleFile(
   let conversations;
   if (SQLITE_EXTENSIONS.has(ext)) {
     try {
-      const { parseSQLiteFile } = await import("./conversation-parsers-sqlite.js");
+      const { parseSQLiteFile } = await import("./parsers-sqlite.js");
       conversations = parseSQLiteFile(filePath);
     } catch (e) {
       logger.error(`[ingest] SQLite parse error in ${basename(filePath)}:`, (e as Error).message);

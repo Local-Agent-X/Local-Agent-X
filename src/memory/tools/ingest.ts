@@ -23,7 +23,7 @@ export function createIngestTool(memory: MemoryIndex) {
       const onProgress = typeof args._onProgress === "function" ? args._onProgress as (msg: string) => void : undefined;
 
       try {
-        const { ingestConversations } = await import("../../conversation-ingest.js");
+        const { ingestConversations } = await import("../../conversation/ingest.js");
         const result = await ingestConversations(memory, target, (p) => {
           const total = p.totalConversations || 1;
           const done = p.processed + p.skipped;

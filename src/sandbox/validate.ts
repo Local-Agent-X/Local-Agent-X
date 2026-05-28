@@ -11,7 +11,7 @@ import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve as resolvePath, sep as pathSep, posix as posixPath, win32 as win32Path } from "node:path";
 
-import type { SandboxConfig } from "./sandbox-types.js";
+import type { SandboxConfig } from "./types.js";
 
 // Home-relative directory prefixes that must not be mounted into the sandbox.
 // Each entry is a path relative to homedir() — match is "equal or inside".

@@ -3,14 +3,14 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createLogger } from "./logger.js";
-import { getRuntimeConfig, saveConfig } from "./config.js";
-import type { SandboxConfig, SandboxMode } from "./sandbox-types.js";
-import { validateSandboxConfig } from "./sandbox-validate.js";
+import { createLogger } from "../logger.js";
+import { getRuntimeConfig, saveConfig } from "../config.js";
+import type { SandboxConfig, SandboxMode } from "./types.js";
+import { validateSandboxConfig } from "./validate.js";
 const logger = createLogger("sandbox");
 
-export type { SandboxMode } from "./sandbox-types.js";
-export { validateSandboxConfig } from "./sandbox-validate.js";
+export type { SandboxMode } from "./types.js";
+export { validateSandboxConfig } from "./validate.js";
 
 /**
  * Container Sandbox for Shell Execution

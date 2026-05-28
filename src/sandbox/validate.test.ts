@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { validateSandboxConfig } from "./sandbox-validate.js";
-import type { SandboxConfig } from "./sandbox-types.js";
+import { validateSandboxConfig } from "./validate.js";
+import type { SandboxConfig } from "./types.js";
 
 // Focused tests for the validator's repo-root rule. sandbox.test.ts covers
 // the breadth of deny rules (~/.ssh, /etc/shadow, segment names, suffixes,

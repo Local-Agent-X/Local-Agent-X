@@ -128,6 +128,16 @@ export function setupIPC(): void {
     app.quit();
   });
 
+  // Full quit + Electron relaunch. Used after `git pull` so the next boot
+  // re-runs reconcile (root/desktop npm install + desktop tsc build) against
+  // the freshly pulled lockfiles/sources. A plain "restart-server" only
+  // respawns the server child and would silently leave deps stale.
+  ipcMain.handle("relaunch-app", () => {
+    setQuitting(true);
+    app.relaunch();
+    app.quit();
+  });
+
   ipcMain.handle("open-in-browser", () => {
     const cfg = getSAXConfig();
     return shell.openExternal(`http://127.0.0.1:${cfg.port}/?token=${cfg.authToken}`);

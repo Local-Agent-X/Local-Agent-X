@@ -11,7 +11,7 @@ async function settingsCheckUpdate() {
     if (data.updateAvailable) {
       status.style.color = 'var(--accent)';
       const summary = `Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''}`;
-      status.innerHTML = `${summary} <button onclick="settingsApplyUpdate()" style="margin-left:10px;padding:4px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-weight:600">Update Now</button> <a href="https://github.com/petermanrique101-sys/Local-Agent-X" target="_blank" style="color:var(--muted);margin-left:8px;font-size:.8em">View on GitHub</a>`;
+      status.innerHTML = `${summary} <button onclick="settingsApplyUpdate()" style="margin-left:10px;padding:4px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-weight:600">Update Now</button> <a href="https://github.com/Local-Agent-X/Local-Agent-X" target="_blank" style="color:var(--muted);margin-left:8px;font-size:.8em">View on GitHub</a>`;
     } else {
       status.style.color = 'var(--accent)';
       status.textContent = 'You are up to date! (v' + (data.localVersion || '0.1.0') + ')';
@@ -22,15 +22,18 @@ async function settingsCheckUpdate() {
   }
 }
 
-// Pull the latest source from GitHub and restart the server. Server runs
-// from src/ via tsx (no compile step), so a successful pull + respawn is
-// all that's needed for new code to take effect. Polls /api/health until
-// the new server is reachable, then reloads the page so the renderer
-// also picks up any changed public/ assets.
+// Pull the latest source from GitHub, then prompt a full quit + relaunch.
+// We deliberately do NOT just restart the server child here: the desktop
+// wrapper's reconcile step (root/desktop `npm install` + desktop `npm run
+// build`) only runs at Electron boot. A server-only restart would silently
+// leave the user on stale deps when a pull bumps package-lock.json, or on
+// a stale desktop wrapper when desktop/src changes. A full relaunch makes
+// reconcile catch everything; server code under src/ runs via tsx and
+// picks up automatically.
 async function settingsApplyUpdate() {
   const status = document.getElementById('settings-update-status');
   if (!status) return;
-  if (!confirm('Pull the latest version from GitHub and restart the server?')) return;
+  if (!confirm('Pull the latest version from GitHub? You will be asked to relaunch the app afterward to finish installing.')) return;
   status.style.color = 'var(--muted)';
   status.innerHTML = 'Pulling latest from GitHub...';
   try {
@@ -44,32 +47,13 @@ async function settingsApplyUpdate() {
       }
       return;
     }
-    status.innerHTML = `Pulled <code>${esc(data.fromCommit)}</code> → <code>${esc(data.toCommit)}</code>. Restarting server...`;
-    // Desktop wrapper has an IPC to restart the server child cleanly. In
-    // browser mode there's no equivalent — surface the manual step.
-    if (window.desktop && window.desktop.restartServer) {
-      try { await window.desktop.restartServer(); } catch (e) { console.warn('[update] restartServer IPC failed', e); }
+    status.style.color = 'var(--accent)';
+    const pulled = `Pulled <code>${esc(data.fromCommit)}</code> → <code>${esc(data.toCommit)}</code>.`;
+    if (window.desktop && window.desktop.relaunchApp) {
+      status.innerHTML = `${pulled} Relaunch to finish installing (runs <code>npm install</code> + build if needed). <button onclick="window.desktop.relaunchApp()" style="margin-left:10px;padding:4px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-weight:600">Quit &amp; Relaunch</button>`;
     } else {
-      status.innerHTML += ' <strong>Restart the server manually to load the new code.</strong>';
-      return;
+      status.innerHTML = `${pulled} <strong>Quit and relaunch the app to finish installing</strong> (it will run <code>npm install</code> and rebuild on next boot).`;
     }
-    // Poll /api/health until the new server is back. ~3s typical for tsx
-    // cold start; give it 30s before giving up.
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 750));
-      try {
-        const h = await fetch('/api/health', { headers: { Authorization: `Bearer ${AUTH_TOKEN}` } });
-        if (h.ok) {
-          status.style.color = 'var(--accent)';
-          status.innerHTML = 'Update applied. Reloading...';
-          setTimeout(() => location.reload(), 500);
-          return;
-        }
-      } catch { /* server still respawning */ }
-    }
-    status.style.color = 'var(--error, red)';
-    status.textContent = 'Update applied but server did not come back within 30s. Reload manually.';
   } catch (e) {
     status.style.color = 'var(--error, red)';
     status.textContent = 'Update failed: ' + (e && e.message ? e.message : String(e));

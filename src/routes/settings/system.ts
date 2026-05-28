@@ -127,9 +127,9 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
       }
       let remoteVersion = localVersion, remoteCommit = "", updateAvailable = false, releaseNotes = "";
       try {
-        const commitRes = await fetch("https://api.github.com/repos/petermanrique101-sys/Local-Agent-X/commits/main", { headers: { Accept: "application/vnd.github.v3+json", "User-Agent": "Local-Agent-X" } });
+        const commitRes = await fetch("https://api.github.com/repos/Local-Agent-X/Local-Agent-X/commits/main", { headers: { Accept: "application/vnd.github.v3+json", "User-Agent": "Local-Agent-X" } });
         if (commitRes.ok) { const d = await commitRes.json() as GitHubCommitResponse; remoteCommit = d.sha?.slice(0, 7) || ""; releaseNotes = d.commit?.message?.split("\n")[0] || ""; }
-        const pkgRes = await fetch("https://raw.githubusercontent.com/petermanrique101-sys/Local-Agent-X/main/package.json", { headers: { "User-Agent": "Local-Agent-X" } });
+        const pkgRes = await fetch("https://raw.githubusercontent.com/Local-Agent-X/Local-Agent-X/main/package.json", { headers: { "User-Agent": "Local-Agent-X" } });
         if (pkgRes.ok) { remoteVersion = (await pkgRes.json() as GitHubPackageResponse).version || localVersion; }
         updateAvailable = (remoteCommit && localCommit && remoteCommit !== localCommit) || remoteVersion !== localVersion;
       } catch {}

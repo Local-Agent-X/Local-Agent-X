@@ -5,7 +5,7 @@
  * within the same turn rather than waiting for a downstream CSP refusal.
  */
 import { describe, it, expect } from "vitest";
-import { checkAppWrite, writeGuardRejectionMessage } from "../src/app-tools/write-guard.js";
+import { checkAppWrite, writeGuardRejectionMessage } from "../src/tools/app-tools/write-guard.js";
 
 const BLOCKED_CDNS = [
   "cdn.tailwindcss.com",

@@ -27,7 +27,7 @@ import {
   renderBuilderPrompt,
 } from "./render-builder-prompt.js";
 import { AgentTemplateStore, type AgentExecStrategy } from "../agent-store.js";
-import { seedAppTemplate } from "../app-tools/app-template.js";
+import { seedAppTemplate } from "./app-tools/app-template.js";
 import { buildContextPack } from "../ops/context-pack-builder.js";
 import { newOpId } from "../ops/op-store.js";
 import { getRetryPolicy } from "../ops/heartbeat.js";
@@ -45,7 +45,7 @@ import { SecurityLayer } from "../security.js";
 import type { Op, OpVisibility } from "../ops/types.js";
 import { readTool, writeTool, editTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";
-import { globTool } from "../glob-tool.js";
+import { globTool } from "./glob-tool.js";
 
 /** Tool defs the in-canonical-sub-agent strategy hands to the agent. Mirrors
  *  the app-builder template's allowedTools verbatim. */

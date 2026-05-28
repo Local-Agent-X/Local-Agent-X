@@ -9,7 +9,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { safeParseBody } from "../server-utils.js";
-import { listAppSnapshots, revertAppToSnapshot } from "../app-tools/snapshots.js";
+import { listAppSnapshots, revertAppToSnapshot } from "../tools/app-tools/snapshots.js";
 
 type Json = (status: number, data: unknown) => void;
 

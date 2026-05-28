@@ -7,7 +7,7 @@ import type { ToolCall } from "../contract-types.js";
 import {
   extractAppTouchesFromToolCalls,
   snapshotAppTurn,
-} from "../../app-tools/snapshots.js";
+} from "../../tools/app-tools/snapshots.js";
 import { getRuntimeConfig } from "../../config.js";
 
 import { createLogger } from "../../logger.js";

@@ -17,6 +17,26 @@ const opSession = new Map<string, string>();
 const sessionOps = new Map<string, Set<string>>();
 const opTask = new Map<string, string>();
 
+/**
+ * Per-session count of chat handlers that have been invoked but haven't yet
+ * created their canonical op. Closes the inject-race window where:
+ *   T+0    client sends `chat` WS msg
+ *   T+1ms  client sets local store status='streaming' (eager)
+ *   T+200  user types inject, client sends inject WS msg
+ *   T+205  server inject handler sees liveOps=[] (op not created yet from
+ *          the chat handler's ~30-200ms prep) → routes as fresh turn →
+ *          broadcasts inject_consumed → inject text is lost.
+ *
+ * lifecycle.ts:wireWsChat brackets its runChatTurn call with markChatHandlerPending
+ * / clearChatHandlerPending (try/finally). The inject handler treats pending as
+ * "live" for the routing decision — pushes to the queue, where
+ * drainInjectsIntoTurn at the top of driveTurn picks it up.
+ *
+ * Count (not boolean) so concurrent chat handlers for the same session
+ * don't clobber each other's pending state.
+ */
+const pendingChatHandlers = new Map<string, number>();
+
 let broadcaster: ((sessionId: string, event: ServerEvent) => void) | null = null;
 let persister: ((sessionId: string, content: string) => void) | null = null;
 let initialized = false;
@@ -81,6 +101,22 @@ export function getOpTask(opId: string): string | undefined {
  * completed ops bleed into the system-prompt augmentation that detects
  * "active background workers" and poisons every subsequent turn.
  */
+export function markChatHandlerPending(sessionId: string): void {
+  if (!sessionId) return;
+  pendingChatHandlers.set(sessionId, (pendingChatHandlers.get(sessionId) || 0) + 1);
+}
+
+export function clearChatHandlerPending(sessionId: string): void {
+  if (!sessionId) return;
+  const n = (pendingChatHandlers.get(sessionId) || 0) - 1;
+  if (n <= 0) pendingChatHandlers.delete(sessionId);
+  else pendingChatHandlers.set(sessionId, n);
+}
+
+export function hasChatHandlerPending(sessionId: string): boolean {
+  return (pendingChatHandlers.get(sessionId) || 0) > 0;
+}
+
 export function releaseOpFromSession(opId: string): void {
   const sessionId = opSession.get(opId);
   if (!sessionId) return;

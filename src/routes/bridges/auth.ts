@@ -12,7 +12,7 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
   // ── Auth ──
   if (method === "POST" && url.pathname === "/api/auth/login") {
     try {
-      const { initiateOAuthLogin } = await import("../../auth.js");
+      const { initiateOAuthLogin } = await import("../../auth/index.js");
       const { authUrl, promise } = initiateOAuthLogin();
       promise.then(() => logger.info("OAuth login completed")).catch((e) => logger.warn("OAuth login failed:", e.message));
       json(200, { ok: true, authUrl });
@@ -30,7 +30,7 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     return true;
   }
   if (method === "GET" && url.pathname === "/api/auth/status") {
-    const { loadTokens } = await import("../../auth.js");
+    const { loadTokens } = await import("../../auth/index.js");
     const tokens = loadTokens();
     const operatorEntry = ctx.rbac.listTokens().find(t => t.id === "operator-default");
     const expiresAt = operatorEntry?.expiresAt || null;
@@ -78,7 +78,7 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
   }
   if (method === "POST" && url.pathname === "/api/auth/anthropic/login") {
     try {
-      const { initiateAnthropicLogin } = await import("../../auth-anthropic.js");
+      const { initiateAnthropicLogin } = await import("../../auth/anthropic.js");
       const { authUrl, promise } = initiateAnthropicLogin();
       promise.then(() => logger.info("Anthropic login completed")).catch((e) => logger.warn("Anthropic login failed:", e.message));
       json(200, { ok: true, authUrl });
@@ -86,7 +86,7 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     return true;
   }
   if (method === "POST" && url.pathname === "/api/auth/anthropic/logout") {
-    try { const { deleteAnthropicTokens } = await import("../../auth-anthropic.js"); deleteAnthropicTokens(); json(200, { ok: true }); }
+    try { const { deleteAnthropicTokens } = await import("../../auth/anthropic.js"); deleteAnthropicTokens(); json(200, { ok: true }); }
     catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }
@@ -106,14 +106,14 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     try {
       const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
       const token = String((body as { token?: string }).token || "").trim();
-      const { saveAnthropicSetupToken } = await import("../../auth-anthropic.js");
+      const { saveAnthropicSetupToken } = await import("../../auth/anthropic.js");
       saveAnthropicSetupToken(token);
       json(200, { ok: true, method: "token" });
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
   }
   if (method === "GET" && url.pathname === "/api/auth/anthropic/status") {
-    const { loadAnthropicTokens, isAnthropicTokenExpired } = await import("../../auth-anthropic.js");
+    const { loadAnthropicTokens, isAnthropicTokenExpired } = await import("../../auth/anthropic.js");
     const tokens = loadAnthropicTokens();
     let cliInstalled = false;
     let cliAuthenticated = false;
@@ -316,7 +316,7 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
   // ── xAI Grok OAuth (SuperGrok / X Premium+) ──
   if (method === "POST" && url.pathname === "/api/auth/xai/login") {
     try {
-      const { initiateXaiLogin } = await import("../../auth-xai.js");
+      const { initiateXaiLogin } = await import("../../auth/xai.js");
       const { authUrl, promise } = await initiateXaiLogin();
       promise.then(() => logger.info("xAI login completed")).catch((e) => logger.warn("xAI login failed:", e.message));
       // Open in the system browser from the server process. The renderer's
@@ -357,20 +357,20 @@ export const handleAuthRoutes: RouteHandler = async (method, url, req, res, ctx,
     try {
       const body = await safeParseBody(req);
       const code = typeof body?.code === "string" ? body.code : "";
-      const { exchangeXaiCodeManually } = await import("../../auth-xai.js");
+      const { exchangeXaiCodeManually } = await import("../../auth/xai.js");
       await exchangeXaiCodeManually(code);
       json(200, { ok: true });
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
   }
   if (method === "POST" && url.pathname === "/api/auth/xai/logout") {
-    try { const { deleteXaiTokens } = await import("../../auth-xai.js"); deleteXaiTokens(); json(200, { ok: true }); }
+    try { const { deleteXaiTokens } = await import("../../auth/xai.js"); deleteXaiTokens(); json(200, { ok: true }); }
     catch (e) { json(500, { error: safeErrorMessage(e) }); }
     return true;
   }
   if (method === "GET" && url.pathname === "/api/auth/xai/status") {
     try {
-      const { loadXaiTokens, isXaiTokenExpired } = await import("../../auth-xai.js");
+      const { loadXaiTokens, isXaiTokenExpired } = await import("../../auth/xai.js");
       const tokens = loadXaiTokens();
       const hasApiKey = ctx.secretsStore.has("XAI_API_KEY");
       const hasOAuth = !!tokens;

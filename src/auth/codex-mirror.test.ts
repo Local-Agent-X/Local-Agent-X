@@ -19,10 +19,10 @@ import {
   warnMirrorDisabledOnce,
   _resetMirrorOnceFlagForTests,
   mirrorImpl,
-} from "./auth-codex-mirror.js";
-import { saveTokens, loadTokens } from "./auth.js";
-import { _resetMasterKeyCacheForTests } from "./auth-storage.js";
-import type { OAuthTokens } from "./types.js";
+} from "./codex-mirror.js";
+import { saveTokens, loadTokens } from "./index.js";
+import { _resetMasterKeyCacheForTests } from "./storage.js";
+import type { OAuthTokens } from "../types.js";
 
 const ENV_KEYS = ["LAX_MIRROR_CODEX_AUTH", "LAX_INSTALL_CODEX_CLI", "HOME", "USERPROFILE"] as const;
 

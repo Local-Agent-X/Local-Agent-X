@@ -12,9 +12,9 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
 
   // Providers
   if (method === "GET" && url.pathname === "/api/providers") {
-    const { loadTokens } = await import("../../auth.js");
-    const { loadAnthropicTokens } = await import("../../auth-anthropic.js");
-    const { loadXaiTokens } = await import("../../auth-xai.js");
+    const { loadTokens } = await import("../../auth/index.js");
+    const { loadAnthropicTokens } = await import("../../auth/anthropic.js");
+    const { loadXaiTokens } = await import("../../auth/xai.js");
     const providers: Array<{ id: string; name: string; models: string[]; active: boolean }> = [];
     const hasOpenAIOAuth = !!loadTokens();
     const hasAnthropicOAuth = !!loadAnthropicTokens();
@@ -130,7 +130,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       const hasOpenAIKey = !!(ctx.config.openaiApiKey || ctx.secretsStore.has("OPENAI_API_KEY"));
       if (!hasOpenAIKey) {
         try {
-          const { loadTokens } = await import("../../auth.js");
+          const { loadTokens } = await import("../../auth/index.js");
           if (loadTokens()) { provider = "codex"; model = model || "gpt-5.4"; }
         } catch {}
       }

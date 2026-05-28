@@ -27,8 +27,8 @@ import { writeFileSync, existsSync, renameSync, unlinkSync, mkdirSync } from "no
 import { spawn, spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { createLogger } from "./logger.js";
-import type { OAuthTokens } from "./types.js";
+import { createLogger } from "../logger.js";
+import type { OAuthTokens } from "../types.js";
 
 const logger = createLogger("auth");
 

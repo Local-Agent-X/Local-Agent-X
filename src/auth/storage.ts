@@ -21,8 +21,8 @@
  * re-save them encrypted on next load.
  */
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { getOrCreateMasterKey } from "./keychain.js";
-import { createLogger } from "./logger.js";
+import { getOrCreateMasterKey } from "../keychain.js";
+import { createLogger } from "../logger.js";
 
 const logger = createLogger("auth-storage");
 

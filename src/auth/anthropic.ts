@@ -2,9 +2,9 @@ import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, unlinkSync, renameSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("auth-anthropic");
 
 /**
@@ -139,7 +139,7 @@ export async function getAnthropicApiKey(): Promise<string> {
   // Check if Claude CLI is available (it has its own credentials)
   try {
     const { execSync } = await import("child_process");
-    const { npmAugmentedEnv } = await import("./anthropic-client/cli-path.js");
+    const { npmAugmentedEnv } = await import("../anthropic-client/cli-path.js");
     execSync("claude --version", { timeout: 3000, stdio: "pipe", env: npmAugmentedEnv() });
     return "cli";
   } catch {}

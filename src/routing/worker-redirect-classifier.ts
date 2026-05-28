@@ -27,7 +27,7 @@
  */
 
 import { createLogger } from "../logger.js";
-import { loadAnthropicTokens, isAnthropicTokenExpired } from "../auth-anthropic.js";
+import { loadAnthropicTokens, isAnthropicTokenExpired } from "../auth/anthropic.js";
 
 const logger = createLogger("routing.worker-redirect-classifier");
 

@@ -70,3 +70,55 @@ export function broadcastAll(data: Record<string, unknown>): void {
     }
   }
 }
+
+export interface TerminateOptions {
+  /** Abort the in-flight provider stream + release the turn lock.
+   *  `true` for user-initiated stop; `false` for transport-level failures
+   *  where the orchestrator has already finished its side of the turn. */
+  abort: boolean;
+  /** Error message to broadcast before the terminal `done`. Empty string
+   *  emits no error event (used by graceful-fail callers that only need
+   *  the done). */
+  errorMessage: string;
+}
+
+/**
+ * Single source of truth for "this chat is over." Three former call sites
+ * (manager.stopChat, manager.failChat, message-router.handleStop) had near-
+ * identical bodies — every fix had to be made in three places. Consolidating
+ * here means the next time we change termination semantics (e.g. dedup done,
+ * add a reason code), it's one edit.
+ *
+ * Returns `true` iff the chat was live and we terminated it; `false` if the
+ * session was unknown or already done.
+ */
+export function terminateChat(sessionId: string, opts: TerminateOptions): boolean {
+  const chat = activeChats.get(sessionId);
+  if (!chat || chat.done) return false;
+
+  if (opts.abort) {
+    chat.abortController.abort();
+    void releaseTurnLockSafe(sessionId);
+  }
+
+  if (opts.errorMessage) {
+    broadcastToSession(sessionId, { type: "error", message: opts.errorMessage });
+  }
+  broadcastToSession(sessionId, {
+    type: "done",
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+  });
+  chat.done = true;
+  broadcastActiveChats();
+  return true;
+}
+
+async function releaseTurnLockSafe(sessionId: string): Promise<void> {
+  try {
+    const { abortTurn, releaseTurn } = await import("../session-turn-lock.js");
+    abortTurn(sessionId);
+    releaseTurn(sessionId);
+  } catch {
+    // best-effort: lock release failures don't change terminate semantics
+  }
+}

@@ -164,7 +164,7 @@ setInterval(() => {
       banner.className = 'visible';
       banner.innerHTML = `
         <span class="update-msg">Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''}</span>
-        <button class="update-btn" onclick="window.open('https://github.com/petermanrique101-sys/Local-Agent-X','_blank')">View on GitHub</button>
+        <button class="update-btn" onclick="window.open('https://github.com/Local-Agent-X/Local-Agent-X','_blank')">View on GitHub</button>
         <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>
       `;
     }

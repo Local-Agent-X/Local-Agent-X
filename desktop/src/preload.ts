@@ -71,6 +71,7 @@ contextBridge.exposeInMainWorld("desktop", {
   toggleWindow: () => ipcRenderer.invoke("toggle-window"),
   toggleDevTools: () => ipcRenderer.invoke("toggle-devtools"),
   quit: () => ipcRenderer.invoke("quit-app"),
+  relaunchApp: () => ipcRenderer.invoke("relaunch-app"),
 
   // Open the tokenized LAX URL in the user's default browser (escape hatch
   // for Web Speech API, sharing with another tool on the same box, etc.)

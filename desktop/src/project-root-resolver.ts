@@ -119,7 +119,7 @@ export async function promptForProjectRoot(): Promise<string | null> {
 
   if (choice.response === 1) {
     await shell.openExternal(
-      "https://github.com/petermanrique101-sys/Local-Agent-X/releases",
+      "https://github.com/Local-Agent-X/Local-Agent-X/releases",
     );
     return null;
   }

@@ -5,7 +5,7 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import type { BrowserManager, BrowserEngine } from "../../browser.js";
+import type { BrowserManager, BrowserEngine } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { dnsPinCheck } from "../../browser/guards.js";
 import { ok, err, computeAuthWallPrefix } from "./shared.js";

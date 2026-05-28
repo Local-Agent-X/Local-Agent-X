@@ -1,4 +1,4 @@
-import type { MemoryIndex } from "../../memory.js";
+import type { MemoryIndex } from "../../memory/index.js";
 
 // Conversation ingest tool
 export function createIngestTool(memory: MemoryIndex) {

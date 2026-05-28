@@ -1,6 +1,6 @@
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody } from "../server-utils.js";
-import type { FactKind } from "../memory.js";
+import type { FactKind } from "../memory/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.memory");

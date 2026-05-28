@@ -33,9 +33,9 @@
  */
 
 import type { AgentDefinition, InvokeScope } from "./types.js";
-import type { AgentTemplate } from "../agent-store.js";
+import type { AgentTemplate } from "../agent-store/index.js";
 import type { AgentRole } from "../agency/agent-roles.js";
-import { AgentTemplateStore, ProjectStore } from "../agent-store.js";
+import { AgentTemplateStore, ProjectStore } from "../agent-store/index.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { _seedBuiltinRoles } from "../agency/agent-roles.js";
 

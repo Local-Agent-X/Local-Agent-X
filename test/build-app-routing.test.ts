@@ -23,7 +23,7 @@ import {
   resolveBuildStrategy,
   APP_BUILD_OP_TYPE,
 } from "../src/tools/build-app.js";
-import { AgentTemplateStore } from "../src/agent-store.js";
+import { AgentTemplateStore } from "../src/agent-store/index.js";
 import { readOp } from "../src/ops/op-store.js";
 import {
   opCancel,

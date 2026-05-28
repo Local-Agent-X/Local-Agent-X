@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeErrorMessage, corsHeaders } from "../../server-utils.js";
-import { setBrowserAuthContext } from "../../browser.js";
-import { redactCredentials } from "../../security.js";
+import { setBrowserAuthContext } from "../../browser/index.js";
+import { redactCredentials } from "../../security/index.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("routes.settings.security");

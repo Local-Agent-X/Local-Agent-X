@@ -1,4 +1,4 @@
-import type { MemoryIndex } from "../../memory.js";
+import type { MemoryIndex } from "../../memory/index.js";
 import type { FactKind } from "../types.js";
 import { displayContent } from "../utils.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";

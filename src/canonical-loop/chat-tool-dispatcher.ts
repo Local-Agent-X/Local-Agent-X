@@ -16,7 +16,7 @@
 import type { ToolDispatcher, ToolDispatchResult } from "./tool-dispatch.js";
 import type { ToolCall } from "./contract-types.js";
 import type { ToolDefinition, ServerEvent } from "../types.js";
-import type { SecurityLayer } from "../security.js";
+import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { ThreatEngine } from "../threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";

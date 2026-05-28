@@ -8,7 +8,7 @@ import {
   checkDeadEnd,
   createDeadEndState,
   type DeadEndState,
-} from "../../agent-guards.js";
+} from "../../agent-guards/index.js";
 
 export const deadEndMiddleware: CanonicalMiddleware = {
   name: "dead-end",

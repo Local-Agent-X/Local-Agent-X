@@ -184,7 +184,7 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
     let providerCall: Promise<string | null>;
     if (provider === "anthropic") {
       providerCall = (async () => {
-        const { streamAnthropicResponse } = await import("../anthropic-client.js");
+        const { streamAnthropicResponse } = await import("../anthropic-client/index.js");
         const stream = streamAnthropicResponse({
           token: apiKey, model,
           messages: [{ role: "user", content: opts.userPrompt } as never],
@@ -201,7 +201,7 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
       })();
     } else if (provider === "codex") {
       providerCall = (async () => {
-        const { streamCodexResponse } = await import("../codex-client.js");
+        const { streamCodexResponse } = await import("../codex-client/index.js");
         const stream = streamCodexResponse({
           token: apiKey, model,
           messages: [{ role: "user", content: opts.userPrompt } as never],

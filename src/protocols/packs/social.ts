@@ -2,7 +2,7 @@
  * Social Media Protocol Pack — Instagram, Twitter/X, Facebook, TikTok protocols.
  */
 
-import type { Protocol } from "../../protocols.js";
+import type { Protocol } from "../../protocols/index.js";
 
 export const instagramStoryMission: Protocol = {
   name: "instagram_story",

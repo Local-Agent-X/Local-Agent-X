@@ -18,7 +18,7 @@
 // for those primitives, not primitives themselves.
 
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { ProjectStore } from "../agent-store.js";
+import { ProjectStore } from "../agent-store/index.js";
 
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
@@ -30,7 +30,7 @@ function err(content: string): ToolResult { return { content, isError: true }; }
  *  swallow errors so a missing WS context doesn't fail the tool call. */
 async function broadcastProjectsChanged(): Promise<void> {
   try {
-    const { broadcastAll } = await import("../chat-ws.js");
+    const { broadcastAll } = await import("../chat-ws/index.js");
     broadcastAll({ type: "projects_changed" });
   } catch { /* no WS context (e.g. test) — tool itself still succeeded */ }
 }

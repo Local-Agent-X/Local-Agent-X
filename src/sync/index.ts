@@ -3,13 +3,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-import { createLogger } from "./logger.js";
-import { DEFAULT_CONFIG, type SyncConfig } from "./sync/constants.js";
-import { resolveConflicts } from "./sync/conflict-resolver.js";
-import { copyFromSync } from "./sync/pull-files.js";
-import { copyToSync } from "./sync/push-files.js";
+import { createLogger } from "../logger.js";
+import { DEFAULT_CONFIG, type SyncConfig } from "./constants.js";
+import { resolveConflicts } from "./conflict-resolver.js";
+import { copyFromSync } from "./pull-files.js";
+import { copyToSync } from "./push-files.js";
 
-export type { SyncConfig } from "./sync/constants.js";
+export type { SyncConfig } from "./constants.js";
 
 const logger = createLogger("sync");
 const execFileAsync = promisify(execFile);

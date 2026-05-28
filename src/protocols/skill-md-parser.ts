@@ -15,7 +15,7 @@
  * 30-line key/value+list parser handles every case in the upstream corpus.
  */
 
-import type { Protocol, ProtocolSource } from "../protocols.js";
+import type { Protocol, ProtocolSource } from "../protocols/index.js";
 
 interface Frontmatter {
   meta: Record<string, string | string[]>;

@@ -26,8 +26,8 @@
  */
 
 import { loadSkillBody } from "./primal-auto-build/skill-bodies.js";
-import { getAllProtocols } from "./protocols.js";
-import type { Protocol } from "./protocols.js";
+import { getAllProtocols } from "./protocols/index.js";
+import type { Protocol } from "./protocols/index.js";
 
 const SLASH_COMMAND_RE = /^\/([a-zA-Z][a-zA-Z0-9_-]*)(?:\s+([\s\S]*))?$/;
 

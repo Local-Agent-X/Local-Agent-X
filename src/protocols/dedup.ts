@@ -21,7 +21,7 @@ import { join, resolve } from "node:path";
 import { getRuntimeConfig } from "../config.js";
 import { getEmbeddingProviderSingleton } from "../embedding-singleton.js";
 import { createLogger } from "../logger.js";
-import type { Protocol } from "../protocols.js";
+import type { Protocol } from "../protocols/index.js";
 
 const logger = createLogger("protocols.dedup");
 

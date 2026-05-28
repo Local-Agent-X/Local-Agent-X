@@ -26,7 +26,7 @@ import {
   readUpdateContextFiles,
   renderBuilderPrompt,
 } from "./render-builder-prompt.js";
-import { AgentTemplateStore, type AgentExecStrategy } from "../agent-store.js";
+import { AgentTemplateStore, type AgentExecStrategy } from "../agent-store/index.js";
 import { seedAppTemplate } from "./app-tools/app-template.js";
 import { buildContextPack } from "../ops/context-pack-builder.js";
 import { newOpId } from "../ops/op-store.js";
@@ -41,7 +41,7 @@ import {
 } from "../canonical-loop/index.js";
 import { createAppBuildAdapter } from "../canonical-loop/adapters/app-build-adapter.js";
 import { makeChatToolDispatcher } from "../canonical-loop/chat-tool-dispatcher.js";
-import { SecurityLayer } from "../security.js";
+import { SecurityLayer } from "../security/index.js";
 import type { Op, OpVisibility } from "../ops/types.js";
 import { readTool, writeTool, editTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";

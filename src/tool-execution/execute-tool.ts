@@ -5,11 +5,11 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ToolDefinition, ToolResult, ServerEvent } from "../types.js";
-import type { SecurityLayer } from "../security.js";
+import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { ThreatEngine } from "../threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
-import { compactIfNeeded, compactIfNeededWithLLM } from "../context-manager.js";
+import { compactIfNeeded, compactIfNeededWithLLM } from "../context-manager/index.js";
 import { createContext } from "./context.js";
 import { resolvePhase } from "./resolve-tool.js";
 import { enforcePolicyPhase } from "./enforce-policy.js";

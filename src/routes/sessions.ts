@@ -198,7 +198,7 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
   // unchanged for callers that want to remove ONE session.
   if (method === "DELETE" && url.pathname === "/api/sessions") {
     try {
-      const { broadcastAll } = await import("../chat-ws.js");
+      const { broadcastAll } = await import("../chat-ws/index.js");
       broadcastAll({ type: "sidebar_clear_chats", at: Date.now() });
     } catch { /* WS broadcast best-effort; the response below is the source of truth */ }
     json(200, {

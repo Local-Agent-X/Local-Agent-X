@@ -8,5 +8,5 @@
  * Persists to ~/.lax/upcoming-events.json.
  */
 
-export type { UpcomingEvent, FollowUp } from "./anticipatory-care/types.js";
-export { AnticipatoryCare } from "./anticipatory-care/care.js";
+export type { UpcomingEvent, FollowUp } from "./types.js";
+export { AnticipatoryCare } from "./care.js";

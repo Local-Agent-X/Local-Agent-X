@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "../../types.js";
-import { IssueStore, type IssuePriority } from "../../agent-store.js";
+import { IssueStore, type IssuePriority } from "../../agent-store/index.js";
 import { ok, err, getAgentProjectId } from "./shared.js";
 
 export const issueCreateTool: ToolDefinition = {

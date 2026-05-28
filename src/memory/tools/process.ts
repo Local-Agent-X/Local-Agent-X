@@ -1,4 +1,4 @@
-import type { MemoryIndex } from "../../memory.js";
+import type { MemoryIndex } from "../../memory/index.js";
 
 export function createProcessTools(memory: MemoryIndex) {
   return [

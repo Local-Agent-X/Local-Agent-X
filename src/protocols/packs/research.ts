@@ -2,7 +2,7 @@
  * Research Protocol Pack — web research, summarize, cite protocols.
  */
 
-import type { Protocol } from "../../protocols.js";
+import type { Protocol } from "../../protocols/index.js";
 
 export const webResearchMission: Protocol = {
   name: "web_research",

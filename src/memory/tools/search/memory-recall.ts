@@ -1,4 +1,4 @@
-import type { MemoryIndex } from "../../../memory.js";
+import type { MemoryIndex } from "../../../memory/index.js";
 import type { FactKind, RetainedFact } from "../../types.js";
 
 export function memoryRecallTool(memory: MemoryIndex) {

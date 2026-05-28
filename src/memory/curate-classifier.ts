@@ -185,7 +185,7 @@ export async function streamForResponse_anthropic(token: string, model: string, 
     }
   }
   try {
-    const { streamAnthropicResponse } = await import("../anthropic-client.js");
+    const { streamAnthropicResponse } = await import("../anthropic-client/index.js");
     const stream = streamAnthropicResponse({
       token,
       model,
@@ -226,7 +226,7 @@ export async function streamForResponse_codex(token: string, model: string, user
     }
   }
   try {
-    const { streamCodexResponse } = await import("../codex-client.js");
+    const { streamCodexResponse } = await import("../codex-client/index.js");
     const stream = streamCodexResponse({
       token,
       model,

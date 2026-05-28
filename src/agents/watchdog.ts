@@ -25,7 +25,7 @@ import {
   AgentTemplateStore,
   IssueStore,
   type Issue,
-} from "../agent-store.js";
+} from "../agent-store/index.js";
 import { ProjectRosterStore, type ProjectRoster } from "../project-rosters.js";
 import { performEscalation } from "./escalation-core.js";
 import { createLogger } from "../logger.js";

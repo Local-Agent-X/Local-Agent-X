@@ -9,7 +9,7 @@
  */
 import type { CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
-import { checkUnmatchedActionClaim } from "../../agent-guards.js";
+import { checkUnmatchedActionClaim } from "../../agent-guards/index.js";
 import { verifyClaimHallucinationWithLLM } from "../../classifiers/claim-verify.js";
 
 interface FiredFlag { fired: boolean }

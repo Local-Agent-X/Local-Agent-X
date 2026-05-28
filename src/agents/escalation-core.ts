@@ -17,7 +17,7 @@ import {
   AgentTemplateStore,
   IssueStore,
   ProjectStore,
-} from "../agent-store.js";
+} from "../agent-store/index.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { EventBus } from "../event-bus.js";
 import { createLogger } from "../logger.js";

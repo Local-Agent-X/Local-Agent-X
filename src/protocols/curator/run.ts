@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../../logger.js";
-import { getAllProtocols } from "../../protocols.js";
+import { getAllProtocols } from "../../protocols/index.js";
 import { applyAutomaticTransitions, loadArchived } from "../archive.js";
 import { getSearchMisses } from "../usage.js";
 import { findClusters, loadEmbeddingCache } from "./clusters.js";

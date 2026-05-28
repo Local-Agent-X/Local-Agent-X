@@ -1,13 +1,13 @@
 import { EmotionalMemory } from "../emotional-memory.js";
 import { MemoryGraph } from "../memory-graph.js";
-import { ProactiveMemory } from "../proactive-memory.js";
-import MemoryImportance from "../memory-importance.js";
+import { ProactiveMemory } from "../proactive-memory/index.js";
+import MemoryImportance from "../memory-importance/index.js";
 import { SharedHistory } from "../shared-history.js";
 import { LanguageMirror } from "../language-mirror.js";
 import { TrustEngine } from "../trust-deepening.js";
 import { VulnerabilityAwareness } from "../vulnerability-awareness.js";
 import { CorrectionLearner } from "../correction-learning.js";
-import { AssociativeMemory } from "../associative-recall.js";
+import { AssociativeMemory } from "../associative-recall/index.js";
 import { PredictivePrefetcher } from "../predictive-prefetch.js";
 import type { OrchestratorInput, ModuleSignal, Notification } from "./types.js";
 import { GRAPH_STOP_WORDS } from "./types.js";

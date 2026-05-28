@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { MemoryIndex } from "../../memory.js";
+import type { MemoryIndex } from "../../memory/index.js";
 import { PERSONALITY_FILES, dedupeProfileMarkdown, setUserScalarField } from "../personality.js";
 import {
   writeMemorySafely,

@@ -5,7 +5,7 @@
  */
 
 import type { ToolDefinition } from "../../types.js";
-import { AppRegistry } from "../../app-runtime.js";
+import { AppRegistry } from "../../app-runtime/index.js";
 import { EventBus } from "../../event-bus.js";
 import { ok, err, getActor } from "./shared.js";
 

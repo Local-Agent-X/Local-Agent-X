@@ -40,7 +40,7 @@ export function startManifestWatcher(): void {
             if (existing) clearTimeout(existing);
             appDebounce.set(appName, setTimeout(() => {
               appDebounce.delete(appName);
-              import("../chat-ws.js").then(({ broadcastAll }) => {
+              import("../chat-ws/index.js").then(({ broadcastAll }) => {
                 try { broadcastAll({ type: "app-files-changed", appName }); }
                 catch (e) { logger.warn(`[manifest] app-files-changed broadcast failed: ${(e as Error).message}`); }
               }).catch(() => {});

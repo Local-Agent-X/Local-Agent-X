@@ -5,9 +5,9 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import type { BrowserManager } from "../../browser.js";
+import type { BrowserManager } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
-import { closeBrowser } from "../../browser.js";
+import { closeBrowser } from "../../browser/index.js";
 import { scanEvaluateScript } from "../../browser/guards.js";
 import { ok, err, appendPostActionSnapshot } from "./shared.js";
 

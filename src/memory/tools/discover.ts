@@ -1,4 +1,4 @@
-import type { MemoryIndex } from "../../memory.js";
+import type { MemoryIndex } from "../../memory/index.js";
 import { discoverMemorySources } from "../discovery/index.js";
 
 // Read-only filesystem scan for memory stores from other agents/tools.

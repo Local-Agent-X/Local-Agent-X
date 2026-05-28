@@ -1,6 +1,6 @@
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
-import type { AgentTemplate } from "../../agent-store.js";
+import type { AgentTemplate } from "../../agent-store/index.js";
 import { AgentTemplateSchema, validateBody } from "../../route-schemas.js";
 import { createLogger } from "../../logger.js";
 

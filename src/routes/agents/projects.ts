@@ -1,6 +1,6 @@
 import type { RouteHandler, ServerContext } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
-import type { Project } from "../../agent-store.js";
+import type { Project } from "../../agent-store/index.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("routes.agents.projects");
@@ -13,7 +13,7 @@ const logger = createLogger("routes.agents.projects");
  *  fail the route. */
 async function broadcastProjectsChanged(): Promise<void> {
   try {
-    const { broadcastAll } = await import("../../chat-ws.js");
+    const { broadcastAll } = await import("../../chat-ws/index.js");
     broadcastAll({ type: "projects_changed" });
   } catch { /* no WS context — request itself still succeeded */ }
 }

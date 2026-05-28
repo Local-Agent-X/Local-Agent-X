@@ -6,5 +6,5 @@
  * Uses long polling (getUpdates) — no webhook, no public URL needed.
  */
 
-export { TelegramBridge } from "./telegram-bridge/bridge.js";
-export type { TelegramBridgeConfig } from "./telegram-bridge/types.js";
+export { TelegramBridge } from "./bridge.js";
+export type { TelegramBridgeConfig } from "./types.js";

@@ -11,7 +11,7 @@ import { queryAuditLog, getAuditSummary } from "../ari-audit-viewer.js";
 import { runBenchmarks } from "../ari-benchmarks.js";
 import { runInjectionTests } from "../security-tests.js";
 import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "../session-policy.js";
-import { isAriActive } from "../ari-kernel.js";
+import { isAriActive } from "../ari-kernel/index.js";
 import { ThreatEngine } from "../threat-engine.js";
 
 import { createLogger } from "../logger.js";
@@ -118,7 +118,7 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
 
   // ARI status
   if (method === "GET" && url.pathname === "/api/ari-status") {
-    const { ariStatus } = await import("../ari-kernel.js");
+    const { ariStatus } = await import("../ari-kernel/index.js");
     json(200, { active: isAriActive(), status: await ariStatus() }); return true;
   }
 

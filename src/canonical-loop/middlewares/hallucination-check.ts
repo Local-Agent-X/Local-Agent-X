@@ -11,7 +11,7 @@ import {
   checkApprovalHallucination,
   checkCreationHallucination,
   checkWorkerHallucination,
-} from "../../agent-guards.js";
+} from "../../agent-guards/index.js";
 import { verifyClaimHallucinationWithLLM } from "../../classifiers/claim-verify.js";
 
 export const hallucinationCheckMiddleware: CanonicalMiddleware = {

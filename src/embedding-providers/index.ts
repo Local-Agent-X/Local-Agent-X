@@ -12,28 +12,28 @@
  *   - local.ts    — TF-IDF + feature hashing, zero network, deterministic
  */
 
-import { createLogger } from "./logger.js";
-import { GeminiEmbeddings } from "./embedding-providers/gemini.js";
-import { LocalEmbeddings } from "./embedding-providers/local.js";
-import { MistralEmbeddings } from "./embedding-providers/mistral.js";
-import { OllamaEmbeddings } from "./embedding-providers/ollama.js";
-import { OpenAIEmbeddings } from "./embedding-providers/openai.js";
+import { createLogger } from "../logger.js";
+import { GeminiEmbeddings } from "./gemini.js";
+import { LocalEmbeddings } from "./local.js";
+import { MistralEmbeddings } from "./mistral.js";
+import { OllamaEmbeddings } from "./ollama.js";
+import { OpenAIEmbeddings } from "./openai.js";
 import type {
   EmbeddingProviderConfig,
   EmbeddingProviderType,
   ExtendedEmbeddingProvider,
-} from "./embedding-providers/types.js";
-import { VoyageEmbeddings } from "./embedding-providers/voyage.js";
+} from "./types.js";
+import { VoyageEmbeddings } from "./voyage.js";
 
 const logger = createLogger("embedding-providers");
 
-export type { EmbeddingProviderConfig, EmbeddingProviderType, ExtendedEmbeddingProvider } from "./embedding-providers/types.js";
-export { OpenAIEmbeddings } from "./embedding-providers/openai.js";
-export { GeminiEmbeddings } from "./embedding-providers/gemini.js";
-export { VoyageEmbeddings } from "./embedding-providers/voyage.js";
-export { MistralEmbeddings } from "./embedding-providers/mistral.js";
-export { OllamaEmbeddings } from "./embedding-providers/ollama.js";
-export { LocalEmbeddings } from "./embedding-providers/local.js";
+export type { EmbeddingProviderConfig, EmbeddingProviderType, ExtendedEmbeddingProvider } from "./types.js";
+export { OpenAIEmbeddings } from "./openai.js";
+export { GeminiEmbeddings } from "./gemini.js";
+export { VoyageEmbeddings } from "./voyage.js";
+export { MistralEmbeddings } from "./mistral.js";
+export { OllamaEmbeddings } from "./ollama.js";
+export { LocalEmbeddings } from "./local.js";
 
 const PROVIDER_NAMES: EmbeddingProviderType[] = [
   "openai",

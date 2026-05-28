@@ -1,4 +1,4 @@
-import type { MemoryIndex } from "../../memory.js";
+import type { MemoryIndex } from "../../memory/index.js";
 import { memorySearchTool } from "./search/memory-search.js";
 import { searchPastSessionsTool } from "./search/search-past-sessions.js";
 import { memoryReindexTool } from "./search/memory-reindex.js";

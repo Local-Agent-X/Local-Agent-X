@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkUnmatchedActionClaim } from "../src/agent-guards.js";
+import { checkUnmatchedActionClaim } from "../src/agent-guards/index.js";
 
 // Regression: model says "noted, I'll remember that" or "got it, saved" in
 // reply but never calls memory_save / memory_update_profile. The guard

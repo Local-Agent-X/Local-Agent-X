@@ -28,20 +28,20 @@ describe("expandPlaceholders — portable home + secret resolution", () => {
   });
 
   it("expands ${HOME} to the OS home directory", async () => {
-    const { expandPlaceholders } = await import("../src/mcp-client.js");
+    const { expandPlaceholders } = await import("../src/mcp-client/index.js");
     const r = expandPlaceholders("${HOME}/Documents");
     expect(r.value).toBe(`${homedir()}/Documents`);
     expect(r.missing).toEqual([]);
   });
 
   it("expands the leading `~/` shorthand", async () => {
-    const { expandPlaceholders } = await import("../src/mcp-client.js");
+    const { expandPlaceholders } = await import("../src/mcp-client/index.js");
     const r = expandPlaceholders("~/projects/foo");
     expect(r.value).toBe(`${homedir()}/projects/foo`);
   });
 
   it("expands ${USERPROFILE} on Windows-style configs", async () => {
-    const { expandPlaceholders } = await import("../src/mcp-client.js");
+    const { expandPlaceholders } = await import("../src/mcp-client/index.js");
     // USERPROFILE may be unset on Linux test runners — the helper falls
     // back to homedir() so the result is always a usable path.
     const r = expandPlaceholders("${USERPROFILE}\\Documents");
@@ -51,7 +51,7 @@ describe("expandPlaceholders — portable home + secret resolution", () => {
 
   it("returns missing-secret list when ${secret:NAME} can't be resolved", async () => {
     // No vault configured in test env → secret lookup returns undefined.
-    const { expandPlaceholders } = await import("../src/mcp-client.js");
+    const { expandPlaceholders } = await import("../src/mcp-client/index.js");
     const r = expandPlaceholders("${secret:NONEXISTENT_TOKEN}");
     expect(r.missing).toContain("NONEXISTENT_TOKEN");
     // Original placeholder preserved in the value so log output surfaces
@@ -61,7 +61,7 @@ describe("expandPlaceholders — portable home + secret resolution", () => {
   });
 
   it("does NOT expand bare $VAR or $(cmd) — only the explicit ${...} forms", async () => {
-    const { expandPlaceholders } = await import("../src/mcp-client.js");
+    const { expandPlaceholders } = await import("../src/mcp-client/index.js");
     // These are the shell-injection vectors the narrow expander rejects.
     const cases = [
       "$HOME/Documents",        // bare $VAR — left alone
@@ -77,7 +77,7 @@ describe("expandPlaceholders — portable home + secret resolution", () => {
   });
 
   it("multiple placeholders expand independently in one string", async () => {
-    const { expandPlaceholders } = await import("../src/mcp-client.js");
+    const { expandPlaceholders } = await import("../src/mcp-client/index.js");
     const r = expandPlaceholders("${HOME}/cache/${secret:MISSING}/data");
     expect(r.value.startsWith(`${homedir()}/cache/`)).toBe(true);
     expect(r.value.endsWith("/data")).toBe(true);
@@ -87,7 +87,7 @@ describe("expandPlaceholders — portable home + secret resolution", () => {
 
 describe("expandPlaceholders — secret resolution via the injected lookup", () => {
   it("resolves ${secret:NAME} when the lookup returns a value", async () => {
-    const { expandPlaceholders, setSecretLookup } = await import("../src/mcp-client.js");
+    const { expandPlaceholders, setSecretLookup } = await import("../src/mcp-client/index.js");
     setSecretLookup((name) => (name === "GITHUB_TOKEN" ? "ghp_test_value" : undefined));
     try {
       const r = expandPlaceholders("${secret:GITHUB_TOKEN}");
@@ -99,7 +99,7 @@ describe("expandPlaceholders — secret resolution via the injected lookup", () 
   });
 
   it("returns missing list when the lookup yields undefined", async () => {
-    const { expandPlaceholders, setSecretLookup } = await import("../src/mcp-client.js");
+    const { expandPlaceholders, setSecretLookup } = await import("../src/mcp-client/index.js");
     setSecretLookup(() => undefined);
     try {
       const r = expandPlaceholders("${secret:GITHUB_TOKEN}");
@@ -112,7 +112,7 @@ describe("expandPlaceholders — secret resolution via the injected lookup", () 
   });
 
   it("supports multiple ${secret:NAME} placeholders, partially resolving", async () => {
-    const { expandPlaceholders, setSecretLookup } = await import("../src/mcp-client.js");
+    const { expandPlaceholders, setSecretLookup } = await import("../src/mcp-client/index.js");
     setSecretLookup((name) => (name === "PRESENT" ? "yes" : undefined));
     try {
       const r = expandPlaceholders("--token=${secret:PRESENT} --db=${secret:ABSENT}");

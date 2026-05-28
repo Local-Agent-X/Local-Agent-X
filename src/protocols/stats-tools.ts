@@ -17,7 +17,7 @@
  */
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { getProtocolStats, getSearchMisses, listUnusedProtocols, usageFileSizeBytes } from "./usage.js";
-import { getAllProtocols } from "../protocols.js";
+import { getAllProtocols } from "../protocols/index.js";
 import {
   loadArchived, archiveProtocol, applyAutomaticTransitions, computeProtocolState,
   type ProtocolState,

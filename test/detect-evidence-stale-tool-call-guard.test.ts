@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectEvidenceStale, type TurnState } from "../src/agent-loop-detectors.js";
+import { detectEvidenceStale, type TurnState } from "../src/agent-loop-detectors/index.js";
 
 // Regression: detectEvidenceStale used to fire even when the agent had just
 // emitted a tool call this iteration. The orchestrator would push the

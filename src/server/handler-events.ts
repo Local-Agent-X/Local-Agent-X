@@ -5,15 +5,15 @@ import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import { extractAgentOutput, safeErrorMessage } from "../server-utils.js";
 import { enqueue } from "../execution-lanes.js";
 import { EventBus } from "../event-bus.js";
-import { ProjectStore, type AgentRun } from "../agent-store.js";
+import { ProjectStore, type AgentRun } from "../agent-store/index.js";
 import { looksLikeClarificationRequest } from "../agents/result-guard.js";
 import { registerAgentRunDriver, type AgentRunDriver } from "../agents/runtime.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
-import type { SessionStore, MemoryIndex } from "../memory.js";
+import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
-import type { SecurityLayer } from "../security.js";
+import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy.js";
-import type { AgentRunStore, AgentTemplateStore } from "../agent-store.js";
+import type { AgentRunStore, AgentTemplateStore } from "../agent-store/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.handler-events");
@@ -97,7 +97,7 @@ export function registerHandlerEvents(deps: {
     const agentSession: Session = { id: `agent-${agentId}`, title: `Agent: ${role}`, messages: [], createdAt: Date.now(), updatedAt: Date.now() };
     let worktreeInfo: { path: string; branch: string } | null = null;
     try {
-      const { resolveProvider } = await import("../agent-request.js");
+      const { resolveProvider } = await import("../agent-request/index.js");
       // Thread the resolved per-agent model pin into the provider chain.
       // resolveAgentModel (invoke.ts) already walked run→roster→template;
       // the pin arrives here as req.modelOverride. When unset, we fall

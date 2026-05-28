@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { createArikernelBridgeTools } from "../../src/tools/arikernel-bridge.js";
 import { dispatchSingleToolCall, type UnifiedDispatchCtx } from "../../src/tool-executor.js";
 import { UnifiedToolRegistry } from "../../src/tools/registry.js";
-import { SecurityLayer } from "../../src/security.js";
+import { SecurityLayer } from "../../src/security/index.js";
 import { ToolPolicy } from "../../src/tool-policy.js";
 import { DEFAULT_POLICY } from "../../src/tool-policy/default-rules.js";
 import type { ToolDefinition } from "../../src/types.js";

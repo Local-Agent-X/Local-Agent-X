@@ -5,8 +5,8 @@
 // build_app even when tool_choice gets dropped.
 
 import type { LAXConfig, ToolDefinition } from "../../types.js";
-import type { MemoryIndex } from "../../memory.js";
-import type { IntegrationRegistry } from "../../integrations.js";
+import type { MemoryIndex } from "../../memory/index.js";
+import type { IntegrationRegistry } from "../../integrations/index.js";
 import { loadSystemPrompt } from "../../config-loader.js";
 import { createLogger } from "../../logger.js";
 import { providerRiderFor } from "./provider-riders.js";

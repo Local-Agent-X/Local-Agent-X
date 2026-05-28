@@ -22,7 +22,7 @@ import { AgentCatalog } from "../src/agents/catalog.js";
 import { invokeAgent, AgentNotFoundError, applyProjectToolGate } from "../src/agents/invoke.js";
 import { createAgentTools } from "../src/agents/tools.js";
 import { _seedBuiltinRoles } from "../src/agency/agent-roles.js";
-import { AgentTemplateStore, ProjectStore } from "../src/agent-store.js";
+import { AgentTemplateStore, ProjectStore } from "../src/agent-store/index.js";
 import { ProjectRosterStore } from "../src/project-rosters.js";
 
 describe("AgentCatalog — superset merge of legacy sources", () => {

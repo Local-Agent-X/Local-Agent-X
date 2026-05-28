@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, relative, isAbsolute } from "node:path";
-import type { MemoryIndex } from "../../../memory.js";
+import type { MemoryIndex } from "../../../memory/index.js";
 
 export function memoryGetTool(memory: MemoryIndex) {
   return {

@@ -12,6 +12,6 @@ export type {
   AssociationContext,
   AssociativeResult,
   AssociationWeb,
-} from "./associative-recall/types.js";
+} from "./types.js";
 
-export { AssociativeMemory } from "./associative-recall/memory.js";
+export { AssociativeMemory } from "./memory.js";

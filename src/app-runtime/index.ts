@@ -46,17 +46,17 @@ export type {
   LayoutDefinition,
   LayoutType,
   QueuedAction,
-} from "./app-runtime/types.js";
-export { validateAppDefinition, validateAppId, validateComponent, type ValidationResult } from "./app-runtime/validation.js";
-export { verifyAuditEntry } from "./app-runtime/audit-signing.js";
-export { AppRegistry } from "./app-runtime/registry.js";
+} from "./types.js";
+export { validateAppDefinition, validateAppId, validateComponent, type ValidationResult } from "./validation.js";
+export { verifyAuditEntry } from "./audit-signing.js";
+export { AppRegistry } from "./registry.js";
 
 // ── Backward compatibility ───────────────────────────────────
 // Re-export types under old names so existing code doesn't break immediately
 
-import type { AppDefinition, AppEvent, AppState } from "./app-runtime/types.js";
+import type { AppDefinition, AppEvent, AppState } from "./types.js";
 
 export type DashboardDefinition = AppDefinition;
 export type DashboardState = AppState;
 export type DashboardEvent = AppEvent;
-export { AppRegistry as DashboardRegistry } from "./app-runtime/registry.js";
+export { AppRegistry as DashboardRegistry } from "./registry.js";

@@ -23,7 +23,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getRuntimeConfig } from "../config.js";
-import type { Protocol } from "../protocols.js";
+import type { Protocol } from "../protocols/index.js";
 import { loadCustomProtocols, saveCustomProtocols, deleteProtocol } from "./builder.js";
 import { getProtocolStats, readAllUsage } from "./usage.js";
 import { createLogger } from "../logger.js";

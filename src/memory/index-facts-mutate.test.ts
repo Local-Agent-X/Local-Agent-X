@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MemoryIndex } from "../memory.js";
+import { MemoryIndex } from "../memory/index.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

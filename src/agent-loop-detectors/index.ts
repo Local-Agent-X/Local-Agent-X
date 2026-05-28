@@ -25,16 +25,16 @@ export {
   EMPTY_RESPONSE_INSTRUCTION,
   UNCOMMITTED_TURN_INSTRUCTION,
   EVIDENCE_STALE_INSTRUCTION,
-} from "./agent-loop-detectors/instructions.js";
+} from "./instructions.js";
 
-export { isWaitingOnUser } from "./agent-loop-detectors/patterns.js";
+export { isWaitingOnUser } from "./patterns.js";
 
 export {
   userMessageHasImages,
   type DetectorKind,
   type RetryInstruction,
   type TurnState,
-} from "./agent-loop-detectors/state.js";
+} from "./state.js";
 
 export {
   detectPlanningOnly,
@@ -43,15 +43,15 @@ export {
   detectEmptyResponse,
   detectUncommittedTurn,
   detectEvidenceStale,
-} from "./agent-loop-detectors/detectors.js";
+} from "./detectors.js";
 
 export {
   DEFAULT_RETRY_BUDGET,
   createRetryCounters,
   type RetryBudget,
   type RetryCounters,
-} from "./agent-loop-detectors/budget.js";
+} from "./budget.js";
 
-export { runPostTurnDetectors } from "./agent-loop-detectors/orchestrator.js";
+export { runPostTurnDetectors } from "./orchestrator.js";
 
-export { computeEvidenceCount } from "./agent-loop-detectors/evidence.js";
+export { computeEvidenceCount } from "./evidence.js";

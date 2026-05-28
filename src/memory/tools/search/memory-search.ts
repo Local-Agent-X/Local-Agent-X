@@ -1,5 +1,5 @@
 import { resolve, relative } from "node:path";
-import type { MemoryIndex } from "../../../memory.js";
+import type { MemoryIndex } from "../../../memory/index.js";
 
 export function memorySearchTool(memory: MemoryIndex) {
   return {

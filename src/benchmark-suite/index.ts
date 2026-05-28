@@ -13,6 +13,6 @@ export type {
   BenchmarkRunResult,
   ProviderComparison,
   SendPromptFn,
-} from "./benchmark-suite/types.js";
+} from "./types.js";
 
-export { BenchmarkSuite } from "./benchmark-suite/suite.js";
+export { BenchmarkSuite } from "./suite.js";

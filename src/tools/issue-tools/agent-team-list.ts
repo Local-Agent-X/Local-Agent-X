@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "../../types.js";
-import { AgentTemplateStore } from "../../agent-store.js";
+import { AgentTemplateStore } from "../../agent-store/index.js";
 import { ProjectRosterStore } from "../../project-rosters.js";
 import { ok } from "./shared.js";
 

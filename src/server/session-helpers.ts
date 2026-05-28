@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { SessionStore, MemoryIndex } from "../memory.js";
+import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { Session } from "../types.js";
 
 import { createLogger } from "../logger.js";

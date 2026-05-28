@@ -10,7 +10,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
 import { parseExportFile, detectFormat } from "./conversation-parsers.js";
 import { chunkConversationPairs } from "./memory-chunking.js";
-import type { ChunkMetadata } from "./memory.js";
+import type { ChunkMetadata } from "./memory/index.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("conversation-ingest");

@@ -12,6 +12,6 @@ export type {
   CompressedSession,
   CompressionLevel,
   CompressionReport,
-} from "./memory-compression/types.js";
+} from "./types.js";
 
-export { MemoryCompressor } from "./memory-compression/compressor.js";
+export { MemoryCompressor } from "./compressor.js";

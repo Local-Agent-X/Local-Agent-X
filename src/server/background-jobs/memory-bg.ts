@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { SessionStore, MemoryIndex } from "../../memory.js";
+import type { SessionStore, MemoryIndex } from "../../memory/index.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("server.background-jobs.memory-bg");
@@ -22,7 +22,7 @@ export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
       }
     } catch (e) { logger.warn("[memory-bg] Reflect:", (e as Error).message); }
     try {
-      const { MemoryConsolidator: MC } = await import("../../memory-consolidation.js");
+      const { MemoryConsolidator: MC } = await import("../../memory-consolidation/index.js");
       const report = MC.getInstance().consolidate();
       if (report.mergedCount > 0 || report.promotedCount > 0) {
         logger.info(`[memory-bg] Consolidation: merged=${report.mergedCount} promoted=${report.promotedCount} entities=${report.entityPagesUpdated}`);

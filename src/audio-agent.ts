@@ -68,7 +68,7 @@ export class AudioAgent extends EventEmitter {
         if (!this.running || !audio) continue;
 
         // Transcribe
-        const { transcribe } = await import("./voice.js");
+        const { transcribe } = await import("./voice/index.js");
         const text = transcribe(audio);
         if (!text || text.length < 2) {
           this.options.onStatus("No speech detected, listening again...");
@@ -184,7 +184,7 @@ export class AudioAgent extends EventEmitter {
 
   /** Speak text using TTS */
   private async speak(text: string): Promise<void> {
-    const { synthesize } = await import("./voice.js");
+    const { synthesize } = await import("./voice/index.js");
     const wav = await synthesize(text, this.options.voice);
     if (!wav || wav.length === 0 || !this.running) return;
 

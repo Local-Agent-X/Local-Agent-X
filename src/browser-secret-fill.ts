@@ -28,7 +28,7 @@
 import type { ToolDefinition, ToolResult } from "./types.js";
 import type { SecretsStore } from "./secrets.js";
 import { deriveOrigin } from "./secrets.js";
-import { getBrowserManager } from "./browser.js";
+import { getBrowserManager } from "./browser/index.js";
 import { registerRedactedSecretValue } from "./sanitize.js";
 import { getActivePreBlessedSecrets } from "./operations/executor.js";
 import { loadOperation } from "./operations/conductor.js";
@@ -116,7 +116,7 @@ export function createBrowserSecretFillTool(
       }
       const pressEnter = args.press_enter === true;
       const sessionId = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
-      const { withBrowserLock } = await import("./browser.js");
+      const { withBrowserLock } = await import("./browser/index.js");
       return withBrowserLock(sessionId, async () => {
 
       // Look up secret metadata. We do NOT pull the value yet — only confirm it

@@ -24,13 +24,13 @@ import {
   type ConsolidationReport,
   type FactEntry,
   type MergedFact,
-} from "./memory-consolidation/types.js";
-import { ensureDirs, jaccardSimilarity, slugify } from "./memory-consolidation/utils.js";
-import { loadTodayFacts } from "./memory-consolidation/load-facts.js";
-import { countContradictions, getPromotionCandidates, mergeRelatedFacts } from "./memory-consolidation/analyze.js";
-import { updateAllEntityPages } from "./memory-consolidation/write.js";
+} from "./types.js";
+import { ensureDirs, jaccardSimilarity, slugify } from "./utils.js";
+import { loadTodayFacts } from "./load-facts.js";
+import { countContradictions, getPromotionCandidates, mergeRelatedFacts } from "./analyze.js";
+import { updateAllEntityPages } from "./write.js";
 
-export type { FactEntry, MergedFact, ConsolidationReport } from "./memory-consolidation/types.js";
+export type { FactEntry, MergedFact, ConsolidationReport } from "./types.js";
 
 export class MemoryConsolidator {
   private static instance: MemoryConsolidator;

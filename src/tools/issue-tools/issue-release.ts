@@ -1,5 +1,5 @@
 import type { ToolDefinition } from "../../types.js";
-import { IssueStore } from "../../agent-store.js";
+import { IssueStore } from "../../agent-store/index.js";
 import { ok, err } from "./shared.js";
 
 export const issueReleaseTool: ToolDefinition = {

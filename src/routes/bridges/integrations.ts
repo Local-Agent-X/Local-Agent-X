@@ -1,6 +1,6 @@
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
-import { IntegrationRegistry } from "../../integrations.js";
+import { IntegrationRegistry } from "../../integrations/index.js";
 
 export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -44,7 +44,7 @@ export const handleIntegrationsRoutes: RouteHandler = async (method, url, req, r
     body.builtin = false; body.installed = false; body.enabled = true;
     if (!body.endpoints) body.endpoints = [];
     if (!body.headers) body.headers = {};
-    ctx.integrations.addIntegration(body as unknown as import("../../integrations.js").IntegrationConfig);
+    ctx.integrations.addIntegration(body as unknown as import("../../integrations/index.js").IntegrationConfig);
     json(200, { ok: true, id: body.id }); return true;
   }
   if (method === "DELETE" && url.pathname.startsWith("/api/integrations/")) {

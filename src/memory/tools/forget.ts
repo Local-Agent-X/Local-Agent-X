@@ -1,6 +1,6 @@
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { MemoryIndex } from "../../memory.js";
+import type { MemoryIndex } from "../../memory/index.js";
 import { atomicWriteFileSync, displayContent } from "../utils.js";
 import { PERSONALITY_FILES } from "../personality.js";
 

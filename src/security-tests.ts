@@ -7,7 +7,7 @@
 
 import { detectInjection } from "./sanitize.js";
 import { classifyData } from "./threat-engine.js";
-import { SecurityLayer } from "./security.js";
+import { SecurityLayer } from "./security/index.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("security-tests");

@@ -156,7 +156,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     // Broadcast so every open browser tab (bottom status bar, model selector)
     // updates instantly instead of staying on the stale provider.
     try {
-      const { broadcastAll } = await import("../../chat-ws.js");
+      const { broadcastAll } = await import("../../chat-ws/index.js");
       broadcastAll({ type: "settings_changed", settings: { provider, model } });
     } catch {}
     json(200, { ok: true, provider, model: model || settings.model }); return true;

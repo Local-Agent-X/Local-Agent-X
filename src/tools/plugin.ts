@@ -1,7 +1,7 @@
 import type { ToolClass } from "@arikernel/core";
 import type { ToolDefinition, ServerEvent } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
-import type { MemoryIndex } from "../memory.js";
+import type { MemoryIndex } from "../memory/index.js";
 import type { CronService } from "../cron-service.js";
 import type { UnifiedToolRegistry } from "./registry.js";
 

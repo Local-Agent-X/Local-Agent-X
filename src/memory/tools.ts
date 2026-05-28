@@ -5,7 +5,7 @@
  * memory_update_profile, memory_ingest, memory_consolidate — everything the
  * agent can call to read/write persistent memory.
  */
-import type { MemoryIndex } from "../memory.js";
+import type { MemoryIndex } from "../memory/index.js";
 import { createSearchTools } from "./tools/search.js";
 import { createSaveTools } from "./tools/save.js";
 import { createFactsTools } from "./tools/facts.js";

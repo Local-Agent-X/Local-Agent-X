@@ -3,7 +3,7 @@
  * escapeHtml / escapeJs / sanitizeHtml at the boundary.
  */
 
-import type { ComponentDefinition } from "../app-runtime.js";
+import type { ComponentDefinition } from "../app-runtime/index.js";
 import { escapeHtml, escapeJs, safeStr, sanitizeHtml } from "./sanitize.js";
 
 export function renderComponent(comp: ComponentDefinition): string {

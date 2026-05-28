@@ -16,7 +16,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MemoryIndex } from "../memory.js";
+import { MemoryIndex } from "../memory/index.js";
 import { _createUniversalIndexForTest, type UniversalIndex } from "./universal-index.js";
 
 let tempDir: string;

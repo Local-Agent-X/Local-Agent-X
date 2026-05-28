@@ -1,4 +1,4 @@
-import { AnticipatoryCare } from "../anticipatory-care.js";
+import { AnticipatoryCare } from "../anticipatory-care/index.js";
 import type { OrchestratorInput, TriageResult } from "./types.js";
 import { SENSITIVE_KEYWORDS, CORRECTION_KEYWORDS, FACT_PATTERNS, STORY_PATTERNS } from "./types.js";
 import { safeRun } from "./state.js";

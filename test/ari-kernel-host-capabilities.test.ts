@@ -31,7 +31,7 @@ import {
   isAriActive,
   startAriKernel,
   stopAriKernel,
-} from "../src/ari-kernel.js";
+} from "../src/ari-kernel/index.js";
 
 // Every (toolName, action) pair the production toolClassMap can route
 // through firewall.execute(). Mirrors HOST_CAPABILITY_MANIFEST, but
@@ -139,7 +139,7 @@ describe("AriKernel host capability manifest", () => {
     // audit store as gated calls — closing the "kernel only sees half the
     // catalog" gap. Verifies the contract: call ariObserve, the event
     // shows up in firewall.getEvents() with toolClass="internal".
-    const { ariObserve, getFirewallForTest } = await import("../src/ari-kernel.js");
+    const { ariObserve, getFirewallForTest } = await import("../src/ari-kernel/index.js");
     ariObserve("protocol_create", "internal", { name: "smoke-test" }, { sessionId: "chat-test-1234" });
     ariObserve("agent_list", "internal", {}, { sessionId: "chat-test-1234" });
 

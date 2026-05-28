@@ -21,7 +21,7 @@ export const postTurnDetectorMiddleware: CanonicalMiddleware = {
 
   async afterModelCall(ctx) {
     const { runPostTurnDetectors, computeEvidenceCount, userMessageHasImages, createRetryCounters } =
-      await import("../../agent-loop-detectors.js");
+      await import("../../agent-loop-detectors/index.js");
     const counters = getMiddlewareState(ctx.op.id, RETRY_COUNTERS_KEY, createRetryCounters);
 
     // Compute evidence from the committed op_messages PLUS this turn's

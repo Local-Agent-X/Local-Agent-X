@@ -4,7 +4,7 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import { ProjectStore } from "../../agent-store.js";
+import { ProjectStore } from "../../agent-store/index.js";
 import { ProjectRosterStore } from "../../project-rosters.js";
 
 export function ok(content: string): ToolResult { return { content }; }

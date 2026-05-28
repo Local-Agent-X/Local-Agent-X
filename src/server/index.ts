@@ -1,6 +1,6 @@
-import { AppRegistry } from "../app-runtime.js";
-import { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore } from "../agent-store.js";
-import { broadcastAll } from "../chat-ws.js";
+import { AppRegistry } from "../app-runtime/index.js";
+import { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore } from "../agent-store/index.js";
+import { broadcastAll } from "../chat-ws/index.js";
 import type { LAXConfig } from "../types.js";
 import type { ServerContext } from "../server-context.js";
 import { bootstrapServices } from "./bootstrap-services.js";
@@ -102,7 +102,7 @@ export async function startServer(config: LAXConfig) {
   // surfacing as a "BLOCKED by tool-policy" failure to a real user.
   {
     const { auditPolicyCoverage, printPolicyCoverageReport } = await import("../tool-policy.js");
-    const { auditKernelCoverage, printKernelCoverageReport } = await import("../ari-kernel.js");
+    const { auditKernelCoverage, printKernelCoverageReport } = await import("../ari-kernel/index.js");
     const seen = new Set<string>();
     const names: string[] = [];
     for (const t of [...allAgentTools, ...bridgeTools]) {
@@ -150,7 +150,7 @@ export async function startServer(config: LAXConfig) {
   // Wire autopilot tool context — resolves provider/model/key on each invocation
   // so auth refreshes don't leave stale credentials inside the autopilot tools.
   const { setAutopilotToolsContext } = await import("../autopilot/tools.js");
-  const { resolveProvider } = await import("../agent-request.js");
+  const { resolveProvider } = await import("../agent-request/index.js");
   const { join: pathJoin } = await import("node:path");
   setAutopilotToolsContext(async () => {
     try {
@@ -171,7 +171,7 @@ export async function startServer(config: LAXConfig) {
   const allAgentToolsRef = { value: allAgentTools };
   const bridgeToolsRef = { value: bridgeTools };
 
-  const bridgeHolder: { whatsappBridge: import("../whatsapp-bridge.js").WhatsAppBridge | null; telegramBridge: import("../telegram-bridge.js").TelegramBridge | null } = { whatsappBridge: null, telegramBridge: null };
+  const bridgeHolder: { whatsappBridge: import("../whatsapp-bridge/index.js").WhatsAppBridge | null; telegramBridge: import("../telegram-bridge/index.js").TelegramBridge | null } = { whatsappBridge: null, telegramBridge: null };
   const bridgeHandler = createBridgeHandler({
     sessions, sessionStore, getOrCreateSession, saveSession,
     config, dataDir, memoryIndex, memoryManager, integrations, secretsStore,

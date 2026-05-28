@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
-import { SecurityLayer } from "./security.js";
+import { SecurityLayer } from "./security/index.js";
 import { checkMemoryTaint, detectInjection, wrapExternalContent, stripControlChars } from "./sanitize.js";
 import { ToolPolicy, type ToolPolicyConfig } from "./tool-policy.js";
 import { RBACManager } from "./rbac.js";

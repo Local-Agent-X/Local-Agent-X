@@ -10,9 +10,9 @@ export type {
   MemoryEntry,
   ImportanceScore,
   ArchiveResult,
-} from "./memory-importance/types.js";
+} from "./types.js";
 
-export { MemoryImportance } from "./memory-importance/importance.js";
+export { MemoryImportance } from "./importance.js";
 
-import { MemoryImportance } from "./memory-importance/importance.js";
+import { MemoryImportance } from "./importance.js";
 export default MemoryImportance.getInstance();

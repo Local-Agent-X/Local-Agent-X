@@ -5,7 +5,7 @@ import type { CronService } from "../cron-service.js";
 import type { SecretsStore } from "../secrets.js";
 import type { ServerEvent, ToolDefinition } from "../types.js";
 import type { UnifiedToolRegistry } from "../tools/registry.js";
-import type { MemoryIndex } from "../memory.js";
+import type { MemoryIndex } from "../memory/index.js";
 import type { ToolPluginContext } from "../tools/plugin.js";
 
 import { createLogger } from "../logger.js";
@@ -97,7 +97,7 @@ export async function bootstrapTools(deps: {
   }
 
   try {
-    const { MCPManager } = await import("../mcp-client.js");
+    const { MCPManager } = await import("../mcp-client/index.js");
     const mcpManager = MCPManager.getInstance(deps.dataDir);
     await mcpManager.connectAll();
     mcpManager.startConfigWatcher();

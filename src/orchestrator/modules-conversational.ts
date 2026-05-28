@@ -1,13 +1,13 @@
 import { EmotionalMemory } from "../emotional-memory.js";
-import { ProactiveMemory } from "../proactive-memory.js";
+import { ProactiveMemory } from "../proactive-memory/index.js";
 import { NarrativeMemory } from "../narrative-memory.js";
 import { InsideReferences } from "../inside-references.js";
-import { AnticipatoryCare } from "../anticipatory-care.js";
+import { AnticipatoryCare } from "../anticipatory-care/index.js";
 import { SharedHistory } from "../shared-history.js";
 import { LanguageMirror } from "../language-mirror.js";
 import { TrustEngine } from "../trust-deepening.js";
 import { VulnerabilityAwareness } from "../vulnerability-awareness.js";
-import { AssociativeMemory } from "../associative-recall.js";
+import { AssociativeMemory } from "../associative-recall/index.js";
 import type { OrchestratorInput, ModuleSignal } from "./types.js";
 
 export function runConversationalModule(name: string, input: OrchestratorInput, signals: ModuleSignal[]): boolean {

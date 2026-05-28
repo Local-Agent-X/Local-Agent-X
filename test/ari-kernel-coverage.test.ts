@@ -21,7 +21,7 @@ import {
   auditKernelCoverage,
   printKernelCoverageReport,
   type KernelCoverageReport,
-} from "../src/ari-kernel.js";
+} from "../src/ari-kernel/index.js";
 
 describe("shouldGateInKernel", () => {
   it("returns true for gated I/O classes (file/http/shell/etc.)", () => {

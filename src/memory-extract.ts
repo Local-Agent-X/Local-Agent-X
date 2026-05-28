@@ -14,7 +14,7 @@
  *   - Non-destructive: only writes new facts, never modifies chunks
  *   - Transparent: returns a per-run summary the user can inspect
  */
-import type { MemoryIndex } from "./memory.js";
+import type { MemoryIndex } from "./memory/index.js";
 import { dispatch } from "./llm-dispatch.js";
 
 export interface ExtractionOptions {

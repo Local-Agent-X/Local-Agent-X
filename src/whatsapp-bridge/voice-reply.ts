@@ -19,7 +19,7 @@
 
 import { createLogger } from "../logger.js";
 import { encodeWavToOgg, isFfmpegAvailable, getVoicePref, splitForVoiceChunks } from "../bridge-voice/index.js";
-import { synthesize } from "../voice.js";
+import { synthesize } from "../voice/index.js";
 import type { BridgeReply } from "./types.js";
 
 const logger = createLogger("whatsapp-bridge");

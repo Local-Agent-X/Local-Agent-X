@@ -22,7 +22,7 @@ vi.mock("../classifiers/identity-extract.js", () => ({
   extractIdentityFactsWithLLM: vi.fn(async () => __nextReturn),
 }));
 
-const { MemoryIndex } = await import("../memory.js");
+const { MemoryIndex } = await import("../memory/index.js");
 const { autoExtractAndSave } = await import("./auto-extract.js");
 
 let tempDir: string;

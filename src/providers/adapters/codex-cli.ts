@@ -13,7 +13,7 @@
 
 import { BaseAdapter } from "../adapter/base-adapter.js";
 import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
-import { streamCodexResponse } from "../../codex-client.js";
+import { streamCodexResponse } from "../../codex-client/index.js";
 
 export class CodexCliAdapter extends BaseAdapter {
   readonly name = "codex-cli";

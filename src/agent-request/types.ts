@@ -1,7 +1,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ToolDefinition, LAXConfig } from "../types.js";
-import type { MemoryIndex, MemoryManager } from "../memory.js";
-import type { IntegrationRegistry } from "../integrations.js";
+import type { MemoryIndex, MemoryManager } from "../memory/index.js";
+import type { IntegrationRegistry } from "../integrations/index.js";
 import type { SecretsStore } from "../secrets.js";
 
 export type ChannelKind = "web" | "telegram" | "whatsapp" | "cron" | "agent";

@@ -11,9 +11,9 @@ export type {
   DetectedPattern,
   AutomationSuggestion,
   SessionInsight,
-} from "./cross-session-learning/types.js";
+} from "./types.js";
 
-export { CrossSessionLearner } from "./cross-session-learning/learner.js";
+export { CrossSessionLearner } from "./learner.js";
 
-import { CrossSessionLearner } from "./cross-session-learning/learner.js";
+import { CrossSessionLearner } from "./learner.js";
 export default CrossSessionLearner.getInstance();

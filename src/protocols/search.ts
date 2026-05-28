@@ -16,8 +16,8 @@
  */
 
 import type { ToolDefinition, ToolResult } from "../types.js";
-import type { Protocol } from "../protocols.js";
-import { getAllProtocols } from "../protocols.js";
+import type { Protocol } from "../protocols/index.js";
+import { getAllProtocols } from "../protocols/index.js";
 import { recordUsage } from "./usage.js";
 
 interface IndexedDoc {

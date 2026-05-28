@@ -1,5 +1,5 @@
 import { encodeWavToOgg, isFfmpegAvailable, transcribeOggBuffer, getVoicePref, splitForVoiceChunks } from "../bridge-voice/index.js";
-import { synthesize } from "../voice.js";
+import { synthesize } from "../voice/index.js";
 import { apiCall, downloadTelegramFile, sendMessage, sendVoice } from "./api.js";
 import { _voiceFailHintSent, _voiceMirrorForChat, logger } from "./types.js";
 

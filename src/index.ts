@@ -117,7 +117,7 @@ process.on("unhandledRejection", (reason) => {
 });
 
 import { loadConfig, setRuntimeConfig } from "./config.js";
-import { startServer } from "./server.js";
+import { startServer } from "./server/index.js";
 import { loadTokens } from "./auth.js";
 import { enforceStartupIntegrity } from "./startup-integrity.js";
 import { initLifecycle } from "./lifecycle.js";

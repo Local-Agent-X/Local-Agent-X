@@ -6,7 +6,7 @@
  * questions at minimal cost.
  */
 
-import type { MemorySearchResult } from "./memory.js";
+import type { MemorySearchResult } from "./memory/index.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("memory-reranker");

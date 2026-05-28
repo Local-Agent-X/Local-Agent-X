@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getRuntimeConfig } from "../../config.js";
-import { getAllProtocols } from "../../protocols.js";
+import { getAllProtocols } from "../../protocols/index.js";
 import type { CuratorState } from "./types.js";
 
 export function curatorDir(): string {

@@ -2,7 +2,7 @@
  * Smart Home Protocol Pack — IoT control protocols.
  */
 
-import type { Protocol } from "../../protocols.js";
+import type { Protocol } from "../../protocols/index.js";
 
 export const lightControlMission: Protocol = {
   name: "smart_lights",

@@ -13,8 +13,8 @@ import {
   type AppVisibility,
   type AccessLevel,
   validateAppId,
-} from "../../app-runtime.js";
-import { renderApp } from "../../app-renderer.js";
+} from "../../app-runtime/index.js";
+import { renderApp } from "../../app-renderer/index.js";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../../lax-data-dir.js";

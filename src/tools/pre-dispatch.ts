@@ -9,7 +9,7 @@
  * one pass; session-policy / RBAC / approval remain per-user gates outside
  * the pack mechanism.
  */
-import type { SecurityLayer } from "../security.js";
+import type { SecurityLayer } from "../security/index.js";
 import { checkSessionPolicy } from "../session-policy.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { ThreatEngine } from "../threat-engine.js";

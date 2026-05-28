@@ -1,4 +1,4 @@
-import type { MemoryIndex } from "../../../memory.js";
+import type { MemoryIndex } from "../../../memory/index.js";
 import { findMatchingApps } from "./app-matcher.js";
 
 export function searchPastSessionsTool(memory: MemoryIndex) {

@@ -18,7 +18,7 @@
  *   - page.ts           — renderApp (orchestrator assembling the document)
  */
 
-export { renderApp } from "./app-renderer/page.js";
+export { renderApp } from "./page.js";
 
 // Backward compatibility
-export { renderApp as renderDashboard } from "./app-renderer/page.js";
+export { renderApp as renderDashboard } from "./page.js";

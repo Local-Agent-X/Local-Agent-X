@@ -109,7 +109,7 @@ export const settingTool: ToolDefinition = {
     // 3) Broadcast to all connected browsers so toggles/UI dropdowns re-sync.
     if (BROADCAST_KEYS.has(fieldName)) {
       try {
-        const { broadcastAll } = await import("../chat-ws.js");
+        const { broadcastAll } = await import("../chat-ws/index.js");
         broadcastAll({ type: "settings_changed", settings: { [fieldName]: newValue } });
       } catch {}
     }

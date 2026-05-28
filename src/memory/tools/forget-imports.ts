@@ -1,4 +1,4 @@
-import type { MemoryIndex } from "../../memory.js";
+import type { MemoryIndex } from "../../memory/index.js";
 
 // Bulk-delete imported memories by source or recency. Read-only when called
 // without `confirm: true` — returns a preview of what would be removed.

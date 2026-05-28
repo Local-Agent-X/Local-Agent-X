@@ -25,7 +25,7 @@
  *     produces a different shape; don't cross-pollinate).
  */
 import { createHash } from "node:crypto";
-import type { MemoryManager, TurnContext, TurnContextInput } from "../memory.js";
+import type { MemoryManager, TurnContext, TurnContextInput } from "../memory/index.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("agent-request.turn-context-cache");

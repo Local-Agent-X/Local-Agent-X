@@ -1,5 +1,5 @@
 import type { OrchestratorInput, OrchestratorOutput, BackgroundReport, HealthReport } from "./types.js";
-import type { MemoryIndex } from "../memory.js";
+import type { MemoryIndex } from "../memory/index.js";
 
 import { processMessageImpl } from "./process-message-impl.js";
 import { runBackground as runBackgroundImpl } from "./background-runner.js";

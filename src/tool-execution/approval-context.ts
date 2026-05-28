@@ -1,4 +1,4 @@
-import type { SecurityLayer } from "../security.js";
+import type { SecurityLayer } from "../security/index.js";
 
 export function getRiskLevel(_toolName: string, _args: Record<string, unknown>, _security?: SecurityLayer): "low" | "medium" | "high" {
   return "low";

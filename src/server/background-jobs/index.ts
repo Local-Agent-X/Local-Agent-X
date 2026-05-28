@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { SecurityLayer } from "../../security.js";
+import { SecurityLayer } from "../../security/index.js";
 import type { LAXConfig, Session, ToolDefinition } from "../../types.js";
-import type { SessionStore, MemoryIndex, MemoryManager } from "../../memory.js";
+import type { SessionStore, MemoryIndex, MemoryManager } from "../../memory/index.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy.js";
 import type { CronService } from "../../cron-service.js";
-import type { IntegrationRegistry } from "../../integrations.js";
-import type { AgentSync } from "../../sync.js";
+import type { IntegrationRegistry } from "../../integrations/index.js";
+import type { AgentSync } from "../../sync/index.js";
 import { JobScheduler } from "../scheduler.js";
 import { createLogger } from "../../logger.js";
 import { registerCronRunner } from "./cron-runner.js";

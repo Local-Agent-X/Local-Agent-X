@@ -4,7 +4,7 @@ import { type AgentOptions } from "../../providers/types.js";
 import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
 import { stripEphemeralMessages } from "../../providers/sanitize.js";
 import { extractAgentOutput } from "../../server-utils.js";
-import { SecurityLayer } from "../../security.js";
+import { SecurityLayer } from "../../security/index.js";
 import type { LAXConfig, Session, ToolDefinition } from "../../types.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy.js";
@@ -28,7 +28,7 @@ export function registerWorkerRunnerForServer(deps: WorkerRunnerDeps): void {
   const { config, dataDir, secretsStore, security, toolPolicy, allAgentTools, getOrCreateSession, saveSession } = deps;
   import("../../worker-session.js").then(({ registerWorkerRunner }) => {
     registerWorkerRunner(async (workerSession, message) => {
-      const { resolveProvider } = await import("../../agent-request.js");
+      const { resolveProvider } = await import("../../agent-request/index.js");
       const sessionId = workerSession.id;
       const { provider, apiKey, model } = await resolveProvider(config, secretsStore, dataDir);
 

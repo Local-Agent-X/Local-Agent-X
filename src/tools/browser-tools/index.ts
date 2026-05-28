@@ -15,8 +15,8 @@
  */
 
 import type { ToolDefinition } from "../../types.js";
-import { getBrowserManager, closeBrowser, withBrowserLock } from "../../browser.js";
-import type { BrowserEngine } from "../../browser.js";
+import { getBrowserManager, closeBrowser, withBrowserLock } from "../../browser/index.js";
+import type { BrowserEngine } from "../../browser/index.js";
 import { VALID_ENGINES, err } from "./shared.js";
 import {
   BROWSER_TOOL_NAME,

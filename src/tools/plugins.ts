@@ -7,12 +7,12 @@ import { agentEscalate } from "../agents/escalate-tool.js";
 import { imageTools } from "./image-tools/index.js";
 import { createSecretTools } from "./secret-tools.js";
 import { createBrowserTools } from "./browser-tools/index.js";
-import { createCoreProtocolTools } from "../protocols.js";
+import { createCoreProtocolTools } from "../protocols/index.js";
 import { createCronTools } from "../cron-service.js";
 import { createHandlerTools } from "../agency/handler.js";
 import { createAgentTools } from "../agents/tools.js";
 import { createProjectTools } from "./project-tools.js";
-import { createMemoryTools } from "../memory.js";
+import { createMemoryTools } from "../memory/index.js";
 import { createArikernelBridgeTools } from "./arikernel-bridge.js";
 
 const SESSION_ONEVENT_TOOLS = new Set(["request_secret", "request_secrets"]);

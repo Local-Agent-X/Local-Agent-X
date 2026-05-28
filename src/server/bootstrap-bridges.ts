@@ -2,25 +2,25 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { stripEphemeralMessages } from "../providers/sanitize.js";
-import { WhatsAppBridge } from "../whatsapp-bridge.js";
-import { TelegramBridge } from "../telegram-bridge.js";
+import { WhatsAppBridge } from "../whatsapp-bridge/index.js";
+import { TelegramBridge } from "../telegram-bridge/index.js";
 import { formatForChannel, getChannelConfig } from "../channel-formatter.js";
 import { resolveSession, buildChannelContext, type ChannelType } from "../session-router.js";
 import { detectInjection } from "../sanitize.js";
 import { getVoicePref, setVoicePref, type BridgePlatform } from "../bridge-voice/index.js";
 import { COMPACTION_PREFIX } from "../types.js";
 import type { LAXConfig, Session, ToolDefinition } from "../types.js";
-import type { SessionStore, MemoryIndex, MemoryManager } from "../memory.js";
+import type { SessionStore, MemoryIndex, MemoryManager } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
-import type { IntegrationRegistry } from "../integrations.js";
-import type { SecurityLayer } from "../security.js";
+import type { IntegrationRegistry } from "../integrations/index.js";
+import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { RBACManager } from "../rbac.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.bootstrap-bridges");
 
-import type { BridgeReply } from "../whatsapp-bridge.js";
+import type { BridgeReply } from "../whatsapp-bridge/index.js";
 
 export type BridgeHandler = (
   platform: string,
@@ -153,7 +153,7 @@ export function createBridgeHandler(deps: {
     const injectionScore = detectInjection(text).reduce((max, h) => Math.max(max, h.score), 0);
     if (injectionScore >= 0.85) return `I can't process that message — it was flagged by security filters.`;
 
-    const { prepareAgentRequest } = await import("../agent-request.js");
+    const { prepareAgentRequest } = await import("../agent-request/index.js");
     const channelConfig = getChannelConfig(channelType);
     const bridgeCtx = `\n\n[${platform} bridge] ${buildChannelContext(route)}. Message from ${name} (${from}). ` +
       `Keep responses concise — max ~${channelConfig.maxTextLength === Infinity ? "unlimited" : channelConfig.maxTextLength} chars. ` +

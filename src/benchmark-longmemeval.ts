@@ -12,9 +12,9 @@
 
 import { readFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { MemoryIndex } from "./memory.js";
+import { MemoryIndex } from "./memory/index.js";
 import { chunkConversationPairs } from "./memory-chunking.js";
-import type { ChunkMetadata } from "./memory.js";
+import type { ChunkMetadata } from "./memory/index.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("benchmark-longmemeval");
@@ -76,7 +76,7 @@ async function main() {
   const memory = new MemoryIndex(benchDir);
 
   try {
-    const { createEmbeddingProvider } = await import("./embedding-providers.js");
+    const { createEmbeddingProvider } = await import("./embedding-providers/index.js");
     const embProvider = createEmbeddingProvider({ provider: "ollama", model: EMB_MODEL, baseUrl: EMB_URL });
     memory.setEmbeddingProvider(embProvider);
     const source = EMB_URL ? `(${EMB_URL})` : "ollama";

@@ -2,7 +2,7 @@
  * Security-layer pack — wraps SecurityLayer.evaluate (file/shell/network/
  * context checks). Rule semantics are unchanged.
  */
-import type { SecurityLayer } from "../../security.js";
+import type { SecurityLayer } from "../../security/index.js";
 import { CONTEXT_RESTRICTED_TOOLS, WORKTREE_REQUIRED_TOOLS } from "../../security/types.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 

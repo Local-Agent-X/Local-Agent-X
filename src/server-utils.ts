@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { existsSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import type { ServerEvent } from "./types.js";
-import { redactCredentials } from "./security.js";
+import { redactCredentials } from "./security/index.js";
 import { getRuntimeConfig } from "./config.js";
 
 import { createLogger } from "./logger.js";

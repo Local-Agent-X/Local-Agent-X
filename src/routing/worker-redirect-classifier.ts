@@ -115,7 +115,7 @@ export async function classifyWorkerRedirect(
     : `${recentBlock}(Worker task unknown — judge by the message alone.)\n\nUser's new message: ${message}`;
 
   try {
-    const { streamAnthropicResponse } = await import("../anthropic-client.js");
+    const { streamAnthropicResponse } = await import("../anthropic-client/index.js");
     const stream = streamAnthropicResponse({
       token: accessToken,
       model: "claude-haiku-4-5-20251001",

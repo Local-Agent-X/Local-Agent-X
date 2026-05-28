@@ -29,7 +29,7 @@ import {
 } from "../src/canonical-loop/runtime.js";
 import { enableDefaultMiddlewareStack } from "../src/canonical-loop/middlewares/host.js";
 import { runAgentViaCanonical } from "../src/canonical-loop/agent-runner.js";
-import type { SecurityLayer } from "../src/security.js";
+import type { SecurityLayer } from "../src/security/index.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
 

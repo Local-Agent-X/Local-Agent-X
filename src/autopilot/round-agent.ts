@@ -11,7 +11,7 @@ import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import type { Operation, OperationPhase } from "../operations/types.js";
 import type { AutopilotConfig } from "./types.js";
 import type { ToolDefinition, LAXConfig } from "../types.js";
-import { SecurityLayer } from "../security.js";
+import { SecurityLayer } from "../security/index.js";
 import { extractAgentOutput } from "../server-utils.js";
 import { registerAutopilotSession, unregisterAutopilotSession, getSelfEditCount } from "./registry.js";
 import { buildAutopilotNudge, type NudgeContext } from "./nudge.js";
@@ -137,7 +137,7 @@ export async function runAutopilotRound(
           } catch { /* args wasn't JSON — fall through with no detail */ }
         }
         try {
-          const { broadcastAll } = await import("../chat-ws.js");
+          const { broadcastAll } = await import("../chat-ws/index.js");
           // Wrap in the worker pool's broadcast envelope so chat.js's
           // msg.event.type === 'bg_op_progress' check actually fires.
           broadcastAll({

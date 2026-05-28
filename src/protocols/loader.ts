@@ -20,7 +20,7 @@
 
 import { existsSync, readFileSync, readdirSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { Protocol, ProtocolSource } from "../protocols.js";
+import type { Protocol, ProtocolSource } from "../protocols/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { parseSkillMd } from "./skill-md-parser.js";
 import { getRuntimeConfig } from "../config.js";

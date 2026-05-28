@@ -36,7 +36,7 @@ const logger = createLogger("autopilot.loop");
 // chat.js silently dropped because it checks msg.event.type, not msg.type.
 async function broadcast(event: Record<string, unknown>): Promise<void> {
   try {
-    const { broadcastAll } = await import("../chat-ws.js");
+    const { broadcastAll } = await import("../chat-ws/index.js");
     // chat.js requires sessionId TRUTHY (`if (msg.type === 'event' && msg.sessionId && msg.event)`).
     // null is falsy so it'd skip the whole bg_op handler block. Use "autopilot"
     // as a sentinel session id — chat.js doesn't route bg_op_* per-session

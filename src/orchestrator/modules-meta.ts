@@ -1,5 +1,5 @@
 import { MemoryGraph } from "../memory-graph.js";
-import crossSessionLearner from "../cross-session-learning.js";
+import crossSessionLearner from "../cross-session-learning/index.js";
 import { UnspokenDetector } from "../unspoken-detector.js";
 import { GrowthTracker } from "../growth-tracker.js";
 import { SharedHistory } from "../shared-history.js";

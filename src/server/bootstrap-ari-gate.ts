@@ -16,7 +16,7 @@
  */
 import type { ToolCall } from "@arikernel/core";
 import { setPreDispatchGate, setUnifiedPolicyPreCheck } from "@arikernel/tool-executors";
-import type { SecurityLayer } from "../security.js";
+import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import { assertToolCallAllowed } from "../tools/pre-dispatch.js";
 import { evaluate as evaluatePolicy, type RulePack } from "../tool-policy/evaluator.js";

@@ -2,8 +2,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeParseBody, corsHeaders } from "../server-utils.js";
-import { renderApp } from "../app-renderer.js";
-import type { AppDefinition } from "../app-runtime.js";
+import { renderApp } from "../app-renderer/index.js";
+import type { AppDefinition } from "../app-runtime/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.apps");
@@ -172,7 +172,7 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
         if (changed) {
           s.sidebarPins = pins;
           wf(settingsPath, JSON.stringify(s, null, 2), { encoding: "utf-8", mode: 0o600 });
-          try { const { broadcastAll } = await import("../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
+          try { const { broadcastAll } = await import("../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
         }
       }
     } catch (e) { logger.warn(`[apps] pin update after rename failed: ${(e as Error).message}`); }

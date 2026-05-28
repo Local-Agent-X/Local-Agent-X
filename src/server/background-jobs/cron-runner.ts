@@ -5,13 +5,13 @@ import { type AgentOptions } from "../../providers/types.js";
 import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
 import { stripEphemeralMessages } from "../../providers/sanitize.js";
 import { extractAgentOutput } from "../../server-utils.js";
-import { SecurityLayer } from "../../security.js";
+import { SecurityLayer } from "../../security/index.js";
 import type { LAXConfig, Session, ToolDefinition } from "../../types.js";
-import type { MemoryIndex, MemoryManager } from "../../memory.js";
+import type { MemoryIndex, MemoryManager } from "../../memory/index.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy.js";
 import type { CronService } from "../../cron-service.js";
-import type { IntegrationRegistry } from "../../integrations.js";
+import type { IntegrationRegistry } from "../../integrations/index.js";
 import { validateMissionOutput } from "../../cron/output-validation.js";
 import { createLogger } from "../../logger.js";
 import { CRON_SYSTEM_PROMPT } from "./prompts.js";
@@ -87,7 +87,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     const sessionId = `cron-${jobId}-${Date.now()}`;
     const cleanedPrompt = stripSaveInstructions(stripCronPreamble(prompt));
     const jobMeta = cronService.get(jobId);
-    const { prepareAgentRequest } = await import("../../agent-request.js");
+    const { prepareAgentRequest } = await import("../../agent-request/index.js");
     const prepared = await prepareAgentRequest({
       channel: "cron", message: cleanedPrompt, sessionMessages: [], sessionId,
       config, dataDir, memoryIndex, memoryManager, integrations, secretsStore,

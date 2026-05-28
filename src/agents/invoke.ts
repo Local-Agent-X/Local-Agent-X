@@ -30,7 +30,7 @@
 import type { AgentDefinition, AgentModelPin, InvokeOpts, RunRef } from "./types.js";
 import { AgentCatalog } from "./catalog.js";
 import { Handler } from "../agency/handler.js";
-import { ProjectStore } from "../agent-store.js";
+import { ProjectStore } from "../agent-store/index.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { EventBus } from "../event-bus.js";
 import { dispatchAgentRun, type AgentRunDriverRequest } from "./runtime.js";

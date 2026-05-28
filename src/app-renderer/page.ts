@@ -3,7 +3,7 @@
  * header + components + status indicator + nonce'd client script.
  */
 
-import type { AppDefinition } from "../app-runtime.js";
+import type { AppDefinition } from "../app-runtime/index.js";
 import { randomBytes } from "node:crypto";
 import { renderLayout } from "./layout.js";
 import { escapeHtml } from "./sanitize.js";

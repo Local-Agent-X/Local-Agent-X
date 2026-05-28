@@ -3,7 +3,7 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import type { BrowserEngine } from "../../browser.js";
+import type { BrowserEngine } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
 
 export function ok(content: string): ToolResult {

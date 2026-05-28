@@ -8,7 +8,7 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
   // List endpoint — abbreviated payload for the sidebar (no body, capped triggers).
   if (method === "GET" && url.pathname === "/api/protocols") {
     try {
-      const { getAllProtocols } = await import("../../protocols.js");
+      const { getAllProtocols } = await import("../../protocols/index.js");
       const catFallback: Record<string, string> = {
         instagram: "Social Media", twitter: "Social Media", facebook: "Social Media", tiktok: "Social Media",
         git: "Developer", deploy: "Developer", test: "Developer", pr: "Developer",
@@ -40,7 +40,7 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
   if (method === "GET" && url.pathname.match(/^\/api\/protocols\/[^/]+$/)) {
     const name = decodeURIComponent(url.pathname.split("/").pop()!);
     try {
-      const { getAllProtocols } = await import("../../protocols.js");
+      const { getAllProtocols } = await import("../../protocols/index.js");
       const protocol = getAllProtocols().find((p) => p.name === name);
       if (!protocol) { json(404, { error: "Protocol not found" }); return true; }
       json(200, { protocol });
@@ -76,7 +76,7 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
     const name = decodeURIComponent(url.pathname.split("/").pop()!);
     try {
       const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
-      const { getAllProtocols } = await import("../../protocols.js");
+      const { getAllProtocols } = await import("../../protocols/index.js");
       const existing = getAllProtocols().find((p) => p.name === name);
       if (!existing) { json(404, { error: "Protocol not found" }); return true; }
       const stype = existing.source?.type ?? "builtin";
@@ -105,7 +105,7 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
     const sourceName = decodeURIComponent(url.pathname.split("/")[3]);
     try {
       const body = (await safeParseBody(req)) as { newName?: string } | null;
-      const { getAllProtocols } = await import("../../protocols.js");
+      const { getAllProtocols } = await import("../../protocols/index.js");
       const original = getAllProtocols().find((p) => p.name === sourceName);
       if (!original) { json(404, { error: "Source protocol not found" }); return true; }
       const { createProtocol } = await import("../../protocols/builder.js");
@@ -123,7 +123,7 @@ export const handleProtocolRoutes: RouteHandler = async (method, url, req, res, 
   if (method === "DELETE" && url.pathname.match(/^\/api\/protocols\/[^/]+$/)) {
     const name = decodeURIComponent(url.pathname.split("/").pop()!);
     try {
-      const { getAllProtocols } = await import("../../protocols.js");
+      const { getAllProtocols } = await import("../../protocols/index.js");
       const existing = getAllProtocols().find((p) => p.name === name);
       if (!existing) { json(404, { error: "Protocol not found" }); return true; }
       const stype = existing.source?.type ?? "builtin";

@@ -6,7 +6,7 @@
  */
 import type { CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
-import { detectUnresolvedErrors, buildReflectionPrompt } from "../../agent-guards.js";
+import { detectUnresolvedErrors, buildReflectionPrompt } from "../../agent-guards/index.js";
 import { readOpMessages } from "../store.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 

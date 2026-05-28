@@ -17,13 +17,13 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, watch as fsWatch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
-import { createLogger } from "./logger.js";
-import { MCPConnection } from "./mcp-client/connection.js";
-import { expandPlaceholdersDeep } from "./mcp-client/placeholders.js";
-import type { MCPConfig, MCPServerConfig } from "./mcp-client/types.js";
-import type { ToolDefinition, ToolResult } from "./types.js";
+import { createLogger } from "../logger.js";
+import { MCPConnection } from "./connection.js";
+import { expandPlaceholdersDeep } from "./placeholders.js";
+import type { MCPConfig, MCPServerConfig } from "./types.js";
+import type { ToolDefinition, ToolResult } from "../types.js";
 
 const logger = createLogger("mcp-client");
 
@@ -34,7 +34,7 @@ const logger = createLogger("mcp-client");
 // the result.
 const REDUNDANT_MCP_SERVERS = new Set<string>(["filesystem"]);
 
-export { expandPlaceholders, setSecretLookup } from "./mcp-client/placeholders.js";
+export { expandPlaceholders, setSecretLookup } from "./placeholders.js";
 
 export class MCPManager {
   private static instance: MCPManager | null = null;

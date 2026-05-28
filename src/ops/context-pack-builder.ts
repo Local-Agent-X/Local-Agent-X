@@ -214,7 +214,7 @@ async function fetchMemoryHits(query: string | undefined, limit: number): Promis
   try {
     const dataDir = getLaxDir();
     // Lazy import — memory module is heavy
-    const { MemoryIndex } = await import("../memory.js");
+    const { MemoryIndex } = await import("../memory/index.js");
     const idx = new MemoryIndex(dataDir);
     const results = await idx.search(query, { maxResults: limit });
     return results.map(r => ({

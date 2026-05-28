@@ -22,7 +22,7 @@ import type { InvokeScope } from "./types.js";
 import { AgentCatalog } from "./catalog.js";
 import { invokeAgent, AgentNotFoundError } from "./invoke.js";
 import { Handler } from "../agency/handler.js";
-import { AgentTemplateStore } from "../agent-store.js";
+import { AgentTemplateStore } from "../agent-store/index.js";
 
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }

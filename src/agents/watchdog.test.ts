@@ -8,7 +8,7 @@ import {
   type AgentTemplate,
   type Issue,
   type Project,
-} from "../agent-store.js";
+} from "../agent-store/index.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { EventBus } from "../event-bus.js";
 import {

@@ -17,7 +17,7 @@ export async function checkSelfEditIntent(
   try {
     const { getRuntimeConfig } = await import("../config.js");
     const { getOrInitSecretsStore } = await import("../secrets.js");
-    const { resolveProvider } = await import("../agent-request.js");
+    const { resolveProvider } = await import("../agent-request/index.js");
     const { getLaxDir } = await import("../lax-data-dir.js");
 
     const runtime = getRuntimeConfig();

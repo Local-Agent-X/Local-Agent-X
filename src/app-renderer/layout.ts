@@ -3,7 +3,7 @@
  * tabs / sidebar shells.
  */
 
-import type { ComponentDefinition, LayoutDefinition } from "../app-runtime.js";
+import type { ComponentDefinition, LayoutDefinition } from "../app-runtime/index.js";
 import { renderComponent } from "./components.js";
 import { escapeHtml, safeStr } from "./sanitize.js";
 

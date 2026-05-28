@@ -5,7 +5,7 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import type { BrowserManager } from "../../browser.js";
+import type { BrowserManager } from "../../browser/index.js";
 import { ok, err } from "./shared.js";
 
 export async function handleAct(

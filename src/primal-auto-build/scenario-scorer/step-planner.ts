@@ -97,7 +97,7 @@ export function _setLlmCallForTests(fn: LlmCall | null): void { injectedLlmCall 
 async function getProductionLlmCall(): Promise<LlmCall> {
   const { getRuntimeConfig } = await import("../../config.js");
   const { getOrInitSecretsStore } = await import("../../secrets.js");
-  const { resolveProvider } = await import("../../agent-request.js");
+  const { resolveProvider } = await import("../../agent-request/index.js");
   const { getLaxDir } = await import("../../lax-data-dir.js");
 
   return async (prompt: string, signal?: AbortSignal): Promise<string> => {

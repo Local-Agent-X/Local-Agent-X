@@ -2,7 +2,7 @@
  * Communication Protocol Pack — email, Slack, Discord, WhatsApp protocols.
  */
 
-import type { Protocol } from "../../protocols.js";
+import type { Protocol } from "../../protocols/index.js";
 
 export const emailMission: Protocol = {
   name: "send_email",

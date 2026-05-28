@@ -11,7 +11,7 @@ import {
   checkToolLoops,
   createLoopState,
   type LoopState,
-} from "../../agent-guards.js";
+} from "../../agent-guards/index.js";
 
 export const loopDetectionMiddleware: CanonicalMiddleware = {
   name: "loop-detection",

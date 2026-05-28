@@ -1,4 +1,4 @@
-import type { EmbeddingProvider } from "../memory.js";
+import type { EmbeddingProvider } from "../memory/index.js";
 
 export type EmbeddingProviderType =
   | "openai"

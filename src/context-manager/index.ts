@@ -12,8 +12,8 @@
  * - 100%: Emergency compact + retry
  */
 
-export { estimateTokens, messageTokens, totalTokens } from "./context-manager/token-estimation.js";
-export { getContextStatus, type ContextStatus } from "./context-manager/status.js";
-export { isContextOverflowError } from "./context-manager/overflow-detection.js";
-export { buildCompactionPrompt, forceCompact } from "./context-manager/compaction-prompt.js";
-export { compactIfNeeded, compactIfNeededWithLLM } from "./context-manager/compaction.js";
+export { estimateTokens, messageTokens, totalTokens } from "./token-estimation.js";
+export { getContextStatus, type ContextStatus } from "./status.js";
+export { isContextOverflowError } from "./overflow-detection.js";
+export { buildCompactionPrompt, forceCompact } from "./compaction-prompt.js";
+export { compactIfNeeded, compactIfNeededWithLLM } from "./compaction.js";

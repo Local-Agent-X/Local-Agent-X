@@ -292,7 +292,7 @@ async function getProductionLlmCall(): Promise<LlmCall> {
   return async (prompt: string, signal?: AbortSignal): Promise<string> => {
     const { getRuntimeConfig } = await import("../../config.js");
     const { getOrInitSecretsStore } = await import("../../secrets.js");
-    const { resolveProvider } = await import("../../agent-request.js");
+    const { resolveProvider } = await import("../../agent-request/index.js");
     const { getLaxDir } = await import("../../lax-data-dir.js");
     const runtime = getRuntimeConfig();
     const dataDir = getLaxDir();

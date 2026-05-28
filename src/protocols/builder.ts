@@ -10,7 +10,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { Protocol, ProtocolStep } from "../protocols.js";
+import type { Protocol, ProtocolStep } from "../protocols/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { ToolDefinition } from "../types.js";
 import { getRuntimeConfig } from "../config.js";
@@ -135,7 +135,7 @@ export function createBuilderTools(): ToolDefinition[] {
           // embedding provider isn't available (memory init didn't run).
           if (!supersedes) {
             const { findDuplicate } = await import("./dedup.js");
-            const { getAllProtocols } = await import("../protocols.js");
+            const { getAllProtocols } = await import("../protocols/index.js");
             const dup = await findDuplicate(
               { name, description, triggers },
               getAllProtocols(),

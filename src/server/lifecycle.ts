@@ -5,22 +5,22 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
-import { setupChatWebSocket } from "../chat-ws.js";
+import { setupChatWebSocket } from "../chat-ws/index.js";
 import { runSecurityAudit, printAuditReport } from "../security-audit.js";
-import { startAriKernel } from "../ari-kernel.js";
+import { startAriKernel } from "../ari-kernel/index.js";
 import { runMigrations } from "../db-migrations.js";
 import { EventBus } from "../event-bus.js";
 import { ConfigWatcher } from "../config-hot-reload.js";
-import { closeAllBrowsers } from "../browser.js";
+import { closeAllBrowsers } from "../browser/index.js";
 import type { LAXConfig, ServerEvent, ToolDefinition } from "../types.js";
-import type { MemoryIndex, MemoryManager } from "../memory.js";
+import type { MemoryIndex, MemoryManager } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
-import type { IntegrationRegistry } from "../integrations.js";
-import type { SecurityLayer } from "../security.js";
+import type { IntegrationRegistry } from "../integrations/index.js";
+import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { RBACManager } from "../rbac.js";
 import type { CronService } from "../cron-service.js";
-import type { AgentSync } from "../sync.js";
+import type { AgentSync } from "../sync/index.js";
 import type { RequestHandler } from "./request-handler.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("server.lifecycle");
@@ -72,7 +72,7 @@ export async function setupVoiceWs(deps: {
   try {
     const { setupVoiceWebSocket, setVoiceSessionFactory } = await import("../voice/audio-ws.js");
     const { createVoiceSessionFactory } = await import("../voice/voice-session.js");
-    const { prepareAgentRequest } = await import("../agent-request.js");
+    const { prepareAgentRequest } = await import("../agent-request/index.js");
     setupVoiceWebSocket(server, config.authToken);
 
     const voiceTurnRunner: import("../voice/voice-session.js").VoiceTurnRunner = async ({ text, history, signal, onDelta, onVisual, sessionId: voiceSessionId }) => {

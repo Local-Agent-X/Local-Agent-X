@@ -70,7 +70,7 @@ export const sidebarPin: ToolDefinition = {
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
 
     // Notify connected clients
-    try { const { broadcastAll } = await import("../../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
+    try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
 
     return ok(`Pinned ${icon} ${name} to the sidebar.`);
   },
@@ -102,7 +102,7 @@ export const sidebarUnpin: ToolDefinition = {
       const removed = currentPins.map(p => p.name).join(", ");
       settings.sidebarPins = [];
       writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
-      try { const { broadcastAll } = await import("../../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins: [] }); } catch {}
+      try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins: [] }); } catch {}
       return ok(`Removed all pins from the sidebar: ${removed}`);
     }
 
@@ -116,7 +116,7 @@ export const sidebarUnpin: ToolDefinition = {
     settings.sidebarPins = pins;
     writeFileSync(settingsPath, JSON.stringify(settings, null, 2), { encoding: "utf-8", mode: 0o600 });
 
-    try { const { broadcastAll } = await import("../../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
+    try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
 
     return ok(`Removed ${name} from the sidebar.`);
   },
@@ -141,7 +141,7 @@ export const sidebarClear: ToolDefinition = {
   },
   async execute() {
     try {
-      const { broadcastAll } = await import("../../chat-ws.js");
+      const { broadcastAll } = await import("../../chat-ws/index.js");
       broadcastAll({ type: "sidebar_clear_chats", at: Date.now() });
     } catch (e) {
       return err(`Failed to broadcast sidebar clear: ${String((e as Error)?.message || e)}`);

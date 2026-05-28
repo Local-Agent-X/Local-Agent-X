@@ -9,6 +9,6 @@
 export type {
   ProactiveSuggestion,
   InteractionPattern,
-} from "./proactive-memory/types.js";
+} from "./types.js";
 
-export { ProactiveMemory } from "./proactive-memory/memory.js";
+export { ProactiveMemory } from "./memory.js";

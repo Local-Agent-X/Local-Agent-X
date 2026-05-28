@@ -1,5 +1,5 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import type { PreparedAgentRequest } from "../../agent-request.js";
+import type { PreparedAgentRequest } from "../../agent-request/index.js";
 import type { ThreatEngine } from "../../threat-engine.js";
 import { createLogger } from "../../logger.js";
 

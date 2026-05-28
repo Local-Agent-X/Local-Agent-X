@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { Protocol } from "../protocols.js";
+import type { Protocol } from "../protocols/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { ToolDefinition } from "../types.js";
 import { loadCustomProtocols, saveCustomProtocols } from "./builder.js";

@@ -11,24 +11,24 @@
  */
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 
 import {
   CODEX_URL,
   type CodexTool,
   type CodexStreamEvent,
   type CodexStreamYield,
-} from "./codex-client/types.js";
-import { buildHeaders, buildRequestBody } from "./codex-client/request.js";
-import { fetchCodexWithRetry } from "./codex-client/fetch-with-retry.js";
+} from "./types.js";
+import { buildHeaders, buildRequestBody } from "./request.js";
+import { fetchCodexWithRetry } from "./fetch-with-retry.js";
 import {
   createCodexStreamState,
   processCodexEvent,
   flushOnAbnormalClose,
-} from "./codex-client/stream-parse.js";
+} from "./stream-parse.js";
 
-export type { ReasoningItem } from "./codex-message-convert.js";
-export type { CodexResponse } from "./codex-client/types.js";
+export type { ReasoningItem } from "../codex-message-convert.js";
+export type { CodexResponse } from "./types.js";
 
 const logger = createLogger("codex-client");
 

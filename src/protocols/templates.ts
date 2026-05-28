@@ -2,7 +2,7 @@
  * Protocol Templates — base templates for common protocol categories.
  */
 
-import type { Protocol, ProtocolStep } from "../protocols.js";
+import type { Protocol, ProtocolStep } from "../protocols/index.js";
 import type { ToolDefinition } from "../types.js";
 
 export interface ProtocolTemplate {

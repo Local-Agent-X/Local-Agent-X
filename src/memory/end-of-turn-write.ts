@@ -135,7 +135,7 @@ async function callForDecision(
   const timeoutId = setTimeout(() => ac.abort(), TIMEOUT_MS);
   try {
     if (lc === "anthropic" && apiKey) {
-      const { streamAnthropicResponse } = await import("../anthropic-client.js");
+      const { streamAnthropicResponse } = await import("../anthropic-client/index.js");
       const stream = streamAnthropicResponse({
         token: apiKey, model,
         messages: [{ role: "user", content: userBlock } as never],
@@ -151,7 +151,7 @@ async function callForDecision(
       return response || null;
     }
     if (lc === "codex" && apiKey) {
-      const { streamCodexResponse } = await import("../codex-client.js");
+      const { streamCodexResponse } = await import("../codex-client/index.js");
       const stream = streamCodexResponse({
         token: apiKey, model,
         messages: [{ role: "user", content: userBlock } as never],

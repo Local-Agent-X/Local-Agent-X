@@ -14,7 +14,7 @@ import {
   checkPostCommit,
   createLoopState,
   type LoopState,
-} from "../../agent-guards.js";
+} from "../../agent-guards/index.js";
 
 export const postCommitMiddleware: CanonicalMiddleware = {
   name: "post-commit",

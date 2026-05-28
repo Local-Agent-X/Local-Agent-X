@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { checkToolLoops, createLoopState, NO_PROGRESS_LIMIT_WEAK } from "../src/agent-guards.js";
+import { checkToolLoops, createLoopState, NO_PROGRESS_LIMIT_WEAK } from "../src/agent-guards/index.js";
 
 // The no-progress guard used to fire on browser-driven tasks because
 // MUTATION_TOOLS was file-only. Live failure 2026-05-13 (Thriveventory PO

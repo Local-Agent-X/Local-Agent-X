@@ -273,7 +273,7 @@ async function spawnPhaseAgent(op: Operation, phase: { id: string; name: string;
  */
 async function captureBrowserState(): Promise<string | null> {
   try {
-    const { getBrowserManager } = await import("../browser.js");
+    const { getBrowserManager } = await import("../browser/index.js");
     const mgr = getBrowserManager("default");
     if (!mgr.isActive()) return null;
     const info = await mgr.getInfo().catch(() => "");

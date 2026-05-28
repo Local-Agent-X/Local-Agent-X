@@ -2,7 +2,7 @@
  * Developer Protocol Pack — git, deploy, test, PR review protocols.
  */
 
-import type { Protocol } from "../../protocols.js";
+import type { Protocol } from "../../protocols/index.js";
 
 export const gitWorkflowMission: Protocol = {
   name: "git_workflow",

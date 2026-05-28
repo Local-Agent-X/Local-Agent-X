@@ -33,7 +33,7 @@ import { trackOpForSession } from "../ops/session-bridge.js";
 import type { Op, OpVisibility } from "../ops/types.js";
 import type { PreparedAgentRequest } from "../agent-request/types.js";
 import type { ServerEvent } from "../types.js";
-import type { SecurityLayer } from "../security.js";
+import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { ThreatEngine } from "../threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";

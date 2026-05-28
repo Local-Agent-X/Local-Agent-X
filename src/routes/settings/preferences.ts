@@ -52,7 +52,7 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     }
     if (Object.keys(broadcastBody).length > 0) {
       try {
-        const { broadcastAll } = await import("../../chat-ws.js");
+        const { broadcastAll } = await import("../../chat-ws/index.js");
         broadcastAll({ type: "settings_changed", settings: broadcastBody });
       } catch {}
     }
@@ -179,7 +179,7 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       clearPinTombstone(pinTombstonePaths(ctx.dataDir, pjoin(getLaxDir(), "sync-repo")), String(name));
     } catch {}
     try { ctx.agentSync.notifyChange(`pin-add:${name}`); } catch {}
-    try { const { broadcastAll } = await import("../../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
+    try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
     json(200, { ok: true, pins }); return true;
   }
   if (method === "DELETE" && url.pathname.startsWith("/api/sidebar/pins/")) {
@@ -201,7 +201,7 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       tombstonePin(pinTombstonePaths(ctx.dataDir, pjoin(getLaxDir(), "sync-repo")), pinName);
     } catch {}
     try { ctx.agentSync.notifyChange(`pin-remove:${pinName}`); } catch {}
-    try { const { broadcastAll } = await import("../../chat-ws.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
+    try { const { broadcastAll } = await import("../../chat-ws/index.js"); broadcastAll({ type: "sidebar_pins_changed", pins }); } catch {}
     json(200, { ok: true, pins }); return true;
   }
 

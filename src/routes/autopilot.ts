@@ -15,7 +15,7 @@ import { startAutopilot } from "../autopilot/start.js";
 import { requestStop, getActiveAutopilotOp, listActiveAutopilotOps } from "../autopilot/loop.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 import { readLock } from "../autopilot/lock.js";
-import { resolveProvider } from "../agent-request.js";
+import { resolveProvider } from "../agent-request/index.js";
 import type { StartAutopilotRequest } from "../autopilot/types.js";
 
 import { createLogger } from "../logger.js";

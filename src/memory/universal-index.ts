@@ -19,7 +19,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { createHash } from "node:crypto";
-import type { MemoryIndex } from "../memory.js";
+import type { MemoryIndex } from "../memory/index.js";
 import type { CanonicalSource, ChunkMetadata, Chunk } from "./types.js";
 import { chunkText, chunkConversationPairs, extractSessionPairs } from "../memory-chunking.js";
 

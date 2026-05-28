@@ -1,15 +1,15 @@
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import { SecurityLayer } from "../security.js";
+import { SecurityLayer } from "../security/index.js";
 import { loadToolPolicy } from "../tool-policy.js";
-import { SessionStore, MemoryIndex, MemoryManager, ensurePersonalityFiles } from "../memory.js";
+import { SessionStore, MemoryIndex, MemoryManager, ensurePersonalityFiles } from "../memory/index.js";
 import { SecretsStore } from "../secrets.js";
-import { AgentSync } from "../sync.js";
+import { AgentSync } from "../sync/index.js";
 import { RBACManager } from "../rbac.js";
-import { setBrowserAuthContext } from "../browser.js";
+import { setBrowserAuthContext } from "../browser/index.js";
 import { CronService } from "../cron-service.js";
-import { IntegrationRegistry } from "../integrations.js";
+import { IntegrationRegistry } from "../integrations/index.js";
 import { setServerPort } from "../server-utils.js";
 import type { LAXConfig } from "../types.js";
 
@@ -56,7 +56,7 @@ export async function initOrRefreshEmbeddingProvider(deps: {
 }): Promise<{ providerName: string; model: string; degraded: boolean }> {
   const { config, dataDir, secretsStore, memoryIndex } = deps;
   try {
-    const { createEmbeddingProvider } = await import("../embedding-providers.js");
+    const { createEmbeddingProvider } = await import("../embedding-providers/index.js");
     const sp = join(dataDir, "settings.json");
     const settings = existsSync(sp) ? JSON.parse(readFileSync(sp, "utf-8")) : {};
     const embProvider = settings.embeddingProvider || "ollama";

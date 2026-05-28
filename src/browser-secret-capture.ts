@@ -13,7 +13,7 @@
 
 import type { ToolDefinition, ToolResult } from "./types.js";
 import type { SecretsStore } from "./secrets.js";
-import { getBrowserManager } from "./browser.js";
+import { getBrowserManager } from "./browser/index.js";
 
 function ok(content: string): ToolResult {
   return { content };
@@ -90,7 +90,7 @@ export function createBrowserSecretCaptureTool(
       const name = rawName.toUpperCase().replace(/[^A-Z0-9_]/g, "_");
       if (!name) return err("Secret name is required.");
       const sessionIdForLock = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
-      const { withBrowserLock } = await import("./browser.js");
+      const { withBrowserLock } = await import("./browser/index.js");
       return withBrowserLock(sessionIdForLock, async () => {
 
       const service = args.service ? String(args.service) : undefined;

@@ -1,16 +1,16 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { SecurityLayer } from "./security.js";
+import type { SecurityLayer } from "./security/index.js";
 import type { ToolPolicy } from "./tool-policy.js";
 import type { RBACManager, Role } from "./rbac.js";
-import type { SessionStore, MemoryIndex, MemoryManager } from "./memory.js";
+import type { SessionStore, MemoryIndex, MemoryManager } from "./memory/index.js";
 import type { SecretsStore } from "./secrets.js";
 import type { CronService } from "./cron-service.js";
-import type { IntegrationRegistry } from "./integrations.js";
-import type { WhatsAppBridge } from "./whatsapp-bridge.js";
-import type { TelegramBridge } from "./telegram-bridge.js";
-import type { AgentSync } from "./sync.js";
-import type { AppRegistry } from "./app-runtime.js";
-import type { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore } from "./agent-store.js";
+import type { IntegrationRegistry } from "./integrations/index.js";
+import type { WhatsAppBridge } from "./whatsapp-bridge/index.js";
+import type { TelegramBridge } from "./telegram-bridge/index.js";
+import type { AgentSync } from "./sync/index.js";
+import type { AppRegistry } from "./app-runtime/index.js";
+import type { AgentRunStore, AgentTemplateStore, IssueStore, ProjectStore } from "./agent-store/index.js";
 import type { ToolDefinition, LAXConfig, ServerEvent, Session } from "./types.js";
 import type { ToolRegistry } from "./tool-search.js";
 

@@ -16,8 +16,8 @@ export type {
   ToolSummary,
   AppEntry,
   ConfigFileEntry,
-} from "./manifest-generator/types.js";
+} from "./types.js";
 
-export { generateManifest, writeManifest } from "./manifest-generator/generator.js";
-export { getManifestSummary } from "./manifest-generator/summary.js";
-export { startManifestWatcher } from "./manifest-generator/watcher.js";
+export { generateManifest, writeManifest } from "./generator.js";
+export { getManifestSummary } from "./summary.js";
+export { startManifestWatcher } from "./watcher.js";

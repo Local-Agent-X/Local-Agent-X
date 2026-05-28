@@ -8,7 +8,7 @@
 //     fake first-person responses)
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import type { MemoryManager } from "../../memory.js";
+import type { MemoryManager } from "../../memory/index.js";
 import { buildTurnContextCached } from "../turn-context-cache.js";
 import { createLogger } from "../../logger.js";
 

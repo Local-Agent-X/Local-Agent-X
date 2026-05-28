@@ -1,8 +1,8 @@
 import { type AgentOptions } from "../../providers/types.js";
 import { runAgentViaCanonical } from "../../canonical-loop/agent-runner.js";
-import { SecurityLayer } from "../../security.js";
+import { SecurityLayer } from "../../security/index.js";
 import type { LAXConfig, Session, ToolDefinition } from "../../types.js";
-import type { SessionStore } from "../../memory.js";
+import type { SessionStore } from "../../memory/index.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy.js";
 import { createLogger } from "../../logger.js";
@@ -33,7 +33,7 @@ export function makeRunDreamCheck(deps: DreamCheckDeps): () => Promise<void> {
       if (!shouldDream()) return;
       logger.info("[dream] Starting memory consolidation...");
       startDream();
-      const { resolveProvider: rp } = await import("../../agent-request.js");
+      const { resolveProvider: rp } = await import("../../agent-request/index.js");
       const { provider, apiKey, model } = await rp(config, secretsStore, dataDir);
       const dreamModel = provider === "anthropic" ? "claude-haiku-4-5" : model;
       const dreamSession: Session = { id: `dream-${Date.now()}`, title: "Memory Dream", messages: [], createdAt: Date.now(), updatedAt: Date.now() };

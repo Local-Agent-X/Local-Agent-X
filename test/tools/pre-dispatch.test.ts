@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomBytes } from "node:crypto";
-import { SecurityLayer } from "../../src/security.js";
+import { SecurityLayer } from "../../src/security/index.js";
 import { wireAriPreDispatch } from "../../src/server/bootstrap-ari-gate.js";
 import * as approvalModule from "../../src/approval-manager.js";
 import { assertToolCallAllowed } from "../../src/tools/pre-dispatch.js";

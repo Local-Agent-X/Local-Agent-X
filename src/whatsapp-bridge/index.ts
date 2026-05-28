@@ -20,18 +20,18 @@ import { mkdirSync, existsSync, rmSync } from "node:fs";
 // @ts-ignore — no types for qrcode
 import QRCode from "qrcode";
 
-import { createLogger } from "./logger.js";
-import type { ConnectionState, WhatsAppBridgeConfig, BridgeReply } from "./whatsapp-bridge/types.js";
-import { splitMessage, toJid } from "./whatsapp-bridge/text-utils.js";
-import { loadAllowedNumbers, saveAllowedNumbers, sanitizeNumbers } from "./whatsapp-bridge/allowed-numbers.js";
-import { dispatchReplyToJid } from "./whatsapp-bridge/voice-reply.js";
-import { createMessagesUpsertHandler } from "./whatsapp-bridge/message-handler.js";
+import { createLogger } from "../logger.js";
+import type { ConnectionState, WhatsAppBridgeConfig, BridgeReply } from "./types.js";
+import { splitMessage, toJid } from "./text-utils.js";
+import { loadAllowedNumbers, saveAllowedNumbers, sanitizeNumbers } from "./allowed-numbers.js";
+import { dispatchReplyToJid } from "./voice-reply.js";
+import { createMessagesUpsertHandler } from "./message-handler.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 const logger = createLogger("whatsapp-bridge");
 
-export type { BridgeReply, WhatsAppBridgeConfig } from "./whatsapp-bridge/types.js";
+export type { BridgeReply, WhatsAppBridgeConfig } from "./types.js";
 
 export class WhatsAppBridge {
   private dataDir: string;

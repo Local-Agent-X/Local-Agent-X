@@ -16,7 +16,7 @@ export interface PrepareInput {
 
 export async function preparePerTurnRequest(input: PrepareInput): Promise<PreparedAgentRequest> {
   const { sessionId, message, sessionMessages, attachments, ctx } = input;
-  const { prepareAgentRequest } = await import("../../../agent-request.js");
+  const { prepareAgentRequest } = await import("../../../agent-request/index.js");
   const prepStart = Date.now();
   const prepared = await prepareAgentRequest({
     channel: sessionId.startsWith("ide-") ? "web" : "web",
@@ -49,7 +49,7 @@ export async function emitContextStatus(
   emitSse: (ev: ServerEvent) => void,
 ): Promise<void> {
   try {
-    const { getContextStatus } = await import("../../../context-manager.js");
+    const { getContextStatus } = await import("../../../context-manager/index.js");
     const status = getContextStatus(prepared.cleanHistory, prepared.model);
     const ev = {
       type: "context_status" as const,

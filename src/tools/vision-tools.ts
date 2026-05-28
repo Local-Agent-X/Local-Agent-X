@@ -180,7 +180,7 @@ export const cameraCaptureTool: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const { captureFrame } = await import("../camera-tool.js");
+      const { captureFrame } = await import("./camera-tool.js");
       const result = captureFrame({
         device: args.device ? String(args.device) : undefined,
         format: "jpg",
@@ -215,7 +215,7 @@ export const ocrTool: ToolDefinition = {
     try {
       const filePath = resolve(String(args.path));
       if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
-      const { recognizeTextNative, recognizeText } = await import("../ocr-tool.js");
+      const { recognizeTextNative, recognizeText } = await import("./ocr-tool.js");
       let result;
       try {
         result = recognizeTextNative(filePath, { language: args.language ? String(args.language) : undefined });

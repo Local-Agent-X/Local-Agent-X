@@ -6,7 +6,7 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { USER_HINTS } from "../types.js";
-import { isPlanMode, READ_ONLY_TOOLS } from "../plan-tools.js";
+import { isPlanMode, READ_ONLY_TOOLS } from "../tools/plan-tools.js";
 import { logRetry } from "../retry-telemetry.js";
 import type { CallContext, Phase, ToolCallContext } from "./context.js";
 import { terminate } from "./context.js";

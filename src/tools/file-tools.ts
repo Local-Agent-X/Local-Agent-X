@@ -4,7 +4,7 @@ import type { ToolDefinition } from "../types.js";
 import { detectInjection } from "../sanitize.js";
 import { ok, err } from "./result-helpers.js";
 import { validateSyntax } from "./syntax-validate.js";
-import { checkAppWrite, writeGuardRejectionMessage } from "../app-tools/write-guard.js";
+import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
 
 // ── Edit-failure recovery helpers ────────────────────────────────────────
 // When edit() fails, the model previously saw a bare string like

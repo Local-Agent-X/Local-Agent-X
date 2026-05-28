@@ -7,7 +7,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { seedAppTemplate } from "../src/app-tools/app-template.js";
+import { seedAppTemplate } from "../src/tools/app-tools/app-template.js";
 
 const createdDirs: string[] = [];
 

@@ -13,7 +13,7 @@ import {
   revertAppToSnapshot,
   extractAppTouchesFromToolCalls,
   SNAPSHOTS_TO_KEEP,
-} from "../src/app-tools/snapshots.js";
+} from "../src/tools/app-tools/snapshots.js";
 
 const APP_ID = "test-app";
 

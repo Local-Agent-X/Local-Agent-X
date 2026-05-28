@@ -10,7 +10,7 @@ import { getRecentFileAccess } from "../file-audit.js";
 import { queryAuditLog, getAuditSummary } from "../ari-audit-viewer.js";
 import { runBenchmarks } from "../ari-benchmarks.js";
 import { runInjectionTests } from "../security-tests.js";
-import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "../session-policy.js";
+import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "../session/policy.js";
 import { isAriActive } from "../ari-kernel/index.js";
 import { ThreatEngine } from "../threat-engine.js";
 

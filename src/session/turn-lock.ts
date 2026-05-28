@@ -19,7 +19,7 @@
 // the registry reflects live progress (iteration count, last tool, committing
 // status). That's what the 409 response exposes and what session_status reads.
 
-import { isCommittingTool } from "./committing-tool-check.js";
+import { isCommittingTool } from "../committing-tool-check.js";
 
 export interface ActiveTurn {
   sessionId: string;

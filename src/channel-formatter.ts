@@ -14,7 +14,7 @@
  * - Fallback: if formatting fails, send plain text (never lose the message)
  */
 
-import type { ChannelType } from "./session-router.js";
+import type { ChannelType } from "./session/router.js";
 
 // ── Channel Limits ──
 

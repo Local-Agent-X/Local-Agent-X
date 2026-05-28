@@ -2,7 +2,7 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import { getLaneStatus, setLaneConcurrency, type LaneName } from "../../execution-lanes.js";
 import { getProviderHealthStatus, resetProviderHealth, type ProviderId } from "../../model-fallback.js";
-import { linkIdentities, unlinkIdentity, getIdentityGroups, type ChannelType } from "../../session-router.js";
+import { linkIdentities, unlinkIdentity, getIdentityGroups, type ChannelType } from "../../session/router.js";
 import { LinkIdentitiesSchema, validateBody } from "../../route-schemas.js";
 
 export const handleInfraRoutes: RouteHandler = async (method, url, req, res, _ctx, _role) => {

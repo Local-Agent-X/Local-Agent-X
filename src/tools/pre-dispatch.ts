@@ -10,7 +10,7 @@
  * the pack mechanism.
  */
 import type { SecurityLayer } from "../security/index.js";
-import { checkSessionPolicy } from "../session-policy.js";
+import { checkSessionPolicy } from "../session/policy.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { ThreatEngine } from "../threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";

@@ -9,7 +9,7 @@
 // caller's own session ID.
 
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { getActiveTurn } from "../session-turn-lock.js";
+import { getActiveTurn } from "../session/turn-lock.js";
 
 function ok(content: string): ToolResult { return { content }; }
 

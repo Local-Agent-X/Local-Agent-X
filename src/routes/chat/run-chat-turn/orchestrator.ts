@@ -43,7 +43,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   // calls auto-scope. Frontend includes projectId on each request when
   // the chat is nested under a project; absent = global catalog.
   try {
-    const { setSessionProject } = await import("../../../session-project.js");
+    const { setSessionProject } = await import("../../../session/project.js");
     setSessionProject(sessionId, typeof projectId === "string" ? projectId : null);
   } catch (e) {
     logger.warn(`[chat] failed to set session project: ${(e as Error).message}`);
@@ -76,7 +76,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   attachRetryContext(sessionId, retryCtx);
   retryCtxAttached = true;
   logger.info(`[retry] correlationId=${retryCtx.correlationId} sess=${sessionId.slice(0, 16)}`);
-  const { tryAcquireOrReplace, releaseTurn: releaseTurnLock } = await import("../../../session-turn-lock.js");
+  const { tryAcquireOrReplace, releaseTurn: releaseTurnLock } = await import("../../../session/turn-lock.js");
   try {
     const prepared = await preparePerTurnRequest({
       sessionId, message, sessionMessages: session.messages, attachments, ctx,
@@ -153,7 +153,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     if (retryCtxAttached) detachRetryContext(sessionId);
     ctx.setActiveBrowserSessionId("default");
     try {
-      const { clearSessionAllowedTools } = await import("../../../session-policy.js");
+      const { clearSessionAllowedTools } = await import("../../../session/policy.js");
       clearSessionAllowedTools(sessionId);
     } catch {}
     if (!doneEmitted) {

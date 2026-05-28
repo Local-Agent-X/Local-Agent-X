@@ -97,7 +97,7 @@ async function injectSessionState(ctx: ToolCallContext): Promise<void> {
   // automatically. Explicit project_id wins.
   if ((tc.name === "agent_spawn" || tc.name === "agent_list" || tc.name === "agent_create") && sessionId) {
     if (!args.project_id) {
-      const { getSessionProject } = await import("../session-project.js");
+      const { getSessionProject } = await import("../session/project.js");
       const pid = getSessionProject(sessionId);
       if (pid) args.project_id = pid;
     }

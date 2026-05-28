@@ -281,11 +281,20 @@ export async function driveTurn(
   // activity row is the receipt. Mixed turns (silent + bash/web_fetch)
   // still drive a wrap-up so data-returning results get surfaced. See
   // turn-loop/silent-tool-check.ts for the predicate.
+  //
+  // Same reasoning extends to tool-less informational turns: if the model
+  // answered with text and made zero tool calls, there is nothing for a
+  // next turn to react to. Without this branch, when the adapter doesn't
+  // surface a stop signal (Anthropic CLI subscription path doesn't carry
+  // end_turn through), the worker loops and the model produces a
+  // "no blocker / informational / nothing to commit" paragraph that reads
+  // as internal scratchwork to the user.
   const allSilent = toolCalls.length > 0 && toolCalls.every(isSilentToolCall);
+  const noTools = toolCalls.length === 0;
   if (
     terminalReason === null &&
     !middlewareAborted &&
-    allSilent &&
+    (allSilent || noTools) &&
     assistantText.trim().length > 0
   ) {
     terminalReason = "done";

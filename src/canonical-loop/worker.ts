@@ -174,6 +174,18 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       // synthetic user message at turnIdx+1. Even when the adapter said
       // terminal=done, the agent isn't done — the nudge must be visible
       // on a next-turn model call. Override the break for any op type.
+      //
+      // Flush pending I/O before the check. A WS `inject` message that
+      // arrived while driveTurn was returning is sitting in the poll
+      // queue — without yielding here, the guard reads `hasInjects=false`,
+      // the worker exits, and then the inject handler runs against a
+      // terminal op, gets routed to getChatHandler() as a fresh op2, and
+      // op2's persistTurnState races op1's — landing the inject in
+      // session.messages BEFORE the original question on rehydrate.
+      // setImmediate fires after the poll phase, so any queued WS message
+      // (including the inject) has fully run and pushInject has landed
+      // before we check.
+      await new Promise<void>(resolve => setImmediate(resolve));
       const middlewareNudged = r.middlewareDirective?.kind === "nudge";
       if (r.terminalReason !== null && op.type === "chat_turn") {
         const sessionId = getSessionForOp(op.id);

@@ -16,6 +16,16 @@ import {
   terminateChat,
 } from "./state.js";
 import { handleIdeRuntimeError } from "./ide-runtime-error.js";
+// Static imports for the inject hot path. Previously these were `await
+// import(...)` inside the handler, but every `await` yields the event loop
+// and the worker's continuation guard (worker.ts:178) could run in between —
+// observing an empty queue, exiting op1, and then the resumed handler would
+// route the inject through getChatHandler() as a fresh op2, racing op1's
+// persistTurnState and writing the inject to session.messages BEFORE the
+// original question. Keeping the inject path fully synchronous closes the
+// race: enqueue happens in one event-loop turn, the guard sees it.
+import { listOpsForSession } from "../ops/session-bridge.js";
+import { pushInject } from "../agent-loop/inject-queue.js";
 
 const logger = createLogger("chat-ws");
 
@@ -109,7 +119,6 @@ export function attachMessageRouter(ctx: RouterContext): void {
         // worker isn't around to drain the queue. Without this re-route the
         // message would sit in the queue indefinitely and only surface when
         // the next user send started a new turn (the orphan-inject bug).
-        const { listOpsForSession } = await import("../ops/session-bridge.js");
         const liveOps = listOpsForSession(sessionId);
         if (liveOps.length === 0) {
           const handler = getChatHandler();
@@ -126,7 +135,6 @@ export function attachMessageRouter(ctx: RouterContext): void {
           logger.warn(`[ws-chat] inject dropped sess=${sessionId} — no live ops and no chat handler`);
           return;
         }
-        const { pushInject } = await import("../agent-loop/inject-queue.js");
         const injectId = pushInject(sessionId, text, clientInjectId);
         logger.info(`[ws-chat] inject queued sess=${sessionId} len=${text.length} id=${injectId.slice(0, 8)} liveOps=${liveOps.length}`);
         broadcastToSession(sessionId, { type: "inject_queued", injectId });

@@ -8,6 +8,14 @@ async function settingsCheckUpdate() {
   try {
     const res = await apiFetch('/api/updates/check');
     const data = await res.json();
+    // Surface check failures explicitly — without this, a 404/offline/auth
+    // failure rendered as a confident "up to date" message and the user
+    // would never know an update was actually waiting.
+    if (data.error) {
+      status.style.color = 'var(--error, red)';
+      status.textContent = 'Could not check for updates: ' + data.error;
+      return;
+    }
     if (data.updateAvailable) {
       status.style.color = 'var(--accent)';
       const summary = `Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''}`;

@@ -164,7 +164,8 @@ setInterval(() => {
       banner.className = 'visible';
       banner.innerHTML = `
         <span class="update-msg">Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''}</span>
-        <button class="update-btn" onclick="window.open('https://github.com/Local-Agent-X/Local-Agent-X','_blank')">View on GitHub</button>
+        <button class="update-btn" onclick="bannerApplyUpdate()">Update Now</button>
+        <button class="update-btn" onclick="window.open('https://github.com/Local-Agent-X/Local-Agent-X','_blank')" style="opacity:.75">View on GitHub</button>
         <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>
       `;
     }
@@ -175,4 +176,37 @@ function dismissUpdate() {
   const banner = document.getElementById('update-banner');
   if (banner) { banner.style.display = 'none'; banner.className = ''; }
   sessionStorage.setItem('sax_update_dismissed', '1');
+}
+
+// Pull + relaunch flow triggered from the boot-time banner. Mirrors
+// settingsApplyUpdate() in settings.js but writes status into the banner
+// instead of the settings panel, so the user can update without opening
+// Settings. Both paths hit the same /api/updates/apply endpoint and rely
+// on the desktop wrapper's reconcile to run npm install + build on the
+// next Electron boot.
+async function bannerApplyUpdate() {
+  const banner = document.getElementById('update-banner');
+  if (!banner) return;
+  if (!confirm('Pull the latest version from GitHub? You will be asked to relaunch the app afterward to finish installing.')) return;
+  banner.innerHTML = `<span class="update-msg">Pulling latest from GitHub…</span>`;
+  try {
+    const res = await apiFetch('/api/updates/apply', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      let msg = data.error || 'Update failed.';
+      if (Array.isArray(data.dirty) && data.dirty.length) {
+        msg += ' (Local changes: ' + data.dirty.slice(0, 3).join(', ') + (data.dirty.length > 3 ? '…' : '') + ')';
+      }
+      banner.innerHTML = `<span class="update-msg" style="color:var(--error,#f88)">${esc(msg)}</span> <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>`;
+      return;
+    }
+    const pulled = `Pulled ${esc(data.fromCommit)} → ${esc(data.toCommit)}.`;
+    if (window.desktop && window.desktop.relaunchApp) {
+      banner.innerHTML = `<span class="update-msg">${pulled} Relaunch to finish installing.</span> <button class="update-btn" onclick="window.desktop.relaunchApp()">Quit &amp; Relaunch</button> <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>`;
+    } else {
+      banner.innerHTML = `<span class="update-msg">${pulled} <strong>Quit and relaunch the app to finish installing.</strong></span> <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>`;
+    }
+  } catch (e) {
+    banner.innerHTML = `<span class="update-msg" style="color:var(--error,#f88)">Update failed: ${esc(e && e.message ? e.message : String(e))}</span> <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>`;
+  }
 }

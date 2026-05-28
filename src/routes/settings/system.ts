@@ -7,14 +7,8 @@ import { getProviderHealthStatus } from "../../model-fallback.js";
 import { getThreatDashboard } from "../../threat-dashboard.js";
 
 /** Typed cache for update check results stored on the module scope */
-interface UpdateCheckResult { localVersion: string; localCommit: string; remoteVersion: string; remoteCommit: string; updateAvailable: boolean; releaseNotes: string }
+interface UpdateCheckResult { localVersion: string; localCommit: string; remoteVersion: string; remoteCommit: string; updateAvailable: boolean; releaseNotes: string; error?: string }
 let _updateCache: { data: UpdateCheckResult; time: number } | null = null;
-
-/** GitHub commit response shape */
-interface GitHubCommitResponse { sha?: string; commit?: { message?: string } }
-
-/** GitHub package.json response shape */
-interface GitHubPackageResponse { version?: string }
 
 export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -113,28 +107,55 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
     json(result.ok ? 200 : 400, result); return true;
   }
 
-  // Update checker
+  // Update checker — uses local git (not GitHub HTTP API) so it works for
+  // private repos. The user's git credential helper already authenticates
+  // with the remote (proved by working push), so `git fetch` succeeds
+  // without us having to manage tokens. Unauthenticated HTTP API calls
+  // would return 404 for a private repo and the empty-catch swallow would
+  // silently report "up to date" — the foot-gun this rewrite removes.
   if (method === "GET" && url.pathname === "/api/updates/check") {
     try {
-      const pkgPath = join(import.meta.dirname || ".", "..", "..", "package.json");
+      const { execSync } = await import("node:child_process");
+      const repoRoot = process.cwd();
+      const pkgPath = join(repoRoot, "package.json");
       const localPkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
       const localVersion = localPkg.version || "0.0.0";
       let localCommit = "";
-      try { const { execSync } = await import("node:child_process"); localCommit = execSync("git rev-parse --short HEAD", { cwd: join(import.meta.dirname || ".", "..", ".."), encoding: "utf-8" }).trim(); } catch {}
+      try { localCommit = execSync("git rev-parse --short HEAD", { cwd: repoRoot, encoding: "utf-8" }).trim(); }
+      catch {
+        json(200, { localVersion, localCommit: "", remoteVersion: localVersion, remoteCommit: "", updateAvailable: false, releaseNotes: "", error: "Not a git checkout — auto-update unavailable." });
+        return true;
+      }
       const now = Date.now();
-      if (_updateCache && now - _updateCache.time < 3600000) {
+      // Cache window kept short (5 min) — these calls are cheap (one local
+      // fetch) and a user clicking "Check for Updates" expects fresh data.
+      // The original 60 min was sized for the rate-limited GitHub HTTP API.
+      if (_updateCache && now - _updateCache.time < 300000) {
         json(200, { ..._updateCache.data, localVersion, localCommit, cached: true }); return true;
       }
-      let remoteVersion = localVersion, remoteCommit = "", updateAvailable = false, releaseNotes = "";
+      let remoteVersion = localVersion, remoteCommit = "", updateAvailable = false, releaseNotes = "", checkError: string | undefined;
       try {
-        const commitRes = await fetch("https://api.github.com/repos/Local-Agent-X/Local-Agent-X/commits/main", { headers: { Accept: "application/vnd.github.v3+json", "User-Agent": "Local-Agent-X" } });
-        if (commitRes.ok) { const d = await commitRes.json() as GitHubCommitResponse; remoteCommit = d.sha?.slice(0, 7) || ""; releaseNotes = d.commit?.message?.split("\n")[0] || ""; }
-        const pkgRes = await fetch("https://raw.githubusercontent.com/Local-Agent-X/Local-Agent-X/main/package.json", { headers: { "User-Agent": "Local-Agent-X" } });
-        if (pkgRes.ok) { remoteVersion = (await pkgRes.json() as GitHubPackageResponse).version || localVersion; }
-        updateAvailable = (remoteCommit && localCommit && remoteCommit !== localCommit) || remoteVersion !== localVersion;
-      } catch {}
-      const result: UpdateCheckResult = { localVersion, localCommit, remoteVersion, remoteCommit, updateAvailable, releaseNotes };
-      _updateCache = { data: result, time: now };
+        // 30s timeout: covers slow networks but won't hang the UI forever.
+        execSync("git fetch origin main --quiet", { cwd: repoRoot, encoding: "utf-8", timeout: 30000 });
+        remoteCommit = execSync("git rev-parse --short origin/main", { cwd: repoRoot, encoding: "utf-8" }).trim();
+        try {
+          const remotePkgRaw = execSync("git show origin/main:package.json", { cwd: repoRoot, encoding: "utf-8" });
+          remoteVersion = (JSON.parse(remotePkgRaw) as { version?: string }).version || localVersion;
+        } catch { /* package.json may be missing on remote — fall back to localVersion */ }
+        try {
+          releaseNotes = execSync("git log -1 --format=%s origin/main", { cwd: repoRoot, encoding: "utf-8" }).trim();
+        } catch { /* non-fatal */ }
+        updateAvailable = !!(remoteCommit && localCommit && remoteCommit !== localCommit) || remoteVersion !== localVersion;
+      } catch (e) {
+        // Surface the failure instead of pretending everything's fine.
+        // Common cases: offline, git auth revoked, remote not reachable.
+        const err = e as { stderr?: Buffer | string; message: string };
+        const stderr = typeof err.stderr === "string" ? err.stderr : err.stderr?.toString() || "";
+        checkError = (stderr || err.message).trim().split("\n")[0] || "git fetch failed";
+      }
+      const result: UpdateCheckResult = { localVersion, localCommit, remoteVersion, remoteCommit, updateAvailable, releaseNotes, ...(checkError ? { error: checkError } : {}) };
+      // Only cache successful checks — don't lock in a transient error for 5 min.
+      if (!checkError) _updateCache = { data: result, time: now };
       json(200, result);
     } catch (e) { json(200, { updateAvailable: false, error: safeErrorMessage(e) }); }
     return true;

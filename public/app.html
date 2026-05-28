@@ -1071,7 +1071,7 @@
 <script src="/js/chat-helpers.js?v=v1"></script>
 <!-- ChatStreamStore must load before every chat-ws / chat-send module so
      they can reference window.ChatStreamStore at file-evaluation time. -->
-<script src="/js/chat-stream-store.js?v=v1"></script>
+<script src="/js/chat-stream-store.js?v=v2"></script>
 <!-- chat-ws-handler split: per-event-group modules must load BEFORE
      chat-ws-handler.js so its dispatcher can reference handleSettingsChanged,
      dispatchBgOpEvent, dispatchChatStreamEvent, handleAgentFeedEvent,
@@ -1087,7 +1087,7 @@
      sendMessage()'s wsHealthy check can reach _sendMessageWs/_sendMessageHttp. -->
 <script src="/js/chat-send-ws.js?v=v3"></script>
 <script src="/js/chat-send-http.js?v=v3"></script>
-<script src="/js/chat-send.js?v=v8"></script>
+<script src="/js/chat-send.js?v=v9"></script>
 <script src="/js/chat-uploads.js?v=v2"></script>
 <script src="/js/chat.js?v=vd4"></script>
 <script src="/js/secret-modal.js?v=v1"></script>

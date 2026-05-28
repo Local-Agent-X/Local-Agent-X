@@ -40,11 +40,21 @@ async function sendMessage() {
       chatWs.send(JSON.stringify({ type: 'inject', sessionId: activeChat.id, message: text, injectId }));
     }
     const injectMsg = { role: 'user', content: text, timestamp: Date.now(), _injected: true, _injectId: injectId, _queueState: 'queued' };
-    // Push to end. The live assistant row isn't in messages[] during a turn
-    // (Phase 1 refactor) — it's synthesized by renderMessages at the store's
-    // liveAnchorIndex. So the inject naturally lands after the synthetic
-    // live row without needing to walk back over any streaming slot.
-    activeChat.messages.push(injectMsg);
+    // Splice the inject AT the live anchor (before the synthesized assistant
+    // row) and advance the anchor by 1 so the synth — and the future
+    // finalized assistant from promoteLiveToMessages — stays after the
+    // inject. Push-to-end placed inject AFTER the assistant slot, so the
+    // user's typed mid-stream message ended up below the response that
+    // addressed it. Preserves typed-before-response ordering both during
+    // streaming and after finalize.
+    const entry = ChatStreamStore.get(activeChat.id);
+    const anchor = entry && typeof entry.liveAnchorIndex === 'number' ? entry.liveAnchorIndex : -1;
+    if (anchor >= 0 && anchor <= activeChat.messages.length) {
+      activeChat.messages.splice(anchor, 0, injectMsg);
+      ChatStreamStore.bumpAnchor(activeChat.id, 1);
+    } else {
+      activeChat.messages.push(injectMsg);
+    }
     if (typeof renderMessages === 'function') renderMessages();
     input.value = ''; input.style.height = 'auto';
     saveChats();

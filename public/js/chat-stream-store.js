@@ -230,6 +230,18 @@
     e.lastActivityMs = Date.now();
   }
 
+  // Shift the live anchor by `delta`. Used by the inject path so the
+  // synthesized live assistant row (and the future finalized assistant from
+  // promoteLiveToMessages) stays AFTER any mid-stream inject we just spliced
+  // in before it. Caller passes 1 after splicing an inject at the current
+  // anchor index.
+  function bumpAnchor(sessionId, delta) {
+    if (!sessionId || typeof delta !== 'number') return;
+    const e = entries.get(sessionId);
+    if (!e || e.liveAnchorIndex < 0) return;
+    e.liveAnchorIndex += delta;
+  }
+
   // Force-terminate from a local action (stop button, transport error). The
   // dispatcher's `done` event normally clears state; this is for cases where
   // we can't wait for it (force-closing the WS, never-arrived done frame).
@@ -315,7 +327,7 @@
 
   window.ChatStreamStore = {
     get, ensure,
-    startTurn, applyEvent, bumpActivity, endTurn, promoteLiveToMessages,
+    startTurn, applyEvent, bumpActivity, bumpAnchor, endTurn, promoteLiveToMessages,
     setSidebarActive, setActiveSidebarSet,
     isStreaming, isActive, inflightOps,
     subscribe, subscribeAll,

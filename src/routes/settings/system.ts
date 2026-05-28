@@ -32,7 +32,7 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
 
   // System status
   if (method === "GET" && url.pathname === "/api/system-status") {
-    const { getSandboxMode, isDockerAvailable } = await import("../../sandbox.js");
+    const { getSandboxMode, isDockerAvailable } = await import("../../sandbox/index.js");
     const { loadProfileName } = await import("../../autonomy/profile-store.js");
     const threatData = getThreatDashboard();
     const providerHealth = getProviderHealthStatus();
@@ -101,14 +101,14 @@ export const handleSystemRoutes: RouteHandler = async (method, url, req, res, ct
 
   // Sandbox
   if (method === "GET" && url.pathname === "/api/sandbox") {
-    const { getSandboxMode, isDockerAvailable } = await import("../../sandbox.js");
+    const { getSandboxMode, isDockerAvailable } = await import("../../sandbox/index.js");
     json(200, { mode: getSandboxMode(), dockerAvailable: isDockerAvailable(), dockerDownloadUrl: "https://www.docker.com/products/docker-desktop/" }); return true;
   }
   if (method === "POST" && url.pathname === "/api/sandbox") {
     const body = await readBody(req);
     const { mode } = JSON.parse(body);
     if (mode !== "host" && mode !== "docker") { json(400, { error: "Invalid mode" }); return true; }
-    const { setSandboxMode } = await import("../../sandbox.js");
+    const { setSandboxMode } = await import("../../sandbox/index.js");
     const result = setSandboxMode(mode);
     json(result.ok ? 200 : 400, result); return true;
   }

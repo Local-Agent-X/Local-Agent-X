@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { delimiter, join } from "node:path";
 import type { ServerEvent, ToolDefinition } from "../types.js";
-import { getSandboxMode, execInSandbox } from "../sandbox.js";
+import { getSandboxMode, execInSandbox } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell } from "./shell-translate.js";
 

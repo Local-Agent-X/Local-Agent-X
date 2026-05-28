@@ -3,8 +3,8 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { validateSandboxConfig, execInSandbox } from "./sandbox.js";
-import type { SandboxConfig } from "./sandbox-types.js";
+import { validateSandboxConfig, execInSandbox } from "./index.js";
+import type { SandboxConfig } from "./types.js";
 
 // Sandbox config validator unit tests. These tests do NOT spawn docker —
 // validateSandboxConfig() is pure, and execInSandbox() rejects bad config

@@ -222,7 +222,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
     logger.info(`[boot-phase] initOrRefreshEmbeddingProvider ${Date.now() - t}ms`);
   }
 
-  import("../tools/image-tools.js").then(m => m.initImageTools?.(secretsStore)).catch(() => {});
+  import("../tools/image-tools/index.js").then(m => m.initImageTools?.(secretsStore)).catch(() => {});
   _t = _bsT("CronService+IntegrationRegistry");
   const cronService = new CronService(dataDir);
   const integrations = new IntegrationRegistry(dataDir);

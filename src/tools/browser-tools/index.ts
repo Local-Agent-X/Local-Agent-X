@@ -2,7 +2,7 @@
  * Browser tool — aggregator + dispatcher.
  *
  * One tool (`browser`) with an `action` discriminator. The per-action handlers
- * live in src/browser-tools/:
+ * live in src/tools/browser-tools/:
  *   shared.ts      — ok/err helpers, auth-wall detector, post-action snapshot,
  *                    input-ref lister, VALID_ENGINES
  *   description.ts — static tool name + description + parameters schema
@@ -14,23 +14,23 @@
  *   observe.ts     — observe (role-bucketed, diff-aware view)
  */
 
-import type { ToolDefinition } from "../types.js";
-import { getBrowserManager, closeBrowser, withBrowserLock } from "../browser.js";
-import type { BrowserEngine } from "../browser.js";
-import { VALID_ENGINES, err } from "./browser-tools/shared.js";
+import type { ToolDefinition } from "../../types.js";
+import { getBrowserManager, closeBrowser, withBrowserLock } from "../../browser.js";
+import type { BrowserEngine } from "../../browser.js";
+import { VALID_ENGINES, err } from "./shared.js";
 import {
   BROWSER_TOOL_NAME,
   BROWSER_TOOL_DESCRIPTION,
   BROWSER_TOOL_PARAMETERS,
-} from "./browser-tools/description.js";
-import { handleNavigate, handleNewTab, handleSnapshot } from "./browser-tools/navigation.js";
+} from "./description.js";
+import { handleNavigate, handleNewTab, handleSnapshot } from "./navigation.js";
 import {
   handleClick,
   handleClickText,
   handleFill,
   handleSelect,
   handleScroll,
-} from "./browser-tools/interact.js";
+} from "./interact.js";
 import {
   handleExtract,
   handleScreenshot,
@@ -41,9 +41,9 @@ import {
   handleDialogAccept,
   handleDialogDismiss,
   handleClose,
-} from "./browser-tools/page.js";
-import { handleAct } from "./browser-tools/act.js";
-import { handleObserve } from "./browser-tools/observe.js";
+} from "./page.js";
+import { handleAct } from "./act.js";
+import { handleObserve } from "./observe.js";
 
 /**
  * Creates the browser tool for web interaction via Playwright.

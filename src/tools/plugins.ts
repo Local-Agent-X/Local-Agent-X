@@ -1,12 +1,12 @@
 import type { ToolDefinition } from "../types.js";
 import type { ToolPlugin } from "./plugin.js";
 import { allTools, createHttpRequestTool, buildToolRegistry } from "../tools.js";
-import { appTools } from "./app-tools.js";
-import { issueTools } from "./issue-tools.js";
+import { appTools } from "./app-tools/index.js";
+import { issueTools } from "./issue-tools/index.js";
 import { agentEscalate } from "../agents/escalate-tool.js";
-import { imageTools } from "./image-tools.js";
+import { imageTools } from "./image-tools/index.js";
 import { createSecretTools } from "./secret-tools.js";
-import { createBrowserTools } from "./browser-tools.js";
+import { createBrowserTools } from "./browser-tools/index.js";
 import { createCoreProtocolTools } from "../protocols.js";
 import { createCronTools } from "../cron-service.js";
 import { createHandlerTools } from "../agency/handler.js";

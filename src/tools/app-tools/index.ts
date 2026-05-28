@@ -1,7 +1,7 @@
 /**
  * App Agent Tools — aggregator.
  *
- * The 10 tool definitions live in src/app-tools/:
+ * The 10 tool definitions live in src/tools/app-tools/:
  *   lifecycle.ts — create, update, list, delete, permissions
  *   runtime.ts   — read, action, query
  *   sidebar.ts   — pin, unpin
@@ -14,10 +14,10 @@
  * - Rate limiting on state/event operations
  */
 
-import type { ToolDefinition } from "../types.js";
-import { appCreate, appUpdate, appList, appDelete, appPermissions } from "./app-tools/lifecycle.js";
-import { appRead, appAction, appQuery } from "./app-tools/runtime.js";
-import { sidebarPin, sidebarUnpin, sidebarClear } from "./app-tools/sidebar.js";
+import type { ToolDefinition } from "../../types.js";
+import { appCreate, appUpdate, appList, appDelete, appPermissions } from "./lifecycle.js";
+import { appRead, appAction, appQuery } from "./runtime.js";
+import { sidebarPin, sidebarUnpin, sidebarClear } from "./sidebar.js";
 
 export const appTools: ToolDefinition[] = [
   appCreate,

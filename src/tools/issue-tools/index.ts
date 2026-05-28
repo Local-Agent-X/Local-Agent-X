@@ -1,7 +1,7 @@
 /**
  * Issue Tools — aggregator.
  *
- * Per-tool modules live in src/issue-tools/:
+ * Per-tool modules live in src/tools/issue-tools/:
  *   shared.ts          — ok/err + project-scope resolvers
  *   issue-create.ts    — issue_create
  *   issue-list.ts      — issue_list
@@ -14,16 +14,16 @@
  *   agent-wakeup.ts    — agent_wakeup
  */
 
-import type { ToolDefinition } from "../types.js";
-import { issueCreateTool } from "./issue-tools/issue-create.js";
-import { issueListTool } from "./issue-tools/issue-list.js";
-import { issueUpdateTool } from "./issue-tools/issue-update.js";
-import { issueCheckoutTool } from "./issue-tools/issue-checkout.js";
-import { issueReleaseTool } from "./issue-tools/issue-release.js";
-import { issueSearchTool } from "./issue-tools/issue-search.js";
-import { agentTeamListTool } from "./issue-tools/agent-team-list.js";
-import { agentWhoAmITool } from "./issue-tools/agent-whoami.js";
-import { agentWakeupTool } from "./issue-tools/agent-wakeup.js";
+import type { ToolDefinition } from "../../types.js";
+import { issueCreateTool } from "./issue-create.js";
+import { issueListTool } from "./issue-list.js";
+import { issueUpdateTool } from "./issue-update.js";
+import { issueCheckoutTool } from "./issue-checkout.js";
+import { issueReleaseTool } from "./issue-release.js";
+import { issueSearchTool } from "./issue-search.js";
+import { agentTeamListTool } from "./agent-team-list.js";
+import { agentWhoAmITool } from "./agent-whoami.js";
+import { agentWakeupTool } from "./agent-wakeup.js";
 
 export const issueTools: ToolDefinition[] = [
   issueCreateTool,

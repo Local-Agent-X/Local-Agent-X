@@ -58,7 +58,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
     async execute(): Promise<{ content: string; metadata?: Record<string, unknown> }> {
       const results: string[] = [];
       try {
-        const { MemoryConsolidator } = await import("../memory-consolidation/index.js");
+        const { MemoryConsolidator } = await import("../memory/cognitive/consolidation/index.js");
         const report = MemoryConsolidator.getInstance().consolidate();
         results.push(`Consolidation: merged=${report.mergedCount} promoted=${report.promotedCount} entities=${report.entityPagesUpdated} contradictions=${report.contradictionsFound}`);
       } catch (e) { results.push(`Consolidation failed: ${(e as Error).message}`); }

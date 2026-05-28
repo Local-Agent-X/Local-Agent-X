@@ -3,8 +3,8 @@ import { join } from "node:path";
 
 import { EmotionalMemory } from "../emotional-memory.js";
 import { MemoryGraph } from "../memory-graph.js";
-import { ProactiveMemory } from "../proactive-memory/index.js";
-import MemoryImportance from "../memory-importance/index.js";
+import { ProactiveMemory } from "../memory/cognitive/proactive/index.js";
+import MemoryImportance from "../memory/cognitive/importance/index.js";
 import { CrossSessionLearner as CrossSessionLearnerClass } from "../cross-session-learning/index.js";
 import { NarrativeMemory } from "../narrative-memory.js";
 import { UnspokenDetector } from "../unspoken-detector.js";
@@ -21,8 +21,8 @@ import { MemoryTierManager } from "../memory-tiers.js";
 import { ContradictionDetector } from "../contradiction-detector.js";
 import { AssociativeMemory } from "../associative-recall/index.js";
 import { PredictivePrefetcher } from "../predictive-prefetch.js";
-import { MemoryCompressor } from "../memory-compression/index.js";
-import { MemoryConsolidator } from "../memory-consolidation/index.js";
+import { MemoryCompressor } from "../memory/cognitive/compression/index.js";
+import { MemoryConsolidator } from "../memory/cognitive/consolidation/index.js";
 
 import type { HealthReport } from "./types.js";
 import { LAX_DIR } from "./types.js";

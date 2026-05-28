@@ -10,10 +10,10 @@ import { createLogger } from "../logger.js";
 import { getApprovalManager } from "../approval-manager.js";
 import {
   activeChats,
-  broadcastActiveChats,
   broadcastToSession,
   getChatHandler,
   getMessageCountForSession,
+  terminateChat,
 } from "./state.js";
 import { handleIdeRuntimeError } from "./ide-runtime-error.js";
 
@@ -96,7 +96,7 @@ export function attachMessageRouter(ctx: RouterContext): void {
     }
 
     if (type === "stop" && sessionId) {
-      await handleStop(sessionId);
+      handleStop(sessionId);
       return;
     }
 
@@ -256,26 +256,13 @@ async function handleCancelOp(opId: string): Promise<void> {
   }
 }
 
-async function handleStop(sessionId: string): Promise<void> {
-  const chat = activeChats.get(sessionId);
-  if (!chat || chat.done) return;
-  chat.abortController.abort();
-  // Release the turn lock so the user can immediately send a new
-  // message. Without this the next message hits "Your previous request
-  // is still running" because the lock waits for the agent's finally
-  // block — which can take 60+ seconds if a subprocess stalls. Stop
-  // should mean stop, not "stop and wait."
-  try {
-    const { abortTurn, releaseTurn } = await import("../session-turn-lock.js");
-    abortTurn(sessionId);
-    releaseTurn(sessionId);
-  } catch (e) {
-    logger.warn(`[ws-chat] stop: turn-lock release failed: ${(e as Error).message}`);
-  }
-  broadcastToSession(sessionId, { type: "error", message: "Stopped by user" });
-  broadcastToSession(sessionId, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
-  chat.done = true;
-  broadcastActiveChats();
+function handleStop(sessionId: string): void {
+  // Stop must mean stop, not "stop and wait." terminateChat aborts the
+  // in-flight provider stream + releases the turn lock immediately, so the
+  // next user send doesn't hit "previous request still running" while the
+  // agent's finally block drains (which can take 60+ seconds if a
+  // subprocess stalls).
+  terminateChat(sessionId, { abort: true, errorMessage: "Stopped by user" });
 }
 
 async function handleChat(ctx: RouterContext, sessionId: string, msg: Record<string, unknown>): Promise<void> {

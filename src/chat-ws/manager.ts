@@ -4,7 +4,6 @@
 // onChat (register the message handler).
 
 import type { ServerEvent } from "../types.js";
-import { createLogger } from "../logger.js";
 import {
   activeChats,
   type ActiveChat,
@@ -12,9 +11,8 @@ import {
   broadcastActiveChats,
   broadcastToSession,
   setChatHandler,
+  terminateChat,
 } from "./state.js";
-
-const logger = createLogger("chat-ws");
 
 export interface ChatWsManager {
   startChat(sessionId: string): { abort: AbortController; onEvent: (event: ServerEvent) => void };
@@ -80,43 +78,20 @@ export function buildManager(): ChatWsManager {
     /** Stop a chat by session ID (used by the HTTP fallback when WS is
      *  unavailable). Returns true if the chat was active and aborted. */
     stopChat(sessionId: string): boolean {
-      const chat = activeChats.get(sessionId);
-      if (!chat || chat.done) return false;
-      chat.abortController.abort();
-      // Release the turn lock so the next message isn't rejected with
-      // "previous request still running". Fire-and-forget — if it
-      // throws we still want stop to return true.
-      void (async () => {
-        try {
-          const { abortTurn, releaseTurn } = await import("../session-turn-lock.js");
-          abortTurn(sessionId);
-          releaseTurn(sessionId);
-        } catch (e) {
-          logger.warn(`[stopChat] turn-lock release failed: ${(e as Error).message}`);
-        }
-      })();
-      broadcastToSession(sessionId, { type: "error", message: "Stopped by user" });
-      broadcastToSession(sessionId, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
-      chat.done = true;
-      broadcastActiveChats();
-      return true;
+      return terminateChat(sessionId, { abort: true, errorMessage: "Stopped by user" });
     },
 
     getActiveChats(): string[] {
       return [...activeChats.keys()].filter(id => !activeChats.get(id)!.done);
     },
 
-    /** Force-terminate a chat with an error reason. Used by
-     *  transport-level error handlers (e.g. wireWsChat self-loop fetch
-     *  failure) so the WS client gets a terminal signal instead of
-     *  waiting for the 5-minute cleanup timer. */
+    /** Force-terminate a chat with an error reason. Used by transport-level
+     *  error handlers (e.g. wireWsChat catch block) so the WS client gets a
+     *  terminal signal instead of waiting for the 5-minute cleanup timer.
+     *  Skips the abort path because the orchestrator's catch already finished
+     *  its side of the turn. */
     failChat(sessionId: string, errorMessage: string): void {
-      const chat = activeChats.get(sessionId);
-      if (!chat || chat.done) return;
-      broadcastToSession(sessionId, { type: "error", message: errorMessage });
-      broadcastToSession(sessionId, { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
-      chat.done = true;
-      broadcastActiveChats();
+      terminateChat(sessionId, { abort: false, errorMessage });
     },
 
     /** Push a one-off event to WS subscribers of `sessionId` outside

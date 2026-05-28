@@ -11,7 +11,7 @@ import {
 } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
-import { evaluateWebFetch, validateUrlWithDns } from "./network-policy.js";
+import { evaluateWebFetch, validateUrlWithDns, type EgressMode } from "./network-policy.js";
 import { TOOL_CLASS_MAP } from "../ari-kernel/tool-class-map.js";
 import type { KernelClass } from "../tool-registry.js";
 
@@ -42,6 +42,7 @@ export class SecurityLayer {
   // file silently allowed every public host, which made the advertised
   // egress-allowlist feature fail-open on a default install.
   private egressAllowlistConfigured: boolean = false;
+  private egressMode: EgressMode = "permissive";
   private sessionAllowedPaths = new Map<string, Set<string>>();
   fileAccessMode: FileAccessMode = "common";
 
@@ -90,18 +91,16 @@ export class SecurityLayer {
   constructor(workspace: string, fileAccessMode?: FileAccessMode) {
     this.workspace = resolve(workspace);
     this.fileAccessMode = fileAccessMode || this.loadFileAccessMode();
+    this.egressMode = this.loadEgressMode();
     // Load egress allowlist from ~/.lax/egress-allowlist.json.
     //
-    // Semantics (intentional change from earlier behavior):
-    //   - file present + populated → enforce that list
-    //   - file present + `[]`      → enforce (user has explicitly opted into
-    //                                  "deny all"); egressAllowlistConfigured=true
-    //   - file missing             → enforce + emit a setup-hint error
-    //                                  (egressAllowlistConfigured stays false)
+    // In permissive mode (default): allowlist is the "trusted destinations"
+    // list — hosts the agent may send secret-shaped payloads to. Hosts not
+    // listed are still reachable for plain surfing; only secret-bearing
+    // POST/PUT/PATCH/DELETE bodies are gated (enforced at the tool layer).
     //
-    // The previous behavior was "missing file = allow all public hosts,"
-    // which silently turned the advertised egress allowlist into a no-op
-    // on every default install.
+    // In strict mode: allowlist is the only set of hosts the agent may
+    // reach at all. Missing file in strict mode → deny-with-hint.
     try {
       const allowlistPath = join(getLaxDir(), "egress-allowlist.json");
       if (existsSync(allowlistPath)) {
@@ -109,20 +108,33 @@ export class SecurityLayer {
         if (Array.isArray(parsed)) {
           this.egressAllowlist = new Set(parsed.map((d: unknown) => String(d).toLowerCase()));
           this.egressAllowlistConfigured = true;
-          logger.info(`[security] Egress allowlist loaded: ${this.egressAllowlist.size} domains`);
+          logger.info(`[security] Egress allowlist loaded: ${this.egressAllowlist.size} domains (mode=${this.egressMode})`);
         } else {
-          logger.warn(`[security] ${allowlistPath} is not a JSON array — treating as missing (deny-by-default)`);
+          logger.warn(`[security] ${allowlistPath} is not a JSON array — treating as missing`);
         }
-      } else {
+      } else if (this.egressMode === "strict") {
         logger.warn(
-          `[security] No egress allowlist at ${allowlistPath} — outbound network requests will be denied. ` +
-          `Create the file with a JSON array of allowed domains (e.g. ["api.anthropic.com","github.com","*.npmjs.org"]) to enable egress.`,
+          `[security] strict mode but no allowlist at ${allowlistPath} — all outbound requests will be denied. ` +
+          `Create the file with a JSON array of allowed domains or set egressMode to "permissive" in ~/.lax/security.json.`,
         );
       }
     } catch (e) {
       logger.warn(`[security] Failed to load egress allowlist: ${(e as Error).message}`);
     }
     logger.info(`[security] File access mode: ${this.fileAccessMode}`);
+  }
+
+  private loadEgressMode(): EgressMode {
+    try {
+      const cfgPath = join(getLaxDir(), "security.json");
+      if (existsSync(cfgPath)) {
+        const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
+        if (cfg.egressMode === "strict" || cfg.egressMode === "permissive") {
+          return cfg.egressMode;
+        }
+      }
+    } catch {}
+    return "permissive";
   }
 
   private loadFileAccessMode(): FileAccessMode {
@@ -225,6 +237,7 @@ export class SecurityLayer {
         this.egressAllowlistConfigured,
         String(SecurityLayer._selfPort || "7007"),
         String(args.url || ""),
+        this.egressMode,
       );
     } else {
       decision = this.evaluateByKernelClass(toolName, TOOL_CLASS_MAP[toolName], args, ctx);
@@ -248,6 +261,7 @@ export class SecurityLayer {
           this.egressAllowlistConfigured,
           String(SecurityLayer._selfPort || "7007"),
           browserUrl,
+          this.egressMode,
         );
       } catch {
         return { allowed: false, reason: "Blocked: invalid URL", userHint: USER_HINTS.network };
@@ -303,6 +317,7 @@ export class SecurityLayer {
             this.egressAllowlistConfigured,
             String(SecurityLayer._selfPort || "7007"),
             args.url,
+            this.egressMode,
           );
         }
         return {
@@ -373,6 +388,7 @@ export class SecurityLayer {
       this.egressAllowlistConfigured,
       String(SecurityLayer._selfPort || "7007"),
       url,
+      this.egressMode,
     );
   }
 

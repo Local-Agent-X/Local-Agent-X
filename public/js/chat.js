@@ -1,40 +1,18 @@
 // ── Chat Panel ──
-// `streamingSessionId` is a legacy singular pointer kept around for
-// updateStreamUI() trigger semantics (its setter in chat-uploads.js fires
-// the UI refresh). Per-session truth lives in `_liveStreams` below — any
-// "is X streaming" question must use `isStreaming(X)`, not equality with
-// the singular. The singular is undefined behavior when multiple sessions
-// stream concurrently (main chat + IDE chat).
-let streamingSessionId = null;
+// Per-session stream state lives in ChatStreamStore (chat-stream-store.js).
+// `isStreaming(id)` is the canonical "is X streaming" query — both the
+// legacy singular streamingSessionId and the local _liveStreams Map were
+// folded into the store as part of the Phase 1 client refactor.
+
 let pendingUploads = [];
 let userScrolledUp = false;
 
-// Registry of in-flight streams. Keyed by sessionId. Lets renderMessages
-// pull the live content (instead of the savePartial-stale persisted copy)
-// when a chat is re-entered mid-stream, and lets the stream handler reattach
-// to a freshly-rendered bodyEl after a chat switch. ALSO the canonical
-// "is X streaming" source — see isStreaming() below.
-const _liveStreams = new Map(); // sessionId → { content, toolEvents }
-
-// Per-session streaming predicate. Use this instead of comparing to the
-// singular streamingSessionId, which only reflects the most-recent stream
-// start and races whenever main chat + IDE chat run concurrently.
 function isStreaming(sessionId) {
-  return !!sessionId && _liveStreams.has(sessionId);
+  return !!sessionId && ChatStreamStore.isStreaming(sessionId);
 }
 window.isStreaming = isStreaming;
 
-// (extracted to /js/chat-ws.js or /js/chat-helpers.js)
-
-// (extracted to /js/chat-ws.js or /js/chat-helpers.js)
-
-// Render path moved to /js/chat-render.js
-// sendMessage moved to /js/chat-send.js
-// Uploads + drag/drop + keyboard + paste moved to /js/chat-uploads.js
-
 function init_chat() {
-  // Always clear stale streaming state on page load
-  window.streamingSessionId = null;
   const stopBtn = document.getElementById('stop-btn');
   if (stopBtn) stopBtn.style.display = 'none';
   const sendBtn = document.getElementById('send-btn');
@@ -159,4 +137,3 @@ async function autoSummarize() {
 }
 
 // Global search + smart-context indicator + mood detection moved to /js/chat-extras.js
-

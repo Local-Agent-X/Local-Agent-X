@@ -1,50 +1,41 @@
 // ── Chat: WebSocket connection + chatWs-dependent helpers ──
 //
-// Owns the chatWs lifecycle (connect / reconnect / drain / event dispatch),
-// the in-flight chat-op tracker (inflightChatOps for canonical resume), the
-// active-chat set used for sidebar attention markers, and a small
-// _findStreamingBodyEl helper that maps a sessionId to its live DOM bubble.
+// Owns the chatWs lifecycle (connect / reconnect / drain / single dispatch),
+// the heartbeat, the stuck-stream watchdog, and a small _findStreamingBodyEl
+// helper that maps a sessionId to its live DOM bubble.
 //
-// Also hosts the helpers other modules use to talk to chatWs without
-// owning the reference:
-//   window.chatWs                — read-only getter (Object.defineProperty)
-//   window.sendChatWsControl(p)  — wraps chatWs.send for agent-feeds
-//   window.sendApprovalResponse  — wraps chatWs.send for tool-cards
-//
-// Extracted from chat.js as part of the 400-LOC god-file split.
+// Per-session stream state (content / toolEvents / opId / seq / activity /
+// status) lives in ChatStreamStore — this module reads from the store for
+// reconnect replay, watchdog scans, and stop-button cleanup. Worker-card
+// state still lives in agentFeedsData (chat-agent-feeds.js) — it's
+// opId-keyed worker data, not per-session chat state.
 //
 // External deps from chat.js / shared.js:
 //   - apiFetch, esc, AUTH_TOKEN, API   (shared.js)
 //   - activeChat                       (app.js — global)
-//   - streamingSessionId, _liveStreams (chat.js — accessed via window.streamingSessionId / closure-bound at call time)
-//   - addMessageEl, renderMessages, _upsertStreamingAssistant, savePartial
-//                                      (chat.js — auto-window function decls; resolved at call time)
 
 function _findStreamingBodyEl(sessionId) {
   if (!activeChat || activeChat.id !== sessionId) return null;
   const messages = document.getElementById('messages');
   if (!messages) return null;
-  // DOM uses class 'msg assistant' (see addMessageEl). Older code here
-  // looked for '.msg-row.assistant' which never matched after a UI
-  // refactor — this helper silently returned null on every chat-switch
-  // re-entry, leaving the streaming bubble frozen at the snapshot it
-  // rendered on entry, with no incoming deltas able to update the DOM.
+  // DOM uses class 'msg assistant' (see addMessageEl). Older code looked
+  // for '.msg-row.assistant' which never matched after a UI refactor —
+  // the helper silently returned null on every chat-switch re-entry,
+  // leaving the streaming bubble frozen at the snapshot it rendered on
+  // entry.
   const rows = messages.querySelectorAll('.msg.assistant');
   const last = rows[rows.length - 1];
   return last ? last.querySelector('.msg-body') : null;
 }
 
-// ──────────────────
-
 // ── WebSocket Chat Connection ──
 let chatWs = null;
-let activeChatsSet = new Set();
 
 // Heartbeat state. Browser WebSocket API doesn't expose protocol-level
-// ping/pong, so we send {type:"ping"} every 25s and expect
-// {type:"pong"} back. If no pong arrives within ~35s the connection is
-// half-open (server-side dead, client's readyState lying as OPEN) — we
-// force-close so onclose fires and the reconnect loop runs.
+// ping/pong, so we send {type:"ping"} every 25s and expect {type:"pong"}
+// back. If no pong arrives within ~35s the connection is half-open
+// (server-side dead, client's readyState lying as OPEN) — we force-close
+// so onclose fires and the reconnect loop runs.
 //
 // Without this, fresh-install repro showed chat sends going into the WS
 // buffer and never reaching the server. Restart-server "fixed it"
@@ -53,22 +44,18 @@ let activeChatsSet = new Set();
 // chat-send.js to demote to HTTP fallback when WS health is stale.
 let chatWsPingTimer = null;
 // Sentinel = 0 ("no pong yet"). DO NOT initialize to Date.now() on load —
-// that creates a 40s window where wsHealthy() returns true based on a
-// pong that never arrived, and the first chat-send goes into a half-open
-// WS buffer that the server never sees. The fresh-install
-// chat-doesnt-work bug was exactly this: heartbeat correct, gate wrong.
-// chat-send.js requires this to be a real timestamp (> 0) before trusting WS.
+// that creates a 40s window where wsHealthy() returns true based on a pong
+// that never arrived, and the first chat-send goes into a half-open WS
+// buffer the server never sees. chat-send.js requires this to be a real
+// timestamp (> 0) before trusting WS.
 window.chatWsLastPong = 0;
 const WS_PING_INTERVAL_MS = 25_000;
 const WS_PONG_TIMEOUT_MS = 35_000;
 function startChatWsHeartbeat() {
   stopChatWsHeartbeat();
   window.chatWsLastPong = 0;
-  // Immediate ping on connection-up. Without this, the very first
-  // send after page-load can race the 25s ping interval — chat-send.js
-  // checks `chatWsLastPong > 0` and falls back to HTTP if no pong has
-  // landed yet. The fire-and-validate-now approach lets a healthy WS
-  // serve the first send instead of unnecessarily demoting to HTTP.
+  // Immediate ping on connection-up — chat-send.js checks `chatWsLastPong > 0`
+  // and falls back to HTTP if no pong has landed yet.
   try {
     if (chatWs && chatWs.readyState === WebSocket.OPEN) {
       chatWs.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
@@ -95,75 +82,56 @@ function stopChatWsHeartbeat() {
   if (chatWsPingTimer) { clearInterval(chatWsPingTimer); chatWsPingTimer = null; }
 }
 
-// Track in-flight canonical chat ops by opId. Populated when the server
-// emits `chat_op_started` and cleared on terminal events (`done` / `error`).
-// On WebSocket reconnect we replay missed canonical events for each one
-// via `reconnect_op` so a connection drop becomes a brief visual pause
-// rather than a lost response. Keyed by opId → sessionId so the replay
-// reaches the right chat. lastActivityMs is bumped by handleChatWsMessage
-// on every event for this op — the stuck-stream watchdog uses it to
-// decide when to force a replay.
-const inflightChatOps = new Map(); // opId → { sessionId, lastSeenSeq, lastActivityMs }
-
 // Stuck-stream watchdog. The agent's response may be fully committed
-// server-side but the client's `streamingSessionId` stays set because
-// the `done` event was lost (one dropped frame mid-stream — not enough
-// to trip the heartbeat, which checks pong roundtrip rather than
-// per-message delivery). Symptom: bubble stays at "thinking…" forever
-// even though the op is done. Manual workaround: navigate to another
-// chat and back, which forces renderMessages() to pull saved text from
-// activeChat.messages. This watchdog automates that recovery via the
-// same `reconnect_op` server replay mechanism connectChatWs already uses
-// on full WS reconnect.
+// server-side but the client's stream entry stays in 'streaming' status
+// because the `done` event was lost (one dropped frame mid-stream — not
+// enough to trip the heartbeat, which checks pong roundtrip rather than
+// per-message delivery). Symptom: bubble stays at "thinking…" forever even
+// though the op is done. Manual workaround: navigate to another chat and
+// back, which forces renderMessages() to pull saved text. This watchdog
+// automates that recovery via the same `reconnect_op` server replay
+// mechanism connectChatWs already uses on full WS reconnect.
 //
-// Cadence: check every 15s. Trigger threshold: 60s since the last
-// event for an inflight op. The threshold is conservative — most
-// real LLM stalls (slow provider, big context) clear well under 60s.
+// Cadence: 15s. Threshold: 60s since last event for an inflight op. The
+// threshold is conservative — most real LLM stalls clear well under 60s.
 const STUCK_STREAM_CHECK_INTERVAL_MS = 15_000;
 const STUCK_STREAM_REPLAY_THRESHOLD_MS = 60_000;
 // Worker ops use a longer threshold than chat-turn ops. A chat turn that
 // goes silent for 60s is almost certainly stuck; a worker mid-build can
 // legitimately stall that long during `npm install` or a Codex CLI's
 // plan-then-write phase. 180s = 3min keeps the watchdog meaningful for
-// genuinely hung workers (lost `bg_op_completed` event after the op
-// landed server-side) without spamming reconnect_op against healthy
+// genuinely hung workers without spamming reconnect_op against healthy
 // long-running ops.
 var STUCK_WORKER_REPLAY_THRESHOLD_MS = 180_000;
 setInterval(function() {
   if (!chatWs || chatWs.readyState !== WebSocket.OPEN) return;
   var now = Date.now();
-  for (var entry of inflightChatOps.entries()) {
-    var opId = entry[0];
-    var info = entry[1];
+  for (var info of ChatStreamStore.inflightOps()) {
     var lastActivity = info.lastActivityMs || 0;
     if (lastActivity === 0 || now - lastActivity < STUCK_STREAM_REPLAY_THRESHOLD_MS) continue;
-    console.warn('[ws] Stuck stream detected for opId=' + opId + ' (no events for ' + Math.round((now - lastActivity) / 1000) + 's) — replaying via reconnect_op');
+    console.warn('[ws] Stuck stream detected for opId=' + info.opId + ' (no events for ' + Math.round((now - lastActivity) / 1000) + 's) — replaying via reconnect_op');
     try {
       chatWs.send(JSON.stringify({
         type: 'reconnect_op',
         sessionId: info.sessionId,
-        opId: opId,
+        opId: info.opId,
         sinceSeq: info.lastSeenSeq,
       }));
-      // Bump the timestamp so we don't spam reconnect_op every interval
-      // while a slow replay is in flight. Real activity from the replay
-      // will bump it again via handleChatWsMessage.
-      info.lastActivityMs = now;
+      // Bump activity so we don't spam reconnect_op every interval while a
+      // slow replay is in flight. Real activity from the replay will bump
+      // it again via the dispatcher.
+      ChatStreamStore.bumpActivity(info.sessionId, info.lastSeenSeq);
     } catch (e) {
       console.warn('[ws] reconnect_op send failed:', e && e.message);
     }
   }
-  // Worker ops live in the AGENTS sidebar (agentFeedsData), not
-  // inflightChatOps — the chat-op watchdog above misses them. Symptom
-  // from the field: "worker activity moved from 8 to 15 but i had to
-  // leave to another page and come back and it jumped but nothing in
-  // the agent thinking changed" — the bg_op_progress events were
-  // landing server-side but the bubble wasn't repainting until route
-  // re-entry forced a render. With sessionId + lastActivityMs stamped
-  // on each card (from chat-ws-handler.js bg_op_started + worker_stream
-  // + bg_op_progress), reconnect_op replays the missed events on the
-  // same wire chat-turn replays already use. Skips terminal states
-  // (completed/failed/cancelled) so finished cards don't keep nagging.
+  // Worker ops live in agentFeedsData (chat-agent-feeds.js), not the chat
+  // stream store — keep the worker-specific scan here. Symptom from the
+  // field: "worker activity moved from 8 to 15 but i had to leave to
+  // another page and come back" — bg_op_progress events landed server-side
+  // but the bubble wasn't repainting until route re-entry. reconnect_op
+  // replays the missed events on the same wire chat-turn replays use.
+  // Skips terminal states (completed/failed/cancelled).
   if (typeof agentFeedsData === 'object' && agentFeedsData) {
     var workerIds = Object.keys(agentFeedsData);
     for (var i = 0; i < workerIds.length; i++) {
@@ -198,35 +166,25 @@ function connectChatWs() {
   chatWs.onopen = () => {
     console.log('[ws] Chat WebSocket connected');
     startChatWsHeartbeat();
-    // Subscribe to active chat if we have one
     if (activeChat) chatWs.send(JSON.stringify({ type: 'subscribe', sessionId: activeChat.id }));
-    // Reconnect-resume: for any chat ops that were in flight when the
-    // socket dropped, ask the server to replay missed canonical events
-    // and re-attach to the live tail. The server replays via
-    // `reconnectOp(opId, sinceSeq)` and translates events back to chat
-    // ServerEvents on this WS only (other connections are unaffected).
-    for (const [opId, info] of inflightChatOps.entries()) {
-      console.log(`[ws] reconnect_op opId=${opId} sinceSeq=${info.lastSeenSeq}`);
+    // Reconnect-resume: for any chat ops in flight when the socket dropped,
+    // ask the server to replay missed canonical events and re-attach to
+    // the live tail.
+    for (const info of ChatStreamStore.inflightOps()) {
+      console.log(`[ws] reconnect_op opId=${info.opId} sinceSeq=${info.lastSeenSeq}`);
       chatWs.send(JSON.stringify({
         type: 'reconnect_op',
         sessionId: info.sessionId,
-        opId,
+        opId: info.opId,
         sinceSeq: info.lastSeenSeq,
       }));
     }
     // Also replay any non-terminal worker ops. The chat WS heartbeat
     // force-closes half-open connections — during the close → reconnect
-    // window (~3s + handshake) bg_op_progress events are broadcast but
-    // not delivered, since the closed ws is no longer in the server's
-    // clients map. The chat-op replay above doesn't cover workers (they
-    // live in agentFeedsData, not inflightChatOps), so without this the
-    // sidebar card froze at whatever line was last received and only
-    // caught up minutes later when the watchdog tripped at 180s.
-    // Symptom from the field: "I do see it work then it freezes then I
-    // leave and come back and it jumps then I can see it live again
-    // until I cant and have to leave the page again and repeat". The
-    // workers were fine; the WS was dropping events during heartbeat
-    // recoveries and only the chat-op path knew how to catch up.
+    // window (~3s + handshake) bg_op_progress events are broadcast but not
+    // delivered. Without this the sidebar card froze at whatever line was
+    // last received and only caught up minutes later when the watchdog
+    // tripped at 180s.
     if (typeof agentFeedsData === 'object' && agentFeedsData) {
       var wIds = Object.keys(agentFeedsData);
       for (var wi = 0; wi < wIds.length; wi++) {
@@ -262,7 +220,6 @@ setTimeout(connectChatWs, 1000);
 
 function stopChat() {
   if (!activeChat) return;
-  // Send stop via WS — preserves the legacy session-turn-lock abort path.
   if (chatWs && chatWs.readyState === WebSocket.OPEN) {
     chatWs.send(JSON.stringify({ type: 'stop', sessionId: activeChat.id }));
     // Also cancel any canonical chat op still running for this session.
@@ -271,9 +228,9 @@ function stopChat() {
     // signals the warm-pool to kill the CLI process. Without this, the
     // canonical op kept running server-side after a stop click and the
     // old `stop` only released the session lock.
-    for (const [opId, info] of inflightChatOps.entries()) {
+    for (const info of ChatStreamStore.inflightOps()) {
       if (info.sessionId === activeChat.id) {
-        chatWs.send(JSON.stringify({ type: 'cancel_op', sessionId: activeChat.id, opId }));
+        chatWs.send(JSON.stringify({ type: 'cancel_op', sessionId: activeChat.id, opId: info.opId }));
       }
     }
   }
@@ -283,21 +240,18 @@ function stopChat() {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
     body: JSON.stringify({ sessionId: activeChat.id }),
   }).catch(() => {});
-  // Force stop local rendering immediately. Drop the session from
-  // _liveStreams so isStreaming(id) flips false — otherwise the
+  // Force-end the local stream entry immediately. Without this the
   // STREAMING badge + inject-mode send button stay lit because we
-  // force-close the WS below and the server's `done` event (which
-  // normally clears _liveStreams) never arrives.
-  try { _liveStreams.delete(activeChat.id); } catch {}
-  window.streamingSessionId = null;
-  try { window.updateStreamUI && window.updateStreamUI(); } catch {}
+  // force-close the WS below and the server's `done` event (which normally
+  // clears the stream) never arrives.
+  ChatStreamStore.endTurn(activeChat.id, 'Stopped by user');
   // Close and reconnect WS to kill any in-flight stream
   if (chatWs) {
     chatWs.close();
     setTimeout(connectChatWs, 500);
   }
-  // Append "stopped" indicator to last message; drop the streaming pin so the
-  // message bubble shrinks back to its natural height.
+  // Append "stopped" indicator to last message; drop the streaming pin so
+  // the message bubble shrinks back to its natural height.
   const msgs = document.querySelectorAll('.msg.assistant');
   const last = msgs[msgs.length - 1];
   if (last) {
@@ -312,12 +266,11 @@ function stopChat() {
   const sendBtn = document.getElementById('send-btn');
   if (stopBtn) stopBtn.style.display = 'none';
   if (sendBtn) sendBtn.disabled = false;
-  // Stop TTS if speaking
   stopSpeaking();
 }
 
 function isChatActive(sessionId) {
-  return activeChatsSet.has(sessionId);
+  return ChatStreamStore.isActive(sessionId);
 }
 
 // Detect when user scrolls away from bottom — pause auto-scroll
@@ -325,19 +278,16 @@ function isChatActive(sessionId) {
   const el = document.getElementById('messages');
   if (!el) { document.addEventListener('DOMContentLoaded', initScrollPause); return; }
   el.addEventListener('wheel', () => {
-    if (!(activeChat && _liveStreams.has(activeChat.id))) return;
+    if (!(activeChat && ChatStreamStore.isStreaming(activeChat.id))) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
     userScrolledUp = !atBottom;
   });
   el.addEventListener('scroll', () => {
-    if (!(activeChat && _liveStreams.has(activeChat.id))) return;
-
+    if (!(activeChat && ChatStreamStore.isStreaming(activeChat.id))) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
     if (atBottom) userScrolledUp = false;
   });
 })();
-
-// ──────────────────
 
 window.sendApprovalResponse = function(approvalId, approved, rememberForSession) {
   try {
@@ -347,13 +297,9 @@ window.sendApprovalResponse = function(approvalId, approved, rememberForSession)
   } catch {}
 };
 
-// ──────────────────
-
 Object.defineProperty(window, 'chatWs', {
   get() { return chatWs; }
 });
-
-// ──────────────────
 
 window.sendChatWsControl = function(payload) {
   try {
@@ -364,6 +310,3 @@ window.sendChatWsControl = function(payload) {
   } catch {}
   return false;
 };
-
-// ──────────────────
-

@@ -185,7 +185,6 @@ function newChat(projectId) {
   navigate('chat');
   if (window.renderMessages) renderMessages();
   // New chat is never streaming — reset UI
-  if (window.streamingSessionId !== undefined) window.streamingSessionId = null;
   const stopBtn = document.getElementById('stop-btn');
   const sendBtn = document.getElementById('send-btn');
   if (stopBtn) stopBtn.style.display = 'none';
@@ -230,8 +229,9 @@ function selectChat(id) {
   // sendMessage handler routes the message as an interject into the
   // running turn. When not streaming, normal new-turn flow. The visual
   // mode (inject vs send) + the toolbar STREAMING pill are driven from
-  // updateStreamUI() — single source of truth bound to streamingSessionId
-  // + activeChat. Call it here on chat-switch so we don't carry stale UI.
+  // updateStreamUI() — single source of truth, re-evaluated on store
+  // changes via subscribeAll. Call it here on chat-switch so we don't
+  // carry stale UI for the previous chat.
   if (sendBtn) sendBtn.disabled = false;
   try { if (typeof updateStreamUI === 'function') updateStreamUI(); } catch {}
   // Subscribe to this chat's events via WS

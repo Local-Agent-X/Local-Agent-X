@@ -28,11 +28,9 @@ async function syncChatsFromServer() {
       const local = localMap.get(srv.id);
       // Mid-stream protection: NEVER replace the local chat object while a
       // stream is in flight for this session. Replacing it orphans the
-      // streamChat closure reference in sendMessage.
-      // Per-session via _liveStreams: the singular streamingSessionId races
-      // whenever main chat + IDE app-builder stream concurrently. Sync must
-      // not replace a local chat object that's mid-stream, regardless of
-      // which session is the "most recent" stream-start.
+      // streamChat closure reference in sendMessage. Per-session via the
+      // store so concurrent streams (main chat + IDE app-builder) each
+      // protect their own object.
       const isStreamingNow = !!(local && typeof window.isStreaming === 'function' && window.isStreaming(srv.id));
       if (local && (isStreamingNow || local.updatedAt >= srv.updatedAt)) {
         // Local copy is at-or-newer than server — keep it but tag if we

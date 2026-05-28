@@ -405,9 +405,10 @@ body.platform-darwin #sidebar-expand-btn{top:40px !important}
 #send-btn{width:36px;height:36px;border-radius:50%;background:var(--accent);border:none;color:var(--bg);font-size:1rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-bottom:2px}
 #send-btn:hover{box-shadow:0 0 14px var(--accent-dim)}
 #send-btn:disabled{opacity:.3;cursor:not-allowed}
-/* Inject mode — applied when streamingSessionId === activeChat.id.
-   Orange so the user can't mistake an in-flight turn for "ready," and
-   distinct from the cyan upload + button next to it. */
+/* Inject mode — applied when the active chat has an in-flight turn (see
+   updateStreamUI in chat-uploads.js). Orange so the user can't mistake
+   an in-flight turn for "ready," and distinct from the cyan upload +
+   button next to it. */
 #send-btn.inject-mode{background:var(--warn);color:#1a0e00;box-shadow:0 0 10px rgba(255,170,0,.4)}
 #send-btn.inject-mode:hover{box-shadow:0 0 14px rgba(255,170,0,.7)}
 .code-block{background:#0d0d18;border:1px solid var(--border);border-radius:8px;padding:10px;overflow-x:auto;font-family:var(--mono);font-size:.82rem;margin:8px 0}

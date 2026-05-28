@@ -13,8 +13,8 @@
 // External deps from chat.js / shared.js:
 //   - apiFetch, esc, md, normalizeMd, _fixMd  (shared.js)
 //   - activeChat, saveChats                   (app.js)
-//   - streamingSessionId, _liveStreams, pendingUploads, userScrolledUp
-//                                             (chat.js — closure-bound at call time)
+//   - pendingUploads, userScrolledUp          (chat.js — closure-bound at call time)
+//   - ChatStreamStore                          (chat-stream-store.js — per-session stream state)
 //   - addMessageEl, appendStaticWorkerBubble, appendToolCardGrouped
 //                                             (chat-helpers.js / chat-tool-cards.js — auto-window)
 
@@ -25,7 +25,7 @@ function autoScroll() {
   // (see .pin-bottom). The response fills that space; the reader controls
   // scroll afterward. Per-session: another chat streaming (IDE while user
   // views main) must not suppress main's auto-scroll.
-  if (typeof window.activeChat !== 'undefined' && window.activeChat && _liveStreams.has(window.activeChat.id)) return;
+  if (typeof window.activeChat !== 'undefined' && window.activeChat && ChatStreamStore.isStreaming(window.activeChat.id)) return;
   if (userScrolledUp) return;
   const el = document.getElementById('messages');
   if (el) el.scrollTop = el.scrollHeight;
@@ -59,7 +59,7 @@ function _upsertStreamingAssistant(chat, content, toolEvents) {
   // Defensive dup guard: if the LAST assistant message in the array has
   // identical content (and no _streaming flag), don't append a clone.
   // Reproduces in the wild on: WS reconnect-replay firing a late `done`
-  // after the assistant was already finalized; sync-from-_liveStreams in
+  // after the assistant was already finalized; sync-from-store in
   // renderMessages firing twice; bg_op_nudge persistence race. All of
   // those funnel here and we'd otherwise grow `messages` with identical
   // assistant rows that render as duplicate "Spawned it" / duplicate
@@ -154,11 +154,10 @@ function renderMessages() {
   // the streaming-assistant row may not exist yet — the iteration below
   // would then skip it entirely and the live DOM bubble would be wiped
   // with no replacement, leaving the chat looking frozen until the next
-  // save tick or page reload. Pull straight from _liveStreams (which
-  // exposes closure-bound content + toolEvents getters from the stream
-  // handler) and upsert so the iteration sees a real assistant slot.
-  if (_liveStreams.has(activeChat.id)) {
-    const live = _liveStreams.get(activeChat.id);
+  // save tick or page reload. Pull straight from the store and upsert so
+  // the iteration sees a real assistant slot.
+  if (ChatStreamStore.isStreaming(activeChat.id)) {
+    const live = ChatStreamStore.get(activeChat.id);
     const hasStreamingMsg = activeChat.messages.some(function(m) { return m && m.role === 'assistant' && m._streaming; });
     if (live && !hasStreamingMsg) {
       _upsertStreamingAssistant(activeChat, live.content || '', live.toolEvents || []);
@@ -188,7 +187,7 @@ function renderMessages() {
       // strip `_streaming`, and the save-interval would lose track and
       // append a duplicate streaming entry. The streaming-state flag is
       // the source of truth — array position is incidental.
-      const live = msg._streaming ? _liveStreams.get(activeChat.id) : null;
+      const live = msg._streaming ? ChatStreamStore.get(activeChat.id) : null;
       // Clean up stale streaming state ONLY if the stream is genuinely no
       // longer active. If we still have a live entry for this session, the
       // stream is in flight — preserve _streaming so the next event keeps

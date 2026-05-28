@@ -194,21 +194,11 @@ function previewImage(index) {
 // Voice + clone modals moved to /js/chat-voice-modals.js
 
 
-// Expose for cross-file access
-window.streamingSessionId = null;
-Object.defineProperty(window, 'streamingSessionId', {
-  get() { return streamingSessionId; },
-  set(v) { streamingSessionId = v; try { updateStreamUI(); } catch {} }
-});
-
 // Single source of truth for "is a turn in flight for the chat I'm looking at"
 // → drives the toolbar STREAMING indicator + the send-btn inject-mode style.
-// Trigger-bound to the streamingSessionId setter above (which fires on every
-// stream start/end), but the predicate is per-session via _liveStreams.has()
-// so concurrent streams (main chat + IDE chat) each get correct UI for their
-// own active view. The singular streamingSessionId is only a "something
-// changed, recheck" notification — never used to decide which session is
-// active.
+// Subscribed to ChatStreamStore so every store mutation re-evaluates the
+// active-chat UI; concurrent streams (main chat + IDE chat) each get correct
+// UI for their own active view because the predicate is per-session.
 function updateStreamUI() {
   try {
     const active = (typeof window !== 'undefined' && window.activeChat) ? window.activeChat : null;
@@ -226,6 +216,7 @@ function updateStreamUI() {
   } catch {}
 }
 window.updateStreamUI = updateStreamUI;
+try { ChatStreamStore.subscribeAll(function() { updateStreamUI(); }); } catch {}
 // (extracted to /js/chat-ws.js or /js/chat-helpers.js)
 
 

@@ -1,9 +1,7 @@
-// ── Chat: Rendering (renderMessages + stream renderers + auto-scroll) ──
+// ── Chat: Rendering (renderMessages + auto-scroll) ──
 //
 // The DOM-rendering side of the chat thread:
 //   - autoScroll                  — single source of truth for "should I scroll to bottom?"
-//   - renderStreamContent         — rAF-batched markdown render for incoming deltas
-//   - stripAgentScratchwork       — removes inline plan/scratch from agent text
 //   - renderMessage               — per-message DOM builder (one of: user, worker,
 //                                   finalized assistant, live synth from store).
 //                                   Takes ctx.parent for the synth case so the rerender
@@ -33,64 +31,6 @@ function autoScroll() {
   if (userScrolledUp) return;
   const el = document.getElementById('messages');
   if (el) el.scrollTop = el.scrollHeight;
-}
-
-// Throttled stream renderer — batches many deltas into one DOM write per ~50ms.
-// Previously every stream token triggered `bodyEl.innerHTML = md(content)` which
-// rebuilt the whole message DOM dozens of times per second, causing flicker,
-// layout thrash, and scroll jumpiness. With rAF batching, the final DOM state
-// is applied at most ~16ms after the latest delta, which feels instant but
-// doesn't thrash.
-const _streamRenderers = new WeakMap();
-function renderStreamContent(bodyEl, content) {
-  if (!bodyEl) return;
-  let pending = _streamRenderers.get(bodyEl);
-  if (!pending) {
-    pending = { raf: 0, latest: content };
-    _streamRenderers.set(bodyEl, pending);
-  }
-  pending.latest = content;
-  if (pending.raf) return;
-  // [stream-debug] TEMP — capture queue→flush latency. If this gap is small
-  // (<100ms) but the user perceives lag, the bottleneck is upstream (events
-  // arriving in bursts). If it's large, the renderer is the bottleneck.
-  const queuedAt = Date.now();
-  pending.raf = requestAnimationFrame(() => {
-    pending.raf = 0;
-    const flushedAt = Date.now();
-    const bodyConnected = bodyEl ? document.contains(bodyEl) : 'no-bodyEl';
-    console.log(`[stream-debug] rAF-flush gap=${flushedAt - queuedAt}ms bodyConnected=${bodyConnected} latestLen=${(pending.latest||'').length}`);
-    // Preserve activity-groups + top-level tool-cards/approval-cards across
-    // the markdown re-render. Without preserving the groups, every stream
-    // delta would wipe the consolidated activity container.
-    const existingGroups = bodyEl.querySelectorAll('.activity-group');
-    const orphanCards = bodyEl.querySelectorAll(':scope > .tool-card, :scope > .approval-card');
-    const mediaPreviews = bodyEl.querySelectorAll(':scope > .tool-media-preview');
-    // Strip inline plans — the agent's "Plan: 1) X, 2) Y" bullet is for
-    // its own reasoning, not for the user's eyes. We remove it before render
-    // so the visible bubble just shows the final answer, not the scratchwork.
-    const stripped = stripAgentScratchwork(pending.latest);
-    bodyEl.innerHTML = stripped ? md(stripped) : '';
-    // Re-attach media previews FIRST so they sit above the activity group.
-    mediaPreviews.forEach(m => bodyEl.appendChild(m));
-    existingGroups.forEach(g => bodyEl.appendChild(g));
-    orphanCards.forEach(c => bodyEl.appendChild(c));
-  });
-}
-
-function stripAgentScratchwork(text) {
-  if (!text) return text;
-  // Kill lines that look like the model's internal plan or step log.
-  // Matches: "Plan: 1) X, 2) Y..." / "I'll: 1) X..." / "Let me: 1) X..."
-  // Plus preambles like "Let me first check the local..." when followed by a tool card.
-  return text
-    .replace(/^Plan\s*:\s*.+?(?=\n\n|$)/gmis, '')
-    .replace(/^(I['’]ll|Let me|I will|I'll|I am going to|I'm going to)\s+.+?(?=\n\n|$)/gmi, (match) => {
-      // only strip if it reads like a step list (contains "1)" or "first" or "then")
-      return /\b(1\)|first|then|next,|step)/i.test(match) ? '' : match;
-    })
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 // Voice state
@@ -167,7 +107,7 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
           // leave the raw result in place for attachMediaPreview's URL scan —
           // generate_image results can wrap their /images/foo.png path inside
           // an EXTERNAL_UNTRUSTED_CONTENT block, so cleaning before scanning
-          // would lose the URL. Mirrors the pre-Phase-3 surgical tool_end op.
+          // would lose the URL.
           const rawResult = endEvt.result || '';
           const detailText = rawResult
             .replace(/<<<EXTERNAL_UNTRUSTED_CONTENT[\s\S]*?<<<END_EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/g, '[content loaded]')
@@ -190,8 +130,8 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
   const chips = data.chips || [];
   for (const chip of chips) { try { appendToolChip(bodyEl, chip); } catch {} }
   // Progress: latest message per tool name. Skip tools that already ended —
-  // their tool-detail carries the final result and the surgical path would
-  // have overwritten progress with the result on tool_end too.
+  // their tool-detail carries the final result, so progress would just
+  // clobber it.
   const progressByTool = data.progressByTool || {};
   for (const toolName of Object.keys(progressByTool)) {
     const ended = toolEvents.some(t => t.type === 'end' && t.name === toolName);
@@ -202,7 +142,7 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
     }
   }
   // Approvals and the stop note hang off bodyEl directly (NOT inside the
-  // activity group) — mirrors the surgical path's bodyEl.appendChild calls.
+  // activity group) — they need to render outside the collapsible block.
   const approvals = data.approvals || [];
   for (const ap of approvals) {
     try {

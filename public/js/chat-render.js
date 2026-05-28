@@ -4,9 +4,13 @@
 //   - autoScroll                  — single source of truth for "should I scroll to bottom?"
 //   - renderStreamContent         — rAF-batched markdown render for incoming deltas
 //   - stripAgentScratchwork       — removes inline plan/scratch from agent text
-//   - renderLiveAssistantFromStore — synthesizes the in-flight assistant bubble at the
-//                                   store's anchor (Phase 1: live row is NOT in messages[])
-//   - renderMessages              — full DOM rebuild from activeChat.messages + live anchor
+//   - renderMessage               — per-message DOM builder (one of: user, worker,
+//                                   finalized assistant, live synth from store).
+//                                   Takes ctx.parent for the synth case so the rerender
+//                                   path can build into a detached fragment.
+//   - renderMessages              — full DOM rebuild loop over renderMessage
+//   - rerenderLiveMessage         — rAF-batched in-place swap of the live bubble
+//                                   from store state (no #messages wipe)
 //
 // Extracted from chat.js as part of the 400-LOC god-file split.
 //
@@ -94,46 +98,172 @@ let voiceEnabled = false, isListening = false, isSpeaking = false;
 let mediaRecorder = null, audioChunks = [], audioContext = null;
 let ttsQueue = [], ttsSentenceBuffer = '', currentAudioSource = null;
 
-// Paint the in-flight assistant bubble directly from ChatStreamStore at the
-// position the iteration is currently at. Phase 1: the live row is NOT in
-// activeChat.messages[] during a turn — it exists only here, in the store —
-// so renderMessages synthesizes it from store state at liveAnchorIndex.
+// Per-session pointer to the live .msg.assistant DOM node — the bubble that
+// rerenderLiveMessage swaps out on each WS event. Populated by the renderMessages
+// loop (when it synthesizes the live row) and by rerenderLiveMessage (after swap).
+// renderMessages wipes #messages then re-populates inside the loop, so we clear
+// at the top.
+const _liveMessageNodes = new Map();      // sessionId → .msg.assistant element
+// Per-session rAF token so multiple rapid WS events coalesce into one swap
+// per frame. The latest store state is read at flush time.
+const _rerenderRafs = new Map();          // sessionId → rAF token
+
+// Build the in-flight assistant bubble from ChatStreamStore state into `parent`.
+// `parent` is either the live #messages container (renderMessages full-render)
+// or a detached div (rerenderLiveMessage swap path). No global side effects —
+// no Spring fade, no autoScroll, no pin-bottom migration. The caller handles
+// post-build framing.
 //
-// `el` is the #messages container. Mirrors the same DOM shape the per-event
-// dispatcher (chat-ws-handler-chat-events.js) writes into: assistant bubble
-// with .msg-body.streaming, thinking dots when no content yet, then tool
-// cards routed through appendToolCardGrouped (same collapsing/×N behaviour
-// as the live-stream path).
-function renderLiveAssistantFromStore(store, el) {
-  addMessageEl('assistant', store.content || '', null);
-  const allMsgs = el.querySelectorAll('.msg.assistant');
-  const lastMsgEl = allMsgs[allMsgs.length - 1];
-  const lastBody = lastMsgEl ? lastMsgEl.querySelector('.msg-body') : null;
-  if (lastBody) {
-    lastBody.classList.add('streaming');
-    // Pre-delta render: paint thinking dots so the chat doesn't look frozen
-    // until the first token lands. Without this, a renderMessages rebuild
-    // mid-stream-before-first-token wipes the indicator.
-    if (!store.content) lastBody.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
+// Mirrors the DOM shape addMessageEl produces for an assistant message plus
+// the streaming-class + thinking-dots + tool-card routing that the per-event
+// dispatcher (chat-ws-handler-chat-events.js) writes into the same bubble.
+function _buildLiveAssistantInto(parent, store) {
+  if (!parent) return null;
+  const content = store ? (store.content || '') : '';
+  const bodyContent = mdPreviewMode ? md(content) : `<pre class="raw-md">${esc(content)}</pre>`;
+  const div = document.createElement('div');
+  div.className = 'msg assistant';
+  div.setAttribute('role', 'article');
+  div.setAttribute('aria-label', 'Assistant message');
+  div.innerHTML = `<div class="msg-label">Assistant</div><div class="msg-body streaming">${bodyContent}</div><div class="msg-footer"></div>`;
+  parent.appendChild(div);
+  const bodyEl = div.querySelector('.msg-body');
+  // Pre-delta render: thinking dots so the chat doesn't look frozen until
+  // the first token lands. Mirrors the manual bubble sendMessage creates.
+  if (bodyEl && !content) {
+    bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
   }
-  const toolEvents = store.toolEvents || [];
+  const toolEvents = store ? (store.toolEvents || []) : [];
   if (toolEvents.length > 0) {
-    const cardHost = lastBody || lastMsgEl;
-    if (cardHost) {
-      try {
-        for (const te of toolEvents) {
-          if (te.type !== 'start') continue;
-          const card = appendToolCardGrouped(cardHost, te.name, te.args || '', te.riskLevel);
-          const endEvt = toolEvents.find(t => t.type === 'end' && t.name === te.name);
-          if (endEvt) {
-            card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
-            card.querySelector('.tool-detail').textContent = (endEvt.result || '').slice(0, 200) || '✓ Done';
-            attachMediaPreview(card, te.name, endEvt.result || '');
-          }
+    const cardHost = bodyEl || div;
+    try {
+      for (const te of toolEvents) {
+        if (te.type !== 'start') continue;
+        // Route through appendToolCardGrouped so the swap matches the
+        // per-event paint path: cards land inside the collapsible
+        // "Agent activity" group, consecutive same-tool calls collapse
+        // into a single ×N card.
+        const card = appendToolCardGrouped(cardHost, te.name, te.args || '', te.riskLevel);
+        const endEvt = toolEvents.find(t => t.type === 'end' && t.name === te.name);
+        if (endEvt) {
+          card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
+          card.querySelector('.tool-detail').textContent = (endEvt.result || '').slice(0, 200) || '✓ Done';
+          attachMediaPreview(card, te.name, endEvt.result || '');
         }
-      } catch (toolRenderErr) { console.error('[chat] live tool card render error:', toolRenderErr); }
-    }
+      }
+    } catch (toolRenderErr) { console.error('[chat] live tool card render error:', toolRenderErr); }
   }
+  return div;
+}
+
+// Render one row from activeChat.messages[] (or the synthetic live row from
+// store). Returns the appended DOM node, or null. Appends to #messages by
+// default; ctx.parent overrides for the synth case so rerenderLiveMessage can
+// build into a detached fragment.
+//
+// ctx: {
+//   parent?:     HTMLElement  // override append target (synth case only)
+//   isLiveSynth?: boolean     // render the live row from ctx.store
+//   store?:      object       // ChatStreamStore entry (synth case)
+// }
+function renderMessage(msg, ctx) {
+  ctx = ctx || {};
+  if (ctx.isLiveSynth) {
+    const parent = ctx.parent || document.getElementById('messages');
+    return _buildLiveAssistantInto(parent, ctx.store);
+  }
+  if (!msg) return null;
+  if (msg.role === 'user') {
+    const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
+    const userEl = addMessageEl('user', displayText, msg.attachments, msg.timestamp);
+    // Pending mid-turn inject: dim the bubble until the server's
+    // inject_consumed event drops _queueState. See chat-send.js inject
+    // path + chat-ws-handler.js inject_consumed branch.
+    if (userEl && msg._queueState === 'queued') userEl.classList.add('queued');
+    return userEl;
+  }
+  if (msg.role === 'assistant' && msg._worker) {
+    // Persisted worker bubble — render with the same styling as a live
+    // worker_stream bubble, just static. Skip the regular assistant
+    // path so the agent's pin-bottom and tool-card logic doesn't apply.
+    return appendStaticWorkerBubble(msg._opId, msg.content || '', msg._taskHint, msg._workerStatus);
+  }
+  if (msg.role === 'assistant' && (msg.content || msg._tools)) {
+    const node = addMessageEl('assistant', msg.content || '', null, msg.timestamp);
+    if (msg._tools && msg._tools.length > 0) {
+      const lastBody = node ? node.querySelector('.msg-body') : null;
+      const cardHost = lastBody || node;
+      if (cardHost) {
+        try {
+          for (const te of msg._tools) {
+            if (te.type !== 'start') continue;
+            // Route through appendToolCardGrouped so re-render matches
+            // the live-stream path: cards land inside the collapsible
+            // "Agent activity" group, and consecutive same-tool calls
+            // collapse into a single ×N card.
+            const card = appendToolCardGrouped(cardHost, te.name, te.args || '', te.riskLevel);
+            const endEvt = msg._tools.find(t => t.type === 'end' && t.name === te.name);
+            if (endEvt) {
+              card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
+              card.querySelector('.tool-detail').textContent = (endEvt.result || '').slice(0, 200) || '✓ Done';
+              attachMediaPreview(card, te.name, endEvt.result || '');
+            }
+          }
+        } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
+      }
+    }
+    return node;
+  }
+  return null;
+}
+
+// rAF-batched swap of the live assistant bubble from ChatStreamStore state.
+// Called from dispatchChatStreamEvent after applyEvent so the bubble always
+// reflects the latest store snapshot. Multiple events in one frame coalesce
+// into a single swap.
+//
+// Off-screen sessions, post-done events, and missing live nodes are no-ops —
+// renderMessages will catch up on next full render.
+function rerenderLiveMessage(sessionId) {
+  if (!sessionId) return;
+  if (!activeChat || activeChat.id !== sessionId) return;
+  if (!ChatStreamStore.isStreaming(sessionId)) return;
+  if (_rerenderRafs.has(sessionId)) return;
+  const token = requestAnimationFrame(() => {
+    _rerenderRafs.delete(sessionId);
+    // Re-check conditions at flush time — chat switch / done can have
+    // landed between queue and flush.
+    if (!activeChat || activeChat.id !== sessionId) return;
+    if (!ChatStreamStore.isStreaming(sessionId)) return;
+    const store = ChatStreamStore.get(sessionId);
+    if (!store) return;
+    let oldNode = _liveMessageNodes.get(sessionId);
+    if (!oldNode || !document.contains(oldNode)) {
+      // Fallback: the manual bubble sendMessage created (before any
+      // renderMessages run captured it into _liveMessageNodes).
+      const messagesEl = document.getElementById('messages');
+      if (messagesEl) {
+        const all = messagesEl.querySelectorAll('.msg.assistant');
+        oldNode = all[all.length - 1] || null;
+      }
+    }
+    if (!oldNode) return;
+    // Phase 2 guard: skip the swap when the bubble carries DOM the store
+    // can't reconstruct. tool_chip / tool_progress / approval_requested /
+    // stopped paint surgically into bodyEl but the store doesn't track
+    // them — rebuilding from store would silently drop chips, approval
+    // cards, progress bars, and stop notices. Phase 3 extends the store
+    // and deletes those surgical ops, at which point this guard becomes
+    // unnecessary and goes away.
+    if (oldNode.querySelector('.tool-chip, .approval-card, .stop-notice, .tool-progress-bar, .tool-progress-text, .agent-inline-card')) return;
+    const tmp = document.createElement('div');
+    const fresh = renderMessage(null, { parent: tmp, isLiveSynth: true, store });
+    if (!fresh) return;
+    oldNode.replaceWith(fresh);
+    _liveMessageNodes.set(sessionId, fresh);
+    autoScroll();
+  });
+  _rerenderRafs.set(sessionId, token);
 }
 
 function renderMessages() {
@@ -141,6 +271,7 @@ function renderMessages() {
   if (!el) return;
   if (!activeChat || activeChat.messages.length === 0) {
     el.innerHTML = `<div id="empty"><img src="/hero.jpg" alt="Local Agent X" class="hero-img hero-dark" /><img src="/hero-light.png" alt="Local Agent X" class="hero-img hero-light" /><h2>LOCAL AGENT X</h2><p>${activeChat ? 'Start your conversation below.' : 'Select a chat or start a new one.'}</p></div>`;
+    _liveMessageNodes.clear();
     return;
   }
 
@@ -153,53 +284,21 @@ function renderMessages() {
   const anchor = (streaming && store && store.liveAnchorIndex >= 0)
                  ? store.liveAnchorIndex : -1;
 
+  // The Map points at DOM nodes we're about to wipe; clear and let the loop
+  // re-populate it when it renders the synth row.
+  _liveMessageNodes.clear();
   el.innerHTML = '';
   for (let i = 0; i < activeChat.messages.length; i++) {
-    if (i === anchor) renderLiveAssistantFromStore(store, el);
-    const msg = activeChat.messages[i];
-    if (msg.role === 'user') {
-      const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
-      const userEl = addMessageEl('user', displayText, msg.attachments, msg.timestamp);
-      // Pending mid-turn inject: dim the bubble until the server's
-      // inject_consumed event drops _queueState. See chat-send.js inject
-      // path + chat-ws-handler.js inject_consumed branch.
-      if (userEl && msg._queueState === 'queued') userEl.classList.add('queued');
-    } else if (msg.role === 'assistant' && msg._worker) {
-      // Persisted worker bubble — render with the same styling as a live
-      // worker_stream bubble, just static. Skip the regular assistant
-      // path so the agent's pin-bottom and tool-card logic doesn't apply.
-      appendStaticWorkerBubble(msg._opId, msg.content || '', msg._taskHint, msg._workerStatus);
-    } else if (msg.role === 'assistant' && (msg.content || msg._tools)) {
-      addMessageEl('assistant', msg.content || '', null, msg.timestamp);
-      if (msg._tools && msg._tools.length > 0) {
-        const allMsgsT = el.querySelectorAll('.msg.assistant');
-        const lastMsgElT = allMsgsT[allMsgsT.length - 1];
-        const lastBody = lastMsgElT ? lastMsgElT.querySelector('.msg-body') : null;
-        const cardHost = lastBody || lastMsgElT;
-        if (cardHost) {
-          try {
-            for (const te of msg._tools) {
-              if (te.type !== 'start') continue;
-              // Route through appendToolCardGrouped so re-render matches
-              // the live-stream path: cards land inside the collapsible
-              // "Agent activity" group, and consecutive same-tool calls
-              // collapse into a single ×N card.
-              const card = appendToolCardGrouped(cardHost, te.name, te.args || '', te.riskLevel);
-              const endEvt = msg._tools.find(t => t.type === 'end' && t.name === te.name);
-              if (endEvt) {
-                card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
-                card.querySelector('.tool-detail').textContent = (endEvt.result || '').slice(0, 200) || '✓ Done';
-                attachMediaPreview(card, te.name, endEvt.result || '');
-              }
-            }
-          } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
-        }
-      }
+    if (i === anchor) {
+      const liveNode = renderMessage(null, { parent: el, isLiveSynth: true, store });
+      if (liveNode) _liveMessageNodes.set(activeChat.id, liveNode);
     }
+    renderMessage(activeChat.messages[i], { parent: el });
   }
   // Anchor at end-of-array — live row goes after every persisted row.
   if (streaming && store && anchor === activeChat.messages.length) {
-    renderLiveAssistantFromStore(store, el);
+    const liveNode = renderMessage(null, { parent: el, isLiveSynth: true, store });
+    if (liveNode) _liveMessageNodes.set(activeChat.id, liveNode);
   }
   // Pin the latest assistant message so it carries the reserved viewport-
   // height of room below it (ChatGPT-style). When navigating to an existing

@@ -280,7 +280,10 @@ function attachMediaPreview(card, toolName, result) {
   if (host.querySelector(':scope > .tool-media-preview')) return;
 
   const re = /(\/(?:images|videos)\/[A-Za-z0-9._-]+)/g;
-  const matches = [...result.matchAll(re)].map(m => m[1]);
+  // Dedupe — tool results commonly emit the same URL twice (e.g. "Saved
+  // at /images/X.png. URL: /images/X.png") which would otherwise produce
+  // two side-by-side previews of the same artifact.
+  const matches = [...new Set([...result.matchAll(re)].map(m => m[1]))];
   if (matches.length === 0) return;
 
   const tok = (typeof AUTH_TOKEN === 'string' && AUTH_TOKEN) ? '?token=' + encodeURIComponent(AUTH_TOKEN) : '';

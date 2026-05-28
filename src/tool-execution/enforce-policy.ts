@@ -7,7 +7,7 @@
 
 import { USER_HINTS, type ToolResult } from "../types.js";
 import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserveInKernel } from "../ari-kernel/index.js";
-import { checkSessionPolicy } from "../session-policy.js";
+import { checkSessionPolicy } from "../session/policy.js";
 import { checkEgressTaint } from "../data-lineage.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit } from "../circuit-breaker.js";

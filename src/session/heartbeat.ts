@@ -9,8 +9,8 @@
 //
 // Cheap: an unref'd interval so it never blocks process exit.
 
-import type { ServerEvent } from "./types.js";
-import { getActiveTurn } from "./session-turn-lock.js";
+import type { ServerEvent } from "../types.js";
+import { getActiveTurn } from "./turn-lock.js";
 
 export interface HeartbeatHandle {
   stop: () => void;

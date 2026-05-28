@@ -115,7 +115,7 @@ export function terminateChat(sessionId: string, opts: TerminateOptions): boolea
 
 async function releaseTurnLockSafe(sessionId: string): Promise<void> {
   try {
-    const { abortTurn, releaseTurn } = await import("../session-turn-lock.js");
+    const { abortTurn, releaseTurn } = await import("../session/turn-lock.js");
     abortTurn(sessionId);
     releaseTurn(sessionId);
   } catch {

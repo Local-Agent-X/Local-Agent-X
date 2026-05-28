@@ -19,7 +19,7 @@ export const handleChatStatusRoutes: RouteHandler = async (method, url, req, res
     // 60s+ if a subprocess stalls. Stop should mean stop.
     let lockAborted = false;
     try {
-      const { abortTurn, releaseTurn } = await import("../../session-turn-lock.js");
+      const { abortTurn, releaseTurn } = await import("../../session/turn-lock.js");
       lockAborted = abortTurn(sid);
       releaseTurn(sid);
     } catch {}
@@ -30,7 +30,7 @@ export const handleChatStatusRoutes: RouteHandler = async (method, url, req, res
   if (method === "GET" && url.pathname.match(/^\/api\/chats\/[^/]+\/status$/)) {
     const sid = decodeURIComponent(url.pathname.split("/")[3]);
     try {
-      const { getActiveTurn } = await import("../../session-turn-lock.js");
+      const { getActiveTurn } = await import("../../session/turn-lock.js");
       const turn = getActiveTurn(sid);
       json(200, { active: turn !== null, turn });
     } catch { json(200, { active: false, turn: null }); }

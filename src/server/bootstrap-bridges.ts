@@ -5,7 +5,7 @@ import { stripEphemeralMessages } from "../providers/sanitize.js";
 import { WhatsAppBridge } from "../whatsapp-bridge/index.js";
 import { TelegramBridge } from "../telegram-bridge/index.js";
 import { formatForChannel, getChannelConfig } from "../channel-formatter.js";
-import { resolveSession, buildChannelContext, type ChannelType } from "../session-router.js";
+import { resolveSession, buildChannelContext, type ChannelType } from "../session/router.js";
 import { detectInjection } from "../sanitize.js";
 import { getVoicePref, setVoicePref, type BridgePlatform } from "../bridge-voice/index.js";
 import { COMPACTION_PREFIX } from "../types.js";

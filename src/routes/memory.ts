@@ -61,7 +61,7 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
 
   if (method === "GET" && url.pathname === "/api/memory/health") {
     try {
-      const { MemoryOrchestrator } = await import("../memory-orchestrator.js");
+      const { MemoryOrchestrator } = await import("../orchestrator/orchestrator.js");
       json(200, MemoryOrchestrator.getInstance().getSystemHealth());
     } catch (e) {
       json(500, { error: "Memory health check failed: " + (e as Error).message });
@@ -71,7 +71,7 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
 
   if (method === "POST" && url.pathname === "/api/memory/background") {
     try {
-      const { MemoryOrchestrator } = await import("../memory-orchestrator.js");
+      const { MemoryOrchestrator } = await import("../orchestrator/orchestrator.js");
       json(200, MemoryOrchestrator.getInstance().runBackground(ctx.memoryIndex));
     } catch (e) {
       json(500, { error: "Memory background run failed: " + (e as Error).message });
@@ -153,7 +153,7 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
   // Debug: test indexChunks directly
   if (method === "POST" && url.pathname === "/api/memory/test-index") {
     try {
-      const { chunkConversationPairs } = await import("../memory-chunking.js");
+      const { chunkConversationPairs } = await import("../memory/chunking.js");
       const testMessages = [
         { role: "user" as const, content: "This is a test message for debugging indexChunks" },
         { role: "assistant" as const, content: "I received your test message. This confirms the ingest pipeline works." },

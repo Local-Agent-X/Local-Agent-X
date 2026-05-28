@@ -17,7 +17,7 @@
  *   - Trivial exact-match queries (quoted strings, single identifiers)
  *   - Cached previously-generated hypotheticals (same query → same doc)
  */
-import { dispatch } from "./llm-dispatch.js";
+import { dispatch } from "../llm-dispatch.js";
 
 export interface HyDEOptions {
   provider?: "ollama" | "anthropic" | "openai" | "auto";

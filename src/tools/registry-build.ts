@@ -26,7 +26,7 @@ import { clipboardTools } from "./clipboard-tools.js";
 import { sqlTools } from "./sql-tools.js";
 import { taskTools } from "./task-tools.js";
 import { planTools } from "./plan-tools.js";
-import { buildDreamPrompt } from "../memory-dream.js";
+import { buildDreamPrompt } from "../memory/dream.js";
 import { configTools } from "./config-tool.js";
 import { selfEditTool } from "./self-edit-tool.js";
 import { primalRunBuildPlanTool } from "../primal-auto-build/tool.js";
@@ -63,7 +63,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
         results.push(`Consolidation: merged=${report.mergedCount} promoted=${report.promotedCount} entities=${report.entityPagesUpdated} contradictions=${report.contradictionsFound}`);
       } catch (e) { results.push(`Consolidation failed: ${(e as Error).message}`); }
       try {
-        const { completeDream, startDream } = await import("../memory-dream.js");
+        const { completeDream, startDream } = await import("../memory/dream.js");
         startDream();
         completeDream(0);
         results.push("Dream state updated");

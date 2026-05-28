@@ -6,9 +6,9 @@
  * questions at minimal cost.
  */
 
-import type { MemorySearchResult } from "./memory/index.js";
+import type { MemorySearchResult } from "./index.js";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("memory-reranker");
 
 export interface RerankOptions {
@@ -94,7 +94,7 @@ async function callLLM(prompt: string, count: number, options: RerankOptions): P
       let apiKey = process.env.ANTHROPIC_API_KEY || "";
       if (!apiKey) {
         try {
-          const { getAnthropicApiKey } = await import("./auth-anthropic.js");
+          const { getAnthropicApiKey } = await import("../auth-anthropic.js");
           apiKey = await getAnthropicApiKey();
         } catch {}
       }

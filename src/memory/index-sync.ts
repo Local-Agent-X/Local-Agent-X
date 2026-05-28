@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import type Database from "better-sqlite3";
 import type { Session } from "../types.js";
 import type { Chunk, ChunkMetadata, EmbeddingProvider, FileRecord, MemoryConfig } from "./types.js";
-import { chunkConversationPairs, extractSessionPairs } from "../memory-chunking.js";
+import { chunkConversationPairs, extractSessionPairs } from "./chunking.js";
 import { chunkText } from "./search-helpers.js";
 import { redactCredentials, safeReadTextFile } from "./utils.js";
 import { embedChunksWithRetry, pruneEmbeddingCache } from "./index-embedding.js";

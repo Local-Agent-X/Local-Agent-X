@@ -21,7 +21,7 @@ import { join, basename } from "node:path";
 import { createHash } from "node:crypto";
 import type { MemoryIndex } from "../memory/index.js";
 import type { CanonicalSource, ChunkMetadata, Chunk } from "./types.js";
-import { chunkText, chunkConversationPairs, extractSessionPairs } from "../memory-chunking.js";
+import { chunkText, chunkConversationPairs, extractSessionPairs } from "./chunking.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.universal-index");

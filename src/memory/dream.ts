@@ -19,10 +19,10 @@
 
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { extractSessionPairs, type ConversationMessage } from "./memory-chunking.js";
-import { getLaxDir } from "./lax-data-dir.js";
+import { extractSessionPairs, type ConversationMessage } from "./chunking.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("memory-dream");
 
 const LAX_DIR = getLaxDir();

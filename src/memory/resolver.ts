@@ -15,7 +15,7 @@
  *   - Returns a structured decision, no side effects — caller applies the operation
  *   - Temperature 0, short max_tokens, cheap models only
  */
-import { dispatch } from "./llm-dispatch.js";
+import { dispatch } from "../llm-dispatch.js";
 
 export type ResolverOp = "ADD" | "UPDATE" | "DELETE" | "NOOP";
 

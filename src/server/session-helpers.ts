@@ -64,7 +64,7 @@ export function createSessionHelpers(deps: {
   async function indexSessionIncrementally(session: Session): Promise<void> {
     if (session.id.startsWith("dream-") || session.id.startsWith("ide-")) return;
     logger.info(`[memory-live] Indexing session ${session.id} (${session.messages?.length || 0} messages)`);
-    const { extractSessionPairs, chunkConversationPairs } = await import("../memory-chunking.js");
+    const { extractSessionPairs, chunkConversationPairs } = await import("../memory/chunking.js");
     const messages = extractSessionPairs(join(dataDir, "sessions", session.id + ".jsonl"));
     if (messages.length < 2) return;
 

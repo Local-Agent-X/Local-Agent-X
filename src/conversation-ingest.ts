@@ -9,7 +9,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname, basename } from "node:path";
 import { parseExportFile, detectFormat } from "./conversation-parsers.js";
-import { chunkConversationPairs } from "./memory-chunking.js";
+import { chunkConversationPairs } from "./memory/chunking.js";
 import type { ChunkMetadata } from "./memory/index.js";
 
 import { createLogger } from "./logger.js";
@@ -129,7 +129,7 @@ export async function ingestConversations(
     logger.info(`[ingest] Kicking off background extraction for ${result.chunksCreated} new chunks (365-day lookback)...`);
     (async () => {
       try {
-        const { runExtraction } = await import("./memory-extract.js");
+        const { runExtraction } = await import("./memory/extract.js");
         const t0 = Date.now();
         const summary = await runExtraction(memory, {
           lookbackHours: 365 * 24, // full year — covers typical ChatGPT history exports

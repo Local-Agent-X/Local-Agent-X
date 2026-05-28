@@ -29,7 +29,7 @@ export function makeRunDreamCheck(deps: DreamCheckDeps): () => Promise<void> {
         shouldDream, buildDreamPrompt, buildDreamPromptForBatch,
         listRecentSessionTranscripts, buildDreamBatches,
         startDream, completeDream,
-      } = await import("../../memory-dream.js");
+      } = await import("../../memory/dream.js");
       if (!shouldDream()) return;
       logger.info("[dream] Starting memory consolidation...");
       startDream();
@@ -82,7 +82,7 @@ export function makeRunDreamCheck(deps: DreamCheckDeps): () => Promise<void> {
       logger.info(`[dream] Memory consolidation finished (${batches.length} batch(es))`);
     } catch (e) {
       logger.warn("[dream] Failed:", (e as Error).message);
-      try { const { failDream } = await import("../../memory-dream.js"); failDream(); } catch {}
+      try { const { failDream } = await import("../../memory/dream.js"); failDream(); } catch {}
     }
   };
 }

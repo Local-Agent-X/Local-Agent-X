@@ -13,7 +13,7 @@
 import { readFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { MemoryIndex } from "./memory/index.js";
-import { chunkConversationPairs } from "./memory-chunking.js";
+import { chunkConversationPairs } from "./memory/chunking.js";
 import type { ChunkMetadata } from "./memory/index.js";
 
 import { createLogger } from "./logger.js";

@@ -14,7 +14,7 @@ export interface MemoryBgDeps {
 export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
   const { dataDir, sessionStore, memoryIndex } = deps;
   return async () => {
-    try { const { MemoryOrchestrator: MO } = await import("../../memory-orchestrator.js"); const r = MO.getInstance().runBackground(memoryIndex); logger.info(`[memory-bg] ${r.totalTimeMs}ms`); } catch (e) { logger.warn("[memory-bg]", (e as Error).message); }
+    try { const { MemoryOrchestrator: MO } = await import("../../orchestrator/orchestrator.js"); const r = MO.getInstance().runBackground(memoryIndex); logger.info(`[memory-bg] ${r.totalTimeMs}ms`); } catch (e) { logger.warn("[memory-bg]", (e as Error).message); }
     try {
       const reflectResult = await memoryIndex.reflect(7);
       if (reflectResult.entitiesUpdated.length > 0 || reflectResult.opinionsUpdated > 0) {

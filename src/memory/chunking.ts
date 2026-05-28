@@ -8,7 +8,7 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import type { ChunkMetadata } from "./memory/index.js";
+import type { ChunkMetadata } from "./index.js";
 
 // Re-export the Chunk shape used by memory.ts (avoid circular import)
 export interface ChunkData {

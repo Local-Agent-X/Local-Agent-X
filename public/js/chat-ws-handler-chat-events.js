@@ -49,6 +49,15 @@ function dispatchChatStreamEvent(msg) {
 
   const viewing = !!(activeChat && activeChat.id === sessionId);
 
+  // Phase 2: store-driven swap of the live bubble. rerenderLiveMessage is
+  // rAF-coalesced and bails for off-screen/post-done sessions. The per-case
+  // surgical DOM ops below STILL RUN — they write into the freshly-swapped
+  // bubble's body (resolved via _findStreamingBodyEl each call). Phase 3
+  // deletes those ops once we're confident the swap path carries the load.
+  if (viewing && typeof rerenderLiveMessage === 'function') {
+    rerenderLiveMessage(sessionId);
+  }
+
   // chat_op_started has no DOM side-effects. Done is finalized by the
   // per-turn subscriber in chat-send-ws.js / -http.js (DOM cleanup, persist).
   if (event.type === 'chat_op_started') return true;

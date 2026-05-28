@@ -1,13 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 
 import { MemoryGraph } from "../memory-graph.js";
-import MemoryImportance from "../memory-importance/index.js";
+import MemoryImportance from "../memory/cognitive/importance/index.js";
 import { NarrativeMemory } from "../narrative-memory.js";
 import { UnspokenDetector } from "../unspoken-detector.js";
 import { GrowthTracker } from "../growth-tracker.js";
 import { MemoryTierManager } from "../memory-tiers.js";
 import { PredictivePrefetcher } from "../predictive-prefetch.js";
-import { MemoryCompressor } from "../memory-compression/index.js";
+import { MemoryCompressor } from "../memory/cognitive/compression/index.js";
 import type { MemoryIndex } from "../memory/index.js";
 
 import type { BackgroundReport } from "./types.js";

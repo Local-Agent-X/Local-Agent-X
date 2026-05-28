@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { getLaxDir } from "../lax-data-dir.js";
+import { getLaxDir } from "../../../lax-data-dir.js";
 
 export const LAX_DIR = getLaxDir();
 export const MEMORY_DIR = join(LAX_DIR, "memory");

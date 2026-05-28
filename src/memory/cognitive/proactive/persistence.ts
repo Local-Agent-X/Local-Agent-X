@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 
 import type { PatternsFile } from "./types.js";
-import { getLaxDir } from "../lax-data-dir.js";
+import { getLaxDir } from "../../../lax-data-dir.js";
 
 const LAX_DIR = getLaxDir();
 const PATTERNS_FILE = join(LAX_DIR, "proactive-patterns.json");

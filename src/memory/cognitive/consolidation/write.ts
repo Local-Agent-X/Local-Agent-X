@@ -50,7 +50,7 @@ export function updateAllEntityPages(grouped: Map<string, FactEntry[]>): number 
   // Write-through reindex for every entity page that changed. Fire-and-
   // forget so consolidation never blocks on the embedding pipeline.
   if (touchedSlugs.length > 0) {
-    import("../memory/universal-index.js")
+    import("../../universal-index.js")
       .then(({ getUniversalIndex }) => {
         const ui = getUniversalIndex();
         if (!ui) return;

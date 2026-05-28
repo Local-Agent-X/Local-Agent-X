@@ -4,7 +4,7 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { tokenizeBasic, jaccardSimilarity as jaccardSim } from "../memory/text-utils.js";
+import { tokenizeBasic, jaccardSimilarity as jaccardSim } from "../../text-utils.js";
 import { LAX_DIR, MEMORY_DIR, ENTITIES_DIR } from "./types.js";
 
 export function ensureDirs(): void {

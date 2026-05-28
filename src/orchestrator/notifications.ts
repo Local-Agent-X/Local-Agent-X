@@ -1,7 +1,7 @@
 import { EmotionalMemory } from "../emotional-memory.js";
 import { MemoryGraph } from "../memory-graph.js";
-import { ProactiveMemory } from "../proactive-memory/index.js";
-import MemoryImportance from "../memory-importance/index.js";
+import { ProactiveMemory } from "../memory/cognitive/proactive/index.js";
+import MemoryImportance from "../memory/cognitive/importance/index.js";
 import { SharedHistory } from "../shared-history.js";
 import { LanguageMirror } from "../language-mirror.js";
 import { TrustEngine } from "../trust-deepening.js";

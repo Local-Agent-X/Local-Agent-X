@@ -1,5 +1,5 @@
 import { EmotionalMemory } from "../emotional-memory.js";
-import { ProactiveMemory } from "../proactive-memory/index.js";
+import { ProactiveMemory } from "../memory/cognitive/proactive/index.js";
 import { NarrativeMemory } from "../narrative-memory.js";
 import { InsideReferences } from "../inside-references.js";
 import { AnticipatoryCare } from "../anticipatory-care/index.js";

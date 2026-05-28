@@ -40,19 +40,11 @@ async function sendMessage() {
       chatWs.send(JSON.stringify({ type: 'inject', sessionId: activeChat.id, message: text, injectId }));
     }
     const injectMsg = { role: 'user', content: text, timestamp: Date.now(), _injected: true, _injectId: injectId, _queueState: 'queued' };
-    // Insert BEFORE any trailing streaming-assistant slot. Pushing to the end
-    // would land the new user bubble after the in-flight assistant placeholder,
-    // and since renderMessages() iterates by array index the assistant would
-    // keep filling above the user bubble. Server-side commitTurn persists in
-    // correct temporal order, so a later session_snapshot rehydrate masked the
-    // bug until you navigated away and back.
-    let insertIdx = activeChat.messages.length;
-    for (let i = activeChat.messages.length - 1; i >= 0; i--) {
-      const m = activeChat.messages[i];
-      if (m && m.role === 'assistant' && m._streaming) insertIdx = i;
-      else break;
-    }
-    activeChat.messages.splice(insertIdx, 0, injectMsg);
+    // Push to end. The live assistant row isn't in messages[] during a turn
+    // (Phase 1 refactor) — it's synthesized by renderMessages at the store's
+    // liveAnchorIndex. So the inject naturally lands after the synthetic
+    // live row without needing to walk back over any streaming slot.
+    activeChat.messages.push(injectMsg);
     if (typeof renderMessages === 'function') renderMessages();
     input.value = ''; input.style.height = 'auto';
     saveChats();
@@ -114,7 +106,7 @@ async function sendMessage() {
   try { bodyEl.classList.add('streaming'); } catch {}
   const streamSessionId = activeChat.id;
   const streamChat = activeChat;
-  ChatStreamStore.startTurn(streamSessionId);
+  ChatStreamStore.startTurn(streamSessionId, streamChat.messages.length);
   stopSpeaking(); ttsSentenceBuffer = '';
   if (window.taskStartTime !== undefined) window.taskStartTime = Date.now();
   const stopBtn = document.getElementById('stop-btn');

@@ -14,19 +14,13 @@ function _sendMessageWs(ctx) {
     projectId: streamChat.projectId || null,
   }));
 
-  const saveInterval = setInterval(function() {
-    const entry = ChatStreamStore.get(streamSessionId);
-    if (!entry) return;
-    if (!entry.content.trim() && entry.toolEvents.length === 0) return;
-    _upsertStreamingAssistant(streamChat, entry.content, entry.toolEvents);
-    streamChat.updatedAt = Date.now();
-    saveChats();
-  }, 3000);
-
+  // No mid-stream save tick — the live row lives in ChatStreamStore until
+  // finalize, where promoteLiveToMessages atomically splices it into
+  // messages[] at the captured anchor. saveChats on `done` is the single
+  // persistence point.
   const unsubscribe = ChatStreamStore.subscribe(streamSessionId, function(entry, event) {
     if (!entry || entry.status !== 'done') return;
     unsubscribe();
-    clearInterval(saveInterval);
     _finalizeWsTurn(streamSessionId, streamChat);
   });
 }
@@ -40,25 +34,17 @@ function _finalizeWsTurn(streamSessionId, streamChat) {
   } catch {}
   userScrolledUp = false;
 
+  // Promote the live row from the store into chat.messages at the anchor
+  // captured at startTurn. Single persistence point — no race with a mid-
+  // stream save tick because there is no save tick.
+  const finalized = ChatStreamStore.promoteLiveToMessages(streamSessionId, streamChat);
+  if (finalized) {
+    streamChat.updatedAt = Date.now();
+    saveChats();
+    renderSidebar();
+  }
   const entry = ChatStreamStore.get(streamSessionId);
   const finalContent = entry ? entry.content : '';
-  const finalTools = entry ? entry.toolEvents : [];
-
-  // Persist final message — preserve any content streamed during the turn.
-  // Don't overwrite existing content with empty string (race with savePartial).
-  const lastMsg = streamChat.messages[streamChat.messages.length - 1];
-  if (lastMsg && lastMsg._streaming) {
-    if (finalContent && finalContent.length >= (lastMsg.content || '').length) {
-      lastMsg.content = finalContent;
-    }
-    lastMsg._tools = finalTools.length > 0 ? [...finalTools] : undefined;
-    lastMsg.timestamp = Date.now();
-    delete lastMsg._streaming;
-    streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
-  } else if (finalContent.trim()) {
-    streamChat.messages.push({ role: 'assistant', content: finalContent, timestamp: Date.now() });
-    streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
-  }
 
   // Final DOM sync — flush any pending rAF render so the last chunk of
   // content is visible. Re-resolve the bubble FRESH: a stale bodyEl from

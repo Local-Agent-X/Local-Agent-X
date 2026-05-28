@@ -93,7 +93,7 @@ async function resolveActiveProvider(): Promise<{
   let apiKey = "";
   try {
     if (provider === "anthropic") {
-      const { loadAnthropicTokens, isAnthropicTokenExpired } = await import("../auth-anthropic.js");
+      const { loadAnthropicTokens, isAnthropicTokenExpired } = await import("../auth/anthropic.js");
       const tokens = loadAnthropicTokens();
       if (!tokens || isAnthropicTokenExpired(tokens)) return null;
       apiKey = tokens.accessToken || "";
@@ -104,7 +104,7 @@ async function resolveActiveProvider(): Promise<{
       // streamCodexResponse expects. Reading just OPENAI_API_KEY broke
       // every classifier for Codex CLI subscribers (no API key exists).
       try {
-        const { getApiKey } = await import("../auth.js");
+        const { getApiKey } = await import("../auth/index.js");
         apiKey = await getApiKey();
       } catch { /* no subscription tokens — fall through to null below */ }
       if (!model) model = "gpt-5.5";

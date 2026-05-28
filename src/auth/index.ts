@@ -2,12 +2,12 @@ import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname } from "node:path";
-import { getAuthPath } from "./config.js";
-import type { OAuthTokens } from "./types.js";
-import { isCodexMirrorEnabled, warnMirrorDisabledOnce, mirrorImpl } from "./auth-codex-mirror.js";
-import { encryptAuthBlob, decryptAuthBlob } from "./auth-storage.js";
+import { getAuthPath } from "../config.js";
+import type { OAuthTokens } from "../types.js";
+import { isCodexMirrorEnabled, warnMirrorDisabledOnce, mirrorImpl } from "./codex-mirror.js";
+import { encryptAuthBlob, decryptAuthBlob } from "./storage.js";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("auth");
 
 // OpenAI Codex OAuth endpoints (shared public client ID for CLI tools)

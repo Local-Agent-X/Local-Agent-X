@@ -2,9 +2,9 @@ import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, writeFileSync, existsSync, unlinkSync, renameSync, mkdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { join, dirname } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("auth-xai");
 
 /**

@@ -9,10 +9,10 @@
 // danger zone. Silent — failures are logged and retried on the next tick
 // (or caught by the lazy path).
 
-import { loadTokens, refreshTokens } from "./auth.js";
-import { loadAnthropicTokens, refreshAnthropicTokens } from "./auth-anthropic.js";
+import { loadTokens, refreshTokens } from "./index.js";
+import { loadAnthropicTokens, refreshAnthropicTokens } from "./anthropic.js";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("auth-refresh");
 
 const CHECK_INTERVAL_MS = 2 * 60 * 1000;     // Every 2 minutes

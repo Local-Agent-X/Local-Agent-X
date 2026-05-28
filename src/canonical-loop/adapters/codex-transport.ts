@@ -27,7 +27,7 @@ export interface CodexTransport {
 export function defaultCodexTransport(): CodexTransport {
   return {
     async *stream(req: CodexTransportRequest) {
-      const { getApiKey } = await import("../../auth.js");
+      const { getApiKey } = await import("../../auth/index.js");
       const { CodexCliAdapter } = await import("../../providers/adapters/codex-cli.js");
 
       let apiKey: string;

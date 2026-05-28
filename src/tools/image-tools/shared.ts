@@ -37,7 +37,7 @@ export async function getActiveProvider(): Promise<{ provider: string; apiKey?: 
   let apiKey: string | undefined;
   if (provider === "xai") {
     try {
-      const { getXaiApiKey } = await import("../../auth-xai.js");
+      const { getXaiApiKey } = await import("../../auth/xai.js");
       const oauth = await getXaiApiKey();
       if (oauth) apiKey = oauth;
     } catch {}

@@ -118,7 +118,7 @@ process.on("unhandledRejection", (reason) => {
 
 import { loadConfig, setRuntimeConfig } from "./config.js";
 import { startServer } from "./server/index.js";
-import { loadTokens } from "./auth.js";
+import { loadTokens } from "./auth/index.js";
 import { enforceStartupIntegrity } from "./startup-integrity.js";
 import { initLifecycle } from "./lifecycle.js";
 
@@ -199,7 +199,7 @@ if (!config.openaiApiKey && !tokens) {
 // Handle CLI args
 const args = process.argv.slice(2);
 if (args.includes("--login")) {
-  const { startOAuthLogin } = await import("./auth.js");
+  const { startOAuthLogin } = await import("./auth/index.js");
   try {
     await startOAuthLogin();
     logger.info("[auth] Login successful!");

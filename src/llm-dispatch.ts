@@ -121,7 +121,7 @@ async function callAnthropic(prompt: string, model: string, temperature: number,
   try {
     let apiKey = process.env.ANTHROPIC_API_KEY || "";
     if (!apiKey) {
-      try { apiKey = await (await import("./auth-anthropic.js")).getAnthropicApiKey(); } catch { /* no fallback key */ }
+      try { apiKey = await (await import("./auth/anthropic.js")).getAnthropicApiKey(); } catch { /* no fallback key */ }
     }
     if (!apiKey) return null;
     const isOAuth = apiKey.startsWith("oauth:");

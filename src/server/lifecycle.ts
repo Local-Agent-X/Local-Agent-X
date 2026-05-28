@@ -333,7 +333,7 @@ export function logStartup(deps: { config: LAXConfig; dataDir: string }): void {
   logger.info(`\n  ► Open: \x1b]8;;${realUrl}\x1b\\http://127.0.0.1:${config.port}/?token=${masked}\x1b]8;;\x1b\\\n  Memory: ${dataDir}/memory/\n  Sessions: ${dataDir}/sessions/`);
   printAuditReport(runSecurityAudit({ authToken: config.authToken, workspace: config.workspace }));
   startAriKernel(join(dataDir, "ari-audit.db"), undefined, config.ariRequired).then(a => { if (a) logger.info(`  [ari] Audit active`); else if (config.ariRequired) logger.error(`  [ari] CRITICAL: ARI failed`); });
-  try { import("../auth-refresh.js").then(({ startAuthRefreshTimer }) => startAuthRefreshTimer()).catch(() => {}); } catch {}
+  try { import("../auth/refresh.js").then(({ startAuthRefreshTimer }) => startAuthRefreshTimer()).catch(() => {}); } catch {}
 
   // Kill orphan Chrome processes from a previous server lifetime that still
   // hold the agent's user-data-dir (~/.lax/chrome-profile). Without this,

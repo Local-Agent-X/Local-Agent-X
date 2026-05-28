@@ -94,7 +94,7 @@ async function callLLM(prompt: string, count: number, options: RerankOptions): P
       let apiKey = process.env.ANTHROPIC_API_KEY || "";
       if (!apiKey) {
         try {
-          const { getAnthropicApiKey } = await import("../auth-anthropic.js");
+          const { getAnthropicApiKey } = await import("../auth/anthropic.js");
           apiKey = await getAnthropicApiKey();
         } catch {}
       }

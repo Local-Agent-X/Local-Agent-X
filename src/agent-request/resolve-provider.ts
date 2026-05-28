@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { LAXConfig } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
-import { getApiKey } from "../auth.js";
+import { getApiKey } from "../auth/index.js";
 import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
 import { PROVIDERS, isHttpProvider } from "../providers/registry.js";
 
@@ -28,9 +28,9 @@ export async function resolveProvider(
   temperature: number;
   maxIterations: number;
 }> {
-  const { loadTokens } = await import("../auth.js");
-  const { loadAnthropicTokens, getAnthropicApiKey } = await import("../auth-anthropic.js");
-  const { loadXaiTokens, getXaiApiKey } = await import("../auth-xai.js");
+  const { loadTokens } = await import("../auth/index.js");
+  const { loadAnthropicTokens, getAnthropicApiKey } = await import("../auth/anthropic.js");
+  const { loadXaiTokens, getXaiApiKey } = await import("../auth/xai.js");
 
   // Load saved settings
   let saved: Record<string, unknown> = {};

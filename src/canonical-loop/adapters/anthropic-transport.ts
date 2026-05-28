@@ -29,7 +29,7 @@ export function defaultAnthropicTransport(): AnthropicTransport {
   return {
     async *stream(req: AnthropicTransportRequest): AsyncIterable<TransportEvent> {
       const { streamAnthropicResponse } = await import("../../anthropic-client/index.js");
-      const { getAnthropicApiKey } = await import("../../auth-anthropic.js");
+      const { getAnthropicApiKey } = await import("../../auth/anthropic.js");
 
       let token: string;
       try {

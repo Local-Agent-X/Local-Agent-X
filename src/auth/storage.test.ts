@@ -19,9 +19,9 @@ import {
   decryptWithKey,
   _resetMasterKeyCacheForTests,
   ENVELOPE_FORMAT,
-} from "./auth-storage.js";
-import { saveTokens, loadTokens } from "./auth.js";
-import type { OAuthTokens } from "./types.js";
+} from "./storage.js";
+import { saveTokens, loadTokens } from "./index.js";
+import type { OAuthTokens } from "../types.js";
 
 const ENV_KEYS = ["LAX_MIRROR_CODEX_AUTH", "HOME", "USERPROFILE"] as const;
 

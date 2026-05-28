@@ -16,7 +16,7 @@ const DEFAULT_LANGUAGE = "en";
 
 async function getCredential(): Promise<string | null> {
   try {
-    const { getXaiApiKey } = await import("../auth-xai.js");
+    const { getXaiApiKey } = await import("../auth/xai.js");
     const oauth = await getXaiApiKey();
     if (oauth) return oauth;
   } catch { /* fall through */ }

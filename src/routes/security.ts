@@ -3,12 +3,12 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody, safeParseBody } from "../server-utils.js";
 import { getThreatDashboard } from "../threat-dashboard.js";
-import { listPolicies, createPolicy, deletePolicy } from "../ari-policy-editor.js";
+import { listPolicies, createPolicy, deletePolicy } from "../ari-kernel/policy-editor.js";
 import { listEgressRules, addEgressRule } from "../egress-policy.js";
 import { scanForSecrets } from "../secret-scanner.js";
 import { getRecentFileAccess } from "../file-audit.js";
-import { queryAuditLog, getAuditSummary } from "../ari-audit-viewer.js";
-import { runBenchmarks } from "../ari-benchmarks.js";
+import { queryAuditLog, getAuditSummary } from "../ari-kernel/audit-viewer.js";
+import { runBenchmarks } from "../ari-kernel/benchmarks.js";
 import { runInjectionTests } from "../security-tests.js";
 import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "../session/policy.js";
 import { isAriActive } from "../ari-kernel/index.js";
@@ -28,7 +28,7 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
   }
   if (method === "POST" && url.pathname === "/api/security/policies") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
-    json(200, createPolicy(body as Omit<import("../ari-policy-editor.js").PolicyRule, "id" | "createdAt" | "updatedAt">)); return true;
+    json(200, createPolicy(body as Omit<import("../ari-kernel/policy-editor.js").PolicyRule, "id" | "createdAt" | "updatedAt">)); return true;
   }
   if (method === "DELETE" && url.pathname.startsWith("/api/security/policies/")) {
     const id = url.pathname.split("/").pop()!;

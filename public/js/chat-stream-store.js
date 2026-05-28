@@ -38,6 +38,12 @@
       status: 'idle',
       abortReason: null,
       sidebarActive: false,
+      // Index in chat.messages where the live assistant row should appear
+      // during the current turn. Captured at startTurn (length of messages
+      // at that moment). renderMessages uses it to synthesize the live row
+      // at the right slot; promoteLiveToMessages splices the finalized row
+      // in at the same index on `done`. -1 = no live row.
+      liveAnchorIndex: -1,
     };
   }
 
@@ -59,7 +65,7 @@
     for (const cb of globalSubs) { try { cb(sessionId, e, event || null); } catch {} }
   }
 
-  function startTurn(sessionId) {
+  function startTurn(sessionId, anchorIdx) {
     const e = ensure(sessionId);
     e.content = '';
     e.toolEvents = [];
@@ -68,8 +74,36 @@
     e.lastActivityMs = Date.now();
     e.status = 'streaming';
     e.abortReason = null;
+    e.liveAnchorIndex = typeof anchorIdx === 'number' ? anchorIdx : -1;
     notify(sessionId, null);
     return e;
+  }
+
+  // Splice the finalized live row into chat.messages at the captured anchor
+  // and clear the anchor. Single point of entry for "the live row enters
+  // persisted history" — replaces the dual-write upsert path that mirrored
+  // the row into messages[] mid-stream via the save-interval.
+  // Returns the inserted msg, or null if nothing was streamed.
+  function promoteLiveToMessages(sessionId, chat) {
+    const e = entries.get(sessionId);
+    if (!e || !chat || !Array.isArray(chat.messages)) return null;
+    const content = e.content || '';
+    const toolEvents = e.toolEvents || [];
+    if (!content.trim() && toolEvents.length === 0) {
+      e.liveAnchorIndex = -1;
+      return null;
+    }
+    const msg = {
+      role: 'assistant',
+      content,
+      timestamp: Date.now(),
+      _tools: toolEvents.length ? [...toolEvents] : undefined,
+    };
+    const raw = typeof e.liveAnchorIndex === 'number' ? e.liveAnchorIndex : chat.messages.length;
+    const idx = Math.max(0, Math.min(raw, chat.messages.length));
+    chat.messages.splice(idx, 0, msg);
+    e.liveAnchorIndex = -1;
+    return msg;
   }
 
   // Mutate entry from a raw WS event and notify subscribers. Events not in
@@ -140,6 +174,15 @@
     const e = entries.get(sessionId);
     if (!e) return false;
     if (e.status === 'done') return false;
+    // Synthesize end events for orphan starts so a stopped/aborted turn
+    // doesn't promote a tool card with a stuck indicator. Mirrors the
+    // pre-refactor renderMessages cleanup that used to do this on the
+    // fly when stripping stale _streaming flags.
+    for (const te of e.toolEvents) {
+      if (te.type === 'start' && !e.toolEvents.find(t => t.type === 'end' && t.name === te.name)) {
+        e.toolEvents.push({ type: 'end', name: te.name, allowed: true, result: '(interrupted)' });
+      }
+    }
     e.status = 'done';
     e.opId = null;
     if (reason) e.abortReason = reason;
@@ -209,7 +252,7 @@
 
   window.ChatStreamStore = {
     get, ensure,
-    startTurn, applyEvent, bumpActivity, endTurn,
+    startTurn, applyEvent, bumpActivity, endTurn, promoteLiveToMessages,
     setSidebarActive, setActiveSidebarSet,
     isStreaming, isActive, inflightOps,
     subscribe, subscribeAll,

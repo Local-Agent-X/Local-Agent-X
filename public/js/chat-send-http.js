@@ -16,16 +16,11 @@ async function _sendMessageHttp(ctx) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    let lastSaveTime = 0;
 
-    function savePartial() {
-      const entry = ChatStreamStore.get(streamSessionId);
-      if (!entry || (!entry.content.trim() && entry.toolEvents.length === 0)) return;
-      _upsertStreamingAssistant(streamChat, entry.content, entry.toolEvents);
-      streamChat.updatedAt = Date.now();
-      saveChats();
-    }
-
+    // No mid-stream save tick — the live row lives in ChatStreamStore until
+    // _finalizeHttpTurn promotes it into messages[]. The store accumulates
+    // content + toolEvents as events arrive; that's the single source of
+    // truth during the turn.
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -36,10 +31,6 @@ async function _sendMessageHttp(ctx) {
         try {
           const event = JSON.parse(line.slice(6));
           dispatchChatStreamEvent({ sessionId: streamSessionId, event });
-          if (event.type === 'tool_end' || (event.type === 'stream' && Date.now() - lastSaveTime > 2000)) {
-            savePartial();
-            lastSaveTime = Date.now();
-          }
         } catch {}
       }
     }
@@ -87,11 +78,7 @@ async function _retryHttpStream(ctx, originalErr) {
           } catch {}
         }
       }
-      const e2 = ChatStreamStore.get(streamSessionId);
-      if (e2 && (e2.content.trim() || e2.toolEvents.length)) {
-        _upsertStreamingAssistant(streamChat, e2.content, e2.toolEvents);
-        streamChat.updatedAt = Date.now(); saveChats();
-      }
+      // _finalizeHttpTurn handles promote + saveChats — don't double-write.
       retrySuccess = true;
       break;
     } catch { /* retry */ }
@@ -105,24 +92,16 @@ async function _retryHttpStream(ctx, originalErr) {
 function _finalizeHttpTurn(ctx, streamSessionId, streamChat) {
   // Synthesize the terminal done — SSE doesn't send one; end-of-stream is
   // the signal. Drives subscribers + flips status so isStreaming flips false.
+  // Must run BEFORE promoteLiveToMessages because the promote clears the
+  // anchor; nothing reads status here but isStreaming is gated on it for
+  // the next renderMessages call.
   ChatStreamStore.endTurn(streamSessionId, null);
 
-  const entry = ChatStreamStore.get(streamSessionId);
-  const finalContent = entry ? entry.content : '';
-  const finalTools = entry ? entry.toolEvents : [];
-
-  const lastMsg = streamChat.messages[streamChat.messages.length - 1];
-  if (lastMsg && lastMsg._streaming) {
-    if (finalContent && finalContent.length >= (lastMsg.content || '').length) {
-      lastMsg.content = finalContent;
-    }
-    lastMsg._tools = finalTools.length > 0 ? [...finalTools] : undefined;
-    lastMsg.timestamp = Date.now();
-    delete lastMsg._streaming;
-    streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
-  } else if (finalContent.trim()) {
-    streamChat.messages.push({ role: 'assistant', content: finalContent, timestamp: Date.now() });
-    streamChat.updatedAt = Date.now(); saveChats(); renderSidebar();
+  const finalized = ChatStreamStore.promoteLiveToMessages(streamSessionId, streamChat);
+  if (finalized) {
+    streamChat.updatedAt = Date.now();
+    saveChats();
+    renderSidebar();
   }
 
   flushTTS();

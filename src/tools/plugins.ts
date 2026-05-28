@@ -8,7 +8,7 @@ import { imageTools } from "./image-tools/index.js";
 import { createSecretTools } from "./secret-tools.js";
 import { createBrowserTools } from "./browser-tools/index.js";
 import { createCoreProtocolTools } from "../protocols/index.js";
-import { createCronTools } from "../cron-service.js";
+import { createCronTools } from "../cron/cron-service.js";
 import { createHandlerTools } from "../agency/handler.js";
 import { createAgentTools } from "../agents/tools.js";
 import { createProjectTools } from "./project-tools.js";
@@ -78,14 +78,14 @@ export const plugins: ToolPlugin[] = [
   {
     id: "browserSecretCapture",
     async register(ctx) {
-      const { createBrowserSecretCaptureTool } = await import("../browser-secret-capture.js");
+      const { createBrowserSecretCaptureTool } = await import("../browser/secret-capture.js");
       return [createBrowserSecretCaptureTool(ctx.secretsStore, () => ctx.activeBrowserSessionIdRef.value)];
     },
   },
   {
     id: "browserSecretFill",
     async register(ctx) {
-      const { createBrowserSecretFillTool } = await import("../browser-secret-fill.js");
+      const { createBrowserSecretFillTool } = await import("../browser/secret-fill.js");
       return [createBrowserSecretFillTool(ctx.secretsStore, () => ctx.activeBrowserSessionIdRef.value)];
     },
   },

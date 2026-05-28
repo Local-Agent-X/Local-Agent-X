@@ -120,7 +120,7 @@ export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<
     // Prefer hot-reloadable config file over static config object
     const basePrompt = loadSystemPrompt() || input.config.systemPrompt;
 
-    const { createSystemPromptBuilder } = await import("../../context-builder.js");
+    const { createSystemPromptBuilder } = await import("../../context/builder.js");
     const contextBuilder = createSystemPromptBuilder({
       basePrompt,
       providerHint,

@@ -10,7 +10,7 @@ import type { LAXConfig, Session, ToolDefinition } from "../../types.js";
 import type { MemoryIndex, MemoryManager } from "../../memory/index.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy.js";
-import type { CronService } from "../../cron-service.js";
+import type { CronService } from "../../cron/cron-service.js";
 import type { IntegrationRegistry } from "../../integrations/index.js";
 import { validateMissionOutput } from "../../cron/output-validation.js";
 import { createLogger } from "../../logger.js";

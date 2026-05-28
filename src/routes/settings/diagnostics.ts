@@ -2,7 +2,7 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse } from "../../server-utils.js";
 import { getToolStats, getToolSuccessRate, getRecentFailures } from "../../tool-tracker.js";
 import { getCrashReport, getTopCrashPatterns } from "../../crash-analytics.js";
-import { getContextUsage } from "../../context-usage.js";
+import { getContextUsage } from "../../context/usage.js";
 import { runStartupTests } from "../../startup-test.js";
 
 export const handleDiagnosticsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {

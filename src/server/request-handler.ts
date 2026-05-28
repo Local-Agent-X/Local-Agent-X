@@ -12,7 +12,7 @@ import type { ToolPolicy } from "../tool-policy.js";
 import type { RBACManager } from "../rbac.js";
 import type { SessionStore, MemoryIndex, MemoryManager } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
-import type { CronService } from "../cron-service.js";
+import type { CronService } from "../cron/cron-service.js";
 import type { IntegrationRegistry } from "../integrations/index.js";
 import type { WhatsAppBridge } from "../whatsapp-bridge/index.js";
 import type { TelegramBridge } from "../telegram-bridge/index.js";

@@ -8,7 +8,7 @@ import { SecretsStore } from "../secrets.js";
 import { AgentSync } from "../sync/index.js";
 import { RBACManager } from "../rbac.js";
 import { setBrowserAuthContext } from "../browser/index.js";
-import { CronService } from "../cron-service.js";
+import { CronService } from "../cron/cron-service.js";
 import { IntegrationRegistry } from "../integrations/index.js";
 import { setServerPort } from "../server-utils.js";
 import type { LAXConfig } from "../types.js";

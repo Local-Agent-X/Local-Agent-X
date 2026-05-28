@@ -294,6 +294,15 @@ export function wireWsChat(deps: {
     // browser via chat-ws's pub/sub (broadcastToSession), so the SSE side-channel
     // is unnecessary for WS callers — `sseSink: null` below. /api/chat remains
     // wired for non-WS callers (Telegram, WhatsApp, curl).
+    //
+    // Mark this session as "chat handler pending" for the inject handler:
+    // runChatTurn does ~30-200ms of prep before the canonical op is created,
+    // and an inject arriving in that window would otherwise see liveOps=[]
+    // and get fresh-turn-routed instead of queued. The mark closes that
+    // window so the inject lands in the queue and drainInjectsIntoTurn at
+    // the top of driveTurn picks it up. See ops/session-bridge.ts.
+    const { markChatHandlerPending, clearChatHandlerPending } = await import("../ops/session-bridge.js");
+    markChatHandlerPending(sessionId);
     try {
       const { runChatTurn } = await import("../routes/chat/run-chat-turn.js");
       const ctx = buildCtx();
@@ -316,6 +325,8 @@ export function wireWsChat(deps: {
       // activeChats entry stays {done:false} until the 5-minute cleanup
       // sweep — UI shows a spinner and accepts no new input until then.
       chatWs.failChat(sessionId, `Chat error: ${msg}`);
+    } finally {
+      clearChatHandlerPending(sessionId);
     }
   });
 }

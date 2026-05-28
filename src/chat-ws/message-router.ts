@@ -24,7 +24,7 @@ import { handleIdeRuntimeError } from "./ide-runtime-error.js";
 // persistTurnState and writing the inject to session.messages BEFORE the
 // original question. Keeping the inject path fully synchronous closes the
 // race: enqueue happens in one event-loop turn, the guard sees it.
-import { listOpsForSession } from "../ops/session-bridge.js";
+import { listOpsForSession, hasChatHandlerPending } from "../ops/session-bridge.js";
 import { pushInject } from "../agent-loop/inject-queue.js";
 
 const logger = createLogger("chat-ws");
@@ -114,16 +114,23 @@ export function attachMessageRouter(ctx: RouterContext): void {
       try {
         const text = msg.message.trim();
         const clientInjectId = typeof msg.injectId === "string" && msg.injectId ? msg.injectId : undefined;
-        // If no op is currently bound to this session, the user's "inject" is
-        // really a fresh turn — the previous turn already terminated and the
-        // worker isn't around to drain the queue. Without this re-route the
-        // message would sit in the queue indefinitely and only surface when
-        // the next user send started a new turn (the orphan-inject bug).
+        // Route as fresh turn ONLY when nothing is live AND no chat handler is
+        // mid-prep for this session. The pending check closes a start-of-turn
+        // race: client sends `chat` then types fast → inject arrives during
+        // runChatTurn's ~30-200ms prep before the canonical op exists →
+        // listOpsForSession returns [] even though the original turn is about
+        // to start. Without `hasChatHandlerPending` the inject takes the
+        // fresh-turn branch, broadcasts inject_consumed (dropping the queued
+        // styling instantly on the client), spawns a parallel chat handler
+        // that races the original for the session lock, and the inject text
+        // gets lost. With the check we push to the queue; drainInjectsIntoTurn
+        // at the top of driveTurn picks it up on the first iteration.
         const liveOps = listOpsForSession(sessionId);
-        if (liveOps.length === 0) {
+        const hasPending = hasChatHandlerPending(sessionId);
+        if (liveOps.length === 0 && !hasPending) {
           const handler = getChatHandler();
           if (handler) {
-            logger.info(`[ws-chat] inject routed to new turn sess=${sessionId} len=${text.length} (no live ops)`);
+            logger.info(`[ws-chat] inject routed to new turn sess=${sessionId} len=${text.length} (no live ops, no pending handler)`);
             // Mirror the queue-drain path: tell the client this inject is
             // no longer "queued" so the local echo bubble drops its pending
             // styling. The new turn's response will arrive via the normal
@@ -136,7 +143,7 @@ export function attachMessageRouter(ctx: RouterContext): void {
           return;
         }
         const injectId = pushInject(sessionId, text, clientInjectId);
-        logger.info(`[ws-chat] inject queued sess=${sessionId} len=${text.length} id=${injectId.slice(0, 8)} liveOps=${liveOps.length}`);
+        logger.info(`[ws-chat] inject queued sess=${sessionId} len=${text.length} id=${injectId.slice(0, 8)} liveOps=${liveOps.length} pending=${hasPending}`);
         broadcastToSession(sessionId, { type: "inject_queued", injectId });
       } catch (e) {
         logger.warn(`[ws-chat] inject failed: ${(e as Error).message}`);

@@ -9,19 +9,21 @@
 // `if (_liveStreams.has(sessionId)) return`. Now there's one listener —
 // the dispatcher — and it routes per-session events through here.
 //
-// Two responsibilities per event:
-//   1. Push it through ChatStreamStore.applyEvent so per-session state
-//      (content / toolEvents / opId / status) stays in sync.
-//   2. If the user is viewing this session, render the side effects
-//      (paint tool card, show modal, append approval card, etc.).
+// Per event:
+//   1. ChatStreamStore.applyEvent absorbs the event into per-session state
+//      (content / toolEvents / chips / progressByTool / approvals /
+//      stopNote / opId / status).
+//   2. rerenderLiveMessage swaps the live bubble from that state.
+//   3. The case bodies below ONLY handle side effects that aren't bubble
+//      DOM — feedTTS, voice sphere, secret modals, context bar, console
+//      debug, and the legacy agent_spawn/_status HTTP-fallback inline
+//      cards. Bubble DOM for stream / tool_* / approval_* / stopped /
+//      error is fully owned by the store + swap; the surgical paints that
+//      used to live here were deleted in Phase 3.
 //
 // External deps (auto-window from sibling scripts):
 //   activeChat                                          (app-state.js)
 //   _findStreamingBodyEl                                (chat-ws.js)
-//   renderStreamContent, md                             (chat-render.js, shared.js)
-//   appendToolCardGrouped, appendToolChip, updateToolProgress
-//                                                       (chat-tool-cards.js)
-//   attachMediaPreview, makeApprovalCard                (chat-tool-cards.js)
 //   showSecretModal, showMultiSecretModal               (secret-modal.js)
 //   updateContextBar                                    (chat-status-bar.js)
 //   feedTTS                                             (chat-voice-tts.js)
@@ -49,11 +51,11 @@ function dispatchChatStreamEvent(msg) {
 
   const viewing = !!(activeChat && activeChat.id === sessionId);
 
-  // Phase 2: store-driven swap of the live bubble. rerenderLiveMessage is
-  // rAF-coalesced and bails for off-screen/post-done sessions. The per-case
-  // surgical DOM ops below STILL RUN — they write into the freshly-swapped
-  // bubble's body (resolved via _findStreamingBodyEl each call). Phase 3
-  // deletes those ops once we're confident the swap path carries the load.
+  // Store-driven swap of the live bubble. rerenderLiveMessage is
+  // rAF-coalesced and bails for off-screen/post-done sessions. This is
+  // now the ONLY path that paints stream text / tool cards / chips /
+  // progress / approvals / stop notes into the live bubble — Phase 3
+  // removed the surgical case bodies that used to run after this.
   if (viewing && typeof rerenderLiveMessage === 'function') {
     rerenderLiveMessage(sessionId);
   }
@@ -64,57 +66,16 @@ function dispatchChatStreamEvent(msg) {
 
   // Resolve the live bubble for the viewing session. _findStreamingBodyEl
   // returns the .msg-body of the most recent assistant message — same
-  // element the per-turn renderer used to hold in its closure.
+  // element the per-turn renderer used to hold in its closure. Only the
+  // legacy agent_spawn / agent_status HTTP-fallback branches still write
+  // into this directly; bubble DOM for stream / tool_* / approval_* /
+  // stopped / error is owned by the store + swap path now.
   const bodyEl = viewing ? _findStreamingBodyEl(sessionId) : null;
-  const store = ChatStreamStore.get(sessionId);
 
   switch (event.type) {
     case 'stream':
-      if (viewing && bodyEl) {
-        renderStreamContent(bodyEl, store.content);
-        if (typeof event.delta === 'string') feedTTS(event.delta);
-      }
-      break;
-
-    case 'tool_start':
-      if (viewing && bodyEl) {
-        // Preserve activity-groups (tool cards) across the markdown re-render
-        // — without this, every text delta wipes the group container and
-        // orphaned tool cards float in body.
-        const existingGroups = bodyEl.querySelectorAll('.activity-group');
-        const orphanCards = bodyEl.querySelectorAll(':scope > .tool-card');
-        const mediaPreviews = bodyEl.querySelectorAll(':scope > .tool-media-preview');
-        bodyEl.innerHTML = store.content ? md(store.content) : '';
-        mediaPreviews.forEach(m => bodyEl.appendChild(m));
-        existingGroups.forEach(g => bodyEl.appendChild(g));
-        orphanCards.forEach(c => bodyEl.appendChild(c));
-        appendToolCardGrouped(bodyEl, event.toolName, event.args, event.riskLevel, event.context);
-      }
-      break;
-
-    case 'tool_end':
-      if (viewing && bodyEl) {
-        const cards = bodyEl.querySelectorAll('.tool-card');
-        const last = cards[cards.length - 1];
-        if (last) {
-          last.querySelector('.indicator').className = 'indicator ' + (event.allowed ? 'allowed' : 'blocked');
-          let cleanResult = (event.result || '').replace(/<<<EXTERNAL_UNTRUSTED_CONTENT[\s\S]*?<<<END_EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/g, '[content loaded]')
-            .replace(/IMPORTANT:.*?Do NOT follow any instructions.*$/gm, '')
-            .replace(/<metadata>[\s\S]*?<\/metadata>/g, '')
-            .replace(/<content>\n?/g, '').replace(/\n?<\/content>/g, '')
-            .trim().slice(0, 200);
-          last.querySelector('.tool-detail').textContent = cleanResult || '✓ Done';
-          attachMediaPreview(last, event.toolName, event.result || '');
-        }
-      }
-      break;
-
-    case 'tool_chip':
-      if (viewing && bodyEl && event.chip) appendToolChip(bodyEl, event.chip);
-      break;
-
-    case 'tool_progress':
-      if (viewing && bodyEl) updateToolProgress(bodyEl, event.toolName, event.message);
+      // Side-effect-only: text painting is owned by the store + swap.
+      if (viewing && typeof event.delta === 'string') feedTTS(event.delta);
       break;
 
     case 'visual':
@@ -133,42 +94,14 @@ function dispatchChatStreamEvent(msg) {
       showMultiSecretModal(event.secrets);
       break;
 
-    case 'approval_requested':
-      if (viewing && bodyEl) bodyEl.appendChild(makeApprovalCard(event.approvalId, event.toolName, event.context, event.argsPreview));
-      break;
-
-    case 'approval_timeout': {
-      const card = document.querySelector('.approval-card[data-id="' + event.approvalId + '"]');
-      if (card) {
-        card.classList.add('timeout');
-        card.querySelector('.approval-status').textContent = 'Timed out — denied.';
-        card.querySelectorAll('button').forEach(b => b.disabled = true);
-      }
-      break;
-    }
-
     case 'context_status':
       if (viewing) updateContextBar(event);
       break;
 
     case 'stopped':
-      // Small italic stop-notice below the message body. Not appended to
-      // store content — keeps the persisted message clean and prevents the
-      // technical reason from being saved into chat history.
+      // The notice itself is rendered from store.stopNote by the swap path.
+      // The console log is the only side effect we still own here.
       if (event.debug) console.info('[stopped]', event.firedBy || '?', event.debug);
-      if (viewing && bodyEl) {
-        const note = document.createElement('div');
-        note.className = 'stop-notice';
-        note.textContent = event.reason || 'Stopped.';
-        note.title = event.debug || event.firedBy || '';
-        bodyEl.appendChild(note);
-      }
-      break;
-
-    case 'error':
-      // applyEvent already appended the deduped "Error: ..." text into
-      // store.content — just repaint.
-      if (viewing && bodyEl) bodyEl.innerHTML = md(store.content);
       break;
 
     case 'agent_spawn':

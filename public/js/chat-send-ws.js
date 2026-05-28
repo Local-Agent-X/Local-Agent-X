@@ -84,20 +84,16 @@ function _finalizeWsTurn(streamSessionId, streamChat) {
         orphanCards.forEach(c => liveBubble.appendChild(c));
       }
     } else {
-      // No live content to paint. Two sub-cases:
-      //   (a) `activeChat.messages` already has the final text (saveInterval
-      //       flushed it, or the persist branch above wrote it).
-      //   (b) `activeChat.messages` is ALSO empty — stream events never
-      //       reached this client (WS reconnect race, half-open connection,
-      //       server-only-persist provider path). The canonical text lives
-      //       in the session log; pull it via hydrateChat.
-      // We can't cheaply tell (a) vs (b), so hydrate unconditionally — it's
-      // idempotent and hydrateChat() calls renderMessages on success.
+      // No live bubble to paint into. The store + activeChat.messages already
+      // hold the turn's text (saveInterval flushed it, or the persist branch
+      // above pushed an assistant entry). renderMessages rebuilds the DOM
+      // from that data. DO NOT hydrate here — hydrateChat does
+      // Object.assign(chat, serverSession) which overwrites any in-flight or
+      // recently-typed messages the server hasn't persisted yet. The
+      // legitimate "server has content client doesn't" cases (WS reconnect
+      // race, half-open) are already covered by reconnect_op replay
+      // (chat-ws.js) and the heartbeat-driven reconnect path.
       if (typeof renderMessages === 'function') renderMessages();
-      if (typeof hydrateChat === 'function') {
-        streamChat._needsHydrate = true;
-        hydrateChat(streamChat).catch(e => console.warn('[chat] done-time hydrate failed:', e && e.message));
-      }
     }
   }
   updateContextBar();

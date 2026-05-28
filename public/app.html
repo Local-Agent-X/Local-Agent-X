@@ -1069,22 +1069,27 @@
 <script src="/js/chat-voice-ui.js?v=v1"></script>
 <script src="/js/chat-extras.js?v=v1"></script>
 <script src="/js/chat-helpers.js?v=v1"></script>
+<!-- ChatStreamStore must load before every chat-ws / chat-send module so
+     they can reference window.ChatStreamStore at file-evaluation time. -->
+<script src="/js/chat-stream-store.js?v=v1"></script>
 <!-- chat-ws-handler split: per-event-group modules must load BEFORE
      chat-ws-handler.js so its dispatcher can reference handleSettingsChanged,
-     dispatchBgOpEvent, handleAgentFeedEvent, renderBuildRunSummary. -->
+     dispatchBgOpEvent, dispatchChatStreamEvent, handleAgentFeedEvent,
+     renderBuildRunSummary. -->
 <script src="/js/chat-ws-handler-build-summary.js?v=v1"></script>
 <script src="/js/chat-ws-handler-bg-ops.js?v=v1"></script>
 <script src="/js/chat-ws-handler-misc.js?v=v1"></script>
-<script src="/js/chat-ws-handler.js?v=v2"></script>
-<script src="/js/chat-ws.js?v=v1"></script>
-<script src="/js/chat-render.js?v=v1"></script>
+<script src="/js/chat-ws-handler-chat-events.js?v=v1"></script>
+<script src="/js/chat-ws-handler.js?v=v3"></script>
+<script src="/js/chat-ws.js?v=v2"></script>
+<script src="/js/chat-render.js?v=v2"></script>
 <!-- chat-send split: dispatch modules must load before chat-send.js so
      sendMessage()'s wsHealthy check can reach _sendMessageWs/_sendMessageHttp. -->
-<script src="/js/chat-send-ws.js?v=v1"></script>
-<script src="/js/chat-send-http.js?v=v1"></script>
-<script src="/js/chat-send.js?v=v7"></script>
-<script src="/js/chat-uploads.js?v=v1"></script>
-<script src="/js/chat.js?v=vd3"></script>
+<script src="/js/chat-send-ws.js?v=v2"></script>
+<script src="/js/chat-send-http.js?v=v2"></script>
+<script src="/js/chat-send.js?v=v8"></script>
+<script src="/js/chat-uploads.js?v=v2"></script>
+<script src="/js/chat.js?v=vd4"></script>
 <script src="/js/secret-modal.js?v=v1"></script>
 <!-- settings.js modules — load BEFORE settings.js for the same reason. -->
 <script src="/js/settings-whatsapp.js?v=v1"></script>

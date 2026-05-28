@@ -83,11 +83,11 @@ function handleBgOpProgress(msg) {
 // area as bg_op_progress (tool-call traces) so each worker card
 // shows both reasoning and tool work side-by-side, like a
 // miniature chat thread off to the side.
-// Off-screen sessions still mark themselves in activeChatsSet
-// so the sidebar can flag activity.
+// Off-screen sessions still get a sidebar marker so the user sees activity
+// even on chats they aren't viewing.
 function handleWorkerStream(msg) {
   if (!(activeChat && activeChat.id === msg.sessionId)) {
-    activeChatsSet.add(msg.sessionId);
+    ChatStreamStore.setSidebarActive(msg.sessionId, true);
     if (typeof renderSidebar === 'function') renderSidebar();
   }
   if (typeof updateAgentFeed === 'function') {
@@ -145,7 +145,7 @@ function handleBgOpNudge(msg) {
       activeChat.messages.push({ role: 'assistant', content: msg.event.text });
       if (typeof renderMessages === 'function') renderMessages();
     } else {
-      activeChatsSet.add(msg.sessionId);
+      ChatStreamStore.setSidebarActive(msg.sessionId, true);
       if (typeof renderSidebar === 'function') renderSidebar();
     }
     if (window.desktop) window.desktop.showNotification('Worker finished', msg.event.text);

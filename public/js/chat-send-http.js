@@ -134,10 +134,11 @@ function _finalizeHttpTurn(ctx, streamSessionId, streamChat) {
     document.getElementById('send-btn').disabled = false;
     if (ctx.isViewingThis()) {
       renderMessages();
-      if (!finalContent.trim() && typeof hydrateChat === 'function') {
-        streamChat._needsHydrate = true;
-        hydrateChat(streamChat).catch(e => console.warn('[chat] done-time hydrate failed (HTTP path):', e && e.message));
-      }
+      // Do NOT hydrate here. hydrateChat does Object.assign(chat, serverSession)
+      // which overwrites in-flight / recently-typed local messages the server
+      // hasn't persisted yet — observed dropping 2 messages mid-conversation.
+      // The store + activeChat.messages already hold the truth; renderMessages
+      // is sufficient. Mirrors the WS-path fix.
     }
     updateContextBar();
   } catch (renderErr) { console.error('[chat] finalize render error:', renderErr); }

@@ -131,10 +131,6 @@ function appendToolChip(bodyEl, chip) {
  * response into a single collapsible block — instead of 15 stacked tool
  * cards flooding the chat, you see "⚙ Agent activity (15)" with a
  * click-to-expand header.
- *
- * A new group starts when the assistant emits actual text content — see
- * the renderStreamContent path which inserts a marker element that
- * breaks the activity-group lookup.
  */
 function ensureActivityGroup(container) {
   const last = container.lastElementChild;
@@ -276,8 +272,6 @@ function attachMediaPreview(card, toolName, result) {
   // card itself if we can't locate one (shouldn't happen in practice).
   const host = card.closest('.msg-body') || card.closest('.msg.assistant') || card.parentElement;
   if (!host) return;
-  // Avoid duplicate previews on tool_end retries / re-renders.
-  if (host.querySelector(':scope > .tool-media-preview')) return;
 
   const re = /(\/(?:images|videos)\/[A-Za-z0-9._-]+)/g;
   // Dedupe — tool results commonly emit the same URL twice (e.g. "Saved

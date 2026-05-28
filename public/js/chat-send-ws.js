@@ -43,44 +43,13 @@ function _finalizeWsTurn(streamSessionId, streamChat) {
     saveChats();
     renderSidebar();
   }
-  const entry = ChatStreamStore.get(streamSessionId);
-  const finalContent = entry ? entry.content : '';
-
-  // Final DOM sync — flush any pending rAF render so the last chunk of
-  // content is visible. Re-resolve the bubble FRESH: a stale bodyEl from
-  // earlier in the turn may be detached after a DOM rebuild (chat-switch+
-  // back, or a layout re-render mid-stream). Live failure 2026-05-18:
-  // assistant replies completed cleanly (Stop button hidden) but bubble
-  // stayed empty until leave+return.
+  // Single source of truth: messages[] now holds the finalized assistant
+  // row (promoteLiveToMessages just spliced it in). The swap path already
+  // painted the latest content; this rebuild atomically replaces the live
+  // synth with the finalized row and clears any straggling state.
   const viewing = !!(activeChat && activeChat.id === streamSessionId);
-  if (viewing) {
-    const liveBubble = _findStreamingBodyEl(streamSessionId);
-    const pending = liveBubble ? _streamRenderers.get(liveBubble) : null;
-    if (pending && pending.raf) { cancelAnimationFrame(pending.raf); pending.raf = 0; }
-    const paintText = (pending && pending.latest) || finalContent;
-    if (liveBubble && paintText) {
-      const existingGroups = liveBubble.querySelectorAll('.activity-group');
-      const orphanCards = liveBubble.querySelectorAll(':scope > .tool-card, :scope > .approval-card');
-      const mediaPreviews = liveBubble.querySelectorAll(':scope > .tool-media-preview');
-      const currentMd = md(paintText);
-      if (liveBubble.innerHTML !== currentMd || existingGroups.length > 0 || orphanCards.length > 0 || mediaPreviews.length > 0) {
-        liveBubble.innerHTML = currentMd;
-        mediaPreviews.forEach(m => liveBubble.appendChild(m));
-        existingGroups.forEach(g => liveBubble.appendChild(g));
-        orphanCards.forEach(c => liveBubble.appendChild(c));
-      }
-    } else {
-      // No live bubble to paint into. The store + activeChat.messages already
-      // hold the turn's text (saveInterval flushed it, or the persist branch
-      // above pushed an assistant entry). renderMessages rebuilds the DOM
-      // from that data. DO NOT hydrate here — hydrateChat does
-      // Object.assign(chat, serverSession) which overwrites any in-flight or
-      // recently-typed messages the server hasn't persisted yet. The
-      // legitimate "server has content client doesn't" cases (WS reconnect
-      // race, half-open) are already covered by reconnect_op replay
-      // (chat-ws.js) and the heartbeat-driven reconnect path.
-      if (typeof renderMessages === 'function') renderMessages();
-    }
+  if (viewing && typeof renderMessages === 'function') {
+    renderMessages();
   }
   updateContextBar();
   flushTTS();

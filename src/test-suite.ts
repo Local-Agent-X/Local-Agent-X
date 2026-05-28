@@ -127,7 +127,6 @@ async function testModuleImports(): Promise<void> {
     "./event-bus.js",
     "./config-hot-reload.js",
     "./io-abstraction.js",
-    "./portable-memory.js",
     "./embedded-runtime.js",
     "./driver-abstraction.js",
     "./agent-protocol.js",

@@ -134,8 +134,24 @@ function _buildLiveAssistantInto(parent, store) {
     bodyEl.innerHTML = '<div class="thinking"><span>.</span><span>.</span><span>.</span></div>';
   }
   const toolEvents = store ? (store.toolEvents || []) : [];
+  _renderAssistantToolArtifacts(bodyEl || div, {
+    toolEvents,
+    chips: store ? (store.chips || []) : [],
+    progressByTool: store ? (store.progressByTool || {}) : {},
+    approvals: store ? (store.approvals || []) : [],
+    stopNote: store ? store.stopNote : null,
+  });
+  return div;
+}
+
+// Shared render for assistant tool artifacts (cards, chips, progress, approvals,
+// stop notice). Used by both the live synth path (_buildLiveAssistantInto) and
+// the finalized assistant branch in renderMessage so a reloaded chat looks
+// identical to its in-flight render.
+function _renderAssistantToolArtifacts(bodyEl, data) {
+  if (!bodyEl || !data) return;
+  const toolEvents = data.toolEvents || [];
   if (toolEvents.length > 0) {
-    const cardHost = bodyEl || div;
     try {
       for (const te of toolEvents) {
         if (te.type !== 'start') continue;
@@ -143,17 +159,71 @@ function _buildLiveAssistantInto(parent, store) {
         // per-event paint path: cards land inside the collapsible
         // "Agent activity" group, consecutive same-tool calls collapse
         // into a single ×N card.
-        const card = appendToolCardGrouped(cardHost, te.name, te.args || '', te.riskLevel);
+        const card = appendToolCardGrouped(bodyEl, te.name, te.args || '', te.riskLevel);
         const endEvt = toolEvents.find(t => t.type === 'end' && t.name === te.name);
         if (endEvt) {
           card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
-          card.querySelector('.tool-detail').textContent = (endEvt.result || '').slice(0, 200) || '✓ Done';
-          attachMediaPreview(card, te.name, endEvt.result || '');
+          // Clean the agent-safety scaffolding off the tool-detail text but
+          // leave the raw result in place for attachMediaPreview's URL scan —
+          // generate_image results can wrap their /images/foo.png path inside
+          // an EXTERNAL_UNTRUSTED_CONTENT block, so cleaning before scanning
+          // would lose the URL. Mirrors the pre-Phase-3 surgical tool_end op.
+          const rawResult = endEvt.result || '';
+          const detailText = rawResult
+            .replace(/<<<EXTERNAL_UNTRUSTED_CONTENT[\s\S]*?<<<END_EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/g, '[content loaded]')
+            .replace(/IMPORTANT:.*?Do NOT follow any instructions.*$/gm, '')
+            .replace(/<metadata>[\s\S]*?<\/metadata>/g, '')
+            .replace(/<content>\n?/g, '').replace(/\n?<\/content>/g, '')
+            .trim()
+            .slice(0, 200);
+          card.querySelector('.tool-detail').textContent = detailText || '✓ Done';
+          attachMediaPreview(card, te.name, rawResult);
         }
       }
-    } catch (toolRenderErr) { console.error('[chat] live tool card render error:', toolRenderErr); }
+    } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
   }
-  return div;
+  // Chips attach to the last tool card matching the chip's emit time. The
+  // store keeps insertion order, so appendToolChip's "last card" heuristic
+  // matches the live arrival order for the common single-chip case. (Cards
+  // and chips can interleave in the rare multi-chip-multi-tool case; not
+  // worth tracking exact targets until that bites someone.)
+  const chips = data.chips || [];
+  for (const chip of chips) { try { appendToolChip(bodyEl, chip); } catch {} }
+  // Progress: latest message per tool name. Skip tools that already ended —
+  // their tool-detail carries the final result and the surgical path would
+  // have overwritten progress with the result on tool_end too.
+  const progressByTool = data.progressByTool || {};
+  for (const toolName of Object.keys(progressByTool)) {
+    const ended = toolEvents.some(t => t.type === 'end' && t.name === toolName);
+    if (ended) continue;
+    const entry = progressByTool[toolName];
+    if (entry && typeof entry.message === 'string') {
+      try { updateToolProgress(bodyEl, toolName, entry.message); } catch {}
+    }
+  }
+  // Approvals and the stop note hang off bodyEl directly (NOT inside the
+  // activity group) — mirrors the surgical path's bodyEl.appendChild calls.
+  const approvals = data.approvals || [];
+  for (const ap of approvals) {
+    try {
+      const card = makeApprovalCard(ap.id, ap.toolName, ap.context, ap.argsPreview);
+      if (ap.status === 'timeout') {
+        card.classList.add('timeout');
+        const statusEl = card.querySelector('.approval-status');
+        if (statusEl) statusEl.textContent = 'Timed out — denied.';
+        card.querySelectorAll('button').forEach(b => b.disabled = true);
+      }
+      bodyEl.appendChild(card);
+    } catch (approvalRenderErr) { console.error('[chat] approval card render error:', approvalRenderErr); }
+  }
+  const stopNote = data.stopNote;
+  if (stopNote) {
+    const note = document.createElement('div');
+    note.className = 'stop-notice';
+    note.textContent = stopNote.reason || 'Stopped.';
+    note.title = stopNote.debug || stopNote.firedBy || '';
+    bodyEl.appendChild(note);
+  }
 }
 
 // Render one row from activeChat.messages[] (or the synthetic live row from
@@ -188,30 +258,16 @@ function renderMessage(msg, ctx) {
     // path so the agent's pin-bottom and tool-card logic doesn't apply.
     return appendStaticWorkerBubble(msg._opId, msg.content || '', msg._taskHint, msg._workerStatus);
   }
-  if (msg.role === 'assistant' && (msg.content || msg._tools)) {
+  if (msg.role === 'assistant' && (msg.content || msg._tools || msg._chips || msg._approvals || msg._stopNote)) {
     const node = addMessageEl('assistant', msg.content || '', null, msg.timestamp);
-    if (msg._tools && msg._tools.length > 0) {
-      const lastBody = node ? node.querySelector('.msg-body') : null;
-      const cardHost = lastBody || node;
-      if (cardHost) {
-        try {
-          for (const te of msg._tools) {
-            if (te.type !== 'start') continue;
-            // Route through appendToolCardGrouped so re-render matches
-            // the live-stream path: cards land inside the collapsible
-            // "Agent activity" group, and consecutive same-tool calls
-            // collapse into a single ×N card.
-            const card = appendToolCardGrouped(cardHost, te.name, te.args || '', te.riskLevel);
-            const endEvt = msg._tools.find(t => t.type === 'end' && t.name === te.name);
-            if (endEvt) {
-              card.querySelector('.indicator').className = 'indicator ' + (endEvt.allowed ? 'allowed' : 'blocked');
-              card.querySelector('.tool-detail').textContent = (endEvt.result || '').slice(0, 200) || '✓ Done';
-              attachMediaPreview(card, te.name, endEvt.result || '');
-            }
-          }
-        } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
-      }
-    }
+    const lastBody = node ? node.querySelector('.msg-body') : null;
+    _renderAssistantToolArtifacts(lastBody || node, {
+      toolEvents: msg._tools || [],
+      chips: msg._chips || [],
+      progressByTool: msg._progressByTool || {},
+      approvals: msg._approvals || [],
+      stopNote: msg._stopNote || null,
+    });
     return node;
   }
   return null;
@@ -248,14 +304,6 @@ function rerenderLiveMessage(sessionId) {
       }
     }
     if (!oldNode) return;
-    // Phase 2 guard: skip the swap when the bubble carries DOM the store
-    // can't reconstruct. tool_chip / tool_progress / approval_requested /
-    // stopped paint surgically into bodyEl but the store doesn't track
-    // them — rebuilding from store would silently drop chips, approval
-    // cards, progress bars, and stop notices. Phase 3 extends the store
-    // and deletes those surgical ops, at which point this guard becomes
-    // unnecessary and goes away.
-    if (oldNode.querySelector('.tool-chip, .approval-card, .stop-notice, .tool-progress-bar, .tool-progress-text, .agent-inline-card')) return;
     const tmp = document.createElement('div');
     const fresh = renderMessage(null, { parent: tmp, isLiveSynth: true, store });
     if (!fresh) return;

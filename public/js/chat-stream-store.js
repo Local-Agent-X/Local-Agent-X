@@ -8,6 +8,10 @@
 // Shape per entry (Map<sessionId, ChatStreamEntry>):
 //   content         accumulated stream text
 //   toolEvents      tool_start/tool_end records, in order
+//   chips           out-of-band tool chips (op-id, kill button, etc.)
+//   progressByTool  toolName → { message } — latest tool_progress per tool
+//   approvals       pending approval cards, status flips on approval_timeout
+//   stopNote        single stop notice for this turn (last write wins)
 //   opId            canonical chat op (set on chat_op_started, cleared on done)
 //   lastSeenSeq     for reconnect_op replay
 //   lastActivityMs  for the stuck-stream watchdog
@@ -32,6 +36,18 @@
       sessionId,
       content: '',
       toolEvents: [],
+      // Out-of-band tool chip data (opId+actions metadata) — last write
+      // wins per tool card, append-only across the turn.
+      chips: [],
+      // toolName → { message } — latest progress event per tool name,
+      // overwritten by each new tool_progress event. Matches the prior
+      // surgical behavior (writes to the last card of that tool name).
+      progressByTool: {},
+      // Pending approval cards in arrival order. status flips to
+      // 'timeout' when approval_timeout lands.
+      approvals: [],
+      // Single stop notice per turn — last write wins.
+      stopNote: null,
       opId: null,
       lastSeenSeq: -1,
       lastActivityMs: 0,
@@ -69,6 +85,10 @@
     const e = ensure(sessionId);
     e.content = '';
     e.toolEvents = [];
+    e.chips = [];
+    e.progressByTool = {};
+    e.approvals = [];
+    e.stopNote = null;
     e.opId = null;
     e.lastSeenSeq = -1;
     e.lastActivityMs = Date.now();
@@ -99,6 +119,10 @@
       timestamp: Date.now(),
       _tools: toolEvents.length ? [...toolEvents] : undefined,
     };
+    if (e.chips.length) msg._chips = [...e.chips];
+    if (Object.keys(e.progressByTool).length) msg._progressByTool = { ...e.progressByTool };
+    if (e.approvals.length) msg._approvals = e.approvals.map(a => ({ ...a }));
+    if (e.stopNote) msg._stopNote = { ...e.stopNote };
     const raw = typeof e.liveAnchorIndex === 'number' ? e.liveAnchorIndex : chat.messages.length;
     const idx = Math.max(0, Math.min(raw, chat.messages.length));
     chat.messages.splice(idx, 0, msg);
@@ -130,6 +154,45 @@
         break;
       case 'tool_end':
         e.toolEvents.push({ type: 'end', name: event.toolName, allowed: event.allowed, result: (event.result || '').slice(0, 500) });
+        e.lastActivityMs = now;
+        break;
+      case 'tool_chip':
+        if (event.chip) e.chips.push(event.chip);
+        e.lastActivityMs = now;
+        break;
+      case 'tool_progress':
+        if (event.toolName) {
+          e.progressByTool[event.toolName] = { message: event.message || '' };
+        }
+        e.lastActivityMs = now;
+        break;
+      case 'approval_requested':
+        if (event.approvalId) {
+          e.approvals.push({
+            id: event.approvalId,
+            toolName: event.toolName,
+            context: event.context,
+            argsPreview: event.argsPreview,
+            status: 'pending',
+            resolvedAt: null,
+          });
+        }
+        e.lastActivityMs = now;
+        break;
+      case 'approval_timeout': {
+        if (event.approvalId) {
+          const ap = e.approvals.find(a => a.id === event.approvalId);
+          if (ap) { ap.status = 'timeout'; ap.resolvedAt = now; }
+        }
+        e.lastActivityMs = now;
+        break;
+      }
+      case 'stopped':
+        e.stopNote = {
+          reason: event.reason || 'Stopped.',
+          debug: event.debug || null,
+          firedBy: event.firedBy || null,
+        };
         e.lastActivityMs = now;
         break;
       case 'error':

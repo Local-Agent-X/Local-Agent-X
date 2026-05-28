@@ -19,7 +19,7 @@ import {
   type CronJob,
   type ExecuteResult,
 } from "./cron-service-types.js";
-import type { CronService } from "../cron-service.js";
+import type { CronService } from "./cron-service.js";
 
 const logger = createLogger("cron-service");
 

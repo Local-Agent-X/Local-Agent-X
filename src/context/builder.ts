@@ -128,7 +128,7 @@ Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete
     id: "app-manifest", label: "App Map", type: "static",
     build: () => {
       try {
-        const { getManifestSummary } = require("./manifest-generator.js");
+        const { getManifestSummary } = require("../manifest-generator.js");
         return getManifestSummary() || "";
       } catch { return ""; }
     },
@@ -197,7 +197,7 @@ When the user references a project, website, person, or topic you don't recogniz
       id: "project-catalog", label: "Project Catalog", type: "static",
       build: async () => {
         try {
-          const { getProjectCatalogSection } = await import("./memory/project-catalog.js");
+          const { getProjectCatalogSection } = await import("../memory/project-catalog.js");
           return getProjectCatalogSection(opts.memoryDir!);
         } catch { return ""; }
       },

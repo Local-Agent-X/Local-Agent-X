@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { CronService, CronJob } from "../cron-service.js";
+import type { CronService, CronJob } from "./cron-service.js";
 import type { ToolDefinition } from "../types.js";
 
 export function createCronTools(cron: CronService): ToolDefinition[] {

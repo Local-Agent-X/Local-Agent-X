@@ -1,5 +1,5 @@
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("context-usage");
 
 export interface ContextUsage {

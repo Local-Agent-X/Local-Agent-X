@@ -25,16 +25,16 @@
 // The LLM orchestrates but never sees the plaintext. Return text says "filled"
 // and length only; no value, no echo, no truncated prefix.
 
-import type { ToolDefinition, ToolResult } from "./types.js";
-import type { SecretsStore } from "./secrets.js";
-import { deriveOrigin } from "./secrets.js";
-import { getBrowserManager } from "./browser/index.js";
-import { registerRedactedSecretValue } from "./sanitize.js";
-import { getActivePreBlessedSecrets } from "./operations/executor.js";
-import { loadOperation } from "./operations/conductor.js";
+import type { ToolDefinition, ToolResult } from "../types.js";
+import type { SecretsStore } from "../secrets.js";
+import { deriveOrigin } from "../secrets.js";
+import { getBrowserManager } from "./index.js";
+import { registerRedactedSecretValue } from "../sanitize.js";
+import { getActivePreBlessedSecrets } from "../operations/executor.js";
+import { loadOperation } from "../operations/conductor.js";
 import { join } from "node:path";
 
-import { createLogger } from "./logger.js";
+import { createLogger } from "../logger.js";
 const logger = createLogger("browser-secret-fill");
 
 function ok(content: string): ToolResult { return { content }; }
@@ -116,7 +116,7 @@ export function createBrowserSecretFillTool(
       }
       const pressEnter = args.press_enter === true;
       const sessionId = args._sessionId ? String(args._sessionId) : (getSessionId ? getSessionId() : "default");
-      const { withBrowserLock } = await import("./browser/index.js");
+      const { withBrowserLock } = await import("./index.js");
       return withBrowserLock(sessionId, async () => {
 
       // Look up secret metadata. We do NOT pull the value yet — only confirm it

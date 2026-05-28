@@ -1,7 +1,7 @@
 import { allTools } from "../tools.js";
 import { unifiedRegistry } from "../tools/registry.js";
 import { plugins, BRIDGE_PLUGIN_IDS } from "../tools/plugins.js";
-import type { CronService } from "../cron-service.js";
+import type { CronService } from "../cron/cron-service.js";
 import type { SecretsStore } from "../secrets.js";
 import type { ServerEvent, ToolDefinition } from "../types.js";
 import type { UnifiedToolRegistry } from "../tools/registry.js";

@@ -19,7 +19,7 @@ import type { IntegrationRegistry } from "../integrations/index.js";
 import type { SecurityLayer } from "../security/index.js";
 import type { ToolPolicy } from "../tool-policy.js";
 import type { RBACManager } from "../rbac.js";
-import type { CronService } from "../cron-service.js";
+import type { CronService } from "../cron/cron-service.js";
 import type { AgentSync } from "../sync/index.js";
 import type { RequestHandler } from "./request-handler.js";
 import { createLogger } from "../logger.js";

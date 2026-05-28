@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createSystemPromptBuilder, ContextBuilder, CACHE_BOUNDARY } from "./context-builder.js";
+import { createSystemPromptBuilder, ContextBuilder, CACHE_BOUNDARY } from "./builder.js";
 
 const MOCK_INPUTS = {
   basePrompt: "You are a personal AI companion.",

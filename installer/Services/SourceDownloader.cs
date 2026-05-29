@@ -19,7 +19,7 @@ namespace LocalAgentX.Installer.Services;
 // releases that have shipped since. Local dev builds default to "main".
 public class SourceDownloader
 {
-    private const string REPO_OWNER = "petermanrique101-sys";
+    private const string REPO_OWNER = "Local-Agent-X";
     private const string REPO_NAME = "Local-Agent-X";
 
     public event Action<string>? OnStatus;

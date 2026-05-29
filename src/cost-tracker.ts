@@ -18,6 +18,8 @@ const PRICING: Record<string, ModelPricing> = {
   "claude-sonnet-4-5": { input: 3, output: 15 },
   "claude-sonnet-4-5-20250929": { input: 3, output: 15 },
   "claude-sonnet-4": { input: 3, output: 15 },
+  "claude-opus-4-8": { input: 5, output: 25 },
+  "claude-opus-4-7": { input: 5, output: 25 },
   "claude-opus-4-6": { input: 5, output: 25 },
   "claude-opus-4-5": { input: 5, output: 25 },
   "claude-opus-4-5-20251101": { input: 5, output: 25 },

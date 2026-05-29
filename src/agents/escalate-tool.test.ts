@@ -145,7 +145,7 @@ describe("Manager template", () => {
     expect(mgr!.role).toBe("manager");
     expect(mgr!.allowedTools).toContain("agent_escalate");
     expect(mgr!.defaultModel?.provider).toBe("anthropic");
-    expect(mgr!.defaultModel?.model).toBe("claude-opus-4-7");
+    expect(mgr!.defaultModel?.model).toBe("claude-opus-4-8");
   });
 });
 

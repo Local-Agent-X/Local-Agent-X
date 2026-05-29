@@ -9,12 +9,12 @@
  * This file is intentionally separate from codex.ts so the adapter
  * sandbox audit (PRD §15 conformance I) scopes correctly.
  */
-import { readFileSync } from "node:fs";
 import type {
   AnthropicTransportRequest,
   TransportEvent,
 } from "./anthropic.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import { imagesToOpenAIParts } from "./images-to-openai-parts.js";
 
 export interface CodexTransportRequest extends AnthropicTransportRequest {
   previousResponseId?: string;
@@ -172,34 +172,6 @@ function toOaiMessage(m: AnthropicTransportRequest["messages"][number]): ChatCom
     tool_call_id: m.toolCallId ?? "tc-unknown",
     content: m.content,
   } as ChatCompletionMessageParam;
-}
-
-function imagesToOpenAIParts(
-  text: string,
-  images: Array<{ url: string; name: string; filePath?: string }>,
-): Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> {
-  const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }> = [
-    { type: "text", text },
-  ];
-  for (const img of images) {
-    try {
-      let dataUrl: string;
-      if (img.url && img.url.startsWith("data:")) {
-        dataUrl = img.url;
-      } else if (img.filePath) {
-        const data = readFileSync(img.filePath);
-        const ext = (img.name.split(".").pop() || "png").toLowerCase();
-        const mime = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
-        dataUrl = `data:${mime};base64,${data.toString("base64")}`;
-      } else {
-        continue;
-      }
-      parts.push({ type: "image_url", image_url: { url: dataUrl, detail: "auto" } });
-    } catch {
-      // Skip unreadable attachments rather than fail the whole turn.
-    }
-  }
-  return parts;
 }
 
 function scrub(s: string): string {

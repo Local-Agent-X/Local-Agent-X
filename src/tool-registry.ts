@@ -16,6 +16,16 @@
 //
 // The two derived maps (TOOL_CLASS_MAP, TOOL_RISK) are exported from
 // their original modules for unchanged downstream consumers.
+//
+// TOOL_POLICY_DEFAULTS (bottom of this file) is the third derived
+// projection: synthetic ToolPolicyRule entries at priority 10 that the
+// ToolPolicy class merges into its rule list. Closes the 2026-05-17
+// silent-block class — newly-registered tools no longer have to be added
+// to default-rules.ts to avoid deny-by-default; their risk tier picks
+// the fallback. Explicit rules in default-rules.ts (priority 40-90)
+// still beat the synthetic floor.
+
+import type { ToolPolicyRule } from "./tool-policy/types.js";
 
 export type KernelClass =
   | "file"
@@ -37,9 +47,16 @@ export type ToolRisk =
   | "external-comms"   // sends a message a third party will see
   | "secrets";         // touches the credential vault — read, write, or fill-from
 
+/** Fallback decision the synthetic policy layer applies when no explicit
+ *  rule in default-rules.ts matches a tool. Most entries don't set this
+ *  directly — it's derived from `risk` by RISK_TO_DEFAULT below. Set on
+ *  an entry only when you need to override the risk-tier mapping. */
+export type PolicyDefault = "allow" | "deny" | "confirm";
+
 export interface ToolEntry {
   kernel: KernelClass;
   risk: ToolRisk;
+  policyDefault?: PolicyDefault;
 }
 
 // Kernel classes that gate at dispatch (taint analysis, capability check,
@@ -316,3 +333,34 @@ export const TOOLS: Record<string, ToolEntry> = {
   pdf_extract_tables:       { kernel: "internal", risk: "safe" },
   pdf_merge:                { kernel: "internal", risk: "workspace-write" },
 };
+
+// ── Synthetic policy-default layer (derived from TOOLS) ────────────────
+//
+// Risk-tier → fallback decision. Higher-risk tiers (shell, destructive,
+// money, external-comms, secrets, network-write) are intentionally
+// undefined here — those tools must be explicitly reviewed and listed in
+// default-rules.ts. The boot-time policy audit surfaces any high-risk
+// tool that's missing from default-rules.ts so it doesn't silent-block.
+const RISK_TO_DEFAULT: Partial<Record<ToolRisk, PolicyDefault>> = {
+  safe: "allow",
+  "workspace-write": "allow",
+  "network-read": "allow",
+};
+
+/** Synthetic ToolPolicyRule entries derived from TOOLS. ToolPolicy merges
+ *  these into its rule list at construction; priority 10 keeps them below
+ *  all explicit default-rules.ts entries (allow floor 40, deny floor 90).
+ *  Effect: a TOOLS entry with risk:"safe" or workspace-write/network-read
+ *  is reachable even when no explicit allow rule exists for it. */
+export const TOOL_POLICY_DEFAULTS: ToolPolicyRule[] = Object.entries(TOOLS)
+  .flatMap(([name, entry]): ToolPolicyRule[] => {
+    const decision = entry.policyDefault ?? RISK_TO_DEFAULT[entry.risk];
+    if (!decision) return [];
+    return [{
+      id: `default-${name}`,
+      tool: name,
+      decision,
+      reason: `Synthetic default (risk=${entry.risk}) — no explicit rule in default-rules.ts`,
+      priority: 10,
+    }];
+  });

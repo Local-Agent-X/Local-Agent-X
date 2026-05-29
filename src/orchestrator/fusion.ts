@@ -1,27 +1,11 @@
 import type { ModuleSignal } from "./types.js";
+import { getSignal, criticalSignalIds } from "./registry.js";
 
 export function applyVetoLayer(signals: ModuleSignal[]): { vetoed: boolean; reason?: string; overrideSignal?: ModuleSignal } {
   for (const sig of signals) {
-    if (sig.source === "vulnerability-awareness" && sig.priority >= 8) {
-      return {
-        vetoed: true,
-        reason: "Sacred/vulnerable topic detected — overriding normal tone",
-        overrideSignal: { ...sig, priority: 10, confidence: 1.0 },
-      };
-    }
-    if (sig.source === "contradiction-detector" && sig.confidence >= 0.8) {
-      return {
-        vetoed: true,
-        reason: "High-confidence contradiction — must address before proceeding",
-        overrideSignal: { ...sig, priority: 9, confidence: 1.0 },
-      };
-    }
-    if (sig.source === "correction-learning" && sig.confidence >= 0.7) {
-      return {
-        vetoed: true,
-        reason: "User correction detected — acknowledge and fix",
-        overrideSignal: { ...sig, priority: 9, confidence: 1.0 },
-      };
+    const outcome = getSignal(sig.source)?.veto?.(sig);
+    if (outcome) {
+      return { vetoed: true, reason: outcome.reason, overrideSignal: outcome.overrideSignal };
     }
   }
   return { vetoed: false };
@@ -40,15 +24,14 @@ export function calculateFusionConfidence(signals: ModuleSignal[]): number {
 }
 
 export function checkDeepPassNeeded(signals: ModuleSignal[], activatedModules: string[]): { needed: boolean; modules: string[] } {
-  const criticalModules = ["vulnerability-awareness", "contradiction-detector", "correction-learning", "emotional-memory"];
   const lowConfidence: string[] = [];
   for (const sig of signals) {
-    if (criticalModules.includes(sig.source) && sig.confidence < 0.4 && sig.confidence > 0.1) {
+    if (criticalSignalIds.includes(sig.source) && sig.confidence < 0.4 && sig.confidence > 0.1) {
       lowConfidence.push(sig.source);
     }
   }
   for (const mod of activatedModules) {
-    if (criticalModules.includes(mod) && !signals.some(s => s.source === mod)) {
+    if (criticalSignalIds.includes(mod) && !signals.some(s => s.source === mod)) {
       lowConfidence.push(mod);
     }
   }

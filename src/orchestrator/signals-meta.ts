@@ -1,5 +1,5 @@
 import { MemoryGraph } from "../memory-graph.js";
-import crossSessionLearner from "../cross-session-learning/index.js";
+import crossSessionLearner, { CrossSessionLearner } from "../cross-session-learning/index.js";
 import { UnspokenDetector } from "../unspoken-detector.js";
 import { GrowthTracker } from "../growth-tracker.js";
 import { SharedHistory } from "../shared-history.js";
@@ -7,17 +7,19 @@ import { MilestoneCelebrator } from "../milestone-celebrations.js";
 import { CorrectionLearner } from "../correction-learning.js";
 import { ContradictionDetector } from "../contradiction-detector.js";
 import { getUniversalIndex } from "../memory/universal-index.js";
-import type { OrchestratorInput, ModuleSignal } from "./types.js";
-import { GRAPH_STOP_WORDS } from "./types.js";
+import type { CognitiveSignal } from "./types.js";
+import { GRAPH_STOP_WORDS, CORRECTION_KEYWORDS, FACT_PATTERNS } from "./types.js";
 
-export function runMetaModule(name: string, input: OrchestratorInput, signals: ModuleSignal[]): boolean {
-  switch (name) {
-    case "cross-session-learning": {
-      const csl = crossSessionLearner;
-      const patterns = csl.detectPatterns(3);
+export const metaSignals: CognitiveSignal[] = [
+  {
+    id: "cross-session-learning",
+    scope: "profile",
+    triage: ({ msgCount }) => (msgCount % 5 === 0 ? "conditional" : null),
+    run(_input, out) {
+      const patterns = crossSessionLearner.detectPatterns(3);
       if (patterns.length > 0) {
         const top = patterns[0];
-        signals.push({
+        out.push({
           source: "cross-session-learning",
           signal: `Recurring pattern: ${top.description} (seen ${top.occurrences}x)`,
           priority: 3,
@@ -25,16 +27,21 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
           confidence: 1.0,
         });
       }
-      return true;
-    }
+    },
+    health: () => CrossSessionLearner.getInstance(),
+  },
 
-    case "unspoken-detector": {
+  {
+    id: "unspoken-detector",
+    scope: "profile",
+    triage: ({ msgCount }) => (msgCount % 10 === 0 && msgCount > 0 ? "scheduled" : null),
+    run(_input, out) {
       const ud = UnspokenDetector.getInstance();
       const absences = ud.detectAbsence();
       if (absences.length > 0) {
         const hint = ud.getSensitivityHint(absences);
         if (hint) {
-          signals.push({
+          out.push({
             source: "unspoken-detector",
             signal: hint,
             priority: 6,
@@ -45,7 +52,7 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
       }
       const changes = ud.detectBehaviorChange();
       if (changes.length > 0) {
-        signals.push({
+        out.push({
           source: "unspoken-detector",
           signal: `Behavior change: ${changes[0].description}`,
           priority: 5,
@@ -53,14 +60,18 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
           confidence: 1.0,
         });
       }
-      return true;
-    }
+    },
+    health: () => UnspokenDetector.getInstance(),
+  },
 
-    case "growth-tracker": {
-      const gt = GrowthTracker.getInstance();
-      const summary = gt.getGrowthSummary();
+  {
+    id: "growth-tracker",
+    scope: "profile",
+    triage: ({ msgCount }) => (msgCount % 20 === 0 && msgCount > 0 ? "scheduled" : null),
+    run(_input, out) {
+      const summary = GrowthTracker.getInstance().getGrowthSummary();
       if (summary && summary.length > 10) {
-        signals.push({
+        out.push({
           source: "growth-tracker",
           signal: summary,
           priority: 3,
@@ -68,13 +79,20 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
           confidence: 1.0,
         });
       }
-      return true;
-    }
+    },
+    health: () => GrowthTracker.getInstance(),
+  },
 
-    case "milestone-celebrations": {
+  {
+    id: "milestone-celebrations",
+    scope: "profile",
+    triage: ({ msgCount }) =>
+      msgCount > 0 && (msgCount % 25 === 0 || msgCount === 1 || msgCount === 10 || msgCount === 50 || msgCount === 100)
+        ? "triggered"
+        : null,
+    run(_input, out) {
       const mc = MilestoneCelebrator.getInstance();
-      const sh = SharedHistory.getInstance();
-      const summary = sh.getRelationshipSummary();
+      const summary = SharedHistory.getInstance().getRelationshipSummary();
       const context = {
         conversationCount: summary.totalConversations || 0,
         appCount: summary.totalApps || 0,
@@ -84,19 +102,27 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
       };
       const milestones = mc.checkMilestones(context);
       for (const m of milestones) {
-        const celebration = mc.celebrate(m);
-        signals.push({
+        out.push({
           source: "milestone-celebrations",
-          signal: celebration,
+          signal: mc.celebrate(m),
           priority: 8,
           category: "milestone",
           confidence: 1.0,
         });
       }
-      return true;
-    }
+    },
+    health: () => MilestoneCelebrator.getInstance(),
+  },
 
-    case "correction-learning": {
+  {
+    id: "correction-learning",
+    scope: "profile",
+    critical: true,
+    triage: ({ input }) =>
+      CORRECTION_KEYWORDS.some(kw => input.message.toLowerCase().includes(kw)) && input.agentPreviousMessage
+        ? "triggered"
+        : null,
+    run(input, _out) {
       // Detection still runs (CorrectionLearner persists records to disk for
       // history/diagnostics), and prepare-request.ts uses the same detector
       // to boost the memory-curate nudge priority. We deliberately STOPPED
@@ -106,13 +132,34 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
       // USER.md (via memory_update_profile) or the Facts DB (via `remember`)
       // in response to the nudge. Synthesis happens at write time, not at
       // recall time.
-      if (!input.agentPreviousMessage) return true;
-      const cl = CorrectionLearner.getInstance();
-      cl.detectCorrection(input.message, input.agentPreviousMessage);
-      return true;
-    }
+      if (!input.agentPreviousMessage) return;
+      CorrectionLearner.getInstance().detectCorrection(input.message, input.agentPreviousMessage);
+    },
+    record(input) {
+      if (input.agentPreviousMessage) {
+        const cl = CorrectionLearner.getInstance();
+        const correction = cl.detectCorrection(input.message, input.agentPreviousMessage);
+        if (correction) {
+          cl.recordCorrection(correction);
+        }
+      }
+    },
+    veto: sig =>
+      sig.confidence >= 0.7
+        ? {
+            reason: "User correction detected — acknowledge and fix",
+            overrideSignal: { ...sig, priority: 9, confidence: 1.0 },
+          }
+        : null,
+    health: () => CorrectionLearner.getInstance(),
+  },
 
-    case "contradiction-detector": {
+  {
+    id: "contradiction-detector",
+    scope: "profile",
+    critical: true,
+    triage: ({ input }) => (FACT_PATTERNS.some(p => p.test(input.message)) ? "triggered" : null),
+    run(input, out) {
       // Pre-fix this read from cd.getContradictionHistory() — its own
       // log of past contradictions. The auto-recording path was
       // unreliable, so the comparison set was almost always empty and
@@ -133,7 +180,7 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
       if (factTexts.length > 0) {
         const contradiction = cd.checkContradiction(input.message, factTexts);
         if (contradiction) {
-          signals.push({
+          out.push({
             source: "contradiction-detector",
             signal:
               `Possible contradiction with prior fact: "${contradiction.oldFact}" — ` +
@@ -145,10 +192,22 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
           });
         }
       }
-      return true;
-    }
+    },
+    veto: sig =>
+      sig.confidence >= 0.8
+        ? {
+            reason: "High-confidence contradiction — must address before proceeding",
+            overrideSignal: { ...sig, priority: 9, confidence: 1.0 },
+          }
+        : null,
+    health: () => ContradictionDetector.getInstance(),
+  },
 
-    case "memory-graph": {
+  {
+    id: "memory-graph",
+    scope: "profile",
+    triage: ({ input }) => (input.message.length > 40 ? "conditional" : null),
+    run(input, out) {
       const entityCandidates = [...new Set(
         (input.message.match(/\b[A-Z][a-zA-Z]{2,}\b/g) || [])
           .filter(w => !GRAPH_STOP_WORDS.has(w.toLowerCase()))
@@ -162,7 +221,7 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
           }
         }
         if (relationships.length > 0) {
-          signals.push({
+          out.push({
             source: "memory-graph",
             signal: `Known relationships: ${relationships.slice(0, 5).join("; ")}`,
             priority: 3,
@@ -171,8 +230,19 @@ export function runMetaModule(name: string, input: OrchestratorInput, signals: M
           });
         }
       }
-      return true;
-    }
-  }
-  return false;
-}
+    },
+    record(input) {
+      if (input.message.length < 40) return;
+      const entityCandidates = [...new Set(
+        (input.message.match(/\b[A-Z][a-zA-Z]{2,}\b/g) || [])
+          .filter(w => !GRAPH_STOP_WORDS.has(w.toLowerCase()))
+      )];
+      if (entityCandidates.length < 2) return;
+      const extracted = MemoryGraph.autoExtractRelationships(input.message, entityCandidates);
+      for (const edge of extracted) {
+        MemoryGraph.addEdge(edge.from, edge.relation, edge.to, edge.metadata);
+      }
+    },
+    health: () => MemoryGraph,
+  },
+];

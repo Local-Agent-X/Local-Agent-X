@@ -6,7 +6,7 @@
 
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { ThreatLevel, DataLabel } from "../threat-engine.js";
+import type { ThreatLevel, DataLabel } from "../threat/threat-engine.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
 interface AuditEntry {

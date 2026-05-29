@@ -2,17 +2,17 @@ import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, readBody, safeParseBody } from "../server-utils.js";
-import { getThreatDashboard } from "../threat-dashboard.js";
+import { getThreatDashboard } from "../threat/threat-dashboard.js";
 import { listPolicies, createPolicy, deletePolicy } from "../ari-kernel/policy-editor.js";
-import { listEgressRules, addEgressRule } from "../egress-policy.js";
-import { scanForSecrets } from "../secret-scanner.js";
+import { listEgressRules, addEgressRule } from "../security/egress-policy.js";
+import { scanForSecrets } from "../security/secret-scanner.js";
 import { getRecentFileAccess } from "../file-audit.js";
 import { queryAuditLog, getAuditSummary } from "../ari-kernel/audit-viewer.js";
 import { runBenchmarks } from "../ari-kernel/benchmarks.js";
 import { runInjectionTests } from "../security-tests.js";
 import { setSessionPolicy, getSessionPolicy, listPresets, type PolicyPreset } from "../session/policy.js";
 import { isAriActive } from "../ari-kernel/index.js";
-import { ThreatEngine } from "../threat-engine.js";
+import { ThreatEngine } from "../threat/threat-engine.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.security");
@@ -152,7 +152,7 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
     const [, m, d] = date.split("-").map(Number);
     if (m < 1 || m > 12 || d < 1 || d > 31) { json(400, { error: "Invalid date values" }); return true; }
     const auditPath = join(ctx.dataDir, "audit", `${date}.jsonl`);
-    const { CryptoAuditTrail } = await import("../threat-engine.js");
+    const { CryptoAuditTrail } = await import("../threat/threat-engine.js");
     json(200, CryptoAuditTrail.verify(auditPath)); return true;
   }
 

@@ -3,7 +3,7 @@ import type { ServerContext } from "../../../server-context.js";
 import type { ServerEvent, Session } from "../../../types.js";
 import type { Role } from "../../../rbac.js";
 import type { PreparedAgentRequest } from "../../../agent-request/types.js";
-import { ThreatEngine } from "../../../threat-engine.js";
+import { ThreatEngine } from "../../../threat/threat-engine.js";
 import { createLogger } from "../../../logger.js";
 
 const logger = createLogger("routes.chat.canonical-run");

@@ -24,13 +24,13 @@
  * and re-exports the public types.
  */
 
-import { loadSettings } from "./settings.js";
+import { loadSettings } from "../settings.js";
 
-import { canaryPromptBlock, checkCanaries, generateCanaries } from "./threat/canaries.js";
-import { classifyData, type DataLabel } from "./threat/classification.js";
-import { CryptoAuditTrail } from "./threat/audit-trail.js";
-import { THREAT_SCORES, ThreatScorer, type ThreatLevel, type ThreatScorerOptions } from "./threat/scoring.js";
-import { ToolChainAnalyzer } from "./threat/tool-chain.js";
+import { canaryPromptBlock, checkCanaries, generateCanaries } from "./canaries.js";
+import { classifyData, type DataLabel } from "./classification.js";
+import { CryptoAuditTrail } from "./audit-trail.js";
+import { THREAT_SCORES, ThreatScorer, type ThreatLevel, type ThreatScorerOptions } from "./scoring.js";
+import { ToolChainAnalyzer } from "./tool-chain.js";
 
 // ── Tunable threat-calibration settings ──
 // Read from ~/.lax/settings.json:
@@ -62,11 +62,11 @@ export function _invalidateThreatSettingsCacheForTests(): void {
   _scorerOptsCachedAt = 0;
 }
 
-export { classifyData, type DataClassification, type DataLabel } from "./threat/classification.js";
-export { generateCanaries, canaryPromptBlock, checkCanaries } from "./threat/canaries.js";
-export { ThreatScorer, THREAT_SCORES, type ThreatLevel } from "./threat/scoring.js";
-export { ToolChainAnalyzer } from "./threat/tool-chain.js";
-export { CryptoAuditTrail } from "./threat/audit-trail.js";
+export { classifyData, type DataClassification, type DataLabel } from "./classification.js";
+export { generateCanaries, canaryPromptBlock, checkCanaries } from "./canaries.js";
+export { ThreatScorer, THREAT_SCORES, type ThreatLevel } from "./scoring.js";
+export { ToolChainAnalyzer } from "./tool-chain.js";
+export { CryptoAuditTrail } from "./audit-trail.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // UNIFIED THREAT ENGINE — per-session orchestrator
@@ -177,7 +177,7 @@ export class ThreatEngine {
       // it and record into the trust ledger. Lazy-imported to keep the
       // threat-engine module's import surface lean.
       if (chainResult.blockedFingerprint) {
-        void import("./threat/consent-store.js").then(({ recordLastBlockedFingerprint }) => {
+        void import("./consent-store.js").then(({ recordLastBlockedFingerprint }) => {
           recordLastBlockedFingerprint(this.sessionId, chainResult.blockedFingerprint!);
         }).catch(() => {});
       }

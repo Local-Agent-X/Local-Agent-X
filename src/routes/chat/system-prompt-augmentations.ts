@@ -1,6 +1,6 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { PreparedAgentRequest } from "../../agent-request/index.js";
-import type { ThreatEngine } from "../../threat-engine.js";
+import type { ThreatEngine } from "../../threat/threat-engine.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("routes.chat.system-prompt");

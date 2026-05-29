@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 

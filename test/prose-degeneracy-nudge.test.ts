@@ -15,7 +15,7 @@
 
 import { describe, it, expect } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import type { ThreatEngine } from "../src/threat-engine.js";
+import type { ThreatEngine } from "../src/threat/threat-engine.js";
 import { augmentSystemPrompt } from "../src/routes/chat/system-prompt-augmentations.js";
 
 // Stub threat engine — only `getCanaryBlock` is touched in the augmenter's

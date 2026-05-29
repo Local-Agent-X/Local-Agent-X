@@ -8,7 +8,7 @@ import { checkMemoryTaint, detectInjection, wrapExternalContent, stripControlCha
 import { ToolPolicy, type ToolPolicyConfig } from "./tool-policy.js";
 import { RBACManager } from "./rbac.js";
 import { checkRegexSafety } from "./safe-regex.js";
-import { classifyData } from "./threat-engine.js";
+import { classifyData } from "./threat/threat-engine.js";
 
 // ═══════════════════════════════════════════════════════════════════
 // SecurityLayer Tests

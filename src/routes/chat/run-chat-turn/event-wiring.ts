@@ -1,7 +1,7 @@
 import type { ServerContext } from "../../../server-context.js";
 import type { ServerEvent } from "../../../types.js";
 import type { PreparedAgentRequest } from "../../../agent-request/types.js";
-import { ThreatEngine } from "../../../threat-engine.js";
+import { ThreatEngine } from "../../../threat/threat-engine.js";
 import { DIRECTIVE_VERB_RE, type SseSink } from "./types.js";
 
 export interface EventWiring {

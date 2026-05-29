@@ -12,7 +12,7 @@ vi.mock("../src/ops/session-bridge.js", () => ({
 }));
 
 import { augmentSystemPrompt } from "../src/routes/chat/system-prompt-augmentations.js";
-import { ThreatEngine } from "../src/threat-engine.js";
+import { ThreatEngine } from "../src/threat/threat-engine.js";
 
 const dataDir = mkdtempSync(join(tmpdir(), "lax-syspromp-test-"));
 

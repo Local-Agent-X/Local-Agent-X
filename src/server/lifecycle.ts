@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/agent-runner.js";
 import { setupChatWebSocket } from "../chat-ws/index.js";
-import { runSecurityAudit, printAuditReport } from "../security-audit.js";
+import { runSecurityAudit, printAuditReport } from "../security/security-audit.js";
 import { startAriKernel } from "../ari-kernel/index.js";
 import { runMigrations } from "../db-migrations.js";
 import { EventBus } from "../event-bus.js";
